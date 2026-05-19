@@ -1,32 +1,14 @@
 {
   "id": "memory",
+  "kind": "memory",
   "configSchema": {
     "type": "object",
     "additionalProperties": true,
     "properties": {
       "enabled": { "type": "boolean", "default": true },
       "dataDir": { "type": "string", "description": "数据存储目录" },
-      "capture": {
-        "type": "object",
-        "properties": {
-          "enabled": { "type": "boolean", "default": true },
-          "retentionDays": { "type": "number", "default": 90 }
-        }
-      },
-      "extraction": {
-        "type": "object",
-        "properties": {
-          "enabled": { "type": "boolean", "default": true },
-          "maxMemoriesPerSession": { "type": "number", "default": 10 }
-        }
-      },
-      "recall": {
-        "type": "object",
-        "properties": {
-          "enabled": { "type": "boolean", "default": true },
-          "maxResults": { "type": "number", "default": 5 }
-        }
-      }
+      "maxSearchResults": { "type": "number", "default": 10 },
+      "retentionDays": { "type": "number", "default": 90 }
     }
   },
   "contracts": {
