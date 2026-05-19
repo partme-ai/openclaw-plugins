@@ -2,7 +2,7 @@
 
 # OpenClaw MQTT
 
-**OpenClaw plugin — MQTT channel bridge with multi-topic routing and explicit topic bindings**
+**OpenClaw 插件：支持多 Topic 与显式绑定规则的 MQTT 渠道桥接**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--mqtt-blue)
 ![Node](https://img.shields.io/badge/Node.js-20+-green)
@@ -13,54 +13,54 @@
 
 [English](./README.md) | [简体中文](./README_CN.md)
 
-## Introduction
+## 简介
 
-`@partme.ai/openclaw-mqtt` is an OpenClaw channel plugin for [OpenClaw](https://github.com/openclaw/openclaw) that embeds an MQTT broker ([Aedes](https://github.com/moscajs/aedes)) and bridges MQTT devices to OpenClaw agents. The plugin uses [`defineChannelPluginEntry`](https://docs.openclaw.ai/plugins/sdk-entrypoints#definechannelpluginentry) + `ChannelPlugin` per the official channel plugin guide (not `definePluginEntry`, which is for non-channel plugins).
+`@partme.ai/openclaw-mqtt` 是为 [OpenClaw](https://github.com/openclaw/openclaw) 提供的 MQTT 渠道插件，内置 [Aedes](https://github.com/moscajs/aedes) broker，将设备消息桥接到 Agent。插件按照官方文档使用 [`defineChannelPluginEntry`](https://docs.openclaw.ai/plugins/sdk-entrypoints#definechannelpluginentry) + `ChannelPlugin` 实现（渠道插件请勿使用仅适用于非渠道插件的 `definePluginEntry`）。
 
-### Core Capabilities
+### 核心能力
 
-- **Embedded Broker**: no external MQTT broker required, works out of the box
-- **Explicit Binding First**: `topicBindings` has the highest routing priority
-- **Standard Topic Fallback**: falls back to `openclaw/agent/<agentId>/in` when no binding matches
-- **Controllable Reply Topic**: supports binding-level `replyTopic`, otherwise auto-derives `/out`
-- **Session Context Mapping**: saves agent/account/replyTopic info per session
-- **Enterprise Security**: MQTT over TLS, user-level topic ACL, anonymous access control, payload size limits
+- **内嵌 Broker**：无需额外部署 MQTT broker，开箱即用
+- **显式绑定优先**：`topicBindings` 命中有最高路由优先级
+- **标准 Topic 回退**：未命中绑定时自动回退到 `openclaw/agent/<agentId>/in`
+- **回复 Topic 可控**：支持绑定级 `replyTopic`，否则自动推导 `/out`
+- **会话上下文映射**：按 session 保存 agent/account/replyTopic 信息
+- **企业级安全**：MQTT over TLS、用户级 topic ACL、匿名访问控制、消息大小限制
 
-### Lifecycle
+### 生命周期
 
-- Embedded broker starts when Gateway runs `startAccount` for MQTT channel (single account `default` in current release)
-- HTTP `GET /mqtt/status` is registered in `registerFull`, exposing broker stats, config snapshot, and policy hot-reload metadata
-- Session key granularity follows OpenClaw global `session.dmScope` configuration
-- **`package.json` → `openclaw.setupEntry`** points to `dist/setup-entry.js`, exporting a lightweight entry via `defineSetupPluginEntry`
+- 内嵌 Broker 在 Gateway 对 MQTT 渠道执行 `startAccount` 时启动（当前版本为单账号 `default`）
+- HTTP `GET /mqtt/status` 在入口的 `registerFull` 中注册，可查看 broker 统计、配置快照及策略热更新元数据
+- 会话键粒度遵循 OpenClaw 全局 `session.dmScope` 配置
+- **`package.json` → `openclaw.setupEntry`** 指向 `dist/setup-entry.js`，通过 `defineSetupPluginEntry` 导出轻量入口
 
-### Highlights
+### 主要特性
 
-#### 1. Embedded Broker
+#### 1. 内嵌 Broker
 
-Aedes MQTT broker starts in-process with zero external dependencies. Supports MQTT 3.1.1 and MQTT 5.0 protocol versions.
+Aedes MQTT broker 随进程启动，支持 MQTT 3.1.1 和 MQTT 5.0 协议版本，无需外部依赖。
 
-#### 2. Topic Routing
+#### 2. Topic 路由
 
-- **Explicit binding**: `topicBindings` array with `topicPattern` → `agentId` + optional `replyTopic`
-- **Standard fallback**: `openclaw/agent/<agentId>/in` ↔ `openclaw/agent/<agentId>/out`
-- **Wildcard support**: `+` (single segment) and `#` (multi-segment) matching on all topic filters
+- **显式绑定**：`topicBindings` 数组中配置 `topicPattern` → `agentId` + 可选 `replyTopic`
+- **标准回退**：`openclaw/agent/<agentId>/in` ↔ `openclaw/agent/<agentId>/out`
+- **通配符支持**：`+`（单段匹配）和 `#`（多段匹配）
 
-#### 3. Enterprise Controls
+#### 3. 企业级控制
 
-| Area | Feature |
-|------|---------|
-| Authentication | Username/password, per-user ACL, anonymous access toggle |
-| Transport | TCP (1883) + TLS (8883) with configurable cert/key/CA |
-| QoS | 0 (at most once) with mailbox soft limit, 1 (at least once) with ACK retry |
-| Persistence | Multi-backend: memory, redis (with mqemitter), mongodb, level, nedb |
-| Limits | Configurable max payload bytes, max connections |
-| Sessions | Expiry-based cleanup, persistent across reconnect |
-| Observability | Prometheus metrics (`prom-client`), structured JSON audit logs |
-| Will / Retain | Configurable retain policy, will message allowlist |
+| 领域 | 功能 |
+|------|------|
+| 认证 | 用户名/密码、每用户 ACL、匿名访问开关 |
+| 传输 | TCP（1883）+ TLS（8883），可配置 cert/key/CA |
+| QoS | 0（至多一次）+ mailbox 软限制，1（至少一次）+ ACK 重试 |
+| 持久化 | 多后端：memory、redis（含 mqemitter）、mongodb、level、nedb |
+| 限制 | 可配置最大 payload 字节数、最大连接数 |
+| 会话 | 基于过期时间的清理，支持跨重连保留 |
+| 可观测性 | Prometheus 指标（`prom-client`）、结构化 JSON 审计日志 |
+| Will / Retain | 可配置 retain 策略、will 消息白名单 |
 
-### Scaling
+### 水平扩展
 
-Default single-process in-memory deployment. Enable persistence for multi-Gateway horizontal scaling:
+默认单进程内存运行，启用持久化即可实现多 Gateway 水平扩展：
 
 ```json
 {
@@ -79,31 +79,31 @@ Default single-process in-memory deployment. Enable persistence for multi-Gatewa
 }
 ```
 
-Supports multiple persistence backends: memory, redis, mongodb, level, nedb.
+支持多种持久化后端：memory、redis、mongodb、level、nedb。
 
-## Message Flow
+## 消息处理流程
 
-1. Device publishes MQTT message
-2. Plugin filters via `subscribeTopics` allowlist
-3. Route decision (`topicBindings` first → standard Topic fallback)
-4. Payload parsing (`JSON.text` → plain text fallback)
-5. Dispatch to OpenClaw runtime
-6. Reply published to `replyTopic` or default `/out`
+1. 设备发送 MQTT 消息
+2. 插件按 `subscribeTopics` 白名单过滤
+3. 路由决策（`topicBindings` 优先 → 标准 Topic 回退）
+4. Payload 解析（`JSON.text` → 纯文本回退）
+5. 调用 OpenClaw runtime 分发到 Agent
+6. 回复消息发布到 `replyTopic` 或默认 `/out`
 
-## Quick Start
+## 快速开始
 
-### Prerequisites
+### 前置条件
 
 - OpenClaw `>= 2026.4.0`
 - Node.js `20+`
 
-### Install
+### 安装
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-mqtt
 ```
 
-### Minimal Config
+### 最小配置
 
 ```json
 {
@@ -134,189 +134,189 @@ openclaw plugins install @partme.ai/openclaw-mqtt
 }
 ```
 
-## Topic Rules
+## Topic 规则
 
-| Type | Format |
-|------|--------|
-| Standard inbound | `openclaw/agent/<agentId>/in` |
-| Standard outbound | `openclaw/agent/<agentId>/out` |
-| Explicit routing | Defined by `topicBindings.topicPattern` |
+| 类型 | 格式 |
+|------|------|
+| 标准入站 | `openclaw/agent/<agentId>/in` |
+| 标准出站 | `openclaw/agent/<agentId>/out` |
+| 显式路由 | 由 `topicBindings.topicPattern` 定义 |
 
-Routing priority: `topicBindings` → Standard inbound parsing → Drop
+路由优先级：`topicBindings` → 标准入站解析 → 丢弃
 
-## Configuration
+## 配置说明
 
-### Required
+### 必填
 
-| Field | Description |
-|-------|-------------|
-| `port` | MQTT TCP listener port (default: `1883`) |
+| 字段 | 说明 |
+|------|------|
+| `port` | MQTT TCP 监听端口（默认：`1883`） |
 
 ### Channel
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `port` | `1883` | MQTT TCP listener port |
-| `maxConnections` | `1000` | Maximum concurrent connections |
-| `subscribeTopics` | `[]` | Allowed inbound topic patterns |
-| `topicBindings` | `[]` | Explicit topic → agent bindings |
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `port` | `1883` | MQTT TCP 监听端口 |
+| `maxConnections` | `1000` | 最大并发连接数 |
+| `subscribeTopics` | `[]` | 允许接收的入站 topic 模式 |
+| `topicBindings` | `[]` | 显式 topic → agent 绑定规则 |
 
 ### Auth
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `auth.enabled` | `false` | Enable client authentication |
-| `auth.allowAnonymous` | `false` | Allow anonymous connections |
-| `auth.users` | `[]` | User list with per-user publish/subscribe ACL |
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `auth.enabled` | `false` | 启用客户端认证 |
+| `auth.allowAnonymous` | `false` | 允许匿名连接 |
+| `auth.users` | `[]` | 用户列表，支持每用户 publish/subscribe ACL |
 
 ### TLS
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `tls.enabled` | `false` | Enable TLS listener (port 8883) |
-| `tls.certFile` | — | TLS certificate path (PEM) |
-| `tls.keyFile` | — | TLS key path (PEM) |
-| `tls.caFile` | — | Optional CA certificate path |
-| `tls.requestCert` | `false` | Request client certificate |
-| `tls.rejectUnauthorized` | `false` | Reject unauthorized certs |
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `tls.enabled` | `false` | 启用 TLS 监听（端口 8883） |
+| `tls.certFile` | — | TLS 证书路径（PEM） |
+| `tls.keyFile` | — | TLS 私钥路径（PEM） |
+| `tls.caFile` | — | 可选 CA 证书路径 |
+| `tls.requestCert` | `false` | 请求客户端证书 |
+| `tls.rejectUnauthorized` | `false` | 拒绝未授权证书 |
 
-### Limits & Session
+### 限制与会话
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `limits.maxPayloadBytes` | `1048576` | Max payload size in bytes |
-| `session.maxExpirySeconds` | `86400` | Session expiry after disconnect |
-| `session.persistentAcrossReconnect` | `true` | Allow sessions to survive reconnect |
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `limits.maxPayloadBytes` | `1048576` | 单条消息最大字节数 |
+| `session.maxExpirySeconds` | `86400` | 断线后会话过期时间 |
+| `session.persistentAcrossReconnect` | `true` | 允许会话跨重连保留 |
 
-### Persistence
+### 持久化
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `persistence.enabled` | `false` | Enable persistence for horizontal scaling |
-| `persistence.backend` | `"memory"` | Backend: `memory`, `redis`, `mongodb`, `level`, `nedb` |
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `persistence.enabled` | `false` | 启用持久化，实现水平扩展 |
+| `persistence.backend` | `"memory"` | 后端类型：`memory`、`redis`、`mongodb`、`level`、`nedb` |
 
-## Testing
+## 测试
 
 ```bash
-# Unit tests
+# 单元测试
 npm test
 
-# Integration tests
+# 集成测试
 npm run test:client
 ```
 
-Integration test client environment variables: `MQTT_BROKER_URL`, `MQTT_CLIENT_ID`, `MQTT_TEST_TIMEOUT_MS`, etc.
+集成测试客户端环境变量：`MQTT_BROKER_URL`、`MQTT_CLIENT_ID`、`MQTT_TEST_TIMEOUT_MS` 等。
 
 ## GitHub Actions
 
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| `ci.yml` | Push / PR to `main` | Install, typecheck, build, test |
-| `release.yml` | Tag `v*` | Build, test, publish npm package |
+| 工作流 | 触发方式 | 作用 |
+|--------|----------|------|
+| `ci.yml` | push / PR 到 `main` | 安装、类型检查、构建、测试 |
+| `release.yml` | `v*` 标签 | 构建、测试并发布 npm 包 |
 
-## Publishing
+## 发版
 
 ```bash
 npm version patch
 git push origin main --follow-tags
 ```
 
-## Project Structure
+## 项目结构
 
 ```
 openclaw-mqtt/
 ├── src/
 │   ├── index.ts              # defineChannelPluginEntry + registerFull
-│   ├── setup-entry.ts        # defineSetupPluginEntry lightweight entry
-│   ├── mqtt-plugin.ts        # ChannelPlugin definition
-│   ├── gateway-mqtt.ts       # Gateway lifecycle management
+│   ├── setup-entry.ts        # defineSetupPluginEntry 轻量入口
+│   ├── mqtt-plugin.ts        # ChannelPlugin 定义
+│   ├── gateway-mqtt.ts       # Gateway 生命周期管理
 │   ├── outbound.ts           # ChannelOutboundAdapter
-│   ├── inbound.ts            # Inbound message handling
-│   ├── broker.ts             # Aedes TCP server
-│   ├── topic-router.ts       # Topic routing
-│   ├── session-mapper.ts     # Session context mapping
-│   ├── mqtt-config.ts        # Config parsing
-│   ├── runtime.ts            # Runtime
-│   └── openclaw-peer.d.ts   # openclaw type placeholder
+│   ├── inbound.ts            # 入站消息处理
+│   ├── broker.ts             # Aedes TCP 服务器
+│   ├── topic-router.ts       # Topic 路由解析
+│   ├── session-mapper.ts     # 会话上下文映射
+│   ├── mqtt-config.ts        # 配置解析
+│   ├── runtime.ts            # 运行时
+│   └── openclaw-peer.d.ts   # openclaw 类型占位
 ├── scripts/
-│   └── test-client.ts       # Integration test client
-├── openclaw.plugin.json     # Plugin metadata
+│   └── test-client.ts       # 集成测试客户端
+├── openclaw.plugin.json     # 插件元数据
 ├── package.json
 └── README.md / README_CN.md
 ```
 
-## Tech Stack
+## 技术栈
 
-| Area | Details |
-|------|---------|
-| Runtime | Node.js 20+, ESM |
+| 类别 | 详情 |
+|------|------|
+| 运行时 | Node.js 20+、ESM |
 | Broker | [Aedes](https://github.com/moscajs/aedes) |
-| Persistence | aedes-persistence-redis, aedes-persistence-mongodb, aedes-persistence-level, aedes-persistence-nedb |
-| Metrics | [prom-client](https://github.com/siimon/prom-client) |
-| Host | OpenClaw plugin API (`defineChannelPluginEntry`, `registerService`) |
+| 持久化 | aedes-persistence-redis、aedes-persistence-mongodb、aedes-persistence-level、aedes-persistence-nedb |
+| 指标 | [prom-client](https://github.com/siimon/prom-client) |
+| 宿主 | OpenClaw 插件 API（`defineChannelPluginEntry`、`registerService`） |
 
-## Version
+## 版本信息
 
-| Item | Version |
-|------|---------|
+| 项目 | 版本 |
+|------|------|
 | @partme.ai/openclaw-mqtt | 0.1.13 |
-| Recommended Node | 20+ |
+| 推荐 Node | 20+ |
 
-## Security
+## 安全
 
-- **Never store credentials in config**: use environment variables or secret managers for passwords and API keys
-- **TLS verification**: enable `tls.rejectUnauthorized` in production to prevent MITM attacks
-- **ACL scoping**: use `auth.users[].publishAllow` / `subscribeAllow` to restrict device topics
-- **Audit logging**: enable `audit.enabled` for structured JSON logs compatible with ELK/SIEM
+- **不要在配置中存储凭据**：使用环境变量或密钥管理器存放密码和 API 密钥
+- **TLS 校验**：生产环境建议启用 `tls.rejectUnauthorized` 防止中间人攻击
+- **ACL 范围控制**：使用 `auth.users[].publishAllow` / `subscribeAllow` 限制设备 topic
+- **审计日志**：启用 `audit.enabled` 输出结构化 JSON 日志，兼容 ELK/SIEM
 
-## FAQ
+## 常见问题
 
-**Does this plugin require an external MQTT broker?**
+**是否必须依赖外部 MQTT broker？**
 
-No, the plugin embeds `aedes` broker.
+不需要，插件内嵌 `aedes` broker。
 
-**How is payload parsed?**
+**Payload 如何解析？**
 
-Default `jsonTextOrPlain` mode: parses `JSON.text` field first, falls back to raw text if not found.
+默认 `jsonTextOrPlain` 模式：优先解析 `JSON.text` 字段，未命中则回退原始文本。
 
-**How do I bind a Topic to an Agent?**
+**如何绑定 Topic 到 Agent？**
 
-Configure `topicPattern` and `agentId` via `topicBindings`, with optional `replyTopic`.
+通过 `topicBindings` 配置 `topicPattern` 与 `agentId`，可选配置 `replyTopic`。
 
-## Links
+## 相关链接
 
-| Resource | URL |
-|----------|-----|
+| 资源 | 链接 |
+|------|------|
 | OpenClaw | [https://docs.openclaw.ai](https://docs.openclaw.ai) |
-| OpenClaw (source) | [https://github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) |
+| OpenClaw 源码 | [https://github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) |
 | Aedes MQTT Broker | [https://github.com/moscajs/aedes](https://github.com/moscajs/aedes) |
-| RabbitMQ MQTT Reference | [https://www.rabbitmq.com/docs/mqtt](https://www.rabbitmq.com/docs/mqtt) |
-| Chinese README | [README_CN.md](./README_CN.md) |
+| RabbitMQ MQTT 参考 | [https://www.rabbitmq.com/docs/mqtt](https://www.rabbitmq.com/docs/mqtt) |
+| English | [README.md](./README.md) |
 
-### OpenClaw Documentation
+### OpenClaw 官方文档
 
-| Topic | URL |
-|-------|-----|
+| 说明 | 链接 |
+|------|------|
 | Channel plugins | [https://docs.openclaw.ai/plugins/sdk-channel-plugins](https://docs.openclaw.ai/plugins/sdk-channel-plugins) |
 | SDK entry points | [https://docs.openclaw.ai/plugins/sdk-entrypoints](https://docs.openclaw.ai/plugins/sdk-entrypoints) |
 | SDK runtime | [https://docs.openclaw.ai/plugins/sdk-runtime](https://docs.openclaw.ai/plugins/sdk-runtime) |
 | SDK setup | [https://docs.openclaw.ai/plugins/sdk-setup](https://docs.openclaw.ai/plugins/sdk-setup) |
 
-## License
+## 开源协议
 
-This project is licensed under the [MIT License](LICENSE).
+本项目采用 [MIT License](LICENSE) 协议。
 
-## Acknowledgements
+## 致谢
 
-- [Aedes](https://github.com/moscajs/aedes) — Embedded MQTT broker
-- [RabbitMQ](https://www.rabbitmq.com/) — Enterprise MQTT feature reference
-- [OpenClaw](https://docs.openclaw.ai) — Plugin host runtime
+- [Aedes](https://github.com/moscajs/aedes) — 内嵌 MQTT broker
+- [RabbitMQ](https://www.rabbitmq.com/) — 企业级 MQTT 功能参考
+- [OpenClaw](https://docs.openclaw.ai) — 插件宿主运行时
 
 ---
 
 <div align="center">
 
-**If this project helps you, consider giving it a star**
+**如果这个项目对你有帮助，请给我们一个星星**
 
 Made with love by PartMe
 

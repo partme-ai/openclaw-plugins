@@ -1,24 +1,24 @@
 # @largezhou/ddingtalk
 
-[中文文档](README.md)
+[English](README.en.md)
 
-OpenClaw DingTalk channel plugin, using Stream mode to connect enterprise robots.
+OpenClaw 钉钉（DingTalk）渠道插件，使用 Stream 模式接入企业机器人。
 
-## Features
+## 功能特点
 
-- ✅ **Stream Mode**: No public IP or domain required, works out of the box
-- ✅ **Multi-Account Support**: Connect multiple DingTalk robots simultaneously with separate credentials and permissions
-- ✅ **Multi-Agent Routing**: Route different accounts, group chats, and direct messages to different Agents
-- ✅ **Private/Group Chat**: Supports private chat and group chat (only when @robot)
-- ✅ **Text Messages**: Send and receive text messages
-- ✅ **Markdown Reply**: Robot replies in Markdown format
-- ✅ **Image Messages**: Receive images from users, send local/remote images
-- ✅ **Audio & Video Messages**: Send and receive voice and video messages
-- ✅ **File Messages**: Send and receive files, including rich text messages
-- ✅ **Active Message Push**: Supports active message pushing, configurable for reminders or scheduled tasks
-- ✅ **OpenClaw Commands**: Supports official OpenClaw commands such as /new, /compact
+- ✅ **Stream 模式**：无需公网 IP 和域名，开箱即用
+- ✅ **多账号支持**：可同时接入多个钉钉机器人，分别配置凭证和权限
+- ✅ **多 Agent 路由**：支持将不同账号、群聊、私聊绑定到不同的 Agent
+- ✅ **私聊/群聊**：支持私聊，群聊（仅@机器人）
+- ✅ **文本消息收发**：接收和发送文本消息
+- ✅ **Markdown 回复**：机器人回复 Markdown 格式
+- ✅ **图片消息收发**：接收用户发送的图片，支持发送本地/远程图片
+- ✅ **音视频消息**：支持接收和发送语音、视频消息
+- ✅ **文件消息**：支持接收和发送文件，以及图文混排消息
+- ✅ **主动推送消息**：支持主动推送消息，可以配置提醒或定时任务
+- ✅ **支持 OpenClaw 命令**：支持 /new、/compact 等 OpenClaw 官方命令
 
-## Installation
+## 安装
 
 ```bash
 openclaw plugins install @largezhou/ddingtalk
@@ -26,113 +26,113 @@ openclaw plugins install @largezhou/ddingtalk
 
 ---
 
-## Quick Start
+## 快速开始
 
-There are two ways to add the DingTalk channel:
+添加钉钉渠道有两种方式：
 
-### Method 1: Add via Installation Wizard (Recommended)
+### 方式一：通过安装向导添加（推荐）
 
-If you have just installed OpenClaw, you can run the wizard directly and follow the prompts to add DingTalk:
+如果您刚安装完 OpenClaw，可以直接运行向导，根据提示添加钉钉：
 
 ```bash
 openclaw onboard
 ```
 
-The wizard will guide you through:
+向导会引导您完成：
 
-1. Creating a DingTalk app robot and obtaining credentials
-2. Configuring app credentials
-3. Starting the gateway
+1. 创建钉钉应用机器人并获取凭证
+2. 配置应用凭证
+3. 启动网关
 
-**After completing the configuration**, you can use the following commands to check the gateway status:
+**完成配置后**，您可以使用以下命令检查网关状态：
 
-- `openclaw gateway status` - View gateway running status
-- `openclaw logs --follow` - View real-time logs
+- `openclaw gateway status` - 查看网关运行状态
+- `openclaw logs --follow` - 查看实时日志
 
-### Method 2: Add via Command Line
+### 方式二：通过命令行添加
 
-If you have already completed the initial installation, you can use the following command to add the DingTalk channel:
+如果您已经完成了初始安装，可以用以下命令添加钉钉渠道：
 
 ```bash
 openclaw channels add
 ```
 
-Then, follow the interactive prompts to select DingTalk, and enter the AppKey (Client ID) and AppSecret (Client Secret).
+然后根据交互式提示选择 DingTalk，输入 AppKey (Client ID) 和 AppSecret (Client Secret) 即可。
 
-**After completing the configuration**, you can use the following commands to manage the gateway:
+**完成配置后**，您可以使用以下命令管理网关：
 
-- `openclaw gateway status` - View gateway running status
-- `openclaw gateway restart` - Restart the gateway to apply new configurations
-- `openclaw logs --follow` - View real-time logs
+- `openclaw gateway status` - 查看网关运行状态
+- `openclaw gateway restart` - 重启网关以应用新配置
+- `openclaw logs --follow` - 查看实时日志
 
 ---
 
-## Step 1: Create a DingTalk App
+## 第一步：创建钉钉应用
 
-### 1. Open the DingTalk Developer Platform
+### 1. 打开钉钉开发者平台
 
-Visit the [DingTalk Developer Platform](https://open-dev.dingtalk.com/fe/app), log in with your DingTalk account, and select an organization to enter.
+访问 [钉钉开发者平台](https://open-dev.dingtalk.com/fe/app)，使用钉钉账号登录，选择组织进入。
 
-### 2. Create an App
+### 2. 创建应用
 
-1. Click **Create App** in the upper right corner
-2. Fill in the app name and description, upload an image (optional)
+1. 点击右上角 **创建应用**
+2. 填写应用名称和描述，上传图片（可选）
 
-![Create App](docs/images/dingtalk/dingtalk-create-app.png)
+![创建应用](docs/images/dingtalk/dingtalk-create-app.png)
 
-### 3. Obtain App Credentials
+### 3. 获取应用凭证
 
-On the app's **Credentials & Basic Information** page, copy:
+在应用的 **凭证与基础信息** 页面，复制：
 
-- **Client ID** (format like `dingxxxx`)
+- **Client ID**（格式如 `dingxxxx`）
 - **Client Secret**
 
-❗ **Important**: Please keep the Client Secret safe and do not share it with others.
+❗ **重要**：请妥善保管 Client Secret，不要分享给他人。
 
-![Obtain App Credentials](docs/images/dingtalk/dingtalk-credentials.png)
+![获取应用凭证](docs/images/dingtalk/dingtalk-credentials.png)
 
-### 4. Add an App Robot
+### 4. 添加应用机器人
 
-1. On the app's **Add App Capabilities** page, select **Robot**, and click Add
+1. 在应用的 **添加应用能力** 页面，选择 **机器人**，点击添加
 
-![Add Robot](docs/images/dingtalk/dingtalk-create-robot.png)
+![添加机器人](docs/images/dingtalk/dingtalk-create-robot.png)
 
-2. Enter the relevant robot information, select **Stream Mode** for **Message Receiving Mode**, and then save
+2. 输入机器人相关信息，**消息接收模式** 选择 **Stream 模式**，然后保存
 
-![Configure Robot](docs/images/dingtalk/dingtalk-robot-config.png)
+![配置机器人](docs/images/dingtalk/dingtalk-robot-config.png)
 
-![Configure Robot Message Receiving Mode](docs/images/dingtalk/dingtalk-robot-config-stream.png)
+![配置机器人消息接收模式](docs/images/dingtalk/dingtalk-robot-config-stream.png)
 
-### 5. Configure App Permissions
+### 5. 配置应用权限
 
-In the app's permission management, make sure the following permissions are enabled:
+在应用的权限管理中，确保开通以下权限：
 
-- Permission for enterprise internal robots to send messages
-- Permission to obtain download links for robot received messages via downloadCode (for receiving images)
+- 企业内机器人发送消息权限
+- 根据 downloadCode 获取机器人接收消息的下载链接（用于接收图片）
 
-### 6. Publish the Robot
+### 6. 发布机器人
 
-Create a robot version, fill in the version number, description, and application availability scope, click save, then click confirm to publish.
+创建机器人版本，填入版本号、描述、应用可用范围，点击保存，点击确认发布。
 
-![Create Robot Version](docs/images/dingtalk/dingtalk-create-version.png)
+![创建机器人版本](docs/images/dingtalk/dingtalk-create-version.png)
 
-![Edit Version](docs/images/dingtalk/dingtalk-edit-version.png)
+![编辑版本](docs/images/dingtalk/dingtalk-edit-version.png)
 
 ---
 
-## Step 2: Configure OpenClaw
+## 第二步：配置 OpenClaw
 
-### Configure via Wizard (Recommended)
+### 通过向导配置（推荐）
 
-Run the following command, select DingTalk according to the prompts, and paste the AppKey (Client ID) and AppSecret (Client Secret):
+运行以下命令，根据提示选择 DingTalk，粘贴 AppKey (Client ID) 和 AppSecret (Client Secret)：
 
 ```bash
 openclaw channels add
 ```
 
-### Configure via Configuration File
+### 通过配置文件配置
 
-Edit `~/.openclaw/openclaw.json`:
+编辑 `~/.openclaw/openclaw.json`：
 
 ```json
 {
@@ -147,41 +147,41 @@ Edit `~/.openclaw/openclaw.json`:
 }
 ```
 
-### allowFrom Whitelist
+### allowFrom 白名单
 
-`allowFrom` controls which users can interact with the robot and execute commands:
+`allowFrom` 控制哪些用户可以与机器人交互并执行命令：
 
-- **Default**: `["*"]` (allows everyone if not configured)
-- **Specified users**: Fill in DingTalk user `staffId`, only whitelisted users can use commands (such as `/compact`, `/new`, etc.), messages from non-whitelisted users will be ignored
-- `allowFrom[0]` also serves as the default target for active message push (`openclaw send`)
+- **默认值**：`["*"]`（不配置的情况下，默认允许所有人）
+- **指定用户**：填入钉钉用户的 `staffId`，只有白名单内的用户才能使用命令（如 `/compact`、`/new` 等），白名单外的用户消息会被忽略
+- `allowFrom[0]` 同时作为主动推送消息（`openclaw send`）的默认目标
 
 ```json
 {
-  "allowFrom": ["user_id_1", "user_id_2"]
+  "allowFrom": ["用户ID_1", "用户ID_2"]
 }
 ```
 
 ---
 
-## Multi-Account Configuration
+## 多账号配置
 
-Supports connecting multiple DingTalk robots simultaneously, each corresponding to an independent account. Use cases:
+支持同时接入多个钉钉机器人，每个机器人对应一个独立的账号（account）。适用场景：
 
-- Different departments use different robots
-- A single OpenClaw instance serves multiple DingTalk organizations
-- Different robots with different permission policies
+- 不同部门使用不同的机器人
+- 同一个 OpenClaw 实例服务多个钉钉组织
+- 不同机器人配置不同的权限策略
 
-### Add a New Account
+### 添加新账号
 
-Add a new account via the wizard, which will interactively prompt for the account ID and credentials:
+通过向导添加新账号，会交互式地提示输入账号 ID 和凭证：
 
 ```bash
 openclaw channels add
 ```
 
-### Configuration File Example
+### 配置文件示例
 
-Edit `~/.openclaw/openclaw.json`:
+编辑 `~/.openclaw/openclaw.json`：
 
 ```json
 {
@@ -190,12 +190,12 @@ Edit `~/.openclaw/openclaw.json`:
       "enabled": true,
       "accounts": {
         "bot-hr": {
-          "name": "HR Assistant",
+          "name": "HR助手",
           "clientId": "dingxxxxxxxx",
           "clientSecret": "secret_1"
         },
         "bot-tech": {
-          "name": "Tech Support",
+          "name": "技术支持",
           "clientId": "dingyyyyyyyy",
           "clientSecret": "secret_2"
         }
@@ -206,9 +206,9 @@ Edit `~/.openclaw/openclaw.json`:
 }
 ```
 
-### Group-Specific Configuration
+### 群组独立配置
 
-You can set independent permissions and behavior for specific group chats:
+可以为特定群聊设置独立的权限和行为：
 
 ```json
 {
@@ -222,9 +222,9 @@ You can set independent permissions and behavior for specific group chats:
 }
 ```
 
-### Single Account Compatibility
+### 单账号兼容
 
-If you only have one robot, there is no need to use `accounts`. You can configure directly at the top level (compatible with the legacy format):
+如果只有一个机器人，无需使用 `accounts`，直接在顶层配置即可（兼容旧版格式）：
 
 ```json
 {
@@ -240,56 +240,56 @@ If you only have one robot, there is no need to use `accounts`. You can configur
 
 ---
 
-## Multi-Agent Routing
+## 多 Agent 路由
 
-Through OpenClaw's routing bindings mechanism, you can assign different accounts, group chats, and direct messages to different Agents.
+通过 OpenClaw 的路由绑定（bindings）机制，可以将不同的账号、群聊、私聊分配给不同的 Agent 处理。
 
-> For more about multi-agent concepts and usage, see the [OpenClaw Documentation - Multi-Agent](https://docs.openclaw.ai/zh-CN/concepts/multi-agent).
+> 更多关于多 Agent 的概念和用法，请参阅 [OpenClaw 官方文档 - 多 Agent](https://docs.openclaw.ai/zh-CN/concepts/multi-agent)。
 
-### Bind Agents by Account
+### 按账号绑定 Agent
 
-Use the command line to bind different DingTalk accounts to different Agents:
+使用命令行将不同钉钉账号绑定到不同的 Agent：
 
 ```bash
-# Bind bot-hr account to hr-agent
+# 将 bot-hr 账号绑定到 hr-agent
 openclaw agents bind --agent hr-agent --bind ddingtalk:bot-hr
 
-# Bind bot-tech account to tech-agent
+# 将 bot-tech 账号绑定到 tech-agent
 openclaw agents bind --agent tech-agent --bind ddingtalk:bot-tech
 
-# Bind the entire DingTalk channel (all accounts) to the default agent
+# 将整个钉钉渠道（所有账号）绑定到默认 agent
 openclaw agents bind --agent default-agent --bind ddingtalk
 ```
 
-View current bindings:
+查看当前绑定：
 
 ```bash
 openclaw agents bindings
 ```
 
-Remove bindings:
+解除绑定：
 
 ```bash
 openclaw agents unbind --agent hr-agent --bind ddingtalk:bot-hr
 ```
 
-### Bind Agents by Group/Direct Chat
+### 按群聊/私聊绑定 Agent
 
-The CLI currently only supports `channel[:accountId]` level bindings. To bind specific group chats or direct messages to different Agents, manually edit the `bindings` configuration in `~/.openclaw/openclaw.json`:
+CLI 命令目前仅支持 `channel[:accountId]` 级别的绑定。如需将特定群聊或私聊绑定到不同 Agent，需要手动编辑 `~/.openclaw/openclaw.json` 的 `bindings` 配置：
 
 ```json
 {
   "agents": {
     "list": [
-      { "id": "hr-agent", "name": "HR Assistant" },
-      { "id": "tech-agent", "name": "Tech Support" },
-      { "id": "general-agent", "name": "General Assistant" }
+      { "id": "hr-agent", "name": "HR助手" },
+      { "id": "tech-agent", "name": "技术支持" },
+      { "id": "general-agent", "name": "通用助手" }
     ]
   },
   "bindings": [
     {
       "agentId": "tech-agent",
-      "comment": "Tech group routes to Tech Support Agent",
+      "comment": "技术交流群走技术支持 Agent",
       "match": {
         "channel": "ddingtalk",
         "peer": {
@@ -300,7 +300,7 @@ The CLI currently only supports `channel[:accountId]` level bindings. To bind sp
     },
     {
       "agentId": "hr-agent",
-      "comment": "Zhang San's DM routes to HR Assistant",
+      "comment": "张三的私聊走HR助手",
       "match": {
         "channel": "ddingtalk",
         "peer": {
@@ -311,7 +311,7 @@ The CLI currently only supports `channel[:accountId]` level bindings. To bind sp
     },
     {
       "agentId": "general-agent",
-      "comment": "Other messages from bot-hr go to General Assistant",
+      "comment": "bot-hr 账号的其他消息走通用助手",
       "match": {
         "channel": "ddingtalk",
         "accountId": "bot-hr"
@@ -323,38 +323,38 @@ The CLI currently only supports `channel[:accountId]` level bindings. To bind sp
 
 ---
 
-## Step 3: Start and Test
+## 第三步：启动并测试
 
-### 1. Start the Gateway
+### 1. 启动网关
 
 ```bash
 openclaw gateway --verbose
 ```
 
-### 2. Send a Test Message
+### 2. 发送测试消息
 
-Find the robot you created in DingTalk, and you can start a normal conversation.
+在钉钉中找到您创建的机器人，即可正常对话。
 
-![DingTalk Conversation](docs/images/dingtalk/dingtalk-chat.jpg)
+![钉钉对话](docs/images/dingtalk/dingtalk-chat.jpg)
 
 ---
 
-## Development
+## 开发
 
 ```bash
-# Install dependencies
+# 安装依赖
 pnpm install
 
-# Pack
+# 打包
 pnpm pack
 ```
 
-## References
+## 参考文档
 
-- [OpenClaw Multi-Agent Documentation](https://docs.openclaw.ai/concepts/multi-agent)
-- [DingTalk Open Platform - Stream Mode](https://opensource.dingtalk.com/developerpedia/docs/learn/stream/overview)
-- [DingTalk Open Platform - Robot Receive Messages](https://open.dingtalk.com/document/orgapp/robot-receive-message)
-- [DingTalk Open Platform - Robot Send Messages](https://open.dingtalk.com/document/orgapp/robot-send-message)
+- [OpenClaw 多 Agent 文档](https://docs.openclaw.ai/zh-CN/concepts/multi-agent)
+- [钉钉开放平台 - Stream 模式说明](https://opensource.dingtalk.com/developerpedia/docs/learn/stream/overview)
+- [钉钉开放平台 - 机器人接收消息](https://open.dingtalk.com/document/orgapp/robot-receive-message)
+- [钉钉开放平台 - 机器人发送消息](https://open.dingtalk.com/document/orgapp/robot-send-message)
 
 ## License
 

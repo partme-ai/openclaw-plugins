@@ -1,6 +1,6 @@
 # TEMPLATE_LABEL
 
-**OpenClaw 插件 — TEMPLATE_DESCRIPTION**
+**OpenClaw plugin — TEMPLATE_DESCRIPTION**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--TEMPLATE_NAME-blue)
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
@@ -8,29 +8,29 @@
 
 [English](./README.md) | [简体中文](./README_CN.md)
 
-## 简介
+## Introduction
 
-TEMPLATE_LABEL（`@partme.ai/openclaw-TEMPLATE_NAME`）是 [OpenClaw](https://github.com/openclaw/openclaw) 的插件，用于...
+TEMPLATE_LABEL (`@partme.ai/openclaw-TEMPLATE_NAME`) is a plugin for [OpenClaw](https://github.com/openclaw/openclaw) that...
 
-### 核心能力
+### Core capabilities
 
-- 功能 1
-- 功能 2
+- Feature 1
+- Feature 2
 
-## 快速开始
+## Quick start
 
-### 前置条件
+### Prerequisites
 
 - [OpenClaw](https://github.com/openclaw/openclaw) **2026.2.24+**
 - **Node.js 22+**
 
-### 安装
+### Install
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-TEMPLATE_NAME
 ```
 
-### 配置
+### Configure
 
 ```jsonc
 {
@@ -39,7 +39,7 @@ openclaw plugins install @partme.ai/openclaw-TEMPLATE_NAME
       "openclaw-TEMPLATE_NAME": {
         "enabled": true,
         "config": {
-          // 配置项
+          // Configuration here
         }
       }
     }
@@ -47,13 +47,13 @@ openclaw plugins install @partme.ai/openclaw-TEMPLATE_NAME
 }
 ```
 
-## 配置参考
+## Configuration reference
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enabled` | boolean | `false` | 启用插件 |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable the plugin |
 
-## 开发
+## Development
 
 ```bash
 pnpm install
@@ -61,11 +61,11 @@ pnpm build
 pnpm test
 ```
 
-## 许可证
+## License
 
-本项目基于 [MIT License](LICENSE) 许可。
+This project is licensed under the [MIT License](LICENSE).
 
-## 链接
+## Links
 
-- [OpenClaw 文档](https://docs.openclaw.ai)
+- [OpenClaw Documentation](https://docs.openclaw.ai)
 - [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins)

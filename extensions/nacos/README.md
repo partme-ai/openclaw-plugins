@@ -2,7 +2,7 @@
 
 # OpenClaw Nacos
 
-**OpenClaw plugin — Nacos Config Center merge and Gateway / Hooks naming registration**
+**OpenClaw 插件：Nacos 配置中心合并与 Gateway / Hooks 命名注册**
 
 ![npm](https://img.shields.io/badge/npm-2026.5.12-blue)
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
@@ -11,143 +11,154 @@
 
 </div>
 
-[English](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/nacos/README.md) | [简体中文](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/nacos/README_CN.md)
+[简体中文](https://github.com/partme-ai/openclaw-nacos/blob/main/README_CN.md) | [English](https://github.com/partme-ai/openclaw-nacos/blob/main/README.md)
 
-## 📖 Introduction
+`@partme.ai/openclaw-nacos` 是为 [OpenClaw](https://github.com/openclaw/openclaw) 开发的 [Nacos](https://nacos.io/) 集成插件：提供 **命名注册**（Gateway / Hooks 服务发现）与可选的 **配置中心**（远程配置合并、写盘前备份、订阅变更）。推荐使用 OpenClaw CLI 安装到扩展目录；也可通过 npm 手动接入。
 
-**OpenClaw Nacos** (`@partme.ai/openclaw-nacos`) is a plugin for [OpenClaw](https://github.com/openclaw/openclaw) that integrates [Nacos](https://nacos.io/) using the official Node.js SDK [`nacos`](https://github.com/nacos-group/nacos-sdk-nodejs). After the Gateway is up, it provides **Naming** (Gateway / Hooks service discovery) and optional **Config Center** (pull remote config, deep-merge with the live config, backup before `writeConfigFile`, subscribe to changes). See [OpenClaw docs](https://docs.openclaw.ai) for the host runtime.
+## 📖 简介
 
-### 🎯 Core capabilities
+**OpenClaw Nacos**（`@partme.ai/openclaw-nacos`）基于 Node.js SDK [`nacos`](https://github.com/nacos-group/nacos-sdk-nodejs)，在 Gateway 已就绪后向 Nacos 注册 **临时实例**，并可选地从 Nacos **拉取配置**、与当前运行配置 **深度合并**、在调用 `runtime.config.writeConfigFile` 前 **备份** 本地配置文件，且支持 **订阅** dataId 变更后重新合并写盘。
 
-#### **Naming**
+### 🎯 核心能力
 
-- Registers the current node as an **ephemeral** instance via `NacosNamingClient` so consumers can resolve **IP + port** (same as the Gateway port, including [Hooks](https://docs.openclaw.ai) / webhook metadata).
-- Port resolution matches OpenClaw: `OPENCLAW_GATEWAY_PORT` → `gateway.port` → default `18789`.
+#### **命名注册（Naming）**
 
-#### **Config Center (optional)**
+- 使用 `NacosNamingClient` 将当前 OpenClaw 节点注册为 **临时实例**，便于其他服务按服务名发现 **IP + 端口**（与 Gateway 监听端口一致，含 [Hooks](https://docs.openclaw.ai) / Webhook 路径元数据）。
+- 端口解析与 OpenClaw 一致：`OPENCLAW_GATEWAY_PORT` → `gateway.port` → 默认 `18789`。
 
-- Uses `NacosConfigClient` to load config from Nacos. Two modes:
-  - **Primary config mode** (`primaryConfigDataId`): Load the **complete** `openclaw.json` from a single Nacos dataId as the source of truth. `sharedConfigs` and `pluginConfigIds` are still layered on top.
-  - **Shared configs mode** (`sharedConfigs`): Pull multiple partial configs and deep-merge them with the current runtime config.
-- Supports optional `applicationDataId` and per-plugin `<pluginId>-<profile>.json` via `pluginConfigIds`.
-- Before `runtime.config.replaceConfigFile`, backs up the active config file under `stateDir` as `openclaw-nacos-<yyyyMMddHHmmss>.json`.
-- Subscribes to Nacos config changes and **re-applies** on every change (pull → merge → backup → write).
-- Naming and Config share **`serverList` / `username` / `password` / default `namespace`**; Config may override with **`configCenter.namespace`**.
+#### **配置中心（Config Center，可选）**
 
-#### **Webhook Cluster Discovery (NEW)**
+- 使用 `NacosConfigClient` 从 Nacos 加载配置。支持两种模式：
+  - **主配置模式** (`primaryConfigDataId`)：将 **完整的** `openclaw.json` 存储在单个 Nacos dataId 中作为单一数据源。`sharedConfigs` 和 `pluginConfigIds` 仍会在其上叠加。
+  - **共享配置模式** (`sharedConfigs`)：拉取多个局部配置并与当前运行时配置深度合并。
+- 支持可选的 `applicationDataId` 和按插件 ID 的 `<pluginId>-<profile>.json`（通过 `pluginConfigIds`）。
+- 写盘前备份当前配置文件，备份命名规则：`openclaw-nacos-<yyyyMMddHHmmss>.json`。
+- 订阅 Nacos 配置变更并在每次变更时**重新应用**（拉取 → 合并 → 备份 → 写入）。
+- 命名与配置共用 **`serverList` / `username` / `password` / 默认 `namespace`**；配置侧可用 **`configCenter.namespace`** 覆盖。
 
-- Discovers peer Gateway nodes registered under the same Nacos service name.
-- Maintains an in-memory peer list that **auto-updates** via Nacos naming subscription.
-- Exposes `GET /nacos/cluster` HTTP endpoint with full peer metadata (IP, port, hooks path, health status).
-- `GET /nacos/health` includes cluster discovery status and peer count.
+#### **Webhook 集群发现（新增）**
 
-### ✨ Highlights
+- 自动发现注册到同一 Nacos 服务名下的其他 Gateway 节点。
+- 通过 Nacos 命名订阅维护**实时更新的**内存节点列表。
+- 提供 `GET /nacos/cluster` HTTP 端点，返回完整节点元数据（IP、端口、hooks 路径、健康状态）。
+- `GET /nacos/health` 端点包含集群发现状态和节点数量。
 
-#### 1. Naming and metadata
+### ✨ 主要特性
 
-- **IP / port**: `registerIp` → `OPENCLAW_NACOS_REGISTER_IP` → first non-loopback IPv4 → `127.0.0.1` (with a warning).
-- **Metadata**: `hooksEnabled`, `hooksBasePath`, `gatewayPort`, `provider`, plus custom `metadata` — **do not** put `hooks.token` or secrets here.
+#### 1. 命名与元数据
 
-#### 2. Merge and placeholders
+- **IP / 端口**：`registerIp` → `OPENCLAW_NACOS_REGISTER_IP` → 本机首个非回环 IPv4 → `127.0.0.1`（并警告）。
+- **元数据**：`hooksEnabled`、`hooksBasePath`、`gatewayPort`、`provider` 及自定义 `metadata`（**勿**写入 `hooks.token` 等密钥）。
 
-- Nacos bodies may be **JSON** or **YAML** (parsed with the `yaml` package).
-- After merge, string values support **`${VAR}`** and **`${VAR:default}`** expansion from the environment.
+#### 2. 配置合并与占位符
 
-#### 3. Backup and write
+- Nacos 正文支持 **JSON** 或 **YAML**（`yaml` 包解析）。
+- 合并完成后对字符串做 **`${VAR}`** / **`${VAR:默认值}`** 形式的环境变量展开。
 
-- Backup source: `OPENCLAW_CONFIG_PATH` if set, else `stateDir/openclaw.json`.
-- Backup file: `stateDir/openclaw-nacos-<yyyyMMddHHmmss>.json` (local 14-digit timestamp).
+#### 3. 备份与写盘
 
-#### 4. Switches
+- 备份源：`OPENCLAW_CONFIG_PATH`（若设置）否则 `stateDir/openclaw.json`。
+- 备份目标：`stateDir/openclaw-nacos-<yyyyMMddHHmmss>.json`（本地时间 14 位时间戳）。
 
-| **Switch** | **Behavior** |
+#### 4. 插件开关
+
+| **开关** | **说明** |
 | --- | --- |
-| `enabled: false` | Disables the entire plugin |
-| `naming.enabled: false` | Skips naming only; Config Center may still run |
-| `configCenter.enabled: true` | Enables pull, merge, subscribe, and write |
-| `clusterDiscovery.enabled: false` | Skips peer discovery only; naming registration still runs |
+| `enabled: false` | 禁用整个插件 |
+| `naming.enabled: false` | 仅跳过命名注册，配置中心仍可使用 |
+| `configCenter.enabled: true` | 启用配置拉取、合并、订阅与写盘 |
+| `clusterDiscovery.enabled: false` | 仅跳过集群节点发现，命名注册仍会运行 |
 
-#### 5. Webhook cluster
+#### 5. Webhook 集群
 
-- **Auto-discovery**: Subscribe to Nacos naming changes → maintain live peer list.
-- **HTTP API**: `GET /nacos/cluster` returns all peers with IP, port, hooks metadata.
-- **Health**: `GET /nacos/health` includes `clusterDiscovery.running` and peer count.
-- **Self-filtering**: The local node is excluded from the peer list automatically.
+- **自动发现**：订阅 Nacos 命名变更 → 维护实时节点列表。
+- **HTTP API**：`GET /nacos/cluster` 返回所有节点及 IP、端口、hooks 元数据。
+- **健康检查**：`GET /nacos/health` 包含 `clusterDiscovery.running` 和节点数量。
+- **自过滤**：本地节点自动从节点列表中排除。
 
-### 🏗️ Conceptual flow
+### 🏗️ 插件内流程（概念）
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                 OpenClaw (Gateway listening)                      │
+│                    OpenClaw（Gateway 已监听）                      │
 └────────────────────────┬─────────────────────────────────────────┘
                          │
          ┌───────────────┼───────────────┐
          ▼               ▼               ▼
 ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐
-│ Nacos Naming │ │ Nacos Config │ │ Cluster Discovery│
-│ register +   │ │ pull→merge→ │ │ subscribe naming │
-│ Hooks meta   │ │ backup→write│ │ → live peer list │
+│ Nacos Naming │ │ Nacos Config │ │ 集群发现          │
+│ 注册实例 +   │ │ pull→merge→ │ │ 订阅命名变更      │
+│ Hooks 元数据  │ │ backup→write│ │ → 实时节点列表    │
 └──────────────┘ └──────┬───────┘ └──────────────────┘
                         │
                         ▼
-               subscribe → re-pull / merge
+               subscribe → 再次 pull/merge
 ```
 
-**Startup order**: OpenClaw loads local `openclaw.json` and starts the Gateway first; this plugin runs **after** that. The first Nacos merge is a **second convergence**. Bootstrapping **only** from Nacos before `loadConfig` requires OpenClaw core support.
+**启动顺序**：OpenClaw 先加载本地 `openclaw.json` 并启动 Gateway，本插件随后运行；首次从 Nacos 合并属于 **二次收敛**。若需进程启动前完全由 Nacos 引导，需要 OpenClaw 核心支持。
 
-### 📖 Quick start
+## 前置要求
 
-#### Prerequisites
+- 已安装 [OpenClaw](https://github.com/openclaw/openclaw)（**2026.4.6+**，见 `package.json` 中 `peerDependencies` 与 `openclaw.compat` / `openclaw.build`）
+- **Node.js 22+**（与官方 [Building plugins](https://docs.openclaw.ai/plugins/building-plugins) 前置要求一致；`engines` 亦声明 `>=22`）
+- Gateway 所在机器能访问 **Nacos Server**（与 [nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs) 兼容的版本）
 
-- [OpenClaw](https://github.com/openclaw/openclaw) **2026.4.6+** (see `peerDependencies` and `openclaw.compat` / `openclaw.build` in `package.json`)
-- **Node.js 22+** ([Building plugins](https://docs.openclaw.ai/plugins/building-plugins) prerequisites; also in `engines`)
-- **Nacos Server** reachable from the Gateway host (compatible with [nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs))
+## 安装
 
-#### 1. Install with OpenClaw CLI (recommended)
+### 1. 使用 OpenClaw CLI（推荐）
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-nacos
 ```
 
-This typically:
+该命令通常会：
 
-- Downloads the package from npm
-- Installs it under your OpenClaw extensions directory (e.g. `~/.openclaw/extensions/`)
-- Updates your OpenClaw config so the plugin can be enabled
+- 从 npm 下载插件包
+- 安装到 OpenClaw 扩展目录（例如 `~/.openclaw/extensions/`）
+- 按你使用的 OpenClaw 版本更新配置并注册插件
 
-Then enable and configure the plugin under `plugins.entries` (see below). Exact CLI behavior depends on your OpenClaw version; see [OpenClaw documentation](https://docs.openclaw.ai).
+然后在 `plugins.entries` 中启用并填写插件配置（见下文）。具体行为以 [OpenClaw 文档](https://docs.openclaw.ai) 为准。
 
-#### 2. Install with npm (manual / advanced)
+### 2. 使用 npm（手动 / 高级）
 
 ```bash
 npm install @partme.ai/openclaw-nacos
 ```
 
-Wire the package into OpenClaw using your version’s plugin discovery rules (`openclaw.plugin.json`, `plugins.entries`, paths).
+再按你所用版本的规则，通过 `openclaw.plugin.json`、`plugins.entries` 等将包接入 OpenClaw。
 
-#### Spring-style `nacos` block (optional)
+## 配置
 
-You may nest a `nacos` object under `plugins.entries.openclaw-nacos.config` (similar to Spring Boot `application.yml`). The plugin flattens it before validation; **top-level keys win** when both are present. See [README_CN.md](./README_CN.md) for field mapping (`server-addr`, `discovery`, `config`, `shared-configs`, `data-id`).
+### Spring / Cloud 风格（可选）
 
-#### npm `nacos` 2.x only
+除下方 **扁平 JSON** 外，可在 `plugins.entries.openclaw-nacos.config` 中使用嵌套的 `nacos` 对象（与 Spring Boot `application.yml` 常见写法对齐），插件会在解析时 **扁平化** 为内部字段；**已存在的顶层键优先生效**。
 
-This plugin targets the official npm package [`nacos`](https://www.npmjs.com/package/nacos) **v2** ([nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs)). Older major lines are not supported.
+支持字段示例：
 
-#### OpenClaw plugin conventions
+- `nacos.server-addr` → `serverList`
+- `nacos.discovery.server-addr` → `namingServerList`（可选），并可在无顶层 `serverList` 时作为地址回退
+- `nacos.discovery.namespace` → `namespace`（命名）
+- `nacos.config.server-addr` → `configServerList`（可选）
+- `nacos.config.namespace` → `configCenter.namespace`
+- `nacos.config.shared-configs`：与 `configCenter.sharedConfigs` 相同语义；项内可使用 `data-id` 或 `dataId`
 
-- `package.json` includes the full **`openclaw`** block from [Building plugins](https://docs.openclaw.ai/plugins/building-plugins): `extensions` (this published package points to **`./dist/index.js`**; the doc quickstart uses `./index.ts` for source-first layouts), **`compat.pluginApi`**, **`compat.minGatewayVersion`**, and **`build.openclawVersion` / `build.pluginSdkVersion`**.
-- Entry uses [`definePluginEntry`](https://docs.openclaw.ai/plugins/sdk-entrypoints) from `openclaw/plugin-sdk/plugin-entry` (focused subpath; avoid the deprecated monolithic `openclaw/plugin-sdk` root import).
-- Nacos clients start only when [`registrationMode === "full"`](https://docs.openclaw.ai/plugins/sdk-entrypoints#registration-mode), matching the doc guidance for long-lived services.
-- Config merge uses [`api.runtime.config.loadConfig` / `writeConfigFile`](https://docs.openclaw.ai/plugins/sdk-runtime); `loadConfig` may be async per docs.
-- Reload hints use the plugin definition **`reload`** field (same semantics as `OpenClawPluginReloadRegistration` in the [SDK overview](https://docs.openclaw.ai/plugins/sdk-overview)).
+### npm 依赖：`nacos` 2.x
 
-#### Config reload
+本插件 **仅支持** npm 包 [`nacos`](https://www.npmjs.com/package/nacos) **2.x**（源码仓库 [nacos-group/nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs)）。**不与** npm 上的旧主版本线混用；升级 SDK 大版本需单独评估 API。
 
-The plugin sets `reload: { restartPrefixes, hotPrefixes }` on the entry object so Gateway reload planning after a Nacos-driven `writeConfigFile` can classify changes (restart vs hot) consistently with OpenClaw core.
+### OpenClaw 插件 API 约定
 
-#### 3. Minimal example (naming only)
+- `package.json` 中的 **`openclaw`** 字段与官方 [Building plugins](https://docs.openclaw.ai/plugins/building-plugins) 示例结构一致：`extensions`（本 npm 包为 **`./dist/index.js`**；文档快速上手常用源码 `./index.ts`）、**`compat.pluginApi`**、**`compat.minGatewayVersion`**、**`build.openclawVersion` / `build.pluginSdkVersion`**。
+- 入口使用官方推荐的 [`definePluginEntry`](https://docs.openclaw.ai/plugins/sdk-entrypoints)（从 `openclaw/plugin-sdk/plugin-entry` 导入），而非已弃用的单体 `openclaw/plugin-sdk` 根导入。
+- 仅在 [`registrationMode === "full"`](https://docs.openclaw.ai/plugins/sdk-entrypoints#registration-mode) 时启动 Nacos 长生命周期服务（与文档中「重服务放在 full」一致）。
+- 配置合并使用 [`api.runtime.config.loadConfig` / `writeConfigFile`](https://docs.openclaw.ai/plugins/sdk-runtime)（`loadConfig` 按文档可为异步）。
+- 热更新前缀通过插件定义的 **`reload`** 字段声明（与 [`OpenClawPluginReloadRegistration`](https://docs.openclaw.ai/plugins/sdk-overview) 一致），由 Gateway 做重载规划。
 
-Edit your OpenClaw config (often `~/.openclaw/openclaw.json` or `OPENCLAW_CONFIG_PATH`):
+### 配置变更与热更新
+
+插件在清单级声明 `reload`（`restartPrefixes` / `hotPrefixes`），与 OpenClaw Gateway 配置重载规划配合：对 `plugins`、`gateway`、`channels` 等前缀倾向 **重启 Gateway**，对 `hooks`、`cron`、`models` 等倾向 **热更新**。从 Nacos 合并写盘后，实际行为以 OpenClaw 核心对变更路径的判定为准。
+
+在 OpenClaw 配置文件（常见为 `~/.openclaw/openclaw.json`，或由 `OPENCLAW_CONFIG_PATH` 指定）中增加插件入口，例如 **仅命名注册** 的最小示例：
 
 ```jsonc
 {
@@ -177,62 +188,188 @@ Edit your OpenClaw config (often `~/.openclaw/openclaw.json` or `OPENCLAW_CONFIG
 }
 ```
 
-#### 3a. Complete config from Nacos (primaryConfigDataId)
+### 配置说明
 
-Store your **entire** `openclaw.json` as a Nacos config (e.g. dataId `openclaw.json`, group `DEFAULT_GROUP`), then use `primaryConfigDataId` to load it as the source of truth. `sharedConfigs` and `pluginConfigIds` are still layered on top.
+#### 必填
 
-```jsonc
-{
-  "plugins": {
-    "entries": {
-      "openclaw-nacos": {
-        "enabled": true,
-        "config": {
-          "serverList": "127.0.0.1:8848",
-          "configCenter": {
-            "enabled": true,
-            "primaryConfigDataId": "openclaw.json",
-            "primaryConfigGroup": "DEFAULT_GROUP",
-            "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
-            "profile": "dev"
-          }
-        }
-      }
-    }
-  }
-}
+| **字段** | **说明** |
+| --- | --- |
+| `serverList` | Nacos 地址，如 `host:8848` 或多地址逗号分隔 |
+| `namingServerList` | 仅用于 Naming 客户端；默认同 `serverList` |
+| `configServerList` | 仅用于 Config 客户端；默认同 `serverList` |
+
+#### 命名相关（可选）
+
+| **字段** | **默认值** | **说明** |
+| --- | --- | --- |
+| `enabled` | `true` | `false` 时禁用整个插件 |
+| `naming.enabled` | `true` | `false` 时仅跳过命名注册 |
+| `namespace` | `public` | 命名空间；未单独指定 `configCenter.namespace` 时作 Config 默认 |
+| `username` / `password` | — | Nacos 认证（命名与配置客户端共用） |
+| `serviceName` | `openclaw-gateway` | 服务名 |
+| `groupName` | `DEFAULT_GROUP` | 分组 |
+| `clusterName` | — | 集群名 |
+| `weight` | `1` | 权重 |
+| `ephemeral` | `true` | 是否临时实例 |
+| `registerIp` | 环境 / 自动 | 注册到 Nacos 的 IP |
+| `metadata` | — | 额外元数据（字符串键值） |
+
+#### 配置中心 `configCenter`（可选）
+
+| **字段** | **说明** |
+| --- | --- |
+| `configCenter.enabled` | `true` 时启用拉取、合并、订阅、写盘 |
+| `configCenter.namespace` | 配置租户，覆盖顶层 `namespace`（仅 Config 客户端） |
+| `configCenter.sharedConfigs` | `{ dataId, group?, refresh? }` 有序列表，按序 deep merge（Spring：`shared-configs`，`data-id` 等价 `dataId`） |
+| `configCenter.applicationDataId` | 可选主配置 dataId（支持模板中的 `${profile}`） |
+| `configCenter.profile` | profile，用于 dataId 与 `<pluginId>-<profile>.json` |
+| `configCenter.pluginConfigIds` | 插件 ID 列表，合并到 `plugins.entries.<id>.config` |
+| `configCenter.skipValidation` | `true` 时跳过插件侧额外校验（仍以 JSON 可序列化等为底线） |
+
+#### 环境变量
+
+| **变量** | **用途** |
+| --- | --- |
+| `OPENCLAW_GATEWAY_PORT` | 覆盖 Gateway 端口解析 |
+| `OPENCLAW_NACOS_REGISTER_IP` | 未设置 `registerIp` 时的注册 IP |
+| `OPENCLAW_CONFIG_PATH` | 若设置，备份时复制该路径对应文件 |
+| `OPENCLAW_PROFILE` | profile（可被 `configCenter.profile` 覆盖） |
+| `SPRING_PROFILES_ACTIVE` | 未设置 `OPENCLAW_PROFILE` 时作为 profile 来源 |
+
+## 🔒 安全与风险
+
+- **`runtime.config.writeConfigFile` 权限极高**，仅在可信环境启用配置中心；勿在 Nacos 配置正文或 metadata 中存放 `hooks.token` 等密钥。
+- 其他服务发现实例后访问 Hooks 时，仍使用 OpenClaw 既有鉴权（如 `Authorization` / `X-OpenClaw-Token`），**不要**依赖 Nacos 元数据传递密钥。
+
+## 🌐 消费方流程（其他服务）
+
+1. 在 Nacos 中订阅对应 `serviceName`。
+2. 选取实例 IP + 端口。
+3. 拼接 Hooks URL：`http://<ip>:<port><hooksBasePath>/...`，并按 OpenClaw 文档携带鉴权头。
+
+## ❓ 常见问题（FAQ）
+
+### Q: Nacos 会在进程启动前完全替代本地 `openclaw.json` 吗？
+
+**A:** 不会。OpenClaw 仍先加载本地配置并启动 Gateway，本插件在之后运行。配置中心做的是远程片段与运行中配置的合并并可写回磁盘，属于 **二次收敛**。若需要「启动前仅从 Nacos 引导」，需要 OpenClaw 核心支持。
+
+### Q: Gateway 的 `gateway.auth.token` 要配进 Nacos 吗？
+
+**A:** **不要。** 命名注册只发布 IP、端口与安全元数据；调用 Hooks 时仍使用你现有的 Gateway / Hooks 鉴权。不要把 `hooks.token` 或管理密钥写进 Nacos。
+
+### Q: CI 构建产物在哪里查看？
+
+**A:** 在仓库 [Actions](https://github.com/partme-ai/openclaw-nacos/actions) 中，每次执行 `ci.yml` 会上传 **`dist/`** 目录为工件（artifact 名 `openclaw-nacos-dist`）。
+
+## 🤖 GitHub Actions
+
+| **工作流** | **触发** | **说明** |
+| --- | --- | --- |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | 推送到 `main` / `master` 或 PR | `pnpm install --frozen-lockfile`、类型检查、构建、测试、上传 `dist` 工件 |
+| [`.github/workflows/release.yml`](.github/workflows/release.yml) | 推送标签 `v*`（执行发布）；**Run workflow** 仅打包测试 | 构建、测试、npm 发布（版本已存在则跳过）、**GitHub Packages** 以 `@<GitHub owner>/openclaw-nacos`（如 `@partme-ai/...`）发布、**GitHub Release** 附带 `.tgz` |
+
+**自动发布：** 在仓库 Secrets 中配置 **`NPM_TOKEN`**，详见 [RELEASING.md](./RELEASING.md)。**手动 Run workflow** 不会执行 npm 发布与 GitHub Release（需推送 `v*` 标签）。发布示例：
+
+```bash
+pnpm version patch
+git push origin main --follow-tags
 ```
 
-With this setup:
-- The **primary config** (`openclaw.json` in Nacos) replaces the local config snapshot as the base.
-- `openclaw-weixin-dev.json` and `openclaw-dingtalk-dev.json` are loaded into `plugins.entries["openclaw-weixin"].config` etc.
-- Any Nacos config change triggers: pull → merge → **backup** (`openclaw-nacos-yyyyMMddHHmmss.json`) → write.
+## 📁 项目结构
 
-#### 3b. Webhook cluster with peer discovery
-
-```jsonc
-{
-  "plugins": {
-    "entries": {
-      "openclaw-nacos": {
-        "enabled": true,
-        "config": {
-          "serverList": "127.0.0.1:8848",
-          "serviceName": "openclaw-gateway",
-          "registerIp": "10.0.0.12",
-          "metadata": { "env": "prod", "region": "us-east-1" }
-        }
-      }
-    }
-  }
-}
+```
+openclaw-nacos/
+├── src/
+│   ├── index.ts              # 插件入口（注册服务、HTTP 路由）
+│   ├── nacos-registry.ts     # Nacos 命名注册（Gateway / Hooks）
+│   ├── nacos-config-sync.ts  # Nacos 配置（合并、备份、订阅、主配置）
+│   ├── nacos-cluster.ts      # Webhook 集群发现
+│   ├── shared.ts             # 共享常量与工具
+│   ├── types.ts
+│   └── ...
+├── docs/
+│   ├── ARCHITECTURE.md       # 系统架构与设计
+│   ├── CONFIG.md             # 完整配置参考
+│   ├── GUIDE.md              # 使用指南与场景
+│   ├── API.md                # HTTP 端点与导出 API
+│   ├── TECHNICAL.md          # 技术细节与设计决策
+│   └── zh/                   # 中文文档
+│       ├── ARCHITECTURE.md
+│       ├── CONFIG.md
+│       ├── GUIDE.md
+│       ├── API.md
+│       └── TECHNICAL.md
+├── dist/                     # 构建产出（发布到 npm）
+├── openclaw.plugin.json      # OpenClaw 插件清单
+├── package.json
+└── README.md / README_CN.md
 ```
 
-After startup:
-- `GET /nacos/cluster` → `{ "peers": [...], "peerCount": 2, "discoveryRunning": true }`
-- `GET /nacos/health` → `{ "status": "ok", "clusterDiscovery": { "running": true } }`
+### 📚 文档
 
-#### 4. Build and test (from this repository)
+- [架构文档](docs/zh/ARCHITECTURE.md) — 系统设计、模块、数据流
+- [配置参考](docs/zh/CONFIG.md) — 完整配置 schema 与字段说明
+- [使用指南](docs/zh/GUIDE.md) — 快速开始、使用场景、故障排查
+- [API 参考](docs/zh/API.md) — HTTP 端点、CLI、导出模块
+- [技术细节](docs/zh/TECHNICAL.md) — 技术栈、SDK 集成、设计决策
+
+## 🛠️ 技术栈
+
+| **类别** | **说明** |
+| --- | --- |
+| 运行时 | Node.js 22+、ESM |
+| SDK | [`nacos`](https://github.com/nacos-group/nacos-sdk-nodejs)（Naming + Config） |
+| 解析 | `yaml`（YAML 配置正文） |
+| 宿主 | OpenClaw 插件 API（`registerService`、`runtime.config`） |
+
+## 📦 版本信息
+
+| **项目** | **版本** |
+| --- | --- |
+| @partme.ai/openclaw-nacos | 2026.5.12.2 |
+| 推荐 Node | 22+ |
+
+## 🔗 相关链接
+
+| **资源** | **链接** |
+| --- | --- |
+| Nacos 官网 | [https://nacos.io](https://nacos.io) |
+| nacos-sdk-nodejs | [https://github.com/nacos-group/nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs) |
+| OpenClaw 文档 | [https://docs.openclaw.ai](https://docs.openclaw.ai) |
+| OpenClaw 源码 | [https://github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) |
+| English | [README.md](./README.md) |
+
+### OpenClaw 官方插件文档（Plugins）
+
+| **说明** | **链接** |
+| --- | --- |
+| 插件总览 | [https://docs.openclaw.ai/tools/plugin](https://docs.openclaw.ai/tools/plugin) |
+| 社区插件 | [https://docs.openclaw.ai/plugins/community](https://docs.openclaw.ai/plugins/community) |
+| 捆绑包 | [https://docs.openclaw.ai/plugins/bundles](https://docs.openclaw.ai/plugins/bundles) |
+| Voice call | [https://docs.openclaw.ai/plugins/voice-call](https://docs.openclaw.ai/plugins/voice-call) |
+
+### 开发插件（Building plugins）
+
+| **说明** | **链接** |
+| --- | --- |
+| 开发插件 | [https://docs.openclaw.ai/plugins/building-plugins](https://docs.openclaw.ai/plugins/building-plugins) |
+| SDK 通道插件 | [https://docs.openclaw.ai/plugins/sdk-channel-plugins](https://docs.openclaw.ai/plugins/sdk-channel-plugins) |
+| SDK 模型提供方插件 | [https://docs.openclaw.ai/plugins/sdk-provider-plugins](https://docs.openclaw.ai/plugins/sdk-provider-plugins) |
+| SDK 迁移 | [https://docs.openclaw.ai/plugins/sdk-migration](https://docs.openclaw.ai/plugins/sdk-migration) |
+
+### SDK 参考（SDK reference）
+
+| **说明** | **链接** |
+| --- | --- |
+| SDK 概览 | [https://docs.openclaw.ai/plugins/sdk-overview](https://docs.openclaw.ai/plugins/sdk-overview) |
+| SDK 入口 | [https://docs.openclaw.ai/plugins/sdk-entrypoints](https://docs.openclaw.ai/plugins/sdk-entrypoints) |
+| SDK 运行时 | [https://docs.openclaw.ai/plugins/sdk-runtime](https://docs.openclaw.ai/plugins/sdk-runtime) |
+| SDK 安装与配置 | [https://docs.openclaw.ai/plugins/sdk-setup](https://docs.openclaw.ai/plugins/sdk-setup) |
+| SDK 测试 | [https://docs.openclaw.ai/plugins/sdk-testing](https://docs.openclaw.ai/plugins/sdk-testing) |
+| 清单 manifest | [https://docs.openclaw.ai/plugins/manifest](https://docs.openclaw.ai/plugins/manifest) |
+| 架构 architecture | [https://docs.openclaw.ai/plugins/architecture](https://docs.openclaw.ai/plugins/architecture) |
+
+## 从源码构建（开发者）
 
 ```bash
 pnpm install
@@ -240,201 +377,21 @@ pnpm run build
 pnpm test
 ```
 
-### 📁 Project structure
+## 📄 开源协议
 
-```
-extensions/nacos/            # In the openclaw-plugins monorepo
-├── src/
-│   ├── index.ts              # Plugin entry (register services, HTTP routes)
-│   ├── nacos-registry.ts     # Nacos Naming (Gateway / Hooks)
-│   ├── nacos-config-sync.ts  # Nacos Config (merge, backup, subscribe, primary)
-│   ├── nacos-cluster.ts      # Webhook cluster discovery
-│   ├── shared.ts             # Shared constants & utilities
-│   ├── types.ts
-│   └── ...
-├── dist/                     # Published build output
-├── openclaw.plugin.json      # OpenClaw plugin manifest
-├── package.json
-└── README.md / README_CN.md
-```
+本项目采用 [MIT License](./LICENSE) 协议。
 
-Full documentation: [openclaw-plugins docs](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos)
-```
-
-### 📚 Documentation
-
-### 📚 Documentation
-
-- [Architecture](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Architecture.md)
-- [Configuration](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Configuration.md)
-- [Usage Guide](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Guide.md)
-- [API Reference](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-API.md)
-- [Technical Details](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Technical.md)
-
-### ❓ FAQ
-
-#### Q: Does Nacos replace my local `openclaw.json` on startup?
-
-**A:** No. OpenClaw still loads local config first and starts the Gateway; this plugin runs afterward. Config Center merges remote config into the live config and can persist via `writeConfigFile` — a **second convergence**. Full “Nacos-only before first load” would require OpenClaw core support.
-
-#### Q: How do I use the webhook cluster feature?
-
-**A:** When `naming` is enabled (the default), the plugin automatically starts cluster discovery. It subscribes to the same Nacos service name used for registration and maintains a live peer list. Access `GET /nacos/cluster` for the current cluster state including all peer IPs, ports, and hooks metadata. External services can discover webhook nodes via Nacos SDK using the registered service name. Self-filtering excludes the local node from the peer list.
-
-#### Q: Is Gateway auth (`gateway.auth.token`) required for Nacos discovery?
-
-**A:** **Naming** only registers IP/port and metadata for other services. Consumers still call Hooks using your normal OpenClaw auth. Do **not** put `hooks.token` or Gateway secrets into Nacos metadata or config bodies.
-
-#### Q: Where are CI build artifacts?
-
-**A:** CI is managed at the monorepo level — [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins/actions).
-
-### 🤖 CI/CD
-
-CI is managed at the monorepo level. See [openclaw-plugins CI](https://github.com/partme-ai/openclaw-plugins/blob/main/.github/workflows/ci.yml).
-
-**Release:** bump version in `package.json` and publish:
-
-```bash
-cd extensions/nacos
-npm version patch  # or minor / major
-npm publish --access public
-```
-
-Or use the monorepo release script:
-
-```bash
-node scripts/publish-changed.mjs --plugin nacos
-```
-
-### 📝 Configuration
-
-#### Required
-
-| **Field** | **Description** |
-| --- | --- |
-| `serverList` | Nacos address, e.g. `host:8848` or comma-separated list |
-
-#### Naming (optional)
-
-| **Field** | **Default** | **Description** |
-| --- | --- | --- |
-| `enabled` | `true` | `false` disables the **entire** plugin |
-| `naming.enabled` | `true` | `false` skips naming only |
-| `namespace` | `public` | Namespace; default for Config if `configCenter.namespace` unset |
-| `username` / `password` | — | Nacos auth (shared by Naming and Config) |
-| `serviceName` | `openclaw-gateway` | Service name |
-| `groupName` | `DEFAULT_GROUP` | Group |
-| `clusterName` | — | Cluster name |
-| `weight` | `1` | Weight |
-| `ephemeral` | `true` | Ephemeral instance |
-| `registerIp` | env / auto | IP registered to Nacos |
-| `metadata` | — | Extra metadata (string map) |
-
-#### Config Center `configCenter` (optional)
-
-| **Field** | **Description** |
-| --- | --- |
-| `configCenter.enabled` | When `true`, enables pull, merge, subscribe, write |
-| `configCenter.namespace` | Config tenant; overrides top-level `namespace` for Config only |
-| `configCenter.sharedConfigs` | Ordered `{ dataId, group?, refresh? }` list, merged in order |
-| `configCenter.applicationDataId` | Optional main dataId (supports `${profile}` in templates) |
-| `configCenter.profile` | Profile for dataIds and `<pluginId>-<profile>.json` |
-| `configCenter.pluginConfigIds` | Plugin IDs; merge into `plugins.entries.<id>.config` |
-| `configCenter.skipValidation` | When `true`, skips extra plugin-side checks (JSON serializable checks still apply) |
-
-#### Environment variables
-
-| **Variable** | **Purpose** |
-| --- | --- |
-| `OPENCLAW_GATEWAY_PORT` | Overrides Gateway port resolution |
-| `OPENCLAW_NACOS_REGISTER_IP` | Advertised IP if `registerIp` unset |
-| `OPENCLAW_CONFIG_PATH` | If set, this file is copied before `writeConfigFile` |
-| `OPENCLAW_PROFILE` | Profile (overridden by `configCenter.profile`) |
-| `SPRING_PROFILES_ACTIVE` | Used if `OPENCLAW_PROFILE` unset |
-
-### 🔒 Security
-
-- **`writeConfigFile` is powerful** — enable Config Center only in trusted environments; never store `hooks.token` or secrets in Nacos bodies or metadata.
-- After discovery, call Hooks with normal OpenClaw auth headers; **never** treat Nacos metadata as a secret channel.
-
-### 🌐 Consumer flow (other services)
-
-1. Subscribe to the service name in Nacos.
-2. Pick an instance (IP + port).
-3. Build Hooks URL: `http://<ip>:<port><hooksBasePath>/...` with OpenClaw auth headers.
-
-### 🛠️ Tech stack
-
-| **Area** | **Details** |
-| --- | --- |
-| Runtime | Node.js 22+, ESM |
-| SDK | [`nacos`](https://github.com/nacos-group/nacos-sdk-nodejs) (Naming + Config) |
-| Parsing | `yaml` for YAML config bodies |
-| Host | OpenClaw plugin API (`registerService`, `runtime.config`) |
-
-### 📦 Version
-
-| **Item** | **Version** |
-| --- | --- |
-| @partme.ai/openclaw-nacos | 2026.5.12.2 |
-| Recommended Node | 22+ |
-
-### 🔗 Links
-
-| **Resource** | **URL** |
-| --- | --- |
-| Nacos | [https://nacos.io](https://nacos.io) |
-| nacos-sdk-nodejs | [https://github.com/nacos-group/nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs) |
-| OpenClaw | [https://docs.openclaw.ai](https://docs.openclaw.ai) |
-| OpenClaw (source) | [https://github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) |
-| 中文说明 | [README_CN.md](./README_CN.md) |
-
-#### OpenClaw plugins (official docs)
-
-| **Topic** | **URL** |
-| --- | --- |
-| Plugins | [https://docs.openclaw.ai/tools/plugin](https://docs.openclaw.ai/tools/plugin) |
-| Community plugins | [https://docs.openclaw.ai/plugins/community](https://docs.openclaw.ai/plugins/community) |
-| Bundles | [https://docs.openclaw.ai/plugins/bundles](https://docs.openclaw.ai/plugins/bundles) |
-| Voice call | [https://docs.openclaw.ai/plugins/voice-call](https://docs.openclaw.ai/plugins/voice-call) |
-
-#### Building plugins
-
-| **Topic** | **URL** |
-| --- | --- |
-| Building plugins | [https://docs.openclaw.ai/plugins/building-plugins](https://docs.openclaw.ai/plugins/building-plugins) |
-| SDK channel plugins | [https://docs.openclaw.ai/plugins/sdk-channel-plugins](https://docs.openclaw.ai/plugins/sdk-channel-plugins) |
-| SDK provider plugins | [https://docs.openclaw.ai/plugins/sdk-provider-plugins](https://docs.openclaw.ai/plugins/sdk-provider-plugins) |
-| SDK migration | [https://docs.openclaw.ai/plugins/sdk-migration](https://docs.openclaw.ai/plugins/sdk-migration) |
-
-#### SDK reference
-
-| **Topic** | **URL** |
-| --- | --- |
-| SDK overview | [https://docs.openclaw.ai/plugins/sdk-overview](https://docs.openclaw.ai/plugins/sdk-overview) |
-| SDK entrypoints | [https://docs.openclaw.ai/plugins/sdk-entrypoints](https://docs.openclaw.ai/plugins/sdk-entrypoints) |
-| SDK runtime | [https://docs.openclaw.ai/plugins/sdk-runtime](https://docs.openclaw.ai/plugins/sdk-runtime) |
-| SDK setup | [https://docs.openclaw.ai/plugins/sdk-setup](https://docs.openclaw.ai/plugins/sdk-setup) |
-| SDK testing | [https://docs.openclaw.ai/plugins/sdk-testing](https://docs.openclaw.ai/plugins/sdk-testing) |
-| Manifest | [https://docs.openclaw.ai/plugins/manifest](https://docs.openclaw.ai/plugins/manifest) |
-| Architecture | [https://docs.openclaw.ai/plugins/architecture](https://docs.openclaw.ai/plugins/architecture) |
-
-### 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
-
-### 🙏 Acknowledgements
+## 🙏 致谢
 
 - [Nacos](https://nacos.io)
 - [nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs)
-- [OpenClaw](https://docs.openclaw.ai)
+- [OpenClaw](https://github.com/openclaw/openclaw)
 
 ---
 
 <div align="center">
 
-**If this project helps you, consider giving it a ⭐️**
+**如果这个项目对你有帮助，请给我们一个 ⭐️**
 
 Made with ❤️ by PartMe
 

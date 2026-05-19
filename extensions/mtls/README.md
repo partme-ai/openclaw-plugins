@@ -1,6 +1,6 @@
 # OpenClaw mTLS
 
-**OpenClaw plugin — mTLS (Mutual TLS) bidirectional certificate authentication**
+**OpenClaw 插件 — mTLS (Mutual TLS) 双向证书认证**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--mtls-blue)
 ![Node](https://img.shields.io/badge/Node.js-20+-green)
@@ -8,58 +8,58 @@
 
 [English](./README.md) | [简体中文](./README_CN.md)
 
-## 📖 Introduction
+## 📖 简介
 
-`@partme.ai/openclaw-mtls` is an OpenClaw security plugin that provides **mTLS (Mutual TLS)** bidirectional certificate-based authentication for the OpenClaw Gateway.
+`@partme.ai/openclaw-mtls` 是 OpenClaw 的安全鉴权插件，提供 **mTLS (Mutual TLS)** 双向证书认证功能，用于保护 OpenClaw Gateway 的安全访问。
 
-### What is mTLS?
+### 什么是 mTLS？
 
-mTLS (Mutual TLS) is a security mechanism where both the client and server authenticate each other using X.509 certificates. Unlike standard TLS where only the server presents a certificate, mTLS requires the client to present a valid certificate signed by a trusted Certificate Authority (CA).
+mTLS（Mutual TLS）是一种安全机制，在这种机制下，客户端和服务端都需要通过 X.509 证书进行身份验证。与标准 TLS 不同（只有服务端向客户端展示证书），mTLS 要求客户端也必须展示由可信 Certificate Authority (CA) 签发的有效证书。
 
-### Core Capabilities
+### 核心能力
 
-- **Bidirectional Authentication**: Both server and client present certificates for mutual verification
-- **Client Certificate Validation**: Extract and verify client certificate CN, issuer, fingerprint
-- **Whitelist Control**: Fine-grained access control via `allowedClients` (CN/issuer/fingerprint)
-- **Path-Based Protection**: Configure which paths require mTLS authentication via `protectedPaths`
-- **Passthrough Mode**: Optional `passthrough` mode allows unauthenticated requests when no certificate is provided
-- **Certificate Info Propagation**: Pass client certificate information to downstream services via HTTP headers
-- **OpenClaw Integration**: Follows OpenClaw's security plugin architecture
+- **双向认证**：服务端和客户端均需提供证书进行双向验证
+- **客户端证书验证**：提取并验证客户端证书的 CN、issuer、fingerprint
+- **白名单控制**：通过 `allowedClients`（CN/issuer/fingerprint）细粒度控制访问权限
+- **基于路径的保护**：通过 `protectedPaths` 配置哪些路径需要 mTLS 认证
+- **透传模式**：可选的 `passthrough` 模式允许在未提供证书时放行请求
+- **证书信息传递**：通过 HTTP Header 将客户端证书信息传递给下游服务
+- **OpenClaw 集成**：遵循 OpenClaw 安全插件架构
 
-### Architecture
+### 架构
 
 ```
-Client (with client cert)
+客户端 (携带客户端证书)
     → HTTPS + mTLS
     → OpenClaw Gateway
-    → mTLS Middleware (validates client cert)
-    → Downstream handlers
+    → mTLS 中间件 (验证客户端证书)
+    → 下游处理器
 ```
 
-### Lifecycle
+### 生命周期
 
-- Plugin registers via `registerHttpRoute` when Gateway loads the plugin
-- mTLS middleware intercepts HTTP requests on protected paths
-- Client certificate is extracted from the TLS socket
-- Certificate is validated against `allowedClients` whitelist (if configured)
-- Authenticated context is attached to the request for downstream use
-- Status endpoint available at `GET /mtls/status`
+- 插件通过 `registerHttpRoute` 在 Gateway 加载时注册
+- mTLS 中间件拦截受保护路径上的 HTTP 请求
+- 从 TLS socket 中提取客户端证书
+- 根据 `allowedClients` 白名单验证证书（如已配置）
+- 将认证上下文附加到请求中供下游使用
+- 状态端点：`GET /mtls/status`
 
-## 🚀 Quick Start
+## 🚀 快速开始
 
-### Prerequisites
+### 前置条件
 
 - OpenClaw `>= 2026.4.0`
 - Node.js `20+`
-- TLS certificates (server cert/key and CA for client cert validation)
+- TLS 证书（服务器证书/私钥和用于验证客户端证书的 CA）
 
-### Install
+### 安装
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-mtls
 ```
 
-### Minimal Config
+### 最小配置
 
 ```json
 {
@@ -88,120 +88,120 @@ openclaw plugins install @partme.ai/openclaw-mtls
 }
 ```
 
-## 🔐 Configuration
+## 🔐 配置说明
 
-### Top-Level Fields
+### 顶层字段
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `enabled` | `true` | Enable/disable the mTLS plugin |
-| `tls` | — | TLS server configuration |
-| `protectedPaths` | `[{path:"/",match:"prefix"}]` | Paths requiring mTLS authentication |
-| `allowedClients` | `[]` | Whitelist of allowed client certificates |
-| `skipPaths` | See below | Paths to skip authentication |
-| `passthrough` | `false` | Allow unauthenticated requests when no cert |
-| `headerName` | `X-Client-Cert` | Header to pass cert info downstream |
-| `headerCertField` | `subject` | Which cert field to use for header |
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `enabled` | `true` | 启用/禁用 mTLS 插件 |
+| `tls` | — | TLS 服务器配置 |
+| `protectedPaths` | `[{path:"/",match:"prefix"}]` | 需要 mTLS 认证的路径 |
+| `allowedClients` | `[]` | 允许的客户端证书白名单 |
+| `skipPaths` | 见下方 | 跳过认证的路径 |
+| `passthrough` | `false` | 未提供证书时是否放行 |
+| `headerName` | `X-Client-Cert` | 向下游传递证书信息的 Header |
+| `headerCertField` | `subject` | 用于 Header 值的证书字段 |
 
-### TLS Configuration
+### TLS 配置
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `tls.enabled` | `true` | Enable TLS |
-| `tls.certFile` | — | Server certificate file path |
-| `tls.keyFile` | — | Server private key file path |
-| `tls.caFile` | — | CA certificate for client cert validation |
-| `tls.requestCert` | `true` | Request client certificate |
-| `tls.rejectUnauthorized` | `true` | Reject clients without valid certificate |
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `tls.enabled` | `true` | 启用 TLS |
+| `tls.certFile` | — | 服务器证书文件路径 |
+| `tls.keyFile` | — | 服务器私钥文件路径 |
+| `tls.caFile` | — | CA 证书文件路径（用于验证客户端证书） |
+| `tls.requestCert` | `true` | 请求客户端证书 |
+| `tls.rejectUnauthorized` | `true` | 拒绝未提供有效证书的客户端 |
 
-### Path Rules
+### 路径规则
 
-| Field | Description |
-|-------|-------------|
-| `path` | URL path to protect |
-| `match` | `"exact"` or `"prefix"` matching |
-| `allowUnauthenticated` | Allow unauthenticated access (for this path only) |
+| 字段 | 说明 |
+|------|------|
+| `path` | 要保护的 URL 路径 |
+| `match` | `exact`（精确匹配）或 `prefix`（前缀匹配） |
+| `allowUnauthenticated` | 是否允许该路径的未认证访问 |
 
-### Client Whitelist
+### 客户端白名单
 
-Each entry in `allowedClients` can specify:
+`allowedClients` 中的每个条目可以指定：
 
-| Field | Description |
-|-------|-------------|
-| `cn` | Client certificate Common Name (CN) |
-| `issuer` | Client certificate issuer |
-| `fingerprint` | Client certificate SHA fingerprint |
+| 字段 | 说明 |
+|------|------|
+| `cn` | 客户端证书 Common Name (CN) |
+| `issuer` | 客户端证书签发者 |
+| `fingerprint` | 客户端证书 SHA 指纹 |
 
-## 🧪 Testing
+## 🧪 测试
 
 ```bash
-# Unit tests
+# 单元测试
 npm test
 
-# Build
+# 构建
 npm run build
 
-# Type check
+# 类型检查
 npm run typecheck
 ```
 
 ## 🤖 GitHub Actions
 
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| `ci.yml` | Push / PR to `main` | Install, typecheck, build, test |
-| `release.yml` | Tag `v*` | Build, test, publish npm package |
+| 工作流 | 触发方式 | 作用 |
+|--------|----------|------|
+| `ci.yml` | push / PR 到 `main` | 安装、类型检查、构建、测试 |
+| `release.yml` | `v*` 标签 | 构建、测试并发布 npm 包 |
 
-## 📦 Publishing
+## 📦 发版
 
 ```bash
 npm version patch
 git push origin main --follow-tags
 ```
 
-## 📁 Project Structure
+## 📁 项目结构
 
 ```
 openclaw-mtls/
 ├── src/
-│   ├── index.ts              # Plugin entry — registerHttpRoute middleware
-│   ├── types.ts              # Type definitions
-│   ├── stats.ts             # Statistics tracking
-│   └── openclaw-sdk.d.ts   # OpenClaw type declarations
+│   ├── index.ts              # 插件入口 — registerHttpRoute 中间件
+│   ├── types.ts              # 类型定义
+│   ├── stats.ts             # 统计信息追踪
+│   └── openclaw-sdk.d.ts   # OpenClaw 类型声明
 ├── test/
-│   └── mtls.test.ts         # Unit tests
+│   └── mtls.test.ts         # 单元测试
 ├── .github/workflows/
-│   ├── ci.yml              # CI workflow
-│   └── release.yml          # Release workflow
-├── openclaw.plugin.json     # Plugin metadata & config schema
+│   ├── ci.yml              # CI 工作流
+│   └── release.yml          # Release 工作流
+├── openclaw.plugin.json     # 插件元数据和配置 schema
 ├── package.json
 └── README.md / README_CN.md
 ```
 
-## 📚 OpenClaw Documentation
+## 📚 OpenClaw 官方文档
 
 - [Building Plugins](https://docs.openclaw.ai/plugins/building-plugins)
 - [Plugin Architecture](https://docs.openclaw.ai/plugins/architecture)
 - [SDK Overview](https://docs.openclaw.ai/plugins/sdk-overview)
 
-## ❓ FAQ
+## ❓ 常见问题（FAQ）
 
-**What is the difference between TLS and mTLS?**
+**TLS 和 mTLS 的区别是什么？**
 
-Standard TLS only verifies the server's certificate to the client. mTLS adds bidirectional verification — the client also presents a certificate that the server validates.
+标准 TLS 只验证服务端向客户端展示的证书。mTLS 添加了双向验证 — 客户端也必须展示由服务端验证的证书。
 
-**How does the Gateway handle mTLS?**
+**Gateway 如何处理 mTLS？**
 
-The OpenClaw Gateway terminates TLS at the proxy/load balancer level. The mTLS plugin extracts client certificate information from the TLS socket and enforces authentication policies.
+OpenClaw Gateway 在代理/负载均衡层终止 TLS。mTLS 插件从 TLS socket 中提取客户端证书信息并强制执行认证策略。
 
-**How do I allow specific clients only?**
+**如何只允许特定客户端？**
 
-Use `allowedClients` with CN, issuer, or fingerprint. Multiple match criteria are ANDed together within a single entry.
+使用 `allowedClients` 配置 CN、issuer 或 fingerprint。单个条目内的多个匹配条件是 AND 关系。
 
-**What happens when a client doesn't provide a certificate?**
+**当客户端未提供证书时会发生什么？**
 
-By default (`passthrough: false`), the request is rejected with 401. If `passthrough: true`, the request is allowed through but no `mtlsAuth` context is attached.
+默认情况下（`passthrough: false`），请求会被拒绝并返回 401。如果 `passthrough: true`，请求会被放行，但不会附加 `mtlsAuth` 上下文。
 
-## 📄 License
+## 📄 许可证
 
 MIT

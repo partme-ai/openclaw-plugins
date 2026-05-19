@@ -1,16 +1,15 @@
 <div align="center">
 
-
+**简体中文 | [English](README.md)**
 
 <img width="120" src="https://img.shields.io/badge/🤖-QQ_Bot-blue?style=for-the-badge" alt="QQ Bot" />
 
-# QQ Bot Channel Plugin for OpenClaw
+# QQ Bot — OpenClaw 渠道插件
 
 
+**让你的 AI 助手接入 QQ — 私聊、群聊、富媒体，一个插件全搞定。**
 
-**Connect your AI assistant to QQ — private chat, group chat, and rich media, all in one plugin.**
-
-### 🚀 Current Version: `v1.7.1`
+### 🚀 当前版本： `v1.7.1`
 
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![QQ Bot](https://img.shields.io/badge/QQ_Bot-API_v2-red)](https://bot.q.qq.com/wiki/)
@@ -18,328 +17,324 @@
 [![Node.js](https://img.shields.io/badge/Node.js->=18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-
 <br/>
 
-**[简体中文](README.zh.md) | English**
+扫描二维码加入群聊，一起交流
 
-Scan to join the QQ group chat
-
-<img width="400" alt="QQ QR Code" src="./docs/images/developer-group.png" />
-
+<img width="400" alt="QQ 群二维码" src="./docs/images/developer-group.png" />
 
 </div>
 
 ---
 
-## ✨ Features
+## ✨ 功能特性
 
-| Feature | Description |
-|---------|-------------|
-| 🔒 **Multi-Scene** | C2C private chat, group @messages |
-| 🖼️ **Rich Media** | Send & receive images, voice, video, and files |
-| 🎙️ **Voice (STT/TTS)** | Speech-to-text transcription & text-to-speech replies |
-| 🔥 **One-Click Hot Upgrade** | Send `/bot-upgrade` in private chat to upgrade — no server login needed |
-| ⏰ **Scheduled Push** | Proactive message delivery via scheduled tasks |
-| 🔗 **URL Support** | Direct URL sending in private chat (no restrictions) |
-| ⌨️ **Typing Indicator** | "Bot is typing..." status shown in real-time |
-| 📝 **Markdown** | Full Markdown formatting support |
-| 🛠️ **Commands** | Native OpenClaw command integration |
-| 💬 **Quoted Context** | Parses the original message a user is replying to and injects it into AI context, so the model always knows exactly which message is being referenced |
-| 📦 **Large File Support** | Auto chunked upload for large files (parallel upload with retry), up to 100 MB |
-| 🔐 **Command Execution Approval** | AI requests approval via Inline Keyboard buttons before executing commands — tap to allow or deny |
+| 功能 | 说明 |
+|------|------|
+| 🔒 **多场景支持** | C2C 私聊、群聊 @消息 |
+| 🖼️ **富媒体消息** | 支持图片、语音、视频、文件的收发 |
+| 🎙️ **语音能力 (STT/TTS)** | 语音转文字自动转录 & 文字转语音回复 |
+| 🔥 **一键热更新** | 私聊发送 `/bot-upgrade` 即可完成版本升级，无需登录服务器 |
+| ⏰ **定时推送** | 支持定时任务触发后主动推送消息 |
+| 🔗 **URL 无限制** | 私聊可直接发送 URL |
+| ⌨️ **输入状态** | 实时显示"Bot 正在输入中…"状态 |
+| 📝 **Markdown** | 完整支持 Markdown 格式消息 |
+| 🛠️ **原生命令** | 支持 OpenClaw 原生命令 |
+| 💬 **引用上下文** | 解析用户回复的原始消息内容，注入 AI 上下文，让模型准确理解"在回复哪条消息" |
+| 📦 **大文件支持** | 大文件自动分片并行上传，最大支持 100 MB |
+| 🔐 **命令执行审批** | AI 执行命令前通过按钮消息请求审批，点击即可允许或拒绝 |
 
 ---
 
-## 📸 Feature Showcase
+## 📸 功能展示
 
-> **Note:** This plugin serves as a **message channel** only — it relays messages between QQ and OpenClaw. Capabilities like image understanding, voice transcription, drawing, etc. depend on the **AI model** you configure and the **skills** installed in OpenClaw, not on this plugin itself.
+> **说明：** 本插件仅作为**消息通道**，负责在 QQ 和 OpenClaw 之间传递消息。图片理解、语音转录、AI 画图等能力取决于你配置的 **AI 模型**以及在 OpenClaw 中安装的 **skill**，而非插件本身提供。
 
-### 💬 Quoted Message Context
+### 💬 引用消息上下文
 
-When a user quotes a message in QQ, the plugin automatically parses the quoted message content and injects it into the AI context, so the model clearly knows "which message the user is replying to" and gives more accurate responses. Supports text and media messages (image/voice/video/file), and works across devices.
+用户在 QQ 中引用某条消息发送时，插件会自动解析被引用的消息内容并注入 AI 上下文，让模型清楚地知道"用户在回复哪条消息"，从而给出更准确的回复。支持文本及媒体消息（图片/语音/视频/文件），换设备后同样可用。
 
-<img width="360" src="docs/images/ref-msg.png" alt="Quoted Message Context Demo" />
+<img width="360" src="docs/images/ref-msg.png" alt="引用消息上下文演示" />
 
-### 🎙️ Voice Messages (STT)
+### 🎙️ 语音消息（STT）
 
-With STT configured, the plugin automatically transcribes voice messages to text before passing them to AI. The whole process is transparent to the user — sending voice feels as natural as sending text.
+配置 STT 后，插件会自动将语音转录为文字再交给 AI 处理。整个过程对用户完全透明——发语音就像发文字一样自然，AI 听得懂你在说什么。
 
-> **You**: *(send a voice message)* "What's the weather like tomorrow in Shenzhen?"
+> **你**：*（发送一段语音）*"明天深圳天气怎么样"
 >
-> **QQBot**: Tomorrow (March 7, Saturday) Shenzhen weather forecast 🌤️ ...
+> **QQBot**：明天（3月7日 周六）深圳的天气预报 🌤️ ...
 
-<img width="360" src="docs/images/voice-stt.jpg" alt="Voice STT Demo" />
+<img width="360" src="docs/images/voice-stt.jpg" alt="听语音演示" />
 
-### 📄 File Understanding
+### 📄 文件理解
 
-Send any file to the bot — novels, reports, spreadsheets — AI automatically recognizes the content and gives an intelligent reply.
+用户发文件给 AI，AI 同样能接住。不管是一本小说还是一份报告，AI 会自动识别文件内容并给出智能回复。
 
-> **You**: *(send a TXT file of "War and Peace")*
+> **你**：*（发送《战争与和平》TXT 文件）*
 >
-> **QQBot**: Got it! You uploaded the Chinese version of "War and Peace" by Leo Tolstoy. This appears to be the opening of Chapter 1...
+> **QQBot**：收到！你上传了列夫·托尔斯泰的《战争与和平》中文版文本。从内容来看，这是第一章的开头……你想让我做什么？
 
-<img width="360" src="docs/images/file-understand.jpg" alt="File Understanding Demo" />
+<img width="360" src="docs/images/file-understand.jpg" alt="AI理解用户发送的文件" />
 
-### 🖼️ Image Understanding
+### 🖼️ 图片理解
 
-If your main model supports vision (e.g. Tencent Hunyuan `hunyuan-vision`), AI can understand images too. This is a general multimodal capability, not plugin-specific.
+如果主模型支持视觉（如腾讯混元 `hunyuan-vision`），用户发图片 AI 也能看懂。这是多模态模型的通用能力，非插件专属功能。
 
-> **You**: *(send an image)*
+> **你**：*（发送一张图片）*
 >
-> **QQBot**: Haha, so cute! Is that a QQ penguin in a lobster costume? 🦞🐧 ...
+> **QQBot**：哈哈，好可爱！这是QQ企鹅穿上小龙虾套装吗？🦞🐧 ...
 
-<img width="360" src="docs/images/image-understand.jpg" alt="Image Understanding Demo" />
+<img width="360" src="docs/images/image-understand.jpg" alt="图片理解演示" />
 
-### 🎨 Image Sending
+### 🎨 图片发送
 
-> **You**: Draw me a cat
+> **你**：画一只猫咪
 >
-> **QQBot**: Here you go! 🐱
+> **QQBot**：画好啦！一只可爱的简笔小猫咪🐱🎨
 
-AI can send images directly. Supports local paths and URLs. Formats: jpg/png/gif/webp/bmp.
+AI 可直接发送图片，支持本地文件路径和网络 URL。格式：jpg/png/gif/webp/bmp。
 
-<img width="360" src="docs/images/image-send.jpg" alt="Image Generation Demo" />
+<img width="360" src="docs/images/image-send.jpg" alt="发图片演示" />
 
-### 🔊 Voice Sending
+### 🔊 语音发送
 
-> **You**: Tell me a joke in voice
+> **你**：给我讲一个笑话
 >
-> **QQBot**: *(sends a voice message)*
+> **QQBot**：*（发送一条语音消息）*
 
-AI can send voice messages directly. Formats: mp3/wav/silk/ogg. No ffmpeg required.
+AI 可直接发送语音消息。格式：mp3/wav/silk/ogg，无需安装 ffmpeg。
 
-<img width="360" src="docs/images/voice-send.jpg" alt="TTS Voice Demo" />
+<img width="360" src="docs/images/voice-send.jpg" alt="发语音演示" />
 
-### ⏰ Scheduled Reminder (Proactive Message)
+### ⏰ 定时提醒（主动消息）
 
-> **You**: Remind me to eat in 5 minutes
+> **你**：5分钟后提醒我吃饭
 >
-> **QQBot**: confirms the reminder first, then proactively sends a voice + text reminder when time is up
+> **QQBot**：先确认已创建提醒，到点后再主动推送语音 + 文本提醒
 
-This capability depends on OpenClaw cron scheduling and proactive messaging. If no reminder arrives, a common reason is QQ-side interception of bot proactive messages.
+该能力依赖 OpenClaw cron 调度与主动消息能力。若未收到提醒，常见原因是 QQ 侧拦截了机器人主动消息。
 
-<img width="360" src="docs/images/reminder.jpg" alt="Scheduled Reminder Demo" />
+<img width="360" src="docs/images/reminder.jpg" alt="定时提醒演示" />
 
-### 📎 File Sending
+### 📎 文件发送
 
-> **You**: Extract chapter 1 of War and Peace and send it as a file
+> **你**：战争与和平的第一章截取一下发文件给我
 >
-> **QQBot**: *(sends a .txt file)*
+> **QQBot**：*（发送 .txt 文件）*
 
-AI can send files directly, in any format.
+AI 可直接发送文件，任意格式均可。
 
-<img width="360" src="docs/images/file-send.jpg" alt="File Sending Demo" />
+<img width="360" src="docs/images/file-send.jpg" alt="发文件演示" />
 
-Since v1.6.6, large file transfer is supported: images up to 20MB, videos up to 30MB, attachments up to 100MB, with a daily transfer limit of 2GB.
+v1.6.6 起支持大文件传输：图片最大 20MB，视频最大 30MB，附件最大 100MB，每日累计传输上限 2GB。
 
-<img width="360" src="docs/images/large-file-transfer.jpg" alt="Large File Transfer Demo" />
+<img width="360" src="docs/images/large-file-transfer.jpg" alt="大文件传输演示" />
 
-### 🔐 Command Execution Approval
+### 🔐 命令执行审批
 
-When the AI needs to execute a command, the plugin sends an approval request via QQ message with interactive buttons — tap **✅ Allow Once**, **⭐ Always Allow**, or **❌ Deny** to control whether the command runs. 
+当 AI 需要执行命令时，插件会通过 QQ 消息发送带按钮的审批请求，你可以点击 **✅ 允许一次**、**⭐ 始终允许** 或 **❌ 拒绝** 来控制命令是否执行。
 
-Use the `/bot-approve` command to manage the approval mode (allowlist / off / strict).
+通过 `/bot-approve` 指令可以管理审批模式（白名单 / 关闭 / 严格模式）。
 
-<img width="360" src="docs/images/approve.png" alt="Command Execution Approval Demo" />
+<img width="360" src="docs/images/approve.png" alt="命令执行审批演示" />
 
-### 🎬 Video Sending
+### 🎬 视频发送
 
-> **You**: Send me a demo video
+> **你**：发一个演示视频给我
 >
-> **QQBot**: *(sends a video)*
+> **QQBot**：*（发送视频）*
 
-AI can send videos directly. Supports local files and URLs.
+AI 可直接发送视频，支持本地文件和公网 URL。
 
-<img width="360" src="docs/images/video-send.jpg" alt="Video Sending Demo" />
+<img width="360" src="docs/images/video-send.jpg" alt="发视频演示" />
 
-> **Under the hood:** Upload dedup caching, ordered queue delivery, and multi-layer audio format fallback.
+> **底层细节：** 上传去重缓存、有序队列发送、音频格式多层降级。
 
-### 🛠️ Slash Commands
+### 🛠️ 斜杠指令
 
-The plugin provides built-in slash commands that are intercepted before reaching the AI queue, giving instant responses for diagnostics and management.
+插件内置一组斜杠指令，在消息进入 AI 队列前拦截处理，即时响应，用于诊断和管理。
 
-#### `/bot-ping` — Latency Test
+#### `/bot-ping` — 延迟测试
 
-> **You**: `/bot-ping`
+> **你**：`/bot-ping`
 >
-> **QQBot**: ✅ pong！⏱ Latency: 602ms (network: 602ms, plugin: 0ms)
+> **QQBot**：✅ pong！⏱ 延迟: 602ms（网络传输: 602ms，插件处理: 0ms）
 
-Measures end-to-end latency from QQ server push to plugin response, broken down into network transport and plugin processing time.
+测量从 QQ 服务器推送到插件响应的端到端延迟，细分网络传输和插件处理两段耗时。
 
-<img width="360" src="docs/images/slash-ping.jpg" alt="Ping Demo" />
+<img width="360" src="docs/images/slash-ping.jpg" alt="Ping 演示" />
 
-#### `/bot-version` — Version Info
+#### `/bot-version` — 版本信息
 
-> **You**: `/bot-version`
+> **你**：`/bot-version`
 >
-> **QQBot**: 🦞 Framework: OpenClaw 2026.3.13 (61d171a) / 🤖 Plugin: v1.6.3 / 🌟 GitHub repo
+> **QQBot**：🦞框架版本：OpenClaw 2026.3.13 (61d171a) / 🤖QQBot 插件版本：v1.6.3 / 🌟官方 GitHub 仓库
 
-Shows framework version, plugin version, and a direct link to the official repository.
+一目了然查看框架版本、插件版本，并可直接跳转官方仓库。
 
-<img width="360" src="docs/images/slash-version.jpg" alt="Version Demo" />
+<img width="360" src="docs/images/slash-version.jpg" alt="Version 演示" />
 
-#### `/bot-help` — Command List
+#### `/bot-help` — 指令列表
 
-> **You**: `/bot-help`
+> **你**：`/bot-help`
 >
-> **QQBot**: Lists all available slash commands with clickable shortcuts.
+> **QQBot**：列出所有可用的斜杠指令及说明，指令可点击快速输入。
 
-<img width="360" src="docs/images/slash-help.jpg" alt="Help Demo" />
+<img width="360" src="docs/images/slash-help.jpg" alt="Help 演示" />
 
-#### `/bot-upgrade` — One-Click Hot Upgrade
+#### `/bot-upgrade` — 一键热更新
 
-> **You**: `/bot-upgrade`
+> **你**：`/bot-upgrade`
 >
-> **QQBot**: 📌 Current: v1.6.3 / ✅ New version v1.6.4 available / Click button below to confirm
+> **QQBot**：📌当前版本 v1.6.3 / ✅发现新版本 v1.6.4 / 点击下方按钮确认升级
 
-Credentials are automatically backed up before upgrade. Version existence is verified against npm before proceeding. Auto-recovery on failure.
+升级流程自动备份凭证，升级前校验版本是否存在于 npm，升级失败自动恢复。
 
-> ⚠️ Hot upgrade is currently not supported on Windows. Sending `/bot-upgrade` on Windows will return a manual upgrade guide instead.
+> ⚠️ 热更新指令暂不支持 Windows 系统，在 Windows 上发送 `/bot-upgrade` 会返回手动升级指引。
 
-> ⚠️ v1.6.6 and below do not support hot upgrade via `/bot-upgrade`. Please upgrade using the following command:
+> ⚠️ v1.6.6 及以下版本暂不支持通过 `/bot-upgrade` 执行热更新，请通过以下命令升级：
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/tencent-connect/openclaw-qqbot/main/scripts/upgrade-via-npm.sh | bash
 > ```
 
-<img width="360" src="docs/images/hot-update.jpg" alt="Hot Upgrade Demo" />
+<img width="360" src="docs/images/hot-update.jpg" alt="一键热更新演示" />
 
-#### `/bot-logs` — Log Export
+#### `/bot-logs` — 日志导出
 
-> **You**: `/bot-logs`
+> **你**：`/bot-logs`
 >
-> **QQBot**: 📋 Logs packaged (~2000 lines), sending file... *(sends a .txt file)*
+> **QQBot**：📋 日志已打包（约 2000 行），正在发送文件… *（发送 .txt 文件）*
 
-Exports the last ~2000 lines of gateway logs as a file for quick troubleshooting.
+导出最近约 2000 行网关日志为文件，方便快速排查问题。
 
-<img width="360" src="docs/images/slash-logs.jpg" alt="Logs Demo" />
+<img width="360" src="docs/images/slash-logs.jpg" alt="Logs 演示" />
 
-#### Usage Help
+#### 用法查询
 
-All commands support a `?` suffix to show usage:
+所有指令都支持 `?` 后缀查看用法说明：
 
-> **You**: `/bot-upgrade ?`
+> **你**：`/bot-upgrade ?`
 >
-> **QQBot**: 📖 /bot-upgrade usage: …
+> **QQBot**：📖 /bot-upgrade 用法：…
 
-#### `/bot-approve` — Approval Configuration
+#### `/bot-approve` — 审批配置管理
 
-> **You**: `/bot-approve`
+> **你**：`/bot-approve`
 >
-> **QQBot**: 🔐 Command Execution Approval — Enable / Disable / Strict mode / Reset / View current config
+> **QQBot**：🔐 命令执行审批配置 — 开启审批 / 关闭审批 / 严格模式 / 恢复默认 / 查看当前配置
 
-Manage the AI command execution approval policy. Supported subcommands:
+管理 AI 命令执行审批策略，支持以下子命令：
 
-| Subcommand | Description |
-|------------|-------------|
-| `/bot-approve on` | Enable approval (allowlist mode, recommended) |
-| `/bot-approve off` | Disable approval — commands execute directly |
-| `/bot-approve always` | Strict mode — every execution requires approval |
-| `/bot-approve reset` | Restore framework defaults |
-| `/bot-approve status` | View current approval config |
+| 子命令 | 说明 |
+|--------|------|
+| `/bot-approve on` | 开启审批（白名单模式，推荐） |
+| `/bot-approve off` | 关闭审批，命令直接执行 |
+| `/bot-approve always` | 严格模式，每次执行都需审批 |
+| `/bot-approve reset` | 恢复框架默认值 |
+| `/bot-approve status` | 查看当前审批配置 |
 
-#### `/bot-clear-storage` — Clear files generated through QQBot conversations and downloaded resources (stored on the host running OpenClaw)
+#### `/bot-clear-storage` — 清理通过 QQBot 对话产生的文件以及下载的资源（保存在 OpenClaw 运行环境的主机上）
 
-`/bot-clear-storage` lists files generated by the conversation and files in the downloaded resources directory. Use `/bot-clear-storage --force` to confirm deletion.
+`/bot-clear-storage` 列出对话产生的文件以及下载的资源目录里的文件，使用`/bot-clear-storage -- force`确定删除。
 
 ---
 
-## 🚀 Getting Started
+## 🚀 快速开始
 
-### Step 1 — Create a QQ Bot on the QQ Open Platform
+### 第一步 — 在 QQ 开放平台创建机器人
 
-1. Go to the [QQ Open Platform](https://q.qq.com/) and **scan the QR code with your phone QQ** to register / log in. If you haven't registered before, scanning will automatically complete the registration and bind your QQ account.
+1. 前往 [QQ 开放平台](https://q.qq.com/)，用**手机 QQ 扫描页面二维码**即可注册/登录。若尚未注册，扫码后系统会自动完成注册并绑定你的 QQ 账号。
 
 <img width="3246" height="1886" alt="Clipboard_Screenshot_1772980354" src="https://github.com/user-attachments/assets/d8491859-57e8-47e4-9d39-b21138be54d0" />
 
-2. After scanning, tap **Agree** on your phone — you'll land on the bot configuration page.
-3. Click **Create Bot** to create a new QQ bot.
+2. 手机 QQ 扫码后选择**同意**，即完成注册，进入 QQ 机器人配置页。
+3. 点击**创建机器人**，即可直接新建一个 QQ 机器人。
 
-<img width="720" alt="Create Bot" src="docs/images/create-robot.png" />
+<img width="720" alt="创建机器人" src="docs/images/create-robot.png" />
 
-> ⚠️ The bot will automatically appear in your QQ message list and send a first message. However, it will reply "The bot has gone to Mars" until you complete the configuration steps below.
+> ⚠️ 机器人创建后会自动出现在你的 QQ 消息列表中，并发送第一条消息。但在完成下面的配置之前，发消息会提示"该机器人去火星了"，属于正常现象。
 
-<img width="400" alt="Bot Say Hello" src="docs/images/bot-say-hello.jpg" />
+<img width="400" alt="机器人打招呼" src="docs/images/bot-say-hello.jpg" />
 
-4. Find **AppID** and **AppSecret** on the bot's page, click **Copy** for each, and save them somewhere safe (e.g., a notepad). **AppSecret is not stored in plaintext — if you leave the page without saving it, you'll have to regenerate a new one.**
+4. 在机器人页面中找到 **AppID** 和 **AppSecret**，分别点击右侧**复制**按钮，保存到记事本或备忘录中。**AppSecret 不支持明文保存，离开页面后再查看会强制重置，请务必妥善保存。**
 
-<img width="720" alt="Find AppID and AppSecret" src="docs/images/find-appid-secret.png" />
+<img width="720" alt="找到 AppID 和 AppSecret" src="docs/images/find-appid-secret.png" />
 
-> For a step-by-step walkthrough with screenshots, see the [official guide](https://cloud.tencent.com/developer/article/2626045).
+> 详细图文教程请参阅 [官方指南](https://cloud.tencent.com/developer/article/2626045)。
 
-### Step 2 — Install / Upgrade the Plugin
+### 第二步 — 安装 / 升级插件
 
-**Option A: Remote One-Liner (Easiest, no clone required)**
+**方式一：远程一键执行（最简单，无需 clone 仓库）**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tencent-connect/openclaw-qqbot/main/scripts/upgrade-via-npm.sh \
   | bash -s -- --appid YOUR_APPID --secret YOUR_SECRET
 ```
 
-One command does it all: download script → cleanup old plugins → install → configure channel → restart service. Once done, open QQ and start chatting!
+一行命令搞定：下载脚本 → 清理旧插件 → 安装 → 配置通道 → 启动服务。完成后打开 QQ 即可开始聊天！
 
-> `--appid` and `--secret` are **required for first-time install**. For subsequent upgrades, run the following command to upgrade to the latest version:
+> 首次安装**必须**传 `--appid` 和 `--secret`。后续升级执行此指令可以升级为最新版：
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/tencent-connect/openclaw-qqbot/main/scripts/upgrade-via-npm.sh | bash
 > ```
 
-**Option B: Local Script (if you've cloned the repo)**
+**方式二：本地脚本（已 clone 仓库时使用）**
 
 ```bash
-# Via npm
+# 通过 npm 安装
 bash ./scripts/upgrade-via-npm.sh --appid YOUR_APPID --secret YOUR_SECRET
 
-# Or via source
+# 或通过源码安装
 bash ./scripts/upgrade-via-source.sh --appid YOUR_APPID --secret YOUR_SECRET
 ```
 
-**Common flags:**
+**常用参数：**
 
-| Flag | Description |
-|------|-------------|
-| `--appid <id> --secret <secret>` | Configure channel (required for first install, or to change credentials) |
-| `--version <version>` | Install a specific version (npm script only) |
-| `--self-version` | Install the version from local `package.json` (npm script only) |
-| `-h` / `--help` | Show full usage |
+| 参数 | 说明 |
+|------|------|
+| `--appid <id> --secret <secret>` | 配置通道（首次安装必填，或更换凭证时使用） |
+| `--version <版本号>` | 安装指定版本（仅 npm 脚本） |
+| `--self-version` | 安装本地 `package.json` 中的版本（仅 npm 脚本） |
+| `-h` / `--help` | 查看完整用法 |
 
-> Environment variables `QQBOT_APPID` / `QQBOT_SECRET` are also supported.
+> 也可通过环境变量 `QQBOT_APPID` / `QQBOT_SECRET` 设置。
 
-**Option C: Manual Install / Upgrade**
+**方式三：手动安装 / 升级**
 
 ```bash
-# Uninstall old plugins (skip if first install)
+# 卸载旧插件（首次安装可跳过）
 openclaw plugins uninstall qqbot
 openclaw plugins uninstall openclaw-qqbot
 
-# Install latest
+# 安装最新版本
 openclaw plugins install @tencent-connect/openclaw-qqbot@latest
 
-# Configure channel (first install only)
+# 配置通道（首次安装必做）
 openclaw channels add --channel qqbot --token "AppID:AppSecret"
 
-# Start / restart
+# 启动 / 重启
 openclaw gateway restart
 ```
 
-### Step 3 — Test
+### 第三步 — 测试
 
-Open QQ, find your bot, and send a message!
+打开 QQ，找到你的机器人，发条消息试试！
 
 <div align="center">
-<img width="500" alt="Chat Demo" src="https://github.com/user-attachments/assets/b2776c8b-de72-4e37-b34d-e8287ce45de1" />
+<img width="500" alt="聊天演示" src="https://github.com/user-attachments/assets/b2776c8b-de72-4e37-b34d-e8287ce45de1" />
 </div>
 
 ---
 
-## ⚙️ Advanced Configuration
+## ⚙️ 进阶配置
 
-### Multi-Account Setup (Multi-Bot)
+### 多账户配置（Multi-Bot）
 
-Run multiple QQ bots under a single OpenClaw instance.
+支持在同一个 OpenClaw 实例下同时运行多个 QQ 机器人。
 
-#### Configuration
+#### 配置方式
 
-Edit `~/.openclaw/openclaw.json` and add an `accounts` field under `channels.qqbot`:
+编辑 `~/.openclaw/openclaw.json`，在 `channels.qqbot` 下增加 `accounts` 字段：
 
 ```json
 {
@@ -366,64 +361,64 @@ Edit `~/.openclaw/openclaw.json` and add an `accounts` field under `channels.qqb
 }
 ```
 
-**Notes:**
+**说明：**
 
-- The top-level `appId` / `clientSecret` is the **default account** (accountId = `"default"`)
-- Each key under `accounts` (e.g. `bot2`, `bot3`) is the `accountId` for that bot
-- Each account can independently configure `enabled`, `name`, `allowFrom`, `systemPrompt`, etc.
-- You may also skip the top-level default account and only configure bots inside `accounts`
+- 顶层的 `appId` / `clientSecret` 是**默认账户**（accountId = `"default"`）
+- `accounts` 下的每个 key（如 `bot2`、`bot3`）就是该账户的 `accountId`
+- 每个账户都可以独立配置 `enabled`、`name`、`allowFrom`、`systemPrompt` 等字段
+- 也可以不配顶层默认账户，只在 `accounts` 里配置所有机器人
 
-Add a second bot via CLI (if the framework supports the `--account` parameter):
+通过 CLI 添加第二个机器人（如果框架支持 `--account` 参数）：
 
 ```bash
 openclaw channels add --channel qqbot --account bot2 --token "222222222:secret-of-bot-2"
 ```
 
-#### Sending Messages to a Specific Account's Users
+#### 向指定账户的用户发送消息
 
-When using `openclaw message send`, specify which bot to use with the `--account` parameter:
+使用 `openclaw message send` 发消息时，需要通过 `--account` 参数指定使用哪个机器人发送：
 
 ```bash
-# Send with the default bot (no --account = uses "default")
+# 使用默认机器人发送（不指定 --account 时自动使用 default）
 openclaw message send --channel "qqbot" \
   --target "qqbot:c2c:OPENID" \
   --message "hello from default bot"
 
-# Send with bot2
+# 使用 bot2 发送
 openclaw message send --channel "qqbot" \
   --account bot2 \
   --target "qqbot:c2c:OPENID" \
   --message "hello from bot2"
 ```
 
-**Target Formats:**
+**Target 格式支持：**
 
-| Format | Description |
-|--------|-------------|
-| `qqbot:c2c:OPENID` | Private chat (C2C) |
-| `qqbot:group:GROUP_OPENID` | Group chat |
-| `qqbot:channel:CHANNEL_ID` | Guild channel |
+| 格式 | 说明 |
+|------|------|
+| `qqbot:c2c:OPENID` | 私聊 |
+| `qqbot:group:GROUP_OPENID` | 群聊 |
+| `qqbot:channel:CHANNEL_ID` | 频道 |
 
-> ⚠️ **Important**: Each bot has its own set of user OpenIDs. An OpenID received by Bot A **cannot** be used to send messages via Bot B — this will result in a 500 error. Always use the matching bot's `accountId` to send messages to its users.
+> ⚠️ **注意**：每个机器人的用户 OpenID 是不同的。机器人 A 收到的用户 OpenID 不能用机器人 B 去发消息，否则会返回 500 错误。必须用对应机器人的 accountId 去给该机器人的用户发消息。
 
-#### How It Works
+#### 工作原理
 
-- When `openclaw gateway` starts, all accounts with `enabled: true` launch their own WebSocket connections
-- Each account maintains an independent Token cache (isolated by `appId`), preventing cross-contamination
-- Incoming message logs are prefixed with `[qqbot:accountId]` for easy debugging
+- 启动 `openclaw gateway` 后，所有 `enabled: true` 的账户会同时启动 WebSocket 连接
+- 每个账户独立维护 Token 缓存（基于 `appId` 隔离），互不干扰
+- 接收消息时，日志会带上 `[qqbot:accountId]` 前缀方便排查
 
 ---
 
-### Voice Configuration (STT / TTS)
+### 语音能力配置（STT / TTS）
 
-#### STT (Speech-to-Text) — Transcribe Incoming Voice Messages
+#### STT（语音转文字）— 自动转录用户发来的语音消息
 
-STT supports two-level configuration with priority fallback:
+STT 支持两级配置，按优先级查找：
 
-| Priority | Config Path | Scope |
-|----------|------------|-------|
-| 1 (highest) | `channels.qqbot.stt` | Plugin-specific |
-| 2 (fallback) | `tools.media.audio.models[0]` | Framework-level |
+| 优先级 | 配置路径 | 作用域 |
+|--------|----------|--------|
+| 1（highest） | `channels.qqbot.stt` | 插件专属 |
+| 2（fallback） | `tools.media.audio.models[0]` | 框架级 |
 
 ```json
 {
@@ -438,16 +433,16 @@ STT supports two-level configuration with priority fallback:
 }
 ```
 
-- `provider` — references a key in `models.providers` to inherit `baseUrl` and `apiKey`
-- Set `enabled: false` to disable
-- When configured, incoming voice messages are automatically converted (SILK→WAV) and transcribed
+- `provider` — 引用 `models.providers` 中的 key，自动继承 `baseUrl` 和 `apiKey`
+- 设置 `enabled: false` 可禁用
+- 配置后，用户发来的语音消息会自动转换（SILK→WAV）并转录为文字
 
-#### TTS (Text-to-Speech) — Send Voice Messages
+#### TTS（文字转语音）— 机器人发送语音消息
 
-| Priority | Config Path | Scope |
-|----------|------------|-------|
-| 1 (highest) | `channels.qqbot.tts` | Plugin-specific |
-| 2 (fallback) | `messages.tts` | Framework-level |
+| 优先级 | 配置路径 | 作用域 |
+|--------|----------|--------|
+| 1（highest） | `channels.qqbot.tts` | 插件专属 |
+| 2（fallback） | `messages.tts` | 框架级 |
 
 ```json
 {
@@ -463,37 +458,37 @@ STT supports two-level configuration with priority fallback:
 }
 ```
 
-- `provider` — references a key in `models.providers` to inherit `baseUrl` and `apiKey`
-- `voice` — voice variant
-- Set `enabled: false` to disable (default: `true`)
-- When configured, AI can generate and send voice messages
+- `provider` — 引用 `models.providers` 中的 key，自动继承 `baseUrl` 和 `apiKey`
+- `voice` — 语音音色
+- 设置 `enabled: false` 可禁用（默认：`true`）
+- 配置后，AI 可生成并发送语音消息
 
 ---
 
-## 📚 Documentation & Links
+## 📚 文档与链接
 
-- [Upgrade Guide](docs/UPGRADE_GUIDE.md) — full upgrade paths and migration notes
-- [Command Reference](docs/commands.md) — OpenClaw CLI commands
-- [Changelog](CHANGELOG.md) — release notes
+- [升级指南](docs/UPGRADE_GUIDE.zh.md) — 完整升级路径与迁移说明
+- [命令参考](docs/commands.md) — OpenClaw CLI 常用命令
+- [更新日志](CHANGELOG.md) — 各版本变更记录
 
-## 🤝 Contributors
+## 🤝 贡献者
 
-Thanks to all the developers who have contributed to this project!
+感谢所有为本项目做出贡献的开发者！
 
 <a href="https://github.com/tencent-connect/openclaw-qqbot/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=tencent-connect/openclaw-qqbot" />
 </a>
 
-## 💖 Acknowledgements
+## 💖 致谢
 
-Special thanks to [@sliverp](https://github.com/sliverp) for outstanding contributions to the project!
+特别感谢 [@sliverp](https://github.com/sliverp) 对项目的核心贡献！
 
 <a href="https://github.com/sliverp"><img src="https://avatars.githubusercontent.com/u/38134380?v=4" width="48" height="48" alt="sliverp" title="sliverp"/></a>
 
-Thanks to [Tencent Cloud Lighthouse](https://cloud.tencent.com/product/lighthouse) for the deep collaboration. For raising crawfish, choose Tencent Cloud Lighthouse!
+感谢[腾讯云Lighthouse](https://cloud.tencent.com/product/lighthouse)的深度合作，养小龙虾，首选腾讯云Lighthouse！
 
 <a href="https://cloud.tencent.com/product/lighthouse">
-  <img alt="Tencent Cloud Lighthouse" src="./docs/images/lighthouse-head.png" height="500" style="max-width:80%; height:auto;"/>
+  <img alt="腾讯云 Lighthouse" src="./docs/images/lighthouse-head.png" height="500" style="max-width:80%; height:auto;"/>
 </a>
 
 ## ⭐ Star History
