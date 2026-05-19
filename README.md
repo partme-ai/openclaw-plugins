@@ -33,6 +33,8 @@
 | Package | Description |
 |---------|------------|
 | [@partme.ai/openclaw-knowledge](./extensions/knowledge) | RAG 知识库引擎 (embedding + vector + hybrid retrieval) |
+| [@partme.ai/openclaw-memory](./extensions/memory) | 多级长期记忆系统 (L0→L3)，自动召回 |
+| [@partme.ai/openclaw-router](./extensions/router) | 企业级跨渠道消息路由引擎 |
 
 ### 🔌 Message Queues & IoT
 | Package | Description |
@@ -95,7 +97,7 @@ Full documentation at [doc/](./doc/):
 | Document | Description |
 |----------|------------|
 | [Getting Started](./doc/OpenClaw-Plugins-Getting-Started.md) | Install and configure plugins |
-| [Architecture](./doc/OpenClaw-Plugins-Architecture.md) | Project architecture and design decisions |
+| [Architecture](./doc/OpenClaw-Plugins-Architecture.md) (EN) / [架构设计](./doc/OpenClaw-Plugins-Architecture_CN.md) (CN) | Project architecture and design decisions |
 | [Contributing](./doc/OpenClaw-Plugins-Contributing.md) | How to add a new plugin |
 | [WeCom Guide](./doc/im-channels/wecom/OpenClaw-WeCom-Configuration.md) | 企业微信全配置指南 |
 
