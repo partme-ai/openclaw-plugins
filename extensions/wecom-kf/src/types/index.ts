@@ -1,40 +1,42 @@
 /**
- * 企微客服插件类型统一导出
- * 与 wecom 插件 types/index 结构对齐
+ * WeCom 类型统一导出
  */
 
+// 常量
+export * from "./constants.js";
+
+// 配置类型
 export type {
-  WecomAccountConfig,
-  KfAccount,
-  ServicerInfo,
-  EventMessagesConfig,
-  AccountMapping,
+    WecomAccountConfig,
+    WecomDmConfig,
+    WecomMediaConfig,
+    WecomNetworkConfig,
+    WecomRoutingConfig,
+    WecomBotConfig,
+    WecomAgentConfig,
+    WecomConfig,
 } from "./config.js";
 
+// 账号类型
 export type {
-  KfEvent,
-  KfMessage,
-  SyncMsgResponse,
-  AgentRouteParams,
-  AgentRouteResult,
-  InboundContextParams,
-  InboundContext,
-  ReplyDispatcherParams,
-  ReplyDispatcher,
-  DispatchReplyParams,
-  SendTextParams,
-} from "./message.js";
+    ResolvedWecomAccount,
+    ResolvedBotAccount,
+    ResolvedAgentAccount,
+    ResolvedMode,
+    ResolvedWecomAccounts,
+} from "./account.js";
 
+// 消息类型
 export type {
-  GatewayRuntime,
-  PluginApi,
-  CommandDefinition,
-  CommandContext,
-  CommandResult,
-  HttpRouteDefinition,
-  ChannelDefinition,
-  ChannelMeta,
-  ChannelCapabilities,
-  ChannelConfig,
-  ChannelOutbound,
-} from "./channel.js";
+    WecomBotInboundBase,
+    WecomBotInboundText,
+    WecomBotInboundVoice,
+    WecomBotInboundVideo,
+    WecomBotInboundStreamRefresh,
+    WecomBotInboundEvent,
+    WecomBotInboundMessage,
+    WecomAgentInboundMessage,
+    WecomInboundQuote,
+    WecomTemplateCard,
+    WecomOutboundMessage,
+} from "./message.js";

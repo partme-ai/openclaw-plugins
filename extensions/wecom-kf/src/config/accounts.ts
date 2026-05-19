@@ -1,207 +1,341 @@
 /**
- * 客服账号自动发现与缓存
- * 使用 kf/account/list（94661）、kf/servicer/list（94645）建立 open_kfid → Agent 映射
- * 与 wecom 插件 config/accounts 职责对齐
+ * WeCom 账号解析与模式检测
  */
 
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type {
-  KfAccount,
-  AccountMapping,
-  ServicerInfo,
-  WecomAccountConfig,
+    WecomConfig,
+    WecomAccountConfig,
+    WecomBotConfig,
+    WecomAgentConfig,
+    WecomNetworkConfig,
+    ResolvedWecomAccount,
+    ResolvedBotAccount,
+    ResolvedAgentAccount,
+    ResolvedMode,
+    ResolvedWecomAccounts,
 } from "../types/index.js";
-import {
-  listKfAccounts,
-  listServicers,
-  getAccessToken,
-} from "../agent/api-client.js";
 
-/** 账号映射缓存：open_kfid → AccountMapping */
-const accountMappings = new Map<string, AccountMapping>();
+export const DEFAULT_ACCOUNT_ID = "default";
 
-/** 接待人员缓存：open_kfid → ServicerInfo[] */
-const servicerCache = new Map<string, ServicerInfo[]>();
-
-/** 自定义 Agent 映射表：open_kfid → agentId */
-const customAgentMapping = new Map<string, string>();
+export type WecomAccountConflict = {
+    type: "duplicate_bot_token" | "duplicate_bot_aibotid" | "duplicate_agent_id";
+    accountId: string;
+    ownerAccountId: string;
+    message: string;
+};
 
 /**
- * 初始化客服账号
- * 插件 onReady 时调用，自动发现并注册所有客服账号
- *
- * @param config - 渠道配置（channels.wecom-kf）
+ * 检测配置中启用的模式
  */
-export async function initializeKfAccounts(
-  config: Record<string, unknown>
-): Promise<void> {
-  const accounts = config.accounts as
-    | Record<string, WecomAccountConfig>
-    | undefined;
+export function detectMode(config: WecomConfig | undefined): ResolvedMode {
+    if (!config || config.enabled === false) return "disabled";
 
-  if (!accounts) {
-    console.warn("[wecom_kf] No accounts configured in channels.wecom-kf.accounts");
-    return;
-  }
+    const accounts = config.accounts;
+    if (accounts && typeof accounts === "object") {
+        const enabledEntries = Object.values(accounts).filter(
+            (entry) => entry && entry.enabled !== false,
+        );
+        if (enabledEntries.length > 0) return "matrix";
+    }
 
-  for (const [accountId, accountCfg] of Object.entries(accounts)) {
-    try {
-      const accessToken = await getAccessToken(
-        accountCfg.corpId,
-        accountCfg.corpSecret
-      );
+    return "legacy";
+}
 
-      const kfAccounts = await listKfAccounts(accessToken);
+/**
+ * 解析 Bot 模式账号
+ */
+function resolveBotAccount(accountId: string, config: WecomBotConfig, network?: WecomNetworkConfig): ResolvedBotAccount {
+    const connectionMode = config.connectionMode ?? 'webhook';
+    const configured = connectionMode === 'websocket'
+        ? Boolean(config.botId && config.secret)
+        : Boolean(config.token && config.encodingAESKey);
+    return {
+        accountId,
+        enabled: true,
+        configured,
+        token: config.token ?? "",
+        encodingAESKey: config.encodingAESKey ?? "",
+        receiveId: config.receiveId?.trim() ?? "",
+        config,
+        network,
+        connectionMode,
+        botId: config.botId,
+        secret: config.secret,
+    };
+}
 
-      for (const kfAccount of kfAccounts) {
-        if (!kfAccount.manage_privilege) {
-          console.warn(
-            `[wecom_kf] 账号 ${kfAccount.name} (${kfAccount.open_kfid}) 无管理权限，跳过`
-          );
-          continue;
+/**
+ * 解析 Agent 模式账号
+ */
+function resolveAgentAccount(accountId: string, config: WecomAgentConfig, network?: WecomNetworkConfig): ResolvedAgentAccount {
+    const agentIdRaw = config.agentId;
+    const agentId = agentIdRaw == null
+        ? undefined
+        : (typeof agentIdRaw === "number" ? agentIdRaw : Number(agentIdRaw));
+    const normalizedAgentId = Number.isFinite(agentId) ? agentId : undefined;
+
+    return {
+        accountId,
+        enabled: true,
+        configured: Boolean(
+            config.corpId && config.corpSecret &&
+            config.token && config.encodingAESKey
+        ),
+        corpId: config.corpId,
+        corpSecret: config.corpSecret,
+        agentId: normalizedAgentId,
+        token: config.token,
+        encodingAESKey: config.encodingAESKey,
+        config,
+        network,
+    };
+}
+
+function toResolvedAccount(params: {
+    accountId: string;
+    enabled: boolean;
+    name?: string;
+    config: WecomAccountConfig;
+    network?: WecomNetworkConfig;
+}): ResolvedWecomAccount {
+    const bot = params.config.bot
+        ? resolveBotAccount(params.accountId, params.config.bot, params.network)
+        : undefined;
+    const agent = params.config.agent
+        ? resolveAgentAccount(params.accountId, params.config.agent, params.network)
+        : undefined;
+    const configured = Boolean(bot?.configured || agent?.configured);
+    return {
+        accountId: params.accountId,
+        name: params.name,
+        enabled: params.enabled,
+        configured,
+        config: params.config,
+        bot,
+        agent,
+    };
+}
+
+function resolveMatrixAccounts(wecom: WecomConfig): Record<string, ResolvedWecomAccount> {
+    const accounts = wecom.accounts;
+    if (!accounts || typeof accounts !== "object") return {};
+
+    const resolved: Record<string, ResolvedWecomAccount> = {};
+    for (const [rawId, entry] of Object.entries(accounts)) {
+        const accountId = rawId.trim();
+        if (!accountId || !entry) continue;
+        const enabled = wecom.enabled !== false && entry.enabled !== false;
+        const config: WecomAccountConfig = {
+            enabled: entry.enabled,
+            name: entry.name,
+            bot: entry.bot,
+            agent: entry.agent,
+        };
+        resolved[accountId] = toResolvedAccount({
+            accountId,
+            enabled,
+            name: entry.name,
+            config,
+            network: wecom.network,
+        });
+    }
+    return resolved;
+}
+
+function resolveLegacyAccounts(wecom: WecomConfig): Record<string, ResolvedWecomAccount> {
+    const config: WecomAccountConfig = {
+        bot: wecom.bot,
+        agent: wecom.agent,
+    };
+    const account = toResolvedAccount({
+        accountId: DEFAULT_ACCOUNT_ID,
+        enabled: wecom.enabled !== false,
+        config,
+        network: wecom.network,
+    });
+    return { [DEFAULT_ACCOUNT_ID]: account };
+}
+
+function normalizeDuplicateKey(value: string): string {
+    return value.trim().toLowerCase();
+}
+
+function formatBotTokenConflict(params: { accountId: string; ownerAccountId: string }): WecomAccountConflict {
+    return {
+        type: "duplicate_bot_token",
+        accountId: params.accountId,
+        ownerAccountId: params.ownerAccountId,
+        message:
+            `Duplicate WeCom bot token: account "${params.accountId}" shares a token with account "${params.ownerAccountId}". ` +
+            "Keep one owner account per bot token.",
+    };
+}
+
+function formatBotAibotidConflict(params: { accountId: string; ownerAccountId: string }): WecomAccountConflict {
+    return {
+        type: "duplicate_bot_aibotid",
+        accountId: params.accountId,
+        ownerAccountId: params.ownerAccountId,
+        message:
+            `Duplicate WeCom bot aibotid: account "${params.accountId}" shares aibotid with account "${params.ownerAccountId}". ` +
+            "Keep one owner account per aibotid.",
+    };
+}
+
+function formatAgentIdConflict(params: { accountId: string; ownerAccountId: string; corpId: string; agentId: number }): WecomAccountConflict {
+    return {
+        type: "duplicate_agent_id",
+        accountId: params.accountId,
+        ownerAccountId: params.ownerAccountId,
+        message:
+            `Duplicate WeCom agent identity: account "${params.accountId}" shares corpId/agentId (${params.corpId}/${params.agentId}) with account "${params.ownerAccountId}". ` +
+            "Keep one owner account per corpId/agentId pair.",
+    };
+}
+
+function collectWecomAccountConflicts(cfg: OpenClawConfig): Map<string, WecomAccountConflict> {
+    const resolved = resolveWecomAccounts(cfg);
+    const conflicts = new Map<string, WecomAccountConflict>();
+    const botTokenOwners = new Map<string, string>();
+    const botAibotidOwners = new Map<string, string>();
+    const agentOwners = new Map<string, string>();
+
+    const accountIds = Object.keys(resolved.accounts).sort((a, b) => a.localeCompare(b));
+    for (const accountId of accountIds) {
+        const account = resolved.accounts[accountId];
+        if (!account || account.enabled === false) {
+            continue;
+        }
+        const bot = account.bot;
+        const agent = account.agent;
+
+        const botToken = bot?.token?.trim();
+        if (botToken) {
+            const key = normalizeDuplicateKey(botToken);
+            const owner = botTokenOwners.get(key);
+            if (owner && owner !== accountId) {
+                conflicts.set(accountId, formatBotTokenConflict({ accountId, ownerAccountId: owner }));
+            } else {
+                botTokenOwners.set(key, accountId);
+            }
         }
 
-        const agentId = resolveAgentId(kfAccount.open_kfid, accountId);
-        registerAccountMapping(kfAccount.open_kfid, {
-          name: kfAccount.name,
-          avatar: kfAccount.avatar,
-          agentId,
-        });
+        const botAibotid = bot?.config.aibotid?.trim();
+        if (botAibotid) {
+            const key = normalizeDuplicateKey(botAibotid);
+            const owner = botAibotidOwners.get(key);
+            if (owner && owner !== accountId) {
+                conflicts.set(accountId, formatBotAibotidConflict({ accountId, ownerAccountId: owner }));
+            } else {
+                botAibotidOwners.set(key, accountId);
+            }
+        }
 
-        const servicers = await listServicers(accessToken, kfAccount.open_kfid);
-        cacheServicers(kfAccount.open_kfid, servicers);
+        const corpId = agent?.corpId?.trim();
+        const agentId = agent?.agentId;
+        if (corpId && typeof agentId === "number" && Number.isFinite(agentId)) {
+            const key = `${normalizeDuplicateKey(corpId)}:${agentId}`;
+            const owner = agentOwners.get(key);
+            if (owner && owner !== accountId) {
+                conflicts.set(accountId, formatAgentIdConflict({ accountId, ownerAccountId: owner, corpId, agentId }));
+            } else {
+                agentOwners.set(key, accountId);
+            }
+        }
+    }
 
-        console.log(
-          `[wecom_kf] 注册账号: ${kfAccount.name} (${kfAccount.open_kfid}), ` +
-            `Agent: ${agentId}, 在线坐席: ${servicers.filter((s) => s.status === 0).length}`
+    return conflicts;
+}
+
+export function resolveWecomAccountConflict(params: {
+    cfg: OpenClawConfig;
+    accountId: string;
+}): WecomAccountConflict | undefined {
+    return collectWecomAccountConflicts(params.cfg).get(params.accountId);
+}
+
+export function listWecomAccountIds(cfg: OpenClawConfig): string[] {
+    const wecom = cfg.channels?.["wecom-cs"] as WecomConfig | undefined;
+    const mode = detectMode(wecom);
+    if (mode === "matrix" && wecom?.accounts) {
+        const ids = Object.keys(wecom.accounts)
+            .map((id) => id.trim())
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b));
+        if (ids.length > 0) return ids;
+    }
+    return [DEFAULT_ACCOUNT_ID];
+}
+
+export function resolveDefaultWecomAccountId(cfg: OpenClawConfig): string {
+    const wecom = cfg.channels?.["wecom-cs"] as WecomConfig | undefined;
+    const ids = listWecomAccountIds(cfg);
+    const preferred = wecom?.defaultAccount?.trim();
+    if (preferred && ids.includes(preferred)) return preferred;
+    return ids[0] ?? DEFAULT_ACCOUNT_ID;
+}
+
+export function resolveWecomAccount(params: {
+    cfg: OpenClawConfig;
+    accountId?: string | null;
+}): ResolvedWecomAccount {
+    const resolved = resolveWecomAccounts(params.cfg);
+    const fallbackId = resolved.defaultAccountId;
+    const requestedId = params.accountId?.trim();
+    if (requestedId) {
+        return (
+            resolved.accounts[requestedId] ??
+            toResolvedAccount({
+                accountId: requestedId,
+                enabled: false,
+                config: {},
+            })
         );
-      }
-    } catch (error) {
-      console.error(
-        `[wecom_kf] 初始化账号 ${accountId} 失败:`,
-        error
-      );
     }
-  }
+    return (
+        resolved.accounts[fallbackId] ??
+        resolved.accounts[DEFAULT_ACCOUNT_ID] ??
+        toResolvedAccount({
+            accountId: fallbackId,
+            enabled: false,
+            config: {},
+        })
+    );
 }
 
 /**
- * 根据 open_kfid 解析对应的 Agent ID
- * 优先级：customAgentMapping > accountId
+ * 解析 WeCom 账号 (双模式)
  */
-function resolveAgentId(openKfId: string, accountId: string): string {
-  const customAgent = customAgentMapping.get(openKfId);
-  if (customAgent) return customAgent;
-  return accountId === "default" ? "default" : accountId;
-}
+export function resolveWecomAccounts(cfg: OpenClawConfig): ResolvedWecomAccounts {
+    const wecom = cfg.channels?.["wecom-cs"] as WecomConfig | undefined;
 
-/**
- * 从配置中加载自定义 Agent 映射
- *
- * @param config - 渠道配置（channels.wecom-kf）
- */
-export function loadCustomAgentMappings(
-  config: Record<string, unknown>
-): void {
-  const accounts = config.accounts as
-    | Record<string, WecomAccountConfig & { agentMapping?: Record<string, string>; agentId?: string }>
-    | undefined;
-
-  if (!accounts) return;
-
-  customAgentMapping.clear();
-
-  for (const [accountId, accountCfg] of Object.entries(accounts)) {
-    if (accountCfg.agentMapping) {
-      for (const [kfId, agentId] of Object.entries(accountCfg.agentMapping)) {
-        customAgentMapping.set(kfId, agentId);
-        console.log(`[wecom_kf] Custom agent mapping: ${kfId} → ${agentId}`);
-      }
+    if (!wecom || wecom.enabled === false) {
+        return {
+            mode: "disabled",
+            defaultAccountId: DEFAULT_ACCOUNT_ID,
+            accounts: {},
+        };
     }
 
-    if (accountCfg.agentId && accountCfg.openKfId) {
-      if (!customAgentMapping.has(accountCfg.openKfId)) {
-        customAgentMapping.set(accountCfg.openKfId, accountCfg.agentId);
-        console.log(
-          `[wecom_kf] Account-level agent mapping: ${accountCfg.openKfId} → ${accountCfg.agentId}`
-        );
-      }
-    }
-  }
+    const mode = detectMode(wecom);
+    const accounts = mode === "matrix" ? resolveMatrixAccounts(wecom) : resolveLegacyAccounts(wecom);
+    const defaultAccountId = resolveDefaultWecomAccountId(cfg);
+    const defaultAccount = accounts[defaultAccountId] ?? accounts[DEFAULT_ACCOUNT_ID];
 
-  console.log(
-    `[wecom_kf] Loaded ${customAgentMapping.size} custom agent mapping(s)`
-  );
+    return {
+        mode,
+        defaultAccountId,
+        accounts,
+        bot: defaultAccount?.bot,
+        agent: defaultAccount?.agent,
+    };
 }
 
 /**
- * 手动设置单个自定义 Agent 映射
+ * 检查是否有任何模式启用
  */
-export function setCustomAgentMapping(
-  openKfId: string,
-  agentId: string
-): void {
-  customAgentMapping.set(openKfId, agentId);
-}
-
-/**
- * 获取所有自定义 Agent 映射（用于调试/管理接口）
- */
-export function getCustomAgentMappings(): Record<string, string> {
-  return Object.fromEntries(customAgentMapping);
-}
-
-/**
- * 注册账号映射
- */
-export function registerAccountMapping(
-  openKfId: string,
-  mapping: AccountMapping
-): void {
-  accountMappings.set(openKfId, mapping);
-}
-
-/**
- * 获取账号映射
- */
-export function getAccountMapping(
-  openKfId: string
-): AccountMapping | undefined {
-  return accountMappings.get(openKfId);
-}
-
-/**
- * 缓存接待人员列表
- */
-export function cacheServicers(
-  openKfId: string,
-  servicers: ServicerInfo[]
-): void {
-  servicerCache.set(openKfId, servicers);
-}
-
-/**
- * 获取缓存的接待人员列表
- */
-export function getCachedServicers(
-  openKfId: string
-): ServicerInfo[] | undefined {
-  return servicerCache.get(openKfId);
-}
-
-/**
- * 获取在线接待人员
- * servicer/list 中 status=0 表示接待中
- */
-export function getOnlineServicers(
-  openKfId: string
-): ServicerInfo[] {
-  const servicers = servicerCache.get(openKfId) ?? [];
-  return servicers.filter((s) => s.status === 0);
-}
-
-/**
- * 获取所有已注册的账号 ID（运行时缓存键）
- */
-export function getAllKfAccountIds(): string[] {
-  return Array.from(accountMappings.keys());
+export function isWecomEnabled(cfg: OpenClawConfig): boolean {
+    const resolved = resolveWecomAccounts(cfg);
+    return Object.values(resolved.accounts).some((account) => account.configured && account.enabled);
 }

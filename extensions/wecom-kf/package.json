@@ -1,7 +1,7 @@
 {
   "name": "@partme.ai/wecom-kf",
   "version": "0.1.11",
-  "description": "OpenClaw 企业微信微信客服渠道插件 — 对接企微微信客服 API，让 OpenClaw Agent 伪装为客服坐席",
+  "description": "OpenClaw WeCom KF (WeChat Work Customer Service) — multi-agent mapping + ICS REST API",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

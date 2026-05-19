@@ -1,8 +1,7 @@
 {
-  "id": "wecom_kf",
-  "name": "@partme.ai/wecom_kf",
-  "version": "0.1.11",
-  "description": "企业微信微信客服渠道插件 - WeChat Work Customer Service Channel",
+  "id": "wecom-kf",
+  "name": "@partme.ai/wecom-kf",
+  "description": "企业微信微信客服渠道插件 — 多客服映射 + 智能客服 REST API",
   "main": "dist/index.js",
   "channels": [
     "wecom-kf"
@@ -162,8 +161,8 @@
   },
   "channelConfigs": {
     "wecom-kf": {
-      "label": "@partme.ai/wecom_kf",
-      "description": "企业微信微信客服渠道插件 - WeChat Work Customer Service Channel",
+      "label": "WeCom KF（微信客服）",
+      "description": "企业微信微信客服 — 多客服映射 + 智能客服 REST API",
       "schema": {
         "type": "object",
         "additionalProperties": true,

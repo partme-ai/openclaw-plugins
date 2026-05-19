@@ -1,168 +1,194 @@
 /**
- * 企微客服消息与事件类型
- * 对应 kf/sync_msg、回调等 API 数据结构
+ * WeCom 消息类型定义
+ * Bot 和 Agent 模式共用
  */
 
 /**
- * 企微客服事件
+ * Bot 模式入站消息基础结构 (JSON)
  */
-export interface KfEvent {
-  /**
-   * 事件类型
-   * - enter_session: 客户进入会话
-   * - msg_send_fail: 消息发送失败
-   * - servicer_status_change: 接待人员状态变更
-   * - session_status_change: 会话状态变更
-   */
-  event_type: string;
-  /** 欢迎语 code（enter_session 事件，有效期 20 秒） */
-  welcome_code?: string;
-  /** 事件响应 code */
-  msg_code?: string;
-  /**
-   * 状态变更类型（session_status_change 事件）
-   * 1 = 从接待池接入, 2 = 转接, 3 = 结束, 4 = 重新接入
-   */
-  change_type?: number;
-  /**
-   * 消息发送失败类型（msg_send_fail 事件）
-   * 4 = 会话已过期, 5 = 会话已关闭, 6 = 超过 5 条限制, 10 = 用户拒收, 12 = 禁发类型
-   */
-  fail_type?: number;
-  /** 接待人员 userid（servicer_status_change 事件） */
-  servicer_userid?: string;
-  /**
-   * 接待人员变更后的状态（servicer_status_change 事件）
-   * 1 = 接待中, 2 = 停止接待
-   */
-  servicer_status?: number;
-  /** 场景值（enter_session 事件） */
-  scene?: string;
-  /** 场景参数 */
-  scene_param?: string;
-  /** 视频号信息 */
-  wechat_channels?: {
-    nickname: string;
-    scene: number;
-  };
-}
+/**
+ * **WecomBotInboundBase (Bot 入站消息基类)**
+ * 
+ * Bot 模式下 JSON 格式回调的基础字段。
+ * @property msgid 消息 ID
+ * @property aibotid 机器人 ID
+ * @property chattype 会话类型: "single" | "group"
+ * @property chatid 群聊 ID (仅群组时存在)
+ * @property response_url 下行回复 URL (用于被动响应转主动推送)
+ * @property from 发送者信息
+ */
+export type WecomBotInboundBase = {
+    msgid?: string;
+    aibotid?: string;
+    chattype?: "single" | "group";
+    chatid?: string;
+    response_url?: string;
+    from?: { userid?: string; corpid?: string };
+    msgtype?: string;
+    /** 附件数量 (部分消息存在) */
+    attachment_count?: number;
+};
+
+export type WecomBotInboundText = WecomBotInboundBase & {
+    msgtype: "text";
+    text?: { content?: string };
+    quote?: WecomInboundQuote;
+};
+
+export type WecomBotInboundVoice = WecomBotInboundBase & {
+    msgtype: "voice";
+    voice?: { content?: string };
+    quote?: WecomInboundQuote;
+};
+
+export type WecomBotInboundVideo = WecomBotInboundBase & {
+    msgtype: "video";
+    video?: { url?: string; aeskey?: string };
+    quote?: WecomInboundQuote;
+};
+
+export type WecomBotInboundStreamRefresh = WecomBotInboundBase & {
+    msgtype: "stream";
+    stream?: { id?: string };
+};
+
+export type WecomBotInboundEvent = WecomBotInboundBase & {
+    msgtype: "event";
+    create_time?: number;
+    event?: {
+        eventtype?: string;
+        [key: string]: unknown;
+    };
+};
 
 /**
- * 企微客服消息
- * 来自 kf/sync_msg API
+ * **WecomInboundQuote (引用消息)**
+ * 
+ * 消息中引用的原始内容（如回复某条消息）。
+ * 支持引用文本、图片、混合类型、语音、文件等。
  */
-export interface KfMessage {
-  /** 消息 ID */
-  msgid: string;
-  /** 客服账号 ID */
-  open_kfid: string;
-  /** 客户外部 ID */
-  external_userid: string;
-  /** 发送时间戳 */
-  send_time: number;
-  /**
-   * 消息来源
-   * 3 = 微信客户发送, 4 = 系统事件, 5 = 接待人员发送
-   */
-  origin: 3 | 4 | 5;
-  /** 消息类型 */
-  msgtype: string;
-  /** 文本消息内容 */
-  text?: { content: string };
-  /** 图片消息 */
-  image?: { media_id: string };
-  /** 语音消息 */
-  voice?: { media_id: string };
-  /** 地理位置消息 */
-  location?: {
-    name?: string;
-    address?: string;
-    latitude?: number;
-    longitude?: number;
-  };
-  /** 链接消息 */
-  link?: {
-    title?: string;
-    desc?: string;
-    url?: string;
-    pic_url?: string;
-  };
-  /** 小程序卡片消息 */
-  miniprogram?: {
-    title?: string;
-    appid?: string;
-    pagepath?: string;
-    thumb_media_id?: string;
-  };
-  /** 视频消息 */
-  video?: { media_id: string };
-  /** 文件消息 */
-  file?: { media_id: string };
-  /** 事件消息（origin=4 时） */
-  event?: KfEvent;
-}
+export type WecomInboundQuote = {
+    msgtype?: "text" | "image" | "mixed" | "voice" | "file" | "video";
+    /** 引用文本内容 */
+    text?: { content?: string };
+    /** 引用图片 URL */
+    image?: { url?: string };
+    /** 引用混合消息 (图文) */
+    mixed?: {
+        msg_item?: Array<{
+            msgtype: "text" | "image";
+            text?: { content?: string };
+            image?: { url?: string };
+        }>;
+    };
+    /** 引用语音 */
+    voice?: { content?: string };
+    /** 引用文件 */
+    file?: { url?: string };
+    /** 引用视频 */
+    video?: { url?: string };
+};
+
+export type WecomBotInboundMessage =
+    | WecomBotInboundText
+    | WecomBotInboundVoice
+    | WecomBotInboundVideo
+    | WecomBotInboundStreamRefresh
+    | WecomBotInboundEvent
+    | (WecomBotInboundBase & { quote?: WecomInboundQuote } & Record<string, unknown>);
 
 /**
- * 消息同步响应
- * 来自 kf/sync_msg API
+ * Agent 模式入站消息结构 (解析自 XML)
  */
-export interface SyncMsgResponse {
-  /** 错误码，0 为成功 */
-  errcode: number;
-  /** 错误信息 */
-  errmsg: string;
-  /** 下一次拉取的游标（必须持久化） */
-  next_cursor: string;
-  /** 是否还有更多消息 */
-  has_more: number;
-  /** 消息列表 */
-  msg_list: KfMessage[];
-}
+/**
+ * **WecomAgentInboundMessage (Agent 入站消息)**
+ * 
+ * Agent 模式下解析自 XML 的扁平化消息结构。
+ * 键名保持 PascalCase (如 `ToUserName`)。
+ */
+export type WecomAgentInboundMessage = {
+    ToUserName?: string;
+    FromUserName?: string;
+    CreateTime?: number;
+    MsgType?: string;
+    MsgId?: string;
+    AgentID?: number;
+    // 文本消息
+    Content?: string;
+    // 图片消息
+    PicUrl?: string;
+    MediaId?: string;
+    // 文件消息
+    FileName?: string;
+    // 语音消息
+    Format?: string;
+    Recognition?: string;
+    // 视频消息
+    ThumbMediaId?: string;
+    // 位置消息
+    Location_X?: number;
+    Location_Y?: number;
+    Scale?: number;
+    Label?: string;
+    // 链接消息
+    Title?: string;
+    Description?: string;
+    Url?: string;
+    // 事件消息
+    Event?: string;
+    EventKey?: string;
+    // 群聊
+    ChatId?: string;
+};
 
-// ─────────────────── Reply 管线类型（与 OpenClaw channel.reply 对齐）───────────────────
+/**
+ * 模板卡片类型
+ */
+/**
+ * **WecomTemplateCard (模板卡片)**
+ * 
+ * 复杂的交互式卡片结构。
+ * @property card_type 卡片类型: "text_notice" | "news_notice" | "button_interaction" ...
+ * @property source 来源信息
+ * @property main_title 主标题
+ * @property sub_title_text 副标题
+ * @property horizontal_content_list 水平排列的键值列表
+ * @property button_list 按钮列表
+ */
+export type WecomTemplateCard = {
+    card_type: "text_notice" | "news_notice" | "button_interaction" | "vote_interaction" | "multiple_interaction";
+    source?: { icon_url?: string; desc?: string; desc_color?: number };
+    main_title?: { title?: string; desc?: string };
+    task_id?: string;
+    button_list?: Array<{ text: string; style?: number; key: string }>;
+    sub_title_text?: string;
+    horizontal_content_list?: Array<{
+        keyname: string;
+        value?: string;
+        type?: number;
+        url?: string;
+        userid?: string;
+    }>;
+    card_action?: { type: number; url?: string; appid?: string; pagepath?: string };
+    action_menu?: { desc: string; action_list: Array<{ text: string; key: string }> };
+    select_list?: Array<{
+        question_key: string;
+        title?: string;
+        selected_id?: string;
+        option_list: Array<{ id: string; text: string }>;
+    }>;
+    submit_button?: { text: string; key: string };
+    checkbox?: {
+        question_key: string;
+        option_list: Array<{ id: string; text: string; is_checked?: boolean }>;
+        mode?: number;
+    };
+};
 
-export interface AgentRouteParams {
-  cfg: Record<string, unknown>;
-  channel: string;
-  accountId: string;
-  peer: { kind: string; id: string };
-}
-
-export interface AgentRouteResult {
-  agentId: string;
-  [key: string]: unknown;
-}
-
-export interface InboundContextParams {
-  channel: string;
-  accountId: string;
-  from: string;
-  text: string;
-  chatType: string;
-  extra?: Record<string, unknown>;
-}
-
-export interface InboundContext {
-  [key: string]: unknown;
-}
-
-export interface ReplyDispatcherParams {
-  deliver: (payload: { text: string }) => Promise<void>;
-}
-
-export interface ReplyDispatcher {
-  [key: string]: unknown;
-}
-
-export interface DispatchReplyParams {
-  ctx: InboundContext;
-  cfg: Record<string, unknown>;
-  dispatcher: ReplyDispatcher;
-  replyOptions: AgentRouteResult;
-}
-
-export interface SendTextParams {
-  text: string;
-  to: string;
-  account: import("./config.js").WecomAccountConfig;
-}
+/**
+ * 出站消息类型
+ */
+export type WecomOutboundMessage =
+    | { msgtype: "text"; text: { content: string } }
+    | { msgtype: "markdown"; markdown: { content: string } }
+    | { msgtype: "template_card"; template_card: WecomTemplateCard };
