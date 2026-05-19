@@ -59,10 +59,8 @@ function failedResult(message: string) {
 // ===================================================================
 
 function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').KnowledgeConfig {
-  const knowledgeConfig = ctx.runtimeConfig?.channels?.wecom?.knowledge as
-    | import('../types.js').KnowledgeConfig
-    | undefined;
-  if (knowledgeConfig?.enabled) {
+  const knowledgeConfig = (ctx.pluginConfig ?? {}) as import('../types.js').KnowledgeConfig;
+  if (knowledgeConfig.enabled ?? true) {
     return knowledgeConfig;
   }
   return { enabled: true };

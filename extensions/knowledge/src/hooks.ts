@@ -204,18 +204,19 @@ function createTokenizerIfConfigured(config: KnowledgeConfig): TokenizerService 
 /**
  * 注册知识库 hooks
  *
- * @param api - OpenClaw 插件 API
- * @param configPath - 可选的配置路径（如 "channels.wecom.knowledge"），
- *                     不传则默认读取插件自身的 knowledge 配置
+ * 直接从 api.pluginConfig 读取配置（与渠道无关，无需 configPath）。
+ * 保留 configPath 参数用于向后兼容——渠道插件仍可指定独立配置路径。
  */
 export function registerKnowledgeHooks(api: OpenClawPluginApi, configPath?: string): void {
-  // 在 register() 阶段通过闭包捕获配置
+  // 优先从 pluginConfig 读取（独立插件模式），fallback 到 configPath（库模式）
+  const pluginConfig = (api.pluginConfig ?? {}) as Record<string, unknown>;
+
   const knowledgeConfig = configPath
     ? configPath.split('.').reduce((obj: any, key: string) => obj?.[key], (api.config as any))
-    : (api.config as any)?.knowledge;
+    : pluginConfig;
 
   api.on('before_prompt_build', (_event: string, ctx: BeforePromptBuildContext): BeforePromptBuildResult | undefined | Promise<BeforePromptBuildResult | undefined> => {
-    return handleBeforePromptBuild(ctx, knowledgeConfig);
+    return handleBeforePromptBuild(ctx, knowledgeConfig ?? pluginConfig);
   });
 }
 

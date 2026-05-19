@@ -1,12 +1,14 @@
 {
-  "id": "openclaw-knowledge",
-  "name": "openclaw-knowledge",
-  "version": "0.1.0",
-  "description": "Knowledge base RAG engine for OpenClaw — embedding, vector store, hybrid retrieval, multi-type chunking (document/FAQ/conversation)",
+  "id": "knowledge",
+  "name": "Knowledge RAG",
+  "description": "知识库 RAG 引擎 — 自动检索注入 + AI 自主知识管理",
   "main": "dist/index.js",
   "channels": [],
   "commands": [],
   "skills": [],
+  "contracts": {
+    "tools": ["knowledge_add", "knowledge_query", "knowledge_update", "knowledge_delete"]
+  },
   "configSchema": {
     "type": "object",
     "properties": {
