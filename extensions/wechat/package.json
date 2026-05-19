@@ -74,6 +74,6 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "peerDependencies": {
-    "openclaw": ">=2026.2.24"
+    "openclaw": ">=2026.4.12"
   }
 }

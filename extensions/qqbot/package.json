@@ -59,7 +59,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": ">=2026.4.12"
   },
   "homepage": "https://github.com/tencent-connect/openclaw-qqbot",
   "repository": {
