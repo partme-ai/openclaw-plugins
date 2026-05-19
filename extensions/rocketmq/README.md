@@ -1,8 +1,8 @@
-# 高德地图（Amap）
+# RocketMQ
 
-**OpenClaw 插件 — 高德开放平台渠道与运营工具，公域 Agent-First 智能运营**
+**OpenClaw 插件 — 阿里云 RocketMQ 消息队列通道**
 
-\![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--amap-blue)
+\![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--rocketmq-blue)
 \![Node](https://img.shields.io/badge/Node.js-22+-green)
 \![License](https://img.shields.io/badge/License-MIT-green)
 
@@ -10,34 +10,12 @@
 
 ## 简介
 
-高德地图（`@partme.ai/openclaw-amap`）是 [OpenClaw](https://github.com/openclaw/openclaw) 的渠道插件，集成高德开放平台 Web 服务 API，提供 POI 搜索、周边查询、地点详情等工具。
-
-### 核心能力
-
-- `amap_query_poi` — POI 关键词搜索
-- `amap_query_around` — 周边搜索
-- `amap_place_detail` — 地点详情查询
+RocketMQ（`@partme.ai/openclaw-rocketmq`）是 [OpenClaw](https://github.com/openclaw/openclaw) 的通道插件，提供 RocketMQ 消息队列集成。
 
 ## 快速开始
 
-### 安装
-
 ```bash
-openclaw plugins install @partme.ai/openclaw-amap
-```
-
-### 配置
-
-```json
-{
-  "channels": {
-    "amap": {
-      "enabled": true,
-      "key": "your-amap-web-api-key",
-      "poi_id": "your-poi-id"
-    }
-  }
-}
+openclaw plugins install @partme.ai/openclaw-rocketmq
 ```
 
 ## 关于 openclaw-plugins
