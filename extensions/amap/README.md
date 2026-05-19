@@ -52,4 +52,4 @@ openclaw plugins install @partme.ai/openclaw-nacos
 
 **PartMe.AI** 专注于 AI 智能客服与企业级 AI Agent 基础设施，提供从企微/钉钉/飞书/QQ 渠道接入，到 RAG 知识库、多级记忆、监控运维的全栈解决方案。
 
-> 📧 联系我们：partme.ai | 🦞 [GitHub](https://github.com/partme-ai/openclaw-plugins)
+> 📧 联系我们：partmeai@gmail.com | 🦞 [GitHub](https://github.com/partme-ai/openclaw-plugins)
