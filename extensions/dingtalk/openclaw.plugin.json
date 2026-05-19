@@ -1,0 +1,22 @@
+{
+  "id": "ddingtalk",
+  "channels": [
+    "ddingtalk"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "channelConfigs": {
+    "ddingtalk": {
+      "label": "ddingtalk",
+      "description": "",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {}
+      }
+    }
+  }
+}

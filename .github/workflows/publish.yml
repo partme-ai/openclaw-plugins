@@ -1,0 +1,38 @@
+name: Publish Changed
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: "Publish a single plugin (leave empty to publish all changed)"
+        required: false
+      dry_run:
+        description: "Dry run (no actual publish)"
+        type: boolean
+        default: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Publish
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="--dry-run"
+          fi
+          if [ -n "${{ inputs.plugin }}" ]; then
+            ARGS="$ARGS --plugin ${{ inputs.plugin }}"
+          fi
+          node scripts/publish-changed.mjs $ARGS
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

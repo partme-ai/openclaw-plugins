@@ -1,0 +1,142 @@
+groups:
+  - name: openclaw.rules
+    interval: 15s
+    rules:
+      # ─────────── 可用性告警 ───────────
+      - alert: OpenClawDown
+        expr: openclaw_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "OpenClaw Prometheus plugin is down on {{ $labels.instance }}"
+          description: "Plugin has been down for more than 1 minute."
+
+      - alert: OpenClawNotReady
+        expr: openclaw_ready == 0
+        for: 2m
+        labels:
+          severity: warning
+          category: availability
+        annotations:
+          summary: "OpenClaw Prometheus plugin not ready on {{ $labels.instance }}"
+          description: "Plugin has not been ready for more than 2 minutes."
+
+      # ─────────── 采集健康告警 ───────────
+      - alert: OpenClawCollectorFailure
+        expr: openclaw_metrics_collector_success == 0
+        for: 2m
+        labels:
+          severity: warning
+          category: collector
+        annotations:
+          summary: "Collector {{ $labels.collector }} failed on {{ $labels.instance }}"
+          description: "Collector has been failing for more than 2 minutes. Check Gateway RPC connectivity."
+
+      - alert: OpenClawScrapeSlow
+        expr: openclaw_metrics_last_scrape_duration_seconds > 5
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "Metrics scrape > 5s on {{ $labels.instance }}"
+          description: "Scrape duration > 5s for more than 5 minutes. Current: {{ $value }}s"
+
+      # ─────────── 基数告警 ───────────
+      - alert: OpenClawHighCardinality
+        expr: openclaw_metrics_series_total > 100000
+        for: 5m
+        labels:
+          severity: warning
+          category: cardinality
+        annotations:
+          summary: "High cardinality ({{ $value }}) on {{ $labels.instance }}"
+          description: "Series count > 100K. Consider dropping high-cardinality labels."
+
+      # ─────────── Agent 性能告警 ───────────
+      - alert: OpenClawAgentP95Slow
+        expr: histogram_quantile(0.95, rate(openclaw_agent_run_duration_seconds_bucket[5m])) > 300
+        for: 10m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "Agent P95 > 5min on {{ $labels.instance }}"
+          description: "Agent P95 duration > 5 minutes for more than 10 minutes."
+
+      - alert: OpenClawAgentP99Slow
+        expr: histogram_quantile(0.99, rate(openclaw_agent_run_duration_seconds_bucket[5m])) > 600
+        for: 5m
+        labels:
+          severity: critical
+          category: performance
+        annotations:
+          summary: "Agent P99 > 10min on {{ $labels.instance }}"
+          description: "Agent P99 duration > 10 minutes for more than 5 minutes."
+
+      # ─────────── 渠道健康告警 ───────────
+      - alert: OpenClawChannelUnhealthy
+        expr: openclaw_sli_channel_health_ratio < 0.95
+        for: 5m
+        labels:
+          severity: warning
+          category: channel
+        annotations:
+          summary: "Channel health < 95% on {{ $labels.instance }}"
+          description: "Health ratio dropped below 0.95 for more than 5 minutes. Current: {{ $value }}"
+
+      # ─────────── 工具错误率告警 ───────────
+      - alert: OpenClawToolErrorHigh
+        expr: openclaw_sli_tool_error_ratio > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          category: tool
+        annotations:
+          summary: "Tool error rate > 10% on {{ $labels.instance }}"
+          description: "Tool error ratio > 0.1 for more than 5 minutes. Current: {{ $value }}"
+
+      # ─────────── 消息成功率 SLO 告警 ───────────
+      - alert: OpenClawMessageSLOViolation
+        expr: openclaw_sli_message_success_ratio < 0.999
+        for: 5m
+        labels:
+          severity: critical
+          category: slo
+        annotations:
+          summary: "Message SLO violated on {{ $labels.instance }}"
+          description: "Message success ratio < 99.9%. Current: {{ $value }}"
+
+      # ─────────── HTTP 延迟告警 ───────────
+      - alert: OpenClawHttpP95Slow
+        expr: openclaw_sli_http_request_p95_seconds > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          category: http
+        annotations:
+          summary: "HTTP P95 > 500ms on {{ $labels.instance }}"
+          description: "HTTP request P95 > 500ms for more than 5 minutes. Current: {{ $value }}s"
+
+      # ─────────── 模型认证过期告警 ───────────
+      - alert: OpenClawModelAuthExpiring
+        expr: openclaw_model_auth_provider_remaining_seconds < 86400
+        for: 5m
+        labels:
+          severity: warning
+          category: auth
+        annotations:
+          summary: "Provider {{ $labels.provider }} auth expiring on {{ $labels.instance }}"
+          description: "Provider auth expires in less than 24h ({{ $value }}s remaining)."
+
+      - alert: OpenClawModelAuthMissing
+        expr: openclaw_model_auth_provider_status{status="missing"} == 1
+        for: 5m
+        labels:
+          severity: critical
+          category: auth
+        annotations:
+          summary: "Provider {{ $labels.provider }} auth missing on {{ $labels.instance }}"
+          description: "Provider API key is missing. Service may be impacted."

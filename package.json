@@ -1,0 +1,23 @@
+{
+  "name": "openclaw-plugins",
+  "version": "1.0.0",
+  "private": true,
+  "description": "30+ Enterprise Plugins for OpenClaw. One Standard. Built for production. Not for demos.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/partme-ai/openclaw-plugins.git"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r exec tsc --noEmit",
+    "lint": "pnpm -r lint",
+    "clean": "pnpm -r clean",
+    "new-plugin": "node scripts/new-plugin.mjs",
+    "publish-changed": "node scripts/publish-changed.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

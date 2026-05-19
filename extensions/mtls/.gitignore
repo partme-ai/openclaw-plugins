@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tgz
+*.log
+.env
+.env.local
+coverage/
+test-certs/
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/

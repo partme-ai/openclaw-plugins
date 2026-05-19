@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["extensions/**", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json"]
+  pull_request:
+    branches: [main]
+    paths: ["extensions/**", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json"]
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      plugins: ${{ steps.detect.outputs.plugins }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: detect
+        run: |
+          PLUGINS=$(node scripts/ci-detect.mjs --json --base origin/main)
+          echo "plugins=$PLUGINS" >> $GITHUB_OUTPUT
+          echo "Detected: $PLUGINS"
+
+  build-and-test:
+    needs: detect
+    if: needs.detect.outputs.plugins != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        plugin: ${{ fromJson(needs.detect.outputs.plugins) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --filter "./extensions/${{ matrix.plugin }}"
+
+      - name: Type check
+        run: cd extensions/${{ matrix.plugin }} && npx tsc --noEmit
+
+      - name: Test
+        run: cd extensions/${{ matrix.plugin }} && npx vitest run --reporter=verbose

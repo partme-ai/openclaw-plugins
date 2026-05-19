@@ -1,0 +1,168 @@
+{
+  "id": "openclaw-rockermq",
+  "version": "2026.5.19",
+  "description": "RocketMQ channel plugin for OpenClaw.",
+  "main": "dist/index.js",
+  "channels": ["rockermq"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "contracts": {
+    "tools": ["mq.publish"]
+  },
+  "channelConfigs": {
+    "rockermq": {
+      "schema": {
+        "type": "object",
+        "description": "RocketMQ channel configuration for openclaw.json -> channels.rockermq",
+        "additionalProperties": false,
+        "properties": {
+          "endpoints": {
+            "type": "string",
+            "description": "RocketMQ proxy endpoints, for example 127.0.0.1:8081"
+          },
+          "namespace": {
+            "type": "string",
+            "default": "",
+            "description": "RocketMQ namespace"
+          },
+          "topicPrefix": {
+            "type": "string",
+            "default": "openclaw",
+            "description": "Prefix used by the standard topic format"
+          },
+          "sessionCredentials": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "accessKey": { "type": "string" },
+              "accessSecret": { "type": "string" },
+              "securityToken": { "type": "string" }
+            }
+          },
+          "producer": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "groupId": { "type": "string", "default": "openclaw-rockermq-producer" },
+              "requestTimeout": { "type": "number", "default": 5000 }
+            },
+            "default": { "groupId": "openclaw-rockermq-producer", "requestTimeout": 5000 }
+          },
+          "consumer": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "groupId": { "type": "string", "default": "openclaw-rockermq-consumer" },
+              "subscriptions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "topic": { "type": "string" },
+                    "filterExpression": { "type": "string", "default": "*" }
+                  },
+                  "required": ["topic"]
+                },
+                "default": []
+              },
+              "maxCacheMessageCount": { "type": "number", "default": 1024 },
+              "maxCacheMessageSizeInBytes": { "type": "number", "default": 67108864 },
+              "longPollingTimeout": { "type": "number", "default": 30000 },
+              "requestTimeout": { "type": "number", "default": 3000 },
+              "reconsumeOnError": { "type": "boolean", "default": true }
+            },
+            "default": {
+              "groupId": "openclaw-rockermq-consumer",
+              "subscriptions": [],
+              "maxCacheMessageCount": 1024,
+              "maxCacheMessageSizeInBytes": 67108864,
+              "longPollingTimeout": 30000,
+              "requestTimeout": 3000,
+              "reconsumeOnError": true
+            }
+          },
+          "topicBindings": {
+            "type": "array",
+            "default": [],
+            "description": "Explicit topic/tag to agent bindings",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "topic": { "type": "string" },
+                "tag": { "type": "string", "default": "*" },
+                "agentId": { "type": "string" },
+                "accountId": { "type": "string", "default": "default" },
+                "peerId": { "type": "string", "description": "Peer identifier for session routing" },
+                "replyTopic": { "type": "string" },
+                "replyTag": { "type": "string" }
+              },
+              "required": ["topic", "agentId"]
+            }
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["jsonTextOrPlain", "jsonOnly", "plainText"],
+                "default": "jsonTextOrPlain"
+              }
+            },
+            "default": { "mode": "jsonTextOrPlain" }
+          },
+          "dispatch": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "mode": { "type": "string", "enum": ["reply-pipeline", "embedded-agent", "subagent"], "default": "embedded-agent" },
+              "timeoutMs": { "type": "number", "default": 120000 },
+              "reply": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": { "type": "boolean", "default": true }
+                },
+                "default": { "enabled": true }
+              }
+            },
+            "default": { "mode": "embedded-agent", "timeoutMs": 120000, "reply": { "enabled": true } }
+          },
+          "idempotency": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean", "default": false },
+              "ttlMs": { "type": "number", "default": 600000 },
+              "maxEntries": { "type": "number", "default": 10000 }
+            },
+            "default": { "enabled": false, "ttlMs": 600000, "maxEntries": 10000 }
+          }
+        },
+        "required": ["endpoints"]
+      },
+      "uiHints": {
+        "endpoints": {
+          "label": "Proxy endpoints",
+          "placeholder": "127.0.0.1:8081"
+        },
+        "sessionCredentials.accessKey": {
+          "label": "Access Key"
+        },
+        "sessionCredentials.accessSecret": {
+          "label": "Access Secret",
+          "sensitive": true
+        },
+        "sessionCredentials.securityToken": {
+          "label": "Security Token",
+          "sensitive": true
+        }
+      }
+    }
+  }
+}

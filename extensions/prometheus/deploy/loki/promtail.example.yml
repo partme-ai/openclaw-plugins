@@ -1,0 +1,31 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions-openclaw.yaml
+
+clients:
+  - url: http://127.0.0.1:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: openclaw-jsonl
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: openclaw
+          instance: gateway-local
+          __path__: /var/log/openclaw/openclaw-*.log
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            subsystem: subsystem
+            logger: logger
+            msg: msg
+      - labels:
+          level:
+          subsystem:
+      - output:
+          source: msg

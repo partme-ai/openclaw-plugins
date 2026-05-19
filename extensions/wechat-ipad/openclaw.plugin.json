@@ -1,0 +1,130 @@
+{
+  "id": "openclaw_wechat_ipad",
+  "name": "openclaw_wechat_ipad",
+  "version": "0.1.0",
+  "description": "WeChat iPad protocol bridge for OpenClaw — personal WeChat account integration via iPad protocol service",
+  "main": "dist/index.js",
+  "channels": [
+    "wechat-ipad"
+  ],
+  "commands": [
+    "wechat-ipad-status"
+  ],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "serviceUrl": {
+        "type": "string",
+        "default": "ws://127.0.0.1:5555",
+        "description": "iPad protocol service WebSocket endpoint"
+      },
+      "apiUrl": {
+        "type": "string",
+        "default": "http://127.0.0.1:5556",
+        "description": "iPad protocol service HTTP API endpoint"
+      },
+      "reconnect": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Auto-reconnect on disconnect"
+          },
+          "intervalMs": {
+            "type": "number",
+            "default": 5000,
+            "description": "Reconnect interval in milliseconds"
+          },
+          "maxRetries": {
+            "type": "number",
+            "default": 30,
+            "description": "Maximum reconnect attempts (0 = infinite)"
+          }
+        }
+      },
+      "auth": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Authentication token for iPad protocol service"
+          }
+        }
+      },
+      "message": {
+        "type": "object",
+        "properties": {
+          "handleGroup": {
+            "type": "boolean",
+            "default": false,
+            "description": "Handle group messages (may cause high load)"
+          },
+          "groupWhitelist": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Group wxid whitelist (empty = all groups when handleGroup is true)"
+          },
+          "ignoreself": {
+            "type": "boolean",
+            "default": true,
+            "description": "Ignore messages sent by the logged-in account"
+          }
+        }
+      }
+    },
+    "required": [
+      "serviceUrl"
+    ]
+  },
+  "uiHints": {
+    "serviceUrl": {
+      "label": "iPad 协议服务地址 (WebSocket)",
+      "placeholder": "ws://127.0.0.1:5555"
+    },
+    "apiUrl": {
+      "label": "iPad 协议服务地址 (HTTP API)",
+      "placeholder": "http://127.0.0.1:5556"
+    },
+    "auth.token": {
+      "label": "认证 Token",
+      "type": "password"
+    },
+    "reconnect.enabled": {
+      "label": "自动重连",
+      "type": "toggle"
+    },
+    "reconnect.intervalMs": {
+      "label": "重连间隔 (ms)",
+      "placeholder": "5000"
+    },
+    "message.handleGroup": {
+      "label": "处理群消息",
+      "type": "toggle"
+    },
+    "message.ignoreself": {
+      "label": "忽略自身消息",
+      "type": "toggle"
+    }
+  },
+  "capabilities": {
+    "protocolBridge": true,
+    "wechat": true,
+    "ipadProtocol": true
+  },
+  "channelConfigs": {
+    "wechat-ipad": {
+      "label": "openclaw_wechat_ipad",
+      "description": "WeChat iPad protocol bridge for OpenClaw — personal WeChat account integration via iPad protocol service",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {}
+      }
+    }
+  }
+}

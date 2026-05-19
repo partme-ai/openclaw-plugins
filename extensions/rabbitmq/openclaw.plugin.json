@@ -1,0 +1,287 @@
+{
+  "id": "openclaw-rabbitmq",
+  "version": "2026.5.12",
+  "description": "RabbitMQ channel plugin for OpenClaw with multi-agent async collaboration and topic subscription support.",
+  "main": "dist/index.js",
+  "channels": [
+    "rabbitmq"
+  ],
+  "configSchema": {
+    "type": "object",
+    "description": "RabbitMQ channel configuration for openclaw.json -> channels.rabbitmq",
+    "additionalProperties": false,
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "RabbitMQ server URL (amqp(s)://user:pass@host:port/vhost)"
+      },
+      "exchange": {
+        "type": "string",
+        "default": "openclaw",
+        "description": "Exchange name"
+      },
+      "exchangeType": {
+        "type": "string",
+        "enum": [
+          "topic",
+          "direct",
+          "fanout",
+          "headers"
+        ],
+        "default": "topic",
+        "description": "Exchange type"
+      },
+      "exchangeDurable": {
+        "type": "boolean",
+        "default": true,
+        "description": "Declare exchange as durable"
+      },
+      "topicPrefix": {
+        "type": "string",
+        "default": "openclaw",
+        "description": "Prefix used by the standard topic format"
+      },
+      "subscribeTopics": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "description": "Topic patterns to subscribe to (supports * / #; + treated as *)"
+      },
+      "topicBindings": {
+        "type": "array",
+        "default": [],
+        "description": "Explicit topicPattern -> agentId bindings",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "topicPattern": {
+              "type": "string"
+            },
+            "agentId": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string",
+              "default": "default"
+            },
+            "replyTopicPattern": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "topicPattern",
+            "agentId"
+          ]
+        }
+      },
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "jsonTextOrPlain",
+              "jsonOnly",
+              "plainText"
+            ],
+            "default": "jsonTextOrPlain"
+          }
+        },
+        "default": {
+          "mode": "jsonTextOrPlain"
+        }
+      },
+      "queue": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Optional durable queue name. When omitted, an exclusive auto-generated queue is used."
+          },
+          "durable": {
+            "type": "boolean",
+            "default": true
+          },
+          "exclusive": {
+            "type": "boolean",
+            "default": false
+          },
+          "autoDelete": {
+            "type": "boolean",
+            "default": false
+          },
+          "quorum": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "default": {
+          "durable": true,
+          "exclusive": false,
+          "autoDelete": false,
+          "quorum": false
+        }
+      },
+      "retry": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "delayMs": {
+            "type": "number",
+            "default": 5000
+          },
+          "maxAttempts": {
+            "type": "number",
+            "default": 5
+          },
+          "queueSuffix": {
+            "type": "string",
+            "default": ".retry"
+          }
+        },
+        "default": {
+          "enabled": false,
+          "delayMs": 5000,
+          "maxAttempts": 5,
+          "queueSuffix": ".retry"
+        }
+      },
+      "connection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "timeoutMs": {
+            "type": "number",
+            "default": 30000
+          },
+          "heartbeatSeconds": {
+            "type": "number",
+            "default": 30
+          },
+          "reconnectAttempts": {
+            "type": "number",
+            "default": 5
+          },
+          "reconnectDelayMs": {
+            "type": "number",
+            "default": 5000
+          }
+        },
+        "default": {
+          "timeoutMs": 30000,
+          "heartbeatSeconds": 30,
+          "reconnectAttempts": 5,
+          "reconnectDelayMs": 5000
+        }
+      },
+      "consume": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "prefetch": {
+            "type": "number",
+            "default": 50
+          },
+          "concurrency": {
+            "type": "number",
+            "default": 4
+          },
+          "requeueOnError": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "default": {
+          "prefetch": 50,
+          "concurrency": 4,
+          "requeueOnError": true
+        }
+      },
+      "dispatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "reply-pipeline",
+              "embedded-agent",
+              "subagent"
+            ],
+            "default": "embedded-agent"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "default": 120000
+          },
+          "reply": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "default": {
+              "enabled": true
+            }
+          }
+        },
+        "default": {
+          "mode": "embedded-agent",
+          "timeoutMs": 120000,
+          "reply": {
+            "enabled": true
+          }
+        }
+      },
+      "idempotency": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "ttlMs": {
+            "type": "number",
+            "default": 600000
+          },
+          "maxEntries": {
+            "type": "number",
+            "default": 10000
+          }
+        },
+        "default": {
+          "enabled": false,
+          "ttlMs": 600000,
+          "maxEntries": 10000
+        }
+      }
+    },
+    "required": [
+      "url"
+    ]
+  },
+  "channelConfigs": {
+    "rabbitmq": {
+      "label": "rabbitmq",
+      "description": "RabbitMQ channel plugin for OpenClaw with multi-agent async collaboration and topic subscription support.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {}
+      }
+    }
+  }
+}

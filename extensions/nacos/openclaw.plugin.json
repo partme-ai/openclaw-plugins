@@ -1,0 +1,133 @@
+{
+  "id": "openclaw-nacos",
+  "name": "@partme.ai/openclaw-nacos",
+  "version": "2026.5.12.2",
+  "description": "Nacos Config Center merge and Gateway/Hooks naming registration with webhook cluster discovery",
+  "main": "dist/index.js",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "services": ["openclaw-nacos-config", "openclaw-nacos-naming", "openclaw-nacos-cluster"]
+  },
+  "setup": {
+    "configMigrations": [],
+    "requiresRuntime": true
+  },
+  "configSchema": {
+    "type": "object",
+    "description": "Flat keys and/or Spring-style `nacos` block (see README). Requires npm package `nacos` 2.x.",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "description": "When false, skip the entire plugin"
+      },
+      "serverList": {
+        "type": "string",
+        "description": "Nacos server addresses, e.g. 127.0.0.1:8848 (also set by Spring nacos.server-addr)"
+      },
+      "namingServerList": {
+        "type": "string",
+        "description": "Optional addresses for Naming only; defaults to serverList (Spring: nacos.discovery.server-addr)"
+      },
+      "configServerList": {
+        "type": "string",
+        "description": "Optional addresses for Config client only; defaults to serverList (Spring: nacos.config.server-addr)"
+      },
+      "namespace": {
+        "type": "string",
+        "description": "Nacos namespace for naming; default for config if configCenter.namespace unset"
+      },
+      "username": {
+        "type": "string",
+        "description": "Nacos username (naming + config)"
+      },
+      "password": {
+        "type": "string",
+        "secret": true,
+        "description": "Nacos password"
+      },
+      "nacos": {
+        "type": "object",
+        "description": "Spring Cloud style nested block: server-addr, discovery, config (shared-configs, data-id). Merged into flat fields before validation.",
+        "additionalProperties": true
+      },
+      "naming": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "When false, skip naming registration only"
+          }
+        }
+      },
+      "configCenter": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "When true, pull sharedConfigs and merge into openclaw.json"
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Config namespace (tenant); overrides top-level namespace for Config client"
+          },
+          "primaryConfigDataId": {
+            "type": "string",
+            "description": "Primary Nacos dataId holding the COMPLETE openclaw.json. When set, replaces the base config snapshot before layering sharedConfigs/pluginConfigIds on top."
+          },
+          "primaryConfigGroup": {
+            "type": "string",
+            "description": "Group for primaryConfigDataId (defaults to DEFAULT_GROUP)."
+          },
+          "sharedConfigs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "dataId": { "type": "string" },
+                "data-id": { "type": "string" },
+                "group": { "type": "string" },
+                "refresh": { "type": "boolean" }
+              }
+            }
+          },
+          "shared-configs": {
+            "type": "array",
+            "description": "Spring alias for sharedConfigs",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "applicationDataId": { "type": "string" },
+          "profile": { "type": "string" },
+          "pluginConfigIds": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "skipValidation": { "type": "boolean" }
+        }
+      },
+      "serviceName": { "type": "string" },
+      "groupName": { "type": "string" },
+      "clusterName": { "type": "string" },
+      "weight": { "type": "number" },
+      "ephemeral": { "type": "boolean" },
+      "registerIp": { "type": "string" },
+      "metadata": {
+        "type": "object",
+        "additionalProperties": { "type": "string" }
+      },
+      "clusterDiscovery": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "When false, skip cluster peer discovery. Default true (when naming is active)."
+          }
+        }
+      }
+    }
+  }
+}

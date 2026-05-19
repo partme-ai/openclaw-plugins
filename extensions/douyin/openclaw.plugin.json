@@ -1,0 +1,46 @@
+{
+  "id": "douyin",
+  "name": "@partme.ai/openclaw-douyin",
+  "version": "0.1.0",
+  "description": "抖音开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
+  "main": "dist/index.js",
+  "channels": [
+    "douyin"
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "app_key": {
+        "type": "string",
+        "description": "抖音开放平台 AppKey"
+      },
+      "app_secret": {
+        "type": "string",
+        "description": "抖音开放平台 AppSecret"
+      },
+      "callback_url": {
+        "type": "string",
+        "description": "Webhook 回调 URL"
+      },
+      "shop_id": {
+        "type": "string",
+        "description": "店铺/POI ID（单店铺）"
+      },
+      "webhook_secret": {
+        "type": "string",
+        "description": "Webhook 验签密钥（若平台要求）"
+      }
+    }
+  },
+  "channelConfigs": {
+    "douyin": {
+      "label": "@partme.ai/openclaw-douyin",
+      "description": "抖音开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {}
+      }
+    }
+  }
+}

@@ -1,0 +1,163 @@
+{
+  "id": "wecom_kf",
+  "name": "@partme.ai/wecom_kf",
+  "version": "0.1.11",
+  "description": "企业微信微信客服渠道插件 - WeChat Work Customer Service Channel",
+  "main": "dist/index.js",
+  "channels": [
+    "wecom-kf"
+  ],
+  "commands": [
+    "kf-status"
+  ],
+  "skills": [
+    "skills"
+  ],
+  "capabilities": {
+    "humanTransfer": true,
+    "satisfactionSurvey": true,
+    "sessionManagement": true
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "corpId": {
+        "type": "string",
+        "description": "企业微信 Corp ID"
+      },
+      "corpSecret": {
+        "type": "string",
+        "description": "企业微信客服应用 Secret"
+      },
+      "token": {
+        "type": "string",
+        "description": "回调 Token（用于消息签名验证）"
+      },
+      "encodingAESKey": {
+        "type": "string",
+        "description": "回调 EncodingAESKey（用于消息加解密）"
+      },
+      "session": {
+        "type": "object",
+        "properties": {
+          "dmScope": {
+            "type": "string",
+            "enum": [
+              "per-peer",
+              "per-channel-peer",
+              "per-account-channel-peer"
+            ],
+            "default": "per-account-channel-peer",
+            "description": "Session isolation scope (recommended: per-account-channel-peer)"
+          },
+          "idleResetMinutes": {
+            "type": "number",
+            "default": 2880,
+            "description": "Idle session reset time in minutes (default: 48h)"
+          }
+        }
+      },
+      "eventMessages": {
+        "type": "object",
+        "properties": {
+          "welcome": {
+            "type": "string",
+            "default": "您好，我是 AI 智能客服，请问有什么可以帮您？",
+            "description": "Session welcome message"
+          },
+          "ending": {
+            "type": "string",
+            "default": "感谢您的咨询，祝您生活愉快！",
+            "description": "Session ending message"
+          },
+          "satisfaction": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Enable satisfaction survey"
+              },
+              "prompt": {
+                "type": "string",
+                "default": "请对本次服务进行评价",
+                "description": "Satisfaction survey prompt"
+              }
+            }
+          }
+        }
+      },
+      "humanTransfer": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable human agent transfer capability"
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "转人工",
+              "人工客服",
+              "人工"
+            ],
+            "description": "Keywords that trigger human transfer"
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "corpId": {
+      "label": "Corp ID",
+      "placeholder": "ww..."
+    },
+    "corpSecret": {
+      "label": "Corp Secret",
+      "type": "password"
+    },
+    "token": {
+      "label": "Callback Token",
+      "type": "password"
+    },
+    "encodingAESKey": {
+      "label": "Encoding AES Key",
+      "type": "password"
+    },
+    "session.dmScope": {
+      "label": "Session Scope",
+      "type": "select"
+    },
+    "session.idleResetMinutes": {
+      "label": "Idle Reset (minutes)",
+      "placeholder": "2880"
+    },
+    "eventMessages.welcome": {
+      "label": "Welcome Message",
+      "type": "textarea"
+    },
+    "eventMessages.ending": {
+      "label": "Ending Message",
+      "type": "textarea"
+    },
+    "eventMessages.satisfaction.enabled": {
+      "label": "Enable Satisfaction Survey",
+      "type": "toggle"
+    },
+    "eventMessages.satisfaction.prompt": {
+      "label": "Survey Prompt"
+    },
+    "humanTransfer.enabled": {
+      "label": "Enable Human Transfer",
+      "type": "toggle"
+    },
+    "humanTransfer.keywords": {
+      "label": "Transfer Keywords",
+      "placeholder": "转人工,人工客服"
+    }
+  }
+}

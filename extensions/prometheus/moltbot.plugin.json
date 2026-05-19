@@ -1,0 +1,109 @@
+{
+  "id": "openclaw-prometheus",
+  "name": "openclaw-prometheus",
+  "version": "0.3.0",
+  "description": "Prometheus metrics exporter for OpenClaw Gateway - built on official plugin SDK runtime, hooks, events, and plugin-owned routes",
+  "main": "dist/index.js",
+  "channels": [],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "port": {
+        "type": "number",
+        "default": 9090,
+        "description": "Dedicated metrics HTTP port (0 to use Gateway port)"
+      },
+      "path": {
+        "type": "string",
+        "default": "/metrics",
+        "description": "Metrics endpoint path"
+      },
+      "collectIntervalMs": {
+        "type": "number",
+        "default": 15000,
+        "description": "Metrics collection interval"
+      },
+      "snapshotIntervalMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Runtime snapshot refresh interval for model auth and channel activity probes"
+      },
+      "workloadWindowMs": {
+        "type": "number",
+        "default": 300000,
+        "description": "Rolling workload observation window in milliseconds"
+      },
+      "includeRuntime": {
+        "type": "boolean",
+        "default": true,
+        "description": "Include Node.js runtime metrics"
+      },
+      "monitoredProviders": {
+        "type": "array",
+        "description": "Provider ids to check via api.runtime.modelAuth.resolveApiKeyForProvider",
+        "items": {
+          "type": "string"
+        },
+        "default": []
+      },
+      "instance": {
+        "type": "string",
+        "default": "",
+        "description": "Instance label for multi-deployment (e.g., pod name, hostname)"
+      },
+      "scrapeAuth": {
+        "type": "object",
+        "description": "Optional Bearer token check on /metrics routes (token via openclaw-prometheus_BEARER_TOKEN recommended)",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Require Authorization: Bearer on metrics HTTP routes"
+          },
+          "bearerToken": {
+            "type": "string",
+            "description": "Dev-only token; production should use env openclaw-prometheus_BEARER_TOKEN"
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "port": {
+      "label": "Metrics Port",
+      "placeholder": "9090"
+    },
+    "path": {
+      "label": "Metrics Path",
+      "placeholder": "/metrics"
+    },
+    "collectIntervalMs": {
+      "label": "Collect Interval (ms)",
+      "placeholder": "15000"
+    },
+    "snapshotIntervalMs": {
+      "label": "Snapshot Interval (ms)",
+      "placeholder": "30000"
+    },
+    "workloadWindowMs": {
+      "label": "Workload Window (ms)",
+      "placeholder": "300000"
+    },
+    "includeRuntime": {
+      "label": "Include Runtime Metrics",
+      "type": "toggle"
+    },
+    "monitoredProviders": {
+      "label": "Monitored Providers"
+    },
+    "scrapeAuth.enabled": {
+      "label": "Scrape auth (Bearer)",
+      "type": "toggle"
+    }
+  },
+  "capabilities": {
+    "metricsExport": true
+  }
+}

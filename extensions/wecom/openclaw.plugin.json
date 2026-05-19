@@ -1,0 +1,24 @@
+{
+  "id": "wecom",
+  "channels": ["wecom"],
+  "skills": ["./skills"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "channelConfigs": {
+    "wecom": {
+      "label": "WeCom（企业微信）",
+      "description": "企业微信智能机器人与自建应用双模式接入，支持 WebSocket 长连接、Webhook 回调和 Agent HTTP API",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {}
+      },
+      "uiHints": {
+        "enabled": { "label": "启用企业微信通道", "type": "toggle" }
+      }
+    }
+  }
+}

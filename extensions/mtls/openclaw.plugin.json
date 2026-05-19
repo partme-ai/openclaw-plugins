@@ -1,0 +1,171 @@
+{
+  "id": "openclaw-mtls",
+  "name": "openclaw-mtls",
+  "version": "0.1.0",
+  "description": "mTLS mutual TLS authentication plugin for OpenClaw",
+  "main": "dist/index.js",
+  "security": [
+    "mtls"
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable mTLS authentication"
+      },
+      "tls": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable TLS"
+          },
+          "certFile": {
+            "type": "string",
+            "description": "Server certificate file path"
+          },
+          "keyFile": {
+            "type": "string",
+            "description": "Server private key file path"
+          },
+          "caFile": {
+            "type": "string",
+            "description": "CA certificate file path for client cert verification"
+          },
+          "requestCert": {
+            "type": "boolean",
+            "default": true,
+            "description": "Request client certificate"
+          },
+          "rejectUnauthorized": {
+            "type": "boolean",
+            "default": true,
+            "description": "Reject unauthorized clients without valid certificate"
+          }
+        }
+      },
+      "protectedPaths": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "match": {
+              "type": "string",
+              "enum": ["exact", "prefix"]
+            },
+            "allowUnauthenticated": {
+              "type": "boolean"
+            }
+          }
+        },
+        "default": [
+          { "path": "/", "match": "prefix", "allowUnauthenticated": false }
+        ]
+      },
+      "allowedClients": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "cn": {
+              "type": "string",
+              "description": "Allowed client certificate CN"
+            },
+            "issuer": {
+              "type": "string",
+              "description": "Allowed client certificate issuer"
+            },
+            "fingerprint": {
+              "type": "string",
+              "description": "Allowed client certificate fingerprint"
+            }
+          }
+        },
+        "default": []
+      },
+      "skipPaths": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": ["/health", "/auth/status", "/mtls/status"]
+      },
+      "passthrough": {
+        "type": "boolean",
+        "default": false,
+        "description": "Allow unauthenticated requests when no certificate provided (instead of rejecting)"
+      },
+      "headerName": {
+        "type": "string",
+        "default": "X-Client-Cert",
+        "description": "HTTP header name to pass client cert info to downstream"
+      },
+      "headerCertField": {
+        "type": "string",
+        "default": "subject",
+        "description": "Which cert field to extract for the header value"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable mTLS",
+      "type": "toggle"
+    },
+    "tls.enabled": {
+      "label": "Enable TLS",
+      "type": "toggle"
+    },
+    "tls.certFile": {
+      "label": "Server Certificate",
+      "type": "file"
+    },
+    "tls.keyFile": {
+      "label": "Server Key",
+      "type": "file"
+    },
+    "tls.caFile": {
+      "label": "CA Certificate (for client certs)",
+      "type": "file"
+    },
+    "tls.requestCert": {
+      "label": "Request Client Certificate",
+      "type": "toggle"
+    },
+    "tls.rejectUnauthorized": {
+      "label": "Reject Unauthorized",
+      "type": "toggle"
+    },
+    "protectedPaths": {
+      "label": "Protected Paths"
+    },
+    "allowedClients": {
+      "label": "Allowed Clients (Whitelist)"
+    },
+    "skipPaths": {
+      "label": "Skip Authentication Paths"
+    },
+    "passthrough": {
+      "label": "Passthrough Mode",
+      "description": "Allow requests without certificate instead of rejecting"
+    },
+    "headerName": {
+      "label": "Cert Info Header"
+    },
+    "headerCertField": {
+      "label": "Cert Field for Header"
+    }
+  },
+  "capabilities": {
+    "security": true,
+    "mtls": true,
+    "tls": true,
+    "authentication": true
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "id": "openclaw-redis-stream",
+  "version": "2026.5.18",
+  "description": "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
+  "main": "dist/index.js",
+  "channels": ["redis-stream"],
+  "activation": {
+    "onStartup": true,
+    "onChannels": ["redis-stream"]
+  },
+  "contracts": {
+    "tools": []
+  },
+  "channelConfigs": {
+    "redis-stream": {
+      "label": "Redis Stream",
+      "description": "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
+      "schema": {
+    "type": "object",
+    "description": "Redis channel configuration for openclaw.json -> channels.redis-stream",
+    "additionalProperties": true,
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "Redis connection URL (e.g. redis://localhost:6379)"
+      },
+      "channelMode": {
+        "type": "string",
+        "enum": ["pubsub", "stream"],
+        "default": "pubsub",
+        "description": "Inbound mode: pubsub (Redis Pub/Sub channels) or stream (Redis Stream consumer group)"
+      },
+      "defaultAgentId": {
+        "type": "string",
+        "default": "",
+        "description": "Fallback agent ID when no channel binding or standard format matches. Empty = skip unroutable messages."
+      },
+      "subscribeChannels": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Redis channels/patterns to subscribe (supports * wildcard). Empty = accept all."
+      },
+      "channelBindings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "channelPattern": { "type": "string", "description": "Channel pattern (supports * wildcard)" },
+            "agentId": { "type": "string", "description": "Target agent ID" },
+            "accountId": { "type": "string", "description": "Account ID (default: \"default\")" },
+            "replyChannel": { "type": "string", "description": "Reply channel override" }
+          },
+          "required": ["channelPattern", "agentId"]
+        },
+        "default": [],
+        "description": "Explicit channel -> agent bindings (priority over standard format)"
+      },
+      "stream": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "inboundKey": { "type": "string", "default": "openclaw:inbound" },
+          "outboundKey": { "type": "string", "default": "openclaw:outbound" },
+          "consumerGroup": { "type": "string", "default": "openclaw-group" },
+          "consumerName": { "type": "string", "default": "openclaw-consumer-1" },
+          "blockMs": { "type": "number", "default": 5000 },
+          "count": { "type": "number", "default": 10 },
+          "createGroup": { "type": "boolean", "default": true }
+        },
+        "default": {
+          "inboundKey": "openclaw:inbound",
+          "outboundKey": "openclaw:outbound",
+          "consumerGroup": "openclaw-group",
+          "consumerName": "openclaw-consumer-1",
+          "blockMs": 5000,
+          "count": 10,
+          "createGroup": true
+        }
+      },
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["plain", "jsonTextOrPlain"],
+            "default": "jsonTextOrPlain",
+            "description": "Payload parsing mode"
+          }
+        },
+        "default": { "mode": "jsonTextOrPlain" }
+      },
+      "fieldMapping": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "textField": { "type": "string", "default": "text" },
+          "agentIdField": { "type": "string", "default": "agentId" },
+          "peerIdField": { "type": "string", "default": "peerId" },
+          "accountIdField": { "type": "string", "default": "accountId" },
+          "replyStreamField": { "type": "string", "default": "replyStream" }
+        },
+        "default": {
+          "textField": "text",
+          "agentIdField": "agentId",
+          "peerIdField": "peerId",
+          "accountIdField": "accountId",
+          "replyStreamField": "replyStream"
+        }
+      },
+      "connection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "reconnectMs": { "type": "number", "default": 3000 },
+          "maxRetries": { "type": "number", "default": 10 }
+        },
+        "default": {
+          "reconnectMs": 3000,
+          "maxRetries": 10
+        }
+      }
+    },
+    "required": ["url"]
+  }
+      }
+    },
+    "configSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    }
+  }

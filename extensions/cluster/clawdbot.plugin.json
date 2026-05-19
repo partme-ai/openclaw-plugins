@@ -1,0 +1,57 @@
+{
+  "id": "openclaw_cluster",
+  "name": "openclaw_cluster",
+  "version": "0.1.6",
+  "description": "Cluster coordination — Discovery · Config Sync · Session Store · Proxy",
+  "main": "dist/index.js",
+  "channels": [],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "cluster": {
+        "type": "object",
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "description": "Current node ID"
+          },
+          "discovery": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "static",
+                  "etcd",
+                  "dns-srv",
+                  "consul",
+                  "nacos",
+                  "redis",
+                  "eureka",
+                  "mdns"
+                ]
+              }
+            }
+          },
+          "configSync": {
+            "type": "object"
+          },
+          "sessionStore": {
+            "type": "object"
+          },
+          "proxy": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {},
+  "capabilities": {
+    "discovery": true,
+    "configSync": true,
+    "sessionStore": true
+  }
+}

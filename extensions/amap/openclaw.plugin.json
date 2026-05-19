@@ -1,0 +1,36 @@
+{
+  "id": "amap",
+  "channels": ["amap"],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "key": {
+        "type": "string",
+        "description": "高德开放平台 Key（Web 服务 API）"
+      },
+      "secret": {
+        "type": "string",
+        "description": "安全密钥（若使用）"
+      },
+      "callback_url": {
+        "type": "string",
+        "description": "Webhook 回调 URL（若平台提供）"
+      },
+      "poi_id": {
+        "type": "string",
+        "description": "当前门店/POI 标识"
+      }
+    }
+  },
+  "channelConfigs": {
+    "amap": {
+      "label": "高德地图（Amap）",
+      "description": "高德开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {}
+      }
+    }
+  }
+}
