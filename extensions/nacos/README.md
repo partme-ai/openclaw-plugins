@@ -243,7 +243,7 @@ pnpm test
 ### 📁 Project structure
 
 ```
-openclaw-nacos/
+extensions/nacos/            # In the openclaw-plugins monorepo
 ├── src/
 │   ├── index.ts              # Plugin entry (register services, HTTP routes)
 │   ├── nacos-registry.ts     # Nacos Naming (Gateway / Hooks)
@@ -252,25 +252,24 @@ openclaw-nacos/
 │   ├── shared.ts             # Shared constants & utilities
 │   ├── types.ts
 │   └── ...
-├── docs/
-│   ├── ARCHITECTURE.md       # System architecture & design
-│   ├── CONFIG.md             # Complete configuration reference
-│   ├── GUIDE.md              # Usage guide & use cases
-│   ├── API.md                # HTTP endpoints & exported API
-│   └── TECHNICAL.md          # Technical details & design decisions
 ├── dist/                     # Published build output
 ├── openclaw.plugin.json      # OpenClaw plugin manifest
 ├── package.json
 └── README.md / README_CN.md
 ```
 
+Full documentation: [openclaw-plugins docs](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos)
+```
+
 ### 📚 Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) — System design, modules, data flow
-- [Configuration](docs/CONFIG.md) — Full config schema and field reference
-- [Usage Guide](docs/GUIDE.md) — Quick start, use cases, troubleshooting
-- [API Reference](docs/API.md) — HTTP endpoints, CLI, exported modules
-- [Technical Details](docs/TECHNICAL.md) — Tech stack, SDK integration, design decisions
+### 📚 Documentation
+
+- [Architecture](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Architecture.md)
+- [Configuration](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Configuration.md)
+- [Usage Guide](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Guide.md)
+- [API Reference](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-API.md)
+- [Technical Details](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Technical.md)
 
 ### ❓ FAQ
 
@@ -288,20 +287,24 @@ openclaw-nacos/
 
 #### Q: Where are CI build artifacts?
 
-**A:** On each push/PR, [GitHub Actions](https://github.com/partme-ai/openclaw-nacos/actions) runs `ci.yml` and uploads the **`dist/`** folder as a workflow artifact (`openclaw-nacos-dist`).
+**A:** CI is managed at the monorepo level — [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins/actions).
 
-### 🤖 GitHub Actions
+### 🤖 CI/CD
 
-| Workflow | Trigger | Purpose |
-| --- | --- | --- |
-| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Push / PR to `main` or `master` | `pnpm install --frozen-lockfile`, typecheck, build, test, upload `dist/` artifact |
-| [`.github/workflows/release.yml`](.github/workflows/release.yml) | Push tag `v*` (`publish`); **Run workflow** runs package job only | Build, test, `npm publish` to npmjs.org (skips if version exists), **GitHub Packages** as `@<github-owner>/openclaw-nacos` (e.g. `@partme-ai/...`), **GitHub Release** with `.tgz` |
+CI is managed at the monorepo level. See [openclaw-plugins CI](https://github.com/partme-ai/openclaw-plugins/blob/main/.github/workflows/ci.yml).
 
-**Release setup:** add repository secret **`NPM_TOKEN`** (see [RELEASING.md](./RELEASING.md)). Creating a tag:
+**Release:** bump version in `package.json` and publish:
 
 ```bash
-pnpm version patch   # or minor / major
-git push origin main --follow-tags
+cd extensions/nacos
+npm version patch  # or minor / major
+npm publish --access public
+```
+
+Or use the monorepo release script:
+
+```bash
+node scripts/publish-changed.mjs --plugin nacos
 ```
 
 ### 📝 Configuration
