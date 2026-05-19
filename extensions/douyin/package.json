@@ -1,5 +1,5 @@
 {
-  "name": "@partme.ai/douyin",
+  "name": "@partme.ai/openclaw-douyin",
   "version": "0.1.0",
   "description": "OpenClaw 抖音开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
   "type": "module",

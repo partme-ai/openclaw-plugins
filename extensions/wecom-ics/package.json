@@ -89,7 +89,7 @@
     "url": "https://github.com/partme-ai/openclaw-plugins.git",
     "directory": "extensions/wecom-ics"
   },
-  "license": "Apache-2.0",
+  "license": "MIT",
   "keywords": [
     "openclaw",
     "openclaw-plugin"

@@ -11,7 +11,7 @@
 
 </div>
 
-[English](https://github.com/partme-ai/openclaw-nacos/blob/main/README.md) | [简体中文](https://github.com/partme-ai/openclaw-nacos/blob/main/README_CN.md)
+[English](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/nacos/README.md) | [简体中文](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/nacos/README_CN.md)
 
 ## 📖 Introduction
 

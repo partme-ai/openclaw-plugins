@@ -1,5 +1,5 @@
 {
-  "name": "@partme.ai/TEMPLATE_NAME",
+  "name": "@partme.ai/openclaw-TEMPLATE_NAME",
   "version": "0.1.0",
   "type": "module",
   "description": "OpenClaw plugin: TEMPLATE_NAME",

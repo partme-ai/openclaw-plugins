@@ -126,4 +126,4 @@ Stable plugins can use semver: `1.0.0`, `1.1.0`.
 | Self-built plugins | MIT |
 | wecom | ISC (TencentCloud fork) |
 | wechat/weixin | SEE LICENSE IN LICENSE (Tencent fork) |
-| wecom-ics, weixin-ics | Apache-2.0 |
+| wecom-ics, weixin-ics | MIT |

@@ -1,5 +1,5 @@
 {
-  "name": "@partme.ai/rabbitmq",
+  "name": "@partme.ai/openclaw-rabbitmq",
   "version": "2026.5.12",
   "description": "RabbitMQ channel plugin for OpenClaw with multi-agent async collaboration and topic subscription support.",
   "type": "module",

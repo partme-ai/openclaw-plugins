@@ -32,38 +32,37 @@
 ### 🧠 AI Capabilities
 | Package | Description |
 |---------|------------|
-| [@partme.ai/knowledge](./extensions/knowledge) | RAG 知识库引擎 (embedding + vector + hybrid retrieval) |
-| [@partme.ai/memory](./extensions/memory) | 多级记忆系统 (L0→L3)，对接 OpenMem |
+| [@partme.ai/openclaw-knowledge](./extensions/knowledge) | RAG 知识库引擎 (embedding + vector + hybrid retrieval) |
 
 ### 🔌 Message Queues & IoT
 | Package | Description |
 |---------|------------|
-| [@partme.ai/mqtt](./extensions/mqtt) | MQTT 3.1.1/5.0 协议桥接 |
-| [@partme.ai/web-mqtt](./extensions/web-mqtt) | Web MQTT (浏览器端) |
-| [@partme.ai/stomp](./extensions/stomp) | STOMP 协议桥接 |
-| [@partme.ai/web-stomp](./extensions/web-stomp) | Web STOMP (浏览器端) |
-| [@partme.ai/rabbitmq](./extensions/rabbitmq) | RabbitMQ 消息队列 |
-| [@partme.ai/redis-stream](./extensions/redis-stream) | Redis Stream 消息队列 |
-| [@partme.ai/rocketmq](./extensions/rocketmq) | RocketMQ 消息队列 |
-| [@partme.ai/cluster](./extensions/cluster) | 集群通信 |
+| [@partme.ai/openclaw-mqtt](./extensions/mqtt) | MQTT 3.1.1/5.0 协议桥接 |
+| [@partme.ai/openclaw-web-mqtt](./extensions/web-mqtt) | Web MQTT (浏览器端) |
+| [@partme.ai/openclaw-stomp](./extensions/stomp) | STOMP 协议桥接 |
+| [@partme.ai/openclaw-web-stomp](./extensions/web-stomp) | Web STOMP (浏览器端) |
+| [@partme.ai/openclaw-rabbitmq](./extensions/rabbitmq) | RabbitMQ 消息队列 |
+| [@partme.ai/openclaw-redis-stream](./extensions/redis-stream) | Redis Stream 消息队列 |
+| [@partme.ai/openclaw-rocketmq](./extensions/rocketmq) | RocketMQ 消息队列 |
+| [@partme.ai/openclaw-cluster](./extensions/cluster) | 集群通信 |
 
 ### 🏗️ Infrastructure
 | Package | Description |
 |---------|------------|
-| [@partme.ai/nacos](./extensions/nacos) | Nacos 配置中心 & 服务注册 |
-| [@partme.ai/prometheus](./extensions/prometheus) | Prometheus 指标监控 |
-| [@partme.ai/tracing](./extensions/tracing) | OpenTelemetry 分布式追踪 |
-| [@partme.ai/mtls](./extensions/mtls) | Mutual TLS 认证 |
-| [@partme.ai/oauth2](./extensions/oauth2) | OAuth 2.0 / Sa-Token 集成 |
+| [@partme.ai/openclaw-nacos](./extensions/nacos) | Nacos 配置中心 & 服务注册 |
+| [@partme.ai/openclaw-prometheus](./extensions/prometheus) | Prometheus 指标监控 |
+| [@partme.ai/openclaw-tracing](./extensions/tracing) | OpenTelemetry 分布式追踪 |
+| [@partme.ai/openclaw-mtls](./extensions/mtls) | Mutual TLS 认证 |
+| [@partme.ai/openclaw-oauth2](./extensions/oauth2) | OAuth 2.0 / Sa-Token 集成 |
 
 ### 🌐 Platform Integrations
 | Package | Description |
 |---------|------------|
-| [@partme.ai/gotify](./extensions/gotify) | Gotify 推送通知 |
-| [@partme.ai/amap](./extensions/amap) | 高德地图 |
-| [@partme.ai/douyin](./extensions/douyin) | 抖音 |
-| [@partme.ai/meituan](./extensions/meituan) | 美团 |
-| [@partme.ai/rednode](./extensions/rednode) | RedNode 集成 |
+| [@partme.ai/openclaw-gotify](./extensions/gotify) | Gotify 推送通知 |
+| [@partme.ai/openclaw-amap](./extensions/amap) | 高德地图 |
+| [@partme.ai/openclaw-douyin](./extensions/douyin) | 抖音 |
+| [@partme.ai/openclaw-meituan](./extensions/meituan) | 美团 |
+| [@partme.ai/openclaw-rednode](./extensions/rednode) | RedNode 集成 |
 
 ---
 

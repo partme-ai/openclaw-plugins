@@ -1,5 +1,5 @@
 {
-  "name": "@partme.ai/redis-stream",
+  "name": "@partme.ai/openclaw-redis-stream",
   "version": "2026.5.18",
   "description": "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
   "type": "module",

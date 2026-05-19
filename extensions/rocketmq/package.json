@@ -1,5 +1,5 @@
 {
-  "name": "@partme.ai/rocketmq",
+  "name": "@partme.ai/openclaw-rocketmq",
   "version": "2026.5.19",
   "description": "RocketMQ channel plugin for OpenClaw with producer and push-consumer integration.",
   "type": "module",

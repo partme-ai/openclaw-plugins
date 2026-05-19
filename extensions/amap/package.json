@@ -1,5 +1,5 @@
 {
-  "name": "@partme.ai/amap",
+  "name": "@partme.ai/openclaw-amap",
   "version": "0.1.0",
   "type": "module",
   "description": "高德开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
@@ -23,7 +23,14 @@
     "url": "https://github.com/partme-ai/openclaw-plugins.git",
     "directory": "extensions/amap"
   },
-  "keywords": ["openclaw", "openclaw-plugin", "amap", "高德", "poi", "location"],
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "amap",
+    "高德",
+    "poi",
+    "location"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",

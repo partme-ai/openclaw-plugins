@@ -1,5 +1,5 @@
 {
-  "name": "@partme.ai/mqtt",
+  "name": "@partme.ai/openclaw-mqtt",
   "version": "0.1.13",
   "description": "MQTT protocol bridge for OpenClaw — IoT device integration via embedded Aedes MQTT broker",
   "type": "module",

@@ -1,5 +1,5 @@
 {
-  "name": "@partme.ai/gotify",
+  "name": "@partme.ai/openclaw-gotify",
   "version": "2026.5.19",
   "description": "OpenClaw Gotify channel plugin — REST delivery, WebSocket stream inbound, bootstrap helpers, and config validation",
   "type": "module",
