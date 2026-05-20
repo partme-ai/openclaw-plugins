@@ -35,7 +35,7 @@ function getConfig(api: OpenClawPluginApi): RouterConfig {
   return { ...DEFAULTS, ...r, audit: { ...DEFAULTS.audit, ...r.audit }, rules: Array.isArray(r.rules) ? r.rules : [] };
 }
 
-function matchRule(rule: RouterRule, channelId: string, direction: "inbound" | "outbound", topic?: string, accountId?: string): boolean {
+export function matchRule(rule: RouterRule, channelId: string, direction: "inbound" | "outbound", topic?: string, accountId?: string): boolean {
   const m = rule.match;
   if (m.channels?.length && !m.channels.includes(channelId)) return false;
   if (m.direction && m.direction !== "both" && m.direction !== direction) return false;
@@ -44,7 +44,7 @@ function matchRule(rule: RouterRule, channelId: string, direction: "inbound" | "
   return true;
 }
 
-function tmpl(t: string, v: Record<string, string>): string {
+export function tmpl(t: string, v: Record<string, string>): string {
   return t.replace(/\{\{(\w+)\}\}/g, (_, k) => v[k] ?? `{{${k}}}`);
 }
 

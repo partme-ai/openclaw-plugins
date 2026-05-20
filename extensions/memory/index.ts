@@ -56,7 +56,7 @@ function initDirs(base: string): void {
   for (const d of ["conversations", "records"]) fs.mkdirSync(path.join(base, d), { recursive: true });
 }
 
-function generateId(): string {
+export function generateId(): string {
   return `${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
 }
 
@@ -64,11 +64,11 @@ function generateId(): string {
 // 关键词搜索
 // ============================================================================
 
-function extractKeywords(text: string): string[] {
+export function extractKeywords(text: string): string[] {
   return [...new Set(text.replace(/[^一-龥a-zA-Z0-9]/g, " ").split(/\s+/).filter((w) => w.length >= 2))];
 }
 
-function keywordScore(query: string, content: string): number {
+export function keywordScore(query: string, content: string): number {
   const qWords = extractKeywords(query);
   if (qWords.length === 0) return 0;
   const lower = content.toLowerCase();
@@ -101,10 +101,10 @@ function extractMemories(base: string, sessionKey: string, messages: Array<{ rol
   }
 }
 
-const counters = new Map<string, number>();
-function shouldExtract(sessionKey: string, everyN = 5): boolean {
-  const c = (counters.get(sessionKey) ?? 0) + 1;
-  counters.set(sessionKey, c);
+export const sessionCounters = new Map<string, number>();
+export function shouldExtract(sessionKey: string, everyN = 5): boolean {
+  const c = (sessionCounters.get(sessionKey) ?? 0) + 1;
+  sessionCounters.set(sessionKey, c);
   return c % everyN === 0;
 }
 
@@ -112,7 +112,7 @@ function shouldExtract(sessionKey: string, everyN = 5): boolean {
 // MemorySearchManager — 框架通过此接口自动召回记忆
 // ============================================================================
 
-function createSearchManager(base: string): MemorySearchManager {
+export function createSearchManager(base: string): MemorySearchManager {
   return {
     async search(query, opts) {
       const results: MemorySearchResult[] = [];

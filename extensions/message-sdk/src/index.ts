@@ -282,8 +282,8 @@ export function extractPlainText(msg: UnifiedMessage): string {
     text += "\n\n" + msg.markdown
       .replace(/#{1,6}\s+/g, "")
       .replace(/\*\*(.+?)\*\*/g, "$1")
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
       .replace(/!\[[^\]]*\]\([^)]+\)/g, "[图片]")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
       .replace(/`{1,3}[^`]*`{1,3}/g, "")
       .replace(/[>\-*]\s/g, "");
   }
@@ -369,42 +369,9 @@ export function parseMediaFromText(text: string): MediaReference[] {
 // ============================================================================
 // 错误类型（统一用于所有渠道插件）
 // ============================================================================
-
-/**
- * 文件大小超限错误
- *
- * 当媒体文件超过平台允许的大小时抛出。供渠道插件统一使用。
- */
-export class FileSizeLimitError extends Error {
-  readonly actualSize: number;
-  readonly limitSize: number;
-  readonly mediaKind: MediaKind;
-
-  constructor(actualSize: number, limitSize: number, mediaKind: MediaKind) {
-    const sizeMB = (actualSize / (1024 * 1024)).toFixed(2);
-    const limitMB = (limitSize / (1024 * 1024)).toFixed(0);
-    super(`文件大小 ${sizeMB}MB 超过 ${mediaKind} 类型限制 ${limitMB}MB`);
-    this.name = "FileSizeLimitError";
-    this.actualSize = actualSize;
-    this.limitSize = limitSize;
-    this.mediaKind = mediaKind;
-  }
-}
-
-/**
- * 媒体操作超时错误
- *
- * 当媒体下载/上传超过指定时间时抛出。
- */
-export class MediaTimeoutError extends Error {
-  readonly timeoutMs: number;
-
-  constructor(timeoutMs: number) {
-    super(`媒体操作超时 (${timeoutMs}ms)`);
-    this.name = "MediaTimeoutError";
-    this.timeoutMs = timeoutMs;
-  }
-}
+//
+// FileSizeLimitError 和 MediaTimeoutError 从 media-io 子模块统一导出。
+// 此处仅定义 media-io 中没有的 MessageParseError。
 
 /**
  * 消息解析错误

@@ -57,11 +57,15 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm build"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
     "tsup": "^8.2.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.0"
   }
 }
