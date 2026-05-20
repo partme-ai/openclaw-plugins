@@ -313,3 +313,58 @@ export function parseMediaFromText(text: string): MediaReference[] {
 
   return media;
 }
+
+// ============================================================================
+// 错误类型（统一用于所有渠道插件）
+// ============================================================================
+
+/**
+ * 文件大小超限错误
+ *
+ * 当媒体文件超过平台允许的大小时抛出。供渠道插件统一使用。
+ */
+export class FileSizeLimitError extends Error {
+  readonly actualSize: number;
+  readonly limitSize: number;
+  readonly mediaKind: MediaKind;
+
+  constructor(actualSize: number, limitSize: number, mediaKind: MediaKind) {
+    const sizeMB = (actualSize / (1024 * 1024)).toFixed(2);
+    const limitMB = (limitSize / (1024 * 1024)).toFixed(0);
+    super(`文件大小 ${sizeMB}MB 超过 ${mediaKind} 类型限制 ${limitMB}MB`);
+    this.name = "FileSizeLimitError";
+    this.actualSize = actualSize;
+    this.limitSize = limitSize;
+    this.mediaKind = mediaKind;
+  }
+}
+
+/**
+ * 媒体操作超时错误
+ *
+ * 当媒体下载/上传超过指定时间时抛出。
+ */
+export class MediaTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`媒体操作超时 (${timeoutMs}ms)`);
+    this.name = "MediaTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * 消息解析错误
+ *
+ * 当 parseMessage 或 parseMessageAny 返回 null 时，可抛出此错误供上层处理。
+ */
+export class MessageParseError extends Error {
+  readonly rawInput: string;
+
+  constructor(rawInput: string, reason?: string) {
+    super(`消息解析失败: ${reason ?? "无效的格式"}`);
+    this.name = "MessageParseError";
+    this.rawInput = rawInput;
+  }
+}
