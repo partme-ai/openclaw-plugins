@@ -452,3 +452,6 @@ export * from "./file/index.js";
 
 // ── OCR（光学字符识别）──
 export * from "./ocr/index.js";
+
+// ── TTS（文本转语音）──
+export * from "./tts/index.js";
