@@ -342,7 +342,7 @@ async function sendThinkingReply(params: {
 }): Promise<void> {
   const { wsClient, frame, streamId, runtime, state } = params;
   try {
-    await sendWeComReply({
+    await sendWeComReplyNonBlocking({
       wsClient,
       frame,
       text: THINKING_MESSAGE,
@@ -351,14 +351,8 @@ async function sendThinkingReply(params: {
       streamId,
     });
   } catch (err) {
-    if (err instanceof StreamExpiredError && state) {
-      state.streamExpired = true;
-      runtime.log?.(
-        `[wecom] Stream expired during thinking reply, will fallback to proactive send`,
-      );
-    } else {
-      runtime.error?.(`[wecom] Failed to send thinking message: ${String(err)}`);
-    }
+    // sendWeComReplyNonBlocking 内部处理跳过逻辑，不会抛出 StreamExpiredError
+    runtime.log?.(`[wecom] Non-blocking thinking reply skipped or failed: ${String(err)}`);
   }
 }
 
@@ -628,23 +622,20 @@ async function routeAndDispatchMessage(params: {
               // if (displayText !== state.accumulatedText) {
               //   runtime.log?.(`[wecom][template-card] Mid-frame masked: original=${state.accumulatedText.length}chars, masked=${displayText.length}chars`);
               // }
-              await sendWeComReply({
+              await sendWeComReplyNonBlocking({
                 wsClient,
                 frame,
-                text: displayText,
+                text: displayText!,
                 runtime,
                 finish: false,
-                streamId: state.streamId,
+                streamId: state.streamId!,
               });
             } catch (err) {
-              if (err instanceof StreamExpiredError) {
-                state.streamExpired = true;
-                runtime.log?.(
-                  `[wecom] Stream expired during intermediate reply, will fallback to proactive send`,
-                );
-              } else {
-                throw err;
-              }
+              // sendWeComReplyNonBlocking 内部处理跳过逻辑，不会抛出 StreamExpiredError
+              // 仅可能因网络/传输异常抛出，记录并继续
+              runtime.log?.(
+                `[wecom] Non-blocking intermediate reply skipped or failed: ${String(err)}`,
+              );
             }
           }
         },
