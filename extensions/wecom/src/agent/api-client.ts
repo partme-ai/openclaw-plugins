@@ -7,6 +7,8 @@ import crypto from "node:crypto";
 import { API_ENDPOINTS, LIMITS } from "../types/constants.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import { readResponseBodyAsBuffer, wecomFetch } from "../http.js";
+import { stripMarkdown } from "./markdown-strip.js";
+import { transcodeBufferToAmr, needsTranscoding } from "./voice-transcode.js";
 
 function resolveWecomEgressProxyUrlFromNetwork(network: any): string | undefined {
     return network?.egressProxyUrl;
@@ -140,6 +142,7 @@ export async function sendText(params: {
     text: string;
 }): Promise<void> {
     const { agent, toUser, toParty, toTag, chatId, text } = params;
+    const cleanText = stripMarkdown(text);
     const token = await getAccessToken(agent);
 
     const useChat = Boolean(chatId);
@@ -148,14 +151,14 @@ export async function sendText(params: {
         : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`;
 
     const body = useChat
-        ? { chatid: chatId, msgtype: "text", text: { content: text } }
+        ? { chatid: chatId, msgtype: "text", text: { content: cleanText } }
         : {
             touser: toUser,
             toparty: toParty,
             totag: toTag,
             msgtype: "text",
             agentid: requireAgentId(agent),
-            text: { content: text }
+            text: { content: cleanText }
         };
 
     const res = await wecomFetch(url, {
@@ -202,8 +205,19 @@ export async function uploadMedia(params: {
     buffer: Buffer;
     filename: string;
 }): Promise<string> {
-    const { agent, type, buffer, filename } = params;
-    const safeFilename = normalizeUploadFilename(filename);
+    const { agent, type, filename } = params;
+    let { buffer } = params;
+    let safeFilename = normalizeUploadFilename(filename);
+
+    // Transcode non-AMR voice to AMR for WeCom compatibility
+    if (type === "voice") {
+        const ext = safeFilename.split(".").pop()?.toLowerCase() || "";
+        if (needsTranscoding(ext)) {
+            buffer = await transcodeBufferToAmr(buffer, ext);
+            safeFilename = safeFilename.replace(/\.[^.]+$/, "") + ".amr";
+        }
+    }
+
     const token = await getAccessToken(agent);
     const proxyUrl = resolveWecomEgressProxyUrlFromNetwork(agent.network);
     // 添加 debug=1 参数获取更多错误信息

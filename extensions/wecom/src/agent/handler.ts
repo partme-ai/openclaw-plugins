@@ -21,6 +21,9 @@ import {
 } from "../shared/xml-parser.js";
 import { sendText, downloadMedia, uploadMedia, sendMedia as sendAgentMedia } from "./api-client.js";
 import type { WecomAgentInboundMessage } from "../types/index.js";
+import { sendWelcomeMessage, shouldSendWelcome } from "./welcome.js";
+import { transcribeVoice, isVoiceAsrEnabled } from "./asr.js";
+import { createStream, updateStream } from "./stream.js";
 import { buildWecomUnauthorizedCommandPrompt, resolveWecomCommandAuthorization } from "../shared/command-auth.js";
 import { processDynamicRouting } from "../dynamic-routing.js";
 import { CHANNEL_ID, DEFAULT_MEDIA_MAX_MB } from "../const.js";
@@ -261,6 +264,13 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.end("success");
 
+        // Send welcome message for enter_chat/subscribe events
+        if (msgType === "event" && eventType && shouldSendWelcome(eventType)) {
+            sendWelcomeMessage(agent, fromUser).catch((err) => {
+                error?.(`[wecom-agent] welcome message failed: ${String(err)}`);
+            });
+        }
+
         const decision = shouldProcessAgentInboundMessage({
             msgType,
             fromUser,
@@ -381,6 +391,24 @@ async function processAgentMessage(params: {
                 log?.(`[wecom-agent] media saved to: ${saved.path}`);
                 mediaPath = saved.path;
                 mediaType = normalizedContentType;
+
+                // ASR for voice messages
+                if (msgType === "voice" && isVoiceAsrEnabled(agent)) {
+                    try {
+                        const transcript = await transcribeVoice(agent, buffer);
+                        if (transcript) {
+                            finalContent = content
+                                ? `${content}\n[语音识别]: ${transcript}`
+                                : `[语音识别]: ${transcript}`;
+                            log?.(`[wecom-agent] voice ASR: transcript="${transcript.slice(0, 100)}"`);
+                        }
+                    } catch (err) {
+                        error?.(`[wecom-agent] voice ASR failed: ${String(err)}`);
+                        finalContent = content
+                            ? `${content}\n[语音识别失败]`
+                            : "[语音识别失败]";
+                    }
+                }
 
                 // 构建附件
                 attachments.push({
@@ -538,6 +566,7 @@ async function processAgentMessage(params: {
     });
 
     // 调度回复
+    const streamState = createStream();
     await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
         ctx: ctxPayload,
         cfg: config,
@@ -572,10 +601,13 @@ async function processAgentMessage(params: {
 
                 // ── 3. 发送文本部分 ──
                 if (text.trim()) {
+                    updateStream(streamState.streamId, { content: text, started: true });
                     try {
                         await sendText({ agent, toUser: fromUser, chatId: undefined, text });
+                        updateStream(streamState.streamId, { finished: true });
                         log?.(`[wecom-agent] reply delivered (${info.kind}) to ${fromUser} (textLen=${text.length})`);
                     } catch (err: unknown) {
+                        updateStream(streamState.streamId, { finished: true, error: String(err) });
                         const message = err instanceof Error ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}` : String(err);
                         error?.(`[wecom-agent] reply failed: ${message}`);
                     }

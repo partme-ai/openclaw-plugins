@@ -7,6 +7,7 @@ import { setWeComRuntime } from "./src/runtime.js";
 import { CHANNEL_ID, WEBHOOK_PATHS } from "./src/const.js";
 import { createWecomAgentWebhookHandler } from "./src/agent/webhook.js";
 import { handleWecomWebhookRequest } from "./src/webhook/index.js";
+import { handleTempMediaRequest } from "./src/temp-media-server.js";
 
 const plugin = {
   id: "wecom",
@@ -73,6 +74,13 @@ const plugin = {
         match: "prefix",
       });
     }
+
+    // Register temp media server route (token-authenticated, 15-minute TTL)
+    api.registerHttpRoute({
+      path: "/wecom-media",
+      handler: handleTempMediaRequest as any,
+      auth: "plugin",
+    });
 
     // Inject media sending instructions and file size limit hints (only for WeCom channel)
     api.on("before_prompt_build", (_event, ctx) => {

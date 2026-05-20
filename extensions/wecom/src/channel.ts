@@ -25,6 +25,7 @@ import { resolveWecomTarget } from "./target.js";
 import { sendText as sendAgentText, sendMedia as sendAgentMedia, uploadMedia as uploadAgentMedia } from "./agent/api-client.js";
 import { startWebhookGateway, stopWebhookGateway } from "./webhook/index.js";
 import type { ResolvedWebhookAccount, WebhookGatewayContext } from "./webhook/index.js";
+import { fetchAndSaveWecomDocMcpConfig } from "./mcp/config-fetch.js";
 
 /**
  * 使用 SDK 的 sendMessage 主动发送企业微信消息
@@ -538,6 +539,26 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
       // ── Bot WebSocket 监听（需要 botId + secret）──────────────────
       const hasBotCredentials = Boolean(account.botId?.trim() && account.secret?.trim());
       if (hasBotCredentials) {
+        // Fire-and-forget: fetch and save WeCom doc MCP config after WS client is authenticated
+        const acctId = ctx.accountId;
+        const mcpFetchTimer = setInterval(() => {
+          const ws = getWeComWebSocket(acctId);
+          if (ws?.isConnected) {
+            clearInterval(mcpFetchTimer);
+            fetchAndSaveWecomDocMcpConfig({
+              client: ws,
+              accountId: acctId,
+              runtime: {
+                log: (msg) => ctx.log?.info?.(msg),
+                error: (msg) => ctx.log?.error?.(msg),
+              },
+            }).catch((err: unknown) => {
+              ctx.log?.error?.(`[wecom] MCP config fetch failed: ${String(err)}`);
+            });
+          }
+        }, 1000);
+        ctx.abortSignal?.addEventListener("abort", () => clearInterval(mcpFetchTimer), { once: true });
+
         return monitorWeComProvider({
           account,
           config: ctx.cfg,

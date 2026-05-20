@@ -71,6 +71,7 @@ import {
 import { maskTemplateCardBlocks } from "./template-card-parser.js";
 import type { ResolvedWeComAccount, WeComConfig } from "./utils.js";
 import { PLUGIN_VERSION } from "./version.js";
+import { buildWecomNativeReplyImageItem } from "./ws-media.js";
 
 // ============================================================================
 // 消息条目类型
@@ -598,6 +599,21 @@ async function routeAndDispatchMessage(params: {
                 ? `${state.mediaErrorSummary}\n\n${summary}`
                 : summary;
               runtime.error?.(`[wecom] sendMediaBatch threw: ${errMsg}`);
+            }
+
+            // 尝试为本地图片创建原生 WS 回复条目（补充主动发送，用于内联 msg_item）
+            for (const mUrl of mediaUrls) {
+              try {
+                const nativeItem = await buildWecomNativeReplyImageItem({
+                  source: mUrl,
+                  log: { debug: (msg) => runtime.log?.(msg) },
+                });
+                if (nativeItem) {
+                  runtime.log?.(`[wecom] Native WS image item created for ${mUrl}`);
+                }
+              } catch {
+                // 忽略失败，降级为已通过 sendMediaBatch 发送的标准流程
+              }
             }
           }
 

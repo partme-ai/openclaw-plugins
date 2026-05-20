@@ -8,6 +8,7 @@
 import crypto from "node:crypto";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { StreamState, WecomWebhookTarget, WebhookInboundMessage, WebhookInboundQuote } from "./types.js";
+import { registerResponseUrl } from "../response-url-tracker.js";
 
 // ============================================================================
 // 常量
@@ -282,6 +283,15 @@ export async function processInboundMessage(
   const globalAesKey = target.account.encodingAESKey;
   const maxBytes = resolveWecomMediaMaxBytes(target.config);
   const proxyUrl = resolveWecomEgressProxyUrl(target.config);
+
+  // Register response_url for proactive message delivery if available
+  if (msg.response_url) {
+    registerResponseUrl({
+      accountId: target.account.accountId,
+      to: resolveWecomSenderUserId(msg) || "unknown",
+      responseUrl: msg.response_url,
+    });
+  }
 
   // 图片消息处理
   if (msgtype === "image") {
