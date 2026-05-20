@@ -2,7 +2,7 @@
   "id": "openclaw-gotify",
   "name": "Gotify",
   "description": "OpenClaw Gotify channel plugin — REST delivery, WebSocket stream inbound, multi-account session isolation, and full application/client lifecycle management.",
-  "version": "2026.5.19",
+  "version": "2026.5.20",
   "channels": ["gotify"],
   "channelEnvVars": {
     "gotify": [

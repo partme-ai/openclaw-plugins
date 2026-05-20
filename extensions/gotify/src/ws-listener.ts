@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from './types.js';
 import { normalizeServerUrl } from './gotify-api.js';
+import { GotifyWebSocketError, GotifyConfigError } from './errors.js';
 
 const GotifyStreamEnvelopeSchema = z.object({
   id: z.union([z.number(), z.string()]),
@@ -46,12 +47,14 @@ export function createGotifyWsListener(
   const connect = () => {
     if (stopped) return;
     if (!account.clientToken || !account.serverUrl) {
-      deps.onStateChange?.({ running: false, lastError: 'Missing clientToken or serverUrl' });
-      return;
+      const error = 'Missing clientToken or serverUrl';
+      deps.onStateChange?.({ running: false, lastError: error });
+      throw new GotifyConfigError('clientToken/serverUrl', error);
     }
     if (reconnectAttempts > account.inbound.maxReconnectAttempts) {
-      deps.onStateChange?.({ running: false, lastError: 'WebSocket reconnect attempts exhausted' });
-      return;
+      const error = 'WebSocket reconnect attempts exhausted';
+      deps.onStateChange?.({ running: false, lastError: error });
+      throw new GotifyWebSocketError(error, 'MAX_RECONNECT_ATTEMPTS');
     }
 
     const url = `${normalizeServerUrl(account.serverUrl).replace(/^http/i, 'ws')}/stream?token=${encodeURIComponent(account.clientToken)}`;
@@ -74,7 +77,8 @@ export function createGotifyWsListener(
         const parsed = GotifyStreamEnvelopeSchema.parse(JSON.parse(raw));
         await deps.onMessage(parsed);
       } catch (error) {
-        deps.onStateChange?.({ running: true, lastError: String(error) });
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        deps.onStateChange?.({ running: true, lastError: errorMsg });
       }
     };
 
@@ -83,13 +87,15 @@ export function createGotifyWsListener(
       deps.onStateChange?.({ running: false, lastError: error });
       // 首次连接失败时通知 gate
       if (connectionGate) {
-        connectionGate.reject(new Error(error));
+        connectionGate.reject(new GotifyWebSocketError(error, 'WEBSOCKET_ERROR'));
         connectionGate = null;
       }
     };
 
-    socket.onclose = () => {
-      deps.onStateChange?.({ running: false, lastError: 'WebSocket closed' });
+    socket.onclose = (event) => {
+      const wasClean = event?.wasClean ? 'clean' : 'unclean';
+      const reason = event?.reason || `WebSocket closed (${wasClean})`;
+      deps.onStateChange?.({ running: false, lastError: reason });
       if (!stopped) {
         scheduleReconnect();
       }

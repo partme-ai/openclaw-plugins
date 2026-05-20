@@ -83,5 +83,8 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
+  },
+  "dependencies": {
+    "@partme.ai/openclaw-message-sdk": "workspace:*"
   }
 }

@@ -361,7 +361,7 @@ describe('Application API', () => {
 
   it('throws when listing applications without clientToken', async () => {
     const noClient = createTestAccount({ clientToken: undefined });
-    await expect(listApplications(noClient)).rejects.toThrow('missing clientToken');
+    await expect(listApplications(noClient)).rejects.toThrow('client token required for this operation');
   });
 });
 
@@ -465,7 +465,8 @@ describe('Health & Doctor', () => {
 
   it('runGotifyDoctor reports missing appToken', async () => {
     const noToken = createTestAccount({ appToken: undefined });
-    const report = await runGotifyDoctor(noToken);
+    const fetchImpl = mockFetch([{ ok: true }]);
+    const report = await runGotifyDoctor(noToken, { fetchImpl });
     expect(report.errors).toContain('Missing appToken.');
   });
 });

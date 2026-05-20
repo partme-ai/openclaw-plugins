@@ -44,7 +44,8 @@
   },
   "dependencies": {
     "aedes": "^0.51.3",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "@partme.ai/openclaw-message-sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

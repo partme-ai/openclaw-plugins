@@ -11,6 +11,7 @@ import type {
   StompStatusSnapshot,
   StompTcpConfig,
 } from "./types.js";
+import { parseMessageAny } from "@partme.ai/openclaw-message-sdk";
 
 interface QueuedDelivery {
   destination: string;
@@ -332,7 +333,13 @@ function handleFrame(conn: InternalConnection, frame: StompFrame, onInbound: Inb
         return;
       }
       const route = resolveInboundRoute(destination, conn, frame, activeConfig);
-      onInbound({ ...route, text: frame.body });
+
+      // Try UnifiedMessage format first
+      const rawBody = frame.body;
+      const unifiedMsg = parseMessageAny(rawBody);
+      const text = unifiedMsg?.text ?? rawBody;
+
+      onInbound({ ...route, text });
       stats.routedInbound += 1;
       if (frame.headers.receipt) {
         socket.write(buildFrame("RECEIPT", { "receipt-id": frame.headers.receipt }));

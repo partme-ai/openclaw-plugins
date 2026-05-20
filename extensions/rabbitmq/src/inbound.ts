@@ -16,6 +16,7 @@ import {
   getOrCreateSessionKey,
 } from "./session-mapper.js";
 import { randomUUID } from "node:crypto";
+import { parseMessageAny } from "@partme.ai/openclaw-message-sdk";
 
 import type { InboundEvent } from "./rabbitmq-server.js";
 
@@ -282,6 +283,16 @@ function parseInboundText(rawPayload: string, mode: RabbitmqConfig["payload"]["m
     return { text: rawPayload };
   }
   if (mode === "jsonOnly") {
+    // Try UnifiedMessage format first
+    const unifiedMsg = parseMessageAny(rawPayload);
+    if (unifiedMsg && unifiedMsg.text) {
+      return {
+        text: unifiedMsg.text,
+        correlationId: typeof unifiedMsg.metadata?.correlationId === "string" ? unifiedMsg.metadata.correlationId : undefined,
+        idempotencyKey: typeof unifiedMsg.metadata?.idempotencyKey === "string" ? unifiedMsg.metadata.idempotencyKey : undefined,
+      };
+    }
+
     try {
       const parsed = JSON.parse(rawPayload) as any;
       const text = typeof parsed?.text === "string" ? parsed.text : JSON.stringify(parsed ?? {});
@@ -294,6 +305,16 @@ function parseInboundText(rawPayload: string, mode: RabbitmqConfig["payload"]["m
       return { text: "" };
     }
   }
+  // Try UnifiedMessage format first
+  const unifiedMsg = parseMessageAny(rawPayload);
+  if (unifiedMsg && unifiedMsg.text) {
+    return {
+      text: unifiedMsg.text,
+      correlationId: typeof unifiedMsg.metadata?.correlationId === "string" ? unifiedMsg.metadata.correlationId : undefined,
+      idempotencyKey: typeof unifiedMsg.metadata?.idempotencyKey === "string" ? unifiedMsg.metadata.idempotencyKey : undefined,
+    };
+  }
+
   try {
     const parsed = JSON.parse(rawPayload) as any;
     if (typeof parsed?.text === "string" && parsed.text.trim().length > 0) {

@@ -8,6 +8,7 @@ import { getRockermqChannelConfig } from "./rockermq-state.js";
 import { DEFAULT_ROCKERMQ_CONFIG, type RockermqConfig } from "./rockermq-config.js";
 import { resolveInboundRoute, buildReplyTopicFromInbound, matchTopic } from "./topic-router.js";
 import { upsertSessionContext } from "./session-mapper.js";
+import { parseMessageAny } from "@partme.ai/openclaw-message-sdk";
 import type { InboundEvent } from "./rockermq-server.js";
 
 type InboundResult = {
@@ -313,6 +314,16 @@ function parseInboundText(
     return { text: rawPayload };
   }
   if (mode === "jsonOnly") {
+    // Try UnifiedMessage format first
+    const unifiedMsg = parseMessageAny(rawPayload);
+    if (unifiedMsg && unifiedMsg.text) {
+      return {
+        text: unifiedMsg.text,
+        correlationId: typeof unifiedMsg.metadata?.correlationId === "string" ? unifiedMsg.metadata.correlationId : undefined,
+        idempotencyKey: typeof unifiedMsg.metadata?.idempotencyKey === "string" ? unifiedMsg.metadata.idempotencyKey : undefined,
+      };
+    }
+
     const parsed = JSON.parse(rawPayload) as Record<string, unknown>;
     const text = typeof parsed.text === "string" ? parsed.text : JSON.stringify(parsed ?? {});
     return {
@@ -321,6 +332,16 @@ function parseInboundText(
       idempotencyKey: typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined,
     };
   }
+  // Try UnifiedMessage format first
+  const unifiedMsg = parseMessageAny(rawPayload);
+  if (unifiedMsg && unifiedMsg.text) {
+    return {
+      text: unifiedMsg.text,
+      correlationId: typeof unifiedMsg.metadata?.correlationId === "string" ? unifiedMsg.metadata.correlationId : undefined,
+      idempotencyKey: typeof unifiedMsg.metadata?.idempotencyKey === "string" ? unifiedMsg.metadata.idempotencyKey : undefined,
+    };
+  }
+
   try {
     const parsed = JSON.parse(rawPayload) as Record<string, unknown>;
     if (typeof parsed.text === "string" && parsed.text.trim().length > 0) {

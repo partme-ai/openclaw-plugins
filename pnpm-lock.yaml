@@ -312,6 +312,9 @@ importers:
 
   extensions/mqtt:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: workspace:*
+        version: link:../message-sdk
       aedes:
         specifier: ^0.51.3
         version: 0.51.3
@@ -477,6 +480,9 @@ importers:
 
   extensions/rabbitmq:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: workspace:*
+        version: link:../message-sdk
       amqplib:
         specifier: ^0.10.4
         version: 0.10.9
@@ -508,6 +514,9 @@ importers:
 
   extensions/redis-stream:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: workspace:*
+        version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
         version: 2026.5.18
@@ -561,6 +570,9 @@ importers:
 
   extensions/rocketmq:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: workspace:*
+        version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
         version: 2026.5.18
@@ -605,6 +617,9 @@ importers:
 
   extensions/stomp:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: workspace:*
+        version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
         version: 2026.5.18
@@ -649,6 +664,9 @@ importers:
 
   extensions/web-mqtt:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: workspace:*
+        version: link:../message-sdk
       aedes:
         specifier: ^0.51.3
         version: 0.51.3
@@ -683,6 +701,9 @@ importers:
 
   extensions/web-stomp:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: workspace:*
+        version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
         version: 2026.5.18

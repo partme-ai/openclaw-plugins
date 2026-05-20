@@ -10,6 +10,29 @@ import { resolveInboundRoute, matchChannel, buildReplyChannelFromInbound } from 
 import { publishMessage } from "./publisher.js";
 import { logger } from "./logger.js";
 import type { RedisChannelConfig, RedisInboundMessage } from "./types.js";
+import { parseMessageAny } from "@partme.ai/openclaw-message-sdk";
+
+// Message deduplication cache
+const processedMessages = new Map<string, number>();
+const DEDUP_TTL_MS = 60_000;
+const DEDUP_MAX = 10_000;
+
+/**
+ * Check if a message ID has been processed recently (deduplication).
+ */
+function isDuplicate(messageId: string): boolean {
+  if (!messageId) return false;
+  const now = Date.now();
+  const prev = processedMessages.get(messageId);
+  if (prev && now - prev < DEDUP_TTL_MS) return true;
+  processedMessages.set(messageId, now);
+  if (processedMessages.size > DEDUP_MAX) {
+    for (const [k, t] of processedMessages) {
+      if (now - t > DEDUP_TTL_MS) processedMessages.delete(k);
+    }
+  }
+  return false;
+}
 
 /**
  * 处理 Redis channel 入站消息。
@@ -27,6 +50,13 @@ export async function handleInboundMessage(message: RedisInboundMessage, config:
   // 1. 白名单过滤
   if (!shouldProcessChannel(channel, config.subscribeChannels)) {
     return true; // 非匹配 channel 不算失败，消息可以 ACK
+  }
+
+  // 2. Deduplication check (use message ID if available, fallback to content hash)
+  const messageId = (message as unknown as { id?: string }).id ?? `${channel}:${message.message.slice(0, 100)}`;
+  if (isDuplicate(messageId)) {
+    logger.info(`Duplicate message skipped: ${messageId.slice(0, 50)}...`);
+    return true; // Duplicate messages are considered successfully processed
   }
 
   // 2. 路由解析（显式绑定优先，Stream fieldAgentId 字段覆盖）
@@ -143,6 +173,13 @@ function parseInboundText(rawPayload: string, mode: RedisChannelConfig["payload"
     return rawPayload;
   }
 
+  // Try UnifiedMessage format first
+  const unifiedMsg = parseMessageAny(rawPayload);
+  if (unifiedMsg && unifiedMsg.text) {
+    return unifiedMsg.text;
+  }
+
+  // Fallback to existing parsing logic
   try {
     const parsed = JSON.parse(rawPayload) as { text?: unknown };
     if (typeof parsed.text === "string" && parsed.text.trim().length > 0) {

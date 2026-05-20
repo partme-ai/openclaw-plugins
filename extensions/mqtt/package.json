@@ -50,7 +50,8 @@
     "aedes-persistence-redis": "^9.0.2",
     "ioredis": "^5.10.1",
     "mqemitter-redis": "^5.1.0",
-    "ws": "^8.20.0"
+    "ws": "^8.20.0",
+    "@partme.ai/openclaw-message-sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -27,6 +27,7 @@ import {
   getSubscribers,
 } from "./subscription-mgr.js";
 import { registerMessage, handleAck, handleNack, cleanupConnection } from "./ack-handler.js";
+import { parseMessageAny } from "@partme.ai/openclaw-message-sdk";
 
 /** WebSocket 服务器实例 */
 let wss: WebSocketServer | null = null;
@@ -299,7 +300,11 @@ function handleSend(
 
   const agentId = route.agentId ?? "default";
   const sessionKey = `stomp:${connectionId}@${agentId}`;
-  const text = frame.body ?? "";
+
+  // Try UnifiedMessage format first
+  const rawBody = frame.body ?? "";
+  const unifiedMsg = parseMessageAny(rawBody);
+  const text = unifiedMsg?.text ?? rawBody;
 
   console.log(
     `[openclaw_web_stomp] SEND: connection=${connectionId}, agent=${agentId}, text=${text.slice(0, 100)}`

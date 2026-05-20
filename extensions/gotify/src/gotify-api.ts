@@ -7,6 +7,12 @@ import type {
   GotifyPagedMessages,
   ResolvedGotifyAccount,
 } from './types.js';
+import {
+  GotifyApiError,
+  GotifyConnectionError,
+  GotifyTimeoutError,
+  GotifyConfigError,
+} from './errors.js';
 
 export interface GotifyFetchOptions {
   fetchImpl?: typeof fetch;
@@ -28,17 +34,17 @@ function buildAuthUrl(
   useClientToken: boolean
 ): string {
   if (!account.serverUrl) {
-    throw new Error(`Gotify account ${account.accountId} is missing serverUrl.`);
+    throw new GotifyConfigError('serverUrl', 'missing server URL');
   }
   if (useClientToken && !account.clientToken) {
-    throw new Error(`Gotify account ${account.accountId} is missing clientToken.`);
+    throw new GotifyConfigError('clientToken', 'client token required for this operation');
   }
   return `${normalizeServerUrl(account.serverUrl)}${path}`;
 }
 
 function buildClientHeaders(account: ResolvedGotifyAccount): HeadersInit {
   if (!account.clientToken) {
-    throw new Error(`Gotify account ${account.accountId} is missing clientToken.`);
+    throw new GotifyConfigError('clientToken', 'client token required for this operation');
   }
   return { 'X-Gotify-Key': account.clientToken };
 }
@@ -81,14 +87,23 @@ async function fetchWithRetry(
         continue;
       }
       const body = await safeReadText(response);
-      throw new Error(`Gotify API failed (${response.status}): ${body}`);
+      throw new GotifyApiError(
+        `Gotify API failed (${response.status}): ${body}`,
+        response.status
+      );
     } catch (error) {
       lastError = error;
+      if (error instanceof GotifyApiError || error instanceof GotifyTimeoutError) {
+        throw error; // Don't retry typed errors
+      }
       if (attempt >= retryCount) break;
       await sleep(retryDelayMs);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  if (lastError instanceof Error) {
+    throw new GotifyConnectionError(lastError.message);
+  }
+  throw new GotifyConnectionError(String(lastError));
 }
 
 async function fetchWithTimeout(
@@ -102,6 +117,11 @@ async function fetchWithTimeout(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetchImpl(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new GotifyTimeoutError(timeoutMs, 'fetch request');
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
   }
@@ -130,7 +150,10 @@ export function buildMessageRequest(
   payload: GotifyMessagePayload
 ): { url: string; init: RequestInit } {
   if (!account.serverUrl || !account.appToken) {
-    throw new Error(`Gotify account ${account.accountId} is not configured for outbound delivery.`);
+    throw new GotifyConfigError(
+      'serverUrl/appToken',
+      'account not configured for outbound delivery'
+    );
   }
   return {
     url: `${normalizeServerUrl(account.serverUrl)}/message`,

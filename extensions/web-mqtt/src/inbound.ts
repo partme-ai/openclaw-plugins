@@ -9,6 +9,7 @@ import { tryGetWebMqttRuntime } from "./runtime.js";
 import type { InboundEvent, WebMqttConfig } from "./types.js";
 import { getClientUsername } from "./ws-server.js";
 import { isUserActionAllowed } from "./acl.js";
+import { parseMessageAny } from "@partme.ai/openclaw-message-sdk";
 
 /**
  * 入站处理结果。
@@ -104,10 +105,17 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
  * 解析入站 payload。
  */
 export function parseInboundPayload(payload: Buffer, config: WebMqttConfig): string {
-  if (config.payload.mode !== "jsonTextOrPlain") {
-    return payload.toString("utf-8");
-  }
+  // Try UnifiedMessage format first
   const raw = payload.toString("utf-8");
+  const unifiedMsg = parseMessageAny(raw);
+  if (unifiedMsg?.text) {
+    return unifiedMsg.text;
+  }
+
+  // Fallback to existing parsing logic
+  if (config.payload.mode !== "jsonTextOrPlain") {
+    return raw;
+  }
   try {
     const data = JSON.parse(raw) as { text?: unknown };
     if (typeof data.text === "string") return data.text;

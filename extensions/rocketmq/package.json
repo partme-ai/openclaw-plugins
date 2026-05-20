@@ -51,7 +51,8 @@
     }
   },
   "dependencies": {
-    "rocketmq-client-nodejs": "^1.0.5"
+    "rocketmq-client-nodejs": "^1.0.5",
+    "@partme.ai/openclaw-message-sdk": "workspace:*"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

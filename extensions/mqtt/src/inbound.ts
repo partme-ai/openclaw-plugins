@@ -22,6 +22,7 @@ import {
 import { logAuditEvent } from "./audit.js";
 import { getClientUsername } from "./broker.js";
 import { isUserActionAllowed } from "./acl.js";
+import { parseMessageAny } from "@partme.ai/openclaw-message-sdk";
 
 /**
  * 处理 MQTT 入站消息（设备 -> Agent）。
@@ -167,6 +168,13 @@ function parseInboundText(rawPayload: string, mode: MqttChannelConfig["payload"]
     return rawPayload;
   }
 
+  // Try UnifiedMessage format first
+  const unifiedMsg = parseMessageAny(rawPayload);
+  if (unifiedMsg && unifiedMsg.text) {
+    return unifiedMsg.text;
+  }
+
+  // Fallback to existing parsing logic
   try {
     const parsed = JSON.parse(rawPayload) as { text?: unknown };
     if (typeof parsed.text === "string" && parsed.text.trim().length > 0) {

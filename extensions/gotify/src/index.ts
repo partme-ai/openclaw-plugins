@@ -35,6 +35,13 @@ export {
   normalizeServerUrl,
 } from './gotify-api.js';
 export {
+  GotifyApiError,
+  GotifyConnectionError,
+  GotifyConfigError,
+  GotifyWebSocketError,
+  GotifyTimeoutError,
+} from './errors.js';
+export {
   resolveGotifyAccount,
   resolveDefaultGotifyAccountId,
   listGotifyAccountIds,

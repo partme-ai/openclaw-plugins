@@ -1,6 +1,6 @@
 {
   "id": "openclaw-redis-stream",
-  "version": "2026.5.18",
+  "version": "2026.5.20",
   "description": "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
   "main": "dist/index.js",
   "channels": ["redis-stream"],

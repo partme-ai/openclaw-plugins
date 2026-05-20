@@ -11,6 +11,7 @@ import { handleInboundMessage } from "./inbound.js";
 import { loadChannelBindings } from "./topic-router.js";
 import { logger } from "./logger.js";
 import { setPublisherClient, clearPublisherClient, getMessagesWritten } from "./publisher.js";
+import { RedisConnectionError, RedisStreamError, RedisTimeoutError } from "./errors.js";
 
 export type RedisStats = {
   connected: boolean;
@@ -50,13 +51,24 @@ export async function startRedisServer(config: RedisChannelConfig): Promise<void
     socket: {
       reconnectStrategy: (retries: number) => {
         if (retries >= config.connection.maxRetries) {
-          return new Error(`Redis max reconnection attempts (${config.connection.maxRetries}) exceeded`);
+          throw new RedisConnectionError(
+            config.url,
+            `max reconnection attempts (${config.connection.maxRetries}) exceeded`
+          );
         }
         return config.connection.reconnectMs;
       },
     },
   });
-  await client.connect();
+
+  try {
+    await client.connect();
+  } catch (error) {
+    throw new RedisConnectionError(
+      config.url,
+      error instanceof Error ? error.message : String(error)
+    );
+  }
   setPublisherClient(client as unknown as Parameters<typeof setPublisherClient>[0]);
   running = true;
   stats.connected = true;
@@ -165,7 +177,7 @@ async function startPubSub(config: RedisChannelConfig): Promise<void> {
  */
 export async function publishMessage(channel: string, message: string): Promise<void> {
   if (!client) {
-    throw new Error("Redis client is not initialized");
+    throw new RedisConnectionError("", "Redis client is not initialized");
   }
   await client.publish(channel, message);
   stats.messagesWritten++;
@@ -178,7 +190,7 @@ export async function publishMessage(channel: string, message: string): Promise<
  */
 export async function publishEntry(stream: string, values: Record<string, string>): Promise<string> {
   if (!client) {
-    throw new Error("Redis client is not initialized");
+    throw new RedisConnectionError("", "Redis client is not initialized");
   }
   const id = await client.xAdd(stream, "*", values);
   stats.messagesWritten++;
@@ -190,7 +202,7 @@ export async function publishEntry(stream: string, values: Record<string, string
  */
 export async function ackEntry(stream: string, group: string, id: string): Promise<void> {
   if (!client) {
-    throw new Error("Redis client is not initialized");
+    throw new RedisConnectionError("", "Redis client is not initialized");
   }
   await client.xAck(stream, group, id);
   stats.messagesAcked++;
@@ -208,9 +220,16 @@ export function getStats(): RedisStats {
  */
 async function ensureConsumerGroup(config: RedisChannelConfig): Promise<void> {
   if (!client) return;
-  await client.xGroupCreate(config.stream.inboundKey, config.stream.consumerGroup, "0", {
-    MKSTREAM: true,
-  });
+  try {
+    await client.xGroupCreate(config.stream.inboundKey, config.stream.consumerGroup, "0", {
+      MKSTREAM: true,
+    });
+  } catch (error) {
+    throw new RedisStreamError(
+      config.stream.inboundKey,
+      error instanceof Error ? error.message : String(error)
+    );
+  }
 }
 
 /**
@@ -229,7 +248,13 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
         config.stream.consumerName,
         { key: config.stream.inboundKey, id: ">" },
         { COUNT: config.stream.count, BLOCK: config.stream.blockMs },
-      );
+      ).catch((error) => {
+        // Wrap timeout errors
+        if (error?.message?.includes("timeout") || error?.message?.includes("TIMEDOUT")) {
+          throw new RedisTimeoutError("XREADGROUP", config.stream.blockMs);
+        }
+        throw error;
+      });
 
       consecutiveErrors = 0;
       if (!result) continue; // 超时无消息，返回 null

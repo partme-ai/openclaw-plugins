@@ -43,7 +43,8 @@
     "directory": "extensions/rabbitmq"
   },
   "dependencies": {
-    "amqplib": "^0.10.4"
+    "amqplib": "^0.10.4",
+    "@partme.ai/openclaw-message-sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.5",
