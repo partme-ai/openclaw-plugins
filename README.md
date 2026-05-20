@@ -22,12 +22,10 @@
 | Package | Description | License |
 |---------|------------|---------|
 | [@partme.ai/wecom](./extensions/wecom) | 企业微信 Bot + Agent 双模接入，多账号矩阵，20 Skills | ISC |
-| [@partme.ai/dingtalk](./extensions/dingtalk) | 钉钉 Stream 模式机器人 | MIT |
-| [@partme.ai/lark](./extensions/lark) | 飞书/Lark 企业消息 | MIT |
-| [@partme.ai/qqbot](./extensions/qqbot) | QQ 机器人 | MIT |
 | [@partme.ai/weixin](extensions/wechat) | 微信公众号 / 客服消息 | SEE LICENSE |
 | [@partme.ai/wecom-kf](./extensions/wecom-kf) | 企业微信客服（外部微信用户） | MIT |
 | [@partme.ai/wechat-ipad](./extensions/wechat-ipad) | 微信 iPad 协议 | MIT |
+| [@partme.ai/openclaw-bridge](./extensions/bridge) | 统一 IM Bridge — 21 个渠道，一个插件（钉钉/飞书/QQ/Discord/Slack/Telegram...） | MIT |
 
 ### 🧠 AI Capabilities
 | Package | Description |
@@ -100,6 +98,19 @@ Full documentation at [doc/](./doc/):
 | [Architecture](./doc/OpenClaw-Plugins-Architecture.md) (EN) / [架构设计](./doc/OpenClaw-Plugins-Architecture_CN.md) (CN) | Project architecture and design decisions |
 | [Contributing](./doc/OpenClaw-Plugins-Contributing.md) | How to add a new plugin |
 | [WeCom Guide](./doc/im-channels/wecom/OpenClaw-WeCom-Configuration.md) | 企业微信全配置指南 |
+
+## 🔗 Official Upstreams
+
+以下 IM 渠道由平台官方团队维护，通过 `@partme.ai/openclaw-bridge` 统一接入 PartMe.AI 生态。
+
+| Channel | Official Plugin | Official Repo | Docs |
+|---------|----------------|---------------|------|
+| 钉钉 | `@dingtalk-real-ai/dingtalk-connector` | [DingTalk-Real-AI/dingtalk-openclaw-connector](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector) | [dws CLI](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli) |
+| 飞书/Lark | `@larksuite/openclaw-lark` | [larksuite/openclaw-lark](https://github.com/larksuite/openclaw-lark) | [文档](https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh) |
+| QQ | `@tencent-connect/openclaw-qqbot` | [tencent-connect/openclaw-qqbot](https://github.com/tencent-connect/openclaw-qqbot) | — |
+
+> 所有 21 个 IM 渠道（含 Discord/Slack/Telegram 等 18 个 bundled 渠道）均通过 `@partme.ai/openclaw-bridge` 统一桥接。
+> 详见 [openclaw-bridge](./extensions/bridge)。
 
 ## 📄 License
 
