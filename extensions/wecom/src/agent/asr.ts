@@ -8,7 +8,7 @@
  */
 
 import type { ResolvedAgentAccount } from "../types/index.js";
-import { transcribeTencentFlash, type TencentFlashASRConfig } from "@partme.ai/openclaw-message-sdk/asr";
+import { transcribeTencentFlash, type TencentFlashASRConfig } from "@partme.ai/openclaw-message-sdk";
 
 /**
  * Transcribe voice message using Tencent Flash ASR

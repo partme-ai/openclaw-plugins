@@ -789,10 +789,10 @@ importers:
   extensions/wecom:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: 2026.5.20
+        specifier: workspace:*
         version: link:../message-sdk
       '@wecom/aibot-node-sdk':
-        specifier: ^1.0.2
+        specifier: ^1.0.6
         version: 1.0.7
       fast-xml-parser:
         specifier: 5.3.4
