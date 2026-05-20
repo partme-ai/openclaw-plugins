@@ -29,7 +29,7 @@
     "openclaw.plugin.json",
     "README.md",
     "README_CN.md",
-    "RELEASING.md"
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
