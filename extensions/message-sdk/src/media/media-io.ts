@@ -10,7 +10,7 @@ import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { isHttpUrl, normalizeLocalPath, getExtension } from "./media-parser.js";
-import { resolveExtension } from "./file-utils.js";
+import { resolveExtension } from "../file/file-utils.js";
 
 // ============================================================================
 // 类型

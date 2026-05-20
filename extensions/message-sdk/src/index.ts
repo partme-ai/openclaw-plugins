@@ -422,9 +422,30 @@ export class MessageParseError extends Error {
 }
 
 // ============================================================================
-// 从子模块重导出（避免双重导入）
+// 从子模块重导出
 // ============================================================================
+//
+// 核心消息类型与函数已在本文档定义（上方）。
+// 以下模块可从 '@partme.ai/openclaw-message-sdk' 统一导入：
+//
+//   import { UnifiedMessage, buildMessage, parseMessage,
+//            extractImagesFromText, httpPost, withRetry,
+//            transcribeTencentFlash, ASRError } from "@partme.ai/openclaw-message-sdk";
+//
+// 也可以按子路径导入：
+//   import { extractImagesFromText } from "@partme.ai/openclaw-message-sdk/media";
+//   import { httpPost, withRetry } from "@partme.ai/openclaw-message-sdk/http";
+//   import { transcribeTencentFlash } from "@partme.ai/openclaw-message-sdk/asr";
+//   import { resolveFileCategory } from "@partme.ai/openclaw-message-sdk/file";
 
-// 这些类型/函数在主模块中已定义，子模块需要使用主模块的版本。
-// 用户导入时统一从 '@partme.ai/openclaw-message-sdk' 导入。
-// 子模块可从相对路径导入 './index.js' 或 './media-parser.js' 等。
+// ── 媒体（解析 + IO）──
+export * from "./media/index.js";
+
+// ── HTTP（客户端 + 重试）──
+export * from "./http/index.js";
+
+// ── ASR（语音识别）──
+export * from "./asr/index.js";
+
+// ── 文件工具 ──
+export * from "./file/index.js";
