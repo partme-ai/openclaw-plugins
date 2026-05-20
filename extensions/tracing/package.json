@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-tracing",
-  "version": "0.1.10",
+  "version": "2026.5.20",
   "description": "Distributed tracing plugin for OpenClaw — capture message flows and agent interactions for debugging",
   "type": "module",
   "main": "dist/index.js",

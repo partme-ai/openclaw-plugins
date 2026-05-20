@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-web-mqtt",
-  "version": "0.1.11",
+  "version": "2026.5.20",
   "description": "Enterprise-grade MQTT over WebSocket channel plugin for OpenClaw",
   "type": "module",
   "main": "dist/index.js",

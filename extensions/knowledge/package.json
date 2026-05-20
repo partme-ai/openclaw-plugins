@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-knowledge",
-  "version": "0.1.0",
+  "version": "2026.5.20",
   "description": "OpenClaw knowledge base RAG engine — standalone plugin for embedding, vector store, hybrid retrieval, and multi-type chunking (document/FAQ/conversation)",
   "type": "module",
   "main": "./dist/index.js",

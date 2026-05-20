@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-cluster",
-  "version": "0.1.6",
+  "version": "2026.5.20",
   "description": "OpenClaw cluster coordination — Discovery · Config Sync · Session Store · Proxy",
   "type": "module",
   "main": "dist/index.js",

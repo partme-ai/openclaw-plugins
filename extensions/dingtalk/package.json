@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/dingtalk",
-  "version": "2.0.1",
+  "version": "2026.5.20",
   "description": "OpenClaw DingTalk (钉钉) channel plugin",
   "main": "index.ts",
   "type": "module",

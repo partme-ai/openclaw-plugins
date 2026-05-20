@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/wecom-kf",
-  "version": "0.1.11",
+  "version": "2026.5.20",
   "description": "OpenClaw WeCom KF (WeChat Work Customer Service) — multi-agent mapping + ICS REST API",
   "type": "module",
   "main": "dist/index.js",

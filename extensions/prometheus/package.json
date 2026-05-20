@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-prometheus",
-  "version": "0.3.0",
+  "version": "2026.5.20",
   "description": "Prometheus metrics exporter for OpenClaw Gateway - built on official plugin runtime, hooks, events, and plugin-owned routes",
   "type": "module",
   "main": "dist/index.js",

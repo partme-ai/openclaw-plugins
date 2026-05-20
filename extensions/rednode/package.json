@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-rednode",
-  "version": "0.1.0",
+  "version": "2026.5.20",
   "description": "OpenClaw 小红书开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
   "type": "module",
   "main": "dist/index.js",

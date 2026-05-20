@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-web-stomp",
-  "version": "0.1.11",
+  "version": "2026.5.20",
   "description": "STOMP over WebSocket bridge for OpenClaw — enterprise integration with Spring STOMP clients and web apps",
   "type": "module",
   "main": "dist/index.js",

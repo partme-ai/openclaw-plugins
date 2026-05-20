@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/wechat-ipad",
-  "version": "0.1.0",
+  "version": "2026.5.20",
   "description": "WeChat iPad protocol bridge for OpenClaw — personal WeChat account integration",
   "type": "module",
   "main": "dist/index.js",

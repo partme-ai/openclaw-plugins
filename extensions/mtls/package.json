@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-mtls",
-  "version": "0.1.0",
+  "version": "2026.5.20",
   "description": "mTLS mutual TLS authentication plugin for OpenClaw — bidirectional certificate-based security authentication",
   "type": "module",
   "main": "dist/index.js",

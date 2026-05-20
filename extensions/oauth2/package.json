@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-oauth2",
-  "version": "0.1.5",
+  "version": "2026.5.20",
   "description": "OAuth 2.0 authentication backend for OpenClaw — Sa-Token · JWT · Introspection",
   "type": "module",
   "main": "dist/index.js",
