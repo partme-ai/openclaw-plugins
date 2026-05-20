@@ -1,9 +1,61 @@
 /**
- * @partme.ai/openclaw-message-sdk — 统一消息格式 SDK
+ * @partme.ai/openclaw-message-sdk — 统一消息格式 SDK + 公共工具库
  *
- * 零运行时依赖的纯类型定义 + 序列化工具 + 消息解析器。
- * 所有 openclaw-plugins 的渠道插件使用此格式进行互通。
+ * 所有 openclaw-plugins 渠道插件共享的基础能力：
+ * - 统一消息类型与构造器
+ * - 媒体解析器（Markdown/HTML/MEDIA:指令/裸露路径）
+ * - HTTP 客户端 + 重试策略
+ * - 腾讯云 ASR 语音识别
+ * - 统一错误类型
+ *
+ * 零运行时必选依赖。ASR/HTTP 按需引入。
  */
+
+// ── 核心消息类型（已在本文档定义，见下方代码） ──
+
+// ── 媒体解析器 ──
+export {
+  extractMediaFromText,
+  extractImagesFromText,
+  extractFilesFromText,
+  isHttpUrl,
+  isLocalReference,
+  normalizeLocalPath,
+  isImagePath,
+  isNonImageFilePath,
+  getExtension,
+  detectMediaTypeFromPath,
+  type ExtractedMedia,
+  type MediaParseResult,
+  type MediaParseOptions,
+  type MediaType,
+} from "./media-parser.js";
+
+// ── HTTP 客户端 + 重试 ──
+export {
+  httpPost,
+  httpGet,
+  withRetry,
+  defaultShouldRetry,
+  HttpError,
+  TimeoutError,
+  type HttpRequestOptions,
+  type RetryOptions,
+} from "./http-client.js";
+
+// ── 腾讯云 ASR ──
+export {
+  transcribeTencentFlash,
+  ASRError,
+  ASRTimeoutError,
+  ASRAuthError,
+  ASRRequestError,
+  ASRResponseParseError,
+  ASRServiceError,
+  ASREmptyResultError,
+  type TencentFlashASRConfig,
+  type ASRErrorKind,
+} from "./asr-tencent.js";
 
 // ============================================================================
 // 媒体类型
