@@ -16,10 +16,10 @@ import { readdirSync, existsSync } from "fs";
 import { resolve, relative, dirname } from "path";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const PLUGINS_DIR = resolve(ROOT, "plugins");
+const EXTENSIONS_DIR = resolve(ROOT, "extensions");
 
 function getPluginDirs() {
-  return readdirSync(PLUGINS_DIR, { withFileTypes: true })
+  return readdirSync(EXTENSIONS_DIR, { withFileTypes: true })
     .filter((d) => d.isDirectory() && !d.name.startsWith("_") && !d.name.startsWith("."))
     .map((d) => d.name)
     .sort();
@@ -66,7 +66,7 @@ function detectChangedPlugins(base) {
       allPlugins = true;
       break;
     }
-    if (plugin && existsSync(resolve(PLUGINS_DIR, plugin))) {
+    if (plugin && existsSync(resolve(EXTENSIONS_DIR, plugin))) {
       affected.add(plugin);
     }
   }
