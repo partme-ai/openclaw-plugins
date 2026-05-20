@@ -33,9 +33,9 @@ import { dingtalkSetupWizard } from "./setup-surface.js";
  * 标准化钉钉发送目标
  * 支持格式：
  * - 原始用户 ID
- * - ddingtalk:user:<userId>  → <userId>
- * - ddingtalk:chat:<groupId> → chat:<groupId>（保留 chat: 前缀用于群聊路由）
- * - ddingtalk:<id>
+ * - dingtalk:user:<userId>  → <userId>
+ * - dingtalk:chat:<groupId> → chat:<groupId>（保留 chat: 前缀用于群聊路由）
+ * - dingtalk:<id>
  * - chat:<groupId>（直接群聊格式）
  * - user:<userId>
  */
@@ -45,7 +45,7 @@ function normalizeDingTalkTarget(target: string): string | undefined {
     return undefined;
   }
 
-  // 处理 ddingtalk:chat:<groupId> → chat:<groupId>
+  // 处理 dingtalk:chat:<groupId> → chat:<groupId>
   const chatPrefixPattern = new RegExp(`^${PLUGIN_ID}:chat:`, "i");
   if (chatPrefixPattern.test(trimmed)) {
     const groupId = trimmed.replace(chatPrefixPattern, "");
@@ -57,7 +57,7 @@ function normalizeDingTalkTarget(target: string): string | undefined {
     return trimmed.slice(5) ? trimmed : undefined;
   }
 
-  // 去除 ddingtalk:user: 或 ddingtalk: 前缀
+  // 去除 dingtalk:user: 或 dingtalk: 前缀
   const prefixPattern = new RegExp(`^${PLUGIN_ID}:(?:user:)?`, "i");
   const withoutPrefix = trimmed.replace(prefixPattern, "");
 
@@ -203,8 +203,8 @@ export const dingtalkPlugin: ChannelPlugin<ResolvedDingTalkAccount> = {
      * 解析发送目标
      * 支持以下格式：
      * - 用户 ID：直接是用户的 staffId
-     * - 带前缀格式：ddingtalk:user:<userId>
-     * - 群聊格式：chat:<openConversationId> 或 ddingtalk:chat:<openConversationId>
+     * - 带前缀格式：dingtalk:user:<userId>
+     * - 群聊格式：chat:<openConversationId> 或 dingtalk:chat:<openConversationId>
      */
     resolveTarget: ({ to, allowFrom, mode }) => {
       const trimmed = to?.trim() ?? "";

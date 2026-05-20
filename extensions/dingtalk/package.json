@@ -53,17 +53,17 @@
       "./index.ts"
     ],
     "channel": {
-      "id": "ddingtalk",
+      "id": "dingtalk",
       "label": "DingTalk",
       "selectionLabel": "DingTalk",
-      "docsPath": "/channels/ddingtalk",
-      "docsLabel": "ddingtalk",
+      "docsPath": "/channels/dingtalk",
+      "docsLabel": "dingtalk",
       "blurb": "DingTalk enterprise robot with Stream mode for Chinese market.",
       "order": 80,
       "quickstartAllowFrom": true
     },
     "install": {
-      "npmSpec": "@largezhou/ddingtalk",
+      "npmSpec": "@largezhou/dingtalk",
       "localPath": "",
       "defaultChoice": "npm"
     }

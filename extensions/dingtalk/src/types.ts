@@ -54,12 +54,12 @@ export type DingTalkAccountConfig = z.infer<typeof DingTalkAccountConfigSchema>;
  *
  * 单账户（旧版兼容）：
  * ```json
- * { "channels": { "ddingtalk": { "clientId": "xxx", "clientSecret": "yyy" } } }
+ * { "channels": { "dingtalk": { "clientId": "xxx", "clientSecret": "yyy" } } }
  * ```
  *
  * 多账户（新版）：
  * ```json
- * { "channels": { "ddingtalk": {
+ * { "channels": { "dingtalk": {
  *     "accounts": {
  *       "bot1": { "clientId": "xxx", "clientSecret": "yyy" },
  *       "bot2": { "clientId": "aaa", "clientSecret": "bbb" }

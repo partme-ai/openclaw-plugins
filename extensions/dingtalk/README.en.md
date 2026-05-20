@@ -1,4 +1,4 @@
-# @largezhou/ddingtalk
+# @largezhou/dingtalk
 
 [中文文档](README.md)
 
@@ -21,7 +21,7 @@ OpenClaw DingTalk channel plugin, using Stream mode to connect enterprise robots
 ## Installation
 
 ```bash
-openclaw plugins install @largezhou/ddingtalk
+openclaw plugins install @largezhou/dingtalk
 ```
 
 ---
@@ -137,7 +137,7 @@ Edit `~/.openclaw/openclaw.json`:
 ```json
 {
   "channels": {
-    "ddingtalk": {
+    "dingtalk": {
       "enabled": true,
       "clientId": "your_app_key",
       "clientSecret": "your_app_secret",
@@ -186,7 +186,7 @@ Edit `~/.openclaw/openclaw.json`:
 ```json
 {
   "channels": {
-    "ddingtalk": {
+    "dingtalk": {
       "enabled": true,
       "accounts": {
         "bot-hr": {
@@ -229,7 +229,7 @@ If you only have one robot, there is no need to use `accounts`. You can configur
 ```json
 {
   "channels": {
-    "ddingtalk": {
+    "dingtalk": {
       "enabled": true,
       "clientId": "your_app_key",
       "clientSecret": "your_app_secret"
@@ -252,13 +252,13 @@ Use the command line to bind different DingTalk accounts to different Agents:
 
 ```bash
 # Bind bot-hr account to hr-agent
-openclaw agents bind --agent hr-agent --bind ddingtalk:bot-hr
+openclaw agents bind --agent hr-agent --bind dingtalk:bot-hr
 
 # Bind bot-tech account to tech-agent
-openclaw agents bind --agent tech-agent --bind ddingtalk:bot-tech
+openclaw agents bind --agent tech-agent --bind dingtalk:bot-tech
 
 # Bind the entire DingTalk channel (all accounts) to the default agent
-openclaw agents bind --agent default-agent --bind ddingtalk
+openclaw agents bind --agent default-agent --bind dingtalk
 ```
 
 View current bindings:
@@ -270,7 +270,7 @@ openclaw agents bindings
 Remove bindings:
 
 ```bash
-openclaw agents unbind --agent hr-agent --bind ddingtalk:bot-hr
+openclaw agents unbind --agent hr-agent --bind dingtalk:bot-hr
 ```
 
 ### Bind Agents by Group/Direct Chat
@@ -291,7 +291,7 @@ The CLI currently only supports `channel[:accountId]` level bindings. To bind sp
       "agentId": "tech-agent",
       "comment": "Tech group routes to Tech Support Agent",
       "match": {
-        "channel": "ddingtalk",
+        "channel": "dingtalk",
         "peer": {
           "kind": "group",
           "id": "cidTechGroup001"
@@ -302,7 +302,7 @@ The CLI currently only supports `channel[:accountId]` level bindings. To bind sp
       "agentId": "hr-agent",
       "comment": "Zhang San's DM routes to HR Assistant",
       "match": {
-        "channel": "ddingtalk",
+        "channel": "dingtalk",
         "peer": {
           "kind": "direct",
           "id": "user_zhangsan_staffId"
@@ -313,7 +313,7 @@ The CLI currently only supports `channel[:accountId]` level bindings. To bind sp
       "agentId": "general-agent",
       "comment": "Other messages from bot-hr go to General Assistant",
       "match": {
-        "channel": "ddingtalk",
+        "channel": "dingtalk",
         "accountId": "bot-hr"
       }
     }
