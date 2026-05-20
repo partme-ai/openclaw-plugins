@@ -10,6 +10,30 @@
     ".": {
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
+    },
+    "./asr": {
+      "types": "./src/asr/index.d.ts",
+      "default": "./src/asr/index.js"
+    },
+    "./media": {
+      "types": "./src/media/index.d.ts",
+      "default": "./src/media/index.js"
+    },
+    "./http": {
+      "types": "./src/http/index.d.ts",
+      "default": "./src/http/index.js"
+    },
+    "./file": {
+      "types": "./src/file/index.d.ts",
+      "default": "./src/file/index.js"
+    },
+    "./ocr": {
+      "types": "./src/ocr/index.d.ts",
+      "default": "./src/ocr/index.js"
+    },
+    "./tts": {
+      "types": "./src/tts/index.d.ts",
+      "default": "./src/tts/index.js"
     }
   },
   "files": [

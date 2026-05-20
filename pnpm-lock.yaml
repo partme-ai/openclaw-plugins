@@ -788,6 +788,9 @@ importers:
 
   extensions/wecom:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: 2026.5.20
+        version: link:../message-sdk
       '@wecom/aibot-node-sdk':
         specifier: ^1.0.2
         version: 1.0.7
