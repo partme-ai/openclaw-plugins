@@ -3,6 +3,7 @@
  */
 
 import type { RedisClientType } from "redis";
+import { RedisConnectionError } from "./errors.js";
 
 let client: RedisClientType | null = null;
 let _messagesWritten = 0;
@@ -30,7 +31,7 @@ export function incrMessagesWritten(n?: number): void {
 /** 发布消息到 Redis channel。 */
 export async function publishMessage(channel: string, message: string): Promise<void> {
   if (!client) {
-    throw new Error("Redis client is not initialized");
+    throw new RedisConnectionError("unknown", "Redis client is not initialized");
   }
   await client.publish(channel, message);
   _messagesWritten++;
@@ -39,7 +40,7 @@ export async function publishMessage(channel: string, message: string): Promise<
 /** 向 stream 追加一条消息。 */
 export async function publishEntry(stream: string, values: Record<string, string>): Promise<string> {
   if (!client) {
-    throw new Error("Redis client is not initialized");
+    throw new RedisConnectionError("unknown", "Redis client is not initialized");
   }
   const id = await client.xAdd(stream, "*", values);
   _messagesWritten++;

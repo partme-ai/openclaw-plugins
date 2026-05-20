@@ -311,6 +311,10 @@ export async function dispatchInboundMessage(
           lastOutboundAt: Date.now(),
           lastError: null,
         });
+        ctx.setStatus({
+          accountId: account.accountId,
+          lastOutboundAt: Date.now(),
+        });
       },
     },
     replyOptions: route,
@@ -318,5 +322,9 @@ export async function dispatchInboundMessage(
   patchAccountSnapshot(account.accountId, {
     lastInboundAt: Date.now(),
     lastError: null,
+  });
+  ctx.setStatus({
+    accountId: account.accountId,
+    lastInboundAt: Date.now(),
   });
 }

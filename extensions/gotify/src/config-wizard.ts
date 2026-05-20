@@ -1,4 +1,5 @@
 import { createApplication, listApplications } from './gotify-api.js';
+import { GotifyConfigError, GotifyApiError } from './errors.js';
 import type { ResolvedGotifyAccount } from './types.js';
 
 /**
@@ -11,8 +12,9 @@ export async function runConfigWizard(account: ResolvedGotifyAccount): Promise<s
     return existing.token;
   }
   if (!account.bootstrap.autoCreateApplication) {
-    throw new Error(
-      `Application ${account.bootstrap.applicationName} not found and autoCreateApplication is disabled.`
+    throw new GotifyConfigError(
+      'autoCreateApplication',
+      `Application ${account.bootstrap.applicationName} not found and auto-create is disabled.`
     );
   }
   const created = await createApplication(account, {
@@ -20,7 +22,7 @@ export async function runConfigWizard(account: ResolvedGotifyAccount): Promise<s
     description: account.bootstrap.applicationDescription,
   });
   if (!created.token) {
-    throw new Error('Gotify application token is missing from createApplication response.');
+    throw new GotifyApiError('Gotify application token is missing from createApplication response.', 500);
   }
   return created.token;
 }

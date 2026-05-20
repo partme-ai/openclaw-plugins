@@ -30,9 +30,9 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md",
+    "README.en.md",
     "LICENSE",
-    "RELEASING.md"
+    "setup-entry.js"
   ],
   "publishConfig": {
     "access": "public"

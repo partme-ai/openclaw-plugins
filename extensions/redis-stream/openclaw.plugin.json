@@ -128,8 +128,89 @@
       }
     },
     "configSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object",
+      "description": "Redis Stream channel plugin configuration",
       "additionalProperties": false,
-      "properties": {}
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable the Redis Stream channel"
+        },
+        "redisUrl": {
+          "type": "string",
+          "format": "uri",
+          "default": "redis://localhost:6379",
+          "description": "Redis connection URL"
+        },
+        "channelMode": {
+          "type": "string",
+          "enum": ["pubsub", "stream"],
+          "default": "pubsub",
+          "description": "Inbound mode: pubsub or stream"
+        },
+        "defaultAgentId": {
+          "type": "string",
+          "default": "",
+          "description": "Fallback agent ID when no route matches"
+        },
+        "channels": {
+          "type": "array",
+          "default": [],
+          "description": "Channel configurations",
+          "items": {
+            "type": "object",
+            "properties": {
+              "channel": { "type": "string", "description": "Channel name/pattern" },
+              "agentId": { "type": "string", "description": "Target agent ID" },
+              "accountId": { "type": "string", "default": "default", "description": "Account ID" },
+              "replyChannel": { "type": "string", "description": "Reply channel override" }
+            },
+            "required": ["channel", "agentId"]
+          }
+        },
+        "payloadMode": {
+          "type": "string",
+          "enum": ["plainText", "jsonOnly", "jsonTextOrPlain"],
+          "default": "jsonTextOrPlain",
+          "description": "Message payload parsing mode"
+        },
+        "subscribeChannels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Channels to subscribe (supports * wildcard)"
+        },
+        "stream": {
+          "type": "object",
+          "properties": {
+            "inboundKey": { "type": "string", "default": "openclaw:inbound" },
+            "outboundKey": { "type": "string", "default": "openclaw:outbound" },
+            "consumerGroup": { "type": "string", "default": "openclaw-group" },
+            "consumerName": { "type": "string", "default": "openclaw-consumer-1" },
+            "blockMs": { "type": "number", "default": 5000 },
+            "count": { "type": "number", "default": 10 },
+            "createGroup": { "type": "boolean", "default": true }
+          }
+        },
+        "fieldMapping": {
+          "type": "object",
+          "properties": {
+            "textField": { "type": "string", "default": "text" },
+            "agentIdField": { "type": "string", "default": "agentId" },
+            "peerIdField": { "type": "string", "default": "peerId" },
+            "accountIdField": { "type": "string", "default": "accountId" },
+            "replyStreamField": { "type": "string", "default": "replyStream" }
+          }
+        },
+        "connection": {
+          "type": "object",
+          "properties": {
+            "reconnectMs": { "type": "number", "default": 3000 },
+            "maxRetries": { "type": "number", "default": 10 }
+          }
+        }
+      }
     }
   }

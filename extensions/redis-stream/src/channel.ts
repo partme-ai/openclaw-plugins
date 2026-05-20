@@ -73,22 +73,54 @@ export const redisStreamChannel = {
     startAccount: async ({
       runtime,
       abortSignal,
+      setStatus,
     }: {
       runtime: { config: Record<string, unknown> };
       abortSignal: AbortSignal;
+      setStatus: (status: Record<string, unknown>) => void;
     }) => {
-      const config = resolveRedisChannelConfig(runtime.config);
-      await startRedisServer(config);
+      try {
+        const config = resolveRedisChannelConfig(runtime.config);
+        await startRedisServer(config);
+        setStatus?.({
+          running: true,
+          configured: true,
+          lastStartAt: Date.now(),
+          lastError: null,
+        });
 
-      await new Promise<void>((resolve) => {
-        abortSignal.addEventListener("abort", () => resolve(), { once: true });
-      });
+        await new Promise<void>((resolve) => {
+          abortSignal.addEventListener("abort", () => resolve(), { once: true });
+        });
 
-      await stopRedisServer();
+        await stopRedisServer();
+      } catch (error) {
+        setStatus?.({
+          running: false,
+          configured: true,
+          lastError: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     },
 
-    stopAccount: async () => {
-      await stopRedisServer();
+    stopAccount: async ({ setStatus }: { setStatus: (status: Record<string, unknown>) => void }) => {
+      try {
+        await stopRedisServer();
+        setStatus?.({
+          running: false,
+          configured: true,
+          lastStopAt: Date.now(),
+          lastError: null,
+        });
+      } catch (error) {
+        setStatus?.({
+          running: false,
+          configured: true,
+          lastError: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     },
   },
 

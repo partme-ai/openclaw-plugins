@@ -1,4 +1,5 @@
 import { createApplication, listApplications, runGotifyDoctor } from './gotify-api.js';
+import { GotifyConfigError } from './errors.js';
 import type { GotifyDoctorReport, ResolvedGotifyAccount } from './types.js';
 
 /**
@@ -10,7 +11,7 @@ export async function bootstrapGotifyAccount(account: ResolvedGotifyAccount): Pr
   applicationToken?: string;
 }> {
   if (!account.bootstrap.enabled) {
-    throw new Error(`Bootstrap is disabled for account ${account.accountId}.`);
+    throw new GotifyConfigError('bootstrap', `Bootstrap is disabled for account ${account.accountId}.`);
   }
 
   const applications = await listApplications(account);
@@ -24,8 +25,9 @@ export async function bootstrapGotifyAccount(account: ResolvedGotifyAccount): Pr
   }
 
   if (!account.bootstrap.autoCreateApplication) {
-    throw new Error(
-      `Application ${account.bootstrap.applicationName} not found and autoCreateApplication is disabled.`
+    throw new GotifyConfigError(
+      'autoCreateApplication',
+      `Application ${account.bootstrap.applicationName} not found and auto-create is disabled.`
     );
   }
 
