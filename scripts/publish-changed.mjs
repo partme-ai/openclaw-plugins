@@ -20,7 +20,7 @@ import { readdirSync, readFileSync, existsSync } from "fs";
 import { resolve } from "path";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const PLUGINS_DIR = resolve(ROOT, "plugins");
+const PLUGINS_DIR = resolve(ROOT, "extensions");
 
 // ── Version parsing (ported from openclaw-china release scripts) ──
 

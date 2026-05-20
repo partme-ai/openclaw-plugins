@@ -38,11 +38,11 @@ export interface PluginApi {
     channel?: {
       publishInbound?: (params: PublishInboundParams) => void | Promise<void>;
     };
-    /** 可选：plugins.entries.<pluginId>.config，由宿主注入 */
-    pluginConfig?: Record<string, unknown>;
-    /** 可选：带 [plugin:id] 前缀的 logger，由宿主注入 */
-    logger?: PluginLogger;
   };
+  /** 可选：plugins.entries.<pluginId>.config，由宿主注入 */
+  pluginConfig?: Record<string, unknown>;
+  /** 可选：带 [plugin:id] 前缀的 logger，由宿主注入 */
+  logger?: PluginLogger;
   registerChannel: (options: { plugin: ChannelDefinition }) => void;
   registerHttpRoute: (params: { path: string; handler: HttpHandler }) => void;
   registerTool?: (tool: ToolDefinition, opts?: { optional?: boolean }) => void;

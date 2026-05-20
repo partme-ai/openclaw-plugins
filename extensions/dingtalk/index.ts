@@ -5,10 +5,11 @@ import { setDingTalkRuntime } from "./src/runtime.js";
 export { dingtalkPlugin } from "./src/channel.js";
 export { setDingTalkRuntime } from "./src/runtime.js";
 
+// Workaround TypeScript inference issues with cross-package types
 export default defineChannelPluginEntry({
   id: "ddingtalk",
   name: "DingTalk",
   description: "DingTalk (钉钉) enterprise robot channel plugin",
   plugin: dingtalkPlugin,
   setRuntime: setDingTalkRuntime,
-});
+}) as never;

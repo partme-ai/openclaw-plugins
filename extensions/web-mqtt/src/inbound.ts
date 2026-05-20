@@ -68,7 +68,7 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
     cfg,
     channel: "mqtt-ws",
     accountId: route.accountId,
-    peer: { kind: \"direct\", id: event.clientId },
+    peer: { kind: "direct", id: event.clientId },
   });
 
   const ctx = await runtime.channel.reply.finalizeInboundContext({

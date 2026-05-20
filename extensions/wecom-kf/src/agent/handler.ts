@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
-import type { ResolvedAgentAccount } from "../types/index.js";
+import type { ResolvedAgentAccount, WecomAccountConfig } from "../types/index.js";
 import {
     extractMsgType,
     extractFromUser,
@@ -677,4 +677,23 @@ export async function handleAgentWebhook(params: AgentWebhookParams): Promise<bo
     }
 
     return false;
+}
+
+/**
+ * **handleCustomerMessage (处理客户消息)**
+ *
+ * 处理企微客服客户消息 (origin=3)。
+ * 这是客服模式的消息处理入口，与 Agent 模式类似但使用不同的 API。
+ *
+ * @param msg - 企微客服消息
+ * @param accountConfig - 客服账号配置
+ */
+export async function handleCustomerMessage(
+  msg: any, // KfMessage - using any to avoid circular dependency
+  accountConfig: WecomAccountConfig
+): Promise<void> {
+  // TODO: Implement customer message handling for wecom-kf plugin
+  // This should integrate with OpenClaw's agent system similar to handleAgentWebhook
+  // but using the KF API instead of Agent API
+  throw new Error("handleCustomerMessage not yet implemented for wecom-kf plugin");
 }

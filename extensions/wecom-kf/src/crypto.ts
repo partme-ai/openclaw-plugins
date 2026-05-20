@@ -174,3 +174,64 @@ export function encryptWecomPlaintext(params: {
   const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
   return encrypted.toString("base64");
 }
+
+/**
+ * **extractEncryptFromXml (从 XML 提取加密内容)**
+ *
+ * 从企微回调 XML 中提取 Encrypt 字段。
+ *
+ * @param xml - XML 字符串
+ * @returns 加密内容
+ */
+export function extractEncryptFromXml(xml: string): string {
+    const match = xml.match(/<Encrypt>(<!\[CDATA\[)?(.*?)(\]\]>)?<\/Encrypt>/s);
+    if (!match || !match[2]) {
+        throw new Error("Encrypt field not found in XML");
+    }
+    return match[2]!;
+}
+
+/**
+ * **parseWecomCallback (解析企微回调)**
+ *
+ * 解析企微回调请求的验签、解密等操作。
+ *
+ * @param query - URL 查询参数
+ * @param body - 请求体
+ * @param token - 回调验证 Token
+ * @param encodingAESKey - 回调加密 Key
+ * @returns 解析结果
+ */
+export function parseWecomCallback(
+    query: { msg_signature?: string; timestamp?: string; nonce?: string; echostr?: string },
+    body: string | null,
+    token: string,
+    encodingAESKey: string
+): { type: "verify" | "event"; echostr?: string; data?: Record<string, unknown> } {
+    const signature = verifyWecomSignature({
+        token,
+        timestamp: query.timestamp ?? "",
+        nonce: query.nonce ?? "",
+        encrypt: extractEncryptFromXml(body ?? ""),
+    });
+
+    if (query.msg_signature !== signature) {
+        throw new Error("Invalid signature");
+    }
+
+    if (query.echostr) {
+        return { type: "verify", echostr: query.echostr };
+    }
+
+    const decrypted = decryptWecomEncrypted({
+        encrypt: extractEncryptFromXml(body ?? ""),
+        encodingAESKey,
+    });
+
+    try {
+        const data = JSON.parse(decrypted.message);
+        return { type: "event", data };
+    } catch {
+        return { type: "event", data: { message: decrypted.message } };
+    }
+}

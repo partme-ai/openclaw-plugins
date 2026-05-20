@@ -192,3 +192,38 @@ export type WecomOutboundMessage =
     | { msgtype: "text"; text: { content: string } }
     | { msgtype: "markdown"; markdown: { content: string } }
     | { msgtype: "template_card"; template_card: WecomTemplateCard };
+
+/**
+ * **KfMessage (企微客服消息)**
+ *
+ * 企微客服回调消息结构。
+ * 用于处理 kf_msg_or_event 事件中的消息。
+ *
+ * @property origin 消息来源: 3=客户消息, 4=系统事件, 5=其他
+ * @property msgtype 消息类型: "text" | "image" | "event" 等
+ * @property openkid 客服账号 ID
+ * @property external_userid 外部联系人 UserID
+ * @property msgid 消息 ID
+ * @property sequence 消息序号
+ */
+export type KfMessage = {
+    /** 消息来源: 3=客户消息, 4=系统事件, 5=其他 */
+    origin: number;
+    /** 消息类型 */
+    msgtype: string;
+    /** 客服账号 ID */
+    open_kfid?: string;
+    /** 外部联系人 UserID */
+    external_userid?: string;
+    /** 消息 ID */
+    msgid?: string;
+    /** 消息序号 */
+    sequence?: number;
+    /** 文本内容 */
+    text?: { content: string };
+    /** 图片信息 */
+    image?: { media_id: string };
+    /** 事件类型 (系统事件) */
+    event?: string;
+    [key: string]: unknown;
+};

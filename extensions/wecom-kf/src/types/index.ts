@@ -39,4 +39,5 @@ export type {
     WecomInboundQuote,
     WecomTemplateCard,
     WecomOutboundMessage,
+    KfMessage,
 } from "./message.js";

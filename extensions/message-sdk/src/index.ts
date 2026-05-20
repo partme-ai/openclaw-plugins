@@ -29,7 +29,7 @@ export {
   type MediaParseResult,
   type MediaParseOptions,
   type MediaType,
-} from "./media-parser.js";
+} from "./media/index.js";
 
 // ── HTTP 客户端 + 重试 ──
 export {
@@ -41,7 +41,7 @@ export {
   TimeoutError,
   type HttpRequestOptions,
   type RetryOptions,
-} from "./http-client.js";
+} from "./http/index.js";
 
 // ── 腾讯云 ASR ──
 export {
@@ -55,7 +55,7 @@ export {
   ASREmptyResultError,
   type TencentFlashASRConfig,
   type ASRErrorKind,
-} from "./asr-tencent.js";
+} from "./asr/index.js";
 
 // ============================================================================
 // 媒体类型

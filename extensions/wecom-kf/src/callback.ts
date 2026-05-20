@@ -11,7 +11,7 @@ import type { KfMessage, WecomAccountConfig } from "./types/index.js";
 import { parseWecomCallback } from "./crypto.js";
 import { getAccessToken, syncMessages } from "./agent/api-client.js";
 import { getCursorStore } from "./cursor-store.js";
-import { handleCustomerMessage } from "./agent/handler.js";
+import { handleAgentWebhook } from "./agent/handler.js";
 import { handleSystemEvent } from "./agent/system-event.js";
 
 /** 同一批消息最大并发处理数 */

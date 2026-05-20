@@ -21,7 +21,7 @@ function getMeituanConfig(api: PluginApi): (() => import("./types.js").MeituanAc
     const meituan = channels?.meituan as Record<string, unknown> | undefined;
     const base = meituan ?? {};
     const overlay = api.pluginConfig ?? {};
-    return { ...base, ...overlay } as import("./types.js").MeituanAccountConfig;
+    return { ...base, ...overlay } as unknown as import("./types.js").MeituanAccountConfig;
   };
 }
 

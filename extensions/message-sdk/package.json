@@ -7,11 +7,37 @@
   "main": "./src/index.js",
   "types": "./src/index.d.ts",
   "exports": {
-    ".": { "types": "./src/index.d.ts", "default": "./src/index.js" }
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    }
   },
-  "files": ["src/", "index.ts", "README.md", "LICENSE"],
-  "repository": { "type": "git", "url": "https://github.com/partme-ai/openclaw-plugins.git", "directory": "extensions/message-sdk" },
-  "keywords": ["openclaw", "openclaw-plugin", "message", "sdk", "unified-message"],
-  "scripts": { "build": "tsup", "typecheck": "tsc --noEmit", "clean": "rm -rf dist" },
-  "devDependencies": { "tsup": "^8.2.0", "typescript": "^5.7.0" }
+  "files": [
+    "src/",
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/partme-ai/openclaw-plugins.git",
+    "directory": "extensions/message-sdk"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "message",
+    "sdk",
+    "unified-message"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsup": "^8.2.0",
+    "typescript": "^5.7.0"
+  }
 }

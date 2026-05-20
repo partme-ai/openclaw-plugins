@@ -34,10 +34,10 @@ const plugin = {
 
     // ── ICS REST API routes (merged from @partme.ai/ics) ──
     const runtime = api.runtime;
-    api.registerHttpRoute({ path: "/ics/agents", handler: createKnowledgeHandler(runtime) });
-    api.registerHttpRoute({ path: "/ics/config/bindings", handler: createBindingsHandler(runtime) });
-    api.registerHttpRoute({ path: "/ics/config/event-messages", handler: createEventMessagesHandler(runtime) });
-    api.registerHttpRoute({ path: "/ics/stats/overview", handler: createStatsHandler(runtime) });
+    api.registerHttpRoute({ path: "/ics/agents", handler: createKnowledgeHandler(runtime), auth: "plugin" });
+    api.registerHttpRoute({ path: "/ics/config/bindings", handler: createBindingsHandler(runtime), auth: "plugin" });
+    api.registerHttpRoute({ path: "/ics/config/event-messages", handler: createEventMessagesHandler(runtime), auth: "plugin" });
+    api.registerHttpRoute({ path: "/ics/stats/overview", handler: createStatsHandler(runtime), auth: "plugin" });
 
     // Register wecom_kf_mcp
     api.registerTool(createWeComMcpTool(), { name: "wecom_kf_mcp" });

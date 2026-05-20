@@ -381,3 +381,76 @@ export async function downloadMedia(params: {
     const buffer = await readResponseBodyAsBuffer(res, params.maxBytes);
     return { buffer, contentType, filename };
 }
+
+/**
+ * **syncMessages (同步消息)**
+ *
+ * 企微客服消息同步接口，用于拉取新消息。
+ * 这是 kf_msg_or_event 回调后拉取消息的接口。
+ *
+ * @param accessToken - 访问令牌
+ * @param cursor - 游标，首次拉取传空
+ * @param token - 回调事件中的 Token
+ * @param openKfId - 客服账号 ID
+ * @returns 同步结果
+ */
+export async function syncMessages(
+    accessToken: string,
+    cursor: string,
+    token: string,
+    openKfId?: string
+): Promise<{
+    errcode: number;
+    errmsg: string;
+    msg_list: Array<{
+        msgid: string;
+        origin: number;
+        msgtype: string;
+        [key: string]: unknown;
+    }>;
+    next_cursor?: string;
+    has_more: number;
+}> {
+    // TODO: Implement syncMessages API call
+    // This is a stub implementation
+    throw new Error("syncMessages not yet implemented for wecom-kf plugin");
+}
+
+/**
+ * **sendEventMessage (发送事件消息)**
+ *
+ * 用于发送欢迎语、满意度调查等事件消息。
+ *
+ * @param params - 发送参数
+ */
+export async function sendEventMessage(params: {
+    agent: ResolvedAgentAccount;
+    openKfId: string;
+    externalUserId: string;
+    msgtype: string;
+    content: unknown;
+}): Promise<void> {
+    // TODO: Implement sendEventMessage API call
+    // This is a stub implementation
+    throw new Error("sendEventMessage not yet implemented for wecom-kf plugin");
+}
+
+/**
+ * **listServicers (获取接待人员列表)**
+ *
+ * 获取客服账号的接待人员列表，用于动态路由和缓存管理。
+ *
+ * @param params - 查询参数
+ * @returns 接待人员列表
+ */
+export async function listServicers(params: {
+    agent: ResolvedAgentAccount;
+    openKfId: string;
+}): Promise<Array<{
+    userid: string;
+    status: number;
+}>> {
+    // TODO: Implement listServicers API call
+    // This is a stub implementation
+    throw new Error("listServicers not yet implemented for wecom-kf plugin");
+}
