@@ -449,3 +449,6 @@ export * from "./asr/index.js";
 
 // ── 文件工具 ──
 export * from "./file/index.js";
+
+// ── OCR（光学字符识别）──
+export * from "./ocr/index.js";
