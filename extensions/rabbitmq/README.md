@@ -10,7 +10,7 @@
 
 </div>
 
-[English](./README.md) | [简体中文](./README_CN.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ## 📖 简介
 
@@ -331,7 +331,7 @@ openclaw-rabbitmq/
 │       └── release.yml       # 发布工作流
 ├── openclaw.plugin.json
 ├── package.json
-└── README.md / README_CN.md
+└── README.md / README.zh-CN.md
 ```
 
 ## 📚 使用示例

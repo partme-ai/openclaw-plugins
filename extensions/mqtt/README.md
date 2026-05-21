@@ -11,7 +11,7 @@
 
 </div>
 
-[English](./README.md) | [简体中文](./README_CN.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ## 简介
 
@@ -242,7 +242,7 @@ openclaw-mqtt/
 │   └── test-client.ts       # 集成测试客户端
 ├── openclaw.plugin.json     # 插件元数据
 ├── package.json
-└── README.md / README_CN.md
+└── README.md / README.zh-CN.md
 ```
 
 ## 技术栈

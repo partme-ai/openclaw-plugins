@@ -382,6 +382,47 @@ export async function downloadMedia(params: {
     return { buffer, contentType, filename };
 }
 
+const INVALID_ACCESS_TOKEN_ERRCODES = new Set([40001, 40014, 42001]);
+
+/**
+ * **callAuthenticatedJson (带自动重试的认证 API 调用)**
+ *
+ * 泛型包装器：自动获取 token，token 过期时清缓存重试一次。
+ * 避免每个 API 端点手动处理 token 生命周期。
+ * 从 research/openclaw-china 回移植。
+ */
+async function callAuthenticatedJson<T extends { errcode?: number; errmsg?: string }>(
+  agent: ResolvedAgentAccount,
+  buildPath: (accessToken: string) => string,
+  init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> } = {},
+): Promise<T> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const accessToken = await getAccessToken(agent);
+    const url = buildPath(accessToken);
+    const res = await wecomFetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init.headers ?? {}),
+      },
+    }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS, proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network) });
+    const data = await res.json() as T;
+
+    if (
+      attempt === 0 &&
+      data.errcode !== undefined &&
+      INVALID_ACCESS_TOKEN_ERRCODES.has(data.errcode)
+    ) {
+      tokenCaches.delete(`${agent.corpId}:${String(agent.agentId ?? "na")}`);
+      continue;
+    }
+
+    return data;
+  }
+
+  throw new Error("authenticated API call exhausted retries");
+}
+
 /**
  * **KF syncMessages (客服消息同步)**
  *
@@ -553,4 +594,129 @@ export async function listServicers(params: {
     };
     if (json.errcode !== 0) return [];
     return json.servicer_list ?? [];
+}
+
+/**
+ * **stripMarkdown (移除 Markdown 格式)**
+ *
+ * 将 Markdown 文本转换为适合企微文本消息的纯文本格式。
+ * 从 research/openclaw-china 回移植。
+ */
+export function stripMarkdown(text: string): string {
+  let result = text;
+  result = result.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
+    const trimmedCode = String(code).trim();
+    if (!trimmedCode) return "";
+    const language = lang ? `[${lang}]\n` : "";
+    const indented = trimmedCode
+      .split("\n")
+      .map((line) => `    ${line}`)
+      .join("\n");
+    return `\n${language}${indented}\n`;
+  });
+  result = result.replace(/^#{1,6}\s+(.+)$/gm, "【$1】");
+  result = result
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/(?<![\w/])_(.+?)_(?![\w/])/g, "$1")
+    .replace(/~~(.*?)~~/g, "$1");
+  result = result.replace(/^[-*]\s+/gm, "· ");
+  result = result.replace(/^(\d+)\.\s+/gm, "$1. ");
+  result = result.replace(/`([^`]+)`/g, "$1");
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
+  result = result.replace(/!\[([^\]]*)\]\([^)]+\)/g, "[图片: $1]");
+  result = result.replace(/^>\s?/gm, "");
+  result = result.replace(/^[-*_]{3,}$/gm, "────────────");
+  result = result.replace(/\n{3,}/g, "\n\n");
+  return result.trim();
+}
+
+/**
+ * **splitMessageByBytes (按字节长度拆分消息)**
+ *
+ * 将文本按 UTF-8 字节长度拆分为多个片段，用于企微文本消息 2048 字节限制。
+ * 从 research/openclaw-china 回移植。
+ */
+export function splitMessageByBytes(text: string, maxBytes = 2048): string[] {
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const char of text) {
+    const candidate = current + char;
+    if (Buffer.byteLength(candidate, "utf8") > maxBytes) {
+      if (current) chunks.push(current);
+      current = char;
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+/**
+ * **sendKfTextMessage (发送 KF 文本消息，含 Markdown 剥离和自动拆分)**
+ *
+ * 自动处理 stripMarkdown + splitMessageByBytes + sendKfMsg 完整流程。
+ * 从 research/openclaw-china 回移植。
+ */
+export async function sendKfTextMessage(params: {
+  agent: ResolvedAgentAccount;
+  externalUserId: string;
+  text: string;
+  openKfId?: string;
+}): Promise<Array<{ errcode: number; errmsg: string; msgid?: string }>> {
+  const { agent, externalUserId } = params;
+  const openKfId = params.openKfId?.trim();
+  if (!openKfId) {
+    throw new Error("openKfId not available for text sending");
+  }
+
+  const accessToken = await getAccessToken(agent);
+  const chunks = splitMessageByBytes(stripMarkdown(params.text), 2048);
+  const results: Array<{ errcode: number; errmsg: string; msgid?: string }> = [];
+
+  for (const chunk of chunks) {
+    const result = await sendKfMsg({
+      accessToken,
+      touser: externalUserId,
+      open_kfid: openKfId,
+      msgtype: "text",
+      text: { content: chunk },
+    });
+    results.push(result);
+    if (result.errcode !== 0) {
+      break;
+    }
+  }
+
+  return results;
+}
+
+/**
+ * **summarizeSendResults (汇总发送结果)**
+ *
+ * 从批量发送结果中提取成功/失败状态。
+ * 从 research/openclaw-china 回移植。
+ */
+export function summarizeSendResults(
+  results: Array<{ errcode: number; errmsg: string; msgid?: string }>,
+): { ok: boolean; msgid?: string; error?: string } {
+  if (results.length === 0) {
+    return { ok: false, error: "no send attempts executed" };
+  }
+
+  const failed = results.find((result) => result.errcode !== 0);
+  if (failed) {
+    return {
+      ok: false,
+      msgid: failed.msgid,
+      error: failed.errmsg || `send failed (errcode=${failed.errcode})`,
+    };
+  }
+
+  const last = results[results.length - 1];
+  return { ok: true, msgid: last?.msgid };
 }

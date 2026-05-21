@@ -717,8 +717,9 @@ export async function handleCustomerMessage(
   // ── State Flow: Load or create dialogue context ──
   let dialogueCtx: Record<string, unknown> | undefined;
   try {
-    const { createDialogueContext, transitionState, DIALOGUE_SESSION_NAMESPACE } =
+    const { createDialogueContext, DIALOGUE_SESSION_NAMESPACE } =
       await import("../kf/dialogue-state.js");
+    const { transitionState } = await import("../kf/dialogue-transitions.js");
     const { isHumanTransferRequest } = await import("../kf/intent-classifier.js");
 
     // Try to get existing dialogue context from session extension

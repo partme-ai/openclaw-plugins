@@ -22,7 +22,7 @@
   <a href="#-tech-stack">Tech Stack</a>
 </p>
 
-[简体中文](./README_CN.md) | English
+[简体中文](./README.zh-CN.md) | English
 
 ---
 

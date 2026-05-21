@@ -8,7 +8,7 @@
 
 </div>
 
-[中文](README_CN.md) | English
+[中文](README.zh-CN.md) | English
 
 ---
 

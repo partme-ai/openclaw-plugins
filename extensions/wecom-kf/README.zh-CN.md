@@ -11,7 +11,7 @@
 
 </div>
 
-[English](./README.md) | [简体中文](./README_CN.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ---
 
@@ -210,7 +210,7 @@ wecom_kf/
 │   └── aftersale-agent/
 ├── package.json
 ├── openclaw.plugin.json
-└── README.md / README_CN.md
+└── README.md / README.zh-CN.md
 ```
 
 ## 生产环境清单

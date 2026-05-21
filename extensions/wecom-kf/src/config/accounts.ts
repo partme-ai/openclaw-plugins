@@ -339,3 +339,26 @@ export function isWecomEnabled(cfg: OpenClawConfig): boolean {
     const resolved = resolveWecomAccounts(cfg);
     return Object.values(resolved.accounts).some((account) => account.configured && account.enabled);
 }
+
+/**
+ * **KF 环境变量回退**
+ *
+ * 当 DEFAULT_ACCOUNT_ID 的 KF 配置缺失时，回退到环境变量。
+ * 支持的变量：WECOM_KF_CORP_ID, WECOM_KF_CORP_SECRET, WECOM_KF_OPEN_KF_ID,
+ *              WECOM_KF_TOKEN, WECOM_KF_ENCODING_AES_KEY
+ * 从 research/openclaw-china 回移植。
+ */
+export function applyKfEnvVarFallback(
+  accountConfig: Record<string, unknown>,
+  accountId: string,
+): Record<string, unknown> {
+  if (accountId !== DEFAULT_ACCOUNT_ID) return accountConfig;
+
+  const result = { ...accountConfig };
+  if (!result.corpId) result.corpId = process.env.WECOM_KF_CORP_ID?.trim();
+  if (!result.corpSecret) result.corpSecret = process.env.WECOM_KF_CORP_SECRET?.trim();
+  if (!result.openKfId) result.openKfId = process.env.WECOM_KF_OPEN_KF_ID?.trim();
+  if (!result.token) result.token = process.env.WECOM_KF_TOKEN?.trim();
+  if (!result.encodingAESKey) result.encodingAESKey = process.env.WECOM_KF_ENCODING_AES_KEY?.trim();
+  return result;
+}

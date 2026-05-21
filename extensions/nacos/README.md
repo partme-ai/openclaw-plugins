@@ -11,7 +11,7 @@
 
 </div>
 
-[简体中文](https://github.com/partme-ai/openclaw-nacos/blob/main/README_CN.md) | [English](https://github.com/partme-ai/openclaw-nacos/blob/main/README.md)
+[简体中文](https://github.com/partme-ai/openclaw-nacos/blob/main/README.zh-CN.md) | [English](https://github.com/partme-ai/openclaw-nacos/blob/main/README.md)
 
 `@partme.ai/openclaw-nacos` 是为 [OpenClaw](https://github.com/openclaw/openclaw) 开发的 [Nacos](https://nacos.io/) 集成插件：提供 **命名注册**（Gateway / Hooks 服务发现）与可选的 **配置中心**（远程配置合并、写盘前备份、订阅变更）。推荐使用 OpenClaw CLI 安装到扩展目录；也可通过 npm 手动接入。
 
@@ -302,7 +302,7 @@ openclaw-nacos/
 ├── dist/                     # 构建产出（发布到 npm）
 ├── openclaw.plugin.json      # OpenClaw 插件清单
 ├── package.json
-└── README.md / README_CN.md
+└── README.md / README.zh-CN.md
 ```
 
 ### 📚 文档

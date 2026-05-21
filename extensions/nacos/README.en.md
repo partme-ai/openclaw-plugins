@@ -11,7 +11,7 @@
 
 </div>
 
-[English](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/nacos/README.md) | [简体中文](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/nacos/README_CN.md)
+[English](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/nacos/README.md) | [简体中文](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/nacos/README.zh-CN.md)
 
 ## 📖 Introduction
 
@@ -127,7 +127,7 @@ Wire the package into OpenClaw using your version’s plugin discovery rules (`o
 
 #### Spring-style `nacos` block (optional)
 
-You may nest a `nacos` object under `plugins.entries.openclaw-nacos.config` (similar to Spring Boot `application.yml`). The plugin flattens it before validation; **top-level keys win** when both are present. See [README_CN.md](./README_CN.md) for field mapping (`server-addr`, `discovery`, `config`, `shared-configs`, `data-id`).
+You may nest a `nacos` object under `plugins.entries.openclaw-nacos.config` (similar to Spring Boot `application.yml`). The plugin flattens it before validation; **top-level keys win** when both are present. See [README.zh-CN.md](./README.zh-CN.md) for field mapping (`server-addr`, `discovery`, `config`, `shared-configs`, `data-id`).
 
 #### npm `nacos` 2.x only
 
@@ -255,7 +255,7 @@ extensions/nacos/            # In the openclaw-plugins monorepo
 ├── dist/                     # Published build output
 ├── openclaw.plugin.json      # OpenClaw plugin manifest
 ├── package.json
-└── README.md / README_CN.md
+└── README.md / README.zh-CN.md
 ```
 
 Full documentation: [openclaw-plugins docs](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos)
@@ -388,7 +388,7 @@ node scripts/publish-changed.mjs --plugin nacos
 | nacos-sdk-nodejs | [https://github.com/nacos-group/nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs) |
 | OpenClaw | [https://docs.openclaw.ai](https://docs.openclaw.ai) |
 | OpenClaw (source) | [https://github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) |
-| 中文说明 | [README_CN.md](./README_CN.md) |
+| 中文说明 | [README.zh-CN.md](./README.zh-CN.md) |
 
 #### OpenClaw plugins (official docs)
 

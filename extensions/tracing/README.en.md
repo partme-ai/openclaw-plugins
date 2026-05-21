@@ -6,7 +6,7 @@
 ![Node](https://img.shields.io/badge/Node.js-20+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-[English](./README.md) | [简体中文](./README_CN.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ---
 
@@ -184,7 +184,7 @@ openclaw-tracing/
 │   └── release.yml           # Release workflow
 ├── openclaw.plugin.json       # Plugin manifest
 ├── package.json
-└── README.md / README_CN.md
+└── README.md / README.zh-CN.md
 ```
 
 ---

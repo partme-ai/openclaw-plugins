@@ -13,7 +13,7 @@
 
 ---
 
-[English](./README.md) | [简体中文](./README_CN.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ---
 
@@ -187,7 +187,7 @@ openclaw-redis-stream/
 ├── tsconfig.json          # TypeScript 配置
 ├── tsup.config.ts         # 构建配置（tsup）
 ├── README.md              # English
-├── README_CN.md           # 简体中文
+├── README.zh-CN.md           # 简体中文
 └── src/
     ├── index.ts           # 入口：defineChannelPluginEntry + HTTP 路由
     ├── channel.ts         # ChannelPlugin 定义

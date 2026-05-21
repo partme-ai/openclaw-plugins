@@ -208,7 +208,53 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
       probe: snapshot.probe,
       lastProbeAt: snapshot.lastProbeAt ?? null,
     }),
-    probeAccount: async () => ({ ok: true }),
+    probeAccount: async ({ account, runtime }) => {
+      // Real KF probe: check API access by calling getAccessToken
+      // Backported from research/openclaw-china probeWecomKfAccount
+      try {
+        const resolved = account as Record<string, unknown>;
+        const agentCfg = resolved.agent as Record<string, unknown> | undefined;
+        const kfCfg = resolved.kf as Record<string, unknown> | undefined;
+
+        const corpId = (kfCfg?.corpId ?? resolved.corpId ?? "") as string;
+        const corpSecret = (kfCfg?.corpSecret ?? resolved.corpSecret ?? "") as string;
+        const token = (kfCfg?.token ?? resolved.token ?? "") as string;
+        const encodingAESKey = (kfCfg?.encodingAESKey ?? resolved.encodingAESKey ?? "") as string;
+
+        // Check if KF is configured
+        if (!corpId || !token || !encodingAESKey) {
+          return { ok: false, error: "KF not configured: missing corpId/token/encodingAESKey" };
+        }
+
+        // Check if can send actively
+        if (!corpSecret) {
+          return {
+            ok: false,
+            error: "corpSecret not configured — cannot send active messages yet. Configure corpSecret and restart.",
+          };
+        }
+
+        // Real API check
+        const { getAccessToken } = await import("./agent/api-client.js");
+        await getAccessToken({
+          accountId: "kf-probe",
+          enabled: true,
+          configured: true,
+          corpId,
+          corpSecret,
+          token: "",
+          encodingAESKey: "",
+          config: { corpId, corpSecret, token: "", encodingAESKey: "" },
+        });
+
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
     buildAccountSnapshot: ({ account, runtime, cfg }) => {
       const conflict = resolveWecomAccountConflict({
         cfg: cfg as OpenClawConfig,

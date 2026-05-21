@@ -6,7 +6,7 @@
 ![Node](https://img.shields.io/badge/Node.js-20+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-[English](./README.md) | [简体中文](./README_CN.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ## 📖 简介
 
@@ -175,7 +175,7 @@ openclaw-mtls/
 │   └── release.yml          # Release 工作流
 ├── openclaw.plugin.json     # 插件元数据和配置 schema
 ├── package.json
-└── README.md / README_CN.md
+└── README.md / README.zh-CN.md
 ```
 
 ## 📚 OpenClaw 官方文档

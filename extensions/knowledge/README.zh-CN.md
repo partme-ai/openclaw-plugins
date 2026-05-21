@@ -6,7 +6,7 @@
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-[简体中文](./README_CN.md) | [English](./README.en.md)
+[简体中文](./README.zh-CN.md) | [English](./README.en.md)
 
 ---
 

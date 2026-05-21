@@ -11,7 +11,7 @@
 
 </div>
 
-[English](./README.md) | [简体中文](./README_CN.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ## Introduction
 
@@ -242,7 +242,7 @@ openclaw-mqtt/
 │   └── test-client.ts       # Integration test client
 ├── openclaw.plugin.json     # Plugin metadata
 ├── package.json
-└── README.md / README_CN.md
+└── README.md / README.zh-CN.md
 ```
 
 ## Tech Stack
@@ -291,7 +291,7 @@ Configure `topicPattern` and `agentId` via `topicBindings`, with optional `reply
 | OpenClaw (source) | [https://github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) |
 | Aedes MQTT Broker | [https://github.com/moscajs/aedes](https://github.com/moscajs/aedes) |
 | RabbitMQ MQTT Reference | [https://www.rabbitmq.com/docs/mqtt](https://www.rabbitmq.com/docs/mqtt) |
-| Chinese README | [README_CN.md](./README_CN.md) |
+| Chinese README | [README.zh-CN.md](./README.zh-CN.md) |
 
 ### OpenClaw Documentation
 

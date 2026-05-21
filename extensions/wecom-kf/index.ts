@@ -9,6 +9,15 @@ import { createWeComMcpTool } from "./src/mcp/index.js";
 // ── KF State Flow ──
 import { DIALOGUE_SESSION_NAMESPACE, buildStateAwarePrompt } from "./src/kf/index.js";
 
+// ── KF Agent Tools ──
+import {
+  createKfServicerListTool,
+  createKfAccountListTool,
+  createKfAccountLinkTool,
+  createKfSessionStatusTool,
+  createKfSessionTransferTool,
+} from "./src/kf/tools.js";
+
 // ── ICS (Intelligent Customer Service) REST API ──
 import { createKnowledgeHandler } from "./src/ics-handlers/knowledge.js";
 import { createBindingsHandler } from "./src/ics-handlers/bindings.js";
@@ -44,6 +53,13 @@ const plugin = {
 
     // Register wecom_kf_mcp
     api.registerTool(createWeComMcpTool(), { name: "wecom_kf_mcp" });
+
+    // ── KF Agent Tools (客服行为) ──
+    api.registerTool(createKfServicerListTool(), { name: "wecom_kf_servicer_list", optional: true });
+    api.registerTool(createKfAccountListTool(), { name: "wecom_kf_account_list", optional: true });
+    api.registerTool(createKfAccountLinkTool(), { name: "wecom_kf_account_link", optional: true });
+    api.registerTool(createKfSessionStatusTool(), { name: "wecom_kf_session_status", optional: true });
+    api.registerTool(createKfSessionTransferTool(), { name: "wecom_kf_session_transfer", optional: true });
 
     // State-aware dialogue prompt injection for KF sessions
     api.on("before_prompt_build", async (_event, ctx) => {

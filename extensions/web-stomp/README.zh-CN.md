@@ -11,7 +11,7 @@
 
 </div>
 
-[English](./README.md) | [简体中文](./README_CN.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ---
 
@@ -254,7 +254,7 @@ openclaw_web_stomp/
 │   └── ack-handler.ts            # ACK/NACK 消息确认
 ├── package.json
 ├── openclaw.plugin.json
-└── README.md / README_CN.md
+└── README.md / README.zh-CN.md
 ```
 
 ## 测试

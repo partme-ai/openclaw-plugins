@@ -390,7 +390,7 @@ pnpm dev   # watch 模式
 | [openclaw_management](https://github.com/partme-ai/openclaw_management) | 管理 REST API + Prometheus + 定义导出/导入 + Web UI |
 | [openclaw_mqtt](https://github.com/partme-ai/openclaw_mqtt) | MQTT 协议接入 |
 | [openclaw_prometheus](https://github.com/partme-ai/openclaw_prometheus) | Prometheus 指标导出 |
-| [openclaw_stomp](https://github.com/partme-ai/openclaw_stomp) | STOMP 服务端 |
+| [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP 服务端 |
 | [openclaw_tracing](https://github.com/partme-ai/openclaw_tracing) | 链路追踪 |
 | [openclaw_web_mqtt](https://github.com/partme-ai/openclaw_web_mqtt) | WebSocket MQTT |
 | [openclaw_web_stomp](https://github.com/partme-ai/openclaw_web_stomp) | WebSocket STOMP |

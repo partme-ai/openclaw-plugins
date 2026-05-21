@@ -8,7 +8,7 @@
 
 </div>
 
-[中文](README_CN.md) | English
+[中文](README.zh-CN.md) | English
 
 ---
 
@@ -379,7 +379,7 @@ Multiple clients subscribed to same session for collaborative interactions.
 | [openclaw_management](https://github.com/partme-ai/openclaw_management) | Management REST API, Prometheus, definitions, Web UI |
 | [openclaw_mqtt](https://github.com/partme-ai/openclaw_mqtt) | MQTT protocol adapter |
 | [openclaw_prometheus](https://github.com/partme-ai/openclaw_prometheus) | Prometheus metrics exporter |
-| [openclaw_stomp](https://github.com/partme-ai/openclaw_stomp) | STOMP server |
+| [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |
 | [openclaw_tracing](https://github.com/partme-ai/openclaw_tracing) | Distributed tracing |
 | [openclaw_web_mqtt](https://github.com/partme-ai/openclaw_web_mqtt) | WebSocket MQTT |
 | [openclaw_web_stomp](https://github.com/partme-ai/openclaw_web_stomp) | WebSocket STOMP |
