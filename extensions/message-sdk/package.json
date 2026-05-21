@@ -37,8 +37,8 @@
     }
   },
   "files": [
+    "dist/",
     "src/",
-    "index.ts",
     "README.md",
     "LICENSE"
   ],
