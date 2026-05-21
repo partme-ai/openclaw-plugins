@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-message-sdk",
-  "version": "2026.5.20",
+  "version": "2026.5.21",
   "type": "module",
   "description": "统一消息格式 SDK — 所有 openclaw-plugins 渠道插件互通的消息结构定义",
   "license": "MIT",
