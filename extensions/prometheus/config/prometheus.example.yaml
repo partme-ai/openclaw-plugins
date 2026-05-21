@@ -1,0 +1,17 @@
+# openclaw-prometheus Configuration Example — v0.3.0
+
+port: 9090
+path: /metrics
+collectIntervalMs: 15000
+snapshotIntervalMs: 30000
+workloadWindowMs: 300000
+includeRuntime: true
+
+monitoredProviders:
+  - openai
+  - anthropic
+
+instance: ""
+
+scrapeAuth:
+  enabled: false

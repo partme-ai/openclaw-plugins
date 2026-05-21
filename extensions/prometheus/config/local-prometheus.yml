@@ -1,0 +1,76 @@
+# OpenClaw Prometheus Plugin - Local Deployment Configuration
+
+# 本地开发环境配置：Prometheus 从本地 OpenClaw Gateway 采集指标
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'local'
+    environment: 'development'
+
+# 告警规则文件路径（可选）
+rule_files:
+  - './alerts/prometheus.yml'
+
+# 告警管理器配置（可选）
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - localhost:9093
+
+# 监控采集配置
+scrape_configs:
+  # ─────────── OpenClaw Gateway 本地指标采集 ───────────
+  - job_name: 'openclaw-gateway'
+    scrape_interval: 10s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    honor_labels: true
+    honor_timestamps: true
+    scheme: http
+    static_configs:
+      - targets:
+          - '127.0.0.1:18789'  # 本地 OpenClaw Gateway Prometheus 端口
+
+    # 指标采集优化配置
+    sample_limit: 10000
+    relabel_configs:
+      # ─────────── Instance Label 支持（多实例部署） ───────────
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '([^:]+)(:[0-9]+)?'  # 从 "host:port" 提取 "host" 作为 instance
+        replacement: '${1}'
+
+      # ─────────── 通用优化 ───────────
+      - source_labels: [__address__]
+        target_label: __tmp_address
+        regex: '([^:]+)(:[0-9]+)?'
+        replacement: '${1}'
+      - source_labels: [__tmp_address]
+        target_label: endpoint
+        replacement: 'http://${1}:18789'
+
+      # ─────────── 添加通用标签 ───────────
+      - target_label: job
+        replacement: 'openclaw-gateway'
+
+      # ─────────── 删除错误的标签过滤规则 ───────────
+      # 原规则：regex: '(openclaw_.*)_.*' 会破坏 _bucket 指标名称
+      # 不需要任何标签过滤，直接使用原始指标名称
+
+# 监控组件自身的配置（如果 Prometheus 也需要监控）
+# scrape_configs:
+#   - job_name: 'prometheus'
+#     static_configs:
+#       - targets: ['localhost:9090']
+
+# 远程写入存储配置（可选，用于生产环境）
+# remote_write:
+#   - url: http://prometheus-remote:9090/api/v1/write
+#     queue_config:
+#       send_timeout: 30s
+#       capacity: 10000
+#       max_shards: 100
+#       samples_to_send: 100

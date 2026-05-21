@@ -1,0 +1,91 @@
+{
+  "name": "@partme.ai/openclaw-mqtt",
+  "version": "2026.5.20",
+  "description": "MQTT protocol bridge for OpenClaw — IoT device integration via embedded Aedes MQTT broker",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:client": "tsx scripts/test-client.ts",
+    "test:all": "npm run test && npm run test:client",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "mqtt",
+    "iot",
+    "aedes",
+    "protocol-bridge"
+  ],
+  "author": "PartMe",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "README_CN.md",
+    "RELEASING.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/partme-ai/openclaw-plugins.git",
+    "directory": "extensions/mqtt"
+  },
+  "dependencies": {
+    "aedes": "^0.51.3",
+    "aedes-persistence-level": "^9.1.3",
+    "aedes-persistence-mongodb": "^9.4.1",
+    "aedes-persistence-nedb": "^2.0.3",
+    "aedes-persistence-redis": "^9.0.2",
+    "ioredis": "^5.10.1",
+    "mqemitter-redis": "^5.1.0",
+    "ws": "^8.20.0",
+    "@partme.ai/openclaw-message-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "mqtt": "^5.13.2",
+    "prom-client": "^15.1.3",
+    "tsup": "^8.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.12"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "setupEntry": "./dist/setup-entry.js",
+    "channel": {
+      "id": "mqtt",
+      "label": "MQTT",
+      "blurb": "MQTT protocol bridge for IoT and device integration via embedded Aedes."
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  }
+}

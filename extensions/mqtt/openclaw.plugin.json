@@ -1,0 +1,330 @@
+{
+  "id": "openclaw-mqtt",
+  "name": "openclaw-mqtt",
+  "version": "0.1.13",
+  "description": "MQTT 3.1.1/5.0 protocol bridge for OpenClaw - IoT device integration via embedded Aedes MQTT broker",
+  "main": "dist/index.js",
+  "channels": ["mqtt"],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "port": {
+        "type": "number",
+        "default": 1883,
+        "description": "MQTT TCP listener port"
+      },
+      "tlsPort": {
+        "type": "number",
+        "default": 8883,
+        "description": "MQTT TLS listener port (0 to disable)"
+      },
+      "tls": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable TLS for MQTT connections"
+          },
+          "certFile": {
+            "type": "string",
+            "description": "Path to TLS certificate file (PEM)"
+          },
+          "keyFile": {
+            "type": "string",
+            "description": "Path to TLS key file (PEM)"
+          },
+          "caFile": {
+            "type": "string",
+            "description": "Optional CA certificate path (PEM)"
+          },
+          "requestCert": {
+            "type": "boolean",
+            "default": false,
+            "description": "Request client certificate"
+          },
+          "rejectUnauthorized": {
+            "type": "boolean",
+            "default": false,
+            "description": "Reject unauthorized client certificates"
+          }
+        }
+      },
+      "maxConnections": {
+        "type": "number",
+        "default": 1000,
+        "description": "Maximum concurrent MQTT connections"
+      },
+      "auth": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable MQTT client authentication"
+          },
+          "allowAnonymous": {
+            "type": "boolean",
+            "default": false,
+            "description": "Allow anonymous connections (when auth is enabled)"
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "username": { "type": "string" },
+                "password": { "type": "string" },
+                "passwordHash": { "type": "string" },
+                "hashAlgorithm": { "type": "string", "enum": ["sha256", "sha512"] },
+                "publishAllow": { "type": "array", "items": { "type": "string" } },
+                "subscribeAllow": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["username"]
+            },
+            "default": [],
+            "description": "MQTT user list with per-user publish/subscribe ACL"
+          }
+        }
+      },
+      "subscribeTopics": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Allowed inbound topic patterns (MQTT wildcards: + for single segment, # for multi-segment)"
+      },
+      "topicBindings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "topicPattern": { "type": "string" },
+            "agentId": { "type": "string" },
+            "accountId": { "type": "string" },
+            "replyTopic": { "type": "string" }
+          },
+          "required": ["topicPattern", "agentId"]
+        },
+        "default": [],
+        "description": "Explicit topic-to-agent bindings with optional reply topic"
+      },
+      "payload": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["jsonTextOrPlain"],
+            "default": "jsonTextOrPlain",
+            "description": "Payload parsing mode: extract JSON.text field, fallback to raw text"
+          }
+        }
+      },
+      "limits": {
+        "type": "object",
+        "properties": {
+          "maxPayloadBytes": {
+            "type": "number",
+            "default": 1048576,
+            "description": "Maximum payload size in bytes (default 1MB)"
+          }
+        }
+      },
+      "session": {
+        "type": "object",
+        "properties": {
+          "maxExpirySeconds": {
+            "type": "number",
+            "default": 86400,
+            "description": "Session expiry time in seconds after disconnect (0 = immediate cleanup)"
+          },
+          "persistentAcrossReconnect": {
+            "type": "boolean",
+            "default": true,
+            "description": "Allow sessions to persist across reconnects"
+          }
+        }
+      },
+      "qos0": {
+        "type": "object",
+        "properties": {
+          "mailboxSoftLimit": {
+            "type": "number",
+            "default": 200,
+            "description": "QoS 0 concurrent processing soft limit per client (RabbitMQ mailbox_soft_limit)"
+          }
+        }
+      },
+      "retain": {
+        "type": "object",
+        "properties": {
+          "allowInboundRetain": {
+            "type": "boolean",
+            "default": true,
+            "description": "Accept retained inbound messages"
+          },
+          "outboundRetain": {
+            "type": "boolean",
+            "default": false,
+            "description": "Set retain flag on agent reply messages"
+          }
+        }
+      },
+      "will": {
+        "type": "object",
+        "properties": {
+          "allow": {
+            "type": "boolean",
+            "default": true,
+            "description": "Allow clients to declare Last Will messages"
+          },
+          "allowedTopicPatterns": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "Allowed will topic patterns (empty = no restriction)"
+          }
+        }
+      },
+      "audit": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable structured audit logging (JSON/text to stdout)"
+          },
+          "format": {
+            "type": "string",
+            "enum": ["json", "text"],
+            "default": "json",
+            "description": "Audit log output format"
+          }
+        }
+      },
+      "persistence": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable multi-backend persistence for horizontal scaling"
+          },
+          "backend": {
+            "type": "string",
+            "enum": ["memory", "redis", "mongodb", "level", "nedb"],
+            "default": "memory",
+            "description": "Persistence backend type"
+          },
+          "redis": {
+            "type": "object",
+            "properties": {
+              "enabled": { "type": "boolean", "default": false },
+              "host": { "type": "string", "default": "localhost" },
+              "port": { "type": "number", "default": 6379 },
+              "db": { "type": "number", "default": 0 },
+              "password": { "type": "string" },
+              "keyPrefix": { "type": "string", "default": "mqtt" },
+              "subscriptionTTL": { "type": "number", "default": 3600 },
+              "retainedTTL": { "type": "number", "default": 0 }
+            }
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "port": { "label": "MQTT Port", "placeholder": "1883" },
+    "tlsPort": { "label": "MQTT TLS Port", "placeholder": "8883" },
+    "tls.enabled": { "label": "Enable TLS", "type": "toggle" },
+    "tls.certFile": { "label": "TLS Certificate", "type": "file" },
+    "tls.keyFile": { "label": "TLS Key", "type": "file" },
+    "tls.caFile": { "label": "CA Certificate", "type": "file" },
+    "tls.requestCert": { "label": "Request Client Certificate", "type": "toggle" },
+    "tls.rejectUnauthorized": { "label": "Reject Unauthorized", "type": "toggle" },
+    "maxConnections": { "label": "Max Connections", "placeholder": "1000" },
+    "auth.enabled": { "label": "Require Authentication", "type": "toggle" },
+    "auth.allowAnonymous": { "label": "Allow Anonymous", "type": "toggle" },
+    "subscribeTopics": { "label": "Subscribe Topics (allowlist)" },
+    "topicBindings": { "label": "Topic → Agent Bindings" },
+    "payload.mode": { "label": "Payload Parse Mode" },
+    "limits.maxPayloadBytes": { "label": "Max Payload Size (bytes)", "placeholder": "1048576" },
+    "session.maxExpirySeconds": { "label": "Session Expiry (seconds)", "placeholder": "86400" },
+    "session.persistentAcrossReconnect": { "label": "Persistent Sessions", "type": "toggle" },
+    "qos0.mailboxSoftLimit": { "label": "QoS 0 Mailbox Limit", "placeholder": "200" },
+    "retain.allowInboundRetain": { "label": "Allow Inbound Retain", "type": "toggle" },
+    "retain.outboundRetain": { "label": "Outbound Retain", "type": "toggle" },
+    "will.allow": { "label": "Allow Last Will", "type": "toggle" },
+    "audit.enabled": { "label": "Enable Audit Log", "type": "toggle" },
+    "audit.format": { "label": "Audit Format" },
+    "persistence.enabled": { "label": "Enable Persistence", "type": "toggle" },
+    "persistence.backend": { "label": "Persistence Backend" }
+  },
+  "channelConfigs": {
+    "mqtt": {
+      "label": "MQTT",
+      "description": "MQTT 3.1.1/5.0 protocol bridge — IoT device integration via embedded Aedes MQTT broker",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "port": {
+            "type": "number",
+            "default": 1883,
+            "description": "MQTT TCP listener port"
+          },
+          "tlsPort": {
+            "type": "number",
+            "default": 8883,
+            "description": "MQTT TLS listener port (0 to disable)"
+          },
+          "maxConnections": {
+            "type": "number",
+            "default": 1000,
+            "description": "Maximum concurrent MQTT connections"
+          },
+          "auth": {
+            "type": "object",
+            "properties": {
+              "enabled": { "type": "boolean", "default": false },
+              "allowAnonymous": { "type": "boolean", "default": false }
+            }
+          },
+          "subscribeTopics": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "Allowed inbound topic patterns (MQTT wildcards: + for single segment, # for multi-segment)"
+          },
+          "topicBindings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "topicPattern": { "type": "string" },
+                "agentId": { "type": "string" },
+                "replyTopic": { "type": "string" }
+              },
+              "required": ["topicPattern", "agentId"]
+            },
+            "default": [],
+            "description": "Explicit topic-to-agent bindings with optional reply topic"
+          }
+        }
+      },
+      "uiHints": {
+        "port": { "label": "MQTT Port", "placeholder": "1883" },
+        "tlsPort": { "label": "MQTT TLS Port", "placeholder": "8883" },
+        "maxConnections": { "label": "Max Connections", "placeholder": "1000" },
+        "auth.enabled": { "label": "Require Authentication", "type": "toggle" },
+        "subscribeTopics": { "label": "Subscribe Topics (allowlist)" },
+        "topicBindings": { "label": "Topic → Agent Bindings" }
+      }
+    }
+  },
+  "capabilities": {
+    "protocolBridge": true,
+    "iot": true
+  }
+}

@@ -1,0 +1,295 @@
+{
+  "id": "knowledge",
+  "name": "Knowledge RAG",
+  "description": "知识库 RAG 引擎 — 自动检索注入 + AI 自主知识管理",
+  "main": "dist/index.js",
+  "channels": [],
+  "commands": [],
+  "skills": [],
+  "contracts": {
+    "tools": ["knowledge_add", "knowledge_query", "knowledge_update", "knowledge_delete"]
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "embedding": {
+        "type": "object",
+        "description": "Embedding provider configuration",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "default": "openai",
+            "description": "Embedding provider: openai, dashscope, zhipu, qianfan, ollama"
+          },
+          "apiKey": {
+            "type": "string",
+            "description": "API key for the embedding provider"
+          },
+          "model": {
+            "type": "string",
+            "default": "text-embedding-ada-002",
+            "description": "Embedding model name"
+          },
+          "dimensions": {
+            "type": "number",
+            "default": 1536,
+            "description": "Embedding vector dimensions"
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "Custom base URL for the embedding provider (ollama: http://localhost:11434)"
+          }
+        }
+      },
+      "store": {
+        "type": "object",
+        "description": "Vector store backend configuration",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "default": "sqlite-vec",
+            "description": "Vector store backend: sqlite-vec, zvec, zvec-native"
+          },
+          "dbPath": {
+            "type": "string",
+            "default": "./data/knowledge.db",
+            "description": "Database file path (for sqlite-vec) or JSON file path (for zvec)"
+          },
+          "dimensions": {
+            "type": "number",
+            "default": 1536,
+            "description": "Vector dimensions, must match embedding dimensions"
+          },
+          "namespace": {
+            "type": "string",
+            "default": "default",
+            "description": "Namespace prefix for isolating data within the same database"
+          },
+          "sources": {
+            "type": "object",
+            "description": "Optional source filter configuration",
+            "properties": {
+              "docIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Allowed document IDs (empty = all)"
+              }
+            }
+          }
+        }
+      },
+      "retrieval": {
+        "type": "object",
+        "description": "Retrieval strategy configuration",
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "default": "hybrid",
+            "description": "Retrieval strategy: hybrid, vector, keyword"
+          },
+          "topK": {
+            "type": "number",
+            "default": 5,
+            "description": "Maximum number of results to return"
+          },
+          "minScore": {
+            "type": "number",
+            "default": 0.3,
+            "description": "Minimum relevance score threshold"
+          },
+          "hybridAlpha": {
+            "type": "number",
+            "default": 0.5,
+            "description": "Hybrid search blend ratio (0=keyword only, 1=vector only)"
+          }
+        }
+      },
+      "reranker": {
+        "type": "object",
+        "description": "Reranker configuration (optional)",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "Reranker provider: jina, zhipu, ollama"
+          },
+          "apiKey": {
+            "type": "string",
+            "description": "API key for the reranker provider"
+          },
+          "model": {
+            "type": "string",
+            "description": "Reranker model name"
+          }
+        }
+      },
+      "tokenizer": {
+        "type": "object",
+        "description": "Tokenizer configuration",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "default": "tiktoken",
+            "description": "Tokenizer provider: tiktoken, zhipu"
+          },
+          "maxTokens": {
+            "type": "number",
+            "default": 8191,
+            "description": "Maximum tokens per chunk"
+          }
+        }
+      },
+      "chunker": {
+        "type": "object",
+        "description": "Text chunking configuration",
+        "properties": {
+          "chunkSize": {
+            "type": "number",
+            "default": 500,
+            "description": "Target chunk size in tokens"
+          },
+          "chunkOverlap": {
+            "type": "number",
+            "default": 50,
+            "description": "Overlap between consecutive chunks"
+          },
+          "separators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "\\n\\n",
+              "\\n",
+              ".",
+              "!",
+              "?",
+              " ",
+              ""
+            ],
+            "description": "Priority-ordered separators for text splitting"
+          }
+        }
+      },
+      "injection": {
+        "type": "object",
+        "description": "Knowledge injection configuration",
+        "properties": {
+          "position": {
+            "type": "string",
+            "default": "system",
+            "description": "Injection position: system, user"
+          },
+          "maxContextLength": {
+            "type": "number",
+            "default": 2000,
+            "description": "Maximum characters to inject per prompt"
+          },
+          "instruction": {
+            "type": "string",
+            "default": "Use the following knowledge base content to answer the user's question:",
+            "description": "Prefix instruction before injected content"
+          }
+        }
+      },
+      "intentGate": {
+        "type": "object",
+        "description": "Intent gate configuration for retrieval triggering",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "default": "rule",
+            "description": "Intent gate mode: rule, strict"
+          }
+        }
+      },
+      "parser": {
+        "type": "object",
+        "description": "Document parser configuration (optional)",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "Document parser provider: ollama, zhipu"
+          },
+          "apiKey": {
+            "type": "string",
+            "description": "API key for the parser provider"
+          }
+        }
+      },
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable or disable the knowledge base plugin"
+      }
+    }
+  },
+  "uiHints": {
+    "embedding.provider": {
+      "label": "Embedding Provider",
+      "type": "select",
+      "options": [
+        "openai",
+        "dashscope",
+        "zhipu",
+        "qianfan",
+        "ollama"
+      ]
+    },
+    "embedding.model": {
+      "label": "Embedding Model",
+      "placeholder": "text-embedding-ada-002"
+    },
+    "store.provider": {
+      "label": "Vector Store",
+      "type": "select",
+      "options": [
+        "sqlite-vec",
+        "zvec",
+        "zvec-native"
+      ]
+    },
+    "retrieval.strategy": {
+      "label": "Retrieval Strategy",
+      "type": "select",
+      "options": [
+        "hybrid",
+        "vector",
+        "keyword"
+      ]
+    },
+    "retrieval.topK": {
+      "label": "Top-K Results",
+      "placeholder": "5"
+    },
+    "retrieval.minScore": {
+      "label": "Min Score Threshold",
+      "placeholder": "0.3"
+    },
+    "injection.position": {
+      "label": "Injection Position",
+      "type": "select",
+      "options": [
+        "system",
+        "user"
+      ]
+    },
+    "intentGate.mode": {
+      "label": "Intent Gate Mode",
+      "type": "select",
+      "options": [
+        "rule",
+        "strict"
+      ]
+    },
+    "enabled": {
+      "label": "Enable Knowledge Base",
+      "type": "toggle"
+    }
+  },
+  "capabilities": {
+    "knowledgeRAG": true
+  },
+  "channelConfigs": {}
+}

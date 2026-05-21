@@ -1,0 +1,93 @@
+{
+  "name": "@partme.ai/openclaw-knowledge",
+  "version": "2026.5.20",
+  "description": "OpenClaw knowledge base RAG engine — standalone plugin for embedding, vector store, hybrid retrieval, and multi-type chunking (document/FAQ/conversation)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "ollama": "^0.6.3",
+    "tiktoken": "^1.0.0",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.12"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.2.0",
+    "openclaw": "^2026.4.9",
+    "tsup": "^8.4.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "keywords": [
+    "openclaw",
+    "knowledge",
+    "rag",
+    "vector-store",
+    "embeddings",
+    "hybrid-search"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/partme-ai/openclaw-plugins.git",
+    "directory": "extensions/knowledge"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.2.24",
+      "minGatewayVersion": "2026.2.24"
+    },
+    "build": {
+      "openclawVersion": "2026.4.9",
+      "pluginSdkVersion": "2026.4.9"
+    }
+  },
+  "bugs": {
+    "url": "https://github.com/partme-ai/openclaw-knowledge/issues"
+  },
+  "homepage": "https://github.com/partme-ai/openclaw-knowledge#readme",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "openclaw"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+  <title>OpenClaw Vision Smoke Test</title>
+  <desc>Simple shapes and label for multimodal vision QA</desc>
+  <rect width="400" height="300" fill="#f8fafc"/>
+  <rect x="24" y="24" width="352" height="252" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="200" y="72" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="600" fill="#334155" letter-spacing="0.08em">OPENCLAW VISION TEST</text>
+  <line x1="48" y1="92" x2="352" y2="92" stroke="#e2e8f0" stroke-width="1"/>
+  <circle cx="130" cy="190" r="52" fill="#ef4444" stroke="#dc2626" stroke-width="2"/>
+  <rect x="218" y="138" width="104" height="104" rx="8" fill="#3b82f6" stroke="#2563eb" stroke-width="2"/>
+  <text x="130" y="258" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#64748b">red circle</text>
+  <text x="270" y="258" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" fill="#64748b">blue square</text>
+</svg>

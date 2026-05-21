@@ -1,0 +1,57 @@
+{
+  "name": "@partme.ai/openclaw-bridge",
+  "version": "2026.5.21",
+  "type": "module",
+  "description": "OpenClaw Bridge — 统一 IM 渠道适配层，将所有 OpenClaw IM 渠道接入 PartMe.AI 生态（上下文注入、消息桥接）",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/partme-ai/openclaw-plugins.git",
+    "directory": "extensions/bridge"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "im",
+    "bridge",
+    "dingtalk",
+    "lark",
+    "feishu",
+    "qqbot",
+    "discord",
+    "slack",
+    "telegram",
+    "whatsapp"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm build"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.12"
+  },
+  "devDependencies": {
+    "tsup": "^8.2.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.0"
+  }
+}

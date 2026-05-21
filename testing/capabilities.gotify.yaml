@@ -1,0 +1,39 @@
+# Gotify 渠道能力声明 — 供标准测试套件 skip 逻辑使用
+# 与 extensions/gotify/src/channel.ts capabilities 保持一致
+
+channel: gotify
+capabilities:
+  supports_text: true
+  supports_markdown: true
+  supports_code_blocks: true
+  supports_image_inbound: false
+  supports_image_outbound: false
+  supports_audio_inbound: false
+  supports_audio_outbound: false
+  supports_video_inbound: false
+  supports_video_outbound: false
+  supports_file_attachment: false
+  supports_streaming: false
+  supports_threads: false
+  supports_reactions: false
+  supports_native_commands: false
+  supports_ws_or_push: true
+  supports_delete_after_consume: false
+  supports_rate_limit_probe: true
+  supports_concurrent_inbound: true
+  supports_skill_tools: true
+  supports_health_endpoint: true
+  supports_dm_policy: true
+  supports_multi_account: true
+  supports_session_label: true
+
+# 推荐冒烟 / 发布前 Tier
+recommended_tiers:
+  smoke: [L0, L1, L1-RT, L13]
+  release: [L0, L1, L1-RT, L2, L3, L4, L5, L10, L12, L13, L14, L20]
+
+# 环境变量
+env:
+  GOTIFY_SERVER_URL: "http://localhost:8080"
+  GOTIFY_APP_TOKEN: "required for send"
+  GOTIFY_CLIENT_TOKEN: "required for poll/ws"

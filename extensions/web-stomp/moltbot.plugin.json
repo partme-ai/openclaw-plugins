@@ -1,0 +1,128 @@
+{
+  "id": "openclaw_web_stomp",
+  "name": "openclaw_web_stomp",
+  "version": "0.1.10",
+  "description": "STOMP 1.0/1.1/1.2 over WebSocket bridge for OpenClaw - enterprise integration",
+  "main": "dist/index.js",
+  "channels": [
+    "stomp"
+  ],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "port": {
+        "type": "number",
+        "default": 15674,
+        "description": "WebSocket listener port for STOMP"
+      },
+      "path": {
+        "type": "string",
+        "default": "/ws",
+        "description": "WebSocket endpoint path"
+      },
+      "heartbeat": {
+        "type": "object",
+        "properties": {
+          "serverMs": {
+            "type": "number",
+            "default": 10000,
+            "description": "Server heartbeat interval in ms"
+          },
+          "clientMs": {
+            "type": "number",
+            "default": 10000,
+            "description": "Expected client heartbeat interval in ms"
+          }
+        }
+      },
+      "maxFrameSize": {
+        "type": "number",
+        "default": 65536,
+        "description": "Maximum STOMP frame size in bytes"
+      },
+      "prefetchCount": {
+        "type": "number",
+        "default": 10,
+        "description": "Default prefetch count for subscriptions"
+      },
+      "destinations": {
+        "type": "object",
+        "properties": {
+          "agentPrefix": {
+            "type": "string",
+            "default": "/agent/",
+            "description": "Destination prefix for agent messaging"
+          },
+          "topicPrefix": {
+            "type": "string",
+            "default": "/topic/",
+            "description": "Destination prefix for pub/sub topics"
+          },
+          "queuePrefix": {
+            "type": "string",
+            "default": "/queue/",
+            "description": "Destination prefix for point-to-point queues"
+          }
+        }
+      },
+      "auth": {
+        "type": "object",
+        "properties": {
+          "required": {
+            "type": "boolean",
+            "default": true,
+            "description": "Require STOMP CONNECT authentication"
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "port": {
+      "label": "WebSocket Port",
+      "placeholder": "15674"
+    },
+    "path": {
+      "label": "WebSocket Path",
+      "placeholder": "/ws"
+    },
+    "heartbeat.serverMs": {
+      "label": "Server Heartbeat (ms)",
+      "placeholder": "10000"
+    },
+    "heartbeat.clientMs": {
+      "label": "Client Heartbeat (ms)",
+      "placeholder": "10000"
+    },
+    "maxFrameSize": {
+      "label": "Max Frame Size (bytes)",
+      "placeholder": "65536"
+    },
+    "prefetchCount": {
+      "label": "Prefetch Count",
+      "placeholder": "10"
+    },
+    "destinations.agentPrefix": {
+      "label": "Agent Destination Prefix",
+      "placeholder": "/agent/"
+    },
+    "destinations.topicPrefix": {
+      "label": "Topic Destination Prefix",
+      "placeholder": "/topic/"
+    },
+    "destinations.queuePrefix": {
+      "label": "Queue Destination Prefix",
+      "placeholder": "/queue/"
+    },
+    "auth.required": {
+      "label": "Require Authentication",
+      "type": "toggle"
+    }
+  },
+  "capabilities": {
+    "protocolBridge": true,
+    "websocket": true
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "name": "@partme.ai/openclaw-TEMPLATE_NAME",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OpenClaw plugin: TEMPLATE_NAME",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "skills",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/partme-ai/openclaw-plugins.git",
+    "directory": "extensions/TEMPLATE_NAME"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm build"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "channel": {
+      "id": "TEMPLATE_NAME",
+      "label": "TEMPLATE_LABEL",
+      "selectionLabel": "TEMPLATE_LABEL (plugin)",
+      "blurb": "TEMPLATE_DESCRIPTION",
+      "order": 90
+    },
+    "install": {
+      "npmSpec": "@partme.ai/TEMPLATE_NAME",
+      "localPath": "plugins/TEMPLATE_NAME",
+      "defaultChoice": "npm"
+    }
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.12"
+  },
+  "devDependencies": {
+    "tsup": "^8.2.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.0"
+  }
+}

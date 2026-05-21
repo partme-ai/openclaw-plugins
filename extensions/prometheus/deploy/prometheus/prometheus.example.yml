@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: openclaw-prometheus-fast
+    metrics_path: /metrics
+    bearer_token_file: /etc/prometheus/openclaw-metrics.token
+    static_configs:
+      - targets:
+          - 127.0.0.1:18789
+        labels:
+          cluster: openclaw-local
+          role: gateway
+
+  - job_name: openclaw-prometheus-health
+    metrics_path: /metrics/health
+    scrape_interval: 30s
+    bearer_token_file: /etc/prometheus/openclaw-metrics.token
+    static_configs:
+      - targets:
+          - 127.0.0.1:18789
+        labels:
+          cluster: openclaw-local
+          role: gateway

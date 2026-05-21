@@ -1,0 +1,20 @@
+{
+  "id": "TEMPLATE_NAME",
+  "channels": ["TEMPLATE_NAME"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "channelConfigs": {
+    "TEMPLATE_NAME": {
+      "label": "TEMPLATE_LABEL",
+      "description": "TEMPLATE_DESCRIPTION",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {}
+      }
+    }
+  }
+}

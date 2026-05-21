@@ -1,0 +1,33 @@
+# ─── Dependencies ───
+node_modules/
+.pnpm-store/
+
+# ─── Build artifacts ───
+dist/
+*.tsbuildinfo
+
+# ─── IDE & Editor ───
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ─── OS ───
+.DS_Store
+Thumbs.db
+
+# ─── OpenClaw runtime state ───
+.omx/
+
+# ─── Backup files ───
+*.bak
+
+# ─── Logs ───
+logs/
+*.log
+
+# ─── Misc ───
+*.tgz
+*.tmp
+tmp/

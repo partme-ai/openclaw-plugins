@@ -1,0 +1,54 @@
+{
+  "id": "openclaw-oauth2",
+  "name": "openclaw-oauth2",
+  "version": "0.1.0",
+  "description": "OAuth 2.0 authentication backend — Sa-Token · JWT · Introspection",
+  "main": "dist/index.js",
+  "channels": [],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "oauth2": {
+        "type": "object",
+        "properties": {
+          "issuerUrl": {
+            "type": "string",
+            "description": "OIDC Issuer URL (Sa-Token backend)"
+          },
+          "clientId": {
+            "type": "string",
+            "description": "OAuth2 Client ID"
+          },
+          "clientSecret": {
+            "type": "string",
+            "description": "OAuth2 Client Secret (introspection)"
+          },
+          "tokenFormat": {
+            "type": "string",
+            "enum": [
+              "jwt-prefer",
+              "jwt-only",
+              "introspection-only"
+            ],
+            "default": "jwt-prefer"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "sa-token",
+              "keycloak",
+              "auth0",
+              "azure-ad",
+              "generic"
+            ],
+            "default": "sa-token"
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {},
+  "channelConfigs": {}
+}

@@ -1,0 +1,17 @@
+{
+  "id": "memory",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "dataDir": { "type": "string", "description": "数据存储目录" },
+      "maxSearchResults": { "type": "number", "default": 10 },
+      "retentionDays": { "type": "number", "default": 90 }
+    }
+  },
+  "contracts": {
+    "tools": ["memory_search"]
+  }
+}

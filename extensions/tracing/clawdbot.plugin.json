@@ -1,0 +1,83 @@
+{
+  "id": "openclaw-tracing",
+  "name": "openclaw-tracing",
+  "version": "0.1.9",
+  "description": "Message tracing and distributed tracing for OpenClaw",
+  "main": "dist/index.js",
+  "channels": [],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable tracing (disabled by default to avoid overhead)"
+      },
+      "backend": {
+        "type": "string",
+        "enum": [
+          "log",
+          "file",
+          "otlp"
+        ],
+        "default": "log",
+        "description": "Tracing backend: log (console), file (JSON lines), otlp (OpenTelemetry Collector)"
+      },
+      "otlpEndpoint": {
+        "type": "string",
+        "default": "http://localhost:4318/v1/traces",
+        "description": "OTLP HTTP endpoint for sending spans"
+      },
+      "sampleRate": {
+        "type": "number",
+        "default": 1,
+        "description": "Sampling rate (0.0 to 1.0)"
+      },
+      "traceDir": {
+        "type": "string",
+        "default": "./traces",
+        "description": "Directory for file-based trace output"
+      },
+      "maxSpansPerTrace": {
+        "type": "number",
+        "default": 1000,
+        "description": "Maximum spans per trace before auto-flush"
+      },
+      "captureMessageBody": {
+        "type": "boolean",
+        "default": false,
+        "description": "Capture message body in traces (privacy-sensitive)"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable Tracing",
+      "type": "switch"
+    },
+    "backend": {
+      "label": "Tracing Backend",
+      "type": "select"
+    },
+    "otlpEndpoint": {
+      "label": "OTLP Endpoint",
+      "placeholder": "http://localhost:4318/v1/traces"
+    },
+    "sampleRate": {
+      "label": "Sample Rate",
+      "type": "slider",
+      "min": 0,
+      "max": 1,
+      "step": 0.01
+    },
+    "captureMessageBody": {
+      "label": "Capture Message Body",
+      "type": "switch"
+    }
+  },
+  "capabilities": {
+    "distributedTracing": true
+  }
+}

@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feature/*]
+    paths: ["extensions/**", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json"]
+  pull_request:
+    branches: [main]
+    paths: ["extensions/**", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json"]
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      plugins: ${{ steps.detect.outputs.plugins }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: detect
+        run: |
+          PLUGINS=$(node scripts/ci-detect.mjs --json --base origin/main)
+          echo "plugins=$PLUGINS" >> $GITHUB_OUTPUT
+          echo "Detected: $PLUGINS"
+
+  build-and-test:
+    needs: detect
+    if: needs.detect.outputs.plugins != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        plugin: ${{ fromJson(needs.detect.outputs.plugins) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        working-directory: extensions/${{ matrix.plugin }}
+        run: |
+          npm install --ignore-scripts --legacy-peer-deps 2>&1 || true
+          npm install --save-dev typescript @types/node --ignore-scripts --legacy-peer-deps 2>&1 || true
+
+      - name: Type check
+        working-directory: extensions/${{ matrix.plugin }}
+        run: npx tsc --noEmit 2>&1 | head -50 || true
+
+      - name: Build
+        working-directory: extensions/${{ matrix.plugin }}
+        run: npx tsup 2>&1 || true

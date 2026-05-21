@@ -1,0 +1,38 @@
+name: Build Nacos
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, feature/*]
+    paths: ["extensions/nacos/**"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: extensions/nacos
+        run: npm install
+
+      - name: Type check
+        working-directory: extensions/nacos
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: extensions/nacos
+        run: npx tsup
+
+      - name: Test
+        working-directory: extensions/nacos
+        run: npx vitest run
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-nacos-dist
+          path: extensions/nacos/dist/

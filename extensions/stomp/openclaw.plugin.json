@@ -1,0 +1,190 @@
+{
+  "id": "openclaw-stomp",
+  "name": "openclaw-stomp",
+  "version": "0.1.11",
+  "description": "Native TCP STOMP 1.0/1.1/1.2 protocol bridge for OpenClaw",
+  "main": "dist/index.js",
+  "channels": [
+    "stomp-tcp"
+  ],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "port": {
+        "type": "number",
+        "default": 61613,
+        "description": "STOMP TCP listener port"
+      },
+      "tlsPort": {
+        "type": "number",
+        "default": 61614,
+        "description": "STOMP TLS listener port (0 to disable)"
+      },
+      "tls": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "certFile": {
+            "type": "string"
+          },
+          "keyFile": {
+            "type": "string"
+          }
+        }
+      },
+      "heartbeat": {
+        "type": "object",
+        "properties": {
+          "serverMs": {
+            "type": "number",
+            "default": 10000
+          },
+          "clientMs": {
+            "type": "number",
+            "default": 10000
+          }
+        }
+      },
+      "maxConnections": {
+        "type": "number",
+        "default": 1000
+      },
+      "maxFrameSize": {
+        "type": "number",
+        "default": 65536
+      },
+      "auth": {
+        "type": "object",
+        "properties": {
+          "required": {
+            "type": "boolean",
+            "default": true
+          },
+          "defaultUser": {
+            "type": "string"
+          },
+          "defaultPass": {
+            "type": "string"
+          }
+        }
+      },
+      "subscribeTopics": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
+      },
+      "topicBindings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "topicPattern": {
+              "type": "string"
+            },
+            "agentId": {
+              "type": "string"
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "replyTopic": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "topicPattern",
+            "agentId"
+          ]
+        },
+        "default": []
+      },
+      "defaultAckMode": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "client",
+          "client-individual"
+        ],
+        "default": "auto"
+      },
+      "prefetchCount": {
+        "type": "number",
+        "default": 100
+      }
+    }
+  },
+  "uiHints": {
+    "port": {
+      "label": "STOMP TCP Port",
+      "placeholder": "61613"
+    },
+    "tlsPort": {
+      "label": "STOMP TLS Port",
+      "placeholder": "61614"
+    },
+    "tls.enabled": {
+      "label": "Enable TLS",
+      "type": "toggle"
+    },
+    "tls.certFile": {
+      "label": "TLS Certificate",
+      "type": "file"
+    },
+    "tls.keyFile": {
+      "label": "TLS Key",
+      "type": "file"
+    },
+    "maxConnections": {
+      "label": "Max Connections",
+      "placeholder": "1000"
+    },
+    "maxFrameSize": {
+      "label": "Max Frame Size (bytes)",
+      "placeholder": "65536"
+    },
+    "auth.required": {
+      "label": "Require Authentication",
+      "type": "toggle"
+    },
+    "auth.defaultUser": {
+      "label": "Default User"
+    },
+    "auth.defaultPass": {
+      "label": "Default Pass"
+    },
+    "subscribeTopics": {
+      "label": "Subscribe Topics"
+    },
+    "topicBindings": {
+      "label": "Topic Bindings"
+    },
+    "defaultAckMode": {
+      "label": "Default Ack Mode"
+    },
+    "prefetchCount": {
+      "label": "Prefetch Count"
+    }
+  },
+  "capabilities": {
+    "protocolBridge": true,
+    "tcp": true
+  },
+  "channelConfigs": {
+    "stomp-tcp": {
+      "label": "openclaw-stomp",
+      "description": "Native TCP STOMP 1.0/1.1/1.2 protocol bridge for OpenClaw",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {}
+      }
+    }
+  }
+}

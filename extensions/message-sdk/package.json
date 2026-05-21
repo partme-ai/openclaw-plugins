@@ -1,0 +1,71 @@
+{
+  "name": "@partme.ai/openclaw-message-sdk",
+  "version": "2026.5.20",
+  "type": "module",
+  "description": "统一消息格式 SDK — 所有 openclaw-plugins 渠道插件互通的消息结构定义",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./asr": {
+      "types": "./src/asr/index.ts",
+      "default": "./src/asr/index.ts"
+    },
+    "./media": {
+      "types": "./src/media/index.ts",
+      "default": "./src/media/index.ts"
+    },
+    "./http": {
+      "types": "./src/http/index.ts",
+      "default": "./src/http/index.ts"
+    },
+    "./file": {
+      "types": "./src/file/index.ts",
+      "default": "./src/file/index.ts"
+    },
+    "./ocr": {
+      "types": "./src/ocr/index.ts",
+      "default": "./src/ocr/index.ts"
+    },
+    "./tts": {
+      "types": "./src/tts/index.ts",
+      "default": "./src/tts/index.ts"
+    }
+  },
+  "files": [
+    "dist/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/partme-ai/openclaw-plugins.git",
+    "directory": "extensions/message-sdk"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "message",
+    "sdk",
+    "unified-message"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsup": "^8.2.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.0"
+  }
+}
