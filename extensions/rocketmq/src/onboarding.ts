@@ -5,9 +5,9 @@
 import { createUrlChannelSetup } from "./channel-setup-factory.js";
 
 const { setupAdapter, setupWizard } = createUrlChannelSetup({
-  channel: "rockermq",
+  channel: "rocketmq",
   label: "RocketMQ",
-  docsPath: "/channels/rockermq",
+  docsPath: "/channels/rocketmq",
   urlField: "endpoints",
   defaultUrl: "127.0.0.1:8081",
   envVar: "ROCKETMQ_ENDPOINTS",

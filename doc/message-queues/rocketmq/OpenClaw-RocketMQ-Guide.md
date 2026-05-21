@@ -1,4 +1,4 @@
-# Usage Guide — openclaw-rockermq
+# Usage Guide — openclaw-rocketmq
 
 ## Prerequisites
 
@@ -38,25 +38,25 @@ openclaw plugins install
 
 Or use the npm registry:
 ```bash
-openclaw plugins install @partme.ai/openclaw-rockermq
+openclaw plugins install @partme.ai/openclaw-rocketmq
 ```
 
 ### 3. Enable the plugin
 
 ```bash
-openclaw plugins enable openclaw-rockermq
+openclaw plugins enable openclaw-rocketmq
 ```
 
 ## Configuration
 
-Add a `channels.rockermq` section to your `openclaw.json`:
+Add a `channels.rocketmq` section to your `openclaw.json`:
 
 ### Minimal Configuration
 
 ```json
 {
   "channels": {
-    "rockermq": {
+    "rocketmq": {
       "endpoints": "127.0.0.1:8081",
       "consumer": {
         "subscriptions": [
@@ -73,7 +73,7 @@ Add a `channels.rockermq` section to your `openclaw.json`:
 ```json
 {
   "channels": {
-    "rockermq": {
+    "rocketmq": {
       "endpoints": "127.0.0.1:8081",
       "namespace": "",
       "topicPrefix": "openclaw",
@@ -85,12 +85,12 @@ Add a `channels.rockermq` section to your `openclaw.json`:
       },
 
       "producer": {
-        "groupId": "openclaw-rockermq-producer",
+        "groupId": "openclaw-rocketmq-producer",
         "requestTimeout": 5000
       },
 
       "consumer": {
-        "groupId": "openclaw-rockermq-consumer",
+        "groupId": "openclaw-rocketmq-consumer",
         "subscriptions": [
           { "topic": "device-status", "filterExpression": "*" },
           { "topic": "openclaw-agent-support-in-device1", "filterExpression": "iot" }
@@ -219,9 +219,9 @@ After installation, the following endpoints are available at `http://127.0.0.1:1
 
 | Endpoint | Description |
 |----------|-------------|
-| `/rockermq/health` | Connection health (200=healthy, 503=unhealthy) |
-| `/rockermq/stats` | Message statistics + session counts |
-| `/rockermq/status` | Full status including config snapshot |
+| `/rocketmq/health` | Connection health (200=healthy, 503=unhealthy) |
+| `/rocketmq/stats` | Message statistics + session counts |
+| `/rocketmq/status` | Full status including config snapshot |
 
 All endpoints require the Gateway auth token (`Authorization: Bearer <token>`).
 
@@ -239,13 +239,13 @@ Params: { topic, tag?, payload, keys? }
 ### Plugin not connecting
 ```bash
 # Check plugin status
-openclaw plugins list | grep rockermq
+openclaw plugins list | grep rocketmq
 
 # Check channel status  
 openclaw status | grep RocketMQ
 
 # Check health
-curl -H "Authorization: Bearer <token>" http://127.0.0.1:18790/rockermq/health
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:18790/rocketmq/health
 ```
 
 ### Messages not being consumed

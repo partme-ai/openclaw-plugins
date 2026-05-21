@@ -1,5 +1,5 @@
 /**
- * openclaw-rockermq 端到端集成测试。
+ * openclaw-rocketmq 端到端集成测试。
  *
  * 测试流程:
  * 1. Plugin 注册验证（通过 Gateway API）
@@ -10,7 +10,7 @@
  * 前置条件:
  * - RocketMQ namesrv + broker + proxy 运行在 127.0.0.1:8081
  * - OpenClaw Gateway 运行在 127.0.0.1:18790
- * - openclaw-rockermq 插件已启用并配置 channels.rockermq
+ * - openclaw-rocketmq 插件已启用并配置 channels.rocketmq
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -19,7 +19,7 @@ import { Producer, PushConsumer, ConsumeResult } from "rocketmq-client-nodejs";
 const ROCKETMQ_ENDPOINTS = "127.0.0.1:8081";
 const GATEWAY_BASE = "http://127.0.0.1:18790";
 
-// 使用已在 broker 注册的 topic（由 openclaw-rockermq PushConsumer 订阅创建）
+// 使用已在 broker 注册的 topic（由 openclaw-rocketmq PushConsumer 订阅创建）
 const INBOUND_TOPIC = "openclaw-agent-main-in";
 const OUTBOUND_TOPIC = "openclaw-agent-main-out";
 
@@ -43,13 +43,13 @@ async function gatewayGet(path: string, retries = 5): Promise<Record<string, unk
   throw new Error("unreachable");
 }
 
-describe("openclaw-rockermq Integration", () => {
+describe("openclaw-rocketmq Integration", () => {
   /**
    * ─── Part 1: Plugin 注册 & 健康检查 ───
    */
   describe("Plugin registration & health", () => {
-    it("/rockermq/health — 连接状态健康", async () => {
-      const data = await gatewayGet("/rockermq/health");
+    it("/rocketmq/health — 连接状态健康", async () => {
+      const data = await gatewayGet("/rocketmq/health");
       expect(data.ok).toBe(true);
       expect(data.healthy).toBe(true);
       const stats = data.data as Record<string, unknown>;
@@ -57,16 +57,16 @@ describe("openclaw-rockermq Integration", () => {
       expect((stats.lastConnectAt as number)).toBeGreaterThan(0);
     });
 
-    it("/rockermq/stats — 返回统计信息", async () => {
-      const data = await gatewayGet("/rockermq/stats");
+    it("/rocketmq/stats — 返回统计信息", async () => {
+      const data = await gatewayGet("/rocketmq/stats");
       expect(data.ok).toBe(true);
       const body = data.data as Record<string, unknown>;
       expect(body.stats).toBeDefined();
       expect(body.sessions).toBeDefined();
     });
 
-    it("/rockermq/status — 完整状态含脱敏配置", async () => {
-      const data = await gatewayGet("/rockermq/status");
+    it("/rocketmq/status — 完整状态含脱敏配置", async () => {
+      const data = await gatewayGet("/rocketmq/status");
       expect(data.ok).toBe(true);
       const body = data.data as Record<string, unknown>;
       const config = body.config as Record<string, unknown>;
@@ -88,7 +88,7 @@ describe("openclaw-rockermq Integration", () => {
     let baselineStats: Record<string, unknown>;
 
     beforeAll(async () => {
-      const data = await gatewayGet("/rockermq/stats");
+      const data = await gatewayGet("/rocketmq/stats");
       baselineStats = (data.data as Record<string, unknown>).stats as Record<string, unknown>;
     });
 
@@ -124,7 +124,7 @@ describe("openclaw-rockermq Integration", () => {
       // 等待 Agent 处理
       await new Promise((r) => setTimeout(r, 8000));
 
-      const afterData = await gatewayGet("/rockermq/stats");
+      const afterData = await gatewayGet("/rocketmq/stats");
       const afterStats = (afterData.data as Record<string, unknown>).stats as Record<string, unknown>;
       const receivedAfter = (afterStats.messagesReceived as number) || 0;
       const receivedBefore = (baselineStats.messagesReceived as number) || 0;
@@ -203,7 +203,7 @@ describe("openclaw-rockermq Integration", () => {
    */
   describe("Channel registration verification", () => {
     it("RocketMQ channel 在 status 端点可见", async () => {
-      const data = await gatewayGet("/rockermq/status");
+      const data = await gatewayGet("/rocketmq/status");
       expect(data.ok).toBe(true);
       const body = data.data as Record<string, unknown>;
       const config = body.config as Record<string, unknown>;
@@ -215,7 +215,7 @@ describe("openclaw-rockermq Integration", () => {
     });
 
     it("stats 端点反映消息处理", async () => {
-      const data = await gatewayGet("/rockermq/stats");
+      const data = await gatewayGet("/rocketmq/stats");
       expect(data.ok).toBe(true);
       const body = data.data as Record<string, unknown>;
       const stats = body.stats as Record<string, unknown>;

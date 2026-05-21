@@ -16,7 +16,7 @@
   "keywords": [
     "openclaw",
     "plugin",
-    "rockermq",
+    "rocketmq",
     "channel",
     "multi-agent",
     "mq"
@@ -45,7 +45,7 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "channel": {
-      "id": "rockermq",
+      "id": "rocketmq",
       "label": "RocketMQ",
       "blurb": "RocketMQ channel plugin with producer and push-consumer support."
     }

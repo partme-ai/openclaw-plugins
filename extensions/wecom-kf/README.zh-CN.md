@@ -362,8 +362,6 @@ pnpm dev   # watch 模式
 |------|------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 认证 |
 | [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
-| [openclaw_ics](https://github.com/partme-ai/openclaw_ics) | 智能客服业务 API |
-| [openclaw_management](https://github.com/partme-ai/openclaw_management) | 管理 REST API + Prometheus + 定义导出/导入 + Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT 协议接入 |
 | [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus 指标导出 |
 | [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP 服务端 |

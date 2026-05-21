@@ -8,9 +8,9 @@ import {
   validateRockermqConfig,
   buildRockermqConfigSnapshot,
   DEFAULT_ROCKERMQ_CONFIG,
-} from "../src/rockermq-config.js";
+} from "../src/rocketmq-config.js";
 
-describe("rockermq-config", () => {
+describe("rocketmq-config", () => {
   describe("resolveRockermqConfig", () => {
     it("should use defaults when no config provided", () => {
       const result = resolveRockermqConfig({});
@@ -19,14 +19,14 @@ describe("rockermq-config", () => {
 
     it("should parse endpoints from runtime config", () => {
       const result = resolveRockermqConfig({
-        channels: { rockermq: { endpoints: "10.0.0.1:8081" } },
+        channels: { rocketmq: { endpoints: "10.0.0.1:8081" } },
       });
       expect(result.endpoints).toBe("10.0.0.1:8081");
     });
 
     it("should parse topicPrefix from runtime config", () => {
       const result = resolveRockermqConfig({
-        channels: { rockermq: { topicPrefix: "custom" } },
+        channels: { rocketmq: { topicPrefix: "custom" } },
       });
       expect(result.topicPrefix).toBe("custom");
     });
@@ -34,7 +34,7 @@ describe("rockermq-config", () => {
     it("should parse topic bindings", () => {
       const result = resolveRockermqConfig({
         channels: {
-          rockermq: {
+          rocketmq: {
             topicBindings: [
               { topic: "device.status", tag: "iot", agentId: "agent1", accountId: "acc1" },
               { topic: "sensor.data", tag: "*", agentId: "agent2" },
@@ -52,7 +52,7 @@ describe("rockermq-config", () => {
     it("should parse consumer subscriptions", () => {
       const result = resolveRockermqConfig({
         channels: {
-          rockermq: {
+          rocketmq: {
             consumer: {
               subscriptions: [
                 { topic: "topic1", filterExpression: "*" },
@@ -69,31 +69,31 @@ describe("rockermq-config", () => {
 
     it("should parse payload mode", () => {
       const result = resolveRockermqConfig({
-        channels: { rockermq: { payload: { mode: "jsonOnly" } } },
+        channels: { rocketmq: { payload: { mode: "jsonOnly" } } },
       });
       expect(result.payload.mode).toBe("jsonOnly");
     });
 
     it("should handle missing nested config gracefully", () => {
-      const result = resolveRockermqConfig({ channels: { rockermq: null as any } });
+      const result = resolveRockermqConfig({ channels: { rocketmq: null as any } });
       expect(result.endpoints).toBe(DEFAULT_ROCKERMQ_CONFIG.endpoints);
     });
 
-    it("should handle undefined rockermq config", () => {
+    it("should handle undefined rocketmq config", () => {
       const result = resolveRockermqConfig({});
       expect(result.endpoints).toBe(DEFAULT_ROCKERMQ_CONFIG.endpoints);
     });
 
     it("should parse dispatch mode", () => {
       const result = resolveRockermqConfig({
-        channels: { rockermq: { dispatch: { mode: "subagent" } } },
+        channels: { rocketmq: { dispatch: { mode: "subagent" } } },
       });
       expect(result.dispatch.mode).toBe("subagent");
     });
 
     it("should parse idempotency config", () => {
       const result = resolveRockermqConfig({
-        channels: { rockermq: { idempotency: { enabled: true, ttlMs: 10000, maxEntries: 100 } } },
+        channels: { rocketmq: { idempotency: { enabled: true, ttlMs: 10000, maxEntries: 100 } } },
       });
       expect(result.idempotency.enabled).toBe(true);
       expect(result.idempotency.ttlMs).toBe(10000);
@@ -103,7 +103,7 @@ describe("rockermq-config", () => {
     it("should filter out bindings with empty topic or agentId", () => {
       const result = resolveRockermqConfig({
         channels: {
-          rockermq: {
+          rocketmq: {
             topicBindings: [
               { topic: "", tag: "*", agentId: "agent1" },
               { topic: "valid.topic", tag: "*", agentId: "" },

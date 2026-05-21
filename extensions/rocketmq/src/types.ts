@@ -1,5 +1,5 @@
 /**
- * openclaw-rockermq 核心类型定义。
+ * openclaw-rocketmq 核心类型定义。
  */
 
 // ─────────────── RocketMQ 配置类型 ───────────────

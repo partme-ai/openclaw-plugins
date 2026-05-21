@@ -4,8 +4,8 @@
  */
 
 import type { ChannelOutboundAdapter, ChannelOutboundContext } from "openclaw/plugin-sdk";
-import { DEFAULT_ROCKERMQ_CONFIG } from "./rockermq-config.js";
-import { getRockermqChannelConfig } from "./rockermq-state.js";
+import { DEFAULT_ROCKERMQ_CONFIG } from "./rocketmq-config.js";
+import { getRockermqChannelConfig } from "./rocketmq-state.js";
 import { getPeerIdBySession, getSessionContext } from "./session-mapper.js";
 import { buildOutboundTopic } from "./topic-router.js";
 
@@ -20,21 +20,21 @@ export const rockermqOutbound: ChannelOutboundAdapter = {
     const peerId = getPeerIdBySession(sessionKey);
     const sessionContext = getSessionContext(sessionKey);
     if (!sessionContext) {
-      return { channel: "rockermq", messageId: "no-session-context" };
+      return { channel: "rocketmq", messageId: "no-session-context" };
     }
 
     const config = getRockermqChannelConfig() ?? DEFAULT_ROCKERMQ_CONFIG;
     const topic =
       sessionContext.replyTopic ??
       buildOutboundTopic(sessionContext.agentId, config.topicPrefix, peerId ?? undefined);
-    const { publishMessage } = await import("./rockermq-server.js");
+    const { publishMessage } = await import("./rocketmq-server.js");
     const receipt = await publishMessage({
       topic,
       tag: sessionContext.replyTag,
       payload: JSON.stringify({ text: ctx.text }),
     });
     return {
-      channel: "rockermq",
+      channel: "rocketmq",
       messageId: String((receipt as { messageId?: unknown })?.messageId ?? sessionKey),
     };
   },

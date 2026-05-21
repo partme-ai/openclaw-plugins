@@ -5,7 +5,7 @@
  */
 
 import { ConsumeResult, Producer, PushConsumer, type MessageView } from "rocketmq-client-nodejs";
-import type { RockermqConfig } from "./rockermq-config.js";
+import type { RockermqConfig } from "./rocketmq-config.js";
 
 export type InboundEvent = {
   topic: string;

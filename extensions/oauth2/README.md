@@ -18,7 +18,6 @@ Inspired by [rabbitmq_auth_backend_oauth2](https://www.rabbitmq.com/docs/oauth2)
 
 ## Overview
 
-Unlike `openclaw_management`'s built-in OAuth login (which protects the Management UI), this plugin operates at the **Gateway level**, intercepting all HTTP requests and validating Bearer tokens against a trusted Sa-Token OAuth2 Server.
 
 Key features:
 
@@ -55,7 +54,6 @@ Client (Business backend / API call)
 └──────────────────────┬───────────────────────┘
                        │
                        ▼
-               openclaw_management
          (reads req.authContext for authorization)
 ```
 
@@ -169,7 +167,6 @@ pnpm dev   # watch mode
 |--------|--------------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 authentication |
 | [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
-| [openclaw_management](https://github.com/partme-ai/openclaw_management) | Management REST API, Prometheus, definitions, Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT protocol adapter |
 | [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus metrics exporter |
 | [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |

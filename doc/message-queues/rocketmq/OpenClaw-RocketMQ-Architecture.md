@@ -1,8 +1,8 @@
-# Architecture — openclaw-rockermq
+# Architecture — openclaw-rocketmq
 
 ## Overview
 
-`@partme.ai/openclaw-rockermq` is an OpenClaw channel plugin that bridges Apache RocketMQ message queues to OpenClaw AI agents. It enables bi-directional communication: inbound messages from RocketMQ topics are routed to agents for processing, and agent replies are published back to RocketMQ topics.
+`@partme.ai/openclaw-rocketmq` is an OpenClaw channel plugin that bridges Apache RocketMQ message queues to OpenClaw AI agents. It enables bi-directional communication: inbound messages from RocketMQ topics are routed to agents for processing, and agent replies are published back to RocketMQ topics.
 
 ## System Context
 
@@ -15,7 +15,7 @@
                               │                          │
                               │                          ▼
                               │               ┌──────────────────┐
-                              │               │  rockermq        │
+                              │               │  rocketmq        │
                               │◀──────────────│  Channel Plugin  │
                               │   reply msg   └──────────────────┘
                               │                          │
@@ -32,9 +32,9 @@
 src/
 ├── index.ts              Plugin entry (defineChannelPluginEntry)
 ├── channel.ts            Channel lifecycle (config, status, gateway, outbound)
-├── rockermq-server.ts    Transport layer (Producer + PushConsumer management)
-├── rockermq-config.ts    Configuration parsing + validation
-├── rockermq-state.ts     Runtime config singleton
+├── rocketmq-server.ts    Transport layer (Producer + PushConsumer management)
+├── rocketmq-config.ts    Configuration parsing + validation
+├── rocketmq-state.ts     Runtime config singleton
 ├── inbound.ts            Inbound message processing + dispatch
 ├── outbound.ts           Outbound message adapter
 ├── topic-router.ts       Topic → Agent routing logic

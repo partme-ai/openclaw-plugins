@@ -4,12 +4,12 @@
 
 import { randomBytes } from "node:crypto";
 import { getRockermqRuntime } from "./runtime.js";
-import { getRockermqChannelConfig } from "./rockermq-state.js";
-import { DEFAULT_ROCKERMQ_CONFIG, type RockermqConfig } from "./rockermq-config.js";
+import { getRockermqChannelConfig } from "./rocketmq-state.js";
+import { DEFAULT_ROCKERMQ_CONFIG, type RockermqConfig } from "./rocketmq-config.js";
 import { resolveInboundRoute, buildReplyTopicFromInbound, matchTopic } from "./topic-router.js";
 import { upsertSessionContext } from "./session-mapper.js";
 import { parseMessageAny } from "@partme.ai/openclaw-message-sdk";
-import type { InboundEvent } from "./rockermq-server.js";
+import type { InboundEvent } from "./rocketmq-server.js";
 
 type InboundResult = {
   accepted: boolean;
@@ -27,14 +27,14 @@ export async function processInbound(
   config: RockermqConfig,
 ): Promise<InboundResult> {
   if (!shouldProcessTopic(event.topic, config)) {
-    console.log(`[openclaw-rockermq] Ignored topic not in subscriptions: ${event.topic}`);
+    console.log(`[openclaw-rocketmq] Ignored topic not in subscriptions: ${event.topic}`);
     return { accepted: false, reason: "topic_not_in_subscriptions" };
   }
 
   const route = resolveInboundRoute(event.topic, event.tag, config);
   if (!route) {
     console.warn(
-      `[openclaw-rockermq] No route matched for topic=${event.topic} tag=${event.tag ?? "*"}`,
+      `[openclaw-rocketmq] No route matched for topic=${event.topic} tag=${event.tag ?? "*"}`,
     );
     return { accepted: false, reason: "no_route_matched" };
   }
@@ -63,7 +63,7 @@ export async function processInbound(
   const agentRoute = rt?.channel?.routing?.resolveAgentRoute
     ? await rt.channel.routing.resolveAgentRoute({
         cfg: rt.config,
-        channel: "rockermq",
+        channel: "rocketmq",
         accountId: route.accountId,
         peer: { kind: "direct", id: peerId },
       })
@@ -78,7 +78,7 @@ export async function processInbound(
     );
 
   console.log(
-    `[openclaw-rockermq] Inbound: topic=${event.topic}, tag=${event.tag ?? "*"}, agent=${route.agentId}, account=${route.accountId}, source=${route.source}, session=${sessionKey}, bytes=${Buffer.byteLength(text, "utf-8")}`,
+    `[openclaw-rocketmq] Inbound: topic=${event.topic}, tag=${event.tag ?? "*"}, agent=${route.agentId}, account=${route.accountId}, source=${route.source}, session=${sessionKey}, bytes=${Buffer.byteLength(text, "utf-8")}`,
   );
 
   // 保存 session 上下文（仅用于出站 replyTopic 路由，session key 由 OpenClaw 核心管理）
@@ -107,7 +107,7 @@ export async function processInbound(
     return { accepted: true, routeSource: route.source };
   } catch (error) {
     console.error(
-      `[openclaw-rockermq] Runtime dispatch failed for peer=${route.peerId || event.topic}:`,
+      `[openclaw-rocketmq] Runtime dispatch failed for peer=${route.peerId || event.topic}:`,
       error,
     );
     return { accepted: false, reason: `dispatch_error:${String(error)}` };
@@ -129,7 +129,7 @@ async function dispatchToRuntime(params: {
 }): Promise<void> {
   const rt = getRockermqRuntime();
   if (!rt) {
-    console.warn("[openclaw-rockermq] Runtime not initialized, cannot dispatch message");
+    console.warn("[openclaw-rocketmq] Runtime not initialized, cannot dispatch message");
     return;
   }
 
@@ -144,13 +144,13 @@ async function dispatchToRuntime(params: {
 
   const replyOptions = await rt.channel.routing.resolveAgentRoute({
     cfg: rt.config,
-    channel: "rockermq",
+    channel: "rocketmq",
     accountId: params.accountId,
     peer: { kind: "direct", id: params.peerId },
   });
 
   const ctx = await rt.channel.reply.finalizeInboundContext({
-    channel: "rockermq",
+    channel: "rocketmq",
     accountId: params.accountId,
     from: params.peerId,
     text: params.prompt,
@@ -167,7 +167,7 @@ async function dispatchToRuntime(params: {
     replyOptions,
     dispatcher: {
       deliver: async (payload: { text: string }) => {
-        const { publishMessage } = await import("./rockermq-server.js");
+        const { publishMessage } = await import("./rocketmq-server.js");
         await publishMessage({
           topic: params.replyTopic,
           tag: params.replyTag,
@@ -175,7 +175,7 @@ async function dispatchToRuntime(params: {
         });
       },
       sendFinalReply: async (payload: { text: string }) => {
-        const { publishMessage } = await import("./rockermq-server.js");
+        const { publishMessage } = await import("./rocketmq-server.js");
         await publishMessage({
           topic: params.replyTopic,
           tag: params.replyTag,
@@ -205,7 +205,7 @@ async function dispatchViaEmbeddedAgent(
 ): Promise<void> {
   const agentDir = await rt.agent.resolveAgentDir(rt.config, params.agentId);
   const workspaceDir = rt.agent.resolveAgentWorkspaceDir(rt.config, params.agentId);
-  const sessionId = `rockermq:${params.accountId ?? "default"}:${params.agentId}:${params.peerId}`;
+  const sessionId = `rocketmq:${params.accountId ?? "default"}:${params.agentId}:${params.peerId}`;
   const runId = cryptoRandom();
   const result = await rt.agent.runEmbeddedAgent({
     sessionId,
@@ -223,7 +223,7 @@ async function dispatchViaEmbeddedAgent(
     return;
   }
   try {
-    const { publishMessage } = await import("./rockermq-server.js");
+    const { publishMessage } = await import("./rocketmq-server.js");
     await publishMessage({
       topic: params.replyTopic,
       tag: params.replyTag,
@@ -234,7 +234,7 @@ async function dispatchViaEmbeddedAgent(
     });
   } catch (err) {
     console.warn(
-      `[openclaw-rockermq] Failed to publish embedded-agent reply: ${err instanceof Error ? err.message : String(err)}`,
+      `[openclaw-rocketmq] Failed to publish embedded-agent reply: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -253,7 +253,7 @@ async function dispatchViaSubagent(
     config: RockermqConfig;
   },
 ): Promise<void> {
-  const childSessionKey = `agent:${params.agentId}:subagent:rockermq:${sanitizeSessionId(params.sessionKey)}`;
+  const childSessionKey = `agent:${params.agentId}:subagent:rocketmq:${sanitizeSessionId(params.sessionKey)}`;
   const { runId } = await rt.subagent.run({
     sessionKey: childSessionKey,
     message: params.prompt,
@@ -276,7 +276,7 @@ async function dispatchViaSubagent(
     return;
   }
   try {
-    const { publishMessage } = await import("./rockermq-server.js");
+    const { publishMessage } = await import("./rocketmq-server.js");
     await publishMessage({
       topic: params.replyTopic,
       tag: params.replyTag,
@@ -287,7 +287,7 @@ async function dispatchViaSubagent(
     });
   } catch (err) {
     console.warn(
-      `[openclaw-rockermq] Failed to publish subagent reply: ${err instanceof Error ? err.message : String(err)}`,
+      `[openclaw-rocketmq] Failed to publish subagent reply: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }

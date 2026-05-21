@@ -171,7 +171,7 @@ Kubernetes-style service discovery.
 
 ## Phased Roadmap
 
-- **V1 (Single Node)**: Stand-alone Gateway, local file storage — managed by `openclaw-management`
+- **V1 (Single Node)**: Stand-alone Gateway, local file storage
 - **V2 (Cluster Aware)**: Management plugin connects to multiple Gateway nodes, aggregates health/metrics; config sync via etcd
 - **V3 (Full Cluster)**: Shared session store, cross-node message routing, leader election
 
@@ -325,23 +325,14 @@ For production deployments, consider replacing with:
 |--------|--------------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 authentication |
 | [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
-| [openclaw-ics](https://github.com/partme-ai/openclaw-ics) | Intelligent Customer Service API |
-| [openclaw-management](https://github.com/partme-ai/openclaw-management) | Management REST API, Prometheus, definitions, Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT protocol adapter |
 | [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus metrics exporter |
 | [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |
 | [openclaw-tracing](https://github.com/partme-ai/openclaw-tracing) | Distributed tracing |
 | [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt) | WebSocket MQTT |
 | [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp) | WebSocket STOMP |
-| [openclaw-wecom-kf](https://github.com/partme-ai/openclaw-wecom-kf) | WeChat Work customer service channel |
-
-## Future Plugins (Cluster-related)
-
-| Plugin | RabbitMQ Analog | Description |
-|---|---|---|
-| openclaw-bridge | rabbitmq_shovel | Cross-gateway message forwarding / mirroring |
-| openclaw-federation | rabbitmq_federation | Multi-region gateway federation |
-| openclaw-top | rabbitmq_top | Real-time Agent/Session resource leaderboard |
+| [@partme.ai/wecom-kf](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/wecom-kf) | WeChat Work customer service channel |
+| [@partme.ai/openclaw-bridge](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/bridge) | Cross-gateway message forwarding / mirroring |
 
 ## License
 

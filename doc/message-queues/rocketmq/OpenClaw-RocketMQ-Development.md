@@ -1,4 +1,4 @@
-# Development Guide — openclaw-rockermq
+# Development Guide — openclaw-rocketmq
 
 ## Project Setup
 
@@ -22,7 +22,7 @@ npm install
 
 ```bash
 # Single test file
-npx vitest run test/rockermq-config.test.ts
+npx vitest run test/rocketmq-config.test.ts
 
 # Tests matching a pattern
 npx vitest run -t "should parse endpoints"
@@ -64,10 +64,10 @@ npm run build
 
 # Register as a local plugin
 openclaw plugins install --path "$(pwd)"
-openclaw plugins enable openclaw-rockermq
+openclaw plugins enable openclaw-rocketmq
 
 # Check it's loaded
-openclaw plugins list | grep rockermq
+openclaw plugins list | grep rocketmq
 ```
 
 ## Project Structure
@@ -77,9 +77,9 @@ openclaw-rocketmq/
 ├── src/
 │   ├── index.ts              # Plugin entry (defineChannelPluginEntry)
 │   ├── channel.ts            # Channel lifecycle + config
-│   ├── rockermq-config.ts    # Config parsing + validation
-│   ├── rockermq-server.ts    # Transport (Producer + PushConsumer)
-│   ├── rockermq-state.ts     # Runtime config singleton
+│   ├── rocketmq-config.ts    # Config parsing + validation
+│   ├── rocketmq-server.ts    # Transport (Producer + PushConsumer)
+│   ├── rocketmq-state.ts     # Runtime config singleton
 │   ├── inbound.ts            # Inbound processing + dispatch
 │   ├── outbound.ts           # Outbound adapter
 │   ├── topic-router.ts       # Topic → agent routing
@@ -91,7 +91,7 @@ openclaw-rocketmq/
 │   ├── setup-entry.ts        # Setup entry
 │   └── openclaw-sdk.d.ts     # SDK type declarations
 ├── test/
-│   ├── rockermq-config.test.ts   # Config parsing tests
+│   ├── rocketmq-config.test.ts   # Config parsing tests
 │   ├── topic-router.test.ts      # Routing tests
 │   ├── session-mapper.test.ts    # Session store tests
 │   └── integration.test.ts       # End-to-end tests
@@ -126,7 +126,7 @@ openclaw-rocketmq/
 ## Testing
 
 ### Unit Tests
-- `rockermq-config.test.ts` — config parsing, validation, credential masking
+- `rocketmq-config.test.ts` — config parsing, validation, credential masking
 - `topic-router.test.ts` — topic parsing, wildcard matching, route resolution
 - `session-mapper.test.ts` — session context CRUD, peer mappings, stats
 
@@ -159,12 +159,12 @@ npx prettier --write "src/**/*.ts" "test/**/*.ts"
 ### `openclaw.plugin.json`
 
 Defines the plugin manifest:
-- `id`: `"openclaw-rockermq"`
-- `channels`: `["rockermq"]`
+- `id`: `"openclaw-rocketmq"`
+- `channels`: `["rocketmq"]`
 - `configSchema`: Channel config JSON Schema
 - `contracts.tools`: `["mq.publish"]`
-- `channelConfigs.rockermq.schema`: Full config schema
-- `channelConfigs.rockermq.uiHints`: UI labels + sensitive field markers
+- `channelConfigs.rocketmq.schema`: Full config schema
+- `channelConfigs.rocketmq.uiHints`: UI labels + sensitive field markers
 
 ### `package.json` `openclaw` field
 
@@ -174,7 +174,7 @@ Defines the plugin manifest:
     "extensions": ["./dist/index.js"],
     "setupEntry": "./dist/setup-entry.js",
     "channel": {
-      "id": "rockermq",
+      "id": "rocketmq",
       "label": "RocketMQ",
       "blurb": "RocketMQ channel plugin with producer and push-consumer support."
     }
@@ -189,7 +189,7 @@ Defines the plugin manifest:
 3. `npm run build` — clean build
 4. Update version in `package.json` + `openclaw.plugin.json` (date-based: `YYYY.M.D`)
 5. Verify with `openclaw plugins list` after install
-6. Test health endpoint: `curl http://127.0.0.1:18790/rockermq/health`
+6. Test health endpoint: `curl http://127.0.0.1:18790/rocketmq/health`
 
 ## Contributing
 

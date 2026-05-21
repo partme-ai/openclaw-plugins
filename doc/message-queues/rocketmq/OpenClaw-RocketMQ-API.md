@@ -1,4 +1,4 @@
-# API Reference — openclaw-rockermq
+# API Reference — openclaw-rocketmq
 
 ## HTTP Endpoints
 
@@ -10,7 +10,7 @@ All endpoints are served under the OpenClaw Gateway at `http://127.0.0.1:18790`.
 
 ---
 
-### GET /rockermq/health
+### GET /rocketmq/health
 
 Returns the connection health status of the RocketMQ plugin.
 
@@ -53,7 +53,7 @@ Returns the connection health status of the RocketMQ plugin.
 
 ---
 
-### GET /rockermq/stats
+### GET /rocketmq/stats
 
 Returns message statistics and session counts.
 
@@ -73,7 +73,7 @@ Returns message statistics and session counts.
 
 ---
 
-### GET /rockermq/status
+### GET /rocketmq/status
 
 Returns full plugin status including config snapshot and session mappings.
 
@@ -149,7 +149,7 @@ Registered as a plugin tool, accessible to agents.
 
 ## Config Schema Reference
 
-### `channels.rockermq`
+### `channels.rocketmq`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -160,9 +160,9 @@ Registered as a plugin tool, accessible to agents.
 | `sessionCredentials.accessKey` | string | — | Access key |
 | `sessionCredentials.accessSecret` | string | — | Access secret (sensitive) |
 | `sessionCredentials.securityToken` | string | — | Security token (sensitive, optional) |
-| `producer.groupId` | string | `"openclaw-rockermq-producer"` | Producer group ID |
+| `producer.groupId` | string | `"openclaw-rocketmq-producer"` | Producer group ID |
 | `producer.requestTimeout` | number | `5000` | Send timeout in ms |
-| `consumer.groupId` | string | `"openclaw-rockermq-consumer"` | Consumer group ID |
+| `consumer.groupId` | string | `"openclaw-rocketmq-consumer"` | Consumer group ID |
 | `consumer.subscriptions` | array | `[]` | Topic subscriptions |
 | `consumer.subscriptions[].topic` | string | — | Topic name |
 | `consumer.subscriptions[].filterExpression` | string | `"*"` | Tag filter |
@@ -192,7 +192,7 @@ Registered as a plugin tool, accessible to agents.
 ## TypeScript Types
 
 ### `RockermqConfig`
-Full config type — see `src/rockermq-config.ts`.
+Full config type — see `src/rocketmq-config.ts`.
 
 ### `RockermqStats`
 ```typescript

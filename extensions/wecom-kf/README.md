@@ -360,8 +360,6 @@ pnpm dev   # watch mode
 |--------|--------------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 authentication |
 | [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
-| [openclaw_ics](https://github.com/partme-ai/openclaw_ics) | Intelligent Customer Service API |
-| [openclaw_management](https://github.com/partme-ai/openclaw_management) | Management REST API, Prometheus, definitions, Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT protocol adapter |
 | [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus metrics exporter |
 | [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |

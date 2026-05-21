@@ -1,9 +1,9 @@
 {
-  "id": "openclaw-rockermq",
+  "id": "openclaw-rocketmq",
   "version": "2026.5.19",
   "description": "RocketMQ channel plugin for OpenClaw.",
   "main": "dist/index.js",
-  "channels": ["rockermq"],
+  "channels": ["rocketmq"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -13,10 +13,10 @@
     "tools": ["mq.publish"]
   },
   "channelConfigs": {
-    "rockermq": {
+    "rocketmq": {
       "schema": {
         "type": "object",
-        "description": "RocketMQ channel configuration for openclaw.json -> channels.rockermq",
+        "description": "RocketMQ channel configuration for openclaw.json -> channels.rocketmq",
         "additionalProperties": false,
         "properties": {
           "endpoints": {
@@ -46,16 +46,16 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "groupId": { "type": "string", "default": "openclaw-rockermq-producer" },
+              "groupId": { "type": "string", "default": "openclaw-rocketmq-producer" },
               "requestTimeout": { "type": "number", "default": 5000 }
             },
-            "default": { "groupId": "openclaw-rockermq-producer", "requestTimeout": 5000 }
+            "default": { "groupId": "openclaw-rocketmq-producer", "requestTimeout": 5000 }
           },
           "consumer": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "groupId": { "type": "string", "default": "openclaw-rockermq-consumer" },
+              "groupId": { "type": "string", "default": "openclaw-rocketmq-consumer" },
               "subscriptions": {
                 "type": "array",
                 "items": {
@@ -76,7 +76,7 @@
               "reconsumeOnError": { "type": "boolean", "default": true }
             },
             "default": {
-              "groupId": "openclaw-rockermq-consumer",
+              "groupId": "openclaw-rocketmq-consumer",
               "subscriptions": [],
               "maxCacheMessageCount": 1024,
               "maxCacheMessageSizeInBytes": 67108864,

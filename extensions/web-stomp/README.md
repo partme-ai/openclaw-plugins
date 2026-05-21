@@ -375,8 +375,6 @@ Multiple clients subscribed to same session for collaborative interactions.
 |--------|--------------|
 | [openclaw_auth_oauth2](https://github.com/partme-ai/openclaw_auth_oauth2) | OAuth2 authentication |
 | [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
-| [openclaw_ics](https://github.com/partme-ai/openclaw_ics) | Intelligent Customer Service API |
-| [openclaw_management](https://github.com/partme-ai/openclaw_management) | Management REST API, Prometheus, definitions, Web UI |
 | [openclaw_mqtt](https://github.com/partme-ai/openclaw_mqtt) | MQTT protocol adapter |
 | [openclaw_prometheus](https://github.com/partme-ai/openclaw_prometheus) | Prometheus metrics exporter |
 | [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |

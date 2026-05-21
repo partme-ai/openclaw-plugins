@@ -1,6 +1,6 @@
-# Technical Details — openclaw-rockermq
+# Technical Details — openclaw-rocketmq
 
-## Transport Layer (`rockermq-server.ts`)
+## Transport Layer (`rocketmq-server.ts`)
 
 ### Producer Management
 
@@ -104,15 +104,15 @@ rt.subagent.run({ sessionKey, message, deliver: false })
 → publishMessage(reply)
 ```
 
-## Config Resolution (`rockermq-config.ts`)
+## Config Resolution (`rocketmq-config.ts`)
 
 ### Resolution Path
 
-Config is read from `channels.rockermq` (or top-level `rockermq` as fallback) in the OpenClaw config:
+Config is read from `channels.rocketmq` (or top-level `rocketmq` as fallback) in the OpenClaw config:
 
 ```typescript
 resolveRockermqConfig(cfg)
-  → cfg.channels.rockermq ?? cfg.rockermq ?? {}
+  → cfg.channels.rocketmq ?? cfg.rocketmq ?? {}
   → merge with DEFAULT_ROCKERMQ_CONFIG
 ```
 

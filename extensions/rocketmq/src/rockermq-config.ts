@@ -67,11 +67,11 @@ export const DEFAULT_ROCKERMQ_CONFIG: RockermqConfig = {
   topicPrefix: "openclaw",
   sessionCredentials: undefined,
   producer: {
-    groupId: "openclaw-rockermq-producer",
+    groupId: "openclaw-rocketmq-producer",
     requestTimeout: 5000,
   },
   consumer: {
-    groupId: "openclaw-rockermq-consumer",
+    groupId: "openclaw-rocketmq-consumer",
     subscriptions: [],
     maxCacheMessageCount: 1024,
     maxCacheMessageSizeInBytes: 64 * 1024 * 1024,
@@ -104,23 +104,23 @@ export function resolveRockermqConfig(
   cfg: Record<string, unknown> | undefined | null,
 ): RockermqConfig {
   const channels = (cfg?.channels as Record<string, unknown> | undefined) ?? {};
-  const rockermq =
-    (channels.rockermq as Record<string, unknown> | null | undefined) ??
-    (cfg?.rockermq as Record<string, unknown> | null | undefined) ??
+  const rocketmq =
+    (channels.rocketmq as Record<string, unknown> | null | undefined) ??
+    (cfg?.rocketmq as Record<string, unknown> | null | undefined) ??
     {};
-  const producer = (rockermq.producer as Record<string, unknown> | undefined) ?? {};
-  const consumer = (rockermq.consumer as Record<string, unknown> | undefined) ?? {};
-  const payload = (rockermq.payload as Record<string, unknown> | undefined) ?? {};
-  const dispatch = (rockermq.dispatch as Record<string, unknown> | undefined) ?? {};
+  const producer = (rocketmq.producer as Record<string, unknown> | undefined) ?? {};
+  const consumer = (rocketmq.consumer as Record<string, unknown> | undefined) ?? {};
+  const payload = (rocketmq.payload as Record<string, unknown> | undefined) ?? {};
+  const dispatch = (rocketmq.dispatch as Record<string, unknown> | undefined) ?? {};
   const dispatchReply = (dispatch.reply as Record<string, unknown> | undefined) ?? {};
-  const idempotency = (rockermq.idempotency as Record<string, unknown> | undefined) ?? {};
+  const idempotency = (rocketmq.idempotency as Record<string, unknown> | undefined) ?? {};
   const sessionCredentials =
-    (rockermq.sessionCredentials as Record<string, unknown> | undefined) ?? {};
+    (rocketmq.sessionCredentials as Record<string, unknown> | undefined) ?? {};
 
   return {
-    endpoints: String(rockermq.endpoints ?? DEFAULT_ROCKERMQ_CONFIG.endpoints),
-    namespace: String(rockermq.namespace ?? DEFAULT_ROCKERMQ_CONFIG.namespace),
-    topicPrefix: String(rockermq.topicPrefix ?? DEFAULT_ROCKERMQ_CONFIG.topicPrefix),
+    endpoints: String(rocketmq.endpoints ?? DEFAULT_ROCKERMQ_CONFIG.endpoints),
+    namespace: String(rocketmq.namespace ?? DEFAULT_ROCKERMQ_CONFIG.namespace),
+    topicPrefix: String(rocketmq.topicPrefix ?? DEFAULT_ROCKERMQ_CONFIG.topicPrefix),
     sessionCredentials:
       typeof sessionCredentials.accessKey === "string" &&
       typeof sessionCredentials.accessSecret === "string"
@@ -172,8 +172,8 @@ export function resolveRockermqConfig(
           : DEFAULT_ROCKERMQ_CONFIG.consumer.requestTimeout,
       reconsumeOnError: consumer.reconsumeOnError !== false,
     },
-    topicBindings: Array.isArray(rockermq.topicBindings)
-      ? rockermq.topicBindings
+    topicBindings: Array.isArray(rocketmq.topicBindings)
+      ? rocketmq.topicBindings
           .map((item) => {
             const value = item as Record<string, unknown>;
             return {

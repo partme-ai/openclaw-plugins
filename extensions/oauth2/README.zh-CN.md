@@ -18,7 +18,7 @@
 
 ## 概述
 
-与 `openclaw_management` 内置的 OAuth 登录（仅保护管理界面）不同，本插件在 **Gateway 层面** 运作，拦截所有 HTTP 请求，验证 Bearer Token 是否来自受信任的 Sa-Token OAuth2 Server。
+与 `openclaw` 内置的 OAuth 登录（仅保护管理界面）不同，本插件在 **Gateway 层面** 运作，拦截所有 HTTP 请求，验证 Bearer Token 是否来自受信任的 Sa-Token OAuth2 Server。
 
 核心功能：
 
@@ -27,7 +27,7 @@
 - **JWT 本地验证**: 零网络开销的 RS256 签名验证，校验 `exp`、`iss`、`aud`，提取 Sa-Token 自定义 claims
 - **Token Introspection**: 对不透明 UUID Token 的降级验证，调用 `/oauth2/check_token` 端点，短 TTL 缓存（30s）
 - **Scope → Role 映射**: `openclaw:admin` → admin、`openclaw:operator` → operator、`openclaw:viewer` → viewer
-- **全局中间件**: 自动注入 `AuthContext` 到所有请求，供下游插件（如 `openclaw_management`）使用
+- **全局中间件**: 自动注入 `AuthContext` 到所有请求，供下游插件（如 `openclaw`）使用
 
 ## 架构
 
@@ -55,7 +55,6 @@
 └──────────────────────┬───────────────────────┘
                        │
                        ▼
-               openclaw_management
          （读取 req.authContext 进行权限判断）
 ```
 
@@ -157,7 +156,6 @@ openclaw-oauth2/
 - [x] 不透明 Token Introspection（RFC 7662）
 - [x] Scope → Role/Permission 映射
 - [x] 全局 Bearer Token 中间件
-- [x] AuthContext 注入（供 `openclaw_management` 等消费）
 - [ ] Token 刷新流程（SCRM 后端负责）
 - [ ] 多提供商支持
 
@@ -187,7 +185,6 @@ pnpm dev   # 监听模式
 |------|------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 认证 |
 | [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
-| [openclaw_management](https://github.com/partme-ai/openclaw_management) | 管理 REST API + Prometheus + 定义导出/导入 + Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT 协议接入 |
 | [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus 指标导出 |
 | [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP 服务端 |

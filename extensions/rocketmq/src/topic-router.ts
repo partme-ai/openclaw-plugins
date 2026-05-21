@@ -7,7 +7,7 @@
  * - {topicPrefix}.agent.<agentId>.out[.<peerId>] -- 出站
  */
 
-import type { RockermqConfig, TopicBinding } from "./rockermq-config.js";
+import type { RockermqConfig, TopicBinding } from "./rocketmq-config.js";
 
 export type RockermqInboundRoute = {
   agentId: string;
