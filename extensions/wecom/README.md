@@ -1,6 +1,6 @@
-# WeCom (WeChat Work / 企业微信)
+# WeCom (WeChat Work)
 
-**OpenClaw 渠道插件 -- 企业微信 Bot + Agent 双模式深度集成**
+**OpenClaw channel plugin -- Enterprise WeChat Work Bot + Agent dual-mode integration**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fwecom-blue)
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
@@ -10,53 +10,47 @@
 
 ---
 
-## 功能特性
+## Features
 
-- **双模式架构**：Bot（WebSocket 长连接 / HTTP Webhook JSON 回调）和 Agent（HTTP Webhook XML 加密回调）可独立或组合运行
-- **消息类型全覆盖**：文本、图片、语音、视频、文件、图文混排（mixed），自动下载解密
-- **语音转文字**：自动提取语音消息中的识别文本
-- **引用消息**：支持被引用的文本、图片、语音、文件消息
-- **流式回复**：Bot 模式带"思考中"占位消息
-- **Agent 模式**：AES-256-CBC 加密 XML 回调 + SHA1 签名验证
-- **Markdown 格式回复**
-- **模板卡片消息**：text_notice、news_notice、button_interaction、vote_interaction、multiple_interaction 及事件回调处理
-- **内置访问控制**：DM Policy（pairing / open / allowlist / disabled）和 Group Policy（open / allowlist / disabled）
-- **命令授权**：按账号控制命令权限，支持访问组
-- **多账号支持**：独立 Bot / Agent 配置，互不干扰，支持账号级字段覆盖
-- **MCP 工具集成**（`wecom_mcp`），含拦截器管道（biz-error, media, smartpage-create, smartpage-export 等）
-- **10 个内置 Skills**：联系人、文档、待办、会议、日程、消息、smartsheet、模板卡片等
-- **动态 Agent 路由**：按用户 / 群组自动创建隔离 Agent 实例
-- **本地文件发送**：可配置 `mediaLocalRoots` 白名单
-- **智能媒体降级**：图片 10MB -> 文件、视频 10MB -> 文件、语音 2MB/仅AMR -> 文件，上限 20MB
-- **Bot 优先、Agent 兜底** 的出站策略：Bot WS 不可用时自动回退到 Agent HTTP API
-- **自动心跳保活与重连**（最多 10 次重连，5 次鉴权重试）
-- **防互踢保护**：服务端主动断连时不自动重启，避免互踢循环
-- **交互式 CLI 配置向导**
+- **Bot + Agent dual-mode**: WebSocket real-time streaming + HTTP API for file/broadcast fallback
+- **Multi-account matrix**: Independent bot/agent configs per account with full isolation
+- **Webhook + WebSocket**: Bot supports both WebSocket long-connection and HTTP webhook modes
+- **10 built-in Skills**: Contacts, docs, calendar, tasks, meetings, smartsheet, messaging, template cards
+- **Full media support**: Image/video/voice/file receive and send with auto-downgrade
+- **Streaming replies**: Real-time markdown streaming with "thinking" placeholder
+- **Access control**: Per-account DM/group policies (open, pairing, allowlist, disabled)
+- **Dynamic Agent routing**: Auto-create isolated agents per user/group
+- **MCP tool**: `wecom_mcp` for direct WeCom API access with interceptor pipeline
+- **CLI setup wizard**: Interactive configuration with multi-mode credential prompts
+- **Template card messages**: text_notice, news_notice, button_interaction, vote_interaction, multiple_interaction with event callback handling
+- **Auto-fallback**: Bot WS unavailable -> transparent fallback to Agent HTTP API
+- **Heartbeat keepalive**: Auto-reconnect with exponential backoff (max 10 retries, 5 auth retries)
+- **Kick protection**: No auto-restart on server-initiated disconnect to avoid re-kick loops
 
-## 快速开始
+## Quick Start
 
-### 环境要求
+### Requirements
 
 - Node.js >= 22.0.0
 - OpenClaw >= 2026.4.12
 
-### 安装
+### Install
 
 ```bash
 openclaw plugins install @partme.ai/wecom
 ```
 
-### 配置
+### Configuration
 
-#### 方式一：交互式配置
+#### Option A: Interactive wizard
 
 ```bash
 openclaw channels add
 ```
 
-按提示输入企业微信机器人的 Bot ID 和 Secret。
+Follow the prompts to enter your WeCom Bot ID and Secret.
 
-#### 方式二：CLI 快速配置
+#### Option B: CLI quick config
 
 ```bash
 openclaw config set channels.wecom.botId <YOUR_BOT_ID>
@@ -65,101 +59,101 @@ openclaw config set channels.wecom.enabled true
 openclaw gateway restart
 ```
 
-### 模式概览
+## Mode Overview
 
-| 模式 | 连接方式 | 消息格式 | 适用场景 |
-|------|---------|---------|---------|
-| **Bot**（智能机器人） | WebSocket（默认）或 HTTP Webhook | JSON | 快速接入，流式回复 |
-| **Agent**（自建应用） | HTTP Webhook 回调 | XML | 企业应用，API 驱动消息 |
+| Mode | Connection | Message Format | Use Case |
+|------|-----------|----------------|----------|
+| **Bot** (Smart Robot) | WebSocket (default) or HTTP Webhook | JSON | Quick integration, streaming replies |
+| **Agent** (Self-built App) | HTTP Webhook | XML (encrypted) | Enterprise apps, API-driven messaging |
 
-> Bot 模式通过 `connectionMode` 支持两种连接方式：
-> - `websocket`（默认）-- WebSocket 长连接，需 `botId` + `secret`
-> - `webhook` -- HTTP 回调，需 `token` + `encodingAESKey`
+> Bot's `connectionMode` supports:
+> - `websocket` (default) -- long-lived WS, requires `botId` + `secret`
+> - `webhook` -- HTTP callback, requires `token` + `encodingAESKey`
 
-### Bot 模式配置
+## Bot Mode Configuration
 
-#### 核心设置
+### Core Settings
 
-| 配置项 | 说明 | 可选值 | 默认值 |
-|--------|------|--------|--------|
-| `channels.wecom.enabled` | 启用通道 | `true` / `false` | `false` |
-| `channels.wecom.connectionMode` | Bot 连接模式 | `websocket` / `webhook` | `websocket` |
-| `channels.wecom.name` | 账号显示名称 | - | `企业微信` |
+| Config | Description | Values | Default |
+|--------|-------------|--------|---------|
+| `channels.wecom.enabled` | Enable channel | `true` / `false` | `false` |
+| `channels.wecom.connectionMode` | Bot connection mode | `websocket` / `webhook` | `websocket` |
+| `channels.wecom.name` | Display name | - | `WeCom` |
 
-#### WebSocket 模式（默认）
+#### WebSocket Mode (default)
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `channels.wecom.botId` | 企业微信机器人 ID | - |
-| `channels.wecom.secret` | 企业微信机器人 Secret | - |
-| `channels.wecom.websocketUrl` | WebSocket 端点 | `wss://openws.work.weixin.qq.com` |
-| `channels.wecom.sendThinkingMessage` | 发送"思考中"占位消息 | `true` |
+| Config | Description | Default |
+|--------|-------------|---------|
+| `channels.wecom.botId` | WeCom Bot ID | - |
+| `channels.wecom.secret` | WeCom Bot Secret | - |
+| `channels.wecom.websocketUrl` | WebSocket endpoint | `wss://openws.work.weixin.qq.com` |
+| `channels.wecom.sendThinkingMessage` | Send "thinking" placeholder | `true` |
 
-#### Webhook 模式（`connectionMode: "webhook"`）
+#### Webhook Mode (`connectionMode: "webhook"`)
 
-| 配置项 | 说明 |
-|--------|------|
-| `channels.wecom.token` | Webhook 验证 Token |
-| `channels.wecom.encodingAESKey` | AES 加密密钥（43 位 Base64） |
-| `channels.wecom.receiveId` | 接收者 ID（解密校验用） |
-| `channels.wecom.welcomeText` | 进入聊天事件欢迎语 |
-| `channels.wecom.streamPlaceholderContent` | 流式占位内容 |
+| Config | Description |
+|--------|-------------|
+| `channels.wecom.token` | Webhook verification token |
+| `channels.wecom.encodingAESKey` | AES encryption key (43-char Base64) |
+| `channels.wecom.receiveId` | Receive ID (decryption verification) |
+| `channels.wecom.welcomeText` | Welcome message on enter-chat event |
+| `channels.wecom.streamPlaceholderContent` | Streaming placeholder content |
 
-#### 访问控制
+#### Access Control
 
-| 配置项 | 说明 | 可选值 | 默认值 |
-|--------|------|--------|--------|
-| `channels.wecom.dmPolicy` | 私聊访问策略 | `pairing` / `open` / `allowlist` / `disabled` | `open` |
-| `channels.wecom.allowFrom` | 私聊白名单（用户 ID 列表） | - | `[]` |
-| `channels.wecom.groupPolicy` | 群聊访问策略 | `open` / `allowlist` / `disabled` | `open` |
-| `channels.wecom.groupAllowFrom` | 群聊白名单（群 ID 列表） | - | `[]` |
-| `channels.wecom.groups` | 按群配置（如发送者白名单） | - | `{}` |
+| Config | Description | Values | Default |
+|--------|-------------|--------|---------|
+| `channels.wecom.dmPolicy` | DM access policy | `pairing` / `open` / `allowlist` / `disabled` | `open` |
+| `channels.wecom.allowFrom` | DM allowlist (user IDs) | - | `[]` |
+| `channels.wecom.groupPolicy` | Group chat policy | `open` / `allowlist` / `disabled` | `open` |
+| `channels.wecom.groupAllowFrom` | Group allowlist (group IDs) | - | `[]` |
+| `channels.wecom.groups` | Per-group config (sender allowlist) | - | `{}` |
 
-#### 媒体设置
+#### Media Settings
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `channels.wecom.mediaLocalRoots` | 媒体发送允许的额外本地路径（支持 `~`） | `[]` |
-| `channels.wecom.media.maxBytes` | 最大媒体文件大小（字节） | `20971520`（20MB） |
-| `channels.wecom.media.tempDir` | 媒体处理临时目录 | - |
-| `channels.wecom.media.retentionHours` | 媒体文件保留时长（小时） | - |
-| `channels.wecom.media.cleanupOnStart` | 启动时清理临时媒体文件 | - |
+| Config | Description | Default |
+|--------|-------------|---------|
+| `channels.wecom.mediaLocalRoots` | Additional local paths for file sending | `[]` |
+| `channels.wecom.media.maxBytes` | Max media file size (bytes) | `20971520` (20MB) |
+| `channels.wecom.media.tempDir` | Media processing temp directory | - |
+| `channels.wecom.media.retentionHours` | Media retention hours | - |
+| `channels.wecom.media.cleanupOnStart` | Clean temp media on startup | - |
 
-**媒体大小限制与自动降级：**
+**Media size limits and auto-downgrade:**
 
-| 媒体类型 | 最大限制 | 降级行为 |
-|----------|----------|----------|
-| 图片 | 10 MB | 超出 -> 以文件形式发送 |
-| 视频 | 10 MB | 超出 -> 以文件形式发送 |
-| 语音 | 2 MB（仅 AMR） | 非 AMR 格式或超出 -> 以文件形式发送 |
-| 文件 | 20 MB | 超出 -> 拒绝发送 |
+| Media Type | Max Limit | Downgrade |
+|------------|-----------|-----------|
+| Image | 10 MB | Exceed -> sent as file |
+| Video | 10 MB | Exceed -> sent as file |
+| Voice | 2 MB (AMR only) | Non-AMR or exceed -> sent as file |
+| File | 20 MB | Exceed -> rejected |
 
-#### 网络设置
+#### Network Settings
 
-| 配置项 | 说明 |
-|--------|------|
-| `channels.wecom.network.timeoutMs` | HTTP 请求超时（毫秒） |
-| `channels.wecom.network.retries` | 重试次数 |
-| `channels.wecom.network.retryDelayMs` | 重试间隔（毫秒） |
-| `channels.wecom.network.egressProxyUrl` | 出口代理 URL（固定 IP 场景） |
+| Config | Description |
+|--------|-------------|
+| `channels.wecom.network.timeoutMs` | HTTP request timeout (ms) |
+| `channels.wecom.network.retries` | Retry count |
+| `channels.wecom.network.retryDelayMs` | Retry delay (ms) |
+| `channels.wecom.network.egressProxyUrl` | Egress proxy URL (fixed IP scenarios) |
 
-> **出口代理优先级**：`channels.wecom.network.egressProxyUrl` > `OPENCLAW_WECOM_EGRESS_PROXY_URL` > `WECOM_EGRESS_PROXY_URL` > `HTTPS_PROXY` > `ALL_PROXY` > `HTTP_PROXY`
+> **Egress proxy priority**: `channels.wecom.network.egressProxyUrl` > `OPENCLAW_WECOM_EGRESS_PROXY_URL` > `WECOM_EGRESS_PROXY_URL` > `HTTPS_PROXY` > `ALL_PROXY` > `HTTP_PROXY`
 
-### Agent 模式配置
+## Agent Mode Configuration
 
-Agent 模式使用 HTTP Webhook 回调，消息体为 XML 加密格式。需在企业微信管理后台「API 接收消息」中配置回调 URL。
+Agent mode uses HTTP webhook callbacks with encrypted XML payloads. Configure the callback URL in the WeCom admin console under "API Receive Messages".
 
-#### 前置条件
+### Prerequisites
 
-1. 在[企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame#apps)创建自建应用
-2. 记录 **CorpID**、**CorpSecret**（应用凭证）和 **AgentId**
-3. 在应用设置 ->「API 接收消息」中：记录 **Token** 和 **EncodingAESKey**
+1. Create a self-built app in the [WeCom Admin Console](https://work.weixin.qq.com/wework_admin/frame#apps)
+2. Note your **CorpID**, **CorpSecret**, and **AgentId**
+3. Under app settings -> "API Receive Messages", record the **Token** and **EncodingAESKey**
 
-#### 配置步骤
+### Setup Steps
 
-> **重要**：必须先配置 Gateway，再在企微后台保存回调 URL。
+> **Important**: Configure the Gateway first, then save the callback URL in the WeCom admin console.
 
-**第一步：配置 Gateway**
+**Step 1: Configure Gateway**
 
 ```bash
 openclaw config set channels.wecom.agent.corpId <YOUR_CORP_ID>
@@ -171,26 +165,13 @@ openclaw config set channels.wecom.enabled true
 openclaw gateway restart
 ```
 
-**第二步：在企微后台保存回调 URL**
+**Step 2: Save callback URL in WeCom admin**
 
-URL：`https://<your-gateway-host>/plugins/wecom/agent/<accountId>`
+URL: `https://<your-gateway-host>/plugins/wecom/agent/<accountId>`
 
-#### Agent 配置参考
+### Dual-mode combination
 
-| 配置项 | 说明 | 必填 |
-|--------|------|------|
-| `channels.wecom.agent.corpId` | 企业 Corp ID | 是 |
-| `channels.wecom.agent.corpSecret` | 应用 Secret | 是 |
-| `channels.wecom.agent.agentId` | 应用 Agent ID | 否（主动发消息时需要） |
-| `channels.wecom.agent.token` | 回调验证 Token | 是 |
-| `channels.wecom.agent.encodingAESKey` | 回调加密密钥（43 位） | 是 |
-| `channels.wecom.agent.welcomeText` | 欢迎语 | 否 |
-| `channels.wecom.agent.dmPolicy` | DM 访问策略（覆盖顶层） | 否 |
-| `channels.wecom.agent.allowFrom` | DM 白名单（覆盖顶层） | 否 |
-
-### 双模式组合使用
-
-Bot 和 Agent 可在同一账号同时运行。Bot 处理 WebSocket 流式消息；Agent 处理 HTTP Webhook 回调及 API 驱动的主动消息。
+Bot and Agent can run simultaneously on the same account:
 
 ```json
 {
@@ -211,9 +192,9 @@ Bot 和 Agent 可在同一账号同时运行。Bot 处理 WebSocket 流式消息
 }
 ```
 
-### 多账号配置
+### Multi-account configuration
 
-通过 `accounts` 配置多个企业微信账号，每个可独立配置 Bot 和/或 Agent。账号级字段覆盖顶层同名字段。
+Configure multiple WeCom accounts via `accounts`, each with independent Bot and/or Agent settings:
 
 ```json
 {
@@ -221,27 +202,18 @@ Bot 和 Agent 可在同一账号同时运行。Bot 处理 WebSocket 流式消息
     "wecom": {
       "enabled": true,
       "defaultAccount": "main",
-      "dmPolicy": "open",
       "accounts": {
-        "main": {
-          "botId": "bot-id-1",
-          "secret": "secret-1",
-          "agent": { ... }
-        },
-        "support": {
-          "dmPolicy": "allowlist",
-          "allowFrom": ["admin1"],
-          "agent": { ... }
-        }
+        "main": { "botId": "...", "agent": { ... } },
+        "support": { "dmPolicy": "allowlist", "agent": { ... } }
       }
     }
   }
 }
 ```
 
-### 动态 Agent 配置
+### Dynamic Agent routing
 
-动态 Agent 路由可为每个用户或群组自动创建隔离的 Agent 实例：
+Auto-create isolated Agent instances per user/group:
 
 ```json
 {
@@ -258,53 +230,34 @@ Bot 和 Agent 可在同一账号同时运行。Bot 处理 WebSocket 流式消息
 }
 ```
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `channels.wecom.dynamicAgents.enabled` | 启用动态 Agent 路由 | `false` |
-| `channels.wecom.dynamicAgents.dmCreateAgent` | 为每个私聊用户创建隔离 Agent | `true` |
-| `channels.wecom.dynamicAgents.groupEnabled` | 为群聊启用动态 Agent | `true` |
-| `channels.wecom.dynamicAgents.adminUsers` | 管理员用户（绕过动态路由，使用主 Agent） | `[]` |
+Generated Agent ID format: `wecom-{type}-{peerId}` (e.g., `wecom-dm-zhangsan`, `wecom-group-wr123456`).
 
-## 访问控制
+## Access Control
 
-### 私聊（DM）访问
+### DM Policies
 
-**默认**：`dmPolicy: "open"` -- 所有用户可自由发送私聊消息。
+- **open** (default) -- All users can send DMs freely
+- **pairing** -- Requires admin approval: `openclaw pairing list wecom` / `openclaw pairing approve wecom <CODE>`
+- **allowlist** -- Only users in `channels.wecom.allowFrom`
+- **disabled** -- All DMs blocked
 
-- **配对审批**：`openclaw pairing list wecom` / `openclaw pairing approve wecom <CODE>`
-- **白名单模式**：通过 `channels.wecom.allowFrom` 配置允许的用户 ID
-- **开放模式**：`dmPolicy: "open"` 允许所有用户
-- **禁用模式**：`dmPolicy: "disabled"` 完全禁止私聊
+### Group Chat Policies
 
-### 群聊访问
+- `"open"` -- All group messages allowed (default)
+- `"allowlist"` -- Only groups in `groupAllowFrom`
+- `"disabled"` -- All group messages blocked
 
-- `"open"` -- 允许所有群消息（默认）
-- `"allowlist"` -- 仅允许 `groupAllowFrom` 中列出的群
-- `"disabled"` -- 禁用所有群消息
+Per-group sender allowlist: `groups.<chatId>.allowFrom` limits which members can interact.
 
-支持群内发送者白名单：`groups.<chatId>.allowFrom` 限制群内哪些成员可以与机器人交互。
+## Cron Jobs
 
-## 定时任务（Cronjob）
+Cron jobs use the **Agent outbound channel**, so Agent mode must be configured.
 
-插件支持通过 OpenClaw 内置 Cron 服务进行定时消息投递。Cron 任务走 Agent 出站通道，因此必须配置 Agent 模式。
+### Target format
 
-### 目标格式
+`delivery.to` supports: `party:<id>`, `tag:<id>`, `user:<id>`, `group:<id>`, `chat:<id>`, and auto-detection.
 
-`delivery.to` 字段支持以下格式：
-
-| 格式 | 目标 | 示例 |
-|------|------|------|
-| `party:<id>` | 部门（所有成员） | `party:1` |
-| `tag:<id>` | 标签组 | `tag:Ops` |
-| `user:<id>` | 指定用户 | `user:zhangsan` |
-| `group:<id>` / `chat:<id>` | 群聊 | `group:wr123abc` |
-| 纯数字 | 自动识别为部门 | `1` -> `party:1` |
-
-> 命名空间前缀（`wecom:`、`qywx:`、`wework:`、`wechatwork:`、`wecom-agent:`）在解析前自动剥离。
-
-### 创建方式
-
-**CLI（推荐，即时生效）：**
+### CLI (instant effect)
 
 ```bash
 openclaw cron add \
@@ -312,81 +265,68 @@ openclaw cron add \
   --agent main \
   --cron "0 9 * * 1-5" \
   --tz "Asia/Shanghai" \
-  --message "早上好！这是今日简报。" \
+  --message "Generate today's briefing" \
   --announce \
   --channel wecom \
   --to "party:1"
 ```
 
-**编辑 `jobs.json`（需重启 Gateway）：** 文件路径 `~/.openclaw/cron/jobs.json`
+## Technical Details
 
-**对话创建：** 在企微对话中让 AI Agent 直接创建，如"每天早上 9 点向全公司发送今日简报"。
+### Security
 
-## 开发
+- **Signature verification**: SHA1(token, timestamp, nonce, encrypt)
+- **Encryption**: AES-256-CBC with PKCS#7 padding
+- **Webhook paths**: `/wecom`, `/wecom/bot`, `/wecom/agent`, `/plugins/wecom/bot/*`, `/plugins/wecom/agent/*`
 
-```bash
-pnpm build          # tsc -> dist/
-pnpm typecheck      # tsc --noEmit
-pnpm test           # vitest run（279 个测试用例）
-pnpm run pack-dry   # 预览发布包内容
-```
+### Timeout handling
 
-## 更新
+Bot webhook mode has a 6-minute (360s) window for streaming responses. Auto-fallback to Agent mode 30s before deadline.
 
-```bash
-openclaw plugins update @partme.ai/wecom
-```
+### Media processing
 
-## 技术详情
+- **Inbound**: AES-256-CBC decrypt WeCom encrypted media URLs
+- **Outbound images**: Base64 via `msg_item` in stream
+- **Outbound files**: Requires Agent mode (`media/upload` + `message/send`)
 
-### 安全机制
+### Proxy for dynamic IPs
 
-- **签名验证**：SHA1(token, timestamp, nonce, encrypt) 验证回调真实性
-- **加密标准**：AES-256-CBC + PKCS#7 填充（32 字节块）
-- **Webhook 路径**：`/wecom`（旧版）、`/wecom/bot`、`/wecom/agent`、`/plugins/wecom/bot/*`、`/plugins/wecom/agent/*`
-
-### 超时处理
-
-Bot webhook 模式有 6 分钟窗口（360s）用于流式回复。插件在 deadline 前 30s 自动回退到 Agent 模式。
-
-### 媒体处理
-
-- 入站：AES-256-CBC 解密企业微信加密媒体 URL
-- 出站图片：通过 `msg_item` 以 base64 形式在流中发送
-- 出站文件：需 Agent 模式，通过 `media/upload` + `message/send` 发送
-
-### 代理支持
-
-对于动态 IP 服务器（常见错误：`60020 not allow to access from your ip`）：
+For error `60020 not allow to access from your ip`:
 
 ```bash
 openclaw config set channels.wecom.network.egressProxyUrl "http://proxy.company.local:3128"
 ```
 
-### 依赖项
+## Build & Test
 
-- `@partme.ai/openclaw-message-sdk`：共享消息类型与工具
-- `@wecom/aibot-node-sdk`：官方 WeCom Bot WebSocket SDK + 加密库
-- `undici`：HTTP 客户端（支持代理）
-- `fast-xml-parser`：XML 解析
-- `file-type`：MIME 类型检测
-- `zod`：配置验证
+```bash
+pnpm build          # tsc -> dist/
+pnpm typecheck      # tsc --noEmit
+pnpm test           # vitest run (279 tests)
+pnpm run pack-dry   # Preview package contents before publish
+```
 
-## 关于 openclaw-plugins
+## Update
 
-本插件属于 [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) 的一部分。该仓库是由 **PartMe.AI 团队** 开发和维护的企业级 OpenClaw 插件集合，涵盖 27+ 个插件，覆盖 IM 渠道、消息队列、AI 能力和基础设施。
+```bash
+openclaw plugins update @partme.ai/wecom
+```
 
-每个插件在 npm 上独立发布，位于 `@partme.ai` 作用域下：
+## About openclaw-plugins
+
+This plugin is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) -- an enterprise OpenClaw plugin collection developed and maintained by the **PartMe.AI team**, featuring 27+ plugins across IM channels, message queues, AI capabilities, and infrastructure.
+
+Each plugin is published independently on npm under the `@partme.ai` scope:
 
 ```bash
 openclaw plugins install @partme.ai/nacos
 openclaw plugins install @partme.ai/wecom
 ```
 
-**PartMe.AI** 专注于 AI 客服与企业级 AI Agent 基础设施，提供从企业微信 / 钉钉 / 飞书 / QQ 渠道集成到 RAG 知识库、多层记忆和生产监控的端到端解决方案。
+**PartMe.AI** specializes in AI customer service and enterprise AI agent infrastructure, providing end-to-end solutions from WeChat Work/DingTalk/Feishu/QQ channel integration to RAG knowledge bases, multi-layer memory, and production monitoring.
 
-> 联系方式：partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)
+> Contact: partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)
 
-## 许可证
+## License
 
 ISC

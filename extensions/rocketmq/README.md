@@ -1,6 +1,6 @@
-# @partme.ai/openclaw-rockermq（RocketMQ 渠道插件）
+# @partme.ai/openclaw-rockermq
 
-**OpenClaw 插件 — 阿里云 RocketMQ 消息队列通道，支持 Producer + PushConsumer、Topic+Tag 绑定、3 种分发模式、健康检查和 mq.publish 工具**
+> RocketMQ Channel Plugin for OpenClaw — producer and push-consumer integration with topic+tag bindings, 3 dispatch modes, health endpoints, and mq.publish tool.
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--rocketmq-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-rocketmq)
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
@@ -10,33 +10,33 @@
 
 ---
 
-## 概述
+## Overview
 
-`@partme.ai/openclaw-rockermq` 将外部 RocketMQ 消息桥接到 OpenClaw Agent，并将 Agent 回复重新发布到 RocketMQ。它使用 `rocketmq-client-nodejs` 实现 Producer 和 PushConsumer，遵循完整的 OpenClaw channel 插件生命周期。
+`@partme.ai/openclaw-rockermq` bridges external RocketMQ messages into OpenClaw agents and publishes agent replies back to RocketMQ. It uses `rocketmq-client-nodejs` for Producer and PushConsumer, with a full OpenClaw channel plugin lifecycle.
 
-## 特性
+## Features
 
-- **Producer + PushConsumer** — 完整的 RocketMQ 生产和消费生命周期
-- **Topic+Tag 绑定** — 显式的 `topic + tag -> agentId` 路由规则
-- **3 种分发模式** — `embedded-agent`（默认）/ `subagent` / `reply-pipeline`
-- **载荷解析策略** — `jsonTextOrPlain`（默认）/ `jsonOnly` / `plainText`
-- **回退主题** — 标准模式：`openclaw.agent.<agentId>.in[.<peerId>]`
-- **回复主题路由** — Agent 回复发布到配置的 `replyTopic` / `replyTag`
-- **健康端点** — `/rockermq/health`、`/rockermq/stats`、`/rockermq/status`
-- **`mq.publish` 工具** — 调试用消息发布工具
-- **会话映射** — 追踪 producer-consumer-conversation 会话映射关系
-- **幂等性** — 可选的去重机制，支持配置 TTL
-- **设置向导** — 通过 OpenClaw setup wizard 进行交互式配置
+- **Producer + PushConsumer** — Full RocketMQ production and consumption lifecycle
+- **Topic+Tag Bindings** — Explicit `topic + tag -> agentId` routing rules
+- **3 Dispatch Modes** — `embedded-agent` (default) / `subagent` / `reply-pipeline`
+- **Payload Strategies** — `jsonTextOrPlain` (default) / `jsonOnly` / `plainText`
+- **Fallback Topics** — Standard pattern: `openclaw.agent.<agentId>.in[.<peerId>]`
+- **Reply Topic Routing** — Agent replies published to configured `replyTopic` / `replyTag`
+- **Health Endpoints** — `/rockermq/health`, `/rockermq/stats`, `/rockermq/status`
+- **`mq.publish` Tool** — Debug tool for publishing messages to RocketMQ
+- **Session Mapping** — Tracks producer-consumer-conversation session mappings
+- **Idempotency** — Optional deduplication with configurable TTL
+- **Setup Wizard** — Interactive setup via OpenClaw setup wizard
 
-## 快速开始
+## Quick Start
 
-### 安装
+### Installation
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-rocketmq
 ```
 
-### 最小配置
+### Minimal Configuration
 
 ```json
 {
@@ -74,44 +74,44 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 }
 ```
 
-## 配置参考
+## Configuration Reference
 
 ```jsonc
 {
   "channels": {
     "rockermq": {
-      "endpoints": "127.0.0.1:8081",           // RocketMQ proxy/namesrv 端点
-      "namespace": "",                          // RocketMQ 命名空间
-      "topicPrefix": "openclaw",               // 回退主题的前缀
-      "sessionCredentials": {                   // 可选：ACL 凭证
+      "endpoints": "127.0.0.1:8081",           // RocketMQ proxy/namesrv endpoint
+      "namespace": "",                          // RocketMQ namespace
+      "topicPrefix": "openclaw",               // Topic prefix for fallback topics
+      "sessionCredentials": {                   // Optional: ACL credentials
         "accessKey": "",
         "accessSecret": "",
         "securityToken": ""
       },
       "producer": {
-        "groupId": "openclaw-rockermq-producer", // Producer 组 ID
-        "requestTimeout": 5000                   // 请求超时（毫秒）
+        "groupId": "openclaw-rockermq-producer", // Producer group ID
+        "requestTimeout": 5000                   // Request timeout in ms
       },
       "consumer": {
-        "groupId": "openclaw-rockermq-consumer", // Consumer 组 ID
-        "subscriptions": [                       // 订阅的主题列表
+        "groupId": "openclaw-rockermq-consumer", // Consumer group ID
+        "subscriptions": [                       // Topics to subscribe
           { "topic": "my.topic", "filterExpression": "*" }
         ],
         "maxCacheMessageCount": 1024,
         "maxCacheMessageSizeInBytes": 67108864,
         "longPollingTimeout": 30000,
         "requestTimeout": 3000,
-        "reconsumeOnError": true                 // 分发失败时重新消费
+        "reconsumeOnError": true                 // Re-consume on dispatch error
       },
-      "topicBindings": [                         // Topic 到 Agent 的路由规则
+      "topicBindings": [                         // Topic-to-agent routing rules
         {
           "topic": "device.status",
           "tag": "iot",
           "agentId": "iot-agent",
           "accountId": "default",
-          "peerId": "device-1",                  // 可选：对端标识
-          "replyTopic": "device.command",        // 可选：回复主题
-          "replyTag": "command"                   // 可选：回复标签
+          "peerId": "device-1",                  // Optional: peer identifier
+          "replyTopic": "device.command",        // Optional: reply topic
+          "replyTag": "command"                   // Optional: reply tag
         }
       ],
       "payload": {
@@ -119,10 +119,10 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
       },
       "dispatch": {
         "mode": "embedded-agent",                // "embedded-agent" | "subagent" | "reply-pipeline"
-        "timeoutMs": 120000,                      // Agent 处理超时
-        "reply": { "enabled": true }              // 启用回复消息发布
+        "timeoutMs": 120000,                      // Agent processing timeout
+        "reply": { "enabled": true }              // Enable reply publishing
       },
-      "idempotency": {                           // 可选：消息去重
+      "idempotency": {                           // Optional: message dedup
         "enabled": false,
         "ttlMs": 600000,
         "maxEntries": 10000
@@ -132,117 +132,118 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 }
 ```
 
-### 配置字段
+### Configuration Fields
 
-| 字段 | 类型 | 默认值 | 描述 |
+| Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `endpoints` | string | `"127.0.0.1:8081"` | RocketMQ proxy/namesrv 端点 |
-| `namespace` | string | `""` | RocketMQ 命名空间 |
-| `topicPrefix` | string | `"openclaw"` | 回退消息路由的主题前缀 |
-| `producer.groupId` | string | `"openclaw-rockermq-producer"` | Producer 组 ID |
-| `producer.requestTimeout` | number | `5000` | Producer 请求超时（毫秒） |
-| `consumer.groupId` | string | `"openclaw-rockermq-consumer"` | Consumer 组 ID |
-| `consumer.reconsumeOnError` | boolean | `true` | 分发错误时重新消费消息 |
-| `payload.mode` | string | `"jsonTextOrPlain"` | 载荷解析模式 |
-| `dispatch.mode` | string | `"embedded-agent"` | Agent 分发模式 |
-| `dispatch.timeoutMs` | number | `120000` | Agent 处理超时（毫秒） |
+| `endpoints` | string | `"127.0.0.1:8081"` | RocketMQ proxy/namesrv endpoint |
+| `namespace` | string | `""` | RocketMQ namespace |
+| `topicPrefix` | string | `"openclaw"` | Topic prefix for fallback message routing |
+| `producer.groupId` | string | `"openclaw-rockermq-producer"` | Producer group ID |
+| `producer.requestTimeout` | number | `5000` | Producer request timeout (ms) |
+| `consumer.groupId` | string | `"openclaw-rockermq-consumer"` | Consumer group ID |
+| `consumer.reconsumeOnError` | boolean | `true` | Re-consume message on dispatch error |
+| `payload.mode` | string | `"jsonTextOrPlain"` | Payload parsing mode |
+| `dispatch.mode` | string | `"embedded-agent"` | Agent dispatch mode |
+| `dispatch.timeoutMs` | number | `120000` | Agent processing timeout (ms) |
 
-### 分发模式
+### Dispatch Modes
 
-| 模式 | 描述 |
+| Mode | Description |
 |------|-------------|
-| `embedded-agent` | 消息路由到当前进程内的嵌入 Agent |
-| `subagent` | 消息路由到独立的子 Agent 实例 |
-| `reply-pipeline` | 消息通过回复管道处理（请求/响应模式） |
+| `embedded-agent` | Messages are routed to an agent embedded within the current process |
+| `subagent` | Messages are routed to a separate subagent instance |
+| `reply-pipeline` | Messages are processed through a reply pipeline (request/reply pattern) |
 
-### 载荷模式
+### Payload Modes
 
-| 模式 | 描述 |
+| Mode | Description |
 |------|-------------|
-| `jsonTextOrPlain` | 优先解析 JSON 中的 `text` 字段，回退到原始文本 |
-| `jsonOnly` | 仅解析 JSON 格式载荷 |
-| `plainText` | 将整个载荷视为纯文本 |
+| `jsonTextOrPlain` | Prefer JSON `text` field, fallback to raw text |
+| `jsonOnly` | Parse payload as JSON only |
+| `plainText` | Treat entire payload as plain text |
 
-## 消息模型
+## Message Model
 
-### 入站（RocketMQ -> Agent）
+### Inbound (RocketMQ -> Agent)
 
-- **显式绑定优先**：根据 `topicBindings[].topic + topicBindings[].tag` 匹配
-- **标准回退**：`{topicPrefix}.agent.<agentId>.in[.<peerId>]`
-- **载荷解析**：`jsonTextOrPlain` — 优先读取 JSON 的 `text` 字段，否则使用原始文本
+- **Explicit binding first**: Matched against `topicBindings[].topic + topicBindings[].tag`
+- **Standard fallback**: `{topicPrefix}.agent.<agentId>.in[.<peerId>]`
+- **Payload parsing**: `jsonTextOrPlain` — reads `text` field from JSON, or uses raw text
 
-### 出站（Agent -> RocketMQ）
+### Outbound (Agent -> RocketMQ)
 
-- **会话绑定**：使用活跃会话中的 `replyTopic` / `replyTag`
-- **标准回退**：`{topicPrefix}.agent.<agentId>.out[.<peerId>]`
-- **消费确认**：PushConsumer 通过 `ConsumeResult.SUCCESS` / `FAILURE` 确认
+- **Session binding**: Uses `replyTopic` / `replyTag` from active session
+- **Standard fallback**: `{topicPrefix}.agent.<agentId>.out[.<peerId>]`
+- **Consumption**: PushConsumer with `ConsumeResult.SUCCESS` / `FAILURE` acknowledgment
 
-## 健康端点
+## Health Endpoints
 
-插件以 "full" 模式注册时可用：
+Available when the plugin registers in "full" mode:
 
-| 端点 | 描述 |
+| Endpoint | Description |
 |----------|-------------|
-| `GET /rockermq/health` | 基本健康检查（200 = 正常，503 = 异常） |
-| `GET /rockermq/stats` | 连接统计和会话统计 |
-| `GET /rockermq/status` | 完整状态，包括配置快照和会话映射 |
+| `GET /rockermq/health` | Basic health check (200 = healthy, 503 = unhealthy) |
+| `GET /rockermq/stats` | Connection stats and session statistics |
+| `GET /rockermq/status` | Full status including config snapshot and session mappings |
 
-## mq.publish 工具
+## mq.publish Tool
 
-用于直接发布消息到 RocketMQ 的调试工具：
+Debug tool for publishing messages directly to RocketMQ:
 
 ```json
 {
   "name": "mq.publish",
-  "description": "发布消息到 RocketMQ",
+  "description": "Publish a message to RocketMQ",
   "parameters": {
-    "topic": "string（必填）",
-    "tag": "string（可选）",
-    "payload": "any（必填）",
-    "keys": "string[]（可选）"
+    "topic": "string (required)",
+    "tag": "string (optional)",
+    "payload": "any (required)",
+    "keys": "string[] (optional)"
   }
 }
 ```
 
-## 传输层说明
+## Transport Layer Notes
 
-- 使用 `PushConsumer` — 消息确认通过 `ConsumeResult.SUCCESS` / `FAILURE` 完成
-- 重试由 RocketMQ broker/consumer group 机制接管，无需手动维护重试队列
-- Request/reply RPC 需要显式配置 `replyTopic` + `replyTag` 绑定（RocketMQ 不像 RabbitMQ 那样原生支持 direct-reply-to）
+- Uses `PushConsumer` — message acknowledgment via `ConsumeResult.SUCCESS` / `FAILURE`
+- Retries are handled by RocketMQ broker/consumer group mechanism
+- No manual retry queue management needed (unlike RabbitMQ)
+- Request/reply RPC requires an explicit `replyTopic` + `replyTag` binding (RocketMQ does not natively support direct-reply-to like RabbitMQ)
 
-## 开发
+## Development
 
 ```bash
-# 安装依赖
+# Install dependencies
 pnpm install
 
-# 构建（tsup -> dist/）
+# Build (tsup -> dist/)
 pnpm build
 
-# 类型检查
+# Type check
 pnpm typecheck
 
-# 运行测试
+# Run tests
 pnpm test
 
-# 监听模式
+# Watch mode
 pnpm dev
 ```
 
-## 许可证
+## License
 
-基于 [MIT License](LICENSE) 开源。
+Licensed under the [MIT License](LICENSE).
 
-## 关于 openclaw-plugins
+## About openclaw-plugins
 
-本项目是 [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) monorepo 的一员 — 由 **PartMe.AI 团队** 研发与二次开发的 OpenClaw 企业级插件集合，包含 30+ 独立插件，覆盖 IM 渠道、消息队列、AI 能力、基础设施四大领域。
+This plugin is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — an enterprise OpenClaw plugin collection developed and maintained by the **PartMe.AI team**, featuring 30+ plugins across IM channels, message queues, AI capabilities, and infrastructure.
 
-每个插件独立发布到 npm（`@partme.ai` scope），可单独安装：
+Each plugin is published independently on npm under the `@partme.ai` scope:
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-rocketmq
 ```
 
-**PartMe.AI** 专注于 AI 智能客服与企业级 AI Agent 基础设施，提供从企微/钉钉/飞书/QQ 渠道接入，到 RAG 知识库、多级记忆、监控运维的全栈解决方案。
+**PartMe.AI** specializes in AI customer service and enterprise AI agent infrastructure, providing end-to-end solutions from WeChat Work/DingTalk/Feishu/QQ channel integration to RAG knowledge bases, multi-layer memory, and production monitoring.
 
-> 联系我们：partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)
+> Contact: partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)

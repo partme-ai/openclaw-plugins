@@ -2,7 +2,7 @@
 
 # OpenClaw RabbitMQ
 
-**OpenClaw 插件 — RabbitMQ 通道桥接，支持多智能体异步协作和主题订阅**
+**OpenClaw plugin — RabbitMQ channel bridge with multi-agent async collaboration and topic subscription support**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--rabbitmq-blue)
 ![Node](https://img.shields.io/badge/Node.js-20+-green)
@@ -12,67 +12,67 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-## 📖 简介
+## 📖 Introduction
 
-`@partme.ai/openclaw-rabbitmq` 是一个 OpenClaw 通道插件，用于连接外部 RabbitMQ 服务器并将 RabbitMQ 消息桥接到 OpenClaw 智能体。该插件使用 OpenClaw 通道插件指南中的 [`defineChannelPluginEntry`](https://docs.openclaw.ai/plugins/sdk-entrypoints#definechannelpluginentry) / `ChannelPlugin`（不是用于非通道插件的 `definePluginEntry`）。它支持：
+`@partme.ai/openclaw-rabbitmq` is an OpenClaw channel plugin for [OpenClaw](https://github.com/openclaw/openclaw) that connects to an external RabbitMQ server and bridges RabbitMQ messages to OpenClaw agents. The plugin uses [`defineChannelPluginEntry`](https://docs.openclaw.ai/plugins/sdk-entrypoints#definechannelpluginentry) / `ChannelPlugin` per the OpenClaw channel plugin guide (not `definePluginEntry`, which is for non-channel plugins). It supports:
 
-- 显式 `topicPattern -> agentId` 绑定
-- 多主题订阅（`subscribeTopics`）
-- RabbitMQ 主题交换机，支持通配符匹配（`*` 和 `#`）
-- 入站消息负载解析策略（优先 JSON.text，回退纯文本）
-- 通过 RabbitMQ 主题路由进行运行时回复分发
-- 遵循 OpenClaw `session.dmScope` 的会话隔离
+- Explicit `topicPattern -> agentId` bindings
+- Multi-topic subscription (`subscribeTopics`)
+- RabbitMQ Topic Exchange with wildcard matching (`*` and `#`)
+- Inbound payload parsing strategy (`JSON.text` first, fallback plain text)
+- Runtime reply dispatch via RabbitMQ topic-based routing
+- Session isolation following OpenClaw `session.dmScope`
 
-## 🎯 核心功能
+## 🎯 Core Capabilities
 
-- **外部 RabbitMQ 服务器**：连接到现有的 RabbitMQ 服务器
-- **显式路由优先**：`topicBindings` 比标准主题回退具有更高的优先级
-- **标准回退**：当没有绑定匹配时，`openclaw.agent.<agentId>.in` 仍然有效
-- **回复主题控制**：每个绑定可使用 `replyTopicPattern`，否则从入站主题派生
-- **会话上下文映射**：每个 RabbitMQ 消息记录智能体/账户上下文
-- **企业级安全基线**：使用 RabbitMQ 的内置安全功能（TLS、认证、授权）
+- **External RabbitMQ server**: connects to an existing RabbitMQ server
+- **Explicit routing first**: `topicBindings` has higher priority than standard topic fallback
+- **Standard fallback**: `openclaw.agent.<agentId>.in` still works when no binding matches
+- **Reply topic control**: use `replyTopicPattern` per binding, otherwise derive from inbound topic
+- **Session context mapping**: each RabbitMQ message records agent/account context
+- **Enterprise security baseline**: uses RabbitMQ's built-in security features (TLS, authentication, authorization)
 
-### 插件生命周期
+### Plugin lifecycle
 
-- 当网关为 RabbitMQ 通道运行 `gateway.startAccount` 时，RabbitMQ 连接启动（本版本中为单个账户 `default`）。
-- HTTP 路由在 `registerFull` 中注册（插件认证）：
-  - `GET /rabbitmq/health` - 就绪状态 + 最近错误
-  - `GET /rabbitmq/stats` - 统计信息 + 会话计数
-  - `GET /rabbitmq/status` - 统计信息 + 活动配置快照
-- 会话键范围遵循 OpenClaw 全局 `session.dmScope`（例如 `per-channel-peer`），而不是通道本地的 `channels.rabbitmq.session.dmScope`。
-- 如果存在 `channels.rabbitmq.session.dmScope`，插件会记录警告并忽略它。
+- The RabbitMQ connection starts when the Gateway runs `gateway.startAccount` for the RabbitMQ channel (single account `default` in this release).
+- HTTP routes are registered in `registerFull` (plugin-authenticated):
+  - `GET /rabbitmq/health` - readiness + last error
+  - `GET /rabbitmq/stats` - stats + session counters
+  - `GET /rabbitmq/status` - stats + active config snapshot
+- Session key scope follows OpenClaw global `session.dmScope` (for example `per-channel-peer`), instead of a channel-local `channels.rabbitmq.session.dmScope`.
+- If `channels.rabbitmq.session.dmScope` is present, the plugin logs a warning and ignores it.
 
-### 工具
+### Tools
 
-- `mq.publish` - 发布消息到配置的 exchange
-- `mq.request` - 基于 Direct Reply-to 的 request/reply（队列 RPC）
+- `mq.publish` - publish a message to the configured exchange
+- `mq.request` - request/reply via a RabbitMQ queue using Direct Reply-to
 
-## 🏗️ 消息流程
+## 🏗️ Message Flow
 
-1. 设备向主题交换机发布 RabbitMQ 消息。
-2. 插件从订阅的队列接收消息。
-3. 插件解析路由：
-   - 首先：`topicBindings`
-   - 回退：标准 `openclaw.agent.<agentId>.in`
-4. 插件解析负载（`JSON.text` -> 纯文本回退）。
-5. 插件将消息分发到 OpenClaw 运行时。
-6. 回复被发布到派生的主题模式。
+1. Device publishes RabbitMQ message to a topic exchange.
+2. Plugin receives message from the subscribed queue.
+3. Plugin resolves route:
+   - First: `topicBindings`
+   - Fallback: standard `openclaw.agent.<agentId>.in`
+4. Plugin parses payload (`JSON.text` -> plain text fallback).
+5. Plugin dispatches to OpenClaw runtime.
+6. Reply is published to the derived topic pattern.
 
-## 🚀 快速开始
+## 🚀 Quick Start
 
-### 先决条件
+### Prerequisites
 
 - OpenClaw `>= 2026.4.0`
 - Node.js `20+`
-- RabbitMQ 服务器 `>= 3.8`
+- RabbitMQ server `>= 3.8`
 
-### 安装
+### Install
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-rabbitmq
 ```
 
-### 最小配置（`openclaw.json`）
+### Minimal config (`openclaw.json`)
 
 ```json
 {
@@ -110,7 +110,7 @@ openclaw plugins install @partme.ai/openclaw-rabbitmq
 }
 ```
 
-### 高级配置（`openclaw.json`）
+### Advanced config (`openclaw.json`)
 
 ```json
 {
@@ -170,40 +170,39 @@ openclaw plugins install @partme.ai/openclaw-rabbitmq
 }
 ```
 
-## 🧭 主题规则
+## 🧭 Topic Rules
 
-### 主题格式
+### Topic Format
 
-- 标准入站：`openclaw.agent.<agentId>.in[.<peerId>]`
-- 标准出站：`openclaw.agent.<agentId>.out[.<peerId>]`
-- 显式映射：由 `topicBindings.topicPattern` 配置
+- Standard inbound: `openclaw.agent.<agentId>.in[.<peerId>]`
+- Standard outbound: `openclaw.agent.<agentId>.out[.<peerId>]`
+- Explicit mapping: configured by `topicBindings.topicPattern`
 
-### 通配符支持
+### Wildcard Support
 
-RabbitMQ 主题交换机支持通配符：
+RabbitMQ Topic Exchange supports wildcards:
+- `*` - matches exactly one word
+- `#` - matches zero or more words
+The plugin also treats `+` as an alias of `*` and normalizes `/` to `.` for compatibility, but `.` + `*`/`#` is recommended.
 
-- `*` - 匹配恰好一个词
-- `#` - 匹配零个或多个词
-插件也将 `+` 视为 `*` 的别名，并会将 `/` 归一化为 `.` 以兼容旧配置，但推荐使用 `.` + `*`/`#`。
+### Priority
 
-### 优先级
+1. `topicBindings` match (explicit routing)
+2. Standard inbound parsing (fallback)
+3. Drop message when neither matches
 
-1. `topicBindings` 匹配（显式路由）
-2. 标准入站解析（回退）
-3. 当两者都不匹配时丢弃消息
+## 🔐 Session Isolation (dmScope)
 
-## 🔐 会话隔离（dmScope）
+Session key granularity follows OpenClaw global `session.dmScope` configuration. No channel-local `channels.rabbitmq.session.dmScope` is needed or used.
 
-会话键粒度遵循 OpenClaw 全局 `session.dmScope` 配置。无需也不使用通道本地的 `channels.rabbitmq.session.dmScope`。
+| dmScope | Session Key Format | Behavior |
+|---------|-------------------|----------|
+| `per-peer` (default) | `agent:<agentId>:direct:<peerId>` | One session per (agent, peer) pair |
+| `per-channel-peer` | `agent:<agentId>:rabbitmq:direct:<peerId>` | One session per channel + (agent, peer) |
+| `per-account-channel-peer` | `agent:<agentId>:rabbitmq:<accountId>:direct:<peerId>` | One session per account + channel + (agent, peer) |
+| `main` | `agent:<agentId>:main` | Single shared session per agent |
 
-| dmScope | 会话键格式 | 行为 |
-|---------|-----------|------|
-| `per-peer`（默认） | `agent:<agentId>:direct:<peerId>` | 每个（智能体、对等端）对一个会话 |
-| `per-channel-peer` | `agent:<agentId>:rabbitmq:direct:<peerId>` | 每个通道 +（智能体、对等端）一个会话 |
-| `per-account-channel-peer` | `agent:<agentId>:rabbitmq:<accountId>:direct:<peerId>` | 每个账户 + 通道 +（智能体、对等端）一个会话 |
-| `main` | `agent:<agentId>:main` | 每个智能体共享单个会话 |
-
-在 `openclaw.json` 中配置：
+To configure, set in your `openclaw.json`:
 
 ```json
 {
@@ -213,143 +212,140 @@ RabbitMQ 主题交换机支持通配符：
 }
 ```
 
-## 🔧 配置参考
+## 🔧 Configuration Reference
 
-### 连接
+### Connection
 
-| 字段                             | 类型     | 默认值        | 描述                           |
-| ------------------------------ | ------ | ---------- | ---------------------------- |
-| `url`                          | string | -          | RabbitMQ 服务器 URL（必需）         |
-| `exchange`                     | string | `openclaw` | 交换机名称                        |
-| `exchangeType`                 | string | `topic`    | 交换机类型（topic, direct, fanout） |
-| `topicPrefix`                  | string | `openclaw` | 标准格式的主题前缀                    |
-| `connection.timeoutMs`         | number | 30000      | 连接超时（毫秒）                     |
-| `connection.heartbeatSeconds`  | number | 30         | 心跳间隔（秒）                      |
-| `connection.reconnectAttempts` | number | 5          | 重连尝试次数                       |
-| `connection.reconnectDelayMs`  | number | 5000       | 重连延迟（毫秒）                     |
-| `connection.reconnectDelay`    | number | 5000       | 重连延迟（毫秒）                     |
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `url` | string | - | RabbitMQ server URL (required) |
+| `exchange` | string | `openclaw` | Exchange name |
+| `exchangeType` | string | `topic` | Exchange type (topic, direct, fanout) |
+| `topicPrefix` | string | `openclaw` | Topic prefix for standard format |
+| `connection.timeout` | number | 30000 | Connection timeout (ms) |
+| `connection.reconnectAttempts` | number | 5 | Reconnect attempts |
+| `connection.reconnectDelay` | number | 5000 | Reconnect delay (ms) |
 
-### 主题
+### Topics
 
-| 字段                | 类型        | 描述          |
-| ----------------- | --------- | ----------- |
-| `subscribeTopics` | string\[] | 要订阅的主题模式列表  |
-| `topicBindings`   | array     | 显式主题到智能体的绑定 |
+| Field | Type | Description |
+| --- | --- | --- |
+| `subscribeTopics` | string[] | List of topic patterns to subscribe to |
+| `topicBindings` | array | Explicit topic to agent bindings |
 
-### 主题绑定
+### Topic Bindings
 
-| 字段                  | 类型     | 默认值       | 描述                                            |
-| ------------------- | ------ | --------- | --------------------------------------------- |
-| `topicPattern`      | string | -         | RabbitMQ 主题模式（必需）                             |
-| `agentId`           | string | -         | 目标智能体 ID（必需）                                  |
-| `accountId`         | string | `default` | 账户 ID                                         |
-| `replyTopicPattern` | string | -         | 回复主题模式（支持 ${agentId}, ${peerId}, ${rest} 占位符） |
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `topicPattern` | string | - | RabbitMQ topic pattern (required) |
+| `agentId` | string | - | Target agent ID (required) |
+| `accountId` | string | `default` | Account ID |
+| `replyTopicPattern` | string | - | Reply topic pattern (supports ${agentId}, ${peerId}, ${rest} placeholders) |
 
-### 负载
+### Payload
 
-| 字段             | 类型     | 默认值               | 描述                                           |
-| -------------- | ------ | ----------------- | -------------------------------------------- |
-| `payload.mode` | string | `jsonTextOrPlain` | 负载解析模式（jsonTextOrPlain, jsonOnly, plainText） |
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `payload.mode` | string | `jsonTextOrPlain` | Payload parsing mode (jsonTextOrPlain, jsonOnly, plainText) |
 
-## 🧪 测试
+## 🧪 Testing
 
-### 单元测试
+### Unit tests
 
 ```bash
 npm test
 ```
 
-### 集成测试客户端
+### Integration test client
 
 ```bash
 npm run test:client
 ```
 
-`scripts/test-client.ts` 将：
+`scripts/test-client.ts` will:
 
-- 连接到 RabbitMQ 服务器（默认 `amqp://localhost`）
-- 订阅已配置的主题
-- 发布 JSON 负载和纯文本负载
-- 接收并显示回复
-- 当没有收到回复时超时失败
+- connect to RabbitMQ server (default `amqp://localhost`)
+- subscribe to configured topics
+- publish JSON payload and plain text payload
+- receive and display replies
+- fail on timeout when no reply is received
 
-### 环境变量
+### Environment variables
 
-| 变量                               | 描述               | 默认值                                                                                                                                                                                                                       |
-| -------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RABBITMQ_URL`                   | RabbitMQ 服务器 URL | `amqp://localhost`                                                                                                                                                                                                        |
-| `RABBITMQ_EXCHANGE`              | 交换机名称            | `openclaw`                                                                                                                                                                                                                |
-| `RABBITMQ_EXCHANGE_TYPE`         | 交换机类型            | `topic`                                                                                                                                                                                                                   |
-| `RABBITMQ_TOPIC_PREFIX`          | 主题前缀             | `openclaw`                                                                                                                                                                                                                |
-| `RABBITMQ_AGENT_ID`              | 测试智能体 ID         | `support-bot`                                                                                                                                                                                                             |
-| `RABBITMQ_PEER_ID`               | 测试对等 ID          | `test-peer`                                                                                                                                                                                                               |
-| `RABBITMQ_TEST_SUBSCRIBE_TOPICS` | 逗号分隔的订阅主题        | `openclaw.agent.support-bot.out.test-peer,openclaw.#`                                                                                                                                                                     |
-| `RABBITMQ_TEST_PUBLISH_CASES`    | JSON 格式的发布案例数组   | `[{"routingKey": "openclaw.agent.support-bot.in.test-peer", "payload": "{\"text\": \"hello from json.text test\"}"}, {"routingKey": "openclaw.agent.support-bot.in.test-peer", "payload": "hello from plain text test"}]` |
-| `RABBITMQ_TEST_TIMEOUT_MS`       | 测试超时             | `20000`                                                                                                                                                                                                                   |
+| Variable | Description | Default |
+| --- | --- | --- |
+| `RABBITMQ_URL` | RabbitMQ server URL | `amqp://localhost` |
+| `RABBITMQ_EXCHANGE` | Exchange name | `openclaw` |
+| `RABBITMQ_EXCHANGE_TYPE` | Exchange type | `topic` |
+| `RABBITMQ_TOPIC_PREFIX` | Topic prefix | `openclaw` |
+| `RABBITMQ_AGENT_ID` | Test agent ID | `support-bot` |
+| `RABBITMQ_PEER_ID` | Test peer ID | `test-peer` |
+| `RABBITMQ_TEST_SUBSCRIBE_TOPICS` | Comma-separated subscribe topics | `openclaw.agent.support-bot.out.test-peer,openclaw.#` |
+| `RABBITMQ_TEST_PUBLISH_CASES` | JSON array of publish cases | `[{"routingKey": "openclaw.agent.support-bot.in.test-peer", "payload": "{\"text\": \"hello from json.text test\"}"}, {"routingKey": "openclaw.agent.support-bot.in.test-peer", "payload": "hello from plain text test"}]` |
+| `RABBITMQ_TEST_TIMEOUT_MS` | Test timeout | `20000` |
 
 ## 🤖 GitHub Actions
 
-| 工作流                             | 触发器                         | 目的                       |
-| ------------------------------- | --------------------------- | ------------------------ |
-| `.github/workflows/ci.yml`      | 推送到 `main` 或 `develop` / PR | 安装、类型检查、构建、测试、上传 `dist/` |
-| `.github/workflows/release.yml` | 标签 `v*` / 手动触发              | 构建、测试、发布 npm 包           |
+| Workflow | Trigger | Purpose |
+| --- | --- | --- |
+| `.github/workflows/ci.yml` | Push / PR to `main` or `develop` | Install, typecheck, build, test, upload `dist/` |
+| `.github/workflows/release.yml` | Tag `v*` / manual dispatch | Build, test, publish npm package |
 
-## 📦 发布
+## 📦 Publishing
 
-- 包名：`@partme.ai/openclaw-rabbitmq`
-- 所需密钥：`NPM_TOKEN`
+- Package: `@partme.ai/openclaw-rabbitmq`
+- Required secret: `NPM_TOKEN`
 
-标签发布示例：
+Tag release example:
 
 ```bash
 npm version patch
 git push origin main --follow-tags
 ```
 
-## 📁 项目结构
+## 📁 Project Structure
 
 ```text
 openclaw-rabbitmq/
 ├── src/
 │   ├── index.ts              # defineChannelPluginEntry + registerFull (HTTP)
 │   ├── channel.ts            # ChannelPlugin
-│   ├── rabbitmq-server.ts    # RabbitMQ 连接管理
-│   ├── rabbitmq-config.ts    # 配置解析和验证
-│   ├── rabbitmq-state.ts     # 状态管理
-│   ├── inbound.ts            # 处理入站消息
+│   ├── rabbitmq-server.ts    # RabbitMQ connection management
+│   ├── rabbitmq-config.ts    # Config parsing and validation
+│   ├── rabbitmq-state.ts     # State management
+│   ├── inbound.ts            # Process inbound messages
 │   ├── outbound.ts           # ChannelOutboundAdapter
-│   ├── topic-router.ts       # 主题路由和通配符匹配
-│   ├── session-mapper.ts     # 会话映射和上下文
-│   ├── dm-scope.ts           # 会话隔离（dmScope）
-│   ├── runtime.ts            # 运行时管理
-│   └── types.ts              # 类型定义
+│   ├── topic-router.ts       # Topic routing and wildcard matching
+│   ├── session-mapper.ts     # Session mapping and context
+│   ├── dm-scope.ts           # Session isolation (dmScope)
+│   ├── runtime.ts            # Runtime management
+│   └── types.ts              # Type definitions
 ├── scripts/
-│   └── test-client.ts        # 集成测试客户端
+│   └── test-client.ts        # Integration test client
 ├── .github/
 │   └── workflows/
-│       ├── ci.yml            # CI 工作流
-│       └── release.yml       # 发布工作流
+│       ├── ci.yml            # CI workflow
+│       └── release.yml       # Release workflow
 ├── openclaw.plugin.json
 ├── package.json
 └── README.md / README.zh-CN.md
 ```
 
-## 📚 使用示例
+## 📚 Usage Examples
 
-### 示例 1：IoT 设备集成
+### Example 1: IoT Device Integration
 
-**配置：**
-
+**Config:**
 ```json
 {
   "channels": {
     "rabbitmq": {
       "url": "amqp://localhost",
       "exchange": "openclaw",
-      "subscribeTopics": ["devices.*.status"],
+      "subscribeTopics": ["devices/+/status"],
       "topicBindings": [
         {
-          "topicPattern": "devices.*.status",
+          "topicPattern": "devices/+/status",
           "agentId": "iot-agent",
           "replyTopicPattern": "devices/${peerId}/command"
         }
@@ -359,24 +355,21 @@ openclaw-rabbitmq/
 }
 ```
 
-**设备发送状态：**
-
+**Device sends status:**
 ```javascript
-// 主题：devices/sensor-001/status
-// 负载：{"text": "Temperature: 25°C, Humidity: 60%"}
+// Topic: devices/sensor-001/status
+// Payload: {"text": "Temperature: 25°C, Humidity: 60%"}
 ```
 
-**智能体回复命令：**
-
+**Agent replies with command:**
 ```javascript
-// 主题：devices/sensor-001/command
-// 负载：{"text": "Set temperature threshold to 28°C"}
+// Topic: devices/sensor-001/command
+// Payload: {"text": "Set temperature threshold to 28°C"}
 ```
 
-### 示例 2：多智能体协作
+### Example 2: Multi-Agent Collaboration
 
-**配置：**
-
+**Config:**
 ```json
 {
   "channels": {
@@ -385,7 +378,7 @@ openclaw-rabbitmq/
       "exchange": "openclaw",
       "subscribeTopics": [
         "openclaw.agent.*/in",
-        "team.*.tasks"
+        "team/+/tasks"
       ],
       "topicBindings": [
         {
@@ -402,24 +395,21 @@ openclaw-rabbitmq/
 }
 ```
 
-**团队领导发送任务：**
-
+**Team leader sends task:**
 ```javascript
-// 主题：team/frontend/tasks
-// 负载：{"text": "Implement login page UI"}
+// Topic: team/frontend/tasks
+// Payload: {"text": "Implement login page UI"}
 ```
 
-**前端智能体回复：**
-
+**Frontend agent replies:**
 ```javascript
-// 主题：openclaw.agent.team-leader.in
-// 负载：{"text": "Login page UI implementation started"}
+// Topic: openclaw.agent.team-leader.in
+// Payload: {"text": "Login page UI implementation started"}
 ```
 
-### 示例 3：系统监控
+### Example 3: System Monitoring
 
-**配置：**
-
+**Config:**
 ```json
 {
   "channels": {
@@ -446,69 +436,68 @@ openclaw-rabbitmq/
 }
 ```
 
-**监控系统发送警报：**
-
+**Monitoring system sends alert:**
 ```javascript
-// 主题：system/alert/security
-// 负载：{"text": "Unauthorized access detected"}
+// Topic: system/alert/security
+// Payload: {"text": "Unauthorized access detected"}
 ```
 
-**安全智能体接收并处理警报**
+**Security agent receives and processes alert**
 
-## OpenClaw 文档
+## OpenClaw documentation
 
-有关插件、SDK 和此通道构建块的官方文档：
+Official docs for plugins, the SDK, and this channel's building blocks:
 
-### 插件
+### Plugins
 
-- [工具 — 插件](https://docs.openclaw.ai/tools/plugin)
-- [社区插件](https://docs.openclaw.ai/plugins/community)
-- [捆绑包](https://docs.openclaw.ai/plugins/bundles)
-- [语音通话](https://docs.openclaw.ai/plugins/voice-call)
+- [Tools — Plugins](https://docs.openclaw.ai/tools/plugin)
+- [Community plugins](https://docs.openclaw.ai/plugins/community)
+- [Bundles](https://docs.openclaw.ai/plugins/bundles)
+- [Voice call](https://docs.openclaw.ai/plugins/voice-call)
 
-### 构建插件
+### Building plugins
 
-- [构建插件](https://docs.openclaw.ai/plugins/building-plugins)
-- [SDK — 通道插件](https://docs.openclaw.ai/plugins/sdk-channel-plugins)（此包是一个 **通道** 插件）
-- [SDK — 提供者插件](https://docs.openclaw.ai/plugins/sdk-provider-plugins)
-- [SDK — 迁移](https://docs.openclaw.ai/plugins/sdk-migration)
+- [Building plugins](https://docs.openclaw.ai/plugins/building-plugins)
+- [SDK — Channel plugins](https://docs.openclaw.ai/plugins/sdk-channel-plugins) (this package is a **channel** plugin)
+- [SDK — Provider plugins](https://docs.openclaw.ai/plugins/sdk-provider-plugins)
+- [SDK — Migration](https://docs.openclaw.ai/plugins/sdk-migration)
 
-### SDK 参考
+### SDK reference
 
-- [SDK 概述](https://docs.openclaw.ai/plugins/sdk-overview)
-- [SDK 入口点](https://docs.openclaw.ai/plugins/sdk-entrypoints)（`defineChannelPluginEntry`、`registerFull` 等）
-- [SDK 运行时](https://docs.openclaw.ai/plugins/sdk-runtime)
-- [SDK 设置](https://docs.openclaw.ai/plugins/sdk-setup)
-- [SDK 测试](https://docs.openclaw.ai/plugins/sdk-testing)
-- [清单](https://docs.openclaw.ai/plugins/manifest)（`openclaw.plugin.json`、`package.json` `openclaw` 字段）
-- [架构](https://docs.openclaw.ai/plugins/architecture)
+- [SDK overview](https://docs.openclaw.ai/plugins/sdk-overview)
+- [SDK entry points](https://docs.openclaw.ai/plugins/sdk-entrypoints) (`defineChannelPluginEntry`, `registerFull`, etc.)
+- [SDK runtime](https://docs.openclaw.ai/plugins/sdk-runtime)
+- [SDK setup](https://docs.openclaw.ai/plugins/sdk-setup)
+- [SDK testing](https://docs.openclaw.ai/plugins/sdk-testing)
+- [Manifest](https://docs.openclaw.ai/plugins/manifest) (`openclaw.plugin.json`, `package.json` `openclaw` field)
+- [Architecture](https://docs.openclaw.ai/plugins/architecture)
 
-## ❓ 常见问题
+## ❓ FAQ
 
-### 此插件是否需要外部 RabbitMQ 服务器？
+### Does this plugin require an external RabbitMQ server?
 
-是的。它连接到现有的 RabbitMQ 服务器。
+Yes. It connects to an existing RabbitMQ server.
 
-### 负载如何解析？
+### How is payload parsed?
 
-默认模式为 `jsonTextOrPlain`：首先解析 `JSON.text`，否则使用原始文本。
+Default mode is `jsonTextOrPlain`: parse `JSON.text` first, otherwise use raw text.
 
-### 如何将一个主题绑定到一个智能体？
+### How do I bind one topic to one agent?
 
-使用带有 `topicPattern` 和 `agentId` 的 `topicBindings`；可选择设置 `replyTopicPattern`。
+Use `topicBindings` with `topicPattern` and `agentId`; optionally set `replyTopicPattern`.
 
-### 如何支持多个智能体接收相同的消息？
+### How do I support multiple agents receiving the same message?
 
-使用带有通配符的主题模式并将多个智能体绑定到相同的模式，或使用 fanout 交换机。
+Use a topic pattern with wildcard and bind multiple agents to the same pattern, or use a fanout exchange.
 
-### 会话隔离如何工作？
+### How does session isolation work?
 
-会话键范围遵循 OpenClaw 全局 `session.dmScope`（例如 `per-channel-peer`），确保消息在正确的会话上下文中处理。
+Session key scope follows OpenClaw global `session.dmScope` (e.g., `per-channel-peer`), ensuring messages are processed in the correct session context.
 
-### 我可以使用 TLS 进行 RabbitMQ 连接吗？
+### Can I use TLS for RabbitMQ connection?
 
-是的，使用 `amqps://` URL 方案并配置 RabbitMQ 服务器使用 TLS。
+Yes, use `amqps://` URL scheme and configure RabbitMQ server with TLS.
 
-## 📄 许可证
+## 📄 License
 
 MIT

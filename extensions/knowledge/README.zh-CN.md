@@ -1,73 +1,73 @@
 # @partme.ai/openclaw-knowledge
 
-> OpenClaw Knowledge Base RAG Engine —— 独立的 Embedding、向量存储、混合检索、多类型分块、自动上下文注入插件。
+> OpenClaw Knowledge Base RAG Engine — standalone plugin for embedding, vector store, hybrid retrieval, multi-type chunking, and automatic context injection.
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--knowledge-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-knowledge)
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-[简体中文](./README.zh-CN.md) | [English](./README.en.md)
+[简体中文](./README.md) | [English](./README.en.md)
 
 ---
 
-## 概述
+## Overview
 
-`@partme.ai/openclaw-knowledge` 是一个基于流水线架构的 RAG（检索增强生成）引擎，为 OpenClaw 提供可插拔的 Embedding、向量存储、混合检索、多类型文本切片、重排序，以及通过 `before_prompt_build` 钩子实现的自动上下文注入。
+`@partme.ai/openclaw-knowledge` is a pipeline-based RAG (Retrieval-Augmented Generation) engine for OpenClaw. It provides pluggable embedding, vector storage, hybrid retrieval, multi-type chunking, reranking, and automatic context injection via the `before_prompt_build` hook.
 
-可与任意 OpenClaw 渠道插件（企微、飞书、钉钉、QQ 机器人、微信）集成，仅需约 **10 行胶水代码**。每个流水线节点都是 **可选的**（通过配置决定）且 **故障安全**（节点失败不影响整体流水线）。
+Integrates with any OpenClaw channel plugin (wecom, lark, dingtalk, qqbot, weixin) in approximately 10 lines of glue code. Each pipeline stage is **optional** (configured by config) and **fail-safe** (node failure does not block the pipeline).
 
-## 特性
+## Features
 
-- **5 种 Embedding 提供者** — OpenAI / DashScope（阿里通义）/ 智谱AI / 百度千帆 / Ollama
-- **3 种向量后端** — `sqlite-vec`（生产推荐） / `zvec`（零依赖） / `native-zvec`
-- **混合检索** — 向量相似度 + FTS5 关键词搜索，权重可调（默认 0.7:0.3）
-- **智能分块** — 基于段落/句子边界的智能分割，支持重叠配置
-- **3 种重排序器** — Jina / 智谱AI / Ollama
-- **2 种分词器** — `tiktoken` / 智谱AI
-- **文档解析** — Ollama / 智谱AI 解析非文本文件
-- **意图门控** — `rule` 模式（<1ms 关键词决策）/ `strict` 严格模式实现精确门控
-- **CRUD 工具** — `knowledge_add` / `knowledge_query` / `knowledge_update` / `knowledge_delete`
-- **配置层级** — 全局配置 + 按 account 覆盖（浅合并，任意字段覆盖）
-- **自动上下文注入** — 通过 `before_prompt_build` 钩子自动注入 RAG 上下文
-- **内容审核** — 可选的过滤配置，可自定义驳回消息
+- **5 Embedding Providers** — OpenAI / DashScope / ZhipuAI / Baidu Qianfan / Ollama
+- **3 Vector Backends** — `sqlite-vec` (production recommended) / `zvec` (zero-dependency) / `native-zvec`
+- **Hybrid Retrieval** — Vector similarity + FTS5 keyword search with configurable weights (default 0.7:0.3)
+- **Multi-Type Chunking** — Smart paragraph/sentence boundary-aware splitting with configurable overlap
+- **3 Reranker Providers** — Jina / ZhipuAI / Ollama
+- **2 Tokenizer Options** — `tiktoken` / ZhipuAI
+- **Document Parser** — Ollama / ZhipuAI for non-text file parsing
+- **Intent Gate** — `rule` mode (<1ms keyword decision) / `strict` mode for precise gating
+- **CRUD Tools** — `knowledge_add` / `knowledge_query` / `knowledge_update` / `knowledge_delete`
+- **Config Hierarchy** — Global config with per-account overrides (shallow merge, arbitrary field override)
+- **Auto Context Injection** — Automatic RAG context injection via `before_prompt_build` hook
+- **Moderation** — Optional content filtering with configurable rejection message
 
-## 架构
+## Architecture
 
 ```
-用户输入
+User Input
     │
     ▼
-意图门控 (rule/strict) ─── 非检索意图 → 跳过 RAG
+IntentGate (rule/strict) ─── non-retrieval intent → skip RAG
     │
-    ▼ (检索意图)
+    ▼ (retrieval intent)
 Embedding ─── Tokenizer ─── Chunker
     │
     ▼
-VectorStore ─── HybridRetriever ───►──── Reranker (可选)
-    │                                       jina/zhipu/ollama
+VectorStore ─── HybridRetriever ───►──── Reranker (optional)
+    │                                        jina/zhipu/ollama
     ▼
-before_prompt_build 钩子
+before_prompt_build hook
     │
-    ▼ (上下文注入)
-注入 → AI 响应
+    ▼ (context injection)
+Injection → AI Response
 ```
 
-**流水线特点：**
-- 每个节点都是 **可选的** — 根据需要配置所需功能
-- 每个节点都是 **故障安全的** — 单个节点失败不影响整体流水线
-- 节点在运行时根据配置动态解析，而非编译时决定
+**Pipeline characteristics:**
+- Each node is **optional** — configure what you need
+- Each node is **fail-safe** — failure in one node does not block the pipeline
+- Nodes are resolved at runtime based on configuration, not compile time
 
-## 快速开始
+## Quick Start
 
-### 安装
+### Installation
 
 ```bash
 npm install @partme.ai/openclaw-knowledge
-# 或
+# or
 pnpm add @partme.ai/openclaw-knowledge
 ```
 
-### 集成到渠道插件
+### Integration into a Channel Plugin
 
 ```typescript
 import {
@@ -87,7 +87,7 @@ export function onRegister(api: PluginApi) {
 }
 ```
 
-### 最小配置
+### Minimal Configuration
 
 ```json
 {
@@ -103,27 +103,27 @@ export function onRegister(api: PluginApi) {
 }
 ```
 
-## 配置参考
+## Configuration Reference
 
-### 全局配置
+### Global Configuration
 
 ```jsonc
 {
   "channels": {
     "wecom": {
       "knowledge": {
-        "enabled": true,                     // 启用知识库
+        "enabled": true,                     // Enable knowledge base
         "intentGate": {
           "mode": "rule",                    // "rule" | "strict"
-          "triggers": ["什么", "如何", "?"],  // 自定义触发词（可选）
-          "skips": ["闲聊", "你好"]           // 自定义跳过词（可选）
+          "triggers": ["什么", "如何", "?"],  // Custom trigger words (optional)
+          "skips": ["闲聊", "你好"]           // Custom skip words (optional)
         },
         "embedding": {
           "provider": "openai",              // "openai" | "dashscope" | "zhipu" | "qianfan" | "ollama"
           "model": "text-embedding-ada-002",
           "dimensions": 1536,
-          "baseUrl": "",                     // 可选：自定义 API 端点
-          "apiKey": ""                       // 可选：自定义 API 密钥
+          "baseUrl": "",                     // Optional: custom API endpoint
+          "apiKey": ""                       // Optional: custom API key
         },
         "tokenizer": {
           "provider": "tiktoken",            // "tiktoken" | "zhipu"
@@ -140,23 +140,23 @@ export function onRegister(api: PluginApi) {
           "keywordBoost": true
         },
         "reranker": {
-          "provider": "",                    // "jina" | "zhipu" | "ollama" | "" (禁用)
+          "provider": "",                    // "jina" | "zhipu" | "ollama" | "" (disabled)
           "model": "",
           "topN": 5
         },
         "parser": {
-          "provider": "zhipu",               // "zhipu" | "ollama" | "" (禁用)
+          "provider": "zhipu",               // "zhipu" | "ollama" | "" (disabled)
           "model": ""
         },
         "injection": {
           "position": "system",              // "system" | "user"
-          "template": "相关知识库内容：\n\n{context}",
+          "template": "Relevant knowledge:\n\n{context}",
           "maxChunks": 5,
           "maxTokens": 2048
         },
         "moderation": {
           "enabled": false,
-          "rejectionMessage": "抱歉，我无法回答这个问题。"
+          "rejectionMessage": "I can't answer that."
         }
       }
     }
@@ -164,7 +164,7 @@ export function onRegister(api: PluginApi) {
 }
 ```
 
-### 按 account 覆盖
+### Per-Account Override
 
 ```jsonc
 {
@@ -173,8 +173,8 @@ export function onRegister(api: PluginApi) {
       "accounts": {
         "account_001": {
           "knowledge": {
-            "retrieval": { "topK": 10 },      // 覆盖：对该账号使用 topK=10
-            "store": { "sources": { "docIds": ["doc_001"] } }  // 完全替换 store.sources
+            "retrieval": { "topK": 10 },      // Override: use topK=10 for this account
+            "store": { "sources": { "docIds": ["doc_001"] } }  // Replace sources entirely
           }
         }
       }
@@ -183,84 +183,84 @@ export function onRegister(api: PluginApi) {
 }
 ```
 
-### 流水线节点速查
+### Pipeline Stage Summary
 
-| 节点 | 默认启用 | 故障安全 | 可用的 Provider |
+| Stage | Enabled by Default | Fail-Safe | Available Providers |
 |-------|-------------------|-----------|-------------------|
-| Embedding | 是 | 是 | openai / dashscope / zhipu / qianfan / ollama |
-| Tokenizer | 是 | 是 | tiktoken / zhipu |
-| Chunker | 是 | 是 | 内置（3 种策略） |
-| VectorStore | 是 | 是 | sqlite-vec / zvec / native-zvec |
-| HybridRetriever | 是 | 是 | 内置（可配置权重） |
-| Reranker | 否 | 是 | jina / zhipu / ollama |
-| Parser | 否 | 是 | ollama / zhipu |
-| IntentGate | 是 | 是 | rule / strict |
+| Embedding | Yes | Yes | openai / dashscope / zhipu / qianfan / ollama |
+| Tokenizer | Yes | Yes | tiktoken / zhipu |
+| Chunker | Yes | Yes | Built-in (3 strategies) |
+| VectorStore | Yes | Yes | sqlite-vec / zvec / native-zvec |
+| HybridRetriever | Yes | Yes | Built-in (configurable weights) |
+| Reranker | No | Yes | jina / zhipu / ollama |
+| Parser | No | Yes | ollama / zhipu |
+| IntentGate | Yes | Yes | rule / strict |
 
-## 支持的文件类型
+## Supported File Types
 
-可通过 `knowledge_add` 工具或 `indexFile()` API 索引文件：
+Files can be indexed via the `knowledge_add` tool or the `indexFile()` API:
 
-| 扩展名 | 描述 |
+| Extension | Description |
 |-----------|-------------|
-| `.md` | Markdown 文档 |
-| `.txt` | 纯文本文件 |
-| `.csv` | 表格数据 |
-| `.json` | JSON 数据 |
-| `.text` | 文本文件（别名） |
+| `.md` | Markdown documents |
+| `.txt` | Plain text files |
+| `.csv` | Tabular data |
+| `.json` | JSON data |
+| `.text` | Text files (alias) |
 
-## CRUD 工具
+## CRUD Tools
 
-| 工具名称 | 函数 | 描述 |
+| Tool Name | Function | Description |
 |-----------|----------|-------------|
-| `knowledge_add` | 添加文档 | 索引文件到知识库 |
-| `knowledge_query` | 搜索 | 按语义相似度查询知识库 |
-| `knowledge_update` | 更新 | 更新已索引的文档 |
-| `knowledge_delete` | 删除 | 从知识库中移除文档 |
+| `knowledge_add` | Add documents | Index file(s) into the knowledge base |
+| `knowledge_query` | Search | Query the knowledge base by semantic similarity |
+| `knowledge_update` | Update | Update existing indexed documents |
+| `knowledge_delete` | Delete | Remove documents from the knowledge base |
 
-## 命名空间策略
+## Namespace Strategy
 
-知识数据按命名空间隔离，格式为 `{accountId}:{mode}`（mode 为 `bot` 或 `agent`）。这确保了不同账号和 Agent 模式之间的数据分离。
+Knowledge data is isolated per namespace in the format `{accountId}:{mode}` (where mode is `bot` or `agent`). This ensures data separation across different accounts and agent modes.
 
-## 开发
+## Development
 
 ```bash
-# 安装依赖
+# Install dependencies
 pnpm install
 
-# 构建
+# Build
 pnpm build
 
-# 运行测试（107+ 个测试用例）
+# Run tests (107+ tests)
 pnpm test
 
-# 监听模式
+# Watch mode
 pnpm dev
 
-# 类型检查
+# Type checking
 pnpm typecheck
 ```
 
-## 技术细节
+## Technical Details
 
-- **动态导入**：重依赖（`better-sqlite3`、`@zvec/zvec`）使用动态导入，当使用其他后端时不会阻止加载。
-- **Store 缓存**：VectorStore + EmbeddingService 对按命名空间缓存在 `Map<string, {store, embedding}>` 中。可通过 `invalidateStoreCache(namespace?)` 强制重建。
-- **Embedding 重载**：`EmbeddingEngine.embed()` 使用函数重载处理单文本和多文本。
-- **配置层级**：字段级浅合并，`store.sources` 整体替换。
+- **Dynamic imports**: Heavy dependencies (`better-sqlite3`, `@zvec/zvec`) are dynamically imported, so failures don't prevent loading when using other backends.
+- **Store caching**: VectorStore + EmbeddingService pairs are cached in a `Map<string, {store, embedding}>` keyed by namespace. Use `invalidateStoreCache(namespace?)` to force recreation.
+- **Embedding overloads**: `EmbeddingEngine.embed()` uses function overloads — single string returns `number[]`, string array returns `number[][]`.
+- **Config hierarchy**: Field-level shallow merge with `store.sources` wholesale replacement.
 
-## 许可证
+## License
 
-基于 [MIT License](LICENSE) 开源。
+Licensed under the [MIT License](LICENSE).
 
-## 关于 openclaw-plugins
+## About openclaw-plugins
 
-本项目是 [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) monorepo 的一员 — 由 **PartMe.AI 团队** 研发与二次开发的 OpenClaw 企业级插件集合，包含 30+ 独立插件，覆盖 IM 渠道、消息队列、AI 能力、基础设施四大领域。
+This plugin is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — an enterprise OpenClaw plugin collection developed and maintained by the **PartMe.AI team**, featuring 30+ plugins across IM channels, message queues, AI capabilities, and infrastructure.
 
-每个插件独立发布到 npm（`@partme.ai` scope），可单独安装：
+Each plugin is published independently on npm under the `@partme.ai` scope:
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-knowledge
 ```
 
-**PartMe.AI** 专注于 AI 智能客服与企业级 AI Agent 基础设施，提供从企微/钉钉/飞书/QQ 渠道接入，到 RAG 知识库、多级记忆、监控运维的全栈解决方案。
+**PartMe.AI** specializes in AI customer service and enterprise AI agent infrastructure, providing end-to-end solutions from WeChat Work/DingTalk/Feishu/QQ channel integration to RAG knowledge bases, multi-layer memory, and production monitoring.
 
-> 联系我们：partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)
+> Contact: partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)

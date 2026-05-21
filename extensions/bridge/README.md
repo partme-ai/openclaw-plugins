@@ -1,6 +1,6 @@
 # OpenClaw Bridge
 
-**OpenClaw 插件 -- 覆盖 21 个 IM 渠道的 PartMe.AI 生态统一接入层**
+**OpenClaw plugin -- Unified access layer covering 21 IM channels for the PartMe.AI ecosystem**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--bridge-blue)
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
@@ -10,52 +10,52 @@
 
 ---
 
-## 功能特性
+## Features
 
-| 模块 | 说明 |
-|------|------|
-| **上下文注入** | 按渠道预设自动注入平台特定的系统上下文（消息格式、工具使用、群聊规则） |
-| **消息桥接** | `agent_end` -> UnifiedMessage -> MQ，配置驱动，支持多 MQ 渠道 |
+| Module | Description |
+|--------|-------------|
+| **Context Injection** | Automatically injects platform-specific system context per channel (message format, tool usage, group chat rules) |
+| **Message Bridge** | `agent_end` -> UnifiedMessage -> MQ, config-driven, supports multiple MQ channels |
 
-## 覆盖渠道（21 个）
+## Covered Channels (21)
 
-### 外部官方插件（需单独安装）
+### External Official Plugins (need separate installation)
 
-| 平台 | 渠道 ID | 官方仓库 | npm 包 |
-|------|---------|---------|--------|
-| 钉钉 | `dingtalk-connector` | [DingTalk-Real-AI/dingtalk-openclaw-connector](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector) | `@dingtalk-real-ai/dingtalk-connector` |
-| 飞书/Lark | `openclaw-lark` | [larksuite/openclaw-lark](https://github.com/larksuite/openclaw-lark) | `@larksuite/openclaw-lark` |
-| QQ | `qqbot` | [tencent-connect/openclaw-qqbot](https://github.com/tencent-connect/openclaw-qqbot) | `@tencent-connect/openclaw-qqbot` |
+| Platform | Channel ID | Official Repository | npm Package |
+|----------|------------|--------------------|-------------|
+| DingTalk | `dingtalk-connector` | [DingTalk-Real-AI/dingtalk-openclaw-connector](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector) | `@dingtalk-real-ai/dingtalk-connector` |
+| Lark/Feishu | `openclaw-lark` | [larksuite/openclaw-lark](https://github.com/larksuite/openclaw-lark) | `@larksuite/openclaw-lark` |
+| QQ Bot | `qqbot` | [tencent-connect/openclaw-qqbot](https://github.com/tencent-connect/openclaw-qqbot) | `@tencent-connect/openclaw-qqbot` |
 
-> 飞书官方文档：https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh
+> Lark docs: https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh
 >
-> 钉钉 CLI 工具 dws：https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli
+> DingTalk CLI tool dws: https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli
 
-### Bundled 渠道（随 OpenClaw 内置，无需额外安装）
+### Bundled Channels (built into OpenClaw, no extra installation)
 
 `discord` `slack` `telegram` `whatsapp` `signal` `line` `matrix` `irc` `msteams` `googlechat` `imessage` `mattermost` `nextcloud-talk` `nostr` `zalo` `twitch` `tlon` `synology-chat`
 
-## 快速开始
+## Quick Start
 
-### 安装
+### Installation
 
 ```bash
-# 安装适配层（仅此一个）
+# Install the bridge layer (only this one)
 openclaw plugins install @partme.ai/openclaw-bridge
 
-# 如使用外部官方渠道，需另外安装：
-openclaw plugins install @dingtalk-real-ai/dingtalk-connector   # 钉钉
-openclaw plugins install @larksuite/openclaw-lark               # 飞书
+# If using external official channels, install separately:
+openclaw plugins install @dingtalk-real-ai/dingtalk-connector   # DingTalk
+openclaw plugins install @larksuite/openclaw-lark               # Lark
 openclaw plugins install @tencent-connect/openclaw-qqbot        # QQ
 ```
 
-### 启动
+### Start
 
 ```bash
 openclaw gateway restart
 ```
 
-## 配置参考
+## Configuration Reference
 
 ```json
 {
@@ -100,34 +100,34 @@ openclaw gateway restart
 }
 ```
 
-### 每渠道配置项
+### Per-Channel Config Fields
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enabled` | boolean | `true` | 是否激活此渠道的 bridge |
-| `forwardToMq` | boolean | `true` | 是否转发消息到 MQ |
-| `mqChannel` | string | `"mqtt"` | 目标 MQ 渠道 |
-| `contextInjection` | boolean | `true` | 是否注入系统上下文 |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `true` | Whether to activate bridge for this channel |
+| `forwardToMq` | boolean | `true` | Whether to forward messages to MQ |
+| `mqChannel` | string | `"mqtt"` | Target MQ channel identifier |
+| `contextInjection` | boolean | `true` | Whether to inject system context |
 
-### 可用 MQ 渠道
+### Available MQ Channels
 
 `mqtt` `rabbitmq` `redis-stream` `rocketmq` `stomp` `web-mqtt` `web-stomp`
 
-## 技术架构
+## Architecture
 
-本插件作为 OpenClaw 的五层模型中的 Layer 3-4 适配层：
+This plugin serves as the Layer 3-4 adapter in OpenClaw's five-layer model:
 
-- **Layer 5** -- 业务应用（SCRM、仪表盘、分析）
-- **Layer 4** -- Router + Bridge（规则引擎、转发、审计、跨渠道上下文注入）
+- **Layer 5** -- Business Apps (SCRM, dashboards, analytics)
+- **Layer 4** -- Router + Bridge (rule engine, forwarding, audit, cross-channel context injection)
 - **Layer 3** -- OpenClaw Agents
-- **Layer 2** -- 能力层（知识库、记忆、追踪、OAuth2）
-- **Layer 1** -- 渠道层（IM、MQ）
+- **Layer 2** -- Capabilities (knowledge base, memory, tracing, OAuth2)
+- **Layer 1** -- Channels (IM, MQ)
 
-Bridge 插件的核心职责：
+Core responsibilities of the Bridge plugin:
 
-1. **上下文注入**：在 `before_prompt_build` 钩子中，根据渠道类型注入对应的系统提示，包括消息格式说明、工具使用规则、群聊行为约束等
-2. **消息桥接**：在 `agent_end` 事件中，将 Agent 回复转换为统一消息格式（UnifiedMessage），并按配置转发到指定 MQ 渠道，实现跨渠道消息分发
+1. **Context Injection**: In the `before_prompt_build` hook, injects channel-specific system prompts including message format instructions, tool usage rules, and group chat behavior constraints
+2. **Message Bridging**: On the `agent_end` event, converts Agent replies to a unified message format (UnifiedMessage) and forwards to the configured MQ channel for cross-channel message distribution
 
-## 许可证
+## License
 
 MIT

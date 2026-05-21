@@ -1,6 +1,6 @@
-# @partme.ai/openclaw-router（消息路由引擎）
+# @partme.ai/openclaw-router
 
-**OpenClaw 插件 — 企业级跨渠道消息路由，纯配置驱动，支持审计日志**
+> Enterprise Message Routing Engine — cross-channel message forwarding, IM to MQ, MQ to IM, config-driven rules, and audit logging.
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--router-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-router)
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
@@ -10,32 +10,32 @@
 
 ---
 
-## 概述
+## Overview
 
-`@partme.ai/openclaw-router` 是 OpenClaw 的企业级消息路由引擎。它监听 `agent_end` 事件，根据可配置的规则将消息多路分发到多个目标。支持 IM→MQ（转发到消息队列）和 MQ→IM（回复到 IM 渠道）。
+`@partme.ai/openclaw-router` is the enterprise-grade message routing engine for OpenClaw. It listens to `agent_end` events and dispatches messages to multiple targets based on configurable rules. It supports IM-to-MQ forwarding (forward copies to message queues) and MQ-to-IM replying (reply back to channels).
 
-**纯配置驱动** — 无需修改任何渠道插件代码。所有路由规则通过 JSON 配置定义。
+**Pure configuration-driven** — no channel plugin code modification needed. All routing rules are defined in JSON config.
 
-## 特性
+## Features
 
-- **agent_end 事件监听** — 自动捕获完成对话
-- **规则引擎** — 多条件匹配：`channels`、`direction`、`topic`、`accountId`
-- **模板主题** — 支持 `{{channel}}`、`{{direction}}`、`{{account}}` 动态变量
-- **IM 到 MQ 转发** — 将用户消息和 Agent 回复转发到 MQ 渠道
-- **MQ 到 IM 回复** — 将 Agent 回复路由回指定 IM 渠道和账号
-- **审计日志** — 可选的控制台审计追踪
-- **纯配置驱动** — 无需修改渠道插件代码
-- **轻量级** — 零外部依赖，单一事件处理器
+- **agent_end Event Listener** — Automatically captures completed conversations
+- **Rule Engine** — Multi-condition matching: `channels`, `direction`, `topic`, `accountId`
+- **Template Topics** — Dynamic topic strings with `{{channel}}`, `{{direction}}`, `{{account}}` variables
+- **IM to MQ Forwarding** — Forward user messages and agent replies to message queue channels
+- **MQ to IM Replying** — Route agent replies back to specific IM channels and accounts
+- **Audit Logging** — Optional console audit trail for all routed messages
+- **Pure Configuration** — No code changes needed in channel plugins
+- **Lightweight** — Zero external dependencies, single event handler
 
-## 快速开始
+## Quick Start
 
-### 安装
+### Installation
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-router
 ```
 
-### 最小配置
+### Minimal Configuration
 
 ```json
 {
@@ -60,7 +60,7 @@ openclaw plugins install @partme.ai/openclaw-router
 }
 ```
 
-## 配置参考
+## Configuration Reference
 
 ```jsonc
 {
@@ -73,16 +73,16 @@ openclaw plugins install @partme.ai/openclaw-router
             {
               "id": "wecom-inbound-to-rabbitmq",
               "match": {
-                "channels": ["wecom"],            // 来源渠道过滤
+                "channels": ["wecom"],            // Channel source filter
                 "direction": "inbound",           // "inbound" | "outbound" | "both"
-                "topic": "support",               // 主题过滤（可选）
-                "accountId": "account_001"        // 账号过滤（可选）
+                "topic": "support",               // Topic filter (optional)
+                "accountId": "account_001"        // Account filter (optional)
               },
               "actions": [
                 {
-                  "type": "forward",             // 转发到 MQ 渠道
+                  "type": "forward",             // Forward to MQ channel
                   "target": "rabbitmq",
-                  "topic": "openclaw/router/{{channel}}/{{direction}}"  // 模板主题
+                  "topic": "openclaw/router/{{channel}}/{{direction}}"  // Template topic
                 }
               ]
             },
@@ -94,7 +94,7 @@ openclaw plugins install @partme.ai/openclaw-router
               },
               "actions": [
                 {
-                  "type": "reply-via",           // 回复到 IM 渠道
+                  "type": "reply-via",           // Reply to IM channel
                   "target": "wecom",
                   "accountId": "default"
                 }
@@ -103,7 +103,7 @@ openclaw plugins install @partme.ai/openclaw-router
           ],
           "audit": {
             "enabled": true,
-            "logToConsole": true                 // 将路由动作记录到控制台
+            "logToConsole": true                 // Log routing actions to console
           }
         }
       }
@@ -112,108 +112,108 @@ openclaw plugins install @partme.ai/openclaw-router
 }
 ```
 
-### 规则匹配字段
+### Rule Match Fields
 
-| 字段 | 类型 | 描述 |
+| Field | Type | Description |
 |-------|------|-------------|
-| `channels` | string[] | 按来源渠道 ID 过滤（如 `["wecom", "dingtalk"]`）。为空/缺失表示匹配所有渠道。 |
-| `direction` | "inbound" \| "outbound" \| "both" | 消息方向。`inbound` = 用户消息，`outbound` = Agent 回复。 |
-| `topic` | string | 按事件主题过滤。精确匹配。 |
-| `accountId` | string | 按 Agent 账号 ID 过滤。 |
+| `channels` | string[] | Filter by source channel IDs (e.g., `["wecom", "dingtalk"]`). Empty/absent means any channel. |
+| `direction` | "inbound" \| "outbound" \| "both" | Message direction. `inbound` = user message, `outbound` = agent reply. |
+| `topic` | string | Filter by event topic. Exact match only. |
+| `accountId` | string | Filter by agent account ID. |
 
-### 动作类型
+### Action Types
 
-| 动作 | 类型值 | 描述 |
+| Action | Type | Description |
 |--------|------|-------------|
-| 转发 | `"forward"` | 将消息副本转发到目标 MQ 渠道。主题支持模板变量 `{{channel}}`、`{{direction}}`、`{{account}}`。 |
-| 回回复 | `"reply-via"` | 通过指定 IM 渠道回复消息。需要 `target` 参数，可选 `accountId` 和 `to`。 |
+| Forward | `"forward"` | Forward a copy of the message to a target MQ channel. Topics support template variables `{{channel}}`, `{{direction}}`, `{{account}}`. |
+| Reply-via | `"reply-via"` | Reply to a message through the specified IM channel. Requires `target` and optionally `accountId` and `to`. |
 
-### 主题模板变量
+### Template Variables for Topics
 
-| 变量 | 描述 |
+| Variable | Description |
 |----------|-------------|
-| `{{channel}}` | 来源渠道 ID（如 `wecom`） |
-| `{{direction}}` | 消息方向（`inbound` / `outbound`） |
-| `{{account}}` | Agent 账号 ID（或 `default`） |
+| `{{channel}}` | Source channel ID (e.g., `wecom`) |
+| `{{direction}}` | Message direction (`inbound` / `outbound`) |
+| `{{account}}` | Agent account ID (or `default`) |
 
-默认主题：
-- 入站：`openclaw/router/{channel}/inbound`
-- 出站：`openclaw/router/{channel}/outbound`
+Default topics:
+- Inbound: `openclaw/router/{channel}/inbound`
+- Outbound: `openclaw/router/{channel}/outbound`
 
-### 审计配置
+### Audit Configuration
 
-| 字段 | 类型 | 默认值 | 描述 |
+| Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `audit.enabled` | boolean | `false` | 启用审计日志 |
-| `audit.logToConsole` | boolean | `false` | 将路由动作记录到控制台 |
+| `audit.enabled` | boolean | `false` | Enable audit logging |
+| `audit.logToConsole` | boolean | `false` | Log routing actions to console |
 
-## 架构
+## Architecture
 
 ```
                     ┌─────────────────────────────────────┐
-                    │          OpenClaw 运行时             │
+                    │           OpenClaw Runtime          │
                     │                                      │
-  用户 ──► IM 渠道 ──► Agent ──► agent_end 事件           │
+  User ──► IM Channel ──► Agent ──► agent_end event         │
                     │         │                            │
                     │         ▼                            │
                     │    ┌──────────┐                      │
                     │    │  Router  │                      │
-                    │    │ (规则)    │                      │
+                    │    │ (Rules)  │                      │
                     │    └────┬─────┘                      │
                     │         │                            │
                     │    ┌────┴─────┐                      │
                     │    │    |     │                      │
                     │    ▼    ▼     ▼                      │
-                    │  MQ_A  MQ_B  回复到渠道              │
+                    │  MQ_A  MQ_B  Reply-Via              │
                     └─────────────────────────────────────┘
 ```
 
-## 使用场景
+## Use Cases
 
-- **审计追踪**：将所有企微对话转发到 RabbitMQ/MQTT 审计队列
-- **多渠道广播**：将 Agent 回复同时发送到多个消息渠道
-- **外部处理**：将消息路由到外部系统进行 NLP、情感分析或数据增强
-- **跨渠道回复**：收到 MQTT 消息，由 Agent 处理后通过企微回复
+- **Audit Trail**: Forward all WeCom conversations to a RabbitMQ/MQTT audit queue
+- **Multi-Channel Broadcast**: Send agent replies to multiple messaging channels simultaneously
+- **External Processing**: Route messages to external systems for NLP, sentiment analysis, or data enrichment
+- **Cross-Channel Reply**: Receive an MQTT message, have the agent process it, then reply via WeCom
 
-## 注意事项
+## Scoping Notes
 
-- 知识库（RAG）和长期记忆的自动注入由 OpenClaw 核心框架和 `openclaw-memory` 插件分别处理，router 不参与。
-- Router 需要目标 MQ 渠道（mqtt、rabbitmq、redis-stream 等）已安装并配置。
-- 主题模板变量在运行时根据实际事件上下文替换。
+- Knowledge base (RAG) and long-term memory auto-injection are handled by the OpenClaw core framework and the `openclaw-memory` plugin respectively. The router does not participate.
+- The router requires target MQ channels (mqtt, rabbitmq, redis-stream, etc.) to be installed and configured separately.
+- Template variables in topic strings are replaced at runtime with actual values from the event context.
 
-## 开发
+## Development
 
 ```bash
-# 安装依赖
+# Install dependencies
 pnpm install
 
-# 构建
+# Build
 pnpm build
 
-# 运行测试
+# Run tests
 pnpm test
 
-# 监听模式
+# Watch mode
 pnpm dev
 
-# 类型检查
+# Type check
 pnpm typecheck
 ```
 
-## 许可证
+## License
 
-基于 [MIT License](LICENSE) 开源。
+Licensed under the [MIT License](LICENSE).
 
-## 关于 openclaw-plugins
+## About openclaw-plugins
 
-本项目是 [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) monorepo 的一员 — 由 **PartMe.AI 团队** 研发与二次开发的 OpenClaw 企业级插件集合，包含 30+ 独立插件，覆盖 IM 渠道、消息队列、AI 能力、基础设施四大领域。
+This plugin is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — an enterprise OpenClaw plugin collection developed and maintained by the **PartMe.AI team**, featuring 30+ plugins across IM channels, message queues, AI capabilities, and infrastructure.
 
-每个插件独立发布到 npm（`@partme.ai` scope），可单独安装：
+Each plugin is published independently on npm under the `@partme.ai` scope:
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-router
 ```
 
-**PartMe.AI** 专注于 AI 智能客服与企业级 AI Agent 基础设施，提供从企微/钉钉/飞书/QQ 渠道接入，到 RAG 知识库、多级记忆、监控运维的全栈解决方案。
+**PartMe.AI** specializes in AI customer service and enterprise AI agent infrastructure, providing end-to-end solutions from WeChat Work/DingTalk/Feishu/QQ channel integration to RAG knowledge bases, multi-layer memory, and production monitoring.
 
-> 联系我们：partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)
+> Contact: partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)

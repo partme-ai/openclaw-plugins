@@ -1,77 +1,61 @@
-# 微信 (WeChat)
+# 微信
 
-**OpenClaw 渠道插件 -- 通过扫码登录微信个人号，接入 AI Agent**
+[English](./README.md)
 
-![npm](https://img.shields.io/badge/npm-@tencent-weixin%2Fopenclaw--weixin-blue)
-![Node](https://img.shields.io/badge/Node.js-22+-green)
-![License](https://img.shields.io/badge/License-MIT-green)
-
-[English](./README.md) | [简体中文](./README.zh-CN.md)
-
----
-
-## 功能特性
-
-- 扫码登录：终端生成二维码，手机扫码一键授权
-- 多账号支持：每次扫码登录创建独立账号，多个微信号同时在线
-- 消息收发：支持文本、图片、语音、视频、文件等多种消息类型
-- 流式回复：AI Agent 回复实时推送
-- CDN 媒体上传：图片/语音/视频/文件通过 CDN 加密传输
-- 输入状态指示：支持发送/取消"正在输入"状态
-- 会话上下文管理：支持 `context_token` 维持对话连续性
+OpenClaw 的微信渠道插件，支持通过扫码完成登录授权。
 
 ## 兼容性
 
-| 插件版本 | OpenClaw 版本 | npm dist-tag | 状态 |
-|----------|---------------|--------------|------|
-| 2.0.x | >=2026.3.22 | `latest` | 活跃 |
-| 1.0.x | >=2026.1.0 <2026.3.22 | `legacy` | 维护中 |
+| 插件版本 | OpenClaw 版本            | npm dist-tag | 状态   |
+|---------|--------------------------|--------------|--------|
+| 2.0.x   | >=2026.3.22              | `latest`     | 活跃   |
+| 1.0.x   | >=2026.1.0 <2026.3.22    | `legacy`     | 维护中 |
 
 > 插件在启动时会检查宿主版本，如果运行的 OpenClaw 版本超出支持范围，插件将拒绝加载。
 
-## 快速开始
+## 前提条件
 
-### 前置条件
+已安装 [OpenClaw](https://docs.openclaw.ai/install)（需要 `openclaw` CLI 可用）。
 
-已安装 [OpenClaw](https://docs.openclaw.ai/install)（需要 `openclaw` CLI 可用）。查看版本：`openclaw --version`。
+查看版本：`openclaw --version`
 
-### 一键安装
+## 一键安装
 
 ```bash
 npx -y @tencent-weixin/openclaw-weixin-cli install
 ```
 
-### 手动安装
+## 手动安装
 
-如果一键安装不适用，可按以下步骤手动操作。
+如果一键安装不适用，可以按以下步骤手动操作：
 
-**1. 安装插件**
+### 1. 安装插件
 
 ```bash
 openclaw plugins install "@tencent-weixin/openclaw-weixin"
 ```
 
-**2. 启用插件**
+### 2. 启用插件
 
 ```bash
 openclaw config set plugins.entries.openclaw-weixin.enabled true
 ```
 
-**3. 扫码登录**
+### 3. 扫码登录
 
 ```bash
 openclaw channels login --channel openclaw-weixin
 ```
 
-终端会显示一个二维码，用手机扫码并在手机上确认授权。确认后，登录凭证会自动保存到本地。
+终端会显示一个二维码，用手机扫码并在手机上确认授权。确认后，登录凭证会自动保存到本地，无需额外操作。
 
-**4. 重启 Gateway**
+### 4. 重启 gateway
 
 ```bash
 openclaw gateway restart
 ```
 
-### 添加更多微信账号
+## 添加更多微信账号
 
 ```bash
 openclaw channels login --channel openclaw-weixin
@@ -79,9 +63,9 @@ openclaw channels login --channel openclaw-weixin
 
 每次扫码登录都会创建一个新的账号条目，支持多个微信号同时在线。
 
-### 多账号上下文隔离
+## 多账号上下文隔离
 
-默认情况下，私聊可能共用同一会话桶。**多个微信号同时登录**时，建议按"账号 + 渠道 + 对端"隔离：
+默认情况下，私聊可能共用同一会话桶。**多个微信号同时登录**时，建议按「账号 + 渠道 + 对端」隔离：
 
 ```bash
 openclaw config set session.dmScope per-account-channel-peer
@@ -91,9 +75,7 @@ openclaw config set session.dmScope per-account-channel-peer
 
 本插件通过 HTTP JSON API 与后端网关通信。二次开发者若需对接自有后端，需实现以下接口。
 
-所有接口均为 `POST`，请求和响应均为 JSON。
-
-### 通用请求头
+所有接口均为 `POST`，请求和响应均为 JSON。通用请求头：
 
 | Header | 说明 |
 |--------|------|
@@ -119,7 +101,9 @@ openclaw config set session.dmScope per-account-channel-peer
 **请求体：**
 
 ```json
-{ "get_updates_buf": "" }
+{
+  "get_updates_buf": ""
+}
 ```
 
 | 字段 | 类型 | 说明 |
@@ -142,7 +126,7 @@ openclaw config set session.dmScope per-account-channel-peer
 | `ret` | `number` | 返回码，`0` = 成功 |
 | `errcode` | `number?` | 错误码（如 `-14` = 会话超时） |
 | `errmsg` | `string?` | 错误描述 |
-| `msgs` | `WeixinMessage[]` | 消息列表 |
+| `msgs` | `WeixinMessage[]` | 消息列表（结构见下方） |
 | `get_updates_buf` | `string` | 新的同步游标，下次请求时回传 |
 | `longpolling_timeout_ms` | `number?` | 服务端建议的下次长轮询超时（ms） |
 
@@ -158,7 +142,10 @@ openclaw config set session.dmScope per-account-channel-peer
     "to_user_id": "<目标用户 ID>",
     "context_token": "<会话上下文令牌>",
     "item_list": [
-      { "type": 1, "text_item": { "text": "你好" } }
+      {
+        "type": 1,
+        "text_item": { "text": "你好" }
+      }
     ]
   }
 }
@@ -290,7 +277,7 @@ openclaw config set session.dmScope per-account-channel-peer
 5. 缩略图同理加密并上传
 6. 使用返回的 `encrypt_query_param` 构造 `CDNMedia` 引用，放入 `MessageItem` 发送
 
-> 完整类型定义见 `src/api/types.ts`，API 调用实现见 `src/api/api.ts`。
+> 完整的类型定义见 [`src/api/types.ts`](src/api/types.ts)，API 调用实现见 [`src/api/api.ts`](src/api/api.ts)。
 
 ## 卸载
 
@@ -302,7 +289,7 @@ openclaw plugins uninstall @tencent-weixin/openclaw-weixin
 
 ### "requires OpenClaw >=2026.3.22" 报错
 
-OpenClaw 版本太旧，不兼容当前插件版本。检查版本：
+你的 OpenClaw 版本太旧，不兼容当前插件版本。检查版本：
 
 ```bash
 openclaw --version
@@ -322,7 +309,3 @@ openclaw plugins install @tencent-weixin/openclaw-weixin@legacy
 openclaw config set plugins.entries.openclaw-weixin.enabled true
 openclaw gateway restart
 ```
-
-## 许可证
-
-MIT
