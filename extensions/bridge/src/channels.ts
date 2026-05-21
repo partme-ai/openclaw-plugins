@@ -18,7 +18,7 @@ export interface ChannelMeta {
   npmPackage?: string;
   /** 官方 GitHub 仓库 */
   repoUrl?: string;
-  /** 上下文预设 key */
+  /** 上下文预设 key（与 channelId 一致） */
   contextPreset: ChannelContextPreset;
 }
 
@@ -31,8 +31,20 @@ export type ChannelContextPreset =
   | "slack"
   | "telegram"
   | "whatsapp"
-  | "generic-chat"
-  | "generic-social";
+  | "signal"
+  | "line"
+  | "matrix"
+  | "irc"
+  | "msteams"
+  | "googlechat"
+  | "imessage"
+  | "mattermost"
+  | "nextcloud-talk"
+  | "nostr"
+  | "zalo"
+  | "twitch"
+  | "tlon"
+  | "synology-chat";
 
 // ── 所有 21 个渠道注册表 ──
 
@@ -67,24 +79,25 @@ export const ALL_CHANNELS: ChannelMeta[] = [
   },
 
   // ═══ Bundled 渠道（随 OpenClaw 内置，无需额外安装） ═══
+  { channelId: "wecom", label: "WeCom", labelCN: "企业微信", source: "bundled", contextPreset: "wecom" },
   { channelId: "discord", label: "Discord", labelCN: "Discord", source: "bundled", contextPreset: "discord" },
   { channelId: "slack", label: "Slack", labelCN: "Slack", source: "bundled", contextPreset: "slack" },
   { channelId: "telegram", label: "Telegram", labelCN: "Telegram", source: "bundled", contextPreset: "telegram" },
   { channelId: "whatsapp", label: "WhatsApp", labelCN: "WhatsApp", source: "bundled", contextPreset: "whatsapp" },
-  { channelId: "signal", label: "Signal", labelCN: "Signal", source: "bundled", contextPreset: "generic-chat" },
-  { channelId: "line", label: "LINE", labelCN: "LINE", source: "bundled", contextPreset: "generic-chat" },
-  { channelId: "matrix", label: "Matrix", labelCN: "Matrix", source: "bundled", contextPreset: "generic-chat" },
-  { channelId: "irc", label: "IRC", labelCN: "IRC", source: "bundled", contextPreset: "generic-social" },
-  { channelId: "msteams", label: "Microsoft Teams", labelCN: "Teams", source: "bundled", contextPreset: "generic-chat" },
-  { channelId: "googlechat", label: "Google Chat", labelCN: "Google Chat", source: "bundled", contextPreset: "generic-chat" },
-  { channelId: "imessage", label: "iMessage", labelCN: "iMessage", source: "bundled", contextPreset: "generic-chat" },
-  { channelId: "mattermost", label: "Mattermost", labelCN: "Mattermost", source: "bundled", contextPreset: "generic-chat" },
-  { channelId: "nextcloud-talk", label: "Nextcloud Talk", labelCN: "Nextcloud Talk", source: "bundled", contextPreset: "generic-chat" },
-  { channelId: "nostr", label: "Nostr", labelCN: "Nostr", source: "bundled", contextPreset: "generic-social" },
-  { channelId: "zalo", label: "Zalo", labelCN: "Zalo", source: "bundled", contextPreset: "generic-chat" },
-  { channelId: "twitch", label: "Twitch", labelCN: "Twitch", source: "bundled", contextPreset: "generic-social" },
-  { channelId: "tlon", label: "Tlon", labelCN: "Tlon", source: "bundled", contextPreset: "generic-chat" },
-  { channelId: "synology-chat", label: "Synology Chat", labelCN: "Synology Chat", source: "bundled", contextPreset: "generic-chat" },
+  { channelId: "signal", label: "Signal", labelCN: "Signal", source: "bundled", contextPreset: "signal" },
+  { channelId: "line", label: "LINE", labelCN: "LINE", source: "bundled", contextPreset: "line" },
+  { channelId: "matrix", label: "Matrix", labelCN: "Matrix", source: "bundled", contextPreset: "matrix" },
+  { channelId: "irc", label: "IRC", labelCN: "IRC", source: "bundled", contextPreset: "irc" },
+  { channelId: "msteams", label: "Microsoft Teams", labelCN: "Teams", source: "bundled", contextPreset: "msteams" },
+  { channelId: "googlechat", label: "Google Chat", labelCN: "Google Chat", source: "bundled", contextPreset: "googlechat" },
+  { channelId: "imessage", label: "iMessage", labelCN: "iMessage", source: "bundled", contextPreset: "imessage" },
+  { channelId: "mattermost", label: "Mattermost", labelCN: "Mattermost", source: "bundled", contextPreset: "mattermost" },
+  { channelId: "nextcloud-talk", label: "Nextcloud Talk", labelCN: "Nextcloud Talk", source: "bundled", contextPreset: "nextcloud-talk" },
+  { channelId: "nostr", label: "Nostr", labelCN: "Nostr", source: "bundled", contextPreset: "nostr" },
+  { channelId: "zalo", label: "Zalo", labelCN: "Zalo", source: "bundled", contextPreset: "zalo" },
+  { channelId: "twitch", label: "Twitch", labelCN: "Twitch", source: "bundled", contextPreset: "twitch" },
+  { channelId: "tlon", label: "Tlon", labelCN: "Tlon", source: "bundled", contextPreset: "tlon" },
+  { channelId: "synology-chat", label: "Synology Chat", labelCN: "Synology Chat", source: "bundled", contextPreset: "synology-chat" },
 ];
 
 /** 按 channelId 查找渠道元数据 */
@@ -101,3 +114,5 @@ export function getExternalChannels(): ChannelMeta[] {
 export function getBundledChannels(): ChannelMeta[] {
   return ALL_CHANNELS.filter((c) => c.source === "bundled");
 }
+
+export { getChannelCapabilities } from "./capabilities.js";
