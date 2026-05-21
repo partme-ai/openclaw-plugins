@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-memory
+# OpenClaw Memory
 
 > Multi-Level Long-Term Memory System (L0 to L3) — conversation recording, memory extraction, scenario induction, user profiling, and automatic recall.
 

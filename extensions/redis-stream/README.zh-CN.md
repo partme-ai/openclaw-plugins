@@ -1,6 +1,6 @@
 <div align="center">
 
-# openclaw-redis-stream
+# OpenClaw Redis Stream
 
 **基于 Redis Pub/Sub 频道 + Stream 消费组的 OpenClaw 消息渠道插件**
 

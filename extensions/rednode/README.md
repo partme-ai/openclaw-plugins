@@ -1,4 +1,4 @@
-# openclaw_rednode
+# RedNote (Xiaohongshu)
 
 OpenClaw 小红书开放平台渠道与运营工具，公域 Agent-First 智能运营。（品牌名 rednode，渠道 id 保持 xhs。）
 

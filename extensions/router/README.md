@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-router
+# OpenClaw Router
 
 > Enterprise Message Routing Engine — cross-channel message forwarding, IM to MQ, MQ to IM, config-driven rules, and audit logging.
 

@@ -1,6 +1,6 @@
 <div align="center">
 
-# openclaw_web_stomp
+# OpenClaw Web STOMP
 
 **STOMP over WebSocket — STOMP 1.2 · ACK · 心跳 · Spring / stomp.js**
 
@@ -385,7 +385,7 @@ pnpm dev   # watch 模式
 | 插件 | 说明 |
 |------|------|
 | [openclaw_auth_oauth2](https://github.com/partme-ai/openclaw_auth_oauth2) | OAuth2 认证 |
-| [openclaw_cluster](https://github.com/partme-ai/openclaw_cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
+| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
 | [openclaw_ics](https://github.com/partme-ai/openclaw_ics) | 智能客服业务 API |
 | [openclaw_management](https://github.com/partme-ai/openclaw_management) | 管理 REST API + Prometheus + 定义导出/导入 + Web UI |
 | [openclaw_mqtt](https://github.com/partme-ai/openclaw_mqtt) | MQTT 协议接入 |

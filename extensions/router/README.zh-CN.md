@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-router（消息路由引擎）
+# OpenClaw Router
 
 **OpenClaw 插件 — 企业级跨渠道消息路由，纯配置驱动，支持审计日志**
 

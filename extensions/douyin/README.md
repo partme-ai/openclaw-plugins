@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-douyin
+# Douyin
 
 OpenClaw 抖音开放平台渠道与运营工具插件，公域 Agent-First 智能运营。符合《公域平台 Agent-First 智能运营设计文档》与《抖音开放平台对接规格》。
 

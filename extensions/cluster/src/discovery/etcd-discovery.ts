@@ -81,7 +81,7 @@ export class EtcdDiscovery implements IDiscoveryService {
     try {
       // 创建 Lease
       this.leaseId = await this.grantLease();
-      console.log(`[openclaw_cluster] etcd lease created: ${this.leaseId} (TTL: ${this.leaseTtlSeconds}s)`);
+      console.log(`[openclaw-cluster] etcd lease created: ${this.leaseId} (TTL: ${this.leaseTtlSeconds}s)`);
 
       // 注册当前节点
       await this.registerSelf();
@@ -99,9 +99,9 @@ export class EtcdDiscovery implements IDiscoveryService {
         void this.refreshNodes();
       }, this.heartbeatInterval * 2);
 
-      console.log(`[openclaw_cluster] etcd discovery started with ${this.endpoints.length} endpoint(s)`);
+      console.log(`[openclaw-cluster] etcd discovery started with ${this.endpoints.length} endpoint(s)`);
     } catch (err) {
-      console.error("[openclaw_cluster] etcd discovery start failed:", err);
+      console.error("[openclaw-cluster] etcd discovery start failed:", err);
       throw err;
     }
   }
@@ -128,15 +128,15 @@ export class EtcdDiscovery implements IDiscoveryService {
     if (this.leaseId) {
       try {
         await this.revokeLease();
-        console.log("[openclaw_cluster] etcd lease revoked");
+        console.log("[openclaw-cluster] etcd lease revoked");
       } catch {
-        console.warn("[openclaw_cluster] Failed to revoke etcd lease (node may already be removed)");
+        console.warn("[openclaw-cluster] Failed to revoke etcd lease (node may already be removed)");
       }
     }
 
     this.nodes = [];
     this.changeCallbacks = [];
-    console.log("[openclaw_cluster] etcd discovery stopped");
+    console.log("[openclaw-cluster] etcd discovery stopped");
   }
 
   /** 获取当前已知节点 */
@@ -208,7 +208,7 @@ export class EtcdDiscovery implements IDiscoveryService {
         ID: this.leaseId,
       });
     } catch (err) {
-      console.warn("[openclaw_cluster] etcd keepalive failed:", (err as Error).message);
+      console.warn("[openclaw-cluster] etcd keepalive failed:", (err as Error).message);
     }
   }
 
@@ -245,7 +245,7 @@ export class EtcdDiscovery implements IDiscoveryService {
       lease: this.leaseId,
     });
 
-    console.log(`[openclaw_cluster] Node ${this.nodeId} registered in etcd`);
+    console.log(`[openclaw-cluster] Node ${this.nodeId} registered in etcd`);
   }
 
   /**
@@ -304,7 +304,7 @@ export class EtcdDiscovery implements IDiscoveryService {
         }
       }
     } catch (err) {
-      console.warn("[openclaw_cluster] etcd refresh nodes failed:", (err as Error).message);
+      console.warn("[openclaw-cluster] etcd refresh nodes failed:", (err as Error).message);
     }
   }
 

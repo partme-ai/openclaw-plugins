@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-message-sdk
+# OpenClaw Message SDK
 
 > Unified Message Format SDK — cross-channel message standard and shared utility library for all openclaw-plugins channel plugins.
 

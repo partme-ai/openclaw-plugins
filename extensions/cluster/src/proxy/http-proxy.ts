@@ -62,19 +62,19 @@ export class HttpProxyServer implements IProxyService {
     return new Promise((resolve, reject) => {
       this.server = createServer((req, res) => {
         void this.handleRequest(req, res).catch((err) => {
-          console.error("[openclaw_cluster] Proxy request error:", err);
+          console.error("[openclaw-cluster] Proxy request error:", err);
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: false, error: "Internal server error" }));
         });
       });
 
       this.server.on("error", (err) => {
-        console.error("[openclaw_cluster] Proxy server error:", err);
+        console.error("[openclaw-cluster] Proxy server error:", err);
         reject(err);
       });
 
       this.server.listen(this.config.port, () => {
-        console.log(`[openclaw_cluster] HTTP proxy listening on port ${this.config.port}`);
+        console.log(`[openclaw-cluster] HTTP proxy listening on port ${this.config.port}`);
         resolve();
       });
     });
@@ -87,7 +87,7 @@ export class HttpProxyServer implements IProxyService {
     return new Promise((resolve) => {
       if (this.server) {
         this.server.close(() => {
-          console.log("[openclaw_cluster] HTTP proxy stopped");
+          console.log("[openclaw-cluster] HTTP proxy stopped");
           this.server = null;
           resolve();
         });

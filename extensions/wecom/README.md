@@ -1,4 +1,4 @@
-# WeCom (WeChat Work)
+# WeCom
 
 **OpenClaw channel plugin -- Enterprise WeChat Work Bot + Agent dual-mode integration**
 

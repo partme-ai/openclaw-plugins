@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-openmem
+# OpenClaw OpenMem
 
 > OpenMem Local-First Memory Bridge for OpenClaw — HTTP bridge for hybrid recall via `/inspect/search` and event ingest via `/events/ingest`.
 

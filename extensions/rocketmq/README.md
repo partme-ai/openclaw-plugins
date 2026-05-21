@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-rockermq
+# OpenClaw RocketMQ
 
 > RocketMQ Channel Plugin for OpenClaw — producer and push-consumer integration with topic+tag bindings, 3 dispatch modes, health endpoints, and mq.publish tool.
 
@@ -12,7 +12,7 @@
 
 ## Overview
 
-`@partme.ai/openclaw-rockermq` bridges external RocketMQ messages into OpenClaw agents and publishes agent replies back to RocketMQ. It uses `rocketmq-client-nodejs` for Producer and PushConsumer, with a full OpenClaw channel plugin lifecycle.
+`@partme.ai/openclaw-rocketmq` bridges external RocketMQ messages into OpenClaw agents and publishes agent replies back to RocketMQ. It uses `rocketmq-client-nodejs` for Producer and PushConsumer, with a full OpenClaw channel plugin lifecycle.
 
 ## Features
 
@@ -22,7 +22,7 @@
 - **Payload Strategies** — `jsonTextOrPlain` (default) / `jsonOnly` / `plainText`
 - **Fallback Topics** — Standard pattern: `openclaw.agent.<agentId>.in[.<peerId>]`
 - **Reply Topic Routing** — Agent replies published to configured `replyTopic` / `replyTag`
-- **Health Endpoints** — `/rockermq/health`, `/rockermq/stats`, `/rockermq/status`
+- **Health Endpoints** — `/rocketmq/health`, `/rocketmq/stats`, `/rocketmq/status`
 - **`mq.publish` Tool** — Debug tool for publishing messages to RocketMQ
 - **Session Mapping** — Tracks producer-consumer-conversation session mappings
 - **Idempotency** — Optional deduplication with configurable TTL
@@ -41,15 +41,15 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 ```json
 {
   "channels": {
-    "rockermq": {
+    "rocketmq": {
       "endpoints": "127.0.0.1:8081",
       "namespace": "",
       "topicPrefix": "openclaw",
       "producer": {
-        "groupId": "openclaw-rockermq-producer"
+        "groupId": "openclaw-rocketmq-producer"
       },
       "consumer": {
-        "groupId": "openclaw-rockermq-consumer",
+        "groupId": "openclaw-rocketmq-consumer",
         "subscriptions": [
           { "topic": "device.status", "filterExpression": "*" }
         ]
@@ -79,7 +79,7 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 ```jsonc
 {
   "channels": {
-    "rockermq": {
+    "rocketmq": {
       "endpoints": "127.0.0.1:8081",           // RocketMQ proxy/namesrv endpoint
       "namespace": "",                          // RocketMQ namespace
       "topicPrefix": "openclaw",               // Topic prefix for fallback topics
@@ -89,11 +89,11 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
         "securityToken": ""
       },
       "producer": {
-        "groupId": "openclaw-rockermq-producer", // Producer group ID
+        "groupId": "openclaw-rocketmq-producer", // Producer group ID
         "requestTimeout": 5000                   // Request timeout in ms
       },
       "consumer": {
-        "groupId": "openclaw-rockermq-consumer", // Consumer group ID
+        "groupId": "openclaw-rocketmq-consumer", // Consumer group ID
         "subscriptions": [                       // Topics to subscribe
           { "topic": "my.topic", "filterExpression": "*" }
         ],
@@ -139,9 +139,9 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 | `endpoints` | string | `"127.0.0.1:8081"` | RocketMQ proxy/namesrv endpoint |
 | `namespace` | string | `""` | RocketMQ namespace |
 | `topicPrefix` | string | `"openclaw"` | Topic prefix for fallback message routing |
-| `producer.groupId` | string | `"openclaw-rockermq-producer"` | Producer group ID |
+| `producer.groupId` | string | `"openclaw-rocketmq-producer"` | Producer group ID |
 | `producer.requestTimeout` | number | `5000` | Producer request timeout (ms) |
-| `consumer.groupId` | string | `"openclaw-rockermq-consumer"` | Consumer group ID |
+| `consumer.groupId` | string | `"openclaw-rocketmq-consumer"` | Consumer group ID |
 | `consumer.reconsumeOnError` | boolean | `true` | Re-consume message on dispatch error |
 | `payload.mode` | string | `"jsonTextOrPlain"` | Payload parsing mode |
 | `dispatch.mode` | string | `"embedded-agent"` | Agent dispatch mode |
@@ -183,9 +183,9 @@ Available when the plugin registers in "full" mode:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /rockermq/health` | Basic health check (200 = healthy, 503 = unhealthy) |
-| `GET /rockermq/stats` | Connection stats and session statistics |
-| `GET /rockermq/status` | Full status including config snapshot and session mappings |
+| `GET /rocketmq/health` | Basic health check (200 = healthy, 503 = unhealthy) |
+| `GET /rocketmq/stats` | Connection stats and session statistics |
+| `GET /rocketmq/status` | Full status including config snapshot and session mappings |
 
 ## mq.publish Tool
 

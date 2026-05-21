@@ -1,6 +1,6 @@
 <div align="center">
 
-# openclaw-redis-stream
+# OpenClaw Redis Stream
 
 **Redis Pub/Sub Channel + Stream Consumer Group Integration for OpenClaw**
 

@@ -47,7 +47,7 @@ export class StaticDiscovery implements IDiscoveryService {
     });
 
     console.log(
-      `[openclaw_cluster] Static discovery started with ${this.nodes.length} nodes`
+      `[openclaw-cluster] Static discovery started with ${this.nodes.length} nodes`
     );
   }
 
@@ -57,7 +57,7 @@ export class StaticDiscovery implements IDiscoveryService {
   async stop(): Promise<void> {
     this.nodes = [];
     this.changeCallbacks = [];
-    console.log("[openclaw_cluster] Static discovery stopped");
+    console.log("[openclaw-cluster] Static discovery stopped");
   }
 
   /**

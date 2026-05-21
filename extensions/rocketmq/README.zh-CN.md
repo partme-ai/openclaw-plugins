@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-rockermq（RocketMQ 渠道插件）
+# OpenClaw RocketMQ
 
 **OpenClaw 插件 — 阿里云 RocketMQ 消息队列通道，支持 Producer + PushConsumer、Topic+Tag 绑定、3 种分发模式、健康检查和 mq.publish 工具**
 
@@ -12,7 +12,7 @@
 
 ## 概述
 
-`@partme.ai/openclaw-rockermq` 将外部 RocketMQ 消息桥接到 OpenClaw Agent，并将 Agent 回复重新发布到 RocketMQ。它使用 `rocketmq-client-nodejs` 实现 Producer 和 PushConsumer，遵循完整的 OpenClaw channel 插件生命周期。
+`@partme.ai/openclaw-rocketmq` 将外部 RocketMQ 消息桥接到 OpenClaw Agent，并将 Agent 回复重新发布到 RocketMQ。它使用 `rocketmq-client-nodejs` 实现 Producer 和 PushConsumer，遵循完整的 OpenClaw channel 插件生命周期。
 
 ## 特性
 
@@ -22,7 +22,7 @@
 - **载荷解析策略** — `jsonTextOrPlain`（默认）/ `jsonOnly` / `plainText`
 - **回退主题** — 标准模式：`openclaw.agent.<agentId>.in[.<peerId>]`
 - **回复主题路由** — Agent 回复发布到配置的 `replyTopic` / `replyTag`
-- **健康端点** — `/rockermq/health`、`/rockermq/stats`、`/rockermq/status`
+- **健康端点** — `/rocketmq/health`、`/rocketmq/stats`、`/rocketmq/status`
 - **`mq.publish` 工具** — 调试用消息发布工具
 - **会话映射** — 追踪 producer-consumer-conversation 会话映射关系
 - **幂等性** — 可选的去重机制，支持配置 TTL
@@ -41,15 +41,15 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 ```json
 {
   "channels": {
-    "rockermq": {
+    "rocketmq": {
       "endpoints": "127.0.0.1:8081",
       "namespace": "",
       "topicPrefix": "openclaw",
       "producer": {
-        "groupId": "openclaw-rockermq-producer"
+        "groupId": "openclaw-rocketmq-producer"
       },
       "consumer": {
-        "groupId": "openclaw-rockermq-consumer",
+        "groupId": "openclaw-rocketmq-consumer",
         "subscriptions": [
           { "topic": "device.status", "filterExpression": "*" }
         ]
@@ -79,7 +79,7 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 ```jsonc
 {
   "channels": {
-    "rockermq": {
+    "rocketmq": {
       "endpoints": "127.0.0.1:8081",           // RocketMQ proxy/namesrv 端点
       "namespace": "",                          // RocketMQ 命名空间
       "topicPrefix": "openclaw",               // 回退主题的前缀
@@ -89,11 +89,11 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
         "securityToken": ""
       },
       "producer": {
-        "groupId": "openclaw-rockermq-producer", // Producer 组 ID
+        "groupId": "openclaw-rocketmq-producer", // Producer 组 ID
         "requestTimeout": 5000                   // 请求超时（毫秒）
       },
       "consumer": {
-        "groupId": "openclaw-rockermq-consumer", // Consumer 组 ID
+        "groupId": "openclaw-rocketmq-consumer", // Consumer 组 ID
         "subscriptions": [                       // 订阅的主题列表
           { "topic": "my.topic", "filterExpression": "*" }
         ],
@@ -139,9 +139,9 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 | `endpoints` | string | `"127.0.0.1:8081"` | RocketMQ proxy/namesrv 端点 |
 | `namespace` | string | `""` | RocketMQ 命名空间 |
 | `topicPrefix` | string | `"openclaw"` | 回退消息路由的主题前缀 |
-| `producer.groupId` | string | `"openclaw-rockermq-producer"` | Producer 组 ID |
+| `producer.groupId` | string | `"openclaw-rocketmq-producer"` | Producer 组 ID |
 | `producer.requestTimeout` | number | `5000` | Producer 请求超时（毫秒） |
-| `consumer.groupId` | string | `"openclaw-rockermq-consumer"` | Consumer 组 ID |
+| `consumer.groupId` | string | `"openclaw-rocketmq-consumer"` | Consumer 组 ID |
 | `consumer.reconsumeOnError` | boolean | `true` | 分发错误时重新消费消息 |
 | `payload.mode` | string | `"jsonTextOrPlain"` | 载荷解析模式 |
 | `dispatch.mode` | string | `"embedded-agent"` | Agent 分发模式 |
@@ -183,9 +183,9 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 
 | 端点 | 描述 |
 |----------|-------------|
-| `GET /rockermq/health` | 基本健康检查（200 = 正常，503 = 异常） |
-| `GET /rockermq/stats` | 连接统计和会话统计 |
-| `GET /rockermq/status` | 完整状态，包括配置快照和会话映射 |
+| `GET /rocketmq/health` | 基本健康检查（200 = 正常，503 = 异常） |
+| `GET /rocketmq/stats` | 连接统计和会话统计 |
+| `GET /rocketmq/status` | 完整状态，包括配置快照和会话映射 |
 
 ## mq.publish 工具
 

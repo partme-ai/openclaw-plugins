@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-memory（长期记忆系统）
+# OpenClaw Memory
 
 **OpenClaw 插件 — 多级长期记忆 (L0→L3)，自动召回**
 

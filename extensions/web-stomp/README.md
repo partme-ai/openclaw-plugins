@@ -1,6 +1,6 @@
 <div align="center">
 
-# openclaw_web_stomp
+# OpenClaw Web STOMP
 
 **STOMP over WebSocket — STOMP 1.2 · ACK · Heartbeat · Spring / stomp.js**
 
@@ -374,7 +374,7 @@ Multiple clients subscribed to same session for collaborative interactions.
 | Plugin | Description |
 |--------|--------------|
 | [openclaw_auth_oauth2](https://github.com/partme-ai/openclaw_auth_oauth2) | OAuth2 authentication |
-| [openclaw_cluster](https://github.com/partme-ai/openclaw_cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
+| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
 | [openclaw_ics](https://github.com/partme-ai/openclaw_ics) | Intelligent Customer Service API |
 | [openclaw_management](https://github.com/partme-ai/openclaw_management) | Management REST API, Prometheus, definitions, Web UI |
 | [openclaw_mqtt](https://github.com/partme-ai/openclaw_mqtt) | MQTT protocol adapter |

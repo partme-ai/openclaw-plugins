@@ -1,6 +1,6 @@
 <div align="center">
 
-# openclaw-oauth2
+# OpenClaw OAuth2
 
 **OAuth 2.0 authentication backend — Sa-Token · JWT · Introspection**
 
@@ -168,7 +168,7 @@ pnpm dev   # watch mode
 | Plugin | Description |
 |--------|--------------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 authentication |
-| [openclaw_cluster](https://github.com/partme-ai/openclaw_cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
+| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
 | [openclaw_management](https://github.com/partme-ai/openclaw_management) | Management REST API, Prometheus, definitions, Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT protocol adapter |
 | [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus metrics exporter |

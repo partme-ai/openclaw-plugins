@@ -49,17 +49,17 @@ export class NacosDiscovery implements IDiscoveryService {
 
   async start(): Promise<void> {
     console.log(
-      `[openclaw_cluster] Nacos discovery started: ${this.baseUrl}, service=${this.serviceName}, nodeId=${this.nodeId}`
+      `[openclaw-cluster] Nacos discovery started: ${this.baseUrl}, service=${this.serviceName}, nodeId=${this.nodeId}`
     );
     try {
       await this.registerSelf();
     } catch (err) {
-      console.error("[openclaw_cluster] Nacos register failed:", (err as Error).message);
+      console.error("[openclaw-cluster] Nacos register failed:", (err as Error).message);
     }
     await this.refreshNodes();
     this.heartbeatTimer = setInterval(() => this.sendBeat().catch(() => {}), HEARTBEAT_INTERVAL_MS);
     this.refreshTimer = setInterval(
-      () => this.refreshNodes().catch((e) => console.warn("[openclaw_cluster] Nacos refresh:", (e as Error).message)),
+      () => this.refreshNodes().catch((e) => console.warn("[openclaw-cluster] Nacos refresh:", (e as Error).message)),
       this.refreshInterval
     );
   }
@@ -75,7 +75,7 @@ export class NacosDiscovery implements IDiscoveryService {
     }
     this.changeCallbacks = [];
     this.nodes = [];
-    console.log("[openclaw_cluster] Nacos discovery stopped");
+    console.log("[openclaw-cluster] Nacos discovery stopped");
   }
 
   getNodes(): ClusterNodeInfo[] {
@@ -102,7 +102,7 @@ export class NacosDiscovery implements IDiscoveryService {
     });
     const json = (await res.json()) as { code?: number };
     if (json.code !== 0) throw new Error(`Nacos register failed: ${JSON.stringify(json)}`);
-    console.log(`[openclaw_cluster] Nacos instance registered: ${this.nodeId}`);
+    console.log(`[openclaw-cluster] Nacos instance registered: ${this.nodeId}`);
   }
 
   private async deregisterSelf(): Promise<void> {

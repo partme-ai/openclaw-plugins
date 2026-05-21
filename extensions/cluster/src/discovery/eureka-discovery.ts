@@ -58,20 +58,20 @@ export class EurekaDiscovery implements IDiscoveryService {
 
   async start(): Promise<void> {
     console.log(
-      `[openclaw_cluster] Eureka discovery started: ${this.baseUrl}, app=${this.appName}, instanceId=${this.instanceId}`
+      `[openclaw-cluster] Eureka discovery started: ${this.baseUrl}, app=${this.appName}, instanceId=${this.instanceId}`
     );
     try {
       await this.registerSelf();
     } catch (err) {
-      console.error("[openclaw_cluster] Eureka register failed:", (err as Error).message);
+      console.error("[openclaw-cluster] Eureka register failed:", (err as Error).message);
     }
     await this.refreshNodes();
     this.heartbeatTimer = setInterval(
-      () => this.heartbeat().catch((e) => console.warn("[openclaw_cluster] Eureka heartbeat:", (e as Error).message)),
+      () => this.heartbeat().catch((e) => console.warn("[openclaw-cluster] Eureka heartbeat:", (e as Error).message)),
       HEARTBEAT_INTERVAL_MS
     );
     this.refreshTimer = setInterval(
-      () => this.refreshNodes().catch((e) => console.warn("[openclaw_cluster] Eureka refresh:", (e as Error).message)),
+      () => this.refreshNodes().catch((e) => console.warn("[openclaw-cluster] Eureka refresh:", (e as Error).message)),
       this.refreshInterval
     );
   }
@@ -87,7 +87,7 @@ export class EurekaDiscovery implements IDiscoveryService {
     }
     this.changeCallbacks = [];
     this.nodes = [];
-    console.log("[openclaw_cluster] Eureka discovery stopped");
+    console.log("[openclaw-cluster] Eureka discovery stopped");
   }
 
   getNodes(): ClusterNodeInfo[] {
@@ -119,7 +119,7 @@ export class EurekaDiscovery implements IDiscoveryService {
       const text = await res.text();
       throw new Error(`Eureka register ${res.status}: ${text}`);
     }
-    console.log(`[openclaw_cluster] Eureka instance registered: ${this.instanceId}`);
+    console.log(`[openclaw-cluster] Eureka instance registered: ${this.instanceId}`);
   }
 
   private async deregisterSelf(): Promise<void> {

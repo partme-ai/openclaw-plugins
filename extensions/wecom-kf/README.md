@@ -1,6 +1,6 @@
 <div align="center">
 
-# wecom_kf
+# WeCom KF
 
 **WeChat Work Customer Service — 企微客服 · 智能转人工 · 事件消息**
 
@@ -359,7 +359,7 @@ pnpm dev   # watch mode
 | Plugin | Description |
 |--------|--------------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 authentication |
-| [openclaw_cluster](https://github.com/partme-ai/openclaw_cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
+| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
 | [openclaw_ics](https://github.com/partme-ai/openclaw_ics) | Intelligent Customer Service API |
 | [openclaw_management](https://github.com/partme-ai/openclaw_management) | Management REST API, Prometheus, definitions, Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT protocol adapter |

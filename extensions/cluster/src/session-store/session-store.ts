@@ -47,7 +47,7 @@ class MemorySessionStore implements ISessionStoreService {
   private nodeId = "local";
 
   async start(): Promise<void> {
-    console.log("[openclaw_cluster] Session store: memory (single-node only)");
+    console.log("[openclaw-cluster] Session store: memory (single-node only)");
   }
 
   async stop(): Promise<void> {

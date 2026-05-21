@@ -66,7 +66,7 @@ As OpenClaw deployments scale, running multiple Gateway instances becomes necess
 ## Directory Structure
 
 ```
-openclaw_cluster/
+openclaw-cluster/
   package.json
   tsconfig.json
   tsup.config.ts
@@ -171,7 +171,7 @@ Kubernetes-style service discovery.
 
 ## Phased Roadmap
 
-- **V1 (Single Node)**: Stand-alone Gateway, local file storage — managed by `openclaw_management`
+- **V1 (Single Node)**: Stand-alone Gateway, local file storage — managed by `openclaw-management`
 - **V2 (Cluster Aware)**: Management plugin connects to multiple Gateway nodes, aggregates health/metrics; config sync via etcd
 - **V3 (Full Cluster)**: Shared session store, cross-node message routing, leader election
 
@@ -311,7 +311,7 @@ For production deployments, consider replacing with:
 
 ## Comparison with RabbitMQ Clustering
 
-| Feature | RabbitMQ | openclaw_cluster |
+| Feature | RabbitMQ | openclaw-cluster |
 |---|---|---|
 | Node Discovery | Built-in Erlang clustering | Plugin-based (static/etcd/DNS) |
 | Config Sync | Erlang term storage | File system or etcd KV |
@@ -324,24 +324,24 @@ For production deployments, consider replacing with:
 | Plugin | Description |
 |--------|--------------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 authentication |
-| [openclaw_cluster](https://github.com/partme-ai/openclaw_cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
-| [openclaw_ics](https://github.com/partme-ai/openclaw_ics) | Intelligent Customer Service API |
-| [openclaw_management](https://github.com/partme-ai/openclaw_management) | Management REST API, Prometheus, definitions, Web UI |
+| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
+| [openclaw-ics](https://github.com/partme-ai/openclaw-ics) | Intelligent Customer Service API |
+| [openclaw-management](https://github.com/partme-ai/openclaw-management) | Management REST API, Prometheus, definitions, Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT protocol adapter |
 | [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus metrics exporter |
 | [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |
 | [openclaw-tracing](https://github.com/partme-ai/openclaw-tracing) | Distributed tracing |
 | [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt) | WebSocket MQTT |
 | [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp) | WebSocket STOMP |
-| [openclaw_wecom_kf](https://github.com/partme-ai/openclaw_wecom_kf) | WeChat Work customer service channel |
+| [openclaw-wecom-kf](https://github.com/partme-ai/openclaw-wecom-kf) | WeChat Work customer service channel |
 
 ## Future Plugins (Cluster-related)
 
 | Plugin | RabbitMQ Analog | Description |
 |---|---|---|
-| openclaw_bridge | rabbitmq_shovel | Cross-gateway message forwarding / mirroring |
-| openclaw_federation | rabbitmq_federation | Multi-region gateway federation |
-| openclaw_top | rabbitmq_top | Real-time Agent/Session resource leaderboard |
+| openclaw-bridge | rabbitmq_shovel | Cross-gateway message forwarding / mirroring |
+| openclaw-federation | rabbitmq_federation | Multi-region gateway federation |
+| openclaw-top | rabbitmq_top | Real-time Agent/Session resource leaderboard |
 
 ## License
 

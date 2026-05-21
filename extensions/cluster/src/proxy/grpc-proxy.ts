@@ -78,10 +78,10 @@ export class GrpcProxyServer implements IProxyService {
       });
 
       this.grpcAvailable = true;
-      console.log(`[openclaw_cluster] gRPC proxy started on port ${this.port}`);
+      console.log(`[openclaw-cluster] gRPC proxy started on port ${this.port}`);
     } catch (error) {
       console.warn(
-        "[openclaw_cluster] gRPC module not available, proxy will use HTTP fallback:",
+        "[openclaw-cluster] gRPC module not available, proxy will use HTTP fallback:",
         (error as Error).message
       );
       this.grpcAvailable = false;
@@ -107,7 +107,7 @@ export class GrpcProxyServer implements IProxyService {
     // 关闭所有客户端连接
     this.clientPool.clear();
     this.nodeAddresses.clear();
-    console.log("[openclaw_cluster] gRPC proxy stopped");
+    console.log("[openclaw-cluster] gRPC proxy stopped");
   }
 
   /**
@@ -124,7 +124,7 @@ export class GrpcProxyServer implements IProxyService {
   ): Promise<void> {
     const address = this.nodeAddresses.get(targetNodeId);
     if (!address) {
-      throw new Error(`[openclaw_cluster] Unknown target node: ${targetNodeId}`);
+      throw new Error(`[openclaw-cluster] Unknown target node: ${targetNodeId}`);
     }
 
     if (this.grpcAvailable) {
@@ -182,7 +182,7 @@ export class GrpcProxyServer implements IProxyService {
       });
     } catch (error) {
       console.error(
-        `[openclaw_cluster] gRPC forward to ${address} failed:`,
+        `[openclaw-cluster] gRPC forward to ${address} failed:`,
         (error as Error).message
       );
       // 降级到 HTTP
@@ -235,7 +235,7 @@ export class GrpcProxyServer implements IProxyService {
         }
         const body = JSON.parse(Buffer.concat(chunks).toString());
         console.log(
-          `[openclaw_cluster] HTTP forward received: session=${body.sessionKey}`
+          `[openclaw-cluster] HTTP forward received: session=${body.sessionKey}`
         );
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
@@ -247,7 +247,7 @@ export class GrpcProxyServer implements IProxyService {
 
     server.listen(this.port, () => {
       console.log(
-        `[openclaw_cluster] HTTP fallback proxy started on port ${this.port}`
+        `[openclaw-cluster] HTTP fallback proxy started on port ${this.port}`
       );
     });
   }

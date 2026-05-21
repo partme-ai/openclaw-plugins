@@ -1,6 +1,6 @@
 <div align="center">
 
-# openclaw-oauth2
+# OpenClaw OAuth2
 
 **OAuth 2.0 认证后端 — Sa-Token · JWT · Introspection**
 
@@ -186,7 +186,7 @@ pnpm dev   # 监听模式
 | 插件 | 说明 |
 |------|------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 认证 |
-| [openclaw_cluster](https://github.com/partme-ai/openclaw_cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
+| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
 | [openclaw_management](https://github.com/partme-ai/openclaw_management) | 管理 REST API + Prometheus + 定义导出/导入 + Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT 协议接入 |
 | [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus 指标导出 |

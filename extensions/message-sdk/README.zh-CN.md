@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-message-sdk
+# OpenClaw Message SDK
 
 **统一消息格式 SDK — openclaw-plugins 全渠道互通的消息标准与公共工具库**
 

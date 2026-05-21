@@ -77,14 +77,14 @@ export class SharedFsConfigSync implements IConfigSyncService {
       await stat(this.sharedPath);
     } catch {
       console.warn(
-        `[openclaw_cluster] Shared path not accessible: ${this.sharedPath}. ` +
+        `[openclaw-cluster] Shared path not accessible: ${this.sharedPath}. ` +
         "Creating it if possible."
       );
       const { mkdir } = await import("node:fs/promises");
       try {
         await mkdir(this.sharedPath, { recursive: true });
       } catch (mkdirErr) {
-        console.error("[openclaw_cluster] Cannot create shared path:", mkdirErr);
+        console.error("[openclaw-cluster] Cannot create shared path:", mkdirErr);
       }
     }
 
@@ -104,21 +104,21 @@ export class SharedFsConfigSync implements IConfigSyncService {
       });
 
       this.watcher.on("error", (err) => {
-        console.warn("[openclaw_cluster] fs.watch error (expected on NFS):", err.message);
+        console.warn("[openclaw-cluster] fs.watch error (expected on NFS):", err.message);
       });
     } catch {
-      console.warn("[openclaw_cluster] fs.watch not available, using polling only");
+      console.warn("[openclaw-cluster] fs.watch not available, using polling only");
     }
 
     // 启动备用轮询
     this.pollTimer = setInterval(() => {
       this.pollForChanges().catch((err) => {
-        console.error("[openclaw_cluster] Config poll error:", err);
+        console.error("[openclaw-cluster] Config poll error:", err);
       });
     }, this.syncInterval);
 
     console.log(
-      `[openclaw_cluster] Shared FS config sync started: ${this.sharedPath}`
+      `[openclaw-cluster] Shared FS config sync started: ${this.sharedPath}`
     );
   }
 
@@ -138,7 +138,7 @@ export class SharedFsConfigSync implements IConfigSyncService {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
-    console.log("[openclaw_cluster] Shared FS config sync stopped");
+    console.log("[openclaw-cluster] Shared FS config sync stopped");
   }
 
   /**
@@ -153,7 +153,7 @@ export class SharedFsConfigSync implements IConfigSyncService {
     // 获取写锁
     const locked = await this.acquireLock(lockPath);
     if (!locked) {
-      throw new Error("[openclaw_cluster] Failed to acquire config write lock");
+      throw new Error("[openclaw-cluster] Failed to acquire config write lock");
     }
 
     try {
@@ -166,7 +166,7 @@ export class SharedFsConfigSync implements IConfigSyncService {
       await writeFile(this.getVersionPath(), version, "utf-8");
       this.lastKnownVersion = version;
 
-      console.log(`[openclaw_cluster] Config pushed to shared FS, version: ${version}`);
+      console.log(`[openclaw-cluster] Config pushed to shared FS, version: ${version}`);
     } finally {
       // 释放锁
       await this.releaseLock(lockPath);
@@ -191,7 +191,7 @@ export class SharedFsConfigSync implements IConfigSyncService {
 
     this.debounceTimer = setTimeout(() => {
       this.pollForChanges().catch((err) => {
-        console.error("[openclaw_cluster] File change handling error:", err);
+        console.error("[openclaw-cluster] File change handling error:", err);
       });
     }, 500);
   }
@@ -211,14 +211,14 @@ export class SharedFsConfigSync implements IConfigSyncService {
         const content = await readFile(configPath, "utf-8");
         const config = JSON.parse(content) as Record<string, unknown>;
 
-        console.log(`[openclaw_cluster] Config change detected, version: ${currentVersion}`);
+        console.log(`[openclaw-cluster] Config change detected, version: ${currentVersion}`);
 
         // 通知回调
         for (const callback of this.changeCallbacks) {
           try {
             callback(config);
           } catch (err) {
-            console.error("[openclaw_cluster] Config change callback error:", err);
+            console.error("[openclaw-cluster] Config change callback error:", err);
           }
         }
       }

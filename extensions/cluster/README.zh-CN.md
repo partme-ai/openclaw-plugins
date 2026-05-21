@@ -65,7 +65,7 @@
 ## 目录结构
 
 ```
-openclaw_cluster/
+openclaw-cluster/
   package.json
   tsconfig.json
   tsup.config.ts
@@ -210,7 +210,7 @@ Kubernetes 风格的服务发现。
 
 ## 分阶段路线
 
-- **V1（单节点）**：独立 Gateway，本地文件存储 — 由 `openclaw_management` 管理
+- **V1（单节点）**：独立 Gateway，本地文件存储 — 由 `openclaw-management` 管理
 - **V2（集群感知）**：management 插件连接多节点 WS，聚合展示；config sync 走 etcd
 - **V3（完整集群）**：共享会话存储、节点间路由、Leader 选举
 
@@ -478,7 +478,7 @@ pnpm dev   # watch 模式
 
 ## 与 RabbitMQ 集群对比
 
-| 特性 | RabbitMQ | openclaw_cluster |
+| 特性 | RabbitMQ | openclaw-cluster |
 |---|---|---|
 | 节点发现 | 内置 Erlang 集群 | 插件式（static/etcd/DNS） |
 | 配置同步 | Erlang term 存储 | 文件系统或 etcd KV |
@@ -491,24 +491,24 @@ pnpm dev   # watch 模式
 | 插件 | 说明 |
 |------|------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 认证 |
-| [openclaw_cluster](https://github.com/partme-ai/openclaw_cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
-| [openclaw_ics](https://github.com/partme-ai/openclaw_ics) | 智能客服业务 API |
-| [openclaw_management](https://github.com/partme-ai/openclaw_management) | 管理 REST API + Prometheus + 定义导出/导入 + Web UI |
+| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
+| [openclaw-ics](https://github.com/partme-ai/openclaw-ics) | 智能客服业务 API |
+| [openclaw-management](https://github.com/partme-ai/openclaw-management) | 管理 REST API + Prometheus + 定义导出/导入 + Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT 协议接入 |
 | [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus 指标导出 |
 | [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP 服务端 |
 | [openclaw-tracing](https://github.com/partme-ai/openclaw-tracing) | 链路追踪 |
 | [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt) | WebSocket MQTT |
 | [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp) | WebSocket STOMP |
-| [openclaw_wecom_kf](https://github.com/partme-ai/openclaw_wecom_kf) | 企微客服渠道 |
+| [openclaw-wecom-kf](https://github.com/partme-ai/openclaw-wecom-kf) | 企微客服渠道 |
 
 ## 未来插件（集群相关）
 
 | 插件 | 对标 RabbitMQ | 说明 |
 |---|---|---|
-| openclaw_bridge | rabbitmq_shovel | 跨 Gateway 消息转发/镜像 |
-| openclaw_federation | rabbitmq_federation | 多地域 Gateway 联邦 |
-| openclaw_top | rabbitmq_top | 实时 Agent/Session 资源消耗排行榜 |
+| openclaw-bridge | rabbitmq_shovel | 跨 Gateway 消息转发/镜像 |
+| openclaw-federation | rabbitmq_federation | 多地域 Gateway 联邦 |
+| openclaw-top | rabbitmq_top | 实时 Agent/Session 资源消耗排行榜 |
 
 ## 许可证
 

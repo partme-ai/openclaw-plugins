@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-knowledge
+# OpenClaw Knowledge
 
 > OpenClaw Knowledge Base RAG 引擎 — 独立的 Embedding、向量存储、混合检索、多类型分块（文档/FAQ/对话）插件。
 

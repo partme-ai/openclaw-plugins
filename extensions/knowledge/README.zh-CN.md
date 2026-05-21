@@ -1,4 +1,4 @@
-# @partme.ai/openclaw-knowledge
+# OpenClaw Knowledge
 
 > OpenClaw Knowledge Base RAG Engine — standalone plugin for embedding, vector store, hybrid retrieval, multi-type chunking, and automatic context injection.
 

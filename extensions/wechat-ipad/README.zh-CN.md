@@ -1,4 +1,4 @@
-# openclaw_wechat_ipad
+# WeChat iPad
 
 微信 iPad 协议桥接插件 —— 通过外部 iPad 协议服务将个人微信号接入 OpenClaw Agent。
 

@@ -64,7 +64,7 @@ export class RedisSessionStore implements ISessionStoreService {
 
       this.socket = createConnection({ host, port }, () => {
         this.connected = true;
-        console.log(`[openclaw_cluster] Redis session store connected to ${host}:${port}`);
+        console.log(`[openclaw-cluster] Redis session store connected to ${host}:${port}`);
 
         // 如果有密码则认证
         if (password) {
@@ -84,7 +84,7 @@ export class RedisSessionStore implements ISessionStoreService {
       });
 
       this.socket.on("error", (err) => {
-        console.error("[openclaw_cluster] Redis connection error:", err.message);
+        console.error("[openclaw-cluster] Redis connection error:", err.message);
         this.connected = false;
         if (this.responseQueue.length === 0) {
           reject(err);
@@ -93,7 +93,7 @@ export class RedisSessionStore implements ISessionStoreService {
 
       this.socket.on("close", () => {
         this.connected = false;
-        console.log("[openclaw_cluster] Redis connection closed");
+        console.log("[openclaw-cluster] Redis connection closed");
       });
     });
   }
@@ -113,7 +113,7 @@ export class RedisSessionStore implements ISessionStoreService {
     }
     this.connected = false;
     this.responseQueue = [];
-    console.log("[openclaw_cluster] Redis session store stopped");
+    console.log("[openclaw-cluster] Redis session store stopped");
   }
 
   /**

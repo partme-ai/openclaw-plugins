@@ -1,6 +1,6 @@
 <div align="center">
 
-# wecom_kf
+# WeCom KF
 
 **企业微信客服渠道 — 企微客服 · 智能转人工 · 事件消息**
 
@@ -361,7 +361,7 @@ pnpm dev   # watch 模式
 | 插件 | 说明 |
 |------|------|
 | [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 认证 |
-| [openclaw_cluster](https://github.com/partme-ai/openclaw_cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
+| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
 | [openclaw_ics](https://github.com/partme-ai/openclaw_ics) | 智能客服业务 API |
 | [openclaw_management](https://github.com/partme-ai/openclaw_management) | 管理 REST API + Prometheus + 定义导出/导入 + Web UI |
 | [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT 协议接入 |

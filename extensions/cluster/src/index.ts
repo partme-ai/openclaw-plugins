@@ -1,5 +1,5 @@
 /**
- * openclaw_cluster 插件入口
+ * openclaw-cluster 插件入口
  *
  * 多节点 OpenClaw Gateway 集群协调插件。
  * 参考 RabbitMQ clustering 和 Erlang OTP 分布式模型设计。
@@ -229,19 +229,19 @@ async function triggerConfigReload(runtime: GatewayRuntime): Promise<void> {
   try {
     if (typeof r.gatewayCall === "function") {
       await (r.gatewayCall as (m: string) => Promise<unknown>)("config.reload");
-      console.log("[openclaw_cluster] Config reload triggered via gatewayCall");
+      console.log("[openclaw-cluster] Config reload triggered via gatewayCall");
       return;
     }
     if (typeof r.invoke === "function") {
       await (r.invoke as (m: string) => Promise<unknown>)("config_reload");
-      console.log("[openclaw_cluster] Config reload triggered via invoke");
+      console.log("[openclaw-cluster] Config reload triggered via invoke");
       return;
     }
     console.log(
-      "[openclaw_cluster] Config changed. No reload API — rely on Gateway file watcher."
+      "[openclaw-cluster] Config changed. No reload API — rely on Gateway file watcher."
     );
   } catch (err) {
-    console.error("[openclaw_cluster] Config reload failed:", err);
+    console.error("[openclaw-cluster] Config reload failed:", err);
   }
 }
 
@@ -266,16 +266,16 @@ async function onClusterConfigChange(
             JSON.stringify(newConfig, null, 2),
             "utf-8"
           );
-          console.log("[openclaw_cluster] Config written to local file, triggering reload");
+          console.log("[openclaw-cluster] Config written to local file, triggering reload");
         } else {
           console.warn(
-            "[openclaw_cluster] etcd sync: no config file path in runtime, cannot write; trigger reload only."
+            "[openclaw-cluster] etcd sync: no config file path in runtime, cannot write; trigger reload only."
           );
         }
       }
       await triggerConfigReload(runtime);
     } catch (err) {
-      console.error("[openclaw_cluster] Config change apply failed:", err);
+      console.error("[openclaw-cluster] Config change apply failed:", err);
     }
   }, CONFIG_RELOAD_DEBOUNCE_MS);
 }
@@ -346,11 +346,11 @@ export default function register(api: PluginApi): void {
     startTime = Date.now();
     activeConfig = resolveClusterConfig(api.runtime.config);
 
-    console.log(`[openclaw_cluster] Node ID: ${activeConfig.nodeId}`);
-    console.log(`[openclaw_cluster] Discovery: ${activeConfig.discovery.type}`);
-    console.log(`[openclaw_cluster] Config sync: ${activeConfig.configSync.type}`);
-    console.log(`[openclaw_cluster] Session store: ${activeConfig.sessionStore.type}`);
-    console.log(`[openclaw_cluster] Proxy: ${activeConfig.proxy.protocol} on port ${activeConfig.proxy.port}`);
+    console.log(`[openclaw-cluster] Node ID: ${activeConfig.nodeId}`);
+    console.log(`[openclaw-cluster] Discovery: ${activeConfig.discovery.type}`);
+    console.log(`[openclaw-cluster] Config sync: ${activeConfig.configSync.type}`);
+    console.log(`[openclaw-cluster] Session store: ${activeConfig.sessionStore.type}`);
+    console.log(`[openclaw-cluster] Proxy: ${activeConfig.proxy.protocol} on port ${activeConfig.proxy.port}`);
 
     try {
       // 1. 启动节点发现
@@ -382,39 +382,39 @@ export default function register(api: PluginApi): void {
 
       // 5. 连接 discovery → proxy：当节点变化时更新代理的路由表
       discoveryService.onNodeChange((nodes: ClusterNodeInfo[]) => {
-        console.log(`[openclaw_cluster] Node list updated: ${nodes.length} node(s)`);
+        console.log(`[openclaw-cluster] Node list updated: ${nodes.length} node(s)`);
         if (proxyService && "updateNodes" in proxyService) {
           (proxyService as HttpProxyServer).updateNodes(nodes);
         }
       });
 
-      console.log("[openclaw_cluster] All cluster services initialized successfully");
+      console.log("[openclaw-cluster] All cluster services initialized successfully");
     } catch (err) {
-      console.error("[openclaw_cluster] Failed to initialize cluster services:", err);
+      console.error("[openclaw-cluster] Failed to initialize cluster services:", err);
     }
   };
   safeOnReady(api, "cluster-init", startClusterService);
 
   // ──────────── 优雅关闭 ────────────
   const shutdown = async () => {
-    console.log("[openclaw_cluster] Shutting down cluster services...");
+    console.log("[openclaw-cluster] Shutting down cluster services...");
 
     try {
       if (proxyService) await proxyService.stop();
       if (sessionStoreService) await sessionStoreService.stop();
       if (configSyncService) await configSyncService.stop();
       if (discoveryService) await discoveryService.stop();
-      console.log("[openclaw_cluster] All cluster services stopped");
+      console.log("[openclaw-cluster] All cluster services stopped");
     } catch (err) {
-      console.error("[openclaw_cluster] Error during shutdown:", err);
+      console.error("[openclaw-cluster] Error during shutdown:", err);
     }
   };
 
   process.on("SIGTERM", () => void shutdown());
   process.on("SIGINT", () => void shutdown());
 
-  console.log("[openclaw_cluster] Plugin registered — cluster coordination");
-  console.log("[openclaw_cluster] Endpoints:");
+  console.log("[openclaw-cluster] Plugin registered — cluster coordination");
+  console.log("[openclaw-cluster] Endpoints:");
   console.log("  GET  /cluster/status   -- Cluster overview");
   console.log("  GET  /cluster/nodes    -- Node list");
   console.log("  GET  /cluster/config   -- Configuration info");

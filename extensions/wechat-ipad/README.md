@@ -1,4 +1,4 @@
-# openclaw_wechat_ipad
+# WeChat iPad
 
 WeChat iPad Protocol Bridge for OpenClaw — 通过 iPad 协议服务实现个人微信号与 OpenClaw Agent 的双向消息对接。
 
