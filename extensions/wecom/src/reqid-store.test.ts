@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createPersistentReqIdStore } from "./reqid-store.ts";
 import { withTimeout, TimeoutError as TimeoutErr } from "./timeout.ts";
-import { isWecomNativeVoiceFormat, needsTranscoding, WECOM_VOICE_FORMATS } from "../agent/voice-transcode.js";
+import { isWecomNativeVoiceFormat, needsTranscoding, WECOM_VOICE_FORMATS } from "./agent/voice-transcode.ts";
 
 // ============================================================================
 // createPersistentReqIdStore
