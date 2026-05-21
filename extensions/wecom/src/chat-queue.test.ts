@@ -12,7 +12,7 @@ import {
   parseOptionalDelimitedEntries,
   formatPairingApproveHint,
   emptyPluginConfigSchema,
-} from "../openclaw-compat.ts";
+} from "./openclaw-compat.ts";
 
 // ============================================================================
 // buildQueueKey / hasActiveTask / enqueueWeComChatTask

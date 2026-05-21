@@ -6,7 +6,7 @@
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-[English](./README.md) | [简体中文](./README_CN.md)
+[English](./README.en.md) | [简体中文](./README.md)
 
 ## Introduction
 
@@ -208,7 +208,7 @@ openclaw-gotify/
 ├── .github/workflows/
 ├── openclaw.plugin.json
 ├── package.json
-└── README.md / README_CN.md
+└── README.md / README.en.md
 ```
 
 ## FAQ

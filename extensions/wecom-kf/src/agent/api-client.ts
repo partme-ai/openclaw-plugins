@@ -383,74 +383,174 @@ export async function downloadMedia(params: {
 }
 
 /**
- * **syncMessages (同步消息)**
+ * **KF syncMessages (客服消息同步)**
  *
  * 企微客服消息同步接口，用于拉取新消息。
- * 这是 kf_msg_or_event 回调后拉取消息的接口。
+ * POST /cgi-bin/kf/sync_msg
  *
  * @param accessToken - 访问令牌
- * @param cursor - 游标，首次拉取传空
- * @param token - 回调事件中的 Token
+ * @param cursor - 游标，首次拉取传空字符串
+ * @param token - 回调事件中的 Token（首次拉取时传入）
  * @param openKfId - 客服账号 ID
+ * @param limit - 每次拉取条数，默认 1000
  * @returns 同步结果
  */
 export async function syncMessages(
     accessToken: string,
     cursor: string,
-    token: string,
-    openKfId?: string
+    token?: string,
+    openKfId?: string,
+    limit = 1000,
 ): Promise<{
     errcode: number;
     errmsg: string;
+    next_cursor?: string;
+    has_more: number;
     msg_list: Array<{
         msgid: string;
-        origin: number;
+        open_kfid?: string;
+        external_userid?: string;
+        send_time?: number;
+        origin?: number;
+        servicer_userid?: string;
         msgtype: string;
         [key: string]: unknown;
     }>;
-    next_cursor?: string;
-    has_more: number;
 }> {
-    // TODO: Implement syncMessages API call
-    // This is a stub implementation
-    throw new Error("syncMessages not yet implemented for wecom-kf plugin");
+    const body: Record<string, unknown> = {};
+    if (cursor?.trim()) body.cursor = cursor.trim();
+    if (token?.trim()) body.token = token.trim();
+    if (openKfId?.trim()) body.open_kfid = openKfId.trim();
+    if (typeof limit === "number" && limit > 0) body.limit = limit;
+
+    const url = `${API_ENDPOINTS.KF_SYNC_MSG}?access_token=${encodeURIComponent(accessToken)}`;
+    const res = await wecomFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
+    const json = await res.json() as {
+        errcode: number;
+        errmsg: string;
+        next_cursor?: string;
+        has_more?: number;
+        msg_list?: Array<{
+            msgid: string;
+            open_kfid?: string;
+            external_userid?: string;
+            send_time?: number;
+            origin?: number;
+            servicer_userid?: string;
+            msgtype: string;
+            [key: string]: unknown;
+        }>;
+    };
+
+    return {
+        errcode: json.errcode ?? 0,
+        errmsg: json.errmsg ?? "ok",
+        next_cursor: json.next_cursor,
+        has_more: json.has_more ?? 0,
+        msg_list: json.msg_list ?? [],
+    };
 }
 
 /**
- * **sendEventMessage (发送事件消息)**
+ * **KF sendEventMessage (发送事件消息/欢迎语)**
  *
  * 用于发送欢迎语、满意度调查等事件消息。
+ * POST /cgi-bin/kf/send_msg_on_event
  *
  * @param params - 发送参数
  */
 export async function sendEventMessage(params: {
-    agent: ResolvedAgentAccount;
-    openKfId: string;
-    externalUserId: string;
+    accessToken: string;
+    code?: string;
     msgtype: string;
-    content: unknown;
-}): Promise<void> {
-    // TODO: Implement sendEventMessage API call
-    // This is a stub implementation
-    throw new Error("sendEventMessage not yet implemented for wecom-kf plugin");
+    open_kfid?: string;
+    [key: string]: unknown;
+}): Promise<{ errcode: number; errmsg: string; msgid?: string }> {
+    const body: Record<string, unknown> = {
+        code: params.code ?? "",
+        msgtype: params.msgtype,
+    };
+    if (params.open_kfid?.trim()) body.open_kfid = params.open_kfid.trim();
+    // Copy extra fields (text, image, etc.)
+    for (const [key, value] of Object.entries(params)) {
+        if (key !== "accessToken" && key !== "code" && key !== "msgtype" && key !== "open_kfid") {
+            body[key] = value;
+        }
+    }
+
+    const url = `${API_ENDPOINTS.KF_SEND_MSG_ON_EVENT}?access_token=${encodeURIComponent(params.accessToken)}`;
+    const res = await wecomFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
+    const json = await res.json() as { errcode: number; errmsg: string; msgid?: string };
+    return json;
 }
 
 /**
- * **listServicers (获取接待人员列表)**
+ * **KF sendMsg (发送客服消息)**
  *
+ * POST /cgi-bin/kf/send_msg
+ * 用于向客户主动发送消息。
+ */
+export async function sendKfMsg(params: {
+    accessToken: string;
+    touser: string;
+    open_kfid: string;
+    msgtype: string;
+    [key: string]: unknown;
+}): Promise<{ errcode: number; errmsg: string; msgid?: string }> {
+    const body: Record<string, unknown> = {
+        touser: params.touser,
+        open_kfid: params.open_kfid,
+        msgtype: params.msgtype,
+    };
+    // Copy content fields (text, image, voice, video, file, etc.)
+    for (const [key, value] of Object.entries(params)) {
+        if (key !== "accessToken" && key !== "touser" && key !== "open_kfid" && key !== "msgtype") {
+            body[key] = value;
+        }
+    }
+
+    const url = `${API_ENDPOINTS.KF_SEND_MSG}?access_token=${encodeURIComponent(params.accessToken)}`;
+    const res = await wecomFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
+    const json = await res.json() as { errcode: number; errmsg: string; msgid?: string };
+    return json;
+}
+
+/**
+ * **KF listServicers (获取接待人员列表)**
+ *
+ * POST /cgi-bin/kf/servicer/list
  * 获取客服账号的接待人员列表，用于动态路由和缓存管理。
- *
- * @param params - 查询参数
- * @returns 接待人员列表
  */
 export async function listServicers(params: {
-    agent: ResolvedAgentAccount;
-    openKfId: string;
-}): Promise<Array<{
-    userid: string;
-    status: number;
-}>> {
-    // TODO: Implement listServicers API call
-    // This is a stub implementation
-    throw new Error("listServicers not yet implemented for wecom-kf plugin");
+    accessToken: string;
+    openKfId?: string;
+}): Promise<Array<{ userid: string; status: number }>> {
+    const body: Record<string, unknown> = {};
+    if (params.openKfId?.trim()) body.open_kfid = params.openKfId.trim();
+
+    const url = `https://qyapi.weixin.qq.com/cgi-bin/kf/servicer/list?access_token=${encodeURIComponent(params.accessToken)}`;
+    const res = await wecomFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
+
+    const json = await res.json() as {
+        errcode: number;
+        servicer_list?: Array<{ userid: string; status: number }>;
+    };
+    if (json.errcode !== 0) return [];
+    return json.servicer_list ?? [];
 }

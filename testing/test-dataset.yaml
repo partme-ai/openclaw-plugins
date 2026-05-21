@@ -1,0 +1,1278 @@
+# OpenClaw Channel Plugin — Standard Test Dataset
+# 版本: 1.0.0
+# 用途: 所有渠道插件（gotify / feishu / mqtt / wecom / …）共用的 E2E 与半自动测试用例库
+# 说明: 本文件为规范数据，不包含可执行代码；各插件通过 ChannelAdapter 注入发送/接收逻辑
+
+schema_version: "1.0.0"
+suite_id: openclaw-channel-standard-v1
+suite_name: OpenClaw 渠道插件标准测试集
+description: >
+  渐进式复杂度测试集，覆盖连通性、文本、Markdown、代码、工具/Skill、多模态、
+  会话路由、安全策略、可靠性及 SLA。用例通过占位符与 skip 条件适配不同渠道能力。
+
+# ── 全局占位符（插件 runner 在运行时替换）────────────────────────────────────
+placeholders:
+  CHANNEL: "渠道 ID，如 gotify / feishu / mqtt"
+  ACCOUNT_ID: "配置中的账号 ID，默认 default"
+  PEER_ID: "对端标识（appid / open_id / topic suffix / chat_id 等）"
+  AGENT_ID: "期望路由到的 Agent ID，默认 main"
+  SESSION_KEY: "期望的 sessionKey 模式，支持 glob"
+  CORRELATION_ID: "每次运行生成的 UUID，用于去重与追踪"
+  TIMESTAMP: "ISO8601 时间戳"
+  SENDER_ID: "发送方在渠道内的原始 ID"
+  OUTBOUND_APP_ID: "本插件出站 Application/机器人 ID（用于回环检测）"
+
+# ── 渠道能力矩阵（插件 manifest 或 README 中声明，runner 用于 skip）──────────
+capability_flags:
+  - id: supports_text
+    description: 支持纯文本入站/出站
+  - id: supports_markdown
+    description: 出站或入站支持 Markdown 渲染
+  - id: supports_code_blocks
+    description: 代码块在渠道中可读（不被截断或转义破坏）
+  - id: supports_image_inbound
+    description: 用户可向 Agent 发送图片
+  - id: supports_image_outbound
+    description: Agent 可向用户发送图片
+  - id: supports_audio_inbound
+    description: 用户可发送语音/音频
+  - id: supports_audio_outbound
+    description: Agent 可回复语音（TTS）或音频文件
+  - id: supports_video_inbound
+    description: 用户可发送视频
+  - id: supports_video_outbound
+    description: Agent 可发送视频
+  - id: supports_file_attachment
+    description: 支持任意文件附件
+  - id: supports_streaming
+    description: 支持流式/分块回复
+  - id: supports_threads
+    description: 支持话题/线程
+  - id: supports_reactions
+    description: 支持表情回应
+  - id: supports_native_commands
+    description: 支持斜杠命令或原生菜单
+  - id: supports_ws_or_push
+    description: 支持 WebSocket / 长连接 / Webhook 实时入站
+  - id: supports_delete_after_consume
+    description: 消费后可删除入站消息
+  - id: supports_rate_limit_probe
+    description: 可观测限流或 429 行为
+  - id: supports_concurrent_inbound
+    description: 可并发接收多条入站
+  - id: supports_skill_tools
+    description: Agent 配置了 MCP/Skill/Tool 且可在 E2E 中触发
+  - id: supports_health_endpoint
+    description: 插件暴露 health/probe HTTP 或 CLI
+  - id: supports_dm_policy
+    description: 实现 dmPolicy / allowFrom 入站访问控制
+  - id: supports_multi_account
+    description: 支持多账号配置与隔离
+  - id: supports_session_label
+    description: 会话显示名/标签可配置或推导
+
+# ── 默认 SLA（可被插件 profile 覆盖）────────────────────────────────────────
+default_sla:
+  connectivity_max_ms: 3000
+  plain_text_reply_max_ms: 30000
+  markdown_reply_max_ms: 45000
+  code_generation_reply_max_ms: 90000
+  skill_invocation_reply_max_ms: 120000
+  multimodal_reply_max_ms: 120000
+  multi_turn_reply_max_ms: 60000
+  concurrent_fanout_max_ms: 90000
+  reconnect_max_ms: 15000
+  # L1-RT / L20 等待回复专用（可被用例 reply_timeout_ms 覆盖）
+  reply_wait_default_ms: 30000
+  reply_wait_sla_strict_ms: 30000
+  reply_wait_sla_relaxed_ms: 120000
+  reply_wait_negative_ms: 8000
+
+# ── 发送-等待-回复（L1-RT）字段约定 ─────────────────────────────────────────
+# wait_for_reply: true  → runner 执行 send → wait → assert（默认与 reply_received 一致）
+# reply_timeout_ms: 仅等待阶段超时（未设置则用 timeout_ms × multiplier）
+# reply_assertions:
+#   contains_any / min_length / max_length / not_contains / matches_regex
+# expect_wait_timeout: true → 故意短超时，断言 runner 以超时 FAIL（L1-RT-03）
+# wait_metrics: true → 记录 sent_at / reply_at / latency_ms / poll_count（L20 对齐）
+
+# ── 多模态附件引用（路径相对于 testing/fixtures/）────────────────────────────
+fixture_refs:
+  image_svg_smoke: fixtures/images/vision-smoke.svg
+  image_svg_ocr: fixtures/images/vision-ocr.svg
+  image_svg_chart: fixtures/images/vision-chart.svg
+  image_svg_icon: fixtures/images/vision-icon.svg
+  # 兼容旧键名（指向 SVG fixture）
+  image_png_small: fixtures/images/vision-smoke.svg
+  image_png_chart: fixtures/images/vision-chart.svg
+  audio_wav_short: fixtures/audio/sample-3s.wav
+  audio_ogg_voice: fixtures/audio/sample-voice.ogg
+  # L9: 本地无 mp4 时由 supports_video_inbound=false 或 fixture_missing skip
+  video_mp4_short: fixtures/video/sample-5s.mp4
+  file_pdf_sample: fixtures/files/sample-one-page.pdf
+  file_zip_sample: fixtures/files/sample-archive.zip
+  audio_wav_en: fixtures/audio/openclaw-asr-en.wav
+  audio_wav_zh: fixtures/audio/openclaw-asr-zh.wav
+
+test_cases:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L0 — 连通性与探活
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L0-01
+    name: 健康检查 / Health Probe
+    tier: L0
+    category: connectivity
+    automation: auto
+    priority: P0
+    objective: 验证插件或上游服务可达，health/probe 返回 ok。
+    preconditions:
+      - 渠道账号已配置且 enabled
+      - 若需外部服务（Gotify/MQTT broker 等）已启动
+    required_capabilities: [supports_health_endpoint]
+    skip_if_missing_capabilities: [supports_health_endpoint]
+    timeout_ms: 10000
+    steps:
+      - 调用插件 healthCheck / probe / GET /{CHANNEL}/health
+      - 记录 latencyMs
+    input:
+      type: none
+    expected:
+      health_ok: true
+      latency_ms_max: "{default_sla.connectivity_max_ms}"
+    failure_signals:
+      - health.ok === false
+      - 连接超时或 DNS 失败
+      - 401/403 表示 token 无效
+
+  - id: L0-02
+    name: Doctor 诊断无 blocking 错误
+    tier: L0
+    category: connectivity
+    automation: auto
+    priority: P0
+    objective: runDoctor / status 汇总配置与依赖，无 blocking errors。
+    preconditions:
+      - 同 L0-01
+    required_capabilities: [supports_health_endpoint]
+    skip_if_missing_capabilities: [supports_health_endpoint]
+    timeout_ms: 15000
+    steps:
+      - 调用 runDoctor 或等价诊断接口
+      - 检查 errors 数组为空
+    input:
+      type: none
+    expected:
+      doctor_ok: true
+      errors_count: 0
+    failure_signals:
+      - doctor.errors 非空
+      - 缺少必需 token/凭证
+
+  - id: L0-03
+    name: 实时入站通道连接（WS/Webhook/Push）
+    tier: L0
+    category: connectivity
+    automation: semi
+    priority: P0
+    objective: 入站 listener 启动且状态 running=true。
+    preconditions:
+      - Gateway 已 startAccount
+      - inbound.enabled=true（若适用）
+    required_capabilities: [supports_ws_or_push]
+    skip_if_missing_capabilities: [supports_ws_or_push]
+    timeout_ms: 20000
+    steps:
+      - 查询账号 snapshot / setStatus
+      - 确认 running=true 且 lastError 为空
+    input:
+      type: none
+    expected:
+      account_running: true
+      last_error: null
+    failure_signals:
+      - running=false 且 lastError 含 token/stream
+      - 反复 reconnect 失败
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L1 — 最简文本往返
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L1-01
+    name: 纯文本 Ping-Pong
+    tier: L1
+    category: text
+    automation: auto
+    priority: P0
+    objective: 用户发送短文本，Agent 在 SLA 内回复非空内容。
+    preconditions:
+      - L0 通过
+      - Agent {AGENT_ID} 在线且模型可用
+      - dmPolicy 允许 {SENDER_ID} 或 allowFrom=["*"]
+    required_capabilities: [supports_text]
+    timeout_ms: 30000
+    steps:
+      - 经 {CHANNEL} 向 {PEER_ID} 发送 input.message
+      - 轮询或订阅出站直到收到新回复
+      - 断言回复长度与相关性
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】请只回复一个字：好"
+      title: "openclaw-std-L1-01"
+      metadata:
+        test_id: L1-01
+        correlation_id: "{CORRELATION_ID}"
+    expected:
+      reply_received: true
+      reply_latency_ms_max: "{default_sla.plain_text_reply_max_ms}"
+      reply_text:
+        min_length: 1
+        max_length: 500
+        contains_any: ["好", "ok", "OK", "收到", "yes"]
+      no_duplicate_replies: 1
+    failure_signals:
+      - 超时无回复
+      - 回复为空或仅空白
+      - 收到多条重复回复（同 correlation_id）
+
+  - id: L1-02
+    name: Echo 确认通道标识
+    tier: L1
+    category: text
+    automation: auto
+    priority: P1
+    objective: Agent 回复中应体现收到来自指定通道的上下文（或至少确认消息内容）。
+    preconditions:
+      - 同 L1-01
+    required_capabilities: [supports_text]
+    timeout_ms: 45000
+    steps:
+      - 发送含通道名的确认请求
+      - 验证回复引用 correlation_id 或关键词
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】你好！请用一句话回复，确认你收到了这条来自 {CHANNEL} 通道的测试消息。"
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 5
+        contains_any: ["{CHANNEL}", "通道", "消息", "收到", "测试", "{CORRELATION_ID}"]
+    failure_signals:
+      - 回复与测试无关的通用寒暄且未体现收到
+
+  # ── L1-RT — 发送 → 等待 → 回复（显式 wait/poll 与延迟指标）────────────────
+
+  - id: L1-RT-01
+    name: 发送后等待回复并断言内容
+    tier: L1
+    category: reply-wait
+    automation: auto
+    priority: P0
+    objective: 发送文本后轮询直到收到 Agent 回复，断言非空且含期望片段。
+    preconditions:
+      - 同 L1-01
+    required_capabilities: [supports_text]
+    timeout_ms: 45000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_default_ms}"
+    wait_metrics: true
+    steps:
+      - "[send] 经 {CHANNEL} 发送 input.message"
+      - "[wait] 轮询出站直到 reply_timeout_ms"
+      - "[assert] reply_assertions + reply_latency_ms_max"
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】请只回复一个字：好"
+      title: "openclaw-std-L1-RT-01"
+      metadata:
+        test_id: L1-RT-01
+        correlation_id: "{CORRELATION_ID}"
+    reply_assertions:
+      contains_any: ["好", "ok", "OK", "收到", "yes"]
+      min_length: 1
+      not_contains: ["error", "Error", "失败", "timeout", "超时"]
+    expected:
+      reply_received: true
+      reply_latency_ms_max: "{default_sla.plain_text_reply_max_ms}"
+      reply_text:
+        min_length: 1
+        contains_any: ["好", "ok", "OK", "收到", "yes"]
+    failure_signals:
+      - 等待回复超时（无 poll 命中）
+      - 回复含错误栈或 gateway 报错关键字
+
+  - id: L1-RT-02
+    name: 等待回复 SLA（30s 严格窗口）
+    tier: L1
+    category: reply-wait
+    automation: auto
+    priority: P0
+    objective: 在 reply_timeout_ms 内必须收到回复；记录 latency_ms 与 poll_count。
+    preconditions:
+      - 同 L1-01
+    required_capabilities: [supports_text]
+    timeout_ms: 60000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_sla_strict_ms}"
+    wait_metrics: true
+    steps:
+      - "[send] 发送 SLA ping"
+      - "[wait] 最长 reply_timeout_ms"
+      - "[assert] latency_ms ≤ reply_latency_ms_max"
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】ping：请用不超过 10 个字回复 pong"
+      title: "openclaw-std-L1-RT-02"
+    reply_assertions:
+      contains_any: ["pong", "Pong", "PONG", "收到", "好", "ok"]
+      min_length: 1
+      not_contains: ["Internal Server Error", "503", "rate limit"]
+    expected:
+      reply_received: true
+      reply_latency_ms_max: "{default_sla.reply_wait_sla_strict_ms}"
+      reply_text:
+        min_length: 1
+    failure_signals:
+      - latency 超过 SLA
+      - poll 次数异常高（>500）暗示轮询未退避
+
+  - id: L1-RT-03
+    name: 等待回复超时失败路径
+    tier: L1
+    category: reply-wait
+    automation: auto
+    priority: P1
+    objective: 使用极短 reply_timeout_ms，runner 应 FAIL 并报告「等待回复超时」。
+    preconditions:
+      - 同 L1-01
+    required_capabilities: [supports_text]
+    timeout_ms: 15000
+    wait_for_reply: true
+    reply_timeout_ms: 800
+    expect_wait_timeout: true
+    wait_metrics: true
+    steps:
+      - "[send] 发送正常 ping（Agent 仍会处理，但等待窗口过短）"
+      - "[wait] reply_timeout_ms=800ms"
+      - "[assert] 用例状态为 FAIL，message 含等待回复超时"
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】请详细用 200 字介绍 OpenClaw（用于超时负向测试）"
+      title: "openclaw-std-L1-RT-03"
+    expected:
+      reply_received: false
+      expect_wait_timeout: true
+    failure_signals:
+      - 意外在 800ms 内收到完整回复（说明 wait 未生效）
+      - 超时但未标记 FAIL
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L2 — 文本边界与编码
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L2-01
+    name: Unicode 与 Emoji
+    tier: L2
+    category: text-edge
+    automation: auto
+    priority: P1
+    objective: CJK、Emoji、组合字符往返不乱码。
+    required_capabilities: [supports_text]
+    timeout_ms: 45000
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】请原样复述：你好🦞世界 αβγ 日本語 🔥✨"
+    expected:
+      reply_received: true
+      reply_text:
+        contains_any: ["你好", "🦞", "日本語"]
+    failure_signals:
+      - 乱码、替换字符 �
+      - Emoji 被剥离
+
+  - id: L2-02
+    name: 长文本（约 2KB）
+    tier: L2
+    category: text-edge
+    automation: auto
+    priority: P2
+    objective: 渠道与 Agent 能处理较长用户输入；回复不被截断到不可读。
+    required_capabilities: [supports_text]
+    timeout_ms: 90000
+    input:
+      type: text
+      message: |
+        【{CORRELATION_ID}】下面是一段重复文本，请用一句话总结你收到了多长的内容。
+        {{LONG_TEXT_2KB}}
+      template_vars:
+        LONG_TEXT_2KB:
+          generator: repeat
+          base: "OpenClaw测试"
+          count: 200
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 10
+        contains_any: ["收到", "长", "字符", "总结"]
+    failure_signals:
+      - 入站被静默丢弃
+      - 回复仅错误提示 payload too large 且无友好说明
+
+  - id: L2-03
+    name: 仅空白字符（应忽略或友好提示）
+    tier: L2
+    category: text-edge
+    automation: auto
+    priority: P2
+    objective: 空白入站不触发 Agent 或返回策略内提示；不应崩溃。
+    required_capabilities: [supports_text]
+    timeout_ms: 15000
+    input:
+      type: text
+      message: "   \n\t  "
+    expected:
+      reply_received: false
+      agent_invoked: false
+      side_effects:
+        - no_crash
+        - no_empty_reply_loop
+    failure_signals:
+      - Gateway 报错
+      - 无限重试
+
+  - id: L2-04
+    name: 空消息（无 text 字段等价）
+    tier: L2
+    category: text-edge
+    automation: auto
+    priority: P2
+    objective: 空 payload 被插件层过滤，不进入 dispatchInboundMessage。
+    required_capabilities: [supports_text]
+    timeout_ms: 15000
+    input:
+      type: text
+      message: ""
+    expected:
+      reply_received: false
+      agent_invoked: false
+    failure_signals:
+      - 空消息触发 Agent
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L3 — Markdown 与富文本
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L3-01
+    name: Markdown 基础格式回复
+    tier: L3
+    category: markdown
+    automation: semi
+    priority: P1
+    objective: 请求 Agent 用 Markdown 回复；出站保留标题/列表/粗体结构。
+    required_capabilities: [supports_text]
+    optional_capabilities: [supports_markdown]
+    timeout_ms: 60000
+    input:
+      type: text
+      message: |
+        【{CORRELATION_ID}】请用 Markdown 回复，包含：
+        1. 二级标题「测试结果」
+        2. 粗体「通过」
+        3. 无序列表两项
+    expected:
+      reply_received: true
+      reply_text:
+        contains_any: ["测试结果", "**", "##", "- ", "* ", "通过"]
+      # outbound_content_type: text/markdown — optional; runner 暂不断言
+    failure_signals:
+      - HTML 实体未解码
+      - 代码块标记被渠道截断导致不可读
+
+  - id: L3-02
+    name: Markdown 表格与链接
+    tier: L3
+    category: markdown
+    automation: semi
+    priority: P2
+    required_capabilities: [supports_text]
+    optional_capabilities: [supports_markdown]
+    timeout_ms: 60000
+    input:
+      type: text
+      message: |
+        【{CORRELATION_ID}】请回复一个 Markdown 表格（2列2行）和一个链接 https://openclaw.ai
+    expected:
+      reply_received: true
+      reply_text:
+        contains_any: ["|", "openclaw", "http"]
+    failure_signals:
+      - 链接不可点击（若渠道支持 link preview）
+      - 表格列错位不可读
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L4 — 代码与编程问题
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L4-01
+    name: 内联代码与 fenced code block
+    tier: L4
+    category: programming
+    automation: semi
+    priority: P1
+    objective: Agent 返回含 ``` 代码块；渠道不破坏 fence。
+    required_capabilities: [supports_text]
+    optional_capabilities: [supports_code_blocks]
+    timeout_ms: 90000
+    input:
+      type: text
+      message: |
+        【{CORRELATION_ID}】用 JavaScript 写一个简单的函数 add(a,b)，并用 Markdown 代码块输出完整代码，不要省略。
+    expected:
+      reply_received: true
+      reply_text:
+        contains_all: ["```", "function", "add"]
+        min_length: 80
+    failure_signals:
+      - 代码块缺少闭合 ```
+      - 渠道 max length 截断无提示
+
+  - id: L4-02
+    name: 编程问答（解释型）
+    tier: L4
+    category: programming
+    automation: auto
+    priority: P2
+    timeout_ms: 90000
+    input:
+      type: text
+      message: |
+        【{CORRELATION_ID}】用三句话解释什么是 REST API，不要使用代码块。
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 50
+        contains_any: ["REST", "API", "HTTP", "资源"]
+    failure_signals:
+      - 答非所问
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L5 — 结构化命令与控制
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L5-01
+    name: 斜杠命令或原生命令（若支持）
+    tier: L5
+    category: control
+    automation: semi
+    priority: P2
+    required_capabilities: [supports_native_commands]
+    skip_if_missing_capabilities: [supports_native_commands]
+    timeout_ms: 30000
+    input:
+      type: command
+      command: "/ping"
+      args: []
+    expected:
+      reply_received: true
+      reply_text:
+        contains_any: ["pong", "Pong", "ok", "在线"]
+    failure_signals:
+      - 命令未注册
+      - 命令被当作普通文本处理且无提示
+
+  - id: L5-02
+    name: 结构化 JSON 指令（纯文本载体）
+    tier: L5
+    category: control
+    automation: auto
+    priority: P2
+    objective: 用户发送 JSON 形态文本，Agent 解析并确认字段。
+    required_capabilities: [supports_text]
+    timeout_ms: 60000
+    input:
+      type: text
+      message: |
+        【{CORRELATION_ID}】请解析以下 JSON 并只回复 action 字段的值：
+        {"action":"PING","id":"{CORRELATION_ID}"}
+    expected:
+      reply_received: true
+      reply_text:
+        contains_any: ["PING", "ping"]
+    failure_signals:
+      - 回复整段 JSON 而非字段值
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L6 — Skill / Tool 调用
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L6-01
+    name: 触发内置或已配置 Skill
+    tier: L6
+    category: skill
+    automation: semi
+    priority: P1
+    objective: 用户请求需调用工具才能完成；trace 中可见 tool/skill 调用。
+    preconditions:
+      - Agent 已启用至少一个稳定 Skill（如 web_search、calculator、datetime）
+      - 测试环境允许外网或 mock tool
+    required_capabilities: [supports_skill_tools, supports_text]
+    skip_if_missing_capabilities: [supports_skill_tools]
+    timeout_ms: 120000
+    input:
+      type: text
+      message: |
+        【{CORRELATION_ID}】请查询今天日期（Asia/Shanghai 时区）并只回复 YYYY-MM-DD 格式的日期，必须使用工具获取，不要猜测。
+    expected:
+      reply_received: true
+      reply_text:
+        matches_regex: "\\d{4}-\\d{2}-\\d{2}"
+      tool_invoked: true
+      tool_names_any: ["datetime", "time", "date", "web_search", "browser"]
+    failure_signals:
+      - 明显错误日期且无 tool 调用
+      - tool 报错未向用户反馈
+
+  - id: L6-02
+    name: MCP 工具调用（可选）
+    tier: L6
+    category: skill
+    automation: manual
+    priority: P2
+    required_capabilities: [supports_skill_tools]
+    skip_if_missing_capabilities: [supports_skill_tools]
+    timeout_ms: 120000
+    input:
+      type: text
+      message: |
+        【{CORRELATION_ID}】列出你当前可用的 MCP 工具名称（最多 5 个），一行一个。
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 10
+    failure_signals:
+      - 声称无工具但环境已配置 MCP
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L7 — 图片理解
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L7-01
+    name: 图片 URL 理解
+    tier: L7
+    category: multimodal-image
+    automation: semi
+    priority: P1
+    required_capabilities: [supports_image_inbound, supports_text]
+    skip_if_missing_capabilities: [supports_image_inbound]
+    timeout_ms: 120000
+    input:
+      type: multimodal
+      message: "【{CORRELATION_ID}】这张图片里有什么？用一句话描述。"
+      attachments:
+        - kind: image
+          source: url
+          url: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/280px-PNG_transparency_demonstration_1.png"
+          mime: image/png
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 10
+        contains_any: ["骰子", "dice", "立方体", "方块", "图形", "PNG"]
+    failure_signals:
+      - 回复称看不到图片
+      - 附件下载失败无提示
+
+  - id: L7-02
+    name: 本地 SVG 视觉冒烟（shapes + label）
+    tier: L7
+    category: multimodal-image
+    automation: semi
+    priority: P2
+    required_capabilities: [supports_image_inbound]
+    skip_if_missing_capabilities: [supports_image_inbound]
+    timeout_ms: 120000
+    input:
+      type: multimodal
+      message: "【{CORRELATION_ID}】附件图片中的标题文字是什么？有哪些形状和颜色？"
+      attachments:
+        - kind: image
+          source: fixture
+          ref: image_svg_smoke
+          mime: image/svg+xml
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 10
+        contains_any: ["OPENCLAW", "VISION", "红", "蓝", "圆", "方", "red", "blue", "circle", "square"]
+    failure_signals:
+      - fixture 路径未找到
+      - 渠道不支持 binary 上传
+
+  - id: L7-03
+    name: 本地 SVG OCR（数字与中英混排）
+    tier: L7
+    category: multimodal-image
+    automation: semi
+    priority: P2
+    required_capabilities: [supports_image_inbound]
+    skip_if_missing_capabilities: [supports_image_inbound]
+    timeout_ms: 120000
+    input:
+      type: multimodal
+      message: "【{CORRELATION_ID}】请读出附件图片中的 5 位数字，只回复数字。"
+      attachments:
+        - kind: image
+          source: fixture
+          ref: image_svg_ocr
+          mime: image/svg+xml
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 5
+        contains_any: ["12345"]
+    failure_signals:
+      - fixture 路径未找到
+      - OCR 完全错误
+
+  - id: L7-04
+    name: 本地 SVG 图表理解
+    tier: L7
+    category: multimodal-image
+    automation: semi
+    priority: P2
+    required_capabilities: [supports_image_inbound]
+    skip_if_missing_capabilities: [supports_image_inbound]
+    timeout_ms: 120000
+    input:
+      type: multimodal
+      message: "【{CORRELATION_ID}】描述附件柱状图：哪一根最高？数值是多少？"
+      attachments:
+        - kind: image
+          source: fixture
+          ref: image_svg_chart
+          mime: image/svg+xml
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 8
+        contains_any: ["Thu", "周四", "80", "最高", "highest"]
+    failure_signals:
+      - fixture 路径未找到
+      - 无法识别图表类型
+
+  - id: L7-05
+    name: 本地 SVG 小图标附件
+    tier: L7
+    category: multimodal-image
+    automation: semi
+    priority: P3
+    required_capabilities: [supports_image_inbound]
+    skip_if_missing_capabilities: [supports_image_inbound]
+    timeout_ms: 120000
+    input:
+      type: multimodal
+      message: "【{CORRELATION_ID}】用一句话描述附件小图标的颜色和样式。"
+      attachments:
+        - kind: image
+          source: fixture
+          ref: image_svg_icon
+          mime: image/svg+xml
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 5
+        contains_any: ["绿", "green", "圆", "icon", "图标", "OC"]
+    failure_signals:
+      - fixture 路径未找到
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L8 — 音频
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L8-01
+    name: 短音频转写或理解
+    tier: L8
+    category: multimodal-audio
+    automation: semi
+    priority: P2
+    required_capabilities: [supports_audio_inbound]
+    skip_if_missing_capabilities: [supports_audio_inbound]
+    timeout_ms: 120000
+    input:
+      type: multimodal
+      message: "【{CORRELATION_ID}】请转写附件音频的内容。"
+      attachments:
+        - kind: audio
+          source: fixture
+          ref: audio_wav_short
+          mime: audio/wav
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 5
+    failure_signals:
+      - ASR 管道未接入
+      - 音频被当作未知文件丢弃
+
+  - id: L8-02
+    name: 音频出站（TTS，可选）
+    tier: L8
+    category: multimodal-audio
+    automation: manual
+    priority: P3
+    required_capabilities: [supports_audio_outbound]
+    skip_if_missing_capabilities: [supports_audio_outbound]
+    timeout_ms: 120000
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】请用语音回复：测试成功"
+    expected:
+      reply_received: true
+      outbound_media:
+        kind: audio
+        present: true
+    failure_signals:
+      - 仅文本无音频
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L9 — 视频
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L9-01
+    name: 短视频理解（可选）
+    tier: L9
+    category: multimodal-video
+    automation: manual
+    priority: P3
+    required_capabilities: [supports_video_inbound]
+    skip_if_missing_capabilities: [supports_video_inbound]
+    timeout_ms: 180000
+    input:
+      type: multimodal
+      message: "【{CORRELATION_ID}】概括附件视频内容（1-2 句）。"
+      attachments:
+        - kind: video
+          source: fixture
+          ref: video_mp4_short
+          mime: video/mp4
+    expected:
+      reply_received: true
+      reply_text:
+        min_length: 10
+    failure_signals:
+      - 视频过大被拒无说明
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L10 — 多轮上下文
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L10-01
+    name: 两轮上下文记忆
+    tier: L10
+    category: context
+    automation: auto
+    priority: P0
+    objective: 同一 session 内第二轮能引用第一轮信息。
+    required_capabilities: [supports_text]
+    timeout_ms: 120000
+    steps:
+      - 发送 turn1，等待回复
+      - 发送 turn2（不重复 secret），等待回复
+    input:
+      type: multi_turn
+      turns:
+        - message: "【{CORRELATION_ID}】请记住暗号：ALPHA-{CORRELATION_ID}，回复「已记住」。"
+          expected_reply_contains_any: ["记住", "好的", "已"]
+        - message: "我刚才让你记住的暗号是什么？只回复暗号本身。"
+          expected_reply_contains: "ALPHA-{CORRELATION_ID}"
+    expected:
+      reply_received: true
+      session_persistence: same_session
+    failure_signals:
+      - 第二轮答不出暗号
+      - 会话被错误重置
+
+  - id: L10-02
+    name: 三轮编程上下文
+    tier: L10
+    category: context
+    automation: semi
+    priority: P2
+    required_capabilities: [supports_text]
+    timeout_ms: 180000
+    input:
+      type: multi_turn
+      turns:
+        - message: "【{CORRELATION_ID}】变量 x=10，回复 ok"
+        - message: "x 加 5 等于多少？只回复数字"
+        - message: "再乘以 2 等于多少？只回复数字"
+    expected:
+      final_reply_text:
+        matches_regex: "^15$|^30$|15|30"
+    failure_signals:
+      - 上下文丢失导致计算错误
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L11 — 会话路由与 Peer 隔离
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L11-01
+    name: Peer A/B 会话隔离（per-peer dmScope）
+    tier: L11
+    category: routing
+    automation: semi
+    priority: P1
+    preconditions:
+      - session.dmScope 为 per-peer 或 per-channel-peer 或 per-account-channel-peer
+      - 可模拟两个不同 PEER_ID
+    required_capabilities: [supports_text, supports_multi_account]
+    skip_if_missing_capabilities: [supports_multi_account]
+    timeout_ms: 180000
+    input:
+      type: multi_peer
+      peers:
+        - peer_id: "{PEER_A}"
+          message: "【{CORRELATION_ID}-A】我是 Peer A，暗号 BANANA"
+        - peer_id: "{PEER_B}"
+          message: "【{CORRELATION_ID}-B】我是 Peer B，暗号 CHERRY"
+      follow_up:
+        - peer_id: "{PEER_A}"
+          message: "我的暗号是什么？只回复暗号"
+          expected_contains: "BANANA"
+    expected:
+      session_isolation: true
+    failure_signals:
+      - Peer A 得到 CHERRY
+      - 两 peer 共享 main 单会话（在 per-peer 配置下）
+
+  - id: L11-02
+    name: 多账号路由到不同 Agent
+    tier: L11
+    category: routing
+    automation: manual
+    priority: P2
+    preconditions:
+      - 配置两个 account 绑定不同 agent
+    required_capabilities: [supports_multi_account]
+    skip_if_missing_capabilities: [supports_multi_account]
+    timeout_ms: 120000
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】你是哪个 Agent？只回复 agent id"
+      account_id: "{ACCOUNT_ID}"
+    expected:
+      reply_received: true
+      agent_id: "{AGENT_ID}"
+    failure_signals:
+      - 消息被错误账号消费
+      - 路由到 default 而非绑定 agent
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L12 — DM 策略 / allowFrom
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L12-01
+    name: allowlist 拒绝未授权发送方
+    tier: L12
+    category: security
+    automation: semi
+    priority: P0
+    preconditions:
+      - dmPolicy=allowlist
+      - allowFrom 不包含测试发送方
+    required_capabilities: [supports_dm_policy]
+    skip_if_missing_capabilities: [supports_dm_policy]
+    timeout_ms: 30000
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】这条应被拒绝"
+      sender_id: "{UNAUTHORIZED_SENDER}"
+    expected:
+      reply_received: false
+      agent_invoked: false
+      inbound_blocked: true
+    failure_signals:
+      - 未授权消息仍触发 Agent
+
+  - id: L12-02
+    name: allowlist 允许授权发送方
+    tier: L12
+    category: security
+    automation: auto
+    priority: P0
+    preconditions:
+      - dmPolicy=allowlist
+      - allowFrom 包含 {SENDER_ID}
+    required_capabilities: [supports_dm_policy, supports_text]
+    skip_if_missing_capabilities: [supports_dm_policy]
+    timeout_ms: 45000
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】授权用户 ping"
+      sender_id: "{SENDER_ID}"
+    expected:
+      reply_received: true
+      inbound_blocked: false
+    failure_signals:
+      - 授权用户被误拦
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L13 — 出站回环预防
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L13-01
+    name: 出站消息不应再次触发入站
+    tier: L13
+    category: reliability
+    automation: auto
+    priority: P0
+    objective: 插件发出的 Agent 回复若出现在入站流，应被 isOutboundEcho 过滤。
+    required_capabilities: [supports_text, supports_ws_or_push]
+    timeout_ms: 60000
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】回复 ok"
+    expected:
+      reply_received: true
+      echo_loop_count: 0
+      max_agent_invocations: 1
+    failure_signals:
+      - 同一消息触发多次 dispatch
+      - 出现 Agent 回复自己的无限循环
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L14 — 幂等 / 去重
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L14-01
+    name: 重复 messageId 去重
+    tier: L14
+    category: reliability
+    automation: semi
+    priority: P1
+    objective: 60s 内相同 messageId 只派发一次（参考 gotify dedup 窗口）。
+    required_capabilities: [supports_ws_or_push]
+    timeout_ms: 60000
+    input:
+      type: duplicate
+      message: "【{CORRELATION_ID}】去重测试"
+      duplicate:
+        same_message_id: true
+        replay_count: 3
+        interval_ms: 500
+    expected:
+      agent_invocation_count: 1
+      reply_count_max: 1
+    failure_signals:
+      - Agent 被调用 3 次
+      - 用户收到 3 条相同回复
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L15 — 限流优雅处理
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L15-01
+    name:  burst 发送不崩溃（软限流）
+    tier: L15
+    category: reliability
+    automation: semi
+    priority: P2
+    required_capabilities: [supports_rate_limit_probe]
+    skip_if_missing_capabilities: [supports_rate_limit_probe]
+    timeout_ms: 120000
+    input:
+      type: burst
+      messages:
+        - "【{CORRELATION_ID}】burst-1"
+        - "【{CORRELATION_ID}】burst-2"
+        - "【{CORRELATION_ID}】burst-3"
+      interval_ms: 100
+    expected:
+      no_crash: true
+      at_least_one_reply: true
+      rate_limit_errors_logged: optional
+    failure_signals:
+      - 进程崩溃
+      - 永久卡死无恢复
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L16 — 错误恢复 / 重连
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L16-01
+    name: WS 断线自动重连
+    tier: L16
+    category: reliability
+    automation: manual
+    priority: P1
+    required_capabilities: [supports_ws_or_push]
+    skip_if_missing_capabilities: [supports_ws_or_push]
+    timeout_ms: 60000
+    steps:
+      - 确认 running=true
+      - 模拟网络断连或重启上游
+      - 恢复网络后发送 L1-01 等价消息
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】重连后 ping"
+    expected:
+      reconnect_success: true
+      reply_received: true
+      reconnect_latency_ms_max: "{default_sla.reconnect_max_ms}"
+    failure_signals:
+      - lastError 持续非空
+      - 重连后消息丢失无日志
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L17 — 并发消息
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L17-01
+    name: 并发入站（不同 correlation_id）
+    tier: L17
+    category: concurrency
+    automation: semi
+    priority: P2
+    required_capabilities: [supports_concurrent_inbound]
+    skip_if_missing_capabilities: [supports_concurrent_inbound]
+    timeout_ms: 90000
+    input:
+      type: concurrent
+      messages:
+        - id: a
+          message: "【{CORRELATION_ID}-A】只回复 A"
+        - id: b
+          message: "【{CORRELATION_ID}-B】只回复 B"
+      launch_parallel: true
+    expected:
+      replies_count_min: 2
+      each_reply_matches_peer: true
+    failure_signals:
+      - 串行卡死仅回复一条
+      - 回复串线（A 收到 B 的回复）
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L18 — 消费后删除（可选）
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L18-01
+    name: deleteAfterConsume 行为
+    tier: L18
+    category: optional-feature
+    automation: semi
+    priority: P3
+    required_capabilities: [supports_delete_after_consume]
+    skip_if_missing_capabilities: [supports_delete_after_consume]
+    timeout_ms: 60000
+    preconditions:
+      - inbound.deleteAfterConsume=true
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】删除测试"
+    expected:
+      reply_received: true
+      inbound_message_deleted: true
+    failure_signals:
+      - 消息仍存在且重复触发
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L19 — 会话标签 / Display Name
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L19-01
+    name: Session 显示名推导
+    tier: L19
+    category: session
+    automation: manual
+    priority: P3
+    required_capabilities: [supports_session_label]
+    skip_if_missing_capabilities: [supports_session_label]
+    timeout_ms: 45000
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】session label test"
+      title: "TestBot-{PEER_ID}"
+    expected:
+      session_label_contains_any: ["{PEER_ID}", "TestBot", "{CHANNEL}"]
+    failure_signals:
+      - 控制台/session 列表显示 unknown
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # L20 — E2E 延迟 SLA
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: L20-01
+    name: 端到端延迟 SLA（P50/P95 采样）
+    tier: L20
+    category: sla
+    automation: auto
+    priority: P1
+    objective: 连续 N 次 send→wait→reply，统计 latency_ms 的 p95 与成功率（与 L1-RT wait_metrics 对齐）。
+    required_capabilities: [supports_text]
+    timeout_ms: 300000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_sla_relaxed_ms}"
+    wait_metrics: true
+    input:
+      type: benchmark
+      sample_size: 5
+      message_template: "【{CORRELATION_ID}-{N}】ping"
+    reply_assertions:
+      min_length: 1
+      not_contains: ["error", "失败"]
+    expected:
+      reply_received: true
+      reply_latency_ms_max: "{default_sla.reply_wait_sla_relaxed_ms}"
+      latency_p95_ms_max: 45000
+      success_rate_min: 0.8
+    failure_signals:
+      - p95 超标
+      - 成功率 < 80%
+      - 任一轮 wait 超时无 reply_at
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 扩展 — 文件附件与流式（跨 L3-L9）
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: X-01
+    name: PDF 文件附件问答
+    tier: L7
+    category: multimodal-file
+    automation: semi
+    priority: P2
+    required_capabilities: [supports_file_attachment]
+    skip_if_missing_capabilities: [supports_file_attachment]
+    timeout_ms: 120000
+    input:
+      type: multimodal
+      message: "【{CORRELATION_ID}】附件 PDF 有多少页？只回复数字"
+      attachments:
+        - kind: file
+          source: fixture
+          ref: file_pdf_sample
+          mime: application/pdf
+    expected:
+      reply_received: true
+      reply_text:
+        matches_regex: "1|一|one"
+    failure_signals:
+      - 无法解析 PDF
+
+  - id: X-02
+    name: 流式回复（若支持 blockStreaming=false）
+    tier: L3
+    category: streaming
+    automation: manual
+    priority: P3
+    required_capabilities: [supports_streaming]
+    skip_if_missing_capabilities: [supports_streaming]
+    timeout_ms: 90000
+    input:
+      type: text
+      message: "【{CORRELATION_ID}】用 100 字介绍 OpenClaw"
+    expected:
+      reply_received: true
+      streaming_chunks_min: 2
+    failure_signals:
+      - 长时间无 partial 更新

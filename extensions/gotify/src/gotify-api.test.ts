@@ -9,6 +9,8 @@ import {
   getApplicationMessages,
   deleteApplicationMessages,
   listApplications,
+  resolveApplicationName,
+  clearApplicationNameCache,
   createApplication,
   updateApplication,
   deleteApplication,
@@ -295,6 +297,40 @@ describe('Application API', () => {
     expect(fetchImpl.mock.calls[0][0]).toContain('/application');
   });
 
+  it('resolveApplicationName loads and caches application names by appId', async () => {
+    clearApplicationNameCache();
+    const fetchImpl = mockFetch([
+      {
+        ok: true,
+        json: async () => [
+          { id: 10, name: 'Alert Manager', token: 'A...', internal: false },
+          { id: 20, name: 'Ops Bot', token: 'B...', internal: false },
+        ],
+      },
+    ]);
+
+    const name = await resolveApplicationName(account, 10, { fetchImpl });
+    expect(name).toBe('Alert Manager');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    const cached = await resolveApplicationName(account, 20, { fetchImpl });
+    expect(cached).toBe('Ops Bot');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolveApplicationName returns undefined when appId is missing from list', async () => {
+    clearApplicationNameCache();
+    const fetchImpl = mockFetch([
+      {
+        ok: true,
+        json: async () => [{ id: 1, name: 'App1', token: 'A...', internal: false }],
+      },
+    ]);
+
+    const name = await resolveApplicationName(account, 999, { fetchImpl });
+    expect(name).toBeUndefined();
+  });
+
   it('createApplication', async () => {
     const fetchImpl = mockFetch([
       {
@@ -356,7 +392,9 @@ describe('Application API', () => {
 
   it('throws when listing applications without clientToken', async () => {
     const noClient = createTestAccount({ clientToken: undefined });
-    await expect(listApplications(noClient)).rejects.toThrow('client token required for this operation');
+    await expect(listApplications(noClient)).rejects.toThrow(
+      'client token required for this operation'
+    );
   });
 });
 

@@ -27,67 +27,132 @@ The plugin implements three connection modes:
 ### Core Components
 
 ```
-index.ts              # Plugin entry - registers channel and HTTP handlers
+index.ts                  # Plugin entry — registers channel, wecom_mcp tool, HTTP routes, before_prompt_build hook
 src/
-  channel.ts          # ChannelPlugin implementation, lifecycle management
-  monitor.ts          # WebSocket message processing + backward-compat webhook handler
-  runtime.ts          # Runtime state singleton
-  http.ts             # HTTP client with undici + proxy support
-  crypto.ts           # AES-CBC encryption/decryption for webhooks
-  media.ts            # Media file download/decryption
-  outbound.ts         # Outbound message adapter
-  target.ts           # Target resolution (user/party/tag/chat)
-  dynamic-agent.ts    # Dynamic agent routing (per-user/per-group isolation)
-  gateway-monitor.ts  # Account lifecycle: dispatch WS / webhook gateway / agent registration
-  ws-adapter.ts       # WebSocket client adapter (@wecom/aibot-node-sdk)
+  # ── Channel + lifecycle ──
+  channel.ts              # ChannelPlugin implementation (WS gateway, webhook dispatch, account lifecycle)
+  monitor.ts              # WebSocket inbound message processing + stream reply delivery
+  runtime.ts              # Runtime state singleton (setWeComRuntime / getWeComRuntime)
 
-  # ── Webhook mode (integrated from @wecom/wecom-openclaw-plugin) ──
+  # ── Configuration + accounts ──
+  accounts.ts             # Multi-account resolution (resolveWeComAccountMulti, setWeComAccountMulti)
+  onboarding.ts           # Setup wizard: applyAccountConfig, dmPolicy helpers, configure prompts
+  const.ts                # Channel ID, webhook paths, API endpoints, media constants
+  state-dir-resolve.ts    # State directory path resolution
+  version.ts              # Version info
+
+  # ── HTTP + network ──
+  http.ts                 # undici fetch wrapper with proxy support
+
+  # ── Message handling ──
+  message-parser.ts       # Inbound XML/JSON message parsing (text, image, voice, video, file, event, etc.)
+  message-sender.ts       # Outbound message dispatch (Bot WS / Bot webhook / Agent fallback)
+  target.ts               # Target resolution (user/party/tag/chat)
+
+  # ── Stream state (WebSocket mode) ──
+  state-manager.ts        # StreamStore + ActiveReplyStore: stream tracking, response_url tracking
+  reqid-store.ts          # Request ID deduplication store
+  chat-queue.ts           # Pending message queue with debounce (500ms default)
+  response-url-tracker.ts # Response URL registry for proactive message delivery
+  timeout.ts              # Stream expiration timeout handler (6-min window + 30s margin)
+
+  # ── Media handling ──
+  media-handler.ts        # Inbound media download + decryption (AES-256-CBC)
+  media-uploader.ts       # Outbound media upload via Agent API
+  ws-media.ts             # Native WebSocket image item builder (for inline msg_item delivery)
+  temp-media-server.ts    # Temporary media HTTP server (token-authenticated, 15-min TTL)
+
+  # ── Template cards ──
+  template-card-parser.ts # Inbound template card event parsing
+  template-card-manager.ts# Template card lifecycle management
+
+  # ── Dynamic agents + routing ──
+  dynamic-agent.ts        # Dynamic agent creation (per-user/per-group isolation)
+  dynamic-routing.ts      # Dynamic agent routing policy
+  dm-policy.ts            # DM access policy (open / allowlist / blocklist)
+  group-policy.ts         # Group chat access policy (open / allowlist / blocklist)
+
+  # ── SDK compatibility ──
+  openclaw-compat.ts      # SDK version shim (emptyPluginConfigSchema, etc.)
+  utils.ts                # Shared utilities
+
+  # ── Webhook mode (Bot URL callback) ──
   webhook/
-    index.ts          # Re-exports: handler, gateway, state, helpers, types
-    handler.ts        # HTTP GET/POST handler with multi-account signature matching
-    gateway.ts        # Lifecycle: start/stop webhook targets, prune timer
-    monitor.ts        # startAgentForStream() — message processing, Agent dispatch, deliver
-    state.ts          # StreamStore + ActiveReplyStore + WebhookMonitorState (singleton)
-    helpers.ts        # buildInboundBody, processInboundMessage, buildFallbackPrompt, MIME detect
-    types.ts          # WebhookInboundMessage, StreamState, PendingInbound, WecomWebhookTarget
-    target.ts         # Path-indexed target registry (register/unregister/resolve)
-    http.ts           # undici fetch wrapper with ProxyAgent
-    media.ts          # AES-256-CBC media decryption (decryptWecomMediaWithMeta)
-    command-auth.ts   # DM policy + command authorization
-    video-frame.ts    # ffmpeg first-frame extraction for video messages
+    index.ts              # Re-exports: handleWecomWebhookRequest
+    handler.ts            # HTTP GET/POST handler with multi-account signature matching
+    gateway.ts            # Lifecycle: start/stop webhook targets, prune timer
+    monitor.ts            # startAgentForStream() — process inbound, dispatch Agent, deliver replies
+    state.ts              # StreamStore + ActiveReplyStore + WebhookMonitorState (singleton)
+    helpers.ts            # buildInboundBody, processInboundMessage, buildFallbackPrompt, MIME detect
+    types.ts              # WebhookInboundMessage, StreamState, PendingInbound, WecomWebhookTarget
+    target.ts             # Path-indexed target registry (register/unregister/resolve)
+    http.ts               # undici fetch wrapper with ProxyAgent
+    media.ts              # AES-256-CBC media decryption (decryptWecomMediaWithMeta)
+    command-auth.ts       # DM policy + command authorization
+    video-frame.ts        # ffmpeg first-frame extraction for video messages
 
+  # ── Agent mode (自建应用) ──
   agent/
-    api-client.ts     # WeCom API client with AccessToken caching
-    handler.ts        # XML webhook handler for Agent mode
-    webhook.ts        # Agent HTTP handler (GET echostr verify, POST XML decrypt)
-  config/
-    schema.ts         # Zod schemas for configuration
-    accounts.ts       # Account resolution, mode detection, conflict checking
-    network.ts        # Proxy resolution chain
-    routing.ts        # Fail-closed routing policy
-  monitor/
-    state.ts          # StreamStore and ActiveReplyStore (WebSocket mode)
-    types.ts          # StreamState, PendingInbound types
-  mcp/                # wecom_mcp tool: JSON-RPC over Streamable HTTP
-  crypto/             # AES-256-CBC, SHA1 signature, XML encrypt/decrypt
-  media/              # Media uploader, constants
-  shared/             # XML parser, command auth utilities
-  types/              # TypeScript types: config, account, message, constants
-  compat/             # SDK version compatibility shim
+    index.ts              # Re-exports
+    api-client.ts         # WeCom API client with AccessToken caching + refresh
+    handler.ts            # Agent request handler: dispatch to OpenClaw agent, deliver replies
+    webhook.ts            # Agent HTTP handler (GET echostr verify, POST XML decrypt + signature check)
+    xml.ts                # XML parsing utilities for Agent callbacks
+    asr.ts                # Voice message speech-to-text via WeCom ASR API
+    stream.ts             # Agent streaming response handler
+    voice-transcode.ts    # Voice format transcoding (AMR → WAV/MP3)
+    welcome.ts            # Welcome message on first connection
+    capabilities.ts       # Agent capability detection
+    markdown-strip.ts     # Strip markdown for plain-text WeCom messages
+
+  # ── MCP tool ──
+  mcp/
+    index.ts              # Re-exports: createWeComMcpTool
+    tool.ts               # wecom_mcp tool implementation (JSON-RPC over Streamable HTTP)
+    transport.ts          # MCP transport layer (undici-based HTTP with WeCom auth)
+    schema.ts             # MCP tool input schemas
+    config-fetch.ts       # Auto-fetch WeCom doc MCP config via WS after connection
+    interceptors/         # MCP response interceptors (smartpage, smartsheet, biz-error, doc-auth, msg-media)
+
+  # ── Shared utilities ──
+  shared/
+    command-auth.ts       # Command authorization utilities
+    xml-parser.ts         # XML parse/serialize with fast-xml-parser
+
+  # ── TypeScript types ──
+  types/
+    index.ts              # Re-exports all types
+    account.ts            # WeComAccount, WeComAccountConfig
+    config.ts             # WeComChannelConfig, WeComConfig (Zod schemas)
+    constants.ts          # Type-level constants
+    message.ts            # WeComMessage, InboundMessageBody, MessageType
+    global.d.ts           # Global type declarations
+
+  # ── Tests (co-located) ──
+  message-parser.test.ts
+  chat-queue.test.ts
+  template-card-parser.test.ts
+  reqid-store.test.ts
+  webhook/command-auth.test.ts
+  webhook/helpers.test.ts
+  webhook/state.test.ts
+  agent/markdown-strip.test.ts
+  agent/welcome.test.ts
+  mcp/tool.test.ts
+  mcp/transport.test.ts
+  shared/xml-parser.test.ts
 ```
 
-### Stream State Management
+### Core Data Flow
 
-The plugin uses sophisticated stream state systems for both modes:
-
-**WebSocket mode** (`src/monitor/state.ts`):
+**WebSocket mode** (`src/monitor.ts` + `src/state-manager.ts`):
 - **StreamStore**: Manages message streams with 6-minute timeout window
 - **ActiveReplyStore**: Tracks `response_url` for proactive pushes
-- **Pending Queue**: Debounces rapid messages (500ms default)
-- **Message Deduplication**: Uses `msgid` to prevent duplicate processing
-- Exports `getSessionChatInfo()` for MCP tool context (preserves original-case chatId)
+- **Chat Queue** (`chat-queue.ts`): Debounces rapid messages (500ms default)
+- **ReqId Store** (`reqid-store.ts`): Message deduplication via `msgid`
+- **Session Chat Info** (`state-manager.ts`): `getSessionChatInfo()` for MCP tool context (preserves original-case chatId)
 
-**Webhook mode** (`src/webhook/state.ts`):
+**Webhook mode** (`src/webhook/state.ts` + `src/webhook/monitor.ts`):
 - Separate singleton (`WebhookMonitorState`) with same StreamStore + ActiveReplyStore pattern
 - Additional `conversationState`/`batchKey`/`ackStream` queue semantics for multi-message merge
 - Used by `webhook/gateway.ts` and `webhook/monitor.ts`
@@ -119,11 +184,19 @@ npx vitest --config vitest.config.ts run -t "should encrypt"
 npx vitest --config vitest.config.ts --watch
 ```
 
-Test files are located alongside source files with `.test.ts` suffix (16 test files total):
-- `src/crypto.test.ts`
-- `src/monitor.integration.test.ts`
-- `src/monitor/state.queue.test.ts`
-- etc.
+Test files are located alongside source files with `.test.ts` suffix (12 test files, 273 test cases):
+- `src/message-parser.test.ts`
+- `src/chat-queue.test.ts`
+- `src/template-card-parser.test.ts`
+- `src/reqid-store.test.ts`
+- `src/webhook/command-auth.test.ts`
+- `src/webhook/helpers.test.ts`
+- `src/webhook/state.test.ts`
+- `src/agent/markdown-strip.test.ts`
+- `src/agent/welcome.test.ts`
+- `src/mcp/tool.test.ts`
+- `src/mcp/transport.test.ts`
+- `src/shared/xml-parser.test.ts`
 
 ### Type Checking
 
@@ -133,11 +206,16 @@ npx tsc --noEmit
 
 ### Build
 
-The plugin is loaded directly as TypeScript by OpenClaw. No build step is required for development, but type checking is recommended. For distribution, use `npm pack`.
+Build via `tsc` (TypeScript compiler):
+
+```bash
+pnpm build      # tsc → dist/
+pnpm typecheck  # tsc --noEmit
+```
 
 ## Configuration Schema
 
-Configuration is validated via Zod (`src/config/schema.ts`):
+Configuration is validated via Zod (`src/types/config.ts`):
 
 ```typescript
 {
@@ -273,12 +351,13 @@ streamStore.updateStream(streamId, (state) => {
 
 ## Dependencies
 
-- `@wecom/aibot-node-sdk`: Official WeCom Bot WebSocket SDK + crypto
-- `undici`: HTTP client with proxy support
+- `@partme.ai/openclaw-message-sdk`: Shared message types and utilities
+- `@wecom/aibot-node-sdk`: Official WeCom Bot WebSocket SDK + crypto (signature verification, AES encrypt/decrypt)
+- `undici`: HTTP client with proxy support (used in webhook/http.ts for outbound requests)
 - `fast-xml-parser`: XML parsing for Agent callbacks
 - `file-type`: MIME type detection from file buffers
 - `zod`: Configuration validation
-- `openclaw`: Peer dependency (>=2026.2.24)
+- `openclaw`: Peer dependency (>=2026.4.12)
 
 ## WeCom API Endpoints Used
 

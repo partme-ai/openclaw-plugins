@@ -15,7 +15,10 @@ import type { ResolvedGotifyAccount } from './types.js';
 
 /** 规范化 Gotify allowlist / sender 标识（小写、去 gotify: 前缀）。 */
 function normalizeGotifyId(value: string): string | null {
-  const normalized = value.replace(/^gotify:/i, '').trim().toLowerCase();
+  const normalized = value
+    .replace(/^gotify:/i, '')
+    .trim()
+    .toLowerCase();
   return normalized || null;
 }
 
@@ -68,9 +71,7 @@ export async function checkGotifyInboundAccess(params: {
       groupPolicy: 'disabled',
     },
     allowFrom: account.allowFrom,
-    accessGroups: cfgRecord.accessGroups as
-      | Record<string, unknown>
-      | undefined,
+    accessGroups: cfgRecord.accessGroups as Record<string, unknown> | undefined,
     useDefaultPairingStore: true,
   });
 

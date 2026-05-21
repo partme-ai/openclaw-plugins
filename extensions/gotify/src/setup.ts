@@ -11,7 +11,10 @@ export async function bootstrapGotifyAccount(account: ResolvedGotifyAccount): Pr
   applicationToken?: string;
 }> {
   if (!account.bootstrap.enabled) {
-    throw new GotifyConfigError('bootstrap', `Bootstrap is disabled for account ${account.accountId}.`);
+    throw new GotifyConfigError(
+      'bootstrap',
+      `Bootstrap is disabled for account ${account.accountId}.`
+    );
   }
 
   const applications = await listApplications(account);

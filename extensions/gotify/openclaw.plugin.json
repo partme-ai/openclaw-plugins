@@ -84,7 +84,12 @@
               "enabled": { "type": "boolean", "description": "Enable WebSocket stream listener for real-time message receiving" },
               "reconnectDelayMs": { "type": "integer", "minimum": 500, "default": 2000 },
               "maxReconnectDelayMs": { "type": "integer", "minimum": 1000, "default": 30000 },
-              "maxReconnectAttempts": { "type": "integer", "minimum": 0, "default": 10 }
+              "maxReconnectAttempts": { "type": "integer", "minimum": 0, "default": 10 },
+              "deleteAfterConsume": {
+                "type": "boolean",
+                "default": true,
+                "description": "Delete Gotify message after inbound is dispatched (set false for dev/test visibility)"
+              }
             }
           },
           "accounts": {
@@ -121,6 +126,10 @@
         "inbound.enabled": {
           "label": "Enable WebSocket Stream",
           "help": "Connect to Gotify /stream endpoint for real-time message receiving. Requires clientToken."
+        },
+        "inbound.deleteAfterConsume": {
+          "label": "Delete After Consume",
+          "help": "Remove message from Gotify after the agent receives it. Set false to keep messages for debugging or OPENCLAW_TEST_VISIBLE-style workflows."
         },
         "dmPolicy": {
           "label": "DM Policy",

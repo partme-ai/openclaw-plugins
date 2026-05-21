@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+  <title>OpenClaw Vision Chart Test</title>
+  <desc>Minimal bar chart for describe-this-chart multimodal tests</desc>
+  <rect width="400" height="300" fill="#f9fafb"/>
+  <rect x="16" y="16" width="368" height="268" rx="10" fill="#ffffff" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="200" y="48" text-anchor="middle" font-family="system-ui, sans-serif" font-size="16" font-weight="600" fill="#374151">Weekly Activity / 本周活动</text>
+  <!-- axes -->
+  <line x1="64" y1="220" x2="360" y2="220" stroke="#cbd5e1" stroke-width="1.5"/>
+  <line x1="64" y1="72" x2="64" y2="220" stroke="#cbd5e1" stroke-width="1.5"/>
+  <!-- bars: Mon 40, Tue 65, Wed 50, Thu 80 -->
+  <rect x="92" y="164" width="44" height="56" rx="4" fill="#93c5fd"/>
+  <rect x="156" y="131" width="44" height="89" rx="4" fill="#60a5fa"/>
+  <rect x="220" y="148" width="44" height="72" rx="4" fill="#3b82f6"/>
+  <rect x="284" y="108" width="44" height="112" rx="4" fill="#2563eb"/>
+  <!-- values -->
+  <text x="114" y="156" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12" fill="#1e40af">40</text>
+  <text x="178" y="123" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12" fill="#1e40af">65</text>
+  <text x="242" y="140" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12" fill="#1e40af">50</text>
+  <text x="306" y="100" text-anchor="middle" font-family="ui-monospace, monospace" font-size="12" fill="#1e40af">80</text>
+  <!-- labels -->
+  <text x="114" y="238" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#64748b">Mon</text>
+  <text x="178" y="238" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#64748b">Tue</text>
+  <text x="242" y="238" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#64748b">Wed</text>
+  <text x="306" y="238" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#64748b">Thu</text>
+  <text x="200" y="268" text-anchor="middle" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8">Highest bar: Thu (80)</text>
+</svg>

@@ -1,4 +1,7 @@
-import type { ChannelOutboundAdapter, ChannelOutboundContext } from 'openclaw/plugin-sdk/channel-contract';
+import type {
+  ChannelOutboundAdapter,
+  ChannelOutboundContext,
+} from 'openclaw/plugin-sdk/channel-contract';
 
 import { resolveDefaultGotifyAccountId, resolveGotifyAccount } from './config.js';
 import { sendGotifyMessage } from './gotify-api.js';

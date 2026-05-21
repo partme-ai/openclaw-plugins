@@ -7,11 +7,11 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { KfMessage, WecomAccountConfig } from "./types/index.js";
+import type { WecomAccountConfig } from "./types/index.js";
 import { parseWecomCallback } from "./crypto.js";
 import { getAccessToken, syncMessages } from "./agent/api-client.js";
 import { getCursorStore } from "./cursor-store.js";
-import { handleAgentWebhook } from "./agent/handler.js";
+import { handleCustomerMessage } from "./agent/handler.js";
 import { handleSystemEvent } from "./agent/system-event.js";
 
 /** 同一批消息最大并发处理数 */
@@ -73,8 +73,8 @@ export function createKfCallbackHandler(
       const parsed = parseWecomCallback(
         query,
         body,
-        defaultConfig.token,
-        defaultConfig.encodingAESKey
+        defaultConfig.token ?? "",
+        defaultConfig.encodingAESKey ?? ""
       );
 
       if (parsed.type === "verify") {
@@ -83,8 +83,8 @@ export function createKfCallbackHandler(
         return;
       }
 
-      const eventData = parsed.data;
-      if (eventData.Event === "kf_msg_or_event") {
+      const eventData = parsed.data as Record<string, unknown> | undefined;
+      if (eventData && eventData.Event === "kf_msg_or_event") {
         processKfEvent(eventData, getAccountConfig).catch((error) => {
           console.error("[wecom_kf] Error processing KF event:", error);
         });
@@ -120,18 +120,36 @@ async function processKfEvent(
     return;
   }
 
-  const accessToken = await getAccessToken(
-    accountConfig.corpId,
-    accountConfig.corpSecret
-  );
+  const corpid = accountConfig.corpId ?? "";
+  const corpseret = accountConfig.corpSecret ?? "";
+  const accessToken = await getAccessToken({
+    accountId: "kf-callback",
+    enabled: true,
+    configured: true,
+    corpId: corpid,
+    corpSecret: corpseret,
+    token: "",
+    encodingAESKey: "",
+    config: {
+      corpId: corpid,
+      corpSecret: corpseret,
+      token: "",
+      encodingAESKey: "",
+    },
+  });
 
   const cursorStore = getCursorStore();
-  const kfId = openKfId ?? accountConfig.openKfId;
-  let cursor = await cursorStore.getCursor(kfId);
+  const kfId = openKfId ?? accountConfig.openKfId ?? "";
+  let cursor: string | undefined = await cursorStore.getCursor(kfId);
 
   let hasMore = true;
   while (hasMore) {
-    const syncResult = await syncMessages(accessToken, cursor, token, openKfId);
+    const syncResult = await syncMessages(
+      accessToken,
+      cursor ?? "",
+      cursor ? undefined : token,  // Only pass token on first pull
+      openKfId,
+    );
 
     if (syncResult.errcode !== 0) {
       console.error(
@@ -161,17 +179,20 @@ async function processKfEvent(
  * @param accountConfig - 当前客服账号配置
  */
 async function processMessage(
-  msg: KfMessage,
+  msg: Record<string, unknown>,
   accountConfig: WecomAccountConfig
 ): Promise<void> {
-  switch (msg.origin) {
+  const origin = msg.origin as number | undefined;
+  const msgtype = msg.msgtype as string | undefined;
+
+  switch (origin) {
     case 3:
       await handleCustomerMessage(msg, accountConfig);
       break;
 
     case 4:
-      if (msg.msgtype === "event") {
-        await handleSystemEvent(msg, accountConfig);
+      if (msgtype === "event") {
+        await handleSystemEvent(msg as Record<string, unknown> as Parameters<typeof handleSystemEvent>[0], accountConfig);
       }
       break;
 
@@ -179,7 +200,7 @@ async function processMessage(
       break;
 
     default:
-      console.log(`[wecom_kf] Unknown origin: ${msg.origin}`);
+      console.log(`[wecom_kf] Unknown origin: ${origin}`);
   }
 }
 

@@ -14,6 +14,9 @@ export const WEBHOOK_PATHS = {
     BOT_PLUGIN: "/plugins/wecom-cs/bot",
     /** Agent 模式推荐路径前缀 */
     AGENT_PLUGIN: "/plugins/wecom-cs/agent",
+    /** KF 客服回调路径 */
+    KF: "/wecom/kefu",
+    KF_PLUGIN: "/plugins/wecom/kefu",
 } as const;
 
 /** 企业微信 API 端点 */
@@ -23,6 +26,12 @@ export const API_ENDPOINTS = {
     SEND_APPCHAT: "https://qyapi.weixin.qq.com/cgi-bin/appchat/send",
     UPLOAD_MEDIA: "https://qyapi.weixin.qq.com/cgi-bin/media/upload",
     DOWNLOAD_MEDIA: "https://qyapi.weixin.qq.com/cgi-bin/media/get",
+    /** KF 客服消息同步 */
+    KF_SYNC_MSG: "https://qyapi.weixin.qq.com/cgi-bin/kf/sync_msg",
+    /** KF 客服消息发送 */
+    KF_SEND_MSG: "https://qyapi.weixin.qq.com/cgi-bin/kf/send_msg",
+    /** KF 事件消息发送 (欢迎语等) */
+    KF_SEND_MSG_ON_EVENT: "https://qyapi.weixin.qq.com/cgi-bin/kf/send_msg_on_event",
 } as const;
 
 /** 各类限制常量 */

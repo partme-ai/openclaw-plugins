@@ -87,10 +87,7 @@ async function fetchWithRetry(
         continue;
       }
       const body = await safeReadText(response);
-      throw new GotifyApiError(
-        `Gotify API failed (${response.status}): ${body}`,
-        response.status
-      );
+      throw new GotifyApiError(`Gotify API failed (${response.status}): ${body}`, response.status);
     } catch (error) {
       lastError = error;
       if (error instanceof GotifyApiError || error instanceof GotifyTimeoutError) {
@@ -183,6 +180,26 @@ export async function sendGotifyMessage(
     const response = await fetchWithRetry(fetchImpl, request.url, request.init, options);
     return (await response.json()) as GotifyMessageResponse;
   });
+}
+
+/**
+ * 出站投递用：首次失败后等待一次再重试（共最多 2 次 POST），提高一来一回回复可靠性。
+ */
+export async function sendGotifyMessageWithDeliveryRetry(
+  account: ResolvedGotifyAccount,
+  payload: GotifyMessagePayload,
+  options: GotifyFetchOptions = {}
+): Promise<GotifyMessageResponse> {
+  try {
+    return await sendGotifyMessage(account, payload, options);
+  } catch (firstError) {
+    await sleep(Math.max(0, options.retryDelayMs ?? 300));
+    try {
+      return await sendGotifyMessage(account, payload, { ...options, retryCount: 0 });
+    } catch {
+      throw firstError;
+    }
+  }
 }
 
 /**
@@ -299,6 +316,63 @@ export async function deleteApplicationMessages(
 }
 
 // ── Application API ────────────────────────────────────────────────────────────
+
+/** 账号级应用名称缓存：accountId → (appId → name)。 */
+const applicationNameCache = new Map<string, Map<number, string>>();
+
+/**
+ * 清空应用名称缓存（测试或账号配置变更时使用）。
+ */
+export function clearApplicationNameCache(accountId?: string): void {
+  if (accountId) {
+    applicationNameCache.delete(accountId);
+  } else {
+    applicationNameCache.clear();
+  }
+}
+
+/**
+ * 按 appId 从缓存或 GET /application 列表解析应用展示名。
+ * 首次未命中时拉取全量应用列表并写入 per-account 缓存，避免每条消息重复请求。
+ */
+export async function resolveApplicationName(
+  account: ResolvedGotifyAccount,
+  applicationId: number,
+  options: GotifyFetchOptions = {}
+): Promise<string | undefined> {
+  const appId = Math.trunc(applicationId);
+  if (!Number.isFinite(appId) || appId <= 0) {
+    return undefined;
+  }
+  if (!account.clientToken) {
+    return undefined;
+  }
+
+  let accountCache = applicationNameCache.get(account.accountId);
+  if (!accountCache) {
+    accountCache = new Map();
+    applicationNameCache.set(account.accountId, accountCache);
+  }
+
+  const cached = accountCache.get(appId);
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    const applications = await listApplications(account, options);
+    for (const app of applications) {
+      const name = app.name?.trim();
+      if (name) {
+        accountCache.set(app.id, name);
+      }
+    }
+  } catch {
+    return undefined;
+  }
+
+  return accountCache.get(appId);
+}
 
 /**
  * 获取应用列表 — GET /application (Client Token)
@@ -664,8 +738,7 @@ export async function probeGotifyAccount(
     }
   }
 
-  const tokenIssue =
-    appTokenValid === false ? 'appToken not found in application list' : undefined;
+  const tokenIssue = appTokenValid === false ? 'appToken not found in application list' : undefined;
 
   return {
     ok: !tokenIssue,

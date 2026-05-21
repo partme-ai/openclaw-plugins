@@ -7,7 +7,7 @@ import { setWeComRuntime } from "./src/runtime.js";
 import { CHANNEL_ID, WEBHOOK_PATHS } from "./src/const.js";
 import { createWecomAgentWebhookHandler } from "./src/agent/webhook.js";
 import { handleWecomWebhookRequest } from "./src/webhook/index.js";
-import { handleTempMediaRequest } from "./src/temp-media-server.js";
+import { handleTempMediaRequest } from "./src/outbound-reply.js";
 
 const plugin = {
   id: "wecom",

@@ -7,6 +7,8 @@ export interface GotifyStreamConfig {
   reconnectDelayMs?: number;
   maxReconnectDelayMs?: number;
   maxReconnectAttempts?: number;
+  /** 入站派发成功后从 Gotify 删除消息；开发/测试可设为 false 便于在 Gotify App 对照 */
+  deleteAfterConsume?: boolean;
 }
 
 export interface GotifyBootstrapConfig {

@@ -475,6 +475,68 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
       };
     },
   },
+
+  // ==========================================================================
+  // Message Tool Actions (OpenClaw standard contract)
+  // ==========================================================================
+  actions: {
+    describeMessageTool: () => ({
+      actions: ["send", "sendAttachment"] as const,
+      capabilities: [] as const,
+      schema: {
+        properties: {
+          media: { type: "string", description: "Media file URL or local file path (for file/image/audio/video attachments)" },
+          caption: { type: "string", description: "Optional caption text for the media" },
+        },
+        visibility: "current-channel",
+      },
+    } as const),
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- AgentToolResult shape compatible
+    handleAction: (async (ctx: Record<string, unknown>) => {
+      const action = String(ctx.action ?? "");
+      const params = (ctx.params ?? {}) as Record<string, unknown>;
+      const cfg = ctx.cfg as OpenClawConfig | undefined;
+      const accountId = (ctx.accountId ?? undefined) as string | undefined;
+
+      const to = String(params.to ?? "").trim();
+      if (!to) {
+        return { content: [], details: { ok: false, error: "wecom send requires 'to' param" } };
+      }
+
+      if (action === "send") {
+        const message = String(params.message ?? "");
+        const media = String(params.media ?? "").trim();
+        if (media) {
+          const wsClient = getWeComWebSocket(accountId ?? DEFAULT_ACCOUNT_ID);
+          if (wsClient?.isConnected) {
+            const chatId = to.replace(new RegExp(`^${CHANNEL_ID}:`, "i"), "");
+            await uploadAndSendMedia({ wsClient, mediaUrl: media, chatId });
+          }
+          return { content: [{ type: "text" as const, text: message || `Sent ${media}` }], details: { ok: true, messageId: `media-${Date.now()}` } };
+        }
+        const result = await sendWeComMessage({ to, content: message, accountId, cfg });
+        return { content: [{ type: "text" as const, text: message }], details: { ok: true, messageId: result.messageId } };
+      }
+
+      if (action === "sendAttachment") {
+        const media = String(params.media ?? "").trim();
+        if (!media) {
+          return { content: [], details: { ok: false, error: "wecom sendAttachment requires 'media' param" } };
+        }
+        const caption = String(params.caption ?? "").trim();
+        const wsClient = getWeComWebSocket(accountId ?? DEFAULT_ACCOUNT_ID);
+        if (wsClient?.isConnected) {
+          const chatId = to.replace(new RegExp(`^${CHANNEL_ID}:`, "i"), "");
+          await uploadAndSendMedia({ wsClient, mediaUrl: media, chatId });
+        }
+        return { content: [{ type: "text" as const, text: caption || `Attachment: ${media}` }], details: { ok: true, messageId: `attachment-${Date.now()}` } };
+      }
+
+      return { content: [], details: { ok: false, error: `Unsupported wecom action: ${action}` } };
+    }) as any,
+  },
+
   gateway: {
     startAccount: async (ctx) => {
       // 多账号：按 accountId 解析账号配置

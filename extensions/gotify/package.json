@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:client": "tsx scripts/test-client.ts",
+    "test:standard": "tsx scripts/run-gotify-standard-tests.ts",
+    "test:ui-gate": "tsx scripts/ui-transcript-gate-test.ts",
+    "test:wait-reply": "tsx scripts/wait-reply-test.ts",
     "lint": "eslint src --fix",
     "format": "prettier --write src",
     "prepublishOnly": "pnpm build"
@@ -57,11 +59,13 @@
     "@typescript-eslint/parser": "^8.20.0",
     "eslint": "^9.16.0",
     "eslint-plugin-prettier": "^5.2.1",
+    "globals": "^17.6.0",
     "prettier": "^3.4.2",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "yaml": "^2.9.0"
   },
   "peerDependencies": {
     "openclaw": ">=2026.4.12"

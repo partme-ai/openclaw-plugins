@@ -5,7 +5,7 @@
 **OpenClaw 插件：Gotify 渠道桥接 — REST API 推送 + WebSocket 流接收 + 多账号会话隔离**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--gotify-blue)
-![Node](https://img.shields.io/badge/Node.js-20+-green)
+![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 </div>
@@ -143,6 +143,19 @@ npm install @partme.ai/openclaw-gotify
 | `reconnectDelayMs` | number | `2000` | 初始重连延迟（毫秒） |
 | `maxReconnectDelayMs` | number | `30000` | 最大重连延迟（指数退避上限） |
 | `maxReconnectAttempts` | number | `10` | 最大重连尝试次数 |
+| `deleteAfterConsume` | boolean | `true` | 消费即删：入站派发成功后删除原消息，Agent 回复发送成功后删除回复消息 |
+
+#### 消费即删策略
+
+默认 **`deleteAfterConsume: true`**（严格策略）：只要消息被消费，就从 Gotify 服务端删除。
+
+| 方向 | 触发时机 |
+|------|----------|
+| 入站 | Agent **整轮回复投递完成**后，DELETE 用户发来的原消息（避免先删后答） |
+| 出站 | `POST /message` 成功后立即 DELETE 该回复（手机端先收到推送再清理） |
+
+关闭方式：配置 `channels.gotify.inbound.deleteAfterConsume: false`。  
+`OPENCLAW_TEST_VISIBLE=1` **不会**跳过插件侧删除，仅影响标准测试 runner 的额外 cleanup 行为。
 
 ### 环境变量声明
 
@@ -187,11 +200,28 @@ npm install @partme.ai/openclaw-gotify
 
 1. Gotify 应用或外部系统发送消息到 Gotify 服务器
 2. 插件通过 WebSocket `/stream` 实时接收消息
-3. 幂等去重（30 秒窗口）
+3. 幂等去重（60 秒窗口）
 4. 解析对端标识（`extras.openclaw.peerId` → `appid` → `title`）
 5. 按 `session.dmScope` 构造会话键
 6. 路由到对应 Agent 处理
 7. Agent 回复通过 `POST /message`（App Token）发送回 Gotify
+
+## 💬 一来一回对话（Gotify + Control UI）
+
+| 层面 | 行为 |
+|------|------|
+| **Gotify App** | 推送通知渠道；默认消费即删（入站用户消息在 Agent **回复发送成功后**删除，出站回复在 POST **成功后**删除） |
+| **OpenClaw Control UI** | **完整对话历史** 保存在 Session Store；多轮共用同一 `sessionKey`（同一 `peerId` / appid） |
+| **幂等** | 仅按 `messageId` 去重，同一对端连续多条新消息不会互相屏蔽 |
+| **出站** | `sendGotifyMessageWithDeliveryRetry`：失败时自动再试 1 次 |
+
+**在 Control UI 查看测试 / 真实对话：**
+
+1. 打开 Gateway（如 `http://127.0.0.1:18789`）→ **Sessions**
+2. 不要选默认 `agent:main:main`；选择 **`gotify: e2e-user`** 或 sessionKey：`agent:main:gotify:default:direct:<peerId>`（`dmScope=per-account-channel-peer` 时，见下表）
+3. Gotify 手机上可能看不到历史（已删），但 UI 里可顺畅多轮一来一回
+
+手动连发 3 条验证：用 e2e-user App Token 连发 3 次 `POST /message`，应在同一 session 看到 3 轮 user/agent 记录。
 
 ## 🧭 dmScope 会话隔离
 
@@ -207,6 +237,40 @@ npm install @partme.ai/openclaw-gotify
 对端标识解析优先级：`extras.openclaw.peerId` → `appid` → `title` → `"gotify"`
 
 ## 🧪 测试
+
+### 诚实评估：单元测试 ≠ Control UI 成功
+
+| 层级 | 命令 | 证明什么 | **不能**证明什么 |
+|------|------|----------|------------------|
+| L0 单元 | `pnpm test`（vitest，~91 条） | 配置解析、mock 派发、去重逻辑 | Gateway 运行、WS 入站、**Control UI 有消息** |
+| L1 标准 | `pnpm test:standard` | Gotify 往返 +（默认）chat.history 抽检 | 用户肉眼在 UI 点对了会话 |
+| **UI 验收门禁** | **`pnpm test:ui-gate`** | **`chat.history` 含 user 消息 = UI 同源 transcript** | Agent LLM 一定成功（user 消息必须先出现） |
+
+**发布 / 验收必须 `pnpm test:ui-gate` 通过。** 仅 vitest 全绿不算成功。
+
+```bash
+# 1. 构建并重启 Gateway（加载最新插件）
+pnpm build && openclaw gateway restart
+
+# 2. UI 验收门禁（必过）
+GOTIFY_APP_TOKEN=AK-MvdcbyFOfBmQ GOTIFY_CLIENT_TOKEN=C7ErQjzzeoAXCKg pnpm test:ui-gate
+
+# 3. 单元测试（CI，mock）
+pnpm test
+
+# 4. 标准 + Agent 往返（可选，含 chat.history 尾检）
+GOTIFY_APP_TOKEN=... GOTIFY_CLIENT_TOKEN=... pnpm test:standard
+```
+
+### Control UI 里查看测试 / E2E 对话
+
+测试消息经 Gotify REST 入站后，会话键由 **`session.dmScope`** 决定（本仓库常见为 `per-account-channel-peer` → `agent:main:gotify:default:direct:4`），**不会**出现在默认 **`agent:main:main`**。
+
+- 打开 `http://127.0.0.1:18789` → **Sessions** → 选 **`gotify: e2e-user`** 或 **`agent:main:gotify:default:direct:4`**
+- **勿用** `channels.gotify.appToken` 做入站测试（与出站同 appid 会被 echo 过滤）；用 **e2e-user App Token**（appid=4）
+- 勿选已废弃的 `agent:main:gotify:direct:4`（旧 dmScope 残留、transcript 文件缺失时 UI 会显示 0 条消息）
+- 默认消费即删（入站 + 出站回复），Gotify App 消息列表通常为空；需保留消息时设 `channels.gotify.inbound.deleteAfterConsume: false`
+- `OPENCLAW_TEST_VISIBLE=1 pnpm test:standard`：仅跳过 runner cleanup，不关闭插件删除
 
 ```bash
 # 单元测试
@@ -254,14 +318,14 @@ openclaw-gotify/
 │   ├── config-wizard.ts      # 配置向导
 │   ├── gotify-client.ts      # GotifyClient 类封装
 │   └── types.ts              # 类型定义
-├── docs/
-│   ├── Gotify-Complete-Reference_CN.md           # Gotify 服务端完整技术参考
-│   └── OpenClaw-Plugin-Mechanism-Complete-Reference_CN.md  # OpenClaw 插件机制参考
 ├── scripts/
-│   └── test-client.ts        # 集成测试客户端
+│   ├── test-client.ts        # 手动 doctor/bootstrap 测试客户端
+│   ├── functional-test.ts    # 完整 API 功能测试（需真实 Gotify 服务器）
+│   ├── e2e-agent-test.ts     # 端到端 Agent 通信 + chat.history 验收
+│   └── ui-transcript-gate-test.ts  # Control UI 验收门禁（发布必过）
 ├── openclaw.plugin.json      # 插件清单
 ├── package.json
-└── README.md / README_CN.md
+└── README.md / README.en.md
 ```
 
 ## 📚 OpenClaw 官方文档

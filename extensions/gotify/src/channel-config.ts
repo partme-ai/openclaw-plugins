@@ -64,6 +64,11 @@ export const GotifyAccountSchema = z
         reconnectDelayMs: z.number().int().min(500).optional().default(2000),
         maxReconnectDelayMs: z.number().int().min(1000).optional().default(30_000),
         maxReconnectAttempts: z.number().int().min(0).optional().default(10),
+        deleteAfterConsume: z
+          .boolean()
+          .optional()
+          .default(true)
+          .describe('Delete Gotify message after successful inbound dispatch'),
       })
       .strict()
       .optional(),
@@ -130,6 +135,11 @@ export const gotifyConfigSchema: ChannelConfigSchema = {
           reconnectDelayMs: { type: 'integer', minimum: 500 },
           maxReconnectDelayMs: { type: 'integer', minimum: 1000 },
           maxReconnectAttempts: { type: 'integer', minimum: 0 },
+          deleteAfterConsume: {
+            type: 'boolean',
+            default: true,
+            description: 'Delete message from Gotify after inbound is dispatched to the agent',
+          },
         },
         additionalProperties: false,
       },

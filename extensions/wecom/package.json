@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest --config vitest.config.ts run",
     "prepublishOnly": "pnpm build",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "pack-dry": "node scripts/pack-dry.mjs"
   },
   "files": [
     "dist/",

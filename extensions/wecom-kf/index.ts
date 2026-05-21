@@ -6,6 +6,9 @@ import { setWecomRuntime } from "./src/runtime.js";
 import { wecomPlugin } from "./src/channel.js";
 import { createWeComMcpTool } from "./src/mcp/index.js";
 
+// ── KF State Flow ──
+import { DIALOGUE_SESSION_NAMESPACE, buildStateAwarePrompt } from "./src/kf/index.js";
+
 // ── ICS (Intelligent Customer Service) REST API ──
 import { createKnowledgeHandler } from "./src/ics-handlers/knowledge.js";
 import { createBindingsHandler } from "./src/ics-handlers/bindings.js";
@@ -42,7 +45,32 @@ const plugin = {
     // Register wecom_kf_mcp
     api.registerTool(createWeComMcpTool(), { name: "wecom_kf_mcp" });
 
-    // MEDIA instruction prompt injection
+    // State-aware dialogue prompt injection for KF sessions
+    api.on("before_prompt_build", async (_event, ctx) => {
+      // Only inject for wecom-kf channel KF surface sessions
+      if (ctx.channelId !== "wecom-kf") return;
+      if (ctx.surface !== "wecom-kf") return;
+
+      // Load dialogue context
+      try {
+        const sessionExt = (api as Record<string, unknown>).session as Record<string, unknown> | undefined;
+        const getState = sessionExt?.state?.get as
+          ((namespace: string) => Promise<Record<string, unknown> | undefined>) | undefined;
+        const dialogueCtx = await getState?.(DIALOGUE_SESSION_NAMESPACE);
+        if (!dialogueCtx) return;
+
+        const statePrompt = buildStateAwarePrompt(dialogueCtx as Parameters<typeof buildStateAwarePrompt>[0]);
+        if (!statePrompt) return;
+
+        return {
+          systemPrompt: statePrompt,
+        };
+      } catch {
+        // Non-blocking: if state flow fails, don't break the conversation
+      }
+    });
+
+    // MEDIA instruction prompt injection (for all wecom-kf channel sessions)
     api.on("before_prompt_build", (_event, ctx) => {
       if (ctx.channelId !== "wecom-kf") return;
       return {

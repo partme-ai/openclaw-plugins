@@ -28,6 +28,10 @@ vi.mock("../accounts.js", () => ({
   resolveWeComAccountMulti: vi.fn(() => ({ botId: "bot", secret: "secret" })),
 }));
 
+vi.mock("undici", () => ({
+  fetch: fetchMock,
+}));
+
 import { WECOM_USERID_HEADER, clearCategoryCache, sendJsonRpc } from "./transport.js";
 
 function createJsonRpcResponse(result: unknown) {
@@ -51,13 +55,11 @@ describe("sendJsonRpc requester userid header", () => {
     });
 
     fetchMock.mockImplementation(async () => createJsonRpcResponse({ tools: [] }));
-    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
     clearCategoryCache("default", "contact");
     clearCategoryCache("default", "doc");
-    vi.unstubAllGlobals();
   });
 
   it("injects x-openclaw-wecom-userid on initialize and request when userid is provided", async () => {

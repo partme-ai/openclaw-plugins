@@ -140,6 +140,9 @@ importers:
       eslint-plugin-prettier:
         specifier: ^5.2.1
         version: 5.5.5(eslint@9.39.4(jiti@2.7.0))(prettier@3.8.3)
+      globals:
+        specifier: ^17.6.0
+        version: 17.6.0
       prettier:
         specifier: ^3.4.2
         version: 3.8.3
@@ -155,6 +158,9 @@ importers:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.19)
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
 
   extensions/knowledge:
     dependencies:
@@ -4547,6 +4553,10 @@ packages:
 
   globals@14.0.0:
     resolution: {integrity: sha512-oahGvuMGQlPw/ivIYBjVSrWAfWLBeku5tpPE2fOPLi+WHffIWbuh2tCjhyQhTBPMf5E9jDEH4FOmTYgYwbKwtQ==}
+    engines: {node: '>=18'}
+
+  globals@17.6.0:
+    resolution: {integrity: sha512-sepffkT8stwnIYbsMBpoCHJuJM5l98FUF2AnE07hfvE0m/qp3R586hw4jF4uadbhvg1ooIdzuu7CsfD2jzCaNA==}
     engines: {node: '>=18'}
 
   globalthis@1.0.4:
@@ -12136,6 +12146,8 @@ snapshots:
       type-fest: 0.8.1
 
   globals@14.0.0: {}
+
+  globals@17.6.0: {}
 
   globalthis@1.0.4:
     dependencies:

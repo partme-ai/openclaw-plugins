@@ -65,7 +65,9 @@ export function createGotifyWsListener(
     if (action === 'resolve') {
       connectionGate.resolve();
     } else {
-      connectionGate.reject(error ?? new GotifyWebSocketError('WebSocket connection failed', 'WEBSOCKET_ERROR'));
+      connectionGate.reject(
+        error ?? new GotifyWebSocketError('WebSocket connection failed', 'WEBSOCKET_ERROR')
+      );
     }
     connectionGate = null;
   };
@@ -161,7 +163,9 @@ export function createGotifyWsListener(
         } catch (error) {
           settleConnectionGate(
             'reject',
-            error instanceof Error ? error : new GotifyWebSocketError(String(error), 'WEBSOCKET_ERROR')
+            error instanceof Error
+              ? error
+              : new GotifyWebSocketError(String(error), 'WEBSOCKET_ERROR')
           );
         }
       });

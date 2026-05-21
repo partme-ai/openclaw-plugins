@@ -22,7 +22,10 @@ export async function runConfigWizard(account: ResolvedGotifyAccount): Promise<s
     description: account.bootstrap.applicationDescription,
   });
   if (!created.token) {
-    throw new GotifyApiError('Gotify application token is missing from createApplication response.', 500);
+    throw new GotifyApiError(
+      'Gotify application token is missing from createApplication response.',
+      500
+    );
   }
   return created.token;
 }

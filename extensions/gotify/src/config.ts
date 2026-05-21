@@ -1,4 +1,9 @@
-import type { GotifyAccountConfig, GotifyChannelConfig, GotifyDmPolicy, ResolvedGotifyAccount } from './types.js';
+import type {
+  GotifyAccountConfig,
+  GotifyChannelConfig,
+  GotifyDmPolicy,
+  ResolvedGotifyAccount,
+} from './types.js';
 
 export const DEFAULT_GOTIFY_ACCOUNT_ID = 'default';
 const DEFAULT_PRIORITY = 5;
@@ -72,6 +77,7 @@ export function resolveGotifyAccount(
       reconnectDelayMs: merged.inbound?.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS,
       maxReconnectDelayMs: merged.inbound?.maxReconnectDelayMs ?? DEFAULT_MAX_RECONNECT_DELAY_MS,
       maxReconnectAttempts: merged.inbound?.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT_ATTEMPTS,
+      deleteAfterConsume: merged.inbound?.deleteAfterConsume ?? true,
     },
     bootstrap: {
       enabled: merged.bootstrap?.enabled ?? false,

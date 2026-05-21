@@ -2,6 +2,8 @@
 
 declare module 'openclaw/plugin-sdk/core' {
   export type OpenClawConfig = Record<string, unknown>;
+  // Generic preserved for call sites (e.g. ChannelPlugin<ResolvedGotifyAccount>); account type is not used in this stub.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   export type ChannelPlugin<T = unknown> = Record<string, unknown>;
   export type OpenClawPluginApi = {
     id: string;
@@ -67,6 +69,14 @@ declare module 'openclaw/plugin-sdk/channel-contract' {
       routing: {
         resolveAgentRoute: (params: any) => Promise<any>;
       };
+      session?: {
+        resolveStorePath: (store: string | undefined, opts: { agentId: string }) => string;
+        recordInboundSession: (params: any) => Promise<void>;
+      };
+      /** Host channel kernel (Feishu/IRC 同款 turn 管线，写入 transcript + 派发 Agent)。 */
+      turn?: {
+        runAssembled: (params: any) => Promise<unknown>;
+      };
     };
   };
   export type ChannelOutboundContext = {
@@ -131,7 +141,8 @@ declare module 'openclaw/plugin-sdk/channel-config-helpers' {
 /** @deprecated Prefer focused subpaths such as plugin-sdk/core and plugin-sdk/channel-contract */
 declare module 'openclaw/plugin-sdk' {
   export type OpenClawConfig = import('openclaw/plugin-sdk/core').OpenClawConfig;
-  export type ChannelAccountSnapshot = import('openclaw/plugin-sdk/channel-contract').ChannelAccountSnapshot;
+  export type ChannelAccountSnapshot =
+    import('openclaw/plugin-sdk/channel-contract').ChannelAccountSnapshot;
   export type ChannelPlugin<T = unknown> = import('openclaw/plugin-sdk/core').ChannelPlugin<T>;
   export type ChannelGatewayContext<T = unknown> =
     import('openclaw/plugin-sdk/channel-contract').ChannelGatewayContext<T>;
@@ -140,9 +151,7 @@ declare module 'openclaw/plugin-sdk' {
   export type ChannelOutboundAdapter =
     import('openclaw/plugin-sdk/channel-contract').ChannelOutboundAdapter;
   export function deleteAccountFromConfigSection(
-    params: Parameters<
-      typeof import('openclaw/plugin-sdk/core').deleteAccountFromConfigSection
-    >[0]
+    params: Parameters<typeof import('openclaw/plugin-sdk/core').deleteAccountFromConfigSection>[0]
   ): import('openclaw/plugin-sdk/core').OpenClawConfig;
   export function setAccountEnabledInConfigSection(
     params: Parameters<

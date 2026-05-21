@@ -8,7 +8,7 @@
 import crypto from "node:crypto";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { StreamState, WecomWebhookTarget, WebhookInboundMessage, WebhookInboundQuote } from "./types.js";
-import { registerResponseUrl } from "../response-url-tracker.js";
+import { registerResponseUrl } from "../outbound-reply.js";
 
 // ============================================================================
 // 常量

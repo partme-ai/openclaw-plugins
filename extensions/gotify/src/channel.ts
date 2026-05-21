@@ -1,5 +1,8 @@
 import type { ChannelPlugin, OpenClawConfig } from 'openclaw/plugin-sdk/core';
-import type { ChannelAccountSnapshot, ChannelGatewayContext } from 'openclaw/plugin-sdk/channel-contract';
+import type {
+  ChannelAccountSnapshot,
+  ChannelGatewayContext,
+} from 'openclaw/plugin-sdk/channel-contract';
 import {
   deleteAccountFromConfigSection,
   setAccountEnabledInConfigSection,
@@ -15,10 +18,28 @@ import {
 } from './config.js';
 import { gotifyOutbound } from './outbound.js';
 import { createGotifyWsListener } from './ws-listener.js';
-import { getAccountSnapshot, getOwnApplicationId, patchAccountSnapshot, setOwnApplicationId } from './runtime.js';
-import { probeGotifyAccount, sendGotifyMessage } from './gotify-api.js';
-import { mapGotifyToInbound, withOpenClawOutboundExtras, isOpenClawOutboundStreamMessage } from './message-mapper.js';
-import { resolveGotifyPeerId } from './peer-resolver.js';
+import {
+  getAccountSnapshot,
+  getOwnApplicationId,
+  patchAccountSnapshot,
+  setOwnApplicationId,
+} from './runtime.js';
+import {
+  probeGotifyAccount,
+  sendGotifyMessageWithDeliveryRetry,
+  deleteMessage,
+  resolveApplicationName,
+} from './gotify-api.js';
+import {
+  mapGotifyToInbound,
+  withOpenClawOutboundExtras,
+  isOpenClawOutboundStreamMessage,
+} from './message-mapper.js';
+import {
+  resolveGotifyPeerId,
+  resolveGotifyConversationLabel,
+  resolveGotifySenderName,
+} from './peer-resolver.js';
 import { checkGotifyInboundAccess } from './inbound-access.js';
 import { gotifyConfigSchema } from './channel-config.js';
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from './types.js';
@@ -100,7 +121,11 @@ const resolveGotifyDmPolicy = createScopedDmSecurityResolver<ResolvedGotifyAccou
   resolveAllowFrom: (account) => account.allowFrom,
   defaultPolicy: 'open',
   approveHint: 'openclaw pairing approve gotify <code>',
-  normalizeEntry: (raw) => raw.replace(/^gotify:/i, '').trim().toLowerCase(),
+  normalizeEntry: (raw) =>
+    raw
+      .replace(/^gotify:/i, '')
+      .trim()
+      .toLowerCase(),
 });
 
 /**
@@ -163,7 +188,10 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
     collectWarnings: ({ account }: { account: ResolvedGotifyAccount }) => {
       const warnings: string[] = [];
       const dmPolicy = account.dmPolicy ?? 'open';
-      if (dmPolicy === 'open' && !(account.allowFrom ?? []).some((entry: string) => String(entry).trim() === '*')) {
+      if (
+        dmPolicy === 'open' &&
+        !(account.allowFrom ?? []).some((entry: string) => String(entry).trim() === '*')
+      ) {
         warnings.push(
           `- Gotify[${account.accountId}]：dmPolicy="open" 时建议设置 channels.gotify.allowFrom=["*"]，或使用 dmPolicy="allowlist" 限制 appid/peerId。`
         );
@@ -313,15 +341,14 @@ export async function dispatchInboundMessage(
     return;
   }
 
-  // ── 幂等去重 ────────────────────────────────────────────────────────────────
+  // ── 幂等去重（按 messageId，非 peer；成功派发后才写入缓存）────────────────
   const messageId = String(message.id ?? '');
   const dedupKey = messageId ? `${account.accountId}:${messageId}` : '';
   if (dedupKey) {
     const seen = dedupCache.get(dedupKey);
-    if (seen !== undefined && seen > Date.now() - DEDUP_WINDOW_MS) {
+    if (seen !== undefined && seen > Date.now()) {
       return;
     }
-    dedupCache.set(dedupKey, Date.now() + DEDUP_WINDOW_MS);
   }
 
   const cfg = ctx.cfg as Record<string, unknown>;
@@ -353,56 +380,200 @@ export async function dispatchInboundMessage(
   });
   const resolvedAgentId =
     typeof route?.agentId === 'string' && route.agentId.trim() ? route.agentId : 'main';
-  const sessionKey = route.sessionKey;
-  const inboundContext = await cr.reply.finalizeInboundContext({
-    channel: 'gotify',
+  /** 路由未返回 sessionKey 时按 dmScope 常见形式兜底，避免 transcript 无法写入 Control UI。 */
+  const sessionKey =
+    typeof route?.sessionKey === 'string' && route.sessionKey.trim()
+      ? route.sessionKey
+      : `agent:${resolvedAgentId}:gotify:${account.accountId}:direct:${peerId}`;
+  const lastRouteSessionKey =
+    route?.lastRoutePolicy === 'main' &&
+    typeof route?.mainSessionKey === 'string' &&
+    route.mainSessionKey.trim()
+      ? route.mainSessionKey
+      : sessionKey;
+  const messageText = inbound.text.trim();
+  const fromAddress = `gotify:${peerId}`;
+  /** 对端地址，用于 lastRoute / OriginatingTo（对齐 Feishu DM：to 指向会话对端而非本账号）。 */
+  const peerAddress = fromAddress;
+
+  let resolvedAppName: string | undefined;
+  if (message.appid !== undefined && message.appid !== null && account.clientToken) {
+    const appId =
+      typeof message.appid === 'number' ? message.appid : Number.parseInt(String(message.appid), 10);
+    if (Number.isFinite(appId) && appId > 0) {
+      resolvedAppName = await resolveApplicationName(account, appId);
+    }
+  }
+
+  const conversationLabel = resolveGotifyConversationLabel(message, peerId, {
     accountId: account.accountId,
-    from: peerId,
-    text: inbound.text,
-    chatType: 'direct',
-    extra: {
-      gotifyMessageId: message.id,
-      gotifyAppId: message.appid,
-      sessionKey,
-      gotifyMetadata: inbound.metadata,
-    },
+    appName: resolvedAppName,
   });
-  await cr.reply.dispatchReplyWithBufferedBlockDispatcher({
+  const senderName = resolveGotifySenderName(message, peerId, resolvedAppName);
+  const nativeDirectUserId =
+    message.appid !== undefined && message.appid !== null ? String(message.appid) : undefined;
+  const inboundContext = cr.reply.finalizeInboundContext({
+    Body: messageText,
+    BodyForAgent: messageText,
+    RawBody: messageText,
+    CommandBody: messageText,
+    From: fromAddress,
+    To: peerAddress,
+    SessionKey: sessionKey,
+    AccountId: account.accountId,
+    ChatType: 'direct',
+    ConversationLabel: conversationLabel,
+    SenderId: peerId,
+    SenderName: senderName,
+    Provider: 'gotify',
+    Surface: 'gotify',
+    OriginatingChannel: 'gotify',
+    OriginatingTo: peerAddress,
+    NativeDirectUserId: nativeDirectUserId,
+    MessageSid: messageId || undefined,
+    Timestamp: message.date ? Date.parse(message.date) || Date.now() : Date.now(),
+    CommandAuthorized: true,
+    gotifyAppId: message.appid,
+    gotifyMetadata: inbound.metadata,
+  });
+
+  const storePath =
+    cr.session?.resolveStorePath && sessionKey
+      ? cr.session.resolveStorePath(
+          (cfg as { session?: { store?: string } }).session?.store,
+          { agentId: resolvedAgentId }
+        )
+      : undefined;
+
+  const onRecordError = (err: unknown) => {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    patchAccountSnapshot(account.accountId, {
+      lastError: `recordInboundSession: ${errorMsg}`,
+    });
+  };
+
+  const deliverReply = async (payload: { text: string }) => {
+    try {
+      const response = await sendGotifyMessageWithDeliveryRetry(account, {
+        message: payload.text,
+        title: message.title ?? resolvedAgentId,
+        priority: account.defaultPriority,
+        extras: withOpenClawOutboundExtras(),
+      });
+      if (response.appid !== undefined && response.appid !== null) {
+        setOwnApplicationId(account.accountId, response.appid);
+      }
+      patchAccountSnapshot(account.accountId, {
+        lastOutboundAt: Date.now(),
+        lastError: null,
+      });
+      ctx.setStatus({
+        accountId: account.accountId,
+        lastOutboundAt: Date.now(),
+      });
+      // 出站：先完成 POST，再删除，保证手机端能收到完整一轮回复后再清理
+      await deleteConsumedGotifyMessage(account, { id: response.id });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      patchAccountSnapshot(account.accountId, { lastError: errorMsg });
+      ctx.setStatus({
+        accountId: account.accountId,
+        lastError: errorMsg,
+      });
+      throw error;
+    }
+  };
+
+  const updateLastRoute = {
+    sessionKey: lastRouteSessionKey,
+    channel: 'gotify' as const,
+    to: peerAddress,
+    accountId: account.accountId,
+  };
+
+  // 与 Feishu/IRC 对齐：经 channel.turn.runAssembled 先 recordInboundSession 再派发，保证 Control UI transcript 有用户轮次
+  const recordParams = {
+    storePath: storePath!,
+    sessionKey,
     ctx: inboundContext,
-    cfg,
-    dispatcherOptions: {
-      deliver: async (payload: { text: string }) => {
-        try {
-          const response = await sendGotifyMessage(account, {
-            message: payload.text,
-            title: message.title ?? resolvedAgentId,
-            priority: account.defaultPriority,
-            extras: withOpenClawOutboundExtras(),
-          });
-          if (response.appid !== undefined && response.appid !== null) {
-            setOwnApplicationId(account.accountId, response.appid);
-          }
-          patchAccountSnapshot(account.accountId, {
-            lastOutboundAt: Date.now(),
-            lastError: null,
-          });
-          ctx.setStatus({
-            accountId: account.accountId,
-            lastOutboundAt: Date.now(),
-          });
-        } catch (error) {
+    updateLastRoute,
+    onRecordError,
+  };
+
+  /** 派发失败时兜底写入 user 轮次（runAssembled 在 record 前崩溃时 Control UI 不空白）。 */
+  const recordInboundFallback = async (): Promise<void> => {
+    if (!cr.session?.recordInboundSession || !storePath || !sessionKey) {
+      return;
+    }
+    try {
+      await cr.session.recordInboundSession(recordParams);
+    } catch (err) {
+      onRecordError(err);
+    }
+  };
+
+  if (
+    cr.turn?.runAssembled &&
+    cr.session?.recordInboundSession &&
+    storePath &&
+    sessionKey
+  ) {
+    try {
+      await cr.turn.runAssembled({
+      cfg,
+      channel: 'gotify',
+      accountId: account.accountId,
+      agentId: resolvedAgentId,
+      routeSessionKey: sessionKey,
+      storePath,
+      ctxPayload: inboundContext,
+      recordInboundSession: cr.session.recordInboundSession,
+      dispatchReplyWithBufferedBlockDispatcher: cr.reply.dispatchReplyWithBufferedBlockDispatcher,
+      delivery: {
+        deliver: deliverReply,
+        onError: (error: unknown) => {
           const errorMsg = error instanceof Error ? error.message : String(error);
           patchAccountSnapshot(account.accountId, { lastError: errorMsg });
-          ctx.setStatus({
-            accountId: account.accountId,
-            lastError: errorMsg,
-          });
-          throw error;
-        }
+        },
       },
-    },
-    replyOptions: route,
-  });
+      record: {
+        updateLastRoute,
+        onRecordError,
+      },
+    });
+    } catch (dispatchErr) {
+      await recordInboundFallback();
+      throw dispatchErr;
+    }
+  } else if (cr.session?.recordInboundSession && storePath && sessionKey) {
+    await cr.session.recordInboundSession(recordParams);
+    await cr.reply.dispatchReplyWithBufferedBlockDispatcher({
+      ctx: inboundContext,
+      cfg,
+      dispatcherOptions: { deliver: deliverReply },
+    });
+  } else {
+    if (cr.session?.recordInboundSession && storePath && sessionKey) {
+      await cr.session.recordInboundSession(recordParams);
+    } else {
+      patchAccountSnapshot(account.accountId, {
+        lastError: `Cannot record inbound transcript (missing session API or sessionKey=${sessionKey ?? 'missing'})`,
+      });
+    }
+    await cr.reply.dispatchReplyWithBufferedBlockDispatcher({
+      ctx: inboundContext,
+      cfg,
+      dispatcherOptions: { deliver: deliverReply },
+    });
+  }
+
+  if (dedupKey) {
+    dedupCache.set(dedupKey, Date.now() + DEDUP_WINDOW_MS);
+  }
+
+  // 入站：在 Agent 回复投递成功后再删除用户消息，避免「先删后答」打断一轮
+  await deleteConsumedGotifyMessage(account, message);
+
   patchAccountSnapshot(account.accountId, {
     lastInboundAt: Date.now(),
     lastError: null,
@@ -411,4 +582,45 @@ export async function dispatchInboundMessage(
     accountId: account.accountId,
     lastInboundAt: Date.now(),
   });
+}
+
+/**
+ * 是否应在消息消费后从 Gotify 服务端删除（入站派发成功后、出站回复发送成功后）。
+ * 仅当 inbound.deleteAfterConsume=false 时保留消息。
+ */
+function shouldDeleteAfterConsume(account: ResolvedGotifyAccount): boolean {
+  return account.inbound.deleteAfterConsume !== false;
+}
+
+/**
+ * 消费成功后从 Gotify 服务端删除消息（入站原消息或出站 Agent 回复）。
+ * 删除失败仅记录 lastError，不影响已完成的派发/发送。
+ */
+async function deleteConsumedGotifyMessage(
+  account: ResolvedGotifyAccount,
+  message: GotifyStreamEnvelope
+): Promise<void> {
+  if (!shouldDeleteAfterConsume(account)) {
+    return;
+  }
+  if (!account.clientToken) {
+    return;
+  }
+  const rawId = message.id;
+  if (rawId === undefined || rawId === null) {
+    return;
+  }
+  const messageId = typeof rawId === 'number' ? rawId : Number.parseInt(String(rawId), 10);
+  if (!Number.isFinite(messageId) || messageId <= 0) {
+    return;
+  }
+
+  try {
+    await deleteMessage(account, messageId);
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    patchAccountSnapshot(account.accountId, {
+      lastError: `deleteMessage(${messageId}): ${errorMsg}`,
+    });
+  }
 }

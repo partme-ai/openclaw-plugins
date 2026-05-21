@@ -143,4 +143,21 @@ export type WecomAccountConfig = {
     name?: string;
     bot?: WecomBotConfig;
     agent?: WecomAgentConfig;
+    /** KF 客服模式配置 */
+    kf?: {
+        openKfId?: string;
+        token?: string;
+        encodingAESKey?: string;
+        corpId?: string;
+        corpSecret?: string;
+        servicerUserId?: string;
+        welcomeText?: string;
+    };
+    /** KF 快捷字段 (兼容 callback.ts 直接读取) */
+    corpId?: string;
+    corpSecret?: string;
+    openKfId?: string;
+    welcomeText?: string;
+    token?: string;
+    encodingAESKey?: string;
 };
