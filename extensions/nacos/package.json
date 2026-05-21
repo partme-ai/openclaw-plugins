@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-nacos",
-  "version": "2026.5.20",
+  "version": "2026.5.22",
   "description": "OpenClaw plugin — Nacos Config Center merge and Gateway/Hooks naming registration",
   "type": "module",
   "main": "dist/index.js",
