@@ -1,13 +1,10 @@
-import type {
-  ChannelAccountSnapshot,
-  ChannelGatewayContext,
-  ChannelPlugin,
-  OpenClawConfig,
-} from 'openclaw/plugin-sdk';
+import type { ChannelPlugin, OpenClawConfig } from 'openclaw/plugin-sdk/core';
+import type { ChannelAccountSnapshot, ChannelGatewayContext } from 'openclaw/plugin-sdk/channel-contract';
 import {
   deleteAccountFromConfigSection,
   setAccountEnabledInConfigSection,
-} from 'openclaw/plugin-sdk';
+} from 'openclaw/plugin-sdk/core';
+import { createScopedDmSecurityResolver } from 'openclaw/plugin-sdk/channel-config-helpers';
 
 import {
   resolveDefaultGotifyAccountId,
@@ -18,9 +15,11 @@ import {
 } from './config.js';
 import { gotifyOutbound } from './outbound.js';
 import { createGotifyWsListener } from './ws-listener.js';
-import { getAccountSnapshot, patchAccountSnapshot } from './runtime.js';
-import { sendGotifyMessage } from './gotify-api.js';
-import { mapGotifyToInbound } from './message-mapper.js';
+import { getAccountSnapshot, getOwnApplicationId, patchAccountSnapshot, setOwnApplicationId } from './runtime.js';
+import { probeGotifyAccount, sendGotifyMessage } from './gotify-api.js';
+import { mapGotifyToInbound, withOpenClawOutboundExtras, isOpenClawOutboundStreamMessage } from './message-mapper.js';
+import { resolvePeerIdFromStreamMessage } from './dm-scope.js';
+import { checkGotifyInboundDmAccess } from './dm-policy.js';
 import { gotifyConfigSchema } from './channel-config.js';
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from './types.js';
 import { gotifySetupAdapter, gotifySetupWizard } from './onboarding.js';
@@ -32,8 +31,8 @@ const listeners = new Map<string, ReturnType<typeof createGotifyWsListener>>();
 /** 消息幂等去重表：messageId → 到期时间戳（ms）。 */
 const dedupCache = new Map<string, number>();
 
-/** 幂等缓存窗口（毫秒），同一账号内 30 秒内相同 ID 视为重复。 */
-const DEDUP_WINDOW_MS = 30_000;
+/** 幂等缓存窗口（毫秒），与 PLUGIN_SPEC 对齐为 60 秒。 */
+const DEDUP_WINDOW_MS = 60_000;
 
 /**
  * 清理过期幂等缓存条目。
@@ -95,6 +94,15 @@ function normalizeGotifyMessagingTarget(raw: string): string | undefined {
   return trimmed.replace(/^gotify:/i, '').trim() || undefined;
 }
 
+const resolveGotifyDmPolicy = createScopedDmSecurityResolver<ResolvedGotifyAccount>({
+  channelKey: 'gotify',
+  resolvePolicy: (account) => account.dmPolicy,
+  resolveAllowFrom: (account) => account.allowFrom,
+  defaultPolicy: 'open',
+  approveHint: 'openclaw pairing approve gotify <code>',
+  normalizeEntry: (raw) => raw.replace(/^gotify:/i, '').trim().toLowerCase(),
+});
+
 /**
  * Gotify 渠道插件定义。
  */
@@ -146,6 +154,22 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
     unconfiguredReason: () => 'channels.gotify missing serverUrl or appToken',
     describeAccount: (account: ResolvedGotifyAccount): ChannelAccountSnapshot =>
       describeGotifyAccountSnapshot(account),
+    resolveAllowFrom: ({ account }: { account: ResolvedGotifyAccount }) => account.allowFrom,
+    formatAllowFrom: ({ allowFrom }: { allowFrom: Array<string | number> }) =>
+      allowFrom.map((entry: string | number) => String(entry).trim()).filter(Boolean),
+  },
+  security: {
+    resolveDmPolicy: resolveGotifyDmPolicy,
+    collectWarnings: ({ account }: { account: ResolvedGotifyAccount }) => {
+      const warnings: string[] = [];
+      const dmPolicy = account.dmPolicy ?? 'open';
+      if (dmPolicy === 'open' && !(account.allowFrom ?? []).some((entry: string) => String(entry).trim() === '*')) {
+        warnings.push(
+          `- Gotify[${account.accountId}]：dmPolicy="open" 时建议设置 channels.gotify.allowFrom=["*"]，或使用 dmPolicy="allowlist" 限制 appid/peerId。`
+        );
+      }
+      return warnings;
+    },
   },
   groups: {
     resolveRequireMention: () => false,
@@ -181,7 +205,8 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
       lastInboundAt: snapshot.lastInboundAt ?? null,
       lastOutboundAt: snapshot.lastOutboundAt ?? null,
     }),
-    probeAccount: async () => ({ ok: true }),
+    probeAccount: async ({ account }: { account: ResolvedGotifyAccount }) =>
+      probeGotifyAccount(account),
     buildAccountSnapshot: ({ account }: { account: ResolvedGotifyAccount }) => ({
       ...describeGotifyAccountSnapshot(account),
       ...getAccountSnapshot(account.accountId),
@@ -200,6 +225,19 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
         lastError: null,
       });
       if (!account.inbound.enabled) {
+        return;
+      }
+      if (!account.clientToken) {
+        const error = 'inbound.enabled requires clientToken for WebSocket /stream';
+        patchAccountSnapshot(account.accountId, {
+          running: false,
+          lastError: error,
+        });
+        ctx.setStatus({
+          accountId: account.accountId,
+          running: false,
+          lastError: error,
+        });
         return;
       }
       const listener = createGotifyWsListener(account, {
@@ -246,7 +284,7 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
 
 /**
  * 将 Gotify 入站流消息派发到 OpenClaw 运行时。
- * 包含幂等去重：30 秒窗口内相同消息 ID 不会重复派发。
+ * 包含幂等去重：60 秒窗口内相同账号+消息 ID 不会重复派发。
  */
 export async function dispatchInboundMessage(
   ctx: ChannelGatewayContext<ResolvedGotifyAccount>,
@@ -261,23 +299,51 @@ export async function dispatchInboundMessage(
     return;
   }
 
+  // ── 跳过 OpenClaw 出站回显，避免 Agent 反馈环 ─────────────────────────────
+  if (isOpenClawOutboundStreamMessage(message)) {
+    return;
+  }
+
+  const ownAppId = getOwnApplicationId(account.accountId);
+  if (
+    ownAppId !== undefined &&
+    message.appid !== undefined &&
+    String(message.appid) === String(ownAppId)
+  ) {
+    return;
+  }
+
   // ── 幂等去重 ────────────────────────────────────────────────────────────────
   const messageId = String(message.id ?? '');
-  if (messageId) {
-    const seen = dedupCache.get(messageId);
+  const dedupKey = messageId ? `${account.accountId}:${messageId}` : '';
+  if (dedupKey) {
+    const seen = dedupCache.get(dedupKey);
     if (seen !== undefined && seen > Date.now() - DEDUP_WINDOW_MS) {
       return;
     }
-    dedupCache.set(messageId, Date.now() + DEDUP_WINDOW_MS);
+    dedupCache.set(dedupKey, Date.now() + DEDUP_WINDOW_MS);
   }
 
   const cfg = ctx.cfg as Record<string, unknown>;
-  const extraPeerId = (message.extras?.openclaw as Record<string, unknown> | undefined)?.peerId;
-  const peerId =
-    typeof extraPeerId === 'string' && extraPeerId.trim()
-      ? extraPeerId.trim().toLowerCase()
-      : String(message.appid || 'unknown');
+  const peerId = resolvePeerIdFromStreamMessage(message);
   const inbound = mapGotifyToInbound(message);
+
+  if (!inbound.text.trim()) {
+    return;
+  }
+
+  const dmAccess = checkGotifyInboundDmAccess({
+    account,
+    peerId,
+    appid: message.appid,
+  });
+  if (!dmAccess.allowed) {
+    patchAccountSnapshot(account.accountId, {
+      lastError: dmAccess.reason ? `Blocked inbound (${dmAccess.reason})` : 'Blocked inbound',
+    });
+    return;
+  }
+
   const route = await cr.routing.resolveAgentRoute({
     cfg,
     channel: 'gotify',
@@ -305,19 +371,33 @@ export async function dispatchInboundMessage(
     cfg,
     dispatcherOptions: {
       deliver: async (payload: { text: string }) => {
-        await sendGotifyMessage(account, {
-          message: payload.text,
-          title: message.title ?? resolvedAgentId,
-          priority: account.defaultPriority,
-        });
-        patchAccountSnapshot(account.accountId, {
-          lastOutboundAt: Date.now(),
-          lastError: null,
-        });
-        ctx.setStatus({
-          accountId: account.accountId,
-          lastOutboundAt: Date.now(),
-        });
+        try {
+          const response = await sendGotifyMessage(account, {
+            message: payload.text,
+            title: message.title ?? resolvedAgentId,
+            priority: account.defaultPriority,
+            extras: withOpenClawOutboundExtras(),
+          });
+          if (response.appid !== undefined && response.appid !== null) {
+            setOwnApplicationId(account.accountId, response.appid);
+          }
+          patchAccountSnapshot(account.accountId, {
+            lastOutboundAt: Date.now(),
+            lastError: null,
+          });
+          ctx.setStatus({
+            accountId: account.accountId,
+            lastOutboundAt: Date.now(),
+          });
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          patchAccountSnapshot(account.accountId, { lastError: errorMsg });
+          ctx.setStatus({
+            accountId: account.accountId,
+            lastError: errorMsg,
+          });
+          throw error;
+        }
       },
     },
     replyOptions: route,

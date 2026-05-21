@@ -16,10 +16,15 @@ const GotifyStreamEnvelopeSchema = z.object({
   event: z.string().optional(),
 });
 
+/** 首次 WebSocket 连接等待超时（毫秒）。 */
+const CONNECTION_TIMEOUT_MS = 15_000;
+
 export interface GotifyWsListenerDeps {
   WebSocketImpl?: typeof WebSocket;
   onMessage: (message: GotifyStreamEnvelope) => Promise<void> | void;
   onStateChange?: (state: { running: boolean; lastError?: string | null }) => void;
+  /** 测试用：覆盖连接超时。 */
+  connectionTimeoutMs?: number;
 }
 
 export interface GotifyWsListenerController {
@@ -36,13 +41,34 @@ export function createGotifyWsListener(
   deps: GotifyWsListenerDeps
 ): GotifyWsListenerController {
   const WebSocketImpl = deps.WebSocketImpl ?? WebSocket;
+  const connectionTimeoutMs = deps.connectionTimeoutMs ?? CONNECTION_TIMEOUT_MS;
   let socket: WebSocket | null = null;
   let stopped = false;
   let reconnectDelay = account.inbound.reconnectDelayMs;
   let reconnectTimer: NodeJS.Timeout | null = null;
+  let connectionTimeoutTimer: NodeJS.Timeout | null = null;
   let reconnectAttempts = 0;
   /** 首次连接建立或失败时 resolve */
   let connectionGate: { resolve: () => void; reject: (err: Error) => void } | null = null;
+
+  /**
+   * 清理首次连接 gate 与超时定时器。
+   */
+  const settleConnectionGate = (action: 'resolve' | 'reject', error?: Error): void => {
+    if (connectionTimeoutTimer) {
+      clearTimeout(connectionTimeoutTimer);
+      connectionTimeoutTimer = null;
+    }
+    if (!connectionGate) {
+      return;
+    }
+    if (action === 'resolve') {
+      connectionGate.resolve();
+    } else {
+      connectionGate.reject(error ?? new GotifyWebSocketError('WebSocket connection failed', 'WEBSOCKET_ERROR'));
+    }
+    connectionGate = null;
+  };
 
   const connect = () => {
     if (stopped) return;
@@ -64,11 +90,7 @@ export function createGotifyWsListener(
       reconnectDelay = account.inbound.reconnectDelayMs;
       reconnectAttempts = 0;
       deps.onStateChange?.({ running: true, lastError: null });
-      // 通知 start() 等待者：连接已建立
-      if (connectionGate) {
-        connectionGate.resolve();
-        connectionGate = null;
-      }
+      settleConnectionGate('resolve');
     };
 
     socket.onmessage = async (event) => {
@@ -85,23 +107,25 @@ export function createGotifyWsListener(
     socket.onerror = (event) => {
       const error = event instanceof ErrorEvent ? event.message : 'WebSocket error';
       deps.onStateChange?.({ running: false, lastError: error });
-      // 首次连接失败时通知 gate
-      if (connectionGate) {
-        connectionGate.reject(new GotifyWebSocketError(error, 'WEBSOCKET_ERROR'));
-        connectionGate = null;
-      }
+      settleConnectionGate('reject', new GotifyWebSocketError(error, 'WEBSOCKET_ERROR'));
     };
 
     socket.onclose = (event) => {
       const wasClean = event?.wasClean ? 'clean' : 'unclean';
       const reason = event?.reason || `WebSocket closed (${wasClean})`;
       deps.onStateChange?.({ running: false, lastError: reason });
+      if (connectionGate) {
+        settleConnectionGate('reject', new GotifyWebSocketError(reason, 'WEBSOCKET_CLOSED'));
+      }
       if (!stopped) {
         scheduleReconnect();
       }
     };
   };
 
+  /**
+   * 安排指数退避重连；捕获 connect 同步抛错，避免 uncaught exception。
+   */
   const scheduleReconnect = () => {
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
@@ -109,7 +133,12 @@ export function createGotifyWsListener(
     reconnectTimer = setTimeout(() => {
       reconnectAttempts += 1;
       reconnectDelay = Math.min(reconnectDelay * 2, account.inbound.maxReconnectDelayMs);
-      connect();
+      try {
+        connect();
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        deps.onStateChange?.({ running: false, lastError: errorMsg });
+      }
     }, reconnectDelay);
   };
 
@@ -118,7 +147,23 @@ export function createGotifyWsListener(
       stopped = false;
       return new Promise<void>((resolve, reject) => {
         connectionGate = { resolve, reject };
-        connect();
+        connectionTimeoutTimer = setTimeout(() => {
+          if (connectionGate) {
+            settleConnectionGate(
+              'reject',
+              new GotifyWebSocketError('WebSocket connection timed out', 'CONNECTION_TIMEOUT')
+            );
+            socket?.close();
+          }
+        }, connectionTimeoutMs);
+        try {
+          connect();
+        } catch (error) {
+          settleConnectionGate(
+            'reject',
+            error instanceof Error ? error : new GotifyWebSocketError(String(error), 'WEBSOCKET_ERROR')
+          );
+        }
       });
     },
     stop() {
@@ -127,10 +172,8 @@ export function createGotifyWsListener(
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
-      // resolve pending start() gate if still waiting
       if (connectionGate) {
-        connectionGate.resolve();
-        connectionGate = null;
+        settleConnectionGate('resolve');
       }
       socket?.close();
       socket = null;

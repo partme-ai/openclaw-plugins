@@ -6,6 +6,9 @@ const runtimeStore = {
 
 const accountSnapshots = new Map<string, GotifyRuntimeSnapshot>();
 
+/** 本账号 Application ID 缓存，用于过滤出站回显（appid 二级过滤）。 */
+const ownApplicationIds = new Map<string, number | string>();
+
 /**
  * 设置当前插件运行时引用。
  */
@@ -45,6 +48,20 @@ export function getAccountSnapshot(accountId: string): GotifyRuntimeSnapshot {
  */
 export function getAllAccountSnapshots(): Record<string, GotifyRuntimeSnapshot> {
   return Object.fromEntries(accountSnapshots.entries());
+}
+
+/**
+ * 缓存当前账号对应的 Gotify Application ID。
+ */
+export function setOwnApplicationId(accountId: string, applicationId: number | string): void {
+  ownApplicationIds.set(accountId, applicationId);
+}
+
+/**
+ * 读取已缓存的本账号 Application ID。
+ */
+export function getOwnApplicationId(accountId: string): number | string | undefined {
+  return ownApplicationIds.get(accountId);
 }
 
 function defaultSnapshot(): GotifyRuntimeSnapshot {

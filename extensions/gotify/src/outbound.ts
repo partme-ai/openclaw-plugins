@@ -1,9 +1,9 @@
-import type { ChannelOutboundAdapter, ChannelOutboundContext } from 'openclaw/plugin-sdk';
+import type { ChannelOutboundAdapter, ChannelOutboundContext } from 'openclaw/plugin-sdk/channel-contract';
 
 import { resolveDefaultGotifyAccountId, resolveGotifyAccount } from './config.js';
 import { sendGotifyMessage } from './gotify-api.js';
 import { mapOutboundToGotify } from './message-mapper.js';
-import { patchAccountSnapshot } from './runtime.js';
+import { patchAccountSnapshot, setOwnApplicationId } from './runtime.js';
 
 /**
  * Gotify 出站适配器。
@@ -21,6 +21,10 @@ export const gotifyOutbound: ChannelOutboundAdapter = {
       ...payload,
       priority: typeof payload.priority === 'number' ? payload.priority : account.defaultPriority,
     });
+
+    if (response.appid !== undefined && response.appid !== null) {
+      setOwnApplicationId(account.accountId, response.appid);
+    }
 
     patchAccountSnapshot(account.accountId, {
       lastOutboundAt: Date.now(),

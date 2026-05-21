@@ -603,7 +603,7 @@ describe('message-mapper', () => {
     expect(payload.title).toBe('test');
     expect(payload.priority).toBe(7);
     expect(payload.extras).toMatchObject({
-      openclaw: { traceId: 'trace-1' },
+      openclaw: { traceId: 'trace-1', source: 'openclaw', outbound: true },
       'client::notification': { click: { url: 'https://example.com' } },
       'client::display': { contentType: 'text/markdown' },
     });
@@ -616,7 +616,9 @@ describe('message-mapper', () => {
       metadata: {},
     } as never);
     expect(payload.message).toBe('simple message');
-    expect(payload.extras).toBeUndefined();
+    expect(payload.extras).toMatchObject({
+      openclaw: { source: 'openclaw', outbound: true },
+    });
   });
 
   it('maps stream envelope to inbound text and metadata', () => {

@@ -26,6 +26,9 @@
   ],
   "author": "PartMe",
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "files": [
     "dist",
     "openclaw.plugin.json",

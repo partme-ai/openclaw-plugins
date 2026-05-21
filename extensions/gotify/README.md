@@ -10,7 +10,7 @@
 
 </div>
 
-[简体中文](./README_CN.md) | [English](./README.md)
+[简体中文](./README.md) | [English](./README.en.md)
 
 `@partme.ai/openclaw-gotify` 是为 [OpenClaw](https://github.com/openclaw/openclaw) 开发的 [Gotify](https://gotify.net/) 渠道插件：通过 REST API **发送消息**，通过 WebSocket `/stream` **实时接收消息**，并完整支持 Application 和 Client 的 **生命周期管理**。
 
@@ -27,7 +27,7 @@
 - **消息管理** — 获取消息列表（游标分页）、按 ID 删除、批量删除
 - **多账号多智能体** — `accounts` 映射支持多个 Gotify 实例，按 `dmScope` 粒度隔离会话
 - **会话隔离** — 完全遵循 OpenClaw 全局 `session.dmScope` 配置（`main` / `per-peer` / `per-channel-peer` / `per-account-channel-peer`）
-- **幂等去重** — 30 秒窗口内相同消息 ID 不会重复派发
+- **幂等去重** — 60 秒窗口内相同账号+消息 ID 不会重复派发
 
 ### 生命周期
 

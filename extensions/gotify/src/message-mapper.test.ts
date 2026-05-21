@@ -21,7 +21,7 @@ describe('message-mapper', () => {
     expect(payload.title).toBe('test');
     expect(payload.priority).toBe(7);
     expect(payload.extras).toMatchObject({
-      openclaw: { traceId: 'trace-1' },
+      openclaw: { traceId: 'trace-1', source: 'openclaw', outbound: true },
       'client::notification': {
         click: {
           url: 'https://example.com/ticket/1',

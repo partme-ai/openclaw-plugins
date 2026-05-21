@@ -49,6 +49,15 @@ export const GotifyAccountSchema = z
       .optional()
       .default(5)
       .describe('Default message priority (0-10, default 5)'),
+    dmPolicy: z
+      .enum(['open', 'allowlist', 'pairing', 'disabled'])
+      .optional()
+      .default('open')
+      .describe('DM access policy for inbound stream messages'),
+    allowFrom: z
+      .array(z.union([z.string(), z.number()]))
+      .optional()
+      .describe('Allowed appid/peerId entries when dmPolicy is allowlist'),
     inbound: z
       .object({
         enabled: z.boolean().optional().default(false),
@@ -102,6 +111,17 @@ export const gotifyConfigSchema: ChannelConfigSchema = {
         maximum: 10,
         default: 5,
         description: 'Default message priority (0-10)',
+      },
+      dmPolicy: {
+        type: 'string',
+        enum: ['open', 'allowlist', 'pairing', 'disabled'],
+        default: 'open',
+        description: 'DM access policy for inbound stream messages',
+      },
+      allowFrom: {
+        type: 'array',
+        items: { type: ['string', 'number'] },
+        description: 'Allowed appid/peerId when dmPolicy is allowlist',
       },
       inbound: {
         type: 'object',

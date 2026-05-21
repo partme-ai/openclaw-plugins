@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 declare module 'openclaw/plugin-sdk/core' {
+  export type OpenClawConfig = Record<string, unknown>;
+  export type ChannelPlugin<T = unknown> = Record<string, unknown>;
   export type OpenClawPluginApi = {
     id: string;
     runtime: any;
@@ -18,6 +20,19 @@ declare module 'openclaw/plugin-sdk/core' {
     }) => void;
     registerCommand?: (command: any) => void;
   };
+  export function deleteAccountFromConfigSection(params: {
+    cfg: OpenClawConfig;
+    sectionKey: string;
+    accountId: string;
+    clearBaseFields?: string[];
+  }): OpenClawConfig;
+  export function setAccountEnabledInConfigSection(params: {
+    cfg: OpenClawConfig;
+    sectionKey: string;
+    accountId: string;
+    enabled: boolean;
+    allowTopLevel?: boolean;
+  }): OpenClawConfig;
 }
 
 declare module 'openclaw/plugin-sdk/channel-core' {
@@ -33,13 +48,10 @@ declare module 'openclaw/plugin-sdk/channel-core' {
   export function defineSetupPluginEntry<TPlugin>(plugin: TPlugin): { plugin: TPlugin };
 }
 
-declare module 'openclaw/plugin-sdk' {
-  export type OpenClawConfig = Record<string, unknown>;
+declare module 'openclaw/plugin-sdk/channel-contract' {
   export type ChannelAccountSnapshot = Record<string, unknown>;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  export type ChannelPlugin<T> = Record<string, unknown>;
   export type ChannelGatewayContext<T = unknown> = {
-    cfg: OpenClawConfig;
+    cfg: import('openclaw/plugin-sdk/core').OpenClawConfig;
     accountId: string;
     account: T;
     runtime: any;
@@ -58,7 +70,7 @@ declare module 'openclaw/plugin-sdk' {
     };
   };
   export type ChannelOutboundContext = {
-    cfg: OpenClawConfig;
+    cfg: import('openclaw/plugin-sdk/core').OpenClawConfig;
     to: string;
     text: string;
     accountId?: string | null;
@@ -66,26 +78,52 @@ declare module 'openclaw/plugin-sdk' {
     priority?: number | null;
     extras?: Record<string, unknown> | null;
   };
-  export type OutboundDeliveryResult = {
-    channel: string;
-    messageId: string;
-    [key: string]: unknown;
-  };
   export type ChannelOutboundAdapter = {
     deliveryMode: 'direct' | 'gateway' | 'hybrid';
-    sendText?: (ctx: ChannelOutboundContext) => Promise<OutboundDeliveryResult>;
+    sendText?: (ctx: ChannelOutboundContext) => Promise<{ channel: string; messageId: string }>;
   };
-  export function deleteAccountFromConfigSection(params: {
-    cfg: OpenClawConfig;
-    sectionKey: string;
-    accountId: string;
-    clearBaseFields?: string[];
-  }): OpenClawConfig;
-  export function setAccountEnabledInConfigSection(params: {
-    cfg: OpenClawConfig;
-    sectionKey: string;
-    accountId: string;
-    enabled: boolean;
-    allowTopLevel?: boolean;
-  }): OpenClawConfig;
+}
+
+declare module 'openclaw/plugin-sdk/channel-config-helpers' {
+  export function createScopedDmSecurityResolver<TAccount>(params: {
+    channelKey: string;
+    resolvePolicy: (account: TAccount) => string | null | undefined;
+    resolveAllowFrom: (account: TAccount) => Array<string | number> | null | undefined;
+    defaultPolicy?: string;
+    approveHint?: string;
+    normalizeEntry?: (raw: string) => string;
+  }): (ctx: {
+    cfg: import('openclaw/plugin-sdk/core').OpenClawConfig;
+    accountId?: string | null;
+    account: TAccount;
+  }) => {
+    policy: string;
+    allowFrom?: Array<string | number> | null;
+    allowFromPath: string;
+    approveHint: string;
+    normalizeEntry?: (raw: string) => string;
+  };
+}
+
+/** @deprecated Prefer focused subpaths such as plugin-sdk/core and plugin-sdk/channel-contract */
+declare module 'openclaw/plugin-sdk' {
+  export type OpenClawConfig = import('openclaw/plugin-sdk/core').OpenClawConfig;
+  export type ChannelAccountSnapshot = import('openclaw/plugin-sdk/channel-contract').ChannelAccountSnapshot;
+  export type ChannelPlugin<T = unknown> = import('openclaw/plugin-sdk/core').ChannelPlugin<T>;
+  export type ChannelGatewayContext<T = unknown> =
+    import('openclaw/plugin-sdk/channel-contract').ChannelGatewayContext<T>;
+  export type ChannelOutboundContext =
+    import('openclaw/plugin-sdk/channel-contract').ChannelOutboundContext;
+  export type ChannelOutboundAdapter =
+    import('openclaw/plugin-sdk/channel-contract').ChannelOutboundAdapter;
+  export function deleteAccountFromConfigSection(
+    params: Parameters<
+      typeof import('openclaw/plugin-sdk/core').deleteAccountFromConfigSection
+    >[0]
+  ): import('openclaw/plugin-sdk/core').OpenClawConfig;
+  export function setAccountEnabledInConfigSection(
+    params: Parameters<
+      typeof import('openclaw/plugin-sdk/core').setAccountEnabledInConfigSection
+    >[0]
+  ): import('openclaw/plugin-sdk/core').OpenClawConfig;
 }

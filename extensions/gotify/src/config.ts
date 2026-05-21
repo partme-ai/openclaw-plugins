@@ -1,4 +1,4 @@
-import type { GotifyAccountConfig, GotifyChannelConfig, ResolvedGotifyAccount } from './types.js';
+import type { GotifyAccountConfig, GotifyChannelConfig, GotifyDmPolicy, ResolvedGotifyAccount } from './types.js';
 
 export const DEFAULT_GOTIFY_ACCOUNT_ID = 'default';
 const DEFAULT_PRIORITY = 5;
@@ -65,6 +65,8 @@ export function resolveGotifyAccount(
     appToken,
     clientToken,
     defaultPriority: normalizePriority(merged.defaultPriority),
+    dmPolicy: normalizeDmPolicy(merged.dmPolicy),
+    allowFrom: normalizeAllowFrom(merged.allowFrom),
     inbound: {
       enabled: merged.inbound?.enabled ?? Boolean(clientToken),
       reconnectDelayMs: merged.inbound?.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS,
@@ -141,4 +143,20 @@ function normalizePriority(value: unknown): number {
     return Math.max(0, Math.min(10, Math.trunc(value)));
   }
   return DEFAULT_PRIORITY;
+}
+
+const VALID_DM_POLICIES = new Set<GotifyDmPolicy>(['open', 'allowlist', 'pairing', 'disabled']);
+
+function normalizeDmPolicy(value: unknown): GotifyDmPolicy {
+  if (typeof value === 'string' && VALID_DM_POLICIES.has(value as GotifyDmPolicy)) {
+    return value as GotifyDmPolicy;
+  }
+  return 'open';
+}
+
+function normalizeAllowFrom(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((entry) => String(entry).trim()).filter(Boolean);
 }

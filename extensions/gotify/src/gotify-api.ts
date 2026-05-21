@@ -613,5 +613,69 @@ export async function runGotifyDoctor(
   };
 }
 
+/**
+ * 探测账号连通性与 Token 有效性，供 status.probeAccount 使用。
+ */
+export async function probeGotifyAccount(
+  account: ResolvedGotifyAccount,
+  options: GotifyFetchOptions = {}
+): Promise<{
+  ok: boolean;
+  latencyMs?: number;
+  healthOk?: boolean;
+  appTokenValid?: boolean;
+  clientTokenValid?: boolean;
+  error?: string;
+}> {
+  if (!account.configured) {
+    return { ok: false, error: 'Missing serverUrl or appToken' };
+  }
+
+  const health = await healthCheck(account, options);
+  if (!health.ok) {
+    return {
+      ok: false,
+      latencyMs: health.latencyMs,
+      healthOk: false,
+      error: health.error ?? 'Health check failed',
+    };
+  }
+
+  let appTokenValid: boolean | undefined;
+  let clientTokenValid: boolean | undefined;
+
+  if (account.clientToken) {
+    try {
+      const applications = await listApplications(account, options);
+      clientTokenValid = true;
+      if (account.appToken) {
+        appTokenValid = applications.some((app) => app.token === account.appToken);
+      }
+    } catch (error) {
+      clientTokenValid = false;
+      return {
+        ok: false,
+        latencyMs: health.latencyMs,
+        healthOk: true,
+        clientTokenValid: false,
+        appTokenValid,
+        error: String(error),
+      };
+    }
+  }
+
+  const tokenIssue =
+    appTokenValid === false ? 'appToken not found in application list' : undefined;
+
+  return {
+    ok: !tokenIssue,
+    latencyMs: health.latencyMs,
+    healthOk: true,
+    appTokenValid,
+    clientTokenValid,
+    error: tokenIssue,
+  };
+}
+
 // ── 遗留导出（向后兼容） ─────────────────────────────────────────────────────
 export { normalizeServerUrl };

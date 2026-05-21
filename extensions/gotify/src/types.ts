@@ -16,6 +16,8 @@ export interface GotifyBootstrapConfig {
   applicationDescription?: string;
 }
 
+export type GotifyDmPolicy = 'open' | 'allowlist' | 'pairing' | 'disabled';
+
 export interface GotifyAccountConfig {
   enabled?: boolean;
   name?: string;
@@ -23,6 +25,8 @@ export interface GotifyAccountConfig {
   appToken?: string;
   clientToken?: string;
   defaultPriority?: number;
+  dmPolicy?: GotifyDmPolicy;
+  allowFrom?: Array<string | number>;
   inbound?: GotifyStreamConfig;
   bootstrap?: GotifyBootstrapConfig;
 }
@@ -41,6 +45,8 @@ export interface ResolvedGotifyAccount {
   appToken: string | null;
   clientToken: string | null;
   defaultPriority: number;
+  dmPolicy: GotifyDmPolicy;
+  allowFrom: string[];
   inbound: Required<GotifyStreamConfig>;
   bootstrap: Required<GotifyBootstrapConfig>;
 }

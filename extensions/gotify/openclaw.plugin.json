@@ -1,5 +1,6 @@
 {
   "id": "openclaw-gotify",
+  "kind": "channel",
   "name": "Gotify",
   "description": "OpenClaw Gotify channel plugin — REST delivery, WebSocket stream inbound, multi-account session isolation, and full application/client lifecycle management.",
   "version": "2026.5.20",
@@ -49,6 +50,33 @@
             "default": 5,
             "description": "Default message priority (0-10)"
           },
+          "dmPolicy": {
+            "type": "string",
+            "enum": ["open", "allowlist", "pairing", "disabled"],
+            "default": "open",
+            "description": "DM access policy for inbound stream messages (matched by appid or peerId)"
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": { "type": ["string", "number"] },
+            "description": "Allowed appid/peerId entries when dmPolicy is allowlist (use \"*\" for open policy hint)"
+          },
+          "bootstrap": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean", "description": "Enable bootstrap helpers on startup" },
+              "autoCreateApplication": {
+                "type": "boolean",
+                "description": "Auto-create Gotify Application when missing"
+              },
+              "applicationName": { "type": "string", "description": "Application name for auto-create" },
+              "applicationDescription": {
+                "type": "string",
+                "description": "Application description for auto-create"
+              }
+            }
+          },
           "inbound": {
             "type": "object",
             "additionalProperties": false,
@@ -93,6 +121,18 @@
         "inbound.enabled": {
           "label": "Enable WebSocket Stream",
           "help": "Connect to Gotify /stream endpoint for real-time message receiving. Requires clientToken."
+        },
+        "dmPolicy": {
+          "label": "DM Policy",
+          "help": "Control who can trigger the agent via inbound stream (open, allowlist, pairing, disabled)."
+        },
+        "allowFrom": {
+          "label": "Allow From",
+          "help": "Allowed appid or peerId values when dmPolicy is allowlist. Use [\"*\"] with dmPolicy open as a documented wildcard."
+        },
+        "bootstrap.enabled": {
+          "label": "Bootstrap Enabled",
+          "help": "Run bootstrap helpers (auto-create Application) when configured."
         }
       }
     }

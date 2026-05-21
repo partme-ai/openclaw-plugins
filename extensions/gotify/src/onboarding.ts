@@ -2,7 +2,7 @@
  * Gotify 渠道 setupWizard — Server URL + App Token 声明式 CLI 配置。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { resolveGotifyAccount } from "./config.js";
 import { createSimpleChannelSetup } from "./channel-setup-factory.js";
 
@@ -27,6 +27,7 @@ const { setupAdapter, setupWizard } = createSimpleChannelSetup({
   ],
   completionLines: [
     "Gotify 凭据已保存。",
+    "入站 Stream 需配置 Client Token（channels.gotify.clientToken 或 GOTIFY_CLIENT_TOKEN）。",
     "可选：在配置中启用 bootstrap 自动创建 Application。",
     "运行 `openclaw gateway restart` 连接 Stream。",
   ],
@@ -35,7 +36,7 @@ const { setupAdapter, setupWizard } = createSimpleChannelSetup({
       inputKey: "baseUrl",
       configKey: "serverUrl",
       label: "Server URL",
-      preferredEnvVar: "GOTIFY_URL",
+      preferredEnvVar: "GOTIFY_SERVER_URL",
       inputPrompt: "Gotify 服务器地址（含协议与端口）",
       helpLines: ["示例：https://gotify.example.com"],
       getValue: (cfg, accountId) => {
@@ -52,6 +53,18 @@ const { setupAdapter, setupWizard } = createSimpleChannelSetup({
       getValue: (cfg, accountId) => {
         const account = resolveGotifyAccount(cfg as Record<string, unknown>, accountId ?? null);
         return account.appToken ?? undefined;
+      },
+    },
+    {
+      inputKey: "secret",
+      configKey: "clientToken",
+      label: "Client Token",
+      preferredEnvVar: "GOTIFY_CLIENT_TOKEN",
+      inputPrompt: "Gotify Client Token（WebSocket /stream 入站）",
+      helpLines: ["在 Gotify WebUI → Clients 创建，前缀 C..."],
+      getValue: (cfg, accountId) => {
+        const account = resolveGotifyAccount(cfg as Record<string, unknown>, accountId ?? null);
+        return account.clientToken ?? undefined;
       },
     },
   ],

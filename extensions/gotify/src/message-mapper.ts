@@ -1,6 +1,42 @@
-import type { ChannelOutboundContext } from 'openclaw/plugin-sdk';
+import type { ChannelOutboundContext } from 'openclaw/plugin-sdk/channel-contract';
 
 import type { GotifyMessagePayload, GotifyStreamEnvelope } from './types.js';
+
+/** OpenClaw 写入 Gotify extras 的命名空间键。 */
+export const OPENCLAW_EXTRAS_KEY = 'openclaw';
+
+/**
+ * 为出站消息合并 openclaw 出站标记，避免 WebSocket /stream 回环触发 Agent。
+ */
+export function withOpenClawOutboundExtras(
+  extras?: Record<string, unknown> | null
+): Record<string, unknown> {
+  const base = extras ?? {};
+  const existing = isPlainObject(base[OPENCLAW_EXTRAS_KEY])
+    ? (base[OPENCLAW_EXTRAS_KEY] as Record<string, unknown>)
+    : {};
+  return {
+    ...base,
+    [OPENCLAW_EXTRAS_KEY]: {
+      ...existing,
+      source: 'openclaw',
+      outbound: true,
+    },
+  };
+}
+
+/**
+ * 判断 stream 消息是否为 OpenClaw 自身发出的出站回显。
+ */
+export function isOpenClawOutboundStreamMessage(message: {
+  extras?: Record<string, unknown>;
+}): boolean {
+  const openclaw = message.extras?.[OPENCLAW_EXTRAS_KEY];
+  if (!isPlainObject(openclaw)) {
+    return false;
+  }
+  return openclaw.source === 'openclaw' && openclaw.outbound === true;
+}
 
 export function mapOutboundToGotify(ctx: ChannelOutboundContext): GotifyMessagePayload {
   const baseExtras = (ctx.extras ?? undefined) as Record<string, unknown> | undefined;
@@ -12,10 +48,12 @@ export function mapOutboundToGotify(ctx: ChannelOutboundContext): GotifyMessageP
       ? metadata.contentType.trim()
       : undefined;
 
-  const extras = mergeExtras(baseExtras, {
-    ...(url ? { 'client::notification': { click: { url } } } : {}),
-    ...(contentType ? { 'client::display': { contentType } } : {}),
-  });
+  const extras = withOpenClawOutboundExtras(
+    mergeExtras(baseExtras, {
+      ...(url ? { 'client::notification': { click: { url } } } : {}),
+      ...(contentType ? { 'client::display': { contentType } } : {}),
+    })
+  );
 
   return {
     message: ctx.text,
