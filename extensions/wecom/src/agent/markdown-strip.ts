@@ -50,11 +50,11 @@ export function stripMarkdown(text: string): string {
   // 7. Strikethrough
   result = result.replace(/~~(.*?)~~/g, "$1");
 
-  // 8. Links: keep text and URL
-  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
-
-  // 9. Images: show alt text
+  // 8. Images: show alt text (must be before links to avoid ![...](...) being consumed by link regex)
   result = result.replace(/!\[([^\]]*)\]\([^)]+\)/g, "[图片: $1]");
+
+  // 9. Links: keep text and URL
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
 
   // 10. Tables: simplify to aligned text
   result = result.replace(
