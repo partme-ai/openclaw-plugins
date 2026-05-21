@@ -1,0 +1,20 @@
+{
+  "id": "openmem",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "baseUrl": {
+        "type": "string",
+        "description": "OpenMem REST base URL",
+        "default": "http://127.0.0.1:3317"
+      },
+      "maxSearchResults": { "type": "number", "default": 10 }
+    }
+  },
+  "contracts": {
+    "tools": ["openmem_search"]
+  }
+}

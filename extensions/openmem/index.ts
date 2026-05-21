@@ -1,0 +1,168 @@
+/**
+ * openmem — OpenMem local-first memory bridge for OpenClaw.
+ *
+ * Implements Memory Host SDK: recall via POST /inspect/search,
+ * ingest via POST /events/ingest on agent_end.
+ */
+
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk'
+import type {
+  MemorySearchManager,
+  MemorySearchResult,
+  MemoryReadResult,
+  MemoryProviderStatus,
+  MemoryEmbeddingProbeResult,
+} from 'openclaw/plugin-sdk/memory-host'
+
+interface OpenMemPluginConfig {
+  enabled: boolean
+  baseUrl: string
+  maxSearchResults: number
+}
+
+const DEFAULTS: OpenMemPluginConfig = {
+  enabled: true,
+  baseUrl: 'http://127.0.0.1:3317',
+  maxSearchResults: 10,
+}
+
+function resolveConfig(api: OpenClawPluginApi): OpenMemPluginConfig {
+  const r = (api.pluginConfig ?? {}) as Partial<OpenMemPluginConfig>
+  return { ...DEFAULTS, ...r }
+}
+
+async function apiJson<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+  const url = `${baseUrl.replace(/\/$/, '')}${path}`
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json', ...(init?.headers as Record<string, string>) },
+    ...init,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`OpenMem ${res.status}: ${text || res.statusText}`)
+  }
+  return res.json() as Promise<T>
+}
+
+/**
+ * Builds MemorySearchManager backed by OpenMem hybrid inspect search.
+ */
+export function createOpenMemSearchManager(baseUrl: string): MemorySearchManager {
+  return {
+    async search(query, opts) {
+      const data = await apiJson<{ chunks: Array<{ content: string; score: number; source?: string }> }>(
+        baseUrl,
+        '/inspect/search',
+        {
+          method: 'POST',
+          body: JSON.stringify({ query, mode: 'hybrid', limit: opts?.maxResults ?? 10 }),
+        },
+      )
+      return (data.chunks ?? []).map(
+        (c, i): MemorySearchResult => ({
+          path: `openmem/chunk/${i}`,
+          startLine: i + 1,
+          endLine: i + 1,
+          score: c.score,
+          snippet: c.content.slice(0, 200),
+          source: c.source ?? 'openmem',
+        }),
+      )
+    },
+
+    async readFile({ relPath }) {
+      return { text: '', path: relPath }
+    },
+
+    status(): MemoryProviderStatus {
+      return {
+        backend: 'http',
+        provider: 'openmem',
+        files: 0,
+        sources: ['openmem'],
+        workspaceDir: baseUrl,
+      }
+    },
+
+    async probeEmbeddingAvailability(): Promise<MemoryEmbeddingProbeResult> {
+      return { ok: false, checked: true, checkedAtMs: Date.now() }
+    },
+
+    async probeVectorAvailability(): Promise<boolean> {
+      return false
+    },
+  }
+}
+
+const plugin = {
+  id: 'openmem',
+  name: 'OpenMem',
+  kind: 'memory' as const,
+  description: 'OpenMem local-first memory — HTTP bridge to OpenMem REST (§6.2)',
+  configSchema: { type: 'object' as const, additionalProperties: true, properties: {} },
+
+  register(api: OpenClawPluginApi) {
+    const cfg = resolveConfig(api)
+    if (!cfg.enabled) {
+      api.logger.info('[openmem] Disabled')
+      return
+    }
+
+    const manager = createOpenMemSearchManager(cfg.baseUrl)
+    api.registerMemorySearchManager?.(manager)
+    api.logger.info(`[openmem] MemorySearchManager → ${cfg.baseUrl}`)
+
+    api.registerTool(
+      {
+        name: 'openmem_search',
+        label: 'OpenMem Search',
+        description: 'Search externalized memories via OpenMem hybrid recall.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query' },
+            limit: { type: 'number', description: 'Max results (default 10)' },
+          },
+          required: ['query'],
+        },
+        async execute(_id: string, params: Record<string, unknown>) {
+          const results = await manager.search(String(params.query ?? ''), {
+            maxResults: Math.min(Math.max(Number(params.limit) || 10, 1), 20),
+          })
+          const text =
+            results.length === 0
+              ? 'No OpenMem memories found.'
+              : results.map((r, i) => `${i + 1}. ${r.snippet}`).join('\n')
+          return { content: [{ type: 'text' as const, text }], details: { count: results.length } }
+        },
+      },
+      { name: 'openmem_search' },
+    )
+
+    api.on('agent_end', async (event, ctx) => {
+      const e = event as Record<string, unknown>
+      const msgs = (Array.isArray(e.messages) ? e.messages : []) as Array<{ role: string; content: string }>
+      if (msgs.length === 0 || !e.success) return
+      const sessionKey = ctx.sessionKey ?? 'unknown'
+      const events = msgs.map((m) => ({
+        sessionId: sessionKey,
+        type: 'agent_message',
+        source: 'runtime',
+        content: m.content,
+        payload: { role: m.role },
+      }))
+      try {
+        await apiJson(cfg.baseUrl, '/events/ingest', {
+          method: 'POST',
+          body: JSON.stringify({ events }),
+        })
+      } catch (err) {
+        api.logger.warn(`[openmem] ingest failed: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    })
+
+    api.logger.info('[openmem] Registered — kind=memory, ingest on agent_end')
+  },
+}
+
+export default plugin
