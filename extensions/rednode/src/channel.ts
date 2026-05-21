@@ -3,6 +3,7 @@
  */
 
 import type { ChannelDefinition, XhsAccountConfig } from "./types.js";
+import { xhsSetupAdapter, xhsSetupWizard } from "./onboarding.js";
 
 export const xhsChannel: ChannelDefinition = {
   id: "xhs",
@@ -15,6 +16,8 @@ export const xhsChannel: ChannelDefinition = {
   capabilities: {
     chatTypes: ["direct"],
   },
+  setupWizard: xhsSetupWizard,
+  setup: xhsSetupAdapter,
   config: {
     listAccountIds: (cfg) => {
       const channels = cfg.channels as Record<string, unknown> | undefined;

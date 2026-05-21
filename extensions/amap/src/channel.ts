@@ -3,6 +3,7 @@
  */
 
 import type { ChannelDefinition, AmapAccountConfig } from "./types.js";
+import { amapSetupAdapter, amapSetupWizard } from "./onboarding.js";
 
 export const amapChannel: ChannelDefinition = {
   id: "amap",
@@ -15,6 +16,8 @@ export const amapChannel: ChannelDefinition = {
   capabilities: {
     chatTypes: ["direct"],
   },
+  setupWizard: amapSetupWizard,
+  setup: amapSetupAdapter,
   config: {
     listAccountIds: (cfg) => {
       const channels = cfg.channels as Record<string, unknown> | undefined;

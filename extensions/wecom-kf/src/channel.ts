@@ -19,7 +19,6 @@ import {
 import type { ResolvedWecomAccount, WecomBotConfig } from "./types/index.js";
 import { monitorWecomProvider } from "./gateway-monitor.js";
 import { setWecomBotConfig, wecomOnboardingAdapter } from "./onboarding.js";
-import { wecomOutbound } from "./outbound.js";
 import { WEBHOOK_PATHS } from "./types/constants.js";
 
 const meta = {
@@ -50,6 +49,7 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
   id: "wecom-cs",
   meta,
   onboarding: wecomOnboardingAdapter as any,
+  setupWizard: wecomOnboardingAdapter as any,
   setup: {
     resolveAccountId: ({ cfg, accountId }) => {
       return accountId?.trim() || resolveDefaultWecomAccountId(cfg as OpenClawConfig) || DEFAULT_ACCOUNT_ID;

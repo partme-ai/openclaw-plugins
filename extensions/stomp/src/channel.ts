@@ -3,6 +3,7 @@
  */
 
 import { publishToDestination } from "./stomp-server.js";
+import { stompTcpSetupAdapter, stompTcpSetupWizard } from "./onboarding.js";
 
 /**
  * 由会话键构造默认回复 topic。
@@ -36,6 +37,8 @@ export const stompTcpChannel = {
     blockStreaming: true,
   },
   reload: { configPrefixes: ["channels.stomp-tcp"] },
+  setupWizard: stompTcpSetupWizard,
+  setup: stompTcpSetupAdapter,
   config: {
     listAccountIds: () => ["default"],
     defaultAccountId: () => "default",

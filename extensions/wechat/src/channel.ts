@@ -30,6 +30,7 @@ import type { WeixinQrStartResult, WeixinQrWaitResult } from "./auth/login-qr.js
 import { sendWeixinMediaFile } from "./messaging/send-media.js";
 import { sendMessageWeixin, StreamingMarkdownFilter } from "./messaging/send.js";
 import { downloadRemoteImageToTemp } from "./cdn/upload.js";
+import { weixinSetupAdapter, weixinSetupWizard } from "./onboarding.js";
 
 /** Returns true when mediaUrl refers to a local filesystem path (absolute or relative). */
 function isLocalFilePath(mediaUrl: string): boolean {
@@ -177,6 +178,8 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
     ],
   },
   reload: { configPrefixes: ["channels.openclaw-weixin"] },
+  setupWizard: weixinSetupWizard,
+  setup: weixinSetupAdapter,
   config: {
     listAccountIds: (cfg) => listWeixinAccountIds(cfg),
     resolveAccount: (cfg, accountId) => resolveWeixinAccount(cfg, accountId),

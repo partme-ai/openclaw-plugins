@@ -53,6 +53,8 @@ export interface ChannelDefinition {
   outbound: {
     sendText: (sessionKey: string, text: string) => Promise<void>;
   };
+  setupWizard?: unknown;
+  setup?: unknown;
 }
 
 /** HTTP 路由定义 */

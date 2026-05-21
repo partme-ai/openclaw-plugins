@@ -9,6 +9,7 @@
 import type { ChannelDefinition } from "./types.js";
 import { publishToDestination } from "./stomp-server.js";
 import { buildSessionDestination } from "./destination-router.js";
+import { stompWsSetupAdapter, stompWsSetupWizard } from "./onboarding.js";
 
 /**
  * STOMP Channel 定义
@@ -32,6 +33,9 @@ export const stompChannel: ChannelDefinition = {
   capabilities: {
     chatTypes: ["direct"],
   },
+
+  setupWizard: stompWsSetupWizard,
+  setup: stompWsSetupAdapter,
 
   config: {
     listAccountIds: () => ["default"],

@@ -7,6 +7,7 @@ import { rabbitmqOutbound } from "./outbound.js";
 import { getStats, startRabbitmqServer, stopRabbitmqServer, trackInboundAccepted, trackInboundDropped, trackRoute } from "./rabbitmq-server.js";
 import { resolveRabbitmqConfig, validateRabbitmqConfig } from "./rabbitmq-config.js";
 import { getRabbitmqChannelConfig, setRabbitmqChannelConfig } from "./rabbitmq-state.js";
+import { rabbitmqSetupAdapter, rabbitmqSetupWizard } from "./onboarding.js";
 import { processInbound } from "./inbound.js";
 
 /**
@@ -30,6 +31,8 @@ export const rabbitmqChannel = {
     order: 90,
   },
   capabilities: { chatTypes: ["direct"] as const },
+  setupWizard: rabbitmqSetupWizard,
+  setup: rabbitmqSetupAdapter,
   config: {
     listAccountIds: () => [DEFAULT_ACCOUNT_ID],
     resolveAccount: (cfg: Record<string, unknown>) => {

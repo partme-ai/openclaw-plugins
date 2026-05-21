@@ -3,6 +3,7 @@
  * 负责账户状态、gateway 生命周期与 outbound 回包逻辑。
  */
 
+import { rockermqSetupAdapter, rockermqSetupWizard } from "./onboarding.js";
 import { processInbound } from "./inbound.js";
 import { rockermqOutbound } from "./outbound.js";
 import {
@@ -38,6 +39,8 @@ export const rockermqChannel = {
     order: 91,
   },
   capabilities: { chatTypes: ["direct"] as const },
+  setupWizard: rockermqSetupWizard,
+  setup: rockermqSetupAdapter,
   config: {
     listAccountIds: () => [DEFAULT_ACCOUNT_ID],
     resolveAccount: (cfg: Record<string, unknown>) => {

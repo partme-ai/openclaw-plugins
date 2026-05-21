@@ -12,6 +12,7 @@
  */
 
 import type { ChannelDefinition } from "./types.js";
+import { wechatIpadSetupAdapter, wechatIpadSetupWizard } from "./onboarding.js";
 import { sendMessage } from "./ipad-bridge.js";
 import { getWxidBySessionKey, parseWxidFromSessionKey } from "./session-mapper.js";
 import { outboundFromText } from "./message-converter.js";
@@ -37,6 +38,9 @@ export const wechatIpadChannel: ChannelDefinition = {
   capabilities: {
     chatTypes: ["direct", "group"],
   },
+
+  setupWizard: wechatIpadSetupWizard,
+  setup: wechatIpadSetupAdapter,
 
   config: {
     /**

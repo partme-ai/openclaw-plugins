@@ -1,12 +1,4 @@
 /**
- * 渠道配置写入适配（占位校验，与 OpenClaw setup 管线对齐）。
+ * @deprecated 请使用 onboarding.ts 中的 douyinSetupAdapter / douyinSetupWizard
  */
-import { createPatchedAccountSetupAdapter } from "openclaw/plugin-sdk/setup";
-
-const CHANNEL_KEY = "douyin" as const;
-
-export const douyinSetupAdapter = createPatchedAccountSetupAdapter({
-  channelKey: CHANNEL_KEY,
-  validateInput: () => null,
-  buildPatch: () => ({}),
-});
+export { douyinSetupAdapter } from "./onboarding.js";

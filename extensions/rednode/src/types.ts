@@ -74,6 +74,8 @@ export interface ChannelDefinition {
     deliveryMode: "direct";
     sendText: (params: SendTextParams) => Promise<{ ok: boolean }>;
   };
+  setupWizard?: unknown;
+  setup?: unknown;
 }
 
 export interface SendTextParams {

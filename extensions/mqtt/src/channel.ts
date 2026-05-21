@@ -25,6 +25,7 @@ import {
   resolveMqttAccount,
   type ResolvedMqttAccount,
 } from "./config.js";
+import { mqttSetupAdapter, mqttSetupWizard } from "./onboarding.js";
 
 const meta = {
   id: "mqtt",
@@ -60,6 +61,8 @@ export const mqttChannel: ChannelPlugin<ResolvedMqttAccount> = {
     blockStreaming: true,
   },
   reload: { configPrefixes: ["channels.mqtt"] },
+  setupWizard: mqttSetupWizard,
+  setup: mqttSetupAdapter,
   configSchema: {
     schema: {
       type: "object",

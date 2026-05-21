@@ -1,6 +1,7 @@
 // ChannelPlugin implementation
 import type { ChannelPlugin } from "openclaw/plugin-sdk";
 import { DEFAULT_ACCOUNT_ID } from "./config.js";
+import { templateSetupAdapter, templateSetupWizard } from "./onboarding.js";
 
 export const plugin: ChannelPlugin = {
   id: "TEMPLATE_NAME",
@@ -18,6 +19,8 @@ export const plugin: ChannelPlugin = {
     blockStreaming: true,
   },
   reload: { configPrefixes: ["channels.TEMPLATE_NAME"] },
+  setupWizard: templateSetupWizard,
+  setup: templateSetupAdapter,
   config: {
     listAccountIds: () => [DEFAULT_ACCOUNT_ID],
     resolveAccount: () => ({ accountId: DEFAULT_ACCOUNT_ID, enabled: true, configured: false }),

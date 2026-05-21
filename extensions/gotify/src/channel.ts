@@ -23,6 +23,7 @@ import { sendGotifyMessage } from './gotify-api.js';
 import { mapGotifyToInbound } from './message-mapper.js';
 import { gotifyConfigSchema } from './channel-config.js';
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from './types.js';
+import { gotifySetupAdapter, gotifySetupWizard } from './onboarding.js';
 
 /** WebSocket 监听器实例，按账号 ID 索引。 */
 const stopSignals = new Map<string, () => void>();
@@ -110,6 +111,8 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
     blockStreaming: true,
   },
   reload: { configPrefixes: ['channels.gotify', 'session.dmScope'] },
+  setupWizard: gotifySetupWizard,
+  setup: gotifySetupAdapter,
   configSchema: gotifyConfigSchema,
   config: {
     listAccountIds: (cfg: OpenClawConfig) => listGotifyAccountIds(cfg),

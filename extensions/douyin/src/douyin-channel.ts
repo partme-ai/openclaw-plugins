@@ -15,7 +15,7 @@ import {
   resolveDouyinAccount,
 } from "./accounts.js";
 import { createDouyinPluginHttpHandler } from "./gateway-webhook.js";
-import { douyinSetupAdapter } from "./setup.js";
+import { douyinSetupAdapter, douyinSetupWizard } from "./onboarding.js";
 import type { ResolvedDouyinAccount } from "./types.js";
 
 const CHANNEL_ID = "douyin";
@@ -89,6 +89,7 @@ export function createDouyinChannelPlugin(): ChannelPlugin<ResolvedDouyinAccount
       },
       reload: { configPrefixes: [`channels.${CHANNEL_ID}`] },
       setup: douyinSetupAdapter,
+      setupWizard: douyinSetupWizard,
       config: douyinConfig,
       directory: createEmptyChannelDirectoryAdapter(),
       messaging: {

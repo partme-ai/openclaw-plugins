@@ -7,6 +7,7 @@
 import { getStats, startRedisServer, stopRedisServer } from "./redis-stream-server.js";
 import { publishMessage, publishEntry } from "./publisher.js";
 import { resolveRedisChannelConfig, redactUrl } from "./redis-stream-config.js";
+import { redisStreamSetupAdapter, redisStreamSetupWizard } from "./onboarding.js";
 
 export const DEFAULT_ACCOUNT_ID = "default";
 
@@ -31,6 +32,9 @@ export const redisStreamChannel = {
   reload: {
     configPrefixes: ["channels.redis-stream"],
   },
+
+  setupWizard: redisStreamSetupWizard,
+  setup: redisStreamSetupAdapter,
 
   // ── 账户管理 ──────────────────────────────────────────────
   config: {

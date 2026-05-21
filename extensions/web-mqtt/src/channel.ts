@@ -8,6 +8,7 @@ import { getStats, startWebMqttServer, stopWebMqttServer, trackInboundAccepted, 
 import { resolveWebMqttConfig, validateWebMqttConfig } from "./mqtt-config.js";
 import { getWebMqttChannelConfig, setWebMqttChannelConfig } from "./mqtt-state.js";
 import { processInbound } from "./inbound.js";
+import { webMqttSetupAdapter, webMqttSetupWizard } from "./onboarding.js";
 
 /**
  * 单账户场景的 accountId。
@@ -30,6 +31,8 @@ export const mqttWsChannel = {
     order: 89,
   },
   capabilities: { chatTypes: ["direct"] as const },
+  setupWizard: webMqttSetupWizard,
+  setup: webMqttSetupAdapter,
   config: {
     listAccountIds: () => [DEFAULT_ACCOUNT_ID],
     resolveAccount: (cfg: Record<string, unknown>) => {

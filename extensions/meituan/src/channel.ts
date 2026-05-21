@@ -3,6 +3,7 @@
  */
 
 import type { ChannelDefinition, MeituanAccountConfig } from "./types.js";
+import { meituanSetupAdapter, meituanSetupWizard } from "./onboarding.js";
 
 export const meituanChannel: ChannelDefinition = {
   id: "meituan",
@@ -15,6 +16,8 @@ export const meituanChannel: ChannelDefinition = {
   capabilities: {
     chatTypes: ["direct"],
   },
+  setupWizard: meituanSetupWizard,
+  setup: meituanSetupAdapter,
   config: {
     listAccountIds: (cfg) => {
       const channels = cfg.channels as Record<string, unknown> | undefined;

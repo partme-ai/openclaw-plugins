@@ -66,6 +66,10 @@ export interface ChannelDefinition {
     deliveryMode: "direct";
     sendText: (params: SendTextParams) => Promise<{ ok: boolean }>;
   };
+  /** OpenClaw CLI setup wizard（声明式 onboard 配置） */
+  setupWizard?: unknown;
+  /** OpenClaw setup adapter（写入 channels 配置） */
+  setup?: unknown;
 }
 
 export interface SendTextParams {
