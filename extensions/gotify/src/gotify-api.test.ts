@@ -24,11 +24,6 @@ import {
   resolveDefaultGotifyAccountId,
   resolveGotifyAccount,
 } from './config.js';
-import {
-  buildSessionKeyFromDmScope,
-  resolveDmScopeFromRuntimeConfig,
-  resolvePeerIdFromStreamMessage,
-} from './dm-scope.js';
 import { mapGotifyToInbound, mapOutboundToGotify } from './message-mapper.js';
 import { selectAccountId } from './outbound.js';
 
@@ -471,111 +466,8 @@ describe('Health & Doctor', () => {
   });
 });
 
-// ── dm-scope Tests ─────────────────────────────────────────────────────────────
-
-describe('dm-scope', () => {
-  it('resolves per-peer scope as default', () => {
-    expect(resolveDmScopeFromRuntimeConfig({})).toBe('per-peer');
-    expect(resolveDmScopeFromRuntimeConfig({ session: {} })).toBe('per-peer');
-    expect(resolveDmScopeFromRuntimeConfig({ session: { dmScope: 'invalid' } })).toBe('per-peer');
-  });
-
-  it('resolves all four valid scopes', () => {
-    expect(resolveDmScopeFromRuntimeConfig({ session: { dmScope: 'main' } })).toBe('main');
-    expect(resolveDmScopeFromRuntimeConfig({ session: { dmScope: 'per-peer' } })).toBe('per-peer');
-    expect(resolveDmScopeFromRuntimeConfig({ session: { dmScope: 'per-channel-peer' } })).toBe(
-      'per-channel-peer'
-    );
-    expect(
-      resolveDmScopeFromRuntimeConfig({ session: { dmScope: 'per-account-channel-peer' } })
-    ).toBe('per-account-channel-peer');
-  });
-
-  it('builds main scope session key', () => {
-    const key = buildSessionKeyFromDmScope({
-      cfg: { session: { dmScope: 'main' } },
-      agentId: 'main',
-      channel: 'gotify',
-      accountId: 'ops',
-      peerId: 'app_1',
-    });
-    expect(key).toBe('agent:main:main');
-  });
-
-  it('builds per-peer session key', () => {
-    const key = buildSessionKeyFromDmScope({
-      cfg: { session: { dmScope: 'per-peer' } },
-      agentId: 'agent-iot',
-      channel: 'gotify',
-      accountId: 'default',
-      peerId: 'APP_5',
-    });
-    expect(key).toBe('agent:agent-iot:direct:app_5');
-  });
-
-  it('builds per-channel-peer session key', () => {
-    const key = buildSessionKeyFromDmScope({
-      cfg: { session: { dmScope: 'per-channel-peer' } },
-      agentId: 'main',
-      channel: 'gotify',
-      accountId: 'ops',
-      peerId: 'APP_3',
-    });
-    expect(key).toBe('agent:main:gotify:direct:app_3');
-  });
-
-  it('builds per-account-channel-peer session key', () => {
-    const key = buildSessionKeyFromDmScope({
-      cfg: { session: { dmScope: 'per-account-channel-peer' } },
-      agentId: 'main',
-      channel: 'gotify',
-      accountId: 'ops',
-      peerId: 'APP_1',
-    });
-    expect(key).toBe('agent:main:gotify:ops:direct:app_1');
-  });
-
-  it('resolves peer id from openclaw extras before appid', () => {
-    const peerId = resolvePeerIdFromStreamMessage({
-      appid: 10,
-      extras: { openclaw: { peerId: 'peer-99' } },
-    });
-    expect(peerId).toBe('peer-99');
-  });
-
-  it('resolves peer id from appid when no extras', () => {
-    const peerId = resolvePeerIdFromStreamMessage({ appid: 42 });
-    expect(peerId).toBe('42');
-  });
-
-  it('resolves peer id from title when no appid', () => {
-    const peerId = resolvePeerIdFromStreamMessage({ title: 'alarm-bot' });
-    expect(peerId).toBe('alarm-bot');
-  });
-
-  it('falls back to gotify when nothing available', () => {
-    const peerId = resolvePeerIdFromStreamMessage({});
-    expect(peerId).toBe('gotify');
-  });
-
-  it('normalizes tokens to lowercase and trimmed', () => {
-    expect(resolvePeerIdFromStreamMessage({ appid: '  APP_99  ' })).toBe('app_99');
-    expect(resolvePeerIdFromStreamMessage({ title: '  MyBot  ' })).toBe('mybot');
-  });
-
-  it('handles empty peerId by falling back to main scope', () => {
-    const key = buildSessionKeyFromDmScope({
-      cfg: { session: { dmScope: 'per-peer' } },
-      agentId: 'main',
-      channel: 'gotify',
-      accountId: 'default',
-      peerId: '',
-    });
-    expect(key).toBe('agent:main:main');
-  });
-
+describe('dispatchInboundMessage agent fallback', () => {
   it('resolves agent to "main" when resolveAgentRoute returns no agentId', () => {
-    // dispatchInboundMessage (channel.ts:262-263) fallback logic
     function resolveAgent(route: { agentId?: string | null } | null): string {
       return typeof route?.agentId === 'string' && route.agentId.trim() ? route.agentId : 'main';
     }

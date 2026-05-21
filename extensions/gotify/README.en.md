@@ -196,7 +196,8 @@ openclaw-gotify/
 │   ├── setup-entry.ts
 │   ├── channel.ts
 │   ├── config.ts
-│   ├── dm-scope.ts
+│   ├── peer-resolver.ts
+│   ├── inbound-access.ts
 │   ├── gotify-api.ts
 │   ├── runtime.ts
 │   ├── setup.ts

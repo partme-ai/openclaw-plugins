@@ -37,11 +37,7 @@ import {
   resolveDefaultGotifyAccountId,
   describeGotifyAccountSnapshot,
 } from '../src/config.js';
-import {
-  buildSessionKeyFromDmScope,
-  resolveDmScopeFromRuntimeConfig,
-  resolvePeerIdFromStreamMessage,
-} from '../src/dm-scope.js';
+import { resolveGotifyPeerId } from '../src/peer-resolver.js';
 import { mapGotifyToInbound, mapOutboundToGotify } from '../src/message-mapper.js';
 import { selectAccountId } from '../src/outbound.js';
 import type { GotifyMessagePayload, ResolvedGotifyAccount } from '../src/types.js';
@@ -289,50 +285,22 @@ async function main() {
   assert(!('clientToken' in snapshot), 'describeGotifyAccountSnapshot does NOT leak clientToken');
   console.log('');
 
-  // ── dmScope 会话隔离 ───────────────────────────────────────────────────────
-  console.log('── dmScope Session Isolation ──');
-
-  const dmScopes = ['main', 'per-peer', 'per-channel-peer', 'per-account-channel-peer'] as const;
-  for (const scope of dmScopes) {
-    const resolved = resolveDmScopeFromRuntimeConfig({ session: { dmScope: scope } });
-    assert(resolved === scope, `resolveDmScopeFromRuntimeConfig: ${scope}`);
-  }
-
-  // 回退
-  assert(resolveDmScopeFromRuntimeConfig({}) === 'per-peer', 'dmScope falls back to per-peer for empty config');
-  assert(resolveDmScopeFromRuntimeConfig({ session: {} }) === 'per-peer', 'dmScope falls back to per-peer for empty session');
-  assert(resolveDmScopeFromRuntimeConfig({ session: { dmScope: 'invalid' } }) === 'per-peer', 'dmScope rejects invalid value');
-
-  // 会话键构造
-  const mainKey = buildSessionKeyFromDmScope({
-    cfg: { session: { dmScope: 'main' } },
-    agentId: 'main', channel: 'gotify', accountId: 'default', peerId: '5',
-  });
-  assert(mainKey === 'agent:main:main', 'main scope session key');
-
-  const paKey = buildSessionKeyFromDmScope({
-    cfg: { session: { dmScope: 'per-account-channel-peer' } },
-    agentId: 'ops-agent', channel: 'gotify', accountId: 'ops', peerId: 'APP_9',
-  });
-  assert(paKey === 'agent:ops-agent:gotify:ops:direct:app_9', 'per-account-channel-peer session key');
-  console.log('');
-
-  // ── Peer ID 解析 ───────────────────────────────────────────────────────────
+  // ── Peer ID 解析（会话键由 resolveAgentRoute 负责）────────────────────────
   console.log('── Peer ID Resolution ──');
 
-  const fromExtras = resolvePeerIdFromStreamMessage({
+  const fromExtras = resolveGotifyPeerId({
     id: 1, appid: 10,
     extras: { openclaw: { peerId: 'custom-peer' } },
   });
   assert(fromExtras === 'custom-peer', 'peerId from extras.openclaw.peerId');
 
-  const fromAppId = resolvePeerIdFromStreamMessage({ id: 2, appid: 42 });
+  const fromAppId = resolveGotifyPeerId({ id: 2, appid: 42 });
   assert(fromAppId === '42', 'peerId from appid');
 
-  const fromTitle = resolvePeerIdFromStreamMessage({ id: 3, title: 'AlertBot' });
+  const fromTitle = resolveGotifyPeerId({ id: 3, title: 'AlertBot' });
   assert(fromTitle === 'alertbot', 'peerId from title (lowercase)');
 
-  const fallback = resolvePeerIdFromStreamMessage({ id: 4 });
+  const fallback = resolveGotifyPeerId({ id: 4 });
   assert(fallback === 'gotify', 'peerId fallback to "gotify"');
   console.log('');
 

@@ -14,6 +14,7 @@ function makeAccount() {
           appToken: 'app-token',
           clientToken: 'client-token',
           inbound: { enabled: true },
+          allowFrom: ['*'],
         },
       },
     },
@@ -89,7 +90,7 @@ describe('dispatchInboundMessage', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it('uses resolvePeerIdFromStreamMessage for routing peer id', async () => {
+  it('uses resolveGotifyPeerId for routing peer id', async () => {
     const resolveAgentRoute = vi.fn().mockResolvedValue({ agentId: 'main', sessionKey: 'sk' });
     const ctx = makeCtx({ resolveAgentRoute });
 

@@ -84,6 +84,29 @@ declare module 'openclaw/plugin-sdk/channel-contract' {
   };
 }
 
+declare module 'openclaw/plugin-sdk/channel-ingress-runtime' {
+  export function defineStableChannelIngressIdentity(params?: {
+    normalize?: (value: string) => string | null | undefined;
+    aliases?: Array<{
+      key: string;
+      kind?: string;
+      normalizeEntry?: (value: string) => string | null | undefined;
+      normalizeSubject?: (value: string) => string | null | undefined;
+    }>;
+    isWildcardEntry?: (value: string) => boolean;
+  }): unknown;
+
+  export function resolveChannelMessageIngress(params: Record<string, unknown>): Promise<{
+    senderAccess: {
+      allowed: boolean;
+      decision: string;
+      reasonCode: string;
+      effectiveAllowFrom: string[];
+    };
+    ingress: Record<string, unknown>;
+  }>;
+}
+
 declare module 'openclaw/plugin-sdk/channel-config-helpers' {
   export function createScopedDmSecurityResolver<TAccount>(params: {
     channelKey: string;

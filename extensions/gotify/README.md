@@ -244,7 +244,8 @@ openclaw-gotify/
 │   ├── gotify-api.ts         # Gotify REST API 全量封装（Message/Application/Client/Health）
 │   ├── config.ts             # 配置解析（多账号合并、默认值补齐）
 │   ├── channel-config.ts     # ChannelConfigSchema（Zod + JSON Schema）
-│   ├── dm-scope.ts           # dmScope 解析 + 会话键构造
+│   ├── peer-resolver.ts      # Gotify peerId 解析（供 resolveAgentRoute）
+│   ├── inbound-access.ts     # 入站 DM 策略（SDK channel-ingress-runtime）
 │   ├── message-mapper.ts     # 入站/出站消息映射
 │   ├── outbound.ts           # ChannelOutboundAdapter
 │   ├── ws-listener.ts        # WebSocket 流监听器（指数退避重连）

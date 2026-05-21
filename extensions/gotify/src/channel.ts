@@ -18,8 +18,8 @@ import { createGotifyWsListener } from './ws-listener.js';
 import { getAccountSnapshot, getOwnApplicationId, patchAccountSnapshot, setOwnApplicationId } from './runtime.js';
 import { probeGotifyAccount, sendGotifyMessage } from './gotify-api.js';
 import { mapGotifyToInbound, withOpenClawOutboundExtras, isOpenClawOutboundStreamMessage } from './message-mapper.js';
-import { resolvePeerIdFromStreamMessage } from './dm-scope.js';
-import { checkGotifyInboundDmAccess } from './dm-policy.js';
+import { resolveGotifyPeerId } from './peer-resolver.js';
+import { checkGotifyInboundAccess } from './inbound-access.js';
 import { gotifyConfigSchema } from './channel-config.js';
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from './types.js';
 import { gotifySetupAdapter, gotifySetupWizard } from './onboarding.js';
@@ -325,14 +325,15 @@ export async function dispatchInboundMessage(
   }
 
   const cfg = ctx.cfg as Record<string, unknown>;
-  const peerId = resolvePeerIdFromStreamMessage(message);
+  const peerId = resolveGotifyPeerId(message);
   const inbound = mapGotifyToInbound(message);
 
   if (!inbound.text.trim()) {
     return;
   }
 
-  const dmAccess = checkGotifyInboundDmAccess({
+  const dmAccess = await checkGotifyInboundAccess({
+    cfg,
     account,
     peerId,
     appid: message.appid,
