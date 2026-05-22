@@ -9,4 +9,5 @@ export default defineConfig({
   target: "node20",
   outDir: "dist",
   external: [/^openclaw(\/.*)?$/],
+  noExternal: ["@partme.ai/openclaw-message-sdk"],
 });

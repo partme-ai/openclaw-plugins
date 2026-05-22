@@ -27,6 +27,9 @@
   ],
   "author": "PartMe",
   "license": "MIT",
+  "dependencies": {
+    "@partme.ai/openclaw-message-sdk": "workspace:*"
+  },
   "files": [
     "dist",
     "openclaw.plugin.json",

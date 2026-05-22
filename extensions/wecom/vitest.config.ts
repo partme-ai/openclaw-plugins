@@ -6,7 +6,7 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts", "index.test.ts"],
+    include: ["src/**/*.test.ts"],
     globals: false,
   },
 });

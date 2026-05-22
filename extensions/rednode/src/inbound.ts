@@ -4,13 +4,13 @@
 
 import crypto from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { XhsAccountConfig } from "./types.js";
-
-async function readBody(req: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString("utf8");
-}
+import {
+  readRequestBodyWithLimit,
+  isRequestBodyLimitError,
+  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+} from "./runtime-api.js";
+import { dispatchWebhookInbound } from "./dispatch-inbound.js";
+import type { PluginApi, XhsAccountConfig } from "./types.js";
 
 /**
  * 小红书 Webhook 验签
@@ -37,23 +37,32 @@ function getSignatureFromRequest(req: IncomingMessage): string | undefined {
   return Array.isArray(raw) ? raw[0] : raw;
 }
 
-function parseXhsEventBody(body: string): { shop_id?: string; content: string } {
-  let eventType = "unknown";
-  let shopId: string | undefined;
+function extractShopId(body: string, config: XhsAccountConfig): string {
   try {
     const raw = JSON.parse(body) as Record<string, unknown>;
-    eventType =
-      (raw.event_type as string) ??
-      (raw.type as string) ??
-      (raw.msg_type as string) ??
-      eventType;
     const sid = raw.shop_id ?? raw.shopId ?? raw.seller_id ?? raw.sellerId;
-    shopId = typeof sid === "string" ? sid : typeof sid === "number" ? String(sid) : undefined;
-    const content = JSON.stringify({ event_type: eventType, ...raw });
-    return { shop_id: shopId, content };
+    if (typeof sid === "string" && sid.trim()) return sid.trim();
+    if (typeof sid === "number") return String(sid);
   } catch {
-    return { content: body };
+    // 非 JSON 时使用配置默认值
   }
+  return config.shop_id ?? config.seller_id ?? "default";
+}
+
+function extractWebhookMessageId(req: IncomingMessage, body: string): string | undefined {
+  const header = req.headers["msg-id"] ?? req.headers["x-msg-id"];
+  const fromHeader = Array.isArray(header) ? header[0] : header;
+  if (typeof fromHeader === "string" && fromHeader.trim()) {
+    return fromHeader.trim();
+  }
+  try {
+    const raw = JSON.parse(body) as Record<string, unknown>;
+    const id = raw.msg_id ?? raw.message_id ?? raw.event_id ?? raw.id;
+    if (id != null && id !== "") return String(id);
+  } catch {
+    // ignore
+  }
+  return undefined;
 }
 
 /**
@@ -61,11 +70,13 @@ function parseXhsEventBody(body: string): { shop_id?: string; content: string } 
  */
 export function createXhsWebhookHandler(
   getConfig: () => XhsAccountConfig | undefined,
-  onInbound: (params: { shopId: string; sessionId: string; content: string }) => void,
+  api: PluginApi,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
     try {
-      const body = await readBody(req);
+      const body = await readRequestBodyWithLimit(req, {
+        maxBytes: DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+      });
       const config = getConfig();
       if (!config?.app_secret && !config?.webhook_secret) {
         res.writeHead(403, { "Content-Type": "text/plain" });
@@ -78,13 +89,28 @@ export function createXhsWebhookHandler(
         res.end("Forbidden: invalid signature");
         return;
       }
-      const parsed = parseXhsEventBody(body);
-      const shopId = parsed.shop_id ?? config!.shop_id ?? config!.seller_id ?? "default";
-      const sessionId = `xhs:${shopId}`;
-      onInbound({ shopId, sessionId, content: parsed.content });
+      const shopId = extractShopId(body, config!);
+      const messageId = extractWebhookMessageId(req, body);
+      const result = await dispatchWebhookInbound({
+        api,
+        channel: "xhs",
+        accountId: "default",
+        peerId: shopId,
+        shopId,
+        rawBody: body,
+        messageId,
+      });
+      if (result === "skipped") {
+        console.warn("[rednode] inbound skipped: no dispatch runtime available");
+      }
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("success");
     } catch (e) {
+      if (isRequestBodyLimitError(e)) {
+        res.writeHead(413, { "Content-Type": "text/plain" });
+        res.end("payload too large");
+        return;
+      }
       console.error("[rednode] webhook error:", e);
       res.writeHead(500, { "Content-Type": "text/plain" });
       res.end("Internal Server Error");

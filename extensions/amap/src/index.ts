@@ -19,17 +19,7 @@ export default function register(api: PluginApi): void {
 
   const getConfig = createAmapConfigGetter(api);
 
-  const webhookHandler = createAmapWebhookHandler(getConfig, (params) => {
-    const publish = api.runtime?.channel?.publishInbound;
-    if (typeof publish === "function") {
-      publish({
-        channel: "amap",
-        sessionId: params.sessionId,
-        shopId: params.shopId,
-        content: params.content,
-      });
-    }
-  });
+  const webhookHandler = createAmapWebhookHandler(getConfig, api);
   api.registerHttpRoute({
     path: AMAP_WEBHOOK_PATH,
     handler: webhookHandler,

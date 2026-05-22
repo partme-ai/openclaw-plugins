@@ -12,7 +12,6 @@ import { buildRockermqConfigSnapshot, resolveRockermqConfig } from "./config.js"
 import { getRockermqChannelConfig } from "./state.js";
 import { getSessionStats, getAllSessionMappings } from "./routing/session-mapper.js";
 import { getStats } from "./transport/server.js";
-import { registerRockermqTools } from "./mq-tools.js";
 
 export { rockermqChannel } from "./channel.js";
 
@@ -26,7 +25,6 @@ export default defineChannelPluginEntry({
   plugin: rockermqChannel,
   setRuntime: setRockermqRuntime,
   registerFull(api: OpenClawPluginApi) {
-    registerRockermqTools(api);
 
     api.registerHttpRoute({
       path: "/rocketmq/health",

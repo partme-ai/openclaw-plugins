@@ -50,4 +50,23 @@ declare module "openclaw/plugin-sdk/runtime-store" {
 
 declare module "openclaw/plugin-sdk/setup" {
   export function createPatchedAccountSetupAdapter(...args: any[]): any;
+  export type ChannelSetupAdapter = any;
+  export type ChannelSetupWizard = any;
+  export function applySetupAccountConfigPatch(...args: any[]): any;
+  export function createStandardChannelSetupStatus(...args: any[]): any;
+  export function setSetupChannelEnabled(...args: any[]): any;
+}
+
+declare module "@partme.ai/openclaw-message-sdk/bridge" {
+  export type BridgePluginRuntime = any;
+  export function normalizeWireIngress(opts: Record<string, unknown>): {
+    accepted: boolean;
+    text?: string;
+    unified?: unknown;
+  };
+  export function createChannelDispatch(opts: Record<string, unknown>): Promise<void>;
+  export function resolveChannelDispatchIdentity(
+    runtime: BridgePluginRuntime,
+    opts: Record<string, unknown>,
+  ): Promise<{ agentId: string; sessionKey: string }>;
 }

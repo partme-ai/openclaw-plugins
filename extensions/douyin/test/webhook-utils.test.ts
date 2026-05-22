@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { tryParseVerifyWebhookChallenge, verifyDouyinSignature, isDuplicateMsgId, extractDouyinSenderId } from "../src/webhook-utils.js";
+import { tryParseVerifyWebhookChallenge, verifyDouyinSignature, extractDouyinSenderId } from "../src/webhook-utils.js";
 
 describe("tryParseVerifyWebhookChallenge", () => {
   it("returns challenge string for verify_webhook event", () => {
@@ -58,28 +58,6 @@ describe("verifyDouyinSignature", () => {
     const body = "data";
     const sig = createHash("sha1").update(secret + body, "utf8").digest("hex");
     expect(verifyDouyinSignature(secret, body, sig.toUpperCase())).toBe(false);
-  });
-});
-
-describe("isDuplicateMsgId", () => {
-  it("returns false on first occurrence", () => {
-    expect(isDuplicateMsgId("msg-001")).toBe(false);
-  });
-
-  it("returns true on second occurrence (duplicate)", () => {
-    // Since the module uses a module-level Set, msg-002 might already be in there
-    // from the previous import, so we use a fresh unique ID
-    const id = `test-dup-${Date.now()}-${Math.random()}`;
-    expect(isDuplicateMsgId(id)).toBe(false);
-    expect(isDuplicateMsgId(id)).toBe(true);
-  });
-
-  it("returns false for undefined msgId", () => {
-    expect(isDuplicateMsgId(undefined)).toBe(false);
-  });
-
-  it("returns false for empty string msgId", () => {
-    expect(isDuplicateMsgId("")).toBe(false);
   });
 });
 

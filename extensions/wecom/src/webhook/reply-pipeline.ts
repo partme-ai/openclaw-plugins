@@ -1,5 +1,5 @@
 /**
- * WeCom Webhook 回复管线薄封装：通用逻辑在 message-sdk，企微协议在 adapters/。
+ * WeCom Webhook 回复管线（OpenClaw SDK + 企微 outbound 适配）。
  */
 
 import type {
@@ -11,11 +11,11 @@ import type {
 import {
   createChannelMessageReplyPipeline,
   createReplyPrefixContext,
+  createTypingLifecycleHooks,
 } from "../runtime-api.js";
-import { createTypingLifecycleHooks } from "@partme.ai/openclaw-message-sdk";
 import { getWeComRuntime } from "../runtime.js";
 import type { WecomWebhookTarget } from "./types.js";
-import { deliverWecomReply } from "../adapters/reply-deliver.js";
+import { deliverWecomReply } from "../outbound/reply-deliver.js";
 
 export type CreateWecomReplyDispatcherParams = {
   target: WecomWebhookTarget;

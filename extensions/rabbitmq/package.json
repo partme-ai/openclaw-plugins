@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "amqplib": "^0.10.4",
-    "@partme.ai/openclaw-message-sdk": "^2026.5.21"
+    "@partme.ai/openclaw-message-sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.5",

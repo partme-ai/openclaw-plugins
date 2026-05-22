@@ -1,18 +1,8 @@
 /**
- * 抖音 Webhook 共用：读 body、verify_webhook 挑战、SHA1 验签、消息去重。
+ * 抖音 Webhook 共用：verify_webhook 挑战、SHA1 验签、发送方 ID 解析。
  */
 
-import type { IncomingMessage } from "node:http";
 import { createHash } from "node:crypto";
-
-/** 读取 HTTP 请求体为 UTF-8 字符串 */
-export async function readWebhookBody(req: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(chunk as Buffer);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
 
 /** 若为 verify_webhook 事件则返回 challenge 字符串，否则返回 null */
 export function tryParseVerifyWebhookChallenge(body: string): string | null {
@@ -40,31 +30,6 @@ export function verifyDouyinSignature(
   const payload = secret + rawBody;
   const hash = createHash("sha1").update(payload, "utf8").digest("hex");
   return hash === signatureHeader.trim();
-}
-
-const seenMsgIds = new Set<string>();
-const MAX_SEEN = 1000;
-
-/** 基于 msg-id 头去重，避免重复投递 */
-export function isDuplicateMsgId(msgId: string | undefined): boolean {
-  if (!msgId) {
-    return false;
-  }
-  if (seenMsgIds.has(msgId)) {
-    return true;
-  }
-  seenMsgIds.add(msgId);
-  if (seenMsgIds.size > MAX_SEEN) {
-    const it = seenMsgIds.values();
-    for (let i = 0; i < MAX_SEEN / 2; i++) {
-      it.next();
-    }
-    const oldest = it.next().value;
-    if (oldest !== undefined) {
-      seenMsgIds.delete(oldest);
-    }
-  }
-  return false;
 }
 
 /**

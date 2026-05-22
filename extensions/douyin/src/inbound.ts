@@ -1,16 +1,22 @@
 /**
- * Gateway 注册的抖音 Webhook：验签、挑战应答，并通过 dispatchInboundDirectDmWithRuntime 入站。
+ * Gateway 注册的抖音 Webhook：验签、挑战应答，并经 message-sdk 入站派发。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/account-resolution";
-import { dispatchInboundDirectDmWithRuntime } from "openclaw/plugin-sdk/channel-inbound";
 import { getDouyinRuntime } from "./runtime.js";
 import type { ResolvedDouyinAccount } from "./types.js";
 import {
+  createIdempotencyCache,
+  readRequestBodyWithLimit,
+  isRequestBodyLimitError,
+  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+  normalizeWireIngress,
+  createChannelDispatch,
+  resolveChannelDispatchIdentity,
+  type BridgePluginRuntime,
+} from "./runtime-api.js";
+import {
   extractDouyinSenderId,
-  isDuplicateMsgId,
-  readWebhookBody,
   tryParseVerifyWebhookChallenge,
   verifyDouyinSignature,
 } from "./webhook-utils.js";
@@ -21,6 +27,9 @@ export type DouyinGatewayLog = {
   error?: (message: string) => void;
   debug?: (message: string) => void;
 };
+
+/** 抖音 Webhook 入站幂等缓存（msg-id）。 */
+const idempotencyCache = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 5000 });
 
 /**
  * 构建符合 registerPluginHttpRoute 的处理器：返回 true 表示已响应请求。
@@ -39,7 +48,9 @@ export function createDouyinPluginHttpHandler(params: {
     }
 
     try {
-      const body = await readWebhookBody(req);
+      const body = await readRequestBodyWithLimit(req, {
+        maxBytes: DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+      });
 
       const challenge = tryParseVerifyWebhookChallenge(body);
       if (challenge != null) {
@@ -58,42 +69,57 @@ export function createDouyinPluginHttpHandler(params: {
 
       const msgIdHeader = req.headers["msg-id"] as string | undefined;
       const messageId = msgIdHeader ?? `douyin-${Date.now()}`;
-      if (isDuplicateMsgId(msgIdHeader)) {
+
+      const parsed = normalizeWireIngress({
+        rawPayload: body,
+        mode: "jsonTextOrPlain",
+        channel: "douyin",
+        idempotencyKey: msgIdHeader,
+        idempotency: msgIdHeader ? idempotencyCache : undefined,
+      });
+      if (!parsed.accepted) {
         res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("success");
         return true;
       }
-
+      const text = parsed.text ?? body;
       const runtime = getDouyinRuntime();
-      const cfg = runtime.config.loadConfig() as OpenClawConfig;
-
       const peerId =
         extractDouyinSenderId(body) ?? `anonymous:${account.shop_id ?? account.accountId}`;
       const shopRef = account.shop_id ?? account.accountId;
 
-      await dispatchInboundDirectDmWithRuntime({
-        cfg,
-        runtime,
+      const { agentId, sessionKey } = await resolveChannelDispatchIdentity(
+        runtime as unknown as BridgePluginRuntime,
+        {
+          channel: "douyin",
+          accountId: account.accountId,
+          peerId,
+        },
+      );
+
+      await createChannelDispatch({
+        mode: "reply-pipeline",
+        runtime: runtime as unknown as BridgePluginRuntime,
         channel: "douyin",
-        channelLabel: "抖音",
         accountId: account.accountId,
-        peer: { kind: "direct", id: peerId },
-        senderId: peerId,
-        senderAddress: `douyin:${peerId}`,
-        recipientAddress: `douyin:shop:${shopRef}`,
-        conversationLabel: peerId,
-        rawBody: body,
-        messageId,
-        deliver: async () => {
-          log?.warn?.(
-            "[douyin] 出站 DM 未接开放平台对称通道；请用抖店/OpenAPI 或 douyin-cli 发送回复。",
-          );
+        peerId,
+        text,
+        agentId,
+        sessionKey,
+        unified: parsed.unified,
+        extra: {
+          rawBody: body,
+          messageId,
+          shopId: shopRef,
         },
-        onRecordError: (err: unknown) => {
-          log?.error?.(`[douyin] record inbound: ${String(err)}`);
-        },
-        onDispatchError: (err: unknown, info: { kind: string }) => {
-          log?.error?.(`[douyin] dispatch (${info.kind}): ${String(err)}`);
+        reply: {
+          deliver: async () => {
+            log?.warn?.(
+              "[douyin] 出站 DM 未接开放平台对称通道；请用抖店/OpenAPI 或 douyin-cli 发送回复。",
+            );
+          },
+          outboundFormat: "plainText",
+          replyRoute: { shopId: shopRef },
         },
       });
 
@@ -101,6 +127,11 @@ export function createDouyinPluginHttpHandler(params: {
       res.end("success");
       return true;
     } catch (e) {
+      if (isRequestBodyLimitError(e)) {
+        res.writeHead(413, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("payload too large");
+        return true;
+      }
       log?.error?.(`[douyin] webhook: ${String(e)}`);
       res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("error");

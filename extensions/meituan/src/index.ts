@@ -25,21 +25,7 @@ export default function register(api: PluginApi): void {
 
   const getConfig = createMeituanConfigGetter(api);
 
-  const webhookHandler = createMeituanWebhookHandler(
-    getConfig,
-    (params) => {
-      const publish = api.runtime?.channel?.publishInbound;
-      if (typeof publish === "function") {
-        publish({
-          channel: "meituan",
-          sessionId: params.sessionId,
-          shopId: params.shopId,
-          content: params.content,
-        });
-      }
-    },
-    api.logger,
-  );
+  const webhookHandler = createMeituanWebhookHandler(getConfig, api, api.logger);
   api.registerHttpRoute({
     path: MEITUAN_WEBHOOK_PATH,
     handler: webhookHandler,

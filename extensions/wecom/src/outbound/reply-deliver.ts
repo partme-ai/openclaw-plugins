@@ -3,13 +3,13 @@
  */
 
 import type { PluginRuntime, ReplyPayload } from "../runtime-api.js";
-import { formatReasoningMessage } from "../runtime-api.js";
 import {
   extractLocalImagePathsFromText,
+  formatReasoningMessage,
   isImageContentType,
   preprocessOutboundReply,
   resolveOutboundMedia,
-} from "@partme.ai/openclaw-message-sdk";
+} from "../runtime-api.js";
 import { getWeComRuntime } from "../runtime.js";
 import type { WecomWebhookTarget } from "../webhook/types.js";
 import { STREAM_MAX_BYTES } from "../webhook/types.js";
@@ -33,9 +33,7 @@ export type DeliverWecomReplyContext = {
   tableMode: Parameters<PluginRuntime["channel"]["text"]["convertMarkdownTables"]>[1];
 };
 
-/**
- * 将 Agent 回复写入 stream 并触发企微侧投递。
- */
+/** 将 Agent 回复写入 stream 并触发企微侧投递。 */
 export async function deliverWecomReply(ctx: DeliverWecomReplyContext): Promise<void> {
   const core = getWeComRuntime();
   const { payload, info, target, streamId, chatType, rawBody, tableMode } = ctx;

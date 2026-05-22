@@ -17,17 +17,7 @@ export default function register(api: PluginApi): void {
 
   const getConfig = createXhsConfigGetter(api);
 
-  const webhookHandler = createXhsWebhookHandler(getConfig, (params) => {
-    const publish = api.runtime?.channel?.publishInbound;
-    if (typeof publish === "function") {
-      publish({
-        channel: "xhs",
-        sessionId: params.sessionId,
-        shopId: params.shopId,
-        content: params.content,
-      });
-    }
-  });
+  const webhookHandler = createXhsWebhookHandler(getConfig, api);
   api.registerHttpRoute({
     path: XHS_WEBHOOK_PATH,
     handler: webhookHandler,

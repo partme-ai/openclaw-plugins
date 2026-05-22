@@ -24,7 +24,9 @@ vi.mock("./active-reply.js", () => ({
   sendBotFallbackPromptNow: vi.fn(async () => undefined),
   useActiveReplyOnce: vi.fn(async () => undefined),
 }));
-vi.mock("./agent-dm.js", () => ({ agentDmMedia: vi.fn(async () => undefined) }));
+vi.mock("../outbound/reply-deliver.js", () => ({
+  deliverWecomReply: vi.fn(async () => undefined),
+}));
 
 import { createWecomReplyDispatcher, createWecomReplyPipeline } from "./reply-pipeline.js";
 

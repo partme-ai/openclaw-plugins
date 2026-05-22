@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest --config vitest.config.ts run",
     "prepublishOnly": "pnpm build",
@@ -61,6 +61,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.0",
+    "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
   },
