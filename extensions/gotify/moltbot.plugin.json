@@ -1,0 +1,154 @@
+{
+  "id": "openclaw-gotify",
+  "kind": "channel",
+  "name": "Gotify",
+  "description": "OpenClaw Gotify channel plugin — REST delivery, WebSocket stream inbound, multi-account session isolation, and full application/client lifecycle management.",
+  "version": "2026.5.20",
+  "channels": ["gotify"],
+  "channelEnvVars": {
+    "gotify": [
+      "GOTIFY_SERVER_URL",
+      "GOTIFY_APP_TOKEN",
+      "GOTIFY_CLIENT_TOKEN"
+    ]
+  },
+  "activation": {
+    "onStartup": false,
+    "onChannels": ["gotify"]
+  },
+  "contracts": {
+    "tools": []
+  },
+  "channelConfigs": {
+    "gotify": {
+      "label": "Gotify",
+      "description": "Self-hosted push notification server — send and receive messages via REST API and WebSocket stream",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "name": { "type": "string" },
+          "serverUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Gotify server base URL (e.g. https://gotify.example.com)"
+          },
+          "appToken": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Application token for sending messages (prefix A...)"
+          },
+          "clientToken": {
+            "type": "string",
+            "description": "Client token for receiving messages via WebSocket stream and admin APIs (prefix C...)"
+          },
+          "defaultPriority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "default": 5,
+            "description": "Default message priority (0-10)"
+          },
+          "dmPolicy": {
+            "type": "string",
+            "enum": ["open", "allowlist", "pairing", "disabled"],
+            "default": "open",
+            "description": "DM access policy for inbound stream messages (matched by appid or peerId)"
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": { "type": ["string", "number"] },
+            "description": "Allowed appid/peerId entries when dmPolicy is allowlist (use \"*\" for open policy hint)"
+          },
+          "bootstrap": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean", "description": "Enable bootstrap helpers on startup" },
+              "autoCreateApplication": {
+                "type": "boolean",
+                "description": "Auto-create Gotify Application when missing"
+              },
+              "applicationName": { "type": "string", "description": "Application name for auto-create" },
+              "applicationDescription": {
+                "type": "string",
+                "description": "Application description for auto-create"
+              }
+            }
+          },
+          "inbound": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean", "description": "Enable WebSocket stream listener for real-time message receiving" },
+              "reconnectDelayMs": { "type": "integer", "minimum": 500, "default": 2000 },
+              "maxReconnectDelayMs": { "type": "integer", "minimum": 1000, "default": 30000 },
+              "maxReconnectAttempts": { "type": "integer", "minimum": 0, "default": 10 },
+              "deleteAfterConsume": {
+                "type": "boolean",
+                "default": true,
+                "description": "Delete Gotify message after inbound is dispatched (set false for dev/test visibility)"
+              }
+            }
+          },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Multiple Gotify account configurations for multi-account multi-agent routing"
+          },
+          "defaultAccount": {
+            "type": "string",
+            "description": "Default account ID when using multi-account mode"
+          }
+        }
+      },
+      "uiHints": {
+        "serverUrl": {
+          "label": "Gotify Server URL",
+          "help": "The base URL of your Gotify server (e.g. https://gotify.example.com)",
+          "placeholder": "https://gotify.example.com"
+        },
+        "appToken": {
+          "label": "App Token",
+          "help": "Application token for sending messages. Created in Gotify WebUI under Apps. Prefix: A...",
+          "sensitive": true
+        },
+        "clientToken": {
+          "label": "Client Token",
+          "help": "Client token for receiving messages via WebSocket stream and managing applications/clients. Created in Gotify WebUI under Clients. Prefix: C...",
+          "sensitive": true
+        },
+        "defaultPriority": {
+          "label": "Default Priority",
+          "help": "Message priority level (0-10, default 5). Higher values indicate higher importance."
+        },
+        "inbound.enabled": {
+          "label": "Enable WebSocket Stream",
+          "help": "Connect to Gotify /stream endpoint for real-time message receiving. Requires clientToken."
+        },
+        "inbound.deleteAfterConsume": {
+          "label": "Delete After Consume",
+          "help": "Remove message from Gotify after the agent receives it. Set false to keep messages for debugging or OPENCLAW_TEST_VISIBLE-style workflows."
+        },
+        "dmPolicy": {
+          "label": "DM Policy",
+          "help": "Control who can trigger the agent via inbound stream (open, allowlist, pairing, disabled)."
+        },
+        "allowFrom": {
+          "label": "Allow From",
+          "help": "Allowed appid or peerId values when dmPolicy is allowlist. Use [\"*\"] with dmPolicy open as a documented wildcard."
+        },
+        "bootstrap.enabled": {
+          "label": "Bootstrap Enabled",
+          "help": "Run bootstrap helpers (auto-create Application) when configured."
+        }
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

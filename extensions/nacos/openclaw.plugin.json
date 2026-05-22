@@ -1,9 +1,9 @@
 {
   "id": "openclaw-nacos",
   "name": "@partme.ai/openclaw-nacos",
-  "version": "2026.5.12.2",
+  "version": "2026.5.24",
   "description": "Nacos Config Center merge and Gateway/Hooks naming registration with webhook cluster discovery",
-  "main": "dist/index.js",
+  "main": "dist/bootstrap.cjs",
   "activation": {
     "onStartup": true
   },

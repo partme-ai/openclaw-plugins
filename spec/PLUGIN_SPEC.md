@@ -132,23 +132,32 @@ running focused test suites: `npx vitest run src/media`
 
 ### Message dedup pattern
 
-All channel plugins MUST implement message deduplication:
+All channel plugins MUST implement message deduplication. **MQ / STOMP / MQTT 类插件** SHOULD use `createIdempotencyCache` from `@partme.ai/openclaw-message-sdk` instead of ad-hoc `Map` implementations.
 
 ```typescript
-const processedMessages = new Map<string, number>();
-const DEDUP_TTL_MS = 60_000;
-const DEDUP_MAX_ENTRIES = 10_000;
+import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 
-function isDuplicate(messageId: string): boolean {
-  const now = Date.now();
-  if (!messageId) return false;
-  const prev = processedMessages.get(messageId);
-  if (prev && now - prev < DEDUP_TTL_MS) return true;
-  // Prune expired + LRU eviction
-  processedMessages.set(messageId, now);
-  return false;
+const dedup = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10_000 });
+
+if (idempotencyKey && dedup.remember(idempotencyKey)) {
+  return; // duplicate
 }
 ```
+
+### MQ / 推送通道与 message-sdk（必选）
+
+以下传输类插件 **MUST** 使用 message-sdk 作为消息载体与 OpenClaw 入站/出站桥接：
+
+`mqtt`, `rabbitmq`, `redis-stream`, `rocketmq`, `stomp`, `web-mqtt`, `web-stomp`, `gotify`（Gotify 入站映射与去重；出站 REST 仍为明文）
+
+| 职责 | 插件 | SDK |
+|------|------|-----|
+| 连接、订阅、publish | 各插件 | — |
+| 解析入站 payload | — | `parseTransportPayload` |
+| 分发至 Agent | — | `dispatchInbound`（`bridge` 子路径） |
+| 序列化出站 wire | — | `serializeForTransport`（经 `createReplyHandler`） |
+
+不得在各插件内重复实现 `parseInboundText` 或完整的 `finalizeInboundContext` + `dispatchReplyFromConfig` 样板代码。详见 `extensions/message-sdk/docs/ARCHITECTURE.md`。
 
 ### Media module guidelines
 

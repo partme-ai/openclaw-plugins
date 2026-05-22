@@ -46,3 +46,35 @@ declare module "openclaw/plugin-sdk" {
   export function deleteAccountFromConfigSection(args: Record<string, unknown>): Record<string, unknown>;
   export function setAccountEnabledInConfigSection(args: Record<string, unknown>): Record<string, unknown>;
 }
+
+declare module "openclaw/plugin-sdk/setup" {
+  export type ChannelSetupAdapter = unknown;
+  export type ChannelSetupWizard = {
+    channel: string;
+    status?: unknown;
+    introNote?: unknown;
+    credentials?: unknown[];
+    textInputs?: unknown[];
+    finalize?: unknown;
+    completionNote?: unknown;
+    disable?: (cfg: import("openclaw/plugin-sdk").OpenClawConfig) => unknown;
+  };
+  export function applySetupAccountConfigPatch(args: Record<string, unknown>): unknown;
+  export function createPatchedAccountSetupAdapter(opts: Record<string, unknown>): ChannelSetupAdapter;
+  export function createStandardChannelSetupStatus(opts: Record<string, unknown>): unknown;
+  export function setSetupChannelEnabled(cfg: unknown, channel: string, enabled: boolean): unknown;
+}
+
+declare module "@partme.ai/openclaw-message-sdk/bridge" {
+  export type BridgePluginRuntime = unknown;
+  export function normalizeWireIngress(opts: Record<string, unknown>): {
+    accepted: boolean;
+    text?: string;
+    unified?: unknown;
+  };
+  export function createChannelDispatch(opts: Record<string, unknown>): Promise<void>;
+  export function resolveChannelDispatchIdentity(
+    runtime: BridgePluginRuntime,
+    opts: Record<string, unknown>,
+  ): Promise<{ agentId: string; sessionKey: string }>;
+}

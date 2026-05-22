@@ -4,9 +4,9 @@
  * 完整的 ChannelPlugin：生命周期、账户管理、出站发送、状态快照、dmScope 会话隔离。
  */
 
-import { getStats, startRedisServer, stopRedisServer } from "./redis-stream-server.js";
-import { publishMessage, publishEntry } from "./publisher.js";
-import { resolveRedisChannelConfig, redactUrl } from "./redis-stream-config.js";
+import { getStats, startRedisServer, stopRedisServer } from "./transport/server.js";
+import { resolveRedisChannelConfig, redactUrl } from "./config.js";
+import { redisStreamOutbound } from "./outbound.js";
 import { redisStreamSetupAdapter, redisStreamSetupWizard } from "./onboarding.js";
 
 export const DEFAULT_ACCOUNT_ID = "default";
@@ -128,27 +128,7 @@ export const redisStreamChannel = {
     },
   },
 
-  // ── 出站发送 ──────────────────────────────────────────────
-  outbound: {
-    deliveryMode: "direct" as const,
-
-    sendText: async (ctx: { cfg: Record<string, unknown>; text: string }) => {
-      const config = resolveRedisChannelConfig(ctx.cfg);
-
-      if (config.channelMode === "stream") {
-        const id = await publishEntry(config.stream.outboundKey, {
-          [config.fieldMapping.textField]: ctx.text,
-        });
-        return { channel: "redis-stream", messageId: id };
-      }
-
-      // Pub/Sub 模式：发布到标准出站 channel
-      // 注意：sendText ctx 不包含 replyChannel —— 有状态的回复通过 dispatchToRuntime 中的 dispatcher 处理
-      const channel = `openclaw:agent:outbound`;
-      await publishMessage(channel, ctx.text);
-      return { channel: "redis-stream", messageId: `${channel}:${Date.now()}` };
-    },
-  },
+  outbound: redisStreamOutbound,
 
   // ── 会话/线程 ──────────────────────────────────────────────
   threading: {

@@ -14,19 +14,20 @@
 
 ## Introduction
 
-`@partme.ai/openclaw-prometheus` is a **non-channel** plugin for [OpenClaw](https://github.com/openclaw/openclaw). It follows the official plugin model: manifest-driven discovery plus [`definePluginEntry`](https://docs.openclaw.ai/plugins/sdk-entrypoints#definepluginentry), documented `api.runtime.*` helpers, plugin hooks, runtime event listeners, and plugin-owned HTTP routes.
+`@partme.ai/openclaw-prometheus` is a **non-channel** plugin for [OpenClaw](https://github.com/openclaw/openclaw). It **fully replaces** the bundled [`diagnostics-prometheus`](https://github.com/openclaw/openclaw/tree/main/extensions/diagnostics-prometheus) exporter and adds RPC usage, hooks, SLI, and enterprise-style JSON endpoints.
 
-This version intentionally avoids host-private imports and undocumented Gateway internals. Metrics are built from facts the plugin can legally observe:
+Metrics come from two layers:
 
-- `api.runtime.modelAuth`, `api.runtime.channel`, `api.runtime.state`
-- plugin hooks such as `message_received`, `message_sent`, `before_tool_call`, `after_tool_call`, `llm_output`, `agent_end`
-- `api.runtime.events.onAgentEvent(...)` and `onSessionTranscriptUpdate(...)`
-- exporter self metrics for scrape quality, route health, and snapshot freshness
+1. **Internal diagnostics (official parity)** — trusted Gateway diagnostic events (`model.usage`, `run.completed`, `tool.execution.*`, message delivery, harness, talk, session recovery, queue lanes, memory, …) → `openclaw_model_tokens_total`, `openclaw_run_duration_seconds`, etc.
+2. **PartMe extensions** — Gateway RPC (`usage.cost`, `sessions.*`, `channels.status`, …), plugin hooks, runtime events, SLI, and exporter meta metrics.
+
+> After enabling this plugin, **disable** bundled `diagnostics-prometheus` to avoid duplicate subscriptions and duplicate series.
 
 ## Core capabilities
 
+- **diagnostics-prometheus drop-in**: `src/diagnostics/metric-store.ts` mirrors the official implementation (series cap, low-cardinality labels, histogram buckets).
 - **Pure plugin architecture**: uses only documented SDK surfaces, no host source patching.
-- **Metrics layers**: exporter self metrics, runtime snapshot metrics, and hook/event-derived workload metrics.
+- **Multi-layer metrics**: diagnostics events, RPC snapshots, hook/event workload, exporter self metrics.
 - **Endpoints**: Prometheus exposition on `{path}` (default `/metrics`), JSON on `{path}/per-object`, `{path}/detailed?family=`, and `{path}/health`.
 - **Snapshot refresh**: `snapshotIntervalMs` controls model-auth and channel-activity probe refresh.
 - **Collection cache**: `collectIntervalMs` reuses the last successful scrape bundle to reduce cost under frequent Prometheus scrapes (set `0` to disable).
@@ -55,16 +56,19 @@ Default `{path}` is `/metrics`.
 
 | Prefix | Source |
 | --- | --- |
+| `openclaw_model_tokens_*`, `openclaw_gen_ai_client_token_usage`, `openclaw_run_*`, `openclaw_tool_execution_*`, `openclaw_message_*`, … | **Internal diagnostics** (same as bundled diagnostics-prometheus) |
+| `openclaw_usage_*` | Gateway RPC `usage.cost` / `sessions.usage` (window gauges) |
 | `openclaw_metrics_*` | Exporter-owned route/scrape metrics |
 | `openclaw_model_auth_*` | `api.runtime.modelAuth` |
 | `openclaw_channel_*` | message hooks + `api.runtime.channel.activity.get(...)` |
-| `openclaw_agent_*` | `before_agent_start` / `agent_end` + runtime agent events |
+| `openclaw_agent_*` | `agent_turn_prepare` / `agent_end` + runtime agent events |
 | `openclaw_tool_*` | `before_tool_call` / `after_tool_call` |
 | `openclaw_messages_*` | `message_received` / `message_sent` |
-| `openclaw_usage_*` | `llm_output` usage aggregation |
 | `openclaw_session_transcript_*` | `api.runtime.events.onSessionTranscriptUpdate(...)` |
 | `openclaw_runtime_*` | runtime namespace availability + state/snapshot age |
 | `openclaw_nodejs_*` | Local process (optional via `includeRuntime`) |
+| `openclaw_ready` | Set only on `gateway_start` / `gateway_stop` (Gateway lifecycle readiness) |
+| `openclaw_plugin_loaded` | Plugin module registered |
 | `openclaw_exporter_*`, `openclaw_metrics_*` | Plugin meta |
 
 ## Quick start
@@ -82,12 +86,17 @@ openclaw plugins install @partme.ai/openclaw-prometheus
 
 ### Minimal config (`openclaw.json`)
 
+Enable `allowConversationAccess` when using conversation hooks for **extension** metrics such as `llm_input` image counts. **Token throughput does not depend on this flag** — it comes from internal `model.usage` diagnostics.
+
 ```json
 {
   "plugins": {
     "entries": {
       "openclaw-prometheus": {
         "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
         "config": {
           "path": "/metrics",
           "collectIntervalMs": 15000,

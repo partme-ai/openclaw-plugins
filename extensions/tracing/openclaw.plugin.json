@@ -20,7 +20,8 @@
         "enum": [
           "log",
           "file",
-          "otlp"
+          "otlp",
+          "skywalking"
         ],
         "default": "log",
         "description": "Tracing backend: log (console), file (JSON lines), otlp (OpenTelemetry Collector)"

@@ -4,8 +4,8 @@ import type {
 } from 'openclaw/plugin-sdk/channel-contract';
 
 import { resolveDefaultGotifyAccountId, resolveGotifyAccount } from './config.js';
-import { sendGotifyMessage } from './gotify-api.js';
-import { mapOutboundToGotify } from './message-mapper.js';
+import { sendGotifyMessage } from './transport/gotify-api.js';
+import { mapOutboundToGotify } from './routing/message-mapper.js';
 import { patchAccountSnapshot, setOwnApplicationId } from './runtime.js';
 
 /**

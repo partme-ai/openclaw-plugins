@@ -18,18 +18,13 @@ import {
 import {
   STREAM_MAX_BYTES,
   BOT_WINDOW_MS,
-  BOT_SWITCH_MARGIN_MS,
   REQUEST_TIMEOUT_MS,
 } from "./types.js";
 import { getMonitorState } from "./gateway.js";
-import { sendText as sendAgentText, uploadMedia, sendMedia as sendAgentMedia } from "../agent/api-client.js";
 import { wecomFetch } from "./http.js";
 import {
-  truncateUtf8Bytes,
-  appendDmContent,
   buildFallbackPrompt,
   extractLocalFilePathsFromText,
-  extractLocalImagePathsFromText,
   looksLikeSendLocalFileIntent,
   computeTaskKey,
   isAgentConfigured,
@@ -39,7 +34,6 @@ import {
   resolveWecomMediaMaxBytes,
   buildCfgForDispatch,
   processInboundMessage,
-  MIME_BY_EXT,
   resolveWecomSenderUserId,
   buildInboundBody,
   hasMedia,
@@ -48,6 +42,15 @@ import {
   buildStreamTextPlaceholderReply,
 } from "./helpers.js";
 import { processDynamicRouting } from "../dynamic-routing.js";
+import { claimWecomInboundMsgid } from "./dedup.js";
+import { createWecomReplyDispatcher } from "./reply-pipeline.js";
+import {
+  getActiveReplyUrl,
+  sendBotFallbackPromptNow,
+  pushFinalStreamReplyNow,
+  useActiveReplyOnce,
+} from "./active-reply.js";
+import { agentDmText, agentDmMedia } from "./agent-dm.js";
 // ============================================================================
 // 入站消息处理
 // ============================================================================
@@ -73,7 +76,26 @@ export async function handleInboundMessage(
   const { streamStore, activeReplyStore } = state;
   const msgid = message.msgid;
 
-  // msgid 去重检查
+  // 持久化 msgid 去重（跨重启）
+  if (msgid) {
+    const claimed = await claimWecomInboundMsgid(target.account.accountId, String(msgid));
+    if (!claimed) {
+      const existingStreamId = streamStore.getStreamByMsgId(String(msgid));
+      if (existingStreamId) {
+        const existingStream = streamStore.getStream(existingStreamId);
+        if (existingStream) {
+          target.runtime.log?.(
+            `[webhook] 消息去重(持久): msgid=${msgid} streamId=${existingStreamId}`,
+          );
+          return buildStreamResponse(existingStream);
+        }
+      }
+      target.runtime.log?.(`[webhook] 消息去重(持久): msgid=${msgid} 已处理，跳过`);
+      return null;
+    }
+  }
+
+  // 进程内 msgid → stream 去重
   if (msgid) {
     const existingStreamId = streamStore.getStreamByMsgId(msgid);
     if (existingStreamId) {
@@ -502,7 +524,6 @@ export async function startAgentForStream(params: {
       } catch (err) {
         target.runtime.error?.(`[webhook] local-path: 图片读取失败后的兜底提示推送失败: ${String(err)}`);
       }
-      // TODO: agent兜底这里需要有agent对象，待对齐lh版本
       if (agentOk && userid && userid !== "unknown") {
         for (const p of imagePaths) {
           const guessedType = guessContentTypeFromPath(p);
@@ -566,7 +587,6 @@ export async function startAgentForStream(params: {
         return;
       }
 
-      // TODO: agent兜底这里需要有agent对象，待对齐lh版本
       for (const p of otherPaths) {
         const alreadySent = streamStore.getStream(streamId)?.agentMediaKeys?.includes(p);
         if (alreadySent) continue;
@@ -802,328 +822,21 @@ export async function startAgentForStream(params: {
   // 否则 Agent 可能直接通过 message 工具私信/发群，绕过 Bot 交付链路，导致群里“没有任何提示”。
   const cfgForDispatch = buildCfgForDispatch(config);
 
-  // ──────────────────────────────────────────────────────────────────
-  // 12. 调度 Agent 回复（核心 deliver 回调）
-  // ──────────────────────────────────────────────────────────────────
+  const { dispatcherOptions, replyOptions } = createWecomReplyDispatcher({
+    target,
+    streamId,
+    chatType,
+    rawBody,
+    tableMode,
+    cfg: cfgForDispatch,
+    agentId: route.agentId,
+  });
+
   await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: cfgForDispatch,
-    replyOptions: {
-      disableBlockStreaming: false,
-    },
-    dispatcherOptions: {
-      deliver: async (payload: { text?: string; mediaUrl?: string; mediaUrls?: string[] }, info: { kind: string }) => {
-        let text = payload.text ?? "";
-
-        // ── <think> 标签保护 ──
-        const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
-        const thinks: string[] = [];
-        text = text.replace(thinkRegex, (match: string) => {
-          thinks.push(match);
-          return `__THINK_PLACEHOLDER_${thinks.length - 1}__`;
-        });
-
-        // ── template_card JSON 检测与发送（对齐 lh 版：直接 wecomFetch 推送） ──
-        const trimmedText = text.trim();
-        if (trimmedText.startsWith("{") && trimmedText.includes('"template_card"')) {
-          try {
-            const parsed = JSON.parse(trimmedText);
-            if (parsed.template_card) {
-              const isSingleChat = chatType !== "group";
-              const responseUrl = getActiveReplyUrl(streamId);
-
-              if (responseUrl && isSingleChat) {
-                // 单聊且有 response_url：发送卡片
-                await useActiveReplyOnce(streamId, async ({ responseUrl, proxyUrl }) => {
-                  const res = await wecomFetch(
-                    responseUrl,
-                    {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        msgtype: "template_card",
-                        template_card: parsed.template_card,
-                      }),
-                    },
-                    { proxyUrl, timeoutMs: REQUEST_TIMEOUT_MS },
-                  );
-                  if (!res.ok) {
-                    throw new Error(`template_card send failed: ${res.status}`);
-                  }
-                });
-                target.runtime.log?.(`[webhook] sent template_card: task_id=${parsed.template_card.task_id}`);
-                streamStore.updateStream(streamId, (s) => {
-                  s.finished = true;
-                  s.content = "[已发送交互卡片]";
-                });
-                target.statusSink?.({ lastOutboundAt: Date.now() });
-                return;
-              } else {
-                // 群聊 或 无 response_url：降级为文本描述
-                target.runtime.log?.(`[webhook] template_card fallback to text (group=${!isSingleChat}, hasUrl=${!!responseUrl})`);
-                const cardTitle = parsed.template_card.main_title?.title || "交互卡片";
-                const cardDesc = parsed.template_card.main_title?.desc || "";
-                const buttons = parsed.template_card.button_list?.map((b: any) => b.text).join(" / ") || "";
-                text = `📋 **${cardTitle}**${cardDesc ? `\n${cardDesc}` : ""}${buttons ? `\n\n选项: ${buttons}` : ""}`;
-              }
-            }
-          } catch { /* parse fail, use normal text */ }
-        }
-
-        // ── Markdown 表格转换 ──
-        text = core.channel.text.convertMarkdownTables(text, tableMode);
-
-        // ── 还原 <think> 标签 ──
-        thinks.forEach((think, i) => {
-          text = text.replace(`__THINK_PLACEHOLDER_${i}__`, think);
-        });
-
-        const current = streamStore.getStream(streamId);
-        if (!current) return;
-
-        if (!current.images) current.images = [];
-        if (!current.agentMediaKeys) current.agentMediaKeys = [];
-
-        // ── 从输出文本推断本机图片路径（安全：要求路径也出现在用户原消息中） ──
-        if (!payload.mediaUrl && !(payload.mediaUrls?.length ?? 0) && text.includes("/")) {
-          const candidates = extractLocalImagePathsFromText({ text, mustAlsoAppearIn: rawBody });
-          if (candidates.length > 0) {
-            target.runtime.log?.(`media: 从输出文本推断到本机图片路径（来自用户原消息）count=${candidates.length}`);
-            for (const p of candidates) {
-              try {
-                const fs = await import("node:fs/promises");
-                const pathModule = await import("node:path");
-                const buf = await fs.readFile(p);
-                const ext = pathModule.extname(p).slice(1).toLowerCase();
-                const imageExts: Record<string, string> = {
-                  jpg: "image/jpeg",
-                  jpeg: "image/jpeg",
-                  png: "image/png",
-                  gif: "image/gif",
-                  webp: "image/webp",
-                  bmp: "image/bmp",
-                };
-                const contentType = imageExts[ext] ?? "application/octet-stream";
-                if (!contentType.startsWith("image/")) {
-                  continue;
-                }
-                const base64 = buf.toString("base64");
-                const md5 = computeMd5(buf);
-                current.images.push({ base64, md5 });
-              } catch (err) {
-                target.runtime.error?.(`[webhook] media: 读取本机图片失败 path=${p}: ${String(err)}`);
-              }
-            }
-          }
-        }
-
-        // ── 每次 deliver 都追加到 dmContent（不受 STREAM_MAX_BYTES 限制） ──
-        if (text.trim()) {
-          streamStore.updateStream(streamId, (s) => {
-            appendDmContent(s, text);
-          });
-        }
-
-        // ── 超时渐进式检测（接近 6 分钟窗口，对齐 lh 版） ──
-        const now = Date.now();
-        const deadline = current.createdAt + BOT_WINDOW_MS;
-        const switchAt = deadline - BOT_SWITCH_MARGIN_MS;
-        const nearTimeout = !current.fallbackMode && !current.finished && now >= switchAt;
-        if (nearTimeout) {
-          const agentOk = isAgentConfigured(target);
-          const prompt = buildFallbackPrompt({
-            kind: "timeout",
-            agentConfigured: agentOk,
-            userId: current.userId,
-            chatType: current.chatType,
-          });
-          target.runtime.log?.(
-            `[webhook] fallback(timeout): 触发切换（接近 6 分钟）chatType=${current.chatType} agentConfigured=${agentOk} hasResponseUrl=${Boolean(getActiveReplyUrl(streamId))}`,
-          );
-          streamStore.updateStream(streamId, (s) => {
-            s.fallbackMode = "timeout";
-            s.finished = true;
-            s.content = prompt;
-            s.fallbackPromptSentAt = s.fallbackPromptSentAt ?? Date.now();
-          });
-          try {
-            await sendBotFallbackPromptNow({ streamId, text: prompt });
-            target.runtime.log?.(`[webhook] fallback(timeout): 群内提示已推送`);
-          } catch (err) {
-            target.runtime.error?.(`[webhook] fallback(timeout) prompt push failed streamId=${streamId}: ${String(err)}`);
-          }
-          return;
-        }
-
-        // ── MEDIA: 指令解析 ──
-        const mediaDirectivePaths: string[] = [];
-        const mediaDirectiveRe = /^MEDIA:\s*`?([^\n`]+?)`?\s*$/gm;
-        let _mdMatch: RegExpExecArray | null;
-        while ((_mdMatch = mediaDirectiveRe.exec(text)) !== null) {
-          let p = (_mdMatch[1] ?? "").trim();
-          if (!p) continue;
-          if (p.startsWith("~/") || p === "~") {
-            const home = os.homedir() || "/root";
-            p = p.replace(/^~/, home);
-          }
-          if (!mediaDirectivePaths.includes(p)) mediaDirectivePaths.push(p);
-        }
-        if (mediaDirectivePaths.length > 0) {
-          text = text.replace(/^MEDIA:\s*`?[^\n`]+?`?\s*$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
-        }
-
-        // ── 媒体处理（对齐 lh 版） ──
-        const mediaUrls = Array.from(new Set([
-          ...(payload.mediaUrls || []),
-          ...(payload.mediaUrl ? [payload.mediaUrl] : []),
-          ...mediaDirectivePaths,
-        ]));
-        for (const mPath of mediaUrls) {
-          let contentType: string | undefined;
-          let filename = mPath.split("/").pop() || "attachment";
-          try {
-            let buf: Buffer;
-
-            const looksLikeUrl = /^https?:\/\//i.test(mPath);
-
-            if (looksLikeUrl) {
-              const loaded = await core.channel.media.fetchRemoteMedia({ url: mPath });
-              buf = loaded.buffer;
-              contentType = loaded.contentType;
-              filename = loaded.fileName ?? "attachment";
-            } else {
-              const fs = await import("node:fs/promises");
-              const pathMod = await import("node:path");
-              buf = await fs.readFile(mPath);
-              filename = pathMod.basename(mPath);
-              const ext = pathMod.extname(mPath).slice(1).toLowerCase();
-              contentType = MIME_BY_EXT[ext] ?? "application/octet-stream";
-            }
-
-            if (contentType?.startsWith("image/")) {
-              // 非 WS 模式：保持原有 base64 嵌入方式
-              const base64 = buf.toString("base64");
-              const md5 = computeMd5(buf);
-              current.images.push({ base64, md5 });
-              target.runtime.log?.(`[webhook] media: 识别为图片 contentType=${contentType} filename=${filename}`);
-            } else {
-              // Webhook 模式：统一切换到 Agent 私信兜底，并在 Bot 会话里提示用户。
-              const agentOk = isAgentConfigured(target);
-              const alreadySent = current.agentMediaKeys.includes(mPath);
-              target.runtime.log?.(
-                `[webhook] fallback(media): 检测到非图片文件 chatType=${current.chatType} contentType=${contentType ?? "unknown"} filename=${filename} agentConfigured=${agentOk} alreadySent=${alreadySent} hasResponseUrl=${Boolean(getActiveReplyUrl(streamId))}`,
-              );
-
-              // TODO: 补充agent
-              if (agentOk && !alreadySent && current.userId) {
-                try {
-                  await agentDmMedia({
-                    target,
-                    userId: current.userId,
-                    mediaUrlOrPath: mPath,
-                    contentType,
-                    filename,
-                  });
-                  target.runtime.log?.(`[webhook] fallback(media): 文件已通过 Agent 私信发送 user=${current.userId}`);
-                  streamStore.updateStream(streamId, (s) => {
-                    s.agentMediaKeys = Array.from(new Set([...(s.agentMediaKeys ?? []), mPath]));
-                  });
-                } catch (err) {
-                  target.runtime.error?.(`[webhook] Agent DM 媒体发送失败: ${String(err)}`);
-                }
-              }
-
-              if (!current.fallbackMode) {
-                const prompt = buildFallbackPrompt({
-                  kind: "media",
-                  agentConfigured: agentOk,
-                  userId: current.userId,
-                  filename,
-                  chatType: current.chatType,
-                });
-                streamStore.updateStream(streamId, (s) => {
-                  s.fallbackMode = "media";
-                  s.finished = true;
-                  s.content = prompt;
-                  s.fallbackPromptSentAt = s.fallbackPromptSentAt ?? Date.now();
-                });
-                try {
-                  await sendBotFallbackPromptNow({ streamId, text: prompt });
-                  target.runtime.log?.(`[webhook] fallback(media): 群内提示已推送`);
-                } catch (err) {
-                  target.runtime.error?.(`[webhook] fallback(media) prompt push failed streamId=${streamId}: ${String(err)}`);
-                }
-              }
-              return;
-            }
-          } catch (err) {
-            target.runtime.error?.(`[webhook] 媒体处理失败: ${mPath}: ${String(err)}`);
-            // Webhook 模式：Agent 私信兜底
-            const agentOk = isAgentConfigured(target);
-            const fallbackFilename = filename || mPath.split("/").pop() || "attachment";
-            // TODO: 补充agent
-            if (agentOk && current.userId && !current.agentMediaKeys.includes(mPath)) {
-              try {
-                await agentDmMedia({
-                  target,
-                  userId: current.userId,
-                  mediaUrlOrPath: mPath,
-                  contentType,
-                  filename: fallbackFilename,
-                });
-                streamStore.updateStream(streamId, (s) => {
-                  s.agentMediaKeys = Array.from(new Set([...(s.agentMediaKeys ?? []), mPath]));
-                });
-                target.runtime.log?.(`[webhook] fallback(error): 媒体处理失败后已通过 Agent 私信发送 user=${current.userId}`);
-              } catch (sendErr) {
-                target.runtime.error?.(`[webhook] fallback(error): 媒体处理失败后的 Agent 私信发送也失败: ${String(sendErr)}`);
-              }
-            }
-            if (!current.fallbackMode) {
-              const prompt = buildFallbackPrompt({
-                kind: "error",
-                agentConfigured: agentOk,
-                userId: current.userId,
-                filename: fallbackFilename,
-                chatType: current.chatType,
-              });
-              streamStore.updateStream(streamId, (s) => {
-                s.fallbackMode = "error";
-                s.finished = true;
-                s.content = prompt;
-                s.fallbackPromptSentAt = s.fallbackPromptSentAt ?? Date.now();
-              });
-              try {
-                await sendBotFallbackPromptNow({ streamId, text: prompt });
-                target.runtime.log?.(`[webhook] fallback(error): 群内提示已推送`);
-              } catch (pushErr) {
-                target.runtime.error?.(`[webhook] fallback(error) prompt push failed streamId=${streamId}: ${String(pushErr)}`);
-              }
-            }
-            return;
-          }
-        }
-
-        // ── fallbackMode 检查：如果已进入 fallback 模式，不再更新 content ──
-        const mode = streamStore.getStream(streamId)?.fallbackMode;
-        if (mode) return;
-
-        // ── 累积 content（段落分隔 \n\n，truncate 保护） ──
-        const nextText = current.content
-          ? `${current.content}\n\n${text}`.trim()
-          : text.trim();
-
-        streamStore.updateStream(streamId, (s) => {
-          s.content = truncateUtf8Bytes(nextText, STREAM_MAX_BYTES);
-          if (current.images?.length) s.images = current.images;
-        });
-        target.statusSink?.({ lastOutboundAt: Date.now() });
-      },
-
-      onError: (err: unknown) => {
-        target.runtime.error?.(`[webhook] Agent reply failed (streamId=${streamId}): ${String(err)}`);
-      },
-    },
+    replyOptions,
+    dispatcherOptions,
   });
 
   // ──────────────────────────────────────────────────────────────────
@@ -1156,7 +869,6 @@ export async function startAgentForStream(params: {
   // 14. 超时模式下 Agent DM 最终投递（对齐 lh 版）
   // ──────────────────────────────────────────────────────────────────
   const finishedState = streamStore.getStream(streamId);
-  // TODO: 补充agent
   if (finishedState?.fallbackMode === "timeout" && !finishedState.finalDeliveredAt) {
     if (!isAgentConfigured(target)) {
       // Agent not configured - group prompt already explains the situation.
@@ -1207,160 +919,4 @@ export async function startAgentForStream(params: {
   }
 
   streamStore.onStreamFinished(streamId);
-}
-
-// ============================================================================
-// 内部辅助：response_url 推送）
-// ============================================================================
-
-/**
- * 获取 response_url
- */
-function getActiveReplyUrl(streamId: string): string | undefined {
-  return getMonitorState().activeReplyStore.getUrl(streamId);
-}
-
-/**
- * 使用 response_url 发送一次性请求
- */
-async function useActiveReplyOnce(
-  streamId: string,
-  fn: (params: { responseUrl: string; proxyUrl?: string }) => Promise<void>,
-): Promise<void> {
-  return getMonitorState().activeReplyStore.use(streamId, fn);
-}
-
-/**
- * 通过 response_url 推送 Bot 兜底提示
- *
- * 对齐 lh 版：直接 POST JSON，不加密。
- */
-async function sendBotFallbackPromptNow(params: { streamId: string; text: string }): Promise<void> {
-  const responseUrl = getActiveReplyUrl(params.streamId);
-  if (!responseUrl) {
-    throw new Error("no response_url（无法主动推送群内提示）");
-  }
-  await useActiveReplyOnce(params.streamId, async ({ responseUrl, proxyUrl }) => {
-    const payload = {
-      msgtype: "stream",
-      stream: {
-        id: params.streamId,
-        finish: true,
-        content: truncateUtf8Bytes(params.text, STREAM_MAX_BYTES) || "1",
-      },
-    };
-    const res = await wecomFetch(
-      responseUrl,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
-      { proxyUrl, timeoutMs: REQUEST_TIMEOUT_MS },
-    );
-    if (!res.ok) {
-      throw new Error(`fallback prompt push failed: ${res.status}`);
-    }
-  });
-}
-
-/**
- * 通过 response_url 推送最终流帧（对齐 lh 版 pushFinalStreamReplyNow）
- *
- * 对齐 lh 版：从 StreamState 构建完整响应，直接 POST JSON，不加密。
- */
-async function pushFinalStreamReplyNow(streamId: string): Promise<void> {
-  const state = getMonitorState().streamStore.getStream(streamId);
-  const responseUrl = getActiveReplyUrl(streamId);
-  if (!state || !responseUrl) return;
-  const finalReply = buildStreamReplyFromState(state, STREAM_MAX_BYTES) as unknown as Record<string, unknown>;
-  await useActiveReplyOnce(streamId, async ({ responseUrl, proxyUrl }) => {
-    const res = await wecomFetch(
-      responseUrl,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(finalReply),
-      },
-      { proxyUrl, timeoutMs: REQUEST_TIMEOUT_MS },
-    );
-    if (!res.ok) {
-      throw new Error(`final stream push failed: ${res.status}`);
-    }
-  });
-}
-
-/**
- * 通过 Agent 私信发送文本（对齐 lh 版 sendAgentDmText）
- *
- * 对齐 lh 版：使用 core.channel.text.chunkText 进行文本分块。
- */
-async function agentDmText(params: {
-  target: WecomWebhookTarget;
-  userId: string;
-  text: string;
-}): Promise<void> {
-  const { target, userId, text } = params;
-  if (!target.account.agent?.configured) {
-    throw new Error("Agent credentials not configured");
-  }
-  const agent = target.account.agent;
-  const chunks = target.core.channel.text.chunkText(text, 20480);
-  for (const chunk of chunks) {
-    const trimmed = chunk.trim();
-    if (!trimmed) continue;
-    await sendAgentText({
-      agent, 
-      toUser: userId,
-      text: trimmed,
-    });
-  }
-}
-
-/**
- * 通过 Agent 私信发送媒体（对齐 lh 版 sendAgentDmMedia）
- *
- * 对齐 lh 版：接受 mediaUrlOrPath，内部判断 URL 或本地路径。
- */
-async function agentDmMedia(params: {
-  target: WecomWebhookTarget;
-  userId: string;
-  mediaUrlOrPath: string;
-  contentType?: string;
-  filename: string;
-}): Promise<void> {
-  const { target, userId, mediaUrlOrPath, filename } = params;
-  if (!target.account.agent?.configured) {
-    throw new Error("Agent credentials not configured");
-  }
-  const agent = target.account.agent;
-  let buffer: Buffer;
-  let inferredContentType = params.contentType;
-
-  const looksLikeUrl = /^https?:\/\//i.test(mediaUrlOrPath);
-  if (looksLikeUrl) {
-    const res = await fetch(mediaUrlOrPath, { signal: AbortSignal.timeout(30_000) });
-    if (!res.ok) throw new Error(`media download failed: ${res.status}`);
-    buffer = Buffer.from(await res.arrayBuffer());
-    inferredContentType = inferredContentType || res.headers.get("content-type") || "application/octet-stream";
-  } else {
-    const fs = await import("node:fs/promises");
-    buffer = await fs.readFile(mediaUrlOrPath);
-  }
-
-  let mediaType: "image" | "voice" | "video" | "file" = "file";
-  const ct = (inferredContentType || "").toLowerCase();
-  if (ct.startsWith("image/")) mediaType = "image";
-  else if (ct.startsWith("audio/")) mediaType = "voice";
-  else if (ct.startsWith("video/")) mediaType = "video";
-
-  const mediaId = await uploadMedia({ agent, type: mediaType, buffer, filename });
-  
-    await sendAgentMedia({
-        agent,
-        toUser: userId,
-        mediaId,
-        mediaType,
-        ...(mediaType === "video" ? { title: filename, description: "" } : {}),
-    });
 }

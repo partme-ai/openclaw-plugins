@@ -73,7 +73,10 @@ export interface WebMqttConfig {
   topicPrefix: string;
   subscribeTopics: string[];
   topicBindings: WebMqttTopicBinding[];
-  payload: { mode: PayloadMode };
+  payload: {
+    mode: PayloadMode;
+    outboundFormat?: "envelope" | "legacyJsonText" | "plainText";
+  };
   auth: WebMqttAuthConfig;
   tls: WebMqttTlsConfig;
   ws: WebMqttWsOptions;
@@ -95,6 +98,8 @@ export interface InboundEvent {
   topic: string;
   payload: Buffer;
   clientId: string;
+  /** MQTT packet messageId（QoS>0 时可用，用于幂等） */
+  messageId?: string;
 }
 
 /** 会话上下文 */

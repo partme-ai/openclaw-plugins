@@ -13,9 +13,9 @@ import {
   setAccountEnabledInConfigSection,
 } from "openclaw/plugin-sdk";
 
-import { monitorMqttBroker } from "./gateway-mqtt.js";
+import { monitorMqttBroker } from "./transport/gateway-mqtt.js";
 import { mqttOutbound } from "./outbound.js";
-import { getBrokerStats } from "./broker.js";
+import { getBrokerStats } from "./transport/server.js";
 import {
   DEFAULT_MQTT_ACCOUNT_ID,
   describeMqttAccountSnapshot,

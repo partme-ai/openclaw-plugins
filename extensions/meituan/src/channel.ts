@@ -4,6 +4,7 @@
 
 import type { ChannelDefinition, MeituanAccountConfig } from "./types.js";
 import { meituanSetupAdapter, meituanSetupWizard } from "./onboarding.js";
+import { meituanSendText } from "./outbound.js";
 
 export const meituanChannel: ChannelDefinition = {
   id: "meituan",
@@ -39,6 +40,6 @@ export const meituanChannel: ChannelDefinition = {
   },
   outbound: {
     deliveryMode: "direct",
-    sendText: async () => ({ ok: true }),
+    sendText: meituanSendText,
   },
 };

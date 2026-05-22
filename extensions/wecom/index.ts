@@ -1,6 +1,6 @@
 import type { OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
 import { emptyPluginConfigSchema } from "./src/openclaw-compat.js";
-import { wecomPlugin } from "./src/channel.js";
+import { resolveWecomChannelPlugin } from "./src/channel-factory.js";
 import { createWeComMcpTool } from "./src/mcp/index.js";
 import { getSessionChatInfo } from "./src/state-manager.js";
 import { setWeComRuntime } from "./src/runtime.js";
@@ -19,7 +19,7 @@ const plugin = {
 
     // Set up runtime
     setWeComRuntime(api.runtime);
-    api.registerChannel({ plugin: wecomPlugin });
+    api.registerChannel({ plugin: resolveWecomChannelPlugin() });
 
     // Register wecom_mcp tool: direct HTTP calls to WeCom MCP Server
     api.registerTool(

@@ -9,10 +9,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
-import { getBrokerStats, getConnectedClients } from "./broker.js";
+import { getBrokerStats, getConnectedClients } from "./transport/server.js";
 import { mqttPlugin } from "./mqtt-plugin.js";
-import { getPendingAckStats } from "./qos-handler.js";
-import { getSessionStats } from "./session-mapper.js";
+import { getPendingAckStats } from "./transport/qos-handler.js";
+import { getSessionStats } from "./routing/session-mapper.js";
 import { setMqttRuntime } from "./runtime.js";
 import { getMqttChannelConfig, getMqttPolicyMeta } from "./mqtt-state.js";
 
@@ -77,8 +77,8 @@ export default defineChannelPluginEntry({
 
 process.on("SIGTERM", async () => {
   console.log("[openclaw-mqtt] Shutting down...");
-  const { stopQosHandler } = await import("./qos-handler.js");
-  const { stopBroker } = await import("./broker.js");
+  const { stopQosHandler } = await import("./transport/qos-handler.js");
+  const { stopBroker } = await import("./transport/server.js");
   stopQosHandler();
   await stopBroker();
 });

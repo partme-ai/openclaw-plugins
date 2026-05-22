@@ -10,8 +10,8 @@ import {
   buildRockermqConfigSnapshot,
   resolveRockermqConfig,
   validateRockermqConfig,
-} from "./rocketmq-config.js";
-import { setRockermqChannelConfig } from "./rocketmq-state.js";
+} from "./config.js";
+import { setRockermqChannelConfig } from "./state.js";
 import {
   getStats,
   startRockermqServer,
@@ -19,7 +19,7 @@ import {
   trackInboundAccepted,
   trackInboundDropped,
   trackRoute,
-} from "./rocketmq-server.js";
+} from "./transport/server.js";
 
 export const DEFAULT_ACCOUNT_ID = "default";
 

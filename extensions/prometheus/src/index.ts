@@ -16,6 +16,13 @@ import { performance } from "node:perf_hooks";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
+import { DiagnosticsCollector } from "./diagnostics/collector.js";
+import {
+  renderDiagnosticsMetricsBlock,
+  resetDiagnosticsMetricStore,
+  startDiagnosticsSubscription,
+  stopDiagnosticsSubscription,
+} from "./diagnostics/subscribe.js";
 import { PluginRuntimeCollector } from "./collectors/plugin-runtime.js";
 import { RuntimeCollector } from "./collectors/runtime.js";
 import { UsageCollector } from "./collectors/usage.js";
@@ -61,6 +68,7 @@ const collectorErrorCounts = new Map<string, number>();
  */
 function buildCollectors(includeRuntime: boolean): MetricCollector[] {
   const list: MetricCollector[] = [
+    new DiagnosticsCollector(),
     new PluginRuntimeCollector(),
     new UsageCollector(),
     new SessionCollector(),
@@ -115,7 +123,7 @@ async function collectAll(): Promise<{
     const collector = collectors[i].name;
     if (result.status === "fulfilled") {
       allSamples.push(...result.value);
-      if (collector !== "plugin-runtime" && collector !== "runtime") {
+      if (collector !== "plugin-runtime" && collector !== "runtime" && collector !== "diagnostics") {
         rpcSamples.push(...result.value);
       }
       allSamples.push({
@@ -210,6 +218,21 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
   refreshHousekeepingMetrics();
   registerPluginObservers(api);
 
+  api.registerService({
+    id: "openclaw-prometheus-diagnostics",
+    start: async (ctx) => {
+      await startDiagnosticsSubscription({
+        logger: api.logger,
+        internalDiagnostics: ctx.internalDiagnostics as import("./diagnostics/subscribe.js").InternalDiagnosticsBridge | undefined,
+        config: api.config,
+      });
+    },
+    stop: () => {
+      stopDiagnosticsSubscription();
+      resetDiagnosticsMetricStore();
+    },
+  });
+
   collectors = buildCollectors(cfg.includeRuntime);
   cache = new CollectCache(cfg.collectIntervalMs);
   cache.invalidate();
@@ -250,9 +273,14 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
       if (!data) {
         return;
       }
-      const output = formatPrometheus(data.definitions, data.samples);
+      const coreOutput = formatPrometheus(data.definitions, data.samples);
+      const diagnosticsOutput = renderDiagnosticsMetricsBlock();
+      const output = diagnosticsOutput
+        ? `${coreOutput.trimEnd()}\n${diagnosticsOutput}`
+        : coreOutput;
       res.writeHead(200, {
         "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+        "Cache-Control": "no-store",
       });
       res.end(output);
     });
@@ -494,9 +522,10 @@ function diagnosticsFromCollectorMap(): { total: number; failed: number } {
   let failed = 0;
   for (const collector of collectors) {
     const count = collectorErrorCounts.get(collector.name) ?? 0;
-    const success = collector.name === "plugin-runtime"
-      ? true
-      : count === 0;
+    const success =
+      collector.name === "plugin-runtime" || collector.name === "diagnostics"
+        ? true
+        : count === 0;
     if (!success) {
       failed += 1;
     }
@@ -505,7 +534,12 @@ function diagnosticsFromCollectorMap(): { total: number; failed: number } {
 }
 
 function hasRpcCollectorsConfigured(): boolean {
-  return collectors.some((collector) => collector.name !== "plugin-runtime" && collector.name !== "runtime");
+  return collectors.some(
+    (collector) =>
+      collector.name !== "plugin-runtime" &&
+      collector.name !== "runtime" &&
+      collector.name !== "diagnostics",
+  );
 }
 
 function dedupeDefinitions(definitions: MetricDefinition[]): MetricDefinition[] {
@@ -586,7 +620,7 @@ export default definePluginEntry({
   id: PLUGIN_ID,
   name: "openclaw-prometheus",
   description:
-    "Prometheus metrics exporter for OpenClaw Gateway — built on official plugin runtime, hooks, events, and plugin-owned routes",
+    "Prometheus metrics exporter for OpenClaw Gateway — supersedes bundled diagnostics-prometheus (internal diagnostic events) plus RPC/hook/SLI extensions",
   register(api: OpenClawPluginApi) {
     registerMetricsRoutes(api);
   },

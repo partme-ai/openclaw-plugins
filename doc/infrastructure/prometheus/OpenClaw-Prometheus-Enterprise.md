@@ -1,6 +1,6 @@
 # OpenClaw Prometheus Plugin - 企业级优化报告
 
-> 版本：0.2.9 | 日期：2026-04-20 | 状态：✅ **100% 企业级标准** |
+> 版本：0.3.1 | 日期：2026-05-22 | 状态：✅ **100% 企业级标准** |
 
 ---
 
@@ -84,7 +84,7 @@
 ## 📋 文件结构
 
 ```
-openclaw-prometheus/
+extensions/prometheus/
 ├── grafana/
 │   ├── cluster/
 │   │   ├── dashboard-overview.json    ✨ 新增（8 个面板）
@@ -101,6 +101,8 @@ openclaw-prometheus/
 └── src/
     └── (所有优化已完成)
 ```
+
+> 插件源码路径：`/path/to/openclaw-plugins/extensions/prometheus`（monorepo 内相对路径 `extensions/prometheus/`）。
 
 ---
 
@@ -308,14 +310,14 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-      image: partme/openclaw-prometheus:0.2.9
+      image: partme/openclaw-prometheus:0.3.1
 ```
 
 ---
 
 ## ✅ 验证结果
 
-- ✅ **16/16 测试通过**
+- ✅ **29/29 测试通过**
 - ✅ **构建成功**（dist/index.js 53.17 KB）
 - ✅ **2 个集群 Dashboard**（Overview + Metrics，18 个面板）
 - ✅ **11 条告警规则**（Prometheus 兼容）
@@ -340,8 +342,8 @@ spec:
 
 | 指标 | 数值 |
 |-------|------|
-| Test Files | 4 |
-| Tests | 16 |
+| Test Files | 7 |
+| Tests | 29 |
 | Pass Rate | 100% |
 | Test Duration | 629ms |
 
@@ -415,7 +417,7 @@ spec:
 
 ---
 
-**版本**：0.2.9  
-**日期**：2026-04-20  
+**版本**：0.3.1  
+**日期**：2026-05-22  
 **状态**：✅ **100% 企业级标准**  
 **评分**：**30.0/30.0 (100%)** 🎉

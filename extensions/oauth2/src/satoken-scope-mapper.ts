@@ -8,7 +8,7 @@
  *
  * 映射优先级：admin > operator > viewer（同时拥有多个 scope 时取最高角色）
  *
- * 与 openclaw_management/src/middleware/auth.ts 的 Role / Permission 类型保持一致
+ * 与 OpenClaw 的 Role / Permission 类型保持一致
  */
 
 import type { Role, Permission, AuthOAuth2Config } from "./types.js";

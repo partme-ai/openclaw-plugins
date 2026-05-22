@@ -1,5 +1,7 @@
 # OpenClaw-Prometheus 架构设计文档
 
+> 版本：0.3.1 | 更新：2026-05-22
+
 > **OpenClaw-Prometheus = OpenClaw 生态的 Prometheus 指标导出插件。**  
 > 它遵循 OpenClaw 插件规范与 `definePluginEntry` 入口模型，将 OpenClaw Gateway 的运行时状态、会话活动、模型消耗、渠道健康等核心指标以 Prometheus 标准格式导出，实现**全链路可观测性**。
 
@@ -14,7 +16,8 @@
 **同步原则**：
 - 与 OpenClaw 插件规范（`@openclaw/plugin-sdk`）保持同一套生命周期与能力注册模型；
 - 仅使用文档化的 SDK 接口（`api.runtime.*`、Plugin Hooks、Runtime Events、Plugin-owned HTTP Routes），不依赖宿主私有源码和未文档化 Gateway 内部接口；
-- 所有指标基于插件可以合法观测到的事实构建，确保跨版本兼容性。
+- 所有指标基于插件可以合法观测到的事实构建，确保跨版本兼容性；
+- **完整替代** bundled `diagnostics-prometheus`（internal diagnostic 事件 → `src/diagnostics/metric-store.ts`），启用本插件后应禁用官方同名插件。
 
 ---
 
@@ -36,7 +39,7 @@
 - 8. 模块划分与目录结构
 - 9. Observer 层：Hook 注册与实时计数（observer.ts）
 - 10. MetricsRegistry：指标存储与高性能查询（metrics-registry.ts）
-- 11. Collector 层：12 个采集器与 RPC 桥接
+- 11. Collector 层：13 个采集器（含 Diagnostics）与 RPC 桥接
 - 12. Export 层：HTTP 端点与格式化器
 - 13. 配置解析与默认值（plugin-config.ts）
 - 14. 采集缓存与 TTL 控制（collect-cache.ts）
@@ -196,7 +199,8 @@ topk(5,
 
 ```promql
 # Token 吞吐量
-rate(openclaw_model_llm_tokens_total[5m]) by (model)
+sum(rate(openclaw_model_tokens_total{token_type="input"}[5m])) by (model)
++ sum(rate(openclaw_model_tokens_total{token_type="output"}[5m])) by (model)
 
 # 日成本趋势
 openclaw_usage_daily_cost_usd_total
@@ -373,13 +377,16 @@ message_sent ─────────┤▶ openclaw_messages_received/sent_t
 session_start ────────┤▶ openclaw_sessions_started/ended_total
 session_end ──────────┤  openclaw_sessions_active_estimated
 
-llm_output ───────────┤▶ openclaw_usage_tokens_input/output/cache_*
-llm_input ────────────┤  openclaw_llm_input_images_total
+llm_input ────────────┤▶ openclaw_model_llm_input_images_total
+                      │  (token 主路径见 DiagnosticsCollector / model.usage)
+
+DiagnosticsCollector ▶ openclaw_model_tokens_total{token_type=...}
+(model.usage 等)      openclaw_run_* / openclaw_tool_execution_* / …
 
 before_tool_call ─────┤▶ openclaw_tool_calls_total / tool_call_failures_total
 after_tool_call ──────┤  openclaw_tool_call_duration_seconds (histogram)
 
-before_agent_start ───┤▶ openclaw_agent_runs_started/total
+agent_turn_prepare ───┤▶ openclaw_agent_runs_started/total
 agent_end ────────────┤  openclaw_agent_run_duration_seconds (histogram)
 
 before_compaction ────┤▶ openclaw_session_compaction_events_total
@@ -395,7 +402,7 @@ before_reset ─────────▶ openclaw_session_reset_requests_tota
 1. Prometheus Server 发起 `GET /metrics` Scrape 请求；
 2. `CollectCache.getOrCollect()` 检查缓存是否有效；
 3. 缓存过期或首次请求时，调用 `collectAll()`；
-4. 12 个 Collector 并行执行（`Promise.allSettled`）；
+4. 13 个 Collector 并行执行（`Promise.allSettled`）；
 5. 每个 Collector 通过 `ws-bridge.ts` 的 `rpcCall()` 调用 Gateway RPC 方法；
 6. RPC 响应被解析为 `MetricSample[]`；
 7. 所有 Collector 的结果合并、去重、追加元指标；
@@ -407,6 +414,7 @@ before_reset ─────────▶ openclaw_session_reset_requests_tota
 Collector                    RPC Method
 ──────────                   ──────────
 
+DiagnosticsCollector         (internal diagnostic events → metric-store)
 PluginRuntimeCollector       (内部: refreshRuntimeSnapshots + SLI)
 HealthCollector              health
 ChannelsCollector            channels.status
@@ -428,7 +436,8 @@ RuntimeCollector             (Node.js process metrics)
 3. `cache.getOrCollect()` 获取采集结果；
 4. `appendMetaSamples()` 追加 `build_info` 和 `scrape_duration`；
 5. `formatPrometheus()` 序列化为 Prometheus text format；
-6. 响应 `200 text/plain; version=0.0.4; charset=utf-8`。
+6. 追加 `renderDiagnosticsMetricsBlock()`（官方 histogram 格式）；
+7. 响应 `200 text/plain; version=0.0.4; charset=utf-8`。
 
 ### 7.4 JSON Drill-Down 流
 
@@ -460,7 +469,7 @@ SLI 指标由 `refreshSliMetrics()` 在每次 `PluginRuntimeCollector.collect()`
 ## 8. 模块划分与目录结构
 
 ```
-openclaw-prometheus/
+extensions/prometheus/
 ├── src/
 │   ├── index.ts                # 插件入口，definePluginEntry + HTTP 路由注册
 │   ├── observer.ts             # Hook 注册 + SLI 计算 + 快照刷新
@@ -534,7 +543,7 @@ export function registerPluginObservers(api: OpenClawPluginApi): void {
   registerLifecycleHooks(api);       // gateway_start/stop, session_start/end
   registerMessageHooks(api);         // message_received/sent
   registerToolHooks(api);            // before/after_tool_call
-  registerAgentHooks(api);           // before_agent_start, agent_end, llm_output
+  registerAgentHooks(api);           // agent_turn_prepare, agent_end (tokens via diagnostics)
   registerRuntimeEventListeners(api); // onAgentEvent, onSessionTranscriptUpdate
   registerSupplementaryPluginHooks(api); // 其余 20+ hooks
 }
@@ -955,7 +964,7 @@ export default definePluginEntry({
   ok: true,
   healthy: boolean,           // 综合健康判断
   plugin: "openclaw-prometheus",
-  version: "0.3.0",
+  version: "0.3.1",
   startedAt: "2026-04-20T12:00:00.000Z",
   lastSnapshotRefreshAt: "...",
   monitoredProviders: [...],
@@ -1048,10 +1057,10 @@ openclaw plugins install @partme.ai/openclaw-prometheus
 ### 22.2 本地开发安装
 
 ```bash
-git clone https://github.com/partme-ai/openclaw-prometheus
-cd openclaw-prometheus
+git clone https://github.com/partme-ai/openclaw-plugins
+cd openclaw-plugins/extensions/prometheus
 pnpm install && pnpm build
-openclaw plugins install ./openclaw-prometheus
+openclaw plugins install /path/to/openclaw-plugins/extensions/prometheus
 ```
 
 ### 22.3 最小配置

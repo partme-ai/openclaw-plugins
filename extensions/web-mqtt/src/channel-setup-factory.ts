@@ -13,6 +13,9 @@ import {
   setSetupChannelEnabled,
 } from "openclaw/plugin-sdk/setup";
 
+/** setupWizard 回调通用上下文（strict 下显式标注）。 */
+type WizardCtx = { cfg: OpenClawConfig; accountId?: string };
+
 /** 单条凭据字段映射（CLI inputKey → channels.<id> 配置键） */
 export type SetupCredentialSpec = {
   inputKey: "token" | "secret" | "url" | "baseUrl" | "botToken" | "appToken" | "privateKey";
@@ -71,7 +74,7 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
   const setupAdapter = createPatchedAccountSetupAdapter({
     channelKey: channel,
     validateInput: () => null,
-    buildPatch: (input) => {
+    buildPatch: (input: Record<string, unknown>) => {
       const patch: Record<string, unknown> = {};
       for (const spec of params.credentials ?? []) {
         const raw = input[spec.inputKey];
@@ -97,13 +100,13 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
       unconfiguredLabel: "需要配置",
       configuredHint: "已配置",
       unconfiguredHint: "需要设置",
-      resolveConfigured: ({ cfg, accountId }) => params.resolveConfigured(cfg, accountId),
+      resolveConfigured: ({ cfg, accountId }: WizardCtx) => params.resolveConfigured(cfg, accountId),
     }),
     introNote: params.introLines?.length
       ? {
           title: `${label} 设置`,
           lines: params.introLines,
-          shouldShow: ({ cfg, accountId }) => !params.resolveConfigured(cfg, accountId),
+          shouldShow: ({ cfg, accountId }: WizardCtx) => !params.resolveConfigured(cfg, accountId),
         }
       : undefined,
     credentials: (params.credentials ?? []).map((spec) => ({
@@ -116,7 +119,7 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
       envPrompt: spec.preferredEnvVar ? `使用环境变量 ${spec.preferredEnvVar}？` : `使用环境变量中的 ${spec.label}？`,
       keepPrompt: `${spec.label} 已配置，保留当前值？`,
       inputPrompt: spec.inputPrompt,
-      inspect: ({ cfg, accountId }) => {
+      inspect: ({ cfg, accountId }: WizardCtx) => {
         const value = spec.getValue(cfg, accountId)?.trim();
         const hasValue = Boolean(value);
         return {
@@ -125,7 +128,7 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
           resolvedValue: value,
         };
       },
-      applySet: ({ cfg, resolvedValue, accountId }) =>
+      applySet: ({ cfg, resolvedValue, accountId }: WizardCtx & { resolvedValue: unknown }) =>
         applySetupAccountConfigPatch({
           cfg,
           channelKey: channel,
@@ -140,8 +143,8 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
       required: spec.required ?? true,
       helpTitle: spec.helpTitle,
       helpLines: spec.helpLines,
-      currentValue: ({ cfg, accountId }) => spec.getValue(cfg, accountId),
-      applySet: ({ cfg, value, accountId }) =>
+      currentValue: ({ cfg, accountId }: WizardCtx) => spec.getValue(cfg, accountId),
+      applySet: ({ cfg, value, accountId }: WizardCtx & { value: string }) =>
         applySetupAccountConfigPatch({
           cfg,
           channelKey: channel,
@@ -149,7 +152,7 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
           patch: { [spec.configKey]: value.trim() },
         }),
     })),
-    finalize: params.finalize ?? (async ({ cfg, accountId }) => {
+    finalize: params.finalize ?? (async ({ cfg, accountId }: WizardCtx) => {
       if (!params.resolveConfigured(cfg, accountId)) {
         return undefined;
       }
@@ -161,10 +164,10 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
       ? {
           title: `${label} 配置完成`,
           lines: params.completionLines,
-          shouldShow: ({ cfg, accountId }) => params.resolveConfigured(cfg, accountId),
+          shouldShow: ({ cfg, accountId }: WizardCtx) => params.resolveConfigured(cfg, accountId),
         }
       : undefined,
-    disable: (cfg) =>
+    disable: (cfg: OpenClawConfig) =>
       applySetupAccountConfigPatch({
         cfg,
         channelKey: channel,
@@ -196,7 +199,7 @@ export function createUrlChannelSetup(params: {
     docsPath: params.docsPath,
     resolveConfigured:
       params.resolveConfigured ??
-      ((cfg) => Boolean(String(getChannelSection(cfg, params.channel)[urlField] ?? "").trim())),
+      ((cfg: OpenClawConfig) => Boolean(String(getChannelSection(cfg, params.channel)[urlField] ?? "").trim())),
     introLines: params.introLines ?? [
       `${params.label} 通过连接 URL 接入 OpenClaw。`,
       `默认示例：${params.defaultUrl}`,
@@ -211,7 +214,7 @@ export function createUrlChannelSetup(params: {
         configKey: urlField,
         message: `${params.label} 连接 URL`,
         placeholder: params.defaultUrl,
-        getValue: (cfg) => {
+        getValue: (cfg: OpenClawConfig) => {
           const v = getChannelSection(cfg, params.channel)[urlField];
           return typeof v === "string" ? v : undefined;
         },
@@ -239,7 +242,7 @@ export function createAppKeySecretChannelSetup(params: {
     channel: params.channel,
     label: params.label,
     docsPath: params.docsPath,
-    resolveConfigured: (cfg) => {
+    resolveConfigured: (cfg: OpenClawConfig) => {
       const section = getChannelSection(cfg, params.channel);
       return Boolean(String(section[keyField] ?? "").trim() && String(section[secretField] ?? "").trim());
     },
@@ -255,7 +258,7 @@ export function createAppKeySecretChannelSetup(params: {
         label: "App Key",
         preferredEnvVar: params.keyEnvVar,
         inputPrompt: `${params.label} App Key`,
-        getValue: (cfg) => {
+        getValue: (cfg: OpenClawConfig) => {
           const v = getChannelSection(cfg, params.channel)[keyField];
           return typeof v === "string" ? v : undefined;
         },
@@ -266,7 +269,7 @@ export function createAppKeySecretChannelSetup(params: {
         label: "App Secret",
         preferredEnvVar: params.secretEnvVar,
         inputPrompt: `${params.label} App Secret`,
-        getValue: (cfg) => {
+        getValue: (cfg: OpenClawConfig) => {
           const v = getChannelSection(cfg, params.channel)[secretField];
           return typeof v === "string" ? v : undefined;
         },
@@ -288,7 +291,7 @@ export function createEmbeddedBrokerChannelSetup(params: {
     channel: params.channel,
     label: params.label,
     docsPath: params.docsPath,
-    resolveConfigured: (cfg) => Boolean(getChannelSection(cfg, params.channel)),
+    resolveConfigured: (cfg: OpenClawConfig) => Boolean(getChannelSection(cfg, params.channel)),
     introLines: params.introLines ?? [
       `${params.label} 为内嵌 Broker，无需外部连接 URL。`,
       "确认后将写入 channels 配置并启用该渠道。",
@@ -298,7 +301,7 @@ export function createEmbeddedBrokerChannelSetup(params: {
       "运行 `openclaw gateway restart` 启动内嵌服务。",
     ],
     credentials: [],
-    finalize: async ({ cfg, accountId }) => ({
+    finalize: async ({ cfg, accountId }: WizardCtx) => ({
       cfg: setSetupChannelEnabled(
         applySetupAccountConfigPatch({
           cfg,

@@ -12,20 +12,21 @@
 
 ## 概述
 
-`@partme.ai/openclaw-router` 是 OpenClaw 的企业级消息路由引擎。它监听 `agent_end` 事件，根据可配置的规则将消息多路分发到多个目标。支持 IM→MQ（转发到消息队列）和 MQ→IM（回复到 IM 渠道）。
+`@partme.ai/openclaw-router` 是 OpenClaw 的企业级消息路由引擎。它通过 Plugin Hooks（`message_received`、`message_sent`、`reply_dispatch`）按规则将消息多路分发。支持 IM→MQ（转发到消息队列）和 MQ→IM（回复到 IM 渠道）。
 
 **纯配置驱动** — 无需修改任何渠道插件代码。所有路由规则通过 JSON 配置定义。
 
 ## 特性
 
-- **agent_end 事件监听** — 自动捕获完成对话
+- **Plugin Hooks** — `message_received`（入站）、`message_sent`（出站转发）、`reply_dispatch`（跨渠道 reply-via）
+- **幂等去重** — 基于 `runId` / `messageId` + `ruleId` 防止重复转发
 - **规则引擎** — 多条件匹配：`channels`、`direction`、`topic`、`accountId`
 - **模板主题** — 支持 `{{channel}}`、`{{direction}}`、`{{account}}` 动态变量
 - **IM 到 MQ 转发** — 将用户消息和 Agent 回复转发到 MQ 渠道
 - **MQ 到 IM 回复** — 将 Agent 回复路由回指定 IM 渠道和账号
 - **审计日志** — 可选的控制台审计追踪
 - **纯配置驱动** — 无需修改渠道插件代码
-- **轻量级** — 零外部依赖，单一事件处理器
+- **轻量级** — 零外部依赖，基于 typed plugin hooks
 
 ## 快速开始
 

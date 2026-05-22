@@ -1,6 +1,6 @@
-import { createApplication, listApplications } from './gotify-api.js';
-import { GotifyConfigError, GotifyApiError } from './errors.js';
-import type { ResolvedGotifyAccount } from './types.js';
+import { createApplication, listApplications } from "./transport/gotify-api.js";
+import { GotifyConfigError, GotifyApiError } from "./errors.js";
+import type { ResolvedGotifyAccount } from "./types.js";
 
 /**
  * 运行配置向导，查找或创建同名 Gotify Application 并返回 appToken。
@@ -13,8 +13,8 @@ export async function runConfigWizard(account: ResolvedGotifyAccount): Promise<s
   }
   if (!account.bootstrap.autoCreateApplication) {
     throw new GotifyConfigError(
-      'autoCreateApplication',
-      `Application ${account.bootstrap.applicationName} not found and auto-create is disabled.`
+      "autoCreateApplication",
+      `Application ${account.bootstrap.applicationName} not found and auto-create is disabled.`,
     );
   }
   const created = await createApplication(account, {
@@ -23,8 +23,8 @@ export async function runConfigWizard(account: ResolvedGotifyAccount): Promise<s
   });
   if (!created.token) {
     throw new GotifyApiError(
-      'Gotify application token is missing from createApplication response.',
-      500
+      "Gotify application token is missing from createApplication response.",
+      500,
     );
   }
   return created.token;

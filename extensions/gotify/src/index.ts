@@ -8,9 +8,9 @@ import {
   listGotifyAccountIds,
   describeGotifyAccountSnapshot,
 } from './config.js';
-import { healthCheck } from './gotify-api.js';
+import { healthCheck } from './transport/gotify-api.js';
 import { setGotifyRuntime, getAccountSnapshot } from './runtime.js';
-import { doctorGotifyAccount } from './setup.js';
+import { doctorGotifyAccount } from "./bootstrap.js";
 
 export { gotifyChannel } from './channel.js';
 export {
@@ -33,7 +33,7 @@ export {
   runGotifyDoctor,
   buildMessageRequest,
   normalizeServerUrl,
-} from './gotify-api.js';
+} from './transport/gotify-api.js';
 export {
   GotifyApiError,
   GotifyConnectionError,
@@ -48,10 +48,10 @@ export {
   describeGotifyAccountSnapshot,
   DEFAULT_GOTIFY_ACCOUNT_ID,
 } from './config.js';
-export { mapGotifyToInbound, mapOutboundToGotify } from './message-mapper.js';
-export { createGotifyWsListener } from './ws-listener.js';
-export { bootstrapGotifyAccount, doctorGotifyAccount } from './setup.js';
-export { runConfigWizard } from './config-wizard.js';
+export { mapGotifyToInbound, mapOutboundToGotify } from './routing/message-mapper.js';
+export { createGotifyWsListener } from './transport/server.js';
+export { bootstrapGotifyAccount, doctorGotifyAccount } from "./bootstrap.js";
+export { runConfigWizard } from "./config-wizard.js";
 
 /**
  * openclaw-gotify 插件入口 — Gotify channel plugin with REST API + WebSocket stream.

@@ -1,45 +1,24 @@
 /**
- * Voice ASR - Agent Mode Capability
- *
- * Automatic speech recognition using Tencent Flash ASR
- * Wraps message-sdk ASR module with WeCom-specific configuration
- *
- * Source: wecom-app voice ASR integration
+ * Voice ASR - Agent Mode（腾讯云 Flash ASR，企微插件内置实现）。
  */
 
 import type { ResolvedAgentAccount } from "../types/index.js";
-import { transcribeTencentFlash, type TencentFlashASRConfig } from "@partme.ai/openclaw-message-sdk";
+import {
+  transcribeTencentFlash,
+  type TencentFlashASRConfig,
+} from "./tencent-flash-asr.js";
 
-/**
- * Transcribe voice message using Tencent Flash ASR
- * @param account - Agent account configuration
- * @param audioBuffer - Audio data buffer
- * @param asrConfig - Optional ASR configuration (overrides account defaults)
- * @returns Transcribed text
- */
+/** 语音转文字 */
 export async function transcribeVoice(
   account: ResolvedAgentAccount,
   audioBuffer: Buffer,
-  asrConfig?: Partial<TencentFlashASRConfig>
+  asrConfig?: Partial<TencentFlashASRConfig>,
 ): Promise<string> {
-  // WeCom-specific ASR configuration
-  // Uses Tencent Cloud Flash ASR (optimized for real-time/short audio)
-  //
-  // Note: This requires Tencent Cloud ASR credentials (appId, secretId, secretKey).
-  // These are NOT the same as WeCom credentials (corpId, corpSecret, encodingAESKey).
-  //
-  // To enable ASR, add ASR credentials to your account config:
-  // channels.wecom.agent.asr = { appId: "...", secretId: "...", secretKey: "..." }
-  //
-  // Or pass them directly via asrConfig parameter.
-
-  // Try to get ASR config from account config first
-  const accountAsrConfig = (account.config as any).asr as TencentFlashASRConfig | undefined;
+  const accountAsrConfig = (account.config as { asr?: TencentFlashASRConfig }).asr;
 
   if (!accountAsrConfig && !asrConfig) {
     throw new Error(
-      "ASR credentials not configured. " +
-      "Add ASR config to channels.wecom.agent.asr or pass asrConfig parameter."
+      "ASR credentials not configured. Add channels.wecom.agent.asr or pass asrConfig.",
     );
   }
 
@@ -52,36 +31,17 @@ export async function transcribeVoice(
     timeoutMs: asrConfig?.timeoutMs || accountAsrConfig?.timeoutMs || 30000,
   };
 
-  // Validate required fields
   if (!config.appId || !config.secretId || !config.secretKey) {
-    throw new Error(
-      "ASR credentials incomplete. Required: appId, secretId, secretKey. " +
-      "These are Tencent Cloud ASR credentials, NOT WeCom credentials."
-    );
+    throw new Error("ASR credentials incomplete (appId, secretId, secretKey required).");
   }
 
-  try {
-    const transcript = await transcribeTencentFlash({
-      audio: audioBuffer,
-      config,
-    });
-    return transcript;
-  } catch (error) {
-    console.error("[wecom-agent] Voice ASR failed:", error);
-    throw error;
-  }
+  return transcribeTencentFlash({ audio: audioBuffer, config });
 }
 
-/**
- * Check if voice message should be transcribed
- * @param account - Agent account configuration
- * @returns true if ASR is enabled
- */
+/** 是否启用 ASR */
 export function isVoiceAsrEnabled(account: ResolvedAgentAccount): boolean {
-  const asrConfig = (account.config as any).asr as TencentFlashASRConfig | undefined;
-  return Boolean(
-    asrConfig?.appId &&
-    asrConfig?.secretId &&
-    asrConfig?.secretKey
-  );
+  const asrConfig = (account.config as { asr?: TencentFlashASRConfig }).asr;
+  return Boolean(asrConfig?.appId && asrConfig?.secretId && asrConfig?.secretKey);
 }
+
+export type { TencentFlashASRConfig };

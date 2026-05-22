@@ -4,6 +4,7 @@
   "version": "0.1.11",
   "description": "STOMP 1.0/1.1/1.2 over WebSocket bridge for OpenClaw - enterprise integration",
   "main": "dist/index.js",
+  "setupEntry": "dist/setup-entry.js",
   "channels": [
     "stomp"
   ],

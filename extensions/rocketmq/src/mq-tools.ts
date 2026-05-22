@@ -41,7 +41,7 @@ export function registerRockermqTools(api: OpenClawPluginApi): void {
           keys?: string[];
         },
       ) {
-        const { publishMessage } = await import("./rocketmq-server.js");
+        const { publishMessage } = await import("./transport/server.js");
         const payload =
           typeof params.payload === "string"
             ? params.payload

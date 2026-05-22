@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { DEFAULT_RABBITMQ_CONFIG } from "../src/rabbitmq-config.js";
+import { DEFAULT_RABBITMQ_CONFIG } from "../src/config.js";
 
 type ConsumeCb = (msg: any) => void;
 
@@ -47,9 +47,9 @@ vi.mock("amqplib", () => ({
 }));
 
 describe("rabbitmq-server", () => {
-  let startRabbitmqServer: typeof import("../src/rabbitmq-server.js").startRabbitmqServer;
-  let stopRabbitmqServer: typeof import("../src/rabbitmq-server.js").stopRabbitmqServer;
-  let requestMessage: typeof import("../src/rabbitmq-server.js").requestMessage;
+  let startRabbitmqServer: typeof import("../src/transport/server.js").startRabbitmqServer;
+  let stopRabbitmqServer: typeof import("../src/transport/server.js").stopRabbitmqServer;
+  let requestMessage: typeof import("../src/transport/server.js").requestMessage;
 
   beforeEach(() => {
     consumeCb = null;
@@ -66,7 +66,7 @@ describe("rabbitmq-server", () => {
   });
 
   it("acks only after inbound handler resolves", async () => {
-    ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/rabbitmq-server.js"));
+    ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/transport/server.js"));
     let release: (() => void) | null = null;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -95,7 +95,7 @@ describe("rabbitmq-server", () => {
   });
 
   it("nacks and requeues on handler error when configured", async () => {
-    ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/rabbitmq-server.js"));
+    ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/transport/server.js"));
     await startRabbitmqServer(
       { ...DEFAULT_RABBITMQ_CONFIG, consume: { ...DEFAULT_RABBITMQ_CONFIG.consume, requeueOnError: true } },
       async () => {
@@ -115,7 +115,7 @@ describe("rabbitmq-server", () => {
   });
 
   it("supports direct reply-to requestMessage", async () => {
-    ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/rabbitmq-server.js"));
+    ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/transport/server.js"));
     await startRabbitmqServer(DEFAULT_RABBITMQ_CONFIG, async () => ({ ok: true as const }));
     const promise = requestMessage({ queue: "rpc_queue", payload: JSON.stringify({ a: 1 }), timeoutMs: 1000, correlationId: "cid" });
     expect(requestCh.sendToQueue).toHaveBeenCalledTimes(0);

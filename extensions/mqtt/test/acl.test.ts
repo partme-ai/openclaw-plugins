@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { aclTopicMatches, isUserActionAllowed } from "../src/acl.js";
+import { aclTopicMatches, isUserActionAllowed } from "../src/transport/acl.js";
 
 describe("aclTopicMatches", () => {
   it("should match exact topic", () => {

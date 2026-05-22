@@ -15,19 +15,20 @@
 
 ## 简介
 
-`@partme.ai/openclaw-prometheus` 是面向 [OpenClaw](https://github.com/openclaw/openclaw) 的**非渠道**插件，按官方文档使用 [`definePluginEntry`](https://docs.openclaw.ai/plugins/sdk-entrypoints#definepluginentry)，并严格依赖文档化的插件机制：manifest discovery、`api.runtime.*`、插件 hooks、runtime events 和插件自有 HTTP 路由。
+`@partme.ai/openclaw-prometheus` 是面向 [OpenClaw](https://github.com/openclaw/openclaw) 的**非渠道**插件，**完整替代** bundled [`diagnostics-prometheus`](https://github.com/openclaw/openclaw/tree/main/extensions/diagnostics-prometheus)，并在此基础上扩展 RPC 用量、hooks、SLI 与企业运维端点。
 
-这一版刻意不依赖宿主私有源码和未文档化 Gateway 内部接口。指标只基于插件可以合法观测到的事实构建：
+指标来源分为两层：
 
-- `api.runtime.modelAuth`、`api.runtime.channel`、`api.runtime.state`
-- `message_received`、`message_sent`、`before_tool_call`、`after_tool_call`、`llm_output`、`agent_end` 等 hook
-- `api.runtime.events.onAgentEvent(...)` 与 `onSessionTranscriptUpdate(...)`
-- exporter 自身的 scrape、route、snapshot 健康指标
+1. **Internal diagnostics（与官方 exporter 一致）** — 订阅 Gateway trusted diagnostic 事件（`model.usage`、`run.completed`、`tool.execution.*`、消息投递、harness、talk、session recovery、queue lane、memory 等），输出 `openclaw_model_tokens_total`、`openclaw_run_duration_seconds` 等标准指标。
+2. **PartMe 扩展** — RPC（`usage.cost` / `sessions.*` / `channels.status` 等）、Plugin hooks、runtime events、SLI 与 exporter 元指标。
+
+> 启用本插件后请**禁用** bundled `diagnostics-prometheus`，避免重复订阅与重复指标。
 
 ## 核心能力
 
+- **diagnostics-prometheus 平替**：`src/diagnostics/metric-store.ts` 与官方实现同构（series cap、低基数 label、histogram bucket）。
 - **纯插件架构**：只使用官方 SDK 暴露的稳定能力，不需要修改 OpenClaw 核心。
-- **三层指标面**：exporter 自身指标、runtime 快照指标、hooks/events 驱动的 workload 指标。
+- **多层指标面**：diagnostics 事件、RPC 快照、hooks/events workload、exporter 自身指标。
 - **端点**：`{path}`（默认 `/metrics`）暴露 Prometheus；`{path}/per-object`、`{path}/detailed?family=`、`{path}/health` 提供 JSON。
 - **快照刷新**：`snapshotIntervalMs` 控制 model auth 与 channel activity 的探测周期。
 - **采集缓存**：`collectIntervalMs` 在多次抓取间复用上一次成功结果，减轻抓取成本；设为 `0` 则每次抓取全量采集。
@@ -56,17 +57,19 @@
 
 | 前缀 | 数据来源 |
 | --- | --- |
+| `openclaw_model_tokens_*` / `openclaw_gen_ai_client_token_usage` / `openclaw_run_*` / `openclaw_tool_execution_*` / `openclaw_message_*` 等 | **Internal diagnostics**（官方 diagnostics-prometheus 同套） |
+| `openclaw_usage_*` | Gateway RPC `usage.cost` / `sessions.usage`（窗口聚合 gauge） |
 | `openclaw_metrics_*` | exporter 自己的 route / scrape 指标 |
 | `openclaw_model_auth_*` | `api.runtime.modelAuth` |
 | `openclaw_channel_*` | message hooks + `api.runtime.channel.activity.get(...)` |
-| `openclaw_agent_*` | `before_agent_start` / `agent_end` + runtime agent events |
+| `openclaw_agent_*` | `agent_turn_prepare` / `agent_end` + runtime agent events |
 | `openclaw_tool_*` | `before_tool_call` / `after_tool_call` |
 | `openclaw_messages_*` | `message_received` / `message_sent` |
-| `openclaw_usage_*` | `llm_output` usage 聚合 |
 | `openclaw_session_transcript_*` | `api.runtime.events.onSessionTranscriptUpdate(...)` |
 | `openclaw_runtime_*` | runtime namespace 可用性 + state/snapshot age |
 | `openclaw_nodejs_*` | 本进程（`includeRuntime`） |
-| `openclaw_exporter_*`、`openclaw_metrics_*` | 插件自身 |
+| `openclaw_ready` | 仅 `gateway_start` / `gateway_stop` 更新；表示 Gateway 生命周期内 exporter 就绪 |
+| `openclaw_plugin_loaded` | 插件模块已注册（与 Gateway 是否 start 无关） |
 
 ## 快速开始
 
@@ -83,12 +86,17 @@ openclaw plugins install @partme.ai/openclaw-prometheus
 
 ### 最小配置（`openclaw.json`）
 
+使用 `llm_input` 等对话 hook 观测图片附件等扩展指标时，需显式开启 `allowConversationAccess`（**token 主路径来自 internal diagnostics，不依赖该开关**）：
+
 ```json
 {
   "plugins": {
     "entries": {
       "openclaw-prometheus": {
         "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
         "config": {
           "path": "/metrics",
           "collectIntervalMs": 15000,

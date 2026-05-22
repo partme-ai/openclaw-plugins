@@ -6,14 +6,14 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsup src/index.ts src/setup-entry.ts --format esm --dts",
+    "build": "tsup",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:standard": "tsx scripts/run-gotify-standard-tests.ts",
-    "test:ui-gate": "tsx scripts/ui-transcript-gate-test.ts",
-    "test:wait-reply": "tsx scripts/wait-reply-test.ts",
+    "test:standard": "tsx test/run-gotify-standard-tests.ts",
+    "test:ui-gate": "tsx test/ui-transcript-gate-test.ts",
+    "test:wait-reply": "tsx test/wait-reply-test.ts",
     "lint": "eslint src --fix",
     "format": "prettier --write src",
     "prepublishOnly": "pnpm build"
@@ -35,9 +35,14 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README.en.md",
     "LICENSE",
-    "setup-entry.js"
+    "README.zh-CN.md",
+    "clawdbot.plugin.json",
+    "moltbot.plugin.json",
+    "tsconfig.json",
+    "tsup.config.ts",
+    "vitest.config.ts",
+    ".gitignore"
   ],
   "publishConfig": {
     "access": "public"
@@ -48,6 +53,7 @@
     "directory": "extensions/gotify"
   },
   "dependencies": {
+    "@partme.ai/openclaw-message-sdk": "^2026.5.22",
     "ws": "^8.20.1",
     "zod": "^4.3.6"
   },
@@ -77,13 +83,9 @@
   },
   "openclaw": {
     "extensions": [
-      "./index.ts"
-    ],
-    "runtimeExtensions": [
       "./dist/index.js"
     ],
-    "setupEntry": "./setup-entry.ts",
-    "runtimeSetupEntry": "./dist/setup-entry.js",
+    "setupEntry": "./dist/setup-entry.js",
     "build": {
       "openclawVersion": "2026.4.0"
     },

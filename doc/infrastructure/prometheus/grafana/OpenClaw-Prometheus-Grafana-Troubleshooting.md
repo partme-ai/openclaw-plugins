@@ -1,4 +1,4 @@
-# OpenClaw Grafana Dashboards - Troubleshooting v0.3.0
+# OpenClaw Grafana Dashboards - Troubleshooting v0.3.1
 
 ## Dashboard 空白
 
@@ -21,8 +21,15 @@
 
 ## Histogram 查询返回 NaN
 
-确认指标类型: `TYPE openclaw_agent_run_duration_seconds histogram`  
-确认包含 `_bucket` 行  
+插件有两套 run 时长 histogram，查询前确认指标名称与面板一致：
+
+| 指标 | 类型 | 用途 |
+|------|------|------|
+| `openclaw_run_duration_seconds` | histogram（diagnostics / `run.completed`） | 按 `model`/`channel`/`outcome` 的 SLO |
+| `openclaw_agent_run_duration_seconds` | histogram（hooks / `observer.ts`） | 按 `agent_id` 的 Agent 性能 |
+
+确认指标类型，例如：`TYPE openclaw_run_duration_seconds histogram` 或 `TYPE openclaw_agent_run_duration_seconds histogram`  
+确认包含对应 `_bucket` 行  
 等待至少 2 个 scrape interval 积累数据
 
 ## 高基数 / 加载慢

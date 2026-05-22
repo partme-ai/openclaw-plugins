@@ -4,5 +4,6 @@
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": ["index.ts", "src/**/*.ts"]
+  "include": ["index.ts",
+    "src/dedupe.ts", "openclaw-sdk.d.ts", "src/**/*.ts"]
 }

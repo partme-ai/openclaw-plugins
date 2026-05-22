@@ -5,7 +5,7 @@
 > 术语速记：
 > - **Scrape**：Prometheus Server 定期拉取指标端点的过程。
 > - **Exporter**：暴露 Prometheus 格式指标的服务端点（本插件即是一个 Exporter）。
-> - **openclaw-prometheus**：OpenClaw 的非渠道插件，通过 Plugin Hooks 实时计数 + Gateway RPC 拉取状态，以 Prometheus 标准格式导出指标。
+> - **openclaw-prometheus**：OpenClaw 的非渠道插件；**内置 diagnostics-prometheus 平替** + Gateway RPC 窗口用量 + Plugin Hooks/SLI 扩展。
 > - **SLI**：Service Level Indicator，服务水平指标（如消息成功率、Agent 错误率）。
 > - **SLO**：Service Level Objective，服务水平目标（如 99.9% 消息成功率）。
 
@@ -13,11 +13,14 @@
 
 ## 0. 总体架构与能力边界
 
-- **实时计数**：Plugin Hooks（28 个）→ MetricsRegistry 内存计数器/直方图
-- **状态拉取**：Gateway RPC（12 个 Collector）→ 采集缓存 → Prometheus text/JSON
+- **Internal diagnostics（官方 parity）**：trusted diagnostic 事件 → `openclaw_model_tokens_total`、`openclaw_run_*` 等（无需 `allowConversationAccess`）
+- **实时计数**：Plugin Hooks → MetricsRegistry 内存计数器/直方图
+- **状态拉取**：Gateway RPC（13 个 Collector）→ 采集缓存 → Prometheus text/JSON
 - **SLI 衍生**：基于 Hook 计数器计算消息成功率、Agent 错误率等
 - **鉴权保护**：可选 Bearer Token（环境变量优先）
 - **告警规则**：由 Prometheus Alertmanager 承担，插件不内置告警评估
+
+> 启用 `openclaw-prometheus` 后，请在 `openclaw.json` 中**禁用** bundled `diagnostics-prometheus`，避免重复指标。完整步骤见 [Deployment §3.4](../OpenClaw-Prometheus-Deployment.md#34-禁用-bundled-diagnostics-prometheus必做)。
 
 建议先阅读架构设计文档了解模块划分与约束：
 - [OpenClaw-Prometheus-Architecture_CN.md](./OpenClaw-Prometheus-Architecture_CN.md)
@@ -83,7 +86,7 @@ tar xzf prometheus-*.tar.gz
 cd prometheus-*/
 
 # 使用项目自带的配置文件
-cp /path/to/openclaw-prometheus/config/local-prometheus.yml prometheus.yml
+cp /path/to/openclaw-plugins/extensions/prometheus/config/local-prometheus.yml prometheus.yml
 
 # 启动
 ./prometheus --config.file=prometheus.yml
@@ -301,7 +304,7 @@ curl -s http://127.0.0.1:18789/metrics | head -30
 # 预期输出
 # # HELP openclaw_exporter_build_info OpenClaw Prometheus plugin build information
 # # TYPE openclaw_exporter_build_info gauge
-# openclaw_exporter_build_info{plugin="openclaw-prometheus",version="0.3.0"} 1
+# openclaw_exporter_build_info{plugin="openclaw-prometheus",version="0.3.1"} 1
 # # HELP openclaw_up Whether OpenClaw Prometheus plugin is loaded
 # # TYPE openclaw_up gauge
 # openclaw_up{instance="default"} 1
@@ -336,7 +339,7 @@ curl -s http://127.0.0.1:18789/metrics/health | python3 -m json.tool
 #   "ok": true,
 #   "healthy": true,
 #   "plugin": "openclaw-prometheus",
-#   "version": "0.3.0",
+#   "version": "0.3.1",
 #   ...
 # }
 ```
@@ -521,11 +524,11 @@ topk(10, sum(openclaw_agent_runs_started_total) by (agent_id))
 
 ```promql
 # Token 吞吐量（tokens/s）
-rate(openclaw_model_llm_tokens_total[5m]) by (model)
+sum(rate(openclaw_model_tokens_total{token_type="input"}[5m])) by (model)
++ sum(rate(openclaw_model_tokens_total{token_type="output"}[5m])) by (model)
 
-# 按 Provider 的 Token 消耗
-rate(openclaw_model_llm_tokens_input_total[5m]) by (provider)
-+ rate(openclaw_model_llm_tokens_output_total[5m]) by (provider)
+# 按 Provider 的 input 吞吐
+sum(rate(openclaw_model_tokens_total{token_type="input"}[5m])) by (provider)
 
 # 日成本趋势
 openclaw_usage_daily_cost_usd_total
@@ -748,8 +751,11 @@ openclaw_nodejs_rss_bytes
 |------|----------|----------|------|
 | Gateway 状态 | `openclaw_up`, `openclaw_ready` | Stat | `openclaw_ready == 0` |
 | 消息 SLO | `openclaw_sli_message_success_ratio` | Gauge + Time series | `< 0.999` |
-| Agent 性能 | `openclaw_agent_run_duration_seconds` | Histogram + Time series | P95 > 300s |
-| Token 消耗 | `openclaw_model_llm_tokens_*` | Time series + Pie | 日成本异常 |
+| Agent 性能（按 agent_id） | `openclaw_agent_run_duration_seconds` | Histogram + Time series | P95 > 300s |
+| Run SLO（按 model/渠道） | `openclaw_run_duration_seconds` | Histogram + Time series | P95 > 300s |
+
+> Run 延迟有两套 histogram（hooks vs diagnostics），选型见 [Metrics § Run 延迟指标选择](../OpenClaw-Prometheus-Metrics.md#run-延迟指标选择)。
+| Token 消耗 | `openclaw_model_tokens_total{token_type=...}` | Time series + Pie | 日成本异常（配合 `openclaw_usage_*` RPC） |
 | 渠道健康 | `openclaw_channel_linked` | Stat + Table | `== 0` |
 | 认证过期 | `openclaw_model_auth_provider_remaining_seconds` | Stat | `< 86400` |
 | 工具性能 | `openclaw_tool_call_duration_seconds` | Histogram + Table | 错误率 > 10% |

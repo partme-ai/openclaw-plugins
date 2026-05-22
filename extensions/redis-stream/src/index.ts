@@ -10,10 +10,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
 import { redisStreamChannel } from "./channel.js";
-import { getStats } from "./redis-stream-server.js";
-import { resolveRedisChannelConfig, redactUrl } from "./redis-stream-config.js";
+import { getStats } from "./transport/server.js";
+import { resolveRedisChannelConfig, redactUrl } from "./config.js";
 import { setRedisStreamRuntime } from "./runtime.js";
-import { getSessionStats } from "./session-mapper.js";
+import { getSessionStats } from "./routing/session-mapper.js";
 
 export default defineChannelPluginEntry({
   id: "openclaw-redis-stream",

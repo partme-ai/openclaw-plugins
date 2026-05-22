@@ -6,14 +6,14 @@ import type { ChannelOutboundAdapter, ChannelOutboundContext } from "openclaw/pl
 import { chunkText } from "openclaw/plugin-sdk/reply-runtime";
 import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 
-import { publishMessage } from "./broker.js";
+import { publishMessage } from "./transport/server.js";
 import { DEFAULT_BROKER_CONFIG } from "./config.js";
 import { getMqttChannelConfig } from "./mqtt-state.js";
-import { getClientIdBySession, getSessionContext } from "./session-mapper.js";
-import { buildOutboundTopic } from "./topic-router.js";
-import { getClientUsername } from "./broker.js";
-import { isUserActionAllowed } from "./acl.js";
-import { logAuditEvent } from "./audit.js";
+import { getClientIdBySession, getSessionContext } from "./routing/session-mapper.js";
+import { buildOutboundTopic } from "./routing/topic-router.js";
+import { getClientUsername } from "./transport/server.js";
+import { isUserActionAllowed } from "./transport/acl.js";
+import { logAuditEvent } from "./transport/audit.js";
 
 /**
  * OpenClaw ChannelOutboundAdapter：直连文本发布到 Aedes。

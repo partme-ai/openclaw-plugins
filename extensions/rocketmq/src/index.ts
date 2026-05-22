@@ -8,10 +8,10 @@ import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { rockermqChannel } from "./channel.js";
 import { setRockermqRuntime } from "./runtime.js";
-import { buildRockermqConfigSnapshot, resolveRockermqConfig } from "./rocketmq-config.js";
-import { getRockermqChannelConfig } from "./rocketmq-state.js";
-import { getSessionStats, getAllSessionMappings } from "./session-mapper.js";
-import { getStats } from "./rocketmq-server.js";
+import { buildRockermqConfigSnapshot, resolveRockermqConfig } from "./config.js";
+import { getRockermqChannelConfig } from "./state.js";
+import { getSessionStats, getAllSessionMappings } from "./routing/session-mapper.js";
+import { getStats } from "./transport/server.js";
 import { registerRockermqTools } from "./mq-tools.js";
 
 export { rockermqChannel } from "./channel.js";

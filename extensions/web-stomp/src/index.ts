@@ -3,16 +3,19 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { PluginApi, StompServerConfig, GatewayRuntime } from "./types.js";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+
 import { stompChannel } from "./channel.js";
-import { startStompServer, stopStompServer, getConnectionInfoList } from "./stomp-server.js";
-import { getSubscriptionStats } from "./subscription-mgr.js";
-import { getAckStats } from "./ack-handler.js";
+import { resolveStompWsConfig } from "./config.js";
+import { setWebStompRuntime } from "./runtime.js";
+import { dispatchInboundStomp } from "./inbound.js";
+import { startStompServer, stopStompServer, getConnectionInfoList } from "./transport/server.js";
+import { getSubscriptionStats } from "./transport/subscription-mgr.js";
+import { getAckStats } from "./transport/ack-handler.js";
 
-let _runtime: GatewayRuntime | null = null;
-
-function registerStompWsService(api: PluginApi, start: () => Promise<void>): void {
-  const withService = api as PluginApi & {
+function registerStompWsService(api: OpenClawPluginApi, start: () => Promise<void>): void {
+  const withService = api as OpenClawPluginApi & {
     registerService?: (svc: { id: string; start: () => Promise<void>; stop?: () => Promise<void> }) => void;
   };
   if (typeof withService.registerService !== "function") {
@@ -30,22 +33,17 @@ function registerStompWsService(api: PluginApi, start: () => Promise<void>): voi
   });
 }
 
-const DEFAULT_CONFIG: StompServerConfig = {
-  wsPort: 15674,
-  path: "/ws",
-  heartbeatIncoming: 10_000,
-  heartbeatOutgoing: 10_000,
-  maxConnections: 500,
-};
-
-/**
- * 旧版兼容入口：直接导出 register(api)。
- */
-export default function register(api: PluginApi): void {
-    _runtime = api.runtime as GatewayRuntime;
-
+export default defineChannelPluginEntry({
+  id: "openclaw_web_stomp",
+  name: "STOMP over WebSocket",
+  description: "STOMP over WebSocket bridge for OpenClaw enterprise integration",
+  plugin: stompChannel,
+  setRuntime: setWebStompRuntime,
+  registerFull(api: OpenClawPluginApi) {
     api.registerHttpRoute({
       path: "/stomp/status",
+      auth: "plugin",
+      match: "prefix",
       handler: async (_req: IncomingMessage, res: ServerResponse) => {
         const connections = getConnectionInfoList();
         const subscriptionStats = getSubscriptionStats();
@@ -67,7 +65,7 @@ export default function register(api: PluginApi): void {
 
     registerStompWsService(api, async () => {
       const runtimeCfg = (api.runtime as { config: Record<string, unknown> }).config;
-      const config = resolveStompConfig(runtimeCfg);
+      const config = resolveStompWsConfig(runtimeCfg);
       try {
         await startStompServer(config, handleInboundMessage);
         console.log("[openclaw_web_stomp] STOMP server started successfully");
@@ -77,75 +75,18 @@ export default function register(api: PluginApi): void {
     });
 
     console.log("[openclaw_web_stomp] Plugin registered — STOMP channel ready");
-    api.registerChannel({ plugin: stompChannel });
     console.log("[openclaw_web_stomp] Endpoints:");
     console.log("  /stomp/status — Server status & connections");
-}
+  },
+});
 
-function handleInboundMessage(agentId: string, sessionKey: string, text: string): void {
+function handleInboundMessage(ctx: import("./inbound.js").WebStompInboundContext): void {
   console.log(
-    `[openclaw_web_stomp] Inbound: agent=${agentId}, session=${sessionKey}, text=${text.slice(0, 100)}`,
+    `[openclaw_web_stomp] Inbound: agent=${ctx.agentId}, peer=${ctx.peerId}, destination=${ctx.destination}`,
   );
-  dispatchToRuntime(sessionKey, text).catch((error) => {
-    console.error(`[openclaw_web_stomp] Runtime dispatch failed for session=${sessionKey}:`, error);
+  dispatchInboundStomp(ctx).catch((error) => {
+    console.error(`[openclaw_web_stomp] Runtime dispatch failed for peer=${ctx.peerId}:`, error);
   });
-}
-
-/**
- * 使用 stomp-server 生成的完整 sessionKey（如 `stomp:<conn>@<agent>`）作为 peer/from，与 channel 出站 `buildSessionDestination(sessionKey)` 一致
- */
-async function dispatchToRuntime(sessionKey: string, text: string): Promise<void> {
-  if (!_runtime) {
-    console.warn("[openclaw_web_stomp] Runtime not initialized, cannot dispatch message");
-    return;
-  }
-
-  const cfg = _runtime.config;
-
-  const route = await _runtime.channel.routing.resolveAgentRoute({
-    cfg,
-    channel: "stomp",
-    accountId: "default",
-    peer: { kind: "dm", id: sessionKey },
-  });
-
-  const ctx = await _runtime.channel.reply.finalizeInboundContext({
-    channel: "stomp",
-    accountId: "default",
-    from: sessionKey,
-    text,
-    chatType: "direct",
-  });
-
-  const replyDestination = `/topic/session.${sessionKey}`;
-  const dispatcher = _runtime.channel.reply.createReplyDispatcherWithTyping({
-    deliver: async (payload) => {
-      const { publishToDestination } = await import("./stomp-server.js");
-      publishToDestination(replyDestination, payload.text);
-    },
-  });
-
-  await _runtime.channel.reply.dispatchReplyFromConfig({
-    ctx,
-    cfg,
-    dispatcher,
-    replyOptions: route,
-  });
-}
-
-function resolveStompConfig(globalConfig: Record<string, unknown>): StompServerConfig {
-  const channels = globalConfig.channels as Record<string, unknown> | undefined;
-  const stompConfig = channels?.stomp as
-    | (Partial<StompServerConfig> & { port?: number })
-    | undefined;
-
-  return {
-    wsPort: stompConfig?.wsPort ?? stompConfig?.port ?? DEFAULT_CONFIG.wsPort,
-    path: stompConfig?.path ?? DEFAULT_CONFIG.path,
-    heartbeatIncoming: stompConfig?.heartbeatIncoming ?? DEFAULT_CONFIG.heartbeatIncoming,
-    heartbeatOutgoing: stompConfig?.heartbeatOutgoing ?? DEFAULT_CONFIG.heartbeatOutgoing,
-    maxConnections: stompConfig?.maxConnections ?? DEFAULT_CONFIG.maxConnections,
-  };
 }
 
 process.on("SIGTERM", async () => {

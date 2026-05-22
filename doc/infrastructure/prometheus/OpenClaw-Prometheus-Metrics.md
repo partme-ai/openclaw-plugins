@@ -1,6 +1,6 @@
 # OpenClaw Prometheus 指标定义
 
-> 版本：v0.3.0 | 更新：2026-04-20
+> 版本：v0.3.1 | 更新：2026-05-22
 > 遵循 [Prometheus 命名规范](https://prometheus.io/docs/practices/naming/) 与 [Grafana 最佳实践](https://grafana.com/docs/grafana/latest/fundamentals/exemplars/)
 
 ---
@@ -19,6 +19,7 @@
 
 | 域 | 前缀 | 核心指标 |
 |----|------|---------|
+| [0. Diagnostics](#0-diagnostics-域官方-parity) | `openclaw_run_*`, `openclaw_model_*`, `openclaw_tool_execution_*`, … | Internal diagnostic 事件（替代 bundled diagnostics-prometheus） |
 | [1. 应用](#1-应用域-openclaw_app_) | `openclaw_app_*` | Exporter 元数据、采集健康、HTTP 端点、SLI |
 | [2. 智能体](#2-智能体域-openclaw_agent_) | `openclaw_agent_*` | Agent 生命周期、运行时长、事件流 |
 | [3. 模型](#3-模型域-openclaw_model_) | `openclaw_model_*` | Token 消耗、LLM 图片、模型认证、可用模型 |
@@ -28,6 +29,71 @@
 | [7. 用量](#7-用量域-openclaw_usage_) | `openclaw_usage_*` | 成本聚合（按 provider/model/agent/date 分组） |
 | [8. 系统](#8-系统域-openclaw_cron__openclaw_skill__openclaw_node__openclaw_presence_) | `openclaw_cron_*` 等 | Cron、Skills、Nodes、Presence |
 | [9. 进程](#9-进程域-openclaw_nodejs_) | `openclaw_nodejs_*` | Node.js 内存、CPU、事件循环延迟 |
+
+---
+
+## 0. Diagnostics 域（官方 parity）
+
+> 来源：`internalDiagnostics.onEvent` 或 SDK `onInternalDiagnosticEvent`；仅 `metadata.trusted === true` 的事件。实现见 `extensions/prometheus/src/diagnostics/metric-store.ts`（与 `research/openclaw/extensions/diagnostics-prometheus` 同构）。
+
+| 指标前缀 / 名称 | 类型 | 典型标签 | 触发事件 |
+|-----------------|------|----------|----------|
+| `openclaw_model_tokens_total` | counter | `token_type`, `provider`, `model`, `agent`, `channel` | `model.usage` |
+| `openclaw_gen_ai_client_token_usage` | histogram | `token_type`, `provider`, `model` | `model.usage` |
+| `openclaw_model_cost_usd_total` | counter | `provider`, `model`, … | `model.usage` |
+| `openclaw_run_completed_total` / `openclaw_run_duration_seconds` | counter / histogram | `provider`, `model`, `channel`, `outcome`, … | `run.completed` |
+| `openclaw_model_call_total` / `openclaw_model_call_duration_seconds` | counter / histogram | `provider`, `model`, `outcome`, … | `model.call.*` |
+| `openclaw_tool_execution_total` / `openclaw_tool_execution_duration_seconds` | counter / histogram | `tool`, `outcome`, … | `tool.execution.*` |
+| `openclaw_message_processed_total` / `openclaw_message_delivery_*` | counter / histogram | `channel`, `outcome`, … | `message.processed` / `message.delivery.*` |
+| `openclaw_harness_run_*` | counter / histogram | `harness`, `plugin`, … | `harness.run.*` |
+| `openclaw_talk_event_total` / `openclaw_talk_audio_bytes` | counter / histogram | `brain`, `mode`, … | `talk.event` |
+| `openclaw_session_recovery_*` | counter / histogram | `state`, `status`, … | `session.recovery.*` |
+| `openclaw_queue_lane_size` / `openclaw_queue_lane_wait_seconds` | gauge / histogram | `lane` | `queue.lane.*` |
+| `openclaw_memory_bytes` / `openclaw_memory_pressure_total` | gauge / counter | `kind`, `level`, … | `diagnostic.memory.*` |
+| `openclaw_prometheus_series_dropped_total` | counter | - | series cap 溢出 |
+
+> **与 RPC 用量域区分**：`openclaw_usage_*` 来自 `usage.cost` 窗口聚合（gauge）；`openclaw_model_tokens_total` 来自实时 diagnostic counter，适合 `rate()`。
+
+---
+
+## Run 延迟指标选择
+
+插件同时暴露两套 **run 时长 histogram**，来源不同、标签不同，**不可混用**同一 PromQL 面板。
+
+| 指标 | 来源 | 实现 | 典型标签 | 适用场景 |
+|------|------|------|----------|----------|
+| `openclaw_run_duration_seconds` | Internal diagnostics | `src/diagnostics/metric-store.ts`（`run.completed` 事件） | `provider`, `model`, `channel`, `outcome`, `trigger` | Gateway 级 SLO、按模型/渠道/结果分组的 P95/P99；与 bundled `diagnostics-prometheus` parity |
+| `openclaw_agent_run_duration_seconds` | Plugin hooks | `src/observer.ts`（`agent_end` / `onAgentEvent`） | `agent_id` | 按 Agent 实例排查慢 run、Agent 性能对比 |
+
+**选择建议**：
+
+- **集群 Overview / 模型 SLO** → 优先 `openclaw_run_duration_seconds`（与 diagnostic 事件一致，标签含 `model`/`outcome`）。
+- **单 Agent 调优、按 agent_id 排行** → 使用 `openclaw_agent_run_duration_seconds`。
+- 两套指标数值可能不完全一致（hook 计时 vs Gateway `run.completed` 上报窗口），告警与 Dashboard 请固定选用其一。
+
+**PromQL — Diagnostics run P95（按 model）**：
+
+```promql
+histogram_quantile(0.95,
+  sum(rate(openclaw_run_duration_seconds_bucket[5m])) by (le, model)
+)
+```
+
+**PromQL — Hook run P95（按 agent_id）**：
+
+```promql
+histogram_quantile(0.95,
+  sum(rate(openclaw_agent_run_duration_seconds_bucket[5m])) by (le, agent_id)
+)
+```
+
+**PromQL — Diagnostics run P95（全局）**：
+
+```promql
+histogram_quantile(0.95,
+  sum(rate(openclaw_run_duration_seconds_bucket[5m])) by (le)
+)
+```
 
 ---
 
@@ -93,7 +159,9 @@ rate(openclaw_sli_agent_error_ratio[1h]) / (1 - 0.999)
 
 ## 2. 智能体域 (`openclaw_agent_*`)
 
-> 来源：`before_agent_start` / `agent_end` hooks + `onAgentEvent` events
+> 来源：`agent_turn_prepare` / `agent_end` hooks + `onAgentEvent` events
+
+> **与 Diagnostics run 延迟区分**：Hook 侧 `openclaw_agent_run_duration_seconds`（标签 `agent_id`）适合按 Agent 实例分析；Gateway diagnostic 侧 `openclaw_run_duration_seconds`（标签 `provider`/`model`/`channel`/`outcome`）来自 `run.completed` 事件，适合 SLO 与模型维度。详见 [Run 延迟指标选择](#run-延迟指标选择)。
 
 | 指标 | 类型 | 标签 | 说明 |
 |------|------|------|------|
@@ -128,29 +196,44 @@ topk(5,
 
 ## 3. 模型域 (`openclaw_model_*`)
 
-### 3.1 LLM Token 实时消耗（Hooks）
+### 3.1 LLM Token 实时消耗（Internal diagnostics）
 
-> 来源：`llm_output` / `llm_input` hooks；counter 类型，支持 `rate()` 聚合
+> 来源：Gateway trusted **`model.usage`** diagnostic 事件（与 bundled `diagnostics-prometheus` 一致）；counter + histogram，支持 `rate()` / `histogram_quantile()`。**不依赖** `llm_output` hook 或 `allowConversationAccess`。
 
 | 指标 | 类型 | 标签 | 说明 |
 |------|------|------|------|
-| `openclaw_model_llm_tokens_input_total` | counter | `provider`, `model` | 实时 input tokens |
-| `openclaw_model_llm_tokens_output_total` | counter | `provider`, `model` | 实时 output tokens |
-| `openclaw_model_llm_tokens_cache_read_total` | counter | `provider`, `model` | 实时 cache read tokens |
-| `openclaw_model_llm_tokens_cache_write_total` | counter | `provider`, `model` | 实时 cache write tokens |
-| `openclaw_model_llm_tokens_total` | counter | `provider`, `model` | 实时总 tokens |
+| `openclaw_model_tokens_total` | counter | `agent`, `channel`, `model`, `provider`, `token_type` | Token 累计；`token_type`: `input` / `output` / `cache_read` / `cache_write` / `prompt` / `total` |
+| `openclaw_gen_ai_client_token_usage` | histogram | `model`, `provider`, `token_type` | input/output token 分布（GenAI 桶） |
+| `openclaw_model_cost_usd_total` | counter | `agent`, `channel`, `model`, `provider` | 模型成本（USD） |
+| `openclaw_model_usage_duration_seconds` | histogram | `agent`, `channel`, `model`, `provider` | 单次 model.usage 耗时 |
+
+**PromQL**：
+
+```promql
+# Token 吞吐（tokens/s），按 model
+sum(rate(openclaw_model_tokens_total{token_type="input"}[5m])) by (model)
++ sum(rate(openclaw_model_tokens_total{token_type="output"}[5m])) by (model)
+
+# 按 provider 的 input 吞吐
+sum(rate(openclaw_model_tokens_total{token_type="input"}[5m])) by (provider)
+```
+
+### 3.2 LLM 图片输入（Hooks 扩展）
+
+> 来源：`llm_input` hook；需 `allowConversationAccess: true`（非 bundled 插件）
+
+| 指标 | 类型 | 标签 | 说明 |
+|------|------|------|------|
 | `openclaw_model_llm_input_images_total` | counter | `provider`, `model` | LLM 图片输入数 |
 
-**PromQL**：`rate(openclaw_model_llm_tokens_total[5m]) by (model)` → token/s 吞吐
-
-### 3.2 模型列表（RPC）
+### 3.3 模型列表（RPC）
 
 | 指标 | 类型 | 标签 | 说明 |
 |------|------|------|------|
 | `openclaw_model_total` | gauge | - | 可用模型总数 |
 | `openclaw_model_by_provider` | gauge | `provider` | 按 provider 的模型数 |
 
-### 3.3 模型认证（RPC + Runtime）
+### 3.4 模型认证（RPC + Runtime）
 
 | 指标 | 类型 | 标签 | 说明 |
 |------|------|------|------|
@@ -427,6 +510,7 @@ openclaw_usage_provider_cost_usd_total
 
 | 域 | 指标数 | 来源 |
 |----|--------|------|
+| Diagnostics | ~35+ | Internal diagnostic events |
 | 应用 (`app`) | ~18 | Plugin + HTTP + SLI |
 | 智能体 (`agent`) | 7 | Hooks + Events |
 | 模型 (`model`) | ~20 | Hooks + RPC |
@@ -436,11 +520,20 @@ openclaw_usage_provider_cost_usd_total
 | 用量 (`usage`) | ~51 | RPC |
 | 系统 (`cron/skill/node/presence`) | ~20 | RPC |
 | 进程 (`nodejs`) | 9 | Process |
-| **合计** | **~160** | |
+| **合计** | **~195+** | |
 
 ---
 
 ## 变更日志
+
+### v0.3.1（2026-05-22）
+
+| 变更 | Before | After |
+|------|--------|-------|
+| diagnostics-prometheus | 需单独启用 bundled 插件 | **内置于 `openclaw-prometheus`**（`src/diagnostics/`） |
+| Token 实时 counter | 文档 `openclaw_model_llm_tokens_*` / hook `openclaw_usage_tokens_*` | **`openclaw_model_tokens_total{token_type=...}`**（`model.usage` 事件） |
+| `llm_output` hook | 写入 `openclaw_usage_tokens_*` counter | **不再写入**（避免与 RPC gauge 冲突） |
+| `/metrics` 输出 | 单路 formatPrometheus | **追加** diagnostics text 块（histogram 原生格式） |
 
 ### v0.3.0（2026-04-20）
 
@@ -448,7 +541,6 @@ openclaw_usage_provider_cost_usd_total
 |------|--------|-------|
 | **域重分类** | 20 个分类（按数据来源） | **9 个业务域**（app/agent/model/tool/session/channel/usage/system/process） |
 | 延迟类型 | summary | **histogram**（可跨实例 `histogram_quantile`） |
-| Hook token 前缀 | `openclaw_llm_tokens_*` | **`openclaw_model_llm_tokens_*`** |
 | 消息指标前缀 | `openclaw_messages_*` | **`openclaw_session_messages_*`** |
 | 子智能体前缀 | `openclaw_subagent_ended_total` | **`openclaw_agent_subagent_ended_total`** |
 | 健康检查单位 | `_duration_ms` (ms) | **`_duration_seconds`** (s) |

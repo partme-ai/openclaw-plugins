@@ -8,10 +8,10 @@ import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { mqttWsChannel } from "./channel.js";
 import { setWebMqttRuntime } from "./runtime.js";
-import { buildWebMqttConfigSnapshot, resolveWebMqttConfig } from "./mqtt-config.js";
+import { buildWebMqttConfigSnapshot, resolveWebMqttConfig } from "./config.js";
 import { getWebMqttChannelConfig } from "./mqtt-state.js";
-import { getSessionStats } from "./session-mapper.js";
-import { getStats } from "./ws-server.js";
+import { getSessionStats } from "./routing/session-mapper.js";
+import { getStats } from "./transport/server.js";
 
 export { mqttWsChannel } from "./channel.js";
 

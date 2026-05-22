@@ -2,6 +2,7 @@ declare module "openclaw/plugin-sdk/core" {
   /** 与 OpenClaw Gateway `PluginHookName` 对齐（见源码 `plugins/hook-types.ts`） */
   type PluginHookName =
     | "before_model_resolve"
+    | "agent_turn_prepare"
     | "before_prompt_build"
     | "before_agent_start"
     | "before_agent_reply"
@@ -97,6 +98,12 @@ declare module "openclaw/plugin-sdk/core" {
         workspaceDir?: string;
         stateDir: string;
         logger: RuntimeLogger;
+        internalDiagnostics?: {
+          emit: (event: Record<string, unknown>) => void;
+          onEvent: (
+            listener: (event: unknown, metadata: { trusted: boolean }) => void,
+          ) => () => void;
+        };
       }) => void | Promise<void>;
       stop?: (ctx: {
         config: Record<string, unknown>;

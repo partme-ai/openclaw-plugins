@@ -200,7 +200,7 @@ npm install @partme.ai/openclaw-gotify
 
 1. Gotify 应用或外部系统发送消息到 Gotify 服务器
 2. 插件通过 WebSocket `/stream` 实时接收消息
-3. 幂等去重（60 秒窗口）
+3. 幂等去重（60 秒窗口，SDK `createIdempotencyCache`，键 `${accountId}:${messageId}`）
 4. 解析对端标识（`extras.openclaw.peerId` → `appid` → `title`）
 5. 按 `session.dmScope` 构造会话键
 6. 路由到对应 Agent 处理
@@ -212,7 +212,7 @@ npm install @partme.ai/openclaw-gotify
 |------|------|
 | **Gotify App** | 推送通知渠道；默认消费即删（入站用户消息在 Agent **回复发送成功后**删除，出站回复在 POST **成功后**删除） |
 | **OpenClaw Control UI** | **完整对话历史** 保存在 Session Store；多轮共用同一 `sessionKey`（同一 `peerId` / appid） |
-| **幂等** | 仅按 `messageId` 去重，同一对端连续多条新消息不会互相屏蔽 |
+| **幂等** | SDK `@partme.ai/openclaw-message-sdk` → `createIdempotencyCache`；仅按 `messageId` 去重，同一对端连续多条新消息不会互相屏蔽 |
 | **出站** | `sendGotifyMessageWithDeliveryRetry`：失败时自动再试 1 次 |
 
 **在 Control UI 查看测试 / 真实对话：**

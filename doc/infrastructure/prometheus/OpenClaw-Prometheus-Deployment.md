@@ -1,6 +1,6 @@
 # OpenClaw Prometheus Plugin - 本地部署与验证指南
 
-> 版本：0.3.0 | 日期：2026-05-02 | 状态：✅ **本地环境就绪** |
+> 版本：0.3.1 | 日期：2026-05-22 | 状态：✅ **本地环境就绪（含 diagnostics-prometheus 平替）** |
 
 ---
 
@@ -9,6 +9,7 @@
 - [1. 环境准备](#1-环境准备)
 - [2. Prometheus 配置](#2-prometheus-配置)
 - [3. 插件安装/加载](#3-插件安装加载)
+  - [3.4 禁用 bundled diagnostics-prometheus（必做）](#34-禁用-bundled-diagnostics-prometheus必做)
 - [4. 数据验证](#4-数据验证)
 - [5. Grafana Dashboard 导入](#5-grafana-dashboard-导入)
 - [6. 常见问题排查](#6-常见问题排查)
@@ -96,22 +97,18 @@ tail -f /tmp/prometheus.log | grep -i 'openclaw'
 
 ```bash
 # 方法 1：使用 OpenClaw CLI 从本地目录加载
-cd /home/wandl/workspaces/workspace-partme-ai/openclaw-plugins/openclaw-prometheus
+cd /path/to/openclaw-plugins/extensions/prometheus
 
 # 安装插件（编译并加载到 Gateway）
-openclaw plugins install
-
-# 预期输出
-# Plugin compiled and installed to OpenClaw Gateway
-# [1/1] openclaw-prometheus
-# [1/1] openclaw-prometheus
+pnpm build
+openclaw plugins install .
 ```
 
 ### 3.2 从 NPM Registry 加载（开发阶段）
 
 ```bash
 # 方法 2：使用 NPM link 方式（仅用于本地开发）
-cd /home/wandl/workspaces/workspace-partme-ai/openclaw-plugins/openclaw-prometheus
+cd /path/to/openclaw-plugins/extensions/prometheus
 
 # 链接到全局 NPM（需要 root 权限）
 npm link
@@ -134,6 +131,70 @@ openclaw plugins status openclaw-prometheus
 # Status: enabled
 # Health: OK
 ```
+
+### 3.4 禁用 bundled diagnostics-prometheus（必做）
+
+`openclaw-prometheus` **已内置**官方 `diagnostics-prometheus` 的全部 diagnostic 指标逻辑（`openclaw_model_tokens_total`、`openclaw_run_*` 等）。若与 bundled 插件同时启用，会**重复订阅** internal diagnostics，导致指标重复或 series 膨胀。
+
+**步骤 1 — 编辑 Gateway 配置**（通常为 `~/.openclaw/openclaw.json` 或项目内 `openclaw.json`）：
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "diagnostics-prometheus": {
+        "enabled": false
+      },
+      "openclaw-prometheus": {
+        "enabled": true,
+        "config": {
+          "path": "/metrics",
+          "collectIntervalMs": 15000,
+          "snapshotIntervalMs": 30000,
+          "includeRuntime": true,
+          "monitoredProviders": ["openai", "anthropic", "gemini"]
+        }
+      }
+    }
+  }
+}
+```
+
+**步骤 2 — 确认 bundled 插件未加载**：
+
+```bash
+openclaw plugins list | grep -E 'diagnostics-prometheus|openclaw-prometheus'
+
+# 期望：仅 openclaw-prometheus 为 enabled
+# diagnostics-prometheus 应不存在或显示 disabled
+```
+
+**步骤 3 — 重启 Gateway**（使插件与服务订阅生效）：
+
+```bash
+# 按你的部署方式重启，例如：
+openclaw gateway restart
+# 或 systemctl / docker compose restart
+```
+
+**步骤 4 — 验证 diagnostics 指标已出现**（需有 LLM 调用产生 `model.usage` 事件）：
+
+```bash
+curl -s http://127.0.0.1:18789/metrics | grep -E 'openclaw_model_tokens_total|openclaw_run_completed_total' | head -5
+
+# 预期（有流量时）：
+# openclaw_model_tokens_total{agent="...",channel="...",model="...",provider="...",token_type="input"} ...
+# # TYPE openclaw_run_duration_seconds histogram
+```
+
+**步骤 5 — 确认未重复 TYPE 行**（同一指标名不应出现两次 `# TYPE`）：
+
+```bash
+curl -s http://127.0.0.1:18789/metrics | grep '^# TYPE openclaw_model_tokens_total'
+# 期望：仅一行
+```
+
+> Token **实时吞吐**来自 `openclaw_model_tokens_total`（diagnostics counter）；**窗口用量/成本**仍来自 RPC 的 `openclaw_usage_*` gauge。Grafana 面板已按此区分 PromQL。
 
 ---
 
@@ -181,10 +242,16 @@ curl -s http://127.0.0.1:18789/metrics | grep 'openclaw_sli_'
 # openclaw_sli_tool_error_ratio{instance="127.0.0.1"} 0.01
 # openclaw_sli_channel_health_ratio{instance="127.0.0.1"} 0.99
 
+# 验证 diagnostics token 指标（有 LLM 流量后）
+curl -s http://127.0.0.1:18789/metrics | grep 'openclaw_model_tokens_total{.*token_type="input"'
+
+# 验证 RPC 窗口用量（scrape 后即可见）
+curl -s http://127.0.0.1:18789/metrics | grep 'openclaw_usage_tokens_input_total '
+
 # 验证 Histogram 指标
 curl -s http://127.0.0.1:18789/metrics | grep 'openclaw_agent_run_duration_seconds_'
 
-# 预期输出
+# 预期输出（Histogram 示例）
 # openclaw_agent_run_duration_seconds_sum{instance="127.0.0.1"} 123.456
 # openclaw_agent_run_duration_seconds_count{instance="127.0.0.1"} 100
 # openclaw_agent_run_duration_seconds_bucket{instance="127.0.0.1",le="0.005"} 10
@@ -474,7 +541,7 @@ tail -f /var/log/grafana/grafana.log | grep -i 'error\|panic'
 prometheus --config.file=config/local-prometheus.yml &
 
 # 2. 安装插件
-cd /home/wandl/workspaces/workspace-partme-ai/openclaw-plugins/openclaw-prometheus
+cd /path/to/openclaw-plugins/extensions/prometheus
 openclaw plugins install
 
 # 3. 验证数据采集
@@ -499,7 +566,7 @@ sleep 5
 tail -f /tmp/prometheus.log | grep -i 'openclaw'
 
 # 4. 安装插件
-cd /home/wandl/workspaces/workspace-partme-ai/openclaw-plugins/openclaw-prometheus
+cd /path/to/openclaw-plugins/extensions/prometheus
 openclaw plugins install
 
 # 5. 验证插件状态
@@ -522,6 +589,7 @@ curl -s http://127.0.0.1:18789/metrics | grep -E 'openclaw_up|openclaw_ready|ope
 | 数据采集 | ✅ | `curl http://127.0.0.1:18789/metrics` |
 | Instance 标签 | ✅ | `grep instance="'` |
 | SLO 指标 | ✅ | `grep openclaw_sli_` |
+| Diagnostics token | ✅ | `grep openclaw_model_tokens_total` |
 | Histogram 指标 | ✅ | `grep _bucket` |
 
 ---
@@ -536,6 +604,6 @@ curl -s http://127.0.0.1:18789/metrics | grep -E 'openclaw_up|openclaw_ready|ope
 
 ---
 
-**版本**: 0.3.0  
-**日期**: 2026-05-02  
-**状态**: ✅ **本地环境就绪**  
+**版本**: 0.3.1  
+**日期**: 2026-05-22  
+**状态**: ✅ **本地环境就绪（禁用 diagnostics-prometheus 后使用 openclaw-prometheus）**  

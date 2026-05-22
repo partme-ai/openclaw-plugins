@@ -6,7 +6,11 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      openclaw:
+        specifier: 2026.5.18
+        version: 2026.5.18
 
   extensions/_template:
     dependencies:
@@ -25,14 +29,13 @@ importers:
         version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@25.9.1)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
 
   extensions/amap:
-    dependencies:
-      openclaw:
-        specifier: '>=2026.4.12'
-        version: 2026.5.18
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
+      openclaw:
+        specifier: '>=2026.4.12'
+        version: 2026.5.18
       tsup:
         specifier: ^8.2.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
@@ -89,14 +92,13 @@ importers:
         version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
 
   extensions/douyin:
-    dependencies:
-      openclaw:
-        specifier: '>=2026.4.12'
-        version: 2026.5.18
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
+      openclaw:
+        specifier: '>=2026.4.12'
+        version: 2026.5.18
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
@@ -109,6 +111,9 @@ importers:
 
   extensions/gotify:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: ^2026.5.22
+        version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
         version: 2026.5.18
@@ -197,14 +202,13 @@ importers:
         version: 3.2.4(@types/node@25.9.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0)
 
   extensions/meituan:
-    dependencies:
-      openclaw:
-        specifier: '>=2026.4.12'
-        version: 2026.5.18
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
+      openclaw:
+        specifier: '>=2026.4.12'
+        version: 2026.5.18
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
@@ -232,6 +236,10 @@ importers:
         version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@25.9.1)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
 
   extensions/message-sdk:
+    dependencies:
+      openclaw:
+        specifier: '>=2026.4.12'
+        version: 2026.5.18
     devDependencies:
       '@types/node':
         specifier: ^25.9.1
@@ -331,9 +339,6 @@ importers:
       openclaw:
         specifier: '>=2026.4.12'
         version: 2026.5.18
-      uuid:
-        specifier: 3.4.0
-        version: 3.4.0
       yaml:
         specifier: ^2.7.0
         version: 2.9.0
@@ -480,14 +485,13 @@ importers:
         version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
 
   extensions/rednode:
-    dependencies:
-      openclaw:
-        specifier: '>=2026.4.12'
-        version: 2026.5.18
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
+      openclaw:
+        specifier: '>=2026.4.12'
+        version: 2026.5.18
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
@@ -716,7 +720,7 @@ importers:
   extensions/wecom:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: ^2026.5.21
+        specifier: workspace:*
         version: link:../message-sdk
       '@wecom/aibot-node-sdk':
         specifier: ^1.0.6
@@ -3061,6 +3065,10 @@ packages:
   '@whiskeysockets/baileys@7.0.0-rc.9':
     resolution: {integrity: sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==}
     engines: {node: '>=20.0.0'}
+    deprecated: |-
+      This version is affected by a zero-day vulnerability that allows spoofing of messages, please update to
+        the latest versions (6.7.22^ or 7.0.0-rc12^)! For more information, check out the public advisory at
+        https://github.com/WhiskeySockets/Baileys/security/advisories/GHSA-qvv5-jq5g-4cgg
     peerDependencies:
       audio-decode: ^2.1.3
       jimp: ^1.6.0
@@ -10043,7 +10051,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
+      vitest: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@25.9.1)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
     optional: true
 
   '@vitest/expect@2.1.9':

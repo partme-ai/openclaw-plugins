@@ -1,0 +1,49 @@
+{
+  "id": "openclaw-rednode",
+  "name": "openclaw-rednode",
+  "version": "2026.5.20",
+  "description": "小红书开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
+  "main": "dist/index.js",
+  "channels": ["xhs"],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "app_id": {
+        "type": "string",
+        "description": "小红书开放平台应用 ID（或底座侧租户 appId）"
+      },
+      "app_secret": {
+        "type": "string",
+        "description": "直连模式：小红书 AppSecret；多租户底座模式可不填"
+      },
+      "ddd4j_api_base": {
+        "type": "string",
+        "description": "多租户底座模式：底座服务根地址"
+      },
+      "ddd4j_api_key": {
+        "type": "string",
+        "description": "多租户底座模式：平台颁发的 API Key"
+      },
+      "callback_url": {
+        "type": "string",
+        "description": "应用推送回调 URL"
+      },
+      "shop_id": {
+        "type": "string",
+        "description": "店铺 ID（单店铺）"
+      },
+      "seller_id": {
+        "type": "string",
+        "description": "卖家 ID（单店铺）"
+      },
+      "webhook_secret": {
+        "type": "string",
+        "description": "Webhook 验签密钥（若平台要求）"
+      }
+    }
+  },
+  "uiHints": {},
+  "capabilities": {}
+}

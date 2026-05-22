@@ -17,7 +17,7 @@ import {
   DEFAULT_GOTIFY_ACCOUNT_ID,
 } from './config.js';
 import { gotifyOutbound } from './outbound.js';
-import { createGotifyWsListener } from './ws-listener.js';
+import { createGotifyWsListener } from './transport/ws-listener.js';
 import {
   getAccountSnapshot,
   getOwnApplicationId,
@@ -29,18 +29,18 @@ import {
   sendGotifyMessageWithDeliveryRetry,
   deleteMessage,
   resolveApplicationName,
-} from './gotify-api.js';
+} from './transport/gotify-api.js';
 import {
-  mapGotifyToInbound,
   withOpenClawOutboundExtras,
   isOpenClawOutboundStreamMessage,
-} from './message-mapper.js';
+} from './routing/message-mapper.js';
+import { createIdempotencyCache, createTranscriptDispatch, normalizeGotifyIngress, type TranscriptChannelRuntime } from '@partme.ai/openclaw-message-sdk';
 import {
   resolveGotifyPeerId,
   resolveGotifyConversationLabel,
   resolveGotifySenderName,
-} from './peer-resolver.js';
-import { checkGotifyInboundAccess } from './inbound-access.js';
+} from './routing/peer-resolver.js';
+import { checkGotifyInboundAccess } from './inbound.js';
 import { gotifyConfigSchema } from './channel-config.js';
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from './types.js';
 import { gotifySetupAdapter, gotifySetupWizard } from './onboarding.js';
@@ -49,43 +49,17 @@ import { gotifySetupAdapter, gotifySetupWizard } from './onboarding.js';
 const stopSignals = new Map<string, () => void>();
 const listeners = new Map<string, ReturnType<typeof createGotifyWsListener>>();
 
-/** 消息幂等去重表：messageId → 到期时间戳（ms）。 */
-const dedupCache = new Map<string, number>();
-
 /** 幂等缓存窗口（毫秒），与 PLUGIN_SPEC 对齐为 60 秒。 */
 const DEDUP_WINDOW_MS = 60_000;
 
-/**
- * 清理过期幂等缓存条目。
- * 每隔 60 秒调用一次即可。
- */
-function cleanDedupCache(): void {
-  const now = Date.now();
-  for (const [id, expiresAt] of dedupCache.entries()) {
-    if (expiresAt < now) {
-      dedupCache.delete(id);
-    }
-  }
-}
-
-/** 惰性初始化的清理定时器，仅当插件实际启动时创建。 */
-let dedupCleanupTimer: ReturnType<typeof setInterval> | null = null;
-
-function ensureDedupCleanupTimer(): void {
-  if (dedupCleanupTimer === null) {
-    dedupCleanupTimer = setInterval(cleanDedupCache, 60_000);
-  }
-}
+/** WebSocket 入站 messageId 去重（message-sdk）。 */
+const gotifyDedup = createIdempotencyCache({ ttlMs: DEDUP_WINDOW_MS, maxEntries: 5000 });
 
 /**
  * 清理本模块分配的全部资源。插件被宿主卸载时调用。
  */
 export function cleanupGotifyChannel(): void {
-  if (dedupCleanupTimer !== null) {
-    clearInterval(dedupCleanupTimer);
-    dedupCleanupTimer = null;
-  }
-  dedupCache.clear();
+  gotifyDedup.clear();
   for (const resolve of stopSignals.values()) resolve();
   stopSignals.clear();
   for (const listener of listeners.values()) {
@@ -245,7 +219,6 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
      * 启动账号时根据配置决定是否建立 WebSocket 监听。
      */
     async startAccount(ctx: ChannelGatewayContext<ResolvedGotifyAccount>) {
-      ensureDedupCleanupTimer();
       const account = ctx.account;
       patchAccountSnapshot(account.accountId, {
         running: account.inbound.enabled,
@@ -344,18 +317,19 @@ export async function dispatchInboundMessage(
   // ── 幂等去重（按 messageId，非 peer；成功派发后才写入缓存）────────────────
   const messageId = String(message.id ?? '');
   const dedupKey = messageId ? `${account.accountId}:${messageId}` : '';
-  if (dedupKey) {
-    const seen = dedupCache.get(dedupKey);
-    if (seen !== undefined && seen > Date.now()) {
-      return;
-    }
+  if (dedupKey && gotifyDedup.has(dedupKey)) {
+    return;
   }
 
   const cfg = ctx.cfg as Record<string, unknown>;
   const peerId = resolveGotifyPeerId(message);
-  const inbound = mapGotifyToInbound(message);
+  const unified = normalizeGotifyIngress({
+    accountId: account.accountId,
+    peerId,
+    message,
+  });
 
-  if (!inbound.text.trim()) {
+  if (!unified.text.trim()) {
     return;
   }
 
@@ -391,7 +365,7 @@ export async function dispatchInboundMessage(
     route.mainSessionKey.trim()
       ? route.mainSessionKey
       : sessionKey;
-  const messageText = inbound.text.trim();
+  const messageText = unified.text.trim();
   const fromAddress = `gotify:${peerId}`;
   /** 对端地址，用于 lastRoute / OriginatingTo（对齐 Feishu DM：to 指向会话对端而非本账号）。 */
   const peerAddress = fromAddress;
@@ -412,7 +386,7 @@ export async function dispatchInboundMessage(
   const senderName = resolveGotifySenderName(message, peerId, resolvedAppName);
   const nativeDirectUserId =
     message.appid !== undefined && message.appid !== null ? String(message.appid) : undefined;
-  const inboundContext = cr.reply.finalizeInboundContext({
+  const inboundContext = await cr.reply.finalizeInboundContext({
     Body: messageText,
     BodyForAgent: messageText,
     RawBody: messageText,
@@ -434,7 +408,8 @@ export async function dispatchInboundMessage(
     Timestamp: message.date ? Date.parse(message.date) || Date.now() : Date.now(),
     CommandAuthorized: true,
     gotifyAppId: message.appid,
-    gotifyMetadata: inbound.metadata,
+    gotifyMetadata: unified.metadata,
+    unifiedMessageId: unified.messageId,
   });
 
   const storePath =
@@ -491,84 +466,39 @@ export async function dispatchInboundMessage(
     accountId: account.accountId,
   };
 
-  // 与 Feishu/IRC 对齐：经 channel.turn.runAssembled 先 recordInboundSession 再派发，保证 Control UI transcript 有用户轮次
-  const recordParams = {
-    storePath: storePath!,
-    sessionKey,
-    ctx: inboundContext,
-    updateLastRoute,
-    onRecordError,
-  };
-
-  /** 派发失败时兜底写入 user 轮次（runAssembled 在 record 前崩溃时 Control UI 不空白）。 */
-  const recordInboundFallback = async (): Promise<void> => {
-    if (!cr.session?.recordInboundSession || !storePath || !sessionKey) {
-      return;
-    }
-    try {
-      await cr.session.recordInboundSession(recordParams);
-    } catch (err) {
-      onRecordError(err);
-    }
-  };
-
   if (
-    cr.turn?.runAssembled &&
-    cr.session?.recordInboundSession &&
-    storePath &&
-    sessionKey
+    !cr.turn?.runAssembled &&
+    (!cr.session?.recordInboundSession || !storePath || !sessionKey)
   ) {
-    try {
-      await cr.turn.runAssembled({
-      cfg,
-      channel: 'gotify',
-      accountId: account.accountId,
-      agentId: resolvedAgentId,
-      routeSessionKey: sessionKey,
-      storePath,
-      ctxPayload: inboundContext,
-      recordInboundSession: cr.session.recordInboundSession,
-      dispatchReplyWithBufferedBlockDispatcher: cr.reply.dispatchReplyWithBufferedBlockDispatcher,
-      delivery: {
-        deliver: deliverReply,
-        onError: (error: unknown) => {
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          patchAccountSnapshot(account.accountId, { lastError: errorMsg });
-        },
-      },
-      record: {
-        updateLastRoute,
-        onRecordError,
-      },
-    });
-    } catch (dispatchErr) {
-      await recordInboundFallback();
-      throw dispatchErr;
-    }
-  } else if (cr.session?.recordInboundSession && storePath && sessionKey) {
-    await cr.session.recordInboundSession(recordParams);
-    await cr.reply.dispatchReplyWithBufferedBlockDispatcher({
-      ctx: inboundContext,
-      cfg,
-      dispatcherOptions: { deliver: deliverReply },
-    });
-  } else {
-    if (cr.session?.recordInboundSession && storePath && sessionKey) {
-      await cr.session.recordInboundSession(recordParams);
-    } else {
-      patchAccountSnapshot(account.accountId, {
-        lastError: `Cannot record inbound transcript (missing session API or sessionKey=${sessionKey ?? 'missing'})`,
-      });
-    }
-    await cr.reply.dispatchReplyWithBufferedBlockDispatcher({
-      ctx: inboundContext,
-      cfg,
-      dispatcherOptions: { deliver: deliverReply },
+    patchAccountSnapshot(account.accountId, {
+      lastError: `Cannot record inbound transcript (missing session API or sessionKey=${sessionKey ?? 'missing'})`,
     });
   }
 
+  await createTranscriptDispatch({
+    channelRuntime: cr as TranscriptChannelRuntime,
+    cfg,
+    channel: 'gotify',
+    accountId: account.accountId,
+    agentId: resolvedAgentId,
+    sessionKey,
+    storePath,
+    inboundContext,
+    record: {
+      updateLastRoute,
+      onRecordError,
+    },
+    delivery: {
+      deliver: deliverReply,
+      onError: (error: unknown) => {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        patchAccountSnapshot(account.accountId, { lastError: errorMsg });
+      },
+    },
+  });
+
   if (dedupKey) {
-    dedupCache.set(dedupKey, Date.now() + DEDUP_WINDOW_MS);
+    gotifyDedup.remember(dedupKey);
   }
 
   // 入站：在 Agent 回复投递成功后再删除用户消息，避免「先删后答」打断一轮

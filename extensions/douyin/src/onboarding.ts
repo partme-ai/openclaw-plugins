@@ -3,7 +3,7 @@
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
-import { resolveDouyinAccount } from "./accounts.js";
+import { resolveDouyinAccount } from "./config.js";
 import { createAppKeySecretChannelSetup } from "./channel-setup-factory.js";
 
 const CHANNEL_ID = "douyin";

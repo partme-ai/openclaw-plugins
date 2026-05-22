@@ -1,6 +1,84 @@
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+
+const requestMock = vi.fn();
+const startMock = vi.fn();
+let lastCtorOptions: Record<string, unknown> | null = null;
+
+vi.mock("openclaw/plugin-sdk/gateway-runtime", () => {
+  class MockGatewayClient {
+    constructor(options: Record<string, unknown>) {
+      lastCtorOptions = options;
+    }
+
+    start(): void {
+      startMock();
+      const onHelloOk = lastCtorOptions?.onHelloOk;
+      if (typeof onHelloOk === "function") {
+        onHelloOk({});
+      }
+    }
+
+    request(method: string, params?: unknown): Promise<unknown> {
+      return requestMock(method, params);
+    }
+  }
+
+  return { GatewayClient: MockGatewayClient };
+});
+
+/** 为 register 集成测试提供最小 RPC 响应，避免真实 Gateway 连接超时。 */
+function stubCollectorRpcResponses(): void {
+  requestMock.mockImplementation(async (method: string) => {
+    switch (method) {
+      case "usage.cost":
+        return { totals: { input: 0, output: 0, totalTokens: 0, totalCost: 0, count: 0 } };
+      case "sessions.usage":
+        return { totals: { input: 0, output: 0, totalTokens: 0, totalCost: 0, count: 0 } };
+      case "skills.status":
+        return { skills: [] };
+      case "sessions.list":
+        return { sessions: [] };
+      case "system-presence":
+        return { online: [] };
+      case "node.list":
+        return { nodes: [] };
+      case "models.list":
+        return { models: [] };
+      case "models.authStatus":
+        return {
+          providers: [{ provider: "openai", status: "ok" }],
+        };
+      case "health":
+        return { ok: true };
+      case "cron.status":
+        return { enabled: false, jobs: 0 };
+      case "cron.list":
+        return { jobs: [] };
+      case "channels.status":
+        return {
+          channels: [
+            {
+              channelId: "discord",
+              accountId: "a1",
+              linked: true,
+            },
+          ],
+        };
+      default:
+        return {};
+    }
+  });
+}
 
 describe("prometheusPlugin register", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    requestMock.mockReset();
+    startMock.mockReset();
+    lastCtorOptions = null;
+    stubCollectorRpcResponses();
+  });
+
   test("registers plugin-owned routes and exports hook/runtime metrics", async () => {
     const { default: plugin } = await import("../dist/index.js");
     const fakeApi = createFakeApi();
@@ -46,6 +124,7 @@ describe("prometheusPlugin register", () => {
 
     const body = Buffer.concat(buffers).toString("utf-8");
     expect(body).toContain("# HELP openclaw_exporter_build_info");
+    expect(body).toContain('version="0.3.1"');
     expect(body).toContain("openclaw_up");
     expect(body).toContain("openclaw_model_auth_provider_status{provider=\"openai\",status=\"ok\"} 1");
     expect(body).toContain("openclaw_sli_message_success_ratio");

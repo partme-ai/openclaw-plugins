@@ -1,6 +1,19 @@
-# OpenClaw Grafana Dashboards — v0.3.0
+# OpenClaw Grafana Dashboards — v0.3.1
 
-企业级 Grafana Dashboard，适用于 `@partme.ai/openclaw-prometheus` v0.3.0 生产环境。
+企业级 Grafana Dashboard，适用于 `@partme.ai/openclaw-prometheus` v0.3.1+（内置 diagnostics-prometheus parity）。
+
+> 部署前请在 `openclaw.json` 中 **禁用** bundled `diagnostics-prometheus`，详见 [OpenClaw-Prometheus-Deployment.md](../OpenClaw-Prometheus-Deployment.md#34-禁用-bundled-diagnostics-prometheus必做)。
+
+## PromQL 约定（v0.3.1+）
+
+| 场景 | 指标 | 示例 PromQL |
+|------|------|-------------|
+| Token 吞吐 / s | `openclaw_model_tokens_total` (counter) | `sum(rate(openclaw_model_tokens_total{token_type="input"}[5m])) by (model)` |
+| 窗口用量/成本 | `openclaw_usage_*` (gauge) | `openclaw_usage_model_cost_usd_total`（勿对 gauge 滥用 `rate()`） |
+| Run 延迟 P95（SLO / 按 model） | `openclaw_run_duration_seconds` (diagnostics histogram) | `histogram_quantile(0.95, sum(rate(openclaw_run_duration_seconds_bucket[5m])) by (le, model))` |
+| Run 延迟 P95（按 agent_id） | `openclaw_agent_run_duration_seconds` (hooks histogram) | `histogram_quantile(0.95, sum(rate(openclaw_agent_run_duration_seconds_bucket[5m])) by (le, agent_id))` |
+
+> 两套 run 时长指标来源不同，详见 [OpenClaw-Prometheus-Metrics.md § Run 延迟指标选择](../OpenClaw-Prometheus-Metrics.md#run-延迟指标选择)。
 
 ## Dashboard
 

@@ -7,8 +7,8 @@
  */
 
 import type { ChannelDefinition } from "./types.js";
-import { publishToDestination } from "./stomp-server.js";
-import { buildSessionDestination } from "./destination-router.js";
+import { publishToDestination } from "./transport/server.js";
+import { buildSessionDestination } from "./routing/destination-router.js";
 import { stompWsSetupAdapter, stompWsSetupWizard } from "./onboarding.js";
 
 /**

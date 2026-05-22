@@ -6,3 +6,5 @@
  */
 
 export * from "./http-client.js";
+export * from "./body-limit.js";
+export * from "./safe-fetch.js";

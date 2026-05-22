@@ -4,10 +4,10 @@
  */
 
 import type { ChannelOutboundAdapter, ChannelOutboundContext } from "openclaw/plugin-sdk";
-import { DEFAULT_ROCKERMQ_CONFIG } from "./rocketmq-config.js";
-import { getRockermqChannelConfig } from "./rocketmq-state.js";
-import { getPeerIdBySession, getSessionContext } from "./session-mapper.js";
-import { buildOutboundTopic } from "./topic-router.js";
+import { DEFAULT_ROCKERMQ_CONFIG } from "./config.js";
+import { getRockermqChannelConfig } from "./state.js";
+import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
+import { buildOutboundTopic } from "./routing/topic-router.js";
 
 /**
  * 发送 OpenClaw 文本回复到 RocketMQ。
@@ -27,7 +27,7 @@ export const rockermqOutbound: ChannelOutboundAdapter = {
     const topic =
       sessionContext.replyTopic ??
       buildOutboundTopic(sessionContext.agentId, config.topicPrefix, peerId ?? undefined);
-    const { publishMessage } = await import("./rocketmq-server.js");
+    const { publishMessage } = await import("./transport/server.js");
     const receipt = await publishMessage({
       topic,
       tag: sessionContext.replyTag,

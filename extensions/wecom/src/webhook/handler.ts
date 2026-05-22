@@ -25,6 +25,11 @@ import {
   resolveWecomSenderUserId,
 } from "./helpers.js";
 import { WecomCrypto } from "@wecom/aibot-node-sdk";
+import {
+  readRequestBodyWithLimit,
+  isRequestBodyLimitError,
+  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+} from "../runtime-api.js";
 
 // ============================================================================
 // 辅助函数
@@ -110,41 +115,27 @@ function resolveBotIdentitySet(target: WecomWebhookTarget): Set<string> {
 }
 
 /** POST body 最大允许字节数 (1 MB) */
-const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_BODY_BYTES = DEFAULT_WEBHOOK_MAX_BODY_BYTES;
 
 /**
- * 读取 HTTP 请求 body（带大小限制保护）
- *
- * 超过 maxBytes 时会主动销毁请求并拒绝，防止大包攻击。
+ * 读取 HTTP 请求 body（message-sdk / OpenClaw webhook-ingress 对齐）。
  */
-function readBody(
+async function readBody(
   req: IncomingMessage,
   maxBytes: number = MAX_BODY_BYTES,
 ): Promise<{ ok: true; value: string } | { ok: false; error: string }> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    req.on("data", (chunk: Buffer) => {
-      total += chunk.length;
-      if (total > maxBytes) {
-        resolve({ ok: false, error: "payload too large" });
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => {
-      const raw = Buffer.concat(chunks).toString("utf8");
-      if (!raw.trim()) {
-        resolve({ ok: false, error: "empty payload" });
-        return;
-      }
-      resolve({ ok: true, value: raw });
-    });
-    req.on("error", (err) => {
-      resolve({ ok: false, error: err instanceof Error ? err.message : String(err) });
-    });
-  });
+  try {
+    const raw = await readRequestBodyWithLimit(req, { maxBytes });
+    if (!raw.trim()) {
+      return { ok: false, error: "empty payload" };
+    }
+    return { ok: true, value: raw };
+  } catch (err) {
+    if (isRequestBodyLimitError(err)) {
+      return { ok: false, error: "payload too large" };
+    }
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /** 构造加密 JSON 响应（返回对象，不做 stringify） */

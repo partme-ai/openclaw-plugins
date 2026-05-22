@@ -4,6 +4,7 @@
 
 import type { ChannelDefinition, AmapAccountConfig } from "./types.js";
 import { amapSetupAdapter, amapSetupWizard } from "./onboarding.js";
+import { amapSendText } from "./outbound.js";
 
 export const amapChannel: ChannelDefinition = {
   id: "amap",
@@ -39,6 +40,6 @@ export const amapChannel: ChannelDefinition = {
   },
   outbound: {
     deliveryMode: "direct",
-    sendText: async () => ({ ok: true }),
+    sendText: amapSendText,
   },
 };

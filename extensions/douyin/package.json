@@ -11,6 +11,7 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "pnpm build"
   },
   "keywords": [
@@ -26,7 +27,15 @@
   "files": [
     "dist",
     "openclaw.plugin.json",
-    "README.md"
+    "clawdbot.plugin.json",
+    "moltbot.plugin.json",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "tsconfig.json",
+    "tsup.config.ts",
+    "vitest.config.ts",
+    ".gitignore"
   ],
   "peerDependencies": {
     "openclaw": ">=2026.4.12"
@@ -38,6 +47,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "openclaw": ">=2026.4.12",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
@@ -51,6 +61,15 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    }
+  },
+  "openclaw": {
+    "extensions": ["./dist/index.js"],
+    "setupEntry": "./dist/setup-entry.js",
+    "channel": {
+      "id": "douyin",
+      "label": "抖音",
+      "blurb": "抖音开放平台 Webhook 渠道与运营工具"
     }
   }
 }

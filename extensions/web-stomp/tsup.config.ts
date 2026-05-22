@@ -6,7 +6,7 @@ import { defineConfig } from "tsup";
  * 因为 OpenClaw 插件安装只解压 tarball，不运行 npm install
  */
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/setup-entry.ts"],
   format: ["esm"],
   dts: true,
   clean: true,

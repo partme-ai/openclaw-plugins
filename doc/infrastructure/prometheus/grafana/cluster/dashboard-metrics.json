@@ -53,12 +53,12 @@
     { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 }, "id": 101, "panels": [], "title": "LLM USAGE", "type": "row" },
     { "id": 10, "type": "timeseries", "title": "Token Throughput / s (by Model)", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "description": "Input / output token rate from usage RPC. Available immediately after scrape.",
+      "description": "Real-time token rate from internal diagnostics (model.usage). Window aggregates use openclaw_usage_* gauges separately.",
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "barWidthFactor": 0.6, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "min": 0, "unit": "short" }, "overrides": [] },
       "options": { "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
-        { "expr": "sum(rate(openclaw_usage_model_tokens_input_total{instance=~\"$instance\"}[5m])) by (model)", "legendFormat": "{{model}} in", "refId": "A" },
-        { "expr": "sum(rate(openclaw_usage_model_tokens_output_total{instance=~\"$instance\"}[5m])) by (model)", "legendFormat": "{{model}} out", "refId": "B" }
+        { "expr": "sum(rate(openclaw_model_tokens_total{token_type=\"input\",instance=~\"$instance\"}[5m])) by (model)", "legendFormat": "{{model}} in", "refId": "A" },
+        { "expr": "sum(rate(openclaw_model_tokens_total{token_type=\"output\",instance=~\"$instance\"}[5m])) by (model)", "legendFormat": "{{model}} out", "refId": "B" }
       ] },
     { "id": 11, "type": "timeseries", "title": "Estimated Cost / USD (by Model)", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
@@ -72,8 +72,8 @@
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "barWidthFactor": 0.6, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "min": 0, "unit": "short" }, "overrides": [] },
       "options": { "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
-        { "expr": "sum(rate(openclaw_usage_tokens_input_total{instance=~\"$instance\"}[5m]))", "legendFormat": "Input / s", "refId": "A" },
-        { "expr": "sum(rate(openclaw_usage_tokens_output_total{instance=~\"$instance\"}[5m]))", "legendFormat": "Output / s", "refId": "B" }
+        { "expr": "sum(rate(openclaw_model_tokens_total{token_type=\"input\",instance=~\"$instance\"}[5m]))", "legendFormat": "Input / s", "refId": "A" },
+        { "expr": "sum(rate(openclaw_model_tokens_total{token_type=\"output\",instance=~\"$instance\"}[5m]))", "legendFormat": "Output / s", "refId": "B" }
       ] },
     { "id": 13, "type": "timeseries", "title": "Total Cost / USD (by Provider)", "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },

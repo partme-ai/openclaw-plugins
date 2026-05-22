@@ -3,10 +3,7 @@
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
-import {
-  createSimpleChannelSetup,
-  getChannelSection,
-} from "./channel-setup-factory.js";
+import { createSimpleChannelSetup, getChannelSection } from "./channel-setup-factory.js";
 
 const CHANNEL_ID = "mqtt-ws";
 

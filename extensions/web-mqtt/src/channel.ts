@@ -4,8 +4,15 @@
  */
 
 import { publishOutboundText } from "./outbound.js";
-import { getStats, startWebMqttServer, stopWebMqttServer, trackInboundAccepted, trackInboundDropped, trackRoute } from "./ws-server.js";
-import { resolveWebMqttConfig, validateWebMqttConfig } from "./mqtt-config.js";
+import {
+  getStats,
+  startWebMqttServer,
+  stopWebMqttServer,
+  trackInboundAccepted,
+  trackInboundDropped,
+  trackRoute,
+} from "./transport/server.js";
+import { resolveWebMqttConfig, validateWebMqttConfig } from "./config.js";
 import { getWebMqttChannelConfig, setWebMqttChannelConfig } from "./mqtt-state.js";
 import { processInbound } from "./inbound.js";
 import { webMqttSetupAdapter, webMqttSetupWizard } from "./onboarding.js";

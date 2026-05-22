@@ -723,10 +723,11 @@ export async function handleCustomerMessage(
     const { isHumanTransferRequest } = await import("../kf/intent-classifier.js");
 
     // Try to get existing dialogue context from session extension
-    const sessionExt = (runtime as Record<string, unknown>).session as Record<string, unknown> | undefined;
-    const getState = sessionExt?.state?.get as
+    const sessionExt = runtime as Record<string, unknown>;
+    const stateApi = (sessionExt.session as Record<string, unknown> | undefined)?.state as Record<string, unknown> | undefined;
+    const getState = stateApi?.get as
       ((namespace: string) => Promise<Record<string, unknown> | undefined>) | undefined;
-    const setState = sessionExt?.state?.set as
+    const setState = stateApi?.set as
       ((namespace: string, value: Record<string, unknown>) => Promise<void>) | undefined;
 
     let ctx = await getState?.(DIALOGUE_SESSION_NAMESPACE);

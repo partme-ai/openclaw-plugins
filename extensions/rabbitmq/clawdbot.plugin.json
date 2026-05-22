@@ -1,0 +1,62 @@
+{
+  "id": "openclaw-rabbitmq",
+  "name": "openclaw-rabbitmq",
+  "version": "2026.5.20",
+  "description": "RabbitMQ channel plugin for OpenClaw with multi-agent async collaboration and topic subscription support.",
+  "main": "dist/index.js",
+  "channels": [
+    "rabbitmq"
+  ],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "RabbitMQ server URL (amqp(s)://user:pass@host:port/vhost)"
+      },
+      "exchange": {
+        "type": "string",
+        "default": "openclaw",
+        "description": "Exchange name"
+      },
+      "exchangeType": {
+        "type": "string",
+        "enum": ["topic", "direct", "fanout", "headers"],
+        "default": "topic",
+        "description": "Exchange type"
+      },
+      "topicPrefix": {
+        "type": "string",
+        "default": "openclaw",
+        "description": "Prefix used by the standard topic format"
+      },
+      "subscribeTopics": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Topic patterns to subscribe to"
+      }
+    },
+    "required": ["url"]
+  },
+  "uiHints": {
+    "url": {
+      "label": "RabbitMQ URL",
+      "placeholder": "amqp://localhost"
+    },
+    "exchange": {
+      "label": "Exchange",
+      "placeholder": "openclaw"
+    },
+    "topicPrefix": {
+      "label": "Topic Prefix",
+      "placeholder": "openclaw"
+    }
+  },
+  "capabilities": {
+    "protocolBridge": true,
+    "mq": true
+  }
+}

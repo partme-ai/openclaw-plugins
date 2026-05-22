@@ -69,6 +69,48 @@ if (parsed) {
 
 ---
 
+## 双路径 Dispatch（Wire vs Transcript）
+
+| 路径 | SDK 入口 | 适用插件 |
+|------|----------|----------|
+| **Wire** | `createWireDispatch` / `bridge.dispatchInbound` | mqtt, rabbitmq, redis-stream, … |
+| **Transcript** | `createTranscriptDispatch` | gotify, wecom, feishu |
+
+```typescript
+import {
+  createWireDispatch,
+  createTranscriptDispatch,
+  createIdempotencyCache,
+  normalizeWireIngress,
+  normalizeGotifyIngress,
+} from "@partme.ai/openclaw-message-sdk";
+
+// MQ：Wire 路径（入站推荐 normalizeWireIngress + createWireDispatch）
+const ingress = normalizeWireIngress({ rawPayload, mode: "jsonTextOrPlain", channel: "mqtt" });
+if (!ingress.accepted) return;
+await createWireDispatch({ runtime, channel: "mqtt", text: ingress.text, unified: ingress.unified, /* ... */ reply: { deliver } });
+
+// IM：Transcript 路径（保证 Control UI transcript）
+await createTranscriptDispatch({ channelRuntime, cfg, channel: "gotify", /* ... */ delivery: { deliver } });
+```
+
+### 幂等去重（createIdempotencyCache）
+
+推荐所有通道插件使用 SDK 导出的 `createIdempotencyCache`，勿自建 `Map`：
+
+```typescript
+import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
+
+const dedup = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 5000 });
+const key = `${accountId}:${messageId}`;
+if (dedup.has(key)) return;
+// ... 成功处理后再 dedup.remember(key)
+```
+
+Gotify reference 实现见 `@partme.ai/openclaw-gotify` 的 `channel.ts`。
+
+---
+
 ## API 参考
 
 ### 1. 统一消息体（UnifiedMessage）

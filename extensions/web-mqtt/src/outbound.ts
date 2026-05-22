@@ -3,10 +3,9 @@
  * 按会话上下文优先回复到绑定 replyTopic，否则回退标准 out topic。
  */
 
-import { getSessionContext } from "./session-mapper.js";
-import { publishToTopic } from "./ws-server.js";
-import { getClientUsername } from "./ws-server.js";
-import { isUserActionAllowed } from "./acl.js";
+import { getSessionContext } from "./routing/session-mapper.js";
+import { publishToTopic, getClientUsername } from "./transport/server.js";
+import { isUserActionAllowed } from "./transport/acl.js";
 import { getWebMqttChannelConfig } from "./mqtt-state.js";
 
 /**

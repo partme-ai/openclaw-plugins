@@ -138,7 +138,15 @@ declare module 'openclaw/plugin-sdk/channel-config-helpers' {
   };
 }
 
-/** @deprecated Prefer focused subpaths such as plugin-sdk/core and plugin-sdk/channel-contract */
+declare module 'openclaw/plugin-sdk/setup' {
+  export type ChannelSetupAdapter = any;
+  export type ChannelSetupWizard = any;
+  export function applySetupAccountConfigPatch(params: any): any;
+  export function createPatchedAccountSetupAdapter(params: any): ChannelSetupAdapter;
+  export function createStandardChannelSetupStatus(params: any): any;
+  export function setSetupChannelEnabled(cfg: any, channel: string, enabled: boolean): any;
+}
+
 declare module 'openclaw/plugin-sdk' {
   export type OpenClawConfig = import('openclaw/plugin-sdk/core').OpenClawConfig;
   export type ChannelAccountSnapshot =

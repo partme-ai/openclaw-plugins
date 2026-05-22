@@ -104,11 +104,12 @@
     { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }, "id": 103, "panels": [], "title": "USAGE & COST", "type": "row" },
     { "id": 30, "type": "timeseries", "title": "Token Throughput / s (by Model)", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Real-time token rate from internal diagnostics (model.usage). Requires LLM activity; disable bundled diagnostics-prometheus when using openclaw-prometheus.",
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "barWidthFactor": 0.6, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } }, "mappings": [], "min": 0, "unit": "short" }, "overrides": [] },
       "options": { "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
-        { "expr": "sum(rate(openclaw_usage_model_tokens_input_total{instance=~\"$instance\"}[5m])) by (model)", "legendFormat": "{{model}} in", "refId": "A" },
-        { "expr": "sum(rate(openclaw_usage_model_tokens_output_total{instance=~\"$instance\"}[5m])) by (model)", "legendFormat": "{{model}} out", "refId": "B" }
+        { "expr": "sum(rate(openclaw_model_tokens_total{token_type=\"input\",instance=~\"$instance\"}[5m])) by (model)", "legendFormat": "{{model}} in", "refId": "A" },
+        { "expr": "sum(rate(openclaw_model_tokens_total{token_type=\"output\",instance=~\"$instance\"}[5m])) by (model)", "legendFormat": "{{model}} out", "refId": "B" }
       ] },
     { "id": 31, "type": "timeseries", "title": "Estimated Cost / USD (by Model)", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },

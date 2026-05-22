@@ -26,6 +26,7 @@ import { sendText as sendAgentText, sendMedia as sendAgentMedia, uploadMedia as 
 import { startWebhookGateway, stopWebhookGateway } from "./webhook/index.js";
 import type { ResolvedWebhookAccount, WebhookGatewayContext } from "./webhook/index.js";
 import { fetchAndSaveWecomDocMcpConfig } from "./mcp/config-fetch.js";
+import { probeWeComAccount } from "./probe.js";
 
 /**
  * 使用 SDK 的 sendMessage 主动发送企业微信消息
@@ -114,13 +115,15 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
   pairing: {
     idLabel: "wecomUserId",
     normalizeAllowEntry: (entry) => entry.replace(new RegExp(`^(${CHANNEL_ID}|user):`, "i"), "").trim(),
-    notifyApproval: async ({ cfg, id }) => {
-      // sendWeComMessage({
-      //   to: id,
-      //   content: " pairing approved",
-      //   accountId: cfg.accountId,
-      // });
-      // Pairing approved for user
+    notifyApproval: async ({ cfg, id, accountId }) => {
+      const resolvedAccountId = accountId ?? DEFAULT_ACCOUNT_ID;
+      const hint = formatPairingApproveHint(CHANNEL_ID);
+      await sendWeComMessage({
+        to: id,
+        content: hint || "✅ 配对已批准，可以开始对话。",
+        accountId: resolvedAccountId,
+        cfg,
+      });
     },
   },
   setupWizard: wecomSetupWizard,
@@ -455,8 +458,8 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
       lastStopAt: snapshot.lastStopAt ?? null,
       lastError: snapshot.lastError ?? null,
     }),
-    probeAccount: async () => {
-      return {ok: true, status: 200};
+    probeAccount: async ({ account }) => {
+      return probeWeComAccount(account);
     },
     buildAccountSnapshot: ({account, runtime}) => {
       const configured = Boolean(
