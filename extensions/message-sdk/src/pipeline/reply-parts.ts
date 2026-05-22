@@ -2,14 +2,24 @@
  * 出站回复拆分（对齐 OpenClaw reply-payload，无 OpenClaw 时提供基础实现）。
  */
 
-import { importOpenClawPluginSdk } from "../openclaw-loader.js";
+import { importOpenClawPluginSdk } from "../openclaw/loader.js";
 
+/**
+ * OutboundReplyPart 是 pipeline 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type OutboundReplyPart = {
   text?: string;
   mediaUrl?: string;
   caption?: string;
 };
 
+/**
+ * ResolveReplyPartsParams 是 pipeline 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type ResolveReplyPartsParams = {
   text?: string;
   mediaUrls?: string[];

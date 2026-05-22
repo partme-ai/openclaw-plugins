@@ -2,7 +2,10 @@
  * MQTT 渠道出站适配器：将 Agent 回复发布到 MQTT Topic。
  */
 
-import type { ChannelOutboundAdapter, ChannelOutboundContext } from "openclaw/plugin-sdk";
+import type {
+  ChannelOutboundAdapter,
+  ChannelOutboundContext,
+} from "openclaw/plugin-sdk/channel-contract";
 import { chunkText } from "openclaw/plugin-sdk/reply-runtime";
 import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 

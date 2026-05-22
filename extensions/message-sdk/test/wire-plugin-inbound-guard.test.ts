@@ -30,7 +30,7 @@ const FORBIDDEN_PATTERNS = [
   /`agent:\$\{/,
 ];
 
-const REQUIRED_PATTERNS = [/createChannelDispatch/, /resolveChannelDispatchIdentity|resolveChannelAgentRoute/];
+const REQUIRED_PATTERNS = [/dispatchChannelMessage/, /resolveChannelDispatchIdentity|resolveChannelAgentRoute/];
 
 describe("wire plugin inbound guard", () => {
   for (const plugin of WIRE_PLUGINS) {

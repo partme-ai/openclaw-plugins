@@ -12,7 +12,7 @@ import { isUserActionAllowed } from "./transport/acl.js";
 import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
-  createChannelDispatch,
+  dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
@@ -106,7 +106,7 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
     (config.payload.outboundFormat as "envelope" | "legacyJsonText" | "plainText" | undefined) ??
     "envelope";
 
-  await createChannelDispatch({
+  await dispatchChannelMessage({
     mode: "reply-pipeline",
     runtime: runtime as unknown as BridgePluginRuntime,
     channel: "mqtt-ws",
@@ -127,7 +127,9 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
         await publishOutboundText(sessionKey, wire, config.topicPrefix);
       },
       outboundFormat,
-      replyRoute: { topic: route.replyTopic },
+      replyRoute: {
+        topic: route.replyTopic ?? `${config.topicPrefix}agent/${agentId}/out`,
+      },
       agentId,
     },
   });

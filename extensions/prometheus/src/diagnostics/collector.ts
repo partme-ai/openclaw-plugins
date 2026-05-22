@@ -40,7 +40,7 @@ export function snapshotToMetricBundle(snapshot: MetricSnapshot): {
     definitions.push({ name, help, type });
   };
 
-  const counterKeys = [...snapshot.counters.keys()].toSorted((a, b) => a.localeCompare(b));
+  const counterKeys = [...snapshot.counters.keys()].sort((a, b) => a.localeCompare(b));
   for (const key of counterKeys) {
     const sample = snapshot.counters.get(key);
     if (!sample) {
@@ -55,7 +55,7 @@ export function snapshotToMetricBundle(snapshot: MetricSnapshot): {
     });
   }
 
-  const gaugeKeys = [...snapshot.gauges.keys()].toSorted((a, b) => a.localeCompare(b));
+  const gaugeKeys = [...snapshot.gauges.keys()].sort((a, b) => a.localeCompare(b));
   for (const key of gaugeKeys) {
     const sample = snapshot.gauges.get(key);
     if (!sample) {
@@ -70,7 +70,7 @@ export function snapshotToMetricBundle(snapshot: MetricSnapshot): {
     });
   }
 
-  const histKeys = [...snapshot.histograms.keys()].toSorted((a, b) => a.localeCompare(b));
+  const histKeys = [...snapshot.histograms.keys()].sort((a, b) => a.localeCompare(b));
   for (const key of histKeys) {
     const sample = snapshot.histograms.get(key);
     if (!sample) {

@@ -68,7 +68,7 @@ function seconds(ms: number | undefined): number | undefined {
 }
 
 function sortedLabels(labels: LabelSet): [string, string][] {
-  return Object.entries(labels).toSorted(([left], [right]) => left.localeCompare(right));
+  return Object.entries(labels).sort(([left], [right]) => left.localeCompare(right));
 }
 
 function metricKey(name: string, labels: LabelSet): string {
@@ -641,7 +641,7 @@ export function renderPrometheusMetrics(store: PrometheusMetricStore): string {
     lines.push(`# TYPE ${name} ${type}`);
   };
 
-  const counterEntries = [...snapshot.counters.entries()].toSorted(([left], [right]) =>
+  const counterEntries = [...snapshot.counters.entries()].sort(([left], [right]) =>
     left.localeCompare(right),
   );
   for (const [key, sample] of counterEntries) {
@@ -650,7 +650,7 @@ export function renderPrometheusMetrics(store: PrometheusMetricStore): string {
     lines.push(`${name}${formatLabels(sample.labels)} ${formatPrometheusNumber(sample.value)}`);
   }
 
-  const gaugeEntries = [...snapshot.gauges.entries()].toSorted(([left], [right]) =>
+  const gaugeEntries = [...snapshot.gauges.entries()].sort(([left], [right]) =>
     left.localeCompare(right),
   );
   for (const [key, sample] of gaugeEntries) {
@@ -659,7 +659,7 @@ export function renderPrometheusMetrics(store: PrometheusMetricStore): string {
     lines.push(`${name}${formatLabels(sample.labels)} ${formatPrometheusNumber(sample.value)}`);
   }
 
-  const histogramEntries = [...snapshot.histograms.entries()].toSorted(([left], [right]) =>
+  const histogramEntries = [...snapshot.histograms.entries()].sort(([left], [right]) =>
     left.localeCompare(right),
   );
   for (const [key, sample] of histogramEntries) {

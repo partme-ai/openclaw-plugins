@@ -166,8 +166,7 @@ openclaw-mtls/
 ├── src/
 │   ├── index.ts              # 插件入口 — registerHttpRoute 中间件
 │   ├── types.ts              # 类型定义
-│   ├── stats.ts             # 统计信息追踪
-│   └── openclaw-sdk.d.ts   # OpenClaw 类型声明
+│   └── stats.ts             # 统计信息追踪
 ├── test/
 │   └── mtls.test.ts         # 单元测试
 ├── .github/workflows/

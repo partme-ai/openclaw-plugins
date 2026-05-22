@@ -1,8 +1,14 @@
+/**
+ * embedded-dispatch.test.ts — 通道消息派发 facade，统一 Wire、Transcript、embedded-agent 与 subagent 路径。
+ *
+ * 这些测试锁定该模块的公开契约，防止命名、归一化、幂等或派发路径在重构时发生行为回退。
+ */
+
 import { describe, expect, it, vi } from "vitest";
-import { createEmbeddedAgentDispatch } from "./embedded-dispatch.js";
+import { dispatchEmbeddedAgentMessage } from "./embedded-dispatch.js";
 import type { EmbeddedAgentRuntime } from "./types.js";
 
-describe("createEmbeddedAgentDispatch", () => {
+describe("dispatchEmbeddedAgentMessage", () => {
   it("runs embedded agent and delivers serialized wire", async () => {
     const deliver = vi.fn().mockResolvedValue(undefined);
     const runEmbeddedAgent = vi.fn().mockResolvedValue({
@@ -18,7 +24,7 @@ describe("createEmbeddedAgentDispatch", () => {
       },
     } as unknown as EmbeddedAgentRuntime;
 
-    const result = await createEmbeddedAgentDispatch({
+    const result = await dispatchEmbeddedAgentMessage({
       runtime,
       channel: "rabbitmq",
       accountId: "default",
@@ -49,7 +55,7 @@ describe("createEmbeddedAgentDispatch", () => {
       },
     } as unknown as EmbeddedAgentRuntime;
 
-    const result = await createEmbeddedAgentDispatch({
+    const result = await dispatchEmbeddedAgentMessage({
       runtime,
       channel: "rabbitmq",
       accountId: "default",

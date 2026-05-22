@@ -208,14 +208,15 @@ export function parseWecomCallback(
     token: string,
     encodingAESKey: string
 ): { type: "verify" | "event"; echostr?: string; data?: Record<string, unknown> } {
-    const signature = verifyWecomSignature({
+    const signatureValid = verifyWecomSignature({
         token,
         timestamp: query.timestamp ?? "",
         nonce: query.nonce ?? "",
         encrypt: extractEncryptFromXml(body ?? ""),
+        signature: query.msg_signature ?? "",
     });
 
-    if (query.msg_signature !== signature) {
+    if (!signatureValid) {
         throw new Error("Invalid signature");
     }
 
@@ -229,9 +230,9 @@ export function parseWecomCallback(
     });
 
     try {
-        const data = JSON.parse(decrypted.message);
+        const data = JSON.parse(decrypted);
         return { type: "event", data };
     } catch {
-        return { type: "event", data: { message: decrypted.message } };
+        return { type: "event", data: { message: decrypted } };
     }
 }

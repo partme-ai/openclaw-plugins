@@ -6,4 +6,4 @@ export {
   createGotifyWsListener,
   type GotifyWsListenerDeps,
   type GotifyWsListenerController,
-} from './ws-listener.js';
+} from "./ws-listener.js";

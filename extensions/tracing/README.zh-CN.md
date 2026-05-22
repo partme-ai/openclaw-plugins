@@ -178,7 +178,6 @@ openclaw-tracing/
 │   │   ├── log-backend.ts    # 日志后端
 │   │   ├── file-backend.ts   # 文件后端 (JSONL)
 │   │   └── otlp-backend.ts   # OTLP HTTP 后端
-│   └── openclaw-sdk.d.ts     # OpenClaw SDK 类型
 ├── .github/workflows/
 │   ├── ci.yml               # CI 工作流
 │   └── release.yml           # 发布工作流

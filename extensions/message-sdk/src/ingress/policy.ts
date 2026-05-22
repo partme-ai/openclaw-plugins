@@ -4,6 +4,11 @@
 
 export type IngressPolicyDecision = "allow" | "deny" | "pairing";
 
+/**
+ * IngressPolicyContext 是 ingress 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type IngressPolicyContext = {
   channel: string;
   accountId: string;
@@ -12,10 +17,20 @@ export type IngressPolicyContext = {
   rawIdentity?: string;
 };
 
+/**
+ * IngressPolicyHook 是 ingress 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type IngressPolicyHook = (
   ctx: IngressPolicyContext,
 ) => IngressPolicyDecision | Promise<IngressPolicyDecision>;
 
+/**
+ * IngressPolicyChainOptions 是 ingress 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type IngressPolicyChainOptions = {
   hooks: IngressPolicyHook[];
   /** 默认 allow */

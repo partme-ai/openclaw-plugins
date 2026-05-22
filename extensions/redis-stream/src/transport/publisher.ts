@@ -29,18 +29,30 @@ export function incrMessagesWritten(n?: number): void {
 }
 
 /** 发布消息到 Redis channel。 */
-export async function publishMessage(channel: string, message: string): Promise<void> {
+export async function publishMessage(
+  channel: string,
+  message: string,
+): Promise<void> {
   if (!client) {
-    throw new RedisConnectionError("unknown", "Redis client is not initialized");
+    throw new RedisConnectionError(
+      "unknown",
+      "Redis client is not initialized",
+    );
   }
   await client.publish(channel, message);
   _messagesWritten++;
 }
 
 /** 向 stream 追加一条消息。 */
-export async function publishEntry(stream: string, values: Record<string, string>): Promise<string> {
+export async function publishEntry(
+  stream: string,
+  values: Record<string, string>,
+): Promise<string> {
   if (!client) {
-    throw new RedisConnectionError("unknown", "Redis client is not initialized");
+    throw new RedisConnectionError(
+      "unknown",
+      "Redis client is not initialized",
+    );
   }
   const id = await client.xAdd(stream, "*", values);
   _messagesWritten++;

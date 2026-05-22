@@ -1,7 +1,7 @@
 /**
  * @partme.ai/openclaw-message-sdk — 统一消息格式 SDK + 公共工具库
  *
- * - 统一消息类型、信封、入栈/出栈
+ * - 统一消息类型、信封、入站/出站队列
  * - 传输层 parse/serialize 管线
  * - OpenClaw 桥接（子路径 bridge）
  * - 媒体 / HTTP / ASR / OCR / TTS 工具
@@ -15,17 +15,15 @@ export {
 
 export {
   normalizeIngress,
-  normalizeGotifyIngress,
-  type NormalizeGotifyIngressParams,
   type NormalizeIngressParams,
 } from "./ingress/index.js";
 
 export {
-  createWireDispatch,
-  createTranscriptDispatch,
-  createChannelDispatch,
-  createEmbeddedAgentDispatch,
-  createSubagentDispatch,
+  dispatchWireMessage,
+  dispatchTranscriptTurn,
+  dispatchChannelMessage,
+  dispatchEmbeddedAgentMessage,
+  dispatchSubagentMessage,
   CHANNEL_CLASS_WIRE,
   CHANNEL_CLASS_TRANSCRIPT,
   isWireChannelClass,
@@ -46,7 +44,7 @@ export {
   type TranscriptChannelRuntime,
   type TranscriptDispatchParams,
   type TranscriptRecordParams,
-  type CreateWireDispatchOptions,
+  type WireDispatchOptions,
 } from "./dispatch/index.js";
 
 export {
@@ -91,6 +89,16 @@ export {
   type PersistentDedupeCheckOptions,
 } from "./dedup/persistent-dedupe.js";
 
+export {
+  createClaimableDedupe,
+  type ClaimableDedupe,
+  type ClaimableDedupeClaim,
+  type ClaimableDedupeClaimKind,
+  type ClaimableDedupeClaimOptions,
+  type ClaimableDedupeOptions,
+  type ClaimableDedupeReleaseOptions,
+} from "./dedup/claimable-dedupe.js";
+
 export { getPathGuard, createLocalPathGuard, type PathGuardApi, type PathGuardReadOptions } from "./media/path-guard.js";
 
 export {
@@ -114,21 +122,48 @@ export {
 export { formatErrorMessage, formatErrorMessageSync } from "./util/format-error.js";
 
 export {
-  InboundMessageStack,
+  InboundMessageQueue,
   type InboundPushParams,
-  type InboundStackItem,
-  type InboundMessageStackOptions,
-} from "./stack/inbound-stack.js";
+  type InboundQueueItem,
+  type InboundMessageQueueOptions,
+} from "./queue/inbound-message-queue.js";
 
 export {
-  OutboundMessageStack,
-  type OutboundStackItem,
-} from "./stack/outbound-stack.js";
+  OutboundMessageQueue,
+  type OutboundQueueItem,
+} from "./queue/outbound-message-queue.js";
 
 export {
-  gotifyStreamToUnified,
-  type GotifyStreamLike,
-} from "./adapters/gotify.js";
+  createKeyedRunQueue,
+  KeyedRunQueueInactiveError,
+  type KeyedRunQueue,
+  type KeyedRunQueueOptions,
+  type KeyedRunQueueTask,
+} from "./queue/keyed-run-queue.js";
+
+export {
+  createInboundDebounceBuffer,
+  type InboundDebounceBuffer,
+  type InboundDebounceBufferOptions,
+  type InboundDebounceFlush,
+  type InboundDebounceFlushReason,
+} from "./queue/inbound-debounce-buffer.js";
+
+export {
+  METADATA_EXTRAS_KEY,
+  METADATA_SOURCE,
+  isOutboundEcho,
+  markOutboundMetadata,
+  mergeMetadata,
+  readMetadata,
+  resolveMetadataCorrelationId,
+  resolveMetadataPeerId,
+  resolveMetadataReplyRoute,
+  resolveMetadataTraceId,
+  type MessageMetadata,
+  type MetadataCarrier,
+  type NativeExtras,
+} from "./metadata/index.js";
 
 export {
   parseMediaDirectives,

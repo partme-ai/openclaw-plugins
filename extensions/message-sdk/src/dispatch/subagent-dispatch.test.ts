@@ -1,8 +1,14 @@
+/**
+ * subagent-dispatch.test.ts — 通道消息派发 facade，统一 Wire、Transcript、embedded-agent 与 subagent 路径。
+ *
+ * 这些测试锁定该模块的公开契约，防止命名、归一化、幂等或派发路径在重构时发生行为回退。
+ */
+
 import { describe, expect, it, vi } from "vitest";
-import { createSubagentDispatch } from "./subagent-dispatch.js";
+import { dispatchSubagentMessage } from "./subagent-dispatch.js";
 import type { SubagentRuntime } from "./types.js";
 
-describe("createSubagentDispatch", () => {
+describe("dispatchSubagentMessage", () => {
   it("runs subagent and delivers serialized wire when reply enabled", async () => {
     const deliver = vi.fn().mockResolvedValue(undefined);
     const run = vi.fn().mockResolvedValue({ runId: "run-1" });
@@ -13,7 +19,7 @@ describe("createSubagentDispatch", () => {
       subagent: { run, waitForRun },
     } as unknown as SubagentRuntime;
 
-    const result = await createSubagentDispatch({
+    const result = await dispatchSubagentMessage({
       runtime,
       channel: "rabbitmq",
       accountId: "default",
@@ -44,7 +50,7 @@ describe("createSubagentDispatch", () => {
       },
     } as unknown as SubagentRuntime;
 
-    const result = await createSubagentDispatch({
+    const result = await dispatchSubagentMessage({
       runtime,
       channel: "rabbitmq",
       accountId: "default",

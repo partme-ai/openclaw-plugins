@@ -21,6 +21,35 @@ import type { ProxyConfig, IProxyService } from "../types.js";
 /** 默认超时（毫秒） */
 const DEFAULT_TIMEOUT = 5000;
 
+type GrpcRuntime = {
+  Server: new () => GrpcServer;
+  ServerCredentials: { createInsecure(): unknown };
+  credentials: { createInsecure(): unknown };
+  Client: new (address: string, credentials: unknown) => GrpcClient;
+};
+
+type GrpcServer = {
+  bindAsync(address: string, credentials: unknown, callback: (err: Error | null) => void): void;
+  forceShutdown(): void;
+};
+
+type GrpcClient = {
+  makeUnaryRequest(
+    method: string,
+    serialize: (msg: unknown) => Buffer,
+    deserialize: (buf: Buffer) => unknown,
+    argument: unknown,
+    options: { deadline: Date },
+    callback: (err: Error | null) => void
+  ): void;
+};
+
+async function loadGrpc(): Promise<GrpcRuntime> {
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  return require("@grpc/grpc-js") as GrpcRuntime;
+}
+
 /**
  * gRPC 代理服务
  * 如果 gRPC 依赖不可用，自动降级到 HTTP 代理
@@ -55,19 +84,19 @@ export class GrpcProxyServer implements IProxyService {
    */
   async start(): Promise<void> {
     try {
-      // 尝试动态加载 gRPC 模块
-      const grpc = await import("@grpc/grpc-js");
+      // 尝试动态加载可选 gRPC 模块；未安装时自动降级到 HTTP。
+      const grpc = await loadGrpc();
 
       // 创建 gRPC Server
       this.server = new grpc.Server();
 
       // 定义服务（使用动态方式，无需 proto 文件）
       const serviceDefinition = this.buildServiceDefinition(grpc);
-      (this.server as ReturnType<typeof grpc.Server.prototype.addService>);
+      void serviceDefinition;
 
       // 绑定端口
       await new Promise<void>((resolve, reject) => {
-        (this.server as InstanceType<typeof grpc.Server>).bindAsync(
+        (this.server as GrpcServer).bindAsync(
           `0.0.0.0:${this.port}`,
           grpc.ServerCredentials.createInsecure(),
           (err) => {
@@ -97,8 +126,7 @@ export class GrpcProxyServer implements IProxyService {
   async stop(): Promise<void> {
     if (this.grpcAvailable && this.server) {
       try {
-        const grpc = await import("@grpc/grpc-js");
-        (this.server as InstanceType<typeof grpc.Server>).forceShutdown();
+        (this.server as GrpcServer).forceShutdown();
       } catch {
         // 静默处理
       }
@@ -153,7 +181,7 @@ export class GrpcProxyServer implements IProxyService {
     message: string
   ): Promise<void> {
     try {
-      const grpc = await import("@grpc/grpc-js");
+      const grpc = await loadGrpc();
 
       // 获取或创建客户端
       let client = this.clientPool.get(address);
@@ -168,7 +196,7 @@ export class GrpcProxyServer implements IProxyService {
       // 通过 unary call 转发
       await new Promise<void>((resolve, reject) => {
         const deadline = new Date(Date.now() + this.timeout);
-        (client as InstanceType<typeof grpc.Client>).makeUnaryRequest(
+        (client as GrpcClient).makeUnaryRequest(
           "/ClusterProxy/ForwardMessage",
           (msg: unknown) => Buffer.from(JSON.stringify(msg)),
           (buf: Buffer) => JSON.parse(buf.toString()),
@@ -255,7 +283,7 @@ export class GrpcProxyServer implements IProxyService {
   /**
    * 构建 gRPC 服务定义（动态方式）
    */
-  private buildServiceDefinition(_grpc: typeof import("@grpc/grpc-js")): unknown {
+  private buildServiceDefinition(_grpc: GrpcRuntime): unknown {
     // 简化实现：使用 JSON 编解码替代 protobuf
     return {};
   }

@@ -5,7 +5,7 @@
 import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
-  createChannelDispatch,
+  dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
@@ -24,7 +24,7 @@ export type WebStompInboundContext = {
 };
 
 /**
- * 将入站 STOMP SEND 分发到 OpenClaw（normalizeWireIngress → createChannelDispatch）。
+ * 将入站 STOMP SEND 分发到 OpenClaw（normalizeWireIngress → dispatchChannelMessage）。
  */
 export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise<void> {
   const runtime = getWebStompRuntime();
@@ -55,7 +55,7 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
     return;
   }
 
-  await createChannelDispatch({
+  await dispatchChannelMessage({
     mode: "reply-pipeline",
     runtime: runtime as unknown as BridgePluginRuntime,
     channel: "stomp",

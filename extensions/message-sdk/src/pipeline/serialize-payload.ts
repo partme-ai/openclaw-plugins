@@ -5,8 +5,18 @@
 import { buildOutboundEnvelope, serializeEnvelope } from "../core/envelope.js";
 import type { MessageEnvelopeHeaders, ReplyRoute } from "../core/types.js";
 
+/**
+ * OutboundWireFormat 是 pipeline 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type OutboundWireFormat = "envelope" | "legacyJsonText" | "plainText";
 
+/**
+ * SerializeOutboundParams 描述 pipeline 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface SerializeOutboundParams {
   channel: string;
   accountId: string;

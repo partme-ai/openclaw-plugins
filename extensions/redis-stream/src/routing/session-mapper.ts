@@ -22,7 +22,10 @@ export function getPeerIdBySession(sessionKey: string): string | undefined {
 }
 
 /** 更新会话上下文 */
-export function upsertSessionContext(sessionKey: string, ctx: Partial<RedisSessionContext>): void {
+export function upsertSessionContext(
+  sessionKey: string,
+  ctx: Partial<RedisSessionContext>,
+): void {
   const peerId = ctx.peerId ?? sessionPeerMap.get(sessionKey) ?? "";
   if (peerId) {
     peerSessionMap.set(peerId, sessionKey);
@@ -45,7 +48,9 @@ export function upsertSessionContext(sessionKey: string, ctx: Partial<RedisSessi
 }
 
 /** 获取会话上下文 */
-export function getSessionContext(sessionKey: string): RedisSessionContext | undefined {
+export function getSessionContext(
+  sessionKey: string,
+): RedisSessionContext | undefined {
   return sessionContextMap.get(sessionKey);
 }
 

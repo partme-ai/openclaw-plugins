@@ -6,25 +6,35 @@
  */
 
 import { getRedisStreamRuntime } from "./runtime.js";
-import { resolveInboundRoute, matchChannel, buildReplyChannelFromInbound } from "./routing/topic-router.js";
+import {
+  resolveInboundRoute,
+  matchChannel,
+  buildReplyChannelFromInbound,
+} from "./routing/topic-router.js";
 import { publishMessage } from "./transport/publisher.js";
 import { logger } from "./logger.js";
 import type { RedisChannelConfig, RedisInboundMessage } from "./types.js";
 import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
-  createChannelDispatch,
+  dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
 
-const idempotencyCache = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10_000 });
+const idempotencyCache = createIdempotencyCache({
+  ttlMs: 60_000,
+  maxEntries: 10_000,
+});
 
 /**
  * 处理 Redis channel 入站消息。
  * 返回 false 时消息不应被 ACK（Stream 模式使用）。
  */
-export async function handleInboundMessage(message: RedisInboundMessage, config: RedisChannelConfig): Promise<boolean> {
+export async function handleInboundMessage(
+  message: RedisInboundMessage,
+  config: RedisChannelConfig,
+): Promise<boolean> {
   // 路由用真实 channel，pattern 仅用于日志/展示
   const channel = message.channel;
 
@@ -39,7 +49,9 @@ export async function handleInboundMessage(message: RedisInboundMessage, config:
   }
 
   // 2. Deduplication check (use message ID if available, fallback to content hash)
-  const messageId = (message as unknown as { id?: string }).id ?? `${channel}:${message.message.slice(0, 100)}`;
+  const messageId =
+    (message as unknown as { id?: string }).id ??
+    `${channel}:${message.message.slice(0, 100)}`;
 
   // 2. 路由解析（显式绑定优先，Stream fieldAgentId 字段覆盖）
   let route = message.fieldAgentId
@@ -68,7 +80,8 @@ export async function handleInboundMessage(message: RedisInboundMessage, config:
   // 3. payload 解析
   const parsed = normalizeWireIngress({
     rawPayload: message.message,
-    mode: config.payload.mode === "jsonTextOrPlain" ? "jsonTextOrPlain" : "plain",
+    mode:
+      config.payload.mode === "jsonTextOrPlain" ? "jsonTextOrPlain" : "plain",
     channel: "redis-stream",
     idempotencyKey: messageId,
     idempotency: idempotencyCache,
@@ -80,7 +93,10 @@ export async function handleInboundMessage(message: RedisInboundMessage, config:
   const text = parsed.text;
 
   // 4. 回复 channel 推导（fieldReplyStream 优先 > binding replyChannel > 标准格式）
-  const replyChannel = message.fieldReplyStream ?? route.replyChannel ?? buildReplyChannelFromInbound(channel);
+  const replyChannel =
+    message.fieldReplyStream ??
+    route.replyChannel ??
+    buildReplyChannelFromInbound(channel);
 
   // 5. peerId 使用 channel 名称（可通过 fieldPeerId 覆盖）
   const peerId = message.fieldPeerId ?? channel;
@@ -99,14 +115,17 @@ export async function handleInboundMessage(message: RedisInboundMessage, config:
         `text=${text.slice(0, 100)}`,
     );
 
-    const { agentId, sessionKey } = await resolveChannelDispatchIdentity(rt as unknown as BridgePluginRuntime, {
-      channel: "redis-stream",
-      accountId: route.accountId,
-      peerId,
-      agentId: route.agentId,
-    });
+    const { agentId, sessionKey } = await resolveChannelDispatchIdentity(
+      rt as unknown as BridgePluginRuntime,
+      {
+        channel: "redis-stream",
+        accountId: route.accountId,
+        peerId,
+        agentId: route.agentId,
+      },
+    );
 
-    await createChannelDispatch({
+    await dispatchChannelMessage({
       mode: "reply-pipeline",
       runtime: rt as unknown as BridgePluginRuntime,
       channel: "redis-stream",
@@ -141,7 +160,10 @@ export async function handleInboundMessage(message: RedisInboundMessage, config:
 /**
  * 检查 channel 是否在订阅白名单中。
  */
-function shouldProcessChannel(channel: string, subscribeChannels: string[]): boolean {
+function shouldProcessChannel(
+  channel: string,
+  subscribeChannels: string[],
+): boolean {
   if (!subscribeChannels.length) {
     return true;
   }
@@ -154,4 +176,3 @@ function isOutboundChannel(channel: string): boolean {
   if (channel === "openclaw:agent:outbound") return true;
   return false;
 }
-

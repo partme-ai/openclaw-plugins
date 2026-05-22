@@ -8,12 +8,15 @@ import type { DispatchInboundParams, DispatchInboundResult } from "../bridge/inb
 import type { BridgePluginRuntime } from "../bridge/types.js";
 import type { OutboundWireFormat } from "../pipeline/serialize-payload.js";
 
+/**
+ * 重新导出该模块的公共类型，方便调用方从 barrel 或实现文件按需导入。
+ */
 export type { ChannelClass };
 
 /** Wire MQ 插件 dispatch 模式。 */
 export type ChannelDispatchMode = "reply-pipeline" | "embedded-agent" | "subagent";
 
-/** createChannelDispatch deliver 回调参数。 */
+/** dispatchChannelMessage deliver 回调参数。 */
 export interface ChannelDispatchDeliverParams {
   wire: string;
   text?: string;
@@ -31,7 +34,7 @@ export interface ChannelDispatchReplyConfig {
   userId?: string;
 }
 
-/** createChannelDispatch 入参。 */
+/** dispatchChannelMessage 入参。 */
 export interface ChannelDispatchParams {
   mode?: ChannelDispatchMode;
   runtime: BridgePluginRuntime;
@@ -51,7 +54,7 @@ export interface ChannelDispatchParams {
   reply: ChannelDispatchReplyConfig;
 }
 
-/** createChannelDispatch 返回值。 */
+/** dispatchChannelMessage 返回值。 */
 export type ChannelDispatchResult =
   | { mode: "reply-pipeline"; wireResult: DispatchInboundResult }
   | { mode: "embedded-agent"; runId: string; delivered: boolean }
@@ -88,7 +91,7 @@ export interface SubagentRuntime extends BridgePluginRuntime {
   };
 }
 
-/** createEmbeddedAgentDispatch 入参。 */
+/** dispatchEmbeddedAgentMessage 入参。 */
 export interface EmbeddedAgentDispatchParams {
   runtime: EmbeddedAgentRuntime;
   channel: string;
@@ -103,7 +106,7 @@ export interface EmbeddedAgentDispatchParams {
   reply: ChannelDispatchReplyConfig;
 }
 
-/** createSubagentDispatch 入参。 */
+/** dispatchSubagentMessage 入参。 */
 export interface SubagentDispatchParams {
   runtime: SubagentRuntime;
   channel: string;
@@ -128,12 +131,17 @@ export interface TranscriptDispatchConfig {
   channelClass: "transcript";
 }
 
+/**
+ * DispatchConfig 是 dispatch 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type DispatchConfig = WireDispatchConfig | TranscriptDispatchConfig;
 
-/** createWireDispatch 入参，与 bridge.dispatchInbound 对齐。 */
+/** dispatchWireMessage 入参，与 bridge.dispatchInbound 对齐。 */
 export type WireDispatchParams = DispatchInboundParams;
 
-/** createWireDispatch 返回值，与 bridge.dispatchInbound 对齐。 */
+/** dispatchWireMessage 返回值，与 bridge.dispatchInbound 对齐。 */
 export type WireDispatchResult = DispatchInboundResult;
 
 /** Transcript 路径 recordInboundSession 参数子集。 */
@@ -201,7 +209,7 @@ export interface TranscriptChannelRuntime {
   };
 }
 
-/** createTranscriptDispatch 入参。 */
+/** dispatchTranscriptTurn 入参。 */
 export interface TranscriptDispatchParams {
   channelRuntime: TranscriptChannelRuntime;
   cfg: Record<string, unknown>;

@@ -219,9 +219,17 @@ export class PostgresSessionStore implements ISessionStoreService {
    */
   private async executeQuery(sql: string): Promise<Record<string, unknown>[]> {
     try {
-      // 尝试动态导入 pg 模块
-      const pg = await import("pg");
-      const client = new pg.default.Client({ connectionString: this.postgresUrl });
+      // 尝试动态加载可选 pg 模块；未安装时切换到内存缓存降级模式。
+      const { createRequire } = await import("node:module");
+      const require = createRequire(import.meta.url);
+      const pg = require("pg") as {
+        Client: new (params: { connectionString: string }) => {
+          connect(): Promise<void>;
+          query(sql: string): Promise<{ rows: Record<string, unknown>[] }>;
+          end(): Promise<void>;
+        };
+      };
+      const client = new pg.Client({ connectionString: this.postgresUrl });
       await client.connect();
       try {
         const result = await client.query(sql);

@@ -19,7 +19,7 @@ import {
 } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
-  createChannelDispatch,
+  dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
   type ChannelDispatchMode,
@@ -131,7 +131,7 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
 }
 
 /**
- * 将入站消息分发到 OpenClaw Runtime（message-sdk createChannelDispatch）。
+ * 将入站消息分发到 OpenClaw Runtime（message-sdk dispatchChannelMessage）。
  */
 async function dispatchToRuntime(
   sessionKey: string,
@@ -153,7 +153,7 @@ async function dispatchToRuntime(
   const mode = config.dispatch.mode as ChannelDispatchMode;
   const outboundFormat = config.payload.outboundFormat ?? "envelope";
 
-  await createChannelDispatch({
+  await dispatchChannelMessage({
     mode,
     runtime: rt as unknown as BridgePluginRuntime,
     channel: "rabbitmq",

@@ -25,7 +25,7 @@ vi.mock("node:fs/promises", () => ({
 
 const today = new Date().toISOString().slice(0, 10);
 
-vi.mock("../utils/file-ops.js", () => ({
+vi.mock("../ics-utils/file-ops.js", () => ({
   readJsonlFile: vi.fn(async (filePath: string) => {
     // 模拟今日有活跃记录的 session
     if (filePath.includes("session-001")) {

@@ -1,14 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
-import { createTranscriptDispatch } from "./transcript-dispatch.js";
+/**
+ * transcript-dispatch.test.ts — 通道消息派发 facade，统一 Wire、Transcript、embedded-agent 与 subagent 路径。
+ *
+ * 这些测试锁定该模块的公开契约，防止命名、归一化、幂等或派发路径在重构时发生行为回退。
+ */
 
-describe("createTranscriptDispatch", () => {
+import { describe, expect, it, vi } from "vitest";
+import { dispatchTranscriptTurn } from "./transcript-dispatch.js";
+
+describe("dispatchTranscriptTurn", () => {
   it("uses turn.runAssembled when session APIs are available", async () => {
     const recordInboundSession = vi.fn().mockResolvedValue(undefined);
     const dispatchReplyWithBufferedBlockDispatcher = vi.fn().mockResolvedValue(undefined);
     const runAssembled = vi.fn().mockResolvedValue(undefined);
     const deliver = vi.fn().mockResolvedValue(undefined);
 
-    await createTranscriptDispatch({
+    await dispatchTranscriptTurn({
       channelRuntime: {
         turn: { runAssembled },
         session: { recordInboundSession },
@@ -42,7 +48,7 @@ describe("createTranscriptDispatch", () => {
     const dispatchReplyWithBufferedBlockDispatcher = vi.fn().mockResolvedValue(undefined);
     const deliver = vi.fn().mockResolvedValue(undefined);
 
-    await createTranscriptDispatch({
+    await dispatchTranscriptTurn({
       channelRuntime: {
         session: { recordInboundSession },
         reply: { dispatchReplyWithBufferedBlockDispatcher },
@@ -75,7 +81,7 @@ describe("createTranscriptDispatch", () => {
     const onRecordError = vi.fn();
 
     await expect(
-      createTranscriptDispatch({
+      dispatchTranscriptTurn({
         channelRuntime: {
           turn: { runAssembled },
           session: { recordInboundSession },

@@ -21,7 +21,10 @@ let loadedBindings: RedisChannelBinding[] = [];
  * 解析入站 channel → agent 路由。
  * 显式绑定优先，标准格式回退。
  */
-export function resolveInboundRoute(channel: string, bindings?: RedisChannelBinding[]): RedisInboundRoute | null {
+export function resolveInboundRoute(
+  channel: string,
+  bindings?: RedisChannelBinding[],
+): RedisInboundRoute | null {
   const effectiveBindings = bindings ?? loadedBindings;
 
   // 1. 显式绑定优先
@@ -38,8 +41,14 @@ export function resolveInboundRoute(channel: string, bindings?: RedisChannelBind
   }
 
   // 2. 标准格式回退：openclaw:agent:<agentId>:in
-  if (channel.startsWith(AGENT_INBOUND_PREFIX) && channel.endsWith(AGENT_INBOUND_SUFFIX)) {
-    const agentId = channel.slice(AGENT_INBOUND_PREFIX.length, channel.length - AGENT_INBOUND_SUFFIX.length);
+  if (
+    channel.startsWith(AGENT_INBOUND_PREFIX) &&
+    channel.endsWith(AGENT_INBOUND_SUFFIX)
+  ) {
+    const agentId = channel.slice(
+      AGENT_INBOUND_PREFIX.length,
+      channel.length - AGENT_INBOUND_SUFFIX.length,
+    );
     if (agentId && !agentId.includes(":")) {
       return {
         agentId,

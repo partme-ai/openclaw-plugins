@@ -10,8 +10,16 @@ import type { RedisChannelConfig, RedisInboundMessage } from "../types.js";
 import { handleInboundMessage } from "../inbound.js";
 import { loadChannelBindings } from "../routing/topic-router.js";
 import { logger } from "../logger.js";
-import { setPublisherClient, clearPublisherClient, getMessagesWritten } from "./publisher.js";
-import { RedisConnectionError, RedisStreamError, RedisTimeoutError } from "../errors.js";
+import {
+  setPublisherClient,
+  clearPublisherClient,
+  getMessagesWritten,
+} from "./publisher.js";
+import {
+  RedisConnectionError,
+  RedisStreamError,
+  RedisTimeoutError,
+} from "../errors.js";
 
 export type RedisStats = {
   connected: boolean;
@@ -41,7 +49,9 @@ const stats: RedisStats = {
 /**
  * 统一启动 Redis：连接 + 可选消费组 + Pub/Sub 订阅 + 可选 Stream 消费循环。
  */
-export async function startRedisServer(config: RedisChannelConfig): Promise<void> {
+export async function startRedisServer(
+  config: RedisChannelConfig,
+): Promise<void> {
   // 加载 channel 绑定
   loadChannelBindings(config.channelBindings ?? []);
 
@@ -53,7 +63,7 @@ export async function startRedisServer(config: RedisChannelConfig): Promise<void
         if (retries >= config.connection.maxRetries) {
           throw new RedisConnectionError(
             config.url,
-            `max reconnection attempts (${config.connection.maxRetries}) exceeded`
+            `max reconnection attempts (${config.connection.maxRetries}) exceeded`,
           );
         }
         return config.connection.reconnectMs;
@@ -66,10 +76,12 @@ export async function startRedisServer(config: RedisChannelConfig): Promise<void
   } catch (error) {
     throw new RedisConnectionError(
       config.url,
-      error instanceof Error ? error.message : String(error)
+      error instanceof Error ? error.message : String(error),
     );
   }
-  setPublisherClient(client as unknown as Parameters<typeof setPublisherClient>[0]);
+  setPublisherClient(
+    client as unknown as Parameters<typeof setPublisherClient>[0],
+  );
   running = true;
   stats.connected = true;
   stats.lastConnectAt = Date.now();
@@ -130,14 +142,17 @@ async function startPubSub(config: RedisChannelConfig): Promise<void> {
 
   // 空白名单 = 接受全部 channel
   if (channels.length === 0) {
-    await subscriberClient.pSubscribe("*", (message: string, channel: string) => {
-      stats.messagesRead++;
-      stats.lastReadAt = Date.now();
-      const inbound: RedisInboundMessage = { channel, pattern: "*", message };
-      handleInboundMessage(inbound, config).catch((err) => {
-        logger.error("Inbound handler error:", err);
-      });
-    });
+    await subscriberClient.pSubscribe(
+      "*",
+      (message: string, channel: string) => {
+        stats.messagesRead++;
+        stats.lastReadAt = Date.now();
+        const inbound: RedisInboundMessage = { channel, pattern: "*", message };
+        handleInboundMessage(inbound, config).catch((err) => {
+          logger.error("Inbound handler error:", err);
+        });
+      },
+    );
     stats.subscribedChannels = ["*"];
     return;
   }
@@ -147,26 +162,32 @@ async function startPubSub(config: RedisChannelConfig): Promise<void> {
 
   // 模式订阅（PSUBSCRIBE）
   for (const pattern of patterns) {
-    await subscriberClient.pSubscribe(pattern, (message: string, channel: string) => {
-      stats.messagesRead++;
-      stats.lastReadAt = Date.now();
-      const inbound: RedisInboundMessage = { channel, pattern, message };
-      handleInboundMessage(inbound, config).catch((err) => {
-        logger.error("Inbound handler error:", err);
-      });
-    });
+    await subscriberClient.pSubscribe(
+      pattern,
+      (message: string, channel: string) => {
+        stats.messagesRead++;
+        stats.lastReadAt = Date.now();
+        const inbound: RedisInboundMessage = { channel, pattern, message };
+        handleInboundMessage(inbound, config).catch((err) => {
+          logger.error("Inbound handler error:", err);
+        });
+      },
+    );
   }
 
   // 精确订阅（SUBSCRIBE）
   if (exact.length > 0) {
-    await subscriberClient.subscribe(exact, (message: string, channel: string) => {
-      stats.messagesRead++;
-      stats.lastReadAt = Date.now();
-      const inbound: RedisInboundMessage = { channel, message };
-      handleInboundMessage(inbound, config).catch((err) => {
-        logger.error("Inbound handler error:", err);
-      });
-    });
+    await subscriberClient.subscribe(
+      exact,
+      (message: string, channel: string) => {
+        stats.messagesRead++;
+        stats.lastReadAt = Date.now();
+        const inbound: RedisInboundMessage = { channel, message };
+        handleInboundMessage(inbound, config).catch((err) => {
+          logger.error("Inbound handler error:", err);
+        });
+      },
+    );
   }
 
   stats.subscribedChannels = channels;
@@ -175,7 +196,10 @@ async function startPubSub(config: RedisChannelConfig): Promise<void> {
 /**
  * 发布消息到 Redis channel。
  */
-export async function publishMessage(channel: string, message: string): Promise<void> {
+export async function publishMessage(
+  channel: string,
+  message: string,
+): Promise<void> {
   if (!client) {
     throw new RedisConnectionError("", "Redis client is not initialized");
   }
@@ -188,7 +212,10 @@ export async function publishMessage(channel: string, message: string): Promise<
 /**
  * 向 stream 追加一条消息。
  */
-export async function publishEntry(stream: string, values: Record<string, string>): Promise<string> {
+export async function publishEntry(
+  stream: string,
+  values: Record<string, string>,
+): Promise<string> {
   if (!client) {
     throw new RedisConnectionError("", "Redis client is not initialized");
   }
@@ -200,7 +227,11 @@ export async function publishEntry(stream: string, values: Record<string, string
 /**
  * 手动确认消费。
  */
-export async function ackEntry(stream: string, group: string, id: string): Promise<void> {
+export async function ackEntry(
+  stream: string,
+  group: string,
+  id: string,
+): Promise<void> {
   if (!client) {
     throw new RedisConnectionError("", "Redis client is not initialized");
   }
@@ -212,7 +243,10 @@ export async function ackEntry(stream: string, group: string, id: string): Promi
  * 读取当前状态。
  */
 export function getStats(): RedisStats {
-  return { ...stats, messagesWritten: stats.messagesWritten + getMessagesWritten() };
+  return {
+    ...stats,
+    messagesWritten: stats.messagesWritten + getMessagesWritten(),
+  };
 }
 
 /**
@@ -221,13 +255,18 @@ export function getStats(): RedisStats {
 async function ensureConsumerGroup(config: RedisChannelConfig): Promise<void> {
   if (!client) return;
   try {
-    await client.xGroupCreate(config.stream.inboundKey, config.stream.consumerGroup, "0", {
-      MKSTREAM: true,
-    });
+    await client.xGroupCreate(
+      config.stream.inboundKey,
+      config.stream.consumerGroup,
+      "0",
+      {
+        MKSTREAM: true,
+      },
+    );
   } catch (error) {
     throw new RedisStreamError(
       config.stream.inboundKey,
-      error instanceof Error ? error.message : String(error)
+      error instanceof Error ? error.message : String(error),
     );
   }
 }
@@ -243,18 +282,23 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
   let consecutiveErrors = 0;
   while (running && client) {
     try {
-      const result = await client.xReadGroup(
-        config.stream.consumerGroup,
-        config.stream.consumerName,
-        { key: config.stream.inboundKey, id: ">" },
-        { COUNT: config.stream.count, BLOCK: config.stream.blockMs },
-      ).catch((error) => {
-        // Wrap timeout errors
-        if (error?.message?.includes("timeout") || error?.message?.includes("TIMEDOUT")) {
-          throw new RedisTimeoutError("XREADGROUP", config.stream.blockMs);
-        }
-        throw error;
-      });
+      const result = await client
+        .xReadGroup(
+          config.stream.consumerGroup,
+          config.stream.consumerName,
+          { key: config.stream.inboundKey, id: ">" },
+          { COUNT: config.stream.count, BLOCK: config.stream.blockMs },
+        )
+        .catch((error) => {
+          // Wrap timeout errors
+          if (
+            error?.message?.includes("timeout") ||
+            error?.message?.includes("TIMEDOUT")
+          ) {
+            throw new RedisTimeoutError("XREADGROUP", config.stream.blockMs);
+          }
+          throw error;
+        });
 
       consecutiveErrors = 0;
       if (!result) continue; // 超时无消息，返回 null
@@ -265,7 +309,9 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
           stats.lastReadAt = Date.now();
 
           // node-redis v5 解析后 message 为纯对象 { k: v }，同时兼容平铺数组
-          const fieldMap = toFieldMap(fields as unknown as Array<unknown> | Record<string, unknown>);
+          const fieldMap = toFieldMap(
+            fields as unknown as Array<unknown> | Record<string, unknown>,
+          );
 
           const text = fieldMap.get(config.fieldMapping.textField) ?? "";
           const channel = streamName;
@@ -273,10 +319,14 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
           const inbound: RedisInboundMessage = {
             channel,
             message: text,
-            fieldAgentId: fieldMap.get(config.fieldMapping.agentIdField) || undefined,
-            fieldPeerId: fieldMap.get(config.fieldMapping.peerIdField) || undefined,
-            fieldAccountId: fieldMap.get(config.fieldMapping.accountIdField) || undefined,
-            fieldReplyStream: fieldMap.get(config.fieldMapping.replyStreamField) || undefined,
+            fieldAgentId:
+              fieldMap.get(config.fieldMapping.agentIdField) || undefined,
+            fieldPeerId:
+              fieldMap.get(config.fieldMapping.peerIdField) || undefined,
+            fieldAccountId:
+              fieldMap.get(config.fieldMapping.accountIdField) || undefined,
+            fieldReplyStream:
+              fieldMap.get(config.fieldMapping.replyStreamField) || undefined,
           };
           const accepted = await handleInboundMessage(inbound, config);
 
@@ -290,7 +340,10 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
       consecutiveErrors++;
       stats.lastError = error instanceof Error ? error.message : String(error);
       // 指数退避，上限 30 秒，避免 Redis 不可用时频繁重试
-      const backoffMs = Math.min(1000 * Math.pow(2, Math.min(consecutiveErrors - 1, 5)), 30000);
+      const backoffMs = Math.min(
+        1000 * Math.pow(2, Math.min(consecutiveErrors - 1, 5)),
+        30000,
+      );
       await sleep(backoffMs);
     }
   }
@@ -301,7 +354,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** 将 node-redis RESP2 MapReply（平铺数组或纯对象）转为 JS Map。 */
-function toFieldMap(fields: Array<unknown> | Record<string, unknown>): Map<string, string> {
+function toFieldMap(
+  fields: Array<unknown> | Record<string, unknown>,
+): Map<string, string> {
   const map = new Map<string, string>();
   if (Array.isArray(fields)) {
     // RESP2 原始格式：平铺数组 [k1, v1, k2, v2, ...]

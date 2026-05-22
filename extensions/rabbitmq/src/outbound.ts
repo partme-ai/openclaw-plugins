@@ -2,7 +2,10 @@
  * RabbitMQ 渠道出站适配器：将 Agent 回复发布到 RabbitMQ Topic。
  */
 
-import type { ChannelOutboundAdapter, ChannelOutboundContext } from "openclaw/plugin-sdk";
+import type {
+  ChannelOutboundAdapter,
+  ChannelOutboundContext,
+} from "openclaw/plugin-sdk/channel-contract";
 import { chunkText, sanitizeForPlainText } from "./utils.js";
 
 import { publishMessage } from "./transport/server.js";

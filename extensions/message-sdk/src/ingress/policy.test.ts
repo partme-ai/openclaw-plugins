@@ -1,3 +1,9 @@
+/**
+ * policy.test.ts — 入站 payload 解析、策略链与 UnifiedMessage 归一化。
+ *
+ * 这些测试锁定该模块的公开契约，防止命名、归一化、幂等或派发路径在重构时发生行为回退。
+ */
+
 import { describe, expect, it } from "vitest";
 import {
   createAllowlistIngressHook,

@@ -25,6 +25,14 @@ async function getAccessToken(apiKey: string, secretKey: string): Promise<string
   return data.access_token;
 }
 
+/**
+ * recognizeQianfan 是 ocr 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export async function recognizeQianfan(input: OCRInput, config: OCRConfig): Promise<OCRResult> {
   const baseUrl = config.baseUrl || DEFAULT_BASE_URL;
   const model = config.model || DEFAULT_MODEL;

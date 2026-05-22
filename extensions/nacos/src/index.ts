@@ -16,7 +16,7 @@ import { NacosConfigSyncService } from "./nacos-config-sync.js";
 import { GatewayNacosRegistry } from "./nacos-registry.js";
 import { WebhookClusterService } from "./nacos-cluster.js";
 import { resolveGatewayPort } from "./resolve-endpoint.js";
-import type { ClusterPeer, OpenClawConfigSlice } from "./types.js";
+import type { ClusterPeer, OpenClawConfigSlice, PluginLog } from "./types.js";
 
 export {
   NacosConfigSyncService,
@@ -72,6 +72,16 @@ function sanitizeError(err: unknown): string {
     .replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, "[ip]");
 }
 
+/** Adapt OpenClaw's optional-debug PluginLogger to this plugin's stricter logger surface. */
+function toPluginLog(logger: OpenClawPluginServiceContext["logger"]): PluginLog {
+  return {
+    info: (msg: string) => logger.info(msg),
+    warn: (msg: string) => logger.warn(msg),
+    error: (msg: string) => logger.error(msg),
+    debug: (msg: string) => logger.debug?.(msg),
+  };
+}
+
 /** Module-level cluster service reference for HTTP routes. */
 let activeClusterService: WebhookClusterService | null = null;
 
@@ -99,9 +109,14 @@ function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
           pluginConfig: parsed.config,
           getCurrentConfig: () => api.runtime.config.current(),
           replaceConfig: (next) =>
-            api.runtime.config.replaceConfigFile(next, { afterWrite: { mode: "auto" } }) as unknown as Promise<void>,
+            api.runtime.config.replaceConfigFile({
+              nextConfig: next as Parameters<
+                typeof api.runtime.config.replaceConfigFile
+              >[0]["nextConfig"],
+              afterWrite: { mode: "auto" },
+            }) as unknown as Promise<void>,
           stateDir: ctx.stateDir,
-          logger: ctx.logger,
+          logger: toPluginLog(ctx.logger),
           env: process.env,
         });
         healthState.configSyncRunning = true;
@@ -116,7 +131,7 @@ function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
     },
     stop: async (ctx: OpenClawPluginServiceContext) => {
       if (sync) {
-        await sync.stop(ctx.logger);
+        await sync.stop(toPluginLog(ctx.logger));
         sync = null;
       }
       healthState.configSyncRunning = false;
@@ -156,7 +171,7 @@ function registerNacosNamingService(api: OpenClawPluginApi): void {
         await registry.register({
           pluginConfig: parsed.config,
           openClawConfig: ctx.config as OpenClawConfigSlice,
-          logger: ctx.logger,
+          logger: toPluginLog(ctx.logger),
         });
         healthState.namingRegistered = true;
         healthState.lastError = null;
@@ -169,7 +184,7 @@ function registerNacosNamingService(api: OpenClawPluginApi): void {
     },
     stop: async (ctx: OpenClawPluginServiceContext) => {
       if (registry) {
-        await registry.stop(ctx.logger);
+        await registry.stop(toPluginLog(ctx.logger));
         registry = null;
       }
       healthState.namingRegistered = false;
@@ -206,7 +221,7 @@ function registerNacosClusterService(api: OpenClawPluginApi): void {
         await cluster.start({
           pluginConfig: parsed.config,
           selfPort: port,
-          logger: ctx.logger,
+          logger: toPluginLog(ctx.logger),
         });
         activeClusterService = cluster;
         healthState.clusterDiscoveryRunning = true;
@@ -220,7 +235,7 @@ function registerNacosClusterService(api: OpenClawPluginApi): void {
     },
     stop: async (ctx: OpenClawPluginServiceContext) => {
       if (cluster) {
-        await cluster.stop(ctx.logger);
+        await cluster.stop(toPluginLog(ctx.logger));
         cluster = null;
       }
       activeClusterService = null;
@@ -251,7 +266,6 @@ export default definePluginEntry({
 
     // Health check HTTP endpoint — internal diagnostics
     api.registerHttpRoute({
-      method: "GET",
       path: "/nacos/health",
       auth: "plugin",
       match: "exact",
@@ -273,7 +287,6 @@ export default definePluginEntry({
 
     // Cluster discovery HTTP endpoint — internal diagnostics
     api.registerHttpRoute({
-      method: "GET",
       path: "/nacos/cluster",
       auth: "plugin",
       match: "exact",

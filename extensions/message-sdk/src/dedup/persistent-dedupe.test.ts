@@ -1,3 +1,9 @@
+/**
+ * persistent-dedupe.test.ts — 入站消息幂等、持久化去重与并发 claim/release 保护。
+ *
+ * 这些测试锁定该模块的公开契约，防止命名、归一化、幂等或派发路径在重构时发生行为回退。
+ */
+
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";

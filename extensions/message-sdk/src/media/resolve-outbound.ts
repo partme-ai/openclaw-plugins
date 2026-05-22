@@ -2,8 +2,13 @@
  * 出站媒体加载：远程 URL 或本机路径 → buffer + contentType。
  */
 
-import { importOpenClawPluginSdk } from "../openclaw-loader.js";
+import { importOpenClawPluginSdk } from "../openclaw/loader.js";
 
+/**
+ * ResolvedOutboundMedia 是 media 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type ResolvedOutboundMedia = {
   buffer: Buffer;
   contentType?: string;
@@ -11,6 +16,11 @@ export type ResolvedOutboundMedia = {
   sourcePath: string;
 };
 
+/**
+ * ResolveOutboundMediaParams 是 media 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type ResolveOutboundMediaParams = {
   pathOrUrl: string;
   mimeByExt?: Record<string, string>;

@@ -200,7 +200,6 @@ openclaw-redis-stream/
     ├── redis-stream-config.ts  # Config resolution + defaults
     ├── redis-stream-server.ts  # Redis transport: Pub/Sub + Stream
     ├── setup-entry.ts     # Lightweight setup-only entry
-    ├── openclaw-sdk.d.ts  # Peer dependency type stubs
     ├── dm-scope.test.ts
     ├── config.test.ts
     ├── topic-router.test.ts

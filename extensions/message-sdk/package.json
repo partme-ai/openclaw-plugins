@@ -46,6 +46,18 @@
     "./ingress": {
       "types": "./src/ingress/index.ts",
       "default": "./src/ingress/index.ts"
+    },
+    "./dedup": {
+      "types": "./src/dedup/index.ts",
+      "default": "./src/dedup/index.ts"
+    },
+    "./queue": {
+      "types": "./src/queue/index.ts",
+      "default": "./src/queue/index.ts"
+    },
+    "./metadata": {
+      "types": "./src/metadata/index.ts",
+      "default": "./src/metadata/index.ts"
     }
   },
   "peerDependencies": {

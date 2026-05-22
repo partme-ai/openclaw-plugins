@@ -5,6 +5,11 @@
 /** 默认 thinking 块正则（对齐 WeCom / Feishu 出站管线）。 */
 export const DEFAULT_THINK_REGEX = /<think>([\s\S]*?)<\/think>/g;
 
+/**
+ * MaskThinkingBlocksResult 是 reply 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type MaskThinkingBlocksResult = {
   text: string;
   placeholders: string[];

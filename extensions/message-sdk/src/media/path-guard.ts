@@ -6,13 +6,23 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
-import { importOpenClawPluginSdk } from "../openclaw-loader.js";
+import { importOpenClawPluginSdk } from "../openclaw/loader.js";
 
+/**
+ * PathGuardReadOptions 是 media 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type PathGuardReadOptions = {
   maxBytes?: number;
   rootDir?: string;
 };
 
+/**
+ * PathGuardApi 是 media 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type PathGuardApi = {
   readRegularFile: (filePath: string, options?: PathGuardReadOptions) => Promise<Buffer>;
   statRegularFileSync: (filePath: string, rootDir?: string) => fs.Stats;

@@ -7,6 +7,12 @@
 
 export type OCRErrorKind = "timeout" | "auth" | "request" | "response_parse" | "service" | "empty_result" | "unsupported_format";
 
+/**
+ * OCRError 表示 ocr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class OCRError extends Error {
   constructor(
     message: string,
@@ -19,6 +25,12 @@ export class OCRError extends Error {
   }
 }
 
+/**
+ * OCRTimeoutError 表示 ocr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class OCRTimeoutError extends OCRError {
   constructor(provider: string, public readonly timeoutMs: number) {
     super(`OCR request timeout after ${timeoutMs}ms`, "timeout", provider, true);
@@ -26,6 +38,12 @@ export class OCRTimeoutError extends OCRError {
   }
 }
 
+/**
+ * OCRAuthError 表示 ocr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class OCRAuthError extends OCRError {
   constructor(provider: string, message: string, public readonly status?: number) {
     super(message, "auth", provider, false);
@@ -33,6 +51,12 @@ export class OCRAuthError extends OCRError {
   }
 }
 
+/**
+ * OCRRequestError 表示 ocr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class OCRRequestError extends OCRError {
   constructor(provider: string, message: string, public readonly status?: number) {
     super(message, "request", provider, true);
@@ -40,6 +64,12 @@ export class OCRRequestError extends OCRError {
   }
 }
 
+/**
+ * OCRResponseParseError 表示 ocr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class OCRResponseParseError extends OCRError {
   constructor(provider: string, public readonly bodySnippet: string) {
     super("OCR response is not valid JSON", "response_parse", provider, false);
@@ -47,6 +77,12 @@ export class OCRResponseParseError extends OCRError {
   }
 }
 
+/**
+ * OCRServiceError 表示 ocr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class OCRServiceError extends OCRError {
   constructor(provider: string, message: string, public readonly serviceCode?: number) {
     super(message, "service", provider, false);
@@ -54,6 +90,12 @@ export class OCRServiceError extends OCRError {
   }
 }
 
+/**
+ * OCREmptyResultError 表示 ocr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class OCREmptyResultError extends OCRError {
   constructor(provider: string) {
     super("OCR returned empty result", "empty_result", provider, false);
@@ -61,6 +103,12 @@ export class OCREmptyResultError extends OCRError {
   }
 }
 
+/**
+ * OCRUnsupportedFormatError 表示 ocr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class OCRUnsupportedFormatError extends OCRError {
   constructor(provider: string, public readonly format: string) {
     super(`Unsupported image format: ${format}`, "unsupported_format", provider, false);

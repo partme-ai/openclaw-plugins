@@ -4,7 +4,6 @@
  * Loaded when the plugin is disabled or unconfigured, avoiding heavy Nacos client imports.
  * See https://docs.openclaw.ai/plugins/sdk-entrypoints (`defineSetupPluginEntry`).
  */
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/setup-runtime";
 import type { NacosPluginConfig } from "./types.js";
 
 const pluginObject = {
@@ -27,5 +26,5 @@ const pluginObject = {
   },
 };
 
-const setupEntry = defineSetupPluginEntry(pluginObject as unknown as Record<string, unknown>);
+const setupEntry = { plugin: pluginObject };
 export default setupEntry;

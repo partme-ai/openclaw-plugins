@@ -73,25 +73,24 @@ if (parsed) {
 
 | 路径 | SDK 入口 | 适用插件 |
 |------|----------|----------|
-| **Wire** | `createWireDispatch` / `bridge.dispatchInbound` | mqtt, rabbitmq, redis-stream, … |
-| **Transcript** | `createTranscriptDispatch` | gotify, wecom, feishu |
+| **Wire** | `dispatchWireMessage` / `bridge.dispatchInbound` | mqtt, rabbitmq, redis-stream, … |
+| **Transcript** | `dispatchTranscriptTurn` | gotify, wecom, feishu |
 
 ```typescript
 import {
-  createWireDispatch,
-  createTranscriptDispatch,
+  dispatchWireMessage,
+  dispatchTranscriptTurn,
   createIdempotencyCache,
   normalizeWireIngress,
-  normalizeGotifyIngress,
 } from "@partme.ai/openclaw-message-sdk";
 
-// MQ：Wire 路径（入站推荐 normalizeWireIngress + createWireDispatch）
+// MQ：Wire 路径（入站推荐 normalizeWireIngress + dispatchWireMessage）
 const ingress = normalizeWireIngress({ rawPayload, mode: "jsonTextOrPlain", channel: "mqtt" });
 if (!ingress.accepted) return;
-await createWireDispatch({ runtime, channel: "mqtt", text: ingress.text, unified: ingress.unified, /* ... */ reply: { deliver } });
+await dispatchWireMessage({ runtime, channel: "mqtt", text: ingress.text, unified: ingress.unified, /* ... */ reply: { deliver } });
 
-// IM：Transcript 路径（保证 Control UI transcript）
-await createTranscriptDispatch({ channelRuntime, cfg, channel: "gotify", /* ... */ delivery: { deliver } });
+// IM：渠道插件先在本地解析平台事件，再走 Transcript 路径（保证 Control UI transcript）
+await dispatchTranscriptTurn({ channelRuntime, cfg, channel: "gotify", /* ... */ delivery: { deliver } });
 ```
 
 ### 幂等去重（createIdempotencyCache）

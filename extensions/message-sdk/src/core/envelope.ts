@@ -10,6 +10,14 @@ import type {
   UnifiedMessage,
 } from "./types.js";
 
+/**
+ * buildEnvelope 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function buildEnvelope(
   message: UnifiedMessage,
   headers?: MessageEnvelopeHeaders,
@@ -21,6 +29,14 @@ export function buildEnvelope(
   };
 }
 
+/**
+ * buildOutboundEnvelope 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function buildOutboundEnvelope(params: {
   channel: string;
   accountId: string;
@@ -42,6 +58,14 @@ export function buildOutboundEnvelope(params: {
   return buildEnvelope(message, params.headers);
 }
 
+/**
+ * parseEnvelope 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function parseEnvelope(raw: string): MessageEnvelope | null {
   try {
     const obj = JSON.parse(raw) as Record<string, unknown>;
@@ -65,6 +89,14 @@ export function parseEnvelope(raw: string): MessageEnvelope | null {
   }
 }
 
+/**
+ * extractRoutingMetadata 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function extractRoutingMetadata(msg: UnifiedMessage): {
   correlationId?: string;
   idempotencyKey?: string;
@@ -78,6 +110,14 @@ export function extractRoutingMetadata(msg: UnifiedMessage): {
   };
 }
 
+/**
+ * mergeReplyRouteIntoHeaders 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function mergeReplyRouteIntoHeaders(
   headers: MessageEnvelopeHeaders | undefined,
   replyRoute: ReplyRoute | undefined,
@@ -88,10 +128,26 @@ export function mergeReplyRouteIntoHeaders(
   return { ...headers, replyRoute };
 }
 
+/**
+ * serializeEnvelope 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function serializeEnvelope(envelope: MessageEnvelope): string {
   return JSON.stringify(envelope);
 }
 
+/**
+ * parseEnvelopeAny 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function parseEnvelopeAny(
   input: string | Buffer | Uint8Array | unknown,
 ): MessageEnvelope | null {

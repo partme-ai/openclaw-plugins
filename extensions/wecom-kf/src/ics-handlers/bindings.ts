@@ -12,7 +12,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { GatewayRuntime } from "../types.js";
-import { triggerConfigReload, safeConfigUpdate } from "../utils/config-reload.js";
+import { triggerConfigReload, safeConfigUpdate } from "../ics-utils/config-reload.js";
 
 /**
  * 创建 bindings 路由规则处理器

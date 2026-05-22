@@ -12,11 +12,21 @@ import {
   type ResolveReplyPartsParams,
 } from "../pipeline/reply-parts.js";
 
+/**
+ * OutboundReplyPayload 是 reply 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type OutboundReplyPayload = ResolveReplyPartsParams & {
   isReasoning?: boolean;
   hasMedia?: boolean;
 };
 
+/**
+ * PreprocessOutboundReplyParams 是 reply 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type PreprocessOutboundReplyParams = {
   payload: OutboundReplyPayload;
   formatReasoning?: (text: string) => string;
@@ -25,6 +35,11 @@ export type PreprocessOutboundReplyParams = {
   homedir?: string;
 };
 
+/**
+ * PreprocessedOutboundReply 是 reply 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type PreprocessedOutboundReply = {
   text: string;
   mediaUrls: string[];

@@ -6,14 +6,27 @@
  * 与 buildCatchallMultiAccountChannelSchema + buildChannelConfigSchema 等效。
  */
 
-import { z } from 'zod';
+import { z } from "zod";
 
-/** ChannelConfigSchema — OpenClaw 插件 SDK 配置校验结构 */
+/**
+ * OpenClaw 渠道配置 schema 容器。
+ *
+ * @property schema - JSON Schema 形式的配置结构，供宿主 UI/CLI 渲染和校验。
+ * @property uiHints - 字段级 UI 元数据，例如 label、placeholder、secret 标记。
+ */
 export interface ChannelConfigSchema {
   schema: Record<string, unknown>;
   uiHints?: Record<string, ChannelConfigUiHint>;
 }
 
+/**
+ * OpenClaw 配置 UI 的字段提示。
+ *
+ * @property label - 字段展示名。
+ * @property description - 帮助说明。
+ * @property placeholder - 输入框占位符。
+ * @property secret - 是否按密钥字段处理，避免明文展示。
+ */
 export interface ChannelConfigUiHint {
   label?: string;
   description?: string;
@@ -22,25 +35,30 @@ export interface ChannelConfigUiHint {
   [key: string]: unknown;
 }
 
-/** 单账号配置的 Zod Schema — 用于运行时类型推导 */
+/**
+ * 单账号配置的 Zod Schema。
+ *
+ * 当前运行时主要消费下方 JSON Schema；保留 Zod Schema 是为了在未来迁移到
+ * `buildCatchallMultiAccountChannelSchema` 时有可复用的强类型源。
+ */
 export const GotifyAccountSchema = z
   .object({
     enabled: z.boolean().optional(),
     name: z.string().optional(),
     serverUrl: z
       .string()
-      .url('serverUrl must be a valid URL')
+      .url("serverUrl must be a valid URL")
       .optional()
-      .describe('Gotify server base URL (e.g. https://gotify.example.com)'),
+      .describe("Gotify server base URL (e.g. https://gotify.example.com)"),
     appToken: z
       .string()
-      .min(1, 'appToken is required for outbound delivery')
+      .min(1, "appToken is required for outbound delivery")
       .optional()
-      .describe('Application token for sending messages'),
+      .describe("Application token for sending messages"),
     clientToken: z
       .string()
       .optional()
-      .describe('Client token for receiving messages and admin APIs'),
+      .describe("Client token for receiving messages and admin APIs"),
     defaultPriority: z
       .number()
       .int()
@@ -48,27 +66,32 @@ export const GotifyAccountSchema = z
       .max(10)
       .optional()
       .default(5)
-      .describe('Default message priority (0-10, default 5)'),
+      .describe("Default message priority (0-10, default 5)"),
     dmPolicy: z
-      .enum(['open', 'allowlist', 'pairing', 'disabled'])
+      .enum(["open", "allowlist", "pairing", "disabled"])
       .optional()
-      .default('open')
-      .describe('DM access policy for inbound stream messages'),
+      .default("open")
+      .describe("DM access policy for inbound stream messages"),
     allowFrom: z
       .array(z.union([z.string(), z.number()]))
       .optional()
-      .describe('Allowed appid/peerId entries when dmPolicy is allowlist'),
+      .describe("Allowed appid/peerId entries when dmPolicy is allowlist"),
     inbound: z
       .object({
         enabled: z.boolean().optional().default(false),
         reconnectDelayMs: z.number().int().min(500).optional().default(2000),
-        maxReconnectDelayMs: z.number().int().min(1000).optional().default(30_000),
+        maxReconnectDelayMs: z
+          .number()
+          .int()
+          .min(1000)
+          .optional()
+          .default(30_000),
         maxReconnectAttempts: z.number().int().min(0).optional().default(10),
         deleteAfterConsume: z
           .boolean()
           .optional()
           .default(true)
-          .describe('Delete Gotify message after successful inbound dispatch'),
+          .describe("Delete Gotify message after successful inbound dispatch"),
       })
       .strict()
       .optional(),
@@ -76,8 +99,11 @@ export const GotifyAccountSchema = z
       .object({
         enabled: z.boolean().optional().default(false),
         autoCreateApplication: z.boolean().optional().default(false),
-        applicationName: z.string().optional().default('openclaw-default'),
-        applicationDescription: z.string().optional().default('Provisioned by openclaw-gotify'),
+        applicationName: z.string().optional().default("openclaw-default"),
+        applicationDescription: z
+          .string()
+          .optional()
+          .default("Provisioned by openclaw-gotify"),
       })
       .strict()
       .optional(),
@@ -88,102 +114,109 @@ export const GotifyAccountSchema = z
  * Gotify 渠道配置 Schema。
  * 等效于 buildCatchallMultiAccountChannelSchema(GotifyAccountSchema)
  * + buildChannelConfigSchema(..., { uiHints })。
+ *
+ * schema 允许顶层字段作为单账号配置，也允许 `accounts.<id>` 作为多账号配置。
+ * appToken/clientToken 在 uiHints 中标记为 secret，确保配置界面不会明文回显。
  */
 export const gotifyConfigSchema: ChannelConfigSchema = {
   schema: {
-    type: 'object',
+    type: "object",
     additionalProperties: true, // 允许账号任意扩展字段
     properties: {
-      enabled: { type: 'boolean' },
-      name: { type: 'string' },
+      enabled: { type: "boolean" },
+      name: { type: "string" },
       serverUrl: {
-        type: 'string',
-        format: 'uri',
-        description: 'Gotify server base URL',
+        type: "string",
+        format: "uri",
+        description: "Gotify server base URL",
       },
       appToken: {
-        type: 'string',
+        type: "string",
         minLength: 1,
-        description: 'Application token for sending messages',
+        description: "Application token for sending messages",
       },
       clientToken: {
-        type: 'string',
-        description: 'Client token for receiving messages and admin APIs',
+        type: "string",
+        description: "Client token for receiving messages and admin APIs",
       },
       defaultPriority: {
-        type: 'integer',
+        type: "integer",
         minimum: 0,
         maximum: 10,
         default: 5,
-        description: 'Default message priority (0-10)',
+        description: "Default message priority (0-10)",
       },
       dmPolicy: {
-        type: 'string',
-        enum: ['open', 'allowlist', 'pairing', 'disabled'],
-        default: 'open',
-        description: 'DM access policy for inbound stream messages',
+        type: "string",
+        enum: ["open", "allowlist", "pairing", "disabled"],
+        default: "open",
+        description: "DM access policy for inbound stream messages",
       },
       allowFrom: {
-        type: 'array',
-        items: { type: ['string', 'number'] },
-        description: 'Allowed appid/peerId when dmPolicy is allowlist',
+        type: "array",
+        items: { type: ["string", "number"] },
+        description: "Allowed appid/peerId when dmPolicy is allowlist",
       },
       inbound: {
-        type: 'object',
+        type: "object",
         properties: {
-          enabled: { type: 'boolean' },
-          reconnectDelayMs: { type: 'integer', minimum: 500 },
-          maxReconnectDelayMs: { type: 'integer', minimum: 1000 },
-          maxReconnectAttempts: { type: 'integer', minimum: 0 },
+          enabled: { type: "boolean" },
+          reconnectDelayMs: { type: "integer", minimum: 500 },
+          maxReconnectDelayMs: { type: "integer", minimum: 1000 },
+          maxReconnectAttempts: { type: "integer", minimum: 0 },
           deleteAfterConsume: {
-            type: 'boolean',
+            type: "boolean",
             default: true,
-            description: 'Delete message from Gotify after inbound is dispatched to the agent',
+            description:
+              "Delete message from Gotify after inbound is dispatched to the agent",
           },
         },
         additionalProperties: false,
       },
       bootstrap: {
-        type: 'object',
+        type: "object",
         properties: {
-          enabled: { type: 'boolean' },
-          autoCreateApplication: { type: 'boolean' },
-          applicationName: { type: 'string' },
-          applicationDescription: { type: 'string' },
+          enabled: { type: "boolean" },
+          autoCreateApplication: { type: "boolean" },
+          applicationName: { type: "string" },
+          applicationDescription: { type: "string" },
         },
         additionalProperties: false,
       },
       accounts: {
-        type: 'object',
+        type: "object",
         additionalProperties: true,
-        description: 'Multiple Gotify account configurations',
+        description: "Multiple Gotify account configurations",
       },
       defaultAccount: {
-        type: 'string',
-        description: 'Default account ID when using multi-account mode',
+        type: "string",
+        description: "Default account ID when using multi-account mode",
       },
     },
     required: [], // 所有字段均为可选，由 resolveGotifyAccount 补充默认值
   },
   uiHints: {
     serverUrl: {
-      label: 'Gotify Server URL',
-      description: 'The base URL of your Gotify server (e.g. https://gotify.example.com)',
-      placeholder: 'https://gotify.example.com',
+      label: "Gotify Server URL",
+      description:
+        "The base URL of your Gotify server (e.g. https://gotify.example.com)",
+      placeholder: "https://gotify.example.com",
     },
     appToken: {
-      label: 'App Token',
-      description: 'Application token for sending messages (from Gotify Apps settings)',
+      label: "App Token",
+      description:
+        "Application token for sending messages (from Gotify Apps settings)",
       secret: true,
     },
     clientToken: {
-      label: 'Client Token',
-      description: 'Client token for receiving messages and admin APIs. Optional if only sending.',
+      label: "Client Token",
+      description:
+        "Client token for receiving messages and admin APIs. Optional if only sending.",
       secret: true,
     },
     defaultPriority: {
-      label: 'Default Priority',
-      description: 'Message priority (0–10, default 5)',
+      label: "Default Priority",
+      description: "Message priority (0–10, default 5)",
     },
   },
 };

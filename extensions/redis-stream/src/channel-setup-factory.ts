@@ -1,4 +1,3 @@
-// @ts-nocheck — large declarative wizard factory mirrors openclaw setup SDK surface; stubs vary by peer installs.
 /**
  * 共享 Channel setupWizard / setupAdapter 工厂。
  *
@@ -6,7 +5,10 @@
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
-import type { ChannelSetupAdapter, ChannelSetupWizard } from "openclaw/plugin-sdk/setup";
+import type {
+  ChannelSetupAdapter,
+  ChannelSetupWizard,
+} from "openclaw/plugin-sdk/setup";
 import {
   applySetupAccountConfigPatch,
   createPatchedAccountSetupAdapter,
@@ -16,7 +18,14 @@ import {
 
 /** 单条凭据字段映射（CLI inputKey → channels.<id> 配置键） */
 export type SetupCredentialSpec = {
-  inputKey: "token" | "secret" | "url" | "baseUrl" | "botToken" | "appToken" | "privateKey";
+  inputKey:
+    | "token"
+    | "secret"
+    | "url"
+    | "baseUrl"
+    | "botToken"
+    | "appToken"
+    | "privateKey";
   configKey: string;
   label: string;
   preferredEnvVar?: string;
@@ -28,7 +37,14 @@ export type SetupCredentialSpec = {
 
 /** 单条文本输入映射（CLI inputKey → channels.<id> 配置键） */
 export type SetupTextInputSpec = {
-  inputKey: "url" | "baseUrl" | "httpPort" | "webhookPath" | "webhookUrl" | "token" | "secret";
+  inputKey:
+    | "url"
+    | "baseUrl"
+    | "httpPort"
+    | "webhookPath"
+    | "webhookUrl"
+    | "token"
+    | "secret";
   configKey: string;
   message: string;
   placeholder?: string;
@@ -53,11 +69,12 @@ export type SimpleChannelSetupParams = {
 /**
  * 读取 channels.<channel> 配置节。
  */
-export function getChannelSection(cfg: OpenClawConfig, channel: string): Record<string, unknown> {
-  return ((cfg.channels as Record<string, unknown> | undefined)?.[channel] ?? {}) as Record<
-    string,
-    unknown
-  >;
+export function getChannelSection(
+  cfg: OpenClawConfig,
+  channel: string,
+): Record<string, unknown> {
+  return ((cfg.channels as Record<string, unknown> | undefined)?.[channel] ??
+    {}) as Record<string, unknown>;
 }
 
 /**
@@ -98,13 +115,15 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
       unconfiguredLabel: "需要配置",
       configuredHint: "已配置",
       unconfiguredHint: "需要设置",
-      resolveConfigured: ({ cfg, accountId }) => params.resolveConfigured(cfg, accountId),
+      resolveConfigured: ({ cfg, accountId }) =>
+        params.resolveConfigured(cfg, accountId),
     }),
     introNote: params.introLines?.length
       ? {
           title: `${label} 设置`,
           lines: params.introLines,
-          shouldShow: ({ cfg, accountId }) => !params.resolveConfigured(cfg, accountId),
+          shouldShow: ({ cfg, accountId }) =>
+            !params.resolveConfigured(cfg, accountId),
         }
       : undefined,
     credentials: (params.credentials ?? []).map((spec) => ({
@@ -114,7 +133,9 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
       preferredEnvVar: spec.preferredEnvVar,
       helpTitle: spec.helpTitle,
       helpLines: spec.helpLines,
-      envPrompt: spec.preferredEnvVar ? `使用环境变量 ${spec.preferredEnvVar}？` : `使用环境变量中的 ${spec.label}？`,
+      envPrompt: spec.preferredEnvVar
+        ? `使用环境变量 ${spec.preferredEnvVar}？`
+        : `使用环境变量中的 ${spec.label}？`,
       keepPrompt: `${spec.label} 已配置，保留当前值？`,
       inputPrompt: spec.inputPrompt,
       inspect: ({ cfg, accountId }) => {
@@ -150,19 +171,22 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
           patch: { [spec.configKey]: value.trim() },
         }),
     })),
-    finalize: params.finalize ?? (async ({ cfg, accountId }) => {
-      if (!params.resolveConfigured(cfg, accountId)) {
-        return undefined;
-      }
-      return {
-        cfg: setSetupChannelEnabled(cfg, channel, true),
-      };
-    }),
+    finalize:
+      params.finalize ??
+      (async ({ cfg, accountId }) => {
+        if (!params.resolveConfigured(cfg, accountId)) {
+          return undefined;
+        }
+        return {
+          cfg: setSetupChannelEnabled(cfg, channel, true),
+        };
+      }),
     completionNote: params.completionLines?.length
       ? {
           title: `${label} 配置完成`,
           lines: params.completionLines,
-          shouldShow: ({ cfg, accountId }) => params.resolveConfigured(cfg, accountId),
+          shouldShow: ({ cfg, accountId }) =>
+            params.resolveConfigured(cfg, accountId),
         }
       : undefined,
     disable: (cfg) =>
@@ -197,7 +221,10 @@ export function createUrlChannelSetup(params: {
     docsPath: params.docsPath,
     resolveConfigured:
       params.resolveConfigured ??
-      ((cfg) => Boolean(String(getChannelSection(cfg, params.channel)[urlField] ?? "").trim())),
+      ((cfg) =>
+        Boolean(
+          String(getChannelSection(cfg, params.channel)[urlField] ?? "").trim(),
+        )),
     introLines: params.introLines ?? [
       `${params.label} 通过连接 URL 接入 OpenClaw。`,
       `默认示例：${params.defaultUrl}`,
@@ -242,7 +269,10 @@ export function createAppKeySecretChannelSetup(params: {
     docsPath: params.docsPath,
     resolveConfigured: (cfg) => {
       const section = getChannelSection(cfg, params.channel);
-      return Boolean(String(section[keyField] ?? "").trim() && String(section[secretField] ?? "").trim());
+      return Boolean(
+        String(section[keyField] ?? "").trim() &&
+        String(section[secretField] ?? "").trim(),
+      );
     },
     introLines: params.introLines,
     completionLines: [

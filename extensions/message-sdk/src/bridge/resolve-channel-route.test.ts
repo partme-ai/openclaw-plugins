@@ -1,3 +1,9 @@
+/**
+ * resolve-channel-route.test.ts — OpenClaw Runtime 桥接层，用于把统一消息派发到 Gateway 并回接回复。
+ *
+ * 这些测试锁定该模块的公开契约，防止命名、归一化、幂等或派发路径在重构时发生行为回退。
+ */
+
 import { describe, expect, it, vi } from "vitest";
 import {
   resolveChannelAgentRoute,

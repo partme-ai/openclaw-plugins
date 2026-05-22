@@ -2,8 +2,13 @@
  * 带 SSRF 防护的 fetch（优先 OpenClaw ssrf-runtime）。
  */
 
-import { importOpenClawPluginSdk } from "../openclaw-loader.js";
+import { importOpenClawPluginSdk } from "../openclaw/loader.js";
 
+/**
+ * SafeFetchOptions 是 http 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type SafeFetchOptions = RequestInit & {
   maxBytes?: number;
   timeoutMs?: number;

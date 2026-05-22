@@ -21,7 +21,7 @@
  *   https://ollama.com/dengcao/Qwen3-Reranker-4B
  *   https://github.com/ollama/ollama-js
  */
-import ollama from 'ollama';
+import { Ollama } from 'ollama';
 import type { RerankerService, KnowledgeRerankerConfig, ScoredDocument } from '../types.js';
 
 /** 默认模型 — Qwen3-Reranker-4B 量化版（2.5GB，性价比最优） */
@@ -54,11 +54,11 @@ ${docList}
 
 export class OllamaRerankerService implements RerankerService {
   readonly modelName: string;
-  private host: string;
+  private client: Ollama;
   private topN: number;
 
   constructor(config?: KnowledgeRerankerConfig) {
-    this.host = config?.baseUrl ?? DEFAULT_HOST;
+    this.client = new Ollama({ host: config?.baseUrl ?? DEFAULT_HOST });
     this.modelName = config?.model ?? DEFAULT_MODEL;
     this.topN = config?.topN ?? 0;
   }
@@ -68,14 +68,13 @@ export class OllamaRerankerService implements RerankerService {
 
     const prompt = buildRerankPrompt(query, documents);
 
-    const response = await ollama.chat({
+    const response = await this.client.chat({
       model: this.modelName,
       messages: [{ role: 'user', content: prompt }],
       options: {
         temperature: 0,   // 确定性输出
         num_predict: 4096, // 足够输出 JSON 结果
       },
-      host: this.host,
     });
 
     const content = response.message?.content ?? '';

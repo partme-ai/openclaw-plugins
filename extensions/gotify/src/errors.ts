@@ -12,9 +12,13 @@
 export class GotifyApiError extends Error {
   readonly statusCode: number;
 
+  /**
+   * @param message - 已包含 Gotify 响应正文摘要的错误消息。
+   * @param statusCode - Gotify HTTP 响应状态码。
+   */
   constructor(message: string, statusCode: number) {
     super(message);
-    this.name = 'GotifyApiError';
+    this.name = "GotifyApiError";
     this.statusCode = statusCode;
   }
 }
@@ -26,9 +30,12 @@ export class GotifyApiError extends Error {
 export class GotifyConnectionError extends Error {
   readonly cause: string;
 
+  /**
+   * @param cause - 底层网络错误、DNS 错误或 fetch 错误的可读描述。
+   */
   constructor(cause: string) {
     super(`Gotify connection failed: ${cause}`);
-    this.name = 'GotifyConnectionError';
+    this.name = "GotifyConnectionError";
     this.cause = cause;
   }
 }
@@ -40,9 +47,13 @@ export class GotifyConnectionError extends Error {
 export class GotifyConfigError extends Error {
   readonly field: string;
 
+  /**
+   * @param field - 缺失或无效的配置字段名。
+   * @param reason - 面向 operator 的配置错误原因。
+   */
   constructor(field: string, reason: string) {
     super(`Gotify configuration error: ${field} - ${reason}`);
-    this.name = 'GotifyConfigError';
+    this.name = "GotifyConfigError";
     this.field = field;
   }
 }
@@ -55,9 +66,13 @@ export class GotifyWebSocketError extends Error {
   readonly cause: string;
   readonly code?: string;
 
+  /**
+   * @param cause - WebSocket 断开、连接失败或协议错误的可读描述。
+   * @param code - 插件内部错误分类，用于状态上报和测试断言。
+   */
   constructor(cause: string, code?: string) {
-    super(`Gotify WebSocket error: ${cause}${code ? ` (code: ${code})` : ''}`);
-    this.name = 'GotifyWebSocketError';
+    super(`Gotify WebSocket error: ${cause}${code ? ` (code: ${code})` : ""}`);
+    this.name = "GotifyWebSocketError";
     this.cause = cause;
     this.code = code;
   }
@@ -70,9 +85,13 @@ export class GotifyWebSocketError extends Error {
 export class GotifyTimeoutError extends Error {
   readonly timeoutMs: number;
 
+  /**
+   * @param timeoutMs - 本次操作允许的最大等待时间，单位毫秒。
+   * @param operation - 超时的操作名称，例如 `fetch request`。
+   */
   constructor(timeoutMs: number, operation: string) {
     super(`Gotify timeout: ${operation} exceeded ${timeoutMs}ms`);
-    this.name = 'GotifyTimeoutError';
+    this.name = "GotifyTimeoutError";
     this.timeoutMs = timeoutMs;
   }
 }

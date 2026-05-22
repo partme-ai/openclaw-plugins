@@ -3,11 +3,21 @@
  * Agent 回复通过 Producer 发送到目标 Topic。
  */
 
-import type { ChannelOutboundAdapter, ChannelOutboundContext } from "openclaw/plugin-sdk";
 import { DEFAULT_ROCKERMQ_CONFIG } from "./config.js";
 import { getRockermqChannelConfig } from "./state.js";
 import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { buildOutboundTopic } from "./routing/topic-router.js";
+
+type ChannelOutboundContext = {
+  to: string;
+  text: string;
+};
+
+type ChannelOutboundAdapter = {
+  deliveryMode: "direct";
+  textChunkLimit?: number;
+  sendText(ctx: ChannelOutboundContext): Promise<{ channel: string; messageId: string }>;
+};
 
 /**
  * 发送 OpenClaw 文本回复到 RocketMQ。

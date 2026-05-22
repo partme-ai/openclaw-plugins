@@ -6,6 +6,9 @@ import { parseEnvelopeAny } from "../core/envelope.js";
 import { parseMessageAny } from "../core/message.js";
 import type { ParsedTransportPayload, PayloadParseMode } from "../core/types.js";
 
+/**
+ * 重新导出该模块的公共类型，方便调用方从 barrel 或实现文件按需导入。
+ */
 export type { ParsedTransportPayload, PayloadParseMode } from "../core/types.js";
 
 /**

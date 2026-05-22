@@ -5,7 +5,7 @@
 import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
-  createChannelDispatch,
+  dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
@@ -47,7 +47,7 @@ export async function dispatchInboundMessage(message: InboundMessage): Promise<v
     agentId: message.agentId,
   });
 
-  await createChannelDispatch({
+  await dispatchChannelMessage({
     mode: "reply-pipeline",
     runtime: runtime as unknown as BridgePluginRuntime,
     channel: "stomp-tcp",

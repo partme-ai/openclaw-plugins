@@ -12,7 +12,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { GatewayRuntime, EventMessagesConfig } from "../types.js";
-import { triggerConfigReload, safeConfigUpdate } from "../utils/config-reload.js";
+import { triggerConfigReload, safeConfigUpdate } from "../ics-utils/config-reload.js";
 
 /**
  * 创建事件消息配置处理器

@@ -40,7 +40,7 @@ flowchart LR
   - **Files**: `message-sdk/src/core/channel-class.ts`, `dispatch/types.ts`  
   - **Verify**: `cd openclaw-plugins/extensions/message-sdk && pnpm test`
 
-- [x] **T0-03** 实现 `createWireDispatch`（thin wrapper over `dispatchInbound`）  
+- [x] **T0-03** 实现 `dispatchWireMessage`（thin wrapper over `dispatchInbound`）  
   - **Phase**: P0  
   - **复杂度**: M  
   - **Files**: `message-sdk/src/dispatch/wire-dispatch.ts`, `bridge/inbound-bridge.ts`, `dispatch/wire-dispatch.test.ts`  
@@ -68,16 +68,16 @@ flowchart LR
 
 ## Phase 1 — Gotify
 
-- [x] **T1-01** 抽取 `createTranscriptDispatch`（runAssembled 编排）  
+- [x] **T1-01** 抽取 `dispatchTranscriptTurn`（runAssembled 编排）  
   - **Phase**: P1  
   - **复杂度**: L  
   - **Files**: `message-sdk/src/dispatch/transcript-dispatch.ts`, `dispatch/transcript-dispatch.test.ts`, `gotify/src/channel.ts`  
   - **Verify**: `cd openclaw-plugins/extensions/message-sdk && pnpm test && cd ../gotify && pnpm test`
 
-- [x] **T1-02** Gotify 入站接入 `ingress/normalize` wrapper  
+- [x] **T1-02** Gotify 入站改为插件本地 mapper，SDK 仅保留通用 `normalizeIngress`  
   - **Phase**: P1  
   - **复杂度**: M  
-  - **Files**: `message-sdk/src/ingress/normalize.ts`, `adapters/gotify.ts`, `gotify/src/channel.ts`  
+  - **Files**: `message-sdk/src/ingress/normalize.ts`, `gotify/src/routing/message-mapper.ts`, `gotify/src/channel.ts`  
   - **Verify**: `cd openclaw-plugins/extensions/gotify && pnpm test`
 
 - [x] **T1-03** Gotify dedup 文档化 + 统一 export 路径  
@@ -152,7 +152,7 @@ flowchart LR
 
 ---
 
-## Phase 3 — MQ Unified Ingress / Stack
+## Phase 3 — MQ Unified Ingress / Queue
 
 - [x] **T3-01** SDK：`ingress/wire-ingress.ts` helper（parse + dedup hook）  
   - **Phase**: P3  
@@ -178,10 +178,10 @@ flowchart LR
   - **Files**: `rabbitmq/src/inbound.ts`, `redis-stream/src/inbound.ts`, `rocketmq/src/inbound.ts`, `stomp/src/inbound.ts`, `web-mqtt/src/inbound.ts`, `web-stomp/src/inbound.ts`  
   - **Verify**: `cd openclaw-plugins/extensions/rabbitmq && pnpm test; cd ../redis-stream && pnpm test; cd ../rocketmq && pnpm test; cd ../stomp && pnpm test; cd ../web-mqtt && pnpm test; cd ../web-stomp && pnpm test`
 
-- [x] **T3-05** 可选 stack 开关（默认 off）  
+- [x] **T3-05** 可选 queue 开关（默认 off）  
   - **Phase**: P3  
   - **复杂度**: M  
-  - **Files**: `message-sdk/src/stack/inbound-stack.ts`, `dispatch/wire-dispatch.ts`, `mqtt/src/inbound.ts`  
+  - **Files**: `message-sdk/src/queue/inbound-message-queue.ts`, `dispatch/wire-dispatch.ts`, `mqtt/src/inbound.ts`  
   - **Verify**: `cd openclaw-plugins/extensions/message-sdk && pnpm test && cd ../mqtt && pnpm test`
 
 - [x] **T3-06** MQ dedup 用法统一文档  
@@ -190,7 +190,7 @@ flowchart LR
   - **Files**: `message-sdk/README.md`, `doc/im-channels/mqtt/`（若存在则更新）  
   - **Verify**: 文档 review
 
-- [x] **T3-07** 负向验证：MQ **仍** 使用 `createWireDispatch`，无 `runAssembled`  
+- [x] **T3-07** 负向验证：MQ **仍** 使用 `dispatchWireMessage` / `dispatchChannelMessage`，无 `runAssembled`  
   - **Phase**: P3  
   - **复杂度**: S  
   - **Files**: `mqtt/src/inbound.ts`, `mqtt/src/inbound.test.ts`  
@@ -206,10 +206,10 @@ flowchart LR
   - **Files**: `message-sdk/docs/feishu-hooks-mapping.md`, `doc/im-channels/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md`  
   - **Verify**: 文档 review
 
-- [x] **T4-02** SDK：`adapters/feishu/reply-hooks.ts` 示例实现  
+- [x] **T4-02** Feishu hooks 边界确认：渠道专属 reply hooks 留 Feishu 插件本地  
   - **Phase**: P4  
   - **复杂度**: L  
-  - **Files**: `message-sdk/src/adapters/feishu/reply-hooks.ts`, `adapters/feishu/reply-hooks.test.ts`  
+  - **Files**: `message-sdk/docs/feishu-hooks-mapping.md`  
   - **Verify**: `cd openclaw-plugins/extensions/message-sdk && pnpm test`
 
 - [x] **T4-03** SDK：ingress policy hooks 对齐 Feishu `channel-ingress-runtime`  

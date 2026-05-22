@@ -4,7 +4,7 @@
 
 import type { ReplyRoute, UnifiedMessage } from "../core/types.js";
 
-/** 插件 Runtime 中 channel 子集（与 openclaw-peer.d.ts 一致）。 */
+/** 插件 Runtime 中 channel 子集，用于 bridge 层避免直接耦合宿主完整 Runtime。 */
 export interface BridgePluginRuntime {
   config: Record<string, unknown>;
   channel: {
@@ -31,6 +31,11 @@ export interface BridgePluginRuntime {
   };
 }
 
+/**
+ * InboundBridgeParams 描述 bridge 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface InboundBridgeParams {
   runtime: BridgePluginRuntime;
   channel: string;
@@ -43,6 +48,11 @@ export interface InboundBridgeParams {
   extra?: Record<string, unknown>;
 }
 
+/**
+ * ReplyBridgeParams 描述 bridge 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface ReplyBridgeParams {
   runtime: BridgePluginRuntime;
   channel: string;
@@ -56,6 +66,11 @@ export interface ReplyBridgeParams {
   agentId?: string;
 }
 
+/**
+ * ReplyBridgeResult 描述 bridge 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface ReplyBridgeResult {
   dispatcher: unknown;
   replyOptions: Record<string, unknown>;

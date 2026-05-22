@@ -18,6 +18,90 @@ import type {
 
 export const DEFAULT_ACCOUNT_ID = "default";
 
+export type CustomAgentAccountConfig = {
+    openKfId?: string;
+    agentId?: string;
+    agentMapping?: Record<string, string>;
+};
+
+export type CustomAgentMappingsConfig = {
+    accounts?: Record<string, CustomAgentAccountConfig>;
+};
+
+export type AccountMapping = {
+    name?: string;
+    avatar?: string;
+    agentId?: string;
+};
+
+export type ServicerInfo = {
+    userid: string;
+    status: number;
+    department_id?: number;
+};
+
+const customAgentMappings: Record<string, string> = {};
+const accountMappings = new Map<string, AccountMapping>();
+const servicerCache = new Map<string, ServicerInfo[]>();
+
+export function loadCustomAgentMappings(config: CustomAgentMappingsConfig): void {
+    for (const key of Object.keys(customAgentMappings)) {
+        delete customAgentMappings[key];
+    }
+
+    for (const account of Object.values(config.accounts ?? {})) {
+        const openKfId = account.openKfId?.trim();
+        const defaultAgentId = account.agentId?.trim();
+        if (openKfId && defaultAgentId) {
+            customAgentMappings[openKfId] = defaultAgentId;
+        }
+
+        for (const [kfId, agentId] of Object.entries(account.agentMapping ?? {})) {
+            const normalizedKfId = kfId.trim();
+            const normalizedAgentId = agentId.trim();
+            if (normalizedKfId && normalizedAgentId) {
+                customAgentMappings[normalizedKfId] = normalizedAgentId;
+            }
+        }
+    }
+}
+
+export function getCustomAgentMappings(): Record<string, string> {
+    return { ...customAgentMappings };
+}
+
+export function setCustomAgentMapping(openKfId: string, agentId: string): void {
+    const normalizedKfId = openKfId.trim();
+    const normalizedAgentId = agentId.trim();
+    if (!normalizedKfId || !normalizedAgentId) return;
+    customAgentMappings[normalizedKfId] = normalizedAgentId;
+}
+
+export function registerAccountMapping(openKfId: string, mapping: AccountMapping): void {
+    const normalizedKfId = openKfId.trim();
+    if (!normalizedKfId) return;
+    accountMappings.set(normalizedKfId, { ...mapping });
+}
+
+export function getAccountMapping(openKfId: string): AccountMapping | undefined {
+    const mapping = accountMappings.get(openKfId.trim());
+    return mapping ? { ...mapping } : undefined;
+}
+
+export function cacheServicers(openKfId: string, servicers: ServicerInfo[]): void {
+    const normalizedKfId = openKfId.trim();
+    if (!normalizedKfId) return;
+    servicerCache.set(normalizedKfId, servicers.map((servicer) => ({ ...servicer })));
+}
+
+export function getCachedServicers(openKfId: string): ServicerInfo[] {
+    return (servicerCache.get(openKfId.trim()) ?? []).map((servicer) => ({ ...servicer }));
+}
+
+export function getOnlineServicers(openKfId: string): ServicerInfo[] {
+    return getCachedServicers(openKfId).filter((servicer) => servicer.status === 0);
+}
+
 export type WecomAccountConflict = {
     type: "duplicate_bot_token" | "duplicate_bot_aibotid" | "duplicate_agent_id";
     accountId: string;

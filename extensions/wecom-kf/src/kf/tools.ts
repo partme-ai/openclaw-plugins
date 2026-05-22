@@ -19,7 +19,7 @@ type ToolDef = {
   label: string;
   description: string;
   parameters: Record<string, unknown>;
-  execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ type: "text"; text: string }> }>;
+  execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }>;
 };
 
 type ResolvedAgent = {
@@ -72,8 +72,8 @@ async function callKfApi<T extends { errcode?: number; errmsg?: string }>(
   return (await res.json()) as T;
 }
 
-function textResult(text: string): { content: Array<{ type: "text"; text: string }> } {
-  return { content: [{ type: "text", text }] };
+function textResult(text: string): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> } {
+  return { content: [{ type: "text", text }], details: {} };
 }
 
 // ── Tool implementations ──

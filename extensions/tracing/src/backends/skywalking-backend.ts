@@ -20,6 +20,15 @@ const DEFAULT_SERVICE_NAME = "openclaw-gateway";
 /** 缓冲区大小 */
 const BUFFER_SIZE = 1000;
 
+type SkyWalkingAgent = {
+  start(options?: {
+    serviceName?: string;
+    serviceInstance?: string;
+    collectorAddress?: string;
+  }): void;
+  flush(): Promise<unknown> | null;
+};
+
 /**
  * SkyWalking 追踪后端
  * 通过 skywalking-backend-js 库与 SkyWalking OAP 服务器通信
@@ -39,7 +48,7 @@ export class SkyWalkingBackend implements TracingBackend {
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   
   /** SkyWalking agent 引用 */
-  private agent: typeof import("skywalking-backend-js") | null = null;
+  private agent: SkyWalkingAgent | null = null;
   
   /**
    * 初始化 SkyWalking 后端
@@ -51,9 +60,10 @@ export class SkyWalkingBackend implements TracingBackend {
     
     try {
       const skywalking = await import("skywalking-backend-js");
-      this.agent = skywalking;
+      const agent = (skywalking as unknown as { default: SkyWalkingAgent }).default;
+      this.agent = agent;
       
-      skywalking.agent.start({
+      agent.start({
         serviceName: this.serviceName,
         serviceInstance: this.serviceInstance,
         collectorAddress: this.collectorAddress,
@@ -109,63 +119,8 @@ export class SkyWalkingBackend implements TracingBackend {
       return;
     }
     
-    const spansToSend = this.buffer.splice(0);
-    
-    for (const span of spansToSend) {
-      this.sendSpanToSkyWalking(span);
-    }
-  }
-  
-  /**
-   * 发送单个 Span 到 SkyWalking
-   * 
-   * @param span - 待发送的 Span
-   */
-  private sendSpanToSkyWalking(span: Span): void {
-    if (!this.agent) {
-      return;
-    }
-    
-    const entrySpan = this.createEntrySpan(span);
-    if (entrySpan) {
-      this.agent.exit({
-        spanId: entrySpan.spanId,
-        operationName: span.name,
-        peer: span.attributes["peer"] as string || "",
-        entrySpan,
-      });
-      this.agent.finish(entrySpan);
-    }
-  }
-  
-  /**
-   * 创建 SkyWalking Span
-   * 
-   * @param span - 内部 Span
-   * @returns SkyWalking SpanContext
-   */
-  private createEntrySpan(span: Span): { spanId: number; traceId: string } | null {
-    if (!this.agent) {
-      return null;
-    }
-    
-    try {
-      const spanId = Math.floor(Math.random() * 1000000);
-      
-      this.agent.entry({
-        spanId,
-        operationName: span.name,
-        peer: span.attributes["peer"] as string || "",
-      });
-      
-      return {
-        spanId,
-        traceId: span.traceId,
-      };
-    } catch (error) {
-      console.error("[openclaw-tracing] Error creating SkyWalking span:", error);
-      return null;
-    }
+    this.buffer.splice(0);
+    await this.agent.flush();
   }
   
   /**

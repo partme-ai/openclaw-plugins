@@ -21,7 +21,7 @@ import { isUserActionAllowed } from "./transport/acl.js";
 import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
-  createChannelDispatch,
+  dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
@@ -141,7 +141,7 @@ async function dispatchToRuntime(
 
   const outboundFormat = getMqttChannelConfig()?.payload?.outboundFormat ?? "envelope";
 
-  await createChannelDispatch({
+  await dispatchChannelMessage({
     mode: "reply-pipeline",
     runtime: rt as unknown as BridgePluginRuntime,
     channel: "mqtt",

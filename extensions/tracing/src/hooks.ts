@@ -171,7 +171,7 @@ export function registerTracingPluginHooks(api: OpenClawPluginApi, hookCtx: Trac
   api.on(
     "session_end",
     (_event, ctx) => {
-      clearActiveTrace(readString(ctx.sessionKey), readString(ctx.runId));
+      clearActiveTrace(readString(ctx.sessionKey));
     },
     hookOpts,
   );

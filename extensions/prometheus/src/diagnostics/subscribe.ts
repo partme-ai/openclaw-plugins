@@ -148,7 +148,7 @@ export async function startDiagnosticsSubscription(params: {
           exporter: "openclaw-prometheus",
           signal: "metrics",
           status: "started",
-          reason: "sdk-fallback",
+          reason: "configured",
         });
       }
       params.logger.info("openclaw-prometheus: subscribed via onInternalDiagnosticEvent (SDK fallback)");

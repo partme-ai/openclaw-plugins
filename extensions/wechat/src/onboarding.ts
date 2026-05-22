@@ -27,7 +27,7 @@ const { setupAdapter, setupWizard } = createSimpleChannelSetup({
   ],
   textInputs: [
     {
-      inputKey: "baseUrl",
+      inputKey: "url",
       configKey: "baseUrl",
       message: "微信 API Base URL",
       placeholder: DEFAULT_BASE_URL,

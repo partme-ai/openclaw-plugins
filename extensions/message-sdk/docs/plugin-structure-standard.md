@@ -14,8 +14,8 @@
 
 | Archetype | 插件 | SDK 入站 | SDK dispatch |
 |-----------|------|----------|--------------|
-| Wire MQ | mqtt, rabbitmq, rocketmq, redis-stream, stomp, web-mqtt, web-stomp | `normalizeWireIngress` | `createChannelDispatch` |
-| Transcript IM | gotify | `normalizeGotifyIngress` | `createTranscriptDispatch` |
+| Wire MQ | mqtt, rabbitmq, rocketmq, redis-stream, stomp, web-mqtt, web-stomp | `normalizeWireIngress` | `dispatchChannelMessage` |
+| Transcript IM | gotify | 插件本地 mapper → `UnifiedMessage` | `dispatchTranscriptTurn` |
 
 ## Wire MQ 标准目录
 
@@ -32,8 +32,7 @@ extensions/{plugin}/
 │   ├── outbound.ts         # publish 封装
 │   ├── transport/          # 协议栈
 │   ├── routing/            # topic-router, session-mapper
-│   ├── setup/              # onboarding, setup-entry, channel-setup-factory
-│   └── openclaw-sdk.d.ts
+│   └── setup/              # onboarding, setup-entry, channel-setup-factory
 ├── test/
 │   └── inbound.test.ts
 ├── openclaw.plugin.json
@@ -58,7 +57,7 @@ src/
 
 | 文件 | SDK 依赖 |
 |------|----------|
-| `inbound.ts` | `normalizeWireIngress` + `createChannelDispatch` |
+| `inbound.ts` | `normalizeWireIngress` + `dispatchChannelMessage` |
 | `outbound.ts` | 无 |
 | `test/inbound.test.ts` | mock SDK，含 mode 回归 |
 
@@ -77,7 +76,7 @@ Wire 插件入站 MUST 通过 SDK 调用 OpenClaw `resolveAgentRoute`：
 ```typescript
 import {
   normalizeWireIngress,
-  createChannelDispatch,
+  dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
@@ -92,7 +91,7 @@ const { agentId, sessionKey } = await resolveChannelDispatchIdentity(rt as Bridg
 
 upsertSessionContext(sessionKey, { peerId, replyTopic, ... }); // 不生成 key
 
-await createChannelDispatch({
+await dispatchChannelMessage({
   mode: config.dispatch?.mode ?? "reply-pipeline",
   runtime: rt,
   channel, accountId, peerId, text, agentId, sessionKey,
@@ -100,7 +99,7 @@ await createChannelDispatch({
 });
 ```
 
-`createChannelDispatch` 在未提供 `sessionKey` 时也会自动 resolve，但插件侧应显式 resolve 后写入 `session-mapper`。
+`dispatchChannelMessage` 在未提供 `sessionKey` 时也会自动 resolve，但插件侧应显式 resolve 后写入 `session-mapper`。
 
 ## inbound.ts 模板
 
@@ -108,7 +107,7 @@ await createChannelDispatch({
 const parsed = normalizeWireIngress({ rawPayload, mode, channel, idempotencyKey, idempotency });
 if (!parsed.accepted) return;
 
-await createChannelDispatch({
+await dispatchChannelMessage({
   mode: config.dispatch?.mode ?? "reply-pipeline",
   runtime: rt,
   channel, accountId, peerId, text: parsed.text, agentId, sessionKey,
@@ -131,7 +130,7 @@ await createChannelDispatch({
 import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
-  createChannelDispatch,
+  dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";

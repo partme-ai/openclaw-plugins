@@ -166,8 +166,7 @@ openclaw-mtls/
 ├── src/
 │   ├── index.ts              # Plugin entry — registerHttpRoute middleware
 │   ├── types.ts              # Type definitions
-│   ├── stats.ts             # Statistics tracking
-│   └── openclaw-sdk.d.ts   # OpenClaw type declarations
+│   └── stats.ts             # Statistics tracking
 ├── test/
 │   └── mtls.test.ts         # Unit tests
 ├── .github/workflows/

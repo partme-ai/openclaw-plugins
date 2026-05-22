@@ -1,8 +1,14 @@
+/**
+ * wire-dispatch.test.ts — 通道消息派发 facade，统一 Wire、Transcript、embedded-agent 与 subagent 路径。
+ *
+ * 这些测试锁定该模块的公开契约，防止命名、归一化、幂等或派发路径在重构时发生行为回退。
+ */
+
 import { describe, expect, it, vi } from "vitest";
-import { createWireDispatch } from "./wire-dispatch.js";
+import { dispatchWireMessage } from "./wire-dispatch.js";
 import * as inboundBridge from "../bridge/inbound-bridge.js";
 
-describe("createWireDispatch", () => {
+describe("dispatchWireMessage", () => {
   it("delegates to dispatchInbound with identical params and result", async () => {
     const mockResult = {
       ctx: { text: "hello" },
@@ -22,7 +28,7 @@ describe("createWireDispatch", () => {
       reply: { deliver: vi.fn() },
     };
 
-    const result = await createWireDispatch(params);
+    const result = await dispatchWireMessage(params);
 
     expect(dispatchInbound).toHaveBeenCalledTimes(1);
     expect(dispatchInbound).toHaveBeenCalledWith(params);
@@ -38,7 +44,7 @@ describe("createWireDispatch", () => {
       replyOptions: {},
     } as never);
 
-    await createWireDispatch(
+    await dispatchWireMessage(
       {
         runtime: {} as never,
         channel: "mqtt",

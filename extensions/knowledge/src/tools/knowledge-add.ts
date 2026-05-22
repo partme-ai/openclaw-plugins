@@ -11,6 +11,10 @@ import { basename, extname } from 'node:path';
 import { stat } from 'node:fs/promises';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type OpenClawPluginToolContext = any;
+type AgentToolResult<T = unknown> = {
+  content: { type: 'text'; text: string }[];
+  details: T | undefined;
+};
 
 import { getOrCreateStore } from '../hooks.js';
 import { indexDocument } from '../indexer/scheduler.js';
@@ -46,12 +50,19 @@ function isSessionNamespace(namespace: string): boolean {
 // 响应构造
 // ===================================================================
 
-function successResult(data: Record<string, unknown>) {
-  return jsonResult({ success: true, ...data });
+function toolResult(data: Record<string, unknown>): AgentToolResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data) }],
+    details: undefined,
+  };
 }
 
-function failedResult(message: string) {
-  return jsonResult({ success: false, error: message });
+function successResult(data: Record<string, unknown>): AgentToolResult {
+  return toolResult({ success: true, ...data });
+}
+
+function failedResult(message: string): AgentToolResult {
+  return toolResult({ success: false, error: message });
 }
 
 // ===================================================================

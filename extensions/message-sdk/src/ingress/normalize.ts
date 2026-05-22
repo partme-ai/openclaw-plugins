@@ -1,46 +1,46 @@
 /**
- * 入站归一化 wrapper（渠道 payload → UnifiedMessage）。
+ * 入站归一化 wrapper（插件已解析字段 → UnifiedMessage）。
+ *
+ * 渠道协议解析留在各渠道插件内；SDK 只接收已归一化的 channel/account/peer/text
+ * 等通用字段，避免在基础库中沉淀 gotify/feishu/wecom 等渠道专属 adapter。
  */
 
-import { gotifyStreamToUnified, type GotifyStreamLike } from "../adapters/gotify.js";
+import { buildMessage } from "../core/message.js";
 import type { UnifiedMessage } from "../core/types.js";
 
-export interface NormalizeGotifyIngressParams {
-  accountId: string;
-  peerId: string;
-  agentId?: string;
-  message: GotifyStreamLike;
-}
-
 /**
- * Gotify 入站 wrapper：包装现有 gotifyStreamToUnified，供 ingress/ 统一调用。
+ * NormalizeIngressParams 描述 ingress 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
  */
-export function normalizeGotifyIngress(params: NormalizeGotifyIngressParams): UnifiedMessage {
-  return gotifyStreamToUnified(params);
+export interface NormalizeIngressParams {
+  channel: string;
+  accountId: string;
+  userId?: string;
+  peerId?: string;
+  agentId?: string;
+  text: string;
+  chatType?: "direct" | "group";
+  direction?: "inbound" | "outbound";
+  metadata?: Record<string, unknown>;
 }
 
-/** 当前支持的 ingress normalize 渠道 discriminated union。 */
-export type NormalizeIngressParams =
-  | {
-      channel: "gotify";
-      accountId: string;
-      peerId: string;
-      agentId?: string;
-      payload: GotifyStreamLike;
-    };
-
 /**
- * 统一 ingress normalize 入口（按 channel 分流至渠道 adapter）。
+ * 统一 ingress normalize 入口。
  */
 export function normalizeIngress(params: NormalizeIngressParams): UnifiedMessage {
-  if (params.channel === "gotify") {
-    return normalizeGotifyIngress({
-      accountId: params.accountId,
-      peerId: params.peerId,
-      agentId: params.agentId,
-      message: params.payload,
-    });
+  const userId = params.userId ?? params.peerId;
+  if (!userId?.trim()) {
+    throw new Error("normalizeIngress requires userId or peerId");
   }
-
-  throw new Error(`Unsupported channel for normalizeIngress: ${(params as { channel: string }).channel}`);
+  return buildMessage({
+    channel: params.channel,
+    accountId: params.accountId,
+    userId: userId.trim(),
+    agentId: params.agentId,
+    text: params.text,
+    chatType: params.chatType ?? "direct",
+    direction: params.direction ?? "inbound",
+    metadata: params.metadata,
+  });
 }

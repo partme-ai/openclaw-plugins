@@ -5,7 +5,7 @@
 import {
   createIdempotencyCache,
   normalizeWireIngress,
-  createChannelDispatch,
+  dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
   type IdempotencyCache,
@@ -68,7 +68,7 @@ export async function dispatchWebhookInbound(
       accountId: params.accountId,
       peerId: params.peerId,
     });
-    await createChannelDispatch({
+    await dispatchChannelMessage({
       mode: "reply-pipeline",
       runtime: bridgeRuntime,
       channel: params.channel,

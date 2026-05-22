@@ -10,6 +10,12 @@
 
 export type ASRErrorKind = "timeout" | "auth" | "request" | "response_parse" | "service" | "empty_result";
 
+/**
+ * ASRError 表示 asr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class ASRError extends Error {
   constructor(
     message: string,
@@ -22,6 +28,12 @@ export class ASRError extends Error {
   }
 }
 
+/**
+ * ASRTimeoutError 表示 asr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class ASRTimeoutError extends ASRError {
   constructor(provider: string, public readonly timeoutMs: number) {
     super(`ASR request timeout after ${timeoutMs}ms`, "timeout", provider, true);
@@ -29,6 +41,12 @@ export class ASRTimeoutError extends ASRError {
   }
 }
 
+/**
+ * ASRAuthError 表示 asr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class ASRAuthError extends ASRError {
   constructor(provider: string, message: string, public readonly status?: number) {
     super(message, "auth", provider, false);
@@ -36,6 +54,12 @@ export class ASRAuthError extends ASRError {
   }
 }
 
+/**
+ * ASRRequestError 表示 asr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class ASRRequestError extends ASRError {
   constructor(provider: string, message: string, public readonly status?: number) {
     super(message, "request", provider, true);
@@ -43,6 +67,12 @@ export class ASRRequestError extends ASRError {
   }
 }
 
+/**
+ * ASRResponseParseError 表示 asr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class ASRResponseParseError extends ASRError {
   constructor(provider: string, public readonly bodySnippet: string) {
     super("ASR response is not valid JSON", "response_parse", provider, false);
@@ -50,6 +80,12 @@ export class ASRResponseParseError extends ASRError {
   }
 }
 
+/**
+ * ASRServiceError 表示 asr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class ASRServiceError extends ASRError {
   constructor(provider: string, message: string, public readonly serviceCode?: number) {
     super(message, "service", provider, false);
@@ -57,6 +93,12 @@ export class ASRServiceError extends ASRError {
   }
 }
 
+/**
+ * ASREmptyResultError 表示 asr 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class ASREmptyResultError extends ASRError {
   constructor(provider: string) {
     super("ASR returned empty transcript", "empty_result", provider, false);

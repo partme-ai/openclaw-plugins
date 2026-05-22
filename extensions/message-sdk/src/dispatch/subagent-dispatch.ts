@@ -14,7 +14,7 @@ import type { SubagentDispatchParams, SubagentRuntime } from "./types.js";
 /**
  * 通过 subagent 执行 prompt；可选将回复经 deliver 发回传输层。
  */
-export async function createSubagentDispatch(
+export async function dispatchSubagentMessage(
   params: SubagentDispatchParams,
 ): Promise<{ runId: string; delivered: boolean }> {
   const rt = params.runtime as SubagentRuntime;

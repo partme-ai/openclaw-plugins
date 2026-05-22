@@ -236,8 +236,7 @@ openclaw-mqtt/
 │   ├── topic-router.ts       # Topic 路由解析
 │   ├── session-mapper.ts     # 会话上下文映射
 │   ├── mqtt-config.ts        # 配置解析
-│   ├── runtime.ts            # 运行时
-│   └── openclaw-peer.d.ts   # openclaw 类型占位
+│   └── runtime.ts            # 运行时
 ├── scripts/
 │   └── test-client.ts       # 集成测试客户端
 ├── openclaw.plugin.json     # 插件元数据

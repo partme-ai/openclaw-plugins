@@ -447,14 +447,14 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
   if (typeof api.registerGatewayMethod === "function") {
     api.registerGatewayMethod(
       "openclaw.prometheus.status",
-      async (_req, res) => {
+      async ({ respond }) => {
         const store = getRuntimeStore();
         store.registry.inc("openclaw_gateway_operator_rpc_requests_total", 1, {
           help: "Gateway operator RPC invocations handled by openclaw-prometheus",
           type: "counter",
           labels: { method: "openclaw.prometheus.status" },
         });
-        res.respond(true, {
+        respond(true, {
           ok: true,
           plugin: PLUGIN_ID,
           version: PLUGIN_VERSION,
@@ -468,7 +468,7 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
   // Alertmanager 集成：配置告警规则
   api.registerGatewayMethod(
     "openclaw.alertmanager.configure",
-    async (req, res) => {
+    async ({ respond }) => {
       const { registry } = getRuntimeStore();
 
       const alertRules = [
@@ -496,7 +496,7 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
         help: "Alertmanager alert rules configured",
       });
 
-      res.respond(true, {
+      respond(true, {
         configured: alertRules.length,
         active: alertRules.length,
         rules: alertRules,

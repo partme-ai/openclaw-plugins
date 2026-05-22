@@ -4,8 +4,6 @@
 
 export {
   normalizeIngress,
-  normalizeGotifyIngress,
-  type NormalizeGotifyIngressParams,
   type NormalizeIngressParams,
 } from "./normalize.js";
 

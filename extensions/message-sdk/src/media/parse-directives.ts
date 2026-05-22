@@ -17,6 +17,11 @@ export function expandHomePath(filePath: string, homedir = os.homedir() || "/roo
   return trimmed;
 }
 
+/**
+ * ParseMediaDirectivesResult 是 media 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type ParseMediaDirectivesResult = {
   /** 剥离 MEDIA: 行后的文本 */
   text: string;

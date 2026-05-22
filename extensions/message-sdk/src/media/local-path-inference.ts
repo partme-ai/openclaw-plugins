@@ -22,6 +22,11 @@ export function extractLocalFilePathsFromText(text: string): string[] {
   return Array.from(found);
 }
 
+/**
+ * ExtractLocalImagePathsParams 是 media 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type ExtractLocalImagePathsParams = {
   text: string;
   /** 安全约束：路径必须也出现在入站原文中 */

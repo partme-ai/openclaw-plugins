@@ -493,7 +493,7 @@ describe('dispatchInboundMessage', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it('uses createTranscriptDispatch path via turn.runAssembled for Control UI transcript', async () => {
+  it('uses dispatchTranscriptTurn path via turn.runAssembled for Control UI transcript', async () => {
     const resolveAgentRoute = vi.fn().mockResolvedValue({
       agentId: 'main',
       sessionKey: 'agent:main:gotify:default:direct:4',

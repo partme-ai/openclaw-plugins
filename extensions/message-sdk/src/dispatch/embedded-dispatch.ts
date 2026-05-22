@@ -14,7 +14,7 @@ import type { EmbeddedAgentDispatchParams, EmbeddedAgentRuntime } from "./types.
 /**
  * 通过 embedded agent 执行 prompt 并将回复经 deliver 发回传输层。
  */
-export async function createEmbeddedAgentDispatch(
+export async function dispatchEmbeddedAgentMessage(
   params: EmbeddedAgentDispatchParams,
 ): Promise<{ runId: string; delivered: boolean }> {
   const rt = params.runtime as EmbeddedAgentRuntime;

@@ -132,7 +132,7 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
         applySetupAccountConfigPatch({
           cfg,
           channelKey: channel,
-          accountId,
+          accountId: accountId ?? "default",
           patch: { [spec.configKey]: resolvedValue },
         }),
     })),
@@ -148,7 +148,7 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
         applySetupAccountConfigPatch({
           cfg,
           channelKey: channel,
-          accountId,
+          accountId: accountId ?? "default",
           patch: { [spec.configKey]: value.trim() },
         }),
     })),
@@ -306,7 +306,7 @@ export function createEmbeddedBrokerChannelSetup(params: {
         applySetupAccountConfigPatch({
           cfg,
           channelKey: params.channel,
-          accountId,
+          accountId: accountId ?? "default",
           patch: { enabled: true },
         }),
         params.channel,

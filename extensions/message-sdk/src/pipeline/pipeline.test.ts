@@ -1,3 +1,9 @@
+/**
+ * pipeline.test.ts — 传输 payload parse/serialize 以及回复内容拆分管线。
+ *
+ * 这些测试锁定该模块的公开契约，防止命名、归一化、幂等或派发路径在重构时发生行为回退。
+ */
+
 import { describe, it, expect } from "vitest";
 import { buildMessage } from "../core/message.js";
 import { parseEnvelope, serializeEnvelope, buildEnvelope } from "../core/envelope.js";

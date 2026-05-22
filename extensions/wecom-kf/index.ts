@@ -45,7 +45,7 @@ const plugin = {
     }
 
     // ── ICS REST API routes (merged from @partme.ai/ics) ──
-    const runtime = api.runtime;
+    const runtime = api.runtime as unknown as Parameters<typeof createKnowledgeHandler>[0];
     api.registerHttpRoute({ path: "/ics/agents", handler: createKnowledgeHandler(runtime), auth: "plugin" });
     api.registerHttpRoute({ path: "/ics/config/bindings", handler: createBindingsHandler(runtime), auth: "plugin" });
     api.registerHttpRoute({ path: "/ics/config/event-messages", handler: createEventMessagesHandler(runtime), auth: "plugin" });
@@ -65,11 +65,11 @@ const plugin = {
     api.on("before_prompt_build", async (_event, ctx) => {
       // Only inject for wecom-kf channel KF surface sessions
       if (ctx.channelId !== "wecom-kf") return;
-      if (ctx.surface !== "wecom-kf") return;
+      if ((ctx as Record<string, unknown>).surface !== "wecom-kf") return;
 
       // Load dialogue context
       try {
-        const sessionExt = (api as Record<string, unknown>).session as Record<string, unknown> | undefined;
+        const sessionExt = (api as Record<string, unknown>).session as { state?: { get?: (namespace: string) => Promise<Record<string, unknown> | undefined> } } | undefined;
         const getState = sessionExt?.state?.get as
           ((namespace: string) => Promise<Record<string, unknown> | undefined>) | undefined;
         const dialogueCtx = await getState?.(DIALOGUE_SESSION_NAMESPACE);

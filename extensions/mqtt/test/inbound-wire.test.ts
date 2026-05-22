@@ -26,8 +26,8 @@ vi.mock("../src/transport/acl.js", () => ({ isUserActionAllowed: vi.fn(() => tru
 import * as bridge from "@partme.ai/openclaw-message-sdk/bridge";
 
 describe("mqtt inbound wire path", () => {
-  it("uses createWireDispatch not runAssembled", async () => {
-    expect(bridge.createWireDispatch).toBeTypeOf("function");
-    expect((bridge as { createTranscriptDispatch?: unknown }).createTranscriptDispatch).toBeUndefined();
+  it("uses dispatchWireMessage not runAssembled", async () => {
+    expect(bridge.dispatchWireMessage).toBeTypeOf("function");
+    expect((bridge as { dispatchTranscriptTurn?: unknown }).dispatchTranscriptTurn).toBeUndefined();
   });
 });

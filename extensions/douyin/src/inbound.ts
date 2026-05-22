@@ -11,7 +11,7 @@ import {
   isRequestBodyLimitError,
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,
   normalizeWireIngress,
-  createChannelDispatch,
+  dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "./runtime-api.js";
@@ -97,7 +97,7 @@ export function createDouyinPluginHttpHandler(params: {
         },
       );
 
-      await createChannelDispatch({
+      await dispatchChannelMessage({
         mode: "reply-pipeline",
         runtime: runtime as unknown as BridgePluginRuntime,
         channel: "douyin",

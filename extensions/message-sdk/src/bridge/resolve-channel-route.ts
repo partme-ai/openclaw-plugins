@@ -1,5 +1,5 @@
 /**
- * 统一封装 OpenClaw resolveAgentRoute，供 Wire 插件与 createChannelDispatch 使用。
+ * 统一封装 OpenClaw resolveAgentRoute，供 Wire 插件与 dispatchChannelMessage 使用。
  */
 
 import type { BridgePluginRuntime } from "./types.js";

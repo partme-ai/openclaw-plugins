@@ -18,7 +18,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { GatewayRuntime, StatsOverview } from "../types.js";
-import { readJsonlFile, resolveWorkspacePath } from "../utils/file-ops.js";
+import { readJsonlFile, resolveWorkspacePath } from "../ics-utils/file-ops.js";
 
 /** 缓存的统计数据 */
 let cachedStats: StatsOverview | null = null;

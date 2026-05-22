@@ -5,15 +5,14 @@
  * 否则退回到带前缀的 console 方法。
  */
 
-/* eslint-disable no-console */
-
 const PREFIX = "[openclaw-redis-stream]";
 
 type LogFn = (message: string, ...args: unknown[]) => void;
 
 let _info: LogFn = (msg, ...args) => console.log(`${PREFIX} ${msg}`, ...args);
 let _warn: LogFn = (msg, ...args) => console.warn(`${PREFIX} ${msg}`, ...args);
-let _error: LogFn = (msg, ...args) => console.error(`${PREFIX} ${msg}`, ...args);
+let _error: LogFn = (msg, ...args) =>
+  console.error(`${PREFIX} ${msg}`, ...args);
 
 export const logger = {
   info(msg: string, ...args: unknown[]): void {
@@ -33,5 +32,3 @@ export const logger = {
     if (opts.error) _error = opts.error;
   },
 };
-
-/* eslint-enable no-console */

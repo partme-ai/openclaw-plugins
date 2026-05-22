@@ -4,14 +4,24 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { importOpenClawPluginSdk } from "../openclaw-loader.js";
+import { importOpenClawPluginSdk } from "../openclaw/loader.js";
 
+/**
+ * PersistentDedupeCheckOptions 是 dedup 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type PersistentDedupeCheckOptions = {
   namespace?: string;
   now?: number;
   onDiskError?: (error: unknown) => void;
 };
 
+/**
+ * PersistentDedupeOptions 是 dedup 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type PersistentDedupeOptions = {
   ttlMs: number;
   memoryMaxSize: number;
@@ -20,6 +30,11 @@ export type PersistentDedupeOptions = {
   onDiskError?: (error: unknown) => void;
 };
 
+/**
+ * PersistentDedupe 是 dedup 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type PersistentDedupe = {
   checkAndRecord: (key: string, options?: PersistentDedupeCheckOptions) => Promise<boolean>;
   hasRecent: (key: string, options?: PersistentDedupeCheckOptions) => Promise<boolean>;

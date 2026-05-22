@@ -8,7 +8,10 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
-import type { OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
+import type {
+  OpenClawPluginApi,
+  PluginRuntime,
+} from "openclaw/plugin-sdk/core";
 import { redisStreamChannel } from "./channel.js";
 import { getStats } from "./transport/server.js";
 import { resolveRedisChannelConfig, redactUrl } from "./config.js";
@@ -18,7 +21,8 @@ import { getSessionStats } from "./routing/session-mapper.js";
 export default defineChannelPluginEntry({
   id: "openclaw-redis-stream",
   name: "Redis Stream",
-  description: "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
+  description:
+    "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
 
   plugin: redisStreamChannel,
 
@@ -28,15 +32,18 @@ export default defineChannelPluginEntry({
 
   registerCliMetadata(api: OpenClawPluginApi) {
     api.registerCli(
-      () => ({
+      () => {
+        // Redis Stream 目前只声明 CLI 元数据；命令实现由后续 CLI surface 接入。
+      },
+      {
         descriptors: [
           {
             name: "redis-stream",
             description: "Redis Stream channel status",
+            hasSubcommands: false,
           },
         ],
-      }),
-      { lazy: true },
+      },
     );
   },
 
@@ -48,7 +55,9 @@ export default defineChannelPluginEntry({
       match: "prefix",
       async handler(_req: IncomingMessage, res: ServerResponse) {
         const s = getStats();
-        res.writeHead(s.connected ? 200 : 503, { "Content-Type": "application/json" });
+        res.writeHead(s.connected ? 200 : 503, {
+          "Content-Type": "application/json",
+        });
         res.end(
           JSON.stringify({
             ok: true,

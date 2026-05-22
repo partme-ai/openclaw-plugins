@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-27 enterprise plugins for [OpenClaw](https://github.com/partme-ai/openclaw) — an AI agent gateway. Each plugin is an independent npm package under `@partme.ai/<name>`. The monorepo uses pnpm workspaces; every plugin in `extensions/` is self-contained with zero cross-plugin dependencies (message-sdk is the sole exception — a shared library, not a plugin).
+28 enterprise plugins for [OpenClaw](https://github.com/partme-ai/openclaw) — an AI agent gateway. Each plugin is an independent npm package under `@partme.ai/<name>`. The monorepo uses pnpm workspaces; every plugin in `extensions/` is self-contained with zero cross-plugin dependencies (message-sdk is the sole exception — a shared library, not a plugin).
 
 ## Commands
 

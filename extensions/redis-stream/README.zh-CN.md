@@ -200,7 +200,6 @@ openclaw-redis-stream/
     ├── redis-stream-config.ts  # 配置解析 + 默认值
     ├── redis-stream-server.ts  # Redis 传输层：Pub/Sub + Stream
     ├── setup-entry.ts     # 轻量级 setup 入口
-    ├── openclaw-sdk.d.ts  # Peer dependency 类型桩
     ├── dm-scope.test.ts
     ├── config.test.ts
     ├── topic-router.test.ts

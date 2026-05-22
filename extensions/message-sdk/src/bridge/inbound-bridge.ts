@@ -6,10 +6,20 @@ import { buildMessage } from "../core/message.js";
 import type { InboundBridgeParams, ReplyBridgeParams, ReplyBridgeResult } from "./types.js";
 import { createReplyHandler } from "./reply-bridge.js";
 
+/**
+ * DispatchInboundParams 描述 bridge 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface DispatchInboundParams extends InboundBridgeParams {
   reply: Omit<ReplyBridgeParams, "runtime" | "channel" | "accountId" | "peerId">;
 }
 
+/**
+ * DispatchInboundResult 描述 bridge 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface DispatchInboundResult extends ReplyBridgeResult {
   ctx: Record<string, unknown>;
 }

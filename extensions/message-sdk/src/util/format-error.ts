@@ -2,7 +2,7 @@
  * 统一错误文案（对齐 OpenClaw error-runtime）。
  */
 
-import { importOpenClawPluginSdk } from "../openclaw-loader.js";
+import { importOpenClawPluginSdk } from "../openclaw/loader.js";
 
 /**
  * 将 unknown 错误格式化为可读字符串。

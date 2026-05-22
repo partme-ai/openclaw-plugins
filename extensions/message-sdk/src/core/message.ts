@@ -10,28 +10,64 @@ import type {
 } from "./types.js";
 import type { BuildMessageParams } from "./types.js";
 
+/**
+ * 重新导出该模块的公共类型，方便调用方从 barrel 或实现文件按需导入。
+ */
 export type { BuildMessageParams } from "./types.js";
 
+/**
+ * IMAGE_EXTENSIONS 是 core 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const IMAGE_EXTENSIONS = new Set([
   "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico", "tiff", "heic", "heif",
 ]);
 
+/**
+ * VIDEO_EXTENSIONS 是 core 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const VIDEO_EXTENSIONS = new Set([
   "mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v",
 ]);
 
+/**
+ * AUDIO_EXTENSIONS 是 core 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const AUDIO_EXTENSIONS = new Set([
   "mp3", "wav", "ogg", "m4a", "amr", "flac", "aac", "opus", "wma",
 ]);
 
+/**
+ * DOCUMENT_EXTENSIONS 是 core 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const DOCUMENT_EXTENSIONS = new Set([
   "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "md", "rtf", "odt", "ods",
 ]);
 
+/**
+ * ARCHIVE_EXTENSIONS 是 core 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const ARCHIVE_EXTENSIONS = new Set([
   "zip", "rar", "7z", "tar", "gz", "tgz", "bz2",
 ]);
 
+/**
+ * detectMediaKind 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function detectMediaKind(fileName: string): MediaKind {
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
   if (IMAGE_EXTENSIONS.has(ext)) return "image";
@@ -42,6 +78,14 @@ export function detectMediaKind(fileName: string): MediaKind {
   return "other";
 }
 
+/**
+ * detectMediaKindFromMime 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function detectMediaKindFromMime(mimeType: string): MediaKind {
   const m = mimeType.toLowerCase();
   if (m.startsWith("image/")) return "image";
@@ -63,14 +107,38 @@ export function detectMediaKindFromMime(mimeType: string): MediaKind {
   return "other";
 }
 
+/**
+ * serializeMessage 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function serializeMessage(msg: UnifiedMessage): string {
   return JSON.stringify(msg);
 }
 
+/**
+ * deserializeMessage 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function deserializeMessage(json: string): UnifiedMessage {
   return JSON.parse(json) as UnifiedMessage;
 }
 
+/**
+ * parseMessage 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function parseMessage(input: string): UnifiedMessage | null {
   try {
     const obj = JSON.parse(input);
@@ -83,6 +151,14 @@ export function parseMessage(input: string): UnifiedMessage | null {
   }
 }
 
+/**
+ * parseMessageAny 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function parseMessageAny(input: string | Buffer | Uint8Array | unknown): UnifiedMessage | null {
   if (typeof input === "string") return parseMessage(input);
   if (Buffer.isBuffer(input)) return parseMessage(input.toString("utf-8"));
@@ -97,12 +173,27 @@ export function parseMessageAny(input: string | Buffer | Uint8Array | unknown): 
   return null;
 }
 
+/**
+ * generateTraceId 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function generateTraceId(): string {
   const ts = Date.now().toString(36);
   const r = Math.random().toString(36).slice(2, 10);
   return `${ts}-${r}`;
 }
 
+/**
+ * generateMessageId 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function generateMessageId(channel?: string): string {
   const prefix = channel ? `${channel}-` : "";
   const ts = Date.now().toString(36);
@@ -110,6 +201,14 @@ export function generateMessageId(channel?: string): string {
   return `${prefix}${ts}-${r}`;
 }
 
+/**
+ * buildMessage 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function buildMessage(params: BuildMessageParams): UnifiedMessage {
   const hasMedia = (params.media?.length ?? 0) > 0;
   const hasText = Boolean(params.text);
@@ -140,6 +239,14 @@ export function buildMessage(params: BuildMessageParams): UnifiedMessage {
   };
 }
 
+/**
+ * buildTextMessage 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function buildTextMessage(
   channel: string,
   accountId: string,
@@ -150,6 +257,14 @@ export function buildTextMessage(
   return buildMessage({ channel, accountId, userId, text, chatType });
 }
 
+/**
+ * buildMediaMessage 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function buildMediaMessage(
   channel: string,
   accountId: string,
@@ -161,6 +276,14 @@ export function buildMediaMessage(
   return buildMessage({ channel, accountId, userId, text, media, chatType });
 }
 
+/**
+ * createMediaRef 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function createMediaRef(url: string, fileName?: string, sizeBytes?: number): MediaReference {
   return {
     url,
@@ -171,6 +294,14 @@ export function createMediaRef(url: string, fileName?: string, sizeBytes?: numbe
   };
 }
 
+/**
+ * createImageRef 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function createImageRef(url: string, base64?: string, fileName?: string): MediaReference {
   const ext = fileName?.split(".").pop()?.toLowerCase() ?? "png";
   return {
@@ -182,6 +313,14 @@ export function createImageRef(url: string, base64?: string, fileName?: string):
   };
 }
 
+/**
+ * extractPlainText 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function extractPlainText(msg: UnifiedMessage): string {
   let text = msg.text;
 
@@ -216,6 +355,14 @@ export function extractPlainText(msg: UnifiedMessage): string {
   return text.trim();
 }
 
+/**
+ * extractMarkdown 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function extractMarkdown(msg: UnifiedMessage): string {
   let md = msg.markdown ?? msg.text;
 
@@ -232,6 +379,14 @@ export function extractMarkdown(msg: UnifiedMessage): string {
   return md.trim();
 }
 
+/**
+ * parseMediaFromText 是 core 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function parseMediaFromText(text: string): MediaReference[] {
   const media: MediaReference[] = [];
   const seen = new Set<string>();
@@ -267,6 +422,12 @@ export function parseMediaFromText(text: string): MediaReference[] {
   return media;
 }
 
+/**
+ * MessageParseError 表示 core 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class MessageParseError extends Error {
   readonly rawInput: string;
 

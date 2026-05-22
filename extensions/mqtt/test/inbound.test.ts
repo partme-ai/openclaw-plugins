@@ -9,9 +9,9 @@ import { describe, expect, it } from "vitest";
 const pluginRoot = dirname(fileURLToPath(import.meta.url));
 
 describe("mqtt inbound", () => {
-  it("uses createChannelDispatch, resolveChannelDispatchIdentity, and forbids direct agent APIs", () => {
+  it("uses dispatchChannelMessage, resolveChannelDispatchIdentity, and forbids direct agent APIs", () => {
     const source = readFileSync(join(pluginRoot, "../src/inbound.ts"), "utf-8");
-    expect(source).toContain("createChannelDispatch");
+    expect(source).toContain("dispatchChannelMessage");
     expect(source).toContain("resolveChannelDispatchIdentity");
     expect(source).not.toMatch(/runEmbeddedAgent/);
     expect(source).not.toMatch(/subagent\.run/);

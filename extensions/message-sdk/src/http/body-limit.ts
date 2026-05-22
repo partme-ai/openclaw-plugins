@@ -3,16 +3,37 @@
  */
 
 import type { IncomingMessage } from "node:http";
-import { importOpenClawPluginSdk } from "../openclaw-loader.js";
+import { importOpenClawPluginSdk } from "../openclaw/loader.js";
 
+/**
+ * DEFAULT_WEBHOOK_MAX_BODY_BYTES 是 http 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const DEFAULT_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
+/**
+ * DEFAULT_WEBHOOK_BODY_TIMEOUT_MS 是 http 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const DEFAULT_WEBHOOK_BODY_TIMEOUT_MS = 30_000;
 
+/**
+ * RequestBodyLimitErrorCode 是 http 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type RequestBodyLimitErrorCode =
   | "PAYLOAD_TOO_LARGE"
   | "REQUEST_BODY_TIMEOUT"
   | "CONNECTION_CLOSED";
 
+/**
+ * RequestBodyLimitError 表示 http 模块中的可实例化能力。
+ *
+ * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
+ * 不要依赖内部字段布局。
+ */
 export class RequestBodyLimitError extends Error {
   readonly code: RequestBodyLimitErrorCode;
   readonly statusCode: number;
@@ -30,6 +51,14 @@ export class RequestBodyLimitError extends Error {
   }
 }
 
+/**
+ * isRequestBodyLimitError 是 http 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export function isRequestBodyLimitError(
   error: unknown,
   code?: RequestBodyLimitErrorCode,
@@ -38,6 +67,11 @@ export function isRequestBodyLimitError(
   return !code || error.code === code;
 }
 
+/**
+ * ReadRequestBodyOptions 是 http 模块的公开类型别名。
+ *
+ * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ */
 export type ReadRequestBodyOptions = {
   maxBytes?: number;
   timeoutMs?: number;

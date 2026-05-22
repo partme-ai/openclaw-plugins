@@ -236,8 +236,7 @@ openclaw-mqtt/
 │   ├── topic-router.ts       # Topic routing
 │   ├── session-mapper.ts     # Session context mapping
 │   ├── mqtt-config.ts        # Config parsing
-│   ├── runtime.ts            # Runtime
-│   └── openclaw-peer.d.ts   # openclaw type placeholder
+│   └── runtime.ts            # Runtime
 ├── scripts/
 │   └── test-client.ts       # Integration test client
 ├── openclaw.plugin.json     # Plugin metadata

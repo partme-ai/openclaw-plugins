@@ -7,6 +7,11 @@ export interface IdempotencyCacheOptions {
   maxEntries: number;
 }
 
+/**
+ * IdempotencyCache 描述 dedup 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface IdempotencyCache {
   /** 若已见过且未过期则返回 true。 */
   has(key: string): boolean;

@@ -61,9 +61,15 @@ export function chunkText(
       index++;
     }
 
-    // 计算下一次起始位置（含重叠）
-    startOffset = endOffset - overlapChars;
-    if (startOffset < 0) startOffset = 0;
+    // 已经消费到文本末尾时必须立即退出；否则 overlap 会把起点回退，
+    // 下一轮仍然切到同一个 endOffset，导致长文本最后一段无限循环。
+    if (endOffset >= text.length) {
+      break;
+    }
+
+    // 计算下一次起始位置（含重叠）。当 overlapChars 过大时，保证起点
+    // 至少前进 1 个字符，避免配置错误造成非递增循环。
+    startOffset = Math.max(endOffset - overlapChars, startOffset + 1);
   }
 
   return chunks;

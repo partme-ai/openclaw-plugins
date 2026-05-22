@@ -21,10 +21,18 @@ export type { ChannelPlugin, ChannelConfigSchema } from "openclaw/plugin-sdk";
 export type { ChannelAccountSnapshot } from "openclaw/plugin-sdk";
 export type { ChannelGatewayContext } from "openclaw/plugin-sdk";
 export type { WizardPrompter } from "openclaw/plugin-sdk";
-export type {
-  ChannelOutboundAdapter,
-  ChannelOutboundContext,
-} from "openclaw/plugin-sdk";
+export type ChannelOutboundContext = {
+  cfg: import("openclaw/plugin-sdk").OpenClawConfig;
+  to: string;
+  text: string;
+  mediaUrl?: string;
+  accountId?: string | null;
+};
+export type ChannelOutboundAdapter = {
+  deliveryMode: "direct";
+  textChunkLimit?: number;
+  sendText(ctx: ChannelOutboundContext): Promise<unknown>;
+};
 
 // ─── 值：emptyPluginConfigSchema（主入口始终导出） ───
 export { emptyPluginConfigSchema } from "openclaw/plugin-sdk";

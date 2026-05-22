@@ -2,7 +2,7 @@
  * openmem plugin — MemorySearchManager and HTTP bridge tests (mock fetch).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createOpenMemSearchManager } from './index.ts'
+import { createOpenMemSearchManager } from './index.js'
 
 describe('createOpenMemSearchManager', () => {
   beforeEach(() => {
@@ -31,7 +31,7 @@ describe('createOpenMemSearchManager', () => {
     expect(results).toHaveLength(1)
     expect(results[0].snippet).toContain('JSONL')
     expect(results[0].score).toBe(0.88)
-    expect(results[0].source).toBe('memory:abc')
+    expect(results[0].source).toBe('memory')
 
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, init] = fetchMock.mock.calls[0]
@@ -65,12 +65,12 @@ describe('createOpenMemSearchManager', () => {
     expect(results).toEqual([])
   })
 
-  it('status reports http openmem provider', () => {
+  it('status reports OpenMem provider', () => {
     const manager = createOpenMemSearchManager('http://localhost:3317')
     const st = manager.status()
     expect(st.provider).toBe('openmem')
-    expect(st.backend).toBe('http')
-    expect(st.sources).toContain('openmem')
+    expect(st.backend).toBe('builtin')
+    expect(st.sources).toContain('memory')
   })
 
   it('probeEmbeddingAvailability returns not ok', async () => {

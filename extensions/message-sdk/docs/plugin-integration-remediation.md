@@ -5,7 +5,7 @@
 
 ## 总览矩阵
 
-| 插件 | Archetype | createChannelDispatch | 目录规范 | 测试 |
+| 插件 | Archetype | dispatchChannelMessage | 目录规范 | 测试 |
 |------|-----------|----------------------|----------|------|
 | mqtt | Wire | [x] | [x] | [x] |
 | rabbitmq | Wire | [x] | [x] | [x] |
@@ -20,8 +20,8 @@
 
 ## mqtt
 
-- [x] `inbound.ts` 使用 `createChannelDispatch`（mode=`reply-pipeline`）
-- [x] 删除直接 `createWireDispatch` 调用（改经 channel dispatch）
+- [x] `inbound.ts` 使用 `dispatchChannelMessage`（mode=`reply-pipeline`）
+- [x] 删除直接 `dispatchWireMessage` 调用（改经 channel dispatch）
 - [x] 目录：`transport/`（broker, qos, acl, audit, gateway-mqtt）
 - [x] 目录：`routing/`（topic-router, session-mapper）
 - [x] 目录：`setup/`（onboarding, setup-entry, channel-setup-factory）
@@ -32,7 +32,7 @@
 ## rabbitmq
 
 - [x] 删除 `dispatchViaEmbeddedAgent` / `dispatchViaSubagent`
-- [x] `inbound.ts` 使用 `createChannelDispatch`（三 mode）
+- [x] `inbound.ts` 使用 `dispatchChannelMessage`（三 mode）
 - [x] 目录重组（同 mqtt 模板，保留 re-export shim）
 - [x] `test/inbound.test.ts` 三 mode mock 测试
 - [x] Verify: `cd extensions/rabbitmq && pnpm test`
@@ -41,39 +41,39 @@
 
 - [x] 合并 `rockermq-*` typo 文件 → `config.ts` / `state.ts`（canonical re-export）
 - [x] 删除插件内 embedded/subagent dispatch
-- [x] `inbound.ts` 使用 `createChannelDispatch`
+- [x] `inbound.ts` 使用 `dispatchChannelMessage`
 - [x] 目录重组（保留 re-export shim）
 - [x] Verify: `cd extensions/rocketmq && pnpm test && pnpm exec tsc --noEmit`
 
 ## redis-stream
 
-- [x] `inbound.ts` 使用 `createChannelDispatch`
+- [x] `inbound.ts` 使用 `dispatchChannelMessage`
 - [x] 测试从 `src/` 迁至 `test/`
 - [x] 目录重组（transport/routing/setup + shim）
 - [x] Verify: `cd extensions/redis-stream && pnpm test`（`functional.test.ts` 需 `REDIS_URL`）
 
 ## stomp
 
-- [x] `inbound.ts` 使用 `createChannelDispatch`
+- [x] `inbound.ts` 使用 `dispatchChannelMessage`
 - [x] 新增 `outbound.ts` 薄层
 - [x] `transport/server.ts`
 - [x] Verify: `cd extensions/stomp && pnpm test`
 
 ## web-mqtt
 
-- [x] `inbound.ts` 使用 `createChannelDispatch`
+- [x] `inbound.ts` 使用 `dispatchChannelMessage`
 - [x] 目录重组
 - [x] Verify: `cd extensions/web-mqtt && pnpm test`
 
 ## web-stomp
 
-- [x] `inbound.ts` 使用 `createChannelDispatch`
+- [x] `inbound.ts` 使用 `dispatchChannelMessage`
 - [x] 目录重组 + `outbound.ts`
 - [x] Verify: `cd extensions/web-stomp && pnpm test`
 
 ## gotify
 
-- [x] 保持 `createTranscriptDispatch`（不引入 Wire mode）
+- [x] 保持 `dispatchTranscriptTurn`（不引入 Wire mode）
 - [x] `transport/`、`routing/`、`policy/`、`setup/`
 - [x] 测试迁至 `test/`
 - [x] Verify: `cd extensions/gotify && pnpm test`

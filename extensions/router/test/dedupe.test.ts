@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { RouteDedupeCache, buildRouteDedupeKey } from "./dedupe.ts";
+import { RouteDedupeCache, buildRouteDedupeKey } from "../src/dedupe.ts";
 
 describe("RouteDedupeCache", () => {
   let cache: RouteDedupeCache;

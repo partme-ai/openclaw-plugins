@@ -4,10 +4,17 @@
  * 完整的 ChannelPlugin：生命周期、账户管理、出站发送、状态快照、dmScope 会话隔离。
  */
 
-import { getStats, startRedisServer, stopRedisServer } from "./transport/server.js";
+import {
+  getStats,
+  startRedisServer,
+  stopRedisServer,
+} from "./transport/server.js";
 import { resolveRedisChannelConfig, redactUrl } from "./config.js";
 import { redisStreamOutbound } from "./outbound.js";
-import { redisStreamSetupAdapter, redisStreamSetupWizard } from "./onboarding.js";
+import {
+  redisStreamSetupAdapter,
+  redisStreamSetupWizard,
+} from "./onboarding.js";
 
 export const DEFAULT_ACCOUNT_ID = "default";
 
@@ -20,7 +27,8 @@ export const redisStreamChannel = {
     label: "Redis Stream",
     selectionLabel: "Redis Stream (Pub/Sub + Stream)",
     docsPath: "/channels/redis-stream",
-    blurb: "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
+    blurb:
+      "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
     aliases: ["redis-stream", "redisstream", "redis-channel"],
     order: 92,
   },
@@ -43,7 +51,9 @@ export const redisStreamChannel = {
     },
 
     resolveAccount: (cfg: Record<string, unknown>) => {
-      const rawChannel = ((cfg.channels as Record<string, unknown> | undefined) ?? {})["redis-stream"] as
+      const rawChannel = ((cfg.channels as
+        | Record<string, unknown>
+        | undefined) ?? {})["redis-stream"] as
         | Record<string, unknown>
         | undefined;
       return {
@@ -57,17 +67,22 @@ export const redisStreamChannel = {
     defaultAccountId: () => DEFAULT_ACCOUNT_ID,
 
     isConfigured: (cfg: Record<string, unknown>) => {
-      const rawChannel = ((cfg.channels as Record<string, unknown> | undefined) ?? {})["redis-stream"] as
+      const rawChannel = ((cfg.channels as
+        | Record<string, unknown>
+        | undefined) ?? {})["redis-stream"] as
         | Record<string, unknown>
         | undefined;
       return Boolean(rawChannel?.url);
     },
 
     unconfiguredReason: (cfg: Record<string, unknown>) => {
-      const rawChannel = ((cfg.channels as Record<string, unknown> | undefined) ?? {})["redis-stream"] as
+      const rawChannel = ((cfg.channels as
+        | Record<string, unknown>
+        | undefined) ?? {})["redis-stream"] as
         | Record<string, unknown>
         | undefined;
-      if (!rawChannel?.url) return "Missing Redis connection URL (channels.redis-stream.url)";
+      if (!rawChannel?.url)
+        return "Missing Redis connection URL (channels.redis-stream.url)";
       return null;
     },
   },
@@ -94,7 +109,9 @@ export const redisStreamChannel = {
         });
 
         await new Promise<void>((resolve) => {
-          abortSignal.addEventListener("abort", () => resolve(), { once: true });
+          abortSignal.addEventListener("abort", () => resolve(), {
+            once: true,
+          });
         });
 
         await stopRedisServer();
@@ -108,7 +125,11 @@ export const redisStreamChannel = {
       }
     },
 
-    stopAccount: async ({ setStatus }: { setStatus: (status: Record<string, unknown>) => void }) => {
+    stopAccount: async ({
+      setStatus,
+    }: {
+      setStatus: (status: Record<string, unknown>) => void;
+    }) => {
       try {
         await stopRedisServer();
         setStatus?.({
@@ -144,7 +165,9 @@ export const redisStreamChannel = {
   status: {
     buildAccountSnapshot: (cfg: Record<string, unknown>) => {
       const config = resolveRedisChannelConfig(cfg);
-      const rawChannel = ((cfg.channels as Record<string, unknown> | undefined) ?? {})["redis-stream"] as
+      const rawChannel = ((cfg.channels as
+        | Record<string, unknown>
+        | undefined) ?? {})["redis-stream"] as
         | Record<string, unknown>
         | undefined;
       return {
@@ -165,7 +188,9 @@ export const redisStreamChannel = {
     },
 
     probeAccount: async (cfg: Record<string, unknown>) => {
-      const rawChannel = ((cfg.channels as Record<string, unknown> | undefined) ?? {})["redis-stream"] as
+      const rawChannel = ((cfg.channels as
+        | Record<string, unknown>
+        | undefined) ?? {})["redis-stream"] as
         | Record<string, unknown>
         | undefined;
       if (!rawChannel?.url) {

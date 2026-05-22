@@ -5,6 +5,9 @@
 import { serializeForTransport } from "../pipeline/serialize-payload.js";
 import type { ReplyBridgeParams, ReplyBridgeResult } from "./types.js";
 
+/**
+ * 重新导出该模块的公共类型，方便调用方从 barrel 或实现文件按需导入。
+ */
 export type { ReplyBridgeResult } from "./types.js";
 
 /**
