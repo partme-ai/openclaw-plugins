@@ -7,10 +7,8 @@ import type {
     OpenClawConfig,
     WizardPrompter,
 } from "openclaw/plugin-sdk";
-import {
-    DEFAULT_ACCOUNT_ID,
-    resolvePromptAccountId,
-} from "../compat/plugin-sdk-shim.js";
+import { promptAccountId } from "openclaw/plugin-sdk/setup";
+import { DEFAULT_ACCOUNT_ID, listWecomAccountIds, resolveDefaultWecomAccountId, resolveWecomAccount, resolveWecomAccounts } from "../config/index.js";
 
 // ─── 类型兼容 ───
 // v2026.3.2 使用 ChannelOnboardingAdapter / ChannelOnboardingDmPolicy（来自 onboarding-types.ts）
@@ -48,7 +46,6 @@ type ChannelOnboardingAdapter = {
         shouldPromptAccountIds: boolean;
     }) => Promise<{ cfg: OpenClawConfig; accountId?: string }>;
 };
-import { listWecomAccountIds, resolveDefaultWecomAccountId, resolveWecomAccount, resolveWecomAccounts } from "../config/index.js";
 import type { WecomConfig, WecomBotConfig, WecomAgentConfig, WecomDmConfig, WecomAccountConfig } from "../types/index.js";
 
 const channel = "wecom-kf" as const;
@@ -337,7 +334,6 @@ async function resolveOnboardingAccountId(params: {
     const override = params.accountOverride?.trim();
     let accountId = override || defaultAccountId;
     if (!override && params.shouldPromptAccountIds) {
-        const promptAccountId = await resolvePromptAccountId();
         accountId = await promptAccountId({
             cfg: params.cfg,
             prompter: params.prompter,

@@ -1,5 +1,5 @@
 import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { emptyPluginConfigSchema, ensureConfigHelpers } from "./src/compat/plugin-sdk-shim.js";
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 
 import { createKfCallbackHandler } from "./src/webhook/callback.js";
 import { setWecomRuntime } from "./src/runtime.js";
@@ -36,7 +36,6 @@ const plugin = {
   description: "OpenClaw WeCom KF (WeChat Work Customer Service) — KF callback + Control Tools; ICS/agents/skills optional",
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
-    void ensureConfigHelpers();
     void initKfSendGuardStore();
 
     setWecomRuntime(api.runtime);

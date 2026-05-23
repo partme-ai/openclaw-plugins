@@ -7,7 +7,7 @@ import type {
 import {
   deleteAccountFromConfigSection,
   setAccountEnabledInConfigSection,
-} from "./compat/plugin-sdk-shim.js";
+} from "openclaw/plugin-sdk/core";
 
 import {
   DEFAULT_ACCOUNT_ID,
