@@ -1,94 +1,112 @@
 import { describe, expect, it, vi } from "vitest";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import plugin from "./index.js";
+import { WEBHOOK_PATHS } from "./src/types/constants.js";
 
-describe("wecom plugin register", () => {
-  it("registers both recommended and legacy webhook route prefixes", () => {
-    const registerChannel = vi.fn();
-    const registerHttpRoute = vi.fn();
-    const registerTool = vi.fn();
-    const on = vi.fn();
-    const api = {
-      runtime: {},
-      registerChannel,
-      registerHttpRoute,
-      registerTool,
-      on,
-    } as unknown as OpenClawPluginApi;
+function createMockApi(config: OpenClawConfig = { channels: {} }) {
+  const registerChannel = vi.fn();
+  const registerHttpRoute = vi.fn();
+  const registerTool = vi.fn();
+  const on = vi.fn();
+  const api = {
+    runtime: { config },
+    registerChannel,
+    registerHttpRoute,
+    registerTool,
+    on,
+  } as unknown as OpenClawPluginApi;
+  return { api, registerChannel, registerHttpRoute, registerTool, on };
+}
+
+describe("wecom-kf plugin register", () => {
+  it("registers KF callback routes with dynamic webhookPath", () => {
+    const { api, registerChannel, registerHttpRoute } = createMockApi({
+      channels: {
+        "wecom-kf": {
+          webhookPath: "/custom/kf",
+          accounts: {
+            desk2: { webhookPath: "/kf/desk2" },
+          },
+        },
+      },
+    } as OpenClawConfig);
 
     plugin.register(api);
 
     expect(registerChannel).toHaveBeenCalledTimes(1);
-    expect(registerHttpRoute).toHaveBeenCalledTimes(2);
-    expect(registerHttpRoute).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: "/plugins/wecom-cs",
-        auth: "plugin",
-        match: "prefix",
-      }),
+
+    const registeredPaths = registerHttpRoute.mock.calls.map(
+      (call) => (call[0] as { path: string }).path,
     );
-    expect(registerHttpRoute).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: "/wecom-cs",
-        auth: "plugin",
-        match: "prefix",
-      }),
-    );
+
+    expect(registeredPaths).toContain("/custom/kf");
+    expect(registeredPaths).toContain("/kf/desk2");
+    expect(registeredPaths).toContain(WEBHOOK_PATHS.KF);
+    expect(registeredPaths).toContain("/plugins/wecom-kf");
+    expect(registeredPaths).not.toContain(WEBHOOK_PATHS.BOT_PLUGIN);
   });
 
-  it("registers wecom_cs_mcp tool", () => {
-    const registerChannel = vi.fn();
-    const registerHttpRoute = vi.fn();
-    const registerTool = vi.fn();
-    const on = vi.fn();
-    const api = {
-      runtime: {},
-      registerChannel,
-      registerHttpRoute,
-      registerTool,
-      on,
-    } as unknown as OpenClawPluginApi;
+  it("registers legacy wecom-cs routes only when legacyWecomCsEnabled=true", () => {
+    const { api, registerHttpRoute } = createMockApi({
+      channels: {
+        "wecom-kf": {
+          legacyWecomCsEnabled: true,
+        },
+      },
+    } as OpenClawConfig);
 
     plugin.register(api);
 
-    expect(registerTool).toHaveBeenCalledTimes(1);
+    const registeredPaths = registerHttpRoute.mock.calls.map(
+      (call) => (call[0] as { path: string }).path,
+    );
+
+    expect(registeredPaths).toContain(WEBHOOK_PATHS.BOT_PLUGIN);
+    expect(registeredPaths).toContain(WEBHOOK_PATHS.AGENT_PLUGIN);
+
+    const kfRoute = registerHttpRoute.mock.calls.find(
+      (call) => (call[0] as { path: string }).path === WEBHOOK_PATHS.KF,
+    );
+    const csBotRoute = registerHttpRoute.mock.calls.find(
+      (call) => (call[0] as { path: string }).path === WEBHOOK_PATHS.BOT_PLUGIN,
+    );
+    expect(kfRoute?.[0].handler).not.toBe(csBotRoute?.[0].handler);
+  });
+
+  it("registers wecom_kf_mcp tool", () => {
+    const { api, registerTool } = createMockApi();
+
+    plugin.register(api);
+
     expect(registerTool).toHaveBeenCalledWith(
       expect.anything(),
-      { name: "wecom_cs_mcp" },
+      expect.objectContaining({ name: "wecom_kf_mcp" }),
     );
   });
 
-  it("injects MEDIA prompt only for wecom-cs channel via before_prompt_build", () => {
-    const registerChannel = vi.fn();
-    const registerHttpRoute = vi.fn();
-    const registerTool = vi.fn();
-    const on = vi.fn();
-    const api = {
-      runtime: {},
-      registerChannel,
-      registerHttpRoute,
-      registerTool,
-      on,
-    } as unknown as OpenClawPluginApi;
+  it("registers wecom_kf control tools with isolated naming", () => {
+    const { api, registerTool } = createMockApi();
 
     plugin.register(api);
 
-    // Should register before_prompt_build listener
-    expect(on).toHaveBeenCalledTimes(1);
-    expect(on).toHaveBeenCalledWith("before_prompt_build", expect.any(Function));
+    const toolNames = registerTool.mock.calls.map((call) => (call[1] as { name: string }).name);
+    expect(toolNames).toContain("wecom_kf_list_servicers");
+    expect(toolNames).toContain("wecom_kf_list_accounts");
+    expect(toolNames).toContain("wecom_kf_get_account_link");
+    expect(toolNames).toContain("wecom_kf_transfer_session");
+  });
 
-    const handler = on.mock.calls[0][1];
+  it("injects MEDIA prompt only for wecom-kf channel via before_prompt_build", () => {
+    const { api, on } = createMockApi();
+    plugin.register(api);
 
-    // Non-wecom-cs channel: should return undefined (no injection)
-    expect(handler({}, { channelId: "telegram" })).toBeUndefined();
-    expect(handler({}, { channelId: "discord" })).toBeUndefined();
-    expect(handler({}, {})).toBeUndefined();
+    const mediaHandler = on.mock.calls.find((call) => call[0] === "before_prompt_build")?.[1];
+    expect(mediaHandler).toBeTypeOf("function");
 
-    // Wecom-cs channel: should return systemPrompt with MEDIA instructions
-    const result = handler({}, { channelId: "wecom-cs" });
+    expect(mediaHandler({}, { channelId: "telegram" })).toBeUndefined();
+
+    const result = mediaHandler({}, { channelId: "wecom-kf" });
     expect(result).toBeDefined();
     expect(result.systemPrompt).toContain("MEDIA:");
-    expect(result.systemPrompt).toContain("【发送文件/图片/视频/语音】");
-    expect(result.systemPrompt).toContain("【文件大小限制】");
   });
 });

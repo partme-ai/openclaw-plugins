@@ -6,11 +6,15 @@ import type {
 
 import {
   detectMode,
+  isLegacyWecomCsEnabled,
   listWecomAccountIds,
   resolveWecomAccount,
   resolveWecomAccountConflict,
+  resolveKfAccountWebhookPath,
 } from "./config/index.js";
 import { registerAgentWebhookTarget, registerWecomWebhookTarget } from "./monitor.js";
+import { primeWecomKfCursor } from "./callback.js";
+import { listKfAccountConfigs } from "./config/kf-callback.js";
 import type { ResolvedWecomAccount, WecomConfig } from "./types/index.js";
 import { WEBHOOK_PATHS } from "./types/constants.js";
 
@@ -20,6 +24,32 @@ type AccountRouteRegistryItem = {
 };
 
 const accountRouteRegistry = new Map<string, AccountRouteRegistryItem>();
+
+/** 避免多账号并行启动时重复预热 KF 游标 */
+let kfCursorPrimeStarted = false;
+
+async function primeKfCursorsOnStartup(
+  cfg: OpenClawConfig,
+  log?: (message: string) => void,
+): Promise<void> {
+  if (kfCursorPrimeStarted) return;
+  kfCursorPrimeStarted = true;
+
+  const kfAccounts = listKfAccountConfigs(cfg);
+  if (kfAccounts.length === 0) return;
+
+  for (const accountConfig of kfAccounts) {
+    try {
+      await primeWecomKfCursor({ accountConfig });
+    } catch (error) {
+      log?.(
+        `[wecom_kf] Cursor prime failed for openKfId=${accountConfig.openKfId ?? "default"}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+}
 
 function logRegisteredRouteSummary(
   ctx: ChannelGatewayContext<ResolvedWecomAccount>,
@@ -129,7 +159,7 @@ export async function monitorWecomProvider(
     });
     throw new Error(conflict.message);
   }
-  const mode = detectMode(cfg.channels?.["wecom-cs"] as WecomConfig | undefined);
+  const mode = detectMode(cfg.channels?.["wecom-kf"] as WecomConfig | undefined);
   const matrixMode = mode === "matrix";
   const bot = account.bot;
   const agent = account.agent;
@@ -152,9 +182,43 @@ export async function monitorWecomProvider(
     }
   }
 
-  if (!botConfigured && !agentConfigured) {
-    ctx.log?.warn(`[${account.accountId}] wecom-cs not configured; channel is idle`);
-    ctx.setStatus({ accountId: account.accountId, running: false, configured: false });
+  const legacyCsEnabled = isLegacyWecomCsEnabled(cfg);
+  const kfOnlyAccount = !botConfigured && !agentConfigured;
+
+  if (kfOnlyAccount) {
+    void primeKfCursorsOnStartup(cfg, (message) => ctx.log?.info(message));
+    const webhookPath = resolveKfAccountWebhookPath({
+      accountId: account.accountId,
+      webhookPath: account.config.webhookPath,
+    });
+    ctx.setStatus({
+      accountId: account.accountId,
+      running: true,
+      configured: account.configured,
+      webhookPath,
+      lastStartAt: Date.now(),
+    });
+    ctx.log?.info(`[${account.accountId}] wecom-kf KF-only mode; webhookPath=${webhookPath}`);
+    await waitForAbortSignal(ctx.abortSignal);
+    return;
+  }
+
+  if (!legacyCsEnabled) {
+    ctx.log?.warn(
+      `[${account.accountId}] 检测到 Bot/Agent 配置但 legacyWecomCsEnabled=false；` +
+        `仅 KF 回调生效。如需 wecom-cs 路径请设置 channels.wecom-kf.legacyWecomCsEnabled=true`,
+    );
+    void primeKfCursorsOnStartup(cfg, (message) => ctx.log?.info(message));
+    ctx.setStatus({
+      accountId: account.accountId,
+      running: true,
+      configured: account.configured,
+      webhookPath: resolveKfAccountWebhookPath({
+        accountId: account.accountId,
+        webhookPath: account.config.webhookPath,
+      }),
+      lastStartAt: Date.now(),
+    });
     await waitForAbortSignal(ctx.abortSignal);
     return;
   }
@@ -215,6 +279,8 @@ export async function monitorWecomProvider(
     if (shouldLogSummary) {
       logRegisteredRouteSummary(ctx, expectedRouteSummaryAccountIds);
     }
+
+    void primeKfCursorsOnStartup(cfg, (message) => ctx.log?.info(message));
 
     ctx.setStatus({
       accountId: account.accountId,

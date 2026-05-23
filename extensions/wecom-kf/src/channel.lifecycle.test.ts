@@ -96,8 +96,9 @@ function createLegacyBotConfig(params: {
 }): OpenClawConfig {
   return {
     channels: {
-      "wecom-cs": {
+      "wecom-kf": {
         enabled: true,
+        legacyWecomCsEnabled: true,
         bot: {
           token: params.token,
           encodingAESKey: params.encodingAESKey,
@@ -221,7 +222,7 @@ describe("wecomPlugin gateway lifecycle", () => {
   it("rejects startup when matrix account credentials conflict", async () => {
     const cfg = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
           accounts: {
             "acct-a": {

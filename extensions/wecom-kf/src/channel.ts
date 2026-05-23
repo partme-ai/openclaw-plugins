@@ -18,19 +18,20 @@ import {
 } from "./config/index.js";
 import type { ResolvedWecomAccount, WecomBotConfig } from "./types/index.js";
 import { monitorWecomProvider } from "./gateway-monitor.js";
-import { setWecomBotConfig, wecomOnboardingAdapter } from "./onboarding.js";
-import { WEBHOOK_PATHS } from "./types/constants.js";
+import { wecomKfOnboardingAdapter } from "./kf-onboarding.js";
+import { setWecomBotConfig } from "./onboarding.js";
+import { resolveKfAccountWebhookPath } from "./config/kf-routes.js";
 import { wecomOutbound } from "./outbound.js";
 
 const meta = {
-  id: "wecom-cs",
-  label: "WeCom CS",
-  selectionLabel: "WeCom CS (plugin)",
-  docsPath: "/channels/wecom-cs",
-  docsLabel: "wecom-cs",
-  blurb: "Enterprise WeCom intelligent bot (API mode) via encrypted webhooks + passive replies.",
-  aliases: ["wechatwork", "wework", "qywx", "企微", "企业微信"],
-  order: 85,
+  id: "wecom-kf",
+  label: "WeCom KF",
+  selectionLabel: "WeCom KF (plugin)",
+  docsPath: "/channels/wecom-kf",
+  docsLabel: "wecom-kf",
+  blurb: "WeChat Work customer service (KF) — multi-account AI agents via encrypted webhooks.",
+  aliases: ["wecom-kf", "wechat-kf", "微信客服", "企微客服"],
+  order: 86,
   quickstartAllowFrom: true,
 };
 
@@ -47,10 +48,10 @@ function normalizeWecomMessagingTarget(raw: string): string | undefined {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- onboarding 在 >=3.22 中已重命名为 setupWizard，
 // 但我们仍设置旧字段以兼容 <3.22 版本的 OpenClaw。
 export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, unknown> = {
-  id: "wecom-cs",
+  id: "wecom-kf",
   meta,
-  onboarding: wecomOnboardingAdapter as any,
-  setupWizard: wecomOnboardingAdapter as any,
+  onboarding: wecomKfOnboardingAdapter as any,
+  setupWizard: wecomKfOnboardingAdapter as any,
   setup: {
     resolveAccountId: ({ cfg, accountId }) => {
       return accountId?.trim() || resolveDefaultWecomAccountId(cfg as OpenClawConfig) || DEFAULT_ACCOUNT_ID;
@@ -96,7 +97,7 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
     nativeCommands: false,
     blockStreaming: true,
   },
-  reload: { configPrefixes: ["channels.wecom-cs"] },
+  reload: { configPrefixes: ["channels.wecom-kf"] },
   // NOTE: We intentionally avoid Zod -> JSON Schema conversion at plugin-load time.
   // Some OpenClaw runtime environments load plugin modules via jiti in a way that can
   // surface zod `toJSONSchema()` binding issues (e.g. `this` undefined leading to `_zod` errors).
@@ -115,7 +116,7 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
     setAccountEnabled: ({ cfg, accountId, enabled }) =>
       setAccountEnabledInConfigSection({
         cfg: cfg as OpenClawConfig,
-        sectionKey: "wecom-cs",
+        sectionKey: "wecom-kf",
         accountId,
         enabled,
         allowTopLevel: true,
@@ -123,7 +124,7 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
     deleteAccount: ({ cfg, accountId }) =>
       deleteAccountFromConfigSection({
         cfg: cfg as OpenClawConfig,
-        sectionKey: "wecom-cs",
+        sectionKey: "wecom-kf",
         accountId,
         clearBaseFields: ["bot", "agent"],
       }) as OpenClawConfig,
@@ -142,7 +143,6 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
         accountId: account.accountId,
       })?.message ?? "not configured",
     describeAccount: (account, cfg): ChannelAccountSnapshot => {
-      const matrixMode = account.accountId !== DEFAULT_ACCOUNT_ID;
       const conflict = resolveWecomAccountConflict({
         cfg: cfg as OpenClawConfig,
         accountId: account.accountId,
@@ -152,11 +152,10 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
         name: account.name,
         enabled: account.enabled,
         configured: account.configured && !conflict,
-        webhookPath: account.bot?.config
-          ? (matrixMode ? `${WEBHOOK_PATHS.BOT_PLUGIN}/${account.accountId}` : WEBHOOK_PATHS.BOT_PLUGIN)
-          : account.agent?.config
-            ? (matrixMode ? `${WEBHOOK_PATHS.AGENT_PLUGIN}/${account.accountId}` : WEBHOOK_PATHS.AGENT_PLUGIN)
-            : WEBHOOK_PATHS.BOT_PLUGIN,
+        webhookPath: resolveKfAccountWebhookPath({
+          accountId: account.accountId,
+          webhookPath: account.config.webhookPath,
+        }),
       };
     },
     resolveAllowFrom: ({ cfg, accountId }) => {
@@ -266,15 +265,10 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
         name: account.name,
         enabled: account.enabled,
         configured: account.configured && !conflict,
-        webhookPath: account.bot?.config
-          ? (account.accountId === DEFAULT_ACCOUNT_ID
-              ? WEBHOOK_PATHS.BOT_PLUGIN
-              : `${WEBHOOK_PATHS.BOT_PLUGIN}/${account.accountId}`)
-          : account.agent?.config
-            ? (account.accountId === DEFAULT_ACCOUNT_ID
-                ? WEBHOOK_PATHS.AGENT_PLUGIN
-                : `${WEBHOOK_PATHS.AGENT_PLUGIN}/${account.accountId}`)
-            : WEBHOOK_PATHS.BOT_PLUGIN,
+        webhookPath: resolveKfAccountWebhookPath({
+          accountId: account.accountId,
+          webhookPath: account.config.webhookPath,
+        }),
         running: runtime?.running ?? false,
         lastStartAt: runtime?.lastStartAt ?? null,
         lastStopAt: runtime?.lastStopAt ?? null,

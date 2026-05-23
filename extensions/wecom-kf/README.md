@@ -4,6 +4,8 @@
 
 **WeChat Work Customer Service — 企微客服 · 智能转人工 · 事件消息**
 
+> **范围声明**：本插件专注 **微信客服（KF）**，实现 KF 消息收发、转人工与 ICS 能力；**不含**企业微信客户联系 Bot/Agent（`wecom-cs`）主路径。Legacy Bot/Agent 可通过 `channels.wecom-kf.legacyWecomCsEnabled=true` 临时启用，Phase 2 将移除。
+
 ![Version](https://img.shields.io/badge/Version-0.1.0-blue) ![License](https://img.shields.io/badge/License-MIT-green)
 
 </div>

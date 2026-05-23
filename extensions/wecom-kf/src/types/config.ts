@@ -85,6 +85,8 @@ export type WecomAgentConfig = {
     corpId: string;
     /** 应用 Secret */
     corpSecret: string;
+    /** 企微 OpenAPI 基础 URL（KF 可选覆盖） */
+    apiBaseUrl?: string;
     /** 应用 ID（可选；不填时可接收回调，但主动发送需具备该字段） */
     agentId?: number | string;
     /** 回调 Token (企微后台「设置API接收」) */
@@ -135,15 +137,83 @@ export type WecomConfig = {
     routing?: WecomRoutingConfig;
     /** 动态 Agent 配置 */
     dynamicAgents?: WecomDynamicAgentsConfig;
+    /** 出站本地媒体 Path Guard 额外白名单根目录 */
+    mediaLocalRoots?: string[];
+};
+
+/**
+ * 微信客服（KF）单账号配置
+ * 位于 channels.wecom-kf.accounts.{accountKey}
+ */
+export type WecomKfAccountConfig = {
+    enabled?: boolean;
+    name?: string;
+    /** 自定义 KF 回调路径（默认 /wecom-kf 或 /wecom-kf/{accountId}） */
+    webhookPath?: string;
+    /** 企微 OpenAPI 基础 URL（默认 https://qyapi.weixin.qq.com） */
+    apiBaseUrl?: string;
+    /** Legacy wecom-cs bot/agent 子配置（历史路径，与 KF 字段可共存） */
+    bot?: WecomBotConfig;
+    agent?: WecomAgentConfig;
+    /** 企微客服账号 open_kfid（必填） */
+    openKfId?: string;
+    /** 绑定的 OpenClaw Agent id（必填） */
+    agentId?: string;
+    /** 可选：接待人员 userid → Agent id 覆盖 */
+    agentMapping?: Record<string, string>;
+    corpId?: string;
+    corpSecret?: string;
+    token?: string;
+    encodingAESKey?: string;
+    servicerUserId?: string;
+    welcomeText?: string;
+};
+
+/**
+ * 微信客服（KF）渠道顶层配置
+ * channels.wecom-kf — 独立于 wecom / wecom-cs
+ */
+export type WecomKfConfig = {
+    enabled?: boolean;
+    defaultAccount?: string;
+    /** 顶层 KF 回调路径（可被 accounts.*.webhookPath 覆盖） */
+    webhookPath?: string;
+    /** 企微 OpenAPI 基础 URL（默认 https://qyapi.weixin.qq.com） */
+    apiBaseUrl?: string;
+    /**
+     * 是否启用 Legacy wecom-cs Bot/Agent 回调与 monitor 路径。
+     * 默认 false；Phase 2 将删除 monitor 中的 wecom-cs 逻辑。
+     */
+    legacyWecomCsEnabled?: boolean;
+    accounts?: Record<string, WecomKfAccountConfig>;
+    /** Legacy wecom-cs 顶层 bot/agent（历史单账号路径） */
+    bot?: WecomBotConfig;
+    agent?: WecomAgentConfig;
+    /** Legacy 单账号顶层字段（与 accounts.default 合并） */
+    openKfId?: string;
+    agentId?: string;
+    agentMapping?: Record<string, string>;
+    corpId?: string;
+    corpSecret?: string;
+    token?: string;
+    encodingAESKey?: string;
+    welcomeText?: string;
+    media?: WecomMediaConfig;
+    network?: WecomNetworkConfig;
+    routing?: WecomRoutingConfig;
 };
 
 /** Matrix 账号条目 */
 export type WecomAccountConfig = {
     enabled?: boolean;
     name?: string;
+    /** KF 自定义回调路径 */
+    webhookPath?: string;
+    /** 企微 OpenAPI 基础 URL */
+    apiBaseUrl?: string;
     bot?: WecomBotConfig;
     agent?: WecomAgentConfig;
-    /** KF 客服模式配置 */
+    /** KF 客服模式配置（嵌套写法，与顶层 KF 字段二选一） */
     kf?: {
         openKfId?: string;
         token?: string;
@@ -152,11 +222,16 @@ export type WecomAccountConfig = {
         corpSecret?: string;
         servicerUserId?: string;
         welcomeText?: string;
+        agentId?: string;
+        agentMapping?: Record<string, string>;
     };
     /** KF 快捷字段 (兼容 callback.ts 直接读取) */
     corpId?: string;
     corpSecret?: string;
     openKfId?: string;
+    /** OpenClaw Agent id（KF 一账号一智能体） */
+    agentId?: string;
+    agentMapping?: Record<string, string>;
     welcomeText?: string;
     token?: string;
     encodingAESKey?: string;

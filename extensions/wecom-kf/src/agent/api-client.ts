@@ -8,6 +8,20 @@ import { API_ENDPOINTS, LIMITS } from "../types/constants.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import { readResponseBodyAsBuffer, wecomFetch } from "../http.js";
 import { resolveWecomEgressProxyUrlFromNetwork } from "../config/index.js";
+import { resolveApiBaseUrl } from "../config/kf-routes.js";
+import { stripMarkdown } from "./markdown-strip.js";
+
+/**
+ * 按账号 `apiBaseUrl` 构造企微 OpenAPI 绝对 URL（默认官方域名）。
+ */
+function buildAgentApiUrl(agent: ResolvedAgentAccount, urlOrPath: string): string {
+    const base = resolveApiBaseUrl(agent.config);
+    if (urlOrPath.startsWith("http://") || urlOrPath.startsWith("https://")) {
+        const path = urlOrPath.replace(/^https?:\/\/[^/]+/, "");
+        return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+    }
+    return `${base}${urlOrPath.startsWith("/") ? urlOrPath : `/${urlOrPath}`}`;
+}
 
 /**
  * **TokenCache (AccessToken 缓存结构)**
@@ -97,7 +111,10 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
 
     cache.refreshPromise = (async () => {
         try {
-            const url = `${API_ENDPOINTS.GET_TOKEN}?corpid=${encodeURIComponent(agent.corpId)}&corpsecret=${encodeURIComponent(agent.corpSecret)}`;
+            const url = buildAgentApiUrl(
+                agent,
+                `${API_ENDPOINTS.GET_TOKEN}?corpid=${encodeURIComponent(agent.corpId)}&corpsecret=${encodeURIComponent(agent.corpSecret)}`,
+            );
             const res = await wecomFetch(url, undefined, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
             const json = await res.json() as { access_token?: string; expires_in?: number; errcode?: number; errmsg?: string };
 
@@ -398,7 +415,7 @@ async function callAuthenticatedJson<T extends { errcode?: number; errmsg?: stri
 ): Promise<T> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const accessToken = await getAccessToken(agent);
-    const url = buildPath(accessToken);
+    const url = buildAgentApiUrl(agent, buildPath(accessToken));
     const res = await wecomFetch(url, {
       ...init,
       headers: {
@@ -568,20 +585,132 @@ export async function sendKfMsg(params: {
     return json;
 }
 
+/** KF 接待人员条目 */
+export type KfServicerInfo = {
+    userid: string;
+    status: number;
+    department_id?: number;
+};
+
+/** KF 客服账号条目 */
+export type KfAccountInfo = {
+    open_kfid: string;
+    name: string;
+    avatar?: string;
+    manage_privilege?: number;
+};
+
 /**
- * **KF listServicers (获取接待人员列表)**
+ * **KF listKfServicers (获取接待人员列表, 94645)**
  *
  * POST /cgi-bin/kf/servicer/list
- * 获取客服账号的接待人员列表，用于动态路由和缓存管理。
+ */
+export async function listKfServicers(params: {
+    agent: ResolvedAgentAccount;
+    openKfId?: string;
+}): Promise<{ errcode: number; errmsg: string; servicer_list?: KfServicerInfo[] }> {
+    const body: Record<string, unknown> = {};
+    if (params.openKfId?.trim()) body.open_kfid = params.openKfId.trim();
+
+    return callAuthenticatedJson(
+        params.agent,
+        (accessToken) => `${API_ENDPOINTS.KF_SERVICER_LIST}?access_token=${encodeURIComponent(accessToken)}`,
+        { method: "POST", body: JSON.stringify(body) },
+    );
+}
+
+/**
+ * **KF listKfAccounts (获取客服账号列表, 94661)**
+ *
+ * POST /cgi-bin/kf/account/list
+ */
+export async function listKfAccounts(params: {
+    agent: ResolvedAgentAccount;
+    offset?: number;
+    limit?: number;
+}): Promise<{ errcode: number; errmsg: string; account_list?: KfAccountInfo[] }> {
+    const body: Record<string, unknown> = {};
+    if (typeof params.offset === "number") body.offset = params.offset;
+    if (typeof params.limit === "number") body.limit = Math.min(params.limit, 100);
+
+    return callAuthenticatedJson(
+        params.agent,
+        (accessToken) => `${API_ENDPOINTS.KF_ACCOUNT_LIST}?access_token=${encodeURIComponent(accessToken)}`,
+        { method: "POST", body: JSON.stringify(body) },
+    );
+}
+
+/**
+ * **KF getKfAccountLink (获取客服账号链接, 94665)**
+ *
+ * POST /cgi-bin/kf/add_contact_way
+ */
+export async function getKfAccountLink(params: {
+    agent: ResolvedAgentAccount;
+    openKfId: string;
+    scene?: string;
+}): Promise<{ errcode: number; errmsg: string; url?: string }> {
+    const body: Record<string, unknown> = { open_kfid: params.openKfId.trim() };
+    if (params.scene?.trim()) body.scene = params.scene.trim();
+
+    return callAuthenticatedJson(
+        params.agent,
+        (accessToken) => `${API_ENDPOINTS.KF_ADD_CONTACT_WAY}?access_token=${encodeURIComponent(accessToken)}`,
+        { method: "POST", body: JSON.stringify(body) },
+    );
+}
+
+/**
+ * **KF transferKfSession (分配/转接客服会话, 94669)**
+ *
+ * POST /cgi-bin/kf/service_state/trans
+ */
+export async function transferKfSession(params: {
+    agent: ResolvedAgentAccount;
+    openKfId: string;
+    externalUserId: string;
+    serviceState: number;
+    servicerUserId?: string;
+}): Promise<{ errcode: number; errmsg: string; msg_code?: string }> {
+    const body: Record<string, unknown> = {
+        open_kfid: params.openKfId.trim(),
+        external_userid: params.externalUserId.trim(),
+        service_state: params.serviceState,
+    };
+    if (params.servicerUserId?.trim()) body.servicer_userid = params.servicerUserId.trim();
+
+    return callAuthenticatedJson(
+        params.agent,
+        (accessToken) => `${API_ENDPOINTS.KF_SERVICE_STATE_TRANS}?access_token=${encodeURIComponent(accessToken)}`,
+        { method: "POST", body: JSON.stringify(body) },
+    );
+}
+
+/**
+ * **KF listServicers (获取接待人员列表 — 兼容旧调用)**
+ *
+ * 仅返回 servicer_list 数组；失败时返回空数组。
  */
 export async function listServicers(params: {
     accessToken: string;
     openKfId?: string;
 }): Promise<Array<{ userid: string; status: number }>> {
+    const agent: ResolvedAgentAccount = {
+        accountId: "legacy-listServicers",
+        enabled: true,
+        configured: true,
+        corpId: "",
+        corpSecret: "",
+        token: "",
+        encodingAESKey: "",
+        config: { corpId: "", corpSecret: "", token: "", encodingAESKey: "" },
+    };
+
+    // 兼容路径：调用方已持有 accessToken，直接请求 API
     const body: Record<string, unknown> = {};
     if (params.openKfId?.trim()) body.open_kfid = params.openKfId.trim();
 
-    const url = `https://qyapi.weixin.qq.com/cgi-bin/kf/servicer/list?access_token=${encodeURIComponent(params.accessToken)}`;
+    const url = `${API_ENDPOINTS.KF_SERVICER_LIST}?access_token=${encodeURIComponent(params.accessToken)}`;
     const res = await wecomFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -594,42 +723,6 @@ export async function listServicers(params: {
     };
     if (json.errcode !== 0) return [];
     return json.servicer_list ?? [];
-}
-
-/**
- * **stripMarkdown (移除 Markdown 格式)**
- *
- * 将 Markdown 文本转换为适合企微文本消息的纯文本格式。
- * 从 research/openclaw-china 回移植。
- */
-export function stripMarkdown(text: string): string {
-  let result = text;
-  result = result.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
-    const trimmedCode = String(code).trim();
-    if (!trimmedCode) return "";
-    const language = lang ? `[${lang}]\n` : "";
-    const indented = trimmedCode
-      .split("\n")
-      .map((line) => `    ${line}`)
-      .join("\n");
-    return `\n${language}${indented}\n`;
-  });
-  result = result.replace(/^#{1,6}\s+(.+)$/gm, "【$1】");
-  result = result
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/\*(.*?)\*/g, "$1")
-    .replace(/__(.*?)__/g, "$1")
-    .replace(/(?<![\w/])_(.+?)_(?![\w/])/g, "$1")
-    .replace(/~~(.*?)~~/g, "$1");
-  result = result.replace(/^[-*]\s+/gm, "· ");
-  result = result.replace(/^(\d+)\.\s+/gm, "$1. ");
-  result = result.replace(/`([^`]+)`/g, "$1");
-  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
-  result = result.replace(/!\[([^\]]*)\]\([^)]+\)/g, "[图片: $1]");
-  result = result.replace(/^>\s?/gm, "");
-  result = result.replace(/^[-*_]{3,}$/gm, "────────────");
-  result = result.replace(/\n{3,}/g, "\n\n");
-  return result.trim();
 }
 
 /**

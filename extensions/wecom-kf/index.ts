@@ -1,10 +1,18 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { emptyPluginConfigSchema, ensureConfigHelpers } from "./src/compat/plugin-sdk-shim.js";
 
 import { handleWecomWebhookRequest } from "./src/monitor.js";
 import { setWecomRuntime } from "./src/runtime.js";
 import { wecomPlugin } from "./src/channel.js";
 import { createWeComMcpTool } from "./src/mcp/index.js";
+import { createKfCallbackHandler } from "./src/callback.js";
+import { createKfAccountConfigGetter } from "./src/config/kf-callback.js";
+import {
+  collectWecomKfRoutePaths,
+  isLegacyWecomCsEnabled,
+} from "./src/config/kf-routes.js";
+import { WEBHOOK_PATHS } from "./src/types/constants.js";
+import type { WecomKfConfig } from "./src/types/config.js";
 
 // ── KF State Flow ──
 import { DIALOGUE_SESSION_NAMESPACE, buildStateAwarePrompt } from "./src/kf/index.js";
@@ -17,6 +25,12 @@ import {
   createKfSessionStatusTool,
   createKfSessionTransferTool,
 } from "./src/kf/tools.js";
+import {
+  createWecomKfListServicersTool,
+  createWecomKfListAccountsTool,
+  createWecomKfGetAccountLinkTool,
+  createWecomKfTransferSessionTool,
+} from "./src/kf/control-tools.js";
 
 // ── ICS (Intelligent Customer Service) REST API ──
 import { createKnowledgeHandler } from "./src/ics-handlers/knowledge.js";
@@ -34,14 +48,48 @@ const plugin = {
 
     setWecomRuntime(api.runtime);
     api.registerChannel({ plugin: wecomPlugin });
-    const routes = ["/plugins/wecom-kf", "/wecom-kf", "/wecom/kefu"];
-    for (const path of routes) {
+
+    const getOpenClawConfig = (): OpenClawConfig | undefined =>
+      (api.runtime as { config?: OpenClawConfig }).config;
+
+    const kfCallbackHandler = createKfCallbackHandler(createKfAccountConfigGetter(getOpenClawConfig));
+    const handleKfWebhookRequest = async (
+      req: Parameters<typeof kfCallbackHandler>[0],
+      res: Parameters<typeof kfCallbackHandler>[1],
+    ): Promise<boolean> => {
+      await kfCallbackHandler(req, res);
+      return true;
+    };
+
+    // KF 客服回调（主路径；支持顶层与 accounts.*.webhookPath）
+    const initialCfg = getOpenClawConfig();
+    const kfChannelConfig = initialCfg?.channels?.["wecom-kf"] as WecomKfConfig | undefined;
+    for (const path of collectWecomKfRoutePaths(kfChannelConfig)) {
       api.registerHttpRoute({
         path,
-        handler: handleWecomWebhookRequest,
+        handler: handleKfWebhookRequest,
         auth: "plugin",
         match: "prefix",
       });
+    }
+
+    // Legacy wecom-cs Bot / Agent 回调（Phase 2 删除；默认不注册）
+    if (isLegacyWecomCsEnabled(initialCfg)) {
+      const csRoutes = [
+        WEBHOOK_PATHS.BOT_PLUGIN,
+        WEBHOOK_PATHS.BOT,
+        WEBHOOK_PATHS.BOT_ALT,
+        WEBHOOK_PATHS.AGENT_PLUGIN,
+        WEBHOOK_PATHS.AGENT,
+      ];
+      for (const path of csRoutes) {
+        api.registerHttpRoute({
+          path,
+          handler: handleWecomWebhookRequest,
+          auth: "plugin",
+          match: "prefix",
+        });
+      }
     }
 
     // ── ICS REST API routes (merged from @partme.ai/ics) ──
@@ -60,6 +108,24 @@ const plugin = {
     api.registerTool(createKfAccountLinkTool(), { name: "wecom_kf_account_link", optional: true });
     api.registerTool(createKfSessionStatusTool(), { name: "wecom_kf_session_status", optional: true });
     api.registerTool(createKfSessionTransferTool(), { name: "wecom_kf_session_transfer", optional: true });
+
+    // ── KF 控制面 Tools（API 响应不进 LLM 上下文） ──
+    api.registerTool(
+      (ctx) => createWecomKfListServicersTool({ ...ctx, config: getOpenClawConfig() }),
+      { name: "wecom_kf_list_servicers", optional: true },
+    );
+    api.registerTool(
+      (ctx) => createWecomKfListAccountsTool({ ...ctx, config: getOpenClawConfig() }),
+      { name: "wecom_kf_list_accounts", optional: true },
+    );
+    api.registerTool(
+      (ctx) => createWecomKfGetAccountLinkTool({ ...ctx, config: getOpenClawConfig() }),
+      { name: "wecom_kf_get_account_link", optional: true },
+    );
+    api.registerTool(
+      (ctx) => createWecomKfTransferSessionTool({ ...ctx, config: getOpenClawConfig() }),
+      { name: "wecom_kf_transfer_session", optional: true },
+    );
 
     // State-aware dialogue prompt injection for KF sessions
     api.on("before_prompt_build", async (_event, ctx) => {
