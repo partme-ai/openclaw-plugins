@@ -183,7 +183,7 @@ Usage:
 Options:
   --plugin <id>     Check a single extension (e.g. wecom-kf, _template)
   --strict-base     Base Profile MUST violations fail the run (alias: --strict)
-  --strict-new      Extended Profile violations fail for wecom-kf and wecom
+  --strict-new      Extended drift thresholds fail for wecom-kf and wecom (not empty dirs)
 
 Enforced plugin sets:
   Base strict: amap, douyin, gotify, meituan, mqtt, rabbitmq, redis-stream,
@@ -631,19 +631,9 @@ function checkExtendedProfile(pluginDir, pluginId, issues, flags) {
   const srcDir = join(pluginDir, "src");
   if (!existsSync(srcDir)) return;
 
-  for (const dir of EXTENDED_SEMANTIC_DIRS) {
-    const path = join(srcDir, dir);
-    if (!existsSync(path)) {
-      addIssue(issues, {
-        rule: "extended-semantic-dir",
-        path,
-        message: `Extended Profile SHOULD: missing src/${dir}/ (doc §7.2)`,
-        pluginId,
-        category: "extended",
-        flags,
-      });
-    }
-  }
+  // Extended semantic dirs are optional per plugin (doc §5.2, §7.2). _template keeps
+  // .gitkeep placeholders for new-plugin.mjs; migrated plugins MAY omit unused dirs.
+  // strict-new checks drift thresholds and index size — not missing empty placeholders.
 
   const indexPath = join(srcDir, "index.ts");
   const lines = countLines(indexPath);
@@ -688,15 +678,13 @@ function checkPlugin(pluginDir, flags) {
   if (EXTENDED_STRICT_PLUGINS.has(pluginId)) {
     checkExtendedProfile(pluginDir, pluginId, issues, flags);
   } else if (srcDir) {
-    // Non-extended plugins: lighter drift hint when src root is crowded (doc §7.1 threshold 15)
-    const srcRootTs = listDir(srcDir).filter(
-      (entry) => entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts"),
-    );
-    if (pluginId !== BASE_TEMPLATE_ID && srcRootTs.length > 15) {
+    // Base Profile plugins: warn on src/ root drift only — never require Extended .gitkeep dirs
+    const driftFiles = listSrcRootBusinessFiles(srcDir);
+    if (pluginId !== BASE_TEMPLATE_ID && driftFiles.length > EXTENDED_SRC_ROOT_DRIFT_THRESHOLD) {
       addIssue(issues, {
         rule: "src-root-drift",
         path: srcDir,
-        message: `src/ root has ${srcRootTs.length} non-test TS files; consider Extended Profile semantic dirs (doc §7.1)`,
+        message: `Base Profile: src/ root has ${driftFiles.length} non-Base .ts files (> ${EXTENDED_SRC_ROOT_DRIFT_THRESHOLD}); consider moving into semantic dirs (doc §7.1): ${driftFiles.join(", ")}`,
         pluginId,
         category: "extended",
         flags,
