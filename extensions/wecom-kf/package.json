@@ -82,9 +82,12 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "clawdbot": "*",
-    "moltbot": "*",
     "openclaw": ">=2026.4.12"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
   },
   "repository": {
     "type": "git",
