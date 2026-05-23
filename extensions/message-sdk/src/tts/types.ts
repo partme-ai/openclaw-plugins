@@ -9,6 +9,11 @@
 // 配置
 // ============================================================================
 
+/**
+ * TTSConfig 描述 tts 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface TTSConfig {
   /** API 端点 URL（远程模式） */
   baseUrl?: string;
@@ -36,6 +41,11 @@ export interface TTSConfig {
 // 结果
 // ============================================================================
 
+/**
+ * TTSResult 描述 tts 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface TTSResult {
   /** 音频数据（Buffer） */
   audio: Buffer;
@@ -55,6 +65,11 @@ export interface TTSResult {
 // 语音列表
 // ============================================================================
 
+/**
+ * TTSVoice 描述 tts 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface TTSVoice {
   /** 语音短名（如 zh-CN-XiaoxiaoNeural） */
   shortName: string;
@@ -75,6 +90,11 @@ export interface TTSVoice {
 /** TTS 提供商种类 */
 export type TTSProviderKind = "remote" | "local";
 
+/**
+ * TTSProvider 描述 tts 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface TTSProvider {
   readonly name: string;
   readonly kind: TTSProviderKind;

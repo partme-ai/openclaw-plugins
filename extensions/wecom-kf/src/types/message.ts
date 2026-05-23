@@ -227,3 +227,73 @@ export type KfMessage = {
     event?: string;
     [key: string]: unknown;
 };
+
+/**
+ * OpenClaw 渠道路由请求参数。
+ *
+ * 当前 wecom-kf 的 ICS 管理接口只透传给 Gateway runtime，因此这里保持
+ * 结构化但宽松的类型，避免把内部 Gateway 形状硬编码到插件侧。
+ */
+export type AgentRouteParams = Record<string, unknown>;
+
+/**
+ * OpenClaw 渠道路由结果。
+ */
+export type AgentRouteResult = Record<string, unknown>;
+
+/**
+ * 入站上下文归一化请求参数。
+ */
+export type InboundContextParams = Record<string, unknown>;
+
+/**
+ * 入站上下文归一化结果。
+ */
+export type InboundContext = Record<string, unknown>;
+
+/**
+ * 回复分发器创建参数。
+ */
+export type ReplyDispatcherParams = Record<string, unknown>;
+
+/**
+ * 回复分发器实例。
+ */
+export type ReplyDispatcher = Record<string, unknown>;
+
+/**
+ * 回复分发请求参数。
+ */
+export type DispatchReplyParams = Record<string, unknown>;
+
+/**
+ * 渠道文本发送参数。
+ */
+export type SendTextParams = {
+    cfg?: Record<string, unknown>;
+    to: string;
+    text: string;
+    accountId?: string | null;
+    [key: string]: unknown;
+};
+
+/**
+ * 事件消息配置。
+ */
+export type EventMessagesConfig = {
+    welcome?: {
+        enabled?: boolean;
+        msgtype?: string;
+        content?: Record<string, unknown>;
+    };
+    ending?: {
+        enabled?: boolean;
+        msgtype?: string;
+        content?: Record<string, unknown>;
+    };
+    satisfaction?: {
+        enabled?: boolean;
+        head_content?: string;
+        options?: Array<{ id: string; content: string }>;
+    };
+};

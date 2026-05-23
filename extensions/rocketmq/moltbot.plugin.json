@@ -1,0 +1,66 @@
+{
+  "id": "openclaw-rocketmq",
+  "name": "openclaw-rocketmq",
+  "version": "2026.5.20",
+  "description": "RocketMQ channel plugin for OpenClaw with producer and push-consumer integration.",
+  "main": "dist/index.js",
+  "channels": [
+    "rocketmq"
+  ],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "endpoints": {
+        "type": "string",
+        "description": "RocketMQ proxy endpoints, for example 127.0.0.1:8081"
+      },
+      "namespace": {
+        "type": "string",
+        "default": "",
+        "description": "RocketMQ namespace"
+      },
+      "topicPrefix": {
+        "type": "string",
+        "default": "openclaw",
+        "description": "Prefix used by the standard topic format"
+      },
+      "producer": {
+        "type": "object",
+        "properties": {
+          "groupId": { "type": "string", "default": "openclaw-rocketmq-producer" },
+          "requestTimeout": { "type": "number", "default": 5000 }
+        }
+      },
+      "consumer": {
+        "type": "object",
+        "properties": {
+          "groupId": { "type": "string", "default": "openclaw-rocketmq-consumer" }
+        }
+      }
+    },
+    "required": ["endpoints"]
+  },
+  "uiHints": {
+    "endpoints": {
+      "label": "Proxy endpoints",
+      "placeholder": "127.0.0.1:8081"
+    },
+    "topicPrefix": {
+      "label": "Topic Prefix",
+      "placeholder": "openclaw"
+    },
+    "sessionCredentials.accessKey": {
+      "label": "Access Key"
+    },
+    "sessionCredentials.accessSecret": {
+      "label": "Access Secret",
+      "sensitive": true
+    }
+  },
+  "capabilities": {
+    "protocolBridge": true,
+    "mq": true
+  }
+}

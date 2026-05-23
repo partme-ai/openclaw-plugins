@@ -10,8 +10,8 @@ import {
   buildRockermqConfigSnapshot,
   resolveRockermqConfig,
   validateRockermqConfig,
-} from "./rockermq-config.js";
-import { setRockermqChannelConfig } from "./rockermq-state.js";
+} from "./config.js";
+import { setRockermqChannelConfig } from "./state.js";
 import {
   getStats,
   startRockermqServer,
@@ -19,7 +19,7 @@ import {
   trackInboundAccepted,
   trackInboundDropped,
   trackRoute,
-} from "./rockermq-server.js";
+} from "./transport/server.js";
 
 export const DEFAULT_ACCOUNT_ID = "default";
 
@@ -27,15 +27,15 @@ export const DEFAULT_ACCOUNT_ID = "default";
  * OpenClaw RocketMQ channel 插件。
  */
 export const rockermqChannel = {
-  id: "rockermq",
+  id: "rocketmq",
   name: "RocketMQ",
   meta: {
-    id: "rockermq",
+    id: "rocketmq",
     label: "RocketMQ",
     selectionLabel: "RocketMQ",
-    docsPath: "/channels/rockermq",
+    docsPath: "/channels/rocketmq",
     blurb: "RocketMQ channel with producer and push-consumer support.",
-    aliases: ["rockermq"],
+    aliases: ["rocketmq"],
     order: 91,
   },
   capabilities: { chatTypes: ["direct"] as const },
@@ -62,7 +62,7 @@ export const rockermqChannel = {
         name: "RocketMQ",
         enabled: true,
         configured: Boolean(config.endpoints),
-        webhookPath: "/rockermq/status",
+        webhookPath: "/rocketmq/status",
         extra: {
           stats: serviceStats,
           config: buildRockermqConfigSnapshot(config),
@@ -85,7 +85,7 @@ export const rockermqChannel = {
       const config = resolveRockermqConfig(cfg);
       setRockermqChannelConfig(config);
       for (const issue of validateRockermqConfig(config)) {
-        console.warn(`[openclaw-rockermq] config warning: ${issue}`);
+        console.warn(`[openclaw-rocketmq] config warning: ${issue}`);
       }
 
       await startRockermqServer(config, async (event) => {

@@ -412,22 +412,26 @@ User message → before_prompt_build
 
 ### 5.4 Unified Message Format
 
-**Decision**: Lightweight SDK (`@partme.ai/message-sdk`), not required for plugins to use.
+**Decision**: `@partme.ai/openclaw-message-sdk` is the **message layer** for MQ/STOMP/MQTT-style channels: transport plugins publish/subscribe only; parsing, envelopes, stacks, and OpenClaw dispatch go through the SDK.
 
-**Contains**:
-```typescript
-interface UnifiedMessage {
-  sessionId: string;
-  traceId: string;
-  source: { channel: string; accountId: string; userId: string; chatType: "direct" | "group" };
-  target?: { channels: string[]; routingRule?: string };
-  contentType: "text" | "image" | "file" | "voice" | "video" | "mixed";
-  text?: string;
-  media: Array<{ url: string; type: string; name?: string }>;
-  metadata?: Record<string, unknown>;
-  timestamp: number;
-}
+**MQ / push channels (required)**: `mqtt`, `rabbitmq`, `redis-stream`, `rocketmq`, `stomp`, `web-mqtt`, `web-stomp`, `gotify` (inbound mapping + dedup; Gotify REST outbound stays human-readable).
+
+**Bridge** (subpath `bridge`):
+
+- `dispatchInbound` — `finalizeInboundContext` + `dispatchReplyFromConfig`
+- `createReplyHandler` — Agent reply → `serializeForTransport` → plugin `deliver({ wire })`
+
+**Wire envelope (v1)**:
+
+```json
+{ "version": "1", "message": { }, "headers": { "correlationId", "idempotencyKey", "replyRoute" } }
 ```
+
+Backward compatible with `{ "text": "..." }` and plain text via `parseTransportPayload`.
+
+**Core model** (`UnifiedMessage`): `messageId`, `source` (channel, accountId, userId, optional agentId), `contentType`, `text` / `markdown` / `media`, `metadata`, `timestamp`. See `extensions/message-sdk/docs/ARCHITECTURE.md`.
+
+**WeCom** remains on its native pipeline in phase 1; WeCom-specific stages may move into SDK adapters in a later phase.
 
 ---
 

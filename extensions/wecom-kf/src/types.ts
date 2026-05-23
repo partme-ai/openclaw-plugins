@@ -10,6 +10,10 @@ export type {
   WecomInboundQuote,
   WecomTemplateCard,
   WecomOutboundMessage,
+  EventMessagesConfig,
+  GatewayRuntime,
+  AgentInfo,
+  StatsOverview,
 } from "./types/index.js";
 
 import type {

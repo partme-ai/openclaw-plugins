@@ -9,8 +9,8 @@ import {
   matchTopic,
   buildReplyTopicFromInbound,
   buildOutboundTopic,
-} from '../src/topic-router.js';
-import { DEFAULT_RABBITMQ_CONFIG, type RabbitmqConfig } from '../src/rabbitmq-config.js';
+} from '../src/routing/topic-router.js';
+import { DEFAULT_RABBITMQ_CONFIG, type RabbitmqConfig } from '../src/config.js';
 
 describe('topic-router', () => {
   describe('parseTopic', () => {

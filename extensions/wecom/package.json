@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest --config vitest.config.ts run",
     "prepublishOnly": "pnpm build",
@@ -49,7 +49,7 @@
     }
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "^2026.5.21",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22",
     "@wecom/aibot-node-sdk": "^1.0.6",
     "fast-xml-parser": "5.3.4",
     "file-type": "^18.7.0",
@@ -61,6 +61,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.0",
+    "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
   },

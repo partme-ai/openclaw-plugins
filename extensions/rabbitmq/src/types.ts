@@ -13,6 +13,8 @@ export type RabbitmqPayloadParseMode = "jsonTextOrPlain";
 export interface RabbitmqPayloadConfig {
   /** 解析模式，当前支持 JSON.text 优先后回退纯文本 */
   mode: RabbitmqPayloadParseMode;
+  /** 出站 reply 信封格式（wire dispatch） */
+  outboundFormat?: "envelope" | "legacyJsonText" | "plainText";
 }
 
 /**

@@ -11,9 +11,16 @@ import type { DmScope } from "./types.js";
  * 从 OpenClaw 运行时配置读取 dmScope。
  * 默认 per-peer，与飞书等渠道插件保持一致。
  */
-export function resolveDmScopeFromRuntimeConfig(cfg: Record<string, unknown>): DmScope {
+export function resolveDmScopeFromRuntimeConfig(
+  cfg: Record<string, unknown>,
+): DmScope {
   const rawScope = (cfg.session as { dmScope?: unknown } | undefined)?.dmScope;
-  const allowed = new Set(["main", "per-peer", "per-channel-peer", "per-account-channel-peer"]);
+  const allowed = new Set([
+    "main",
+    "per-peer",
+    "per-channel-peer",
+    "per-account-channel-peer",
+  ]);
   if (typeof rawScope === "string" && allowed.has(rawScope)) {
     return rawScope as DmScope;
   }

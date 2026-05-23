@@ -9,12 +9,12 @@ import {
   defineChannelPluginEntry,
   type OpenClawPluginApi,
 } from "openclaw/plugin-sdk/core";
-import { douyinChannelPlugin } from "./douyin-channel.js";
+import { douyinChannelPlugin } from "./channel.js";
 import { getDouyinRuntime, setDouyinRuntime } from "./runtime.js";
 import type { DouyinAccountConfig } from "./types.js";
 import { createDouyinTools } from "./tools.js";
 
-export { douyinChannelPlugin } from "./douyin-channel.js";
+export { douyinChannelPlugin } from "./channel.js";
 export { setDouyinRuntime, getDouyinRuntime } from "./runtime.js";
 
 /**

@@ -11,8 +11,8 @@
  * 命名空间隔离：{accountId}:{mode}，每个账号+模式独立向量库。
  */
 
-import type { OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk";
-import { registerKnowledgeHooks, getOrCreateStore, invalidateStoreCache, extractKnowledgeConfig } from "./src/hooks.js";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { registerKnowledgeHooks } from "./src/hooks.js";
 import { createKnowledgeAddTool } from "./src/tools/knowledge-add.js";
 import { createKnowledgeQueryTool } from "./src/tools/knowledge-query.js";
 import { createKnowledgeUpdateTool } from "./src/tools/knowledge-update.js";
@@ -42,22 +42,10 @@ const plugin = {
 
     // ── 2. 四个知识库工具 — AI 自主管理知识 ──────────────────
     // 工具工厂从 ctx.pluginConfig 读取配置，不再硬编码 wecom 路径
-    api.registerTool(
-      (ctx: OpenClawPluginToolContext) => createKnowledgeAddTool(ctx),
-      { name: "knowledge_add" },
-    );
-    api.registerTool(
-      (ctx: OpenClawPluginToolContext) => createKnowledgeQueryTool(ctx),
-      { name: "knowledge_query" },
-    );
-    api.registerTool(
-      (ctx: OpenClawPluginToolContext) => createKnowledgeUpdateTool(ctx),
-      { name: "knowledge_update" },
-    );
-    api.registerTool(
-      (ctx: OpenClawPluginToolContext) => createKnowledgeDeleteTool(ctx),
-      { name: "knowledge_delete" },
-    );
+    api.registerTool((ctx) => createKnowledgeAddTool(ctx), { name: "knowledge_add" });
+    api.registerTool((ctx) => createKnowledgeQueryTool(ctx), { name: "knowledge_query" });
+    api.registerTool((ctx) => createKnowledgeUpdateTool(ctx), { name: "knowledge_update" });
+    api.registerTool((ctx) => createKnowledgeDeleteTool(ctx), { name: "knowledge_delete" });
 
     api.logger.info("[knowledge] 4 tools registered: add, query, update, delete");
     api.logger.info("[knowledge] Plugin ready — auto RAG injection + AI knowledge management");

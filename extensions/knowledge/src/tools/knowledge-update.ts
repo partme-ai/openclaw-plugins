@@ -9,6 +9,10 @@ import { stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type OpenClawPluginToolContext = any;
+type AgentToolResult<T = unknown> = {
+  content: { type: 'text'; text: string }[];
+  details: T | undefined;
+};
 
 import { getOrCreateStore } from '../hooks.js';
 import { indexDocument } from '../indexer/scheduler.js';

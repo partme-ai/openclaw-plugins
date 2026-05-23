@@ -2,7 +2,7 @@
 
 # OpenClaw Web MQTT
 
-**OpenClaw 渠道插件：企业级 MQTT over WebSocket，支持 topic 治理与 agent 绑定**
+**OpenClaw channel plugin — enterprise MQTT over WebSocket with topic governance and agent binding**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--web--mqtt-blue)
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
@@ -10,55 +10,57 @@
 
 </div>
 
-[简体中文](./README_CN.md) | [English](./README.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
-## 简介
+## Introduction
 
-`@partme.ai/openclaw-web-mqtt` 是基于 OpenClaw 最新 channel SDK 的渠道插件：
+`@partme.ai/openclaw-web-mqtt` is an OpenClaw **channel plugin** built on the latest channel SDK entrypoints:
 
-- 使用 `defineChannelPluginEntry` 进行完整注册
-- 使用 `defineSetupPluginEntry` 支持 setup-only 轻量加载
-- 使用 runtime store 管理 runtime 注入与读取
+- `defineChannelPluginEntry` for full runtime registration
+- `defineSetupPluginEntry` for setup-only loading
+- runtime store pattern for safe runtime injection
 
-插件提供内嵌强化版 MQTT over WebSocket broker，面向浏览器与 Web 应用接入，并将入站消息路由给 OpenClaw Agent。
+It provides a hardened embedded MQTT-over-WebSocket broker for browser and web applications, and routes inbound messages into OpenClaw agent replies.
 
-## 核心能力
+## Core capabilities
 
-- **多 topic 订阅治理**：`subscribeTopics` 白名单，支持 `+/#` 通配符
-- **topic-agent 显式绑定**：`topicPattern -> agentId`，支持绑定 `replyTopic`
-- **标准路由回退**：`<topicPrefix>agent/<agentId>/in` -> `<topicPrefix>agent/<agentId>/out`
-- **企业级增强**：
-  - 鉴权与用户级 topic 访问控制
-  - TLS/WSS 支持
-  - 消息大小与 WebSocket 帧大小限制
-  - 空闲超时与连接治理
-  - 路由命中与丢弃原因统计
+- **Multi-topic subscription governance**: `subscribeTopics` allowlist with MQTT wildcards (`+`, `#`)
+- **Topic-agent binding**: explicit `topicPattern -> agentId` routing with optional `replyTopic`
+- **Standard fallback route**: `<topicPrefix>agent/<agentId>/in` -> `<topicPrefix>agent/<agentId>/out`
+- **Enterprise controls**:
+  - auth and per-user topic allowlist
+  - TLS/WSS support
+  - max payload and websocket frame limits
+  - idle timeout and connection governance
+  - route metrics and drop reason visibility
 
-## 消息处理流程
+## Message flow
 
-1. Web MQTT 客户端发布消息
-2. 插件按 `subscribeTopics` 过滤
-3. 路由决策：
-   - 优先 `topicBindings`
-   - 回退标准 topic
-4. payload 按 `jsonTextOrPlain` 解析
-5. 进入 OpenClaw reply pipeline
-6. 回复发布到绑定 `replyTopic` 或默认 out topic
+1. Web MQTT client publishes topic/payload
+2. Plugin checks `subscribeTopics`
+3. Route resolution:
+   - first `topicBindings`
+   - then standard fallback topic
+4. Payload parsing (`jsonTextOrPlain`)
+5. Dispatch to OpenClaw runtime reply pipeline
+6. Publish reply to binding `replyTopic` or derived default out topic
 
-## 快速开始
+## Quick start
 
-### 前置条件
+### Prerequisites
 
 - OpenClaw `>= 2026.4.0`
 - Node.js `22+`
 
-### 安装
+### Install
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-web-mqtt
 ```
 
-### 最小配置（`openclaw.json`）
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
+### Minimal config (`openclaw.json`)
 
 ```json
 {
@@ -108,44 +110,44 @@ openclaw plugins install @partme.ai/openclaw-web-mqtt
 }
 ```
 
-## 企业级加固建议
+## Enterprise hardening checklist
 
-- 强制替换默认账号，使用独立 MQTT 用户
-- 生产环境开启 `tls.enabled`，部署 WSS
-- 严格配置 `publishAllow` / `subscribeAllow`
-- 按流量调优 `maxPayloadBytes`、`maxFrameSize`、`idleTimeoutMs`
-- 配合反向代理与网络 ACL 做边界隔离
+- Replace default credentials and enforce dedicated users
+- Enable `tls.enabled` and deploy WSS in production
+- Set strict `publishAllow` / `subscribeAllow`
+- Tune `maxPayloadBytes`, `maxFrameSize`, `idleTimeoutMs` by traffic profile
+- Use reverse proxy policy and network ACL for perimeter controls
 
-## 状态与可观测性
+## Status and observability
 
-`GET /mqtt-ws/status`（插件鉴权路由）输出：
+`GET /mqtt-ws/status` (plugin-auth route) exposes:
 
-- 当前连接数
-- 入站接受/丢弃计数
-- binding 与标准回退路由命中计数
-- 出站发布计数
-- 最近错误摘要
-- 脱敏后的生效配置快照
+- connection count
+- accepted/dropped inbound counters
+- binding-vs-standard route counters
+- outbound publish counters
+- last error summary
+- sanitized active config snapshot
 
-## 测试
+## Testing
 
-### 单元测试
+### Unit tests
 
 ```bash
 npm test
 ```
 
-### 集成测试端
+### Integration test client
 
 ```bash
 npm run test:client
 ```
 
-默认测试端点：
+Default test endpoint:
 
 - `MQTT_BROKER_URL=ws://127.0.0.1:15675/ws`
 
-支持环境变量：
+Supported env vars:
 
 - `MQTT_BROKER_URL`
 - `MQTT_CLIENT_ID`
@@ -156,27 +158,27 @@ npm run test:client
 - `MQTT_TEST_TOPIC_PLAIN`
 - `MQTT_TEST_REPLY_TOPIC`
 
-## CI 与发版
+## CI and release
 
-| 工作流 | 触发方式 | 作用 |
+| Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | Push / PR | 安装、类型检查、构建、测试、上传产物 |
-| `.github/workflows/release.yml` | `v*` tag / 手动触发 | 构建、测试并发布 npm（已存在版本自动跳过） |
+| `.github/workflows/ci.yml` | Push / PR | install, typecheck, build, test, upload artifact |
+| `.github/workflows/release.yml` | tag `v*` / manual | build, test, publish npm (skip existing version) |
 
-发版细节见 [`RELEASING.md`](./RELEASING.md)。
+Release details: [`RELEASING.md`](./RELEASING.md)
 
-## RabbitMQ Web-MQTT 兼容基线
+## RabbitMQ Web MQTT baseline
 
-本插件参考 RabbitMQ Web-MQTT 官方生产实践：
+This plugin references RabbitMQ Web MQTT production practices:
 
-- 默认 websocket 端点约定 `15675/ws`
-- 明确插件启用与独立用户策略
-- WSS/TLS 生产部署建议
-- websocket 帧大小/超时/压缩调优建议
+- default websocket endpoint convention `15675/ws`
+- explicit plugin enabling and secure user setup
+- WSS/TLS deployment recommendations
+- websocket tuning (frame size / timeout / compression)
 
-参考文档：[RabbitMQ Web MQTT](https://www.rabbitmq.com/docs/web-mqtt)
+Reference: [RabbitMQ Web MQTT](https://www.rabbitmq.com/docs/web-mqtt)
 
-## OpenClaw 官方文档
+## OpenClaw documentation
 
 ### Plugins
 
@@ -202,6 +204,6 @@ npm run test:client
 - [Manifest](https://docs.openclaw.ai/plugins/manifest)
 - [Architecture](https://docs.openclaw.ai/plugins/architecture)
 
-## 许可证
+## License
 
 MIT

@@ -6,39 +6,35 @@
  */
 
 import { getRedisStreamRuntime } from "./runtime.js";
-import { resolveInboundRoute, matchChannel, buildReplyChannelFromInbound } from "./topic-router.js";
-import { publishMessage } from "./publisher.js";
+import {
+  resolveInboundRoute,
+  matchChannel,
+  buildReplyChannelFromInbound,
+} from "./routing/topic-router.js";
+import { publishMessage } from "./transport/publisher.js";
 import { logger } from "./logger.js";
 import type { RedisChannelConfig, RedisInboundMessage } from "./types.js";
-import { parseMessageAny } from "@partme.ai/openclaw-message-sdk";
+import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
+import {
+  normalizeWireIngress,
+  dispatchChannelMessage,
+  resolveChannelDispatchIdentity,
+  type BridgePluginRuntime,
+} from "@partme.ai/openclaw-message-sdk/bridge";
 
-// Message deduplication cache
-const processedMessages = new Map<string, number>();
-const DEDUP_TTL_MS = 60_000;
-const DEDUP_MAX = 10_000;
-
-/**
- * Check if a message ID has been processed recently (deduplication).
- */
-function isDuplicate(messageId: string): boolean {
-  if (!messageId) return false;
-  const now = Date.now();
-  const prev = processedMessages.get(messageId);
-  if (prev && now - prev < DEDUP_TTL_MS) return true;
-  processedMessages.set(messageId, now);
-  if (processedMessages.size > DEDUP_MAX) {
-    for (const [k, t] of processedMessages) {
-      if (now - t > DEDUP_TTL_MS) processedMessages.delete(k);
-    }
-  }
-  return false;
-}
+const idempotencyCache = createIdempotencyCache({
+  ttlMs: 60_000,
+  maxEntries: 10_000,
+});
 
 /**
  * 处理 Redis channel 入站消息。
  * 返回 false 时消息不应被 ACK（Stream 模式使用）。
  */
-export async function handleInboundMessage(message: RedisInboundMessage, config: RedisChannelConfig): Promise<boolean> {
+export async function handleInboundMessage(
+  message: RedisInboundMessage,
+  config: RedisChannelConfig,
+): Promise<boolean> {
   // 路由用真实 channel，pattern 仅用于日志/展示
   const channel = message.channel;
 
@@ -53,11 +49,9 @@ export async function handleInboundMessage(message: RedisInboundMessage, config:
   }
 
   // 2. Deduplication check (use message ID if available, fallback to content hash)
-  const messageId = (message as unknown as { id?: string }).id ?? `${channel}:${message.message.slice(0, 100)}`;
-  if (isDuplicate(messageId)) {
-    logger.info(`Duplicate message skipped: ${messageId.slice(0, 50)}...`);
-    return true; // Duplicate messages are considered successfully processed
-  }
+  const messageId =
+    (message as unknown as { id?: string }).id ??
+    `${channel}:${message.message.slice(0, 100)}`;
 
   // 2. 路由解析（显式绑定优先，Stream fieldAgentId 字段覆盖）
   let route = message.fieldAgentId
@@ -84,10 +78,25 @@ export async function handleInboundMessage(message: RedisInboundMessage, config:
   }
 
   // 3. payload 解析
-  const text = parseInboundText(message.message, config.payload.mode);
+  const parsed = normalizeWireIngress({
+    rawPayload: message.message,
+    mode:
+      config.payload.mode === "jsonTextOrPlain" ? "jsonTextOrPlain" : "plain",
+    channel: "redis-stream",
+    idempotencyKey: messageId,
+    idempotency: idempotencyCache,
+  });
+  if (!parsed.accepted) {
+    logger.info(`Duplicate message skipped: ${messageId.slice(0, 50)}...`);
+    return true;
+  }
+  const text = parsed.text;
 
   // 4. 回复 channel 推导（fieldReplyStream 优先 > binding replyChannel > 标准格式）
-  const replyChannel = message.fieldReplyStream ?? route.replyChannel ?? buildReplyChannelFromInbound(channel);
+  const replyChannel =
+    message.fieldReplyStream ??
+    route.replyChannel ??
+    buildReplyChannelFromInbound(channel);
 
   // 5. peerId 使用 channel 名称（可通过 fieldPeerId 覆盖）
   const peerId = message.fieldPeerId ?? channel;
@@ -100,45 +109,45 @@ export async function handleInboundMessage(message: RedisInboundMessage, config:
   }
 
   try {
-    // resolveAgentRoute 由 OpenClaw 核心返回 sessionKey（与飞书完全一致）
-    const replyOptions = await rt.channel.routing.resolveAgentRoute({
-      cfg: rt.config,
-      channel: "redis-stream",
-      accountId: route.accountId,
-      peer: { kind: "direct", id: peerId },
-    });
-    const sessionKey: string = replyOptions.sessionKey;
-
     logger.info(
       `Inbound: channel=${channel}, agent=${route.agentId}, ` +
-        `account=${route.accountId}, source=${route.source}, session=${sessionKey}, ` +
+        `account=${route.accountId}, source=${route.source}, ` +
         `text=${text.slice(0, 100)}`,
     );
 
-    const ctx = await rt.channel.reply.finalizeInboundContext({
+    const { agentId, sessionKey } = await resolveChannelDispatchIdentity(
+      rt as unknown as BridgePluginRuntime,
+      {
+        channel: "redis-stream",
+        accountId: route.accountId,
+        peerId,
+        agentId: route.agentId,
+      },
+    );
+
+    await dispatchChannelMessage({
+      mode: "reply-pipeline",
+      runtime: rt as unknown as BridgePluginRuntime,
       channel: "redis-stream",
       accountId: route.accountId,
-      from: peerId,
+      peerId,
       text,
-      chatType: "direct",
+      agentId,
+      sessionKey,
+      unified: parsed.unified,
       extra: {
         channel,
         matchedPattern: route.matchedPattern,
         routeSource: route.source,
       },
-    });
-
-    const dispatcher = rt.channel.reply.createReplyDispatcherWithTyping({
-      deliver: async (payload: { text: string }) => {
-        await publishMessage(replyChannel, payload.text);
+      reply: {
+        deliver: async ({ wire }) => {
+          await publishMessage(replyChannel, wire);
+        },
+        outboundFormat: "envelope",
+        replyRoute: { topic: replyChannel },
+        agentId,
       },
-    });
-
-    await rt.channel.reply.dispatchReplyFromConfig({
-      ctx,
-      cfg: rt.config,
-      dispatcher,
-      replyOptions,
     });
 
     return true;
@@ -151,7 +160,10 @@ export async function handleInboundMessage(message: RedisInboundMessage, config:
 /**
  * 检查 channel 是否在订阅白名单中。
  */
-function shouldProcessChannel(channel: string, subscribeChannels: string[]): boolean {
+function shouldProcessChannel(
+  channel: string,
+  subscribeChannels: string[],
+): boolean {
   if (!subscribeChannels.length) {
     return true;
   }
@@ -163,30 +175,4 @@ function isOutboundChannel(channel: string): boolean {
   if (channel.endsWith(":out")) return true;
   if (channel === "openclaw:agent:outbound") return true;
   return false;
-}
-
-/**
- * 解析入站消息 payload 为纯文本。
- */
-function parseInboundText(rawPayload: string, mode: RedisChannelConfig["payload"]["mode"]): string {
-  if (mode !== "jsonTextOrPlain") {
-    return rawPayload;
-  }
-
-  // Try UnifiedMessage format first
-  const unifiedMsg = parseMessageAny(rawPayload);
-  if (unifiedMsg && unifiedMsg.text) {
-    return unifiedMsg.text;
-  }
-
-  // Fallback to existing parsing logic
-  try {
-    const parsed = JSON.parse(rawPayload) as { text?: unknown };
-    if (typeof parsed.text === "string" && parsed.text.trim().length > 0) {
-      return parsed.text;
-    }
-  } catch {
-    // ignore parse error and fallback to plain text
-  }
-  return rawPayload;
 }

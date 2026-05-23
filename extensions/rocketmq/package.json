@@ -16,7 +16,7 @@
   "keywords": [
     "openclaw",
     "plugin",
-    "rockermq",
+    "rocketmq",
     "channel",
     "multi-agent",
     "mq"
@@ -45,14 +45,14 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "channel": {
-      "id": "rockermq",
+      "id": "rocketmq",
       "label": "RocketMQ",
       "blurb": "RocketMQ channel plugin with producer and push-consumer support."
     }
   },
   "dependencies": {
     "rocketmq-client-nodejs": "^1.0.5",
-    "@partme.ai/openclaw-message-sdk": "^2026.5.21"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

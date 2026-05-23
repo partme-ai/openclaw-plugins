@@ -58,8 +58,8 @@ export function deepMergeKnowledgeConfig(
   if (!global?.enabled) return null;
 
   const merged: KnowledgeConfig = {
-    enabled: true,
     ...global,
+    enabled: true,
   };
 
   if (!accountOverride) return merged;
@@ -78,7 +78,7 @@ export function deepMergeKnowledgeConfig(
 
   // store 配置：深度合并，但 sources 完全替换
   if (accountOverride.store || global.store) {
-    const baseStore = { ...(global.store ?? {}) };
+    const baseStore = { ...getDefaultStoreConfig('default'), ...(global.store ?? {}) };
     merged.store = accountOverride.store
       ? { ...baseStore, ...accountOverride.store, sources: accountOverride.store.sources ?? baseStore.sources }
       : baseStore;
@@ -105,8 +105,7 @@ export async function getOrCreateStore(
   const embedding = createEmbeddingService(config.embedding);
 
   // 创建 VectorStore
-  const storeConfig = config.store ?? getDefaultStoreConfig(namespace);
-  storeConfig.namespace = namespace;
+  const storeConfig = { ...getDefaultStoreConfig(namespace), ...(config.store ?? {}), namespace };
   const dimensions = config.embedding?.dimensions ?? embedding.dimensions;
   const store = await createVectorStore(storeConfig, dimensions);
 
@@ -215,8 +214,8 @@ export function registerKnowledgeHooks(api: OpenClawPluginApi, configPath?: stri
     ? configPath.split('.').reduce((obj: any, key: string) => obj?.[key], (api.config as any))
     : pluginConfig;
 
-  api.on('before_prompt_build', (_event: string, ctx: BeforePromptBuildContext): BeforePromptBuildResult | undefined | Promise<BeforePromptBuildResult | undefined> => {
-    return handleBeforePromptBuild(ctx, knowledgeConfig ?? pluginConfig);
+  api.on('before_prompt_build', (_event, ctx) => {
+    return handleBeforePromptBuild(ctx as unknown as BeforePromptBuildContext, knowledgeConfig ?? pluginConfig);
   });
 }
 

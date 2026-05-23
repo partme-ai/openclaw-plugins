@@ -187,13 +187,13 @@ export class RedisDiscovery implements IDiscoveryService {
     this.client = new MinimalRedisClient(host, port, password);
     await this.client.connect();
     console.log(
-      `[openclaw_cluster] Redis discovery started: ${host}:${port}, prefix=${this.keyPrefix}, nodeId=${this.nodeId}`
+      `[openclaw-cluster] Redis discovery started: ${host}:${port}, prefix=${this.keyPrefix}, nodeId=${this.nodeId}`
     );
     await this.registerSelf();
     await this.refreshNodes();
     this.heartbeatTimer = setInterval(() => this.heartbeat().catch(() => {}), HEARTBEAT_MS);
     this.refreshTimer = setInterval(
-      () => this.refreshNodes().catch((e) => console.warn("[openclaw_cluster] Redis discovery refresh:", (e as Error).message)),
+      () => this.refreshNodes().catch((e) => console.warn("[openclaw-cluster] Redis discovery refresh:", (e as Error).message)),
       REFRESH_MS
     );
   }
@@ -213,7 +213,7 @@ export class RedisDiscovery implements IDiscoveryService {
     }
     this.changeCallbacks = [];
     this.nodes = [];
-    console.log("[openclaw_cluster] Redis discovery stopped");
+    console.log("[openclaw-cluster] Redis discovery stopped");
   }
 
   getNodes(): ClusterNodeInfo[] {

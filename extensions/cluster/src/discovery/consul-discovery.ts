@@ -92,26 +92,26 @@ export class ConsulDiscovery implements IDiscoveryService {
    */
   async start(): Promise<void> {
     console.log(
-      `[openclaw_cluster] Consul discovery started: ${this.consulAddress}, service=${this.serviceName}, nodeId=${this.nodeId}`
+      `[openclaw-cluster] Consul discovery started: ${this.consulAddress}, service=${this.serviceName}, nodeId=${this.nodeId}`
     );
 
     try {
       await this.registerSelf();
     } catch (err) {
-      console.error("[openclaw_cluster] Consul register failed:", (err as Error).message);
+      console.error("[openclaw-cluster] Consul register failed:", (err as Error).message);
     }
 
     await this.refreshNodes();
 
     this.ttlPassTimer = setInterval(() => {
       this.passTtlCheck().catch((e) =>
-        console.warn("[openclaw_cluster] Consul TTL pass failed:", (e as Error).message)
+        console.warn("[openclaw-cluster] Consul TTL pass failed:", (e as Error).message)
       );
     }, TTL_PASS_INTERVAL);
 
     this.refreshTimer = setInterval(() => {
       this.refreshNodes().catch((e) =>
-        console.warn("[openclaw_cluster] Consul refresh failed:", (e as Error).message)
+        console.warn("[openclaw-cluster] Consul refresh failed:", (e as Error).message)
       );
     }, this.refreshInterval);
   }
@@ -132,11 +132,11 @@ export class ConsulDiscovery implements IDiscoveryService {
     try {
       await this.deregisterSelf();
     } catch (err) {
-      console.warn("[openclaw_cluster] Consul deregister failed:", (err as Error).message);
+      console.warn("[openclaw-cluster] Consul deregister failed:", (err as Error).message);
     }
     this.changeCallbacks = [];
     this.nodes = [];
-    console.log("[openclaw_cluster] Consul discovery stopped");
+    console.log("[openclaw-cluster] Consul discovery stopped");
   }
 
   getNodes(): ClusterNodeInfo[] {
@@ -165,7 +165,7 @@ export class ConsulDiscovery implements IDiscoveryService {
 
     const url = `${this.consulAddress}/v1/agent/service/register`;
     await this.consulRequest(url, { method: "PUT", body: JSON.stringify(payload) });
-    console.log(`[openclaw_cluster] Consul service registered: ${this.nodeId}`);
+    console.log(`[openclaw-cluster] Consul service registered: ${this.nodeId}`);
   }
 
   /**

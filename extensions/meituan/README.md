@@ -1,14 +1,26 @@
+# Meituan
 
-## 关于 openclaw-plugins
+OpenClaw 美团开放平台渠道与运营工具插件，公域 Agent-First 智能运营。符合《公域平台 Agent-First 智能运营设计文档》与《美团开放平台对接规格》。
+| 运行时 | 项目路径 | 说明 |
+|--------|----------|------|
 
-本项目是 [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins)  monorepo 的一员 — 一个由 **PartMe.AI 团队** 研发与二次开发的 OpenClaw 企业级插件集合，包含 30+ 独立插件，覆盖 IM 渠道、消息队列、AI 能力、基础设施四大领域。
+## 能力
 
-每个插件独立发布到 npm（`@partme.ai` scope），可单独安装：
+- **渠道** `meituan`：配置 `channels.meituan`（app_key、app_secret、callback_url、shop_id 等）
+- **Webhook**：`POST /channels/meituan/webhook` 接收美团开放平台事件
+- **工具**（若运行时提供 `registerTool`）：meituan_query_orders、meituan_reply_review、meituan_query_shop_metrics、meituan_verify_writeoff、meituan_shop_qrcode
+
+## 安装与配置
+
+安装后于 `openclaw.json` 的 `channels.meituan` 中配置凭证与回调 URL。在美团开放平台将回调地址设为 `https://<域名>/channels/meituan/webhook`。
+
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
+## 构建
 
 ```bash
-openclaw plugins install @partme.ai/openclaw-nacos
+pnpm install
+pnpm build
 ```
 
-**PartMe.AI** 专注于 AI 智能客服与企业级 AI Agent 基础设施，提供从企微/钉钉/飞书/QQ 渠道接入，到 RAG 知识库、多级记忆、监控运维的全栈解决方案。
-
-> 📧 联系我们：partmeai@gmail.com | 🦞 [GitHub](https://github.com/partme-ai/openclaw-plugins)
+## E2E 验证

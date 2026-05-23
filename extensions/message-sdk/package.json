@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-message-sdk",
-  "version": "2026.5.21",
+  "version": "2026.5.22",
   "type": "module",
   "description": "统一消息格式 SDK — 所有 openclaw-plugins 渠道插件互通的消息结构定义",
   "license": "MIT",
@@ -34,6 +34,38 @@
     "./tts": {
       "types": "./src/tts/index.ts",
       "default": "./src/tts/index.ts"
+    },
+    "./bridge": {
+      "types": "./dist/bridge/index.d.ts",
+      "default": "./dist/bridge/index.js"
+    },
+    "./dispatch": {
+      "types": "./src/dispatch/index.ts",
+      "default": "./src/dispatch/index.ts"
+    },
+    "./ingress": {
+      "types": "./src/ingress/index.ts",
+      "default": "./src/ingress/index.ts"
+    },
+    "./dedup": {
+      "types": "./src/dedup/index.ts",
+      "default": "./src/dedup/index.ts"
+    },
+    "./queue": {
+      "types": "./src/queue/index.ts",
+      "default": "./src/queue/index.ts"
+    },
+    "./metadata": {
+      "types": "./src/metadata/index.ts",
+      "default": "./src/metadata/index.ts"
+    }
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.12"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
     }
   },
   "files": [

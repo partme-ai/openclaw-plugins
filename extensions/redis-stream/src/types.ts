@@ -3,7 +3,11 @@
  */
 
 /** DM session scope（与 OpenClaw session.dmScope 一致） */
-export type DmScope = "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
+export type DmScope =
+  | "main"
+  | "per-peer"
+  | "per-channel-peer"
+  | "per-account-channel-peer";
 
 /** channel → agent 绑定配置 */
 export interface RedisChannelBinding {

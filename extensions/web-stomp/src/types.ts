@@ -197,6 +197,6 @@ export interface StompConnectionInfo {
   subscriptionCount: number;
   /** 关联的 Agent ID */
   agentId?: string;
-  /** 关联的 OpenClaw 会话键 */
-  sessionKey?: string;
+  /** STOMP peer 标识（用于 resolveAgentRoute） */
+  peerId?: string;
 }

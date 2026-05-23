@@ -1,14 +1,29 @@
+# Douyin
 
-## 关于 openclaw-plugins
+OpenClaw 抖音开放平台渠道与运营工具插件，公域 Agent-First 智能运营。符合《公域平台 Agent-First 智能运营设计文档》与《抖音开放平台对接规格》。
 
-本项目是 [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins)  monorepo 的一员 — 一个由 **PartMe.AI 团队** 研发与二次开发的 OpenClaw 企业级插件集合，包含 30+ 独立插件，覆盖 IM 渠道、消息队列、AI 能力、基础设施四大领域。
+**优先对接**：[抖音生活服务商家应用](https://developer.open-douyin.com/docs/resource/zh-CN/local-life/connect/life-open-platform)，适合自建智能体、核销/发券/对账等场景；接口与 SDK 见 [生活服务 OpenAPI SDK 总览](https://developer.open-douyin.com/docs/resource/zh-CN/local-life/develop/sdk-overview)。
 
-每个插件独立发布到 npm（`@partme.ai` scope），可单独安装：
+## 能力
+
+- **官方插件入口**：`defineChannelPluginEntry`（`openclaw/plugin-sdk/core`），`setRuntime` 注入 Gateway 运行时
+- **渠道** `douyin`：`createChatChannelPlugin`，混合账号配置 `channels.douyin`（含 `accounts.<id>`）
+- **Gateway Webhook**：`gateway.startAccount` 内 `registerPluginHttpRoute`（`auth: "plugin"`，`pluginId: "douyin"`），默认路径见配置 `webhook_path`（默认 `/channels/douyin/webhook`）
+- **入站**：验签与 `verify_webhook` 挑战后调用 `dispatchInboundDirectDmWithRuntime`（`openclaw/plugin-sdk/channel-inbound`）
+- **出站**：当前为占位（抖音私信需走开放平台/OpenAPI；见代码注释）
+- **工具**（`registerFull`）：douyin_query_orders、douyin_reply_review、douyin_query_shop_metrics
+
+开发时直接使用 peer `openclaw` 提供的 `openclaw/plugin-sdk/*` 类型；不再维护本地 SDK 类型占位文件。
+
+## 安装与配置
+
+安装后于 `openclaw.json` 的 `channels.douyin` 中配置凭证与回调 URL。在抖音开放平台将回调地址设为 `https://<域名>/channels/douyin/webhook`。
+
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
+## 构建
 
 ```bash
-openclaw plugins install @partme.ai/openclaw-nacos
+pnpm install
+pnpm build
 ```
-
-**PartMe.AI** 专注于 AI 智能客服与企业级 AI Agent 基础设施，提供从企微/钉钉/飞书/QQ 渠道接入，到 RAG 知识库、多级记忆、监控运维的全栈解决方案。
-
-> 📧 联系我们：partmeai@gmail.com | 🦞 [GitHub](https://github.com/partme-ai/openclaw-plugins)

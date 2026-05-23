@@ -9,8 +9,8 @@ import {
   matchTopic,
   buildReplyTopicFromInbound,
   buildOutboundTopic,
-} from "../src/topic-router.js";
-import { DEFAULT_ROCKERMQ_CONFIG, type RockermqConfig } from "../src/rockermq-config.js";
+} from "../src/routing/topic-router.js";
+import { DEFAULT_ROCKERMQ_CONFIG, type RockermqConfig } from "../src/config.js";
 
 describe("topic-router", () => {
   describe("parseStandardTopic", () => {

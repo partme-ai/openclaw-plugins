@@ -8,7 +8,7 @@ import {
   validateRabbitmqConfig,
   buildRabbitmqConfigSnapshot,
   DEFAULT_RABBITMQ_CONFIG,
-} from '../src/rabbitmq-config.js';
+} from '../src/config.js';
 
 describe('rabbitmq-config', () => {
   describe('resolveRabbitmqConfig', () => {

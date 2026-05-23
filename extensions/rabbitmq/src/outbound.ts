@@ -2,14 +2,17 @@
  * RabbitMQ 渠道出站适配器：将 Agent 回复发布到 RabbitMQ Topic。
  */
 
-import type { ChannelOutboundAdapter, ChannelOutboundContext } from "openclaw/plugin-sdk";
+import type {
+  ChannelOutboundAdapter,
+  ChannelOutboundContext,
+} from "openclaw/plugin-sdk/channel-contract";
 import { chunkText, sanitizeForPlainText } from "./utils.js";
 
-import { publishMessage } from "./rabbitmq-server.js";
-import { DEFAULT_RABBITMQ_CONFIG } from "./rabbitmq-config.js";
-import { getRabbitmqChannelConfig } from "./rabbitmq-state.js";
-import { getPeerIdBySession, getSessionContext } from "./session-mapper.js";
-import { buildOutboundTopic } from "./topic-router.js";
+import { publishMessage } from "./transport/server.js";
+import { DEFAULT_RABBITMQ_CONFIG } from "./config.js";
+import { getRabbitmqChannelConfig } from "./state.js";
+import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
+import { buildOutboundTopic } from "./routing/topic-router.js";
 
 /**
  * OpenClaw ChannelOutboundAdapter：直连文本发布到 RabbitMQ。

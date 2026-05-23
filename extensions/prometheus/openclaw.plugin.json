@@ -1,8 +1,8 @@
 {
   "id": "openclaw-prometheus",
   "name": "openclaw-prometheus",
-  "version": "0.3.0",
-  "description": "Prometheus metrics exporter for OpenClaw Gateway - built on official plugin SDK runtime, hooks, events, and plugin-owned routes",
+  "version": "0.3.1",
+  "description": "Prometheus metrics exporter for OpenClaw Gateway. Supersedes bundled diagnostics-prometheus (model.usage tokens, run/tool/message histograms via internal diagnostics) and adds RPC usage, hooks, and SLI metrics. Disable the bundled diagnostics-prometheus plugin when using this exporter.",
   "main": "dist/index.js",
   "channels": [],
   "commands": [],

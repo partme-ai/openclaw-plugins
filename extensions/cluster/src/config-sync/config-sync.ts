@@ -39,7 +39,7 @@ export function createConfigSyncService(
  */
 class NoopConfigSync implements IConfigSyncService {
   async start(): Promise<void> {
-    console.log("[openclaw_cluster] Config sync: none (single-node mode)");
+    console.log("[openclaw-cluster] Config sync: none (single-node mode)");
   }
 
   async stop(): Promise<void> {

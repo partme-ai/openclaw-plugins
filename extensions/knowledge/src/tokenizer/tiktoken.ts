@@ -6,27 +6,27 @@
  *
  * 智谱 Tokenizer API 文档: https://docs.bigmodel.cn/api-reference/模型-api/文本分词器
  */
-import { get_encoding, type Tiktoken } from 'tiktoken';
+import { get_encoding, type Tiktoken, type TiktokenEncoding } from 'tiktoken';
 import type { TokenizerService, KnowledgeTokenizerConfig } from '../types.js';
 
 /** 默认编码 */
-const DEFAULT_ENCODING = 'o200k_base';
+const DEFAULT_ENCODING: TiktokenEncoding = 'o200k_base';
 
 export class TikTokenTokenizerService implements TokenizerService {
   readonly modelName: string;
-  private encodingName: string;
-  private encPromise: Promise<Tiktoken> | null = null;
+  private encodingName: TiktokenEncoding;
+  private encoder: Tiktoken | null = null;
 
   constructor(config?: KnowledgeTokenizerConfig) {
-    this.encodingName = config?.model ?? DEFAULT_ENCODING;
+    this.encodingName = toTiktokenEncoding(config?.model);
     this.modelName = `tiktoken:${this.encodingName}`;
   }
 
   private async getEncoder(): Promise<Tiktoken> {
-    if (!this.encPromise) {
-      this.encPromise = get_encoding(this.encodingName);
+    if (!this.encoder) {
+      this.encoder = get_encoding(this.encodingName);
     }
-    return this.encPromise;
+    return this.encoder;
   }
 
   async countTokens(text: string): Promise<number> {
@@ -50,5 +50,19 @@ export class TikTokenTokenizerService implements TokenizerService {
     } catch {
       return false;
     }
+  }
+}
+
+function toTiktokenEncoding(value: string | undefined): TiktokenEncoding {
+  switch (value) {
+    case 'gpt2':
+    case 'r50k_base':
+    case 'p50k_base':
+    case 'p50k_edit':
+    case 'cl100k_base':
+    case 'o200k_base':
+      return value;
+    default:
+      return DEFAULT_ENCODING;
   }
 }

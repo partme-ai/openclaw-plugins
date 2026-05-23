@@ -20,6 +20,7 @@ import type { ResolvedWecomAccount, WecomBotConfig } from "./types/index.js";
 import { monitorWecomProvider } from "./gateway-monitor.js";
 import { setWecomBotConfig, wecomOnboardingAdapter } from "./onboarding.js";
 import { WEBHOOK_PATHS } from "./types/constants.js";
+import { wecomOutbound } from "./outbound.js";
 
 const meta = {
   id: "wecom-cs",
@@ -45,7 +46,7 @@ function normalizeWecomMessagingTarget(raw: string): string | undefined {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- onboarding 在 >=3.22 中已重命名为 setupWizard，
 // 但我们仍设置旧字段以兼容 <3.22 版本的 OpenClaw。
-export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
+export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, unknown> = {
   id: "wecom-cs",
   meta,
   onboarding: wecomOnboardingAdapter as any,
@@ -208,7 +209,53 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> = {
       probe: snapshot.probe,
       lastProbeAt: snapshot.lastProbeAt ?? null,
     }),
-    probeAccount: async () => ({ ok: true }),
+    probeAccount: async ({ account }) => {
+      // Real KF probe: check API access by calling getAccessToken
+      // Backported from research/openclaw-china probeWecomKfAccount
+      try {
+        const resolved = account as Record<string, unknown>;
+        const agentCfg = resolved.agent as Record<string, unknown> | undefined;
+        const kfCfg = resolved.kf as Record<string, unknown> | undefined;
+
+        const corpId = (kfCfg?.corpId ?? resolved.corpId ?? "") as string;
+        const corpSecret = (kfCfg?.corpSecret ?? resolved.corpSecret ?? "") as string;
+        const token = (kfCfg?.token ?? resolved.token ?? "") as string;
+        const encodingAESKey = (kfCfg?.encodingAESKey ?? resolved.encodingAESKey ?? "") as string;
+
+        // Check if KF is configured
+        if (!corpId || !token || !encodingAESKey) {
+          return { ok: false, error: "KF not configured: missing corpId/token/encodingAESKey" };
+        }
+
+        // Check if can send actively
+        if (!corpSecret) {
+          return {
+            ok: false,
+            error: "corpSecret not configured — cannot send active messages yet. Configure corpSecret and restart.",
+          };
+        }
+
+        // Real API check
+        const { getAccessToken } = await import("./agent/api-client.js");
+        await getAccessToken({
+          accountId: "kf-probe",
+          enabled: true,
+          configured: true,
+          corpId,
+          corpSecret,
+          token: "",
+          encodingAESKey: "",
+          config: { corpId, corpSecret, token: "", encodingAESKey: "" },
+        });
+
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
     buildAccountSnapshot: ({ account, runtime, cfg }) => {
       const conflict = resolveWecomAccountConflict({
         cfg: cfg as OpenClawConfig,

@@ -3,7 +3,7 @@
  * 管理 Agent 路由规则：哪个客服账号对应哪个 Agent
  *
  * 从原 config.ts 中提取的业务专属功能，
- * 全局配置读写已由 openclaw_management /api/config 承担。
+ * 全局配置读写由 OpenClaw 配置系统管理。
  *
  * 对应端点：
  * - GET /ics/config/bindings  - 获取 bindings 路由规则
@@ -12,7 +12,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { GatewayRuntime } from "../types.js";
-import { triggerConfigReload, safeConfigUpdate } from "../utils/config-reload.js";
+import { triggerConfigReload, safeConfigUpdate } from "../ics-utils/config-reload.js";
 
 /**
  * 创建 bindings 路由规则处理器

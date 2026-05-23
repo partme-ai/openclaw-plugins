@@ -198,11 +198,22 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
   };
 }
 
+const VALID_OPENCLAW_DM_SCOPES: OpenClawDmScope[] = [
+  "main",
+  "per-peer",
+  "per-channel-peer",
+  "per-account-channel-peer",
+];
+
 /**
- * 兼容旧函数名：读取 OpenClaw 全局 `session.dmScope`。
+ * 解析 OpenClaw 全局 `session.dmScope`；缺失或非法时回退 `main`。
  */
 export function resolveOpenClawDmScope(globalConfig: Record<string, unknown>): OpenClawDmScope {
-  return (globalConfig.session as any)?.dmScope ?? 'per-peer';
+  const raw = (globalConfig.session as { dmScope?: unknown } | undefined)?.dmScope;
+  if (typeof raw === "string" && VALID_OPENCLAW_DM_SCOPES.includes(raw as OpenClawDmScope)) {
+    return raw as OpenClawDmScope;
+  }
+  return "main";
 }
 
 /**

@@ -13,6 +13,80 @@ import { getAccessToken, syncMessages } from "./agent/api-client.js";
 import { getCursorStore } from "./cursor-store.js";
 import { handleCustomerMessage } from "./agent/handler.js";
 import { handleSystemEvent } from "./agent/system-event.js";
+import { getWecomRuntime } from "./runtime.js";
+
+/** Account state tracking — updates via channel setStatus */
+const accountStatePatches = new Map<string, Record<string, unknown>>();
+
+export function consumeAccountStatePatch(accountId: string): Record<string, unknown> | undefined {
+  const patch = accountStatePatches.get(accountId);
+  accountStatePatches.delete(accountId);
+  return patch;
+}
+
+function trackAccountEvent(accountId: string, patch: Record<string, unknown>): void {
+  const existing = accountStatePatches.get(accountId) ?? {};
+  accountStatePatches.set(accountId, { ...existing, ...patch });
+}
+
+/**
+ * **primeWecomKfCursor (冷启动游标预热)**
+ *
+ * 在通道启动时遍历历史消息将游标推进到最新位置，防止重放历史消息。
+ * 仅在 corpId + corpSecret 均配置时执行（需要主动发送能力）。
+ * 从 research/openclaw-china 回移植。
+ */
+export async function primeWecomKfCursor(params: {
+  accountConfig: WecomAccountConfig;
+}): Promise<void> {
+  const { accountConfig } = params;
+  const corpId = accountConfig.corpId?.trim();
+  const corpSecret = accountConfig.corpSecret?.trim();
+  const openKfId = accountConfig.openKfId?.trim();
+
+  if (!corpId || !corpSecret || !openKfId) {
+    return;
+  }
+
+  const cursorStore = getCursorStore();
+  const existingCursor = await cursorStore.getCursor(openKfId);
+  if (existingCursor) {
+    return; // Cursor already exists, no need to prime
+  }
+
+  console.log(`[wecom_kf] Priming cursor for openKfId=${openKfId}`);
+
+  try {
+    const token = await getAccessToken({
+      accountId: "kf-prime",
+      enabled: true,
+      configured: true,
+      corpId,
+      corpSecret,
+      token: "",
+      encodingAESKey: "",
+      config: { corpId, corpSecret, token: "", encodingAESKey: "" },
+    });
+
+    let cursor = "";
+    let hasMore = true;
+    while (hasMore) {
+      const result = await syncMessages(token, cursor, undefined, openKfId, 1000);
+      if (result.next_cursor) {
+        cursor = result.next_cursor;
+        await cursorStore.saveCursor(openKfId, cursor);
+      }
+      hasMore = result.has_more === 1;
+    }
+
+    console.log(`[wecom_kf] Cursor primed for openKfId=${openKfId}`);
+  } catch (error) {
+    console.warn(
+      `[wecom_kf] Cursor prime failed for openKfId=${openKfId}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
 
 /** 同一批消息最大并发处理数 */
 const MSG_PROCESS_CONCURRENCY = 8;
@@ -84,10 +158,25 @@ export function createKfCallbackHandler(
       }
 
       const eventData = parsed.data as Record<string, unknown> | undefined;
-      if (eventData && eventData.Event === "kf_msg_or_event") {
+      if (!eventData) {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("success");
+        return;
+      }
+
+      // kf_msg_or_event: 客户消息/系统事件回调 (path 94670)
+      if (eventData.Event === "kf_msg_or_event") {
         processKfEvent(eventData, getAccountConfig).catch((error) => {
           console.error("[wecom_kf] Error processing KF event:", error);
         });
+      }
+
+      // kf_account_auth_change: 客服账号授权变更通知 (path 97712)
+      if (eventData.Event === "kf_account_auth_change") {
+        const authAdd = (eventData.AuthAddOpenKfId as string)?.trim();
+        const authDel = (eventData.AuthDelOpenKfId as string)?.trim();
+        if (authAdd) console.log(`[wecom_kf] KF account authorized: ${authAdd}`);
+        if (authDel) console.log(`[wecom_kf] KF account deauthorized: ${authDel}`);
       }
 
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -163,6 +252,9 @@ async function processKfEvent(
       syncResult.msg_list.map((msg) => limit(() => processMessage(msg, accountConfig)))
     );
 
+    // Track last sync time
+    trackAccountEvent(accountConfig.openKfId ?? kfId, { lastSyncAt: Date.now() });
+
     if (syncResult.next_cursor) {
       cursor = syncResult.next_cursor;
       await cursorStore.saveCursor(kfId, cursor);
@@ -187,6 +279,7 @@ async function processMessage(
 
   switch (origin) {
     case 3:
+      trackAccountEvent(accountConfig.openKfId ?? "default", { lastInboundAt: Date.now() });
       await handleCustomerMessage(msg, accountConfig);
       break;
 

@@ -18,6 +18,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import type BetterSqlite3 from 'better-sqlite3';
 import type { VectorStore, VectorChunk, VectorChunkMetadata, SearchOptions, ScoredChunk, StoreStats } from '../types.js';
 import { cosineSimilarity } from './math.js';
 
@@ -52,7 +53,7 @@ type ChunkRowWithVector = ChunkRow & { vector: Buffer };
 
 export class SqliteVecStore implements VectorStore {
   private config: SqliteVecConfig;
-  private db: import('better-sqlite3').Database | null = null;
+  private db: BetterSqlite3.Database | null = null;
   private namespaceTable: string;
   private ftsTable: string;
 
@@ -66,7 +67,7 @@ export class SqliteVecStore implements VectorStore {
   async initialize(): Promise<void> {
     await mkdir(dirname(this.config.dbPath), { recursive: true });
 
-    let Database: typeof import('better-sqlite3').default;
+    let Database: typeof BetterSqlite3;
     try {
       Database = (await import('better-sqlite3')).default;
     } catch {
@@ -76,13 +77,14 @@ export class SqliteVecStore implements VectorStore {
       );
     }
 
-    this.db = new Database(this.config.dbPath);
+    const db = new Database(this.config.dbPath);
+    this.db = db;
 
     // 启用 WAL 模式提升并发性能
-    this.db.pragma('journal_mode = WAL');
+    db.pragma('journal_mode = WAL');
 
     // 创建向量表（每行一个 chunk，向量存为 BLOB）
-    this.db.exec(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS ${this.namespaceTable} (
         id TEXT PRIMARY KEY,
         source_id TEXT NOT NULL DEFAULT '',
@@ -95,14 +97,14 @@ export class SqliteVecStore implements VectorStore {
     `);
 
     // 创建 source_id 索引以加速按来源删除
-    this.db.exec(`
+    db.exec(`
       CREATE INDEX IF NOT EXISTS idx_${this.namespaceTable}_source_id
       ON ${this.namespaceTable}(source_id);
     `);
 
     // 创建 FTS5 全文搜索虚拟表
     // content= 指向主表，自动同步
-    this.db.exec(`
+    db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS ${this.ftsTable} USING fts5(
         id UNINDEXED,
         text,
@@ -114,7 +116,7 @@ export class SqliteVecStore implements VectorStore {
     `);
 
     // 同步已存在的数据到 FTS（首次创建时）
-    this.db.exec(`
+    db.exec(`
       INSERT OR IGNORE INTO ${this.ftsTable}(${this.ftsTable})
       SELECT id, text, source_id FROM ${this.namespaceTable};
     `);
@@ -294,22 +296,23 @@ export class SqliteVecStore implements VectorStore {
 
   async deleteBySource(sourceId: string): Promise<void> {
     if (!this.db) throw new Error('SqliteVecStore not initialized');
+    const db = this.db;
 
-    const transaction = this.db.transaction(() => {
+    const transaction = db.transaction(() => {
       // 删除该 source 的所有 id
-      const ids = this.db!.prepare(
+      const ids = db.prepare(
         `SELECT id FROM ${this.namespaceTable} WHERE source_id = ?`
       ).all(sourceId) as { id: string }[];
 
       // 从 FTS5 删除
       for (const row of ids) {
-        this.db!.prepare(
+        db.prepare(
           `DELETE FROM ${this.ftsTable} WHERE id = ?`
         ).run(row.id);
       }
 
       // 从向量表删除
-      this.db!.prepare(`DELETE FROM ${this.namespaceTable} WHERE source_id = ?`).run(sourceId);
+      db.prepare(`DELETE FROM ${this.namespaceTable} WHERE source_id = ?`).run(sourceId);
     });
 
     transaction();
@@ -317,12 +320,13 @@ export class SqliteVecStore implements VectorStore {
 
   async clear(): Promise<void> {
     if (!this.db) throw new Error('SqliteVecStore not initialized');
+    const db = this.db;
 
-    const transaction = this.db.transaction(() => {
+    const transaction = db.transaction(() => {
       // 清空 FTS5
-      this.db!.exec(`DELETE FROM ${this.ftsTable}`);
+      db.exec(`DELETE FROM ${this.ftsTable}`);
       // 清空向量表
-      this.db!.exec(`DELETE FROM ${this.namespaceTable}`);
+      db.exec(`DELETE FROM ${this.namespaceTable}`);
     });
 
     transaction();

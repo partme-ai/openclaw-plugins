@@ -5,7 +5,10 @@
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
-import type { ChannelSetupAdapter, ChannelSetupWizard } from "openclaw/plugin-sdk/setup";
+import type {
+  ChannelSetupAdapter,
+  ChannelSetupWizard,
+} from "openclaw/plugin-sdk/setup";
 import {
   applySetupAccountConfigPatch,
   createPatchedAccountSetupAdapter,
@@ -13,9 +16,19 @@ import {
   setSetupChannelEnabled,
 } from "openclaw/plugin-sdk/setup";
 
+type ChannelSetupWizardCredential = NonNullable<ChannelSetupWizard["credentials"]>[number];
+type ChannelSetupWizardTextInput = NonNullable<ChannelSetupWizard["textInputs"]>[number];
+type SetupWizardAccountParams = { cfg: OpenClawConfig; accountId: string };
+type SetupWizardCredentialApplySetParams = SetupWizardAccountParams & {
+  resolvedValue: string;
+};
+type SetupWizardTextApplySetParams = SetupWizardAccountParams & {
+  value: string;
+};
+
 /** 单条凭据字段映射（CLI inputKey → channels.<id> 配置键） */
 export type SetupCredentialSpec = {
-  inputKey: "token" | "secret" | "url" | "baseUrl" | "botToken" | "appToken" | "privateKey";
+  inputKey: "token" | "secret" | "url" | "botToken" | "appToken" | "privateKey";
   configKey: string;
   label: string;
   preferredEnvVar?: string;
@@ -27,7 +40,7 @@ export type SetupCredentialSpec = {
 
 /** 单条文本输入映射（CLI inputKey → channels.<id> 配置键） */
 export type SetupTextInputSpec = {
-  inputKey: "url" | "baseUrl" | "httpPort" | "webhookPath" | "webhookUrl" | "token" | "secret";
+  inputKey: "url" | "httpPort" | "webhookPath" | "webhookUrl" | "token" | "secret";
   configKey: string;
   message: string;
   placeholder?: string;
@@ -72,15 +85,16 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
     channelKey: channel,
     validateInput: () => null,
     buildPatch: (input) => {
+      const inputRecord = input as Record<string, unknown>;
       const patch: Record<string, unknown> = {};
       for (const spec of params.credentials ?? []) {
-        const raw = input[spec.inputKey];
+        const raw = inputRecord[spec.inputKey];
         if (typeof raw === "string" && raw.trim()) {
           patch[spec.configKey] = raw.trim();
         }
       }
       for (const spec of params.textInputs ?? []) {
-        const raw = input[spec.inputKey];
+        const raw = inputRecord[spec.inputKey];
         if (typeof raw === "string" && raw.trim()) {
           patch[spec.configKey] = raw.trim();
         }
@@ -97,13 +111,14 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
       unconfiguredLabel: "需要配置",
       configuredHint: "已配置",
       unconfiguredHint: "需要设置",
-      resolveConfigured: ({ cfg, accountId }) => params.resolveConfigured(cfg, accountId),
+      resolveConfigured: ({ cfg }) => params.resolveConfigured(cfg),
     }),
     introNote: params.introLines?.length
       ? {
           title: `${label} 设置`,
           lines: params.introLines,
-          shouldShow: ({ cfg, accountId }) => !params.resolveConfigured(cfg, accountId),
+      shouldShow: ({ cfg, accountId }: SetupWizardAccountParams) =>
+        !params.resolveConfigured(cfg, accountId),
         }
       : undefined,
     credentials: (params.credentials ?? []).map((spec) => ({
@@ -116,7 +131,7 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
       envPrompt: spec.preferredEnvVar ? `使用环境变量 ${spec.preferredEnvVar}？` : `使用环境变量中的 ${spec.label}？`,
       keepPrompt: `${spec.label} 已配置，保留当前值？`,
       inputPrompt: spec.inputPrompt,
-      inspect: ({ cfg, accountId }) => {
+      inspect: ({ cfg, accountId }: SetupWizardAccountParams) => {
         const value = spec.getValue(cfg, accountId)?.trim();
         const hasValue = Boolean(value);
         return {
@@ -125,14 +140,14 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
           resolvedValue: value,
         };
       },
-      applySet: ({ cfg, resolvedValue, accountId }) =>
+      applySet: ({ cfg, resolvedValue, accountId }: SetupWizardCredentialApplySetParams) =>
         applySetupAccountConfigPatch({
           cfg,
           channelKey: channel,
           accountId,
           patch: { [spec.configKey]: resolvedValue },
         }),
-    })),
+    })) as ChannelSetupWizardCredential[],
     textInputs: (params.textInputs ?? []).map((spec) => ({
       inputKey: spec.inputKey,
       message: spec.message,
@@ -140,15 +155,15 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
       required: spec.required ?? true,
       helpTitle: spec.helpTitle,
       helpLines: spec.helpLines,
-      currentValue: ({ cfg, accountId }) => spec.getValue(cfg, accountId),
-      applySet: ({ cfg, value, accountId }) =>
+      currentValue: ({ cfg, accountId }: SetupWizardAccountParams) => spec.getValue(cfg, accountId),
+      applySet: ({ cfg, value, accountId }: SetupWizardTextApplySetParams) =>
         applySetupAccountConfigPatch({
           cfg,
           channelKey: channel,
           accountId,
           patch: { [spec.configKey]: value.trim() },
         }),
-    })),
+    })) as ChannelSetupWizardTextInput[],
     finalize: params.finalize ?? (async ({ cfg, accountId }) => {
       if (!params.resolveConfigured(cfg, accountId)) {
         return undefined;

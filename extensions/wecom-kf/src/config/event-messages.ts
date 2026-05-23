@@ -5,7 +5,7 @@
  */
 
 import type { EventMessagesConfig } from "../types/index.js";
-import { getWecomKfRuntime } from "../runtime.js";
+import { getWecomRuntime } from "../runtime.js";
 
 /** 内置默认事件消息配置 */
 const DEFAULT_EVENT_MESSAGES: EventMessagesConfig = {
@@ -40,9 +40,9 @@ export async function getEventMessagesConfig(
   openKfId: string
 ): Promise<EventMessagesConfig> {
   try {
-    const runtime = getWecomKfRuntime();
+    const runtime = getWecomRuntime();
     const cfg = runtime.config;
-    const channelCfg = (cfg as Record<string, Record<string, unknown>>).channels?.[
+    const channelCfg = (cfg as unknown as Record<string, Record<string, unknown>>).channels?.[
       "wecom-kf"
     ] as Record<string, unknown> | undefined;
 

@@ -67,7 +67,10 @@ export interface InboundMessage {
   peerId: string;
   destination: string;
   replyDestination?: string;
-  text: string;
+  /** STOMP SEND 帧原始 body（由 inbound 经 normalizeWireIngress 解析）。 */
+  rawPayload: string;
+  /** 可选幂等键（message-id / receipt / 合成键）。 */
+  idempotencyKey?: string;
 }
 
 export type InboundHandler = (message: InboundMessage) => void;

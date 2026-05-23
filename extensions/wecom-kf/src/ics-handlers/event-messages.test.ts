@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 // ─── Mock safeConfigUpdate / triggerConfigReload ───
 
-vi.mock("../utils/config-reload.js", () => ({
+vi.mock("../ics-utils/config-reload.js", () => ({
   safeConfigUpdate: vi.fn(async (_path: string, updater: (cfg: Record<string, unknown>) => Record<string, unknown>) => {
     // 模拟执行 updater 并记录最终结果
     const result = updater({ channels: { "wecom-kf": {} } });
@@ -157,7 +157,7 @@ describe("事件消息处理器", () => {
 
   describe("PUT /ics/config/event-messages", () => {
     it("应更新渠道默认配置并触发热重载", async () => {
-      const { triggerConfigReload } = await import("../utils/config-reload.js");
+      const { triggerConfigReload } = await import("../ics-utils/config-reload.js");
       const handler = createEventMessagesHandler(runtime);
       const req = createMockReq("PUT", "/ics/config/event-messages", {
         welcome: { enabled: false, msgtype: "text", content: { text: "更新后" } },
@@ -176,7 +176,7 @@ describe("事件消息处理器", () => {
 
   describe("DELETE /ics/config/event-messages/:accountId", () => {
     it("应删除账号级配置并触发热重载", async () => {
-      const { triggerConfigReload } = await import("../utils/config-reload.js");
+      const { triggerConfigReload } = await import("../ics-utils/config-reload.js");
       const handler = createEventMessagesHandler(runtime);
       const req = createMockReq("DELETE", "/ics/config/event-messages/acct-001");
       const res = createMockRes();

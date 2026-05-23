@@ -9,7 +9,7 @@
  * - 跳过公开路径（/auth/status, /health 等）
  * - 向后兼容 gatewayToken 开发模式
  *
- * 与 openclaw_management withAuth() 的集成：
+ * 与 OpenClaw Gateway Auth 的集成：
  * - 本中间件在 Gateway 级别运行，早于 management handler
  * - 验证通过后注入 req.authContext
  * - management 的 withAuth() 检测到 authContext 存在时直接使用
@@ -252,7 +252,7 @@ function sendUnauthorized(res: ServerResponse, message: string): void {
 
 /**
  * 创建 withSaTokenAuth 包装器
- * 替换现有 withAuth()，兼容 openclaw_management 的 handler 签名
+ * 替换现有 withAuth()，兼容 Gateway 的 handler 签名
  *
  * @param handler - 原始处理函数
  * @param requiredPermission - 所需权限

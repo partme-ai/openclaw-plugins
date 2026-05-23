@@ -261,7 +261,7 @@ export function mergeKnowledgeConfig(
 
   // store 配置：深度合并，但 sources 完全替换
   if (accountOverride.store || global.store) {
-    const baseStore = { ...(global.store ?? {}) };
+    const baseStore: KnowledgeStoreConfig = { ...DEFAULT_STORE, ...(global.store ?? {}) };
     merged.store = accountOverride.store
       ? { ...baseStore, ...accountOverride.store, sources: accountOverride.store.sources ?? baseStore.sources }
       : baseStore;

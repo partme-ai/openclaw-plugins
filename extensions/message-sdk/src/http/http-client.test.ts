@@ -139,13 +139,14 @@ describe("withRetry", () => {
       maxRetries: 2,
       initialDelay: 10,
     });
+    const assertion = expect(promise).rejects.toBe(err);
 
     // 第一次重试: sleep(10 * 2^0 = 10)
     await vi.advanceTimersByTimeAsync(10);
     // 第二次重试: sleep(10 * 2^1 = 20)
     await vi.advanceTimersByTimeAsync(20);
 
-    await expect(promise).rejects.toBe(err);
+    await assertion;
     expect(fn).toHaveBeenCalledTimes(3);
   }, 10000);
 

@@ -1,4 +1,4 @@
-import type { ChannelOutboundAdapter, ChannelOutboundContext } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
 
 import { sendText as sendAgentText, sendMedia as sendAgentMedia, uploadMedia } from "./agent/api-client.js";
 import { resolveWecomAccount, resolveWecomAccountConflict, resolveWecomAccounts } from "./config/index.js";
@@ -7,6 +7,29 @@ import { getWsClient, waitForWsConnection } from "./ws-adapter.js";
 import { uploadAndSendMediaBuffer } from "./media/index.js";
 
 import { resolveWecomTarget } from "./target.js";
+
+type OutboundDeliveryResult = {
+  channel: string;
+  messageId: string;
+  timestamp?: number;
+};
+
+type ChannelOutboundContext = {
+  cfg: OpenClawConfig;
+  to: string;
+  text: string;
+  mediaUrl?: string;
+  accountId?: string | null;
+};
+
+type ChannelOutboundAdapter = {
+  deliveryMode: "direct";
+  chunkerMode?: "text";
+  textChunkLimit?: number;
+  chunker?: (text: string, limit: number) => string[];
+  sendText(ctx: ChannelOutboundContext): Promise<OutboundDeliveryResult>;
+  sendMedia?(ctx: ChannelOutboundContext): Promise<OutboundDeliveryResult>;
+};
 
 // ─── MIME 类型映射表（扩展名 → Content-Type）──────────────────────────
 

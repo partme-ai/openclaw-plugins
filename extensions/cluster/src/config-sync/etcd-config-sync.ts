@@ -59,7 +59,7 @@ export class EtcdConfigSync implements IConfigSyncService {
     }, this.syncInterval);
 
     console.log(
-      `[openclaw_cluster] etcd config sync started (interval: ${this.syncInterval}ms, ` +
+      `[openclaw-cluster] etcd config sync started (interval: ${this.syncInterval}ms, ` +
       `endpoints: ${this.endpoints.join(", ")})`
     );
   }
@@ -76,7 +76,7 @@ export class EtcdConfigSync implements IConfigSyncService {
     }
 
     this.changeCallbacks = [];
-    console.log("[openclaw_cluster] etcd config sync stopped");
+    console.log("[openclaw-cluster] etcd config sync stopped");
   }
 
   /**
@@ -90,7 +90,7 @@ export class EtcdConfigSync implements IConfigSyncService {
 
     await this.etcdRequest("/v3/kv/put", { key, value });
 
-    console.log("[openclaw_cluster] Configuration pushed to etcd");
+    console.log("[openclaw-cluster] Configuration pushed to etcd");
   }
 
   /**
@@ -135,13 +135,13 @@ export class EtcdConfigSync implements IConfigSyncService {
             }
           }
 
-          console.log(`[openclaw_cluster] Config updated from etcd (revision: ${revision})`);
+          console.log(`[openclaw-cluster] Config updated from etcd (revision: ${revision})`);
         } catch {
-          console.warn("[openclaw_cluster] Failed to parse config from etcd");
+          console.warn("[openclaw-cluster] Failed to parse config from etcd");
         }
       }
     } catch (err) {
-      console.warn("[openclaw_cluster] etcd config poll failed:", (err as Error).message);
+      console.warn("[openclaw-cluster] etcd config poll failed:", (err as Error).message);
     }
   }
 

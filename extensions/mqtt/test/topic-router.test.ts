@@ -18,7 +18,7 @@ import {
   buildStatusTopic,
   buildReplyTopicFromInbound,
   loadTopicMappings,
-} from "../src/topic-router.js";
+} from "../src/routing/topic-router.js";
 
 describe("buildOutboundTopic / buildStatusTopic", () => {
   it("应构建正确的出站 Topic", () => {

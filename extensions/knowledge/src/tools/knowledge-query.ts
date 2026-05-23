@@ -11,6 +11,10 @@
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type OpenClawPluginToolContext = any;
+type AgentToolResult<T = unknown> = {
+  content: { type: 'text'; text: string }[];
+  details: T | undefined;
+};
 
 import { getOrCreateStore } from '../hooks.js';
 import { hybridSearch } from '../retriever/hybrid.js';

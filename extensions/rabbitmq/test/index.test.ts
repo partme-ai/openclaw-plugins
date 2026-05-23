@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { setRabbitmqRuntime, getRabbitmqRuntime } from "../src/runtime.js";
-import { resolveRabbitmqConfig, DEFAULT_RABBITMQ_CONFIG } from "../src/rabbitmq-config.js";
+import { resolveRabbitmqConfig, DEFAULT_RABBITMQ_CONFIG } from "../src/config.js";
 import { resolveDmScopeFromRuntimeConfig } from "../src/dm-scope.js";
 import { rabbitmqChannel, DEFAULT_ACCOUNT_ID } from "../src/channel.js";
 

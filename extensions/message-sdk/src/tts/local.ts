@@ -19,6 +19,11 @@ import type { TTSProvider } from "./types.js";
 // 模型：chattts/chattts
 // 参考：llm-study/llm-text-to-speech/chat-tts/
 
+/**
+ * CHAT_TTS_PROVIDER 是 tts 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const CHAT_TTS_PROVIDER: TTSProvider = {
   name: "chattts",
   kind: "local",
@@ -35,6 +40,11 @@ export const CHAT_TTS_PROVIDER: TTSProvider = {
 // 模型：CAMB-AI/MARS5-TTS
 // 参考：spring-ai-examples/spring-ai-ollama-audio-mars5tts/
 
+/**
+ * MARS5_TTS_PROVIDER 是 tts 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const MARS5_TTS_PROVIDER: TTSProvider = {
   name: "mars5tts",
   kind: "local",
@@ -52,6 +62,11 @@ export const MARS5_TTS_PROVIDER: TTSProvider = {
 // 需要：CUDA GPU
 // 参考：llm-study/llm-text-to-speech/qwen-tts/
 
+/**
+ * QWEN_TTS_PROVIDER 是 tts 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const QWEN_TTS_PROVIDER: TTSProvider = {
   name: "qwen-tts",
   kind: "local",
@@ -68,6 +83,11 @@ export const QWEN_TTS_PROVIDER: TTSProvider = {
 //       macOS 用 nsss（系统语音），Windows 用 SAPI5，Linux 用 espeak
 // 参考：llm-study/llm-text-to-speech/ollama-voice/
 
+/**
+ * PYTTSX3_PROVIDER 是 tts 模块对外共享的常量或默认实现。
+ *
+ * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
+ */
 export const PYTTSX3_PROVIDER: TTSProvider = {
   name: "pyttsx3",
   kind: "local",

@@ -143,7 +143,7 @@ function registerToolHooks(api: OpenClawPluginApi): void {
 }
 
 function registerAgentHooks(api: OpenClawPluginApi): void {
-  api.on("before_agent_start", (_event, ctx) => {
+  api.on("agent_turn_prepare", (_event, ctx) => {
     const { registry } = getRuntimeStore();
     const agentId = stringOr(ctx.agentId, "unknown");
     const channelId = stringOr(ctx.channelId, "unknown");
@@ -152,7 +152,7 @@ function registerAgentHooks(api: OpenClawPluginApi): void {
       labels: { kind: "agent" },
     });
     registry.inc("openclaw_agent_runs_started_total", 1, {
-      help: "Agent runs observed through plugin hooks",
+      help: "Agent runs observed through agent_turn_prepare hooks",
       type: "counter",
       labels: {
         agent_id: agentId,
@@ -161,51 +161,9 @@ function registerAgentHooks(api: OpenClawPluginApi): void {
     });
   });
 
-  api.on("llm_output", (event) => {
-    const { registry } = getRuntimeStore();
-    const labels = {
-      provider: event.provider,
-      model: event.model,
-    };
-    registry.inc("openclaw_usage_tokens_input_total", event.usage?.input ?? 0, {
-      help: "Input tokens observed through llm_output hooks",
-      type: "counter",
-      labels,
-    });
-    registry.inc("openclaw_usage_tokens_output_total", event.usage?.output ?? 0, {
-      help: "Output tokens observed through llm_output hooks",
-      type: "counter",
-      labels,
-    });
-    const cacheRead = event.usage?.cacheRead ?? 0;
-    const cacheWrite = event.usage?.cacheWrite ?? 0;
-    if (cacheRead > 0) {
-      registry.inc("openclaw_usage_tokens_cache_read_total", cacheRead, {
-        help: "Cache read tokens observed through llm_output hooks",
-        type: "counter",
-        labels,
-      });
-    }
-    if (cacheWrite > 0) {
-      registry.inc("openclaw_usage_tokens_cache_write_total", cacheWrite, {
-        help: "Cache write tokens observed through llm_output hooks",
-        type: "counter",
-        labels,
-      });
-    }
-    registry.inc(
-      "openclaw_usage_tokens_total",
-      event.usage?.total ??
-        (event.usage?.input ?? 0) +
-          (event.usage?.output ?? 0) +
-          (event.usage?.cacheRead ?? 0) +
-          (event.usage?.cacheWrite ?? 0),
-      {
-        help: "Total tokens observed through llm_output hooks",
-        type: "counter",
-        labels,
-      },
-    );
+  api.on("llm_output", () => {
+    // Token / cost / latency histograms come from trusted `model.usage` diagnostic events
+    // (diagnostics-prometheus parity in src/diagnostics/metric-store.ts).
   });
 
   api.on("agent_end", (event, ctx) => {
@@ -304,7 +262,9 @@ function normalizeSessionResetReason(reason: unknown): string {
     trimmed === "idle" ||
     trimmed === "daily" ||
     trimmed === "compaction" ||
-    trimmed === "deleted"
+    trimmed === "deleted" ||
+    trimmed === "shutdown" ||
+    trimmed === "restart"
   ) {
     return trimmed;
   }
@@ -329,6 +289,9 @@ function incHookInvocation(hook: string): void {
  * 补充注册 OpenClaw 其余 Plugin SDK hooks（模型解析、压缩、子代理、派发、安装等）。
  */
 function registerSupplementaryPluginHooks(api: OpenClawPluginApi): void {
+  api.on("agent_turn_prepare", () => {
+    incHookInvocation("agent_turn_prepare");
+  });
   api.on("before_model_resolve", () => {
     incHookInvocation("before_model_resolve");
   });
@@ -539,8 +502,8 @@ export function refreshHousekeepingMetrics(): void {
     help: "Whether the OpenClaw Prometheus plugin is loaded",
     labels: { instance: cfg.instance || "default" },
   });
-  registry.set("openclaw_ready", 1, {
-    help: "Whether the OpenClaw Prometheus plugin runtime is initialized",
+  registry.set("openclaw_plugin_loaded", 1, {
+    help: "Whether the OpenClaw Prometheus plugin module is loaded and registered",
     labels: { instance: cfg.instance || "default" },
   });
   registry.set("openclaw_plugin_uptime_seconds", (Date.now() - store.startedAt) / 1000, {

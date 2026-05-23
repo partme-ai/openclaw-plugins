@@ -4,6 +4,7 @@
 
 import type { ChannelDefinition, XhsAccountConfig } from "./types.js";
 import { xhsSetupAdapter, xhsSetupWizard } from "./onboarding.js";
+import { xhsSendText } from "./outbound.js";
 
 export const xhsChannel: ChannelDefinition = {
   id: "xhs",
@@ -39,6 +40,6 @@ export const xhsChannel: ChannelDefinition = {
   },
   outbound: {
     deliveryMode: "direct",
-    sendText: async () => ({ ok: true }),
+    sendText: xhsSendText,
   },
 };

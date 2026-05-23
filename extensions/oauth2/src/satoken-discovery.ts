@@ -11,7 +11,7 @@
  */
 
 import type { OidcConfig, JWKS, JWK } from "./types.js";
-import { createPublicKey, type KeyObject } from "node:crypto";
+import { createPublicKey, type JsonWebKey, type KeyObject } from "node:crypto";
 
 /** 默认 JWKS 缓存 TTL（秒） */
 const DEFAULT_JWKS_CACHE_TTL = 3600;

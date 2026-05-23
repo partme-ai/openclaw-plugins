@@ -10,9 +10,9 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as mqtt from "mqtt";
 
 // 导入插件 broker 模块
-import { startBroker, stopBroker, getBrokerStats, getConnectedClients, getClientUsername } from "../src/broker.js";
-import { loadTopicMappings, getLoadedTopicMappings, resolveInboundRoute } from "../src/topic-router.js";
-import { isUserActionAllowed, aclTopicMatches } from "../src/acl.js";
+import { startBroker, stopBroker, getBrokerStats, getConnectedClients, getClientUsername } from "../src/transport/server.js";
+import { loadTopicMappings, getLoadedTopicMappings, resolveInboundRoute } from "../src/routing/topic-router.js";
+import { isUserActionAllowed, aclTopicMatches } from "../src/transport/acl.js";
 
 const BROKER_PORT = 1885; // 使用不同端口避免冲突
 const E2E_TIMEOUT = 20000;
@@ -157,23 +157,7 @@ describe("openclaw-mqtt E2E 功能验证", () => {
   // 测试4: 消息发送 + 路由 + 入站处理
   // ═══════════════════════════════════════════════════════════
   it("E2E-4: 设备发送消息 → Topic 路由 → 入站处理", async () => {
-    const received: mqtt.IPublishPacket[] = [];
-
-    // 创建订阅者监听回复
-    const agentOut = mqtt.connect(`mqtt://localhost:${BROKER_PORT}`, {
-      clientId: "agent-listener", clean: true, connectTimeout: 5000,
-    });
-    await new Promise<void>((resolve) => {
-      const t = setTimeout(() => resolve(), 5000);
-      agentOut.on("connect", () => {
-        agentOut.subscribe("openclaw/agent/iot-agent/out", { qos: 1 }, () => { clearTimeout(t); resolve(); });
-      });
-    });
-    agentOut.on("message", (t, p, packet) => {
-      received.push({ ...packet, topic: t, payload: p } as any);
-    });
-
-    await new Promise(r => setTimeout(r, 300));
+    const beforeCount = inboundMessages.length;
 
     // 设备发送消息
     const device = mqtt.connect(`mqtt://localhost:${BROKER_PORT}`, {
@@ -207,16 +191,16 @@ describe("openclaw-mqtt E2E 功能验证", () => {
       }), { qos: 1 }, () => resolve());
     });
 
-    // 等待消息到达
+    // 等待 broker 入站回调
     await new Promise<void>(r => setTimeout(r, 2000));
 
-    console.log(`[e2e] ✅ 设备发送 2 条消息, 订阅者收到 ${received.length} 条`);
+    const received = inboundMessages.slice(beforeCount);
+    console.log(`[e2e] ✅ 设备发送 2 条消息, broker 入站收到 ${received.length} 条`);
     expect(received.length).toBeGreaterThanOrEqual(2);
-    expect(received.some(m => m.topic === "devices/sensor-1/data")).toBe(true);
-    expect(received.some(m => m.topic === "openclaw/agent/iot-agent/in")).toBe(true);
+    expect(received.some((m) => m.topic === "devices/sensor-1/data")).toBe(true);
+    expect(received.some((m) => m.topic === "openclaw/agent/iot-agent/in")).toBe(true);
 
     await device.endAsync();
-    await agentOut.endAsync();
   }, E2E_TIMEOUT);
 
   // ═══════════════════════════════════════════════════════════

@@ -1,10 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import fs from "node:fs";
+
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 
 import { handleSlashCommand } from "./slash-commands.js";
 import type { SlashCommandContext } from "./slash-commands.js";
 import { isDebugMode, _resetForTest as resetDebugMode } from "./debug-mode.js";
 
 const mockSendMessageWeixin = vi.hoisted(() => vi.fn().mockResolvedValue({ messageId: "test-id" }));
+const mockStateDir = "/tmp/openclaw-wechat-slash-commands-test";
 
 vi.mock("./send.js", () => ({
   sendMessageWeixin: mockSendMessageWeixin,
@@ -19,8 +22,16 @@ vi.mock("../util/logger.js", () => ({
   },
 }));
 
+vi.mock("../storage/state-dir.js", () => ({
+  resolveStateDir: () => "/tmp/openclaw-wechat-slash-commands-test",
+}));
+
 describe("handleSlashCommand", () => {
   let ctx: SlashCommandContext;
+
+  afterAll(() => {
+    fs.rmSync(mockStateDir, { recursive: true, force: true });
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();

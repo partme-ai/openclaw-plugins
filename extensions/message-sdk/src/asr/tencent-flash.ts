@@ -24,6 +24,11 @@ const ASR_FLASH_PATH_PREFIX = "/asr/flash/v1";
 const ASR_FLASH_URL_PREFIX = `https://${ASR_FLASH_HOST}${ASR_FLASH_PATH_PREFIX}`;
 const ASR_PROVIDER = "tencent-flash";
 
+/**
+ * TencentFlashASRConfig 描述 asr 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface TencentFlashASRConfig {
   appId: string;
   secretId: string;
@@ -81,6 +86,14 @@ function extractTranscript(payload: TencentFlashResponse): string {
   return lines.join("\n").trim();
 }
 
+/**
+ * transcribeTencentFlash 是 asr 模块对外暴露的操作入口。
+ *
+ * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
+ * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
+ * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
+ * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ */
 export async function transcribeTencentFlash(params: {
   audio: Buffer;
   config: TencentFlashASRConfig;

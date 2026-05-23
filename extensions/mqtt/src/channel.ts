@@ -11,11 +11,11 @@ import type {
 import {
   deleteAccountFromConfigSection,
   setAccountEnabledInConfigSection,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 
-import { monitorMqttBroker } from "./gateway-mqtt.js";
+import { monitorMqttBroker } from "./transport/gateway-mqtt.js";
 import { mqttOutbound } from "./outbound.js";
-import { getBrokerStats } from "./broker.js";
+import { getBrokerStats } from "./transport/server.js";
 import {
   DEFAULT_MQTT_ACCOUNT_ID,
   describeMqttAccountSnapshot,
@@ -147,7 +147,7 @@ export const mqttChannel: ChannelPlugin<ResolvedMqttAccount> = {
       cfg,
     }: {
       account: ResolvedMqttAccount;
-      runtime: { running?: boolean; lastStartAt?: number | null; lastStopAt?: number | null; lastError?: string | null; lastInboundAt?: number | null; lastOutboundAt?: number | null } | null;
+      runtime?: ChannelAccountSnapshot;
       cfg: OpenClawConfig;
     }) => {
       const stats = getBrokerStats();

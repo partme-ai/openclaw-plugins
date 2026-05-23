@@ -1,30 +1,36 @@
-# @partme.ai/openclaw-message-sdk
+# OpenClaw Message SDK
 
-**统一消息格式 SDK — openclaw-plugins 全渠道互通的消息标准与公共工具库**
+> Unified Message Format SDK — cross-channel message standard and shared utility library for all openclaw-plugins channel plugins.
+
+[![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--message--sdk-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-message-sdk)
+[![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 [简体中文](./README.md) | [English](./README.en.md)
 
-## 简介
+---
 
-`@partme.ai/openclaw-message-sdk` 是 openclaw-plugins 生态中的基础设施库，提供：
+## Overview
 
-- **统一消息体（UnifiedMessage）** — 所有 IM 渠道插件共用的消息结构，支持跨渠道路由
-- **媒体解析引擎** — 从 Markdown/HTML/MEDIA 指令/裸露路径中提取图片和文件
-- **HTTP 客户端** — 带超时和指数退避重试的轻量 HTTP 封装
-- **文件工具** — MIME/扩展名映射、文件分类
-- **AI 能力模块** — ASR 语音识别、OCR 文字识别、TTS 语音合成（按需引入）
+`@partme.ai/openclaw-message-sdk` is the foundational shared library for the openclaw-plugins ecosystem. It provides:
 
-**零运行时必选依赖**。ASR/OCR/TTS 模块按需引入，不用的模块不会增加包体积。
+- **UnifiedMessage** — Common message structure shared by all IM channel plugins, supporting cross-channel routing
+- **Media Parser Engine** — Extract images and files from Markdown/HTML/MEDIA directives/bare paths
+- **HTTP Client** — Lightweight HTTP wrapper with timeout and exponential backoff retry
+- **File Utilities** — MIME/extension mapping, file categorization
+- **AI Capability Modules** — ASR speech recognition, OCR text recognition, TTS speech synthesis (optional imports)
 
-### 核心设计原则
+**Zero mandatory runtime dependencies**. ASR/OCR/TTS modules are imported on demand — unused modules do not increase bundle size.
 
-- **消息体不含二进制数据**，只包含文件 URL/路径引用
-- **图片可选 base64** 内联（小图场景，<1MB）
-- 内容类型支持 `text` / `markdown` / `mixed` 三种
-- `traceId` 全链路追踪，贯穿消息生成 → 传输 → 投递
-- 所有类型从主入口统一导入，也可按子路径按需导入
+### Core Design Principles
 
-## 安装
+- **No binary data in messages** — only file URL/path references
+- **Optional base64 inlining** for small images (<1MB)
+- Content type supports `text` / `markdown` / `mixed`
+- `traceId` for end-to-end tracing throughout message generation, transmission, and delivery
+- All types can be imported from the main entry, or via subpath imports for tree-shaking
+
+## Installation
 
 ```bash
 npm install @partme.ai/openclaw-message-sdk
@@ -32,7 +38,7 @@ npm install @partme.ai/openclaw-message-sdk
 pnpm add @partme.ai/openclaw-message-sdk
 ```
 
-## 快速开始
+## Quick Start
 
 ```typescript
 import {
@@ -44,22 +50,22 @@ import {
   type UnifiedMessage,
 } from "@partme.ai/openclaw-message-sdk";
 
-// 1. 构造统一消息
+// 1. Build a unified message
 const msg = buildMessage({
   channel: "wecom",
   accountId: "default",
   userId: "user_zhangsan",
-  text: "请查看这张图片",
+  text: "Please review this image",
   media: [
     createImageRef("https://cdn.example.com/img.png", undefined, "report.png"),
-    createMediaRef("https://cdn.example.com/data.pdf", "季度报告.pdf", 2048000),
+    createMediaRef("https://cdn.example.com/data.pdf", "quarterly_report.pdf", 2048000),
   ],
 });
 
-// 2. 序列化为 JSON（MQ 跨渠道路由）
+// 2. Serialize to JSON (for MQ cross-channel routing)
 const json = serializeMessage(msg);
 
-// 3. 反序列化（带校验）
+// 3. Deserialize with validation
 const parsed = parseMessage(json);
 if (parsed) {
   console.log(parsed.source.channel); // "wecom"
@@ -69,61 +75,61 @@ if (parsed) {
 
 ---
 
-## API 参考
+## API Reference
 
-### 1. 统一消息体（UnifiedMessage）
+### 1. UnifiedMessage
 
 ```typescript
 interface UnifiedMessage {
-  messageId: string;           // 消息唯一 ID，格式: {channel}-{ts36}-{random6}
-  traceId: string;             // 全链路追踪 ID，格式: {ts36}-{random8}
-  timestamp: number;           // Unix 毫秒时间戳
+  messageId: string;           // Unique message ID, format: {channel}-{ts36}-{random6}
+  traceId: string;             // End-to-end tracing ID, format: {ts36}-{random8}
+  timestamp: number;           // Unix timestamp in milliseconds
   source: {
-    channel: string;           // 来源渠道 (wecom, dingtalk, feishu...)
-    accountId: string;         // 账号标识
-    userId: string;            // 用户标识
+    channel: string;           // Source channel (wecom, dingtalk, feishu...)
+    accountId: string;         // Account identifier
+    userId: string;            // User identifier
     chatType: "direct" | "group";
   };
   target?: {
-    channels: string[];        // 目标渠道列表
-    routingRule?: string;      // 路由规则名
+    channels: string[];        // Target channel list
+    routingRule?: string;      // Routing rule name
   };
   contentType: "text" | "markdown" | "mixed";
-  text: string;                // 纯文本内容（所有渠道通用）
-  markdown?: string;           // Markdown 内容（Markdown 渠道优先取用）
-  media: MediaReference[];     // 媒体引用列表
-  replyToMessageId?: string;   // 被回复消息的 ID
-  metadata?: Record<string, unknown>; // 扩展元数据
+  text: string;                // Plain text (universal across all channels)
+  markdown?: string;           // Markdown content (preferred by Markdown channels)
+  media: MediaReference[];     // Media reference list
+  replyToMessageId?: string;   // Original message being replied to
+  metadata?: Record<string, unknown>; // Extended metadata
   direction: "inbound" | "outbound";
 }
 ```
 
-**消息构造器**
+**Message Builders**
 
-| 函数 | 说明 |
-|------|------|
-| `buildMessage(params)` | 通用构造器，自动判定 `contentType` |
-| `buildTextMessage(channel, accountId, userId, text, chatType?)` | 快捷纯文本消息 |
-| `buildMediaMessage(channel, accountId, userId, text, media, chatType?)` | 快捷媒体消息 |
+| Function | Description |
+|----------|-------------|
+| `buildMessage(params)` | General-purpose builder, auto-detects `contentType` |
+| `buildTextMessage(channel, accountId, userId, text, chatType?)` | Quick plain text message |
+| `buildMediaMessage(channel, accountId, userId, text, media, chatType?)` | Quick media message |
 
-**序列化**
+**Serialization**
 
-| 函数 | 说明 |
-|------|------|
-| `serializeMessage(msg)` | 序列化为 JSON 字符串 |
-| `deserializeMessage(json)` | 反序列化（无校验） |
-| `parseMessage(input)` | 安全反序列化，含基本字段校验，失败返回 `null` |
-| `parseMessageAny(input)` | 从 `string/Buffer/Uint8Array/object` 解析，自动检测格式 |
+| Function | Description |
+|----------|-------------|
+| `serializeMessage(msg)` | Serialize to JSON string |
+| `deserializeMessage(json)` | Deserialize without validation |
+| `parseMessage(input)` | Safe deserialization with basic field validation, returns `null` on failure |
+| `parseMessageAny(input)` | Parse from `string/Buffer/Uint8Array/object`, auto-detects format |
 
-**文本提取** — 从 UnifiedMessage 提取文本供不同能力等级的渠道使用：
+**Text Extraction** — Extract text from UnifiedMessage for channels with different capability levels:
 
-| 函数 | 说明 |
-|------|------|
-| `extractPlainText(msg)` | 纯文本提取，Markdown 降级为纯文本，媒体替换为 `[图片]` 占位符 |
-| `extractMarkdown(msg)` | Markdown 提取，媒体替换为 `![name](url)` 或 📎 链接 |
-| `parseMediaFromText(text)` | 从文本中解析媒体引用（Markdown 图片 / MEDIA: / 裸露 URL） |
+| Function | Description |
+|----------|-------------|
+| `extractPlainText(msg)` | Plain text extraction, Markdown downgraded to plain text, media replaced with `[image]` placeholders |
+| `extractMarkdown(msg)` | Markdown extraction, media replaced with `![name](url)` or file links |
+| `parseMediaFromText(text)` | Parse media references from text (Markdown images / MEDIA: directives / bare URLs) |
 
-**ID 生成**
+**ID Generation**
 
 ```typescript
 const traceId = generateTraceId();           // "lj8xk-abc12345"
@@ -132,7 +138,7 @@ const msgId = generateMessageId("wecom");    // "wecom-lj8xk-x7y9z1"
 
 ---
 
-### 2. 媒体引用（MediaReference）
+### 2. MediaReference
 
 ```typescript
 interface MediaReference {
@@ -140,26 +146,26 @@ interface MediaReference {
   kind: "image" | "video" | "audio" | "document" | "archive" | "other";
   mimeType: string;
   fileName?: string;
-  sizeBytes?: number;          // 文件大小（字节）
-  base64?: string;             // 小图可内联 base64
+  sizeBytes?: number;          // File size in bytes
+  base64?: string;             // Optional base64 for small images
   thumbnailUrl?: string;
-  durationSeconds?: number;    // 音视频时长
+  durationSeconds?: number;    // Audio/video duration
   width?: number;
   height?: number;
 }
 ```
 
-**构造器**
+**Constructors**
 
 ```typescript
-// 通用媒体引用，自动检测 kind
+// Generic media reference, auto-detects kind
 const ref = createMediaRef("https://cdn.example.com/data.pdf", "report.pdf", 2048000);
 
-// 图片专用（允许 base64 内联）
+// Image-specific (supports base64 inlining)
 const img = createImageRef("https://cdn.example.com/img.png", undefined, "photo.png");
 ```
 
-**类型检测**
+**Type Detection**
 
 ```typescript
 detectMediaKind("report.pdf");         // "document"
@@ -169,7 +175,7 @@ detectMediaKind("archive.zip");        // "archive"
 detectMediaKindFromMime("image/webp"); // "image"
 ```
 
-**预定义扩展名集合**
+**Predefined Extension Sets**
 
 ```typescript
 IMAGE_EXTENSIONS    // Set: png, jpg, jpeg, gif, webp, bmp, svg, ico, tiff, heic, heif
@@ -181,49 +187,49 @@ ARCHIVE_EXTENSIONS  // Set: zip, rar, 7z, tar, gz, tgz, bz2
 
 ---
 
-### 3. 媒体解析引擎（media-parser）
+### 3. Media Parser Engine
 
-从 AI 回复文本中提取媒体引用，是渠道插件处理 `MEDIA:` 指令和 Markdown 图片的核心工具。
+The core tool for channel plugins to extract media references from AI reply text. Supports `MEDIA:` directives, Markdown images, and bare paths.
 
 ```typescript
 import { extractMediaFromText } from "@partme.ai/openclaw-message-sdk";
 
 const result = extractMediaFromText(
-  "这是处理后的图片 ![](/tmp/photo.png)\n\n另外这个 PDF: [下载报告](/tmp/report.pdf)",
+  "Processed image: ![](/tmp/photo.png)\n\nPDF report: [download](/tmp/report.pdf)",
   {
-    removeFromText: true,    // 提取后从文本中移除媒体引用
-    checkExists: true,       // 仅提取磁盘上确实存在的文件
-    parseMediaLines: true,   // 解析 MEDIA: 指令行
+    removeFromText: true,    // Remove media references from text after extraction
+    checkExists: true,       // Only extract files that actually exist on disk
+    parseMediaLines: true,   // Parse MEDIA: directive lines
     parseMarkdownImages: true,
     parseHtmlImages: true,
-    parseBarePaths: true,    // 裸露路径: /tmp/abc.png
-    parseMarkdownLinks: true, // Markdown 文件链接
+    parseBarePaths: true,    // Bare paths: /tmp/abc.png
+    parseMarkdownLinks: true, // Markdown file links
   }
 );
 
 // result.images  → [{ source: "/tmp/photo.png", type: "image", ... }]
 // result.files   → [{ source: "/tmp/report.pdf", type: "file", ... }]
 // result.all     → [...images, ...files]
-// result.text    → 移除媒体后的纯文本
+// result.text    → Clean text with media references removed
 ```
 
-**便捷函数**
+**Convenience Functions**
 
 ```typescript
-// 仅提取图片
+// Extract images only
 const { text, images } = extractImagesFromText(text, options);
 
-// 仅提取文件
+// Extract files only
 const { text, files } = extractFilesFromText(text, options);
 ```
 
-**导出的路径工具**
+**Exported Path Utilities**
 
 ```typescript
 import {
   isHttpUrl,           // (value: string) => boolean
-  isLocalReference,    // 检测是否为本地路径引用
-  normalizeLocalPath,  // 标准化本地路径：MEDIA:/~/file:// → 绝对路径
+  isLocalReference,    // Check if a value is a local path reference
+  normalizeLocalPath,  // Normalize local paths: MEDIA:/~/file:// → absolute path
   isImagePath,         // (path: string) => boolean
   isNonImageFilePath,  // (path: string) => boolean
   getExtension,        // (path: string) => string  (no dot)
@@ -236,12 +242,12 @@ import {
 
 ---
 
-### 4. HTTP 客户端
+### 4. HTTP Client
 
 ```typescript
 import { httpPost, httpGet, withRetry, HttpError, TimeoutError } from "@partme.ai/openclaw-message-sdk";
 
-// POST JSON，默认 30s 超时
+// POST JSON, 30s timeout by default
 const data = await httpPost<{ token: string }>(
   "https://api.example.com/auth",
   { appId: "xxx", secret: "yyy" }
@@ -253,16 +259,16 @@ const users = await httpGet<{ id: string; name: string }[]>(
   { headers: { Authorization: "Bearer token" } }
 );
 
-// 带重试（指数退避）
+// With retry (exponential backoff)
 const result = await withRetry(
   () => fetchUnstableApi(),
   {
     maxRetries: 5,
-    initialDelay: 500,     // 起始 500ms
-    maxDelay: 10000,        // 上限 10s
-    backoffMultiplier: 2,   // 每次翻倍: 500 → 1000 → 2000 → 4000 → 8000
+    initialDelay: 500,     // Start at 500ms
+    maxDelay: 10000,        // Cap at 10s
+    backoffMultiplier: 2,   // Double each time: 500 → 1000 → 2000 → 4000 → 8000
     shouldRetry: (err, attempt) => {
-      // 默认：网络错误 + 5xx 状态码
+      // Default: network errors + 5xx status codes
       return defaultShouldRetry(err) && attempt <= 3;
     },
   }
@@ -271,28 +277,28 @@ const result = await withRetry(
 
 ---
 
-### 5. 文件工具（file-utils）
+### 5. File Utilities
 
 ```typescript
 import { resolveFileCategory, resolveExtension } from "@partme.ai/openclaw-message-sdk";
 
-// MIME + 文件名 → 分类
+// MIME + filename → category
 resolveFileCategory("image/png");                     // "image"
 resolveFileCategory("application/pdf", "report.pdf"); // "document"
 resolveFileCategory("application/zip");               // "archive"
 
-// MIME / 文件名 → 扩展名
+// MIME / filename → extension
 resolveExtension("image/png");                        // ".png"
 resolveExtension("application/zip", "backup.zip");    // ".zip"
 ```
 
 ---
 
-### 6. ASR — 语音识别
+### 6. ASR — Speech Recognition
 
 ```typescript
 import { 
-  transcribeTencentFlash,  // 腾讯云 Flash ASR（极速版）
+  transcribeTencentFlash,  // Tencent Cloud Flash ASR (real-time)
   ASRError,
   ASRTimeoutError,
   ASRAuthError,
@@ -307,33 +313,33 @@ const config: TencentFlashASRConfig = {
 };
 
 const result = await transcribeTencentFlash(audioBuffer, "voice.amr", config);
-// → { text: "今天天气真好", elapsedMs: 230 }
+// → { text: "Nice weather today", elapsedMs: 230 }
 ```
 
-**错误层级**
+**Error Hierarchy**
 
 ```
-ASRError (基类)
-├── ASRAuthError        — 鉴权失败
-├── ASRRequestError     — 请求失败
-├── ASRResponseParseError — 响应解析失败
-├── ASRServiceError     — 服务端错误
-├── ASRTimeoutError     — 超时
-└── ASREmptyResultError — 识别结果为空
+ASRError (base)
+├── ASRAuthError            — Authentication failure
+├── ASRRequestError         — Request failure
+├── ASRResponseParseError   — Response parsing failure
+├── ASRServiceError         — Server-side error
+├── ASRTimeoutError         — Timeout
+└── ASREmptyResultError     — Empty recognition result
 ```
 
 ---
 
-### 7. OCR — 光学字符识别
+### 7. OCR — Optical Character Recognition
 
-支持 4 个提供商，统一接口：
+Supports 4 providers with a unified interface:
 
 ```typescript
 import {
   recognizeDeepSeek,     // DeepSeek Vision (deepseek-chat)
-  recognizeGLM,          // 智谱 AI GLM-4V
-  recognizePaddleOCR,    // 百度 PP-OCRv4 (自部署)
-  recognizeQianfan,      // 百度千帆 ERNIE-4.0
+  recognizeGLM,          // ZhipuAI GLM-4V
+  recognizePaddleOCR,    // Baidu PP-OCRv4 (self-hosted)
+  recognizeQianfan,      // Baidu Qianfan ERNIE-4.0
   type OCRInput,
   type OCRConfig,
   type OCRResult,
@@ -350,18 +356,18 @@ const input: OCRInput = {
 };
 
 const result: OCRResult = await recognizeDeepSeek(input, config);
-// result.text           → 完整识别文本
-// result.blocks[].lines[].words[].text  → 逐词识别结果
+// result.text           → Full recognized text
+// result.blocks[].lines[].words[].text  → Per-word recognition
 // result.provider       → "deepseek"
 // result.elapsedMs      → 1234
 ```
 
-**OCR 类型**
+**OCR Types**
 
 ```typescript
 interface OCRResult {
-  text: string;           // 完整文本
-  blocks: OCRBlock[];     // 块 → 行 → 词 层级
+  text: string;           // Full text
+  blocks: OCRBlock[];     // Block → Line → Word hierarchy
   provider: string;
   model: string;
   elapsedMs: number;
@@ -371,16 +377,16 @@ interface OCRResult {
 
 ---
 
-### 8. TTS — 文本转语音
+### 8. TTS — Text-to-Speech
 
-**远程方案**（纯 HTTP，零依赖）：
+**Remote Solutions** (pure HTTP, zero additional dependencies):
 
 ```typescript
 import { synthesizeEdgeTTS, synthesizeOpenAI, EDGE_TTS_VOICES } from "@partme.ai/openclaw-message-sdk";
 
-// Microsoft Edge TTS（免费，300+ 神经语音）
-const result = await synthesizeEdgeTTS("你好，我是AI助手", {
-  voice: "zh-CN-XiaoxiaoNeural",
+// Microsoft Edge TTS (free, 300+ neural voices)
+const result = await synthesizeEdgeTTS("Hello, I am an AI assistant", {
+  voice: "en-US-JennyNeural",
   outputFormat: "mp3",
   rate: "+10%",
 });
@@ -395,60 +401,60 @@ const result2 = await synthesizeOpenAI("Welcome to OpenClaw", {
 });
 ```
 
-**本地方案**（需要 Python 运行时，通过 child_process 调用）：
+**Local Solutions** (require Python runtime, called via child_process):
 
-| 提供商 | 特点 |
-|--------|------|
-| `CHAT_TTS_PROVIDER` | 2noise/ChatTTS，自然对话风格 |
-| `MARS5_TTS_PROVIDER` | CAMB.AI，语音克隆（5s 参考音频） |
-| `QWEN_TTS_PROVIDER` | 阿里 Qwen3-TTS，声音设计 |
-| `PYTTSX3_PROVIDER` | 完全离线，系统语音引擎 |
+| Provider | Description |
+|----------|-------------|
+| `CHAT_TTS_PROVIDER` | 2noise/ChatTTS, natural conversation style |
+| `MARS5_TTS_PROVIDER` | CAMB.AI, voice cloning (5s reference audio) |
+| `QWEN_TTS_PROVIDER` | Alibaba Qwen3-TTS, voice design |
+| `PYTTSX3_PROVIDER` | Fully offline, system speech engine |
 
 ---
 
-### 9. 错误类型
+### 9. Error Types
 
 ```typescript
 import {
-  MessageParseError,    // 消息解析失败（基类：Error）
-  HttpError,            // HTTP 请求错误（status + body）
-  TimeoutError,         // 请求超时（timeoutMs）
-  // ASR 错误（见 §6）
-  // OCR 错误（ocr/errors.ts）
-  // TTS 错误（tts/errors.ts）
+  MessageParseError,    // Message parsing failure (extends Error)
+  HttpError,            // HTTP request error (status + body)
+  TimeoutError,         // Request timeout (timeoutMs)
+  // ASR errors (see section 6)
+  // OCR errors (ocr/errors.ts)
+  // TTS errors (tts/errors.ts)
 } from "@partme.ai/openclaw-message-sdk";
 ```
 
 ---
 
-## 子路径导入
+## Subpath Imports
 
-可按需导入，避免加载用不到的模块：
+Import only what you need to avoid loading unused modules:
 
 ```typescript
-// 仅媒体解析
+// Media parser only
 import { extractMediaFromText } from "@partme.ai/openclaw-message-sdk/media";
 
-// 仅 HTTP 客户端
+// HTTP client only
 import { httpPost, withRetry } from "@partme.ai/openclaw-message-sdk/http";
 
-// 仅 ASR
+// ASR only
 import { transcribeTencentFlash } from "@partme.ai/openclaw-message-sdk/asr";
 
-// 仅文件工具
+// File utilities only
 import { resolveFileCategory } from "@partme.ai/openclaw-message-sdk/file";
 ```
 
 ---
 
-## 在渠道插件中使用
+## Usage in Channel Plugins
 
-各渠道插件（wecom, dingtalk, feishu, gotify, mqtt 等）使用 SDK 的标准模式：
+Channel plugins (wecom, dingtalk, feishu, gotify, mqtt, etc.) follow this standard pattern:
 
 ```typescript
 import { buildMessage, extractMediaFromText } from "@partme.ai/openclaw-message-sdk";
 
-// 1. 入站：提取 AI 回复中的媒体指令
+// 1. Inbound: Extract media directives from AI replies
 const { text, images, files } = extractMediaFromText(aiReply, {
   removeFromText: true,
   parseMediaLines: true,
@@ -456,7 +462,7 @@ const { text, images, files } = extractMediaFromText(aiReply, {
   parseBarePaths: true,
 });
 
-// 2. 出站：构造统一消息体用于 MQ 路由
+// 2. Outbound: Build unified message for MQ routing
 const outbound = buildMessage({
   channel: "wecom",
   accountId: account.accountId,
@@ -471,15 +477,15 @@ const outbound = buildMessage({
 
 ---
 
-## 扩展指南
+## Extension Guide
 
-### 添加新的 ASR 提供商
+### Adding a New ASR Provider
 
 ```
 src/asr/
-├── index.ts          ← export 新函数
-├── errors.ts         ← 共用错误类型
-└── my-provider.ts    ← 实现 transcribeMyProvider()
+├── index.ts          ← Export the new function
+├── errors.ts         ← Shared error types
+└── my-provider.ts    ← Implement transcribeMyProvider()
 ```
 
 ```typescript
@@ -489,14 +495,44 @@ import { ASRError, ASRAuthError } from "./errors.js";
 export async function transcribeMyProvider(
   audio: Buffer, fileName: string, config: MyConfig
 ): Promise<{ text: string; elapsedMs: number }> {
-  // 实现识别逻辑
+  // Implement recognition logic
 }
 ```
 
-### 添加新的 OCR 提供商
+### Adding a New OCR Provider
 
-模式同上：实现 `recognizeXxx(input: OCRInput, config: OCRConfig): Promise<OCRResult>`。
+Same pattern: implement `recognizeXxx(input: OCRInput, config: OCRConfig): Promise<OCRResult>`.
 
-### 添加新的 TTS 提供商
+### Adding a New TTS Provider
 
-实现 `synthesizeXxx(text: string, config: TTSConfig): Promise<TTSResult>`。
+Implement `synthesizeXxx(text: string, config: TTSConfig): Promise<TTSResult>`.
+
+## Available Subpath Exports
+
+| Subpath | Contents |
+|---------|----------|
+| `@partme.ai/openclaw-message-sdk` | Core types, message builders, serialization |
+| `@partme.ai/openclaw-message-sdk/media` | Media parser and IO utilities |
+| `@partme.ai/openclaw-message-sdk/http` | HTTP client with retry |
+| `@partme.ai/openclaw-message-sdk/file` | File category/extension utilities |
+| `@partme.ai/openclaw-message-sdk/asr` | Tencent Cloud Flash ASR |
+| `@partme.ai/openclaw-message-sdk/ocr` | OCR with 4 providers |
+| `@partme.ai/openclaw-message-sdk/tts` | TTS with Edge/openai/local providers |
+
+## License
+
+Licensed under the [MIT License](LICENSE).
+
+## About openclaw-plugins
+
+This SDK is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — an enterprise OpenClaw plugin collection developed and maintained by the **PartMe.AI team**, featuring 30+ plugins across IM channels, message queues, AI capabilities, and infrastructure.
+
+Each plugin is published independently on npm under the `@partme.ai` scope:
+
+```bash
+openclaw plugins install @partme.ai/openclaw-nacos
+```
+
+**PartMe.AI** specializes in AI customer service and enterprise AI agent infrastructure, providing end-to-end solutions from WeChat Work/DingTalk/Feishu/QQ channel integration to RAG knowledge bases, multi-layer memory, and production monitoring.
+
+> Contact: partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)

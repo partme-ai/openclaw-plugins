@@ -21,7 +21,7 @@ import {
   writeMarkdownFile,
   deleteFile,
   resolveWorkspacePath,
-} from "../utils/file-ops.js";
+} from "../ics-utils/file-ops.js";
 
 /**
  * 创建知识库管理处理器
@@ -194,22 +194,24 @@ async function performSemanticSearch(
   query: string,
   maxResults: number
 ): Promise<Array<{ document: string; snippet: string; score: number }>> {
-  const runtimeAny = runtime as Record<string, unknown>;
+  const runtimeAny = runtime as unknown as Record<string, unknown>;
 
   try {
     // 策略 1: runtime.memorySearch（首选）
-    if (typeof runtime.memorySearch === "function") {
-      const results = await runtime.memorySearch({ query, agentId, maxResults });
-      return results.map((r) => ({
-        document: r.path,
-        snippet: r.snippet,
-        score: r.score,
+    if (typeof runtimeAny.memorySearch === "function") {
+      const searchFn = runtimeAny.memorySearch as (params: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+      const results = await searchFn({ query, agentId, maxResults });
+      return results.map((r: Record<string, unknown>) => ({
+        document: (r.path as string) ?? "",
+        snippet: (r.snippet as string) ?? "",
+        score: (r.score as number) ?? 0,
       }));
     }
 
     // 策略 2: runtime.gatewayCall
-    if (typeof runtime.gatewayCall === "function") {
-      const results = await runtime.gatewayCall("memory.search", {
+    if (typeof runtimeAny.gatewayCall === "function") {
+      const gatewayCall = runtimeAny.gatewayCall as (method: string, params: Record<string, unknown>) => Promise<unknown>;
+      const results = await gatewayCall("memory.search", {
         query,
         agentId,
         maxResults,

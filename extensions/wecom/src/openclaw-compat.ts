@@ -12,8 +12,17 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
+import { fetchWithSsrFGuard } from "./runtime-api.js";
 import { resolveStateDir } from "./state-dir-resolve.js";
+
 export { resolveStateDir };
+export {
+  readRequestBodyWithLimit,
+  isRequestBodyLimitError,
+  createPersistentDedupe,
+  fetchWithSsrFGuard,
+  formatErrorMessage,
+} from "./runtime-api.js";
 
 export const DEFAULT_ACCOUNT_ID = "default";
 
@@ -244,41 +253,48 @@ async function fetchRemoteMedia(
   url: string,
   maxBytes?: number,
 ): Promise<{ buffer: Buffer; contentType?: string; fileName?: string }> {
-  const res = await fetch(url, { redirect: "follow" });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch media from ${url}: HTTP ${res.status} ${res.statusText}`);
-  }
+  const { response: res, release } = await fetchWithSsrFGuard({
+    url,
+    maxRedirects: 3,
+  });
+  try {
+    if (!res.ok) {
+      throw new Error(`Failed to fetch media from ${url}: HTTP ${res.status} ${res.statusText}`);
+    }
 
-  const buffer = Buffer.from(await res.arrayBuffer());
-  if (maxBytes && buffer.length > maxBytes) {
-    throw new Error(`Media from ${url} exceeds max size (${buffer.length} > ${maxBytes})`);
-  }
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (maxBytes && buffer.length > maxBytes) {
+      throw new Error(`Media from ${url} exceeds max size (${buffer.length} > ${maxBytes})`);
+    }
 
-  const headerMime = res.headers.get("content-type")?.split(";")?.[0]?.trim();
+    const headerMime = res.headers.get("content-type")?.split(";")?.[0]?.trim();
 
-  let fileName: string | undefined;
-  const disposition = res.headers.get("content-disposition");
-  if (disposition) {
-    const match = /filename\*?\s*=\s*(?:UTF-8''|")?([^";]+)/i.exec(disposition);
-    if (match?.[1]) {
-      try {
-        fileName = path.basename(decodeURIComponent(match[1].replace(/["']/g, "").trim()));
-      } catch {
-        fileName = path.basename(match[1].replace(/["']/g, "").trim());
+    let fileName: string | undefined;
+    const disposition = res.headers.get("content-disposition");
+    if (disposition) {
+      const match = /filename\*?\s*=\s*(?:UTF-8''|")?([^";]+)/i.exec(disposition);
+      if (match?.[1]) {
+        try {
+          fileName = path.basename(decodeURIComponent(match[1].replace(/["']/g, "").trim()));
+        } catch {
+          fileName = path.basename(match[1].replace(/["']/g, "").trim());
+        }
       }
     }
-  }
-  if (!fileName) {
-    try {
-      const parsed = new URL(url);
-      const base = path.basename(parsed.pathname);
-      if (base && base.includes(".")) fileName = base;
-    } catch { /* ignore */ }
-  }
+    if (!fileName) {
+      try {
+        const parsed = new URL(url);
+        const base = path.basename(parsed.pathname);
+        if (base && base.includes(".")) fileName = base;
+      } catch { /* ignore */ }
+    }
 
-  const contentType = await detectMimeFallback({ buffer, headerMime, filePath: fileName ?? url });
+    const contentType = await detectMimeFallback({ buffer, headerMime, filePath: fileName ?? url });
 
-  return { buffer, contentType, fileName };
+    return { buffer, contentType, fileName };
+  } finally {
+    await release();
+  }
 }
 
 /** 展开 ~ 为用户主目录 */

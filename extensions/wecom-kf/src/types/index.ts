@@ -26,6 +26,12 @@ export type {
     ResolvedWecomAccounts,
 } from "./account.js";
 
+export type ServicerInfo = {
+    userid: string;
+    status: number;
+    department_id?: number;
+};
+
 // 消息类型
 export type {
     WecomBotInboundBase,
@@ -40,4 +46,20 @@ export type {
     WecomTemplateCard,
     WecomOutboundMessage,
     KfMessage,
+    AgentRouteParams,
+    AgentRouteResult,
+    InboundContextParams,
+    InboundContext,
+    ReplyDispatcherParams,
+    ReplyDispatcher,
+    DispatchReplyParams,
+    SendTextParams,
+    EventMessagesConfig,
 } from "./message.js";
+
+export type {
+    GatewayRuntime,
+    PluginApi,
+    AgentInfo,
+    StatsOverview,
+} from "./channel.js";

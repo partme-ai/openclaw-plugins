@@ -64,7 +64,7 @@ export class PostgresSessionStore implements ISessionStoreService {
    */
   async start(): Promise<void> {
     console.log(
-      `[openclaw_cluster] PostgreSQL session store starting: ${this.postgresUrl}`
+      `[openclaw-cluster] PostgreSQL session store starting: ${this.postgresUrl}`
     );
 
     // 尝试初始化表
@@ -76,10 +76,10 @@ export class PostgresSessionStore implements ISessionStoreService {
           updated_at TIMESTAMP DEFAULT NOW()
         )`
       );
-      console.log("[openclaw_cluster] PostgreSQL session store: table ready");
+      console.log("[openclaw-cluster] PostgreSQL session store: table ready");
     } catch (error) {
       console.warn(
-        "[openclaw_cluster] PostgreSQL init failed, using cache-only mode:",
+        "[openclaw-cluster] PostgreSQL init failed, using cache-only mode:",
         (error as Error).message
       );
       this.simpleMode = true;
@@ -88,7 +88,7 @@ export class PostgresSessionStore implements ISessionStoreService {
     // 启动 TTL 清理
     this.cleanupTimer = setInterval(() => {
       this.cleanup().catch((err) => {
-        console.error("[openclaw_cluster] Session cleanup error:", err);
+        console.error("[openclaw-cluster] Session cleanup error:", err);
       });
     }, CLEANUP_INTERVAL);
   }
@@ -102,7 +102,7 @@ export class PostgresSessionStore implements ISessionStoreService {
       this.cleanupTimer = null;
     }
     this.cache.clear();
-    console.log("[openclaw_cluster] PostgreSQL session store stopped");
+    console.log("[openclaw-cluster] PostgreSQL session store stopped");
   }
 
   /**
@@ -134,7 +134,7 @@ export class PostgresSessionStore implements ISessionStoreService {
         return nodeId;
       }
     } catch (error) {
-      console.error("[openclaw_cluster] PG getSessionNode error:", error);
+      console.error("[openclaw-cluster] PG getSessionNode error:", error);
     }
 
     return null;
@@ -161,7 +161,7 @@ export class PostgresSessionStore implements ISessionStoreService {
            updated_at = NOW()`
       );
     } catch (error) {
-      console.error("[openclaw_cluster] PG registerSession error:", error);
+      console.error("[openclaw-cluster] PG registerSession error:", error);
     }
   }
 
@@ -180,7 +180,7 @@ export class PostgresSessionStore implements ISessionStoreService {
         `DELETE FROM openclaw_sessions WHERE session_key = '${this.escapeString(sessionKey)}'`
       );
     } catch (error) {
-      console.error("[openclaw_cluster] PG removeSession error:", error);
+      console.error("[openclaw-cluster] PG removeSession error:", error);
     }
   }
 
@@ -206,7 +206,7 @@ export class PostgresSessionStore implements ISessionStoreService {
         `DELETE FROM openclaw_sessions WHERE updated_at < NOW() - INTERVAL '${this.sessionTtl} seconds'`
       );
     } catch (error) {
-      console.error("[openclaw_cluster] PG cleanup error:", error);
+      console.error("[openclaw-cluster] PG cleanup error:", error);
     }
   }
 
@@ -219,9 +219,17 @@ export class PostgresSessionStore implements ISessionStoreService {
    */
   private async executeQuery(sql: string): Promise<Record<string, unknown>[]> {
     try {
-      // 尝试动态导入 pg 模块
-      const pg = await import("pg");
-      const client = new pg.default.Client({ connectionString: this.postgresUrl });
+      // 尝试动态加载可选 pg 模块；未安装时切换到内存缓存降级模式。
+      const { createRequire } = await import("node:module");
+      const require = createRequire(import.meta.url);
+      const pg = require("pg") as {
+        Client: new (params: { connectionString: string }) => {
+          connect(): Promise<void>;
+          query(sql: string): Promise<{ rows: Record<string, unknown>[] }>;
+          end(): Promise<void>;
+        };
+      };
+      const client = new pg.Client({ connectionString: this.postgresUrl });
       await client.connect();
       try {
         const result = await client.query(sql);

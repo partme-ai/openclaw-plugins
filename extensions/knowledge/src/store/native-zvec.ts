@@ -19,6 +19,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import type {
   VectorStore,
   VectorChunk,
@@ -59,6 +60,7 @@ type ZVecQueryParams = {
 
 // 缓存动态加载的 ZVec 模块（单例模式）
 let _zvecMod: ZvecModule | null = null;
+const require = createRequire(import.meta.url);
 
 type ZvecModule = {
   ZVecInitialize: (opts?: { logLevel?: number }) => void;
@@ -440,8 +442,7 @@ async function loadZvecModule(): Promise<ZvecModule> {
   if (_zvecMod) return _zvecMod;
 
   try {
-    const mod = await import('@zvec/zvec');
-    const zvec = mod as unknown as ZvecModule;
+    const zvec = require('@zvec/zvec') as ZvecModule;
 
     // 全局初始化（仅一次）
     if (zvec.ZVecInitialize) {

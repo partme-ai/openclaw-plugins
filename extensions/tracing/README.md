@@ -1,116 +1,116 @@
-# OpenClaw 追踪
+# OpenClaw Tracing
 
-**OpenClaw 插件 — 分布式追踪消息流和智能体交互**
+**OpenClaw plugin — Distributed tracing for message flows and agent interactions**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--tracing-blue)
 ![Node](https://img.shields.io/badge/Node.js-20+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-[English](./README.md) | [简体中文](./README_CN.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ---
 
-## 📖 简介
+## 📖 Introduction
 
-`@partme.ai/openclaw-tracing` 是一个为 [OpenClaw](https://github.com/openclaw/openclaw) 设计的**分布式追踪插件**，用于捕获消息流、智能体交互和工具调用的完整追踪链。灵感来自 rabbitmq_tracing，它使用兼容 OpenTelemetry 的数据模型，并支持多种后端存储追踪数据。
-
----
-
-## 🎯 核心功能
-
-- **完整追踪链**：捕获从消息到达 → 智能体处理 → 工具调用 → 响应的完整生命周期
-- **多种后端**：支持日志 / 文件（JSONL + 每日轮转）/ OTLP HTTP 后端
-- **采样控制**：基于 traceId 哈希的确定性采样
-- **隐私保护**：可选的消息体捕获
-- **HTTP API**：通过 REST 端点查询最近的追踪数据
-- **Hook 集成**：自动追踪 `command:new`、`tool_result_persist` 和 `agent:bootstrap` 事件
-- **会话隔离**：遵循 OpenClaw 全局 `session.dmScope` 配置，确保会话追踪的一致性
+`@partme.ai/openclaw-tracing` is a **distributed tracing plugin** for [OpenClaw](https://github.com/openclaw/openclaw) that captures message flows, agent interactions, and tool calls as a complete trace chain. Inspired by rabbitmq_tracing, it uses an OpenTelemetry-compatible data model and supports multiple backends for trace storage.
 
 ---
 
-## 🏗️ 工作原理
+## 🎯 Core Capabilities
 
-### 追踪数据模型
-
-项目采用 [OpenTelemetry Span 模型](src/types.ts)：
-
-```
-Trace (追踪)
-  └── Span (跨度)
-        ├── traceId      # 全局追踪 ID，关联所有相关 Span
-        ├── spanId       # 当前操作 ID
-        ├── parentSpanId  # 父 Span ID（构建调用链）
-        ├── name         # 操作名称
-        ├── kind         # Span 类型 (server/internal/client)
-        ├── startTimeMs  # 开始时间
-        ├── endTimeMs    # 结束时间
-        ├── attributes    # 键值属性
-        └── events       # 时间点事件
-```
-
-### 追踪流程
-
-```
-消息到达 → command:new → agent:bootstrap → tool:xxx → 响应
-    ↓            ↓              ↓              ↓
- [Root Span] [Agent Span]  [Tool Span]  [完成导出]
-```
-
-参考 [hooks.ts](src/hooks.ts) 中的三个核心事件钩子：
-
-| 事件 | 创建的 Span | 类型 |
-|------|------------|------|
-| `command:new` | 消息到达根 Span | server |
-| `agent:bootstrap` | 智能体处理 Span | internal |
-| `tool_result_persist` | 工具调用 Span | client |
-
-### 会话隔离策略
-
-插件使用 OpenClaw 的全局 `session.dmScope` 配置进行会话隔离，参考 [dm-scope.ts](src/dm-scope.ts)：
-
-| dmScope | 会话键格式 | 说明 |
-|---------|----------|------|
-| `main` | `agent:agentId:main` | 所有交互共享一个会话 |
-| `per-peer` | `agent:agentId:direct:peerId` | 每个对等方独立会话 |
-| `per-channel-peer` | `agent:agentId:channel:direct:peerId` | 通道+对等方会话隔离 |
-| `per-account-channel-peer` | `agent:agentId:channel:accountId:direct:peerId` | 账户+通道+对等方隔离 |
-
-这与 `openclaw-mqtt`、`openclaw-web-mqtt`、`openclaw-stomp`、`openclaw-web-stomp` 等插件保持一致。
-
-### 追踪后端
-
-项目支持三种后端存储，参考 [backends/](src/backends/) 目录：
-
-| 后端 | 配置值 | 说明 |
-|------|--------|------|
-| **Log** | `backend: "log"` | 输出到控制台 JSON 格式 |
-| **File** | `backend: "file"` | JSONL 文件 + 每日轮转 |
-| **OTLP** | `backend: "otlp"` | 推送到支持 OTLP 的后端服务 |
-
-### 采样机制
-
-参考 [sampler.ts](src/sampler.ts)：
-
-- 使用**确定性采样**：相同 `traceId` 始终产生相同采样结果
-- 基于 `traceId` 哈希值与 `sampleRate` 比较
-- 配置范围：`0.0`（全拒绝）~ `1.0`（全采样）
+- **Complete trace chain**: Captures the full lifecycle from message arrival → agent processing → tool calls → response
+- **Multiple backends**: Supports Log / File (JSONL + daily rotation) / OTLP HTTP backends
+- **Sampling control**: Deterministic sampling based on traceId hash
+- **Privacy protection**: Optional message body capture
+- **HTTP API**: Query recent traces via REST endpoints
+- **Hook integration**: Automatically traces `command:new`, `tool_result_persist`, and `agent:bootstrap` events
+- **Session isolation**: Follows OpenClaw global `session.dmScope` for consistent session tracking
 
 ---
 
-## 🚀 快速开始
+## 🏗️ How It Works
 
-### 先决条件
+### Tracing Data Model
+
+The project uses the [OpenTelemetry Span model](src/types.ts):
+
+```
+Trace
+  └── Span
+        ├── traceId      # Global trace ID linking all related Spans
+        ├── spanId       # Current operation ID
+        ├── parentSpanId  # Parent Span ID (builds call chain)
+        ├── name         # Operation name
+        ├── kind         # Span type (server/internal/client)
+        ├── startTimeMs  # Start time
+        ├── endTimeMs    # End time
+        ├── attributes    # Key-value attributes
+        └── events       # Time point events
+```
+
+### Trace Flow
+
+```
+Message Arrives → command:new → agent:bootstrap → tool:xxx → Response
+        ↓               ↓              ↓              ↓
+   [Root Span]   [Agent Span]   [Tool Span]   [Export Complete]
+```
+
+Reference the three core event hooks in [hooks.ts](src/hooks.ts):
+
+| Event | Created Span | Type |
+|-------|-------------|------|
+| `command:new` | Message arrival root Span | server |
+| `agent:bootstrap` | Agent processing Span | internal |
+| `tool_result_persist` | Tool call Span | client |
+
+### Session Isolation Strategy
+
+The plugin uses OpenClaw's global `session.dmScope` configuration for session isolation, reference [dm-scope.ts](src/dm-scope.ts):
+
+| dmScope | Session Key Format | Description |
+|---------|-------------------|-------------|
+| `main` | `agent:agentId:main` | All interactions share one session |
+| `per-peer` | `agent:agentId:direct:peerId` | Separate session per peer |
+| `per-channel-peer` | `agent:agentId:channel:direct:peerId` | Channel + peer session isolation |
+| `per-account-channel-peer` | `agent:agentId:channel:accountId:direct:peerId` | Account + channel + peer isolation |
+
+This aligns with `openclaw-mqtt`, `openclaw-web-mqtt`, `openclaw-stomp`, `openclaw-web-stomp`.
+
+### Tracing Backends
+
+The project supports three backend storage types, reference the [backends/](src/backends/) directory:
+
+| Backend | Config Value | Description |
+|---------|--------------|-------------|
+| **Log** | `backend: "log"` | Output to console as JSON |
+| **File** | `backend: "file"` | JSONL files with daily rotation |
+| **OTLP** | `backend: "otlp"` | Push to OTLP-compatible backend |
+
+### Sampling Mechanism
+
+Reference [sampler.ts](src/sampler.ts):
+
+- **Deterministic sampling**: Same `traceId` always produces the same sampling result
+- Based on comparing `traceId` hash with `sampleRate`
+- Config range: `0.0` (reject all) ~ `1.0` (accept all)
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
 
 - OpenClaw `>= 2026.4.0`
 - Node.js `20+`
 
-### 安装
+### Install
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-tracing
 ```
 
-### 最小配置 (`openclaw.json`)
+### Minimal Config (`openclaw.json`)
 
 ```json
 {
@@ -126,7 +126,7 @@ openclaw plugins install @partme.ai/openclaw-tracing
 }
 ```
 
-### 完整配置选项
+### Full Config Options
 
 ```json
 {
@@ -142,62 +142,61 @@ openclaw plugins install @partme.ai/openclaw-tracing
 }
 ```
 
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `enabled` | boolean | false | 是否启用追踪 |
-| `backend` | string | "log" | 后端类型：log/file/otlp |
-| `otlpEndpoint` | string | "http://localhost:4318" | OTLP HTTP 端点 |
-| `sampleRate` | number | 1.0 | 采样率 0.0~1.0 |
-| `traceDir` | string | "./traces" | 文件后端存储目录 |
-| `maxSpansPerTrace` | number | 100 | 单个追踪最大 Span 数 |
-| `captureMessageBody` | boolean | false | 是否捕获消息体 |
+| Config | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | false | Enable tracing |
+| `backend` | string | "log" | Backend type: log/file/otlp |
+| `otlpEndpoint` | string | "http://localhost:4318" | OTLP HTTP endpoint |
+| `sampleRate` | number | 1.0 | Sampling rate 0.0~1.0 |
+| `traceDir` | string | "./traces" | File backend storage directory |
+| `maxSpansPerTrace` | number | 100 | Max spans per trace |
+| `captureMessageBody` | boolean | false | Capture message body |
 
 ---
 
-## 📍 HTTP 端点
+## 📍 HTTP Endpoints
 
-| 端点 | 方法 | 描述 |
+| Endpoint | Method | Description |
 | -------- | ------ | ----------- |
-| `/tracing/status` | GET | 追踪状态和配置 |
-| `/tracing/traces` | GET | 最近追踪列表（支持 `?limit=N` 参数） |
-| `/tracing/trace` | GET | 详细追踪信息（需要 `?traceId=xxx` 参数） |
+| `/tracing/status` | GET | Tracing status and configuration |
+| `/tracing/traces` | GET | Recent trace list (supports `?limit=N`) |
+| `/tracing/trace` | GET | Detailed trace info (requires `?traceId=xxx`) |
 
 ---
 
-## 📁 项目结构
+## 📁 Project Structure
 
 ```
 openclaw-tracing/
 ├── src/
-│   ├── index.ts              # 插件入口点
-│   ├── hooks.ts              # 网关事件钩子
-│   ├── sampler.ts            # 追踪采样器
-│   ├── dm-scope.ts           # 基于 dmScope 的会话隔离
-│   ├── types.ts              # 类型定义
+│   ├── index.ts              # Plugin entry point
+│   ├── hooks.ts              # Gateway event hooks
+│   ├── sampler.ts            # Trace sampler
+│   ├── dm-scope.ts           # Session isolation based on dmScope
+│   ├── types.ts              # Type definitions
 │   ├── backends/
-│   │   ├── log-backend.ts    # 日志后端
-│   │   ├── file-backend.ts   # 文件后端 (JSONL)
-│   │   └── otlp-backend.ts   # OTLP HTTP 后端
-│   └── openclaw-sdk.d.ts     # OpenClaw SDK 类型
+│   │   ├── log-backend.ts    # Log backend
+│   │   ├── file-backend.ts   # File backend (JSONL)
+│   │   └── otlp-backend.ts   # OTLP HTTP backend
 ├── .github/workflows/
-│   ├── ci.yml               # CI 工作流
-│   └── release.yml           # 发布工作流
-├── openclaw.plugin.json       # 插件清单
+│   ├── ci.yml               # CI workflow
+│   └── release.yml           # Release workflow
+├── openclaw.plugin.json       # Plugin manifest
 ├── package.json
-└── README.md / README_CN.md
+└── README.md / README.zh-CN.md
 ```
 
 ---
 
-## 🧪 测试
+## 🧪 Testing
 
-### 单元测试
+### Unit Tests
 
 ```bash
 npm test
 ```
 
-### 测试覆盖率
+### Test Coverage
 
 ```bash
 npm run test:coverage
@@ -207,19 +206,19 @@ npm run test:coverage
 
 ## 🤖 GitHub Actions
 
-| 工作流 | 触发条件 | 目的 |
+| Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | 推送到 `main` 或 `master` / PR | 安装、类型检查、构建、测试、上传 `dist/` |
-| `.github/workflows/release.yml` | 标签 `v*` / 手动触发 | 构建、测试、发布 npm 包 |
+| `.github/workflows/ci.yml` | Push / PR to `main` or `master` | Install, typecheck, build, test, upload `dist/` |
+| `.github/workflows/release.yml` | Tag `v*` / manual dispatch | Build, test, publish npm package |
 
 ---
 
-## 📦 发布
+## 📦 Publishing
 
-- 包名: `@partme.ai/openclaw-tracing`
-- 必需密钥: `NPM_TOKEN`
+- Package: `@partme.ai/openclaw-tracing`
+- Required secret: `NPM_TOKEN`
 
-标签发布示例:
+Tag release example:
 
 ```bash
 npm version patch
@@ -228,45 +227,45 @@ git push origin main --follow-tags
 
 ---
 
-## OpenClaw 文档
+## OpenClaw Documentation
 
-插件、SDK 和相关主题的官方文档：
+Official docs for plugins, the SDK, and related topics:
 
-### 插件
+### Plugins
 
-- [工具 — 插件](https://docs.openclaw.ai/tools/plugin)
-- [社区插件](https://docs.openclaw.ai/plugins/community)
-- [捆绑包](https://docs.openclaw.ai/plugins/bundles)
+- [Tools — Plugins](https://docs.openclaw.ai/tools/plugin)
+- [Community plugins](https://docs.openclaw.ai/plugins/community)
+- [Bundles](https://docs.openclaw.ai/plugins/bundles)
 
-### 构建插件
+### Building Plugins
 
-- [构建插件](https://docs.openclaw.ai/plugins/building-plugins)
-- [SDK 概览](https://docs.openclaw.ai/plugins/sdk-overview)
-- [SDK 入口点](https://docs.openclaw.ai/plugins/sdk-entrypoints)
-- [SDK 运行时](https://docs.openclaw.ai/plugins/sdk-runtime)
-
----
-
-## ❓ 常见问题
-
-### 会话隔离如何工作？
-
-插件使用 OpenClaw 的全局 `session.dmScope` 配置生成一致的会话键，确保追踪数据根据您所需的作用域正确隔离。
-
-### 我可以将其与外部可观测性系统一起使用吗？
-
-是的，OTLP 后端允许您将追踪数据导出到 Jaeger、Zipkin 或 Prometheus 等系统。
-
-### 如何控制追踪采样？
-
-在配置中设置 `sampleRate` 在 0.0 到 1.0 之间，以控制捕获的追踪比例。
-
-### 消息体隐私如何保护？
-
-设置 `captureMessageBody: false`（默认）可避免捕获消息内容，仅记录元数据。
+- [Building plugins](https://docs.openclaw.ai/plugins/building-plugins)
+- [SDK overview](https://docs.openclaw.ai/plugins/sdk-overview)
+- [SDK entry points](https://docs.openclaw.ai/plugins/sdk-entrypoints)
+- [SDK runtime](https://docs.openclaw.ai/plugins/sdk-runtime)
 
 ---
 
-## 📄 许可证
+## ❓ FAQ
+
+### How does session isolation work?
+
+The plugin uses OpenClaw's global `session.dmScope` configuration to generate consistent session keys, ensuring traces are properly isolated according to your desired scope.
+
+### Can I use this with external observability systems?
+
+Yes, the OTLP backend allows you to export traces to systems like Jaeger, Zipkin, or Prometheus.
+
+### How do I control trace sampling?
+
+Set `sampleRate` between 0.0 and 1.0 in the configuration to control the fraction of traces captured.
+
+### How is message body privacy protected?
+
+Set `captureMessageBody: false` (default) to avoid capturing message content, logging only metadata.
+
+---
+
+## 📄 License
 
 MIT

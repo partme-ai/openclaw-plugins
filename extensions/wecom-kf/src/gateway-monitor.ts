@@ -11,7 +11,6 @@ import {
   resolveWecomAccountConflict,
 } from "./config/index.js";
 import { registerAgentWebhookTarget, registerWecomWebhookTarget } from "./monitor.js";
-import { startWsClient } from "./ws-adapter.js";
 import type { ResolvedWecomAccount, WecomConfig } from "./types/index.js";
 import { WEBHOOK_PATHS } from "./types/constants.js";
 
@@ -167,25 +166,7 @@ export async function monitorWecomProvider(
     if (bot && botConfigured) {
       const connectionMode = bot.connectionMode ?? 'webhook';
 
-      if (connectionMode === 'websocket') {
-        // 长链接模式：启动 WSClient
-        unregisters.push(
-          startWsClient({
-            accountId: account.accountId,
-            botId: bot.botId!,
-            secret: bot.secret!,
-            account: bot,
-            config: cfg,
-            runtime: ctx.runtime,
-            core: {} as PluginRuntime,
-            statusSink: (patch) => ctx.setStatus({ accountId: ctx.accountId, ...patch }),
-            welcomeText: bot.config.welcomeText,
-            network: bot.network,
-          }),
-        );
-        botPaths.push(`ws://${account.accountId}`);
-        ctx.log?.info(`[${account.accountId}] wecom bot websocket client started (botId=${bot.botId})`);
-      } else {
+      if (connectionMode === 'webhook') {
         // Webhook 模式：注册 HTTP 路径（现有逻辑不变）
         const paths = resolveBotRegistrationPaths({
           accountId: account.accountId,

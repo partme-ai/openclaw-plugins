@@ -1,0 +1,37 @@
+{
+  "id": "openclaw-meituan",
+  "name": "openclaw-meituan",
+  "version": "2026.5.20",
+  "description": "美团开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
+  "main": "dist/index.js",
+  "channels": ["meituan"],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "app_key": {
+        "type": "string",
+        "description": "美团开放平台 AppKey"
+      },
+      "app_secret": {
+        "type": "string",
+        "description": "美团开放平台 AppSecret"
+      },
+      "callback_url": {
+        "type": "string",
+        "description": "Webhook 回调 URL"
+      },
+      "shop_id": {
+        "type": "string",
+        "description": "店铺 ID（单店铺）"
+      },
+      "webhook_secret": {
+        "type": "string",
+        "description": "Webhook 验签密钥（若平台要求）"
+      }
+    }
+  },
+  "uiHints": {},
+  "capabilities": {}
+}

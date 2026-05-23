@@ -24,14 +24,34 @@ export interface GatewayRuntime {
   config: Record<string, unknown>;
   channel: {
     routing: {
-      resolveAgentRoute(params: AgentRouteParams): Promise<AgentRouteResult>;
+      resolveAgentRoute(params: AgentRouteParams): AgentRouteResult | Promise<AgentRouteResult>;
     };
     reply: {
-      finalizeInboundContext(params: InboundContextParams): Promise<InboundContext>;
+      finalizeInboundContext(params: InboundContextParams): InboundContext | Promise<InboundContext>;
       createReplyDispatcherWithTyping(params: ReplyDispatcherParams): ReplyDispatcher;
-      dispatchReplyFromConfig(params: DispatchReplyParams): Promise<void>;
+      dispatchReplyFromConfig(params: DispatchReplyParams): unknown | Promise<unknown>;
     };
   };
+}
+
+/**
+ * Agent 基础信息。
+ */
+export interface AgentInfo {
+  id: string;
+  workspace: string;
+  [key: string]: unknown;
+}
+
+/**
+ * ICS 运营统计概览。
+ */
+export interface StatsOverview {
+  todaySessions: number;
+  todayMessages: number;
+  transferRate: number;
+  activeAgents: number;
+  generatedAt: string;
 }
 
 /**

@@ -11,10 +11,10 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setRabbitmqRuntime, getRabbitmqRuntime } from "../src/runtime.js";
-import { setRabbitmqChannelConfig } from "../src/rabbitmq-state.js";
-import { DEFAULT_RABBITMQ_CONFIG } from "../src/rabbitmq-config.js";
-import { resolveInboundRoute, buildReplyTopicFromInbound } from "../src/topic-router.js";
-import { getOrCreateSessionKey, upsertSessionContext, getSessionContext, removePeerSessions, getSessionStats } from "../src/session-mapper.js";
+import { setRabbitmqChannelConfig } from "../src/state.js";
+import { DEFAULT_RABBITMQ_CONFIG } from "../src/config.js";
+import { resolveInboundRoute, buildReplyTopicFromInbound } from "../src/routing/topic-router.js";
+import { upsertSessionContext, getSessionContext, removePeerSessions, getSessionStats } from "../src/routing/session-mapper.js";
 import { resolveDmScopeFromRuntimeConfig } from "../src/dm-scope.js";
 
 /**
@@ -142,42 +142,6 @@ describe("Functional Integration: Main Agent Communication", () => {
     });
   });
 
-  // ─── Test 3: dmScope 会话隔离 ───
-  describe("dmScope 会话隔离 (main 智能体)", () => {
-    it("per-peer: main 智能体应为不同 peer 创建不同会话", () => {
-      const cfg = { session: { dmScope: "per-peer" } };
-      const key1 = getOrCreateSessionKey({
-        cfg, peerId: "peer-a", agentId: "main", accountId: "default", channel: "rabbitmq",
-      });
-      const key2 = getOrCreateSessionKey({
-        cfg, peerId: "peer-b", agentId: "main", accountId: "default", channel: "rabbitmq",
-      });
-      expect(key1).toBe("agent:main:direct:peer-a");
-      expect(key2).toBe("agent:main:direct:peer-b");
-      expect(key1).not.toBe(key2);
-    });
-
-    it("main dmScope: main 智能体应共享单会话", () => {
-      const cfg = { session: { dmScope: "main" } };
-      const key1 = getOrCreateSessionKey({
-        cfg, peerId: "peer-a", agentId: "main", accountId: "default", channel: "rabbitmq",
-      });
-      const key2 = getOrCreateSessionKey({
-        cfg, peerId: "peer-b", agentId: "main", accountId: "default", channel: "rabbitmq",
-      });
-      expect(key1).toBe("agent:main:main");
-      expect(key1).toBe(key2);
-    });
-
-    it("per-channel-peer: main 智能体会话键应包含 rabbitmq channel", () => {
-      const cfg = { session: { dmScope: "per-channel-peer" } };
-      const key = getOrCreateSessionKey({
-        cfg, peerId: "peer-1", agentId: "main", accountId: "default", channel: "rabbitmq",
-      });
-      expect(key).toBe("agent:main:rabbitmq:direct:peer-1");
-    });
-  });
-
   // ─── Test 4: 完整消息收发流程 ───
   describe("完整消息收发流程 (main 智能体)", () => {
     it("应该正确处理 main 智能体的完整请求-回复流程", async () => {
@@ -194,16 +158,8 @@ describe("Functional Integration: Main Agent Communication", () => {
       expect(route).not.toBeNull();
       expect(route!.agentId).toBe("main");
 
-      // Step 3: dmScope 会话键生成
-      const cfg = { session: { dmScope: "per-peer" } };
-      const sessionKey = getOrCreateSessionKey({
-        cfg,
-        peerId: route!.peerId || "test-device",
-        agentId: route!.agentId,
-        accountId: route!.accountId,
-        channel: "rabbitmq",
-      });
-      expect(sessionKey).toBe("agent:main:direct:test-device");
+      // Step 3: OpenClaw resolveAgentRoute 提供的 sessionKey（由核心 dmScope 决定）
+      const sessionKey = "agent:main:direct:test-device";
 
       // Step 4: 保存会话上下文
       const replyTopic = route!.replyTopic ?? buildReplyTopicFromInbound(
@@ -305,18 +261,9 @@ describe("Functional Integration: Main Agent Communication", () => {
 
   // ─── Test 6: 默认配置 (未指定智能体) 应能与 main 通信 ───
   describe("默认未配置智能体时与 main 通信", () => {
-    it("未配置 agentId 时 dmScope 回退到 main", () => {
+    it("未配置 agentId 时 dmScope 回退到 per-peer", () => {
       const dmScope = resolveDmScopeFromRuntimeConfig({});
       expect(dmScope).toBe("per-peer");
-
-      const sessionKey = getOrCreateSessionKey({
-        cfg: {},
-        peerId: "any-peer",
-        agentId: "main",
-        accountId: "default",
-        channel: "rabbitmq",
-      });
-      expect(sessionKey).toBe("agent:main:direct:any-peer");
     });
 
     it("默认配置下标准 Topic 格式正常解析 main 智能体", () => {

@@ -1,9 +1,9 @@
 {
   "name": "@partme.ai/openclaw-nacos",
-  "version": "2026.5.22",
+  "version": "2026.5.24",
   "description": "OpenClaw plugin — Nacos Config Center merge and Gateway/Hooks naming registration",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/bootstrap.cjs",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsup",
@@ -28,7 +28,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "publishConfig": {
@@ -62,7 +62,7 @@
   },
   "openclaw": {
     "extensions": [
-      "./dist/index.js"
+      "./dist/bootstrap.cjs"
     ],
     "setupEntry": "./dist/setup-entry.js",
     "providers": [],
@@ -77,6 +77,10 @@
   },
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/bootstrap.cjs"
+    },
+    "./internal": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }

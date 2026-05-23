@@ -30,7 +30,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md",
+    "README.zh-CN.md",
     "grafana",
     "clawdbot.plugin.json",
     "moltbot.plugin.json"

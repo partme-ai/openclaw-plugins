@@ -1,0 +1,6 @@
+{
+  "name": "uuid",
+  "version": "3.4.0-shim",
+  "description": "uuid/v4 shim for nacos-naming compatibility",
+  "main": "./v4.js"
+}

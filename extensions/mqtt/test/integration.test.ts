@@ -15,8 +15,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as mqtt from "mqtt";
 
 // 直接从源码导入 broker 模块（不依赖 openclaw peer dependency）
-import { startBroker, stopBroker, getBrokerStats, getConnectedClients, getClientUsername } from "../src/broker.js";
-import { loadTopicMappings, getLoadedTopicMappings } from "../src/topic-router.js";
+import { startBroker, stopBroker, getBrokerStats, getConnectedClients, getClientUsername } from "../src/transport/server.js";
+import { loadTopicMappings, getLoadedTopicMappings } from "../src/routing/topic-router.js";
 
 const BROKER_PORT = 1884;
 const TEST_TIMEOUT = 15000;

@@ -9,10 +9,9 @@ import type { OpenClawPluginApi } from 'openclaw/plugin-sdk'
 import type {
   MemorySearchManager,
   MemorySearchResult,
-  MemoryReadResult,
   MemoryProviderStatus,
   MemoryEmbeddingProbeResult,
-} from 'openclaw/plugin-sdk/memory-host'
+} from 'openclaw/plugin-sdk/memory-core-host-engine-storage'
 
 interface OpenMemPluginConfig {
   enabled: boolean
@@ -65,7 +64,7 @@ export function createOpenMemSearchManager(baseUrl: string): MemorySearchManager
           endLine: i + 1,
           score: c.score,
           snippet: c.content.slice(0, 200),
-          source: c.source ?? 'openmem',
+          source: 'memory',
         }),
       )
     },
@@ -76,10 +75,10 @@ export function createOpenMemSearchManager(baseUrl: string): MemorySearchManager
 
     status(): MemoryProviderStatus {
       return {
-        backend: 'http',
+        backend: 'builtin',
         provider: 'openmem',
         files: 0,
-        sources: ['openmem'],
+        sources: ['memory'],
         workspaceDir: baseUrl,
       }
     },
@@ -109,8 +108,17 @@ const plugin = {
     }
 
     const manager = createOpenMemSearchManager(cfg.baseUrl)
-    api.registerMemorySearchManager?.(manager)
-    api.logger.info(`[openmem] MemorySearchManager → ${cfg.baseUrl}`)
+    api.registerMemoryCapability({
+      runtime: {
+        async getMemorySearchManager() {
+          return { manager }
+        },
+        resolveMemoryBackendConfig() {
+          return { backend: 'builtin' }
+        },
+      },
+    })
+    api.logger.info(`[openmem] Memory runtime → ${cfg.baseUrl}`)
 
     api.registerTool(
       {

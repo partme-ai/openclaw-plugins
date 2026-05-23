@@ -1,59 +1,69 @@
 <div align="center">
 
-# wecom_kf
+# WeCom KF
 
-**企业微信客服渠道 — 企微客服 · 智能转人工 · 事件消息**
+**WeChat Work Customer Service — 企微客服 · 智能转人工 · 事件消息**
 
 ![Version](https://img.shields.io/badge/Version-0.1.0-blue) ![License](https://img.shields.io/badge/License-MIT-green)
 
 </div>
 
-中文 | [English](README.md)
+[中文](README.zh-CN.md) | English
 
 ---
 
-## 概述
+## OpenClaw 文档
 
-本插件将 OpenClaw 与企业微信的微信客服 API 集成，使 AI Agent 能够自动处理客户咨询，同时在需要时无缝转接人工客服。
+- [Chat Channels](https://docs.openclaw.ai/channels) · [Plugins](https://docs.openclaw.ai/tools/plugin) · [Plugin Manifest](https://docs.openclaw.ai/plugins/manifest)
+- [Skills](https://docs.openclaw.ai/tools/skills) · [Webhooks](https://docs.openclaw.ai/automation/webhook)
+- 本仓库文档索引：[OPENCLAW_DOCS_INDEX.md](../../OPENCLAW_DOCS_INDEX.md)（在 monorepo 根目录）
 
-**范围**：本插件**仅实现下述 8 个官方文档**能力（接收/发送消息、事件消息、回调、接待人员列表、客服账号列表、客服链接、分配会话），**不含**管理功能（如客服账号/接待人员增删改、知识库、统计、客户详情等接口）。
+**包名与插件 ID**：包名为 `@partme.ai/wecom_kf`，插件 ID 为 `wecom_kf`（原 `openclaw_wecom_kf` 已弃用）。若配置中曾使用 `plugins.entries.openclaw_wecom_kf`，请改为 `plugins.entries.wecom_kf`；渠道配置 `channels.wecom-kf` 不变。
 
-### 核心功能
+---
 
-- **自动账号发现**：启动时自动发现并注册所有客服账号（94661）
-- **多账号支持**：每个 `open_kfid` 可映射到不同的 OpenClaw Agent
-- **智能转人工**：内置技能支持上下文感知的人工转接（94669、94645）
-- **可配置事件消息**：欢迎语、结束语、满意度评价（95122）
-- **边聊边处理**：回调先返回 200，同批消息有限并发处理（97712、94670）
-- **企微 API**：仅上述 8 个文档（94670、94677、95122、97712、94645、94661、94665、94669）
+## Overview
 
-## 架构
+This plugin integrates OpenClaw with WeChat Work's customer service (微信客服) API, allowing AI agents to handle customer inquiries automatically while supporting seamless handoff to human agents when needed.
+
+**Scope**: This plugin implements **only the 8 official KF docs** listed below (message receive/send, event messages, callback, servicer list, account list, contact-way link, session assignment). It does **not** include management features (e.g. add/delete/edit accounts or servicers, knowledge base, or customer-detail APIs).
+
+### Key Features
+
+- **Automatic Account Discovery**: Discovers and registers all customer service accounts on startup (94661)
+- **Multi-Account Support**: Each `open_kfid` can be mapped to a different OpenClaw Agent
+- **Intelligent Human Transfer**: Built-in skill for context-aware transfer to human agents (94669, 94645)
+- **Configurable Event Messages**: Welcome, ending, and satisfaction survey (95122)
+- **Process-while-chat**: Callback returns 200 immediately; message batch is processed with limited concurrency (97712, 94670)
+- **WeChat Work API**: Only the 8 docs below (94670, 94677, 95122, 97712, 94645, 94661, 94665, 94669)
+
+## Architecture
 
 ```
-企业微信平台                          OpenClaw Gateway
+WeChat Work Platform                    OpenClaw Gateway
     │                                        │
     │  ┌─────────────────────────────────────┤
-    │  │    wecom-kf 插件                    │
+    │  │    wecom-kf Plugin                  │
     │  │  ┌─────────────────────────────┐    │
     ▼  │  │                             │    │
-回调接口 ─┼──► callback.ts              │    │
+Callback ─┼──► callback.ts              │    │
 (POST)    │  │     │                    │    │
           │  │     ▼                    │    │
           │  │ message-handler.ts ──────┼────┼──► OpenClaw Agent
-          │  │     │                    │    │      (AI 回复)
+          │  │     │                    │    │      (AI Reply)
           │  │     ▼                    │    │
           │  │ system-event-handler.ts  │    │
-          │  │ (欢迎语/结束语/满意度)     │    │
+          │  │ (welcome/ending/survey)  │    │
           │  │     │                    │    │
           │  └─────┼────────────────────┘    │
           │        │                         │
           │        ▼                         │
-          │   wecom-api.ts ──────────────────┼──► 企微客服 API
-          │   (sync_msg, send_msg 等)         │
+          │   wecom-api.ts ──────────────────┼──► WeChat Work API
+          │   (sync_msg, send_msg, etc.)     │
           └──────────────────────────────────┤
 ```
 
-## 目录结构
+## Directory Structure
 
 ```
 wecom_kf/
@@ -62,28 +72,28 @@ wecom_kf/
   tsup.config.ts
   openclaw.plugin.json       # channels: ["wecom-kf"]
   src/
-    index.ts                 # 入口：注册渠道 + 回调路由
+    index.ts                 # Entry: register channel + callback route
     types.ts                 # KfMessage, KfAccount, EventMessagesConfig
-    channel.ts               # wecomKfChannel 渠道定义 (outbound.sendText)
-    callback.ts              # HTTP 回调处理 (/wecom/kefu)
-    message-handler.ts       # 客户消息 → Agent 回复管线
-    system-event-handler.ts  # 欢迎语/结束语/满意度
-    wecom-api.ts             # 企微 API（仅 8 个文档）
-    account-manager.ts       # 账号自动发现与缓存
-    crypto.ts                # 企微回调加解密 (AES-256-CBC)
-    config.ts                # 事件消息配置读取
-    cursor-store.ts          # next_cursor 持久化
+    channel.ts               # wecomKfChannel definition (outbound.sendText)
+    callback.ts              # HTTP callback handler (/wecom/kefu)
+    message-handler.ts       # Customer message → Agent reply pipeline
+    system-event-handler.ts  # Welcome/ending messages, satisfaction survey
+    wecom-api.ts             # WeChat Work API (8 docs only)
+    account-manager.ts       # Account auto-discovery and caching
+    crypto.ts                # WeChat callback encryption (AES-256-CBC)
+    config.ts                # Event messages configuration reader
+    cursor-store.ts          # next_cursor persistence
   skills/
     transfer-to-human/       # 转人工 skill（SKILL.md + references/kf-api.md）
   hooks/
-    session-memory/          # 会话重置时持久化客户上下文
+    session-memory/          # Persist customer context on session reset
   templates/
     presale-agent/           # AGENTS.md, SOUL.md, IDENTITY.md, USER.md, TOOLS.md, HEARTBEAT.md
     support-agent/
     aftersale-agent/
 ```
 
-## 客服回调入口
+## Callback URL（客服回调入口）
 
 企微后台「接收消息服务器配置」中，回调 URL 填写：
 
@@ -91,17 +101,17 @@ wecom_kf/
 
 与 wecom 插件的 `/wecom`、`/wecom/bot`、`/wecom/agent` 同属 `/wecom` 前缀，便于统一入口。服务器需在 **5 秒内** 返回 HTTP 200，否则企微会重试。
 
-## 开启客服委托（三步）
+## 开启客服委托（三步） / Enable KF delegation (3 steps)
 
 要让本插件收到企微客服的消息与事件，必须在企业微信后台完成「客服委托」相关配置；否则回调不会推送。
 
-### 第一步：将自建应用加入「微信客服 - 可调用接口的应用」
+### Step 1: Add app to「微信客服 - 可调用接口的应用」
 
 1. 登录 [企业微信管理后台](https://work.weixin.qq.com/)。
 2. 进入 **客户联系 → 微信客服 → API 与回调**（或 **应用管理 → 自建应用 → 你的应用**）。
 3. 在「**微信客服 - 可调用接口的应用**」中，将用于本插件的 **自建应用** 添加进去。
 
-### 第二步：配置回调 URL 与密钥
+### Step 2: Configure callback URL and secrets
 
 1. 在 **应用管理 → 自建应用 → 你的应用** 中，进入「**接收消息**」或「**接收消息服务器配置**」。
 2. 填写：
@@ -110,34 +120,34 @@ wecom_kf/
    - **EncodingAESKey**：与 `channels.wecom-kf.encodingAESKey` 一致。
 3. 保存后企微会发 GET 请求校验 URL，本插件会解密 `echostr` 并原样返回，通过即生效。
 
-### 第三步：为应用授权至少一个客服账号
+### Step 3: Authorize at least one KF account to the app
 
 - 在「**微信客服 - 可调用接口的应用**」或客服账号管理中，为上述自建应用 **授权至少一个客服账号**。
-- 官方说明：对自建应用，配置到「微信客服 - 可调用接口的应用」且授权了至少一个客服账号后，**自动获得**「微信客服→管理账号、分配会话和收发消息」权限，并开始接收 **微信客服消息和事件**。
+- 官方说明：对自建应用，配置到「微信客服- 可调用接口的应用」且授权了至少一个客服账号后，**自动获得**「微信客服→管理账号、分配会话和收发消息」权限，并开始接收 **微信客服消息和事件**。
 
 完成以上三步后，企微会向你的回调 URL 推送 `kf_msg_or_event` 等事件，本插件即可正常收发消息。若未配置或未授权，回调不会触发。
 
 **参考**：[微信客服 - 回调通知](https://developer.work.weixin.qq.com/document/path/97712)、[接收消息和事件](https://developer.work.weixin.qq.com/document/path/94670)。
 
-## 与 wecom 插件的关系（自建应用如何配置）
+## Relationship with wecom plugin（与 wecom 插件的关系 / 自建应用如何配置）
 
-**wecom-kf 与 [@partme.ai/wecom](https://www.npmjs.com/package/@partme.ai/wecom) 不是同一套体系**：前者对应企微「**微信客服**」（公众号/小程序/视频号用户进线），后者对应企微「**客户联系**」（智能机器人 + 自建应用 Bot/推送）。两者 channel 不同（`wecom-kf` vs `wecom`），可同时安装；若两种场景都要，需用**两个自建应用**分别配置。
+**wecom-kf and [@partme.ai/wecom](https://www.npmjs.com/package/@partme.ai/wecom) are not the same system**: wecom-kf is for WeCom **微信客服** (customers from 公众号/miniprogram/video channels); wecom is for **客户联系** (Bot + Agent push). Different channels (`wecom-kf` vs `wecom`), so both can be installed; if you need both scenarios, use **two** 自建应用 with different callback URLs.
 
-| 维度 | wecom（客户联系） | wecom-kf（微信客服） |
-|------|-------------------|----------------------|
-| 典型用途 | 内部/客户与机器人聊天、自建应用发消息 | 外部用户从「微信客服」进线，AI + 转人工 |
-| 回调路径 | `/plugins/wecom/bot/{accountId}`、`/plugins/wecom/agent/{accountId}` | `/wecom/kefu` |
-| 后台配置 | 自建应用「接收消息」填上述 URL | 自建应用加入「微信客服-可调用接口的应用」+ 接收消息 URL = `/wecom/kefu` |
+| 维度 | wecom (客户联系) | wecom-kf (微信客服) |
+|------|------------------|---------------------|
+| 典型用途 | Internal/customer chat with Bot, app push | External users via 微信客服, AI + human handoff |
+| Callback path | `/plugins/wecom/bot/{accountId}`, `/plugins/wecom/agent/{accountId}` | `/wecom/kefu` |
+| 后台配置 | 自建应用「接收消息」with above URL | Add app to「微信客服-可调用接口的应用」+ 接收消息 URL = `/wecom/kefu` |
 
-一个自建应用只能填**一个**接收消息 URL，因此不能用一个应用同时接客户联系和微信客服。推荐：
+One 自建应用 can have only **one** 接收消息 URL, so you cannot use a single app for both. Recommendation:
 
 | 需求 | 安装 | 自建应用与 URL |
 |------|------|----------------|
-| 只要微信客服进线 | wecom-kf | 1 个自建应用 → 加入「微信客服-可调用接口的应用」→ 接收消息 URL = `https://你的域名/wecom/kefu` |
-| 只要客户联系 Bot/应用 | wecom | 1 个自建应用 → 接收消息 URL = `https://你的域名/plugins/wecom/agent/{accountId}` |
-| 微信客服 + 客户联系都要 | wecom + wecom-kf | 2 个自建应用：一个 URL = `/wecom/kefu`，一个 URL = `/plugins/wecom/agent/xxx` |
+| 只要微信客服 | wecom-kf | 1 app → 微信客服-可调用接口的应用 → URL = `https://你的域名/wecom/kefu` |
+| 只要客户联系 | wecom | 1 app → URL = `https://你的域名/plugins/wecom/agent/{accountId}` |
+| 两个都要 | wecom + wecom-kf | 2 apps: one URL = `/wecom/kefu`, one URL = `/plugins/wecom/agent/xxx` |
 
-## 微信客服官方文档索引
+## Official WeCom KF docs（微信客服官方文档索引）
 
 | 分类 | 文档 |
 |------|------|
@@ -149,76 +159,76 @@ wecom_kf/
 | 机器人 | [知识库分组](https://developer.work.weixin.qq.com/document/path/95971) / [知识库问答](https://developer.work.weixin.qq.com/document/path/95972) |
 | 回调 | [回调通知](https://developer.work.weixin.qq.com/document/path/97712) |
 
-## 企微 API 覆盖
+## WeChat Work API Coverage
 
-| API | 端点 | 用途 |
+| API | Endpoint | Usage |
 |---|---|---|
-| **回调接收** | `/wecom/kefu` | 接收消息/事件通知 |
-| **同步消息** | `kf/sync_msg` | 拉取消息（3 天内） |
-| **发送消息** | `kf/send_msg` | AI 回复客户 |
-| **事件消息** | `kf/send_msg_on_event` | 欢迎语/结束语（带 welcome_code） |
-| **会话状态** | `kf/service_state/get` | 查询当前会话状态 |
-| **转接** | `kf/service_state/trans` | 转接人工客服 |
-| **账号列表** | `kf/account/list` | 发现所有客服账号 |
-| **客服列表** | `kf/servicer/list` | 获取可用人工客服（94645） |
-| **接入链接** | `kf/add_contact_way` | 获取客服账号链接（94665） |
+| **Callback** | `/wecom/kefu` | Receive message/event notifications |
+| **Sync Messages** | `kf/sync_msg` | Pull messages (within 3 days) |
+| **Send Message** | `kf/send_msg` | AI reply to customer |
+| **Event Message** | `kf/send_msg_on_event` | Welcome/ending messages with welcome_code |
+| **Service State** | `kf/service_state/get` | Check current session state |
+| **Transfer** | `kf/service_state/trans` | Transfer to human agent |
+| **Account List** | `kf/account/list` | Discover all KF accounts (94661) |
+| **Servicer List** | `kf/servicer/list` | Get available human agents (94645) |
+| **Contact Way** | `kf/add_contact_way` | Get KF account link (94665) |
 
-## 会话配置（推荐）
+## Session Configuration (Recommended)
 
-为保证按客户和客服账号正确隔离会话，建议在 OpenClaw 中做如下配置（渠道 meta 提供 `recommendedConfig`）：
+For correct session isolation per customer and per KF account, configure OpenClaw as follows (channel meta exposes `recommendedConfig`):
 
-- **`session.dmScope`**：使用 `per-account-channel-peer`，使每个客户 × 客服账号拥有独立会话。
-- **`session.resetByChannel`**：对 `wecom-kf` 使用空闲重置（如 `idleMinutes: 2880`），48 小时无活动后结束会话，与企微 48 小时回复窗口一致。
+- **`session.dmScope`**: Use `per-account-channel-peer` so each customer × KF-account has a dedicated session.
+- **`session.resetByChannel`**: For `wecom-kf`, use idle reset (e.g. `idleMinutes: 2880`) so sessions end after 48h of inactivity, matching WeChat reply window.
 
-若未设置为 per-peer 模式，插件启动时会打印警告。
+The plugin logs a startup warning if `dmScope` is not set to a per-peer mode.
 
-## 钩子
+## Hooks
 
-| 钩子 | 触发事件 | 用途 |
+| Hook | Trigger | Purpose |
 |---|---|---|
-| `session-memory` | `command:new`（wecom-kf 渠道） | 会话重置时，将客户上下文（昵称、客服账号、最近消息）写入 Agent 工作区 `memory/YYYY-MM-DD.md`，供长期记忆使用 |
+| `session-memory` | `command:new` (on wecom-kf channel) | On session reset, persists customer context (nickname, KF account, last messages) to Agent workspace `memory/YYYY-MM-DD.md` for long-term memory |
 
-## 自动回复命令
+## Auto-reply Command
 
-| 命令 | 说明 |
+| Command | Description |
 |---|---|
-| `/kf-status` | 在会话中返回企微客服账号连接状态及各账号在线客服数 |
+| `/kf-status` | In chat, returns WeChat KF account connection status and online servicer count per account |
 
-## Agent 工作区模板
+## Agent Workspace Templates
 
-插件在 `templates/` 下提供三种即用型 Agent 模板：
+The plugin provides three ready-to-use agent templates under `templates/`:
 
-| 模板 | 路径 | 适用场景 |
+| Template | Path | Use Case |
 |---|---|---|
-| 售前 | `templates/presale-agent/` | 售前与销售（AGENTS.md、SOUL.md、IDENTITY.md、USER.md、TOOLS.md、HEARTBEAT.md） |
-| 支持 | `templates/support-agent/` | 技术支持（含 exec 工具、知识库路径） |
-| 售后 | `templates/aftersale-agent/` | 售后服务（政策、保修、退换货） |
+| Presale | `templates/presale-agent/` | Sales and pre-sales (AGENTS.md, SOUL.md, IDENTITY.md, USER.md, TOOLS.md, HEARTBEAT.md) |
+| Support | `templates/support-agent/` | Technical support (includes exec tool, knowledge paths) |
+| Aftersale | `templates/aftersale-agent/` | After-sales (policies, warranty, returns) |
 
-将所需模板复制到 Agent 工作区后，按需调整模型引用和路径即可。
+Copy the desired template into your Agent workspace and adjust model refs and paths as needed.
 
-## 消息流程
+## Message Flow
 
-1. **回调接收**：企微向 `/wecom/kefu` 发送 POST
-2. **解密**：插件使用 AES-256-CBC 解密回调
-3. **事件路由**：
-   - `msg` 事件 → `message-handler.ts` → OpenClaw Agent
-   - `enter_session` → 发送欢迎语
-   - `session_status_change`（结束）→ 发送结束语 + 满意度评价
-4. **AI 回复**：Agent 处理消息，生成回复
-5. **消息下发**：插件调用 `kf/send_msg` 发送回复
+1. **Callback Reception**: WeChat Work sends POST to `/wecom/kefu`
+2. **Decryption**: Plugin decrypts callback using AES-256-CBC
+3. **Event Routing**:
+   - `msg` events → `message-handler.ts` → OpenClaw Agent
+   - `enter_session` → Send welcome message
+   - `session_status_change` (end) → Send ending message + satisfaction survey
+4. **AI Response**: Agent processes message, generates reply
+5. **Reply Delivery**: Plugin calls `kf/send_msg` to deliver response
 
-## 配置
+## Configuration
 
-### openclaw.json 中的渠道配置
+### Channel Configuration in `openclaw.json`
 
 ```json
 {
   "channels": {
     "wecom-kf": {
-      "corpId": "企业ID",
-      "corpSecret": "应用密钥",
-      "token": "回调Token",
-      "encodingAESKey": "AES密钥",
+      "corpId": "your_corp_id",
+      "corpSecret": "your_corp_secret",
+      "token": "callback_token",
+      "encodingAESKey": "aes_key",
       "eventMessages": {
         "welcome": {
           "enabled": true,
@@ -243,7 +253,7 @@ wecom_kf/
       "accounts": {
         "kf_xxx": {
           "agentId": "presale-agent",
-          "eventMessages": { /* 账号级覆盖 */ }
+          "eventMessages": { /* account-level override */ }
         }
       }
     }
@@ -251,7 +261,7 @@ wecom_kf/
 }
 ```
 
-### Agent 绑定
+### Agent Binding
 
 ```json
 {
@@ -270,108 +280,94 @@ wecom_kf/
 }
 ```
 
-## 智能转人工技能
+## Intelligent Human Transfer Skill
 
-插件内置转人工技能（`skills/transfer-to-human/SKILL.md`），规范与 wecom 插件 skills 一致（frontmatter、分节、references）。Agent 可据此判断何时转接人工：
+The plugin includes a built-in skill (`skills/transfer-to-human/SKILL.md`) that enables agents to decide when to transfer to human agents. Structure follows the wecom plugin skill spec (frontmatter, sections, references).
 
 ```markdown
-# 转人工技能
+# Transfer to Human Skill
 
-当客户明确要求转人工，或当你无法充分回答问题时，
-使用此技能将会话转接给人工客服。
+When the customer explicitly requests human service, or when you cannot
+adequately answer the question, use this skill to transfer the conversation.
 
-## 步骤：
-1. 通过 servicer/list 检查可用人工客服
-2. 如有可用客服，调用 service_state/trans
-3. 如无可用客服，告知客户等待时间或回拨选项
+## Steps:
+1. Check available human agents via servicer/list
+2. If agents available, call service_state/trans
+3. If no agents, inform customer of wait time or callback option
 ```
 
-## 测试
-
-```bash
-pnpm test            # 运行单元测试
-pnpm test:watch      # 监听模式
-pnpm test:coverage   # 覆盖率报告
-```
-
-测试覆盖：
-- `account-manager.test.ts` — 自定义 Agent 映射 + 缓存（9 个测试）
-- `message-handler.test.ts` — 多模态消息提取（11 个测试）
-
-## 开发
+## Development
 
 ```bash
 pnpm install
 pnpm build
-pnpm dev   # watch 模式
+pnpm dev   # watch mode
 ```
 
-## API 约束（重要）
+## API Constraints (Important)
 
-| 约束 | 值 | 说明 |
+| Constraint | Value | Description |
 |---|---|---|
-| 回复窗口 | 48 小时 | 必须在客户最后一条消息后 48 小时内回复 |
-| 消息限制 | 5 条 | 每条客户消息最多回复 5 条 |
-| sync_msg 有效期 | 3 天 | 超过 3 天的消息无法拉取 |
-| Token 有效期 | 10 分钟 | Access Token 10 分钟过期 |
-| welcome_code 有效期 | 20 秒 | 必须在 20 秒内发送欢迎语 |
+| Reply window | 48 hours | Must reply within 48h of last customer message |
+| Message limit | 5 messages | Max 5 replies per customer message |
+| sync_msg validity | 3 days | Messages older than 3 days cannot be pulled |
+| Token validity | 10 minutes | Access token expires in 10 min |
+| welcome_code validity | 20 seconds | Must send welcome within 20s |
 
-## 生产环境清单
+## Production checklist
 
-- **回调 URL**：使用 **HTTPS** 与稳定公网域名；**5 秒内** 返回 200。
-- **企业可信 IP**：若网关按 IP 限制访问，需放行 [企业微信回调 IP 段](https://developer.work.weixin.qq.com/document/path/92521)，保证企微可访问 `/wecom/kefu`。
-- **配置**：确保 `corpId`、`corpSecret`、`token`、`encodingAESKey` 与企微应用及回调配置一致；插件启动时仅在配置有效时发现客服账号。
+- **Callback URL**: Use **HTTPS** and a stable public domain; respond within **5 seconds** with 200.
+- **Enterprise trusted IPs**: If your gateway restricts by IP, allow [企业微信回调 IP 段](https://developer.work.weixin.qq.com/document/path/92521) so callbacks from WeCom can reach `/wecom/kefu`.
+- **Config**: Ensure `corpId`, `corpSecret`, `token`, `encodingAESKey` match the WeCom app and callback config; plugin startup will discover KF accounts only when config is valid.
 
-## 会话状态说明
+## Session State Reference
 
-| 状态值 | 说明 |
+| State | Description |
 |---|---|
-| 0 | 未处理（新会话进入，自动变为 1） |
-| 1 | 由智能客服接待（AI Agent） |
-| 2 | 待接入池（等待人工接待） |
-| 3 | 由人工客服接待 |
-| 4 | 已结束 |
+| 0 | Unhandled (new session, auto-transitions to 1) |
+| 1 | Handled by AI agent (smart customer service) |
+| 2 | In queue (waiting for human agent) |
+| 3 | Handled by human agent |
+| 4 | Session ended |
 
-## 关键类型
+## Key Types
 
-| 类型 | 说明 |
+| Type | Description |
 |---|---|
-| `KfMessage` | 企微消息结构（origin、msgtype、event、open_kfid、external_userid） |
-| `KfAccount` | 客服账号（open_kfid、name、avatar、manage_privilege） |
-| `EventMessagesConfig` | 欢迎语/结束语/满意度评价配置 |
-| `wecomKfChannel` | 渠道定义对象（capabilities、config、outbound） |
+| `KfMessage` | WeChat Work message structure (origin, msgtype, event, open_kfid, external_userid) |
+| `KfAccount` | Customer service account (open_kfid, name, avatar, manage_privilege) |
+| `EventMessagesConfig` | Welcome/ending message and satisfaction survey configuration |
+| `wecomKfChannel` | Channel definition object (capabilities, config, outbound) |
 
-## 插件配置（configSchema）
+## Plugin Configuration (configSchema)
 
-| 选项 | 类型 | 默认值 | 说明 |
+| Option | Type | Default | Description |
 |---|---|---|---|
-| `corpId` | string | — | 企业微信 Corp ID |
-| `corpSecret` | string | — | 客服应用密钥 |
-| `token` | string | — | 回调验证 Token |
-| `encodingAESKey` | string | — | 回调加解密 AES Key |
-| `session.dmScope` | string | `per-account-channel-peer` | 会话隔离级别 |
-| `session.resetByChannel` | object | `{mode:"idle", idleMinutes:2880}` | 渠道会话重置策略 |
-| `eventMessages.welcome` | object | — | 默认欢迎语配置 |
-| `eventMessages.ending` | object | — | 默认结束语配置 |
-| `eventMessages.satisfaction` | object | — | 满意度评价配置 |
-| `humanTransfer.waitTimeout` | number | 300 | 无人工客服时等待超时（秒） |
+| `corpId` | string | — | WeChat Work Corp ID |
+| `corpSecret` | string | — | App secret for KF API |
+| `token` | string | — | Callback verification token |
+| `encodingAESKey` | string | — | AES encryption key for callbacks |
+| `session.dmScope` | string | `per-account-channel-peer` | Session isolation level |
+| `session.resetByChannel` | object | `{mode:"idle", idleMinutes:2880}` | Channel-specific session reset |
+| `eventMessages.welcome` | object | — | Default welcome message config |
+| `eventMessages.ending` | object | — | Default ending message config |
+| `eventMessages.satisfaction` | object | — | Satisfaction survey config |
+| `humanTransfer.waitTimeout` | number | 300 | Seconds to wait before fallback when no human agent |
 
-## OpenClaw 生态插件
+## Related OpenClaw plugins
 
-| 插件 | 说明 |
-|------|------|
-| [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 认证 |
-| [openclaw_cluster](https://github.com/partme-ai/openclaw_cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
-| [openclaw_ics](https://github.com/partme-ai/openclaw_ics) | 智能客服业务 API |
-| [openclaw_management](https://github.com/partme-ai/openclaw_management) | 管理 REST API + Prometheus + 定义导出/导入 + Web UI |
-| [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT 协议接入 |
-| [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus 指标导出 |
-| [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP 服务端 |
-| [openclaw-tracing](https://github.com/partme-ai/openclaw-tracing) | 链路追踪 |
+| Plugin | Description |
+|--------|--------------|
+| [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 authentication |
+| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
+| [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT protocol adapter |
+| [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus metrics exporter |
+| [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |
+| [openclaw-tracing](https://github.com/partme-ai/openclaw-tracing) | Distributed tracing |
 | [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt) | WebSocket MQTT |
 | [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp) | WebSocket STOMP |
-| [wecom_kf](https://github.com/partme-ai/openclaw_wecom_kf) | 企微客服渠道 |
+| [wecom_kf](https://github.com/partme-ai/openclaw_wecom_kf) | WeChat Work customer service channel |
 
-## 许可证
+## License
 
 MIT

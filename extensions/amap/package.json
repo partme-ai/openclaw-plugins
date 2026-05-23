@@ -4,6 +4,9 @@
   "type": "module",
   "description": "高德开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
   "license": "MIT",
+  "dependencies": {
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -15,8 +18,15 @@
   "files": [
     "dist",
     "openclaw.plugin.json",
+    "clawdbot.plugin.json",
+    "moltbot.plugin.json",
     "README.md",
-    "LICENSE"
+    "README.zh-CN.md",
+    "LICENSE",
+    "tsconfig.json",
+    "tsup.config.ts",
+    "vitest.config.ts",
+    ".gitignore"
   ],
   "repository": {
     "type": "git",
@@ -43,10 +53,27 @@
   "peerDependencies": {
     "openclaw": ">=2026.4.12"
   },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "openclaw": ">=2026.4.12",
     "tsup": "^8.2.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "setupEntry": "./dist/setup-entry.js",
+    "channel": {
+      "id": "amap",
+      "label": "高德地图（Amap）",
+      "blurb": "高德开放平台渠道与运营工具"
+    }
   }
 }

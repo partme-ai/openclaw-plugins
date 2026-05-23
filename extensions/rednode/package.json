@@ -11,6 +11,7 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "pnpm build"
   },
   "keywords": [
@@ -26,13 +27,25 @@
   ],
   "author": "PartMe",
   "license": "MIT",
+  "dependencies": {
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22"
+  },
   "files": [
     "dist",
     "openclaw.plugin.json",
-    "README.md"
+    "clawdbot.plugin.json",
+    "moltbot.plugin.json",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "tsconfig.json",
+    "tsup.config.ts",
+    "vitest.config.ts",
+    ".gitignore"
   ],
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "openclaw": ">=2026.4.12",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
@@ -50,5 +63,21 @@
   },
   "peerDependencies": {
     "openclaw": ">=2026.4.12"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "setupEntry": "./dist/setup-entry.js",
+    "channel": {
+      "id": "xhs",
+      "label": "小红书",
+      "blurb": "小红书开放平台渠道与运营工具"
+    }
   }
 }

@@ -9,6 +9,15 @@ import { createWeComMcpTool } from "./src/mcp/index.js";
 // ── KF State Flow ──
 import { DIALOGUE_SESSION_NAMESPACE, buildStateAwarePrompt } from "./src/kf/index.js";
 
+// ── KF Agent Tools ──
+import {
+  createKfServicerListTool,
+  createKfAccountListTool,
+  createKfAccountLinkTool,
+  createKfSessionStatusTool,
+  createKfSessionTransferTool,
+} from "./src/kf/tools.js";
+
 // ── ICS (Intelligent Customer Service) REST API ──
 import { createKnowledgeHandler } from "./src/ics-handlers/knowledge.js";
 import { createBindingsHandler } from "./src/ics-handlers/bindings.js";
@@ -36,7 +45,7 @@ const plugin = {
     }
 
     // ── ICS REST API routes (merged from @partme.ai/ics) ──
-    const runtime = api.runtime;
+    const runtime = api.runtime as unknown as Parameters<typeof createKnowledgeHandler>[0];
     api.registerHttpRoute({ path: "/ics/agents", handler: createKnowledgeHandler(runtime), auth: "plugin" });
     api.registerHttpRoute({ path: "/ics/config/bindings", handler: createBindingsHandler(runtime), auth: "plugin" });
     api.registerHttpRoute({ path: "/ics/config/event-messages", handler: createEventMessagesHandler(runtime), auth: "plugin" });
@@ -45,15 +54,22 @@ const plugin = {
     // Register wecom_kf_mcp
     api.registerTool(createWeComMcpTool(), { name: "wecom_kf_mcp" });
 
+    // ── KF Agent Tools (客服行为) ──
+    api.registerTool(createKfServicerListTool(), { name: "wecom_kf_servicer_list", optional: true });
+    api.registerTool(createKfAccountListTool(), { name: "wecom_kf_account_list", optional: true });
+    api.registerTool(createKfAccountLinkTool(), { name: "wecom_kf_account_link", optional: true });
+    api.registerTool(createKfSessionStatusTool(), { name: "wecom_kf_session_status", optional: true });
+    api.registerTool(createKfSessionTransferTool(), { name: "wecom_kf_session_transfer", optional: true });
+
     // State-aware dialogue prompt injection for KF sessions
     api.on("before_prompt_build", async (_event, ctx) => {
       // Only inject for wecom-kf channel KF surface sessions
       if (ctx.channelId !== "wecom-kf") return;
-      if (ctx.surface !== "wecom-kf") return;
+      if ((ctx as Record<string, unknown>).surface !== "wecom-kf") return;
 
       // Load dialogue context
       try {
-        const sessionExt = (api as Record<string, unknown>).session as Record<string, unknown> | undefined;
+        const sessionExt = (api as Record<string, unknown>).session as { state?: { get?: (namespace: string) => Promise<Record<string, unknown> | undefined> } } | undefined;
         const getState = sessionExt?.state?.get as
           ((namespace: string) => Promise<Record<string, unknown> | undefined>) | undefined;
         const dialogueCtx = await getState?.(DIALOGUE_SESSION_NAMESPACE);

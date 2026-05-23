@@ -6,7 +6,6 @@ import { getMqttRuntime } from "./runtime.js";
 import { getMqttChannelConfig } from "./mqtt-state.js";
 import {
   DEFAULT_BROKER_CONFIG,
-  resolveOpenClawDmScope,
   type MqttChannelConfig,
 } from "./config.js";
 import type { MqttInboundMessage, MqttInboundRoute } from "./types.js";
@@ -14,15 +13,21 @@ import {
   resolveInboundRoute,
   buildReplyTopicFromInbound,
   matchTopic,
-} from "./topic-router.js";
+} from "./routing/topic-router.js";
+import { upsertSessionContext } from "./routing/session-mapper.js";
+import { logAuditEvent } from "./transport/audit.js";
+import { getClientUsername } from "./transport/server.js";
+import { isUserActionAllowed } from "./transport/acl.js";
+import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
-  getOrCreateSessionKey,
-  upsertSessionContext,
-} from "./session-mapper.js";
-import { logAuditEvent } from "./audit.js";
-import { getClientUsername } from "./broker.js";
-import { isUserActionAllowed } from "./acl.js";
-import { parseMessageAny } from "@partme.ai/openclaw-message-sdk";
+  normalizeWireIngress,
+  dispatchChannelMessage,
+  resolveChannelDispatchIdentity,
+  type BridgePluginRuntime,
+} from "@partme.ai/openclaw-message-sdk/bridge";
+
+/** MQTT 入站幂等缓存（messageId / 等价键）。 */
+const idempotencyCache = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10_000 });
 
 /**
  * 处理 MQTT 入站消息（设备 -> Agent）。
@@ -47,16 +52,34 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
     return;
   }
 
-  const dmScope = resolveOpenClawDmScope(
-    (getMqttRuntime()?.config as Record<string, unknown> | undefined) ?? {},
-  );
-  const sessionKey = getOrCreateSessionKey(
-    message.clientId,
-    route.agentId,
-    route.accountId,
-    dmScope,
-  );
-  const text = parseInboundText(message.payload, config.payload.mode);
+  const rt = getMqttRuntime();
+  if (!rt) {
+    console.warn("[openclaw-mqtt] Runtime not initialized, cannot dispatch message");
+    return;
+  }
+
+  const peerId = message.clientId;
+  const { agentId, sessionKey } = await resolveChannelDispatchIdentity(rt as unknown as BridgePluginRuntime, {
+    channel: "mqtt",
+    accountId: route.accountId,
+    peerId,
+    agentId: route.agentId,
+  });
+
+  const idempotencyKey =
+    message.messageId !== undefined ? String(message.messageId) : undefined;
+  const parsed = normalizeWireIngress({
+    rawPayload: message.payload,
+    mode: config.payload.mode,
+    channel: "mqtt",
+    idempotencyKey,
+    idempotency: idempotencyKey ? idempotencyCache : undefined,
+  });
+  if (!parsed.accepted) {
+    console.log(`[openclaw-mqtt] Duplicate inbound dropped: ${message.messageId}`);
+    return;
+  }
+  const text = parsed.text;
   const replyTopic = route.replyTopic ?? buildReplyTopicFromInbound(message.topic);
   const username = getClientUsername(message.clientId);
   const user = config.auth.users.find((entry) => entry.username === username);
@@ -80,33 +103,35 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
 
   upsertSessionContext(sessionKey, {
     clientId: message.clientId,
-    agentId: route.agentId,
+    agentId,
     accountId: route.accountId,
     lastInboundTopic: message.topic,
     replyTopic,
   });
 
   console.log(
-    `[openclaw-mqtt] Inbound: client=${message.clientId}, topic=${message.topic}, agent=${route.agentId}, account=${route.accountId}, source=${route.source}, session=${sessionKey}, text=${text.slice(0, 100)}`,
+    `[openclaw-mqtt] Inbound: client=${message.clientId}, topic=${message.topic}, agent=${agentId}, account=${route.accountId}, source=${route.source}, session=${sessionKey}, text=${text.slice(0, 100)}`,
   );
 
   try {
-    await dispatchToRuntime(sessionKey, message.clientId, text, message, route, replyTopic);
+    await dispatchToRuntime(sessionKey, peerId, agentId, text, message, route, replyTopic, parsed.unified);
   } catch (error) {
     console.error(`[openclaw-mqtt] Runtime dispatch failed for client=${message.clientId}:`, error);
   }
 }
 
 /**
- * 将入站消息分发到 OpenClaw Runtime。
+ * 将入站消息分发到 OpenClaw Runtime（经 message-sdk 桥接）。
  */
 async function dispatchToRuntime(
   sessionKey: string,
   peerId: string,
+  agentId: string,
   text: string,
   inbound: MqttInboundMessage,
   routeResult: MqttInboundRoute,
   replyTopic: string,
+  unified: import("@partme.ai/openclaw-message-sdk").UnifiedMessage | null,
 ): Promise<void> {
   const rt = getMqttRuntime();
   if (!rt) {
@@ -114,21 +139,18 @@ async function dispatchToRuntime(
     return;
   }
 
-  const cfg = rt.config;
+  const outboundFormat = getMqttChannelConfig()?.payload?.outboundFormat ?? "envelope";
 
-  const replyOptions = await rt.channel.routing.resolveAgentRoute({
-    cfg,
+  await dispatchChannelMessage({
+    mode: "reply-pipeline",
+    runtime: rt as unknown as BridgePluginRuntime,
     channel: "mqtt",
     accountId: routeResult.accountId,
-    peer: { kind: "direct", id: peerId },
-  });
-
-  const ctx = await rt.channel.reply.finalizeInboundContext({
-    channel: "mqtt",
-    accountId: routeResult.accountId,
-    from: peerId,
+    peerId,
     text,
-    chatType: "direct",
+    agentId,
+    sessionKey,
+    unified,
     extra: {
       topic: inbound.topic,
       qos: inbound.qos,
@@ -138,21 +160,18 @@ async function dispatchToRuntime(
       properties: inbound.properties,
       matchedPattern: routeResult.matchedPattern,
       routeSource: routeResult.source,
+      sessionKey,
     },
-  });
-
-  const dispatcher = rt.channel.reply.createReplyDispatcherWithTyping({
-    deliver: async (payload: { text: string }) => {
-      const { publishMessage } = await import("./broker.js");
-      publishMessage(replyTopic, payload.text);
+    reply: {
+      deliver: async ({ wire }: { wire: Uint8Array | string }) => {
+        const { publishMessage } = await import("./transport/server.js");
+        const payload = typeof wire === "string" ? wire : Buffer.from(wire).toString("utf8");
+        publishMessage(replyTopic, payload);
+      },
+      outboundFormat,
+      replyRoute: { topic: replyTopic },
+      agentId,
     },
-  });
-
-  await rt.channel.reply.dispatchReplyFromConfig({
-    ctx,
-    cfg,
-    dispatcher,
-    replyOptions,
   });
 }
 
@@ -161,27 +180,4 @@ function shouldProcessTopic(topic: string, subscribeTopics: string[]): boolean {
     return true;
   }
   return subscribeTopics.some((pattern) => matchTopic(topic, pattern));
-}
-
-function parseInboundText(rawPayload: string, mode: MqttChannelConfig["payload"]["mode"]): string {
-  if (mode !== "jsonTextOrPlain") {
-    return rawPayload;
-  }
-
-  // Try UnifiedMessage format first
-  const unifiedMsg = parseMessageAny(rawPayload);
-  if (unifiedMsg && unifiedMsg.text) {
-    return unifiedMsg.text;
-  }
-
-  // Fallback to existing parsing logic
-  try {
-    const parsed = JSON.parse(rawPayload) as { text?: unknown };
-    if (typeof parsed.text === "string" && parsed.text.trim().length > 0) {
-      return parsed.text;
-    }
-  } catch {
-    // ignore parse error and fallback to plain text
-  }
-  return rawPayload;
 }

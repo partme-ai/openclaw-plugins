@@ -11,7 +11,7 @@ import {
   removePeerSessions,
   getAllSessionMappings,
   getSessionStats,
-} from "../src/session-mapper.js";
+} from "../src/routing/session-mapper.js";
 
 describe("session-mapper", () => {
   beforeEach(() => {

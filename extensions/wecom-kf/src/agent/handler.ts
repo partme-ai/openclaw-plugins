@@ -717,15 +717,17 @@ export async function handleCustomerMessage(
   // ── State Flow: Load or create dialogue context ──
   let dialogueCtx: Record<string, unknown> | undefined;
   try {
-    const { createDialogueContext, transitionState, DIALOGUE_SESSION_NAMESPACE } =
+    const { createDialogueContext, DIALOGUE_SESSION_NAMESPACE } =
       await import("../kf/dialogue-state.js");
+    const { transitionState } = await import("../kf/dialogue-transitions.js");
     const { isHumanTransferRequest } = await import("../kf/intent-classifier.js");
 
     // Try to get existing dialogue context from session extension
-    const sessionExt = (runtime as Record<string, unknown>).session as Record<string, unknown> | undefined;
-    const getState = sessionExt?.state?.get as
+    const sessionExt = runtime as Record<string, unknown>;
+    const stateApi = (sessionExt.session as Record<string, unknown> | undefined)?.state as Record<string, unknown> | undefined;
+    const getState = stateApi?.get as
       ((namespace: string) => Promise<Record<string, unknown> | undefined>) | undefined;
-    const setState = sessionExt?.state?.set as
+    const setState = stateApi?.set as
       ((namespace: string, value: Record<string, unknown>) => Promise<void>) | undefined;
 
     let ctx = await getState?.(DIALOGUE_SESSION_NAMESPACE);

@@ -11,6 +11,11 @@ import type { OCRError } from "./errors.js";
 // 配置
 // ============================================================================
 
+/**
+ * OCRConfig 描述 ocr 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface OCRConfig {
   /** API 端点 URL */
   baseUrl: string;
@@ -28,6 +33,11 @@ export interface OCRConfig {
 // 输入
 // ============================================================================
 
+/**
+ * OCRInput 描述 ocr 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface OCRInput {
   /** 图片 URL (http/https) */
   url?: string;
@@ -43,6 +53,11 @@ export interface OCRInput {
 // 结果
 // ============================================================================
 
+/**
+ * OCRWord 描述 ocr 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface OCRWord {
   /** 识别的文字 */
   text: string;
@@ -52,6 +67,11 @@ export interface OCRWord {
   bbox?: [number, number, number, number];
 }
 
+/**
+ * OCRLine 描述 ocr 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface OCRLine {
   /** 行文本 */
   text: string;
@@ -63,6 +83,11 @@ export interface OCRLine {
   bbox?: [number, number, number, number];
 }
 
+/**
+ * OCRBlock 描述 ocr 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface OCRBlock {
   /** 块文本 */
   text: string;
@@ -74,6 +99,11 @@ export interface OCRBlock {
   bbox?: [number, number, number, number];
 }
 
+/**
+ * OCRResult 描述 ocr 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface OCRResult {
   /** 完整识别文本 */
   text: string;
@@ -93,6 +123,11 @@ export interface OCRResult {
 // 提供商接口
 // ============================================================================
 
+/**
+ * OCRProvider 描述 ocr 模块公开 API 的结构化参数或返回值。
+ *
+ * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ */
 export interface OCRProvider {
   readonly name: string;
   readonly defaultModel: string;

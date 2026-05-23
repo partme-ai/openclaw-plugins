@@ -15,7 +15,13 @@ const DEFAULT_SERVICE_TYPE = "_openclaw._tcp.local";
 const QUERY_INTERVAL_MS = 15_000;
 
 /** multicast-dns 实例类型（创建后为 mdns() 返回值） */
-type MdnsInstance = { on: (e: string, fn: (...args: unknown[]) => void) => void; removeListener?: (e: string, fn: unknown) => void; query: (name: string, type: string) => void; respond: (packet: { answers: unknown[] }) => void; destroy: () => void } | null;
+type MdnsInstance = {
+  on: (e: string, fn: (packet: MdnsPacket) => void) => void;
+  removeListener?: (e: string, fn: (packet: MdnsPacket) => void) => void;
+  query: (name: string, type: string) => void;
+  respond: (packet: { answers: unknown[] }) => void;
+  destroy: () => void;
+} | null;
 
 async function createMdns(): Promise<MdnsInstance> {
   try {
@@ -56,7 +62,7 @@ export class MdnsDiscovery implements IDiscoveryService {
     this.mdns = await createMdns();
     if (!this.mdns) {
       throw new Error(
-        "[openclaw_cluster] mDNS discovery requires optional dependency 'multicast-dns'. Run: pnpm add multicast-dns"
+        "[openclaw-cluster] mDNS discovery requires optional dependency 'multicast-dns'. Run: pnpm add multicast-dns"
       );
     }
 
@@ -81,7 +87,7 @@ export class MdnsDiscovery implements IDiscoveryService {
     });
 
     console.log(
-      `[openclaw_cluster] mDNS discovery started: type=${this.serviceType}, instance=${this.instanceName}`
+      `[openclaw-cluster] mDNS discovery started: type=${this.serviceType}, instance=${this.instanceName}`
     );
 
     this.sendQuery();
@@ -99,7 +105,7 @@ export class MdnsDiscovery implements IDiscoveryService {
     this.changeCallbacks = [];
     this.nodes = [];
     this.nodeMap.clear();
-    console.log("[openclaw_cluster] mDNS discovery stopped");
+    console.log("[openclaw-cluster] mDNS discovery stopped");
   }
 
   getNodes(): ClusterNodeInfo[] {

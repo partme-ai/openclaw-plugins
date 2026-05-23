@@ -1,5 +1,5 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { publishMessage, requestMessage } from "./rabbitmq-server.js";
+import { publishMessage, requestMessage } from "./transport/server.js";
 
 const PublishParamsSchema = {
   type: "object",

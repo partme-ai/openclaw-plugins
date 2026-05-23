@@ -15,10 +15,9 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type {
   MemorySearchManager,
   MemorySearchResult,
-  MemoryReadResult,
   MemoryProviderStatus,
   MemoryEmbeddingProbeResult,
-} from "openclaw/plugin-sdk/memory-host";
+} from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
@@ -175,9 +174,18 @@ const plugin = {
     initDirs(cfg.dataDir);
     const manager = createSearchManager(cfg.dataDir);
 
-    // 注册 MemorySearchManager — 框架自动调用 search() 在 before_prompt_build 时注入记忆
-    api.registerMemorySearchManager?.(manager);
-    api.logger.info("[memory] MemorySearchManager registered — framework handles injection");
+    // 注册 Memory runtime — 框架按 agent/purpose 拉取 manager 并在 before_prompt_build 时注入记忆。
+    api.registerMemoryCapability({
+      runtime: {
+        async getMemorySearchManager() {
+          return { manager };
+        },
+        resolveMemoryBackendConfig() {
+          return { backend: "builtin" };
+        },
+      },
+    });
+    api.logger.info("[memory] Memory runtime registered — framework handles injection");
 
     // memory_search 工具 — Agent 主动搜索
     api.registerTool({

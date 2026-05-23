@@ -2,7 +2,7 @@
  * STOMP TCP Channel 定义。
  */
 
-import { publishToDestination } from "./stomp-server.js";
+import { publishToDestination } from "./transport/server.js";
 import { stompTcpSetupAdapter, stompTcpSetupWizard } from "./onboarding.js";
 
 /**

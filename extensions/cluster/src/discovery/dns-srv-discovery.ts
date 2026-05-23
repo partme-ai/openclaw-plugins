@@ -58,7 +58,7 @@ export class DnsSrvDiscovery implements IDiscoveryService {
    * 立即执行一次查询，然后定时刷新
    */
   async start(): Promise<void> {
-    console.log(`[openclaw_cluster] DNS SRV discovery started: domain=${this.domain}`);
+    console.log(`[openclaw-cluster] DNS SRV discovery started: domain=${this.domain}`);
 
     // 首次查询
     await this.refresh();
@@ -66,7 +66,7 @@ export class DnsSrvDiscovery implements IDiscoveryService {
     // 定时刷新
     this.refreshTimer = setInterval(() => {
       this.refresh().catch((err) => {
-        console.error("[openclaw_cluster] DNS SRV refresh error:", err);
+        console.error("[openclaw-cluster] DNS SRV refresh error:", err);
       });
     }, this.refreshInterval);
   }
@@ -80,7 +80,7 @@ export class DnsSrvDiscovery implements IDiscoveryService {
       this.refreshTimer = null;
     }
     this.nodes = [];
-    console.log("[openclaw_cluster] DNS SRV discovery stopped");
+    console.log("[openclaw-cluster] DNS SRV discovery stopped");
   }
 
   /**
@@ -135,14 +135,14 @@ export class DnsSrvDiscovery implements IDiscoveryService {
 
       if (changed) {
         console.log(
-          `[openclaw_cluster] DNS SRV: ${newNodes.length} node(s) discovered from ${this.domain}`
+          `[openclaw-cluster] DNS SRV: ${newNodes.length} node(s) discovered from ${this.domain}`
         );
         this.notifyChange();
       }
     } catch (error) {
       // DNS 查询失败时保留上次成功的缓存
       console.warn(
-        `[openclaw_cluster] DNS SRV query failed for ${this.domain}, ` +
+        `[openclaw-cluster] DNS SRV query failed for ${this.domain}, ` +
         `keeping cached ${this.nodes.length} node(s):`,
         (error as Error).message
       );
@@ -181,7 +181,7 @@ export class DnsSrvDiscovery implements IDiscoveryService {
       try {
         callback(this.getNodes());
       } catch (err) {
-        console.error("[openclaw_cluster] Node change callback error:", err);
+        console.error("[openclaw-cluster] Node change callback error:", err);
       }
     }
   }

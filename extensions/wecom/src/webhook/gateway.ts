@@ -122,6 +122,12 @@ export function startWebhookGateway(ctx: WebhookGatewayContext): void {
 
   log.info(`[webhook] 启动 Webhook Gateway (accountId=${ctx.accountId})`);
 
+  void import("./dedup.js")
+    .then(({ warmupWecomWebhookDedupe }) =>
+      warmupWecomWebhookDedupe(ctx.accountId, (msg) => log.info(String(msg))),
+    )
+    .catch((err) => log.error(`[webhook] dedup warmup failed: ${String(err)}`));
+
   // 2. 确保 pruneTimer 启动（幂等：如果已在运行，不会重复启动）
   monitorState.startPruning(PRUNE_INTERVAL_MS);
 
