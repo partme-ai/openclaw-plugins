@@ -70,6 +70,8 @@ Session-key partitioning is driven only by `session.dmScope`.
 openclaw plugins install @partme.ai/openclaw-stomp
 ```
 
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
 ### Minimal config example (`openclaw.json`)
 
 ```json

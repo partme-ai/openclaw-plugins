@@ -58,6 +58,8 @@
 openclaw plugins install @partme.ai/openclaw-web-mqtt
 ```
 
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+
 ### 最小配置（`openclaw.json`）
 
 ```json

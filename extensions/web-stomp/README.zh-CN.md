@@ -141,6 +141,8 @@ openclaw_web_stomp/
 
 ### openclaw.json 中的渠道配置
 
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+
 ```json
 {
   "channels": {

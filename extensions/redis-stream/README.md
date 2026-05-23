@@ -70,6 +70,8 @@ openclaw plugins install clawhub:@partme.ai/openclaw-redis-stream
 openclaw plugins install npm:@partme.ai/openclaw-redis-stream
 ```
 
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
 ### Minimal Configuration
 
 ```jsonc

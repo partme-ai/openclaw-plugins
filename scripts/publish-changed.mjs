@@ -7,6 +7,7 @@
  *   2. Compare with local package.json version using numeric semver ordering
  *   3. If local > npm (or not published yet), publish
  *   4. Refuse to publish prerelease (x.y.z-w) with tag "latest"
+ *   5. Temporarily materialize workspace: deps → npm semver for publish, then restore
  *
  * Usage:
  *   node scripts/publish-changed.mjs [--dry-run] [--plugin wecom] [--tag next]
@@ -16,8 +17,12 @@
  */
 
 import { execSync } from "child_process";
-import { readdirSync, readFileSync, existsSync } from "fs";
+import { readdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import { resolve } from "path";
+import {
+  materializePkgJsonForPublish,
+  readMessageSdkVersion,
+} from "./workspace-deps.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PLUGINS_DIR = resolve(ROOT, "extensions");
@@ -130,6 +135,7 @@ console.log(dryRun ? "🔍 DRY RUN — no packages will be published\n" : `📦 
 
 const plugins = getPlugins(filterName);
 const results = [];
+const messageSdkVersion = readMessageSdkVersion();
 
 for (const { dir, path: pluginPath } of plugins) {
   const pkgPath = resolve(pluginPath, "package.json");
@@ -156,17 +162,41 @@ for (const { dir, path: pluginPath } of plugins) {
   if (publish) {
     console.log(`📤 ${dir} — ${pkg.name}@${pkg.version} (${reason})`);
     if (!dryRun) {
+      const pkgPath = resolve(pluginPath, "package.json");
+      const originalPkgContent = readFileSync(pkgPath, "utf8");
+      let materialized = false;
       try {
+        const { pkg: publishPkg, changed } = materializePkgJsonForPublish(
+          JSON.parse(originalPkgContent),
+          messageSdkVersion,
+        );
+        if (changed) {
+          writeFileSync(pkgPath, `${JSON.stringify(publishPkg, null, 2)}\n`);
+          materialized = true;
+          console.log(
+            `  ↳ workspace → ^${messageSdkVersion} (@partme.ai/openclaw-message-sdk) for npm publish`,
+          );
+        }
         execSync(`cd "${pluginPath}" && npm publish --access public --tag ${tag}`, {
           stdio: "inherit",
-          timeout: 60_000,
+          timeout: 120_000,
         });
         results.push({ plugin: dir, status: "published", version: pkg.version });
       } catch (err) {
         console.error(`❌ ${dir} publish failed: ${err.message}`);
         results.push({ plugin: dir, status: "failed", error: err.message });
+      } finally {
+        if (materialized) {
+          writeFileSync(pkgPath, originalPkgContent);
+        }
       }
     } else {
+      const { changed } = materializePkgJsonForPublish(pkg, messageSdkVersion);
+      if (changed) {
+        console.log(
+          `  ↳ would materialize workspace → ^${messageSdkVersion} (@partme.ai/openclaw-message-sdk)`,
+        );
+      }
       results.push({ plugin: dir, status: "would-publish", version: pkg.version });
     }
   } else {

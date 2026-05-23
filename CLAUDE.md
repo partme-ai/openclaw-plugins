@@ -110,7 +110,7 @@ Channel plugins with media support follow the `src/media.ts` pattern: `detectMed
 
 - **Versioning**: date-based `YYYY.M.D` for active plugins; semver `1.0.0` for stable. Prerelease: `YYYY.M.D.N` with `--tag next`
 - **Test naming**: `src/<module>.<feature>.test.ts` — enables `npx vitest run src/<module>` pattern matching
-- **No cross-plugin deps**: each plugin is fully self-contained. `message-sdk` is the sole shared library — 8 plugins depend on it via `workspace:*`. Other cross-plugin imports are forbidden.
+- **No cross-plugin deps**: each plugin is fully self-contained. `message-sdk` is the sole shared library — consumers use `workspace:^<sdkVersion>` in dev; `publish-changed.mjs` materializes to `^<version>` on npm publish. Run `pnpm sync-message-sdk-deps` after bumping message-sdk.
 - **File naming**: `kebab-case.ts` for modules, `camelCase.ts` for narrow utilities
 - **Plugin IDs**: lowercase, dash-separated
 - **Node**: >=22.0.0, pnpm 9, ESM only

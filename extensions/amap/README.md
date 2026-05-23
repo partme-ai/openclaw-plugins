@@ -24,6 +24,8 @@ Amap (`@partme.ai/openclaw-amap`) is an [OpenClaw](https://github.com/openclaw/o
 openclaw plugins install @partme.ai/openclaw-amap
 ```
 
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
 ## About openclaw-plugins
 
 This plugin is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — an enterprise OpenClaw plugin collection developed and maintained by the **PartMe.AI team**, featuring 30+ plugins across IM channels, message queues, AI capabilities, and infrastructure.

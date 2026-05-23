@@ -79,6 +79,8 @@ User API is not required for normal send/receive workflows. Keep runtime least-p
 openclaw plugins install @partme.ai/openclaw-gotify
 ```
 
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
 ### Minimal Config
 
 ```json

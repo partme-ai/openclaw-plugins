@@ -103,6 +103,8 @@ Supports multiple persistence backends: memory, redis, mongodb, level, nedb.
 openclaw plugins install @partme.ai/openclaw-mqtt
 ```
 
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
 ### Minimal Config
 
 ```json

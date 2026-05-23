@@ -40,6 +40,8 @@
 openclaw plugins install @partme.ai/wecom
 ```
 
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
 ### Configuration
 
 #### Option A: Interactive wizard

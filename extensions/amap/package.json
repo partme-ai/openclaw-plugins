@@ -5,7 +5,7 @@
   "description": "高德开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
   "license": "MIT",
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:*"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -66,7 +66,9 @@
     "vitest": "^4.0.0"
   },
   "openclaw": {
-    "extensions": ["./dist/index.js"],
+    "extensions": [
+      "./dist/index.js"
+    ],
     "setupEntry": "./dist/setup-entry.js",
     "channel": {
       "id": "amap",

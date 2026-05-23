@@ -141,6 +141,8 @@ openclaw_web_stomp/
 
 ### Channel Configuration in `openclaw.json`
 
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
 ```json
 {
   "channels": {

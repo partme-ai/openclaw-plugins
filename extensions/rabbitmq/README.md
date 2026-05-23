@@ -72,6 +72,8 @@
 openclaw plugins install @partme.ai/openclaw-rabbitmq
 ```
 
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
 ### Minimal config (`openclaw.json`)
 
 ```json

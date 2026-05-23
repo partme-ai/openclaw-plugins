@@ -25,7 +25,7 @@
   "author": "PartMe",
   "license": "MIT",
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:*"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22"
   },
   "files": [
     "dist",
@@ -67,7 +67,9 @@
     }
   },
   "openclaw": {
-    "extensions": ["./dist/index.js"],
+    "extensions": [
+      "./dist/index.js"
+    ],
     "setupEntry": "./dist/setup-entry.js",
     "channel": {
       "id": "douyin",

@@ -51,6 +51,8 @@
 openclaw plugins install @partme.ai/openclaw-gotify
 ```
 
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+
 然后在 `channels.gotify` 中填写配置（见下文）。
 
 ### 2. 使用 npm（手动 / 高级）

@@ -31,7 +31,7 @@ importers:
   extensions/amap:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:*
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
     devDependencies:
       '@types/node':
@@ -98,7 +98,7 @@ importers:
   extensions/douyin:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:*
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
     devDependencies:
       '@types/node':
@@ -120,7 +120,7 @@ importers:
   extensions/gotify:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: ^2026.5.21
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
@@ -212,7 +212,7 @@ importers:
   extensions/meituan:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:*
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
     devDependencies:
       '@types/node':
@@ -269,7 +269,7 @@ importers:
   extensions/mqtt:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:*
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
       aedes:
         specifier: ^0.51.3
@@ -425,7 +425,7 @@ importers:
   extensions/rabbitmq:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:*
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
       amqplib:
         specifier: ^0.10.4
@@ -459,7 +459,7 @@ importers:
   extensions/redis-stream:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:*
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
@@ -499,7 +499,7 @@ importers:
   extensions/rednode:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:*
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
     devDependencies:
       '@types/node':
@@ -521,7 +521,7 @@ importers:
   extensions/rocketmq:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:*
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
@@ -568,7 +568,7 @@ importers:
   extensions/stomp:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:*
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
@@ -615,7 +615,7 @@ importers:
   extensions/web-mqtt:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: ^2026.5.21
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
       aedes:
         specifier: ^0.51.3
@@ -652,7 +652,7 @@ importers:
   extensions/web-stomp:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: ^2026.5.21
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
@@ -736,7 +736,7 @@ importers:
   extensions/wecom:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:*
+        specifier: workspace:^2026.5.22
         version: link:../message-sdk
       '@wecom/aibot-node-sdk':
         specifier: ^1.0.6
@@ -9701,7 +9701,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
+      vitest: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@25.9.1)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
     optional: true
 
   '@vitest/expect@2.1.9':

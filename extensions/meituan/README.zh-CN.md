@@ -30,6 +30,8 @@
 openclaw plugins install @partme.ai/openclaw-meituan
 ```
 
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+
 ## 配置
 
 安装后在 `openclaw.json` 的 `channels.meituan` 中配置凭据与回调 URL。

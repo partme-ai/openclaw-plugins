@@ -58,6 +58,8 @@ It provides a hardened embedded MQTT-over-WebSocket broker for browser and web a
 openclaw plugins install @partme.ai/openclaw-web-mqtt
 ```
 
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
 ### Minimal config (`openclaw.json`)
 
 ```json

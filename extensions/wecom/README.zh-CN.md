@@ -46,6 +46,8 @@
 openclaw plugins install @partme.ai/wecom
 ```
 
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+
 ### 配置
 
 #### 方式一：交互式配置

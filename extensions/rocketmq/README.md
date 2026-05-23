@@ -36,6 +36,8 @@
 openclaw plugins install @partme.ai/openclaw-rocketmq
 ```
 
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+
 ### Minimal Configuration
 
 ```json
