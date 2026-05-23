@@ -132,6 +132,140 @@ const EXTENDED_INDEX_LINE_THRESHOLD = 150;
 
 const SKIP_WALK_DIRS = new Set(["node_modules", "dist", ".git"]);
 
+/** Base flat files checked for pointless / mis-aimed re-export shims */
+const BASE_SHIM_FILES = [
+  "outbound.ts",
+  "inbound.ts",
+  "channel.ts",
+  "runtime.ts",
+  "onboarding.ts",
+  "config.ts",
+  "types.ts",
+  "setup-entry.ts",
+  "channel-setup-factory.ts",
+];
+
+/** Max lines for a file to be treated as a thin shim (warn-only heuristic) */
+const BASE_SHIM_LINE_THRESHOLD = 15;
+
+/**
+ * First path segment after `./` for a relative import target.
+ * @param {string} target
+ */
+function shimTargetDir(target) {
+  const normalized = target.replace(/^\.\//, "");
+  const slash = normalized.indexOf("/");
+  return slash === -1 ? normalized.replace(/\.js$/, "") : normalized.slice(0, slash);
+}
+
+/**
+ * Whether a Base flat file re-exports from an unrelated semantic directory.
+ * @param {string} baseStem e.g. outbound
+ * @param {string} target e.g. ./channel/onboarding.js
+ */
+function isMisaimedBaseShimTarget(baseStem, target) {
+  const dir = shimTargetDir(target);
+
+  /** @type {Record<string, string[]>} */
+  const allowedFirstSegment = {
+    outbound: ["outbound"],
+    inbound: ["inbound", "dispatch", "webhook"],
+    channel: ["channel"],
+    runtime: ["runtime"],
+    onboarding: ["onboarding", "channel"],
+    config: ["config"],
+    types: ["types", "config"],
+    "setup-entry": ["channel", "setup"],
+    "channel-setup-factory": ["channel-setup-factory", "onboarding", "channel"],
+  };
+
+  const allowed = allowedFirstSegment[baseStem];
+  if (!allowed) return false;
+  if (allowed.includes(dir)) return false;
+
+  /** Cross-semantic hops that are always suspicious */
+  /** @type {Record<string, string[]>} */
+  const forbidden = {
+    outbound: ["channel", "onboarding", "config", "inbound", "runtime", "types", "dispatch", "webhook"],
+    inbound: ["onboarding", "outbound", "channel-setup-factory", "config", "runtime"],
+    runtime: ["onboarding", "outbound", "inbound", "config", "channel"],
+    onboarding: ["outbound", "inbound", "runtime", "webhook", "dispatch"],
+    config: ["outbound", "inbound", "onboarding", "runtime", "webhook", "dispatch"],
+    types: ["onboarding", "runtime", "outbound", "inbound", "webhook", "dispatch"],
+    channel: ["onboarding", "config", "inbound", "outbound", "runtime"],
+  };
+
+  const bad = forbidden[baseStem];
+  return Boolean(bad?.includes(dir));
+}
+
+/**
+ * True when target is a root-level Base flat re-export (e.g. ./onboarding.js), not ./outbound/index.js.
+ * @param {string} target
+ */
+function isRootBaseFlatReExport(target) {
+  const normalized = target.replace(/^\.\//, "").replace(/\.js$/, "");
+  if (normalized.includes("/")) return false;
+  return BASE_SRC_FLAT.has(`${normalized}.ts`);
+}
+
+/**
+ * Warn on thin Base shims that re-export from wrong semantics or another Base flat file.
+ * @param {string} pluginDir
+ * @param {string} pluginId
+ * @param {Issue[]} issues
+ * @param {ReturnType<typeof parseArgs>} flags
+ */
+function checkBaseShimSemantics(pluginDir, pluginId, issues, flags) {
+  const srcDir = join(pluginDir, "src");
+  if (!existsSync(srcDir)) return;
+
+  for (const fileName of BASE_SHIM_FILES) {
+    const path = join(srcDir, fileName);
+    if (!existsSync(path)) continue;
+
+    const content = readFileSync(path, "utf8");
+    const lines = content.split("\n").length;
+    if (lines > BASE_SHIM_LINE_THRESHOLD) continue;
+
+    const baseStem = fileName.replace(/\.ts$/, "");
+    const reExportTargets = [
+      ...content.matchAll(/export\s+(?:\{[^}]*\}|\*)\s+from\s+['"](\.\/[^'"]+)['"]/g),
+    ].map((match) => match[1]);
+
+    for (const target of reExportTargets) {
+      const targetFile = target.replace(/^\.\//, "").replace(/\.js$/, ".ts");
+      const targetBase = basename(targetFile);
+      const isSetupPairHop =
+        (baseStem === "channel-setup-factory" && targetBase === "onboarding.ts") ||
+        (baseStem === "onboarding" && targetBase === "channel-setup-factory.ts");
+
+      if (isRootBaseFlatReExport(target) && !isSetupPairHop) {
+        addIssue(issues, {
+          rule: "base-shim-chain",
+          path,
+          message: `${fileName} re-exports from Base flat ${target} (collapse to semantic module or import directly)`,
+          pluginId,
+          category: "base-should",
+          flags,
+        });
+        continue;
+      }
+
+      if (isMisaimedBaseShimTarget(baseStem, target)) {
+        addIssue(issues, {
+          rule: "base-shim-semantics",
+          path,
+          message: `${fileName} (${lines} lines) re-exports from unrelated module ${target}; use ./${baseStem}/ or documented Migration.md target`,
+          pluginId,
+          category: "base-should",
+          flags,
+        });
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -674,6 +808,7 @@ function checkPlugin(pluginDir, flags) {
   checkRootMustNot(pluginDir, pluginId, issues, flags);
   checkCommittedArtifacts(pluginDir, pluginId, issues, flags);
   checkNaming(pluginDir, pluginId, issues, flags);
+  checkBaseShimSemantics(pluginDir, pluginId, issues, flags);
 
   if (EXTENDED_STRICT_PLUGINS.has(pluginId)) {
     checkExtendedProfile(pluginDir, pluginId, issues, flags);

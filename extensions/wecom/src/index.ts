@@ -19,7 +19,7 @@ import { getSessionChatInfo } from "./state/state-manager.js";
 import { setWeComRuntime } from "./runtime.js";
 import { CHANNEL_ID, WEBHOOK_PATHS } from "./types/const.js";
 import { createWecomAgentWebhookHandler, handleWecomWebhookRequest } from "./transport/server.js";
-import { handleTempMediaRequest } from "./outbound.js";
+import { handleTempMediaRequest } from "./outbound/outbound-reply.js";
 
 export { wecomPlugin } from "./channel.js";
 export { setWeComRuntime, getWeComRuntime } from "./runtime.js";

@@ -1,5 +1,5 @@
 /**
- * WeCom setup 向导导出（CLI onboarding 使用）。
+ * Base Profile setup factory shim — setup wizard implementation in `onboarding.ts`.
+ * @see Migration.md
  */
-
 export { wecomSetupWizard, wecomSetupAdapter } from "./onboarding.js";
