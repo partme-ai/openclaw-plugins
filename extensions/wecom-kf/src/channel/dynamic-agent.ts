@@ -4,7 +4,7 @@
  * 动态 Agent 路由（通用逻辑见 message-sdk routing）。
  *
  * **KF 主路径说明**：`handleCustomerMessage` 使用 OpenClaw bindings（channel=wecom-kf）
- * 固定 agentId 映射，不走本模块的动态 peer 注入。本模块仅服务 wecom-kf legacy Bot/Agent 入站路径。
+ * 固定 agentId 映射；动态 peer 路由为可选扩展，供多 Agent 场景使用。
  */
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import {

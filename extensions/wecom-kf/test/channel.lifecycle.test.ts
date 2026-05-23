@@ -1,6 +1,3 @@
-import { IncomingMessage, ServerResponse } from "node:http";
-import { Socket } from "node:net";
-
 import {
   type ChannelAccountSnapshot,
   type ChannelGatewayContext,
@@ -9,50 +6,8 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import { createRuntimeEnv } from "../../test-utils/runtime-env.js";
-import { computeWecomMsgSignature, encryptWecomPlaintext } from "../src/webhook/crypto.js";
 import { wecomPlugin } from "../src/channel/channel.js";
-import { handleWecomWebhookRequest } from "../src/legacy/monitor.js";
 import type { ResolvedWecomAccount } from "../src/types/index.js";
-
-function createMockRequest(params: {
-  method: "GET" | "POST";
-  url: string;
-  body?: unknown;
-}): IncomingMessage {
-  const socket = new Socket();
-  const req = new IncomingMessage(socket);
-  req.method = params.method;
-  req.url = params.url;
-  if (params.method === "POST") {
-    req.push(JSON.stringify(params.body ?? {}));
-  }
-  req.push(null);
-  return req;
-}
-
-function createMockResponse(): ServerResponse & {
-  _getData: () => string;
-  _getStatusCode: () => number;
-} {
-  type MockResponse = ServerResponse & {
-    _getData: () => string;
-    _getStatusCode: () => number;
-  };
-  const req = new IncomingMessage(new Socket());
-  const res = new ServerResponse(req) as MockResponse;
-  let data = "";
-  res.write = (chunk: string | Uint8Array) => {
-    data += String(chunk);
-    return true;
-  };
-  res.end = ((chunk?: string | Uint8Array) => {
-    if (chunk) data += String(chunk);
-    return res;
-  }) as MockResponse["end"];
-  res._getData = () => data;
-  res._getStatusCode = () => res.statusCode;
-  return res;
-}
 
 function createCtx(params: {
   cfg: OpenClawConfig;
@@ -89,67 +44,24 @@ function createCtx(params: {
   };
 }
 
-function createLegacyBotConfig(params: {
-  token: string;
-  encodingAESKey: string;
-  receiveId?: string;
-}): OpenClawConfig {
+function createKfConfig(): OpenClawConfig {
   return {
     channels: {
       "wecom-kf": {
         enabled: true,
-        legacyWecomCsEnabled: true,
-        bot: {
-          token: params.token,
-          encodingAESKey: params.encodingAESKey,
-          receiveId: params.receiveId ?? "",
-        },
+        corpId: "corp",
+        token: "token",
+        encodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        openKfId: "wk123",
+        corpSecret: "secret",
       },
     },
   } as OpenClawConfig;
 }
 
-async function sendWecomGetVerify(params: {
-  path: string;
-  token: string;
-  encodingAESKey: string;
-  receiveId: string;
-}): Promise<{ handled: boolean; status: number; body: string }> {
-  const timestamp = "1700000000";
-  const nonce = "nonce";
-  const echostr = encryptWecomPlaintext({
-    encodingAESKey: params.encodingAESKey,
-    receiveId: params.receiveId,
-    plaintext: "ping",
-  });
-  const msgSignature = computeWecomMsgSignature({
-    token: params.token,
-    timestamp,
-    nonce,
-    encrypt: echostr,
-  });
-  const req = createMockRequest({
-    method: "GET",
-    url:
-      `${params.path}?msg_signature=${encodeURIComponent(msgSignature)}` +
-      `&timestamp=${encodeURIComponent(timestamp)}` +
-      `&nonce=${encodeURIComponent(nonce)}` +
-      `&echostr=${encodeURIComponent(echostr)}`,
-  });
-  const res = createMockResponse();
-  const handled = await handleWecomWebhookRequest(req, res);
-  return {
-    handled,
-    status: res._getStatusCode(),
-    body: res._getData(),
-  };
-}
-
 describe("wecomPlugin gateway lifecycle", () => {
-  it("keeps startAccount pending until abort signal", async () => {
-    const token = "token";
-    const encodingAESKey = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
-    const cfg = createLegacyBotConfig({ token, encodingAESKey });
+  it("keeps startAccount pending until abort signal in KF-only mode", async () => {
+    const cfg = createKfConfig();
     const abortController = new AbortController();
     const ctx = createCtx({ cfg, abortController });
 
@@ -162,69 +74,41 @@ describe("wecomPlugin gateway lifecycle", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(resolved).toBe(false);
+    expect(ctx.getStatus().running).toBe(true);
+    expect(ctx.getStatus().webhookPath).toBe("/wecom-kf");
 
     abortController.abort();
     await startPromise;
     expect(resolved).toBe(true);
+    expect(ctx.getStatus().running).toBe(false);
   });
 
-  it("unregisters webhook targets after abort", async () => {
-    const token = "token";
-    const encodingAESKey = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
-    const receiveId = "";
-    const cfg = createLegacyBotConfig({ token, encodingAESKey, receiveId });
+  it("warns when bot/agent config remains but runs KF-only", async () => {
+    const cfg = {
+      channels: {
+        "wecom-kf": {
+          enabled: true,
+          corpId: "corp",
+          token: "token",
+          encodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+          bot: {
+            token: "bot-token",
+            encodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+          },
+        },
+      },
+    } as OpenClawConfig;
     const abortController = new AbortController();
     const ctx = createCtx({ cfg, abortController });
 
     const startPromise = wecomPlugin.gateway!.startAccount!(ctx);
-    await vi.waitFor(async () => {
-      const probe = await sendWecomGetVerify({
-        path: "/wecom-kf/bot",
-        token,
-        encodingAESKey,
-        receiveId,
-      });
-      expect(probe.handled).toBe(true);
-    }, { timeout: 3000 });
-
-    const activeLegacyRoute = await sendWecomGetVerify({
-      path: "/wecom-kf/bot",
-      token,
-      encodingAESKey,
-      receiveId,
-    });
-    expect(activeLegacyRoute.handled).toBe(true);
-    expect(activeLegacyRoute.status).toBe(200);
-    expect(activeLegacyRoute.body).toBe("ping");
-
-    const activePluginRoute = await sendWecomGetVerify({
-      path: "/plugins/wecom-kf/bot",
-      token,
-      encodingAESKey,
-      receiveId,
-    });
-    expect(activePluginRoute.handled).toBe(true);
-    expect(activePluginRoute.status).toBe(200);
-    expect(activePluginRoute.body).toBe("ping");
+    await Promise.resolve();
+    expect(ctx.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Legacy wecom-cs 路径已移除"),
+    );
 
     abortController.abort();
     await startPromise;
-
-    const inactiveLegacyRoute = await sendWecomGetVerify({
-      path: "/wecom-kf/bot",
-      token,
-      encodingAESKey,
-      receiveId,
-    });
-    expect(inactiveLegacyRoute.handled).toBe(false);
-
-    const inactivePluginRoute = await sendWecomGetVerify({
-      path: "/plugins/wecom-kf/bot",
-      token,
-      encodingAESKey,
-      receiveId,
-    });
-    expect(inactivePluginRoute.handled).toBe(false);
   });
 
   it("rejects startup when matrix account credentials conflict", async () => {

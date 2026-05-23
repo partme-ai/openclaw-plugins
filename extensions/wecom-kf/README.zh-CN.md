@@ -61,7 +61,7 @@
 wecom-kf/
   openclaw.plugin.json       # channels: ["wecom-kf"]；contracts 仅 Control Tools
   src/
-    index.ts                 # 插件入口：KF 核心 + Control Tools + 可选 ICS
+    index.ts                 # 插件入口：KF 核心 + Control Tools
     webhook/callback.ts      # KF HTTP 回调（验签 → sync_msg → 分发）
     dispatch/inbound-dispatcher.ts # 客户消息 → Agent → send_msg
     channel/channel.ts       # wecom-kf 渠道 + 出站
@@ -73,9 +73,6 @@ wecom-kf/
       transfer-policy.ts     # 转人工策略 + 接待人员缓存
       call-context.ts        # Tool / dispatch CallContext
     intelligence/            # 对话状态机、intent、before_prompt_build（Phase 3B）
-    http/ics/
-      handlers/              # 可选运营 REST API（icsEnabled=true）
-      storage/               # ICS 专用文件读写
   agents/                    # 可选智能体 workspace 模板（核心不 import）
   skills/                    # 可选技能（需手动安装；不在 plugin manifest）
 ```
@@ -87,10 +84,7 @@ wecom-kf/
 | **KF 核心** | `webhook/callback.ts`、`dispatch/inbound-dispatcher.ts`、`channel/channel.ts`、`tools/control-tools.ts`、`tools/call-context.ts` | 默认启用 | 1 ✅ |
 | **媒体与策略** | `dispatch/dm-policy.ts`、`media/`、`outbound/kf-send.ts`（见下 **message-sdk 复用**） | 默认启用 | 2 ✅ |
 | **会话状态与智能化** | `src/intelligence/`、`dispatch/inbound-dispatcher.ts` dialogue 闭环、`agent/system-event.ts` | 默认启用 | 3 **当前** |
-| **ICS 运营（可选）** | `src/http/ics/handlers/`、`src/http/ics/storage/` | `channels.wecom-kf.icsEnabled: true` → 注册 `/ics/*` | 3 ✅（开关） |
 | **智能体模板（可选）** | `agents/` | 独立部署；`--workspace` 指向子目录 | — |
-| **Skills（可选）** | `skills/` | 复制/软链到 agent workspace；插件不自动加载 | — |
-| **Legacy Bot/Agent** | `legacy/monitor.ts` 等 | `legacyWecomCsEnabled: true`（默认 **false**，Phase 2 移除中） | 废弃 |
 
 ### message-sdk 复用
 
@@ -105,11 +99,8 @@ wecom-kf/
 | `text/stripMarkdown` | `agent/api-client.ts`（直接委托 message-sdk） | 出站 Markdown 剥离 |
 | `util/withTimeout` | `shared/http.ts`、`dispatch/kf-transcript-dispatch.ts` | Agent 派发与 HTTP 超时 |
 | `transcript/buildAgentReplyTimeoutSummary` | `config/templates.ts`、`dispatch/inbound-dispatcher.ts` | 派发超时用户可见兜底文案 |
-| `util/truncateUtf8Bytes` | `legacy/monitor.ts`（legacy 流式） | 流式 content / DM 字节上限 |
 | `media/path-guard`（`getPathGuard`） | `media/path-guard.ts` | 本机媒体路径白名单读取 |
 | `media`（`parseMediaDirectives`、`resolveOutboundMedia`、`isHttpUrl`） | `outbound/kf-send.ts` | KF 出站媒体解析与发送 |
-| `media/extractLocalImagePathsFromText` | `legacy/monitor.ts`（legacy 流式附图） | 从回复文本推断本机图片路径 |
-| `queue` / `ingress`（stream、active-reply） | `legacy/monitor/state.ts` | Legacy Bot/Agent 流式会话存储 |
 | `openclaw/state-dir` | `state/cursor-store.ts`、`store/durable-json-map.ts` | 持久化目录 |
 | `asr` | `agent/asr.ts` | 入站语音 Flash ASR（可选） |
 
@@ -128,9 +119,10 @@ wecom-kf/
 | **`send_msg_on_event`** | 欢迎语（✅）、排队/结束语/满意度（实施中） | 部分完成 |
 | **`src/intelligence/*` + prompt 注入** | 多轮状态机；dispatch 写入 + `before_prompt_build` 读取 | ✅ |
 | **`servicerCache`** | `config/accounts.ts` 缓存接待人员，与 Tools 对齐 | 部分完成 |
-| **`icsEnabled`** | 默认 `false`；ICS REST 与 KF 核心解耦 | ✅ |
 
 **Control Tools**（已注册）：`wecom_kf_list_servicers`、`wecom_kf_list_accounts`、`wecom_kf_get_account_link`、`wecom_kf_transfer_session`。
+
+**已移除**（2026.5）：Legacy Bot/Agent（`legacyWecomCsEnabled`）与 ICS 运营 REST（`icsEnabled`）；运行时仅保留 KF 路径。
 
 **已废弃**（Phase 3B 已删除）：旧版 `src/kf/tools.ts` 与未接入的 `src/kf/knowledge.ts` RAG stub；KF 运行时工具已收敛到 `src/tools/`。
 
@@ -438,14 +430,13 @@ pnpm dev   # watch 模式
 | `eventMessages.ending` | object | — | 默认结束语配置 |
 | `eventMessages.satisfaction` | object | — | 满意度评价配置 |
 | `humanTransfer.waitTimeout` | number | 300 | 无人工客服时等待超时（秒） |
-| `icsEnabled` | boolean | `false` | 为 `true` 时注册 `/ics/*` 运营 REST API；KF 核心不依赖此项 |
 
 ## 文档
 
 | 文档 | 说明 |
 |------|------|
 | [Roadmap Phase 3](../../doc/wecom-kf/OpenClaw-WeCom-KF-Roadmap.md) | 任务状态与验收命令 |
-| [联调 Checklist](../../doc/wecom-kf/Integration-Checklist.md) | 回调、sync、多账号、媒体、Control Tools、icsEnabled |
+| [联调 Checklist](../../doc/wecom-kf/Integration-Checklist.md) | 回调、sync、多账号、媒体、Control Tools |
 | [主架构](../../doc/wecom-kf/OpenClaw-WeCom-KF-Master-Architecture.md) | 事件矩阵与模块边界 |
 | [Tools 架构](../../doc/wecom-kf/OpenClaw-WeCom-KF-Tools-Architecture.md) | Control Tools 与 transcript 隔离 |
 

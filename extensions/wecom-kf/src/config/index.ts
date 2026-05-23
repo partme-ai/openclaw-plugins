@@ -32,8 +32,6 @@ export {
     DEFAULT_API_BASE_URL,
     DEFAULT_KF_WEBHOOK_PATH,
     collectWecomKfRoutePaths,
-    isLegacyWecomCsEnabled,
-    isIcsEnabled,
     normalizeRoutePath,
     resolveApiBaseUrl,
     resolveKfAccountWebhookPath,

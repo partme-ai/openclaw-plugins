@@ -43,34 +43,6 @@ describe("wecom-kf plugin register", () => {
     expect(registeredPaths).toContain("/kf/desk2");
     expect(registeredPaths).toContain(WEBHOOK_PATHS.KF);
     expect(registeredPaths).toContain("/plugins/wecom-kf");
-    expect(registeredPaths).not.toContain(WEBHOOK_PATHS.BOT_PLUGIN);
-  });
-
-  it("registers legacy wecom-cs routes only when legacyWecomCsEnabled=true", () => {
-    const { api, registerHttpRoute } = createMockApi({
-      channels: {
-        "wecom-kf": {
-          legacyWecomCsEnabled: true,
-        },
-      },
-    } as OpenClawConfig);
-
-    plugin.register(api);
-
-    const registeredPaths = registerHttpRoute.mock.calls.map(
-      (call) => (call[0] as { path: string }).path,
-    );
-
-    expect(registeredPaths).toContain(WEBHOOK_PATHS.BOT_PLUGIN);
-    expect(registeredPaths).toContain(WEBHOOK_PATHS.AGENT_PLUGIN);
-
-    const kfRoute = registerHttpRoute.mock.calls.find(
-      (call) => (call[0] as { path: string }).path === WEBHOOK_PATHS.KF,
-    );
-    const csBotRoute = registerHttpRoute.mock.calls.find(
-      (call) => (call[0] as { path: string }).path === WEBHOOK_PATHS.BOT_PLUGIN,
-    );
-    expect(kfRoute?.[0].handler).not.toBe(csBotRoute?.[0].handler);
   });
 
   it("registers wecom_kf_mcp tool", () => {
@@ -96,32 +68,6 @@ describe("wecom-kf plugin register", () => {
     expect(toolNames).toContain("wecom_kf_transfer_session");
     expect(toolNames).not.toContain("wecom_kf_servicer_list");
     expect(toolNames).not.toContain("wecom_kf_session_transfer");
-  });
-
-  it("registers ICS routes only when icsEnabled=true", () => {
-    const { api, registerHttpRoute } = createMockApi({
-      channels: { "wecom-kf": { icsEnabled: true } },
-    } as OpenClawConfig);
-
-    plugin.register(api);
-
-    const registeredPaths = registerHttpRoute.mock.calls.map(
-      (call) => (call[0] as { path: string }).path,
-    );
-    expect(registeredPaths).toContain("/ics/agents");
-    expect(registeredPaths).toContain("/ics/config/bindings");
-  });
-
-  it("does not register ICS routes by default", () => {
-    const { api, registerHttpRoute } = createMockApi();
-
-    plugin.register(api);
-
-    const registeredPaths = registerHttpRoute.mock.calls.map(
-      (call) => (call[0] as { path: string }).path,
-    );
-    expect(registeredPaths).not.toContain("/ics/agents");
-    expect(registeredPaths).not.toContain("/ics/stats/overview");
   });
 
   it("injects MEDIA prompt only for wecom-kf channel via before_prompt_build", () => {

@@ -180,16 +180,6 @@ export type WecomKfConfig = {
     webhookPath?: string;
     /** 企微 OpenAPI 基础 URL（默认 https://qyapi.weixin.qq.com） */
     apiBaseUrl?: string;
-    /**
-     * 是否启用 Legacy wecom-cs Bot/Agent 回调与 monitor 路径。
-     * 默认 false；Phase 2 将删除 monitor 中的 wecom-cs 逻辑。
-     */
-    legacyWecomCsEnabled?: boolean;
-    /**
-     * 是否启用 ICS 运营 REST API（`/ics/*`：知识库、bindings、event-messages、stats）。
-     * 默认 false；与 KF 消息收发核心解耦，运营后台按需开启。
-     */
-    icsEnabled?: boolean;
     accounts?: Record<string, WecomKfAccountConfig>;
     /** Legacy wecom-cs 顶层 bot/agent（历史单账号路径） */
     bot?: WecomBotConfig;

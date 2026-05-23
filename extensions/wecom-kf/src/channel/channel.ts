@@ -16,10 +16,9 @@ import {
   resolveWecomAccount,
   resolveWecomAccountConflict,
 } from "../config/index.js";
-import type { ResolvedWecomAccount, WecomBotConfig } from "../types/index.js";
+import type { ResolvedWecomAccount } from "../types/index.js";
 import { monitorWecomProvider } from "../runtime/gateway-monitor.js";
-import { wecomKfOnboardingAdapter } from "./onboarding.js";
-import { setWecomBotConfig } from "../legacy/onboarding.js";
+import { wecomKfOnboardingAdapter, setKfAccountConfig } from "./onboarding.js";
 import { resolveKfAccountWebhookPath } from "../config/kf-routes.js";
 import { wecomOutbound } from "../outbound/index.js";
 
@@ -57,34 +56,18 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
       return accountId?.trim() || resolveDefaultWecomAccountId(cfg as OpenClawConfig) || DEFAULT_ACCOUNT_ID;
     },
     applyAccountConfig: ({ cfg, accountId, input }) => {
-      const isWsMode = input.url === "ws" || input.url === "websocket";
-
-      if (isWsMode) {
-        // websocket 模式: --bot-token → botId, --token → secret
-        const botConfig: WecomBotConfig = {
-          connectionMode: "websocket",
-          botId: input.botToken?.trim() || undefined,
-          secret: input.token?.trim() || undefined,
-        };
-        return setWecomBotConfig(cfg as OpenClawConfig, botConfig, accountId);
-      }
-
-      // webhook 模式: --token → token, --access-token → encodingAESKey
-      const botConfig: WecomBotConfig = {
-        connectionMode: "webhook",
-        token: input.token?.trim() ?? "",
-        encodingAESKey: input.accessToken?.trim() ?? "",
-      };
-      return setWecomBotConfig(cfg as OpenClawConfig, botConfig, accountId);
+      return setKfAccountConfig({
+        cfg: cfg as OpenClawConfig,
+        accountId,
+        patch: {
+          token: input.token?.trim() ?? "",
+          encodingAESKey: input.accessToken?.trim() ?? "",
+        },
+      });
     },
     validateInput: ({ input }) => {
-      const isWsMode = input.url === "ws" || input.url === "websocket";
-      if (isWsMode) {
-        if (!input.botToken?.trim()) return "websocket 模式需要 --bot-token <BotID>";
-        if (!input.token?.trim()) return "websocket 模式需要 --token <Secret>";
-      } else {
-        if (!input.token?.trim()) return "webhook 模式需要 --token <Token>";
-      }
+      if (!input.token?.trim()) return "KF webhook 模式需要 --token <Token>";
+      if (!input.accessToken?.trim()) return "KF webhook 模式需要 --access-token <EncodingAESKey>";
       return null;
     },
   },

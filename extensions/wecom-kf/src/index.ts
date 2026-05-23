@@ -6,7 +6,7 @@ const plugin = {
   id: "wecom-kf",
   name: "WeCom KF",
   description:
-    "OpenClaw WeCom KF (WeChat Work Customer Service) — KF callback + Control Tools; ICS/agents/skills optional",
+    "OpenClaw WeCom KF (WeChat Work Customer Service) — KF callback + Control Tools; agents/skills optional",
   configSchema: emptyPluginConfigSchema(),
   register: registerWecomKfFull,
 };

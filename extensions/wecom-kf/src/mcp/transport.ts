@@ -10,37 +10,11 @@
  * - MCP 配置运行时缓存（通过 WSClient 拉取 URL 并缓存在内存中）
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { generateReqId } from "@wecom/aibot-node-sdk";
-import { DEFAULT_ACCOUNT_ID } from "../config/accounts.js";
-import { getWsClient } from "../legacy/ws-adapter.js";
-import { withTimeout } from "../shared/http.js";
 
 // ============================================================================
 // 常量
 // ============================================================================
-
-/** 获取 MCP 配置的 WebSocket 命令 */
-const MCP_GET_CONFIG_CMD = "aibot_get_mcp_config";
-
-/** MCP 配置拉取超时时间（毫秒） */
-const MCP_CONFIG_FETCH_TIMEOUT_MS = 15_000;
-
-/** 从 package.json 读取插件版本号 */
-const getPluginVersion = (): string => {
-  try {
-    const currentDir = dirname(fileURLToPath(import.meta.url));
-    const pkgPath = resolve(currentDir, "..", "..", "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
-    return pkg.version ?? "";
-  } catch {
-    return "";
-  }
-};
-
-const PLUGIN_VERSION = getPluginVersion();
 
 // ============================================================================
 // 类型定义
@@ -159,38 +133,10 @@ const inflightInitRequests = new Map<string, Promise<McpSession>>();
  * @returns 完整的 response.body 配置对象（至少包含 url 字段）
  */
 async function fetchMcpConfig(category: string): Promise<Record<string, unknown>> {
-  const wsClient = getWsClient(DEFAULT_ACCOUNT_ID);
-  if (!wsClient) {
-    throw new Error("WSClient 未连接，无法拉取 MCP 配置");
-  }
-
-  const reqId = generateReqId("mcp_config");
-
-  const response = await withTimeout(
-    wsClient.reply(
-      { headers: { req_id: reqId } },
-      { biz_type: category, plugin_version: PLUGIN_VERSION },
-      MCP_GET_CONFIG_CMD,
-    ),
-    MCP_CONFIG_FETCH_TIMEOUT_MS,
-    `MCP config fetch for "${category}" timed out after ${MCP_CONFIG_FETCH_TIMEOUT_MS}ms`,
+  void category;
+  throw new Error(
+    "MCP 配置拉取需要 WeCom Bot WebSocket 连接；Legacy Bot 路径已移除。请手动配置 ~/.openclaw/wecomKfConfig/config.json 中的 mcpConfig。",
   );
-
-  if (response.errcode !== undefined && response.errcode !== 0) {
-    const errMsg = `MCP 配置请求失败: errcode=${response.errcode}, errmsg=${response.errmsg ?? "unknown"}`;
-    console.error(`${LOG_TAG} ${errMsg}`);
-    throw new Error(errMsg);
-  }
-
-  const body = response.body as { url?: string } | undefined;
-  if (!body?.url) {
-    throw new Error(
-      `MCP 配置响应缺少 url 字段 (category="${category}")`,
-    );
-  }
-
-  console.log(`${LOG_TAG} 配置拉取成功 (category="${category}")`);
-  return body as Record<string, unknown>;
 }
 
 /**

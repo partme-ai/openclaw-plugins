@@ -61,7 +61,7 @@ function isPromptCancelled<T>(value: T | symbol): value is symbol {
 /**
  * 写入 channels.wecom-kf 账号级或顶层 KF 配置。
  */
-function setKfAccountConfig(params: {
+export function setKfAccountConfig(params: {
     cfg: OpenClawConfig;
     accountId: string;
     patch: Record<string, unknown>;

@@ -4,7 +4,7 @@
 
 **WeChat Work Customer Service — 企微客服 · 智能转人工 · 事件消息**
 
-> **范围声明**：本插件专注 **微信客服（KF）**，实现 KF 消息收发、转人工与 ICS 能力；**不含**企业微信客户联系 Bot/Agent 主路径。Legacy Bot/Agent 可通过 `channels.wecom-kf.legacyWecomCsEnabled=true` 临时启用，Phase 2 将移除。
+> **范围声明**：本插件专注 **微信客服（KF）**，实现 KF 消息收发、转人工与智能化能力；**不含**企业微信客户联系 Bot/Agent 与 ICS 运营 REST API（已移除）。
 
 ![Version](https://img.shields.io/badge/Version-0.1.0-blue) ![License](https://img.shields.io/badge/License-MIT-green)
 
@@ -79,9 +79,6 @@ wecom-kf/
       control-tools.ts       # wecom_kf_* Control Tools (core; API not in LLM context)
       call-context.ts        # Tool / dispatch CallContext 解析
     intelligence/            # 对话状态机、intent、prompt 注入（P3）
-    http/ics/
-      handlers/              # Optional ops REST API (icsEnabled=true)
-      storage/               # ICS file/config helpers
   agents/                    # Optional agent workspace templates (not imported by core)
   skills/                    # Optional skills (manual install; not in plugin manifest)
 ```
@@ -92,11 +89,12 @@ wecom-kf/
 |-------|--------|----------------|
 | **KF core** | `webhook/callback.ts`, `channel/channel.ts`, `tools/control-tools.ts`, `tools/call-context.ts`, `dispatch/inbound-dispatcher.ts` | Always on |
 | **Intelligence (L2)** | `src/intelligence/` — dialogue state, intent, `before_prompt_build` | Always on |
-| **ICS ops (optional)** | `src/http/ics/handlers/`, `src/http/ics/storage/` | `channels.wecom-kf.icsEnabled: true` → `/ics/*` routes |
 | **Agent templates (optional)** | `agents/` | Deploy separately; point `--workspace` at subdirs |
 | **Skills (optional)** | `skills/` | Copy/symlink into agent workspace; not auto-loaded by plugin |
 
 **Control Tools** (registered): `wecom_kf_list_servicers`, `wecom_kf_list_accounts`, `wecom_kf_get_account_link`, `wecom_kf_transfer_session` — API payloads go to audit log, not LLM transcript.
+
+**Removed** (2026.5): Legacy Bot/Agent (`legacyWecomCsEnabled`) and ICS ops REST API (`icsEnabled`). KF-only runtime.
 
 **Deprecated** (removed in Phase 3B): legacy `src/kf/tools.ts` and unused `src/kf/knowledge.ts` RAG stub. Runtime tools now live in `src/tools/`.
 
@@ -113,11 +111,8 @@ Minimum dependency: `@partme.ai/openclaw-message-sdk >= 2026.5.22` (same as [wec
 | `text/stripMarkdown` | `agent/api-client.ts` (via message-sdk) | Outbound Markdown stripping |
 | `util/withTimeout` | `shared/http.ts`, `dispatch/kf-transcript-dispatch.ts` | Agent dispatch and HTTP timeouts |
 | `transcript/buildAgentReplyTimeoutSummary` | `config/templates.ts`, `dispatch/inbound-dispatcher.ts` | User-visible timeout fallback text |
-| `util/truncateUtf8Bytes` | `legacy/monitor.ts` (legacy streaming) | Streaming content / DM byte limits |
 | `media/path-guard` (`getPathGuard`) | `media/path-guard.ts` | Local media path allowlist reads |
 | `media` (`parseMediaDirectives`, `resolveOutboundMedia`, `isHttpUrl`) | `outbound/kf-send.ts` | KF outbound media parse and send |
-| `media/extractLocalImagePathsFromText` | `legacy/monitor.ts` (legacy streaming) | Infer local image paths from reply text |
-| `queue` / `ingress` (stream, active-reply) | `legacy/monitor/state.ts` | Legacy Bot/Agent streaming session store |
 | `openclaw/state-dir` | `state/cursor-store.ts`, `store/durable-json-map.ts` | Persistent state directories |
 | `asr` | `agent/asr.ts` | Inbound voice Flash ASR (optional) |
 

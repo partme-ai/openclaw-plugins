@@ -13,8 +13,14 @@ import os from "os";
 import path from "path";
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { generateReqId } from "@wecom/aibot-node-sdk";
-import type { WecomRuntimeEnv } from "../legacy/monitor/types.js";
+import { DEFAULT_ACCOUNT_ID } from "../config/accounts.js";
 import { withTimeout } from "../shared/http.js";
+
+/** 插件运行时日志接口（MCP 配置持久化用） */
+export type PluginLogEnv = {
+  log?: (message: string) => void;
+  error?: (message: string) => void;
+};
 
 // ============================================================================
 // 常量
@@ -171,7 +177,7 @@ async function serializeWrite(filePath: string, action: () => Promise<void>): Pr
  */
 async function saveMcpConfigToPluginJson(
     config: McpConfigBody,
-    runtime: WecomRuntimeEnv,
+    runtime: PluginLogEnv,
 ): Promise<void> {
     const wecomConfigPath = resolveWecomKfConfigWritePath();
 
@@ -213,7 +219,7 @@ async function saveMcpConfigToPluginJson(
 export async function fetchAndSaveMcpConfig(
     wsClient: WSClient,
     accountId: string,
-    runtime: WecomRuntimeEnv,
+    runtime: PluginLogEnv,
 ): Promise<void> {
     try {
         runtime.log?.(`[${accountId}] Fetching MCP config...`);

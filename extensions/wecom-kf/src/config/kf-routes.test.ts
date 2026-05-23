@@ -4,8 +4,6 @@ import {
     collectWecomKfRoutePaths,
     DEFAULT_API_BASE_URL,
     DEFAULT_KF_WEBHOOK_PATH,
-    isIcsEnabled,
-    isLegacyWecomCsEnabled,
     normalizeRoutePath,
     resolveApiBaseUrl,
     resolveKfAccountWebhookPath,
@@ -37,34 +35,6 @@ describe("kf-routes", () => {
         expect(resolveApiBaseUrl({ apiBaseUrl: "https://proxy.example.com/" })).toBe(
             "https://proxy.example.com",
         );
-    });
-
-    it("isLegacyWecomCsEnabled 默认 false", () => {
-        expect(isLegacyWecomCsEnabled(undefined)).toBe(false);
-        expect(
-            isLegacyWecomCsEnabled({
-                channels: { "wecom-kf": { enabled: true } },
-            } as never),
-        ).toBe(false);
-        expect(
-            isLegacyWecomCsEnabled({
-                channels: { "wecom-kf": { legacyWecomCsEnabled: true } },
-            } as never),
-        ).toBe(true);
-    });
-
-    it("isIcsEnabled 默认 false，显式 true 时启用", () => {
-        expect(isIcsEnabled(undefined)).toBe(false);
-        expect(
-            isIcsEnabled({
-                channels: { "wecom-kf": {} },
-            } as never),
-        ).toBe(false);
-        expect(
-            isIcsEnabled({
-                channels: { "wecom-kf": { icsEnabled: true } },
-            } as never),
-        ).toBe(true);
     });
 
     it("resolveKfAccountWebhookPath 支持账号级默认后缀", () => {

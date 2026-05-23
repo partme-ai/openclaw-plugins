@@ -58,26 +58,6 @@ export function resolveApiBaseUrl(config?: { apiBaseUrl?: string }): string {
 }
 
 /**
- * 是否启用 Legacy wecom-cs Bot/Agent 回调与 monitor 主路径。
- *
- * 默认 `false`：Gateway 仅注册 KF 回调；Phase 2 将移除 monitor 中的 wecom-cs 逻辑。
- */
-export function isLegacyWecomCsEnabled(cfg: OpenClawConfig | undefined): boolean {
-    const channel = getWecomKfChannelBlock(cfg);
-    return channel?.legacyWecomCsEnabled === true;
-}
-
-/**
- * 是否启用 ICS 运营 REST API（知识库 / bindings / event-messages / stats）。
- *
- * 默认 `false`：KF 核心仅注册回调 + Control Tools；运营后台需显式 `icsEnabled: true`。
- */
-export function isIcsEnabled(cfg: OpenClawConfig | undefined): boolean {
-    const channel = getWecomKfChannelBlock(cfg);
-    return channel?.icsEnabled === true;
-}
-
-/**
  * 解析账号在状态/UI 中展示的 KF webhookPath。
  */
 export function resolveKfAccountWebhookPath(params: {
