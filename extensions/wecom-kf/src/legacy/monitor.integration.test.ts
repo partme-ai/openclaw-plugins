@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { handleWecomWebhookRequest, registerWecomWebhookTarget } from "./monitor.js";
-import { encryptWecomPlaintext, computeWecomMsgSignature, WECOM_PKCS7_BLOCK_SIZE } from "../crypto.js";
-import * as runtime from "../runtime.js";
+import { encryptWecomPlaintext, computeWecomMsgSignature, WECOM_PKCS7_BLOCK_SIZE } from "../webhook/crypto.js";
+import * as runtime from "../runtime/index.js";
 import crypto from "node:crypto";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";

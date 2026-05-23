@@ -50,13 +50,13 @@ import {
   deleteMessage,
   resolveApplicationName,
 } from "./transport/gotify-api.js";
-import { replayBacklogForAccount } from "./backlog-replay.js";
-import { writeBacklogCursor } from "./backlog-cursor.js";
+import { replayBacklogForAccount } from "./dispatch/backlog-replay.js";
+import { writeBacklogCursor } from "./dispatch/backlog-cursor.js";
 import {
   withOpenClawOutboundExtras,
   isOpenClawOutboundStreamMessage,
   mapGotifyStreamToUnified,
-} from "./routing/message-mapper.js";
+} from "./dispatch/routing/message-mapper.js";
 import {
   createIdempotencyCache,
   dispatchTranscriptTurn,
@@ -66,9 +66,9 @@ import {
   resolveGotifyPeerId,
   resolveGotifyConversationLabel,
   resolveGotifySenderName,
-} from "./routing/peer-resolver.js";
+} from "./dispatch/routing/peer-resolver.js";
 import { checkGotifyInboundAccess } from "./inbound.js";
-import { gotifyConfigSchema } from "./channel-config.js";
+import { gotifyConfigSchema } from "./config/channel-config.js";
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from "./types.js";
 import { gotifySetupAdapter, gotifySetupWizard } from "./onboarding.js";
 

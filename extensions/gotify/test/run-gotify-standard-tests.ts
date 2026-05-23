@@ -24,7 +24,7 @@ import { fetchChatHistory, extractMessageText } from './gateway-transcript.js';
 import { getMessages } from '../src/transport/gotify-api.js';
 import { resolveGotifyAccount } from '../src/config.js';
 import { buildMessage, type UnifiedMessage } from '@partme.ai/openclaw-message-sdk';
-import { mapGotifyStreamToUnified } from '../src/routing/message-mapper.js';
+import { mapGotifyStreamToUnified } from '../src/dispatch/routing/message-mapper.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DATASET = resolve(__dirname, './gotify-standard-dataset.yaml');

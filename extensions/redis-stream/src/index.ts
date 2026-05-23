@@ -19,7 +19,7 @@ import { setRedisStreamRuntime } from "./runtime.js";
 import { getSessionStats } from "./routing/session-mapper.js";
 
 export default defineChannelPluginEntry({
-  id: "openclaw-redis-stream",
+  id: "redis-stream",
   name: "Redis Stream",
   description:
     "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",

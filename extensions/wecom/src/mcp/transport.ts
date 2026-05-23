@@ -1,28 +1,29 @@
 /**
- * MCP Streamable HTTP 传输层模块
+ * @module mcp/transport
  *
- * 负责:
- * - MCP JSON-RPC over HTTP 通信（发送请求、解析响应）
- * - Streamable HTTP session 生命周期管理（initialize 握手 → Mcp-Session-Id 维护 → 失效重建）
- * - 自动检测无状态 Server：如果 initialize 响应未返回 Mcp-Session-Id，
- *   则标记为无状态模式，后续请求跳过握手和 session 管理
- * - SSE 流式响应解析
- * - MCP 配置运行时缓存（通过 WSClient 拉取 URL 并缓存在内存中）
+ * MCP **Streamable HTTP** 传输层（JSON-RPC over HTTP）。
+ *
+ * **职责**：
+ * - 通过 WSClient 拉取 MCP Server URL 并内存缓存（accountId:category 隔离）
+ * - initialize / notifications/initialized 握手与 Mcp-Session-Id 维护
+ * - 无状态 Server 自动探测（无 Session-Id 则跳过后续 session 管理）
+ * - SSE 响应解析；404 session 失效时自动重建并重试
+ * - 透传 `x-openclaw-wecom-userid` 供 MCP Server 鉴权
  */
 
 import { generateReqId } from "@wecom/aibot-node-sdk";
 import { fetch as undiciFetch } from "undici";
-import { DEFAULT_ACCOUNT_ID } from "../openclaw-compat.js";
-import { getWeComWebSocket } from "../state-manager.js";
-import { MCP_GET_CONFIG_CMD, MCP_CONFIG_FETCH_TIMEOUT_MS } from "../const.js";
-import { withTimeout } from "../timeout.js";
-import { PLUGIN_VERSION } from "../version.js";
+import { DEFAULT_ACCOUNT_ID } from "../shared/openclaw-compat.js";
+import { getWeComWebSocket } from "../state/state-manager.js";
+import { MCP_GET_CONFIG_CMD, MCP_CONFIG_FETCH_TIMEOUT_MS } from "../types/const.js";
+import { withTimeout } from "../shared/timeout.js";
+import { PLUGIN_VERSION } from "../types/version.js";
 import { getWeComRuntime } from "../runtime.js";
 import {
   resolveDefaultWeComAccountId,
   listWeComAccountIds,
   resolveWeComAccountMulti,
-} from "../accounts.js";
+} from "../config/accounts.js";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 // ============================================================================

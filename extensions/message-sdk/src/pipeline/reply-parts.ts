@@ -1,33 +1,42 @@
 /**
+ * @module pipeline/reply-parts
+ *
  * 出站回复拆分（对齐 OpenClaw reply-payload，无 OpenClaw 时提供基础实现）。
+ *
+ * **职责**：将长文本按 maxChunkChars 分块，并将 mediaUrls 拆为可发送片段列表。
+ *
+ * **关键导出**：`resolveSendableOutboundReplyParts`、`resolveTextChunksWithFallback`
  */
 
 import { importOpenClawPluginSdk } from "../openclaw/loader.js";
 
-/**
- * OutboundReplyPart 是 pipeline 模块的公开类型别名。
- *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
- */
+/** 单个可发送出站片段 / Single sendable outbound part */
 export type OutboundReplyPart = {
+  /** 文本块 / Text chunk */
   text?: string;
+  /** 媒体 URL / Media URL */
   mediaUrl?: string;
+  /** 媒体说明 / Media caption */
   caption?: string;
 };
 
-/**
- * ResolveReplyPartsParams 是 pipeline 模块的公开类型别名。
- *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
- */
+/** resolveSendableOutboundReplyParts 入参 / Params for resolving sendable parts */
 export type ResolveReplyPartsParams = {
+  /** 原始文本 / Raw text */
   text?: string;
+  /** 媒体 URL 列表 / Media URLs */
   mediaUrls?: string[];
+  /** 单块最大字符数，默认 4000 / Max chars per chunk */
   maxChunkChars?: number;
 };
 
 /**
- * 将出站载荷拆为可发送片段（文本块 + 媒体）。
+ * 将出站载荷拆为可发送片段（文本块 + 媒体）/ Split outbound payload into sendable parts.
+ *
+ * 优先委托 OpenClaw `resolveSendableOutboundReplyParts`；不可用时本地按 maxChunkChars 分块。
+ *
+ * @param params - 文本与媒体 URL
+ * @returns 按顺序发送的片段列表
  */
 export async function resolveSendableOutboundReplyParts(
   params: ResolveReplyPartsParams,
@@ -40,6 +49,7 @@ export async function resolveSendableOutboundReplyParts(
     return sdk.resolveSendableOutboundReplyParts(params);
   }
 
+  // Fallback：本地分块 + 媒体 URL 逐条追加
   const parts: OutboundReplyPart[] = [];
   const text = params.text?.trim() ?? "";
   const maxChunk = params.maxChunkChars ?? 4000;
@@ -59,7 +69,11 @@ export async function resolveSendableOutboundReplyParts(
 }
 
 /**
- * 文本分块（带单块 fallback）。
+ * 文本分块（带 OpenClaw fallback）/ Chunk text with optional OpenClaw delegation.
+ *
+ * @param text - 原始文本
+ * @param maxChunkChars - 单块最大字符数
+ * @returns 非空文本块数组；空文本返回 []
  */
 export async function resolveTextChunksWithFallback(
   text: string,

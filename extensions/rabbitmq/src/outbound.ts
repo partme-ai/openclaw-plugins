@@ -6,7 +6,7 @@ import type {
   ChannelOutboundAdapter,
   ChannelOutboundContext,
 } from "openclaw/plugin-sdk/channel-contract";
-import { chunkText, sanitizeForPlainText } from "./utils.js";
+import { chunkText, sanitizeForPlainText } from "./text-chunking.js";
 
 import { publishMessage } from "./transport/server.js";
 import { DEFAULT_RABBITMQ_CONFIG } from "./config.js";

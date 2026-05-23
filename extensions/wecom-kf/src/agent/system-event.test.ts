@@ -115,7 +115,7 @@ describe("inferServiceStateFromSessionChange", () => {
 
 describe("handleSystemEvent session_status_change", () => {
   it("state=3 时写入 session service state", async () => {
-    const sessionModule = await import("../kf/session-service-state.js");
+    const sessionModule = await import("../state/session-service-state.js");
     const spy = vi.spyOn(sessionModule, "setKfSessionServiceState").mockResolvedValue();
 
     await handleSystemEvent(

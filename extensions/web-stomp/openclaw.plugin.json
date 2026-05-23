@@ -1,10 +1,8 @@
 {
-  "id": "openclaw_web_stomp",
-  "name": "openclaw_web_stomp",
+  "id": "web-stomp",
+  "name": "web-stomp",
   "version": "0.1.11",
   "description": "STOMP 1.0/1.1/1.2 over WebSocket bridge for OpenClaw - enterprise integration",
-  "main": "dist/index.js",
-  "setupEntry": "dist/setup-entry.js",
   "channels": [
     "stomp"
   ],
@@ -128,7 +126,7 @@
   },
   "channelConfigs": {
     "stomp": {
-      "label": "openclaw_web_stomp",
+      "label": "web-stomp",
       "description": "STOMP 1.0/1.1/1.2 over WebSocket bridge for OpenClaw - enterprise integration",
       "schema": {
         "type": "object",

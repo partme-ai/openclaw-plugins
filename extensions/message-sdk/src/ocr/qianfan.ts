@@ -1,8 +1,11 @@
 /**
- * 百度千帆 OCR
+ * @module ocr/qianfan
  *
- * 基于百度千帆大模型平台的 OCR 识别。
- * 参考：spring-ai-examples/spring-ai-ollama-ocr-qianfan
+ * 百度千帆 OCR — 基于 ERNIE 多模态 Chat Completions。
+ *
+ * **参考**：spring-ai-examples/spring-ai-ollama-ocr-qianfan
+ *
+ * **关键导出**：`recognizeQianfan`
  */
 
 import {
@@ -26,12 +29,11 @@ async function getAccessToken(apiKey: string, secretKey: string): Promise<string
 }
 
 /**
- * recognizeQianfan 是 ocr 模块对外暴露的操作入口。
+ * 使用百度千帆多模态模型识别图片文字。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param input - 图片 URL 或 base64
+ * @param config - Bearer token（apiKey）与端点
+ * @returns 统一 OCR 结果（单块文本）
  */
 export async function recognizeQianfan(input: OCRInput, config: OCRConfig): Promise<OCRResult> {
   const baseUrl = config.baseUrl || DEFAULT_BASE_URL;

@@ -1,16 +1,14 @@
 /**
- * wecom_mcp — 模拟 MCP 调用的 Agent Tool
+ * @module mcp/tool
  *
- * 通过 MCP Streamable HTTP 传输协议调用企业微信 MCP Server，
- * 提供 list（列出所有工具）和 call（调用工具）两个操作。
+ * Agent Tool **`wecom_mcp`**：模拟 MCP 客户端调用企微 MCP Server。
  *
- * 在 skills 中的使用方式：
- *   wecom_mcp list <category>
- *   wecom_mcp call <category> <method> '<jsonArgs>'
+ * **操作**：
+ * - `list <category>`：tools/list，返回工具名与清洗后的 inputSchema
+ * - `call <category> <method> [args]`：tools/call，经 interceptors 管道后 sendJsonRpc
  *
- * 示例：
- *   wecom_mcp list contact
- *   wecom_mcp call contact getContact '{}'
+ * **会话上下文**：requesterUserId、accountId、chatId、chatType 由工具工厂注入 CallContext，
+ * 供文档授权卡片、多账号缓存隔离等拦截器使用。
  */
 
 import { sendJsonRpc, type McpToolInfo } from "./transport.js";

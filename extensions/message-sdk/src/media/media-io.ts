@@ -1,8 +1,17 @@
 /**
- * 媒体 IO 模块
+ * @module media/media-io
  *
- * 统一的媒体文件下载、读取、归档和清理功能。
- * 来源：openclaw-china packages/shared/src/media/media-io.ts (746行)
+ * 媒体 IO 模块 — 统一下载、读取、归档与清理。
+ *
+ * **职责**：
+ * - 远程 URL / 本机路径 → Buffer（带大小与超时限制）
+ * - 入站媒体从临时目录归档到按日期分目录的 inbound 目录
+ * - 过期 inbound 文件清理
+ *
+ * **来源**：openclaw-china packages/shared/src/media/media-io.ts (MIT License)
+ *
+ * **关键导出**：`fetchMediaFromUrl`、`readMedia`、`downloadToTempFile`、
+ * `finalizeInboundMediaFile`、`pruneInboundMediaDir`
  */
 
 import * as fs from "node:fs";
@@ -17,9 +26,12 @@ import { resolveExtension } from "../file/file-utils.js";
 // ============================================================================
 
 /**
- * MediaReadResult 描述 media 模块公开 API 的结构化参数或返回值。
+ * 媒体读取结果 / Result of reading media from URL or local path.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property buffer - 文件二进制内容
+ * @property fileName - 推断的文件名
+ * @property size - 字节数
+ * @property mimeType - MIME 类型（可选）
  */
 export interface MediaReadResult {
   buffer: Buffer;
@@ -29,9 +41,13 @@ export interface MediaReadResult {
 }
 
 /**
- * DownloadToTempFileResult 描述 media 模块公开 API 的结构化参数或返回值。
+ * 下载到临时文件的结果 / Result of streaming download to temp file.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property path - 临时文件绝对路径
+ * @property fileName - 生成的临时文件名
+ * @property contentType - 响应 Content-Type
+ * @property size - 实际写入字节数
+ * @property sourceFileName - 原始文件名（Content-Disposition 或 URL 推断）
  */
 export interface DownloadToTempFileResult {
   path: string;
@@ -42,9 +58,11 @@ export interface DownloadToTempFileResult {
 }
 
 /**
- * MediaReadOptions 描述 media 模块公开 API 的结构化参数或返回值。
+ * 媒体读取选项 / Options for read/fetch operations.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property timeout - 超时毫秒（默认 30000）
+ * @property maxSize - 最大字节数（默认 100MB）
+ * @property fetch - 自定义 fetch 实现（测试用）
  */
 export interface MediaReadOptions {
   timeout?: number;
@@ -53,9 +71,11 @@ export interface MediaReadOptions {
 }
 
 /**
- * DownloadToTempFileOptions 描述 media 模块公开 API 的结构化参数或返回值。
+ * 下载到临时文件的选项 / Options extending {@link MediaReadOptions}.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property tempDir - 临时目录（默认 `os.tmpdir()`）
+ * @property tempPrefix - 临时文件名前缀
+ * @property sourceFileName - 覆盖源文件名推断
  */
 export interface DownloadToTempFileOptions extends MediaReadOptions {
   tempDir?: string;
@@ -64,9 +84,11 @@ export interface DownloadToTempFileOptions extends MediaReadOptions {
 }
 
 /**
- * FinalizeInboundMediaOptions 描述 media 模块公开 API 的结构化参数或返回值。
+ * 入站媒体归档选项 / Options for moving temp file into inbound archive.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property filePath - 当前临时文件路径
+ * @property tempDir - 临时根目录（仅归档此目录下的文件）
+ * @property inboundDir - 入站持久化根目录
  */
 export interface FinalizeInboundMediaOptions {
   filePath: string;
@@ -75,9 +97,11 @@ export interface FinalizeInboundMediaOptions {
 }
 
 /**
- * PruneInboundMediaDirOptions 描述 media 模块公开 API 的结构化参数或返回值。
+ * 清理过期 inbound 媒体目录的选项 / Options for pruning dated inbound folders.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property inboundDir - 入站根目录（含 `YYYY-MM-DD` 子目录）
+ * @property keepDays - 保留天数（早于 cutoff 的文件会被删除）
+ * @property nowMs - 可选当前时间戳（测试用）
  */
 export interface PruneInboundMediaDirOptions {
   inboundDir: string;
@@ -86,9 +110,11 @@ export interface PruneInboundMediaDirOptions {
 }
 
 /**
- * PathSecurityOptions 描述 media 模块公开 API 的结构化参数或返回值。
+ * 本机路径安全校验选项 / Path security validation options.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property allowedPrefixes - 允许的路径前缀白名单
+ * @property maxPathLength - 最大路径长度（默认 4096）
+ * @property preventTraversal - 是否拒绝 `..` 穿越（默认 true）
  */
 export interface PathSecurityOptions {
   allowedPrefixes?: string[];
@@ -100,12 +126,7 @@ export interface PathSecurityOptions {
 // 错误
 // ============================================================================
 
-/**
- * FileSizeLimitError 表示 media 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 文件大小超出限制 / File exceeds configured size limit */
 export class FileSizeLimitError extends Error {
   constructor(message: string, public readonly actualSize: number, public readonly limitSize: number) {
     super(message);
@@ -113,12 +134,7 @@ export class FileSizeLimitError extends Error {
   }
 }
 
-/**
- * MediaTimeoutError 表示 media 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 媒体下载/读取超时 / Media fetch or read timed out */
 export class MediaTimeoutError extends Error {
   constructor(message: string, public readonly timeoutMs: number) {
     super(message);
@@ -126,12 +142,7 @@ export class MediaTimeoutError extends Error {
   }
 }
 
-/**
- * PathSecurityError 表示 media 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 路径未通过安全校验 / Path failed security validation */
 export class PathSecurityError extends Error {
   constructor(message: string, public readonly unsafePath: string, public readonly reason: string) {
     super(message);
@@ -197,12 +208,10 @@ function formatDateDir(date = new Date()): string {
 }
 
 /**
- * getMimeType 是 media 模块对外暴露的操作入口。
+ * 根据文件路径扩展名推断 MIME 类型。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param filePath - 文件名或路径
+ * @returns MIME 字符串；未知扩展名时返回 `undefined`
  */
 export function getMimeType(filePath: string): string | undefined {
   const ext = getExtension(filePath);
@@ -214,12 +223,11 @@ export function getMimeType(filePath: string): string | undefined {
 // ============================================================================
 
 /**
- * validatePathSecurity 是 media 模块对外暴露的操作入口。
+ * 校验本机路径是否满足安全策略。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param filePath - 待访问路径
+ * @param options - 白名单、长度与穿越检测选项
+ * @throws {@link PathSecurityError} 路径过长、穿越或不在白名单内
  */
 export function validatePathSecurity(filePath: string, options: PathSecurityOptions = {}): void {
   const { allowedPrefixes, maxPathLength = DEFAULT_MAX_PATH_LENGTH, preventTraversal = true } = options;
@@ -232,11 +240,9 @@ export function validatePathSecurity(filePath: string, options: PathSecurityOpti
 }
 
 /**
- * getDefaultAllowedPrefixes 是 media 模块对外暴露的操作入口。
+ * 返回平台默认的允许路径前缀列表。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @returns Unix 为 `/tmp`、`/Users` 等；Windows 为 `tmpdir()` 与 `homedir()`
  */
 export function getDefaultAllowedPrefixes(): string[] {
   if (process.platform === "win32") return [os.tmpdir(), os.homedir()];
@@ -248,12 +254,17 @@ export function getDefaultAllowedPrefixes(): string[] {
 // ============================================================================
 
 /**
- * fetchMediaFromUrl 是 media 模块对外暴露的操作入口。
+ * 从 HTTP(S) URL 下载媒体到内存 Buffer。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param url - 远程 URL
+ * @param options - 超时、大小限制与自定义 fetch
+ * @returns 读取结果（含 buffer 与 MIME）
+ * @throws {@link FileSizeLimitError} {@link MediaTimeoutError} HTTP 非 2xx
+ *
+ * @example
+ * ```ts
+ * const { buffer, mimeType } = await fetchMediaFromUrl("https://cdn.example.com/a.png");
+ * ```
  */
 export async function fetchMediaFromUrl(url: string, options: MediaReadOptions = {}): Promise<MediaReadResult> {
   const { timeout = DEFAULT_TIMEOUT, maxSize = DEFAULT_MAX_SIZE, fetch: customFetch = globalThis.fetch } = options;
@@ -276,12 +287,12 @@ export async function fetchMediaFromUrl(url: string, options: MediaReadOptions =
 }
 
 /**
- * downloadToTempFile 是 media 模块对外暴露的操作入口。
+ * 流式下载 URL 到临时文件（适合大文件，边读边校验大小）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param url - 必须为 HTTP(S) URL
+ * @param options - 超时、大小、临时目录与前缀
+ * @returns 临时文件路径与元数据
+ * @throws 非 HTTP URL、超时或超出 `maxSize` 时抛错
  */
 export async function downloadToTempFile(url: string, options: DownloadToTempFileOptions = {}): Promise<DownloadToTempFileResult> {
   if (!isHttpUrl(url)) throw new Error(`downloadToTempFile expects HTTP URL, got: ${url}`);
@@ -317,12 +328,12 @@ export async function downloadToTempFile(url: string, options: DownloadToTempFil
 }
 
 /**
- * readMediaFromLocal 是 media 模块对外暴露的操作入口。
+ * 从本机路径读取媒体（含路径安全校验）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param filePath - 本机路径（支持 `media-parser` 归一化格式）
+ * @param options - 大小限制与安全选项
+ * @returns 读取结果
+ * @throws 文件不存在、过大或路径不安全
  */
 export async function readMediaFromLocal(filePath: string, options: MediaReadOptions & PathSecurityOptions = {}): Promise<MediaReadResult> {
   const { maxSize = DEFAULT_MAX_SIZE } = options;
@@ -338,12 +349,11 @@ export async function readMediaFromLocal(filePath: string, options: MediaReadOpt
 }
 
 /**
- * readMedia 是 media 模块对外暴露的操作入口。
+ * 统一读取媒体：自动区分 HTTP URL 与本机路径。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param source - URL 或本机路径
+ * @param options - 读取与安全选项
+ * @returns 读取结果
  */
 export async function readMedia(source: string, options: MediaReadOptions & PathSecurityOptions = {}): Promise<MediaReadResult> {
   if (isHttpUrl(source)) return fetchMediaFromUrl(source, options);
@@ -351,12 +361,11 @@ export async function readMedia(source: string, options: MediaReadOptions & Path
 }
 
 /**
- * readMediaBatch 是 media 模块对外暴露的操作入口。
+ * 批量读取多个媒体源（单个失败不影响其余）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param sources - URL 或路径列表
+ * @param options - 读取选项
+ * @returns 每项含 `result` 或 `error`，与输入顺序一一对应
  */
 export async function readMediaBatch(sources: string[], options: MediaReadOptions & PathSecurityOptions = {}): Promise<Array<{ source: string; result?: MediaReadResult; error?: Error }>> {
   const results = await Promise.allSettled(sources.map((s) => readMedia(s, options)));
@@ -368,12 +377,12 @@ export async function readMediaBatch(sources: string[], options: MediaReadOption
 // ============================================================================
 
 /**
- * finalizeInboundMediaFile 是 media 模块对外暴露的操作入口。
+ * 将临时目录中的入站媒体移动到按日期分层的 inbound 目录。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * 若文件不在 `tempDir` 下则原样返回路径；跨设备移动失败时尝试 copy+unlink。
+ *
+ * @param options - 文件路径与目录配置
+ * @returns 归档后的最终路径
  */
 export async function finalizeInboundMediaFile(options: FinalizeInboundMediaOptions): Promise<string> {
   const current = String(options.filePath ?? "").trim();
@@ -386,12 +395,11 @@ export async function finalizeInboundMediaFile(options: FinalizeInboundMediaOpti
 }
 
 /**
- * pruneInboundMediaDir 是 media 模块对外暴露的操作入口。
+ * 清理 inbound 目录中早于 `keepDays` 的 dated 子目录内文件。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * 仅处理名为 `YYYY-MM-DD` 的子目录；`keepDays < 0` 或非有限值时 no-op。
+ *
+ * @param options - inbound 根目录与保留天数
  */
 export async function pruneInboundMediaDir(options: PruneInboundMediaDirOptions): Promise<void> {
   const keepDays = Number(options.keepDays);
@@ -413,12 +421,10 @@ export async function pruneInboundMediaDir(options: PruneInboundMediaDirOptions)
 }
 
 /**
- * cleanupFileSafe 是 media 模块对外暴露的操作入口。
+ * 安全删除文件（忽略 ENOENT，其它错误可选回调）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param filePath - 待删除路径；`undefined` 时 no-op
+ * @param onError - 非 ENOENT 删除失败时的回调
  */
 export async function cleanupFileSafe(filePath: string | undefined, onError?: (error: unknown, filePath: string) => void): Promise<void> {
   if (!filePath) return;

@@ -9,8 +9,8 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import { createRuntimeEnv } from "../../test-utils/runtime-env.js";
-import { computeWecomMsgSignature, encryptWecomPlaintext } from "./crypto.js";
-import { wecomPlugin } from "./channel.js";
+import { computeWecomMsgSignature, encryptWecomPlaintext } from "./webhook/crypto.js";
+import { wecomPlugin } from "./channel/channel.js";
 import { handleWecomWebhookRequest } from "./legacy/monitor.js";
 import type { ResolvedWecomAccount } from "./types/index.js";
 

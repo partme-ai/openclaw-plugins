@@ -1,13 +1,18 @@
 /**
- * ASR 模块 — 语音识别
+ * @module asr
  *
- * 来源：openclaw-china packages/shared/src/asr/ (MIT License)
- * 版权：原始版权归 openclaw-china 项目所有
+ * ASR 模块 — 语音识别（Automatic Speech Recognition）。
  *
- * 新增 ASR 提供商：
- *   1. import { ASRError, ... } from "./errors.js"
- *   2. 实现 transcribeXxx() 函数
- *   3. 在 index.ts 中 export
+ * **职责**：将音频 Buffer 转为文本；各提供商共用统一错误体系。
+ *
+ * **来源**：openclaw-china packages/shared/src/asr/ (MIT License)
+ *
+ * **扩展新提供商**：
+ * 1. `import { ASRError, ... } from "./errors.js"`
+ * 2. 实现 `transcribeXxx()` 函数
+ * 3. 在本 index 中 export
+ *
+ * **关键导出**：`transcribeTencentFlash`、ASR 错误类
  */
 
 export * from "./errors.js";

@@ -4,16 +4,19 @@
  * KF 入站媒体：downloadMedia → saveMediaBuffer → 可选 ASR（voice）→ Agent 上下文。
  */
 
+import {
+  buildTextFilePreview,
+  normalizeInboundTextContentType,
+} from "@partme.ai/openclaw-message-sdk";
 import { pathToFileURL } from "node:url";
-import path from "node:path";
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
 
 import { downloadMedia } from "../agent/api-client.js";
 import { isKfVoiceAsrEnabled, transcribeKfVoice } from "../agent/asr.js";
 import { resolveWecomMediaMaxBytes } from "../config/index.js";
-import { resolveKfAgentAccount } from "../kf/call-context.js";
+import { resolveKfAgentAccount } from "../tools/call-context.js";
 import type { KfMessage } from "../types/index.js";
-import { extractInboundMediaId, isInboundMediaMessage } from "../bot.js";
+import { extractInboundMediaId, isInboundMediaMessage } from "./bot.js";
 
 export type KfInboundMediaContext = {
   finalContent: string;
@@ -21,26 +24,6 @@ export type KfInboundMediaContext = {
   mediaPath?: string;
   mediaType?: string;
 };
-
-function looksLikeTextFile(buffer: Buffer): boolean {
-  const sampleSize = Math.min(buffer.length, 4096);
-  if (sampleSize === 0) return true;
-  let bad = 0;
-  for (let i = 0; i < sampleSize; i++) {
-    const b = buffer[i]!;
-    const isWhitespace = b === 0x09 || b === 0x0a || b === 0x0d;
-    const isPrintable = b >= 0x20 && b !== 0x7f;
-    if (!isWhitespace && !isPrintable) bad++;
-  }
-  return bad / sampleSize <= 0.02;
-}
-
-function buildTextFilePreview(buffer: Buffer, maxChars: number): string | undefined {
-  if (!looksLikeTextFile(buffer)) return undefined;
-  const text = buffer.toString("utf8");
-  if (!text.trim()) return undefined;
-  return text.length > maxChars ? `${text.slice(0, maxChars)}\n…(已截断)` : text;
-}
 
 /**
  * 下载并归档 KF 入站媒体，构建 Agent 可消费的文本与附件元数据。
@@ -100,13 +83,11 @@ export async function buildKfInboundMediaContext(params: {
     };
     const textPreview = msgtype === "file" ? buildTextFilePreview(buffer, 12_000) : undefined;
     const looksText = Boolean(textPreview);
-    const originalExt = path.extname(originalFileName).toLowerCase();
-    const normalizedContentType =
-      looksText && originalExt === ".md"
-        ? "text/markdown"
-        : looksText && (!contentType || contentType === "application/octet-stream")
-          ? "text/plain; charset=utf-8"
-          : contentType;
+    const normalizedContentType = normalizeInboundTextContentType({
+      contentType,
+      originalFileName,
+      looksText,
+    });
 
     const saved = await core.channel.media.saveMediaBuffer(
       buffer,

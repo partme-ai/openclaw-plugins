@@ -1,18 +1,24 @@
 /**
- * MCP Config Fetch
+ * @module mcp/config-fetch
  *
- * Auto-discovers WeCom MCP configuration from WeCom servers.
- * Fetches and persists doc MCP config with account-specific settings.
+ * 企微 **doc MCP 配置** 自动发现与持久化。
  *
- * Source: openclaw-china/wecom/src/mcp-config.ts
+ * **职责**：
+ * - 通过 WSClient `aibot_get_mcp_config` 拉取 doc 品类 MCP URL
+ * - 写入 state 目录 `wecomConfig/config.json`（按 account 分桶）
+ * - 供离线/重启后快速恢复 MCP 端点信息
+ *
+ * 来源：openclaw-china/wecom mcp-config 实现。
  */
 
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import type { WSClient } from "@wecom/aibot-node-sdk";
+
+import { resolveStateDir } from "../state/state-dir-resolve.js";
+import { withTimeout } from "../shared/timeout.js";
 
 type WecomRuntimeEnv = {
   log?: (message: string) => void;
@@ -50,6 +56,7 @@ type PersistedWecomMcpFile = {
   [key: string]: unknown;
 };
 
+/** 内存中的 doc MCP 配置快照 */
 export interface WecomDocMcpConfig {
   bizType: "doc";
   url: string;
@@ -68,40 +75,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function resolveOpenClawStateDir(): string {
-  const override = process.env.OPENCLAW_STATE_DIR?.trim() || process.env.CLAWDBOT_STATE_DIR?.trim();
-  if (override) {
-    if (override.startsWith("~")) {
-      const home = os.homedir();
-      const normalized = override === "~" ? home : path.join(home, override.slice(2));
-      return path.resolve(normalized);
-    }
-    return path.resolve(override);
-  }
-  return path.join(os.homedir(), ".openclaw");
-}
-
+/** 解析持久化 MCP 配置文件路径 */
 export function resolveWecomMcpConfigPath(): string {
-  return path.join(resolveOpenClawStateDir(), "wecomConfig", "config.json");
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(label));
-    }, timeoutMs);
-
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      }
-    );
-  });
+  return path.join(resolveStateDir(), "wecomConfig", "config.json");
 }
 
 function readResponseField(body: unknown, key: string): string | undefined {
@@ -116,6 +92,11 @@ function readResponseBoolean(body: unknown, key: string): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+/**
+ * 从企微服务端拉取 doc MCP 配置。
+ *
+ * @param client - 已连接的 WSClient
+ */
 export async function fetchWecomDocMcpConfig(client: WSClient): Promise<WecomDocMcpConfig> {
   const reqId = randomUUID();
   const response = await withTimeout(
@@ -171,6 +152,7 @@ async function writePersistedConfig(filePath: string, data: PersistedWecomMcpFil
   await fs.rename(tempPath, filePath);
 }
 
+/** 同路径串行写，避免并发写 config.json 损坏 */
 async function serializeWrite(filePath: string, action: () => Promise<void>): Promise<void> {
   const previous = writeQueues.get(filePath) ?? Promise.resolve();
   const next = previous.catch(() => undefined).then(action);
@@ -184,6 +166,9 @@ async function serializeWrite(filePath: string, action: () => Promise<void>): Pr
   }
 }
 
+/**
+ * 将 doc MCP 配置合并写入持久化文件（按 accountId）。
+ */
 export async function saveWecomDocMcpConfig(params: {
   accountId: string;
   config: WecomDocMcpConfig;
@@ -228,6 +213,9 @@ export async function saveWecomDocMcpConfig(params: {
   });
 }
 
+/**
+ * 拉取并持久化 doc MCP 配置（失败时仅打日志，不抛给调用方）。
+ */
 export async function fetchAndSaveWecomDocMcpConfig(params: {
   client: WSClient;
   accountId: string;

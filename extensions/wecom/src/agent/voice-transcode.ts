@@ -1,10 +1,14 @@
 /**
- * Voice Transcoding - Agent Mode Capability
+ * @module agent/voice-transcode
  *
- * Transcodes audio to AMR format for WeCom compatibility
- * Uses ffmpeg for audio conversion
+ * Agent 模式 **语音转 AMR**（企微 voice 消息仅原生支持 AMR/SPEEX）。
  *
- * Source: wecom-app voice transcoding
+ * **职责**：
+ * - 检测 ffmpeg 是否可用
+ * - 将 mp3/wav 等格式 transcoding 为 8kHz mono AMR
+ * - 供 `api-client.uploadMedia` 在 type=voice 时调用
+ *
+ * 来源：wecom-app voice transcoding 实现。
  */
 
 import { spawn } from "node:child_process";
@@ -14,8 +18,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 /**
- * Check if ffmpeg is available
- * @returns true if ffmpeg command exists
+ * 检测系统是否安装 ffmpeg。
  */
 export async function hasFfmpeg(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -26,18 +29,18 @@ export async function hasFfmpeg(): Promise<boolean> {
 }
 
 /**
- * Transcode audio to AMR format (8kHz mono) for WeCom
- * @param inputPath - Input audio file path
- * @param outputPath - Output AMR file path
+ * 将本地音频文件 transcoding 为 AMR（8kHz 单声道）。
+ *
+ * @param inputPath - 输入文件路径
+ * @param outputPath - 输出 .amr 路径
  */
 export async function transcodeToAmr(inputPath: string, outputPath: string): Promise<void> {
-  // amr_nb requires 8kHz mono for most WeCom clients
   const args = [
-    "-y", // Overwrite output file
+    "-y",
     "-i", inputPath,
-    "-ar", "8000", // 8kHz sample rate
-    "-ac", "1", // Mono
-    "-c:a", "amr_nb", // AMR narrowband codec
+    "-ar", "8000",
+    "-ac", "1",
+    "-c:a", "amr_nb",
     outputPath
   ];
 
@@ -54,10 +57,10 @@ export async function transcodeToAmr(inputPath: string, outputPath: string): Pro
 }
 
 /**
- * Transcode audio buffer to AMR format
- * @param audioBuffer - Input audio buffer
- * @param inputFormat - Input format (e.g., "mp3", "wav")
- * @returns AMR format audio buffer
+ * 将内存中的音频 Buffer transcoding 为 AMR Buffer。
+ *
+ * @param audioBuffer - 原始音频
+ * @param inputFormat - 扩展名/格式（如 mp3、wav）
  */
 export async function transcodeBufferToAmr(
   audioBuffer: Buffer,
@@ -73,43 +76,35 @@ export async function transcodeBufferToAmr(
   const outputPath = join(tempDir, "output.amr");
 
   try {
-    // Write input file
     await writeFile(inputPath, audioBuffer);
-
-    // Transcode
     await transcodeToAmr(inputPath, outputPath);
-
-    // Read output
     const amrBuffer = await readFile(outputPath);
     return amrBuffer;
   } finally {
-    // Cleanup temp directory
     try {
       await rm(tempDir, { recursive: true, force: true });
     } catch {
-      // Ignore cleanup errors
+      // 清理失败不影响主流程
     }
   }
 }
 
-/**
- * WeCom supported voice formats
- */
+/** 企微原生支持的语音容器格式 */
 export const WECOM_VOICE_FORMATS = ["amr", "speex"];
 
 /**
- * Check if audio format is natively supported by WeCom
- * @param format - Audio format (e.g., "amr", "mp3")
- * @returns true if WeCom natively supports this format
+ * 判断格式是否企微原生支持（无需转码）。
+ *
+ * @param format - 扩展名
  */
 export function isWecomNativeVoiceFormat(format: string): boolean {
   return WECOM_VOICE_FORMATS.includes(format.toLowerCase());
 }
 
 /**
- * Check if audio needs transcoding for WeCom
- * @param format - Audio format
- * @returns true if transcoding is needed
+ * 判断上传前是否需要 ffmpeg 转 AMR。
+ *
+ * @param format - 扩展名
  */
 export function needsTranscoding(format: string): boolean {
   return !isWecomNativeVoiceFormat(format);

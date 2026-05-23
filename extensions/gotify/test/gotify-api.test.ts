@@ -27,7 +27,7 @@ import {
   resolveDefaultGotifyAccountId,
   resolveGotifyAccount,
 } from '../src/config.js';
-import { mapGotifyToInbound, mapOutboundToGotify } from '../src/routing/message-mapper.js';
+import { mapGotifyToInbound, mapOutboundToGotify } from '../src/dispatch/routing/message-mapper.js';
 import { selectAccountId } from '../src/outbound.js';
 
 // ── Test fixtures ──────────────────────────────────────────────────────────────

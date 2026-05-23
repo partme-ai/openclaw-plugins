@@ -15,8 +15,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateReqId } from "@wecom/aibot-node-sdk";
 import { DEFAULT_ACCOUNT_ID } from "../config/accounts.js";
-import { getWsClient } from "../ws-adapter.js";
-import { withTimeout } from "../timeout.js";
+import { getWsClient } from "../legacy/ws-adapter.js";
+import { withTimeout } from "../shared/timeout.js";
 
 // ============================================================================
 // 常量

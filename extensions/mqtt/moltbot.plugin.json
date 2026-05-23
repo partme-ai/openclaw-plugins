@@ -1,5 +1,5 @@
 {
-  "id": "openclaw-mqtt",
+  "id": "mqtt",
   "name": "openclaw-mqtt",
   "version": "0.1.13",
   "description": "MQTT 3.1.1/5.0 protocol bridge for OpenClaw - IoT device integration",

@@ -39,13 +39,13 @@
 回调接口 ─┼──► webhook/callback.ts      │    │
 (POST)    │  │     │ sync_msg          │    │
           │  │     ▼                    │    │
-          │  │ dispatch.ts ────────────┼────┼──► OpenClaw Agent
+          │  │ dispatch/inbound-dispatcher.ts ─┼──► OpenClaw Agent
           │  │     │                    │    │      (AI 回复)
           │  │     ▼                    │    │
           │  │ agent/system-event.ts    │    │
           │  │ (欢迎语 / 系统事件)       │    │
           │  │     │                    │    │
-          │  │ kf/control-tools.ts      │    │
+          │  │ tools/control-tools.ts   │    │
           │  │ (转人工 · 不进 transcript)│    │
           │  └─────┼────────────────────┘    │
           │        │                         │
@@ -59,22 +59,22 @@
 
 ```
 wecom-kf/
-  index.ts                   # 插件入口：KF 核心 + Control Tools + 可选 ICS
   openclaw.plugin.json       # channels: ["wecom-kf"]；contracts 仅 Control Tools
   src/
+    index.ts                 # 插件入口：KF 核心 + Control Tools + 可选 ICS
     webhook/callback.ts      # KF HTTP 回调（验签 → sync_msg → 分发）
-    dispatch.ts              # 客户消息 → Agent → send_msg
-    channel.ts               # wecom-kf 渠道 + 出站
+    dispatch/inbound-dispatcher.ts # 客户消息 → Agent → send_msg
+    channel/channel.ts       # wecom-kf 渠道 + 出站
     agent/
       api-client.ts          # 企微 KF API（sync / send / trans 等）
       system-event.ts        # origin=4 系统事件（欢迎语等）
-    kf/
+    tools/
       control-tools.ts       # wecom_kf_* 控制面 Tools（核心）
       call-context.ts        # Tool / dispatch CallContext
     intelligence/            # 对话状态机、intent、before_prompt_build（Phase 3B）
-    ics/
+    http/ics/
       handlers/              # 可选运营 REST API（icsEnabled=true）
-      utils/                 # ICS 专用文件读写
+      storage/               # ICS 专用文件读写
   agents/                    # 可选智能体 workspace 模板（核心不 import）
   skills/                    # 可选技能（需手动安装；不在 plugin manifest）
 ```
@@ -83,13 +83,38 @@ wecom-kf/
 
 | 层级 | 路径 | 注册方式 | Phase |
 |------|------|----------|:-----:|
-| **KF 核心** | `webhook/callback.ts`、`dispatch.ts`、`channel.ts`、`kf/control-tools.ts`、`kf/call-context.ts` | 默认启用 | 1 ✅ |
-| **媒体与策略** | `dm-policy.ts`、`media/`、`outbound/kf-send.ts` | 默认启用 | 2 实施中 |
-| **会话状态与智能化** | `src/intelligence/`、`dispatch.ts` dialogue 闭环、`agent/system-event.ts` | 默认启用 | 3 **当前** |
-| **ICS 运营（可选）** | `src/ics/handlers/`、`src/ics/utils/` | `channels.wecom-kf.icsEnabled: true` → 注册 `/ics/*` | 3 ✅（开关） |
+| **KF 核心** | `webhook/callback.ts`、`dispatch/inbound-dispatcher.ts`、`channel/channel.ts`、`tools/control-tools.ts`、`tools/call-context.ts` | 默认启用 | 1 ✅ |
+| **媒体与策略** | `dispatch/dm-policy.ts`、`media/`、`outbound/kf-send.ts`（见下 **message-sdk 复用**） | 默认启用 | 2 ✅ |
+| **会话状态与智能化** | `src/intelligence/`、`dispatch/inbound-dispatcher.ts` dialogue 闭环、`agent/system-event.ts` | 默认启用 | 3 **当前** |
+| **ICS 运营（可选）** | `src/http/ics/handlers/`、`src/http/ics/storage/` | `channels.wecom-kf.icsEnabled: true` → 注册 `/ics/*` | 3 ✅（开关） |
 | **智能体模板（可选）** | `agents/` | 独立部署；`--workspace` 指向子目录 | — |
 | **Skills（可选）** | `skills/` | 复制/软链到 agent workspace；插件不自动加载 | — |
 | **Legacy Bot/Agent** | `legacy/monitor.ts` 等 | `legacyWecomCsEnabled: true`（默认 **false**，Phase 2 移除中） | 废弃 |
+
+### message-sdk 复用
+
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`（与 [wecom](../wecom/README.zh-CN.md) 一致）。KF 业务语义留在本插件；下列能力通过 **薄封装** 委托 message-sdk，避免与 `wecom` / `wecom-cs` 重复实现。
+
+| message-sdk 模块 | wecom-kf 挂载点 | 用途 |
+|------------------|-----------------|------|
+| `config/mergeChannelAccountConfig` | `config/accounts.ts` | 账号级配置合并 |
+| `dedup`（`createPersistentDedupe`） | `dedup/kf-inbound-dedup.ts` | 入站 `msgid` 跨进程去重 |
+| `ingress`（`resolveCommandAuthorization` 等） | `shared/command-auth.ts`、`dispatch/dm-policy.ts` | DM 策略与命令授权 |
+| `routing`（`dynamic-peer-agent`） | `channel/dynamic-agent.ts` | 按客户动态 Agent 路由 |
+| `text/stripMarkdown` | `agent/markdown-strip.ts` | 出站 Markdown 剥离 |
+| `util/withTimeout` | `shared/timeout.ts`、`dispatch/kf-transcript-dispatch.ts` | Agent 派发与 HTTP 超时 |
+| `transcript/buildAgentReplyTimeoutSummary` | `config/templates.ts`、`dispatch/inbound-dispatcher.ts` | 派发超时用户可见兜底文案 |
+| `util/truncateUtf8Bytes` | `legacy/monitor.ts`（legacy 流式） | 流式 content / DM 字节上限 |
+| `media/path-guard`（`getPathGuard`） | `media/path-guard.ts` | 本机媒体路径白名单读取 |
+| `media`（`parseMediaDirectives`、`resolveOutboundMedia`、`isHttpUrl`） | `outbound/kf-send.ts` | KF 出站媒体解析与发送 |
+| `media/extractLocalImagePathsFromText` | `legacy/monitor.ts`（legacy 流式附图） | 从回复文本推断本机图片路径 |
+| `queue` / `ingress`（stream、active-reply） | `legacy/monitor/state.ts` | Legacy Bot/Agent 流式会话存储 |
+| `openclaw/state-dir` | `state/cursor-store.ts`、`store/durable-json-map.ts` | 持久化目录 |
+| `asr` | `agent/asr.ts` | 入站语音 Flash ASR（可选） |
+
+**HTTP 客户端说明**：`shared/http-client.ts` 为 message-sdk `undiciFetch` 的薄包装（WeCom User-Agent）；核心实现见 `@partme.ai/openclaw-message-sdk/http`。
+
+**目标态（P2+）**：`bridge/inbound-bridge`、`bridge/reply-bridge`、`transcript/*` 模板与流式分块等，见 [主架构 §7](../../doc/wecom-kf/OpenClaw-WeCom-KF-Master-Architecture.md#7-message-sdk-采用清单)。
 
 ### Phase 3 模块说明（会话状态与智能化）
 
@@ -97,7 +122,7 @@ wecom-kf/
 |------|------|:----:|
 | **`wecom_kf_transfer_session`** | 94669 转人工/排队/结束；API 结果 audit 日志，不进 LLM | 部分完成 |
 | **`KfSessionSideEffectStore`** | 持久化 trans 返回的 `msg_code`，供事件消息发送 | 实施中 |
-| **`kf/transfer-policy.ts`** | 按在线 servicer 自动选席 | 实施中 |
+| **`tools/transfer-policy.ts`** | 按在线 servicer 自动选席 | 实施中 |
 | **`session_status_change`** | state=3 停止 Agent 自动回复 | 实施中 |
 | **`send_msg_on_event`** | 欢迎语（✅）、排队/结束语/满意度（实施中） | 部分完成 |
 | **`src/intelligence/*` + prompt 注入** | 多轮状态机；dispatch 写入 + `before_prompt_build` 读取 | ✅ |
@@ -106,7 +131,7 @@ wecom-kf/
 
 **Control Tools**（已注册）：`wecom_kf_list_servicers`、`wecom_kf_list_accounts`、`wecom_kf_get_account_link`、`wecom_kf_transfer_session`。
 
-**已废弃**（Phase 3B 已删除）：旧版 `src/kf/tools.ts` 与未接入的 `src/kf/knowledge.ts` RAG stub。
+**已废弃**（Phase 3B 已删除）：旧版 `src/kf/tools.ts` 与未接入的 `src/kf/knowledge.ts` RAG stub；KF 运行时工具已收敛到 `src/tools/`。
 
 **联调文档**：[Integration-Checklist.md](../../doc/wecom-kf/Integration-Checklist.md) · [Roadmap Phase 3](../../doc/wecom-kf/OpenClaw-WeCom-KF-Roadmap.md#phase-3--会话状态与智能化当前)
 

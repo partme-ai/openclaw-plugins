@@ -1,8 +1,23 @@
 /**
- * Webhook 核心消息处理
+ * @module webhook/monitor
  *
- * 从 @mocrane/wecom monitor.ts 部分迁移 + 重构。
- * 负责：入站消息解析、防抖聚合、Agent 调度、流式输出、超时兜底。
+ * Webhook **核心消息处理**（入站、防抖、Agent 调度、流式输出、兜底）。
+ *
+ * **职责**：
+ * - 入站解析、msgid 去重、防抖入队、access-policy 门禁
+ * - `startAgentForStream`：媒体解密、路由、reply-pipeline、response_url 最终推送
+ * - stream_refresh / enter_chat / template_card_event 分支
+ *
+ * **与 message-sdk 关系**：
+ * - 队列/防抖：`StreamSessionStore`（queue）
+ * - 去重：`claimWecomInboundMsgid`（createPersistentDedupe）
+ * - 回复：`createWecomReplyDispatcher` → transcript hooks
+ * - 媒体：`truncateUtf8Bytes`、Path Guard
+ *
+ * **关键流程**：handleInboundMessage → debounce → flushPending → startAgentForStream
+ *
+ * **关键导出**：`handleInboundMessage`、`handleStreamRefresh`、`handleEnterChat`、
+ * `handleTemplateCardEvent`、`startAgentForStream`
  */
 
 import { pathToFileURL } from "node:url";
@@ -41,17 +56,23 @@ import {
   buildStreamPlaceholderReply,
   buildStreamTextPlaceholderReply,
   truncateUtf8Bytes,
-} from "./helpers.js";
-import { processDynamicRouting } from "../dynamic-routing.js";
+} from "./inbound-helpers.js";
+import { processDynamicRouting } from "../config/dynamic-routing.js";
 import { claimWecomInboundMsgid } from "./dedup.js";
+import { checkWebhookDmPolicy, checkWebhookGroupPolicy } from "./access-policy.js";
 import { createWecomReplyDispatcher } from "./reply-pipeline.js";
 import {
   applyWecomWebhookEmptyContentFallback,
   resolveWecomEnterChatWelcomeText,
+  resolveWecomStreamPlaceholderText,
   resolveWecomStreamingConfig,
   syncWecomStreamContent,
-} from "../streaming-config.js";
-import { resolveWecomTemplates } from "../templates.js";
+} from "../config/streaming-config.js";
+import { resolveWecomTemplates, buildMediaErrorSummary } from "../config/templates.js";
+import {
+  getExtendedMediaLocalRoots,
+  readGuardedLocalMediaFile,
+} from "../media/media-path-guard.js";
 import {
   getActiveReplyUrl,
   sendBotFallbackPromptNow,
@@ -64,9 +85,17 @@ import { agentDmText, agentDmMedia } from "./agent-dm.js";
 // ============================================================================
 
 /**
- * 处理入站消息
+ * 处理入站用户消息：去重 → 策略 → 防抖入队 → 占位符响应。
  *
- * 解析消息类型和内容，创建/获取 stream，加入防抖队列，返回占位符响应。
+ * WHY：企微要求 HTTP 回调快速返回 stream 占位符；真实 Agent 处理在 debounce 后异步进行。
+ *
+ * @param target - Webhook Target
+ * @param message - 解密后的入站消息
+ * @param timestamp - 回调 timestamp（加密响应用）
+ * @param nonce - 回调 nonce
+ * @param proxyUrl - 可选出口代理
+ * @param msgFilterData - 预解析的 senderUserId / chatId
+ * @returns 加密前的响应 JSON；跳过时 null
  */
 export async function handleInboundMessage(
   target: WecomWebhookTarget,
@@ -84,7 +113,7 @@ export async function handleInboundMessage(
   const { streamStore, activeReplyStore } = state;
   const msgid = message.msgid;
 
-  // 持久化 msgid 去重（跨重启）
+  // 持久化 msgid 去重：跨重启防止企微重试导致重复 dispatch
   if (msgid) {
     const claimed = await claimWecomInboundMsgid(target.account.accountId, String(msgid));
     if (!claimed) {
@@ -103,7 +132,7 @@ export async function handleInboundMessage(
     }
   }
 
-  // 进程内 msgid → stream 去重
+  // 进程内 msgid → stream 映射：同进程重入时直接返回已有 stream 响应
   if (msgid) {
     const existingStreamId = streamStore.getStreamByMsgId(msgid);
     if (existingStreamId) {
@@ -130,9 +159,24 @@ export async function handleInboundMessage(
   // 原版 conversationKey 格式：wecom:{accountId}:{userid}:{chatId}
   // 单聊时 chatId 等于 userid
   const resolvedChatId = chatId || userid;
+  const isGroupChat = chatType === "group";
   const conversationKey = `wecom:${target.account.accountId}:${userid}:${resolvedChatId}`;
 
-  // 加入防抖队列
+  if (isGroupChat) {
+    if (
+      !checkWebhookGroupPolicy({
+        chatId: resolvedChatId,
+        senderId: userid,
+        account: target.account,
+        config: target.config,
+        runtime: target.runtime,
+      })
+    ) {
+      return null;
+    }
+  }
+
+  // 防抖入队：同 conversationKey 短时多条消息合并为一批（DEFAULT_DEBOUNCE_MS）
   const result = streamStore.addPendingMessage({
     conversationKey,
     target,
@@ -158,6 +202,22 @@ export async function handleInboundMessage(
     );
   }
 
+  if (!isGroupChat) {
+    const dmPolicyResult = await checkWebhookDmPolicy({
+      senderId: userid,
+      isGroup: false,
+      account: target.account,
+      streamId,
+      runtime: target.runtime,
+    });
+    if (!dmPolicyResult.allowed) {
+      streamStore.markFinished(streamId);
+      streamStore.onStreamFinished(streamId);
+      const placeholder = resolveWecomStreamPlaceholderText(target.account.config);
+      return buildStreamPlaceholderReply(streamId, placeholder);
+    }
+  }
+
   // 更新 stream 的元数据
   streamStore.updateStream(streamId, (s) => {
     s.userId = userid;
@@ -167,7 +227,7 @@ export async function handleInboundMessage(
   });
 
   // 根据 status 返回不同的占位符响应（对齐原版 status 分支处理）
-  const defaultPlaceholder = (target.account.config as any)?.streamPlaceholderContent;
+  const defaultPlaceholder = resolveWecomStreamPlaceholderText(target.account.config);
   const templates = resolveWecomTemplates(target.account);
   const queuedPlaceholder = templates.queued;
   const mergedQueuedPlaceholder = templates.mergedQueued;
@@ -206,9 +266,11 @@ export async function handleInboundMessage(
 // ============================================================================
 
 /**
- * 处理 stream_refresh 请求
+ * 处理 stream_refresh 长轮询：返回 StreamState 当前内容与 finish 标记。
  *
- * 返回 StreamState 中的当前累积内容、图片附件和 finish 标记。
+ * @param target - Webhook Target
+ * @param message - 含 stream.id 的 refresh 消息
+ * @returns stream 响应 JSON；缺少 id 时 null
  */
 export async function handleStreamRefresh(
   target: WecomWebhookTarget,
@@ -244,9 +306,11 @@ export async function handleStreamRefresh(
 // ============================================================================
 
 /**
- * 处理 enter_chat 事件
+ * 处理 enter_chat 事件，返回可配置欢迎消息。
  *
- * 返回可配置的欢迎消息。
+ * @param target - Webhook Target
+ * @param message - enter_chat 事件消息
+ * @returns 文本响应或 null
  */
 export async function handleEnterChat(
   target: WecomWebhookTarget,
@@ -275,15 +339,14 @@ export async function handleEnterChat(
 // ============================================================================
 
 /**
- * 处理模板卡片事件（对齐原版 template_card_event 逻辑）
+ * 处理模板卡片交互事件（非阻塞：立即返回空加密体，异步启动 Agent）。
  *
- * 原版流程：
- * 1. msgid 去重：跳过已处理的卡片事件
- * 2. 解析卡片交互数据：event_key、selected_items、task_id
- * 3. 立即返回空加密回复（非阻塞）
- * 4. 创建 stream 并标记开始
- * 5. 存储 response_url（用于后续推送）
- * 6. 构造交互描述文本，作为文本消息启动 Agent 处理
+ * @param target - Webhook Target
+ * @param message - template_card_event 消息
+ * @param timestamp - 回调 timestamp
+ * @param nonce - 回调 nonce
+ * @param proxyUrl - 可选出口代理
+ * @returns 空对象（加密后返回）
  */
 export async function handleTemplateCardEvent(
   target: WecomWebhookTarget,
@@ -368,15 +431,18 @@ export async function handleTemplateCardEvent(
 // ============================================================================
 
 /**
- * **startAgentForStream (启动 Agent 处理流程)**
+ * 启动 Agent 处理流程（防抖 flush 或 template_card 触发）。
  *
- * 将接收到的（或聚合的）消息转换为 OpenClaw 内部格式，并分发给对应的 Agent。
- * 包含：
- * 1. 消息解密与媒体保存。
- * 2. 路由解析 (Agent Route)。
- * 3. 会话记录 (Session Recording)。
- * 4. 触发 Agent 响应 (Dispatch Reply)。
- * 5. 处理 Agent 输出（包括文本、Markdown 表格转换、<think> 标签保护、模板卡片识别）。
+ * WHY：Webhook 交付约束 — 图片走 Bot stream 帧，非图片走 Agent 私信；
+ * 必须 `tools.deny message` 防止 Agent 绕过 Bot 链路。
+ *
+ * @param params.target - Webhook Target（含 core）
+ * @param params.accountId - 账号 ID
+ * @param params.msg - 入站消息（或合成消息）
+ * @param params.streamId - stream ID
+ * @param params.mergedContents - 防抖合并后的正文（可选）
+ * @param params.mergedMsgids - 合并的 msgid 列表（可选）
+ * @returns Promise
  */
 export async function startAgentForStream(params: {
   target: WecomWebhookTarget;
@@ -396,15 +462,13 @@ export async function startAgentForStream(params: {
     return;
   }
 
-  // WS 长连接模式标记：跳过 Webhook 专属的 Agent 私信兜底逻辑（对齐 lh 版）
-  const isWsMode = Boolean(stream.wsMode);
-
   const core = target.core;
   const config = target.config;
   const account = target.account;
   const streamingConfig = resolveWecomStreamingConfig(account);
   const templates = resolveWecomTemplates(account);
   const chatType = msg.chattype === "group" ? "group" : "direct";
+  const userid = resolveWecomSenderUserId(msg) ?? "unknown";
   const chatId = msg.chattype === "group" ? (msg.chatid?.trim() || "unknown") : userid;
   const taskKey = computeTaskKey(target, msg);
   const aibotid = String(msg.aibotid ?? "").trim() || undefined;
@@ -417,6 +481,41 @@ export async function startAgentForStream(params: {
     s.taskKey = taskKey;
     s.aibotid = aibotid;
   });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 1.5 访问控制（群策略 + DM 策略，与 WS 长连接对齐）
+  // ──────────────────────────────────────────────────────────────────
+  if (chatType === "group") {
+    if (
+      !checkWebhookGroupPolicy({
+        chatId,
+        senderId: userid,
+        account,
+        config,
+        runtime: target.runtime,
+      })
+    ) {
+      streamStore.markFinished(streamId);
+      streamStore.onStreamFinished(streamId);
+      return;
+    }
+  } else {
+    const dmPolicyResult = await checkWebhookDmPolicy({
+      senderId: userid,
+      isGroup: false,
+      account,
+      streamId,
+      runtime: target.runtime,
+    });
+    if (!dmPolicyResult.allowed) {
+      target.runtime.log?.(
+        `[webhook] dm policy blocked sender=${userid} pairingSent=${String(dmPolicyResult.pairingSent ?? false)}`,
+      );
+      streamStore.markFinished(streamId);
+      streamStore.onStreamFinished(streamId);
+      return;
+    }
+  }
 
   // ──────────────────────────────────────────────────────────────────
   // 1. 入站消息处理（媒体解密）—— 对齐原版 processInboundMessage
@@ -443,7 +542,6 @@ export async function startAgentForStream(params: {
     );
   }
   if (directLocalPaths.length && looksLikeSendLocalFileIntent(rawBody)) {
-    const fs = await import("node:fs/promises");
     const pathModule = await import("node:path");
     const imageExts = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
 
@@ -457,16 +555,25 @@ export async function startAgentForStream(params: {
 
     // 图片：通过 Bot 原会话交付（base64 msg_item）
     if (imagePaths.length > 0 && otherPaths.length === 0) {
+      const mediaLocalRoots = await getExtendedMediaLocalRoots(account.config);
+      const maxBytes = resolveWecomMediaMaxBytes(config);
       const loaded: Array<{ base64: string; md5: string; path: string }> = [];
+      const readErrors: string[] = [];
       for (const p of imagePaths) {
-        try {
-          const buf = await fs.readFile(p);
-          const base64 = buf.toString("base64");
-          const md5 = computeMd5(buf);
-          loaded.push({ base64, md5, path: p });
-        } catch (err) {
-          target.runtime.error?.(`[webhook] local-path: 读取图片失败 path=${p}: ${String(err)}`);
+        const readResult = await readGuardedLocalMediaFile({
+          filePath: p,
+          allowedRoots: mediaLocalRoots,
+          maxBytes,
+        });
+        if (!readResult.ok) {
+          target.runtime.error?.(`[webhook] local-path: 读取图片失败 path=${p}: ${readResult.error}`);
+          readErrors.push(buildMediaErrorSummary(p, readResult, templates));
+          continue;
         }
+        const buf = readResult.buffer;
+        const base64 = buf.toString("base64");
+        const md5 = computeMd5(buf);
+        loaded.push({ base64, md5, path: p });
       }
 
       if (loaded.length > 0) {
@@ -512,13 +619,15 @@ export async function startAgentForStream(params: {
       const fallbackName = imagePaths.length === 1
         ? (imagePaths[0]!.split("/").pop() || "image")
         : `${imagePaths.length} 张图片`;
-      const prompt = buildFallbackPrompt({
-        kind: "media",
-        agentConfigured: agentOk,
-        userId: userid,
-        filename: fallbackName,
-        chatType,
-      });
+      const prompt = readErrors.length > 0
+        ? readErrors.join("\n\n")
+        : buildFallbackPrompt({
+          kind: "media",
+          agentConfigured: agentOk,
+          userId: userid,
+          filename: fallbackName,
+          chatType,
+        });
 
       streamStore.updateStream(streamId, (s) => {
         s.fallbackMode = "error";

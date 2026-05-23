@@ -22,7 +22,7 @@ import { z } from "zod";
 
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from "../types.js";
 import { normalizeServerUrl } from "./gotify-api.js";
-import { GotifyWebSocketError, GotifyConfigError } from "../errors.js";
+import { GotifyWebSocketError, GotifyConfigError } from "../shared/errors.js";
 
 const GotifyStreamEnvelopeSchema = z.object({
   id: z.union([z.number(), z.string()]),

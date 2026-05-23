@@ -8,7 +8,7 @@ vi.mock("@wecom/aibot-node-sdk", () => ({
   generateReqId: generateReqIdMock,
 }));
 
-vi.mock("../state-manager.js", () => ({
+vi.mock("../state/state-manager.js", () => ({
   getWeComWebSocket: vi.fn(() => ({
     reply: replyMock,
   })),
@@ -22,7 +22,7 @@ vi.mock("../runtime.js", () => ({
   })),
 }));
 
-vi.mock("../accounts.js", () => ({
+vi.mock("../config/accounts.js", () => ({
   resolveDefaultWeComAccountId: vi.fn(() => "default"),
   listWeComAccountIds: vi.fn(() => ["default"]),
   resolveWeComAccountMulti: vi.fn(() => ({ botId: "bot", secret: "secret" })),

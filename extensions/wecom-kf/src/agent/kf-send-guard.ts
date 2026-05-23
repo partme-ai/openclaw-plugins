@@ -5,7 +5,7 @@
  * 与企微文档 94677 对齐；状态持久化至 state 目录 JSON，重启不丢失计数。
  */
 
-import { DurableJsonMapStore } from "../store/durable-json-map.js";
+import { DurableJsonMapStore } from "../state/durable-json-map.js";
 
 /** KF 主动回复限制常量 */
 export const KF_SEND_LIMITS = {

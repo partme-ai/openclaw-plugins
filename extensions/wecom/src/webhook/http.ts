@@ -1,13 +1,25 @@
+/**
+ * WeCom Agent HTTP 客户端（http）
+ *
+ * 基于 undici 的 fetch 封装，供 Agent API（gettoken、media、message/send）使用。
+ * 与 message-sdk 无直接耦合；SSRF 防护的出站 fetch 见 runtime-api `fetchWithSsrFGuard`。
+ *
+ * 特性：ProxyAgent 连接池复用、超时与外部 AbortSignal 合并、统一 User-Agent。
+ */
+
+import type { Dispatcher } from "undici";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 
-const proxyDispatchers = new Map<string, ProxyAgent>();
+type ProxyDispatcher = Dispatcher;
+
+const proxyDispatchers = new Map<string, ProxyDispatcher>();
 
 /**
  * **getProxyDispatcher (获取代理 Dispatcher)**
- *
+ * 
  * 缓存并复用 ProxyAgent，避免重复创建连接池。
  */
-function getProxyDispatcher(proxyUrl: string): ProxyAgent {
+function getProxyDispatcher(proxyUrl: string): ProxyDispatcher {
   const existing = proxyDispatchers.get(proxyUrl);
   if (existing) return existing;
   const created = new ProxyAgent(proxyUrl);
@@ -15,6 +27,7 @@ function getProxyDispatcher(proxyUrl: string): ProxyAgent {
   return created;
 }
 
+/** 合并调用方 signal 与可选超时，生成单一 AbortSignal */
 function mergeAbortSignal(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -31,7 +44,7 @@ function mergeAbortSignal(params: {
 
 /**
  * **WecomHttpOptions (HTTP 选项)**
- *
+ * 
  * @property proxyUrl 代理服务器地址
  * @property timeoutMs 请求超时时间 (毫秒)
  * @property signal AbortSignal 信号
@@ -43,10 +56,13 @@ export type WecomHttpOptions = {
 };
 
 /**
- * **wecomFetch (统一 HTTP 请求)**
+ * 统一 HTTP 请求入口。
  *
- * 基于 `undici` 的 fetch 封装，自动处理 ProxyAgent 和 Timeout。
- * 所有对企业微信 API 的调用都应经过此函数。
+ * @param input 请求 URL
+ * @param init 标准 RequestInit
+ * @param opts.proxyUrl 企业可信 IP 场景下的 egress 代理
+ * @param opts.timeoutMs 请求超时（与 init.signal 合并）
+ * @param opts.signal 外部取消信号
  */
 export async function wecomFetch(input: string | URL, init?: RequestInit, opts?: WecomHttpOptions): Promise<Response> {
   const proxyUrl = opts?.proxyUrl?.trim() ?? "";
@@ -54,13 +70,12 @@ export async function wecomFetch(input: string | URL, init?: RequestInit, opts?:
 
   const initSignal = init?.signal ?? undefined;
   const signal = mergeAbortSignal({ signal: opts?.signal ?? initSignal, timeoutMs: opts?.timeoutMs });
-
+  
   const headers = new Headers(init?.headers ?? {});
   if (!headers.has("User-Agent")) {
     headers.set("User-Agent", "OpenClaw/2.0 (WeCom-Agent)");
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nextInit: any = {
     ...(init ?? {}),
     ...(signal ? { signal } : {}),
@@ -80,10 +95,10 @@ export async function wecomFetch(input: string | URL, init?: RequestInit, opts?:
 }
 
 /**
- * **readResponseBodyAsBuffer (读取响应 Body)**
+ * 将 Response body 读入 Buffer，可选 maxBytes 防止 OOM。
  *
- * 将 Response Body 读取为 Buffer，支持最大字节限制以防止内存溢出。
- * 适用于下载媒体文件等场景。
+ * @param res fetch 响应
+ * @param maxBytes 最大允许字节数，超出则 cancel reader 并抛错
  */
 export async function readResponseBodyAsBuffer(res: Response, maxBytes?: number): Promise<Buffer> {
   if (!res.body) return Buffer.alloc(0);

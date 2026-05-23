@@ -1,14 +1,20 @@
 /**
- * Webhook Gateway 生命周期管理
+ * @module webhook/gateway
  *
- * 从 @mocrane/wecom gateway-monitor.ts 部分迁移（仅 Webhook 部分）。
- * 负责：初始化状态、注册 Target、启停管理。
+ * Webhook Gateway **生命周期**管理（启停、Target 注册、flush 调度）。
  *
- * 关键设计：
- * - MonitorState 是全局单例（monitorState），所有账号共享同一个 StreamStore 和 ActiveReplyStore
- * - Target 注册/注销不影响 monitorState 生命周期，只控制 pruneTimer 的启停
- * - 每个账号注册多条路径（兼容历史路径 + 推荐路径 + 多账号路径）
- * - 按 accountId 管理各自的 unregister，stop 时只注销该账号的 Target
+ * **职责**：
+ * - 验证 token / encodingAESKey，注册多路径 Webhook Target
+ * - 启动 prune 定时器与 dedup warmup
+ * - 防抖 flush 时触发 `startAgentForStream`
+ *
+ * **与 message-sdk 关系**：
+ * - 使用 `monitorState`（SDK StreamSessionMonitor 封装）管理队列
+ * - dedup warmup 见 {@link warmupWecomWebhookDedupe}
+ *
+ * **关键流程**：`startWebhookGateway` → registerTarget → flushPending → Agent
+ *
+ * **关键导出**：`startWebhookGateway`、`stopWebhookGateway`、`getMonitorState`
  */
 
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
@@ -17,8 +23,8 @@ import { PRUNE_INTERVAL_MS, WEBHOOK_PATHS } from "./types.js";
 import { monitorState, WebhookMonitorState } from "./state.js";
 import { registerWecomWebhookTarget, hasActiveTargets } from "./target.js";
 import { startAgentForStream } from "./monitor.js";
-import { hasMultiAccounts } from "../accounts.js";
-import { DEFAULT_ACCOUNT_ID } from "../openclaw-compat.js";
+import { hasMultiAccounts } from "../config/accounts.js";
+import { DEFAULT_ACCOUNT_ID } from "../shared/openclaw-compat.js";
 import { getWeComRuntime } from "../runtime.js";
 
 // ============================================================================
@@ -79,21 +85,21 @@ function resolveBotRegistrationPaths(params: {
 // ============================================================================
 
 /**
- * 获取当前的 MonitorState 实例（全局单例）
+ * 获取当前的 MonitorState 实例（全局单例）。
  *
- * 供 monitor.ts 等内部模块调用以访问 StreamStore 和 ActiveReplyStore。
+ * @returns Webhook 全局监控状态
  */
 export function getMonitorState(): WebhookMonitorState {
   return monitorState;
 }
 
 /**
- * 启动 Webhook Gateway
+ * 启动 Webhook Gateway。
  *
- * 1. 验证 Webhook 配置
- * 2. 确保 pruneTimer 启动
- * 3. 设置 FlushHandler（仅首次）
- * 4. 解析并注册多条 Webhook 路径
+ * WHY：多账号 matrix 模式需注册带 accountId 后缀的路径 + 老路径兼容，签名匹配才能
+ * 路由到正确账号。
+ *
+ * @param ctx - Gateway 上下文（账号、config、runtime、setStatus）
  */
 export function startWebhookGateway(ctx: WebhookGatewayContext): void {
   const { account, config, runtime } = ctx;
@@ -131,7 +137,7 @@ export function startWebhookGateway(ctx: WebhookGatewayContext): void {
   // 2. 确保 pruneTimer 启动（幂等：如果已在运行，不会重复启动）
   monitorState.startPruning(PRUNE_INTERVAL_MS);
 
-  // 3. 设置 FlushHandler（仅首次，因为 monitorState 是全局单例）
+  // FlushHandler 只需安装一次：monitorState 为全局单例，防抖结束统一走 flushPending
   if (!flushHandlerInstalled) {
     monitorState.streamStore.setFlushHandler((pending) => void flushPending(pending));
     flushHandlerInstalled = true;
@@ -139,8 +145,8 @@ export function startWebhookGateway(ctx: WebhookGatewayContext): void {
 
   // 4. 构造 Target 上下文
   const runtimeEnv = {
-    log: (msg: string) => runtime.log(msg),
-    error: (msg: string) => runtime.error(msg),
+    log: (...args: unknown[]) => runtime.log(...args),
+    error: (...args: unknown[]) => runtime.error(...args),
   };
 
   // 判断是否为多账号模式
@@ -188,10 +194,9 @@ export function startWebhookGateway(ctx: WebhookGatewayContext): void {
 }
 
 /**
- * 停止 Webhook Gateway
+ * 停止 Webhook Gateway（仅注销当前 accountId 的 Target）。
  *
- * 1. 注销该账号的 Target（不影响其他账号）
- * 2. 如果没有任何活跃 Target，停止清理定时器
+ * @param ctx - Gateway 上下文
  */
 export function stopWebhookGateway(ctx: WebhookGatewayContext): void {
   const log = ctx.log ?? {
@@ -226,15 +231,12 @@ export function stopWebhookGateway(ctx: WebhookGatewayContext): void {
 // ============================================================================
 
 /**
- * **flushPending (刷新待处理消息 / 核心 Agent 触发点)**
+ * 防抖窗口结束时的 flush 处理 — **核心 Agent 触发点**。
  *
- * 当防抖计时器结束时被调用。
- * 核心逻辑：
- * 1. 聚合所有 pending 的消息内容（用于上下文）。
- * 2. 获取 PluginRuntime。
- * 3. 标记 Stream 为 Started。
- * 4. 调用 `startAgentForStream` 启动 Agent 流程。
- * 5. 处理异常并更新 Stream 状态为 Error。
+ * WHY：同一 conversationKey 短时多条消息合并为一批，减少 Agent 调用次数；
+ * 合并后的 `mergedContents` 作为单轮上下文输入。
+ *
+ * @param pending - 待 flush 的防抖批次（含 streamId、contents、target）
  */
 async function flushPending(pending: PendingInbound): Promise<void> {
   const { streamId, target, msg, contents, msgids, conversationKey, batchKey } = pending;

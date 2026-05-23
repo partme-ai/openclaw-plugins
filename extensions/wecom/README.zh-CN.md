@@ -105,7 +105,7 @@ openclaw gateway restart
 | `channels.wecom.encodingAESKey` | AES 加密密钥（43 位 Base64） |
 | `channels.wecom.receiveId` | 接收者 ID（解密校验用） |
 | `channels.wecom.welcomeText` | 进入聊天事件欢迎语 |
-| `channels.wecom.streamPlaceholderContent` | 流式占位内容 |
+| `channels.wecom.streamPlaceholderText` | Bot 流式首帧占位 |
 
 #### 访问控制
 

@@ -36,10 +36,8 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md",
-    "skills",
-    "clawdbot.plugin.json",
-    "moltbot.plugin.json"
+    "README.zh-CN.md",
+    "skills"
   ],
   "publishConfig": {
     "access": "public",
@@ -49,6 +47,7 @@
     "extensions": [
       "./dist/index.js"
     ],
+    "setupEntry": "./dist/setup-entry.js",
     "channel": {
       "id": "wecom-kf",
       "label": "WeCom KF",
@@ -81,16 +80,6 @@
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
-  },
-  "clawdbot": {
-    "extensions": [
-      "./dist/index.js"
-    ]
-  },
-  "moltbot": {
-    "extensions": [
-      "./dist/index.js"
-    ]
   },
   "peerDependencies": {
     "clawdbot": "*",

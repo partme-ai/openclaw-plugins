@@ -1,26 +1,31 @@
 /**
- * 企业微信 setupWizard — 声明式 CLI setup wizard 配置。
+ * 企业微信 CLI Setup Wizard（onboarding）
  *
- * 覆盖 Bot 双模式（WebSocket / Webhook）+ Agent 模式 + 多账号。
- * 框架通过 plugin.setupWizard 字段识别并驱动 channel 的引导配置流程。
+ * 声明式配置 Bot（WebSocket / Webhook）+ Agent + 多账号 + DM 策略。
+ * OpenClaw 通过 `wecomPlugin.setupWizard` / `setup` 驱动交互式 `openclaw channels add`。
+ *
+ * 与 message-sdk：无直接依赖；配置写入走 `accounts.setWeComAccountMulti`，
+ * DM open 策略的 allowFrom 通配符通过 openclaw-compat `addWildcardAllowFrom`（SDK 或 fallback）。
  */
 
 import type { ChannelSetupWizard, ChannelSetupDmPolicy } from "openclaw/plugin-sdk/setup";
 import type { ChannelSetupAdapter } from "openclaw/plugin-sdk/setup";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
-import { addWildcardAllowFrom } from "./openclaw-compat.js";
-import type { WeComConfig } from "./utils.js";
-import { resolveWeComAccountMulti, setWeComAccountMulti, hasMultiAccounts, listWeComAccountIds } from "./accounts.js";
-import { CHANNEL_ID } from "./const.js";
+import { addWildcardAllowFrom } from "./shared/openclaw-compat.js";
+import type { WeComConfig } from "./config/wecom-config.js";
+import { resolveWeComAccountMulti, setWeComAccountMulti, hasMultiAccounts, listWeComAccountIds } from "./config/accounts.js";
+import { CHANNEL_ID } from "./types/const.js";
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
+/** 按 accountId 解析账号（默认账号当 accountId 为空） */
 function getAccount(cfg: OpenClawConfig, accountId?: string) {
   return resolveWeComAccountMulti({ cfg, accountId: accountId ?? null });
 }
 
+/** 是否已具备 Bot-WS、Bot-Webhook 或 Agent 任一有效凭据 */
 function isConfigured(cfg: OpenClawConfig, accountId?: string): boolean {
   const a = getAccount(cfg, accountId);
   const hasBotWs = Boolean(a.botId?.trim() && a.secret?.trim());
@@ -33,6 +38,10 @@ function isConfigured(cfg: OpenClawConfig, accountId?: string): boolean {
 // ChannelSetupAdapter — 框架用于应用配置输入的适配器
 // ============================================================================
 
+/**
+ * 将 CLI ChannelSetupInput 映射为 WeComConfig 并写入（多账号感知）。
+ * Bot WS / Webhook / Agent 字段通过 inputKey 别名承载（见下方 credentials 定义）。
+ */
 export const wecomSetupAdapter: ChannelSetupAdapter = {
   applyAccountConfig: ({ cfg, input, accountId }) => {
     const patch: Partial<WeComConfig> = {};
@@ -70,6 +79,13 @@ export const wecomSetupAdapter: ChannelSetupAdapter = {
 // DM Policy 配置
 // ============================================================================
 
+/**
+ * 更新 DM 策略；open 时自动追加 allowFrom 通配符 "*"。
+ *
+ * @param cfg 当前配置
+ * @param dmPolicy 目标策略
+ * @param accountId 多账号 ID（可选）
+ */
 function setWeComDmPolicy(
   cfg: OpenClawConfig,
   dmPolicy: "pairing" | "allowlist" | "open" | "disabled",
@@ -355,13 +371,11 @@ export const wecomSetupWizard: ChannelSetupWizard = {
       "  channels.wecom.footer.status     — 状态栏阶段文案",
       "  channels.wecom.footer.elapsed    — 关流展示耗时",
       "",
-      "文案模板（可选，openclaw config set）：",
-      '  channels.wecom.templates.thinking "正在思考…"',
-      '  channels.wecom.templates.tool "正在查资料…"',
-      '  channels.wecom.templates.compaction "📦 正在压缩上下文…"',
-      '  channels.wecom.templates.emptyReply "⚠️ 未能生成可展示的回复…"',
-      '  channels.wecom.templates.finishFooter "⏱ {elapsed}s · 已完成"',
-      '  channels.wecom.templates.welcome "你好，我是助手"',
+      "用户可见文案（推荐平铺 *Text，openclaw config set）：",
+      '  channels.wecom.welcomeText "你好，我是助手"',
+      '  channels.wecom.thinkingText "正在思考…"',
+      '  channels.wecom.toolStatusText "正在调用 {toolName}…"',
+      '  channels.wecom.streamPlaceholderText "1"   # Bot 流式首帧占位（非欢迎语）',
     ],
     shouldShow: ({ cfg, accountId }) => !isConfigured(cfg, accountId),
   },

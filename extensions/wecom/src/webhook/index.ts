@@ -1,7 +1,18 @@
 /**
- * Webhook 模块公共入口
+ * @module webhook/index
  *
- * Re-export 所有 Webhook 模式对外暴露的函数和类型。
+ * Webhook 模块公共入口 — 企微 Bot **HTTP 回调**模式对外 re-export。
+ *
+ * **职责**：聚合 handler、gateway、target、state、types 的公共 API，供插件主入口注册 HTTP 路由。
+ *
+ * **与 message-sdk 关系**：
+ * - 底层队列/去重/ActiveReply 依赖 message-sdk `queue`、`ingress` 子模块（见 `state.ts`）
+ * - 入站 body 限流对齐 message-sdk webhook-ingress（`readRequestBodyWithLimit`）
+ *
+ * **关键流程**：`startWebhookGateway` → 注册 Target → `handleWecomWebhookRequest` → monitor 层
+ *
+ * **关键导出**：`handleWecomWebhookRequest`、`startWebhookGateway`、`registerWecomWebhookTarget`、
+ * 各类 Webhook 类型与 TTL 常量
  */
 
 // ── Handler ─────────────────────────────────────────────────────────

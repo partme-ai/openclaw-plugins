@@ -115,6 +115,8 @@ openclaw gateway restart
 
 ## 访问控制
 
+Bot（WebSocket / Webhook）与 Agent 回调均执行同一套 **dmPolicy / groupPolicy** 门禁；Webhook pairing 码经 `response_url` 主动推送，Agent pairing 经应用 API 私信下发。
+
 ### DM 策略
 
 | 策略 | 行为 |
@@ -228,38 +230,52 @@ openclaw config set channels.wecom.streaming.status true
 openclaw config set channels.wecom.streaming.content true
 ```
 
-### 文案模板
+### 用户可见文案（*Text）
 
-用户可见状态栏、关流脚注、空回复、Webhook 队列 Ack、媒体/错误提示等文案可通过 `channels.wecom.templates` 覆盖。账号级：`channels.wecom.accounts.{id}.templates.*`（与顶层 deep-merge）。
+在 `channels.wecom` **平铺 `*Text` 字段**（与 `welcomeText` 同一命名习惯）。支持 `{elapsed}`、`{toolName}`、`{minutes}` 等占位符（见各字段说明）。
 
-| 键 | 默认 | 占位符 | 用途 |
-|----|------|--------|------|
-| `thinking` | `正在思考…` | — | 思考阶段 |
-| `received` | `已收到，正在处理…` | — | 入站 Ack（预留） |
-| `tool` | `正在查资料…` | `{toolName}` | 工具调用 |
-| `reading` | `正在阅读附件…` | — | 媒体解析 |
-| `generating` | `正在组织回复…` | — | 生成回复 |
-| `compaction` | `📦 正在压缩上下文…` | — | 上下文压缩 |
-| `emptyReply` | `⚠️ 未能生成…` | — | 空回复关流 |
-| `finishFooter` | `⏱ {elapsed}s · 已完成` | `{elapsed}` | 关流耗时脚注 |
-| `welcome` | （空） | — | enter_chat（优先于 `welcomeText`） |
-| `queued` / `mergedQueued` / `mergedDone` | 队列 Ack 文案 | — | Webhook 重内容合并 |
+| 配置键 | 默认 | 占位符 | 用途 |
+|--------|------|--------|------|
+| `welcomeText` | （空） | — | enter_chat / subscribe 欢迎语 |
+| `thinkingText` | `正在思考…` | — | 流式气泡 **状态栏**（思考阶段） |
+| `toolStatusText` | `正在查资料…` | `{toolName}` | 工具调用状态栏 |
+| `readingText` | `正在阅读附件…` | — | 入站含附件 |
+| `generatingText` | `正在组织回复…` | — | 开始生成答案 |
+| `streamPlaceholderText` | （见下） | — | **流式首帧** replyStream 占位（协议层） |
+| `queuedText` / `mergedQueuedText` / … | 见源码默认值 | — | Webhook 队列 Ack |
 
-另有 `timeout`、`dispatchError`、`mediaError*`、`sessionReset` 等键，默认值见 `extensions/wecom/src/templates.ts`（`WECOM_DEFAULT_TEMPLATES`）。
+完整键名见 `extensions/wecom/src/text-config.ts`（`WECOM_TEXT_KEY_MAPPING`）；默认值见 `WECOM_DEFAULT_TEMPLATES`。
 
 ```bash
-openclaw config set channels.wecom.templates.thinking "正在思考…"
-openclaw config set channels.wecom.templates.tool "正在调用 {toolName}…"
-openclaw config set channels.wecom.templates.compaction "📦 正在压缩上下文…"
-openclaw config set channels.wecom.templates.emptyReply "⚠️ 未能生成可展示的回复，请稍后重试。"
-openclaw config set channels.wecom.templates.finishFooter "⏱ {elapsed}s · 已完成"
-openclaw config set channels.wecom.templates.welcome "你好，我是助手"
+openclaw config set channels.wecom.welcomeText "你好，我是助手"
+openclaw config set channels.wecom.thinkingText "正在思考…"
+openclaw config set channels.wecom.toolStatusText "正在调用 {toolName}…"
+openclaw config set channels.wecom.finishFooterText "⏱ {elapsed}s · 已完成"
 
-# 多账号矩阵：按 accountId 覆盖
-openclaw config set channels.wecom.accounts.bot2.templates.thinking "Bot2 思考中…"
+# 多账号：账号级 scalar 覆盖顶层同名字段
+openclaw config set channels.wecom.accounts.bot2.thinkingText "Bot2 思考中…"
 ```
 
-各模板在流式气泡中的触发时机与合成规则见 **[Streaming 架构 §10.3 内「文案模板」小节](./OpenClaw-WeCom-Streaming-Architecture.md#文案模板channelswecomtemplates)**（§10.3 主体为 streaming/footer CLI，模板为其子节）。
+#### `streamPlaceholderText` 是什么？
+
+**有必要**，但与 `welcomeText` / `thinkingText` **不是一回事**：
+
+| 字段 | 层级 | 何时出现 |
+|------|------|----------|
+| `welcomeText` | 业务文案 | 用户 **进入会话**（`enter_chat`）单独一条欢迎 |
+| `thinkingText` | 业务文案 | 回复进行中，stream 气泡 **状态栏**（「正在思考…」） |
+| `streamPlaceholderText` | **协议占位** | Bot 开始流式回复时 **第一条** `replyStream` 的 `content` |
+
+企微 Bot 流式要求先占住 stream：`finish=false` 的首帧不能为空。Webhook 未配置时回退 `"1"`；WebSocket 未配置时回退 `<think></think>`（`THINKING_MESSAGE`）。
+
+- 一般 **不用改** `streamPlaceholderText`。
+- **不要**用它当欢迎语；欢迎语只用 `welcomeText`。
+
+```bash
+openclaw config set channels.wecom.streamPlaceholderText "1"
+```
+
+各文案在流式气泡中的触发时机见 **[Streaming 架构 §10.3](./OpenClaw-WeCom-Streaming-Architecture.md#用户可见文案text)**。
 
 ## 联调与测试
 

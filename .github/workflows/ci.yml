@@ -3,10 +3,10 @@ name: CI
 on:
   push:
     branches: [main, feature/*]
-    paths: ["extensions/**", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
+    paths: ["extensions/**", "scripts/**", "doc/OpenClaw-Plugin-Structure-Standard.md", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
   pull_request:
     branches: [main]
-    paths: ["extensions/**", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
+    paths: ["extensions/**", "scripts/**", "doc/OpenClaw-Plugin-Structure-Standard.md", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
 
 jobs:
   detect:
@@ -25,6 +25,28 @@ jobs:
           PLUGINS=$(node scripts/ci-detect.mjs --json --base origin/main)
           echo "plugins=$PLUGINS" >> $GITHUB_OUTPUT
           echo "Detected: $PLUGINS"
+
+  plugin-structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Structure inventory (warn mode)
+        run: node scripts/check-plugin-structure.mjs
+
+      - name: Base Profile gate (strict plugins)
+        run: |
+          for id in amap douyin gotify meituan mqtt rabbitmq redis-stream rednode rocketmq stomp web-mqtt web-stomp; do
+            node scripts/check-plugin-structure.mjs --plugin "$id" || exit 1
+          done
+
+      - name: Extended Profile gate (wecom, wecom-kf)
+        run: |
+          node scripts/check-plugin-structure.mjs --plugin wecom --strict-new
+          node scripts/check-plugin-structure.mjs --plugin wecom-kf --strict-new
 
   build-and-test:
     needs: detect

@@ -1,6 +1,6 @@
 {
-  "id": "openclaw-rednode",
-  "name": "openclaw-rednode",
+  "id": "rednode",
+  "name": "rednode",
   "version": "2026.5.20",
   "description": "小红书开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
   "main": "dist/index.js",

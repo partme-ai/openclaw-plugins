@@ -1,10 +1,16 @@
 /**
+ * @module bridge/resolve-channel-route
+ *
  * 统一封装 OpenClaw resolveAgentRoute，供 Wire 插件与 dispatchChannelMessage 使用。
+ *
+ * **职责**：解析 agentId、sessionKey；合并插件显式传入与 OpenClaw 路由结果。
+ *
+ * **关键导出**：`resolveChannelAgentRoute`、`resolveChannelDispatchIdentity`
  */
 
 import type { BridgePluginRuntime } from "./types.js";
 
-/** resolveAgentRoute 返回的路由信息子集。 */
+/** resolveAgentRoute 返回的路由信息子集 / Agent route subset from OpenClaw */
 export interface ChannelAgentRoute {
   agentId?: string;
   sessionKey?: string;
@@ -13,7 +19,7 @@ export interface ChannelAgentRoute {
   accountId?: string;
 }
 
-/** resolveChannelAgentRoute 入参。 */
+/** resolveChannelAgentRoute 入参 / Params for resolving agent route */
 export interface ResolveChannelAgentRouteParams {
   channel: string;
   accountId: string;
@@ -22,7 +28,10 @@ export interface ResolveChannelAgentRouteParams {
 }
 
 /**
- * 调用 OpenClaw 内置 resolveAgentRoute 解析 agentId / sessionKey。
+ * 调用 OpenClaw 内置 resolveAgentRoute 解析 agentId / sessionKey / Resolve agent route via OpenClaw.
+ *
+ * @param runtime - Bridge runtime
+ * @param params - 渠道、账号、peer、会话类型
  */
 export async function resolveChannelAgentRoute(
   runtime: BridgePluginRuntime,
@@ -38,7 +47,12 @@ export async function resolveChannelAgentRoute(
 }
 
 /**
- * 合并插件路由结果与 OpenClaw resolveAgentRoute，得到 dispatch 所需的 agentId / sessionKey。
+ * 合并插件路由结果与 OpenClaw resolveAgentRoute，得到 dispatch 所需的 agentId / sessionKey /
+ * Merge explicit params with OpenClaw route for dispatch identity.
+ *
+ * @param runtime - Bridge runtime
+ * @param params - 路由参数 + 可选显式 agentId/sessionKey
+ * @throws 当 resolveAgentRoute 返回空 sessionKey 时
  */
 export async function resolveChannelDispatchIdentity(
   runtime: BridgePluginRuntime,

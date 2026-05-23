@@ -1,5 +1,12 @@
 /**
+ * @module dispatch
+ *
  * dispatch 模块 barrel export。
+ *
+ * **职责**：对外暴露 Wire/Transcript/embedded/subagent 派发入口、通道类别常量与类型。
+ *
+ * **子模块**：`wire-dispatch`、`transcript-dispatch`、`channel-dispatch`、`embedded-dispatch`、
+ * `subagent-dispatch`、`agent-helpers`、`types`
  */
 
 export {
@@ -18,9 +25,7 @@ export {
   createDispatchRunId,
 } from "./agent-helpers.js";
 
-/**
- * 重新导出该模块的公共类型，方便调用方从 barrel 或实现文件按需导入。
- */
+/** 重新导出 dispatch 层公共类型 / Re-export dispatch public types */
 export type {
   ChannelClass,
   ChannelDispatchMode,

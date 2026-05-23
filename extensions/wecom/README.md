@@ -99,7 +99,7 @@ openclaw gateway restart
 | `channels.wecom.encodingAESKey` | AES encryption key (43-char Base64) |
 | `channels.wecom.receiveId` | Receive ID (decryption verification) |
 | `channels.wecom.welcomeText` | Welcome message on enter-chat event |
-| `channels.wecom.streamPlaceholderContent` | Streaming placeholder content |
+| `channels.wecom.streamPlaceholderText` | Bot stream first-frame placeholder |
 
 #### Access Control
 
@@ -241,7 +241,7 @@ In-repo guides under [`doc/wecom/`](../../doc/wecom/):
 | Document | Description |
 |----------|-------------|
 | [Architecture](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | Dual-mode topology, source module map, inbound flows, streaming overview |
-| [Configuration](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Dual-mode setup, multi-account, access control, streaming/footer/**templates** config |
+| [Configuration](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Dual-mode setup, multi-account, access control, streaming/footer/**\*Text** config |
 | [Streaming architecture](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` lifecycle, 6-minute window, 846608 fallback, state machine |
 | [Testing & debugging](../../doc/wecom/OpenClaw-WeCom-Testing.md) | `message send`, `agent --deliver`, `user:` prefix (93006), pairing |
 | [Feishu SDK inventory](../../doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | OpenClaw plugin-sdk mapping vs Feishu channel |

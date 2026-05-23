@@ -1,14 +1,4 @@
-import type { PluginRuntime } from "openclaw/plugin-sdk";
-
-let runtime: PluginRuntime | null = null;
-
-export function setWecomRuntime(next: PluginRuntime): void {
-  runtime = next;
-}
-
-export function getWecomRuntime(): PluginRuntime {
-  if (!runtime) {
-    throw new Error("WeCom runtime not initialized");
-  }
-  return runtime;
-}
+/**
+ * Base Profile runtime shim — Extended implementation in `runtime/index.ts`.
+ */
+export { setWecomRuntime, getWecomRuntime } from "./runtime/index.js";

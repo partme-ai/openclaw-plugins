@@ -7,7 +7,8 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { API_ENDPOINTS, KF_MEDIA_MAX_BYTES, LIMITS } from "../types/constants.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
-import { readResponseBodyAsBuffer, wecomFetch } from "../http.js";
+import { splitUtf8TextByMaxBytes } from "@partme.ai/openclaw-message-sdk/util";
+import { readResponseBodyAsBuffer, wecomFetch } from "../shared/http-client.js";
 import { resolveWecomEgressProxyUrlFromNetwork } from "../config/index.js";
 import { resolveApiBaseUrl } from "../config/kf-routes.js";
 import { checkKfSendAllowed, recordKfOutboundSend } from "./kf-send-guard.js";
@@ -830,33 +831,9 @@ export async function listServicers(params: {
 }
 
 /**
- * **splitMessageByBytes (按字节长度拆分消息)**
- *
- * 将文本按 UTF-8 字节长度拆分为多个片段，用于企微文本消息 2048 字节限制。
- * 从 research/openclaw-china 回移植。
- */
-export function splitMessageByBytes(text: string, maxBytes = 2048): string[] {
-  const chunks: string[] = [];
-  let current = "";
-
-  for (const char of text) {
-    const candidate = current + char;
-    if (Buffer.byteLength(candidate, "utf8") > maxBytes) {
-      if (current) chunks.push(current);
-      current = char;
-    } else {
-      current = candidate;
-    }
-  }
-
-  if (current) chunks.push(current);
-  return chunks;
-}
-
-/**
  * **sendKfTextMessage (发送 KF 文本消息，含 Markdown 剥离和自动拆分)**
  *
- * 自动处理 stripMarkdown + splitMessageByBytes + sendKfMsg 完整流程。
+ * 自动处理 stripMarkdown + splitUtf8TextByMaxBytes + sendKfMsg 完整流程。
  * 从 research/openclaw-china 回移植。
  */
 export async function sendKfTextMessage(params: {
@@ -871,7 +848,7 @@ export async function sendKfTextMessage(params: {
     throw new Error("openKfId not available for text sending");
   }
 
-  const chunks = splitMessageByBytes(stripMarkdown(params.text), LIMITS.TEXT_MAX_BYTES);
+  const chunks = splitUtf8TextByMaxBytes(stripMarkdown(params.text), LIMITS.TEXT_MAX_BYTES);
   const results: KfSendMsgResult[] = [];
 
   for (const chunk of chunks) {

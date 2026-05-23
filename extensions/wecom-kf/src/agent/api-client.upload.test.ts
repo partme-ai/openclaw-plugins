@@ -6,7 +6,7 @@ const { wecomFetchMock, resolveProxyMock } = vi.hoisted(() => ({
   resolveProxyMock: vi.fn(() => undefined),
 }));
 
-vi.mock("../http.js", () => ({
+vi.mock("../shared/http-client.js", () => ({
   wecomFetch: wecomFetchMock,
   readResponseBodyAsBuffer: vi.fn(),
 }));

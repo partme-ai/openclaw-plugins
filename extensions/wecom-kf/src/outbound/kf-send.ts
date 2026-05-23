@@ -15,7 +15,7 @@ import {
   summarizeSendResults,
 } from "../agent/api-client.js";
 import { resolveKfAccountByOpenKfId, resolveWecomAccount } from "../config/index.js";
-import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media-path-guard.js";
+import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media/path-guard.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import type { WecomConfig } from "../types/config.js";
 import { getWecomKfChannelBlock } from "../config/channel-block.js";

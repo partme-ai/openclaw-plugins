@@ -235,7 +235,7 @@ sequenceDiagram
 
 Bot Webhook 无法在单连接上 push，采用：
 
-1. **首次响应**：加密 JSON，`msgtype: stream`，`finish: false`，占位内容（`streamPlaceholderContent` 或默认 `"1"`）
+1. **首次响应**：加密 JSON，`msgtype: stream`，`finish: false`，占位内容（`streamPlaceholderText` 或默认 `"1"`）
 2. **轮询刷新**：企微发送 `msgtype: stream` 的 `stream_refresh`，插件返回当前 `StreamState` 快照
 3. **完成**：Agent `onIdle` 后标记 `finished: true`，下次 refresh 或 active reply 推送最终内容
 
@@ -270,7 +270,7 @@ sequenceDiagram
 | 维度 | WebSocket | Webhook |
 |------|-----------|---------|
 | 更新触发 | 插件主动 `replyStream` | 企微轮询 `stream_refresh` |
-| 占位配置 | `sendThinkingMessage` + `streamPlaceholderContent` | `streamPlaceholderContent` |
+| 占位配置 | `sendThinkingMessage` + `streamPlaceholderText` | `streamPlaceholderText` |
 | 6 分钟窗口 | 846608 后 `sendMessage` | `BOT_WINDOW_MS` + Agent 私信兜底 |
 | 去重 | messageId + 会话队列 | 持久化 msgid dedupe（`dedup.ts`） |
 | blockStreaming | 经 `deliver` 写 StreamState | `disableBlockStreaming: false` |
@@ -338,7 +338,7 @@ Webhook 额外通过 `createChannelMessageReplyPipeline` 接入 typing 生命周
 | Tool 进度 | `onToolStart` + `channel-streaming` SDK | `onToolStart` + `channel-streaming` + `suppressDefaultToolProgressMessages` |
 | Reasoning | `onReasoningStream` 可选 | **未接入** |
 | Compaction | `onCompactionStart` / `onCompactionEnd` | `onCompactionStart` / `onCompactionEnd`（`footer.status` / `streaming.status`） |
-| 配置 | `streaming` / `renderMode` / `blockStreaming` | `sendThinkingMessage`、`streamPlaceholderContent` |
+| 配置 | `streaming` / `renderMode` / `blockStreaming` | `sendThinkingMessage`、`streamPlaceholderText` |
 | 关流 | `streaming_mode: false` | `finish=true` |
 
 详见 [OpenClaw-WeCom-Feishu-SDK-Inventory.md](./OpenClaw-WeCom-Feishu-SDK-Inventory.md)。
@@ -354,7 +354,7 @@ Webhook 额外通过 `createChannelMessageReplyPipeline` 接入 typing 生命周
 | Thinking | `onReplyStart` → thinking | 入队后立即 `replyStream(THINKING)` |
 | 欢迎语 | WS `event.enter_chat` → `replyWelcome` | WS `event.enter_chat` → `replyWelcome` |
 | Block 增量 | ✅ 每 block 更新 stream | ✅ 每 block append 到 `state.content` |
-| 配置 | `sendThinkingMessage` | 同左 + `streamPlaceholderContent` |
+| 配置 | `sendThinkingMessage` | 同左 + `streamPlaceholderText` |
 | 业务整包 | ❌ 无开关 | ❌ 同样无开关 |
 
 **可借鉴（不必照搬 Feishu 复杂度）：**
@@ -393,8 +393,8 @@ Webhook 额外通过 `createChannelMessageReplyPipeline` 接入 typing 生命周
 | 关闭答案增量 | ❌ 待 `streaming` / `streaming.content` |
 | 状态栏阶段展示 | ❌ 待 `footer.status` |
 | 账号级关闭流式 | ✅ `streaming false`（待实现） |
-| Webhook 占位文案 | ✅ `streamPlaceholderContent` |
-| WS 占位文案 | ❌ 未接 `streamPlaceholderContent` |
+| Webhook 占位文案 | ✅ `streamPlaceholderText` |
+| WS 占位文案 | ❌ 未接 `streamPlaceholderText` |
 
 ### 10.3 建议配置：Feishu 式布尔开关（待实现）
 
@@ -493,40 +493,30 @@ openclaw config set channels.wecom.sendThinkingMessage true
 | 生成中 | `正在组织回复…` | `onAssistantMessageStart` |
 | 完成 | （关流，展示最终答案） | `finish=true` |
 
-#### 文案模板（`channels.wecom.templates`）
+#### 用户可见文案（`*Text`）
 
-> **配置入口**：键表、`openclaw config set` 示例与账号级覆盖见 **[Configuration §文案模板](./OpenClaw-WeCom-Configuration.md#文案模板)**。本节说明模板在流式气泡中的触发时机。
+> **配置入口**：键表与 CLI 示例见 **[Configuration §用户可见文案](./OpenClaw-WeCom-Configuration.md#用户可见文案text)**。本节说明各文案在流式气泡中的触发时机。
 
-| 键 | 默认 | 占位符 | 用途 |
-|----|------|--------|------|
-| `thinking` | `正在思考…` | — | `onReplyStart` / compaction 结束 |
-| `received` | `已收到，正在处理…` | — | 入站 Ack（预留） |
-| `tool` | `正在查资料…` | `{toolName}` | `onToolStart` |
-| `reading` | `正在阅读附件…` | — | 入站媒体解析 |
-| `generating` | `正在组织回复…` | — | `onAssistantMessageStart` |
-| `compaction` | `📦 正在压缩上下文…` | — | `onCompactionStart` |
-| `emptyReply` | `⚠️ 未能生成…` | — | 空回复关流 |
-| `finishFooter` | `⏱ {elapsed}s · 已完成` | `{elapsed}` | `footer.elapsed` |
-| `welcome` | （空） | — | enter_chat（优先于 `welcomeText`） |
-| `queued` / `mergedQueued` / `mergedDone` | 队列 Ack 文案 | — | Webhook 重内容合并批次 |
+| 配置键 | 默认 | 占位符 | 用途 |
+|--------|------|--------|------|
+| `thinkingText` | `正在思考…` | — | `onReplyStart` / compaction 结束 |
+| `receivedText` | `已收到，正在处理…` | — | 入站 Ack（预留） |
+| `toolStatusText` | `正在查资料…` | `{toolName}` | `onToolStart` |
+| `readingText` | `正在阅读附件…` | — | 入站媒体解析 |
+| `generatingText` | `正在组织回复…` | — | `onAssistantMessageStart` |
+| `compactionText` | `📦 正在压缩上下文…` | — | `onCompactionStart` |
+| `emptyReplyText` | `⚠️ 未能生成…` | — | 空回复关流 |
+| `finishFooterText` | `⏱ {elapsed}s · 已完成` | `{elapsed}` | `footer.elapsed` |
+| `welcomeText` | （空） | — | enter_chat |
+| `queuedText` / `mergedQueuedText` / `mergedDoneText` | 队列 Ack | — | Webhook 批次 |
 
-账号级覆盖：`channels.wecom.accounts.{id}.templates.*`（与顶层 deep-merge）。
-
-**全局模板**
+账号级覆盖：`channels.wecom.accounts.{id}.thinkingText` 等（scalar 覆盖顶层）。
 
 ```bash
-openclaw config set channels.wecom.templates.thinking "正在思考…"
-openclaw config set channels.wecom.templates.tool "正在调用 {toolName}…"
-openclaw config set channels.wecom.templates.compaction "📦 正在压缩上下文…"
-openclaw config set channels.wecom.templates.emptyReply "⚠️ 未能生成可展示的回复，请稍后重试。"
-openclaw config set channels.wecom.templates.finishFooter "⏱ {elapsed}s · 已完成"
-openclaw config set channels.wecom.templates.welcome "你好，我是助手"
-```
-
-**账号级**（多 Bot 矩阵时按 `accountId` 覆盖，例如 `bot2`）：
-
-```bash
-openclaw config set channels.wecom.accounts.bot2.templates.thinking "Bot2 思考中…"
+openclaw config set channels.wecom.thinkingText "正在思考…"
+openclaw config set channels.wecom.toolStatusText "正在调用 {toolName}…"
+openclaw config set channels.wecom.welcomeText "你好，我是助手"
+openclaw config set channels.wecom.accounts.bot2.thinkingText "Bot2 思考中…"
 ```
 
 #### 与现有字段关系
@@ -534,7 +524,7 @@ openclaw config set channels.wecom.accounts.bot2.templates.thinking "Bot2 思考
 | 字段 | 关系 |
 |------|------|
 | `sendThinkingMessage` | 控制是否发 thinking 首帧；与 `footer.status` 可并存 |
-| `streamPlaceholderContent` | Webhook 首帧 / WS thinking 文案（实现后统一） |
+| `streamPlaceholderText` | Bot 流式 **首帧** replyStream 占位（协议层，非 welcome/thinkingText） |
 | `blockStreaming`（agents.defaults） | Core 是否 emit block；`streaming.content=false` 时插件仍只累积不推送 |
 
 业务 Bot（整包结果）：`streaming false` + `footer.status false` + `sendThinkingMessage false`，或单独账号配置。
@@ -546,7 +536,7 @@ openclaw config set channels.wecom.accounts.bot2.templates.thinking "Bot2 思考
 3. **流式模式**：`streaming.content` 时恢复 `wecom-openclaw-plugin` 式 `replyStreamNonBlocking` 中间帧。
 4. **`streaming.status` + `footer.status`**：`onToolStart` / 解析队列 → 更新 `statusLine`（参考 Feishu `updateStreamingStatusLine`）。
 5. **`footer.elapsed`**：记录 `onReplyStart` 时间，关流时 append `⏱ {elapsed}s`。
-6. **WS 占位**：`streamPlaceholderContent` 与 Webhook 对齐。
+6. **首帧占位**：`resolveWecomStreamPlaceholderText`（Webhook 默认 `"1"`，WS 默认 `THINKING_MESSAGE`）。
 
 ---
 
@@ -587,10 +577,10 @@ replyStream 失败 (846608)
 |--------|------|------|------|
 | `connectionMode` | `websocket` / `webhook` | `websocket` | Bot |
 | `sendThinkingMessage` | 是否发 thinking 占位 | `true` | Bot |
-| `streamPlaceholderContent` | Webhook 首次 stream 占位 | `"1"` | Webhook |
+| `streamPlaceholderText` | Webhook 首次 stream 占位 | `"1"` | Webhook |
 | `network.agentReplyTimeoutMs` | Agent 总超时 | 6min | 全局 |
 | `welcomeText` | enter_chat 欢迎语 | Bot WS / Webhook / kf WS |
-| `templates.*` | 用户可见文案模板 | Bot WS / Webhook |
+| `*Text` 字段 | 用户可见文案（`thinkingText`、`welcomeText` 等） | Bot WS / Webhook |
 
 **待实现（Feishu 式开关）**：
 
@@ -601,7 +591,7 @@ replyStream 失败 (846608)
 | `streaming.content` | 结果内容流式（打字机） | `true` |
 | `footer.status` | 状态栏阶段文案 | `true` |
 | `footer.elapsed` | 关流展示耗时 | `false` |
-| WS 读取 `streamPlaceholderContent` | 与 Webhook 占位统一 | ✅ |
+| WS 读取 `streamPlaceholderText` | 与 Webhook 占位统一 | ✅ |
 
 ---
 
@@ -625,7 +615,7 @@ replyStream 失败 (846608)
 |------|------|:------:|
 | **P0** | Feishu 式 `streaming` + `footer.status`（默认模式 + 状态栏） | 高 |
 | **P0** | `streaming.status` / `streaming.content` 子开关 | 高 |
-| **P0** | WS 必关流 + `streamPlaceholderContent` 统一 | 高 |
+| **P0** | WS 必关流 + `streamPlaceholderText` 统一 | 高 |
 | **P1** | WS `enter_chat` 欢迎语（`replyWelcome` + `welcomeText` / 自定义占位） | ✅ |
 | **P1** | WS 侧 StreamState / `watchStreamReply` 与 kf 对齐（可选重构） | 中 |
 | **P2** | `onPartialReply` 与 block deliver 策略统一 | 低 |

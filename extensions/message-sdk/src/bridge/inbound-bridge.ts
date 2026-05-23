@@ -1,31 +1,35 @@
 /**
+ * @module bridge/inbound-bridge
+ *
  * 入站桥接：UnifiedMessage / 文本 → OpenClaw finalizeInboundContext + dispatch。
+ *
+ * **职责**：完成 resolveAgentRoute、finalizeInboundContext、挂载 reply handler 并调用
+ * dispatchReplyFromConfig；Wire 路径的核心实现。
+ *
+ * **关键导出**：`dispatchInbound`、`toInboundUnifiedMessage`
  */
 
 import { buildMessage } from "../core/message.js";
 import type { InboundBridgeParams, ReplyBridgeParams, ReplyBridgeResult } from "./types.js";
 import { createReplyHandler } from "./reply-bridge.js";
 
-/**
- * DispatchInboundParams 描述 bridge 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
- */
+/** dispatchInbound 入参（含 reply 配置）/ Dispatch inbound params with reply config */
 export interface DispatchInboundParams extends InboundBridgeParams {
   reply: Omit<ReplyBridgeParams, "runtime" | "channel" | "accountId" | "peerId">;
 }
 
-/**
- * DispatchInboundResult 描述 bridge 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
- */
+/** dispatchInbound 返回值 / Dispatch inbound result */
 export interface DispatchInboundResult extends ReplyBridgeResult {
+  /** finalizeInboundContext 产出的 ctx / Inbound context from OpenClaw */
   ctx: Record<string, unknown>;
 }
 
 /**
- * 完成入站上下文构建、路由解析，并挂载回复分发器后 dispatch。
+ * 完成入站上下文构建、路由解析，并挂载回复分发器后 dispatch / Full inbound dispatch pipeline.
+ *
+ * 流程：resolveAgentRoute → finalizeInboundContext → createReplyHandler → dispatchReplyFromConfig。
+ *
+ * @param params - 入站参数与 reply 配置
  */
 export async function dispatchInbound(params: DispatchInboundParams): Promise<DispatchInboundResult> {
   const { runtime, channel, accountId, peerId, text, chatType, agentId, unified, extra, reply } =
@@ -71,7 +75,11 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
 }
 
 /**
- * 将原始入站参数规范为 UnifiedMessage（便于入栈）。
+ * 将原始入站参数规范为 UnifiedMessage（便于入栈）/ Normalize inbound params to UnifiedMessage.
+ *
+ * 若已提供 unified 则原样返回；否则用 buildMessage 构造 inbound 消息。
+ *
+ * @param params - 入站桥接参数
  */
 export function toInboundUnifiedMessage(params: InboundBridgeParams): import("../core/types.js").UnifiedMessage {
   if (params.unified) {

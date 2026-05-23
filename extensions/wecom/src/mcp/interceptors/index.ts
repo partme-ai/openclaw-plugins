@@ -1,12 +1,21 @@
 /**
- * MCP call 拦截器注册表与调度入口
+ * @module mcp/interceptors
  *
- * 所有 call 拦截器在此注册，按注册顺序执行。
- * 新增拦截器只需：
- *   1. 在 interceptors/ 目录下新建文件，实现 CallInterceptor 接口
- *   2. 在下方 interceptors 数组中注册
+ * MCP **tools/call 拦截器** 注册表与调度。
  *
- * tool.ts 的 handleCall 无需任何改动。
+ * **职责**：
+ * - `resolveBeforeCall`：合并超时、替换 args（本地文件 → 请求体）
+ * - `runAfterCall`：管道式变换响应（base64→本地路径、业务错误、授权卡片等）
+ *
+ * **已注册拦截器**（按顺序）：
+ * 1. biz-error — 业务 errcode 触发 MCP 缓存清理
+ * 2. doc-auth-error — 文档未授权时发 aibot_send_biz_msg 卡片
+ * 3. msg-media — get_msg_media base64 落盘
+ * 4. smartpage-create — page_filepath 读本地 markdown
+ * 5. smartpage-export — export content 落盘
+ * 6. smartsheet-upload — image_path/file_path 上传后替换
+ *
+ * 新增拦截器：实现 `CallInterceptor` 并加入下方 `interceptors` 数组即可。
  */
 
 import { bizErrorInterceptor } from "./biz-error.js";

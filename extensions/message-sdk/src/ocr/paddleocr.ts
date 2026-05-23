@@ -1,9 +1,11 @@
 /**
- * PaddleOCR 识别
+ * @module ocr/paddleocr
  *
- * 基于百度 PaddleOCR 的 OCR 识别。
- * PaddleOCR 可通过 PaddleHub Serving 或自部署 HTTP 服务提供 API。
- * 参考：spring-ai-examples/spring-ai-ollama-ocr-paddleocr
+ * PaddleOCR 识别 — 自部署 HTTP 服务（PP-OCRv4）。
+ *
+ * **参考**：spring-ai-examples/spring-ai-ollama-ocr-paddleocr
+ *
+ * **关键导出**：`recognizePaddleOCR`
  */
 
 import {
@@ -21,12 +23,11 @@ function resolveImageBase64(input: OCRInput): string {
 }
 
 /**
- * recognizePaddleOCR 是 ocr 模块对外暴露的操作入口。
+ * 调用自部署 PaddleOCR HTTP 服务识别图片（需 base64 输入）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param input - 必须提供 `base64` 字段
+ * @param config - 服务 baseUrl（默认 `http://localhost:8866/predict/ocr_system`）
+ * @returns 含 bbox 的结构化块列表
  */
 export async function recognizePaddleOCR(input: OCRInput, config: OCRConfig): Promise<OCRResult> {
   const baseUrl = config.baseUrl || DEFAULT_BASE_URL;

@@ -15,7 +15,7 @@ import {
   resolveGotifyAccount,
 } from "./config.js";
 import { sendGotifyMessage } from "./transport/gotify-api.js";
-import { mapOutboundToGotify } from "./routing/message-mapper.js";
+import { mapOutboundToGotify } from "./dispatch/routing/message-mapper.js";
 import { patchAccountSnapshot, setOwnApplicationId } from "./runtime.js";
 
 /**

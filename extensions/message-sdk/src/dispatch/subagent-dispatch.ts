@@ -1,5 +1,11 @@
 /**
+ * @module dispatch/subagent-dispatch
+ *
  * subagent dispatch：独立子 Agent run → waitForRun → wire 序列化 → deliver。
+ *
+ * **职责**：在 wire 通道上以 subagent 模式运行 prompt，可选等待结果并序列化回传输层。
+ *
+ * **关键导出**：`dispatchSubagentMessage`
  */
 
 import { serializeForTransport, type OutboundWireFormat } from "../pipeline/serialize-payload.js";
@@ -12,7 +18,10 @@ import {
 import type { SubagentDispatchParams, SubagentRuntime } from "./types.js";
 
 /**
- * 通过 subagent 执行 prompt；可选将回复经 deliver 发回传输层。
+ * 通过 subagent 执行 prompt；可选将回复经 deliver 发回传输层 / Run subagent and optionally deliver reply.
+ *
+ * @param params - Subagent runtime、通道身份、文本、reply 配置
+ * @returns runId 与是否已成功 deliver
  */
 export async function dispatchSubagentMessage(
   params: SubagentDispatchParams,

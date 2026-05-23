@@ -31,15 +31,30 @@ import type { ResolvedBotAccount, WecomNetworkConfig, WecomBotInboundMessage } f
 import type { WecomRuntimeEnv, WecomWebhookTarget, StreamState } from "./monitor/types.js";
 import { shouldProcessBotInboundMessage, buildInboundBody } from "./monitor.js";
 import { monitorState } from "./monitor/state.js";
-import { getWecomRuntime } from "../runtime.js";
-import { fetchAndSaveMcpConfig } from "../mcp-config.js";
+import { getWecomRuntime } from "../runtime/index.js";
+import { fetchAndSaveMcpConfig } from "../mcp/config-store.js";
+import { claimWecomKfInboundMsgid } from "../dedup/kf-inbound-dedup.js";
+
+/** Legacy Bot WS 入站 msgid 持久化去重 namespace（复用 KF dedup 基础设施）。 */
+function legacyBotDedupeScope(accountId: string): string {
+    return `legacy-bot:${accountId}`;
+}
+
+/**
+ * WS 入站 msgid 去重：内存 stream 索引 + 跨重启持久化 claim。
+ * @returns true 表示应继续处理
+ */
+async function claimWsInboundMsgid(accountId: string, msgid: string): Promise<boolean> {
+    const existingStreamId = monitorState.streamStore.getStreamByMsgId(msgid);
+    if (existingStreamId) return false;
+    return claimWecomKfInboundMsgid(legacyBotDedupeScope(accountId), msgid);
+}
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
 /** "思考中" 占位消息，让用户立即看到机器人正在响应 */
 const THINKING_MESSAGE = "<think></think>";
 
-// ─── WSClient Instance Registry ────────────────────────────────────────
 
 const wsClients = new Map<string, WSClient>();
 
@@ -221,6 +236,7 @@ function setupMessageHandler(params: {
 
     // 监听所有消息类型
     wsClient.on("message", (frame: WsFrame<BaseMessage>) => {
+        void (async () => {
         const body = frame.body;
         if (!body) return;
 
@@ -248,10 +264,11 @@ function setupMessageHandler(params: {
             `from=${userid} msgid=${String(msg.msgid ?? "")}`,
         );
 
-        // 消息去重
+        // 消息去重（内存 stream 索引 + 持久化 msgid claim）
         if (msg.msgid) {
-            const existingStreamId = streamStore.getStreamByMsgId(String(msg.msgid));
-            if (existingStreamId) {
+            const msgidStr = String(msg.msgid);
+            const claimed = await claimWsInboundMsgid(accountId, msgidStr);
+            if (!claimed) {
                 target.runtime.log?.(
                     `[${accountId}] ws-inbound: duplicate msgid=${msg.msgid}, skipping`,
                 );
@@ -295,6 +312,9 @@ function setupMessageHandler(params: {
         });
 
         target.statusSink?.({ lastInboundAt: Date.now() });
+        })().catch((err) => {
+            target.runtime.error?.(`[${accountId}] ws-inbound: handler failed: ${String(err)}`);
+        });
     });
 }
 
@@ -325,6 +345,7 @@ function setupEventHandler(params: {
 
     // 模板卡片交互事件 → 转换为文本消息注入管线
     wsClient.on("event.template_card_event", (frame: WsFrame<EventMessageWith<TemplateCardEventData>>) => {
+        void (async () => {
         const body = frame.body;
         if (!body) return;
 
@@ -334,10 +355,13 @@ function setupEventHandler(params: {
 
         const msgid = body.msgid ? String(body.msgid) : undefined;
 
-        // 去重
-        if (msgid && streamStore.getStreamByMsgId(msgid)) {
-            target.runtime.log?.(`[${accountId}] ws-event: template_card_event already processed msgid=${msgid}`);
-            return;
+        // 去重（内存 stream 索引 + 持久化 msgid claim）
+        if (msgid) {
+            const claimed = await claimWsInboundMsgid(accountId, msgid);
+            if (!claimed) {
+                target.runtime.log?.(`[${accountId}] ws-event: template_card_event already processed msgid=${msgid}`);
+                return;
+            }
         }
 
         const streamId = streamStore.createStream({ msgid });
@@ -394,6 +418,9 @@ function setupEventHandler(params: {
             streamId: actualStreamId,
             log: (msg) => target.runtime.log?.(`[${accountId}] ${msg}`),
             error: (msg) => target.runtime.error?.(`[${accountId}] ${msg}`),
+        });
+        })().catch((err) => {
+            target.runtime.error?.(`[${accountId}] ws-event: template_card_event failed: ${String(err)}`);
         });
     });
 

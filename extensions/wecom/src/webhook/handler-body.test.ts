@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   isRequestBodyLimitError,
   readRequestBodyWithLimit,
-} from "../runtime-api.js";
+} from "../runtime/runtime-api.js";
 
 function mockReq(chunks: Buffer[]): IncomingMessage {
   const req = new EventEmitter() as IncomingMessage & { destroy?: () => void };

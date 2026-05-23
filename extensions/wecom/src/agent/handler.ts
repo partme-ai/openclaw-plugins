@@ -1,6 +1,20 @@
 /**
- * WeCom Agent Webhook 处理器
- * 处理 XML 格式回调
+ * @module agent/handler
+ *
+ * 企业微信 **Agent 模式** POST 回调业务处理器。
+ *
+ * **职责**：
+ * - 消费上游 {@link handleWecomAgentWebhookRequest} 已完成验签/解密的 XML 明文
+ * - 基于持久化 dedup（`claimWecomAgentInboundMsgid`）按 msgId 去重
+ * - 过滤 event/系统发送者等非用户意图消息
+ * - 下载媒体、ASR、动态路由、会话记录，并调度 OpenClaw Agent 回复
+ * - 通过 Agent API（非被动 XML 回复）向用户投递文本与媒体
+ *
+ * **上下游**：
+ * - 上游：`agent/webhook.ts` 完成 XML 加解密与 target 路由后传入 `verifiedPost`
+ * - 下游：`api-client` 发送消息；`webhook/dedup` 持久化幂等
+ *
+ * **关键导出**：`handleAgentWebhook`、`shouldProcessAgentInboundMessage`
  */
 
 import { pathToFileURL } from "node:url";
@@ -21,34 +35,29 @@ import {
 } from "../shared/xml-parser.js";
 import { sendText, downloadMedia, uploadMedia, sendMedia as sendAgentMedia } from "./api-client.js";
 import type { WecomAgentInboundMessage } from "../types/index.js";
+import { resolveWeComAccountMulti } from "../config/accounts.js";
 import { sendWelcomeMessage, shouldSendWelcome } from "./welcome.js";
 import { transcribeVoice, isVoiceAsrEnabled } from "./asr.js";
 import { createStream, updateStream } from "./stream.js";
 import { buildWecomUnauthorizedCommandPrompt, resolveWecomCommandAuthorization } from "../shared/command-auth.js";
-import { processDynamicRouting } from "../dynamic-routing.js";
-import { CHANNEL_ID } from "../const.js";
-import { resolveWecomMediaMaxBytes } from "../utils.js";
+import { buildWecomPairingReplyText, checkWecomDmPolicy } from "../config/dm-policy.js";
+import { checkGroupPolicy } from "../config/group-policy.js";
+import { processDynamicRouting } from "../config/dynamic-routing.js";
+import { CHANNEL_ID } from "../types/const.js";
+import { resolveWecomMediaMaxBytes } from "../config/wecom-config.js";
+import { claimWecomAgentInboundMsgid } from "../webhook/dedup.js";
 
-/** 错误提示信息 */
+/** HTTP 错误响应末尾的可选帮助文案（当前为空，预留扩展） */
 const ERROR_HELP = "";
 
-// Agent webhook 幂等去重池（防止企微回调重试导致重复回复）
-// 注意：这是进程内内存去重，重启会清空；但足以覆盖企微的短周期重试。
-const RECENT_MSGID_TTL_MS = 10 * 60 * 1000;
-const recentAgentMsgIds = new Map<string, number>();
-
-function rememberAgentMsgId(msgId: string): boolean {
-    const now = Date.now();
-    const existing = recentAgentMsgIds.get(msgId);
-    if (existing && now - existing < RECENT_MSGID_TTL_MS) return false;
-    recentAgentMsgIds.set(msgId, now);
-    // 简单清理：只在写入时做一次线性 prune，避免无界增长
-    for (const [k, ts] of recentAgentMsgIds) {
-        if (now - ts >= RECENT_MSGID_TTL_MS) recentAgentMsgIds.delete(k);
-    }
-    return true;
-}
-
+/**
+ * 启发式判断 Buffer 是否像文本文件（非二进制）。
+ *
+ * 采样前 4KB，非可打印字符占比超过 2% 则视为二进制。
+ *
+ * @param buffer - 待检测的文件内容
+ * @returns 是否更像文本
+ */
 function looksLikeTextFile(buffer: Buffer): boolean {
     const sampleSize = Math.min(buffer.length, 4096);
     if (sampleSize === 0) return true;
@@ -63,6 +72,11 @@ function looksLikeTextFile(buffer: Buffer): boolean {
     return bad / sampleSize <= 0.02;
 }
 
+/**
+ * 分析 Buffer 的可打印字符比例，用于日志诊断 file 消息类型。
+ *
+ * @param buffer - 待分析内容
+ */
 function analyzeTextHeuristic(buffer: Buffer): { sampleSize: number; badCount: number; badRatio: number } {
     const sampleSize = Math.min(buffer.length, 4096);
     if (sampleSize === 0) return { sampleSize: 0, badCount: 0, badRatio: 0 };
@@ -76,6 +90,7 @@ function analyzeTextHeuristic(buffer: Buffer): { sampleSize: number; badCount: n
     return { sampleSize, badCount, badRatio: badCount / sampleSize };
 }
 
+/** 将 Buffer 头部字节格式化为十六进制预览字符串（调试用）。 */
 function previewHex(buffer: Buffer, maxBytes = 32): string {
     const n = Math.min(buffer.length, maxBytes);
     if (n <= 0) return "";
@@ -86,6 +101,12 @@ function previewHex(buffer: Buffer, maxBytes = 32): string {
         .trim();
 }
 
+/**
+ * 若内容为文本，截取前 maxChars 字符作为 Agent 上下文预览。
+ *
+ * @param buffer - 文件内容
+ * @param maxChars - 最大预览字符数
+ */
 function buildTextFilePreview(buffer: Buffer, maxChars: number): string | undefined {
     if (!looksLikeTextFile(buffer)) return undefined;
     const text = buffer.toString("utf8");
@@ -128,8 +149,11 @@ export type AgentWebhookParams = {
     error?: (msg: string) => void;
 };
 
+/** Agent 入站消息是否进入 AI 会话的判定结果 */
 export type AgentInboundProcessDecision = {
+    /** 是否应继续 dispatch Agent */
     shouldProcess: boolean;
+    /** 跳过或接受的原因码（如 event:enter_chat、missing_sender） */
     reason: string;
 };
 
@@ -176,6 +200,7 @@ export function shouldProcessAgentInboundMessage(params: {
     };
 }
 
+/** 从 XML 解析结果中规范化 AgentId 为有限数字，无效时返回 undefined。 */
 function normalizeAgentId(value: unknown): number | undefined {
     if (typeof value === "number" && Number.isFinite(value)) return value;
     const raw = String(value ?? "").trim();
@@ -195,7 +220,12 @@ function resolveQueryParams(req: IncomingMessage): URLSearchParams {
 }
 
 /**
- * 处理消息回调 (POST)
+ * 处理 Agent POST 消息回调。
+ *
+ * 流程：校验 preverified 信封 → msgId 持久化 dedup → 立即回 success →
+ * 异步 welcome / processAgentMessage。
+ *
+ * @param params - Webhook 上下文，须含上游已解密的 `verifiedPost`
  */
 async function handleMessageCallback(params: AgentWebhookParams): Promise<boolean> {
     const { req, res, verifiedPost, agent, config, core, log, error } = params;
@@ -241,9 +271,10 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
         const chatId = extractChatId(msg);
         const msgId = extractMsgId(msg);
         const eventType = String((msg as Record<string, unknown>).Event ?? "").trim().toLowerCase();
+        // 持久化 dedup：同一 msgId 在 TTL 内重复回调时短路，避免重复 dispatch
         if (msgId) {
-            const ok = rememberAgentMsgId(msgId);
-            if (!ok) {
+            const claimed = await claimWecomAgentInboundMsgid(agent.accountId, msgId);
+            if (!claimed) {
                 log?.(`[wecom-agent] duplicate msgId=${msgId} from=${fromUser} chatId=${chatId ?? "N/A"} type=${msgType}; skipped`);
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -263,7 +294,11 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
 
         // Send welcome message for enter_chat/subscribe events
         if (msgType === "event" && eventType && shouldSendWelcome(eventType)) {
-            sendWelcomeMessage(agent, fromUser).catch((err) => {
+            const channelAccount = resolveWeComAccountMulti({
+                cfg: config,
+                accountId: agent.accountId,
+            });
+            sendWelcomeMessage(agent, fromUser, { channelConfig: channelAccount.config }).catch((err) => {
                 error?.(`[wecom-agent] welcome message failed: ${String(err)}`);
             });
         }
@@ -334,6 +369,50 @@ async function processAgentMessage(params: {
     const isGroup = Boolean(chatId);
     const peerId = isGroup ? chatId! : fromUser;
     const mediaMaxBytes = resolveWecomMediaMaxBytes(config);
+    const channelAccount = resolveWeComAccountMulti({
+        cfg: config,
+        accountId: agent.accountId,
+    });
+    const policyAccount = {
+        ...channelAccount,
+        config: {
+            ...channelAccount.config,
+            dmPolicy: agent.config.dmPolicy ?? channelAccount.config.dmPolicy,
+            allowFrom: agent.config.allowFrom ?? channelAccount.config.allowFrom,
+        },
+    };
+
+    if (isGroup) {
+        const groupPolicyResult = checkGroupPolicy({
+            chatId: peerId,
+            senderId: fromUser,
+            account: channelAccount,
+            config,
+            runtime: { log, error } as Parameters<typeof checkGroupPolicy>[0]["runtime"],
+        });
+        if (!groupPolicyResult.allowed) {
+            log?.(`[wecom-agent] group policy blocked chatId=${peerId} sender=${fromUser}`);
+            return;
+        }
+    }
+
+    const dmPolicyResult = await checkWecomDmPolicy({
+        senderId: fromUser,
+        isGroup,
+        account: policyAccount,
+        runtime: { log, error } as Parameters<typeof checkWecomDmPolicy>[0]["runtime"],
+        logPrefix: "[wecom-agent]",
+        sendPairingReply: async ({ senderId, code }) => {
+            const text = buildWecomPairingReplyText(senderId, code);
+            await sendText({ agent, toUser: senderId, chatId: undefined, text });
+        },
+    });
+    if (!dmPolicyResult.allowed) {
+        log?.(
+            `[wecom-agent] dm policy blocked sender=${fromUser} pairingSent=${String(dmPolicyResult.pairingSent ?? false)}`,
+        );
+        return;
+    }
 
     // 处理媒体文件
     const attachments: any[] = []; // TODO: define specific type

@@ -1,18 +1,20 @@
 /**
- * 文件工具 — 扩展名解析、MIME 映射、文件分类
+ * @module file/file-utils
  *
- * 来源：openclaw-china packages/shared/src/file/file-utils.ts (284行)
+ * 文件工具 — 扩展名解析、MIME 映射、文件分类。
+ *
+ * **职责**：为媒体下载、附件命名提供一致的扩展名与类别推断。
+ *
+ * **来源**：openclaw-china packages/shared/src/file/file-utils.ts (MIT License)
+ *
+ * **关键导出**：`resolveExtension`、`resolveFileCategory`
  */
 
 // ============================================================================
 // 类型
 // ============================================================================
 
-/**
- * FileCategory 是 file 模块的公开类型别名。
- *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
- */
+/** 文件大类 / High-level file category for routing and UI */
 export type FileCategory = "image" | "audio" | "video" | "document" | "archive" | "code" | "other";
 
 // ============================================================================
@@ -73,6 +75,7 @@ const CATEGORY_BY_EXTENSION: Record<string, FileCategory> = {
 // API
 // ============================================================================
 
+/** 从文件名提取小写扩展名（含点） */
 function extractExtension(fileName: string): string {
   const lastDot = fileName.lastIndexOf(".");
   if (lastDot === -1 || lastDot === fileName.length - 1) return "";
@@ -80,9 +83,19 @@ function extractExtension(fileName: string): string {
 }
 
 /**
- * 根据 MIME 类型和文件名分类文件
+ * 根据 MIME 类型和文件名分类文件。
  *
- * 优先级: MIME前缀 > 精确MIME映射 > 扩展名映射 > "other"
+ * 优先级：MIME 前缀（image/audio/video）> 精确 MIME 映射 > 扩展名映射 > `other`
+ *
+ * @param contentType - Content-Type 头或 MIME 字符串
+ * @param fileName - 可选文件名（用于扩展名回退）
+ * @returns 文件大类
+ *
+ * @example
+ * ```ts
+ * resolveFileCategory("application/pdf", "report.pdf"); // "document"
+ * resolveFileCategory("image/png");                     // "image"
+ * ```
  */
 export function resolveFileCategory(contentType: string, fileName?: string): FileCategory {
   const mime = contentType.split(";")[0].trim().toLowerCase();
@@ -95,9 +108,19 @@ export function resolveFileCategory(contentType: string, fileName?: string): Fil
 }
 
 /**
- * 从 MIME 类型或文件名解析扩展名
+ * 从 MIME 类型或文件名解析扩展名。
  *
- * 优先级: fileName扩展名 > MIME映射 > ".bin"
+ * 优先级：fileName 扩展名 > MIME 映射 > `.bin`
+ *
+ * @param contentType - MIME 类型
+ * @param fileName - 可选文件名
+ * @returns 带点的小写扩展名
+ *
+ * @example
+ * ```ts
+ * resolveExtension("application/pdf", "a.bin"); // ".pdf"（MIME 优先于错误扩展名时需传准确 fileName）
+ * resolveExtension("application/octet-stream", "data.csv"); // ".csv"
+ * ```
  */
 export function resolveExtension(contentType: string, fileName?: string): string {
   if (fileName) { const ext = extractExtension(fileName); if (ext) return ext; }

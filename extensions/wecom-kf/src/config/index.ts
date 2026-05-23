@@ -34,6 +34,12 @@ export {
     resolveKfAccountWebhookPath,
 } from "./kf-routes.js";
 export {
+    WECOM_KF_DEFAULT_TEMPLATES,
+    buildKfAgentReplyTimeoutSummary,
+    resolveWecomKfTemplates,
+    type ResolvedWecomKfTemplates,
+} from "./templates.js";
+export {
     getWecomKfChannelBlock,
     LEGACY_WECOM_CS_CHANNEL_KEY,
     warnWecomCsChannelDeprecation,

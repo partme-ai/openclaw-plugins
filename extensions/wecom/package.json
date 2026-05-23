@@ -25,6 +25,7 @@
     "extensions": [
       "./dist/index.js"
     ],
+    "setupEntry": "./dist/setup-entry.js",
     "channel": {
       "id": "wecom",
       "label": "WeCom",

@@ -4,31 +4,40 @@
  * 高德开放平台渠道 + 运营工具，公域 Agent-First 智能运营。
  */
 
-import type { PluginApi } from "./types.js";
+import {
+  defineChannelPluginEntry,
+  type OpenClawPluginApi,
+} from "openclaw/plugin-sdk/core";
+
 import { amapChannel } from "./channel.js";
 import { createAmapConfigGetter } from "./config.js";
 import { createAmapWebhookHandler } from "./inbound.js";
-import { createAmapTools } from "./tools.js";
+import { createAmapTools } from "./tools/tools.js";
 import { AMAP_WEBHOOK_PATH } from "./transport/server.js";
 
-/**
- * 插件注册入口
- */
-export default function register(api: PluginApi): void {
-  api.registerChannel({ plugin: amapChannel });
+export { amapChannel } from "./channel.js";
 
-  const getConfig = createAmapConfigGetter(api);
+export default defineChannelPluginEntry({
+  id: "amap",
+  name: "高德",
+  description: "高德开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
+  plugin: amapChannel as never,
+  setRuntime: () => {},
+  registerFull(api: OpenClawPluginApi) {
+    const getConfig = createAmapConfigGetter(api as never);
 
-  const webhookHandler = createAmapWebhookHandler(getConfig, api);
-  api.registerHttpRoute({
-    path: AMAP_WEBHOOK_PATH,
-    handler: webhookHandler,
-  });
+    const webhookHandler = createAmapWebhookHandler(getConfig, api as never);
+    api.registerHttpRoute({
+      path: AMAP_WEBHOOK_PATH,
+      auth: "plugin",
+      handler: webhookHandler,
+    });
 
-  if (typeof api.registerTool === "function") {
-    const tools = createAmapTools(getConfig);
-    for (const tool of tools) api.registerTool(tool);
-  }
+    if (typeof api.registerTool === "function") {
+      const tools = createAmapTools(getConfig);
+      for (const tool of tools) api.registerTool(tool as never);
+    }
 
-  console.log(`[amap] Plugin registered — channel amap + ${AMAP_WEBHOOK_PATH}`);
-}
+    console.log(`[amap] Plugin registered — channel amap + ${AMAP_WEBHOOK_PATH}`);
+  },
+});

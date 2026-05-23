@@ -2,7 +2,7 @@
 
 本文档记录 `@partme.ai/wecom` 在本地 OpenClaw Gateway 上的**手工联调步骤**，重点说明已验证的**主动发消息**方法。单元测试见插件目录 `pnpm test`。
 
-相关文档：[配置指南](./OpenClaw-WeCom-Configuration.md)
+相关文档：[配置指南](./OpenClaw-WeCom-Configuration.md) · [真实环境联调 Checklist](./OpenClaw-WeCom-Integration-Checklist.md)（Bot WS / Webhook / Agent 三模式可勾选清单）
 
 ## 前置条件
 
@@ -33,12 +33,12 @@ pnpm test
 pnpm typecheck
 ```
 
-流式相关单元测试覆盖：`streaming-config.test.ts`（气泡合成、enter_chat 欢迎语解析、Webhook 空内容兜底）、`finish-thinking.test.ts`、`templates.test.ts`（模板 merge 与占位符替换）。
+流式相关单元测试覆盖：`streaming-config.test.ts`（气泡合成、enter_chat 欢迎语解析、Webhook 空内容兜底）、`finish-thinking.test.ts`、`templates.test.ts`（*Text 合并与占位符替换）。
 
 手工验证（可选）：
 
-- **enter_chat 欢迎语**：配置 `channels.wecom.templates.welcome` 或 `channels.wecom.welcomeText`，打开 Bot 会话，确认 WS / Webhook 收到欢迎文本。
-- **状态栏 / compaction**：长对话触发上下文压缩时，stream 气泡状态行应短暂显示 compaction 模板（默认「📦 正在压缩上下文…」）；可通过 `channels.wecom.templates.compaction` 自定义。
+- **enter_chat 欢迎语**：配置 `channels.wecom.welcomeText`，打开 Bot 会话，确认 WS / Webhook 收到欢迎文本。
+- **状态栏 / compaction**：长对话触发上下文压缩时，stream 气泡状态行应短暂显示 compaction 文案（默认「📦 正在压缩上下文…」）；可通过 `channels.wecom.compactionText` 自定义。
 
 ## 入站测试（用户 → Bot）
 

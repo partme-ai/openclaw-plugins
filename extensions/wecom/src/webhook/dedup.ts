@@ -1,10 +1,23 @@
 /**
- * Webhook 入站消息持久化去重（message-sdk createPersistentDedupe）。
+ * @module webhook/dedup
+ *
+ * Webhook 入站消息**持久化去重**（跨进程/重启）。
+ *
+ * **职责**：基于 msgid 的 claim 语义，防止企微重试导致重复 dispatch。
+ *
+ * **与 message-sdk 关系**：
+ * - 封装 `createPersistentDedupe`（内存 LRU + 磁盘 JSON，TTL 24h）
+ * - Bot 入站与 Agent 回调使用不同 namespace 隔离
+ *
+ * **关键流程**：`claimWecomInboundMsgid` → checkAndRecord → 重复则短路
+ *
+ * **关键导出**：`claimWecomInboundMsgid`、`claimWecomAgentInboundMsgid`、
+ * `warmupWecomWebhookDedupe`
  */
 
 import * as path from "node:path";
-import { createPersistentDedupe, type PersistentDedupe } from "../runtime-api.js";
-import { resolveStateDir } from "../openclaw-compat.js";
+import { createPersistentDedupe, type PersistentDedupe } from "../runtime/runtime-api.js";
+import { resolveStateDir } from "../shared/openclaw-compat.js";
 
 const DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
 const MEMORY_MAX_SIZE = 1_000;
@@ -38,7 +51,13 @@ async function getWecomWebhookDedupe(): Promise<PersistentDedupe> {
   return sharedDedupePromise;
 }
 
-/** 尝试登记入站 msgid；true 表示首次处理 */
+const AGENT_INBOUND_DEDUP_PREFIX = "wecom-agent-inbound";
+
+function resolveAgentInboundDedupeNamespace(accountId: string): string {
+  return `${AGENT_INBOUND_DEDUP_PREFIX}:${accountId || "default"}`;
+}
+
+/** Webhook Bot 入站 msgid 去重；`true` 表示首次 claim 成功（应继续处理）。 */
 export async function claimWecomInboundMsgid(
   accountId: string,
   msgid: string,
@@ -49,6 +68,26 @@ export async function claimWecomInboundMsgid(
   return dedupe.checkAndRecord(trimmed, { namespace: accountId || "default" });
 }
 
+/** Agent 回调入站 msgid 去重；`true` 表示首次 claim 成功。 */
+export async function claimWecomAgentInboundMsgid(
+  accountId: string,
+  msgid: string,
+): Promise<boolean> {
+  const trimmed = msgid?.trim();
+  if (!trimmed) return true;
+  const dedupe = await getWecomWebhookDedupe();
+  return dedupe.checkAndRecord(trimmed, {
+    namespace: resolveAgentInboundDedupeNamespace(accountId),
+  });
+}
+
+/**
+ * Gateway 启动时预热去重缓存（从磁盘加载 namespace 条目）。
+ *
+ * @param accountId - 账号 ID（namespace）
+ * @param log - 可选日志回调
+ * @returns 预热加载的条目数
+ */
 export async function warmupWecomWebhookDedupe(
   accountId: string,
   log?: (...args: unknown[]) => void,
@@ -61,6 +100,7 @@ export async function warmupWecomWebhookDedupe(
   return count;
 }
 
+/** 测试专用：重置单例 dedupe 实例。 */
 export function resetWecomWebhookDedupeForTests(): void {
   sharedDedupe = null;
   sharedDedupePromise = null;

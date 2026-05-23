@@ -1,9 +1,8 @@
 {
-  "id": "openclaw-stomp",
-  "name": "openclaw-stomp",
+  "id": "stomp",
+  "name": "stomp",
   "version": "0.1.11",
   "description": "Native TCP STOMP 1.0/1.1/1.2 protocol bridge for OpenClaw",
-  "main": "dist/index.js",
   "channels": [
     "stomp-tcp"
   ],
@@ -178,7 +177,7 @@
   },
   "channelConfigs": {
     "stomp-tcp": {
-      "label": "openclaw-stomp",
+      "label": "stomp",
       "description": "Native TCP STOMP 1.0/1.1/1.2 protocol bridge for OpenClaw",
       "schema": {
         "type": "object",

@@ -1,28 +1,37 @@
 /**
- * Welcome Messages - Agent Mode Capability
+ * @module agent/welcome
  *
- * Sends welcome messages on enter_chat and subscribe events
+ * Agent 模式 **欢迎语**（enter_chat / subscribe 事件）。
  *
- * Source: wecom-app welcome message handling
+ * **职责**：
+ * - 监听 event 类型回调中的 enter_chat、subscribe
+ * - 通过 Agent API 向用户发送配置的 welcomeText
+ *
+ * **上下游**：
+ * - 上游：`agent/handler` 在 dedup 后、process 前触发
+ * - 配置：`streaming-config.resolveAgentWelcomeText`
  */
 
 import type { ResolvedAgentAccount } from "../types/index.js";
+import type { WeComConfig } from "../config/wecom-config.js";
+import { resolveAgentWelcomeText } from "../config/streaming-config.js";
 import { sendText } from "./api-client.js";
 
 /**
- * Send welcome message to user
- * @param account - Agent account configuration
- * @param userId - User ID to send welcome message to
- * @param welcomeText - Welcome message text (optional, falls back to account config)
+ * 向用户发送欢迎消息。
+ *
+ * @param account - Agent 账号
+ * @param userId - 目标用户 userid
+ * @param options.channelConfig - 可选合并的渠道级配置（共享 welcomeText）
  */
 export async function sendWelcomeMessage(
   account: ResolvedAgentAccount,
   userId: string,
-  welcomeText?: string
+  options?: { channelConfig?: WeComConfig },
 ): Promise<void> {
-  const text = welcomeText?.trim() || account.config.welcomeText?.trim();
+  const text = resolveAgentWelcomeText(account.config.welcomeText, options?.channelConfig);
   if (!text) {
-    return; // No welcome text configured
+    return;
   }
 
   try {
@@ -38,9 +47,9 @@ export async function sendWelcomeMessage(
 }
 
 /**
- * Check if event type should trigger welcome message
- * @param eventType - Event type from WeCom webhook
- * @returns true if welcome message should be sent
+ * 判断 event 类型是否应触发欢迎语。
+ *
+ * @param eventType - 企微 Event 字段（小写）
  */
 export function shouldSendWelcome(eventType: string): boolean {
   return eventType === "enter_chat" || eventType === "subscribe";

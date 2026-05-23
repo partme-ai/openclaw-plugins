@@ -8,15 +8,15 @@ import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import type { ResolvedBotAccount } from "../types/index.js";
 import type { WecomBotInboundMessage as WecomInboundMessage, WecomInboundQuote } from "../types/index.js";
-import { decryptWecomEncrypted, encryptWecomPlaintext, verifyWecomSignature, computeWecomMsgSignature, extractEncryptFromXml } from "../crypto.js";
-import { getWecomRuntime } from "../runtime.js";
-import { decryptWecomMediaWithMeta } from "../media.js";
+import { decryptWecomEncrypted, encryptWecomPlaintext, verifyWecomSignature, computeWecomMsgSignature, extractEncryptFromXml } from "../webhook/crypto.js";
+import { getWecomRuntime } from "../runtime/index.js";
+import { decryptWecomMediaWithMeta } from "../media/decrypt.js";
 import { uploadAndSendMediaBuffer } from "../media/index.js";
 import { getWsClient } from "./ws-adapter.js";
 import { WEBHOOK_PATHS, LIMITS as WECOM_LIMITS } from "../types/constants.js";
 import { handleAgentWebhook } from "../agent/index.js";
 import { resolveWecomAccount, resolveWecomEgressProxyUrl, resolveWecomMediaMaxBytes, shouldRejectWecomDefaultRoute, getWecomKfChannelBlock } from "../config/index.js";
-import { wecomFetch } from "../http.js";
+import { wecomFetch } from "../shared/http-client.js";
 import { sendText as sendAgentText, sendMedia as sendAgentMedia, uploadMedia } from "../agent/api-client.js";
 import { extractAgentId, parseXml } from "../shared/xml-parser.js";
 
@@ -30,9 +30,12 @@ import { extractAgentId, parseXml } from "../shared/xml-parser.js";
 import type { WecomRuntimeEnv, WecomWebhookTarget, StreamState, PendingInbound, ActiveReplyState } from "./monitor/types.js";
 import { monitorState, LIMITS } from "./monitor/state.js";
 import { buildWecomUnauthorizedCommandPrompt, resolveWecomCommandAuthorization } from "../shared/command-auth.js";
-import { generateAgentId, shouldUseDynamicAgent, ensureDynamicAgentListed } from "../dynamic-agent.js";
-import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media-path-guard.js";
+import { generateAgentId, shouldUseDynamicAgent, ensureDynamicAgentListed } from "../channel/dynamic-agent.js";
+import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media/path-guard.js";
 import type { WecomConfig } from "../types/config.js";
+import { extractLocalFilePathsFromText, extractLocalImagePathsFromText } from "@partme.ai/openclaw-message-sdk/media";
+import { truncateUtf8Bytes } from "@partme.ai/openclaw-message-sdk/util";
+import { enqueueLegacyChatTask } from "./chat-queue.js";
 
 // Global State
 monitorState.streamStore.setFlushHandler((pending) => void flushPending(pending));
@@ -102,17 +105,6 @@ function checkPruneTimer() {
     monitorState.stopPruning();
   }
 }
-
-
-
-
-function truncateUtf8Bytes(text: string, maxBytes: number): string {
-  const buf = Buffer.from(text, "utf8");
-  if (buf.length <= maxBytes) return text;
-  const slice = buf.subarray(buf.length - maxBytes);
-  return slice.toString("utf8");
-}
-
 /**
  * **jsonOk (返回 JSON 响应)**
  * 
@@ -531,47 +523,6 @@ async function sendAgentDmMedia(params: {
     mediaId,
     mediaType,
   });
-}
-
-function extractLocalImagePathsFromText(params: {
-  text: string;
-  mustAlsoAppearIn: string;
-}): string[] {
-  const text = params.text;
-  const mustAlsoAppearIn = params.mustAlsoAppearIn;
-  if (!text.trim()) return [];
-
-  // Conservative: only accept common absolute paths for macOS/Linux hosts.
-  // Also require that the exact path appeared in the user's original message to prevent exfil.
-  const exts = "(png|jpg|jpeg|gif|webp|bmp)";
-  const re = new RegExp(String.raw`(\/(?:Users|tmp|root|home)\/[^\s"'<>]+?\.${exts})`, "gi");
-  const found = new Set<string>();
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    const p = m[1];
-    if (!p) continue;
-    if (!mustAlsoAppearIn.includes(p)) continue;
-    found.add(p);
-  }
-  return Array.from(found);
-}
-
-function extractLocalFilePathsFromText(text: string): string[] {
-  if (!text.trim()) return [];
-
-  // Conservative: only accept common absolute paths for macOS/Linux hosts.
-  // This is primarily for "send local file" style requests (operator/debug usage).
-  // Exclude CJK characters, CJK punctuation (，。！？；：), and other non-path chars
-  // to avoid swallowing trailing Chinese text as part of the path.
-  const re = new RegExp(String.raw`(\/(?:Users|tmp|root|home)\/[^\s"'<>\u3000-\u303F\uFF00-\uFFEF\u4E00-\u9FFF\u3400-\u4DBF]+)`, "g");
-  const found = new Set<string>();
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    const p = m[1];
-    if (!p) continue;
-    found.add(p);
-  }
-  return Array.from(found);
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -1178,24 +1129,36 @@ async function flushPending(pending: PendingInbound): Promise<void> {
   if (core) {
     streamStore.markStarted(streamId);
     const enrichedTarget: WecomWebhookTarget = { ...target, core };
+    const accountId = target.account.accountId;
+    const chatId = String(msg.chatid ?? msg.from?.userid ?? "unknown");
     logInfo(target, `flush pending: start batch streamId=${streamId} batchKey=${batchKey} conversationKey=${conversationKey} mergedCount=${contents.length}`);
     logVerbose(target, `防抖结束: 开始处理聚合消息 数量=${contents.length} streamId=${streamId}`);
 
-    // Pass the first msg (with its media structure), and mergedContents for multi-message context
-    startAgentForStream({
-      target: enrichedTarget,
-      accountId: target.account.accountId,
-      msg,
-      streamId,
-      mergedContents: contents.length > 1 ? mergedContents : undefined,
-      mergedMsgids: msgids.length > 1 ? msgids : undefined,
-    }).catch((err) => {
+    const { status: queueStatus, promise } = enqueueLegacyChatTask({
+      accountId,
+      chatId,
+      task: async () => {
+        await startAgentForStream({
+          target: enrichedTarget,
+          accountId,
+          msg,
+          streamId,
+          mergedContents: contents.length > 1 ? mergedContents : undefined,
+          mergedMsgids: msgids.length > 1 ? msgids : undefined,
+        });
+      },
+    });
+    if (queueStatus === "queued") {
+      logVerbose(target, `flush pending: queued behind prior chat task chatId=${chatId} streamId=${streamId}`);
+    }
+
+    promise.catch((err) => {
       streamStore.updateStream(streamId, (state) => {
         state.error = err instanceof Error ? err.message : String(err);
         state.content = state.content || `Error: ${state.error}`;
         state.finished = true;
       });
-      target.runtime.error?.(`[${target.account.accountId}] wecom agent failed (处理失败): ${String(err)}`);
+      target.runtime.error?.(`[${accountId}] wecom agent failed (处理失败): ${String(err)}`);
       streamStore.onStreamFinished(streamId);
     });
   }

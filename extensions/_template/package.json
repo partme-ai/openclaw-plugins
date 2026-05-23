@@ -41,6 +41,7 @@
     "extensions": [
       "./dist/index.js"
     ],
+    "setupEntry": "./dist/setup-entry.js",
     "channel": {
       "id": "TEMPLATE_NAME",
       "label": "TEMPLATE_LABEL",

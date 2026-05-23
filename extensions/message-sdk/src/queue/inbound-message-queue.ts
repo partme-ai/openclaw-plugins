@@ -1,11 +1,14 @@
 /**
- * FIFO queue for inbound UnifiedMessage items inside one Gateway process.
+ * @module queue/inbound-message-queue
  *
- * `push` can optionally use an idempotency cache. When the key was already
- * seen, the item is not queued and `false` is returned.
+ * Gateway 进程内 UnifiedMessage 的 FIFO 入站队列。
  *
- * 该队列只表达 SDK 内部的轻量入站排队语义，不负责持久化、重试或跨进程锁。
- * 需要跨进程去重时应组合 `dedup/persistent-dedupe` 或 `claimable-dedupe`。
+ * **职责**：单进程轻量缓冲入站消息；可选组合内存幂等缓存拒绝重复 messageId。
+ *
+ * **适用场景**：插件进程内「先入队再派发」的顺序控制；跨进程去重应组合 `dedup/persistent-dedupe`
+ * 或 `claimable-dedupe`。
+ *
+ * **关键导出**：`InboundMessageQueue`、`InboundPushParams`、`InboundQueueItem`
  */
 
 import type { UnifiedMessage } from "../core/types.js";
@@ -14,9 +17,9 @@ import type { IdempotencyCache } from "../dedup/idempotency-cache.js";
 /**
  * 入站消息入队参数。
  *
- * @property message - 已归一化的 UnifiedMessage。
- * @property idempotencyKey - 可选幂等 key；未提供时使用 `message.messageId`。
- * @property transportMeta - 原传输层元数据，供后续派发或审计使用。
+ * @property message - 已归一化的 UnifiedMessage
+ * @property idempotencyKey - 可选幂等 key；未提供时使用 `message.messageId`
+ * @property transportMeta - 原传输层元数据，供后续派发或审计使用
  */
 export interface InboundPushParams {
   message: UnifiedMessage;
@@ -27,16 +30,16 @@ export interface InboundPushParams {
 /**
  * 入队后的同步/异步处理器。
  *
- * @param item - 刚进入队列的消息条目；处理器可以立即派发，也可以只做审计。
+ * @param item - 刚进入队列的消息条目；处理器可以立即派发，也可以只做审计
  */
 export type InboundQueueHandler = (item: InboundQueueItem) => void | Promise<void>;
 
 /**
  * 队列内部保存的入站消息条目。
  *
- * @property message - 入站统一消息。
- * @property transportMeta - 可选原始传输元数据。
- * @property pushedAt - 入队时间戳，单位毫秒。
+ * @property message - 入站统一消息
+ * @property transportMeta - 可选原始传输元数据
+ * @property pushedAt - 入队时间戳（毫秒）
  */
 export interface InboundQueueItem {
   message: UnifiedMessage;
@@ -47,8 +50,8 @@ export interface InboundQueueItem {
 /**
  * 入站队列配置。
  *
- * @property idempotency - 可选内存幂等缓存，用于拒绝重复 messageId/key。
- * @property onPush - 入队后立即触发的处理器。
+ * @property idempotency - 可选内存幂等缓存，用于拒绝重复 messageId/key
+ * @property onPush - 入队后立即触发的处理器
  */
 export interface InboundMessageQueueOptions {
   idempotency?: IdempotencyCache;
@@ -58,8 +61,17 @@ export interface InboundMessageQueueOptions {
 /**
  * 单进程 FIFO 入站队列。
  *
- * 适合在插件进程内短暂缓冲消息，或在测试中锁定“入队后再派发”的顺序。
+ * 适合在插件进程内短暂缓冲消息，或在测试中锁定「入队后再派发」的顺序。
  * 该类不是持久队列；进程退出后队列内容会丢失。
+ *
+ * @example
+ * ```ts
+ * const queue = new InboundMessageQueue({
+ *   idempotency: createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10_000 }),
+ *   onPush: (item) => dispatchToAgent(item),
+ * });
+ * const accepted = await queue.push({ message });
+ * ```
  */
 export class InboundMessageQueue {
   private readonly queue: InboundQueueItem[] = [];
@@ -69,7 +81,7 @@ export class InboundMessageQueue {
   /**
    * 创建一个入站队列实例。
    *
-   * @param options - 幂等缓存和入队处理器配置。
+   * @param options - 幂等缓存和入队处理器配置
    */
   constructor(options: InboundMessageQueueOptions = {}) {
     this.idempotency = options.idempotency;
@@ -79,8 +91,10 @@ export class InboundMessageQueue {
   /**
    * 将消息放入队列，并在需要时触发 onPush。
    *
-   * @param params - 入队消息、幂等 key 和传输元数据。
-   * @returns `true` 表示消息被接受；`false` 表示被幂等缓存判定为重复。
+   * 若配置了幂等缓存且 key 在 TTL 内已见过，则不入队并返回 `false`。
+   *
+   * @param params - 入队消息、幂等 key 和传输元数据
+   * @returns `true` 表示消息被接受；`false` 表示被幂等缓存判定为重复
    */
   async push(params: InboundPushParams): Promise<boolean> {
     const key = params.idempotencyKey ?? params.message.messageId;
@@ -102,9 +116,9 @@ export class InboundMessageQueue {
   }
 
   /**
-   * 取出最早入队的消息。
+   * 取出最早入队的消息（FIFO）。
    *
-   * @returns 队首条目；队列为空时返回 `undefined`。
+   * @returns 队首条目；队列为空时返回 `undefined`
    */
   pop(): InboundQueueItem | undefined {
     return this.queue.shift();
@@ -113,7 +127,7 @@ export class InboundMessageQueue {
   /**
    * 查看队首消息但不移除。
    *
-   * @returns 队首条目；队列为空时返回 `undefined`。
+   * @returns 队首条目；队列为空时返回 `undefined`
    */
   peek(): InboundQueueItem | undefined {
     return this.queue[0];

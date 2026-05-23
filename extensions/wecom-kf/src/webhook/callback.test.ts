@@ -6,14 +6,14 @@ import {
   computeWecomMsgSignature,
   encryptWecomPlaintext,
   parseWecomCallback,
-} from "../crypto.js";
+} from "../webhook/crypto.js";
 import type { WecomAccountConfig } from "../types/index.js";
 
 const dispatchKfMessageMock = vi.hoisted(() => vi.fn(async () => undefined));
 const syncKfMessagesMock = vi.hoisted(() => vi.fn());
 const getWecomRuntimeMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../dispatch.js", () => ({
+vi.mock("../dispatch/inbound-dispatcher.js", () => ({
   dispatchKfMessage: dispatchKfMessageMock,
 }));
 
@@ -25,7 +25,7 @@ vi.mock("../agent/api-client.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../runtime.js", () => ({
+vi.mock("../runtime/index.js", () => ({
   getWecomRuntime: getWecomRuntimeMock,
   setWecomRuntime: vi.fn(),
 }));
@@ -35,7 +35,7 @@ vi.mock("../dedup/kf-inbound-dedup.js", () => ({
   resolveKfInboundDedupeNamespace: vi.fn((openKfId: string) => `wecom-kf-inbound:${openKfId}`),
 }));
 
-vi.mock("../cursor-store.js", () => {
+vi.mock("../state/cursor-store.js", () => {
   const memory = new Map<string, string>();
   return {
     getCursorStore: () => ({
@@ -73,11 +73,12 @@ function makeGetReq(query: Record<string, string>): IncomingMessage {
 }
 
 function makePostReq(query: Record<string, string>, body: string): IncomingMessage {
-  const req = new EventEmitter() as IncomingMessage & EventEmitter;
+  const req = new EventEmitter() as IncomingMessage & EventEmitter & { destroy?: () => void };
   req.method = "POST";
   req.url = `/wecom/kefu?${new URLSearchParams(query).toString()}`;
   req.headers = { host: "localhost" };
-  queueMicrotask(() => {
+  req.destroy = () => req.removeAllListeners();
+  setImmediate(() => {
     req.emit("data", Buffer.from(body, "utf-8"));
     req.emit("end");
   });

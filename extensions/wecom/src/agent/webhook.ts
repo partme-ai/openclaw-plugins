@@ -1,10 +1,20 @@
 /**
- * Agent Webhook HTTP 入口
+ * @module agent/webhook
  *
- * 职责：
- * 1. 管理 AgentWebhookTarget 注册表（多账号共用同一 path 时按签名选中）
- * 2. GET  → echostr URL 验证
- * 3. POST → XML body 解密 → 调用 handleAgentWebhook
+ * 企业微信 **Agent 模式** HTTP Webhook 入口（Adapter 层）。
+ *
+ * **职责**：
+ * - 维护 `AgentWebhookTarget` 注册表（同 path 多账号时按签名选中）
+ * - GET：echostr URL 验证（验签 + AES 解密 echostr）
+ * - POST：读取 XML 密文 → 验签 → AES 解密 → 解析明文 → 调用 `handleAgentWebhook`
+ *
+ * **XML 加解密**：
+ * - 使用 `@wecom/aibot-node-sdk` 的 `WecomCrypto`（token + encodingAESKey + corpId）
+ * - POST 体通过 `extractEncryptFromXml` 提取 `<Encrypt>` 节点后再 decrypt
+ *
+ * **上下游**：
+ * - 上游：HTTP Server 路由至 `createWecomAgentWebhookHandler`
+ * - 下游：`agent/handler` 处理业务逻辑（不再重复验签/解密）
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -15,12 +25,13 @@ import type { ResolvedAgentAccount } from "../types/index.js";
 import { extractEncryptFromXml } from "./xml.js";
 import { parseXml, extractAgentId } from "../shared/xml-parser.js";
 import { handleAgentWebhook } from "./index.js";
-import { WEBHOOK_PATHS, LIMITS } from "../const.js";
+import { WEBHOOK_PATHS, LIMITS } from "../types/const.js";
 
 // ============================================================================
 // Types
 // ============================================================================
 
+/** 已注册的 Agent Webhook 目标（账号 + 配置 + 日志 + path） */
 export type AgentWebhookTarget = {
     agent: ResolvedAgentAccount;
     config: OpenClawConfig;
@@ -37,12 +48,14 @@ export type AgentWebhookTarget = {
 
 const agentTargets = new Map<string, AgentWebhookTarget[]>();
 
+/** 注册 Agent Webhook 目标到 path 维度的列表中（支持同 path 多账号）。 */
 export function registerAgentWebhookTarget(target: AgentWebhookTarget): void {
     const list = agentTargets.get(target.path) ?? [];
     list.push(target);
     agentTargets.set(target.path, list);
 }
 
+/** 按 accountId 从所有 path 的注册表中移除目标。 */
 export function deregisterAgentWebhookTarget(accountId: string): void {
     for (const [path, list] of agentTargets) {
         const filtered = list.filter((t) => t.agent.accountId !== accountId);
@@ -58,6 +71,7 @@ export function deregisterAgentWebhookTarget(accountId: string): void {
 // Helpers
 // ============================================================================
 
+/** 规范化 Webhook path（补前导 `/`、去掉尾部 `/`）。 */
 function normalizeWebhookPath(raw: string): string {
     const trimmed = raw.trim();
     if (!trimmed) return "/";
@@ -85,6 +99,12 @@ function resolveSignatureParam(params: URLSearchParams): string {
     );
 }
 
+/**
+ * 读取 POST 请求体为 UTF-8 文本，超过 maxBytes 时拒绝。
+ *
+ * @param req - HTTP 请求
+ * @param maxBytes - 最大允许字节数
+ */
 async function readTextBody(
     req: IncomingMessage,
     maxBytes: number,
@@ -122,11 +142,24 @@ function normalizeAgentIdValue(value: unknown): number | undefined {
 // Main HTTP handler
 // ============================================================================
 
+/**
+ * 创建 Agent Webhook HTTP 处理器（供插件 monitor 挂载）。
+ *
+ * @param runtime - OpenClaw 插件运行时
+ */
 export function createWecomAgentWebhookHandler(runtime: PluginRuntime) {
     return (req: IncomingMessage, res: ServerResponse) =>
         handleWecomAgentWebhookRequest(req, res, runtime);
 }
 
+/**
+ * Agent Webhook 主请求处理：路由匹配 → GET 验证 / POST 解密 → 转 handler。
+ *
+ * @param req - HTTP 请求
+ * @param res - HTTP 响应
+ * @param runtime - 插件运行时
+ * @returns 已处理时 true/void；非 Agent path 且未匹配时 false
+ */
 export async function handleWecomAgentWebhookRequest(
     req: IncomingMessage,
     res: ServerResponse,
@@ -159,7 +192,7 @@ export async function handleWecomAgentWebhookRequest(
     const nonce = query.get("nonce") ?? "";
     const signature = resolveSignatureParam(query);
 
-    // ── GET: echostr URL 验证 ──────────────────────────────────────────
+    // ── GET: echostr URL 验证（企微配置回调 URL 时发起）──
     if (req.method === "GET") {
         const echostr = query.get("echostr") ?? "";
         // 用签名匹配正确的 target
@@ -190,7 +223,7 @@ export async function handleWecomAgentWebhookRequest(
         }
     }
 
-    // ── POST: XML 消息回调 ─────────────────────────────────────────────
+    // ── POST: XML 密文消息回调（验签 → decrypt → parse → handler）──
     if (req.method !== "POST") return false;
 
     const rawBody = await readTextBody(req, LIMITS.MAX_REQUEST_BODY_SIZE);

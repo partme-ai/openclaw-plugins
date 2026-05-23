@@ -1,36 +1,52 @@
+/**
+ * 企业微信 OpenClaw ChannelPlugin 定义（channel）
+ *
+ * 实现 OpenClaw 标准通道契约：配置/安全/出站/status/gateway/actions/setup。
+ * - 入站：gateway.startAccount → Bot WS（monitor）或 Webhook（webhook/index）或 Agent-only 等待
+ * - 出站：优先 Bot WebSocket，失败回退 Agent HTTP API
+ * - 安全：DM/群组策略；resolveDmPolicy 使用 openclaw-compat buildAccountScopedDmSecurityPolicy
+ *
+ * 与 message-sdk：出站分块与 Reply 预处理经 getWeComRuntime().channel 与 runtime-api 间接使用 SDK；
+ * 企微协议适配保留在本插件 webhook/agent/monitor 子模块。
+ */
+
 import {
   type ChannelPlugin,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/core";
-import { buildAccountScopedDmSecurityPolicy, type ChannelSecurityDmPolicyCompat } from "./openclaw-compat.js";
+import { buildAccountScopedDmSecurityPolicy, type ChannelSecurityDmPolicyCompat } from "./shared/openclaw-compat.js";
 import type { ChannelStatusIssue } from "openclaw/plugin-sdk/channel-contract";
 
-import { formatPairingApproveHint, DEFAULT_ACCOUNT_ID } from './openclaw-compat.js'
+import { formatPairingApproveHint, DEFAULT_ACCOUNT_ID } from './shared/openclaw-compat.js'
 import { getWeComRuntime } from "./runtime.js";
-import { monitorWeComProvider } from "./monitor.js";
-import { getWeComWebSocket } from "./state-manager.js";
+import { monitorWeComProvider } from "./dispatch/ws-monitor.js";
+import { getWeComWebSocket } from "./state/state-manager.js";
 import { wecomSetupWizard, wecomSetupAdapter } from "./onboarding.js";
-import type { WeComConfig, ResolvedWeComAccount } from "./utils.js";
+import type { WeComConfig, ResolvedWeComAccount } from "./config/wecom-config.js";
 import {
   listWeComAccountIds,
   resolveWeComAccountMulti,
   resolveDefaultWeComAccountId,
   hasMultiAccounts,
-} from "./accounts.js";
-import type { WeComMultiAccountConfig } from "./accounts.js";
-import { CHANNEL_ID, TEXT_CHUNK_LIMIT, WEBHOOK_PATHS } from "./const.js";
-import { uploadAndSendMedia } from "./media-uploader.js";
+} from "./config/accounts.js";
+import type { WeComMultiAccountConfig } from "./config/accounts.js";
+import { CHANNEL_ID, TEXT_CHUNK_LIMIT, WEBHOOK_PATHS } from "./types/const.js";
+import { uploadAndSendMedia } from "./media/media-uploader.js";
 import { registerAgentWebhookTarget, deregisterAgentWebhookTarget } from "./agent/webhook.js";
-import { resolveWecomTarget } from "./target.js";
+import { resolveWecomTarget } from "./outbound/target.js";
 import { sendText as sendAgentText, sendMedia as sendAgentMedia, uploadMedia as uploadAgentMedia } from "./agent/api-client.js";
 import { startWebhookGateway, stopWebhookGateway } from "./webhook/index.js";
 import type { ResolvedWebhookAccount, WebhookGatewayContext } from "./webhook/index.js";
 import { fetchAndSaveWecomDocMcpConfig } from "./mcp/config-fetch.js";
-import { probeWeComAccount } from "./probe.js";
+import { probeWeComAccount } from "./runtime/probe.js";
 
 /**
- * 使用 SDK 的 sendMessage 主动发送企业微信消息
- * 优先 Bot WebSocket，不可用时自动回退到 Agent HTTP API
+ * 主动发送文本消息：Bot WS 优先，不可用时回退 Agent HTTP。
+ *
+ * @param to 目标会话（可带 wecom: 前缀）
+ * @param content Markdown 正文
+ * @param accountId 多账号 ID
+ * @param cfg Agent 回退时必需
  */
 async function sendWeComMessage({
                                   to,
@@ -541,6 +557,10 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
   },
 
   gateway: {
+    /**
+     * 按账号启动网关：注册 Agent webhook 目标、Bot WS 监听或 Bot Webhook gateway。
+     * connectionMode 默认 websocket；配置 token+encodingAESKey 可走 webhook。
+     */
     startAccount: async (ctx) => {
       // 多账号：按 accountId 解析账号配置
       const account = resolveWeComAccountMulti({ cfg: ctx.cfg, accountId: ctx.accountId });

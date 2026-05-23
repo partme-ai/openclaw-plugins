@@ -76,6 +76,11 @@
 | 模块 | 路径 | 说明 |
 |------|------|------|
 | persistent-dedupe | `dedup/persistent-dedupe.ts` | 优先 `openclaw/plugin-sdk`，本地 fallback |
+| keyed-run-queue | `queue/keyed-run-queue.ts` | WeCom 会话串行 |
+| transcript/* | `transcript/` | IM 流式配置、关流、reply 工厂 |
+| routing/dynamic-peer-agent | `routing/dynamic-peer-agent.ts` | 动态 per-peer Agent |
+| config/merge-account-config | `config/merge-account-config.ts` | 多账号 templates/groups 合并 |
+| util | `util/` | timeout、UTF-8 截断、模板占位符 |
 | path-guard | `media/path-guard.ts` | 对齐 security-runtime |
 | body-limit | `http/body-limit.ts` | 对齐 webhook-ingress |
 | safe-fetch | `http/safe-fetch.ts` | 对齐 ssrf-runtime |

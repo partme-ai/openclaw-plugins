@@ -1,5 +1,12 @@
 /**
- * UnifiedMessage 构造、序列化与文本提取。
+ * @module core/message
+ *
+ * UnifiedMessage 构造、序列化、解析与文本/媒体提取。
+ *
+ * **职责**：提供 messageId/traceId 生成、buildMessage 工厂、JSON 序列化/反序列化、
+ * 纯文本/Markdown 提取、从文本解析媒体链接。
+ *
+ * **关键导出**：`buildMessage`、`parseMessage`、`extractPlainText`、`detectMediaKind`
  */
 
 import type {
@@ -10,63 +17,43 @@ import type {
 } from "./types.js";
 import type { BuildMessageParams } from "./types.js";
 
-/**
- * 重新导出该模块的公共类型，方便调用方从 barrel 或实现文件按需导入。
- */
+/** 重新导出构造参数类型 / Re-export build params type */
 export type { BuildMessageParams } from "./types.js";
 
-/**
- * IMAGE_EXTENSIONS 是 core 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+// ============================================================================
+// 扩展名 → MediaKind 映射常量 / Extension → MediaKind sets
+// ============================================================================
+
+/** 图片扩展名集合 / Image file extensions */
 export const IMAGE_EXTENSIONS = new Set([
   "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico", "tiff", "heic", "heif",
 ]);
 
-/**
- * VIDEO_EXTENSIONS 是 core 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+/** 视频扩展名集合 / Video file extensions */
 export const VIDEO_EXTENSIONS = new Set([
   "mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v",
 ]);
 
-/**
- * AUDIO_EXTENSIONS 是 core 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+/** 音频扩展名集合 / Audio file extensions */
 export const AUDIO_EXTENSIONS = new Set([
   "mp3", "wav", "ogg", "m4a", "amr", "flac", "aac", "opus", "wma",
 ]);
 
-/**
- * DOCUMENT_EXTENSIONS 是 core 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+/** 文档扩展名集合 / Document file extensions */
 export const DOCUMENT_EXTENSIONS = new Set([
   "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "md", "rtf", "odt", "ods",
 ]);
 
-/**
- * ARCHIVE_EXTENSIONS 是 core 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+/** 压缩包扩展名集合 / Archive file extensions */
 export const ARCHIVE_EXTENSIONS = new Set([
   "zip", "rar", "7z", "tar", "gz", "tgz", "bz2",
 ]);
 
 /**
- * detectMediaKind 是 core 模块对外暴露的操作入口。
+ * 根据文件名扩展名推断媒体种类 / Detect media kind from file name extension.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param fileName - 文件名或 URL 路径 / File name or URL path
+ * @returns 推断的 MediaKind，未知时为 other
  */
 export function detectMediaKind(fileName: string): MediaKind {
   const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
@@ -79,12 +66,10 @@ export function detectMediaKind(fileName: string): MediaKind {
 }
 
 /**
- * detectMediaKindFromMime 是 core 模块对外暴露的操作入口。
+ * 根据 MIME 类型推断媒体种类 / Detect media kind from MIME type string.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param mimeType - MIME 类型，如 image/png / MIME type string
+ * @returns 推断的 MediaKind
  */
 export function detectMediaKindFromMime(mimeType: string): MediaKind {
   const m = mimeType.toLowerCase();
@@ -108,36 +93,32 @@ export function detectMediaKindFromMime(mimeType: string): MediaKind {
 }
 
 /**
- * serializeMessage 是 core 模块对外暴露的操作入口。
+ * 将 UnifiedMessage 序列化为 JSON 字符串 / Serialize UnifiedMessage to JSON string.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param msg - 统一消息体 / Unified message
+ * @returns JSON 字符串
  */
 export function serializeMessage(msg: UnifiedMessage): string {
   return JSON.stringify(msg);
 }
 
 /**
- * deserializeMessage 是 core 模块对外暴露的操作入口。
+ * 从 JSON 字符串反序列化 UnifiedMessage / Deserialize UnifiedMessage from JSON string.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param json - JSON 字符串 / JSON string
+ * @returns 解析后的 UnifiedMessage（不做 schema 校验）
  */
 export function deserializeMessage(json: string): UnifiedMessage {
   return JSON.parse(json) as UnifiedMessage;
 }
 
 /**
- * parseMessage 是 core 模块对外暴露的操作入口。
+ * 尝试从 JSON 字符串解析 UnifiedMessage / Parse UnifiedMessage from JSON with validation.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * 校验 messageId、source.channel、text 字段；无效时返回 null。
+ *
+ * @param input - JSON 字符串 / JSON string
+ * @returns 有效 UnifiedMessage 或 null
  */
 export function parseMessage(input: string): UnifiedMessage | null {
   try {
@@ -152,12 +133,12 @@ export function parseMessage(input: string): UnifiedMessage | null {
 }
 
 /**
- * parseMessageAny 是 core 模块对外暴露的操作入口。
+ * 从多种输入形态解析 UnifiedMessage / Parse UnifiedMessage from string, Buffer, or object.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * 支持：UTF-8 字符串、Buffer、Uint8Array、已解析对象（含 envelope.message 嵌套）。
+ *
+ * @param input - 原始输入 / Raw input
+ * @returns 有效 UnifiedMessage 或 null
  */
 export function parseMessageAny(input: string | Buffer | Uint8Array | unknown): UnifiedMessage | null {
   if (typeof input === "string") return parseMessage(input);
@@ -165,6 +146,7 @@ export function parseMessageAny(input: string | Buffer | Uint8Array | unknown): 
   if (input instanceof Uint8Array) return parseMessage(new TextDecoder().decode(input));
   if (typeof input === "object" && input !== null) {
     const o = input as Record<string, unknown>;
+    // 兼容 envelope 嵌套：{ message: UnifiedMessage }
     if (o.message && typeof o.message === "object") {
       return (o.message as UnifiedMessage) ?? null;
     }
@@ -174,11 +156,9 @@ export function parseMessageAny(input: string | Buffer | Uint8Array | unknown): 
 }
 
 /**
- * generateTraceId 是 core 模块对外暴露的操作入口。
+ * 生成链路追踪 ID / Generate trace id (timestamp + random).
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @returns 形如 `{ts36}-{random}` 的 trace id
  */
 export function generateTraceId(): string {
   const ts = Date.now().toString(36);
@@ -187,12 +167,10 @@ export function generateTraceId(): string {
 }
 
 /**
- * generateMessageId 是 core 模块对外暴露的操作入口。
+ * 生成消息 ID / Generate message id with optional channel prefix.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param channel - 可选渠道前缀 / Optional channel prefix
+ * @returns 唯一 messageId
  */
 export function generateMessageId(channel?: string): string {
   const prefix = channel ? `${channel}-` : "";
@@ -202,18 +180,19 @@ export function generateMessageId(channel?: string): string {
 }
 
 /**
- * buildMessage 是 core 模块对外暴露的操作入口。
+ * 根据参数构造完整 UnifiedMessage / Build a UnifiedMessage from params.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * 自动推断 contentType（text / markdown / mixed）并生成 messageId、traceId、timestamp。
+ *
+ * @param params - 构造参数 / Build parameters
+ * @returns 新的 UnifiedMessage
  */
 export function buildMessage(params: BuildMessageParams): UnifiedMessage {
   const hasMedia = (params.media?.length ?? 0) > 0;
   const hasText = Boolean(params.text);
   const hasMarkdown = Boolean(params.markdown);
 
+  // 推断内容类型：有媒体且有多模态文本 → mixed；仅 markdown → markdown；否则 text
   let contentType: MessageContentType = "text";
   if (hasMedia && (hasText || hasMarkdown)) contentType = "mixed";
   else if (hasMarkdown) contentType = "markdown";
@@ -240,12 +219,13 @@ export function buildMessage(params: BuildMessageParams): UnifiedMessage {
 }
 
 /**
- * buildTextMessage 是 core 模块对外暴露的操作入口。
+ * 快捷构造纯文本 UnifiedMessage / Build a plain text UnifiedMessage.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param channel - 渠道 ID
+ * @param accountId - 账号 ID
+ * @param userId - 用户 ID
+ * @param text - 文本内容
+ * @param chatType - 会话类型，默认 direct
  */
 export function buildTextMessage(
   channel: string,
@@ -258,12 +238,14 @@ export function buildTextMessage(
 }
 
 /**
- * buildMediaMessage 是 core 模块对外暴露的操作入口。
+ * 快捷构造带媒体的 UnifiedMessage / Build a UnifiedMessage with media attachments.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param channel - 渠道 ID
+ * @param accountId - 账号 ID
+ * @param userId - 用户 ID
+ * @param text - 伴随文本
+ * @param media - 媒体引用列表
+ * @param chatType - 会话类型
  */
 export function buildMediaMessage(
   channel: string,
@@ -277,12 +259,11 @@ export function buildMediaMessage(
 }
 
 /**
- * createMediaRef 是 core 模块对外暴露的操作入口。
+ * 创建通用媒体引用 / Create a MediaReference from URL and optional metadata.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param url - 媒体 URL
+ * @param fileName - 可选文件名（用于 kind 推断）
+ * @param sizeBytes - 可选字节大小
  */
 export function createMediaRef(url: string, fileName?: string, sizeBytes?: number): MediaReference {
   return {
@@ -295,12 +276,11 @@ export function createMediaRef(url: string, fileName?: string, sizeBytes?: numbe
 }
 
 /**
- * createImageRef 是 core 模块对外暴露的操作入口。
+ * 创建图片媒体引用 / Create an image MediaReference.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param url - 图片 URL
+ * @param base64 - 可选内联 base64
+ * @param fileName - 可选文件名（用于 MIME 推断）
  */
 export function createImageRef(url: string, base64?: string, fileName?: string): MediaReference {
   const ext = fileName?.split(".").pop()?.toLowerCase() ?? "png";
@@ -314,16 +294,17 @@ export function createImageRef(url: string, base64?: string, fileName?: string):
 }
 
 /**
- * extractPlainText 是 core 模块对外暴露的操作入口。
+ * 提取 Agent 可用的纯文本（含 Markdown 降级与媒体占位）/ Extract plain text for Agent prompt.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * 合并 text、简化后的 markdown、媒体占位符（[图片: …] 等）。
+ *
+ * @param msg - 统一消息 / Unified message
+ * @returns  Trim 后的纯文本
  */
 export function extractPlainText(msg: UnifiedMessage): string {
   let text = msg.text;
 
+  // Markdown → 简化纯文本：去标题/粗体/链接/代码块等标记
   if (msg.markdown) {
     text +=
       "\n\n" +
@@ -336,6 +317,7 @@ export function extractPlainText(msg: UnifiedMessage): string {
         .replace(/[>\-*]\s/g, "");
   }
 
+  // 媒体附件追加人类可读占位行
   if (msg.media.length > 0) {
     const parts = msg.media.map((m) => {
       switch (m.kind) {
@@ -356,12 +338,10 @@ export function extractPlainText(msg: UnifiedMessage): string {
 }
 
 /**
- * extractMarkdown 是 core 模块对外暴露的操作入口。
+ * 提取 Markdown 表示（含媒体链接）/ Extract Markdown representation with media links.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param msg - 统一消息
+ * @returns Markdown 字符串
  */
 export function extractMarkdown(msg: UnifiedMessage): string {
   let md = msg.markdown ?? msg.text;
@@ -380,17 +360,18 @@ export function extractMarkdown(msg: UnifiedMessage): string {
 }
 
 /**
- * parseMediaFromText 是 core 模块对外暴露的操作入口。
+ * 从文本中解析媒体引用（Markdown 图片、MEDIA: 行、URL 正则）/ Parse media refs from free text.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * 去重后返回 MediaReference 列表；用于 Agent 回复或用户消息中的隐式媒体链接。
+ *
+ * @param text - 原始文本
+ * @returns 解析出的媒体列表
  */
 export function parseMediaFromText(text: string): MediaReference[] {
   const media: MediaReference[] = [];
   const seen = new Set<string>();
 
+  // Markdown 图片语法 ![alt](url)
   const mdImageRe = /!\[([^\]]*)\]\(([^)]+)\)/g;
   for (const m of text.matchAll(mdImageRe)) {
     const url = m[2];
@@ -400,6 +381,7 @@ export function parseMediaFromText(text: string): MediaReference[] {
     }
   }
 
+  // OpenClaw MEDIA: 行协议
   const mediaRe = /^MEDIA:\s*`?([^\n`]+?)`?\s*$/gm;
   for (const m of text.matchAll(mediaRe)) {
     const url = m[1].trim();
@@ -409,6 +391,7 @@ export function parseMediaFromText(text: string): MediaReference[] {
     }
   }
 
+  // 常见媒体/文档 URL 后缀
   const urlRe =
     /https?:\/\/\S+\.(png|jpg|jpeg|gif|webp|svg|mp4|mov|mp3|wav|pdf|docx?|xlsx?|pptx?|zip)(\?\S*)?/gi;
   for (const m of text.matchAll(urlRe)) {
@@ -423,14 +406,16 @@ export function parseMediaFromText(text: string): MediaReference[] {
 }
 
 /**
- * MessageParseError 表示 core 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
+ * 消息解析失败错误 / Error thrown when message parsing fails irrecoverably.
  */
 export class MessageParseError extends Error {
+  /** 原始输入 / Raw input that failed to parse */
   readonly rawInput: string;
 
+  /**
+   * @param rawInput - 无法解析的原始字符串
+   * @param reason - 可选失败原因描述
+   */
   constructor(rawInput: string, reason?: string) {
     super(`消息解析失败: ${reason ?? "无效的格式"}`);
     this.name = "MessageParseError";

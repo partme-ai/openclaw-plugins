@@ -1,5 +1,8 @@
 /**
- * WeCom 双模式常量定义
+ * WeCom 协议与路由常量（types/constants）
+ *
+ * WEBHOOK_PATHS / API_ENDPOINTS / LIMITS / CRYPTO 为 Agent+Bot 双模式共享。
+ * 与 `const.ts` 中渠道级常量（CHANNEL_ID、超时、分块）互补；避免在业务代码中硬编码 URL 与限制。
  */
 
 /** 固定 Webhook 路径 */

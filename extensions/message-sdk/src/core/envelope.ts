@@ -1,5 +1,12 @@
 /**
- * MessageEnvelope 构建与解析。
+ * @module core/envelope
+ *
+ * MessageEnvelope 构建、解析与序列化。
+ *
+ * **职责**：在 UnifiedMessage 外包装 version=1 信封，携带 correlationId、replyRoute 等传输 headers；
+ * 兼容 legacy 裸 UnifiedMessage JSON。
+ *
+ * **关键导出**：`buildEnvelope`、`parseEnvelope`、`serializeEnvelope`、`buildOutboundEnvelope`
  */
 
 import { buildMessage, parseMessage, parseMessageAny } from "./message.js";
@@ -11,12 +18,10 @@ import type {
 } from "./types.js";
 
 /**
- * buildEnvelope 是 core 模块对外暴露的操作入口。
+ * 将 UnifiedMessage 包装为 version=1 信封 / Wrap UnifiedMessage in a version-1 envelope.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param message - 内嵌统一消息
+ * @param headers - 可选传输 headers
  */
 export function buildEnvelope(
   message: UnifiedMessage,
@@ -30,12 +35,15 @@ export function buildEnvelope(
 }
 
 /**
- * buildOutboundEnvelope 是 core 模块对外暴露的操作入口。
+ * 构造出站信封（direction=outbound）/ Build an outbound envelope with text body.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param params.channel - 渠道 ID
+ * @param params.accountId - 账号 ID
+ * @param params.userId - 用户/peer ID
+ * @param params.text - 出站文本
+ * @param params.agentId - 可选 agent ID
+ * @param params.replyToMessageId - 可选回复目标
+ * @param params.headers - 可选信封 headers
  */
 export function buildOutboundEnvelope(params: {
   channel: string;
@@ -59,17 +67,19 @@ export function buildOutboundEnvelope(params: {
 }
 
 /**
- * parseEnvelope 是 core 模块对外暴露的操作入口。
+ * 从 JSON 字符串解析信封 / Parse MessageEnvelope from JSON string.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * 优先识别 version=1 信封；失败时尝试 legacy 裸 UnifiedMessage 并包装为信封。
+ *
+ * @param raw - JSON 字符串
+ * @returns 有效信封或 null
  */
 export function parseEnvelope(raw: string): MessageEnvelope | null {
   try {
     const obj = JSON.parse(raw) as Record<string, unknown>;
     if (!obj || typeof obj !== "object") return null;
+
+    // 标准 version=1 信封路径
     if (obj.version === "1" && obj.message && typeof obj.message === "object") {
       const msg = obj.message as UnifiedMessage;
       if (!msg.messageId || !msg.source?.channel) return null;
@@ -79,6 +89,8 @@ export function parseEnvelope(raw: string): MessageEnvelope | null {
         headers: (obj.headers as MessageEnvelopeHeaders) ?? undefined,
       };
     }
+
+    // Legacy：整段 JSON 即为 UnifiedMessage
     const legacy = parseMessage(raw);
     if (legacy) {
       return { version: "1", message: legacy };
@@ -90,12 +102,9 @@ export function parseEnvelope(raw: string): MessageEnvelope | null {
 }
 
 /**
- * extractRoutingMetadata 是 core 模块对外暴露的操作入口。
+ * 从 UnifiedMessage.metadata 提取路由元数据 / Extract correlation/idempotency from message metadata.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param msg - 统一消息
  */
 export function extractRoutingMetadata(msg: UnifiedMessage): {
   correlationId?: string;
@@ -111,12 +120,11 @@ export function extractRoutingMetadata(msg: UnifiedMessage): {
 }
 
 /**
- * mergeReplyRouteIntoHeaders 是 core 模块对外暴露的操作入口。
+ * 将 replyRoute 合并进信封 headers / Merge replyRoute into envelope headers.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param headers - 现有 headers，可为 undefined
+ * @param replyRoute - 出站回复路由
+ * @returns 合并后的 headers；replyRoute 为空时原样返回
  */
 export function mergeReplyRouteIntoHeaders(
   headers: MessageEnvelopeHeaders | undefined,
@@ -129,24 +137,19 @@ export function mergeReplyRouteIntoHeaders(
 }
 
 /**
- * serializeEnvelope 是 core 模块对外暴露的操作入口。
+ * 序列化信封为 JSON 字符串 / Serialize envelope to JSON string.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param envelope - version=1 信封
  */
 export function serializeEnvelope(envelope: MessageEnvelope): string {
   return JSON.stringify(envelope);
 }
 
 /**
- * parseEnvelopeAny 是 core 模块对外暴露的操作入口。
+ * 从多种输入形态解析信封 / Parse MessageEnvelope from string, Buffer, or object.
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param input - 原始输入
+ * @returns 有效信封或 null
  */
 export function parseEnvelopeAny(
   input: string | Buffer | Uint8Array | unknown,

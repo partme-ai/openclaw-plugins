@@ -1,5 +1,5 @@
 {
-  "id": "openclaw-gotify",
+  "id": "gotify",
   "kind": "channel",
   "name": "Gotify",
   "description": "OpenClaw Gotify channel plugin — REST delivery, WebSocket stream inbound, multi-account session isolation, and full application/client lifecycle management.",

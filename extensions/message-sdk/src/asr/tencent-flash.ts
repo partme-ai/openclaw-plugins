@@ -1,11 +1,13 @@
 /**
- * 腾讯云 Flash ASR（语音识别）
+ * @module asr/tencent-flash
  *
- * 来源：openclaw-china packages/shared/src/asr/tencent-flash.ts (MIT License)
- * 版权：原始版权归 openclaw-china 项目所有
+ * 腾讯云 Flash ASR（一句话识别 / Flash ASR）。
  *
- * ASR 错误类型从 ./errors.js 导入，所有 ASR 提供商共用。
- * 新增提供商（百度、阿里云等）只需 import { ASRError, ... } from "./errors.js"
+ * **职责**：将音频 Buffer 提交腾讯云 Flash 接口并返回合并后的文本转写。
+ *
+ * **来源**：openclaw-china packages/shared/src/asr/tencent-flash.ts (MIT License)
+ *
+ * **关键导出**：`transcribeTencentFlash`、`TencentFlashASRConfig`
  */
 
 import { createHmac } from "node:crypto";
@@ -25,9 +27,14 @@ const ASR_FLASH_URL_PREFIX = `https://${ASR_FLASH_HOST}${ASR_FLASH_PATH_PREFIX}`
 const ASR_PROVIDER = "tencent-flash";
 
 /**
- * TencentFlashASRConfig 描述 asr 模块公开 API 的结构化参数或返回值。
+ * 腾讯云 Flash ASR 配置 / Tencent Flash ASR credentials and options.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property appId - 腾讯云应用 ID
+ * @property secretId - API SecretId
+ * @property secretKey - API SecretKey（用于 HMAC-SHA1 签名）
+ * @property engineType - 引擎类型（默认 `16k_zh`）
+ * @property voiceFormat - 音频格式（默认 `silk`）
+ * @property timeoutMs - 请求超时（默认 30000）
  */
 export interface TencentFlashASRConfig {
   appId: string;
@@ -53,12 +60,14 @@ interface TencentFlashResponse {
   flash_result?: TencentFlashResponseItem[];
 }
 
+/** URL 查询参数值编码（腾讯云签名规范） */
 function encodeQueryValue(value: string): string {
   return encodeURIComponent(value)
     .replace(/%20/g, "+")
     .replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
+/** 按 key 排序并拼接 signed query string */
 function buildSignedQuery(params: Record<string, string>): string {
   return Object.entries(params)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -66,6 +75,7 @@ function buildSignedQuery(params: Record<string, string>): string {
     .join("&");
 }
 
+/** 从 flash_result 提取合并文本（优先 item.text，否则拼接 sentence_list） */
 function extractTranscript(payload: TencentFlashResponse): string {
   const items = Array.isArray(payload.flash_result) ? payload.flash_result : [];
   const lines: string[] = [];
@@ -87,12 +97,20 @@ function extractTranscript(payload: TencentFlashResponse): string {
 }
 
 /**
- * transcribeTencentFlash 是 asr 模块对外暴露的操作入口。
+ * 调用腾讯云 Flash ASR 将音频转为文本。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param params.audio - 原始音频二进制
+ * @param params.config - 腾讯云凭证与引擎配置
+ * @returns 合并后的转写文本
+ * @throws {@link ASRAuthError} {@link ASRTimeoutError} {@link ASREmptyResultError} 等
+ *
+ * @example
+ * ```ts
+ * const text = await transcribeTencentFlash({
+ *   audio: silkBuffer,
+ *   config: { appId: "...", secretId: "...", secretKey: "..." },
+ * });
+ * ```
  */
 export async function transcribeTencentFlash(params: {
   audio: Buffer;

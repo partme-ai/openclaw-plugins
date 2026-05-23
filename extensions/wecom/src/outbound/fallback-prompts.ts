@@ -1,5 +1,7 @@
 /**
- * 企微出站兜底提示文案（Agent DM / 超时 / 媒体错误）。
+ * @module outbound/fallback-prompts
+ *
+ * 出站 **兜底提示文案** re-export（Agent DM / 超时 / 媒体错误）。
  */
 
-export { buildFallbackPrompt } from "../webhook/helpers.js";
+export { buildFallbackPrompt } from "../webhook/inbound-helpers.js";

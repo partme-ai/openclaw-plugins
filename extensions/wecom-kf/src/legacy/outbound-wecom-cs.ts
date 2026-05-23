@@ -2,13 +2,13 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk";
 
 import { sendText as sendAgentText, sendMedia as sendAgentMedia, uploadMedia } from "../agent/api-client.js";
 import { resolveWecomAccount, resolveWecomAccountConflict, resolveWecomAccounts } from "../config/index.js";
-import { getWecomRuntime } from "../runtime.js";
+import { getWecomRuntime } from "../runtime/index.js";
 import { getWsClient, waitForWsConnection } from "./ws-adapter.js";
 import { uploadAndSendMediaBuffer } from "../media/index.js";
-import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media-path-guard.js";
+import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media/path-guard.js";
 import type { WecomConfig } from "../types/config.js";
 
-import { resolveWecomTarget } from "../target.js";
+import { resolveWecomTarget } from "../outbound/target.js";
 
 type OutboundDeliveryResult = {
   channel: string;

@@ -8,10 +8,10 @@
  */
 
 import { generateReqId } from "@wecom/aibot-node-sdk";
-import { getWeComWebSocket } from "../../state-manager.js";
+import { getWeComWebSocket } from "../../state/state-manager.js";
 import { resolveCurrentAccountId } from "../transport.js";
-import { withTimeout } from "../../timeout.js";
-import { AIBOT_SEND_BIZ_MSG_CMD, BIZ_MSG_SEND_TIMEOUT_MS } from "../../const.js";
+import { withTimeout } from "../../shared/timeout.js";
+import { AIBOT_SEND_BIZ_MSG_CMD, BIZ_MSG_SEND_TIMEOUT_MS } from "../../types/const.js";
 import type { CallInterceptor, CallContext } from "./types.js";
 
 // ============================================================================

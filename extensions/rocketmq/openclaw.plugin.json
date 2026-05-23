@@ -1,8 +1,7 @@
 {
-  "id": "openclaw-rocketmq",
+  "id": "rocketmq",
   "version": "2026.5.19",
   "description": "RocketMQ channel plugin for OpenClaw.",
-  "main": "dist/index.js",
   "channels": ["rocketmq"],
   "configSchema": {
     "type": "object",

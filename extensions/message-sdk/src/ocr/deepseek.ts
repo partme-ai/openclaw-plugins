@@ -1,8 +1,11 @@
 /**
- * DeepSeek Vision OCR
+ * @module ocr/deepseek
  *
- * 基于 DeepSeek Vision 模型的 OCR 识别。
- * 参考：spring-ai-examples/spring-ai-ollama-ocr-deepseek
+ * DeepSeek Vision OCR — 基于 DeepSeek 多模态 Chat API 的图片文字识别。
+ *
+ * **参考**：spring-ai-examples/spring-ai-ollama-ocr-deepseek
+ *
+ * **关键导出**：`recognizeDeepSeek`
  */
 
 import {
@@ -31,12 +34,20 @@ function resolveImagePayload(input: OCRInput): { type: string; image_url: { url:
 }
 
 /**
- * recognizeDeepSeek 是 ocr 模块对外暴露的操作入口。
+ * 使用 DeepSeek Vision 识别图片中的文字。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param input - 图片 URL 或 base64（见 {@link OCRInput}）
+ * @param config - API 密钥与端点
+ * @returns 统一 {@link OCRResult} 结构
+ * @throws {@link OCRAuthError} {@link OCREmptyResultError} 等
+ *
+ * @example
+ * ```ts
+ * const result = await recognizeDeepSeek(
+ *   { url: "https://cdn.example.com/doc.png" },
+ *   { baseUrl: "https://api.deepseek.com/v1", apiKey: process.env.DEEPSEEK_KEY! },
+ * );
+ * ```
  */
 export async function recognizeDeepSeek(input: OCRInput, config: OCRConfig): Promise<OCRResult> {
   const baseUrl = config.baseUrl || DEFAULT_BASE_URL;

@@ -1,5 +1,11 @@
 /**
+ * @module dispatch/embedded-dispatch
+ *
  * embedded-agent dispatch：当前进程内 runEmbeddedAgent → wire 序列化 → deliver。
+ *
+ * **职责**：在 wire 通道上以 embedded 模式同步运行 Agent，将最终文本序列化并通过 deliver 回传。
+ *
+ * **关键导出**：`dispatchEmbeddedAgentMessage`
  */
 
 import { serializeForTransport, type OutboundWireFormat } from "../pipeline/serialize-payload.js";
@@ -12,7 +18,10 @@ import {
 import type { EmbeddedAgentDispatchParams, EmbeddedAgentRuntime } from "./types.js";
 
 /**
- * 通过 embedded agent 执行 prompt 并将回复经 deliver 发回传输层。
+ * 通过 embedded agent 执行 prompt 并将回复经 deliver 发回传输层 / Run embedded agent and deliver reply.
+ *
+ * @param params - Embedded runtime、通道身份、prompt、reply 配置
+ * @returns runId 与是否已成功 deliver（空回复时 delivered=false）
  */
 export async function dispatchEmbeddedAgentMessage(
   params: EmbeddedAgentDispatchParams,

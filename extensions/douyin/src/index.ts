@@ -12,7 +12,7 @@ import {
 import { douyinChannelPlugin } from "./channel.js";
 import { getDouyinRuntime, setDouyinRuntime } from "./runtime.js";
 import type { DouyinAccountConfig } from "./types.js";
-import { createDouyinTools } from "./tools.js";
+import { createDouyinTools } from "./tools/tools.js";
 
 export { douyinChannelPlugin } from "./channel.js";
 export { setDouyinRuntime, getDouyinRuntime } from "./runtime.js";

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * new-plugin.mjs — Generate a new plugin from _template.
+ * new-plugin.mjs — Generate a new plugin from _template (Base Profile).
  *
  * Usage:
  *   node scripts/new-plugin.mjs my-plugin
@@ -36,13 +36,16 @@ if (existsSync(dest)) {
   process.exit(1);
 }
 
-// Copy template (skip files that shouldn't be in real plugins)
+// Copies Base Profile TS + Extended placeholder dirs (.gitkeep / skills/README.md).
 cpSync(TEMPLATE, dest, {
   recursive: true,
-  filter: (src) => !src.includes("node_modules") && !src.includes(".DS_Store"),
+  filter: (src) =>
+    !src.includes("node_modules") &&
+    !src.includes(".DS_Store") &&
+    !src.includes("/dist/") &&
+    !src.endsWith("/dist"),
 });
 
-// Replace placeholders in template files
 function replaceInFile(filePath) {
   if (!existsSync(filePath)) return;
   let content = readFileSync(filePath, "utf8");
@@ -55,18 +58,22 @@ function replaceInFile(filePath) {
 const filesToProcess = [
   "package.json",
   "openclaw.plugin.json",
-  "index.ts",
+  "README.md",
+  "README.zh-CN.md",
+  "README.en.md",
+  "src/index.ts",
   "src/channel.ts",
+  "src/channel-setup-factory.ts",
   "src/config.ts",
-  "src/types.ts",
-  "src/monitor.ts",
+  "src/onboarding.ts",
+  "src/setup-entry.ts",
+  "src/transport/server.ts",
 ];
 
 for (const file of filesToProcess) {
   replaceInFile(resolve(dest, file));
 }
 
-// Generate doc guide from template (doc/<name>/OpenClaw-<name>-Guide.md)
 const docDir = resolve(ROOT, "doc", name);
 const guideDest = resolve(docDir, `OpenClaw-${name}-Guide.md`);
 if (existsSync(DOC_TEMPLATE)) {
@@ -79,24 +86,19 @@ if (existsSync(DOC_TEMPLATE)) {
 }
 
 console.log(`\nPlugin created: extensions/${name}`);
-console.log(`  npm: @partme.ai/${name}`);
+console.log(`  npm: @partme.ai/openclaw-${name}`);
 console.log(`  label: ${label}`);
-console.log(`\nFiles:`);
+console.log(`\nBase Profile skeleton:`);
 console.log(`  extensions/${name}/`);
-console.log(`  ├── index.ts`);
-console.log(`  ├── src/`);
-console.log(`  │   ├── channel.ts   ← implement ChannelPlugin`);
-console.log(`  │   ├── config.ts    ← define config schema`);
-console.log(`  │   ├── media.ts     ← media loading & type detection`);
-console.log(`  │   ├── monitor.ts   ← message dedup & webhook handler`);
-console.log(`  │   ├── runtime.ts   ← state singleton`);
-console.log(`  │   └── types.ts     ← type definitions`);
-console.log(`  └── doc/${name}/OpenClaw-${name}-Guide.md ← setup guide`);
+console.log(`  ├── openclaw.plugin.json`);
+console.log(`  ├── src/index.ts              ← defineChannelPluginEntry`);
+console.log(`  ├── src/channel.ts            ← ChannelPlugin`);
+console.log(`  ├── src/setup-entry.ts        ← defineSetupPluginEntry`);
+console.log(`  ├── src/inbound.ts / outbound.ts`);
+console.log(`  ├── src/transport/server.ts   ← HTTP / transport`);
+console.log(`  ├── src/*/.gitkeep            ← Extended Profile placeholders (§7.2)`);
+console.log(`  ├── skills/ hooks/            ← optional assets (MAY)`);
+console.log(`  └── test/*.test.ts (+ e2e/)`);
 console.log(`\nNext steps:`);
 console.log(`  cd extensions/${name}`);
-console.log(`  # 1. Edit src/channel.ts — implement your channel`);
-console.log(`  # 2. Edit src/config.ts — Zod schema + JSON Schema`);
-console.log(`  # 3. Edit src/monitor.ts — parseInboundMessage() & webhook handler`);
-console.log(`  # 4. Edit src/media.ts — extractInboundMedia() for your platform`);
-console.log(`  # 5. Write tests following <module>.<feature>.test.ts convention`);
-console.log(`  pnpm install && npx tsc --noEmit`);
+console.log(`  pnpm install && pnpm typecheck && pnpm test`);

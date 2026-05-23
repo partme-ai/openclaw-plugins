@@ -1,7 +1,11 @@
 /**
- * index.ts — 统一消息核心模型、信封结构与基础构造/解析工具。
+ * @module core
  *
- * 本文件作为 core 模块的一部分，负责对外暴露稳定 API 或组织子模块出口；注释用于说明职责边界，避免通道插件重复实现同类逻辑。
+ * 统一消息核心模块 barrel export。
+ *
+ * **职责**：对外暴露 UnifiedMessage 类型、信封结构、通道类别常量及构造/解析工具。
+ *
+ * **子模块**：`types`、`message`、`envelope`、`channel-class`
  */
 
 export * from "./types.js";

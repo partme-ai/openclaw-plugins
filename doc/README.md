@@ -7,6 +7,7 @@
 | [Architecture](./OpenClaw-Plugins-Architecture.md) | [架构设计](./OpenClaw-Plugins-Architecture_CN.md) |
 | [Getting Started](./OpenClaw-Plugins-Getting-Started.md) | [快速开始](./OpenClaw-Plugins-Getting-Started_CN.md) |
 | [Contributing](./OpenClaw-Plugins-Contributing.md) | [贡献指南](./OpenClaw-Plugins-Contributing_CN.md) |
+| — | [插件目录结构与命名规范（强规范 / Normative）](./OpenClaw-Plugin-Structure-Standard.md) |
 
 ## 插件文档 / Plugin Docs
 

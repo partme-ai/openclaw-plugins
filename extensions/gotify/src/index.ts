@@ -27,7 +27,7 @@ import {
 } from "./config.js";
 import { healthCheck } from "./transport/gotify-api.js";
 import { setGotifyRuntime, getAccountSnapshot } from "./runtime.js";
-import { doctorGotifyAccount } from "./bootstrap.js";
+import { doctorGotifyAccount } from "./runtime/bootstrap.js";
 
 export { gotifyChannel } from "./channel.js";
 export {
@@ -57,7 +57,7 @@ export {
   GotifyConfigError,
   GotifyWebSocketError,
   GotifyTimeoutError,
-} from "./errors.js";
+} from "./shared/errors.js";
 export {
   resolveGotifyAccount,
   resolveDefaultGotifyAccountId,
@@ -68,10 +68,10 @@ export {
 export {
   mapGotifyToInbound,
   mapOutboundToGotify,
-} from "./routing/message-mapper.js";
+} from "./dispatch/routing/message-mapper.js";
 export { createGotifyWsListener } from "./transport/server.js";
-export { bootstrapGotifyAccount, doctorGotifyAccount } from "./bootstrap.js";
-export { runConfigWizard } from "./config-wizard.js";
+export { bootstrapGotifyAccount, doctorGotifyAccount } from "./runtime/bootstrap.js";
+export { runConfigWizard } from "./config/config-wizard.js";
 
 /**
  * openclaw-gotify 插件入口 — Gotify channel plugin with REST API + WebSocket stream.
@@ -83,7 +83,7 @@ export { runConfigWizard } from "./config-wizard.js";
  */
 const gotifyEntry: ReturnType<typeof defineChannelPluginEntry> =
   defineChannelPluginEntry({
-    id: "openclaw-gotify",
+    id: "gotify",
     name: "Gotify",
     description:
       "OpenClaw Gotify channel plugin — REST delivery + WebSocket stream with multi-account session isolation.",

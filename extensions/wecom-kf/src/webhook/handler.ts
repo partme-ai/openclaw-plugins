@@ -4,12 +4,12 @@
 
 import { syncKfMessages } from "../agent/api-client.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
-import { dispatchKfMessage } from "../dispatch.js";
+import { dispatchKfMessage } from "../dispatch/inbound-dispatcher.js";
 import { handleSystemEvent } from "../agent/system-event.js";
-import { getCursorStore } from "../cursor-store.js";
+import { getCursorStore } from "../state/cursor-store.js";
 import { claimWecomKfInboundMsgid } from "../dedup/kf-inbound-dedup.js";
 import { resolveKfAccountByOpenKfId } from "../config/accounts.js";
-import { getWecomRuntime } from "../runtime.js";
+import { getWecomRuntime } from "../runtime/index.js";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type { KfMessage, WecomAccountConfig } from "../types/index.js";
 

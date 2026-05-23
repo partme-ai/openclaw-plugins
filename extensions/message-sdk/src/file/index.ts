@@ -1,8 +1,12 @@
 /**
- * 文件工具模块 — MIME/扩展名映射
+ * @module file
  *
- * 来源：openclaw-china packages/shared/src/file/ (MIT License)
- * 版权：原始版权归 openclaw-china 项目所有
+ * 文件工具模块 — MIME/扩展名映射与文件分类。
+ *
+ * **来源**：openclaw-china packages/shared/src/file/ (MIT License)
+ *
+ * **关键导出**：`resolveExtension`、`resolveFileCategory`
  */
 
 export * from "./file-utils.js";
+export * from "./text-heuristic.js";

@@ -14,12 +14,12 @@ import {
   dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
-} from "./runtime-api.js";
+} from "./runtime/runtime-api.js";
 import {
   extractDouyinSenderId,
   tryParseVerifyWebhookChallenge,
   verifyDouyinSignature,
-} from "./webhook-utils.js";
+} from "./webhook/webhook-utils.js";
 
 export type DouyinGatewayLog = {
   info?: (message: string) => void;

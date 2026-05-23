@@ -20,7 +20,7 @@ export { rabbitmqChannel } from "./channel.js";
  * channel plugin entry。
  */
 export default defineChannelPluginEntry({
-  id: "openclaw-rabbitmq",
+  id: "rabbitmq",
   name: "RabbitMQ",
   description: "OpenClaw RabbitMQ channel plugin with enterprise-grade controls.",
   plugin: rabbitmqChannel,

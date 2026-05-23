@@ -5,8 +5,8 @@ const getMonitorStateMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../runtime.js", () => ({ getWeComRuntime: getWeComRuntimeMock }));
 vi.mock("./gateway.js", () => ({ getMonitorState: getMonitorStateMock }));
-vi.mock("../runtime-api.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../runtime-api.js")>();
+vi.mock("../runtime/runtime-api.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../runtime/runtime-api.js")>();
   return {
     ...actual,
     createReplyPrefixContext: vi.fn(() => ({
@@ -28,7 +28,7 @@ vi.mock("../outbound/reply-deliver.js", () => ({
   deliverWecomReply: vi.fn(async () => undefined),
 }));
 
-import { createWecomReplyDispatcher, createWecomReplyPipeline } from "./reply-pipeline.js";
+import { createWecomReplyDispatcher } from "./reply-pipeline.js";
 
 describe("createWecomReplyDispatcher", () => {
   beforeEach(() => {
@@ -77,9 +77,6 @@ describe("createWecomReplyDispatcher", () => {
     expect(result.replyOptions.disableBlockStreaming).toBe(false);
   });
 
-  it("exports createWecomReplyPipeline as alias", () => {
-    expect(createWecomReplyPipeline).toBe(createWecomReplyDispatcher);
-  });
 
   it("preserves template_card / MEDIA / lifecycle hooks contract", () => {
     const result = createWecomReplyDispatcher({

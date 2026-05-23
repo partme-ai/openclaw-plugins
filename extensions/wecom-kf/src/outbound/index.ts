@@ -6,7 +6,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk";
 
 import { isLegacyWecomCsEnabled } from "../config/kf-routes.js";
 import { resolveWecomAccount, resolveWecomAccounts } from "../config/index.js";
-import { getWecomRuntime } from "../runtime.js";
+import { getWecomRuntime } from "../runtime/index.js";
 import { sendKfOutboundMedia, sendKfOutboundText } from "./kf-send.js";
 
 type OutboundDeliveryResult = {

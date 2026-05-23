@@ -1,45 +1,53 @@
 /**
- * Stream Mode - Agent Mode Capability
+ * @module agent/stream
  *
- * Implements streaming responses with 6-minute window
- * Handles stream placeholder responses and refresh callbacks
+ * Agent 模式 **流式回复** 内存状态管理（占位/刷新窗口）。
  *
- * Source: wecom-app stream mode implementation
+ * **职责**：
+ * - 维护 streamId → 内容/完成态 的内存 Map（TTL 10 分钟）
+ * - 构建企微 stream 占位与增量响应结构
+ * - Agent 模式下实际投递仍走 `sendText` API（非原生 stream 被动回复）
+ *
+ * **说明**：源自 wecom-app stream 实现；6 分钟窗口用于判断 stream 是否过期。
  */
 
+import { truncateUtf8Bytes } from "@partme.ai/openclaw-message-sdk/util";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import { sendText } from "./api-client.js";
 
-/**
- * Stream state for tracking active streaming responses
- */
+/** 单次 Agent 回复的 stream 内存状态 */
 export type StreamState = {
+  /** 唯一 stream 标识 */
   streamId: string;
+  /** 关联的企微 msgid（可选） */
   msgid?: string;
+  /** 创建时间戳（ms） */
   createdAt: number;
+  /** 最后更新时间戳（ms） */
   updatedAt: number;
+  /** 是否已开始写入内容 */
   started: boolean;
+  /** 是否已结束 */
   finished: boolean;
+  /** 错误信息（如有） */
   error?: string;
+  /** 累积文本内容 */
   content: string;
 };
 
-/**
- * Stream configuration
- */
-const STREAM_TTL_MS = 10 * 60 * 1000; // 10 minute TTL
-const STREAM_MAX_BYTES = 512_000; // 500KB max content size
-const INITIAL_STREAM_WAIT_MS = 5000; // 5 second initial wait
+/** stream 条目 TTL：10 分钟 */
+const STREAM_TTL_MS = 10 * 60 * 1000;
+/** 单 stream 最大 UTF-8 字节数 */
+const STREAM_MAX_BYTES = 512_000;
+/** 首次等待内容的最大毫秒数 */
+const INITIAL_STREAM_WAIT_MS = 5000;
 
-/**
- * Stream state storage (in-memory)
- */
+/** streamId → 状态 */
 const streams = new Map<string, StreamState>();
+/** msgid → streamId 反向索引 */
 const msgidToStreamId = new Map<string, string>();
 
-/**
- * Clean up expired streams
- */
+/** 清理超过 TTL 的 stream 及孤立 msgid 映射 */
 function pruneStreams(): void {
   const cutoff = Date.now() - STREAM_TTL_MS;
   for (const [id, state] of streams.entries()) {
@@ -55,17 +63,14 @@ function pruneStreams(): void {
 }
 
 /**
- * Generate unique stream ID
- * @returns Random stream ID
+ * 生成唯一 streamId。
  */
 export function createStreamId(): string {
-  // Simple random ID generation
   return Math.random().toString(36).substring(2, 18) + Date.now().toString(36);
 }
 
 /**
- * Create new stream state
- * @returns New stream state
+ * 创建并注册新的 stream 状态。
  */
 export function createStream(): StreamState {
   const streamId = createStreamId();
@@ -82,18 +87,19 @@ export function createStream(): StreamState {
 }
 
 /**
- * Get stream state by ID
- * @param streamId - Stream ID
- * @returns Stream state or undefined
+ * 按 streamId 获取状态。
+ *
+ * @param streamId - stream 标识
  */
 export function getStream(streamId: string): StreamState | undefined {
   return streams.get(streamId);
 }
 
 /**
- * Update stream content
- * @param streamId - Stream ID
- * @param update - Update function or partial state
+ * 更新 stream 状态（部分字段或 updater 函数）。
+ *
+ * @param streamId - stream 标识
+ * @param update - 部分字段或 `(state) => void`
  */
 export function updateStream(
   streamId: string,
@@ -111,9 +117,9 @@ export function updateStream(
 }
 
 /**
- * Build stream placeholder response
- * @param streamId - Stream ID
- * @returns Stream message object
+ * 构建初始 stream 占位消息（finish=false）。
+ *
+ * @param streamId - stream 标识
  */
 export function buildStreamPlaceholder(streamId: string): {
   msgtype: "stream";
@@ -130,15 +136,14 @@ export function buildStreamPlaceholder(streamId: string): {
 }
 
 /**
- * Build stream response from state
- * @param state - Stream state
- * @returns Stream message object
+ * 根据当前状态构建 stream 响应（截断至 STREAM_MAX_BYTES）。
+ *
+ * @param state - stream 状态
  */
 export function buildStreamResponse(state: StreamState): {
   msgtype: "stream";
   stream: { id: string; finish: boolean; content: string };
 } {
-  // Truncate content to max bytes
   const content = truncateUtf8Bytes(state.content, STREAM_MAX_BYTES);
   return {
     msgtype: "stream",
@@ -151,23 +156,10 @@ export function buildStreamResponse(state: StreamState): {
 }
 
 /**
- * Truncate UTF-8 string to max bytes
- * @param text - Input text
- * @param maxBytes - Maximum byte length
- * @returns Truncated text
- */
-function truncateUtf8Bytes(text: string, maxBytes: number): string {
-  const buf = Buffer.from(text, "utf8");
-  if (buf.length <= maxBytes) return text;
-  const slice = buf.subarray(buf.length - maxBytes);
-  return slice.toString("utf8");
-}
-
-/**
- * Wait for stream content with timeout
- * @param streamId - Stream ID
- * @param maxWaitMs - Maximum wait time in milliseconds
- * @returns Promise that resolves when content is available or timeout
+ * 轮询等待 stream 出现内容、完成或错误（默认 5s 超时）。
+ *
+ * @param streamId - stream 标识
+ * @param maxWaitMs - 最大等待毫秒
  */
 export async function waitForStreamContent(
   streamId: string,
@@ -188,12 +180,13 @@ export async function waitForStreamContent(
 }
 
 /**
- * Send stream refresh to WeCom
- * @param account - Agent account
- * @param userId - User ID to send refresh to
- * @param streamId - Stream ID
- * @param content - Updated content
- * @param finished - Whether stream is finished
+ * 向用户发送 stream 刷新（Agent 模式降级为 sendText）。
+ *
+ * @param account - Agent 账号
+ * @param userId - 接收用户 userid
+ * @param streamId - stream 标识
+ * @param content - 更新后的文本
+ * @param finished - 是否标记为已完成
  */
 export async function sendStreamRefresh(
   account: ResolvedAgentAccount,
@@ -207,16 +200,12 @@ export async function sendStreamRefresh(
     throw new Error(`Stream ${streamId} not found`);
   }
 
-  // Update state
   state.content = content;
   state.finished = finished;
   state.updatedAt = Date.now();
 
-  // Build stream response
-  const response = buildStreamResponse(state);
+  buildStreamResponse(state);
 
-  // Send as text message (WeCom doesn't support native stream type in Agent mode)
-  // In production, this would be sent via the framework's stream mechanism
   await sendText({
     agent: account,
     toUser: userId,
@@ -224,28 +213,26 @@ export async function sendStreamRefresh(
   });
 }
 
-/**
- * Clean up expired streams (should be called periodically)
- */
+/** 主动清理过期 stream（可周期性调用） */
 export function cleanupExpiredStreams(): void {
   pruneStreams();
 }
 
 /**
- * Check if stream has expired
- * @param state - Stream state
- * @param windowMs - Time window in milliseconds (default 6 minutes)
- * @returns true if stream has expired
+ * 判断 stream 是否超出企微刷新窗口（默认 6 分钟）。
+ *
+ * @param state - stream 状态
+ * @param windowMs - 窗口毫秒数
  */
 export function isStreamExpired(state: StreamState, windowMs: number = 6 * 60 * 1000): boolean {
   return Date.now() - state.createdAt > windowMs;
 }
 
 /**
- * Get time remaining in stream window
- * @param state - Stream state
- * @param windowMs - Time window in milliseconds (default 6 minutes)
- * @returns Remaining milliseconds
+ * 返回 stream 窗口内剩余毫秒数。
+ *
+ * @param state - stream 状态
+ * @param windowMs - 窗口毫秒数
  */
 export function getStreamTimeRemaining(state: StreamState, windowMs: number = 6 * 60 * 1000): number {
   const elapsed = Date.now() - state.createdAt;

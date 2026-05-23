@@ -58,6 +58,30 @@
     "./metadata": {
       "types": "./src/metadata/index.ts",
       "default": "./src/metadata/index.ts"
+    },
+    "./util": {
+      "types": "./src/util/index.ts",
+      "default": "./src/util/index.ts"
+    },
+    "./transcript": {
+      "types": "./src/transcript/index.ts",
+      "default": "./src/transcript/index.ts"
+    },
+    "./routing": {
+      "types": "./src/routing/index.ts",
+      "default": "./src/routing/index.ts"
+    },
+    "./config": {
+      "types": "./src/config/index.ts",
+      "default": "./src/config/index.ts"
+    },
+    "./openclaw": {
+      "types": "./src/openclaw/index.ts",
+      "default": "./src/openclaw/index.ts"
+    },
+    "./text": {
+      "types": "./src/text/index.ts",
+      "default": "./src/text/index.ts"
     }
   },
   "peerDependencies": {
@@ -93,6 +117,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "undici": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { sendActiveMessage, handleWecomWebhookRequest, registerWecomWebhookTarget } from "./monitor.js";
-import * as cryptoHelpers from "../crypto.js";
-import * as runtime from "../runtime.js";
+import * as cryptoHelpers from "../webhook/crypto.js";
+import * as runtime from "../runtime/index.js";
 import * as agentApi from "../agent/api-client.js";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
@@ -23,8 +23,8 @@ vi.mock("../agent/api-client.js", () => ({
     uploadMedia: vi.fn(),
 }));
 
-vi.mock("../media-path-guard.js", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../media-path-guard.js")>();
+vi.mock("../media/path-guard.js", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../media/path-guard.js")>();
     const fs = await import("node:fs/promises");
     const os = await import("node:os");
     return {

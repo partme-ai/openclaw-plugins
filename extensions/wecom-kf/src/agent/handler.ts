@@ -4,9 +4,16 @@
  */
 
 import { pathToFileURL } from "node:url";
-import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
+import {
+    analyzeTextHeuristic,
+    buildTextFilePreview,
+    createIdempotencyCache,
+    normalizeInboundTextContentType,
+    previewHex,
+} from "@partme.ai/openclaw-message-sdk";
+import { deliverAgentReplyPayload } from "./agent-reply-delivery.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import {
     extractMsgType,
@@ -18,79 +25,18 @@ import {
     extractFileName,
     extractAgentId,
 } from "../shared/xml-parser.js";
-import { sendText, downloadMedia, uploadMedia, sendMedia as sendAgentMedia } from "./api-client.js";
-import { getWecomRuntime } from "../runtime.js";
+import { sendText, downloadMedia } from "./api-client.js";
 import type { WecomAgentInboundMessage } from "../types/index.js";
 import { buildWecomUnauthorizedCommandPrompt, resolveWecomCommandAuthorization } from "../shared/command-auth.js";
-import { resolveWecomMediaMaxBytes, shouldRejectWecomDefaultRoute, getWecomKfChannelBlock } from "../config/index.js";
-import { generateAgentId, shouldUseDynamicAgent, ensureDynamicAgentListed } from "../dynamic-agent.js";
-import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media-path-guard.js";
-import type { WecomConfig } from "../types/config.js";
+import { resolveWecomMediaMaxBytes, shouldRejectWecomDefaultRoute } from "../config/index.js";
+import { generateAgentId, shouldUseDynamicAgent, ensureDynamicAgentListed } from "../channel/dynamic-agent.js";
 
 /** 错误提示信息 */
 const ERROR_HELP = "";
 
 // Agent webhook 幂等去重池（防止企微回调重试导致重复回复）
 // 注意：这是进程内内存去重，重启会清空；但足以覆盖企微的短周期重试。
-const RECENT_MSGID_TTL_MS = 10 * 60 * 1000;
-const recentAgentMsgIds = new Map<string, number>();
-
-function rememberAgentMsgId(msgId: string): boolean {
-    const now = Date.now();
-    const existing = recentAgentMsgIds.get(msgId);
-    if (existing && now - existing < RECENT_MSGID_TTL_MS) return false;
-    recentAgentMsgIds.set(msgId, now);
-    // 简单清理：只在写入时做一次线性 prune，避免无界增长
-    for (const [k, ts] of recentAgentMsgIds) {
-        if (now - ts >= RECENT_MSGID_TTL_MS) recentAgentMsgIds.delete(k);
-    }
-    return true;
-}
-
-function looksLikeTextFile(buffer: Buffer): boolean {
-    const sampleSize = Math.min(buffer.length, 4096);
-    if (sampleSize === 0) return true;
-    let bad = 0;
-    for (let i = 0; i < sampleSize; i++) {
-        const b = buffer[i]!;
-        const isWhitespace = b === 0x09 || b === 0x0a || b === 0x0d; // \t \n \r
-        const isPrintable = b >= 0x20 && b !== 0x7f;
-        if (!isWhitespace && !isPrintable) bad++;
-    }
-    // 非可打印字符占比太高，基本可判断为二进制
-    return bad / sampleSize <= 0.02;
-}
-
-function analyzeTextHeuristic(buffer: Buffer): { sampleSize: number; badCount: number; badRatio: number } {
-    const sampleSize = Math.min(buffer.length, 4096);
-    if (sampleSize === 0) return { sampleSize: 0, badCount: 0, badRatio: 0 };
-    let badCount = 0;
-    for (let i = 0; i < sampleSize; i++) {
-        const b = buffer[i]!;
-        const isWhitespace = b === 0x09 || b === 0x0a || b === 0x0d;
-        const isPrintable = b >= 0x20 && b !== 0x7f;
-        if (!isWhitespace && !isPrintable) badCount++;
-    }
-    return { sampleSize, badCount, badRatio: badCount / sampleSize };
-}
-
-function previewHex(buffer: Buffer, maxBytes = 32): string {
-    const n = Math.min(buffer.length, maxBytes);
-    if (n <= 0) return "";
-    return buffer
-        .subarray(0, n)
-        .toString("hex")
-        .replace(/(..)/g, "$1 ")
-        .trim();
-}
-
-function buildTextFilePreview(buffer: Buffer, maxChars: number): string | undefined {
-    if (!looksLikeTextFile(buffer)) return undefined;
-    const text = buffer.toString("utf8");
-    if (!text.trim()) return undefined;
-    const truncated = text.length > maxChars ? `${text.slice(0, maxChars)}\n…(已截断)` : text;
-    return truncated;
-}
+const agentMsgIdDedupe = createIdempotencyCache({ ttlMs: 10 * 60 * 1000, maxEntries: 10_000 });
 
 /**
  * **AgentWebhookParams (Webhook 处理器参数)**
@@ -240,8 +186,7 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
         const msgId = extractMsgId(msg);
         const eventType = String((msg as Record<string, unknown>).Event ?? "").trim().toLowerCase();
         if (msgId) {
-            const ok = rememberAgentMsgId(msgId);
-            if (!ok) {
+            if (agentMsgIdDedupe.remember(msgId)) {
                 log?.(`[wecom-agent] duplicate msgId=${msgId} from=${fromUser} chatId=${chatId ?? "N/A"} type=${msgType}; skipped`);
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -349,12 +294,11 @@ async function processAgentMessage(params: {
                 };
                 const textPreview = msgType === "file" ? buildTextFilePreview(buffer, 12_000) : undefined;
                 const looksText = Boolean(textPreview);
-                const originalExt = path.extname(originalFileName).toLowerCase();
-                const normalizedContentType =
-                    looksText && originalExt === ".md" ? "text/markdown" :
-                    looksText && (!contentType || contentType === "application/octet-stream")
-                        ? "text/plain; charset=utf-8"
-                        : contentType;
+                const normalizedContentType = normalizeInboundTextContentType({
+                    contentType,
+                    originalFileName,
+                    looksText,
+                });
 
                 const ext = extMap[normalizedContentType] || (looksText ? "txt" : "bin");
                 const filename = `${mediaId}.${ext}`;
@@ -558,111 +502,17 @@ async function processAgentMessage(params: {
         cfg: config,
         dispatcherOptions: {
             deliver: async (payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string }, info: { kind: string }) => {
-                let text = payload.text ?? "";
-
-                // ── 1. 解析 MEDIA: 指令（兜底处理核心 splitMediaFromOutput 未覆盖的边界情况）──
-                const mediaDirectivePaths: string[] = [];
-                const mediaDirectiveRe = /^MEDIA:\s*`?([^\n`]+?)`?\s*$/gm;
-                let _mdMatch: RegExpExecArray | null;
-                while ((_mdMatch = mediaDirectiveRe.exec(text)) !== null) {
-                    let p = (_mdMatch[1] ?? "").trim();
-                    if (!p) continue;
-                    if (p.startsWith("~/") || p === "~") {
-                        const home = process.env.HOME || "/root";
-                        p = p.replace(/^~/, home);
-                    }
-                    if (!mediaDirectivePaths.includes(p)) mediaDirectivePaths.push(p);
-                }
-                // 从回复文本中移除 MEDIA: 指令行
-                if (mediaDirectivePaths.length > 0) {
-                    text = text.replace(/^MEDIA:\s*`?[^\n`]+?`?\s*$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
-                }
-
-                // ── 2. 合并所有媒体 URL ──
-                const mediaUrls = Array.from(new Set([
-                    ...(payload.mediaUrls || []),
-                    ...(payload.mediaUrl ? [payload.mediaUrl] : []),
-                    ...mediaDirectivePaths,
-                ]));
-
-                // ── 3. 发送文本部分 ──
-                if (text.trim()) {
-                    try {
-                        await sendText({ agent, toUser: fromUser, chatId: undefined, text });
-                        log?.(`[wecom-agent] reply delivered (${info.kind}) to ${fromUser} (textLen=${text.length})`);
-                    } catch (err: unknown) {
-                        const message = err instanceof Error ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}` : String(err);
-                        error?.(`[wecom-agent] reply failed: ${message}`);
-                    }
-                }
-
-                // ── 4. 逐个发送媒体文件（通过 Agent API 上传 + 发送）──
-                for (const mediaPath of mediaUrls) {
-                    try {
-                        const isRemoteUrl = /^https?:\/\//i.test(mediaPath);
-                        let buf: Buffer;
-                        let contentType: string;
-                        let filename: string;
-
-                        if (isRemoteUrl) {
-                            const res = await fetch(mediaPath, { signal: AbortSignal.timeout(30_000) });
-                            if (!res.ok) throw new Error(`download failed: ${res.status}`);
-                            buf = Buffer.from(await res.arrayBuffer());
-                            contentType = res.headers.get("content-type") || "application/octet-stream";
-                            filename = new URL(mediaPath).pathname.split("/").pop() || "media";
-                        } else {
-                            const pathModule = await import("node:path");
-                            const runtimeCfg = getWecomRuntime()?.config?.loadConfig?.() as OpenClawConfig | undefined;
-                            const wecomConfig = getWecomKfChannelBlock(runtimeCfg) as WecomConfig | undefined;
-                            const allowedRoots = await getExtendedMediaLocalRoots(wecomConfig);
-                            const guarded = await readGuardedLocalMediaFile({ filePath: mediaPath, allowedRoots });
-                            if (!guarded.ok) {
-                                throw new Error(guarded.error);
-                            }
-                            buf = guarded.buffer;
-                            filename = pathModule.basename(mediaPath);
-                            const ext = pathModule.extname(mediaPath).slice(1).toLowerCase();
-                            const MIME_MAP: Record<string, string> = {
-                                jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif",
-                                webp: "image/webp", mp3: "audio/mpeg", wav: "audio/wav", amr: "audio/amr",
-                                mp4: "video/mp4", mov: "video/quicktime", pdf: "application/pdf",
-                                doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                txt: "text/plain", csv: "text/csv", json: "application/json", zip: "application/zip",
-                            };
-                            contentType = MIME_MAP[ext] ?? "application/octet-stream";
-                        }
-
-                        // 确定企微媒体类型
-                        let mediaType: "image" | "voice" | "video" | "file" = "file";
-                        if (contentType.startsWith("image/")) mediaType = "image";
-                        else if (contentType.startsWith("audio/")) mediaType = "voice";
-                        else if (contentType.startsWith("video/")) mediaType = "video";
-
-                        log?.(`[wecom-agent] uploading media: ${filename} (${mediaType}, ${contentType}, ${buf.length} bytes)`);
-
-                        const mediaId = await uploadMedia({ agent, type: mediaType, buffer: buf, filename });
-
-                        await sendAgentMedia({
-                            agent,
-                            toUser: fromUser,
-                            mediaId,
-                            mediaType,
-                            ...(mediaType === "video" ? { title: filename, description: "" } : {}),
-                        });
-
-                        log?.(`[wecom-agent] media sent (${info.kind}) to ${fromUser}: ${filename} (${mediaType})`);
-                    } catch (err: unknown) {
-                        const message = err instanceof Error ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}` : String(err);
-                        error?.(`[wecom-agent] media send failed: ${mediaPath}: ${message}`);
-                        // 降级：发文本通知用户
-                        try {
-                            await sendText({ agent, toUser: fromUser, chatId: undefined, text: `⚠️ 文件发送失败: ${mediaPath.split("/").pop() || mediaPath}\n${message}` });
-                        } catch { /* ignore */ }
-                    }
-                }
-
-                // 如果既没有文本也没有媒体，不做任何事（防止空回复）
+                await deliverAgentReplyPayload({
+                    cfg: config,
+                    agent,
+                    toUser: fromUser,
+                    text: String(payload.text ?? ""),
+                    mediaUrls: payload.mediaUrls,
+                    mediaUrl: payload.mediaUrl,
+                    log,
+                    error,
+                    infoKind: info.kind,
+                });
             },
             onError: (err: unknown, info: { kind: string }) => {
                 error?.(`[wecom-agent] ${info.kind} reply error: ${String(err)}`);

@@ -1,5 +1,8 @@
 /**
- * WeCom 账号类型定义
+ * WeCom 解析后账号类型（types/account）
+ *
+ * `ResolvedAgentAccount` 由 `accounts.resolveWeComAccountMulti` 在 agent 凭据齐全时构造，
+ * 供 Agent HTTP API、webhook 注册与 probe 使用。Bot 侧仍使用 `ResolvedWeComAccount`（utils.ts）。
  */
 
 import type {

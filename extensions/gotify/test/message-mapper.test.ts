@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mapGotifyToInbound, mapOutboundToGotify } from '../src/routing/message-mapper.js';
+import { mapGotifyToInbound, mapOutboundToGotify } from '../src/dispatch/routing/message-mapper.js';
 
 describe('message-mapper', () => {
   it('maps outbound metadata to gotify extras', () => {

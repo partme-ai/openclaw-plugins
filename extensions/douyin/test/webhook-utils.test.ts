@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { tryParseVerifyWebhookChallenge, verifyDouyinSignature, extractDouyinSenderId } from "../src/webhook-utils.js";
+import { tryParseVerifyWebhookChallenge, verifyDouyinSignature, extractDouyinSenderId } from "../src/webhook/webhook-utils.js";
 
 describe("tryParseVerifyWebhookChallenge", () => {
   it("returns challenge string for verify_webhook event", () => {

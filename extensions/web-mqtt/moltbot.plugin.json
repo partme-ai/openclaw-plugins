@@ -1,6 +1,6 @@
 {
-  "id": "openclaw-web-mqtt",
-  "name": "openclaw-web-mqtt",
+  "id": "web-mqtt",
+  "name": "web-mqtt",
   "version": "0.1.9",
   "description": "Enterprise MQTT over WebSocket channel plugin for OpenClaw",
   "main": "dist/index.js",

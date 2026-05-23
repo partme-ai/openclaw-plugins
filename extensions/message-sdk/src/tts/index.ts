@@ -1,22 +1,16 @@
 /**
- * TTS 模块 — 文本转语音（Text-to-Speech）
+ * @module tts
  *
- * 远程方案（纯 HTTP，TypeScript 直接调用）：
- * - EdgeTTS：      Microsoft Edge 免费 TTS，300+ 神经语音
- * - OpenAI TTS：    tts-1/tts-1-hd，6 种内置语音
+ * TTS 模块 — 文本转语音（Text-to-Speech）。
  *
- * 本地方案（需要 Python 运行时，通过 child_process 调用）：
- * - ChatTTS：      2noise/ChatTTS，自然对话风格
- * - Mars5TTS：     CAMB.AI，语音克隆（5秒参考音频）
- * - Qwen TTS：     阿里 Qwen3-TTS，声音设计
- * - pyttsx3：      完全离线，系统语音引擎
+ * **远程方案**（纯 HTTP / CLI）：
+ * - EdgeTTS — Microsoft 免费神经语音
+ * - OpenAI TTS — tts-1 / tts-1-hd
  *
- * 来源：llm-study/llm-text-to-speech/ + Spring AI / LangChain4j TTS 示例
+ * **本地方案**（需 Python，见 `local.ts` 元数据）：
+ * - ChatTTS、Mars5TTS、Qwen TTS、pyttsx3
  *
- * 新增 TTS 提供商：
- *   1. import { TTSError } from "./errors.js"
- *   2. 实现 synthesizeXxx() 函数
- *   3. 在 index.ts 中 export
+ * **关键导出**：`synthesizeEdgeTTS`、`synthesizeOpenAI`、本地 Provider 常量
  */
 
 export * from "./errors.js";

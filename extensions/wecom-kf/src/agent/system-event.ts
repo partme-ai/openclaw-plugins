@@ -16,17 +16,17 @@ import {
   extractEventMessageText,
   getEventMessagesConfig,
 } from "../config/event-messages.js";
-import { resolveKfAgentAccount } from "../kf/call-context.js";
+import { resolveKfAgentAccount } from "../tools/call-context.js";
 import {
   dispatchKfEventMessageByCode,
-} from "../kf/event-message-dispatch.js";
+} from "../state/event-message-dispatch.js";
 import {
   enqueueKfSessionSideEffect,
-} from "../kf/session-side-effect-store.js";
+} from "../state/session-side-effect-store.js";
 import {
   setKfSessionServiceState,
-} from "../kf/session-service-state.js";
-import { getWecomRuntime } from "../runtime.js";
+} from "../state/session-service-state.js";
+import { getWecomRuntime } from "../runtime/index.js";
 import { trackAccountStatePatch } from "../webhook/callback.js";
 
 type KfSystemEventAccountConfig = {

@@ -1,5 +1,9 @@
-// ChannelPlugin implementation
+/**
+ * ChannelPlugin 定义（通道契约层）。
+ */
+
 import type { ChannelPlugin } from "openclaw/plugin-sdk";
+
 import { DEFAULT_ACCOUNT_ID } from "./config.js";
 import { templateSetupAdapter, templateSetupWizard } from "./onboarding.js";
 
@@ -8,6 +12,8 @@ export const plugin: ChannelPlugin = {
   meta: {
     id: "TEMPLATE_NAME",
     label: "TEMPLATE_LABEL",
+    selectionLabel: "TEMPLATE_LABEL",
+    docsPath: "/channels/TEMPLATE_NAME",
     blurb: "TEMPLATE_DESCRIPTION",
   },
   capabilities: {
@@ -19,8 +25,8 @@ export const plugin: ChannelPlugin = {
     blockStreaming: true,
   },
   reload: { configPrefixes: ["channels.TEMPLATE_NAME"] },
-  setupWizard: templateSetupWizard,
-  setup: templateSetupAdapter,
+  setupWizard: templateSetupWizard as never,
+  setup: templateSetupAdapter as never,
   config: {
     listAccountIds: () => [DEFAULT_ACCOUNT_ID],
     resolveAccount: () => ({ accountId: DEFAULT_ACCOUNT_ID, enabled: true, configured: false }),

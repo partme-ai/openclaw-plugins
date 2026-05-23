@@ -252,6 +252,9 @@ importers:
       openclaw:
         specifier: '>=2026.4.12'
         version: 2026.5.18
+      undici:
+        specifier: ^6.0.0
+        version: 6.25.0
     devDependencies:
       '@types/node':
         specifier: ^25.9.1
@@ -772,6 +775,9 @@ importers:
 
   extensions/wecom-kf:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: workspace:^2026.5.22
+        version: link:../message-sdk
       '@wecom/aibot-node-sdk':
         specifier: ^1.0.0
         version: 1.0.7

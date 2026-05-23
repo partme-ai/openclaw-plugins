@@ -1,6 +1,11 @@
 /**
- * WeCom 消息类型定义
- * Bot 和 Agent 模式共用
+ * WeCom 入站/出站消息类型（types/message）
+ *
+ * - Bot：JSON 回调（WebSocket / Webhook），见 WecomBotInbound* 联合类型
+ * - Agent：XML 解析后的 PascalCase 结构 WecomAgentInboundMessage（见 shared/xml-parser）
+ *
+ * 与 message-sdk：通用 ReplyPayload / 出站预处理在 runtime-api 从 SDK 引入；
+ * 本文件描述企微协议原生形状，供 webhook/agent 适配层映射到 SDK 入站模型。
  */
 
 /**

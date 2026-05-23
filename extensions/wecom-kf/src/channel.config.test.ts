@@ -1,7 +1,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { describe, expect, it } from "vitest";
 
-import { wecomPlugin } from "./channel.js";
+import { wecomPlugin } from "./channel/channel.js";
 
 describe("wecomPlugin config.deleteAccount", () => {
   it("removes only the target matrix account", () => {

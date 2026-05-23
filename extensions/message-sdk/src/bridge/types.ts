@@ -1,11 +1,22 @@
 /**
+ * @module bridge/types
+ *
  * OpenClaw 桥接层类型（与 plugin-sdk channel.reply 对齐）。
+ *
+ * **职责**：定义 BridgePluginRuntime 能力子集及入站/出站桥接参数，避免通道插件直接耦合宿主完整 Runtime。
+ *
+ * **关键导出**：`BridgePluginRuntime`、`InboundBridgeParams`、`ReplyBridgeParams`
  */
 
 import type { ReplyRoute, UnifiedMessage } from "../core/types.js";
 
-/** 插件 Runtime 中 channel 子集，用于 bridge 层避免直接耦合宿主完整 Runtime。 */
+/**
+ * 插件 Runtime 中 channel 子集 / Bridge plugin runtime channel subset.
+ *
+ * 仅包含 routing、reply 派发所需的最小 API。
+ */
 export interface BridgePluginRuntime {
+  /** OpenClaw 配置对象 / OpenClaw config */
   config: Record<string, unknown>;
   channel: {
     routing: {
@@ -31,11 +42,7 @@ export interface BridgePluginRuntime {
   };
 }
 
-/**
- * InboundBridgeParams 描述 bridge 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
- */
+/** 入站桥接参数 / Inbound bridge parameters */
 export interface InboundBridgeParams {
   runtime: BridgePluginRuntime;
   channel: string;
@@ -48,29 +55,21 @@ export interface InboundBridgeParams {
   extra?: Record<string, unknown>;
 }
 
-/**
- * ReplyBridgeParams 描述 bridge 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
- */
+/** 出站桥接参数 / Reply bridge parameters */
 export interface ReplyBridgeParams {
   runtime: BridgePluginRuntime;
   channel: string;
   accountId: string;
   peerId: string;
   sessionKey?: string;
-  /** 出站发布回调（传输层实现）。 */
+  /** 出站发布回调（传输层实现）/ Transport-layer publish callback */
   deliver: (payload: { text: string; wire: string }) => void | Promise<void>;
   outboundFormat?: "envelope" | "legacyJsonText" | "plainText";
   replyRoute?: ReplyRoute;
   agentId?: string;
 }
 
-/**
- * ReplyBridgeResult 描述 bridge 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
- */
+/** createReplyHandler 返回值 / Reply handler creation result */
 export interface ReplyBridgeResult {
   dispatcher: unknown;
   replyOptions: Record<string, unknown>;

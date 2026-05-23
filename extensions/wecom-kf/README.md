@@ -69,18 +69,19 @@ Callback ─┼──► callback.ts              │    │
 
 ```
 wecom-kf/
-  index.ts                   # Plugin entry: KF core registration
   openclaw.plugin.json       # channels: ["wecom-kf"]; contracts = Control Tools only
   src/
-    callback.ts              # KF HTTP callback (core)
-    channel.ts               # wecom-kf channel + outbound
-    kf/
+    index.ts                 # Plugin entry: KF core registration
+    webhook/callback.ts      # KF HTTP callback (core)
+    channel/channel.ts       # wecom-kf channel + outbound
+    dispatch/inbound-dispatcher.ts
+    tools/
       control-tools.ts       # wecom_kf_* Control Tools (core; API not in LLM context)
       call-context.ts        # Tool / dispatch CallContext 解析
     intelligence/            # 对话状态机、intent、prompt 注入（P3）
-    ics/
+    http/ics/
       handlers/              # Optional ops REST API (icsEnabled=true)
-      utils/                 # ICS file/config helpers
+      storage/               # ICS file/config helpers
   agents/                    # Optional agent workspace templates (not imported by core)
   skills/                    # Optional skills (manual install; not in plugin manifest)
 ```
@@ -89,15 +90,40 @@ wecom-kf/
 
 | Layer | Paths | Registration |
 |-------|--------|----------------|
-| **KF core** | `callback.ts`, `channel.ts`, `kf/control-tools.ts`, `kf/call-context.ts`, `dispatch.ts` | Always on |
+| **KF core** | `webhook/callback.ts`, `channel/channel.ts`, `tools/control-tools.ts`, `tools/call-context.ts`, `dispatch/inbound-dispatcher.ts` | Always on |
 | **Intelligence (L2)** | `src/intelligence/` — dialogue state, intent, `before_prompt_build` | Always on |
-| **ICS ops (optional)** | `src/ics/handlers/`, `src/ics/utils/` | `channels.wecom-kf.icsEnabled: true` → `/ics/*` routes |
+| **ICS ops (optional)** | `src/http/ics/handlers/`, `src/http/ics/storage/` | `channels.wecom-kf.icsEnabled: true` → `/ics/*` routes |
 | **Agent templates (optional)** | `agents/` | Deploy separately; point `--workspace` at subdirs |
 | **Skills (optional)** | `skills/` | Copy/symlink into agent workspace; not auto-loaded by plugin |
 
 **Control Tools** (registered): `wecom_kf_list_servicers`, `wecom_kf_list_accounts`, `wecom_kf_get_account_link`, `wecom_kf_transfer_session` — API payloads go to audit log, not LLM transcript.
 
-**Deprecated** (removed in Phase 3B): legacy `src/kf/tools.ts` and unused `src/kf/knowledge.ts` RAG stub.
+**Deprecated** (removed in Phase 3B): legacy `src/kf/tools.ts` and unused `src/kf/knowledge.ts` RAG stub. Runtime tools now live in `src/tools/`.
+
+### message-sdk reuse
+
+Minimum dependency: `@partme.ai/openclaw-message-sdk >= 2026.5.22` (same as [wecom](../wecom/README.md)). KF-specific behavior stays in this plugin; the following capabilities are delegated via **thin wrappers** to avoid duplicating logic with `wecom` / `wecom-cs`.
+
+| message-sdk module | wecom-kf mount point | Purpose |
+|--------------------|----------------------|---------|
+| `config/mergeChannelAccountConfig` | `config/accounts.ts` | Account-level config merge |
+| `dedup` (`createPersistentDedupe`) | `dedup/kf-inbound-dedup.ts` | Cross-process inbound `msgid` dedup |
+| `ingress` (`resolveCommandAuthorization`, etc.) | `shared/command-auth.ts`, `dispatch/dm-policy.ts` | DM policy and command authorization |
+| `routing` (`dynamic-peer-agent`) | `channel/dynamic-agent.ts` | Per-customer dynamic Agent routing |
+| `text/stripMarkdown` | `agent/markdown-strip.ts` | Outbound Markdown stripping |
+| `util/withTimeout` | `shared/timeout.ts`, `dispatch/kf-transcript-dispatch.ts` | Agent dispatch and HTTP timeouts |
+| `transcript/buildAgentReplyTimeoutSummary` | `config/templates.ts`, `dispatch/inbound-dispatcher.ts` | User-visible timeout fallback text |
+| `util/truncateUtf8Bytes` | `legacy/monitor.ts` (legacy streaming) | Streaming content / DM byte limits |
+| `media/path-guard` (`getPathGuard`) | `media/path-guard.ts` | Local media path allowlist reads |
+| `media` (`parseMediaDirectives`, `resolveOutboundMedia`, `isHttpUrl`) | `outbound/kf-send.ts` | KF outbound media parse and send |
+| `media/extractLocalImagePathsFromText` | `legacy/monitor.ts` (legacy streaming) | Infer local image paths from reply text |
+| `queue` / `ingress` (stream, active-reply) | `legacy/monitor/state.ts` | Legacy Bot/Agent streaming session store |
+| `openclaw/state-dir` | `state/cursor-store.ts`, `store/durable-json-map.ts` | Persistent state directories |
+| `asr` | `agent/asr.ts` | Inbound voice Flash ASR (optional) |
+
+**HTTP client note**: `shared/http-client.ts` is a thin wrapper over message-sdk `undiciFetch` (WeCom User-Agent); core implementation lives in `@partme.ai/openclaw-message-sdk/http`.
+
+**Target state (P2+)**: `bridge/inbound-bridge`, `bridge/reply-bridge`, full `transcript/*` templates and streaming chunks — see [Master Architecture §7](../../doc/wecom-kf/OpenClaw-WeCom-KF-Master-Architecture.md#7-message-sdk-采用清单).
 
 Legacy directory layout (pre-Phase 2C):
 

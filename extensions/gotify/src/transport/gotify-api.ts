@@ -36,7 +36,7 @@ import {
   GotifyConnectionError,
   GotifyTimeoutError,
   GotifyConfigError,
-} from "../errors.js";
+} from "../shared/errors.js";
 
 /**
  * Gotify API 调用的 fetch 行为选项。

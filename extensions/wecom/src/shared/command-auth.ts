@@ -1,78 +1,74 @@
+/**
+ * WeCom 命令授权薄封装（shared/command-auth）
+ *
+ * 职责：将企微 Bot / Agent 账号的 `dmPolicy` + `allowFrom` 映射到 message-sdk 通用入站授权流程。
+ *
+ * 与 @partme.ai/openclaw-message-sdk 的关系：
+ * - `createAllowFromNormalizer` / `resolveCommandAuthorization` 来自 message-sdk/ingress
+ * - 本模块仅注入 WeCom 通道特有规则（channelId=wecom、userid 前缀剥离）
+ * - 未授权时的中文提示文案由本模块 `buildWecomUnauthorizedCommandPrompt` 提供（SDK 无通道文案）
+ *
+ * 调用方：webhook/command-auth、agent 入站管线等需要判断 slash/command 是否允许执行的场景。
+ */
+
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
+import {
+  createAllowFromNormalizer,
+  resolveCommandAuthorization,
+  type CommandAuthResult,
+} from "@partme.ai/openclaw-message-sdk/ingress";
 
-import type { WecomAgentConfig, WecomBotConfig } from "../types/index.js";
+import type { WecomAgentConfig, WecomBotConfig } from "../types/config.js";
 
-type WecomCommandAuthAccountConfig = Pick<WecomBotConfig, "dmPolicy" | "allowFrom"> | Pick<WecomAgentConfig, "dmPolicy" | "allowFrom">;
+/** Bot 或 Agent 子配置中参与命令鉴权的字段子集 */
+type WecomCommandAuthAccountConfig =
+  | Pick<WecomBotConfig, "dmPolicy" | "allowFrom">
+  | Pick<WecomAgentConfig, "dmPolicy" | "allowFrom">;
 
-function normalizeWecomAllowFromEntry(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/^wecom:/, "")
-    .replace(/^user:/, "")
-    .replace(/^userid:/, "");
-}
+/** 企微 allowFrom 条目规范化：剥离 `user:` / `userid:` 前缀后交给 SDK 比对 */
+const normalizeWecomAllowFrom = createAllowFromNormalizer({
+  channelId: "wecom",
+  stripPrefixes: ["user:", "userid:"],
+});
 
-function isWecomSenderAllowed(senderUserId: string, allowFrom: string[]): boolean {
-  const list = allowFrom.map((entry) => normalizeWecomAllowFromEntry(entry)).filter(Boolean);
-  if (list.includes("*")) return true;
-  const normalizedSender = normalizeWecomAllowFromEntry(senderUserId);
-  if (!normalizedSender) return false;
-  return list.includes(normalizedSender);
-}
+/** 与 message-sdk CommandAuthResult 一致，便于上层解构 authorized / reason 等字段 */
+export type WecomCommandAuthResult = CommandAuthResult;
 
+/**
+ * 解析 WeCom 命令授权状态。
+ *
+ * 薄封装：直接委托 message-sdk `resolveCommandAuthorization`，仅传入 WeCom 的 allowFrom 规范化器。
+ *
+ * @param params.core OpenClaw 运行时（配对、访问组等能力）
+ * @param params.cfg 全局 OpenClaw 配置
+ * @param params.accountConfig 当前 Bot 或 Agent 子配置的 dmPolicy / allowFrom
+ * @param params.rawBody 原始消息体（SDK 用于提取命令文本）
+ * @param params.senderUserId 发送者企微 userid
+ * @returns 授权结果（是否允许、拒绝原因、配对提示等）
+ */
 export async function resolveWecomCommandAuthorization(params: {
   core: PluginRuntime;
   cfg: OpenClawConfig;
   accountConfig: WecomCommandAuthAccountConfig;
   rawBody: string;
   senderUserId: string;
-}): Promise<{
-  shouldComputeAuth: boolean;
-  dmPolicy: "pairing" | "allowlist" | "open" | "disabled";
-  senderAllowed: boolean;
-  authorizerConfigured: boolean;
-  commandAuthorized: boolean | undefined;
-  effectiveAllowFrom: string[];
-}> {
-  const { core, cfg, accountConfig, rawBody, senderUserId } = params;
-
-  const dmPolicy = (accountConfig.dmPolicy ?? "pairing") as "pairing" | "allowlist" | "open" | "disabled";
-  const configAllowFrom = (accountConfig.allowFrom ?? []).map((v) => String(v));
-
-  const shouldComputeAuth = core.channel.commands.shouldComputeCommandAuthorized(rawBody, cfg);
-  // WeCom channel currently does NOT support the `openclaw pairing` CLI workflow
-  // ("Channel wecom does not support pairing"). So we must not rely on pairing
-  // store approvals for command authorization here.
-  //
-  // Policy semantics:
-  // - open: commands are allowed for everyone by default (unless higher-level access-groups deny).
-  // - allowlist: commands require allowFrom entries.
-  // - pairing: treated the same as allowlist for WeCom (since pairing CLI is unsupported).
-  const effectiveAllowFrom = dmPolicy === "open" ? ["*"] : configAllowFrom;
-
-  const senderAllowed = isWecomSenderAllowed(senderUserId, effectiveAllowFrom);
-  const allowAllConfigured = effectiveAllowFrom.some((entry) => normalizeWecomAllowFromEntry(entry) === "*");
-  const authorizerConfigured = allowAllConfigured || effectiveAllowFrom.length > 0;
-  const useAccessGroups = cfg.commands?.useAccessGroups !== false;
-
-  const commandAuthorized = shouldComputeAuth
-    ? core.channel.commands.resolveCommandAuthorizedFromAuthorizers({
-      useAccessGroups,
-      authorizers: [{ configured: authorizerConfigured, allowed: senderAllowed }],
-    })
-    : undefined;
-
-  return {
-    shouldComputeAuth,
-    dmPolicy,
-    senderAllowed,
-    authorizerConfigured,
-    commandAuthorized,
-    effectiveAllowFrom,
-  };
+}): Promise<WecomCommandAuthResult> {
+  return resolveCommandAuthorization({
+    ...params,
+    normalizeAllowFrom: normalizeWecomAllowFrom,
+  });
 }
 
+/**
+ * 构建未授权命令的中文提示文案（WeCom 本地实现，非 message-sdk）。
+ *
+ * 根据 dmPolicy 与入口（Bot 智能机器人 / Agent 自建应用）生成可复制的 `openclaw config set` 命令，
+ * 方便管理员自助放行。
+ *
+ * @param params.senderUserId 触发命令的用户 userid
+ * @param params.dmPolicy 当前 DM 策略
+ * @param params.scope 命令入口：`bot` 对应 channels.wecom.bot，`agent` 对应 channels.wecom.agent
+ */
 export function buildWecomUnauthorizedCommandPrompt(params: {
   senderUserId: string;
   dmPolicy: "pairing" | "allowlist" | "open" | "disabled";
@@ -92,7 +88,7 @@ export function buildWecomUnauthorizedCommandPrompt(params: {
       `管理员：${policyCmd("open")}（全放开）或 ${policyCmd("allowlist")}（白名单）`,
     ].join("\n");
   }
-  // WeCom 不支持 pairing CLI，因此这里统一给出“open / allowlist”两种明确的配置指令
+
   return [
     `无权限执行命令（入口：${scopeLabel}，userid：${user}）`,
     `管理员全放开：${policyCmd("open")}`,

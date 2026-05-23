@@ -128,24 +128,25 @@ extensions/wecom/
 ├── utils.ts / config.ts     # 配置解析、账号 merge
 ├── accounts.ts              # 多账号 list / resolve
 │
-├── monitor.ts               # ★ Bot WebSocket 主流程（~1400 行）
+├── monitor.ts               # ★ Bot WebSocket 主流程（连接、入站、策略、dispatch 编排）
+├── ws-reply-pipeline.ts     # message-sdk createTranscriptReplyDispatcherHooks + WS deliver / 关流
 ├── message-sender.ts        # replyStream / 846608 降级
 ├── message-parser.ts        # 入站 JSON 解析
 ├── media-handler.ts         # 入站媒体下载
-├── chat-queue.ts            # 同会话串行队列（accountId:chatId）
-├── state-manager.ts         # WS 实例、MessageState、session ↔ chatId
-├── finish-thinking.ts       # 关流最终文案 resolveThinkingFinishText
-├── streaming-config.ts      # streaming / footer / templates 解析
-├── templates.ts             # 用户可见文案模板
-├── dynamic-routing.ts       # 动态 Agent 注入
-├── dynamic-agent.ts         # per-user / per-group agentId 生成
+├── chat-queue.ts            # 同会话串行（message-sdk createKeyedRunQueue 薄封装）
+├── state-manager.ts         # WS 实例、MessageState、session ↔ chatId（globalSingleton）
+├── finish-thinking.ts       # 关流文案（message-sdk resolveStreamFinishText 薄封装）
+├── streaming-config.ts      # streaming / footer（message-sdk transcript 薄封装）
+├── templates.ts             # 企微中文默认模板 + message-sdk 通用解析
+├── dynamic-routing.ts       # 动态 Agent（message-sdk processDynamicPeerRouting）
+├── dynamic-agent.ts         # wecom agentId 格式 + SDK readDynamicAgents
 ├── dm-policy.ts / group-policy.ts
 │
 ├── webhook/                 # Bot HTTP Webhook
 │   ├── index.ts / gateway.ts
 │   ├── handler.ts           # 解密、路由、stream_refresh
 │   ├── monitor.ts           # 入站处理、防抖、Agent 调度
-│   ├── reply-pipeline.ts    # OpenClaw createChannelMessageReplyPipeline 适配
+│   ├── reply-pipeline.ts    # message-sdk createTranscriptReplyDispatcherHooks + deliverWecomReply
 │   ├── state.ts             # StreamState Map
 │   ├── helpers.ts           # buildStreamResponse、占位符
 │   ├── dedup.ts             # msgId 去重
@@ -174,7 +175,8 @@ extensions/wecom/
 |------|------|------|
 | 入口 | `index.ts` | 插件注册、MCP、路由、`before_prompt_build` |
 | 契约 | `channel.ts` | OpenClaw ChannelPlugin 全量实现 |
-| Bot WS | `monitor.ts` | WS 连接、入站、策略、dispatch、流式关流 |
+| Bot WS | `monitor.ts` | WS 连接、入站、策略、dispatch 编排 |
+| Bot WS 回复 | `ws-reply-pipeline.ts` | transcript hooks + WS deliver / 846608 降级 / 关流 |
 | Bot WH | `webhook/monitor.ts` | JSON 入站、StreamState、reply-pipeline |
 | Agent | `agent/handler.ts` | XML 入站、媒体、欢迎语、去重 |
 | 出站 | `message-sender.ts`、`outbound/*`、`agent/api-client.ts` | 三路径统一交付 |
@@ -193,6 +195,7 @@ sequenceDiagram
   participant U as 用户
   participant WX as 企微 WS
   participant M as monitor.ts
+  participant RP as ws-reply-pipeline
   participant Q as chat-queue
   participant C as OpenClaw Core
   participant S as message-sender
@@ -203,15 +206,16 @@ sequenceDiagram
   M->>M: parseMessageContent + 媒体下载
   M->>M: resolveAgentRoute + dynamic-routing
   M->>Q: enqueueWeComChatTask
-  Q->>M: thinking 占位 replyStream
+  M->>RP: createWsWecomReplyDispatcher
+  RP->>S: thinking 占位 replyStream
   M->>C: finalizeInboundContext + dispatchReply
   loop block/final
-    C->>M: onBlockReply / deliver
-    M->>S: replyStream finish=false
+    C->>RP: deliver（文本累积 / 媒体 / 中间帧）
+    RP->>S: replyStream finish=false
     S->>WX: stream 更新
   end
-  M->>M: resolveThinkingFinishText
-  M->>S: replyStream finish=true
+  RP->>RP: processTemplateCards + resolveThinkingFinishText
+  RP->>S: replyStream finish=true（846608 降级 sendMessage）
   S->>WX: 关流
   WX->>U: 最终消息
 ```
@@ -225,10 +229,10 @@ sequenceDiagram
 | 3. 解析 | `message-parser.ts`、`media-handler.ts` | mixed、引用、图片/文件落盘 |
 | 4. 路由 | `dynamic-routing.ts` | 可选 per-user/per-group Agent |
 | 5. 串行 | `chat-queue.ts` | 同一 `accountId:chatId` 排队，避免并发乱序 |
-| 6. 占位 | `monitor.ts` | `THINKING_MESSAGE`，受 `sendThinkingMessage` 控制 |
-| 7. 调度 | OpenClaw SDK | `dispatchReplyWithBufferedBlockDispatcher` |
-| 8. 增量 | `streaming-config.ts` | `syncWecomStreamContent` 拼 status + answer |
-| 9. 关流 | `finish-thinking.ts` | 空回复 / 媒体 / 错误均有可见兜底文案 |
+| 6. 占位 | `ws-reply-pipeline.ts` | `THINKING_MESSAGE`，受 `sendThinkingMessage` 控制 |
+| 7. 调度 | OpenClaw SDK + `ws-reply-pipeline.ts` | `createTranscriptReplyDispatcherHooks` + `dispatchReplyWithBufferedBlockDispatcher` |
+| 8. 增量 | `ws-reply-pipeline.ts` + `streaming-config.ts` | status / answer 中间帧 |
+| 9. 关流 | `ws-reply-pipeline.ts` + `finish-thinking.ts` | 模板卡片 + 空回复 / 媒体 / 错误兜底文案 |
 | 10. 降级 | `message-sender.ts` | errcode **846608** → `sendMessage` 主动发送 |
 
 **MessageState**（`interface.ts`）在 WS 路径跟踪：`accumulatedText`、`streamId`、`hasMedia`、`streamExpired`、`dispatchErrorSummary` 等。
@@ -261,7 +265,7 @@ sequenceDiagram
 ```
 
 - 入站编排：`webhook/monitor.ts`（防抖、超时、`BOT_WINDOW_MS` 6 分钟）
-- 与 WS 共用：`streaming-config.ts`、`finish-thinking.ts`、模板卡片逻辑
+- 与 WS 共用：`streaming-config.ts`、`finish-thinking.ts`、模板卡片逻辑；WS 与 Webhook 均经 `createTranscriptReplyDispatcherHooks`（分别为 `ws-reply-pipeline.ts` / `webhook/reply-pipeline.ts`）
 - 846608 / 超时：`active-reply.ts` 主动推送兜底
 
 ### 4.3 Agent 自建应用（XML）
@@ -329,7 +333,7 @@ sequenceDiagram
 | `streaming: true` | 启用流式；可细调 `streaming.status`、`streaming.content` |
 | `footer.status` | 在 stream 气泡中展示阶段文案（tool / 阅读 / 生成等） |
 | `footer.elapsed` | 关流时展示耗时脚注 |
-| `templates.*` | 各阶段用户可见文案（配置见 [Configuration §文案模板](./OpenClaw-WeCom-Configuration.md#文案模板)；实现见 `templates.ts`） |
+| `*Text` | 各阶段用户可见文案（配置见 [Configuration §用户可见文案](./OpenClaw-WeCom-Configuration.md#用户可见文案text)；实现见 `templates.ts` + `text-config.ts`） |
 
 ### 5.3 streamId 生命周期
 
@@ -384,6 +388,7 @@ sequenceDiagram
 
 | 组件 | 关系 |
 |------|------|
+| `@partme.ai/openclaw-message-sdk` | 公共 util、transcript 流式、routing、config merge、keyed queue |
 | `openclaw-router` | 通过 `agent_end` 监听 wecom，**无需修改本插件** |
 | `openclaw-knowledge` | 可配置 `channels.wecom.knowledge` 或 router 自动注入 |
 | `message-sdk` | MQ 桥接场景可选；WeCom 主路径走 OpenClaw ChannelPlugin |

@@ -1,7 +1,11 @@
 /**
- * HTTP 客户端 + 重试策略
+ * @module http/http-client
  *
- * 来源：openclaw-china packages/shared/src/http/
+ * HTTP 客户端 + 指数退避重试策略。
+ *
+ * **职责**：JSON GET/POST 封装与可配置重试（网络错误、5xx）。
+ *
+ * **关键导出**：`httpGet`、`httpPost`、`withRetry`、`defaultShouldRetry`
  */
 
 // ============================================================================
@@ -9,9 +13,10 @@
 // ============================================================================
 
 /**
- * HttpRequestOptions 描述 http 模块公开 API 的结构化参数或返回值。
+ * HTTP 请求选项 / Options for httpGet/httpPost.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property timeout - 超时毫秒（默认 30000）
+ * @property headers - 额外请求头
  */
 export interface HttpRequestOptions {
   timeout?: number;
@@ -19,9 +24,13 @@ export interface HttpRequestOptions {
 }
 
 /**
- * RetryOptions 描述 http 模块公开 API 的结构化参数或返回值。
+ * 重试策略选项 / Retry policy for {@link withRetry}.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property maxRetries - 最大重试次数（默认 3）
+ * @property initialDelay - 首次退避毫秒（默认 1000）
+ * @property maxDelay - 退避上限毫秒（默认 10000）
+ * @property backoffMultiplier - 指数倍数（默认 2）
+ * @property shouldRetry - 自定义是否重试（默认 {@link defaultShouldRetry}）
  */
 export interface RetryOptions {
   maxRetries?: number;
@@ -35,12 +44,7 @@ export interface RetryOptions {
 // 错误
 // ============================================================================
 
-/**
- * HttpError 表示 http 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** HTTP 响应非 2xx / Non-success HTTP response with status and body snippet */
 export class HttpError extends Error {
   constructor(message: string, public readonly status: number, public readonly body?: string) {
     super(message);
@@ -48,12 +52,7 @@ export class HttpError extends Error {
   }
 }
 
-/**
- * TimeoutError 表示 http 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 请求超时 / Request aborted due to timeout */
 export class TimeoutError extends Error {
   constructor(message: string, public readonly timeoutMs: number) {
     super(message);
@@ -66,12 +65,18 @@ export class TimeoutError extends Error {
 // ============================================================================
 
 /**
- * httpPost 是 http 模块对外暴露的操作入口。
+ * POST JSON 并解析响应体为 JSON。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param url - 请求 URL
+ * @param body - 将被 `JSON.stringify` 的请求体
+ * @param options - 超时与请求头
+ * @returns 解析后的 JSON（泛型 T）
+ * @throws {@link HttpError} {@link TimeoutError}
+ *
+ * @example
+ * ```ts
+ * const data = await httpPost<{ id: string }>("https://api.example.com/items", { name: "a" });
+ * ```
  */
 export async function httpPost<T = unknown>(url: string, body: unknown, options?: HttpRequestOptions): Promise<T> {
   const { timeout = 30000, headers = {} } = options ?? {};
@@ -91,12 +96,12 @@ export async function httpPost<T = unknown>(url: string, body: unknown, options?
 }
 
 /**
- * httpGet 是 http 模块对外暴露的操作入口。
+ * GET 并解析响应体为 JSON。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param url - 请求 URL
+ * @param options - 超时与请求头
+ * @returns 解析后的 JSON（泛型 T）
+ * @throws {@link HttpError} {@link TimeoutError}
  */
 export async function httpGet<T = unknown>(url: string, options?: HttpRequestOptions): Promise<T> {
   const { timeout = 30000, headers = {} } = options ?? {};
@@ -120,12 +125,10 @@ export async function httpGet<T = unknown>(url: string, options?: HttpRequestOpt
 // ============================================================================
 
 /**
- * defaultShouldRetry 是 http 模块对外暴露的操作入口。
+ * 默认重试判定：网络/超时错误与 5xx 响应可重试。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param error - 捕获的错误
+ * @returns 是否应继续重试
  */
 export function defaultShouldRetry(error: unknown): boolean {
   if (error instanceof Error) {
@@ -145,11 +148,17 @@ function calcDelay(attempt: number, initial: number, max: number, mult: number):
 function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
 
 /**
- * withRetry 是 http 模块对外暴露的操作入口。
+ * 对异步函数执行指数退避重试。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param fn - 待执行的异步函数
+ * @param options - 重试次数、退避与 shouldRetry 策略
+ * @returns `fn` 成功时的返回值
+ * @throws 超过重试次数或 shouldRetry 返回 false 时抛出最后一次错误
+ *
+ * @example
+ * ```ts
+ * const result = await withRetry(() => httpGet("https://api.example.com/health"), { maxRetries: 2 });
+ * ```
  */
 export async function withRetry<T>(fn: () => Promise<T>, options?: RetryOptions): Promise<T> {
   const { maxRetries = 3, initialDelay = 1000, maxDelay = 10000, backoffMultiplier = 2, shouldRetry = defaultShouldRetry } = options ?? {};

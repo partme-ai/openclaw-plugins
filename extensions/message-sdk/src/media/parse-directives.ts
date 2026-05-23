@@ -1,13 +1,30 @@
 /**
- * 出站文本中的 MEDIA: 指令解析与剥离。
+ * @module media/parse-directives
+ *
+ * 出站文本中的 `MEDIA:` 指令解析与剥离。
+ *
+ * **职责**：Agent 回复中显式输出的 `MEDIA:` 行会被提取为媒体路径列表，
+ * 并从正文中移除，避免 IM 平台展示原始指令。
+ *
+ * **关键导出**：`parseMediaDirectives`、`expandHomePath`
  */
 
 import os from "node:os";
 
+/** 匹配整行 `MEDIA: \`path\`` 或 `MEDIA: path` 指令 */
 const MEDIA_DIRECTIVE_RE = /^MEDIA:\s*`?([^\n`]+?)`?\s*$/gm;
 
 /**
- * 展开 ~ 为用户主目录路径。
+ * 展开 `~` 为用户主目录路径。
+ *
+ * @param filePath - 可能含 `~/` 前缀的路径
+ * @param homedir - 主目录（默认 `os.homedir()`）
+ * @returns 展开后的路径；非 `~` 开头则原样 trim 返回
+ *
+ * @example
+ * ```ts
+ * expandHomePath("~/Downloads/a.png"); // => "/Users/me/Downloads/a.png"
+ * ```
  */
 export function expandHomePath(filePath: string, homedir = os.homedir() || "/root"): string {
   const trimmed = filePath.trim();
@@ -18,9 +35,10 @@ export function expandHomePath(filePath: string, homedir = os.homedir() || "/roo
 }
 
 /**
- * ParseMediaDirectivesResult 是 media 模块的公开类型别名。
+ * `parseMediaDirectives` 返回值 / Result of parsing MEDIA directives.
  *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ * @property text - 剥离 `MEDIA:` 行后的正文
+ * @property paths - 去重后的媒体路径列表（已展开 `~`）
  */
 export type ParseMediaDirectivesResult = {
   /** 剥离 MEDIA: 行后的文本 */
@@ -30,7 +48,22 @@ export type ParseMediaDirectivesResult = {
 };
 
 /**
- * 从出站文本提取 MEDIA: 行路径并剥离指令行。
+ * 从出站文本提取 `MEDIA:` 行路径并剥离指令行。
+ *
+ * 处理逻辑：
+ * 1. 逐行匹配 `MEDIA:` 前缀
+ * 2. 展开 `~` 并去重
+ * 3. 从正文删除所有 `MEDIA:` 行，压缩多余空行
+ *
+ * @param text - Agent 出站原文
+ * @param options.homedir - 主目录（用于 `~` 展开）
+ * @returns 剥离后的文本与路径列表
+ *
+ * @example
+ * ```ts
+ * parseMediaDirectives("你好\nMEDIA: ~/a.png\n再见");
+ * // => { text: "你好\n\n再见", paths: ["/Users/me/a.png"] }
+ * ```
  */
 export function parseMediaDirectives(
   text: string,

@@ -1,5 +1,9 @@
 /**
- * 企微 Bot 窗口超时与 fallback 切换（插件策略）。
+ * @module outbound/bot-window
+ *
+ * 企微 Bot **被动回复窗口** 超时检测与 fallback 切换。
+ *
+ * 接近 BOT_WINDOW_MS 时停止 stream 增量，切换为 Agent DM / 文案 fallback。
  */
 
 import type { WecomWebhookTarget } from "../webhook/types.js";
@@ -8,7 +12,7 @@ import {
   BOT_WINDOW_MS,
 } from "../webhook/types.js";
 import { buildFallbackPrompt } from "./fallback-prompts.js";
-import { isAgentConfigured } from "../webhook/helpers.js";
+import { isAgentConfigured } from "../webhook/inbound-helpers.js";
 import { sendBotFallbackPromptNow } from "../webhook/active-reply.js";
 
 export type BotWindowStreamSlice = {

@@ -1,8 +1,11 @@
 /**
- * WeCom 子模块配置类型定义
+ * WeCom 子模块配置类型定义（types/config）
  *
- * 注意：顶层配置类型 WeComConfig 定义在 src/utils.ts 中，以平铺结构为准。
- * 本文件仅定义 Agent/Bot/DM/Network/Media 等子模块的配置类型。
+ * 顶层平铺配置 `WeComConfig` 见 `src/utils.ts`（channels.wecom.*）。
+ * 本文件定义 Bot / Agent / 网络 / 媒体 / 动态 Agent 等嵌套子结构，供 accounts 合并与类型校验使用。
+ *
+ * 与 message-sdk：网络/媒体上限等运行时解析在 utils 中委托
+ * `resolveChannelMediaMaxBytes` 等 SDK 方法；此处仅为静态 TypeScript 契约，不含逻辑。
  */
 
 /** 流式输出子开关（channels.wecom.streaming.status / .content） */
@@ -21,37 +24,6 @@ export type WecomFooterConfig = {
   status?: boolean;
   /** 关流时展示耗时，默认 false */
   elapsed?: boolean;
-};
-
-/**
- * 用户可见文案模板（channels.wecom.templates）。
- * 支持 `{elapsed}`、`{toolName}`、`{minutes}`、`{kind}`、`{detail}`、`{mediaUrl}`、`{reason}`、`{emptyReply}` 等占位符。
- */
-export type WecomTemplatesConfig = {
-  thinking?: string;
-  received?: string;
-  tool?: string;
-  reading?: string;
-  generating?: string;
-  compaction?: string;
-  emptyReply?: string;
-  finishFooter?: string;
-  welcome?: string;
-  cardSent?: string;
-  mediaSent?: string;
-  mediaParseFailed?: string;
-  mediaDelivered?: string;
-  processedComplete?: string;
-  timeout?: string;
-  dispatchError?: string;
-  mediaErrorNoAccess?: string;
-  mediaErrorReason?: string;
-  mediaErrorGeneric?: string;
-  queued?: string;
-  mergedQueued?: string;
-  mergedDone?: string;
-  sessionReset?: string;
-  sessionNew?: string;
 };
 
 /** 媒体处理配置 */
@@ -95,10 +67,8 @@ export type WecomBotConfig = {
     botIds?: string[];
     /** 接收者 ID (可选，用于解密校验) */
     receiveId?: string;
-    /** 流式消息占位符 */
-    streamPlaceholderContent?: string;
-    /** 欢迎语 */
-    welcomeText?: string;
+    /** Bot 流式首帧占位（非欢迎语、非 thinkingText 状态栏） */
+    streamPlaceholderText?: string;
     /** DM 策略: 'open' 允许所有人, 'pairing' 需要配对, 'allowlist' 仅允许列表, 'disabled' 禁用 */
     dmPolicy?: 'open' | 'pairing' | 'allowlist' | 'disabled';
     /** 允许的用户列表，为空表示允许所有人 */

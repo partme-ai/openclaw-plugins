@@ -8,8 +8,8 @@ import {
   readRequestBodyWithLimit,
   isRequestBodyLimitError,
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,
-} from "./runtime-api.js";
-import { dispatchWebhookInbound } from "./dispatch-inbound.js";
+} from "./runtime/runtime-api.js";
+import { dispatchWebhookInbound } from "./dispatch/dispatch-inbound.js";
 import type { MeituanAccountConfig, PluginApi, PluginLogger } from "./types.js";
 
 /**

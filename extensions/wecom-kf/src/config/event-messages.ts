@@ -5,7 +5,7 @@
  */
 
 import type { EventMessagesConfig } from "../types/index.js";
-import { getWecomRuntime } from "../runtime.js";
+import { getWecomRuntime } from "../runtime/index.js";
 
 /** 内置默认事件消息配置 */
 const DEFAULT_EVENT_MESSAGES: EventMessagesConfig = {

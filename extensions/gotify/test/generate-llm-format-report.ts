@@ -6,7 +6,7 @@ import { buildMessage, type UnifiedMessage } from '@partme.ai/openclaw-message-s
 import { interpolate, loadDataset, type StandardTestCase, type TestContext } from '../../../testing/scripts/run-standard-tests.js';
 import { resolveGotifyAccount } from '../src/config.js';
 import { deleteAllMessages, getMessages, sendGotifyMessage, type GotifyPagedMessages } from '../src/transport/gotify-api.js';
-import { mapGotifyStreamToUnified } from '../src/routing/message-mapper.js';
+import { mapGotifyStreamToUnified } from '../src/dispatch/routing/message-mapper.js';
 import { fetchChatHistory, extractMessageText, waitForUserTranscript } from './gateway-transcript.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

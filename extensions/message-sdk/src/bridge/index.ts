@@ -1,6 +1,13 @@
 /**
+ * @module bridge
+ *
  * OpenClaw 桥接层 — 统一入站 dispatch 与出站 deliver。
- * 保留 dispatchInbound / createReplyHandler，并 re-export Wire dispatch facade。
+ *
+ * **职责**：
+ * - 保留 `dispatchInbound` / `createReplyHandler` 作为 Wire 核心
+ * - re-export Wire dispatch facade、channel dispatch、parse/ingress 工具
+ *
+ * **适用场景**：MQ 插件、bridge 插件、message-sdk 包主入口 re-export。
  */
 
 export {
@@ -32,9 +39,7 @@ export {
   type ChannelClass,
 } from "../core/channel-class.js";
 
-/**
- * 重新导出该模块的公共类型，方便调用方从 barrel 或实现文件按需导入。
- */
+/** 重新导出 Wire dispatch 类型别名 / Re-export wire dispatch type aliases */
 export type { WireDispatchConfig, WireDispatchParams, WireDispatchResult } from "../dispatch/types.js";
 
 export { parseTransportPayload, type ParsedTransportPayload, type PayloadParseMode } from "../pipeline/parse-payload.js";
@@ -52,9 +57,7 @@ export {
   type ResolveChannelAgentRouteParams,
 } from "./resolve-channel-route.js";
 
-/**
- * 重新导出该模块的公共类型，方便调用方从 barrel 或实现文件按需导入。
- */
+/** 重新导出桥接层公共类型 / Re-export bridge public types */
 export type {
   BridgePluginRuntime,
   InboundBridgeParams,

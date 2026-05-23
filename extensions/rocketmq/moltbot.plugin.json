@@ -1,6 +1,6 @@
 {
-  "id": "openclaw-rocketmq",
-  "name": "openclaw-rocketmq",
+  "id": "rocketmq",
+  "name": "rocketmq",
   "version": "2026.5.20",
   "description": "RocketMQ channel plugin for OpenClaw with producer and push-consumer integration.",
   "main": "dist/index.js",

@@ -1,15 +1,27 @@
 /**
- * WeCom Webhook 出站回复投递（stream 更新、媒体、模板卡片）。
+ * @module outbound/reply-deliver
+ *
+ * 企微 **Webhook Bot** 出站回复投递（stream 增量 + 媒体 + 模板卡片）。
+ *
+ * **职责**：
+ * - 预处理 Markdown/表格（`preprocessOutboundReply`）
+ * - 检测 template_card JSON 并经 response_url 发送
+ * - 将文本/图片写入 streamStore，同步 streaming 配置与 footer
+ * - 非图片媒体委托 `media-deliver`（Agent DM fallback）
+ *
+ * **上下游**：
+ * - 上游：`webhook/reply-pipeline` dispatch deliver 回调
+ * - 下游：`streaming-config`、`template-card`、`media-deliver`
  */
 
-import type { PluginRuntime, ReplyPayload } from "../runtime-api.js";
+import type { PluginRuntime, ReplyPayload } from "../runtime/runtime-api.js";
 import {
   extractLocalImagePathsFromText,
   formatReasoningMessage,
   isImageContentType,
   preprocessOutboundReply,
   resolveOutboundMedia,
-} from "../runtime-api.js";
+} from "../runtime/runtime-api.js";
 import { getWeComRuntime } from "../runtime.js";
 import type { WecomWebhookTarget } from "../webhook/types.js";
 import { STREAM_MAX_BYTES } from "../webhook/types.js";
@@ -19,15 +31,15 @@ import {
   computeMd5,
   MIME_BY_EXT,
   truncateUtf8Bytes,
-} from "../webhook/helpers.js";
+} from "../webhook/inbound-helpers.js";
 import { deliverTemplateCardIfPresent } from "./template-card.js";
 import { handleBotWindowNearTimeout } from "./bot-window.js";
 import { deliverMediaLoadError, deliverNonImageMedia } from "./media-deliver.js";
 import {
   resolveWecomStreamingConfig,
   syncWecomStreamContent,
-} from "../streaming-config.js";
-import { resolveWecomTemplates } from "../templates.js";
+} from "../config/streaming-config.js";
+import { resolveWecomTemplates } from "../config/templates.js";
 
 export type DeliverWecomReplyContext = {
   payload: ReplyPayload;

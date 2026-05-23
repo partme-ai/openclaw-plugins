@@ -21,7 +21,7 @@ export { resolveBrokerConfig } from "./config.js";
 export type { ResolvedMqttAccount } from "./config.js";
 
 export default defineChannelPluginEntry({
-  id: "openclaw-mqtt",
+  id: "mqtt",
   name: "MQTT",
   description:
     "OpenClaw MQTT channel — embedded Aedes broker, multi-topic routing and explicit topic→agent bindings",

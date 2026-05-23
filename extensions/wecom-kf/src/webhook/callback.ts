@@ -8,16 +8,20 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import {
+  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+  readRequestBodyWithLimit,
+} from "@partme.ai/openclaw-message-sdk";
 import type { WecomAccountConfig } from "../types/index.js";
-import { parseWecomCallback } from "../crypto.js";
+import { parseWecomCallback } from "../webhook/crypto.js";
 import { syncKfMessages } from "../agent/api-client.js";
-import { getCursorStore } from "../cursor-store.js";
-import { dispatchKfMessage } from "../dispatch.js";
+import { getCursorStore } from "../state/cursor-store.js";
+import { dispatchKfMessage } from "../dispatch/inbound-dispatcher.js";
 import { handleSystemEvent } from "../agent/system-event.js";
 import { resolveKfAccountByOpenKfId } from "../config/accounts.js";
 import { claimWecomKfInboundMsgid } from "../dedup/kf-inbound-dedup.js";
-import { resolveKfAgentAccount } from "../kf/call-context.js";
-import { getWecomRuntime } from "../runtime.js";
+import { resolveKfAgentAccount } from "../tools/call-context.js";
+import { getWecomRuntime } from "../runtime/index.js";
 import type { KfMessage } from "../types/index.js";
 
 /** Account state tracking — updates via channel setStatus */
@@ -110,7 +114,9 @@ export function createKfCallbackHandler(
         echostr: url.searchParams.get("echostr") ?? undefined,
       };
 
-      const body = await readRequestBody(req);
+      const body = req.method === "GET"
+        ? null
+        : await readRequestBodyWithLimit(req, { maxBytes: DEFAULT_WEBHOOK_MAX_BODY_BYTES });
       const defaultConfig = getAccountConfig();
       if (!defaultConfig) {
         console.error("[wecom_kf] No default account config found");
@@ -308,18 +314,3 @@ async function processSyncedMessage(
   }
 }
 
-function readRequestBody(req: IncomingMessage): Promise<string | null> {
-  return new Promise((resolve, reject) => {
-    if (req.method === "GET") {
-      resolve(null);
-      return;
-    }
-
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => {
-      resolve(Buffer.concat(chunks).toString("utf-8") || null);
-    });
-    req.on("error", reject);
-  });
-}

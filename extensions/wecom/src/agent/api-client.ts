@@ -1,15 +1,25 @@
 /**
- * WeCom Agent API 客户端
- * 管理 AccessToken 缓存和 API 调用
+ * @module agent/api-client
+ *
+ * 企业微信 **Agent 模式** REST API 客户端（Infrastructure 层）。
+ *
+ * **职责**：
+ * - AccessToken 缓存与并发刷新合并
+ * - 文本/媒体消息发送（`message/send`、`appchat/send`）
+ * - 临时素材上传/下载（media_id 生命周期 3 天）
+ * - 出站文本经 `stripMarkdown` 清洗（企微不支持 Markdown 渲染）
+ *
+ * **关键导出**：`getAccessToken`、`sendText`、`uploadMedia`、`sendMedia`、`downloadMedia`
  */
 
 import crypto from "node:crypto";
 import { API_ENDPOINTS, LIMITS } from "../types/constants.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
-import { readResponseBodyAsBuffer, wecomFetch } from "../http.js";
+import { readResponseBodyAsBuffer, wecomFetch } from "../webhook/http.js";
 import { stripMarkdown } from "./markdown-strip.js";
 import { transcodeBufferToAmr, needsTranscoding } from "./voice-transcode.js";
 
+/** 从账号 network 配置解析出站 HTTP 代理 URL。 */
 function resolveWecomEgressProxyUrlFromNetwork(network: any): string | undefined {
     return network?.egressProxyUrl;
 }
@@ -30,6 +40,7 @@ type TokenCache = {
 
 const tokenCaches = new Map<string, TokenCache>();
 
+/** 规范化上传文件名，避免企微网关拒绝特殊字符或非 ASCII。 */
 function normalizeUploadFilename(filename: string): string {
     const trimmed = filename.trim();
     if (!trimmed) return "file.bin";
@@ -46,6 +57,7 @@ function normalizeUploadFilename(filename: string): string {
     return `${safeBase}${safeExt || ".bin"}`;
 }
 
+/** 按文件扩展名推断 multipart 上传 Content-Type。 */
 function guessUploadContentType(filename: string): string {
     const ext = filename.split(".").pop()?.toLowerCase() || "";
     const contentTypeMap: Record<string, string> = {
@@ -67,6 +79,7 @@ function guessUploadContentType(filename: string): string {
     return contentTypeMap[ext] || "application/octet-stream";
 }
 
+/** 校验并返回 Agent 应用的 agentId（单聊 message/send 必填）。 */
 function requireAgentId(agent: ResolvedAgentAccount): number {
     if (typeof agent.agentId === "number" && Number.isFinite(agent.agentId)) return agent.agentId;
     throw new Error(`wecom agent account=${agent.accountId} missing agentId; sending via cgi-bin/message/send requires agentId`);
