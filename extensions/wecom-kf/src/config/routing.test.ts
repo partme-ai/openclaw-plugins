@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 
-import { resolveWecomFailClosedOnDefaultRoute, shouldRejectWecomDefaultRoute } from "./routing.js";
+import { resolveWecomFailClosedOnDefaultRoute, shouldRejectWecomDefaultRoute } from "./resolvers.js";
 
 describe("resolveWecomFailClosedOnDefaultRoute", () => {
     it("defaults to true in matrix mode", () => {

@@ -5,6 +5,8 @@
  * 用于 send-guard、session service_state、side-effect 等 KF 运行时状态。
  */
 
+export { resolveOpenClawStateDir as resolveStateDir } from "@partme.ai/openclaw-message-sdk/openclaw";
+
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveOpenClawStateDir } from "@partme.ai/openclaw-message-sdk/openclaw";

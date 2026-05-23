@@ -70,6 +70,7 @@ wecom-kf/
       system-event.ts        # origin=4 系统事件（欢迎语等）
     tools/
       control-tools.ts       # wecom_kf_* 控制面 Tools（核心）
+      transfer-policy.ts     # 转人工策略 + 接待人员缓存
       call-context.ts        # Tool / dispatch CallContext
     intelligence/            # 对话状态机、intent、before_prompt_build（Phase 3B）
     http/ics/
@@ -101,8 +102,8 @@ wecom-kf/
 | `dedup`（`createPersistentDedupe`） | `dedup/kf-inbound-dedup.ts` | 入站 `msgid` 跨进程去重 |
 | `ingress`（`resolveCommandAuthorization` 等） | `shared/command-auth.ts`、`dispatch/dm-policy.ts` | DM 策略与命令授权 |
 | `routing`（`dynamic-peer-agent`） | `channel/dynamic-agent.ts` | 按客户动态 Agent 路由 |
-| `text/stripMarkdown` | `agent/markdown-strip.ts` | 出站 Markdown 剥离 |
-| `util/withTimeout` | `shared/timeout.ts`、`dispatch/kf-transcript-dispatch.ts` | Agent 派发与 HTTP 超时 |
+| `text/stripMarkdown` | `agent/api-client.ts`（直接委托 message-sdk） | 出站 Markdown 剥离 |
+| `util/withTimeout` | `shared/http.ts`、`dispatch/kf-transcript-dispatch.ts` | Agent 派发与 HTTP 超时 |
 | `transcript/buildAgentReplyTimeoutSummary` | `config/templates.ts`、`dispatch/inbound-dispatcher.ts` | 派发超时用户可见兜底文案 |
 | `util/truncateUtf8Bytes` | `legacy/monitor.ts`（legacy 流式） | 流式 content / DM 字节上限 |
 | `media/path-guard`（`getPathGuard`） | `media/path-guard.ts` | 本机媒体路径白名单读取 |
@@ -112,7 +113,7 @@ wecom-kf/
 | `openclaw/state-dir` | `state/cursor-store.ts`、`store/durable-json-map.ts` | 持久化目录 |
 | `asr` | `agent/asr.ts` | 入站语音 Flash ASR（可选） |
 
-**HTTP 客户端说明**：`shared/http-client.ts` 为 message-sdk `undiciFetch` 的薄包装（WeCom User-Agent）；核心实现见 `@partme.ai/openclaw-message-sdk/http`。
+**HTTP 客户端说明**：`shared/http.ts` 为 message-sdk `undiciFetch` 与 `withTimeout` 的薄包装（WeCom User-Agent）；核心实现见 `@partme.ai/openclaw-message-sdk/http`。
 
 **目标态（P2+）**：`bridge/inbound-bridge`、`bridge/reply-bridge`、`transcript/*` 模板与流式分块等，见 [主架构 §7](../../doc/wecom-kf/OpenClaw-WeCom-KF-Master-Architecture.md#7-message-sdk-采用清单)。
 

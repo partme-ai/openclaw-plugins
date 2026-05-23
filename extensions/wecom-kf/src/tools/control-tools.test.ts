@@ -7,7 +7,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { __testing } from "./control-tools.js";
 import * as apiClient from "../agent/api-client.js";
-import { resetServicerCacheForTests } from "./servicer-cache.js";
+import { resetServicerCacheForTests } from "./transfer-policy.js";
 
 const {
     handleListServicers,

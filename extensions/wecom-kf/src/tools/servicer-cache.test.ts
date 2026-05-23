@@ -9,7 +9,7 @@ import {
   getCachedServicers,
   getOnlineServicers,
   resetServicerCacheForTests,
-} from "./servicer-cache.js";
+} from "./transfer-policy.js";
 
 describe("接待人员缓存", () => {
   const mockServicers: ServicerInfo[] = [

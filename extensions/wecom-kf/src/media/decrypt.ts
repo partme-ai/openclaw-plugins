@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { decodeEncodingAESKey, pkcs7Unpad, WECOM_PKCS7_BLOCK_SIZE } from "../webhook/crypto.js";
-import { readResponseBodyAsBuffer, wecomFetch, type WecomHttpOptions } from "../shared/http-client.js";
+import { readResponseBodyAsBuffer, wecomFetch, type WecomHttpOptions } from "../shared/http.js";
 
 export type DecryptedWecomMedia = {
     buffer: Buffer;

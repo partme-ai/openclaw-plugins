@@ -16,7 +16,7 @@ import { getWsClient } from "./ws-adapter.js";
 import { WEBHOOK_PATHS, LIMITS as WECOM_LIMITS } from "../types/constants.js";
 import { handleAgentWebhook } from "../agent/index.js";
 import { resolveWecomAccount, resolveWecomEgressProxyUrl, resolveWecomMediaMaxBytes, shouldRejectWecomDefaultRoute, getWecomKfChannelBlock } from "../config/index.js";
-import { wecomFetch } from "../shared/http-client.js";
+import { wecomFetch } from "../shared/http.js";
 import { sendText as sendAgentText, sendMedia as sendAgentMedia, uploadMedia } from "../agent/api-client.js";
 import { extractAgentId, parseXml } from "../shared/xml-parser.js";
 

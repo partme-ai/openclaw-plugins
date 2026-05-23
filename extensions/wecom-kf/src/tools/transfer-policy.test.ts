@@ -4,9 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedAgentAccount } from "../types/index.js";
-import { resetServicerCacheForTests, cacheServicers } from "./servicer-cache.js";
-import { resolveTransferServicerUserId } from "./transfer-policy.js";
-import * as servicerCache from "./servicer-cache.js";
+import { resetServicerCacheForTests, cacheServicers, resolveTransferServicerUserId } from "./transfer-policy.js";
 
 const agent = {
   accountId: "default",
@@ -58,15 +56,12 @@ describe("resolveTransferServicerUserId", () => {
   });
 
   it("无在线坐席时返回错误", async () => {
-    vi.spyOn(servicerCache, "refreshServicersFromApi").mockResolvedValue({
-      ok: true,
-      count: 0,
-    });
+    cacheServicers("wk1", [{ userid: "offline", status: 1 }]);
 
     const result = await resolveTransferServicerUserId({
       agent,
       openKfId: "wk1",
-      refreshIfStale: true,
+      refreshIfStale: false,
     });
 
     expect(result.ok).toBe(false);

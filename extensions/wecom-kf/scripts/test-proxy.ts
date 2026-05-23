@@ -1,4 +1,4 @@
-import { wecomFetch } from "../src/shared/http-client.js";
+import { wecomFetch } from "../src/shared/http.js";
 
 const args = process.argv.slice(2);
 let proxyUrl = "";

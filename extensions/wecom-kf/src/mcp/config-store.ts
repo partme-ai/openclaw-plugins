@@ -14,7 +14,7 @@ import path from "path";
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { generateReqId } from "@wecom/aibot-node-sdk";
 import type { WecomRuntimeEnv } from "../legacy/monitor/types.js";
-import { withTimeout } from "../shared/timeout.js";
+import { withTimeout } from "../shared/http.js";
 
 // ============================================================================
 // 常量

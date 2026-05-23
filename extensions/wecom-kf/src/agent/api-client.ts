@@ -8,11 +8,11 @@ import path from "node:path";
 import { API_ENDPOINTS, KF_MEDIA_MAX_BYTES, LIMITS } from "../types/constants.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import { splitUtf8TextByMaxBytes } from "@partme.ai/openclaw-message-sdk/util";
-import { readResponseBodyAsBuffer, wecomFetch } from "../shared/http-client.js";
+import { readResponseBodyAsBuffer, wecomFetch } from "../shared/http.js";
 import { resolveWecomEgressProxyUrlFromNetwork } from "../config/index.js";
 import { resolveApiBaseUrl } from "../config/kf-routes.js";
 import { checkKfSendAllowed, recordKfOutboundSend } from "./kf-send-guard.js";
-import { stripMarkdown } from "./markdown-strip.js";
+import { stripMarkdown } from "@partme.ai/openclaw-message-sdk/text";
 import { needsTranscoding, transcodeBufferToAmr } from "./voice-transcode.js";
 
 /**

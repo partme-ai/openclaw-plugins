@@ -8,9 +8,32 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { getPathGuard } from "@partme.ai/openclaw-message-sdk";
 
-import { getDefaultMediaLocalRoots } from "./local-roots.js";
-import { resolveStateDir } from "../state/state-dir-resolve.js";
+import { resolveStateDir } from "../state/durable-json-map.js";
 import type { WecomConfig } from "../types/config.js";
+
+/**
+ * 获取默认媒体本地路径白名单（优先 OpenClaw SDK，fallback 与 stateDir 对齐）。
+ */
+export async function getDefaultMediaLocalRoots(): Promise<readonly string[]> {
+  try {
+    const sdk = (await import("openclaw/plugin-sdk/core")) as {
+      getDefaultMediaLocalRoots?: () => readonly string[];
+    };
+    if (typeof sdk.getDefaultMediaLocalRoots === "function") {
+      return sdk.getDefaultMediaLocalRoots();
+    }
+  } catch {
+    // plugin-sdk 不可用或版本过低
+  }
+
+  const stateDir = path.resolve(resolveStateDir());
+  return [
+    path.join(stateDir, "media"),
+    path.join(stateDir, "agents"),
+    path.join(stateDir, "workspace"),
+    path.join(stateDir, "sandboxes"),
+  ];
+}
 
 export type GuardedLocalMediaReadResult =
   | { ok: true; buffer: Buffer }

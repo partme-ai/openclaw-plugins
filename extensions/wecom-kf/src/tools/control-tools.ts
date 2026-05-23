@@ -22,14 +22,13 @@ import {
     listKfServicers,
     transferKfSession,
 } from "../agent/api-client.js";
-import { cacheServicers, refreshServicersFromApi } from "./servicer-cache.js";
+import { cacheServicers, refreshServicersFromApi, resolveTransferServicerUserId } from "./transfer-policy.js";
 import {
     consumePendingKfSessionSideEffects,
     dispatchKfEventMessageByCode,
 } from "../state/event-message-dispatch.js";
 import { enqueueKfSessionSideEffect } from "../state/session-side-effect-store.js";
 import { setKfSessionServiceState } from "../state/session-service-state.js";
-import { resolveTransferServicerUserId } from "./transfer-policy.js";
 import {
     resolveKfAgentAccount,
     resolveKfCallContext,

@@ -14,7 +14,7 @@ import {
 import { deliverKfAgentReplyPayload } from "../outbound/kf-send.js";
 import { resolveKfAccountByOpenKfId } from "../config/accounts.js";
 import { resolveKfAgentAccount } from "../tools/call-context.js";
-import { TimeoutError, withTimeout } from "../shared/timeout.js";
+import { TimeoutError, withTimeout } from "../shared/http.js";
 import type { KfInboundMediaContext } from "./inbound-media.js";
 import type { WecomAccountConfig } from "../types/index.js";
 import { LIMITS } from "../types/constants.js";

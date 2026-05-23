@@ -20,9 +20,14 @@ export {
     isWecomEnabled,
     applyKfEnvVarFallback,
 } from "./accounts.js";
-export { resolveWecomEgressProxyUrl, resolveWecomEgressProxyUrlFromNetwork } from "./network.js";
-export { DEFAULT_WECOM_MEDIA_MAX_BYTES, resolveWecomMediaMaxBytes } from "./media.js";
-export { resolveWecomFailClosedOnDefaultRoute, shouldRejectWecomDefaultRoute } from "./routing.js";
+export {
+    DEFAULT_WECOM_MEDIA_MAX_BYTES,
+    resolveWecomEgressProxyUrl,
+    resolveWecomEgressProxyUrlFromNetwork,
+    resolveWecomFailClosedOnDefaultRoute,
+    resolveWecomMediaMaxBytes,
+    shouldRejectWecomDefaultRoute,
+} from "./resolvers.js";
 export {
     DEFAULT_API_BASE_URL,
     DEFAULT_KF_WEBHOOK_PATH,

@@ -110,8 +110,8 @@ Minimum dependency: `@partme.ai/openclaw-message-sdk >= 2026.5.22` (same as [wec
 | `dedup` (`createPersistentDedupe`) | `dedup/kf-inbound-dedup.ts` | Cross-process inbound `msgid` dedup |
 | `ingress` (`resolveCommandAuthorization`, etc.) | `shared/command-auth.ts`, `dispatch/dm-policy.ts` | DM policy and command authorization |
 | `routing` (`dynamic-peer-agent`) | `channel/dynamic-agent.ts` | Per-customer dynamic Agent routing |
-| `text/stripMarkdown` | `agent/markdown-strip.ts` | Outbound Markdown stripping |
-| `util/withTimeout` | `shared/timeout.ts`, `dispatch/kf-transcript-dispatch.ts` | Agent dispatch and HTTP timeouts |
+| `text/stripMarkdown` | `agent/api-client.ts` (via message-sdk) | Outbound Markdown stripping |
+| `util/withTimeout` | `shared/http.ts`, `dispatch/kf-transcript-dispatch.ts` | Agent dispatch and HTTP timeouts |
 | `transcript/buildAgentReplyTimeoutSummary` | `config/templates.ts`, `dispatch/inbound-dispatcher.ts` | User-visible timeout fallback text |
 | `util/truncateUtf8Bytes` | `legacy/monitor.ts` (legacy streaming) | Streaming content / DM byte limits |
 | `media/path-guard` (`getPathGuard`) | `media/path-guard.ts` | Local media path allowlist reads |
@@ -121,7 +121,7 @@ Minimum dependency: `@partme.ai/openclaw-message-sdk >= 2026.5.22` (same as [wec
 | `openclaw/state-dir` | `state/cursor-store.ts`, `store/durable-json-map.ts` | Persistent state directories |
 | `asr` | `agent/asr.ts` | Inbound voice Flash ASR (optional) |
 
-**HTTP client note**: `shared/http-client.ts` is a thin wrapper over message-sdk `undiciFetch` (WeCom User-Agent); core implementation lives in `@partme.ai/openclaw-message-sdk/http`.
+**HTTP client note**: `shared/http.ts` is a thin wrapper over message-sdk `undiciFetch` and `withTimeout` (WeCom User-Agent); core implementation lives in `@partme.ai/openclaw-message-sdk/http`.
 
 **Target state (P2+)**: `bridge/inbound-bridge`, `bridge/reply-bridge`, full `transcript/*` templates and streaming chunks — see [Master Architecture §7](../../doc/wecom-kf/OpenClaw-WeCom-KF-Master-Architecture.md#7-message-sdk-采用清单).
 
