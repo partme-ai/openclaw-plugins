@@ -1,0 +1,611 @@
+schema_version: "1.0.0"
+suite_id: openclaw-gotify-llm-prompts-v1
+suite_name: openclaw-gotify 大模型提示词测试集
+description: >
+  面向 openclaw-gotify 的简洁问题集。
+  目标不是覆盖所有通道工程细节，而是用 10 组从简单到复杂的提示输入，
+  验证 main 智能体能否通过 Gotify 正常收消息、产出新回复消息、并满足常见输出形态要求。
+  每条用例同时提供一份与 message-sdk UnifiedMessage 契约对齐的 sdk_inbound /
+  sdk_expected_reply 结构，便于后续统一到 message-sdk canonical message model。
+
+default_sla:
+  reply_wait_default_ms: 30000
+  reply_wait_strict_ms: 45000
+  reply_wait_relaxed_ms: 90000
+
+test_cases:
+  - id: Q01
+    name: 普通文本测试
+    tier: L1
+    category: prompt-basic
+    automation: auto
+    priority: P0
+    timeout_ms: 45000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_default_ms}"
+    wait_metrics: true
+    input:
+      type: text
+      title: "gotify-q01-plain-text"
+      message: "【{CORRELATION_ID}】请只回复：收到"
+    sdk_inbound:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text: "【{CORRELATION_ID}】请只回复：收到"
+      media: []
+      direction: inbound
+      metadata:
+        caseId: Q01
+        promptKind: plain_text
+    sdk_expected_reply:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text_rule: non_empty
+      media: []
+      direction: outbound
+    channel_expected_payload:
+      title: "gotify-q01-plain-text"
+      priority: 5
+      extras:
+        openclaw:
+          outbound: true
+          source: openclaw
+    reply_assertions:
+      min_length: 2
+      contains_any: ["收到"]
+    expected:
+      reply_received: true
+    gotify_assertions:
+      require_main_agent: true
+      session_key_equals: "agent:main:gotify:{ACCOUNT_ID}:direct:{PEER_ID}"
+      transcript_user_contains: "【{CORRELATION_ID}】"
+      message_list_title: "gotify-q01-plain-text"
+      message_list_expected_count_by_title: 2
+      message_list_require_user_visible: true
+      message_list_require_reply_visible: true
+      message_list_reply_matches_transcript: true
+
+  - id: Q02
+    name: 普通文本总结测试
+    tier: L1
+    category: prompt-basic
+    automation: auto
+    priority: P0
+    timeout_ms: 45000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_default_ms}"
+    input:
+      type: text
+      title: "gotify-q02-summary"
+      message: "【{CORRELATION_ID}】请把这句话总结成 8 个字以内：OpenClaw 通过 Gotify 收发智能体消息。"
+    sdk_inbound:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text: "【{CORRELATION_ID}】请把这句话总结成 8 个字以内：OpenClaw 通过 Gotify 收发智能体消息。"
+      media: []
+      direction: inbound
+      metadata:
+        caseId: Q02
+        promptKind: summary
+    sdk_expected_reply:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text_rule: non_empty
+      media: []
+      direction: outbound
+    channel_expected_payload:
+      title: "gotify-q02-summary"
+      priority: 5
+      extras:
+        openclaw:
+          outbound: true
+          source: openclaw
+    reply_assertions:
+      min_length: 2
+      max_length: 20
+      contains_any: ["OpenClaw", "Gotify", "收发", "消息", "通道"]
+    expected:
+      reply_received: true
+    gotify_assertions:
+      require_main_agent: true
+      session_key_equals: "agent:main:gotify:{ACCOUNT_ID}:direct:{PEER_ID}"
+      message_list_title: "gotify-q02-summary"
+      message_list_expected_count_by_title: 2
+      message_list_require_reply_visible: true
+
+  - id: Q03
+    name: Markdown 文本测试
+    tier: L2
+    category: prompt-format
+    automation: auto
+    priority: P0
+    timeout_ms: 60000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_strict_ms}"
+    input:
+      type: text
+      title: "gotify-q03-markdown"
+      message: "【{CORRELATION_ID}】请用 Markdown 回复，包含一个二级标题“测试结果”和两个无序列表项。"
+    sdk_inbound:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: markdown
+      text: "【{CORRELATION_ID}】请用 Markdown 回复，包含一个二级标题“测试结果”和两个无序列表项。"
+      markdown: "## 测试结果\n- 列表项一\n- 列表项二"
+      media: []
+      direction: inbound
+      metadata:
+        caseId: Q03
+        promptKind: markdown
+    sdk_expected_reply:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: markdown
+      text_rule: non_empty
+      media: []
+      direction: outbound
+    channel_expected_payload:
+      title: "gotify-q03-markdown"
+      priority: 5
+      extras:
+        openclaw:
+          outbound: true
+          source: openclaw
+    reply_assertions:
+      min_length: 10
+      contains_any: ["## 测试结果", "##", "- ", "* ", "测试结果"]
+    expected:
+      reply_received: true
+    gotify_assertions:
+      require_main_agent: true
+      message_list_title: "gotify-q03-markdown"
+      message_list_expected_count_by_title: 2
+      message_list_require_reply_visible: true
+
+  - id: Q04
+    name: HTML 内容测试
+    tier: L2
+    category: prompt-format
+    automation: auto
+    priority: P0
+    timeout_ms: 60000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_strict_ms}"
+    input:
+      type: text
+      title: "gotify-q04-html"
+      message: |
+        【{CORRELATION_ID}】下面是一段 HTML，请忽略标签，只提取正文并用一句话回复：
+        <article><h1>发布通知</h1><p>明天下午三点发布新版本。</p></article>
+    sdk_inbound:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text: "【{CORRELATION_ID}】下面是一段 HTML，请忽略标签，只提取正文并用一句话回复：<article><h1>发布通知</h1><p>明天下午三点发布新版本。</p></article>"
+      media: []
+      direction: inbound
+      metadata:
+        caseId: Q04
+        promptKind: html_content
+    sdk_expected_reply:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text_rule: non_empty
+      media: []
+      direction: outbound
+    channel_expected_payload:
+      title: "gotify-q04-html"
+      priority: 5
+      extras:
+        openclaw:
+          outbound: true
+          source: openclaw
+    reply_assertions:
+      min_length: 8
+      contains_any: ["发布通知", "明天下午三点", "新版本", "发布"]
+      not_contains: ["<article>", "<h1>", "<p>"]
+    expected:
+      reply_received: true
+    gotify_assertions:
+      require_main_agent: true
+      message_list_title: "gotify-q04-html"
+      message_list_expected_count_by_title: 2
+      message_list_require_reply_visible: true
+
+  - id: Q05
+    name: 带文件地址测试
+    tier: L3
+    category: prompt-resource
+    automation: auto
+    priority: P0
+    timeout_ms: 60000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_strict_ms}"
+    input:
+      type: text
+      title: "gotify-q05-file-url"
+      message: "【{CORRELATION_ID}】这里有一个文件地址：https://example.com/reports/weekly-sales.pdf 。请不要访问它，只根据地址判断文件类型，并给出 2 条处理建议。"
+    sdk_inbound:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text: "【{CORRELATION_ID}】这里有一个文件地址：https://example.com/reports/weekly-sales.pdf 。请不要访问它，只根据地址判断文件类型，并给出 2 条处理建议。"
+      media: []
+      direction: inbound
+      metadata:
+        caseId: Q05
+        promptKind: file_url
+        fileUrl: "https://example.com/reports/weekly-sales.pdf"
+    sdk_expected_reply:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text_rule: non_empty
+      media: []
+      direction: outbound
+    channel_expected_payload:
+      title: "gotify-q05-file-url"
+      priority: 5
+      extras:
+        openclaw:
+          outbound: true
+          source: openclaw
+    reply_assertions:
+      min_length: 12
+      contains_any: [".pdf", "PDF", "报告", "下载", "预览", "解析"]
+    expected:
+      reply_received: true
+    gotify_assertions:
+      require_main_agent: true
+      message_list_title: "gotify-q05-file-url"
+      message_list_expected_count_by_title: 2
+      message_list_require_reply_visible: true
+
+  - id: Q06
+    name: 带任务的提示词测试
+    tier: L4
+    category: prompt-task
+    automation: auto
+    priority: P0
+    timeout_ms: 90000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_relaxed_ms}"
+    input:
+      type: text
+      title: "gotify-q06-task"
+      message: |
+        【{CORRELATION_ID}】你现在是内容运营助手。
+        任务：根据下面的 brief 生成 3 条微信公众号标题。
+        brief：产品是“企业消息联动平台”，核心卖点是“多渠道统一接入、消息可追踪、智能体自动回复”。
+    sdk_inbound:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text: "【{CORRELATION_ID}】你现在是内容运营助手。任务：根据下面的 brief 生成 3 条微信公众号标题。brief：产品是“企业消息联动平台”，核心卖点是“多渠道统一接入、消息可追踪、智能体自动回复”。"
+      media: []
+      direction: inbound
+      metadata:
+        caseId: Q06
+        promptKind: task_generation
+    sdk_expected_reply:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text_rule: non_empty
+      media: []
+      direction: outbound
+    channel_expected_payload:
+      title: "gotify-q06-task"
+      priority: 5
+      extras:
+        openclaw:
+          outbound: true
+          source: openclaw
+    reply_assertions:
+      min_length: 20
+      contains_any: ["1.", "2.", "3.", "企业", "消息", "智能体", "联动"]
+    expected:
+      reply_received: true
+    gotify_assertions:
+      require_main_agent: true
+      message_list_title: "gotify-q06-task"
+      message_list_expected_count_by_title: 2
+      message_list_require_reply_visible: true
+
+  - id: Q07
+    name: 返回内容结构化测试（JSON）
+    tier: L4
+    category: prompt-structured
+    automation: auto
+    priority: P0
+    timeout_ms: 90000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_relaxed_ms}"
+    input:
+      type: text
+      title: "gotify-q07-json"
+      message: "【{CORRELATION_ID}】请严格返回 JSON，对象必须包含 topic、tone、count 三个字段，其中 topic=\"gotify test\"，tone=\"formal\"，count=3。不要输出 JSON 之外的任何文字。"
+    sdk_inbound:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text: "【{CORRELATION_ID}】请严格返回 JSON，对象必须包含 topic、tone、count 三个字段，其中 topic=\"gotify test\"，tone=\"formal\"，count=3。不要输出 JSON 之外的任何文字。"
+      media: []
+      direction: inbound
+      metadata:
+        caseId: Q07
+        promptKind: structured_json
+    sdk_expected_reply:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text_rule: non_empty
+      media: []
+      direction: outbound
+    channel_expected_payload:
+      title: "gotify-q07-json"
+      priority: 5
+      extras:
+        openclaw:
+          outbound: true
+          source: openclaw
+    reply_assertions:
+      min_length: 20
+      contains_all: ["topic", "tone", "count", "gotify test", "formal", "3"]
+    expected:
+      reply_received: true
+    gotify_assertions:
+      require_main_agent: true
+      message_list_title: "gotify-q07-json"
+      message_list_expected_count_by_title: 2
+      message_list_require_reply_visible: true
+
+  - id: Q08
+    name: 返回内容结构化测试（Markdown 表格）
+    tier: L4
+    category: prompt-structured
+    automation: auto
+    priority: P1
+    timeout_ms: 90000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_relaxed_ms}"
+    input:
+      type: text
+      title: "gotify-q08-table"
+      message: "【{CORRELATION_ID}】请输出一个 2 列 3 行的 Markdown 表格，列名为“字段”和“说明”，内容围绕 Gotify 测试。"
+    sdk_inbound:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: markdown
+      text: "【{CORRELATION_ID}】请输出一个 2 列 3 行的 Markdown 表格，列名为“字段”和“说明”，内容围绕 Gotify 测试。"
+      markdown: "| 字段 | 说明 |\n| --- | --- |\n| 渠道 | Gotify |\n| 用途 | 测试 |"
+      media: []
+      direction: inbound
+      metadata:
+        caseId: Q08
+        promptKind: markdown_table
+    sdk_expected_reply:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: markdown
+      text_rule: non_empty
+      media: []
+      direction: outbound
+    channel_expected_payload:
+      title: "gotify-q08-table"
+      priority: 5
+      extras:
+        openclaw:
+          outbound: true
+          source: openclaw
+    reply_assertions:
+      min_length: 20
+      contains_any: ["| 字段 | 说明 |", "|", "Gotify", "测试"]
+    expected:
+      reply_received: true
+    gotify_assertions:
+      require_main_agent: true
+      message_list_title: "gotify-q08-table"
+      message_list_expected_count_by_title: 2
+      message_list_require_reply_visible: true
+
+  - id: Q09
+    name: 带角色要求的客服回复测试
+    tier: L5
+    category: prompt-role
+    automation: auto
+    priority: P1
+    timeout_ms: 90000
+    wait_for_reply: true
+    reply_timeout_ms: "{default_sla.reply_wait_relaxed_ms}"
+    input:
+      type: text
+      title: "gotify-q09-role"
+      message: "【{CORRELATION_ID}】你现在扮演一个冷静专业的售后客服。用户投诉：'昨晚提交的数据今天还没同步成功。' 请给出一段 80 字以内的安抚和处理回复。"
+    sdk_inbound:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text: "【{CORRELATION_ID}】你现在扮演一个冷静专业的售后客服。用户投诉：'昨晚提交的数据今天还没同步成功。' 请给出一段 80 字以内的安抚和处理回复。"
+      media: []
+      direction: inbound
+      metadata:
+        caseId: Q09
+        promptKind: role_reply
+    sdk_expected_reply:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text_rule: non_empty
+      media: []
+      direction: outbound
+    channel_expected_payload:
+      title: "gotify-q09-role"
+      priority: 5
+      extras:
+        openclaw:
+          outbound: true
+          source: openclaw
+    reply_assertions:
+      min_length: 15
+      max_length: 120
+      contains_any: ["抱歉", "排查", "同步", "尽快", "处理"]
+    expected:
+      reply_received: true
+    gotify_assertions:
+      require_main_agent: true
+      message_list_title: "gotify-q09-role"
+      message_list_expected_count_by_title: 2
+      message_list_require_reply_visible: true
+
+  - id: Q10
+    name: 多轮上下文记忆测试
+    tier: L6
+    category: prompt-memory
+    automation: auto
+    priority: P0
+    timeout_ms: 120000
+    input:
+      type: multi_turn
+      title: "gotify-q10-multi-turn"
+      turns:
+        - message: "【{CORRELATION_ID}】请记住编号 ZX-{CORRELATION_ID}，只回复“记住了”。"
+          expected_reply_contains_any: ["记住", "记住了"]
+        - message: "我刚才让你记住的编号是什么？只回复编号本身。"
+          expected_reply_contains: "ZX-{CORRELATION_ID}"
+    sdk_inbound_sequence:
+      - source:
+          channel: gotify
+          accountId: "{ACCOUNT_ID}"
+          userId: "{PEER_ID}"
+          chatType: direct
+          agentId: main
+        contentType: text
+        text: "【{CORRELATION_ID}】请记住编号 ZX-{CORRELATION_ID}，只回复“记住了”。"
+        media: []
+        direction: inbound
+        metadata:
+          caseId: Q10
+          turn: 1
+          promptKind: memory
+      - source:
+          channel: gotify
+          accountId: "{ACCOUNT_ID}"
+          userId: "{PEER_ID}"
+          chatType: direct
+          agentId: main
+        contentType: text
+        text: "我刚才让你记住的编号是什么？只回复编号本身。"
+        media: []
+        direction: inbound
+        metadata:
+          caseId: Q10
+          turn: 2
+          promptKind: memory
+    sdk_expected_reply:
+      source:
+        channel: gotify
+        accountId: "{ACCOUNT_ID}"
+        userId: "{PEER_ID}"
+        chatType: direct
+        agentId: main
+      contentType: text
+      text_rule: non_empty
+      media: []
+      direction: outbound
+    channel_expected_payload:
+      title: "gotify-q10-multi-turn"
+      priority: 5
+      extras:
+        openclaw:
+          outbound: true
+          source: openclaw
+    expected:
+      reply_received: true
+      session_persistence: same_session
+    gotify_assertions:
+      require_main_agent: true
+      session_key_equals: "agent:main:gotify:{ACCOUNT_ID}:direct:{PEER_ID}"
+      transcript_min_messages: 4
+      transcript_user_contains: "【{CORRELATION_ID}】"
+      transcript_assistant_contains_any: ["ZX-{CORRELATION_ID}"]
+      message_list_title: "gotify-q10-multi-turn"
+      message_list_expected_count_by_title: 4
+      message_list_require_reply_visible: true

@@ -1,0 +1,40 @@
+{
+  "dashboard": {
+    "title": "OpenClaw - Simple Test",
+    "tags": ["openclaw", "test"],
+    "timezone": "browser",
+    "refresh": "10s",
+    "panels": [
+      {
+        "title": "OpenClaw Up Status",
+        "targets": [
+          {
+            "expr": "openclaw_up"
+          }
+        ],
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "type": "stat"
+      },
+      {
+        "title": "Message Sent Total",
+        "targets": [
+          {
+            "expr": "openclaw_session_messages_sent_total"
+          }
+        ],
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 0,
+          "y": 6
+        },
+        "type": "stat"
+      }
+    ]
+  }
+}
