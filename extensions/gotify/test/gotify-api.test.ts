@@ -19,6 +19,7 @@ import {
   updateClient,
   deleteClient,
   healthCheck,
+  probeGotifyAccount,
   runGotifyDoctor,
 } from '../src/transport/gotify-api.js';
 import {
@@ -453,7 +454,9 @@ describe('Client API', () => {
 // ── Health & Doctor Tests ──────────────────────────────────────────────────────
 
 describe('Health & Doctor', () => {
-  const account = createTestAccount();
+  const account = createTestAccount({
+    inbound: { enabled: true, allowedAppId: 1 },
+  });
 
   it('healthCheck returns ok and latency', async () => {
     const fetchImpl = mockFetch([{ ok: true, json: async () => ({}) }]);
@@ -501,6 +504,24 @@ describe('Health & Doctor', () => {
     const fetchImpl = mockFetch([{ ok: true }]);
     const report = await runGotifyDoctor(noToken, { fetchImpl });
     expect(report.errors).toContain('Missing appToken.');
+  });
+
+  it('runGotifyDoctor reports missing inbound.allowedAppId when inbound is enabled', async () => {
+    const account = createTestAccount({
+      inbound: { enabled: true },
+    });
+    const fetchImpl = mockFetch([{ ok: true }]);
+    const report = await runGotifyDoctor(account, { fetchImpl });
+    expect(report.errors).toContain('Missing inbound.allowedAppId.');
+  });
+
+  it('probeGotifyAccount fails when inbound is enabled without allowedAppId', async () => {
+    const account = createTestAccount({
+      inbound: { enabled: true },
+    });
+    const probe = await probeGotifyAccount(account);
+    expect(probe.ok).toBe(false);
+    expect(probe.error).toBe('Missing inbound.allowedAppId');
   });
 });
 

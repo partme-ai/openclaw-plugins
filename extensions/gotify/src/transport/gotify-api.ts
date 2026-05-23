@@ -867,6 +867,9 @@ export async function runGotifyDoctor(
   if (!account.appToken) {
     errors.push("Missing appToken.");
   }
+  if (account.inbound.enabled && !account.inbound.allowedAppId) {
+    errors.push("Missing inbound.allowedAppId.");
+  }
 
   // 健康检查
   if (account.serverUrl) {
@@ -928,6 +931,12 @@ export async function probeGotifyAccount(
 }> {
   if (!account.configured) {
     return { ok: false, error: "Missing serverUrl or appToken" };
+  }
+  if (account.inbound.enabled && !account.inbound.allowedAppId) {
+    return {
+      ok: false,
+      error: "Missing inbound.allowedAppId",
+    };
   }
 
   const health = await healthCheck(account, options);

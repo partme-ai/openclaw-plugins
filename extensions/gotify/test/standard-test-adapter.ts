@@ -36,6 +36,8 @@ const FIXTURES_ROOT = join(REPO_ROOT, 'testing/fixtures');
 
 const GOTIFY_URL = process.env.GOTIFY_SERVER_URL ?? 'http://localhost:8080';
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL ?? 'http://localhost:18789';
+const GOTIFY_SENDER_APP_TOKEN =
+  process.env.GOTIFY_SENDER_APP_TOKEN ?? process.env.GOTIFY_APP_TOKEN ?? '';
 /** 消费即删下回复在服务端停留极短，默认 250ms 轮询以免错过 Agent 回复。 */
 const DEFAULT_POLL_INTERVAL_MS = Number(process.env.OPENCLAW_TEST_POLL_MS ?? 250);
 
@@ -67,6 +69,7 @@ async function loadCapabilities(): Promise<Record<string, boolean>> {
 function buildAccount(): ResolvedGotifyAccount {
   const appToken = process.env.GOTIFY_APP_TOKEN ?? '';
   const clientToken = process.env.GOTIFY_CLIENT_TOKEN ?? '';
+  const accountId = process.env.OPENCLAW_TEST_ACCOUNT_ID ?? 'default';
   if (!appToken || !clientToken) {
     throw new Error(
       'GOTIFY_APP_TOKEN and GOTIFY_CLIENT_TOKEN are required for standard tests'
@@ -76,14 +79,37 @@ function buildAccount(): ResolvedGotifyAccount {
     {
       channels: {
         gotify: {
-          serverUrl: GOTIFY_URL,
-          appToken,
-          clientToken,
+          ...(accountId === 'default'
+            ? {
+                serverUrl: GOTIFY_URL,
+                appToken,
+                clientToken,
+              }
+            : {
+                accounts: {
+                  [accountId]: {
+                    serverUrl: GOTIFY_URL,
+                    appToken,
+                    clientToken,
+                  },
+                },
+              }),
         },
       },
     },
-    process.env.OPENCLAW_TEST_ACCOUNT_ID ?? 'default'
+    accountId
   );
+}
+
+function buildSenderAccount(account: ResolvedGotifyAccount): ResolvedGotifyAccount {
+  if (!GOTIFY_SENDER_APP_TOKEN) {
+    throw new Error('GOTIFY_SENDER_APP_TOKEN (or GOTIFY_APP_TOKEN fallback) is required for inbound simulation');
+  }
+  return {
+    ...account,
+    appToken: GOTIFY_SENDER_APP_TOKEN,
+    configured: Boolean(account.serverUrl && GOTIFY_SENDER_APP_TOKEN),
+  };
 }
 
 /** 解析 fixture ref 为绝对路径。 */
@@ -154,6 +180,7 @@ async function pollForReply(
  */
 export async function createGotifyAdapter(): Promise<ChannelAdapter> {
   const account = buildAccount();
+  const senderAccount = buildSenderAccount(account);
   const capabilities = await loadCapabilities();
   let beforeIds = new Set<number>();
 
@@ -237,7 +264,7 @@ export async function createGotifyAdapter(): Promise<ChannelAdapter> {
         extras: buildSendExtras(input),
       };
 
-      const sent = await sendGotifyMessage(account, payload);
+      const sent = await sendGotifyMessage(senderAccount, payload);
       const sentAt = Date.now();
       return { messageId: String(sent.id), sentAt, raw: sent };
     },

@@ -12,6 +12,8 @@
 export interface GotifyStreamConfig {
   /** 是否启用 Gotify -> OpenClaw 的 WebSocket 入站监听。 */
   enabled?: boolean;
+  /** 仅接收指定 Application ID 的入站消息；未配置时接受当前用户可见的所有应用消息。 */
+  allowedAppId?: number;
   /** 首次断线后的重连延迟，单位毫秒。 */
   reconnectDelayMs?: number;
   /** 指数退避重连的最大延迟，单位毫秒。 */

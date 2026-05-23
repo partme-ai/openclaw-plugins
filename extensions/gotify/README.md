@@ -85,17 +85,22 @@ openclaw plugins install @partme.ai/openclaw-gotify
 {
   "channels": {
     "gotify": {
-      "serverUrl": "https://gotify.example.com",
-      "appToken": "YOUR_GOTIFY_APP_TOKEN",
-      "clientToken": "YOUR_GOTIFY_CLIENT_TOKEN",
-      "defaultPriority": 5,
-      "inbound": {
-        "enabled": true
-      },
-      "bootstrap": {
-        "enabled": true,
-        "autoCreateApplication": false,
-        "applicationName": "openclaw-default"
+      "defaultAccount": "default",
+      "accounts": {
+        "default": {
+          "name": "default",
+          "enabled": true,
+          "serverUrl": "https://gotify.example.com",
+          "appToken": "YOUR_GOTIFY_APP_TOKEN",
+          "clientToken": "YOUR_GOTIFY_CLIENT_TOKEN",
+          "defaultPriority": 5,
+          "dmPolicy": "open",
+          "allowFrom": ["*"],
+          "inbound": {
+            "enabled": true,
+            "allowedAppId": 1
+          }
+        }
       }
     }
   },
@@ -111,27 +116,64 @@ openclaw plugins install @partme.ai/openclaw-gotify
 {
   "channels": {
     "gotify": {
-      "defaultAccount": "ops",
+      "defaultAccount": "default",
       "accounts": {
-        "ops": {
-          "serverUrl": "https://gotify-ops.example.com",
-          "appToken": "OPS_APP_TOKEN",
-          "clientToken": "OPS_CLIENT_TOKEN",
-          "inbound": { "enabled": true }
+        "default": {
+          "name": "default",
+          "enabled": true,
+          "serverUrl": "http://localhost:8080",
+          "appToken": "ACYOShvtHHH2U69",
+          "clientToken": "C7ErQjzzeoAXCKg",
+          "defaultPriority": 5,
+          "dmPolicy": "open",
+          "allowFrom": ["*"],
+          "inbound": {
+            "enabled": true
+          }
         },
-        "alerts": {
-          "serverUrl": "https://gotify-alerts.example.com",
-          "appToken": "ALERTS_APP_TOKEN"
+        "e2e": {
+          "name": "e2e",
+          "enabled": true,
+          "serverUrl": "http://127.0.0.1:18080",
+          "appToken": "Aiq5hUNRZLE9ucx",
+          "clientToken": "CS8dXyptveo_dkm",
+          "defaultPriority": 5,
+          "dmPolicy": "open",
+          "allowFrom": ["*"],
+          "inbound": {
+            "enabled": true,
+            "allowedAppId": 2,
+            "deleteAfterConsume": false
+          }
         }
       }
     }
-  },
-  "bindings": [
-    { "agentId": "ops-agent", "match": { "channel": "gotify", "accountId": "ops" } },
-    { "agentId": "alerts-agent", "match": { "channel": "gotify", "accountId": "alerts" } }
-  ]
+  }
 }
 ```
+
+This pattern makes the runtime intent explicit:
+
+- `accounts.default` is the normal plugin account.
+- `accounts.e2e` is a dedicated local test account.
+- `appToken` is always the token used by `openclaw-gotify` itself for outbound send.
+- `clientToken` is used by the plugin for `/stream` inbound listen and operator APIs.
+- `inbound.allowedAppId` means one account only accepts inbound messages from one Gotify Application ID.
+
+### Backlog Replay
+
+When `inbound.enabled=true`, `openclaw-gotify` now requires `inbound.allowedAppId` and uses it for startup backlog replay:
+
+1. connect `/stream` first and buffer newly arriving live messages
+2. fetch historical messages from `GET /application/{allowedAppId}/message?since=<lastSeenMessageId>`
+3. replay them one by one in ascending message-id order
+4. persist `lastSeenMessageId` after each successfully processed message
+5. drain buffered live messages in order
+6. switch to normal live `/stream` handling
+
+This design avoids sending a whole backlog batch to the agent at once. Each historical message is dispatched as an individual inbound turn.
+
+For local end-to-end tests, the simulated external sender may use a second Gotify Application token such as `GOTIFY_SENDER_APP_TOKEN`. That sender token is a test harness concern and is not part of the plugin's runtime config shape.
 
 ## Session Isolation
 

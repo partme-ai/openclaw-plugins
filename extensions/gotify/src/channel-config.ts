@@ -79,6 +79,12 @@ export const GotifyAccountSchema = z
     inbound: z
       .object({
         enabled: z.boolean().optional().default(false),
+        allowedAppId: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Only accept inbound messages from this Gotify Application ID"),
         reconnectDelayMs: z.number().int().min(500).optional().default(2000),
         maxReconnectDelayMs: z
           .number()
@@ -161,6 +167,12 @@ export const gotifyConfigSchema: ChannelConfigSchema = {
         type: "object",
         properties: {
           enabled: { type: "boolean" },
+          allowedAppId: {
+            type: "integer",
+            minimum: 1,
+            description:
+              "Only accept inbound messages from this Gotify Application ID",
+          },
           reconnectDelayMs: { type: "integer", minimum: 500 },
           maxReconnectDelayMs: { type: "integer", minimum: 1000 },
           maxReconnectAttempts: { type: "integer", minimum: 0 },
@@ -217,6 +229,12 @@ export const gotifyConfigSchema: ChannelConfigSchema = {
     defaultPriority: {
       label: "Default Priority",
       description: "Message priority (0–10, default 5)",
+    },
+    "inbound.allowedAppId": {
+      label: "Allowed Application ID",
+      description:
+        "Only receive inbound messages from this Gotify Application ID. Leave empty to receive all applications visible to the current user.",
+      placeholder: "1",
     },
   },
 };

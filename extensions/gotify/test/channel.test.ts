@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import { dispatchInboundMessage } from '../src/channel.js';
+import { cleanupGotifyChannel, dispatchInboundMessage } from '../src/channel.js';
 import { resolveGotifyAccount } from '../src/config.js';
-import { setOwnApplicationId } from '../src/runtime.js';
+import { resetGotifyRuntimeForTest, setOwnApplicationId } from '../src/runtime.js';
 import type { GotifyStreamEnvelope } from '../src/types.js';
 
 vi.mock('../src/transport/gotify-api.js', async (importOriginal) => {
@@ -103,6 +103,8 @@ function makeCtx(
 describe('dispatchInboundMessage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetGotifyRuntimeForTest();
+    cleanupGotifyChannel();
   });
 
   it('skips outbound-marked stream messages to prevent feedback loop', async () => {
@@ -135,6 +137,60 @@ describe('dispatchInboundMessage', () => {
     });
 
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('skips inbound messages whose appid does not match inbound.allowedAppId', async () => {
+    const dispatch = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCtx({ dispatchReplyWithBufferedBlockDispatcher: dispatch });
+    const account = resolveGotifyAccount(
+      {
+        channels: {
+          gotify: {
+            serverUrl: 'https://push.example.com',
+            appToken: 'app-token',
+            clientToken: 'client-token',
+            inbound: { enabled: true, allowedAppId: 42 },
+            allowFrom: ['*'],
+          },
+        },
+      },
+      'default'
+    );
+
+    await dispatchInboundMessage(ctx as never, account, {
+      id: 2,
+      appid: 7,
+      message: 'foreign app',
+    });
+
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('accepts inbound message when appid matches inbound.allowedAppId', async () => {
+    const dispatch = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCtx({ dispatchReplyWithBufferedBlockDispatcher: dispatch });
+    const account = resolveGotifyAccount(
+      {
+        channels: {
+          gotify: {
+            serverUrl: 'https://push.example.com',
+            appToken: 'app-token',
+            clientToken: 'client-token',
+            inbound: { enabled: true, allowedAppId: 42 },
+            allowFrom: ['*'],
+          },
+        },
+      },
+      'default'
+    );
+
+    await dispatchInboundMessage(ctx as never, account, {
+      id: 3,
+      appid: 42,
+      message: 'matched app',
+    });
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('uses resolveGotifyPeerId for routing peer id', async () => {

@@ -63,18 +63,28 @@ npm install @partme.ai/openclaw-gotify
 
 ## 配置
 
-### 最小配置（单账号）
+### 最小配置
 
 ```jsonc
 {
   "channels": {
     "gotify": {
-      "serverUrl": "https://gotify.example.com",
-      "appToken": "Axxxxxxxxxxxxx",
-      "clientToken": "Cxxxxxxxxxxxxx",
-      "defaultPriority": 5,
-      "inbound": {
-        "enabled": true
+      "defaultAccount": "default",
+      "accounts": {
+        "default": {
+          "name": "default",
+          "enabled": true,
+          "serverUrl": "https://gotify.example.com",
+          "appToken": "Axxxxxxxxxxxxx",
+          "clientToken": "Cxxxxxxxxxxxxx",
+          "defaultPriority": 5,
+          "dmPolicy": "open",
+          "allowFrom": ["*"],
+          "inbound": {
+            "enabled": true,
+            "allowedAppId": 1
+          }
+        }
       }
     }
   }
@@ -87,38 +97,64 @@ npm install @partme.ai/openclaw-gotify
 {
   "channels": {
     "gotify": {
-      "defaultAccount": "ops",
+      "defaultAccount": "default",
       "accounts": {
-        "ops": {
-          "serverUrl": "https://ops-gotify.example.com",
-          "appToken": "A_ops_token",
-          "clientToken": "C_ops_client",
+        "default": {
+          "name": "default",
+          "enabled": true,
+          "serverUrl": "http://localhost:8080",
+          "appToken": "ACYOShvtHHH2U69",
+          "clientToken": "C7ErQjzzeoAXCKg",
           "defaultPriority": 5,
-          "inbound": { "enabled": true }
+          "dmPolicy": "open",
+          "allowFrom": ["*"],
+          "inbound": {
+            "enabled": true
+          }
         },
-        "alert": {
-          "serverUrl": "https://alert-gotify.example.com",
-          "appToken": "A_alert_token",
-          "clientToken": "C_alert_client",
-          "defaultPriority": 9,
-          "inbound": { "enabled": true }
+        "e2e": {
+          "name": "e2e",
+          "enabled": true,
+          "serverUrl": "http://127.0.0.1:18080",
+          "appToken": "Aiq5hUNRZLE9ucx",
+          "clientToken": "CS8dXyptveo_dkm",
+          "defaultPriority": 5,
+          "dmPolicy": "open",
+          "allowFrom": ["*"],
+          "inbound": {
+            "enabled": true,
+            "allowedAppId": 2,
+            "deleteAfterConsume": false
+          }
         }
       }
     }
-  },
-  "agents": {
-    "ops-agent": {
-      "channels": { "gotify": { "accounts": ["ops"] } }
-    },
-    "alert-agent": {
-      "channels": { "gotify": { "accounts": ["alert"] } }
-    }
-  },
-  "session": {
-    "dmScope": "per-account-channel-peer"
   }
 }
 ```
+
+这个写法更明确：
+
+- `accounts.default` 表示正常运行账号
+- `accounts.e2e` 表示本地联调用测试账号
+- `appToken` 始终表示 **openclaw-gotify 自己用于出站发送** 的 Application Token
+- `clientToken` 表示插件用于 **WebSocket `/stream` 入站监听** 与管理/查询 API 的 Client Token
+- `inbound.allowedAppId` 表示 **一个账号只接收一个指定 Application ID 的入站消息**
+
+### 停机期间消息补偿（Backlog Replay）
+
+当 `inbound.enabled=true` 时，`openclaw-gotify` 现在要求必须配置 `inbound.allowedAppId`，并据此在启动阶段执行历史消息补偿：
+
+1. 先建立 `/stream` 连接，并把刚到达的实时消息暂存在内存缓冲区
+2. 调用 `GET /application/{allowedAppId}/message?since=<lastSeenMessageId>` 拉取停机期间的历史消息
+3. 按消息 ID 升序 **一条一条** 回放
+4. 每成功处理一条消息，就持久化推进 `lastSeenMessageId`
+5. 历史回放结束后，再按顺序处理缓冲区中的实时消息
+6. 最后切换到正常的 `/stream` 实时处理
+
+这样不会把一批历史消息一次性塞给智能体，而是保持逐条入站、逐条完成的处理方式。
+
+如果本地测试需要再用一个独立的 Gotify Application 来模拟“外部用户发消息”，建议通过测试脚本环境变量（例如 `GOTIFY_SENDER_APP_TOKEN`）传入。那个 sender token 属于测试编排层，不属于插件运行配置本体。
 
 ### 配置说明
 

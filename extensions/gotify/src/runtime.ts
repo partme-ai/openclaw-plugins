@@ -110,6 +110,17 @@ export function getOwnApplicationId(
 }
 
 /**
+ * 清空运行时缓存（仅测试使用）。
+ *
+ * @internal
+ */
+export function resetGotifyRuntimeForTest(): void {
+  runtimeStore.runtime = null;
+  accountSnapshots.clear();
+  ownApplicationIds.clear();
+}
+
+/**
  * 构造新账号的默认运行态快照。
  *
  * @returns 未运行、无错误、无时间戳的初始快照。

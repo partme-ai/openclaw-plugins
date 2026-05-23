@@ -123,6 +123,7 @@ export function resolveGotifyAccount(
     allowFrom: normalizeAllowFrom(merged.allowFrom),
     inbound: {
       enabled: merged.inbound?.enabled ?? Boolean(clientToken),
+      allowedAppId: normalizePositiveInt(merged.inbound?.allowedAppId),
       reconnectDelayMs:
         merged.inbound?.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS,
       maxReconnectDelayMs:
@@ -245,6 +246,24 @@ function normalizePriority(value: unknown): number {
     return Math.max(0, Math.min(10, Math.trunc(value)));
   }
   return DEFAULT_PRIORITY;
+}
+
+/**
+ * 将配置值规范化为正整数 Application ID。
+ *
+ * @param value - `inbound.allowedAppId` 原始值。
+ * @returns 正整数；无效或未配置时返回 0。
+ */
+function normalizePositiveInt(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const normalized = Math.trunc(value);
+    return normalized > 0 ? normalized : 0;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const normalized = Number.parseInt(value.trim(), 10);
+    return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
+  }
+  return 0;
 }
 
 const VALID_DM_POLICIES = new Set<GotifyDmPolicy>([

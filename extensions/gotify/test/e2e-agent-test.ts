@@ -31,11 +31,12 @@ const TEST_PEER_ID = process.env.GOTIFY_TEST_PEER_ID ?? process.env.OPENCLAW_TES
 const AGENT_ID = process.env.OPENCLAW_TEST_AGENT_ID ?? 'main';
 const ACCOUNT_ID = process.env.OPENCLAW_TEST_ACCOUNT_ID ?? 'default';
 const APP_TOKEN = process.env.GOTIFY_APP_TOKEN ?? '';
+const SENDER_APP_TOKEN = process.env.GOTIFY_SENDER_APP_TOKEN ?? APP_TOKEN;
 const CLIENT_TOKEN = process.env.GOTIFY_CLIENT_TOKEN ?? '';
 
-if (!APP_TOKEN || !CLIENT_TOKEN) {
-  console.error('Error: GOTIFY_APP_TOKEN and GOTIFY_CLIENT_TOKEN are required.');
-  console.error('Usage: GOTIFY_APP_TOKEN=<token> GOTIFY_CLIENT_TOKEN=<token> npx tsx scripts/e2e-agent-test.ts');
+if (!APP_TOKEN || !CLIENT_TOKEN || !SENDER_APP_TOKEN) {
+  console.error('Error: GOTIFY_APP_TOKEN, GOTIFY_CLIENT_TOKEN and effective sender token are required.');
+  console.error('Usage: GOTIFY_APP_TOKEN=<plugin-app-token> GOTIFY_SENDER_APP_TOKEN=<sender-app-token> GOTIFY_CLIENT_TOKEN=<token> npx tsx scripts/e2e-agent-test.ts');
   process.exit(1);
 }
 const POLL_TIMEOUT_MS = 120_000;
@@ -46,7 +47,7 @@ async function gotifyRequest(path: string, opts: RequestInit = {}): Promise<Resp
   const url = `${GOTIFY_URL}${path}`;
   const isGet = !opts.method || opts.method === 'GET';
   const headers: Record<string, string> = {
-    "X-Gotify-Key": isGet ? CLIENT_TOKEN : APP_TOKEN,
+    "X-Gotify-Key": isGet ? CLIENT_TOKEN : SENDER_APP_TOKEN,
     "Content-Type": "application/json",
     ...((opts.headers as Record<string, string>) ?? {}),
   };

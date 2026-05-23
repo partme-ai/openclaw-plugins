@@ -43,4 +43,29 @@ describe('config', () => {
     expect(listGotifyAccountIds(cfg)).toEqual(['ops', 'alert']);
     expect(resolveGotifyAccount(cfg, null).serverUrl).toBe('https://ops.example.com');
   });
+
+  it('normalizes inbound.allowedAppId as a positive integer', () => {
+    const account = resolveGotifyAccount(
+      {
+        channels: {
+          gotify: {
+            accounts: {
+              e2e: {
+                serverUrl: 'https://push.example.com',
+                appToken: 'app-token',
+                clientToken: 'client-token',
+                inbound: {
+                  enabled: true,
+                  allowedAppId: '42',
+                },
+              },
+            },
+          },
+        },
+      },
+      'e2e'
+    );
+
+    expect(account.inbound.allowedAppId).toBe(42);
+  });
 });

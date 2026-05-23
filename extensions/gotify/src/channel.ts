@@ -50,6 +50,8 @@ import {
   deleteMessage,
   resolveApplicationName,
 } from "./transport/gotify-api.js";
+import { replayBacklogForAccount } from "./backlog-replay.js";
+import { writeBacklogCursor } from "./backlog-cursor.js";
 import {
   withOpenClawOutboundExtras,
   isOpenClawOutboundStreamMessage,
@@ -73,6 +75,7 @@ import { gotifySetupAdapter, gotifySetupWizard } from "./onboarding.js";
 /** WebSocket 监听器实例，按账号 ID 索引。 */
 const stopSignals = new Map<string, () => void>();
 const listeners = new Map<string, ReturnType<typeof createGotifyWsListener>>();
+const inboundQueues = new Map<string, Promise<void>>();
 
 /** 幂等缓存窗口（毫秒），与 PLUGIN_SPEC 对齐为 60 秒。 */
 const DEDUP_WINDOW_MS = 60_000;
@@ -121,6 +124,27 @@ export function cleanupGotifyChannel(): void {
     listener.stop();
   }
   listeners.clear();
+  inboundQueues.clear();
+}
+
+function parsePositiveMessageId(id: number | string | undefined): number {
+  const normalized =
+    typeof id === "number" ? Math.trunc(id) : Number.parseInt(String(id ?? ""), 10);
+  return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
+}
+
+function enqueueInbound(accountId: string, task: () => Promise<void>): Promise<void> {
+  const previous = inboundQueues.get(accountId) ?? Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(task);
+  const tracked = next.finally(() => {
+    if (inboundQueues.get(accountId) === tracked) {
+      inboundQueues.delete(accountId);
+    }
+  });
+  inboundQueues.set(accountId, tracked);
+  return tracked;
 }
 
 const meta = {
@@ -337,9 +361,35 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
         });
         return;
       }
+      if (!account.inbound.allowedAppId) {
+        const error =
+          "inbound.enabled requires inbound.allowedAppId so the account subscribes to exactly one Gotify application";
+        patchAccountSnapshot(account.accountId, {
+          running: false,
+          lastError: error,
+        });
+        ctx.setStatus({
+          accountId: account.accountId,
+          running: false,
+          lastError: error,
+        });
+        return;
+      }
+      const processInbound = async (message: GotifyStreamEnvelope) => {
+        await enqueueInbound(account.accountId, async () => {
+          await dispatchInboundMessage(ctx, account, message);
+        });
+      };
+
+      const bufferedMessages: GotifyStreamEnvelope[] = [];
+      let buffering = true;
       const listener = createGotifyWsListener(account, {
         onMessage: async (message) => {
-          await dispatchInboundMessage(ctx, account, message);
+          if (buffering) {
+            bufferedMessages.push(message);
+            return;
+          }
+          await processInbound(message);
         },
         onStateChange: (state) => {
           patchAccountSnapshot(account.accountId, {
@@ -360,6 +410,47 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
       listeners.get(account.accountId)?.stop();
       listeners.set(account.accountId, listener);
       await listener.start();
+
+      try {
+        const replay = await replayBacklogForAccount({
+          account,
+          dispatch: processInbound,
+        });
+        patchAccountSnapshot(account.accountId, {
+          lastError:
+            replay.replayed > 0
+              ? `backlog replayed ${replay.replayed} messages up to ${replay.lastSeenMessageId}`
+              : null,
+        });
+        ctx.setStatus({
+          accountId: account.accountId,
+          lastError:
+            replay.replayed > 0
+              ? `backlog replayed ${replay.replayed} messages up to ${replay.lastSeenMessageId}`
+              : null,
+        });
+      } catch (error) {
+        const errorMsg =
+          error instanceof Error ? error.message : String(error);
+        patchAccountSnapshot(account.accountId, {
+          running: false,
+          lastError: `backlog replay failed: ${errorMsg}`,
+        });
+        ctx.setStatus({
+          accountId: account.accountId,
+          running: false,
+          lastError: `backlog replay failed: ${errorMsg}`,
+        });
+        listener.stop();
+        listeners.delete(account.accountId);
+        return;
+      }
+
+      while (bufferedMessages.length > 0) {
+        const message = bufferedMessages.shift()!;
+        await processInbound(message);
+      }
+      buffering = false;
       /*
        * gateway.startAccount 需要保持 Promise 挂起，让宿主管理该账号的生命周期。
        * stopAccount/cleanup 会 resolve 对应 stopSignal，使 startAccount 正常退出。
@@ -453,6 +544,17 @@ export async function dispatchInboundMessage(
   if (!unified.text.trim()) {
     // Gotify 允许空 message；空文本无法驱动 OpenClaw agent，直接跳过。
     return;
+  }
+
+  const configuredAllowedAppId = account.inbound.allowedAppId;
+  if (configuredAllowedAppId > 0) {
+    const incomingAppId =
+      typeof message.appid === "number"
+        ? message.appid
+        : Number.parseInt(String(message.appid ?? ""), 10);
+    if (!Number.isFinite(incomingAppId) || incomingAppId !== configuredAllowedAppId) {
+      return;
+    }
   }
 
   const dmAccess = await checkGotifyInboundAccess({
@@ -659,6 +761,12 @@ export async function dispatchInboundMessage(
 
   // 入站：在 Agent 回复投递成功后再删除用户消息，避免「先删后答」打断一轮
   await deleteConsumedGotifyMessage(account, message);
+
+  const allowedAppId = account.inbound.allowedAppId;
+  const seenMessageId = parsePositiveMessageId(message.id);
+  if (allowedAppId > 0 && seenMessageId > 0) {
+    await writeBacklogCursor(account.accountId, allowedAppId, seenMessageId);
+  }
 
   patchAccountSnapshot(account.accountId, {
     lastInboundAt: Date.now(),
