@@ -102,18 +102,24 @@ function mergeWeComAccountConfig(cfg: OpenClawConfig, accountId: string): WeComC
   const account = findAccountConfig(wecomConfig?.accounts, accountId);
 
   // 深层合并：对 groups 做嵌套合并，其余字段用账号级覆盖
-  const { groups: baseGroups, ...baseRest } = base;
-  const { groups: accountGroups, ...accountRest } = account;
+  const { groups: baseGroups, templates: baseTemplates, ...baseRest } = base;
+  const { groups: accountGroups, templates: accountTemplates, ...accountRest } = account;
 
   const mergedGroups =
     baseGroups || accountGroups
       ? { ...baseGroups, ...accountGroups }
       : undefined;
 
+  const mergedTemplates =
+    baseTemplates || accountTemplates
+      ? { ...baseTemplates, ...accountTemplates }
+      : undefined;
+
   return {
     ...baseRest,
     ...accountRest,
     ...(mergedGroups !== undefined ? { groups: mergedGroups } : {}),
+    ...(mergedTemplates !== undefined ? { templates: mergedTemplates } : {}),
   } as WeComConfig;
 }
 

@@ -37,6 +37,9 @@ export const REPLY_SEND_TIMEOUT_MS = 15_000;
 /** 消息处理总超时时间（毫秒） */
 export const MESSAGE_PROCESS_TIMEOUT_MS = 6 * 60 * 1000;
 
+/** Agent 无可见回复时的兜底文案（用于关闭 thinking 流，避免用户侧假死） */
+export { EMPTY_REPLY_FALLBACK_MESSAGE } from "./templates.js";
+
 /** WebSocket 心跳间隔（毫秒） */
 export const WS_HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -98,8 +101,11 @@ export const MCP_CONFIG_FETCH_TIMEOUT_MS = 15_000;
 // 默认值
 // ============================================================================
 
-/** 默认媒体大小上限（MB） */
+/** 默认媒体大小上限（MB），仅作历史常量保留 */
 export const DEFAULT_MEDIA_MAX_MB = 5;
+
+/** WeCom 通道默认媒体大小上限（字节），与 README 20MB 一致 */
+export const DEFAULT_WECOM_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
 
 /** 文本分块大小上限 */
 export const TEXT_CHUNK_LIMIT = 4000;

@@ -33,12 +33,12 @@ pnpm test
 pnpm typecheck
 ```
 
-流式相关单元测试覆盖：`streaming-config.test.ts`（气泡合成、enter_chat 欢迎语解析、Webhook 空内容兜底）、`finish-thinking.test.ts`。
+流式相关单元测试覆盖：`streaming-config.test.ts`（气泡合成、enter_chat 欢迎语解析、Webhook 空内容兜底）、`finish-thinking.test.ts`、`templates.test.ts`（模板 merge 与占位符替换）。
 
 手工验证（可选）：
 
-- **enter_chat 欢迎语**：配置 `channels.wecom.welcomeText`，打开 Bot 会话，确认 WS 模式收到欢迎文本。
-- **状态栏 / compaction**：长对话触发上下文压缩时，stream 气泡状态行应短暂显示「📦 正在压缩上下文…」。
+- **enter_chat 欢迎语**：配置 `channels.wecom.templates.welcome` 或 `channels.wecom.welcomeText`，打开 Bot 会话，确认 WS / Webhook 收到欢迎文本。
+- **状态栏 / compaction**：长对话触发上下文压缩时，stream 气泡状态行应短暂显示 compaction 模板（默认「📦 正在压缩上下文…」）；可通过 `channels.wecom.templates.compaction` 自定义。
 
 ## 入站测试（用户 → Bot）
 

@@ -47,9 +47,11 @@ import { claimWecomInboundMsgid } from "./dedup.js";
 import { createWecomReplyDispatcher } from "./reply-pipeline.js";
 import {
   applyWecomWebhookEmptyContentFallback,
+  resolveWecomEnterChatWelcomeText,
   resolveWecomStreamingConfig,
   syncWecomStreamContent,
 } from "../streaming-config.js";
+import { resolveWecomTemplates } from "../templates.js";
 import {
   getActiveReplyUrl,
   sendBotFallbackPromptNow,
@@ -166,8 +168,9 @@ export async function handleInboundMessage(
 
   // 根据 status 返回不同的占位符响应（对齐原版 status 分支处理）
   const defaultPlaceholder = (target.account.config as any)?.streamPlaceholderContent;
-  const queuedPlaceholder = "已收到，已排队处理中...";
-  const mergedQueuedPlaceholder = "已收到，已合并排队处理中...";
+  const templates = resolveWecomTemplates(target.account);
+  const queuedPlaceholder = templates.queued;
+  const mergedQueuedPlaceholder = templates.mergedQueued;
 
   if (status === "active_new") {
     // 第一条消息，返回默认占位符
@@ -249,7 +252,7 @@ export async function handleEnterChat(
   target: WecomWebhookTarget,
   message: WebhookInboundMessage,
 ): Promise<Record<string, unknown> | null> {
-  const welcomeText = target.account.welcomeText;
+  const welcomeText = resolveWecomEnterChatWelcomeText(target.account.config);
 
   const userId = message.from?.userid ?? "unknown";
   target.runtime.log?.(
@@ -400,8 +403,7 @@ export async function startAgentForStream(params: {
   const config = target.config;
   const account = target.account;
   const streamingConfig = resolveWecomStreamingConfig(account);
-
-  const userid = resolveWecomSenderUserId(msg) || "unknown";
+  const templates = resolveWecomTemplates(account);
   const chatType = msg.chattype === "group" ? "group" : "direct";
   const chatId = msg.chattype === "group" ? (msg.chatid?.trim() || "unknown") : userid;
   const taskKey = computeTaskKey(target, msg);
@@ -852,13 +854,14 @@ export async function startAgentForStream(params: {
   if (isResetCommand) {
     const current = streamStore.getStream(streamId);
     if (current && !current.content?.trim()) {
-      const ackText = resetCommandKind === "reset" ? "✅ 已重置会话。" : "✅ 已开启新会话。";
+      const ackText = resetCommandKind === "reset" ? templates.sessionReset : templates.sessionNew;
       streamStore.updateStream(streamId, (s) => {
         s.answerText = ackText;
         syncWecomStreamContent(s, streamingConfig, {
           includeAnswer: true,
           includeFooter: true,
           includeStatus: false,
+          templates,
         });
         s.content = truncateUtf8Bytes(s.content, STREAM_MAX_BYTES) || s.content;
         s.finished = true;
@@ -872,6 +875,7 @@ export async function startAgentForStream(params: {
       hasMediaDelivered: (s.agentMediaKeys?.length ?? 0) > 0,
       hasFallback: Boolean(s.fallbackMode),
       finishedAt: Date.now(),
+      templates,
     });
     s.content = truncateUtf8Bytes(s.content, STREAM_MAX_BYTES) || s.content;
   });
@@ -924,7 +928,7 @@ export async function startAgentForStream(params: {
 
   const ackStreamIds = streamStore.drainAckStreamsForBatch(streamId);
   if (ackStreamIds.length > 0) {
-    const mergedDoneHint = "✅ 已合并处理完成，请查看上一条回复。";
+    const mergedDoneHint = templates.mergedDone;
     for (const ackId of ackStreamIds) {
       streamStore.updateStream(ackId, (s) => { s.content = mergedDoneHint; s.finished = true; });
     }

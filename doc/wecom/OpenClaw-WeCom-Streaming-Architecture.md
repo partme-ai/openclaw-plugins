@@ -491,6 +491,28 @@ openclaw config set channels.wecom.sendThinkingMessage true
 | 生成中 | `正在组织回复…` | `onAssistantMessageStart` |
 | 完成 | （关流，展示最终答案） | `finish=true` |
 
+#### 文案模板（`channels.wecom.templates`）
+
+| 键 | 默认 | 占位符 | 用途 |
+|----|------|--------|------|
+| `thinking` | `正在思考…` | — | `onReplyStart` / compaction 结束 |
+| `received` | `已收到，正在处理…` | — | 入站 Ack（预留） |
+| `tool` | `正在查资料…` | `{toolName}` | `onToolStart` |
+| `reading` | `正在阅读附件…` | — | 入站媒体解析 |
+| `generating` | `正在组织回复…` | — | `onAssistantMessageStart` |
+| `compaction` | `📦 正在压缩上下文…` | — | `onCompactionStart` |
+| `emptyReply` | `⚠️ 未能生成…` | — | 空回复关流 |
+| `finishFooter` | `⏱ {elapsed}s · 已完成` | `{elapsed}` | `footer.elapsed` |
+| `welcome` | （空） | — | enter_chat（优先于 `welcomeText`） |
+| `queued` / `mergedQueued` / `mergedDone` | 队列 Ack 文案 | — | Webhook 重内容合并批次 |
+
+账号级覆盖：`channels.wecom.accounts.{id}.templates.*`（与顶层 deep-merge）。
+
+```bash
+openclaw config set channels.wecom.templates.thinking "正在思考…"
+openclaw config set channels.wecom.templates.finishFooter "耗时 {elapsed}s"
+```
+
 #### 与现有字段关系
 
 | 字段 | 关系 |
@@ -552,6 +574,7 @@ replyStream 失败 (846608)
 | `streamPlaceholderContent` | Webhook 首次 stream 占位 | `"1"` | Webhook |
 | `network.agentReplyTimeoutMs` | Agent 总超时 | 6min | 全局 |
 | `welcomeText` | enter_chat 欢迎语 | Bot WS / Webhook / kf WS |
+| `templates.*` | 用户可见文案模板 | Bot WS / Webhook |
 
 **待实现（Feishu 式开关）**：
 
@@ -590,7 +613,7 @@ replyStream 失败 (846608)
 | **P1** | WS `enter_chat` 欢迎语（`replyWelcome` + `welcomeText` / 自定义占位） | ✅ |
 | **P1** | WS 侧 StreamState / `watchStreamReply` 与 kf 对齐（可选重构） | 中 |
 | **P2** | `onPartialReply` 与 block deliver 策略统一 | 低 |
-| **P3** | 重内容 Ack + 异步解析（与流式正交） | 低 |
+| **P3** | 重内容 Ack + 异步解析（队列 Ack 模板可配置） | ✅ |
 
 **明确不做**：`routes` / commandPrefix / agentId 动态路由；与飞书 `threadSession` 无关的复杂 profile 嵌套。
 

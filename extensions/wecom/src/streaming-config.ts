@@ -6,6 +6,22 @@
 
 import type { WeComConfig, ResolvedWeComAccount } from "./utils.js";
 import type { WecomFooterConfig, WecomStreamingNestedConfig } from "./types/config.js";
+import {
+  formatWecomElapsedFooter,
+  WECOM_DEFAULT_TEMPLATES,
+  type ResolvedWecomTemplates,
+} from "./templates.js";
+
+export {
+  formatWecomElapsedFooter,
+  WECOM_STATUS_COMPACTING,
+  WECOM_STATUS_GENERATING,
+  WECOM_STATUS_READING,
+  WECOM_STATUS_RECEIVED,
+  WECOM_STATUS_THINKING,
+  WECOM_STATUS_TOOL,
+} from "./templates.js";
+export type { ResolvedWecomTemplates };
 
 /** 解析后的流式配置（账号级 merged config 输入） */
 export type ResolvedWecomStreamingConfig = {
@@ -20,14 +36,6 @@ export type ResolvedWecomStreamingConfig = {
   /** 关流时展示耗时 */
   footerElapsed: boolean;
 };
-
-/** 状态栏阶段文案 */
-export const WECOM_STATUS_RECEIVED = "已收到，正在处理…";
-export const WECOM_STATUS_THINKING = "正在思考…";
-export const WECOM_STATUS_TOOL = "正在查资料…";
-export const WECOM_STATUS_READING = "正在阅读附件…";
-export const WECOM_STATUS_GENERATING = "正在组织回复…";
-export const WECOM_STATUS_COMPACTING = "📦 正在压缩上下文…";
 
 /**
  * 解析 channels.wecom.streaming / footer 配置，合并账号级 overrides。
@@ -63,12 +71,6 @@ export function resolveWecomStreamingConfig(
 /** 是否应在 stream 气泡中展示状态行 */
 export function shouldShowWecomStatusLine(cfg: ResolvedWecomStreamingConfig): boolean {
   return cfg.footerStatus || (cfg.streaming && cfg.streamingStatus);
-}
-
-/** 关流耗时脚注 */
-export function formatWecomElapsedFooter(elapsedMs: number): string {
-  const seconds = Math.max(1, Math.round(elapsedMs / 1000));
-  return `⏱ ${seconds}s · 已完成`;
 }
 
 /**
@@ -129,8 +131,10 @@ export function syncWecomStreamContent(
     includeFooter?: boolean;
     includeStatus?: boolean;
     finishedAt?: number;
+    templates?: ResolvedWecomTemplates;
   } = {},
 ): void {
+  const templates = options.templates ?? WECOM_DEFAULT_TEMPLATES;
   const showAnswer =
     options.includeAnswer === true ||
     (options.includeAnswer !== false &&
@@ -147,7 +151,7 @@ export function syncWecomStreamContent(
     options.includeFooter === true &&
     streamingConfig.footerElapsed &&
     state.replyStartedAt != null
-      ? formatWecomElapsedFooter((options.finishedAt ?? Date.now()) - state.replyStartedAt)
+      ? formatWecomElapsedFooter((options.finishedAt ?? Date.now()) - state.replyStartedAt, templates)
       : undefined;
 
   state.content = buildWecomStreamBubbleText({
@@ -169,9 +173,13 @@ export function resolveWecomStreamPlaceholder(cfg: WeComConfig, fallback: string
 }
 
 /**
- * 解析 WS enter_chat 欢迎语文案（welcomeText 优先，其次自定义 stream 占位）。
+ * 解析 WS enter_chat 欢迎语文案（templates.welcome / welcomeText / streamPlaceholderContent）。
  */
 export function resolveWecomEnterChatWelcomeText(cfg: WeComConfig): string | undefined {
+  const fromTemplates = cfg.templates?.welcome?.trim();
+  if (fromTemplates) {
+    return fromTemplates;
+  }
   const welcome = cfg.welcomeText?.trim();
   if (welcome) {
     return welcome;
@@ -193,15 +201,21 @@ export function applyWecomWebhookEmptyContentFallback(
     fallbackMode?: string;
   },
   streamingConfig: ResolvedWecomStreamingConfig,
-  options: { hasMediaDelivered?: boolean; hasFallback?: boolean; finishedAt?: number } = {},
+  options: {
+    hasMediaDelivered?: boolean;
+    hasFallback?: boolean;
+    finishedAt?: number;
+    templates?: ResolvedWecomTemplates;
+  } = {},
 ): void {
+  const templates = options.templates ?? WECOM_DEFAULT_TEMPLATES;
   if (state.content.trim() || (state.images?.length ?? 0) > 0) {
     return;
   }
   if (options.hasMediaDelivered) {
-    state.answerText = "✅ 文件已发送。";
+    state.answerText = templates.mediaDelivered;
   } else if (!options.hasFallback) {
-    state.answerText = "✅ 已处理完成。";
+    state.answerText = templates.processedComplete;
   } else {
     return;
   }
@@ -210,5 +224,6 @@ export function applyWecomWebhookEmptyContentFallback(
     includeFooter: true,
     includeStatus: false,
     finishedAt: options.finishedAt,
+    templates,
   });
 }

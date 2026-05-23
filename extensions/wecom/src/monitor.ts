@@ -51,8 +51,11 @@ import { enqueueWeComChatTask } from "./chat-queue.js";
 import {
   buildAgentReplyTimeoutSummary,
   buildDispatchErrorSummary,
-  resolveThinkingFinishText,
-} from "./finish-thinking.js";
+  buildMediaErrorSummary,
+  resolveWecomTemplates,
+  resolveWecomToolStatusLine,
+} from "./templates.js";
+import { resolveThinkingFinishText } from "./finish-thinking.js";
 import type { WeComMonitorOptions, MessageState } from "./interface.js";
 import {
   downloadAndSaveImages,
@@ -88,13 +91,9 @@ import {
   resolveWecomStreamingConfig,
   resolveWecomStreamPlaceholder,
   shouldShowWecomStatusLine,
-  WECOM_STATUS_COMPACTING,
-  WECOM_STATUS_GENERATING,
-  WECOM_STATUS_READING,
-  WECOM_STATUS_THINKING,
-  WECOM_STATUS_TOOL,
   type ResolvedWecomStreamingConfig,
 } from "./streaming-config.js";
+import type { ResolvedWecomTemplates } from "./templates.js";
 import {
   formatChannelProgressDraftLineForEntry,
   isChannelProgressDraftWorkToolName,
@@ -183,28 +182,6 @@ async function getExtendedMediaLocalRoots(config?: WeComConfig): Promise<string[
     }
   }
   return roots;
-}
-
-// ============================================================================
-// 媒体发送错误提示
-// ============================================================================
-
-/**
- * 根据媒体发送结果生成纯文本错误摘要（用于替换 thinking 流式消息展示给用户）。
- *
- * 使用纯文本而非 markdown 格式，因为 replyStream 只支持纯文本。
- */
-function buildMediaErrorSummary(
-  mediaUrl: string,
-  result: { rejectReason?: string; error?: string },
-): string {
-  if (result.error?.includes("LocalMediaAccessError")) {
-    return `⚠️ 文件发送失败：没有权限访问路径 ${mediaUrl}\n请在 openclaw.json 的 mediaLocalRoots 中添加该路径的父目录后重启生效。`;
-  }
-  if (result.rejectReason) {
-    return `⚠️ 文件发送失败：${result.rejectReason}`;
-  }
-  return `⚠️ 文件发送失败：无法处理文件 ${mediaUrl}，请稍后再试。`;
 }
 
 // ============================================================================
@@ -359,6 +336,7 @@ interface DeliverContext {
   account: ResolvedWeComAccount;
   runtime: RuntimeEnv;
   streamingConfig: ResolvedWecomStreamingConfig;
+  templates: ResolvedWecomTemplates;
 }
 
 /**
@@ -411,7 +389,7 @@ async function flushStreamingUpdate(
 
   if (!bubbleText.trim()) {
     if (options.finish) {
-      bubbleText = resolveThinkingFinishText(state, { streamingConfig });
+      bubbleText = resolveThinkingFinishText(state, { streamingConfig, templates: ctx.templates });
     } else {
       return;
     }
@@ -471,8 +449,9 @@ async function sendThinkingReply(params: {
   runtime: RuntimeEnv;
   account: ResolvedWeComAccount;
   state?: MessageState;
+  templates: ResolvedWecomTemplates;
 }): Promise<void> {
-  const { wsClient, frame, streamId, runtime, account, state } = params;
+  const { wsClient, frame, streamId, runtime, account, state, templates } = params;
   const placeholder = resolveWecomStreamPlaceholder(account.config, THINKING_MESSAGE);
   try {
     await sendWeComReplyNonBlocking({
@@ -487,7 +466,7 @@ async function sendThinkingReply(params: {
     runtime.log?.(`[wecom] Non-blocking thinking reply skipped or failed: ${String(err)}`);
   }
   if (state && shouldShowWecomStatusLine(resolveWecomStreamingConfig(account))) {
-    state.statusLine = WECOM_STATUS_THINKING;
+    state.statusLine = templates.thinking;
   }
 }
 
@@ -498,7 +477,7 @@ async function sendThinkingReply(params: {
  * 因此所有媒体统一走 aibot_send_msg 主动发送。
  */
 async function sendMediaBatch(ctx: DeliverContext, mediaUrls: string[]): Promise<void> {
-  const { wsClient, frame, state, account, runtime } = ctx;
+  const { wsClient, frame, state, account, runtime, templates } = ctx;
   const body = frame.body as MessageBody;
   const chatId = body.chatid || body.from.userid;
   const mediaLocalRoots = await getExtendedMediaLocalRoots(account.config);
@@ -525,7 +504,7 @@ async function sendMediaBatch(ctx: DeliverContext, mediaUrls: string[]): Promise
         `[wecom] Media send failed: url=${mediaUrl}, reason=${result.rejectReason || result.error}`,
       );
       // 收集错误摘要，后续在 finishThinkingStream 中直接替换 thinking 流展示给用户
-      const summary = buildMediaErrorSummary(mediaUrl, result);
+      const summary = buildMediaErrorSummary(mediaUrl, result, templates);
       state.mediaErrorSummary = state.mediaErrorSummary
         ? `${state.mediaErrorSummary}\n\n${summary}`
         : summary;
@@ -560,7 +539,7 @@ async function finishThinkingStream(ctx: DeliverContext): Promise<void> {
   const { wsClient, frame, state, runtime, streamingConfig } = ctx;
   const body = frame.body as MessageBody;
   const chatId = body.chatid || body.from.userid;
-  const finishText = resolveThinkingFinishText(state, { streamingConfig });
+  const finishText = resolveThinkingFinishText(state, { streamingConfig, templates: ctx.templates });
 
   // 尝试流式发送；若已知过期或发送时发现过期，统一降级为主动发送
   let expired = state.streamExpired;
@@ -624,11 +603,12 @@ async function routeAndDispatchMessage(params: {
   } = params;
   const core = getWeComRuntime();
   const streamingConfig = resolveWecomStreamingConfig(account);
+  const templates = resolveWecomTemplates(account);
   const showStatusLine = shouldShowWecomStatusLine(streamingConfig);
   const showCompactionStatus =
     streamingConfig.footerStatus ||
     (streamingConfig.streaming && streamingConfig.streamingStatus);
-  const ctx: DeliverContext = { wsClient, frame, state, account, runtime, streamingConfig };
+  const ctx: DeliverContext = { wsClient, frame, state, account, runtime, streamingConfig, templates };
 
   // 防止 onCleanup 被多次调用（onError 回调与 catch 块可能重复触发）
   let cleanedUp = false;
@@ -643,7 +623,7 @@ async function routeAndDispatchMessage(params: {
   const agentReplyTimeoutMs = resolveWecomAgentReplyTimeoutMs(config);
   state.replyStartedAt = state.replyStartedAt ?? Date.now();
   if (state.inboundHadMedia && streamingConfig.footerStatus) {
-    state.statusLine = WECOM_STATUS_READING;
+    state.statusLine = templates.reading;
   }
 
   try {
@@ -687,7 +667,7 @@ async function routeAndDispatchMessage(params: {
                 if (!isChannelProgressDraftWorkToolName(payload.name)) {
                   return;
                 }
-                let nextStatus = WECOM_STATUS_TOOL;
+                let nextStatus = resolveWecomToolStatusLine(templates, payload.name);
                 if (streamingConfig.streaming && streamingConfig.streamingStatus) {
                   const formatted = formatChannelProgressDraftLineForEntry(
                     account.config,
@@ -713,7 +693,7 @@ async function routeAndDispatchMessage(params: {
           onAssistantMessageStart: showStatusLine
             ? async () => {
                 try {
-                  await updateWecomStatusLine(ctx, WECOM_STATUS_GENERATING);
+                  await updateWecomStatusLine(ctx, templates.generating);
                 } catch (e) {
                   runtime.log?.(`[wecom] status flush on assistant start failed: ${String(e)}`);
                 }
@@ -722,7 +702,7 @@ async function routeAndDispatchMessage(params: {
           onCompactionStart: showCompactionStatus
             ? async () => {
                 try {
-                  await updateWecomStatusLine(ctx, WECOM_STATUS_COMPACTING);
+                  await updateWecomStatusLine(ctx, templates.compaction);
                 } catch (e) {
                   runtime.log?.(`[wecom] status flush on compaction start failed: ${String(e)}`);
                 }
@@ -731,7 +711,7 @@ async function routeAndDispatchMessage(params: {
           onCompactionEnd: showCompactionStatus
             ? async () => {
                 try {
-                  await updateWecomStatusLine(ctx, WECOM_STATUS_THINKING);
+                  await updateWecomStatusLine(ctx, templates.thinking);
                 } catch (e) {
                   runtime.log?.(`[wecom] status flush on compaction end failed: ${String(e)}`);
                 }
@@ -742,7 +722,7 @@ async function routeAndDispatchMessage(params: {
           onReplyStart: async () => {
             state.replyStartedAt = state.replyStartedAt ?? Date.now();
             if (shouldShowWecomStatusLine(streamingConfig)) {
-              state.statusLine = WECOM_STATUS_THINKING;
+              state.statusLine = templates.thinking;
             }
             if (!isShowThink && state.streamId && !state.accumulatedText) {
               try {
@@ -753,6 +733,7 @@ async function routeAndDispatchMessage(params: {
                   runtime,
                   account,
                   state,
+                  templates,
                 });
               } catch (e) {
                 runtime.error?.(`[wecom] sendThinkingReply threw err: ${String(e)}`);
@@ -829,7 +810,7 @@ async function routeAndDispatchMessage(params: {
           },
           onError: (err, info) => {
             runtime.error?.(`[wecom] ${info.kind} reply failed: ${String(err)}`);
-            const summary = buildDispatchErrorSummary(info.kind, err);
+            const summary = buildDispatchErrorSummary(info.kind, err, templates);
             state.dispatchErrorSummary = state.dispatchErrorSummary
               ? `${state.dispatchErrorSummary}\n\n${summary}`
               : summary;
@@ -859,12 +840,12 @@ async function routeAndDispatchMessage(params: {
   } catch (err) {
     runtime.error?.(`[wecom][plugin] Failed to process message: ${String(err)}`);
     if (err instanceof TimeoutError) {
-      state.dispatchErrorSummary = buildAgentReplyTimeoutSummary(agentReplyTimeoutMs);
+      state.dispatchErrorSummary = buildAgentReplyTimeoutSummary(agentReplyTimeoutMs, templates);
       runtime.error?.(
         `[wecom] Agent reply timed out after ${agentReplyTimeoutMs}ms, sending fallback to user`,
       );
     } else if (!state.dispatchErrorSummary) {
-      state.dispatchErrorSummary = buildDispatchErrorSummary("dispatch", err);
+      state.dispatchErrorSummary = buildDispatchErrorSummary("dispatch", err, templates);
     }
     // 即使 dispatch 抛异常，也需要处理卡片和关闭 thinking 流
     try {

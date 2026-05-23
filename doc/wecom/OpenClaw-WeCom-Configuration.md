@@ -207,3 +207,43 @@ openclaw config set channels.wecom.network.egressProxyUrl "http://proxy.company.
 ### 群聊发文件失败
 
 企业微信 Bot 接口不支持发送非图片文件。插件会自动通过 Agent 私信发送，并在群里提示"文件已私信发给您"。
+
+## 流式输出架构
+
+Bot 流式回复（WebSocket / Webhook 双路径、Feishu 式 `streaming` / `footer` 开关、默认模式 vs 流式模式）见：
+
+**[OpenClaw-WeCom-Streaming-Architecture.md](./OpenClaw-WeCom-Streaming-Architecture.md)**
+
+快速开关示例：
+
+```bash
+# 默认：状态栏过程 + 最终一次出结果
+openclaw config set channels.wecom.streaming false
+openclaw config set channels.wecom.footer.status true
+
+# 流式：中间状态 + 结果打字机
+openclaw config set channels.wecom.streaming true
+openclaw config set channels.wecom.streaming.status true
+openclaw config set channels.wecom.streaming.content true
+```
+
+### 文案模板
+
+用户可见状态栏、关流脚注、空回复与 Webhook 队列 Ack 文案可通过 `channels.wecom.templates` 覆盖（默认值与历史行为一致）：
+
+```bash
+openclaw config set channels.wecom.templates.thinking "正在思考…"
+openclaw config set channels.wecom.templates.tool "正在调用 {toolName}…"
+openclaw config set channels.wecom.templates.compaction "📦 正在压缩上下文…"
+openclaw config set channels.wecom.templates.emptyReply "⚠️ 未能生成可展示的回复，请稍后重试。"
+openclaw config set channels.wecom.templates.finishFooter "⏱ {elapsed}s · 已完成"
+openclaw config set channels.wecom.templates.welcome "你好，我是助手"
+```
+
+账号级：`channels.wecom.accounts.<accountId>.templates.thinking`
+
+## 联调与测试
+
+手工联调（入站/出站、多 Bot、`message send`、`agent --deliver`、常见报错）见：
+
+**[OpenClaw-WeCom-Testing.md](./OpenClaw-WeCom-Testing.md)**

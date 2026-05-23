@@ -118,6 +118,15 @@ describe("formatWecomElapsedFooter", () => {
 });
 
 describe("resolveWecomEnterChatWelcomeText", () => {
+  it("prefers templates.welcome over welcomeText", () => {
+    expect(
+      resolveWecomEnterChatWelcomeText({
+        templates: { welcome: "模板欢迎" },
+        welcomeText: "欢迎",
+      } as WeComConfig),
+    ).toBe("模板欢迎");
+  });
+
   it("prefers welcomeText over streamPlaceholderContent", () => {
     expect(
       resolveWecomEnterChatWelcomeText({

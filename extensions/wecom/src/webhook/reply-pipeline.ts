@@ -27,11 +27,11 @@ import {
   resolveWecomStreamingConfig,
   shouldShowWecomStatusLine,
   syncWecomStreamContent,
-  WECOM_STATUS_COMPACTING,
-  WECOM_STATUS_GENERATING,
-  WECOM_STATUS_THINKING,
-  WECOM_STATUS_TOOL,
 } from "../streaming-config.js";
+import {
+  resolveWecomTemplates,
+  resolveWecomToolStatusLine,
+} from "../templates.js";
 
 export type CreateWecomReplyDispatcherParams = {
   target: WecomWebhookTarget;
@@ -59,13 +59,14 @@ function updateWebhookStatusLine(
   nextStatus: string,
 ): void {
   const streamingConfig = resolveWecomStreamingConfig(target.account);
+  const templates = resolveWecomTemplates(target.account);
   if (!shouldShowWecomStatusLine(streamingConfig)) {
     return;
   }
   const { streamStore } = getMonitorState();
   streamStore.updateStream(streamId, (s) => {
     s.statusLine = nextStatus;
-    syncWecomStreamContent(s, streamingConfig, { includeAnswer: false });
+    syncWecomStreamContent(s, streamingConfig, { includeAnswer: false, templates });
     s.content = truncateUtf8Bytes(s.content, STREAM_MAX_BYTES) || s.content;
   });
 }
@@ -79,6 +80,7 @@ export function createWecomReplyDispatcher(
   const core = getWeComRuntime();
   const { target, streamId, chatType, rawBody, tableMode, cfg, agentId } = params;
   const streamingConfig = resolveWecomStreamingConfig(target.account);
+  const templates = resolveWecomTemplates(target.account);
   const showStatusLine = shouldShowWecomStatusLine(streamingConfig);
   const showCompactionStatus =
     streamingConfig.footerStatus ||
@@ -113,8 +115,8 @@ export function createWecomReplyDispatcher(
         streamStore.updateStream(streamId, (s) => {
           s.replyStartedAt = s.replyStartedAt ?? Date.now();
           if (shouldShowWecomStatusLine(streamingConfig)) {
-            s.statusLine = WECOM_STATUS_THINKING;
-            syncWecomStreamContent(s, streamingConfig, { includeAnswer: false });
+            s.statusLine = templates.thinking;
+            syncWecomStreamContent(s, streamingConfig, { includeAnswer: false, templates });
             s.content = truncateUtf8Bytes(s.content, STREAM_MAX_BYTES) || s.content;
           }
         });
@@ -148,7 +150,7 @@ export function createWecomReplyDispatcher(
             if (!isChannelProgressDraftWorkToolName(payload.name)) {
               return;
             }
-            let nextStatus = WECOM_STATUS_TOOL;
+            let nextStatus = resolveWecomToolStatusLine(templates, payload.name);
             if (streamingConfig.streaming && streamingConfig.streamingStatus) {
               const formatted = formatChannelProgressDraftLineForEntry(
                 target.account.config,
@@ -169,17 +171,17 @@ export function createWecomReplyDispatcher(
         : undefined,
       onAssistantMessageStart: showStatusLine
         ? async () => {
-            updateWebhookStatusLine(streamId, target, WECOM_STATUS_GENERATING);
+            updateWebhookStatusLine(streamId, target, templates.generating);
           }
         : undefined,
       onCompactionStart: showCompactionStatus
         ? async () => {
-            updateWebhookStatusLine(streamId, target, WECOM_STATUS_COMPACTING);
+            updateWebhookStatusLine(streamId, target, templates.compaction);
           }
         : undefined,
       onCompactionEnd: showCompactionStatus
         ? async () => {
-            updateWebhookStatusLine(streamId, target, WECOM_STATUS_THINKING);
+            updateWebhookStatusLine(streamId, target, templates.thinking);
           }
         : undefined,
     },

@@ -4,9 +4,17 @@
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { DEFAULT_ACCOUNT_ID } from "./openclaw-compat.js";
-import { CHANNEL_ID } from "./const.js";
+import { CHANNEL_ID, DEFAULT_WECOM_MEDIA_MAX_BYTES, MESSAGE_PROCESS_TIMEOUT_MS } from "./const.js";
 import type { ResolvedAgentAccount } from "./types/account.js";
-import type { WecomAgentConfig, WecomNetworkConfig, WecomMediaConfig, WecomDynamicAgentsConfig } from "./types/config.js";
+import type {
+  WecomAgentConfig,
+  WecomNetworkConfig,
+  WecomMediaConfig,
+  WecomDynamicAgentsConfig,
+  WecomFooterConfig,
+  WecomStreamingNestedConfig,
+  WecomTemplatesConfig,
+} from "./types/config.js";
 
 // ============================================================================
 // 配置类型定义
@@ -39,6 +47,15 @@ export interface WeComConfig {
   groups?: Record<string, WeComGroupConfig>;
   /** 是否发送"思考中"消息，默认为 true */
   sendThinkingMessage?: boolean;
+  /**
+   * 流式输出总开关：`false` = 默认模式（状态栏 + 最终整包）；`true` = 流式模式。
+   * 也可为嵌套对象 `{ status?, content? }`（CLI dot-path 写入时）。
+   */
+  streaming?: boolean | WecomStreamingNestedConfig;
+  /** 流式气泡脚注（状态栏 / 耗时） */
+  footer?: WecomFooterConfig;
+  /** 用户可见文案模板（状态栏 / 关流 / 错误 / 队列 Ack 等） */
+  templates?: WecomTemplatesConfig;
   /** 额外允许访问的本地媒体路径白名单（支持 ~ 表示 home 目录），如 ["~/Downloads", "~/Documents"] */
   mediaLocalRoots?: string[];
   /** Agent 模式配置（自建应用） */
@@ -145,12 +162,48 @@ return {
 }
 
 /**
+ * 解析 WeCom 通道媒体最大字节数。
+ *
+ * 优先级：
+ * 1. `channels.wecom.media.maxBytes`（通道专属）
+ * 2. `agents.defaults.mediaMaxMb`（OpenClaw 全局默认，单位 MB）
+ * 3. 插件文档默认 20MB
+ */
+export function resolveWecomMediaMaxBytes(cfg: OpenClawConfig): number {
+  const val = (cfg.channels?.[CHANNEL_ID] as WeComConfig | undefined)?.media?.maxBytes;
+  if (typeof val === "number" && Number.isFinite(val) && val > 0) {
+    return val;
+  }
+  const globalMb = cfg.agents?.defaults?.mediaMaxMb;
+  if (typeof globalMb === "number" && Number.isFinite(globalMb) && globalMb > 0) {
+    return globalMb * 1024 * 1024;
+  }
+  return DEFAULT_WECOM_MEDIA_MAX_BYTES;
+}
+
+/**
+ * 解析 Agent 回复总超时（毫秒）。
+ *
+ * 优先级：
+ * 1. `channels.wecom.network.agentReplyTimeoutMs`
+ * 2. 插件默认 {@link MESSAGE_PROCESS_TIMEOUT_MS}（6 分钟）
+ */
+export function resolveWecomAgentReplyTimeoutMs(cfg: OpenClawConfig): number {
+  const val = (cfg.channels?.[CHANNEL_ID] as WeComConfig | undefined)?.network?.agentReplyTimeoutMs;
+  if (typeof val === "number" && Number.isFinite(val) && val > 0) {
+    return val;
+  }
+  return MESSAGE_PROCESS_TIMEOUT_MS;
+}
+
+/**
  * 解析出口代理 URL（对齐原版 resolveWecomEgressProxyUrl）
  *
  * 优先级：
  * 1. config.channels.wecom.network.egressProxyUrl
  * 2. 环境变量：OPENCLAW_WECOM_EGRESS_PROXY_URL → WECOM_EGRESS_PROXY_URL → HTTPS_PROXY → ALL_PROXY → HTTP_PROXY
  */
+
 export function resolveWecomEgressProxyUrl(cfg: OpenClawConfig): string | undefined {
   const wecom = (cfg.channels?.[CHANNEL_ID] ?? {}) as WeComConfig;
   const proxyUrl =

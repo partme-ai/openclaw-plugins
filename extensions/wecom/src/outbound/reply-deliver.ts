@@ -23,6 +23,12 @@ import {
 import { deliverTemplateCardIfPresent } from "./template-card.js";
 import { handleBotWindowNearTimeout } from "./bot-window.js";
 import { deliverMediaLoadError, deliverNonImageMedia } from "./media-deliver.js";
+import {
+  resolveWecomStreamingConfig,
+  syncWecomStreamContent,
+} from "../streaming-config.js";
+import { resolveWecomTemplates } from "../templates.js";
+
 export type DeliverWecomReplyContext = {
   payload: ReplyPayload;
   info: { kind?: string };
@@ -33,11 +39,15 @@ export type DeliverWecomReplyContext = {
   tableMode: Parameters<PluginRuntime["channel"]["text"]["convertMarkdownTables"]>[1];
 };
 
-/** 将 Agent 回复写入 stream 并触发企微侧投递。 */
+/**
+ * 将 Agent 回复写入 stream 并触发企微侧 refresh 投递。
+ */
 export async function deliverWecomReply(ctx: DeliverWecomReplyContext): Promise<void> {
   const core = getWeComRuntime();
   const { payload, info, target, streamId, chatType, rawBody, tableMode } = ctx;
   const { streamStore } = getMonitorState();
+  const streamingConfig = resolveWecomStreamingConfig(target.account);
+  const templates = resolveWecomTemplates(target.account);
 
   const pre = await preprocessOutboundReply({
     payload,
@@ -116,13 +126,30 @@ export async function deliverWecomReply(ctx: DeliverWecomReplyContext): Promise<
   }
 
   if (streamStore.getStream(streamId)?.fallbackMode) return;
-  const nextText = current.content ? `${current.content}\n\n${text}`.trim() : text.trim();
+
+  const isFinal = info?.kind === "final";
+  const pushAnswerIncrementally =
+    streamingConfig.streaming && streamingConfig.streamingContent && !isFinal;
+
   streamStore.updateStream(streamId, (s) => {
-    s.content = truncateUtf8Bytes(nextText, STREAM_MAX_BYTES);
+    if (text.trim()) {
+      const nextAnswer = s.answerText ? `${s.answerText}\n\n${text}`.trim() : text.trim();
+      s.answerText = nextAnswer;
+    }
+    syncWecomStreamContent(s, streamingConfig, {
+      includeAnswer: isFinal || pushAnswerIncrementally,
+      includeFooter: isFinal,
+      includeStatus: true,
+      templates,
+    });
+    s.content = truncateUtf8Bytes(s.content, STREAM_MAX_BYTES) || s.content;
     if (current.images?.length) s.images = current.images;
   });
+
   target.statusSink?.({ lastOutboundAt: Date.now() });
-  if (info?.kind === "final") {
-    target.runtime.log?.(`[webhook] deliver final streamId=${streamId} len=${text.length}`);
+  if (isFinal) {
+    target.runtime.log?.(
+      `[webhook] deliver final streamId=${streamId} len=${text.length} answerLen=${current.answerText?.length ?? 0}`,
+    );
   }
 }

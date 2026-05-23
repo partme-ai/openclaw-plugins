@@ -5,6 +5,55 @@
  * 本文件仅定义 Agent/Bot/DM/Network/Media 等子模块的配置类型。
  */
 
+/** 流式输出子开关（channels.wecom.streaming.status / .content） */
+export type WecomStreamingNestedConfig = {
+  /** 显式关闭对象形式下的流式模式 */
+  enabled?: boolean;
+  /** 中间状态流式（tool / 阶段），默认 true（streaming 模式时） */
+  status?: boolean;
+  /** 答案 block 增量流式，默认 true（streaming 模式时） */
+  content?: boolean;
+};
+
+/** 流式气泡脚注配置 */
+export type WecomFooterConfig = {
+  /** 状态栏阶段文案，默认 true */
+  status?: boolean;
+  /** 关流时展示耗时，默认 false */
+  elapsed?: boolean;
+};
+
+/**
+ * 用户可见文案模板（channels.wecom.templates）。
+ * 支持 `{elapsed}`、`{toolName}`、`{minutes}`、`{kind}`、`{detail}`、`{mediaUrl}`、`{reason}`、`{emptyReply}` 等占位符。
+ */
+export type WecomTemplatesConfig = {
+  thinking?: string;
+  received?: string;
+  tool?: string;
+  reading?: string;
+  generating?: string;
+  compaction?: string;
+  emptyReply?: string;
+  finishFooter?: string;
+  welcome?: string;
+  cardSent?: string;
+  mediaSent?: string;
+  mediaParseFailed?: string;
+  mediaDelivered?: string;
+  processedComplete?: string;
+  timeout?: string;
+  dispatchError?: string;
+  mediaErrorNoAccess?: string;
+  mediaErrorReason?: string;
+  mediaErrorGeneric?: string;
+  queued?: string;
+  mergedQueued?: string;
+  mergedDone?: string;
+  sessionReset?: string;
+  sessionNew?: string;
+};
+
 /** 媒体处理配置 */
 export type WecomMediaConfig = {
     tempDir?: string;
@@ -16,6 +65,8 @@ export type WecomMediaConfig = {
 /** 网络配置 */
 export type WecomNetworkConfig = {
     timeoutMs?: number;
+    /** Agent 回复总超时（毫秒），超时后向用户发送降级提示并关闭 thinking 流 */
+    agentReplyTimeoutMs?: number;
     retries?: number;
     retryDelayMs?: number;
     /**
