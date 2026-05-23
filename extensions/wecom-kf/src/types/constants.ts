@@ -4,16 +4,22 @@
 
 /** 固定 Webhook 路径 */
 export const WEBHOOK_PATHS = {
-    /** Bot 模式历史兼容路径（不再维护） */
-    BOT: "/wecom-cs",
-    /** Bot 模式历史备用兼容路径（不再维护） */
-    BOT_ALT: "/wecom-cs/bot",
-    /** Agent 模式历史兼容路径（不再维护） */
-    AGENT: "/wecom-cs/agent",
-    /** Bot 模式推荐路径前缀 */
-    BOT_PLUGIN: "/plugins/wecom-cs/bot",
-    /** Agent 模式推荐路径前缀 */
-    AGENT_PLUGIN: "/plugins/wecom-cs/agent",
+    /** Legacy Bot 回调（与 KF 主路径 /wecom-kf 区分，使用 /wecom-kf/bot） */
+    BOT: "/wecom-kf/bot",
+    /** Legacy Bot 备用路径 */
+    BOT_ALT: "/wecom-kf/bot",
+    /** Legacy Agent 回调 */
+    AGENT: "/wecom-kf/agent",
+    /** Legacy Bot 推荐路径前缀 */
+    BOT_PLUGIN: "/plugins/wecom-kf/bot",
+    /** Legacy Agent 推荐路径前缀 */
+    AGENT_PLUGIN: "/plugins/wecom-kf/agent",
+    /** @deprecated 旧 wecom-cs Bot 路径（legacy 开关开启时仍注册） */
+    LEGACY_BOT: "/wecom-cs",
+    LEGACY_BOT_ALT: "/wecom-cs/bot",
+    LEGACY_AGENT: "/wecom-cs/agent",
+    LEGACY_BOT_PLUGIN: "/plugins/wecom-cs/bot",
+    LEGACY_AGENT_PLUGIN: "/plugins/wecom-cs/agent",
     /** KF 客服回调路径 */
     KF: "/wecom/kefu",
     KF_PLUGIN: "/plugins/wecom/kefu",

@@ -8,6 +8,7 @@ import { createWeComMcpTool } from "./src/mcp/index.js";
 import { createKfAccountConfigGetter } from "./src/config/kf-callback.js";
 import {
   collectWecomKfRoutePaths,
+  getWecomKfChannelBlock,
   isIcsEnabled,
   isLegacyWecomCsEnabled,
 } from "./src/config/kf-routes.js";
@@ -55,7 +56,7 @@ const plugin = {
 
     // ── KF 核心：客服回调（主路径） ──
     const initialCfg = getOpenClawConfig();
-    const kfChannelConfig = initialCfg?.channels?.["wecom-kf"] as WecomKfConfig | undefined;
+    const kfChannelConfig = getWecomKfChannelBlock(initialCfg);
     for (const path of collectWecomKfRoutePaths(kfChannelConfig)) {
       api.registerHttpRoute({
         path,
@@ -65,7 +66,7 @@ const plugin = {
       });
     }
 
-    // Legacy wecom-cs Bot / Agent 回调（默认不注册；lazy load legacy/monitor）
+    // Legacy Bot / Agent 回调（默认不注册；lazy load legacy/monitor）
     if (isLegacyWecomCsEnabled(initialCfg)) {
       let legacyWebhookHandler: typeof import("./src/legacy/monitor.js").handleWecomWebhookRequest | undefined;
       const resolveLegacyWebhookHandler = async () => {
@@ -81,6 +82,11 @@ const plugin = {
         WEBHOOK_PATHS.BOT_ALT,
         WEBHOOK_PATHS.AGENT_PLUGIN,
         WEBHOOK_PATHS.AGENT,
+        WEBHOOK_PATHS.LEGACY_BOT_PLUGIN,
+        WEBHOOK_PATHS.LEGACY_BOT,
+        WEBHOOK_PATHS.LEGACY_BOT_ALT,
+        WEBHOOK_PATHS.LEGACY_AGENT_PLUGIN,
+        WEBHOOK_PATHS.LEGACY_AGENT,
       ];
       for (const path of csRoutes) {
         api.registerHttpRoute({

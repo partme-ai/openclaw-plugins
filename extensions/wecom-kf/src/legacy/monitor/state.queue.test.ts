@@ -17,10 +17,10 @@ describe("wecom StreamStore queue", () => {
         config: {} as any,
         runtime: {},
         core: {} as any,
-        path: "/wecom-cs",
+        path: "/wecom-kf/bot",
       } satisfies WecomWebhookTarget;
 
-      const conversationKey = "wecom-cs:default:U:C";
+      const conversationKey = "wecom-kf:default:U:C";
 
       const msg1 = { msgid: "M1" } satisfies WecomInboundMessage;
       const msg2 = { msgid: "M2" } satisfies WecomInboundMessage;
@@ -90,10 +90,10 @@ describe("wecom StreamStore queue", () => {
         config: {} as any,
         runtime: {},
         core: {} as any,
-        path: "/wecom-cs",
+        path: "/wecom-kf/bot",
       } satisfies WecomWebhookTarget;
 
-      const conversationKey = "wecom-cs:default:U:C2";
+      const conversationKey = "wecom-kf:default:U:C2";
 
       // 1 becomes active and flushes; mark as started to simulate "processing started".
       const r1 = store.addPendingMessage({
@@ -152,10 +152,10 @@ describe("wecom StreamStore queue", () => {
       config: {} as any,
       runtime: {},
       core: {} as any,
-      path: "/wecom-cs",
+      path: "/wecom-kf/bot",
     } satisfies WecomWebhookTarget;
 
-    const conversationKey = "wecom-cs:default:U:idle";
+    const conversationKey = "wecom-kf:default:U:idle";
 
     const r1 = store.addPendingMessage({
       conversationKey,

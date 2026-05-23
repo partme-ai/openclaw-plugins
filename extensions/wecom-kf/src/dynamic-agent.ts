@@ -4,7 +4,7 @@
  * 动态 Agent 路由（通用逻辑见 message-sdk routing）。
  *
  * **KF 主路径说明**：`handleCustomerMessage` 使用 OpenClaw bindings（channel=wecom-kf）
- * 固定 agentId 映射，不走本模块的动态 peer 注入。本模块仅服务 wecom-cs Bot/Agent 入站路径。
+ * 固定 agentId 映射，不走本模块的动态 peer 注入。本模块仅服务 wecom-kf legacy Bot/Agent 入站路径。
  */
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import {
@@ -14,17 +14,22 @@ import {
   type DynamicPeerAgentConfig,
 } from "@partme.ai/openclaw-message-sdk/routing";
 
+import { getWecomKfChannelBlock } from "./config/channel-block.js";
+
 /** 动态 Agent 配置（与 message-sdk DynamicPeerAgentConfig 一致） */
 export interface DynamicAgentConfig extends DynamicPeerAgentConfig {}
 
-const CHANNEL_CONFIG_KEY = "wecom-cs";
+const CHANNEL_CONFIG_KEY = "wecom-kf";
 
 /**
- * 读取 `channels.wecom-cs.dynamicAgents` 配置。
+ * 读取 `channels.wecom-kf.dynamicAgents` 配置。
  */
 export function getDynamicAgentConfig(config: OpenClawConfig): DynamicAgentConfig {
+  const block = getWecomKfChannelBlock(config) as
+    | { dynamicAgents?: Partial<DynamicAgentConfig> }
+    | undefined;
   return readDynamicAgentsFromChannelConfig(
-    config as { channels?: Record<string, { dynamicAgents?: Partial<DynamicAgentConfig> }> },
+    { channels: { [CHANNEL_CONFIG_KEY]: block ?? {} } },
     CHANNEL_CONFIG_KEY,
   );
 }
@@ -32,7 +37,7 @@ export function getDynamicAgentConfig(config: OpenClawConfig): DynamicAgentConfi
 export { sanitizeDynamicIdPart };
 
 /**
- * 生成动态 Agent ID（格式：`wecom-cs-{accountId}-{chatType}-{sanitizedPeerId}`）。
+ * 生成动态 Agent ID（格式：`wecom-kf-{accountId}-{chatType}-{sanitizedPeerId}`）。
  */
 export function generateAgentId(
   chatType: "dm" | "group",
@@ -41,7 +46,7 @@ export function generateAgentId(
 ): string {
   const sanitizedPeer = sanitizeDynamicIdPart(peerId) || "unknown";
   const sanitizedAccountId = sanitizeDynamicIdPart(accountId ?? "default") || "default";
-  return `wecom-cs-${sanitizedAccountId}-${chatType}-${sanitizedPeer}`;
+  return `wecom-kf-${sanitizedAccountId}-${chatType}-${sanitizedPeer}`;
 }
 
 /**

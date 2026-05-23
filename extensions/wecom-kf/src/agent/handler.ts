@@ -22,7 +22,7 @@ import { sendText, downloadMedia, uploadMedia, sendMedia as sendAgentMedia } fro
 import { getWecomRuntime } from "../runtime.js";
 import type { WecomAgentInboundMessage } from "../types/index.js";
 import { buildWecomUnauthorizedCommandPrompt, resolveWecomCommandAuthorization } from "../shared/command-auth.js";
-import { resolveWecomMediaMaxBytes, shouldRejectWecomDefaultRoute } from "../config/index.js";
+import { resolveWecomMediaMaxBytes, shouldRejectWecomDefaultRoute, getWecomKfChannelBlock } from "../config/index.js";
 import { generateAgentId, shouldUseDynamicAgent, ensureDynamicAgentListed } from "../dynamic-agent.js";
 import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media-path-guard.js";
 import type { WecomConfig } from "../types/config.js";
@@ -419,8 +419,8 @@ async function processAgentMessage(params: {
                     content,
                     "",
                     `媒体处理失败：${String(err)}`,
-                    `提示：可在 OpenClaw 配置中提高 channels.wecom-cs.media.maxBytes（当前=${mediaMaxBytes}）`,
-                    `例如：openclaw config set channels.wecom-cs.media.maxBytes ${50 * 1024 * 1024}`,
+                    `提示：可在 OpenClaw 配置中提高 channels.wecom-kf.media.maxBytes（当前=${mediaMaxBytes}）`,
+                    `例如：openclaw config set channels.wecom-kf.media.maxBytes ${50 * 1024 * 1024}`,
                 ].join("\n");
             }
         } else {
@@ -432,7 +432,7 @@ async function processAgentMessage(params: {
     // 解析路由
     const route = core.channel.routing.resolveAgentRoute({
         cfg: config,
-        channel: "wecom-cs",
+        channel: "wecom-kf",
         accountId: agent.accountId,
         peer: { kind: isGroup ? "group" : "direct", id: peerId },
     });
@@ -447,9 +447,9 @@ async function processAgentMessage(params: {
     if (shouldRejectWecomDefaultRoute({ cfg: config, matchedBy: route.matchedBy, useDynamicAgent })) {
         const prompt =
             `当前账号（${agent.accountId}）未绑定 OpenClaw Agent，已拒绝回退到默认主智能体。` +
-            `请在 bindings 中添加：{"agentId":"你的Agent","match":{"channel":"wecom-cs","accountId":"${agent.accountId}"}}`;
+            `请在 bindings 中添加：{"agentId":"你的Agent","match":{"channel":"wecom-kf","accountId":"${agent.accountId}"}}`;
         error?.(
-            `[wecom-cs-agent] routing guard: blocked default fallback accountId=${agent.accountId} matchedBy=${route.matchedBy} from=${fromUser}`,
+            `[wecom-kf-agent] routing guard: blocked default fallback accountId=${agent.accountId} matchedBy=${route.matchedBy} from=${fromUser}`,
         );
         try {
             await sendText({ agent, toUser: fromUser, chatId: undefined, text: prompt });
@@ -467,10 +467,10 @@ async function processAgentMessage(params: {
             agent.accountId,
         );
         route.agentId = targetAgentId;
-        route.sessionKey = `agent:${targetAgentId}:wecom-cs:${agent.accountId}:${isGroup ? "group" : "dm"}:${peerId}`;
+        route.sessionKey = `agent:${targetAgentId}:wecom-kf:${agent.accountId}:${isGroup ? "group" : "dm"}:${peerId}`;
         // 异步添加到 agents.list（不阻塞）
         ensureDynamicAgentListed(targetAgentId, core).catch(() => {});
-        log?.(`[wecom-cs-agent] dynamic agent routing: ${targetAgentId}, sessionKey=${route.sessionKey}`);
+        log?.(`[wecom-kf-agent] dynamic agent routing: ${targetAgentId}, sessionKey=${route.sessionKey}`);
     }
     // ===== 动态 Agent 路由注入结束 =====
 
@@ -495,7 +495,7 @@ async function processAgentMessage(params: {
     const authz = await resolveWecomCommandAuthorization({
         core,
         cfg: config,
-        // Agent 门禁应读取 channels.wecom-cs.agent.dm（即 agent.config.dm），而不是 channels.wecom-cs.dm（不存在）
+        // Agent 门禁应读取 channels.wecom-kf.agent.dm（即 agent.config.dm），而不是 channels.wecom-kf.dm（不存在）
         accountConfig: agent.config,
         rawBody: finalContent,
         senderUserId: fromUser,
@@ -519,23 +519,23 @@ async function processAgentMessage(params: {
         RawBody: finalContent,
         CommandBody: finalContent,
         Attachments: attachments.length > 0 ? attachments : undefined,
-        From: isGroup ? `wecom-cs:group:${peerId}` : `wecom-cs:${fromUser}`,
+        From: isGroup ? `wecom-kf:group:${peerId}` : `wecom-kf:${fromUser}`,
         // 使用 wecom-agent: 前缀标记 Agent 会话，确保 outbound 路由不会混入 Bot WS 发送路径。
         // resolveWecomTarget 已支持剥离 wecom-agent: 前缀（target.ts L41），解析结果不变。
-        To: `wecom-cs-agent:${fromUser}`,
+        To: `wecom-kf-agent:${fromUser}`,
         SessionKey: route.sessionKey,
         AccountId: route.accountId,
         ChatType: isGroup ? "group" : "direct",
         ConversationLabel: fromLabel,
         SenderName: fromUser,
         SenderId: fromUser,
-        Provider: "wecom-cs",
+        Provider: "wecom-kf",
         Surface: "webchat",
-        OriginatingChannel: "wecom-cs",
+        OriginatingChannel: "wecom-kf",
         // 标记为 Agent 会话的回复路由目标，避免与 Bot 会话混淆：
         // - 用于让 /new /reset 这类命令回执不被 Bot 侧策略拦截
         // - 群聊场景也统一路由为私信触发者（与 deliver 策略一致）
-        OriginatingTo: `wecom-cs-agent:${fromUser}`,
+        OriginatingTo: `wecom-kf-agent:${fromUser}`,
         CommandAuthorized: authz.commandAuthorized ?? true,
         MediaPath: mediaPath,
         MediaType: mediaType,
@@ -613,7 +613,7 @@ async function processAgentMessage(params: {
                         } else {
                             const pathModule = await import("node:path");
                             const runtimeCfg = getWecomRuntime()?.config?.loadConfig?.() as OpenClawConfig | undefined;
-                            const wecomConfig = runtimeCfg?.channels?.["wecom-cs"] as WecomConfig | undefined;
+                            const wecomConfig = getWecomKfChannelBlock(runtimeCfg) as WecomConfig | undefined;
                             const allowedRoots = await getExtendedMediaLocalRoots(wecomConfig);
                             const guarded = await readGuardedLocalMediaFile({ filePath: mediaPath, allowedRoots });
                             if (!guarded.ok) {

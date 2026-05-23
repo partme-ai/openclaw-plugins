@@ -387,10 +387,10 @@ describe("handleWecomWebhookRequest", () => {
           streamPlaceholderContent: "A处理中",
         } as any,
       } as any,
-      config: { channels: { "wecom-cs": { accounts: {} } } } as OpenClawConfig,
+      config: { channels: { "wecom-kf": { accounts: {} } } } as OpenClawConfig,
       runtime: {},
       core: {} as any,
-      path: "/plugins/wecom-cs/bot/acct-a",
+      path: "/plugins/wecom-kf/bot/acct-a",
     });
     const unregisterB = registerWecomWebhookTarget({
       account: {
@@ -406,10 +406,10 @@ describe("handleWecomWebhookRequest", () => {
           streamPlaceholderContent: "B处理中",
         } as any,
       } as any,
-      config: { channels: { "wecom-cs": { accounts: {} } } } as OpenClawConfig,
+      config: { channels: { "wecom-kf": { accounts: {} } } } as OpenClawConfig,
       runtime: {},
       core: {} as any,
-      path: "/plugins/wecom-cs/bot/acct-b",
+      path: "/plugins/wecom-kf/bot/acct-b",
     });
 
     try {
@@ -428,7 +428,7 @@ describe("handleWecomWebhookRequest", () => {
       const msg_signature = computeWecomMsgSignature({ token, timestamp, nonce, encrypt });
       const req = createMockRequest({
         method: "POST",
-        url: `/plugins/wecom-cs/bot/acct-b?msg_signature=${encodeURIComponent(msg_signature)}&timestamp=${encodeURIComponent(timestamp)}&nonce=${encodeURIComponent(nonce)}`,
+        url: `/plugins/wecom-kf/bot/acct-b?msg_signature=${encodeURIComponent(msg_signature)}&timestamp=${encodeURIComponent(timestamp)}&nonce=${encodeURIComponent(nonce)}`,
         body: { encrypt },
       });
       const res = createMockResponse();
@@ -468,10 +468,10 @@ describe("handleWecomWebhookRequest", () => {
           streamPlaceholderContent: "A处理中",
         } as any,
       } as any,
-      config: { channels: { "wecom-cs": { accounts: {} } } } as OpenClawConfig,
+      config: { channels: { "wecom-kf": { accounts: {} } } } as OpenClawConfig,
       runtime: {},
       core: {} as any,
-      path: "/plugins/wecom-cs/bot/acct-a",
+      path: "/plugins/wecom-kf/bot/acct-a",
     });
     const unregisterB = registerWecomWebhookTarget({
       account: {
@@ -487,10 +487,10 @@ describe("handleWecomWebhookRequest", () => {
           streamPlaceholderContent: "B处理中",
         } as any,
       } as any,
-      config: { channels: { "wecom-cs": { accounts: {} } } } as OpenClawConfig,
+      config: { channels: { "wecom-kf": { accounts: {} } } } as OpenClawConfig,
       runtime: {},
       core: {} as any,
-      path: "/plugins/wecom-cs/bot/acct-b",
+      path: "/plugins/wecom-kf/bot/acct-b",
     });
 
     try {
@@ -509,7 +509,7 @@ describe("handleWecomWebhookRequest", () => {
       const msg_signature = computeWecomMsgSignature({ token, timestamp, nonce, encrypt });
       const req = createMockRequest({
         method: "POST",
-        url: `/plugins/wecom-cs/bot/acct-b?msg_signature=${encodeURIComponent(msg_signature)}&timestamp=${encodeURIComponent(timestamp)}&nonce=${encodeURIComponent(nonce)}`,
+        url: `/plugins/wecom-kf/bot/acct-b?msg_signature=${encodeURIComponent(msg_signature)}&timestamp=${encodeURIComponent(timestamp)}&nonce=${encodeURIComponent(nonce)}`,
         body: { encrypt },
       });
       const res = createMockResponse();
@@ -548,7 +548,7 @@ describe("handleWecomWebhookRequest", () => {
           aibotid: "BOT_ONLY",
         } as any,
       } as any,
-      config: { channels: { "wecom-cs": { accounts: {} } } } as OpenClawConfig,
+      config: { channels: { "wecom-kf": { accounts: {} } } } as OpenClawConfig,
       runtime: {},
       core: {} as any,
       path: "/hook-matrix-mismatch",
@@ -595,15 +595,15 @@ describe("handleWecomWebhookRequest", () => {
         receiveId: "",
         config: { token, encodingAESKey } as any,
       } as any,
-      config: { channels: { "wecom-cs": { accounts: { "acct-a": { bot: {} } } } } } as OpenClawConfig,
+      config: { channels: { "wecom-kf": { accounts: { "acct-a": { bot: {} } } } } } as OpenClawConfig,
       runtime: {},
       core: {} as any,
-      path: "/plugins/wecom-cs/bot/acct-a",
+      path: "/plugins/wecom-kf/bot/acct-a",
     });
     try {
       const req = createMockRequest({
         method: "GET",
-        url: "/wecom-cs/bot?timestamp=t&nonce=n&msg_signature=s&echostr=e",
+        url: "/wecom-kf/bot?timestamp=t&nonce=n&msg_signature=s&echostr=e",
       });
       const res = createMockResponse();
       const handled = await handleWecomWebhookRequest(req, res);
@@ -615,7 +615,7 @@ describe("handleWecomWebhookRequest", () => {
 
       const pluginReq = createMockRequest({
         method: "GET",
-        url: "/plugins/wecom-cs/bot?timestamp=t&nonce=n&msg_signature=s&echostr=e",
+        url: "/plugins/wecom-kf/bot?timestamp=t&nonce=n&msg_signature=s&echostr=e",
       });
       const pluginRes = createMockResponse();
       const pluginHandled = await handleWecomWebhookRequest(pluginReq, pluginRes);
@@ -648,9 +648,9 @@ describe("handleWecomWebhookRequest", () => {
         encodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
         config: {} as any,
       },
-      config: { channels: { "wecom-cs": { accounts: {} } } } as OpenClawConfig,
+      config: { channels: { "wecom-kf": { accounts: {} } } } as OpenClawConfig,
       runtime: {},
-      path: "/plugins/wecom-cs/agent/default",
+      path: "/plugins/wecom-kf/agent/default",
     } as any);
     const unregisterB = registerAgentWebhookTarget({
       agent: {
@@ -664,15 +664,15 @@ describe("handleWecomWebhookRequest", () => {
         encodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
         config: {} as any,
       },
-      config: { channels: { "wecom-cs": { accounts: {} } } } as OpenClawConfig,
+      config: { channels: { "wecom-kf": { accounts: {} } } } as OpenClawConfig,
       runtime: {},
-      path: "/plugins/wecom-cs/agent/default",
+      path: "/plugins/wecom-kf/agent/default",
     } as any);
 
     try {
       const req = createMockRequest({
         method: "GET",
-        url: `/plugins/wecom-cs/agent/default?msg_signature=${encodeURIComponent(signature)}&timestamp=${encodeURIComponent(timestamp)}&nonce=${encodeURIComponent(nonce)}&echostr=${encodeURIComponent(echostr)}`,
+        url: `/plugins/wecom-kf/agent/default?msg_signature=${encodeURIComponent(signature)}&timestamp=${encodeURIComponent(timestamp)}&nonce=${encodeURIComponent(nonce)}&echostr=${encodeURIComponent(echostr)}`,
       });
       const res = createMockResponse();
       const handled = await handleWecomWebhookRequest(req, res);

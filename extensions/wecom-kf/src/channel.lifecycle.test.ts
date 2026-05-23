@@ -179,7 +179,7 @@ describe("wecomPlugin gateway lifecycle", () => {
     const startPromise = wecomPlugin.gateway!.startAccount!(ctx);
     await vi.waitFor(async () => {
       const probe = await sendWecomGetVerify({
-        path: "/wecom-cs/bot",
+        path: "/wecom-kf/bot",
         token,
         encodingAESKey,
         receiveId,
@@ -188,7 +188,7 @@ describe("wecomPlugin gateway lifecycle", () => {
     }, { timeout: 3000 });
 
     const activeLegacyRoute = await sendWecomGetVerify({
-      path: "/wecom-cs/bot",
+      path: "/wecom-kf/bot",
       token,
       encodingAESKey,
       receiveId,
@@ -198,7 +198,7 @@ describe("wecomPlugin gateway lifecycle", () => {
     expect(activeLegacyRoute.body).toBe("ping");
 
     const activePluginRoute = await sendWecomGetVerify({
-      path: "/plugins/wecom-cs/bot",
+      path: "/plugins/wecom-kf/bot",
       token,
       encodingAESKey,
       receiveId,
@@ -211,7 +211,7 @@ describe("wecomPlugin gateway lifecycle", () => {
     await startPromise;
 
     const inactiveLegacyRoute = await sendWecomGetVerify({
-      path: "/wecom-cs/bot",
+      path: "/wecom-kf/bot",
       token,
       encodingAESKey,
       receiveId,
@@ -219,7 +219,7 @@ describe("wecomPlugin gateway lifecycle", () => {
     expect(inactiveLegacyRoute.handled).toBe(false);
 
     const inactivePluginRoute = await sendWecomGetVerify({
-      path: "/plugins/wecom-cs/bot",
+      path: "/plugins/wecom-kf/bot",
       token,
       encodingAESKey,
       receiveId,

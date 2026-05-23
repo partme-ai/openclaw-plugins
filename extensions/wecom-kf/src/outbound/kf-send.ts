@@ -18,13 +18,14 @@ import { resolveKfAccountByOpenKfId, resolveWecomAccount } from "../config/index
 import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media-path-guard.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import type { WecomConfig } from "../types/config.js";
+import { getWecomKfChannelBlock } from "../config/channel-block.js";
 
 /**
  * 规范化 KF 外部联系人 ID（external_userid）。
  */
 export function normalizeKfExternalUserId(rawTarget: string): string {
   let normalized = rawTarget.trim();
-  normalized = normalized.replace(/^(wecom-kf|wecom-cs-agent|wecom-cs|wecom-agent|wecom):/i, "");
+  normalized = normalized.replace(/^(wecom-kf|wecom-kf-agent|wecom-cs-agent|wecom-cs|wecom-agent|wecom):/i, "");
   if (normalized.startsWith("user:")) {
     normalized = normalized.slice("user:".length);
   }
@@ -125,7 +126,7 @@ async function loadKfOutboundMediaBuffer(params: {
     };
   }
 
-  const wecomConfig = params.cfg.channels?.["wecom-kf"] as WecomConfig | undefined;
+  const wecomConfig = getWecomKfChannelBlock(params.cfg) as WecomConfig | undefined;
   const allowedRoots = await getExtendedMediaLocalRoots(wecomConfig);
   const guarded = await readGuardedLocalMediaFile({ filePath: source, allowedRoots });
   if (!guarded.ok) {

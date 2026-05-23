@@ -15,7 +15,7 @@ import { uploadAndSendMediaBuffer } from "../media/index.js";
 import { getWsClient } from "./ws-adapter.js";
 import { WEBHOOK_PATHS, LIMITS as WECOM_LIMITS } from "../types/constants.js";
 import { handleAgentWebhook } from "../agent/index.js";
-import { resolveWecomAccount, resolveWecomEgressProxyUrl, resolveWecomMediaMaxBytes, shouldRejectWecomDefaultRoute } from "../config/index.js";
+import { resolveWecomAccount, resolveWecomEgressProxyUrl, resolveWecomMediaMaxBytes, shouldRejectWecomDefaultRoute, getWecomKfChannelBlock } from "../config/index.js";
 import { wecomFetch } from "../http.js";
 import { sendText as sendAgentText, sendMedia as sendAgentMedia, uploadMedia } from "../agent/api-client.js";
 import { extractAgentId, parseXml } from "../shared/xml-parser.js";
@@ -69,7 +69,7 @@ const ERROR_HELP = "";
  * **normalizeWebhookPath (标准化 Webhook 路径)**
  * 
  * 将用户配置的路径统一格式化为以 `/` 开头且不以 `/` 结尾的字符串。
- * 例如: `wecom-cs` -> `/wecom-cs`
+ * 例如: `wecom-cs` -> `/wecom-kf/bot`
  */
 function normalizeWebhookPath(raw: string): string {
   const trimmed = raw.trim();
@@ -501,7 +501,7 @@ async function sendAgentDmMedia(params: {
     buffer = Buffer.from(await res.arrayBuffer());
     inferredContentType = inferredContentType || res.headers.get("content-type") || "application/octet-stream";
   } else {
-    const wecomConfig = params.cfg?.channels?.["wecom-cs"] as WecomConfig | undefined;
+    const wecomConfig = getWecomKfChannelBlock(params.cfg) as WecomConfig | undefined;
     const allowedRoots = await getExtendedMediaLocalRoots(wecomConfig);
     const guarded = await readGuardedLocalMediaFile({
       filePath: params.mediaUrlOrPath,
@@ -999,7 +999,7 @@ export async function processInboundMessage(target: WecomWebhookTarget, msg: Wec
       } catch (err) {
         target.runtime.error?.(`Failed to decrypt inbound image: ${String(err)}`);
         target.runtime.error?.(
-          `图片解密失败: ${String(err)}; 可调大 channels.wecom-cs.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom-cs.media.maxBytes ${50 * 1024 * 1024}`,
+          `图片解密失败: ${String(err)}; 可调大 channels.wecom-kf.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom-kf.media.maxBytes ${50 * 1024 * 1024}`,
         );
         const errorMessage = typeof err === 'object' && err 
           ? `${(err as any).message}${((err as any).cause) ? ` (cause: ${String((err as any).cause)})` : ''}` 
@@ -1033,7 +1033,7 @@ export async function processInboundMessage(target: WecomWebhookTarget, msg: Wec
         };
       } catch (err) {
         target.runtime.error?.(
-          `Failed to decrypt inbound file: ${String(err)}; 可调大 channels.wecom-cs.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom-cs.media.maxBytes ${50 * 1024 * 1024}`,
+          `Failed to decrypt inbound file: ${String(err)}; 可调大 channels.wecom-kf.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom-kf.media.maxBytes ${50 * 1024 * 1024}`,
         );
         const errorMessage = typeof err === 'object' && err 
           ? `${(err as any).message}${((err as any).cause) ? ` (cause: ${String((err as any).cause)})` : ''}` 
@@ -1069,7 +1069,7 @@ export async function processInboundMessage(target: WecomWebhookTarget, msg: Wec
         };
       } catch (err) {
         target.runtime.error?.(
-          `Failed to decrypt inbound video: ${String(err)}; 可调大 channels.wecom-cs.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom-cs.media.maxBytes ${50 * 1024 * 1024}`,
+          `Failed to decrypt inbound video: ${String(err)}; 可调大 channels.wecom-kf.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom-kf.media.maxBytes ${50 * 1024 * 1024}`,
         );
         const errorMessage = typeof err === 'object' && err 
           ? `${(err as any).message}${((err as any).cause) ? ` (cause: ${String((err as any).cause)})` : ''}` 
@@ -1117,7 +1117,7 @@ export async function processInboundMessage(target: WecomWebhookTarget, msg: Wec
               bodyParts.push(`[${t}]`);
             } catch (err) {
               target.runtime.error?.(
-                `Failed to decrypt mixed ${t}: ${String(err)}; 可调大 channels.wecom-cs.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom-cs.media.maxBytes ${50 * 1024 * 1024}`,
+                `Failed to decrypt mixed ${t}: ${String(err)}; 可调大 channels.wecom-kf.media.maxBytes（当前=${maxBytes}）例如：openclaw config set channels.wecom-kf.media.maxBytes ${50 * 1024 * 1024}`,
               );
               const errorMessage = typeof err === 'object' && err 
                 ? `${(err as any).message}${((err as any).cause) ? ` (cause: ${String((err as any).cause)})` : ''}` 
@@ -1650,7 +1650,7 @@ async function startAgentForStream(params: {
 
   const route = core.channel.routing.resolveAgentRoute({
     cfg: config,
-    channel: "wecom-cs",
+    channel: "wecom-kf",
     accountId: account.accountId,
     peer: { kind: chatType === "group" ? "group" : "direct", id: chatId },
   });
@@ -1664,9 +1664,9 @@ async function startAgentForStream(params: {
   if (shouldRejectWecomDefaultRoute({ cfg: config, matchedBy: route.matchedBy, useDynamicAgent })) {
     const prompt =
       `当前账号（${account.accountId}）未绑定 OpenClaw Agent，已拒绝回退到默认主智能体。` +
-      `请在 bindings 中添加：{"agentId":"你的Agent","match":{"channel":"wecom-cs","accountId":"${account.accountId}"}}`;
+      `请在 bindings 中添加：{"agentId":"你的Agent","match":{"channel":"wecom-kf","accountId":"${account.accountId}"}}`;
     target.runtime.error?.(
-      `[wecom-cs] routing guard: blocked default fallback accountId=${account.accountId} matchedBy=${route.matchedBy} streamId=${streamId}`,
+      `[wecom-kf] routing guard: blocked default fallback accountId=${account.accountId} matchedBy=${route.matchedBy} streamId=${streamId}`,
     );
     streamStore.updateStream(streamId, (s) => {
       s.finished = true;
@@ -1690,7 +1690,7 @@ async function startAgentForStream(params: {
       account.accountId,
     );
     route.agentId = targetAgentId;
-    route.sessionKey = `agent:${targetAgentId}:wecom-cs:${account.accountId}:${chatType === "group" ? "group" : "dm"}:${chatId}`;
+    route.sessionKey = `agent:${targetAgentId}:wecom-kf:${account.accountId}:${chatType === "group" ? "group" : "dm"}:${chatId}`;
     // 异步添加到 agents.list（不阻塞）
     ensureDynamicAgentListed(targetAgentId, core).catch(() => {});
     logVerbose(target, `dynamic agent routing: ${targetAgentId}, sessionKey=${route.sessionKey}`);
@@ -1772,24 +1772,24 @@ async function startAgentForStream(params: {
     RawBody: rawBody,
     CommandBody: rawBody,
     Attachments: attachments,
-    From: chatType === "group" ? `wecom-cs:group:${chatId}` : `wecom-cs:${userid}`,
-    To: `wecom-cs:${chatId}`,
+    From: chatType === "group" ? `wecom-kf:group:${chatId}` : `wecom-kf:${userid}`,
+    To: `wecom-kf:${chatId}`,
     SessionKey: route.sessionKey,
     AccountId: route.accountId,
     ChatType: chatType,
     ConversationLabel: fromLabel,
     SenderName: userid,
     SenderId: userid,
-    Provider: "wecom-cs",
+    Provider: "wecom-kf",
     // Keep Surface aligned with OriginatingChannel for Bot-mode delivery.
     // If Surface is "webchat", core dispatch treats this as cross-channel
     // and routes replies via routeReply -> wecom outbound (Agent API),
     // bypassing the Bot stream deliver path.
-    Surface: "wecom-cs",
+    Surface: "wecom-kf",
     MessageSid: msg.msgid,
     CommandAuthorized: commandAuthorized,
-    OriginatingChannel: "wecom-cs",
-    OriginatingTo: `wecom-cs:${chatId}`,
+    OriginatingChannel: "wecom-kf",
+    OriginatingTo: `wecom-kf:${chatId}`,
     MediaPath: mediaPath,
     MediaType: mediaType,
     MediaUrl: mediaPath, // Local path for now
@@ -1800,13 +1800,13 @@ async function startAgentForStream(params: {
     sessionKey: ctxPayload.SessionKey ?? route.sessionKey,
     ctx: ctxPayload,
     onRecordError: (err) => {
-      target.runtime.error?.(`wecom-cs: failed updating session meta: ${String(err)}`);
+      target.runtime.error?.(`wecom-kf: failed updating session meta: ${String(err)}`);
     },
   });
 
   const tableMode = core.channel.text.resolveMarkdownTableMode({
     cfg: config,
-    channel: "wecom-cs",
+    channel: "wecom-kf",
     accountId: account.accountId,
   });
 
@@ -2072,7 +2072,7 @@ async function startAgentForStream(params: {
               filename = loaded.fileName ?? "attachment";
             } else {
               const pathModule = await import("node:path");
-              const wecomConfig = config.channels?.["wecom-cs"] as WecomConfig | undefined;
+              const wecomConfig = getWecomKfChannelBlock(config) as WecomConfig | undefined;
               const allowedRoots = await getExtendedMediaLocalRoots(wecomConfig);
               const guarded = await readGuardedLocalMediaFile({ filePath: mediaPath, allowedRoots });
               if (!guarded.ok) {
@@ -2465,7 +2465,7 @@ export function registerAgentWebhookTarget(target: AgentWebhookTarget): () => vo
 }
 
 /**
- * **handleWecomWebhookRequest (Legacy wecom-cs HTTP 入口)**
+ * **handleWecomWebhookRequest (Legacy wecom-kf legacy HTTP 入口)**
  *
  * 仅处理 Bot/Agent 回调；KF 回调由 webhook/callback 独立注册。
  */
@@ -2501,7 +2501,7 @@ export async function handleWecomWebhookRequest(req: IncomingMessage, res: Serve
       writeRouteFailure(
         res,
         "wecom_matrix_path_required",
-        "Matrix mode requires explicit account path. Use /plugins/wecom-cs/bot/{accountId} or /plugins/wecom-cs/agent/{accountId}.",
+        "Matrix mode requires explicit account path. Use /plugins/wecom-kf/bot/{accountId} or /plugins/wecom-kf/agent/{accountId}.",
       );
       return true;
     }
@@ -2690,7 +2690,7 @@ export async function handleWecomWebhookRequest(req: IncomingMessage, res: Serve
     return true;
   }
 
-  // Bot 模式路由: /plugins/wecom-cs/bot（推荐）以及 /wecom-cs、/wecom-cs/bot（兼容）
+  // Bot 模式路由: /plugins/wecom-kf/bot（推荐）以及 /wecom-cs、/wecom-cs/bot（兼容）
   const targets = webhookTargets.get(path);
   if (!targets || targets.length === 0) return false;
 
@@ -2882,7 +2882,7 @@ export async function handleWecomWebhookRequest(req: IncomingMessage, res: Serve
 
     const userid = decision.senderUserId!;
     const chatId = decision.chatId ?? userid;
-    const conversationKey = `wecom-cs:${target.account.accountId}:${userid}:${chatId}`;
+    const conversationKey = `wecom-kf:${target.account.accountId}:${userid}:${chatId}`;
     const msgContent = buildInboundBody(msg);
 
     logInfo(

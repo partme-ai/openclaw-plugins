@@ -42,7 +42,7 @@ function createMockRequest(bodyObj: any): IncomingMessage {
     const socket = new Socket();
     const req = new IncomingMessage(socket);
     req.method = "POST";
-    req.url = "/plugins/wecom-cs/bot/default?timestamp=123&nonce=456&signature=789";
+    req.url = "/plugins/wecom-kf/bot/default?timestamp=123&nonce=456&signature=789";
     req.push(JSON.stringify(bodyObj));
     req.push(null);
     return req;
@@ -154,7 +154,7 @@ describe("Monitor Active Features", () => {
             } as any,
             runtime: { log: () => { } },
             core: mockCore,
-            path: "/plugins/wecom-cs/bot/default"
+            path: "/plugins/wecom-kf/bot/default"
         });
     });
 

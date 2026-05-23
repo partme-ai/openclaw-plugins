@@ -169,7 +169,7 @@
   },
   "channelConfigs": {
     "wecom-kf": {
-      "label": "WeCom CS（企业微信智能客服）",
+      "label": "WeCom KF（企业微信客服）",
       "description": "企业微信微信客服 — KF 回调 + Control Tools；ICS/agents/skills 可选",
       "schema": {
         "type": "object",

@@ -40,7 +40,7 @@ function normalizeWecomMessagingTarget(raw: string): string | undefined {
   if (!trimmed) return undefined;
   return (
     trimmed
-      .replace(/^(wecom-cs-agent|wecom-cs|wecom-agent|wecom|wechatwork|wework|qywx):/i, "")
+      .replace(/^(wecom-kf-agent|wecom-kf|wecom-cs-agent|wecom-cs|wecom-agent|wecom|wechatwork|wework|qywx):/i, "")
       .trim() || undefined
   );
 }

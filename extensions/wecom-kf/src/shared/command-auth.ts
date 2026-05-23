@@ -25,7 +25,7 @@ type WecomCommandAuthAccountConfig =
 /** wecom-kf 通道 allowFrom 归一化：剥离 wecom-kf / wecom-cs / user 前缀 */
 const normalizeWecomKfAllowFrom = createAllowFromNormalizer({
   channelId: "wecom-kf",
-  stripPrefixes: ["wecom-cs:", "user:", "userid:"],
+  stripPrefixes: ["wecom-kf:", "wecom-cs:", "wecom-cs-agent:", "wecom-kf-agent:", "user:", "userid:"],
 });
 
 export type WecomCommandAuthResult = CommandAuthResult;
@@ -80,10 +80,10 @@ export function buildWecomUnauthorizedCommandPrompt(params: {
         : "Agent（自建应用）";
   const dmPrefix =
     params.scope === "bot"
-      ? "channels.wecom-cs.bot.dm"
+      ? "channels.wecom-kf.bot.dm"
       : params.scope === "kf"
-        ? "channels.wecom-cs.accounts.<accountId>.agent.dm"
-        : "channels.wecom-cs.agent.dm";
+        ? "channels.wecom-kf.accounts.<accountId>.agent.dm"
+        : "channels.wecom-kf.agent.dm";
   const allowCmd = (value: string) => `openclaw config set ${dmPrefix}.allowFrom '${value}'`;
   const policyCmd = (value: string) => `openclaw config set ${dmPrefix}.policy "${value}"`;
 

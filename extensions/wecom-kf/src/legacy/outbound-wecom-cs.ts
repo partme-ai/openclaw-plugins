@@ -157,9 +157,9 @@ export const wecomLegacyOutbound: ChannelOutboundAdapter = {
       const wsTarget = resolveWecomTarget(to);
       const chatid = wsTarget?.touser || wsTarget?.chatid;
 
-      // 如果目标是 Agent 会话（wecom-cs-agent:），跳过 WS Bot，走 Agent outbound
+      // 如果目标是 Agent 会话（wecom-kf-agent:），跳过 WS Bot，走 Agent outbound
       const rawTo = typeof to === "string" ? to.trim().toLowerCase() : "";
-      if (!rawTo.startsWith("wecom-cs-agent:")) {
+      if (!rawTo.startsWith("wecom-kf-agent:")) {
         if (!wsClient?.isConnected) {
           console.log(`[wecom-outbound] Bot WS 未连接，等待重连... (accountId=${botAccount.accountId})`);
           const reconnected = await waitForWsConnection(botAccount.accountId, 10_000);
@@ -180,7 +180,7 @@ export const wecomLegacyOutbound: ChannelOutboundAdapter = {
           markdown: { content: text },
         });
         console.log(`[wecom-outbound] Sent text via Bot WS to chatid=${chatid} (len=${text.length})`);
-        return { channel: "wecom-cs", messageId: `ws-bot-${Date.now()}`, timestamp: Date.now() };
+        return { channel: "wecom-kf", messageId: `ws-bot-${Date.now()}`, timestamp: Date.now() };
       }
     }
 
@@ -197,18 +197,18 @@ export const wecomLegacyOutbound: ChannelOutboundAdapter = {
     // - 用户在 Bot 会话发 /new，但却收到一条 Agent 私信回执（双重回复/错会话）。
     // 因此：
     // - Bot 会话目标：抑制该回执（Bot 会话里由 wecom 插件补中文回执）。
-    // - Agent 会话目标（wecom-cs-agent:）：允许发送，但改写成中文。
+    // - Agent 会话目标（wecom-kf-agent:）：允许发送，但改写成中文。
     let outgoingText = text;
     const trimmed = String(outgoingText ?? "").trim();
     const rawTo = typeof to === "string" ? to.trim().toLowerCase() : "";
-    const isAgentSessionTarget = rawTo.startsWith("wecom-cs-agent:");
+    const isAgentSessionTarget = rawTo.startsWith("wecom-kf-agent:");
     const looksLikeNewSessionAck =
       /new session started/i.test(trimmed) && /model:/i.test(trimmed);
 
     if (looksLikeNewSessionAck) {
       if (!isAgentSessionTarget) {
         console.log(`[wecom-outbound] Suppressed command ack to avoid Bot/Agent double-reply (len=${trimmed.length})`);
-        return { channel: "wecom-cs", messageId: `suppressed-${Date.now()}`, timestamp: Date.now() };
+        return { channel: "wecom-kf", messageId: `suppressed-${Date.now()}`, timestamp: Date.now() };
       }
 
       const modelLabel = (() => {
@@ -246,7 +246,7 @@ export const wecomLegacyOutbound: ChannelOutboundAdapter = {
     }
 
     return {
-      channel: "wecom-cs",
+      channel: "wecom-kf",
       messageId: `agent-${Date.now()}`,
       timestamp: Date.now(),
     };
@@ -261,8 +261,8 @@ export const wecomLegacyOutbound: ChannelOutboundAdapter = {
     const botAccount = resolvedAccount.bot;
     if (botAccount?.connectionMode === "websocket" && botAccount.configured) {
       const rawTo = typeof to === "string" ? to.trim().toLowerCase() : "";
-      // 如果目标是 Agent 会话（wecom-cs-agent:），跳过 WS Bot，走 Agent outbound
-      if (!rawTo.startsWith("wecom-cs-agent:")) {
+      // 如果目标是 Agent 会话（wecom-kf-agent:），跳过 WS Bot，走 Agent outbound
+      if (!rawTo.startsWith("wecom-kf-agent:")) {
         const wsTarget = resolveWecomTarget(to);
         const chatId = wsTarget?.touser || wsTarget?.chatid;
         if (!chatId) {
@@ -306,7 +306,7 @@ export const wecomLegacyOutbound: ChannelOutboundAdapter = {
 
         console.log(`[wecom-outbound] Bot WS sendMedia 成功: type=${result.finalType}${result.downgraded ? ` (降级: ${result.downgradeNote})` : ""}`);
         return {
-          channel: "wecom-cs",
+          channel: "wecom-kf",
           messageId: `ws-bot-media-${Date.now()}`,
           timestamp: Date.now(),
         };
@@ -367,7 +367,7 @@ export const wecomLegacyOutbound: ChannelOutboundAdapter = {
     }
 
     return {
-      channel: "wecom-cs",
+      channel: "wecom-kf",
       messageId: `agent-media-${Date.now()}`,
       timestamp: Date.now(),
     };

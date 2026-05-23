@@ -7,7 +7,9 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 
 import type { WecomKfConfig } from "../types/index.js";
+import { getWecomKfChannelBlock } from "./channel-block.js";
 import { WEBHOOK_PATHS } from "../types/constants.js";
+export { getWecomKfChannelBlock, LEGACY_WECOM_CS_CHANNEL_KEY, warnWecomCsChannelDeprecation } from "./channel-block.js";
 
 /** 默认 KF 回调路径（无自定义 webhookPath 时使用） */
 export const DEFAULT_KF_WEBHOOK_PATH = "/wecom-kf";
@@ -61,7 +63,7 @@ export function resolveApiBaseUrl(config?: { apiBaseUrl?: string }): string {
  * 默认 `false`：Gateway 仅注册 KF 回调；Phase 2 将移除 monitor 中的 wecom-cs 逻辑。
  */
 export function isLegacyWecomCsEnabled(cfg: OpenClawConfig | undefined): boolean {
-    const channel = cfg?.channels?.["wecom-kf"] as WecomKfConfig | undefined;
+    const channel = getWecomKfChannelBlock(cfg);
     return channel?.legacyWecomCsEnabled === true;
 }
 
@@ -71,7 +73,7 @@ export function isLegacyWecomCsEnabled(cfg: OpenClawConfig | undefined): boolean
  * 默认 `false`：KF 核心仅注册回调 + Control Tools；运营后台需显式 `icsEnabled: true`。
  */
 export function isIcsEnabled(cfg: OpenClawConfig | undefined): boolean {
-    const channel = cfg?.channels?.["wecom-kf"] as WecomKfConfig | undefined;
+    const channel = getWecomKfChannelBlock(cfg);
     return channel?.icsEnabled === true;
 }
 

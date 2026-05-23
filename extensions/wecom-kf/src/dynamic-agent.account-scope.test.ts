@@ -6,12 +6,12 @@ describe("generateAgentId account scoping", () => {
   it("generates different ids for same peer across accounts", () => {
     const a = generateAgentId("dm", "zhangsan", "acct-a");
     const b = generateAgentId("dm", "zhangsan", "acct-b");
-    expect(a).toBe("wecom-cs-acct-a-dm-zhangsan");
-    expect(b).toBe("wecom-cs-acct-b-dm-zhangsan");
+    expect(a).toBe("wecom-kf-acct-a-dm-zhangsan");
+    expect(b).toBe("wecom-kf-acct-b-dm-zhangsan");
     expect(a).not.toBe(b);
   });
 
   it("falls back to default account scope when accountId is omitted", () => {
-    expect(generateAgentId("group", "wr123456")).toBe("wecom-cs-default-group-wr123456");
+    expect(generateAgentId("group", "wr123456")).toBe("wecom-kf-default-group-wr123456");
   });
 });

@@ -1,6 +1,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 
 import type { WecomConfig, WecomNetworkConfig } from "../types/index.js";
+import { getWecomKfChannelBlock } from "./channel-block.js";
 
 export function resolveWecomEgressProxyUrlFromNetwork(network?: WecomNetworkConfig): string | undefined {
   const proxyUrl = network?.egressProxyUrl ??
@@ -15,6 +16,6 @@ export function resolveWecomEgressProxyUrlFromNetwork(network?: WecomNetworkConf
 }
 
 export function resolveWecomEgressProxyUrl(cfg: OpenClawConfig): string | undefined {
-  const wecom = cfg.channels?.["wecom-cs"] as WecomConfig | undefined;
+  const wecom = getWecomKfChannelBlock(cfg) as WecomConfig | undefined;
   return resolveWecomEgressProxyUrlFromNetwork(wecom?.network);
 }

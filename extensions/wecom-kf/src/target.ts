@@ -40,7 +40,7 @@ export function resolveWecomTarget(raw: string | undefined): WecomTarget | undef
     // 1. Remove standard namespace prefixes (移除标准命名空间前缀)
     let clean = raw
         .trim()
-        .replace(/^(wecom-cs-agent|wecom-cs|wecom-agent|wecom|wechatwork|wework|qywx):/i, "");
+        .replace(/^(wecom-kf-agent|wecom-kf|wecom-cs-agent|wecom-cs|wecom-agent|wecom|wechatwork|wework|qywx):/i, "");
 
     // 2. Explicit Type Prefixes (显式类型前缀)
     if (/^party:/i.test(clean)) {

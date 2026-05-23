@@ -190,13 +190,13 @@ describe("wecomOutbound", () => {
 
     const ack = "✅ New session started · model: openai-codex/gpt-5.2";
 
-    const r1 = await wecomOutbound.sendText({ cfg, to: "wecom-cs:userid123", text: ack } as any);
+    const r1 = await wecomOutbound.sendText({ cfg, to: "wecom-kf:userid123", text: ack } as any);
     expect(api.sendText).not.toHaveBeenCalled();
     expect(r1.messageId).toBe("suppressed-456");
 
     (api.sendText as any).mockClear();
 
-    await wecomOutbound.sendText({ cfg, to: "wecom-cs-agent:userid123", text: ack } as any);
+    await wecomOutbound.sendText({ cfg, to: "wecom-kf-agent:userid123", text: ack } as any);
     expect(api.sendText).toHaveBeenCalledWith(
       expect.objectContaining({
         toUser: "userid123",

@@ -51,7 +51,7 @@ type ChannelOnboardingAdapter = {
 import { listWecomAccountIds, resolveDefaultWecomAccountId, resolveWecomAccount, resolveWecomAccounts } from "../config/index.js";
 import type { WecomConfig, WecomBotConfig, WecomAgentConfig, WecomDmConfig, WecomAccountConfig } from "../types/index.js";
 
-const channel = "wecom-cs" as const;
+const channel = "wecom-kf" as const;
 
 type WecomMode = "bot" | "agent" | "both";
 
@@ -60,7 +60,7 @@ type WecomMode = "bot" | "agent" | "both";
 // ============================================================
 
 function getWecomConfig(cfg: OpenClawConfig): WecomConfig | undefined {
-    return cfg.channels?.["wecom-cs"] as WecomConfig | undefined;
+    return cfg.channels?.["wecom-kf"] as WecomConfig | undefined;
 }
 
 function setWecomEnabled(cfg: OpenClawConfig, enabled: boolean): OpenClawConfig {
@@ -68,8 +68,8 @@ function setWecomEnabled(cfg: OpenClawConfig, enabled: boolean): OpenClawConfig 
         ...cfg,
         channels: {
             ...cfg.channels,
-            "wecom-cs": {
-                ...((cfg.channels?.["wecom-cs"] as WecomConfig | undefined) ?? {}),
+            "wecom-kf": {
+                ...((cfg.channels?.["wecom-kf"] as WecomConfig | undefined) ?? {}),
                 enabled,
             },
         },
@@ -125,7 +125,7 @@ function setWecomDefaultAccount(cfg: OpenClawConfig, accountId: string): OpenCla
         ...cfg,
         channels: {
             ...cfg.channels,
-            "wecom-cs": {
+            "wecom-kf": {
                 ...wecom,
                 defaultAccount: accountId,
             },
@@ -166,7 +166,7 @@ function ensureMatrixAccounts(wecom: WecomConfig): WecomConfig {
 }
 
 function accountWebhookPath(kind: "bot" | "agent", accountId: string): string {
-    const recommendedBase = kind === "bot" ? "/plugins/wecom-cs/bot" : "/plugins/wecom-cs/agent";
+    const recommendedBase = kind === "bot" ? "/plugins/wecom-kf/bot" : "/plugins/wecom-kf/agent";
     return `${recommendedBase}/${accountId}`;
 }
 
@@ -177,7 +177,7 @@ export function setWecomBotConfig(cfg: OpenClawConfig, bot: WecomBotConfig, acco
             ...cfg,
             channels: {
                 ...cfg.channels,
-                "wecom-cs": {
+                "wecom-kf": {
                     ...wecom,
                     enabled: true,
                     bot,
@@ -193,7 +193,7 @@ export function setWecomBotConfig(cfg: OpenClawConfig, bot: WecomBotConfig, acco
         ...cfg,
         channels: {
             ...cfg.channels,
-            "wecom-cs": {
+            "wecom-kf": {
                 ...matrixWecom,
                 enabled: true,
                 defaultAccount: matrixWecom.defaultAccount?.trim() || DEFAULT_ACCOUNT_ID,
@@ -217,7 +217,7 @@ function setWecomAgentConfig(cfg: OpenClawConfig, agent: WecomAgentConfig, accou
             ...cfg,
             channels: {
                 ...cfg.channels,
-                "wecom-cs": {
+                "wecom-kf": {
                     ...wecom,
                     enabled: true,
                     agent,
@@ -233,7 +233,7 @@ function setWecomAgentConfig(cfg: OpenClawConfig, agent: WecomAgentConfig, accou
         ...cfg,
         channels: {
             ...cfg.channels,
-            "wecom-cs": {
+            "wecom-kf": {
                 ...matrixWecom,
                 enabled: true,
                 defaultAccount: matrixWecom.defaultAccount?.trim() || DEFAULT_ACCOUNT_ID,
@@ -281,7 +281,7 @@ function setWecomDmPolicy(
             ...cfg,
             channels: {
                 ...cfg.channels,
-                "wecom-cs": {
+                "wecom-kf": {
                     ...matrixWecom,
                     enabled: true,
                     defaultAccount: matrixWecom.defaultAccount?.trim() || DEFAULT_ACCOUNT_ID,
@@ -302,7 +302,7 @@ function setWecomDmPolicy(
             ...cfg,
             channels: {
                 ...cfg.channels,
-                "wecom-cs": {
+                "wecom-kf": {
                     ...wecom,
                     bot: {
                         ...wecom.bot,
@@ -316,7 +316,7 @@ function setWecomDmPolicy(
         ...cfg,
         channels: {
             ...cfg.channels,
-            "wecom-cs": {
+            "wecom-kf": {
                 ...wecom,
                 agent: {
                     ...wecom.agent,
@@ -723,8 +723,8 @@ async function showSummary(cfg: OpenClawConfig, prompter: WizardPrompter, accoun
 const dmPolicy: ChannelOnboardingDmPolicy = {
     label: "WeCom CS",
     channel,
-    policyKey: "channels.wecom-cs.bot.dm.policy",
-    allowFromKey: "channels.wecom-cs.bot.dm.allowFrom",
+    policyKey: "channels.wecom-kf.bot.dm.policy",
+    allowFromKey: "channels.wecom-kf.bot.dm.allowFrom",
     getCurrent: (cfg: OpenClawConfig) => {
         const account = resolveWecomAccount({ cfg });
         return (account.bot?.config.dm?.policy ?? "pairing") as "pairing";

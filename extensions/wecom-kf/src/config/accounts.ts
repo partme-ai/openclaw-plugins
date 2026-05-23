@@ -1,6 +1,6 @@
 /**
  * WeCom KF 账号解析与模式检测
- * 渠道键：channels.wecom-kf（独立于 wecom / wecom-cs）
+ * 渠道键：channels.wecom-kf（wecom-cs 为读时弃用别名）
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
@@ -20,8 +20,15 @@ import type {
     ResolvedWecomAccounts,
 } from "../types/index.js";
 
+import {
+    getWecomKfChannelBlock,
+    LEGACY_WECOM_CS_CHANNEL_KEY,
+    WECOM_KF_CHANNEL_ID,
+    warnWecomCsChannelDeprecation,
+} from "./channel-block.js";
+
 /** wecom-kf 渠道 ID，与 OpenClaw bindings.match.channel 对齐 */
-export const WECOM_KF_CHANNEL_ID = "wecom-kf";
+export { WECOM_KF_CHANNEL_ID, LEGACY_WECOM_CS_CHANNEL_KEY, getWecomKfChannelBlock, warnWecomCsChannelDeprecation };
 
 export const DEFAULT_ACCOUNT_ID = "default";
 
@@ -133,7 +140,7 @@ function registerCustomAgentMappingsForAccount(account: CustomAgentAccountConfig
 }
 
 function getWecomKfBlock(cfg: OpenClawConfig): WecomKfConfig | undefined {
-    return cfg.channels?.[WECOM_KF_CHANNEL_ID] as WecomKfConfig | undefined;
+    return getWecomKfChannelBlock(cfg);
 }
 
 function flattenKfFields(source: Record<string, unknown>): Record<string, unknown> {

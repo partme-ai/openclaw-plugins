@@ -21,7 +21,7 @@ function createMockRequest(bodyObj: any, query: URLSearchParams): IncomingMessag
     const socket = new Socket();
     const req = new IncomingMessage(socket);
     req.method = "POST";
-    req.url = `/plugins/wecom-cs/bot/default?${query.toString()}`;
+    req.url = `/plugins/wecom-kf/bot/default?${query.toString()}`;
     req.push(JSON.stringify(bodyObj));
     req.push(null);
     return req;
@@ -108,7 +108,7 @@ describe("Monitor Integration: Inbound Image", () => {
             config: {} as any,
             runtime: { log: console.log, error: console.error },
             core: mockCore as any,
-            path: "/plugins/wecom-cs/bot/default"
+            path: "/plugins/wecom-kf/bot/default"
         });
     });
 
@@ -198,8 +198,8 @@ describe("Monitor Integration: Inbound Image", () => {
         // Expect Context Injection
         expect(ctx.MediaPath).toBe("/tmp/saved-image.jpg");
         expect(ctx.MediaType).toBe("image/jpeg");
-        expect(ctx.Surface).toBe("wecom-cs");
-        expect(ctx.OriginatingChannel).toBe("wecom-cs");
+        expect(ctx.Surface).toBe("wecom-kf");
+        expect(ctx.OriginatingChannel).toBe("wecom-kf");
 
         expect(undiciFetch).toHaveBeenCalledWith(
             imageUrl,

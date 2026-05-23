@@ -344,7 +344,7 @@ grep -E '\[wecom_kf:audit\]|transfer|enter_session|session_status|send_msg_on_ev
 - [ ] **Token / Secret** 勿提交仓库；使用环境变量或加密配置
 - [ ] **dm allowlist**：生产环境收紧 `allowFrom`
 - [ ] **mediaLocalRoots**：本地 `MEDIA:` 路径白名单
-- [ ] **legacyWecomCsEnabled**：保持 `false`；勿注册 `/wecom-cs` 路由（legacy 代码保留于 `src/legacy/`，默认 gate 关闭，见 README）
+- [ ] **legacyWecomCsEnabled**：保持 `false`；勿注册 Legacy Bot/Agent 路由（主路径 `/wecom-kf/bot`；旧 `/wecom-cs*` 仅在 legacy 开关开启时作别名，见 README）
 - [ ] **48h / 5 条** 限制：监控 `msg_send_fail`（`fail_type` 日志）
 
 ---

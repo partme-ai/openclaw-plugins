@@ -28,7 +28,13 @@ export {
     DEFAULT_KF_WEBHOOK_PATH,
     collectWecomKfRoutePaths,
     isLegacyWecomCsEnabled,
+    isIcsEnabled,
     normalizeRoutePath,
     resolveApiBaseUrl,
     resolveKfAccountWebhookPath,
 } from "./kf-routes.js";
+export {
+    getWecomKfChannelBlock,
+    LEGACY_WECOM_CS_CHANNEL_KEY,
+    warnWecomCsChannelDeprecation,
+} from "./channel-block.js";

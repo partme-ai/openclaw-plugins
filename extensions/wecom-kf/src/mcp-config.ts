@@ -4,9 +4,10 @@
  * 负责:
  * - 通过 WSClient 发送 aibot_get_mcp_config 请求
  * - 解析服务端响应，提取 MCP 配置 (url、type、is_authed)
- * - 将配置写入 ~/.openclaw/wecomCsConfig/config.json 的 mcpConfig 字段
+ * - 将配置写入 ~/.openclaw/wecomKfConfig/config.json 的 mcpConfig 字段
  */
 
+import fs from "node:fs";
 import os from "os";
 import path from "path";
 import type { WSClient } from "@wecom/aibot-node-sdk";
@@ -94,8 +95,30 @@ export async function fetchMcpConfig(
 // 配置持久化
 // ============================================================================
 
+const WECOM_KF_CONFIG_DIR = "wecomKfConfig";
+const LEGACY_WECOM_CS_CONFIG_DIR = "wecomCsConfig";
+
+function resolveWecomKfConfigWritePath(): string {
+    return path.join(os.homedir(), ".openclaw", WECOM_KF_CONFIG_DIR, "config.json");
+}
+
+function resolveWecomKfConfigReadPath(): string {
+    const primaryPath = resolveWecomKfConfigWritePath();
+    if (fs.existsSync(primaryPath)) {
+        return primaryPath;
+    }
+    const legacyPath = path.join(os.homedir(), ".openclaw", LEGACY_WECOM_CS_CONFIG_DIR, "config.json");
+    if (fs.existsSync(legacyPath)) {
+        console.warn(
+            "[wecom-kf] ~/.openclaw/wecomCsConfig is deprecated; migrate to ~/.openclaw/wecomKfConfig",
+        );
+        return legacyPath;
+    }
+    return primaryPath;
+}
+
 /**
- * 将 MCP 配置写入 ~/.openclaw/wecomCsConfig/config.json 的 mcpConfig 字段
+ * 将 MCP 配置写入 ~/.openclaw/wecomKfConfig/config.json 的 mcpConfig 字段
  *
  * 使用 OpenClaw SDK 提供的文件锁和原子写入，保证并发安全。
  * 配置格式: { mcpConfig: { [type]: { type, url } } }
@@ -104,8 +127,8 @@ async function saveMcpConfigToPluginJson(
     config: McpConfigBody,
     runtime: WecomRuntimeEnv,
 ): Promise<void> {
-    const wecomConfigDir = path.join(os.homedir(), ".openclaw", "wecomCsConfig");
-    const wecomConfigPath = path.join(wecomConfigDir, "config.json");
+    const wecomConfigPath = resolveWecomKfConfigWritePath();
+    const wecomConfigDir = path.dirname(wecomConfigPath);
 
     const lockOptions = {
         stale: 60_000,
@@ -143,7 +166,7 @@ async function saveMcpConfigToPluginJson(
         // 原子写入
         await writeJsonFileAtomically(wecomConfigPath, pluginJson);
 
-        runtime.log?.(`[WeCom CS] MCP config saved to ${wecomConfigPath}`);
+        runtime.log?.(`[WeCom KF] MCP config saved to ${wecomConfigPath}`);
     });
 }
 
@@ -152,7 +175,7 @@ async function saveMcpConfigToPluginJson(
 // ============================================================================
 
 /**
- * 拉取 MCP 配置并持久化到 ~/.openclaw/wecomCsConfig/config.json
+ * 拉取 MCP 配置并持久化到 ~/.openclaw/wecomKfConfig/config.json
  *
  * 认证成功后调用。失败仅记录日志，不影响 WebSocket 消息正常收发。
  *

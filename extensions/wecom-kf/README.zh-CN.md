@@ -89,7 +89,7 @@ wecom-kf/
 | **ICS 运营（可选）** | `src/ics/handlers/`、`src/ics/utils/` | `channels.wecom-kf.icsEnabled: true` → 注册 `/ics/*` | 3 ✅（开关） |
 | **智能体模板（可选）** | `agents/` | 独立部署；`--workspace` 指向子目录 | — |
 | **Skills（可选）** | `skills/` | 复制/软链到 agent workspace；插件不自动加载 | — |
-| **Legacy wecom-cs** | `legacy/monitor.ts` 等 | `legacyWecomCsEnabled: true`（默认 **false**，Phase 2 移除中） | 废弃 |
+| **Legacy Bot/Agent** | `legacy/monitor.ts` 等 | `legacyWecomCsEnabled: true`（默认 **false**，Phase 2 移除中） | 废弃 |
 
 ### Phase 3 模块说明（会话状态与智能化）
 

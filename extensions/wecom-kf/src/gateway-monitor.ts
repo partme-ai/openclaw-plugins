@@ -6,6 +6,7 @@ import type {
 
 import {
   detectMode,
+  getWecomKfChannelBlock,
   isLegacyWecomCsEnabled,
   listWecomAccountIds,
   resolveWecomAccount,
@@ -155,7 +156,7 @@ export async function monitorWecomProvider(
     });
     throw new Error(conflict.message);
   }
-  const mode = detectMode(cfg.channels?.["wecom-kf"] as WecomConfig | undefined);
+  const mode = detectMode(getWecomKfChannelBlock(cfg) as WecomConfig | undefined);
   const matrixMode = mode === "matrix";
   const bot = account.bot;
   const agent = account.agent;
@@ -166,14 +167,14 @@ export async function monitorWecomProvider(
     if (agentConfigured && !botConfigured) {
       ctx.log?.warn(
         `[${account.accountId}] 检测到仍在使用单 Agent 兼容模式。建议尽快升级为多账号模式：` +
-        `将 channels.wecom-cs.agent 迁移到 channels.wecom-cs.accounts.<accountId>.agent，` +
-        `并设置 channels.wecom-cs.defaultAccount。`,
+        `将 channels.wecom-kf.agent 迁移到 channels.wecom-kf.accounts.<accountId>.agent，` +
+        `并设置 channels.wecom-kf.defaultAccount。`,
       );
     } else {
       ctx.log?.warn(
         `[${account.accountId}] 检测到仍在使用单账号兼容模式。建议尽快升级为多账号模式：` +
-        `将 channels.wecom-cs.bot/agent 迁移到 channels.wecom-cs.accounts.<accountId>.bot/agent，` +
-        `并设置 channels.wecom-cs.defaultAccount。`,
+        `将 channels.wecom-kf.bot/agent 迁移到 channels.wecom-kf.accounts.<accountId>.bot/agent，` +
+        `并设置 channels.wecom-kf.defaultAccount。`,
       );
     }
   }
@@ -187,7 +188,7 @@ export async function monitorWecomProvider(
     if (!kfOnlyAccount && !legacyCsEnabled) {
       ctx.log?.warn(
         `[${account.accountId}] 检测到 Bot/Agent 配置但 legacyWecomCsEnabled=false；` +
-          `仅 KF 回调生效。如需 wecom-cs 路径请设置 channels.wecom-kf.legacyWecomCsEnabled=true`,
+          `仅 KF 回调生效。如需 Legacy Bot/Agent 路径请设置 channels.wecom-kf.legacyWecomCsEnabled=true`,
       );
     }
     const webhookPath = resolveKfAccountWebhookPath({

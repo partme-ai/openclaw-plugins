@@ -240,7 +240,7 @@ function setupMessageHandler(params: {
 
         const userid = decision.senderUserId!;
         const chatId = decision.chatId ?? userid;
-        const conversationKey = `wecom-cs:${accountId}:${userid}:${chatId}`;
+        const conversationKey = `wecom-kf:${accountId}:${userid}:${chatId}`;
         const msgContent = buildInboundBody(msg);
 
         target.runtime.log?.(
@@ -369,7 +369,7 @@ function setupEventHandler(params: {
         // 需要通过 addPendingMessage 注入，让现有管线处理
         const userid = body.from?.userid ?? "unknown";
         const chatId = body.chatid ?? userid;
-        const conversationKey = `wecom-cs:${accountId}:${userid}:${chatId}`;
+        const conversationKey = `wecom-kf:${accountId}:${userid}:${chatId}`;
 
         // 先清除之前创建的 stream（addPendingMessage 会创建新的）
         // 直接用 addPendingMessage 复用完整管线
