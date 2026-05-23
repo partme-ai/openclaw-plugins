@@ -3,7 +3,7 @@
  */
 
 import type { RedisClientType } from "redis";
-import { RedisConnectionError } from "../errors.js";
+import { RedisConnectionError } from "../shared/errors.js";
 
 let client: RedisClientType | null = null;
 let _messagesWritten = 0;

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import plugin from "./index.js";
-import { WEBHOOK_PATHS } from "./types/constants.js";
+import plugin from "../src/index.js";
+import { WEBHOOK_PATHS } from "../src/types/constants.js";
 
 function createMockApi(config: OpenClawConfig = { channels: {} }) {
   const registerChannel = vi.fn();

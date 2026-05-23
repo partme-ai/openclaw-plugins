@@ -9,10 +9,10 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { rabbitmqChannel } from "./channel.js";
 import { setRabbitmqRuntime } from "./runtime.js";
 import { buildRabbitmqConfigSnapshot, resolveRabbitmqConfig } from "./config.js";
-import { getRabbitmqChannelConfig } from "./state.js";
+import { getRabbitmqChannelConfig } from "./state/state.js";
 import { getSessionStats } from "./routing/session-mapper.js";
 import { getStats } from "./transport/server.js";
-import { registerRabbitmqTools } from "./mq-tools.js";
+import { registerRabbitmqTools } from "./tools/mq-tools.js";
 
 export { rabbitmqChannel } from "./channel.js";
 

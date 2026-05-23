@@ -9,7 +9,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { rockermqChannel } from "./channel.js";
 import { setRockermqRuntime } from "./runtime.js";
 import { buildRockermqConfigSnapshot, resolveRockermqConfig } from "./config.js";
-import { getRockermqChannelConfig } from "./state.js";
+import { getRockermqChannelConfig } from "./state/state.js";
 import { getSessionStats, getAllSessionMappings } from "./routing/session-mapper.js";
 import { getStats } from "./transport/server.js";
 

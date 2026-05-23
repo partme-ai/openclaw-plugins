@@ -6,7 +6,7 @@
 import { rabbitmqOutbound } from "./outbound.js";
 import { getStats, startRabbitmqServer, stopRabbitmqServer, trackInboundAccepted, trackInboundDropped, trackRoute } from "./transport/server.js";
 import { resolveRabbitmqConfig, validateRabbitmqConfig } from "./config.js";
-import { getRabbitmqChannelConfig, setRabbitmqChannelConfig } from "./state.js";
+import { getRabbitmqChannelConfig, setRabbitmqChannelConfig } from "./state/state.js";
 import { rabbitmqSetupAdapter, rabbitmqSetupWizard } from "./onboarding.js";
 import { processInbound } from "./inbound.js";
 

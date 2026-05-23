@@ -18,7 +18,7 @@ import {
   resolveBrokerConfig,
   type ResolvedMqttAccount,
 } from "../config.js";
-import { setMqttChannelConfig } from "../mqtt-state.js";
+import { setMqttChannelConfig } from "../state/mqtt-state.js";
 import type { MqttTopicMapping } from "../types.js";
 
 /**

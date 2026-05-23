@@ -4,7 +4,7 @@
  */
 
 import crypto from "node:crypto";
-import type { XhsAccountConfig } from "./types.js";
+import type { XhsAccountConfig } from "../types.js";
 import { rednoteExecute } from "./rednote-api-client.js";
 
 const XHS_API_BASE = process.env.XHS_API_BASE ?? "https://open.xiaohongshu.com";

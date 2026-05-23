@@ -4,7 +4,7 @@
  */
 
 import { DEFAULT_ROCKERMQ_CONFIG } from "./config.js";
-import { getRockermqChannelConfig } from "./state.js";
+import { getRockermqChannelConfig } from "./state/state.js";
 import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { buildOutboundTopic } from "./routing/topic-router.js";
 

@@ -5,7 +5,7 @@
  * 默认 per-peer，确保 session key 遵循 agent:<agentId>:direct:<peerId> 规则（与飞书一致）。
  */
 
-import type { DmScope } from "./types.js";
+import type { DmScope } from "../types.js";
 
 /**
  * 从 OpenClaw 运行时配置读取 dmScope。

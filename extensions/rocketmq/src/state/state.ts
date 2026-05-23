@@ -2,7 +2,7 @@
  * RocketMQ 通道状态。
  */
 
-import type { RockermqConfig } from "./config.js";
+import type { RockermqConfig } from "../config.js";
 
 let rockermqChannelConfig: RockermqConfig | null = null;
 

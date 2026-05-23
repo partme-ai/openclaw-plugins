@@ -9,7 +9,7 @@ import { xhsChannel } from "./channel.js";
 import { createXhsConfigGetter } from "./config.js";
 import { createXhsWebhookHandler } from "./inbound.js";
 import { setRuntime } from "./runtime.js";
-import { createXhsTools } from "./tools.js";
+import { createXhsTools } from "./tools/tools.js";
 import { XHS_WEBHOOK_PATH } from "./transport/server.js";
 import type { PluginApi } from "./types.js";
 

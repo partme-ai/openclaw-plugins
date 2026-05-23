@@ -2,8 +2,8 @@
  * 进程内 MQTT Channel 配置快照（由 gateway startAccount 在启动 broker 时写入）。
  */
 
-import type { MqttChannelConfig } from "./types.js";
-import type { OpenClawDmScope } from "./types.js";
+import type { MqttChannelConfig } from "../types.js";
+import type { OpenClawDmScope } from "../types.js";
 
 let channelConfig: MqttChannelConfig | null = null;
 let policyVersion = 0;

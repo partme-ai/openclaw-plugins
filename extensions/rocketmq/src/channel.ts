@@ -11,7 +11,7 @@ import {
   resolveRockermqConfig,
   validateRockermqConfig,
 } from "./config.js";
-import { setRockermqChannelConfig } from "./state.js";
+import { setRockermqChannelConfig } from "./state/state.js";
 import {
   getStats,
   startRockermqServer,

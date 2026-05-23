@@ -8,6 +8,6 @@
 
 import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
 
-import { mqttPlugin } from "./mqtt-plugin.js";
+import { mqttPlugin } from "./runtime/mqtt-plugin.js";
 
 export default defineSetupPluginEntry(mqttPlugin);

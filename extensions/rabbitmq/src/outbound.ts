@@ -6,11 +6,11 @@ import type {
   ChannelOutboundAdapter,
   ChannelOutboundContext,
 } from "openclaw/plugin-sdk/channel-contract";
-import { chunkText, sanitizeForPlainText } from "./text-chunking.js";
+import { chunkText, sanitizeForPlainText } from "./shared/text-chunking.js";
 
 import { publishMessage } from "./transport/server.js";
 import { DEFAULT_RABBITMQ_CONFIG } from "./config.js";
-import { getRabbitmqChannelConfig } from "./state.js";
+import { getRabbitmqChannelConfig } from "./state/state.js";
 import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { buildOutboundTopic } from "./routing/topic-router.js";
 

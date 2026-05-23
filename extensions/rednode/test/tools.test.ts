@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createXhsTools } from "../src/tools.js";
+import { createXhsTools } from "../src/tools/tools.js";
 import type { XhsAccountConfig } from "../src/types.js";
 
 describe("createXhsTools", () => {

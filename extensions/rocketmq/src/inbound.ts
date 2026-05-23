@@ -3,7 +3,7 @@
  */
 
 import { getRockermqRuntime } from "./runtime.js";
-import { getRockermqChannelConfig } from "./state.js";
+import { getRockermqChannelConfig } from "./state/state.js";
 import { DEFAULT_ROCKERMQ_CONFIG, type RockermqConfig } from "./config.js";
 import { resolveInboundRoute, buildReplyTopicFromInbound, matchTopic } from "./routing/topic-router.js";
 import { upsertSessionContext } from "./routing/session-mapper.js";

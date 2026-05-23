@@ -38,7 +38,7 @@ import {
   updateAuthMetrics,
   updateAclDenials,
   updateSessionMetrics,
-} from "../metrics.js";
+} from "../shared/metrics.js";
 
 type AedesBroker = NonNullable<ReturnType<typeof createBroker>>;
 

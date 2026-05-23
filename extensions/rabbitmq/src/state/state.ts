@@ -2,7 +2,7 @@
  * RabbitMQ 通道状态管理。
  */
 
-import type { RabbitmqConfig } from "./config.js";
+import type { RabbitmqConfig } from "../config.js";
 
 let rabbitmqChannelConfig: RabbitmqConfig | null = null;
 

@@ -11,7 +11,7 @@ import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 
 import { publishMessage } from "./transport/server.js";
 import { DEFAULT_BROKER_CONFIG } from "./config.js";
-import { getMqttChannelConfig } from "./mqtt-state.js";
+import { getMqttChannelConfig } from "./state/mqtt-state.js";
 import { getClientIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { buildOutboundTopic } from "./routing/topic-router.js";
 import { getClientUsername } from "./transport/server.js";

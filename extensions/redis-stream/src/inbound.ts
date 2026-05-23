@@ -12,7 +12,7 @@ import {
   buildReplyChannelFromInbound,
 } from "./routing/topic-router.js";
 import { publishMessage } from "./transport/publisher.js";
-import { logger } from "./logger.js";
+import { logger } from "./shared/logger.js";
 import type { RedisChannelConfig, RedisInboundMessage } from "./types.js";
 import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {

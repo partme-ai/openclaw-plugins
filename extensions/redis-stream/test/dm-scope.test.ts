@@ -2,7 +2,7 @@
  * dm-scope 测试。
  */
 import { describe, it, expect } from "vitest";
-import { resolveDmScopeFromRuntimeConfig, buildSessionKeyFromDmScope } from "../src/dm-scope.js";
+import { resolveDmScopeFromRuntimeConfig, buildSessionKeyFromDmScope } from "../src/shared/dm-scope.js";
 
 describe("resolveDmScopeFromRuntimeConfig", () => {
   it("returns per-peer when no session config present (default)", () => {

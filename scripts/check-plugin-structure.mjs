@@ -124,8 +124,11 @@ const EXTENDED_SEMANTIC_DIRS = [
   "types",
 ];
 
-/** Extended src-root drift threshold (doc §7.1 uses >15 to enable; checker warns earlier) */
-const EXTENDED_SRC_ROOT_DRIFT_THRESHOLD = 5;
+/** Default src-root drift threshold for non-strict plugins (doc §7.1 uses >15 to enable; checker warns earlier) */
+const SRC_ROOT_DRIFT_THRESHOLD_DEFAULT = 5;
+
+/** Strict plugins (--strict-base / BASE_STRICT_PLUGINS / --strict-new extended): allowlist-only at src/ root */
+const SRC_ROOT_DRIFT_THRESHOLD_STRICT = 0;
 
 /** Extended index.ts line threshold (doc §7.1) */
 const EXTENDED_INDEX_LINE_THRESHOLD = 150;
@@ -889,6 +892,15 @@ function checkNaming(pluginDir, pluginId, issues, flags) {
   }
 }
 
+function srcRootDriftThreshold(pluginId, flags) {
+  if (flags.strictNew && EXTENDED_STRICT_PLUGINS.has(pluginId)) {
+    return SRC_ROOT_DRIFT_THRESHOLD_STRICT;
+  }
+  if (flags.strictBase || BASE_STRICT_PLUGINS.has(pluginId)) {
+    return SRC_ROOT_DRIFT_THRESHOLD_STRICT;
+  }
+  return SRC_ROOT_DRIFT_THRESHOLD_DEFAULT;
+}
 function listSrcRootBusinessFiles(srcDir) {
   return listDir(srcDir)
     .filter(
@@ -923,11 +935,12 @@ function checkExtendedProfile(pluginDir, pluginId, issues, flags) {
   }
 
   const driftFiles = listSrcRootBusinessFiles(srcDir);
-  if (driftFiles.length > EXTENDED_SRC_ROOT_DRIFT_THRESHOLD) {
+  const driftThreshold = srcRootDriftThreshold(pluginId, flags);
+  if (driftFiles.length > driftThreshold) {
     addIssue(issues, {
       rule: "extended-src-root-drift",
       path: srcDir,
-      message: `Extended Profile SHOULD: src/ root has ${driftFiles.length} non-Base .ts files (> ${EXTENDED_SRC_ROOT_DRIFT_THRESHOLD}); move into semantic dirs: ${driftFiles.join(", ")}`,
+      message: `Extended Profile SHOULD: src/ root has ${driftFiles.length} non-Base .ts files (> ${driftThreshold}); move into semantic dirs: ${driftFiles.join(", ")}`,
       pluginId,
       category: "extended",
       flags,
@@ -956,11 +969,12 @@ function checkPlugin(pluginDir, flags) {
   } else if (srcDir) {
     // Base Profile plugins: warn on src/ root drift only — never require Extended .gitkeep dirs
     const driftFiles = listSrcRootBusinessFiles(srcDir);
-    if (pluginId !== BASE_TEMPLATE_ID && driftFiles.length > EXTENDED_SRC_ROOT_DRIFT_THRESHOLD) {
+    const driftThreshold = srcRootDriftThreshold(pluginId, flags);
+    if (pluginId !== BASE_TEMPLATE_ID && driftFiles.length > driftThreshold) {
       addIssue(issues, {
         rule: "src-root-drift",
         path: srcDir,
-        message: `Base Profile: src/ root has ${driftFiles.length} non-Base .ts files (> ${EXTENDED_SRC_ROOT_DRIFT_THRESHOLD}); consider moving into semantic dirs (doc §7.1): ${driftFiles.join(", ")}`,
+        message: `Base Profile: src/ root has ${driftFiles.length} non-Base .ts files (> ${driftThreshold}); consider moving into semantic dirs (doc §7.1): ${driftFiles.join(", ")}`,
         pluginId,
         category: "extended",
         flags,

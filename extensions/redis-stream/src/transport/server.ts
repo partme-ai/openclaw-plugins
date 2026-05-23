@@ -9,7 +9,7 @@ import { createClient, type RedisClientType } from "redis";
 import type { RedisChannelConfig, RedisInboundMessage } from "../types.js";
 import { handleInboundMessage } from "../inbound.js";
 import { loadChannelBindings } from "../routing/topic-router.js";
-import { logger } from "../logger.js";
+import { logger } from "../shared/logger.js";
 import {
   setPublisherClient,
   clearPublisherClient,
@@ -19,7 +19,7 @@ import {
   RedisConnectionError,
   RedisStreamError,
   RedisTimeoutError,
-} from "../errors.js";
+} from "../shared/errors.js";
 
 export type RedisStats = {
   connected: boolean;

@@ -9,10 +9,10 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import { createRuntimeEnv } from "../../test-utils/runtime-env.js";
-import { computeWecomMsgSignature, encryptWecomPlaintext } from "./webhook/crypto.js";
-import { wecomPlugin } from "./channel/channel.js";
-import { handleWecomWebhookRequest } from "./legacy/monitor.js";
-import type { ResolvedWecomAccount } from "./types/index.js";
+import { computeWecomMsgSignature, encryptWecomPlaintext } from "../src/webhook/crypto.js";
+import { wecomPlugin } from "../src/channel/channel.js";
+import { handleWecomWebhookRequest } from "../src/legacy/monitor.js";
+import type { ResolvedWecomAccount } from "../src/types/index.js";
 
 function createMockRequest(params: {
   method: "GET" | "POST";

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/runtime.js", () => ({ getMqttRuntime: vi.fn(() => null) }));
-vi.mock("../src/mqtt-state.js", () => ({
+vi.mock("../src/state/mqtt-state.js", () => ({
   getMqttChannelConfig: vi.fn(() => ({
     retain: { allowInboundRetain: true },
     subscribeTopics: [],

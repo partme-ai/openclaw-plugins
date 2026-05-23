@@ -13,7 +13,7 @@ import {
   trackRoute,
 } from "./transport/server.js";
 import { resolveWebMqttConfig, validateWebMqttConfig } from "./config.js";
-import { getWebMqttChannelConfig, setWebMqttChannelConfig } from "./mqtt-state.js";
+import { getWebMqttChannelConfig, setWebMqttChannelConfig } from "./state/mqtt-state.js";
 import { processInbound } from "./inbound.js";
 import { webMqttSetupAdapter, webMqttSetupWizard } from "./onboarding.js";
 

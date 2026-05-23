@@ -6,7 +6,7 @@
 import { getSessionContext } from "./routing/session-mapper.js";
 import { publishToTopic, getClientUsername } from "./transport/server.js";
 import { isUserActionAllowed } from "./transport/acl.js";
-import { getWebMqttChannelConfig } from "./mqtt-state.js";
+import { getWebMqttChannelConfig } from "./state/mqtt-state.js";
 
 /**
  * 发布回复文本。

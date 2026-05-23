@@ -11,11 +11,11 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setRabbitmqRuntime, getRabbitmqRuntime } from "../src/runtime.js";
-import { setRabbitmqChannelConfig } from "../src/state.js";
+import { setRabbitmqChannelConfig } from "../src/state/state.js";
 import { DEFAULT_RABBITMQ_CONFIG } from "../src/config.js";
 import { resolveInboundRoute, buildReplyTopicFromInbound } from "../src/routing/topic-router.js";
 import { upsertSessionContext, getSessionContext, removePeerSessions, getSessionStats } from "../src/routing/session-mapper.js";
-import { resolveDmScopeFromRuntimeConfig } from "../src/dm-scope.js";
+import { resolveDmScopeFromRuntimeConfig } from "../src/shared/dm-scope.js";
 
 /**
  * 模拟 OpenClaw Gateway 运行时，等同于真实环境中的 api.runtime 对象。

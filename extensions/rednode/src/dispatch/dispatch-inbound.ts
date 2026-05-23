@@ -9,8 +9,8 @@ import {
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
   type IdempotencyCache,
-} from "./runtime-api.js";
-import type { PluginApi } from "./types.js";
+} from "../runtime/runtime-api.js";
+import type { PluginApi } from "../types.js";
 
 const idempotencyCache: IdempotencyCache = createIdempotencyCache({
   ttlMs: 60_000,

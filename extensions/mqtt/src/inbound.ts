@@ -3,7 +3,7 @@
  */
 
 import { getMqttRuntime } from "./runtime.js";
-import { getMqttChannelConfig } from "./mqtt-state.js";
+import { getMqttChannelConfig } from "./state/mqtt-state.js";
 import {
   DEFAULT_BROKER_CONFIG,
   type MqttChannelConfig,

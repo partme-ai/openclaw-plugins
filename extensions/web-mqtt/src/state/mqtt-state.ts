@@ -3,7 +3,7 @@
  * 保存当前生效的配置快照，供 status 路由和诊断输出使用。
  */
 
-import type { WebMqttConfig } from "./types.js";
+import type { WebMqttConfig } from "../types.js";
 
 let currentConfig: WebMqttConfig | null = null;
 

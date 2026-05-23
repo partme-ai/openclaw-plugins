@@ -3,9 +3,9 @@
  * 供 registerTool 注册；path 与参数以 xiaohongshu.apifox.cn 为准。
  */
 
-import type { ToolDefinition } from "./types.js";
-import type { XhsAccountConfig } from "./types.js";
-import { xhsApiCallOrProxy } from "./xhs-api.js";
+import type { ToolDefinition } from "../types.js";
+import type { XhsAccountConfig } from "../types.js";
+import { xhsApiCallOrProxy } from "../agent/xhs-api.js";
 
 export function createXhsTools(
   getConfig: () => XhsAccountConfig | undefined

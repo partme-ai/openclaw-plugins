@@ -10,13 +10,13 @@ import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { getBrokerStats, getConnectedClients } from "./transport/server.js";
-import { mqttPlugin } from "./mqtt-plugin.js";
+import { mqttPlugin } from "./runtime/mqtt-plugin.js";
 import { getPendingAckStats } from "./transport/qos-handler.js";
 import { getSessionStats } from "./routing/session-mapper.js";
 import { setMqttRuntime } from "./runtime.js";
-import { getMqttChannelConfig, getMqttPolicyMeta } from "./mqtt-state.js";
+import { getMqttChannelConfig, getMqttPolicyMeta } from "./state/mqtt-state.js";
 
-export { mqttPlugin } from "./mqtt-plugin.js";
+export { mqttPlugin } from "./runtime/mqtt-plugin.js";
 export { resolveBrokerConfig } from "./config.js";
 export type { ResolvedMqttAccount } from "./config.js";
 

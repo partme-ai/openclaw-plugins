@@ -3,7 +3,7 @@
  */
 
 import { getRabbitmqRuntime } from "./runtime.js";
-import { getRabbitmqChannelConfig } from "./state.js";
+import { getRabbitmqChannelConfig } from "./state/state.js";
 import { DEFAULT_RABBITMQ_CONFIG, type RabbitmqConfig } from "./config.js";
 import type { RabbitmqInboundRoute } from "./types.js";
 import {
