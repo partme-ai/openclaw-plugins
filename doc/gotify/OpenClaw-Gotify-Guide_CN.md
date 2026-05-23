@@ -18,7 +18,7 @@
 - 用户管理：Gotify **User API** 不作为运行期必需依赖；仅用于运维诊断与管理边界说明
 
 建议先阅读架构设计文档了解模块划分与约束：
-- [OpenClaw-Gotify-Architecture_CN.md](./OpenClaw-Gotify-Architecture_CN.md)
+- [OpenClaw-Gotify-Architecture_CN.md](OpenClaw-Gotify-Architecture_CN.md)
 
 ---
 
