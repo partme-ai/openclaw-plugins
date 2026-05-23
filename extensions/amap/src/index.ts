@@ -12,6 +12,7 @@ import {
 import { amapChannel } from "./channel.js";
 import { createAmapConfigGetter } from "./config.js";
 import { createAmapWebhookHandler } from "./inbound.js";
+import { setAmapRuntime } from "./runtime.js";
 import { createAmapTools } from "./tools/tools.js";
 import { AMAP_WEBHOOK_PATH } from "./transport/server.js";
 
@@ -22,7 +23,7 @@ export default defineChannelPluginEntry({
   name: "高德",
   description: "高德开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
   plugin: amapChannel as never,
-  setRuntime: () => {},
+  setRuntime: setAmapRuntime,
   registerFull(api: OpenClawPluginApi) {
     const getConfig = createAmapConfigGetter(api as never);
 

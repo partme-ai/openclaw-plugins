@@ -148,6 +148,146 @@ const BASE_SHIM_FILES = [
 /** Max lines for a file to be treated as a thin shim (warn-only heuristic) */
 const BASE_SHIM_LINE_THRESHOLD = 15;
 
+/** Base core files checked for substantive exports / logic (doc §5.1, §6) */
+const BASE_CORE_SUBSTANCE_FILES = BASE_SRC_MUST.filter((rel) => rel !== "index.ts");
+
+/**
+ * Whether file content exports a public symbol (function, const, type, or re-export).
+ * @param {string} content
+ */
+function hasExportSurface(content) {
+  return (
+    /\bexport\s+(async\s+)?function\b/.test(content) ||
+    /\bexport\s+(const|let|var|class|interface|type|enum)\b/.test(content) ||
+    /\bexport\s+\{[^}]+\}\s+from\s+['"]/.test(content) ||
+    /\bexport\s+\*\s+from\s+['"]/.test(content) ||
+    /\bexport\s+default\b/.test(content) ||
+    /\bexport\s+\{/.test(content)
+  );
+}
+
+/**
+ * Strip block/line comments for stub detection.
+ * @param {string} content
+ */
+function stripComments(content) {
+  return content
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "")
+    .trim();
+}
+
+/**
+ * True when a Base core file is an empty stub (version-only runtime, no exports, etc.).
+ * Extended plugins MAY use thin semantic barrels — those still export symbols.
+ * @param {string} rel e.g. runtime.ts
+ * @param {string} content
+ */
+function isEmptyCoreStub(rel, content) {
+  const code = stripComments(content);
+  if (!code) return true;
+
+  if (!hasExportSurface(content)) return true;
+
+  /** Semantic barrel re-exports are substantive for Extended plugins */
+  if (/\bexport\s+\*\s+from\s+['"]/.test(code)) return false;
+  if (/\bexport\s+\{[^}]+\}\s+from\s+['"]/.test(code)) return false;
+
+  if (rel === "runtime.ts") {
+    const hasRuntimeApi =
+      /\bsetRuntime\b/.test(code) ||
+      /\bset[A-Z]\w*Runtime\b/.test(code) ||
+      /\bcreatePluginRuntimeStore\b/.test(code);
+    if (!hasRuntimeApi) return true;
+  }
+
+  const nonEmptyLines = content
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      return t && !t.startsWith("//") && !t.startsWith("*") && t !== "*/" && !t.startsWith("/**");
+    });
+
+  if (nonEmptyLines.length < 3 && !/\bexport\s+\{[^}]+\}\s+from/.test(code)) {
+    return !/\bexport\s+(async\s+)?function\b/.test(code);
+  }
+
+  return false;
+}
+
+/**
+ * Warn/error when Base core src files are missing substance (doc §5.1, §6).
+ * @param {string} pluginDir
+ * @param {string} pluginId
+ * @param {Issue[]} issues
+ * @param {ReturnType<typeof parseArgs>} flags
+ */
+function checkBaseCoreSubstance(pluginDir, pluginId, issues, flags) {
+  const srcDir = join(pluginDir, "src");
+  if (!existsSync(srcDir)) return;
+
+  const indexPath = join(srcDir, "index.ts");
+  if (existsSync(indexPath)) {
+    const indexContent = readFileSync(indexPath, "utf8");
+    const hasOrchestration =
+      /\bdefineChannelPluginEntry\b/.test(indexContent) ||
+      /\bregister\s*\(\s*api\b/.test(indexContent) ||
+      /\bregister\s*:\s*\w+/.test(indexContent);
+    if (!hasOrchestration) {
+      addIssue(issues, {
+        rule: "base-core-substance",
+        path: indexPath,
+        message:
+          "src/index.ts MUST orchestrate via defineChannelPluginEntry or register(api); move business logic to semantic modules",
+        pluginId,
+        category: "base-should",
+        flags,
+      });
+    }
+  }
+
+  for (const rel of BASE_CORE_SUBSTANCE_FILES) {
+    const path = join(srcDir, rel);
+    if (!existsSync(path)) continue;
+
+    const content = readFileSync(path, "utf8");
+    const lines = content.split("\n").length;
+    const baseStem = basename(rel, ".ts");
+
+    if (isEmptyCoreStub(rel, content)) {
+      addIssue(issues, {
+        rule: "base-core-substance",
+        path,
+        message: `src/${rel} MUST contain real logic or a semantic barrel with exports (${lines} lines); see extensions/_template`,
+        pluginId,
+        category: "base-should",
+        flags,
+      });
+      continue;
+    }
+
+    if (lines <= BASE_SHIM_LINE_THRESHOLD) {
+      const reExportTargets = [
+        ...content.matchAll(/export\s+(?:\{[^}]*\}|\*)\s+from\s+['"](\.\/[^'"]+)['"]/g),
+      ].map((match) => match[1]);
+
+      for (const target of reExportTargets) {
+        if (isRootBaseFlatReExport(target)) continue;
+        if (isMisaimedBaseShimTarget(baseStem, target)) {
+          addIssue(issues, {
+            rule: "base-core-substance",
+            path,
+            message: `${rel} re-exports from unrelated module ${target}; use ./${baseStem}/ or inline logic`,
+            pluginId,
+            category: "base-should",
+            flags,
+          });
+        }
+      }
+    }
+  }
+}
+
 /**
  * First path segment after `./` for a relative import target.
  * @param {string} target
@@ -809,6 +949,7 @@ function checkPlugin(pluginDir, flags) {
   checkCommittedArtifacts(pluginDir, pluginId, issues, flags);
   checkNaming(pluginDir, pluginId, issues, flags);
   checkBaseShimSemantics(pluginDir, pluginId, issues, flags);
+  checkBaseCoreSubstance(pluginDir, pluginId, issues, flags);
 
   if (EXTENDED_STRICT_PLUGINS.has(pluginId)) {
     checkExtendedProfile(pluginDir, pluginId, issues, flags);

@@ -192,6 +192,8 @@ src/
 | `src/types.ts` | 类型定义 | 可执行逻辑 |
 | `src/transport/server.ts` | 传输层 I/O（HTTP/Webhook/Broker） | 领域规则沉淀 |
 
+**Base 平铺核心文件 MUST 含有效逻辑**：实现写在文件内，或作为**单一语义 barrel** 从对应子目录 re-export（如 `outbound.ts` → `./outbound/`）；禁止空占位、仅版本常量、或从无关模块 re-export。参考 `extensions/_template` 行数与职责划分；Extended 插件（`wecom`、`wecom-kf`）根文件可薄委托，但 MUST 导出 channel/runtime 所需的完整公共面。
+
 ---
 
 ## 7. Extended Profile — 语义分层

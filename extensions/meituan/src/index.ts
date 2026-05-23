@@ -10,6 +10,7 @@ import {
 import { meituanChannel } from "./channel.js";
 import { createMeituanConfigGetter } from "./config.js";
 import { createMeituanWebhookHandler } from "./inbound.js";
+import { setMeituanRuntime } from "./runtime.js";
 import { createMeituanTools } from "./tools/tools.js";
 import { MEITUAN_WEBHOOK_PATH } from "./transport/server.js";
 import type { PluginApi } from "./types.js";
@@ -29,7 +30,7 @@ export default defineChannelPluginEntry({
   name: "美团",
   description: "美团开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
   plugin: meituanChannel as never,
-  setRuntime: () => {},
+  setRuntime: setMeituanRuntime,
   registerFull(api: OpenClawPluginApi) {
     const pluginApi = api as never as PluginApi;
     const getConfig = createMeituanConfigGetter(pluginApi);
