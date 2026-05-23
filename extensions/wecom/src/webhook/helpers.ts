@@ -9,6 +9,9 @@ import crypto from "node:crypto";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { StreamState, WecomWebhookTarget, WebhookInboundMessage, WebhookInboundQuote } from "./types.js";
 import { registerResponseUrl } from "../outbound-reply.js";
+import { resolveWecomMediaMaxBytes } from "../utils.js";
+
+export { resolveWecomMediaMaxBytes };
 
 // ============================================================================
 // 常量
@@ -236,15 +239,6 @@ export function computeMd5(data: Buffer | string): string {
 // ============================================================================
 // 配置解析
 // ============================================================================
-
-/**
- * 解析媒体最大字节数（对齐原版 resolveWecomMediaMaxBytes）
- */
-export function resolveWecomMediaMaxBytes(cfg: OpenClawConfig): number {
-  const val = (cfg.channels?.wecom as any)?.media?.maxBytes;
-  if (typeof val === "number" && Number.isFinite(val) && val > 0) return val;
-  return 20 * 1024 * 1024; // 默认 20MB
-}
 
 // ============================================================================
 // 入站消息处理（processInboundMessage）

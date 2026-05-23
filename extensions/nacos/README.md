@@ -258,18 +258,15 @@ extensions/nacos/            # In the openclaw-plugins monorepo
 └── README.md / README.zh-CN.md
 ```
 
-Full documentation: [openclaw-plugins docs](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos)
-```
+Full documentation: [openclaw-plugins docs](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/nacos)
 
 ### 📚 Documentation
 
-### 📚 Documentation
-
-- [Architecture](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Architecture.md)
-- [Configuration](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Configuration.md)
-- [Usage Guide](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Guide.md)
-- [API Reference](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-API.md)
-- [Technical Details](https://github.com/partme-ai/openclaw-plugins/tree/main/doc/infrastructure/nacos/OpenClaw-Nacos-Technical.md)
+- [Architecture](https://github.com/partme-ai/openclaw-plugins/blob/main/doc/nacos/OpenClaw-Nacos-Architecture.md)
+- [Configuration](https://github.com/partme-ai/openclaw-plugins/blob/main/doc/nacos/OpenClaw-Nacos-Configuration.md)
+- [Usage Guide](https://github.com/partme-ai/openclaw-plugins/blob/main/doc/nacos/OpenClaw-Nacos-Guide.md)
+- [API Reference](https://github.com/partme-ai/openclaw-plugins/blob/main/doc/nacos/OpenClaw-Nacos-API.md)
+- [Technical Details](https://github.com/partme-ai/openclaw-plugins/blob/main/doc/nacos/OpenClaw-Nacos-Technical.md)
 
 ### ❓ FAQ
 

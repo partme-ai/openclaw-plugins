@@ -42,12 +42,20 @@ export interface MessageState {
   hasMediaFailed?: boolean;
   /** 媒体发送失败时的纯文本错误摘要（用于替换 thinking 流展示给用户） */
   mediaErrorSummary?: string;
+  /** Agent dispatch / 超时等错误摘要（用于替换 thinking 流展示给用户） */
+  dispatchErrorSummary?: string;
+  /** 入站消息是否包含已落盘的媒体（视频/文件等） */
+  inboundHadMedia?: boolean;
   // /** deliver 回调是否被调用过（用于区分"核心无回复"和"核心回复了空内容"） */
   // deliverCalled?: boolean;
   /** 流式回复是否已过期（errcode 846608，>6分钟），需降级为主动发送 */
   streamExpired?: boolean;
   /** 是否已成功发送过模板卡片 */
   hasTemplateCard?: boolean;
+  /** 当前状态栏文案（stream 气泡上半区） */
+  statusLine?: string;
+  /** Agent 回复开始时间（用于 footer.elapsed） */
+  replyStartedAt?: number;
 }
 
 // ============================================================================

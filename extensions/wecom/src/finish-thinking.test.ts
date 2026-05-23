@@ -58,6 +58,23 @@ describe("resolveThinkingFinishText", () => {
     const text = resolveThinkingFinishText({ accumulatedText: "" });
     expect(text.length).toBeGreaterThan(0);
   });
+
+  it("footer.elapsed 时在答案后附加耗时脚注", () => {
+    const text = resolveThinkingFinishText(
+      { accumulatedText: "答案", replyStartedAt: Date.now() - 12_000 },
+      {
+        streamingConfig: {
+          streaming: false,
+          streamingStatus: false,
+          streamingContent: false,
+          footerStatus: true,
+          footerElapsed: true,
+        },
+      },
+    );
+    expect(text).toContain("答案");
+    expect(text).toContain("⏱ 12s · 已完成");
+  });
 });
 
 describe("buildAgentReplyTimeoutSummary", () => {

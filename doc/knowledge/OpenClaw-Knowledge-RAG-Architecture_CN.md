@@ -238,7 +238,7 @@ sequenceDiagram
 
 本文的**核心主题是第一层（知识库 RAG）的实现细节**。第二层（业务 MCP）仅在架构总览中介绍其存在和与 RAG 的协同关系，详细的 MCP 架构设计、Skill 注册机制、私有业务系统接入方案，请参考：
 
-|- `docs/OpenClaw-WeCom-Knowledge-RAG-Strategy_CN.md` — 商业增值策略与三层能力模型，含扩展点说明和版本发布策略
+|- [OpenClaw-Knowledge-RAG-Strategy_CN.md](./OpenClaw-Knowledge-RAG-Strategy_CN.md) — 商业增值策略与三层能力模型，含扩展点说明和版本发布策略
 
 ### 4.4 纯加法原则
 
@@ -1504,7 +1504,7 @@ function createDocParserIfConfigured(config: KnowledgeConfig): DocParserService 
 
 # Part IV：双模式侵入点
 
-> 详见 [开发者指南](./OpenClaw-WeCom-Knowledge-RAG-Development_CN.md) 第 8.4 节「侵入式修改的规范」，本章仅做概要。
+> 详见 [开发者指南](./OpenClaw-Knowledge-RAG-Development_CN.md) 第 8.4 节「侵入式修改的规范」，本章仅做概要。
 
 ## 18. Agent 模式：文件入库索引
 

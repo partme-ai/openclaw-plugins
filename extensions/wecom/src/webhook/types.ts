@@ -154,8 +154,14 @@ export interface StreamState {
   finished: boolean;
   /** 错误信息 */
   error?: string;
-  /** 已积累的响应内容（用于长轮询返回） */
+  /** 已积累的响应内容（用于长轮询返回，为 status + answer 合成后的展示文本） */
   content: string;
+  /** 原始累积答案（block deliver 拼接，不含状态栏） */
+  answerText?: string;
+  /** 当前状态栏文案 */
+  statusLine?: string;
+  /** Agent 回复开始时间（footer.elapsed） */
+  replyStartedAt?: number;
   /** 过程中生成的图片（Base64 + MD5） */
   images?: Array<{ base64: string; md5: string }>;
   /** 兜底模式（仅作为内部状态，不暴露给企微） */

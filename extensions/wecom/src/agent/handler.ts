@@ -26,11 +26,8 @@ import { transcribeVoice, isVoiceAsrEnabled } from "./asr.js";
 import { createStream, updateStream } from "./stream.js";
 import { buildWecomUnauthorizedCommandPrompt, resolveWecomCommandAuthorization } from "../shared/command-auth.js";
 import { processDynamicRouting } from "../dynamic-routing.js";
-import { CHANNEL_ID, DEFAULT_MEDIA_MAX_MB } from "../const.js";
-
-function resolveWecomMediaMaxBytes(config: OpenClawConfig): number {
-    return (config.channels?.wecom?.media?.maxBytes as number | undefined) ?? DEFAULT_MEDIA_MAX_MB * 1024 * 1024;
-}
+import { CHANNEL_ID } from "../const.js";
+import { resolveWecomMediaMaxBytes } from "../utils.js";
 
 /** 错误提示信息 */
 const ERROR_HELP = "";

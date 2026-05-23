@@ -6,7 +6,7 @@
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-ISC-green)
 
-[English](./README.en.md) | [简体中文](./README.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ---
 
@@ -15,9 +15,9 @@
 - **Bot + Agent dual-mode**: WebSocket real-time streaming + HTTP API for file/broadcast fallback
 - **Multi-account matrix**: Independent bot/agent configs per account with full isolation
 - **Webhook + WebSocket**: Bot supports both WebSocket long-connection and HTTP webhook modes
-- **10 built-in Skills**: Contacts, docs, calendar, tasks, meetings, smartsheet, messaging, template cards
+- **11 built-in Skills**: Contacts, docs, calendar, tasks, meetings, smartsheet, messaging, template cards, preflight
 - **Full media support**: Image/video/voice/file receive and send with auto-downgrade
-- **Streaming replies**: Real-time markdown streaming with "thinking" placeholder
+- **Streaming replies**: Bot `replyStream` plain-text streaming with "thinking" placeholder (see Streaming doc)
 - **Access control**: Per-account DM/group policies (open, pairing, allowlist, disabled)
 - **Dynamic Agent routing**: Auto-create isolated agents per user/group
 - **MCP tool**: `wecom_mcp` for direct WeCom API access with interceptor pipeline
@@ -234,6 +234,18 @@ Auto-create isolated Agent instances per user/group:
 
 Generated Agent ID format: `wecom-{type}-{peerId}` (e.g., `wecom-dm-zhangsan`, `wecom-group-wr123456`).
 
+## Documentation
+
+In-repo guides under [`doc/wecom/`](../../doc/wecom/):
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | Dual-mode topology, source module map, inbound flows, streaming overview |
+| [Configuration](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Dual-mode setup, multi-account, access control, streaming/footer/**templates** config |
+| [Streaming architecture](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` lifecycle, 6-minute window, 846608 fallback, state machine |
+| [Testing & debugging](../../doc/wecom/OpenClaw-WeCom-Testing.md) | `message send`, `agent --deliver`, `user:` prefix (93006), pairing |
+| [Feishu SDK inventory](../../doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | OpenClaw plugin-sdk mapping vs Feishu channel |
+
 ## Access Control
 
 ### DM Policies
@@ -272,6 +284,10 @@ openclaw cron add \
   --channel wecom \
   --to "party:1"
 ```
+
+## Testing
+
+Manual Gateway debugging (`message send`, multi-bot, `user:` vs raw userid / 93006): see [OpenClaw-WeCom-Testing.md](../../doc/wecom/OpenClaw-WeCom-Testing.md).
 
 ## Technical Details
 
@@ -321,7 +337,7 @@ This plugin is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-
 Each plugin is published independently on npm under the `@partme.ai` scope:
 
 ```bash
-openclaw plugins install @partme.ai/nacos
+openclaw plugins install @partme.ai/openclaw-nacos
 openclaw plugins install @partme.ai/wecom
 ```
 

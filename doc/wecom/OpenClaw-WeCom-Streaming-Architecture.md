@@ -6,6 +6,8 @@
 
 本文描述企业微信 **流式回复** 的平台能力、插件现状、关键约束，以及面向「对话场景 vs 业务整包场景」的分层设计方案。
 
+**插件总览架构**（双模式、源码模块、入站主流程）：**[OpenClaw-WeCom-Architecture.md](./OpenClaw-WeCom-Architecture.md)**
+
 ---
 
 ## 1. 背景与目标
@@ -493,6 +495,8 @@ openclaw config set channels.wecom.sendThinkingMessage true
 
 #### 文案模板（`channels.wecom.templates`）
 
+> **配置入口**：键表、`openclaw config set` 示例与账号级覆盖见 **[Configuration §文案模板](./OpenClaw-WeCom-Configuration.md#文案模板)**。本节说明模板在流式气泡中的触发时机。
+
 | 键 | 默认 | 占位符 | 用途 |
 |----|------|--------|------|
 | `thinking` | `正在思考…` | — | `onReplyStart` / compaction 结束 |
@@ -508,9 +512,21 @@ openclaw config set channels.wecom.sendThinkingMessage true
 
 账号级覆盖：`channels.wecom.accounts.{id}.templates.*`（与顶层 deep-merge）。
 
+**全局模板**
+
 ```bash
 openclaw config set channels.wecom.templates.thinking "正在思考…"
-openclaw config set channels.wecom.templates.finishFooter "耗时 {elapsed}s"
+openclaw config set channels.wecom.templates.tool "正在调用 {toolName}…"
+openclaw config set channels.wecom.templates.compaction "📦 正在压缩上下文…"
+openclaw config set channels.wecom.templates.emptyReply "⚠️ 未能生成可展示的回复，请稍后重试。"
+openclaw config set channels.wecom.templates.finishFooter "⏱ {elapsed}s · 已完成"
+openclaw config set channels.wecom.templates.welcome "你好，我是助手"
+```
+
+**账号级**（多 Bot 矩阵时按 `accountId` 覆盖，例如 `bot2`）：
+
+```bash
+openclaw config set channels.wecom.accounts.bot2.templates.thinking "Bot2 思考中…"
 ```
 
 #### 与现有字段关系

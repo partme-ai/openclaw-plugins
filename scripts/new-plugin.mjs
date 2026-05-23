@@ -7,13 +7,13 @@
  *   node scripts/new-plugin.mjs my-plugin --label "My Plugin" --desc "Description"
  */
 
-import { readFileSync, writeFileSync, cpSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, cpSync, existsSync, mkdirSync } from "fs";
 import { resolve } from "path";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const TEMPLATE = resolve(ROOT, "extensions/_template");
 const EXTENSIONS = resolve(ROOT, "extensions");
-const DOC_GUIDES = resolve(ROOT, "doc/guides");
+const DOC_TEMPLATE = resolve(ROOT, "doc/_template.md");
 
 const args = process.argv.slice(2);
 const name = args[0];
@@ -66,15 +66,16 @@ for (const file of filesToProcess) {
   replaceInFile(resolve(dest, file));
 }
 
-// Generate doc guide from template
-const guideTemplate = resolve(DOC_GUIDES, "_template.md");
-const guideDest = resolve(DOC_GUIDES, `${name}.md`);
-if (existsSync(guideTemplate)) {
-  let guide = readFileSync(guideTemplate, "utf8");
+// Generate doc guide from template (doc/<name>/OpenClaw-<name>-Guide.md)
+const docDir = resolve(ROOT, "doc", name);
+const guideDest = resolve(docDir, `OpenClaw-${name}-Guide.md`);
+if (existsSync(DOC_TEMPLATE)) {
+  mkdirSync(docDir, { recursive: true });
+  let guide = readFileSync(DOC_TEMPLATE, "utf8");
   guide = guide.replace(/TEMPLATE_NAME/g, name);
   guide = guide.replace(/TEMPLATE_LABEL/g, label);
   writeFileSync(guideDest, guide);
-  console.log(`   doc/guides/${name}.md`);
+  console.log(`   doc/${name}/OpenClaw-${name}-Guide.md`);
 }
 
 console.log(`\nPlugin created: extensions/${name}`);
@@ -90,7 +91,7 @@ console.log(`  │   ├── media.ts     ← media loading & type detection`)
 console.log(`  │   ├── monitor.ts   ← message dedup & webhook handler`);
 console.log(`  │   ├── runtime.ts   ← state singleton`);
 console.log(`  │   └── types.ts     ← type definitions`);
-console.log(`  └── doc/guides/${name}.md ← setup guide`);
+console.log(`  └── doc/${name}/OpenClaw-${name}-Guide.md ← setup guide`);
 console.log(`\nNext steps:`);
 console.log(`  cd extensions/${name}`);
 console.log(`  # 1. Edit src/channel.ts — implement your channel`);

@@ -9,16 +9,16 @@ import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { fileTypeFromBuffer } from "file-type";
 import { getWeComRuntime } from "./runtime.js";
-import { IMAGE_DOWNLOAD_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS, DEFAULT_MEDIA_MAX_MB } from "./const.js";
+import { IMAGE_DOWNLOAD_TIMEOUT_MS, FILE_DOWNLOAD_TIMEOUT_MS } from "./const.js";
 import { withTimeout } from "./timeout.js";
-import type { ResolvedWeComAccount } from "./utils.js";
+import { resolveWecomMediaMaxBytes, type ResolvedWeComAccount } from "./utils.js";
 
 // ============================================================================
 // 媒体超限错误
 // ============================================================================
 
 /**
- * 附件超过 OpenClaw 配置的 `agents.defaults.mediaMaxMb` 上限时抛出。
+ * 附件超过媒体大小上限时抛出（见 `resolveWecomMediaMaxBytes` 优先级链）。
  *
  * 本错误由插件层主动判定并抛出，不依赖 OpenClaw 核心层错误消息的字符串匹配，
  * 上层（monitor）可通过 `instanceof MediaOversizeError` 精确识别并向用户提示。
@@ -92,8 +92,7 @@ export async function downloadAndSaveImages(params: {
   for (const imageUrl of imageUrls) {
     try {
       runtime.log?.(`[wecom] Downloading image: url=${imageUrl}`);
-      const mediaMaxMb = config.agents?.defaults?.mediaMaxMb ?? DEFAULT_MEDIA_MAX_MB;
-      const maxBytes = mediaMaxMb * 1024 * 1024;
+      const maxBytes = resolveWecomMediaMaxBytes(config);
 
       let imageBuffer: Buffer;
       let imageContentType: string;
@@ -180,8 +179,7 @@ export async function downloadAndSaveFiles(params: {
   for (const fileUrl of fileUrls) {
     try {
       runtime.log?.(`[wecom] Downloading file: url=${fileUrl}`);
-      const mediaMaxMb = config.agents?.defaults?.mediaMaxMb ?? DEFAULT_MEDIA_MAX_MB;
-      const maxBytes = mediaMaxMb * 1024 * 1024;
+      const maxBytes = resolveWecomMediaMaxBytes(config);
 
       let fileBuffer: Buffer;
       let fileContentType: string;

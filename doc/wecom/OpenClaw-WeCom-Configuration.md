@@ -2,11 +2,13 @@
 
 `@partme.ai/wecom` 是 openclaw-plugins 的旗舰插件，支持企业微信智能机器人 + 自建应用双模式接入。
 
+**架构总览**（双模式、源码模块、入站主流程、流式概要）：**[OpenClaw-WeCom-Architecture.md](./OpenClaw-WeCom-Architecture.md)**
+
 ## 功能亮点
 
 - **Bot + Agent 双模**：WebSocket 长连接实时对话 + HTTP API 文件/广播兜底
 - **多账号矩阵**：无限扩展的账号隔离，每账号独立 bot/agent 配置
-- **20 个内置 Skills**：通讯录、文档、日程、待办、会议、智能表格等
+- **11 个内置 Skills**：通讯录、文档、日程、待办、会议、智能表格等
 - **全媒体支持**：图片/视频/语音/文件收发，自动降级
 - **动态 Agent**：per-user/per-group 自动创建隔离 Agent
 - **流式响应**：打字机效果 + 非阻塞发送
@@ -208,11 +210,10 @@ openclaw config set channels.wecom.network.egressProxyUrl "http://proxy.company.
 
 企业微信 Bot 接口不支持发送非图片文件。插件会自动通过 Agent 私信发送，并在群里提示"文件已私信发给您"。
 
-## 流式输出架构
+## 架构与流式
 
-Bot 流式回复（WebSocket / Webhook 双路径、Feishu 式 `streaming` / `footer` 开关、默认模式 vs 流式模式）见：
-
-**[OpenClaw-WeCom-Streaming-Architecture.md](./OpenClaw-WeCom-Streaming-Architecture.md)**
+- **插件架构**（双模式拓扑、模块地图、入站三路流程）：**[OpenClaw-WeCom-Architecture.md](./OpenClaw-WeCom-Architecture.md)**
+- **流式专题**（协议、状态机、846608 降级、演进路线）：**[OpenClaw-WeCom-Streaming-Architecture.md](./OpenClaw-WeCom-Streaming-Architecture.md)**
 
 快速开关示例：
 
@@ -229,7 +230,22 @@ openclaw config set channels.wecom.streaming.content true
 
 ### 文案模板
 
-用户可见状态栏、关流脚注、空回复与 Webhook 队列 Ack 文案可通过 `channels.wecom.templates` 覆盖（默认值与历史行为一致）：
+用户可见状态栏、关流脚注、空回复、Webhook 队列 Ack、媒体/错误提示等文案可通过 `channels.wecom.templates` 覆盖。账号级：`channels.wecom.accounts.{id}.templates.*`（与顶层 deep-merge）。
+
+| 键 | 默认 | 占位符 | 用途 |
+|----|------|--------|------|
+| `thinking` | `正在思考…` | — | 思考阶段 |
+| `received` | `已收到，正在处理…` | — | 入站 Ack（预留） |
+| `tool` | `正在查资料…` | `{toolName}` | 工具调用 |
+| `reading` | `正在阅读附件…` | — | 媒体解析 |
+| `generating` | `正在组织回复…` | — | 生成回复 |
+| `compaction` | `📦 正在压缩上下文…` | — | 上下文压缩 |
+| `emptyReply` | `⚠️ 未能生成…` | — | 空回复关流 |
+| `finishFooter` | `⏱ {elapsed}s · 已完成` | `{elapsed}` | 关流耗时脚注 |
+| `welcome` | （空） | — | enter_chat（优先于 `welcomeText`） |
+| `queued` / `mergedQueued` / `mergedDone` | 队列 Ack 文案 | — | Webhook 重内容合并 |
+
+另有 `timeout`、`dispatchError`、`mediaError*`、`sessionReset` 等键，默认值见 `extensions/wecom/src/templates.ts`（`WECOM_DEFAULT_TEMPLATES`）。
 
 ```bash
 openclaw config set channels.wecom.templates.thinking "正在思考…"
@@ -238,9 +254,12 @@ openclaw config set channels.wecom.templates.compaction "📦 正在压缩上下
 openclaw config set channels.wecom.templates.emptyReply "⚠️ 未能生成可展示的回复，请稍后重试。"
 openclaw config set channels.wecom.templates.finishFooter "⏱ {elapsed}s · 已完成"
 openclaw config set channels.wecom.templates.welcome "你好，我是助手"
+
+# 多账号矩阵：按 accountId 覆盖
+openclaw config set channels.wecom.accounts.bot2.templates.thinking "Bot2 思考中…"
 ```
 
-账号级：`channels.wecom.accounts.<accountId>.templates.thinking`
+各模板在流式气泡中的触发时机与合成规则见 **[Streaming 架构 §10.3 内「文案模板」小节](./OpenClaw-WeCom-Streaming-Architecture.md#文案模板channelswecomtemplates)**（§10.3 主体为 streaming/footer CLI，模板为其子节）。
 
 ## 联调与测试
 

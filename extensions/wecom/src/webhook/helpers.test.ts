@@ -549,11 +549,32 @@ describe("resolveWecomMediaMaxBytes", () => {
     expect(resolveWecomMediaMaxBytes(cfg)).toBe(50 * 1024 * 1024);
   });
 
+  it("无通道配置时使用 agents.defaults.mediaMaxMb", () => {
+    const cfg = { agents: { defaults: { mediaMaxMb: 10 } } } as any;
+    expect(resolveWecomMediaMaxBytes(cfg)).toBe(10 * 1024 * 1024);
+  });
+
   it("无配置时返回默认 20MB", () => {
     expect(resolveWecomMediaMaxBytes({} as any)).toBe(20 * 1024 * 1024);
   });
 
-  it("配置值为 0 时使用默认", () => {
+  it("通道 maxBytes 优先于全局 mediaMaxMb", () => {
+    const cfg = {
+      channels: { wecom: { media: { maxBytes: 30 * 1024 * 1024 } } },
+      agents: { defaults: { mediaMaxMb: 10 } },
+    } as any;
+    expect(resolveWecomMediaMaxBytes(cfg)).toBe(30 * 1024 * 1024);
+  });
+
+  it("配置值为 0 时回退到 agents.defaults.mediaMaxMb", () => {
+    const cfg = {
+      channels: { wecom: { media: { maxBytes: 0 } } },
+      agents: { defaults: { mediaMaxMb: 8 } },
+    } as any;
+    expect(resolveWecomMediaMaxBytes(cfg)).toBe(8 * 1024 * 1024);
+  });
+
+  it("配置值为 0 且无全局配置时使用默认 20MB", () => {
     const cfg = { channels: { wecom: { media: { maxBytes: 0 } } } } as any;
     expect(resolveWecomMediaMaxBytes(cfg)).toBe(20 * 1024 * 1024);
   });

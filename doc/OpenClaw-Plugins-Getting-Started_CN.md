@@ -7,14 +7,16 @@
 ```bash
 # IM 渠道
 openclaw plugins install @partme.ai/wecom
-openclaw plugins install @partme.ai/dingtalk
+
+# 钉钉 / 飞书 / QQ 等官方上游渠道见 openclaw-bridge，例如：
+# openclaw plugins install @dingtalk-real-ai/dingtalk-connector
 
 # 基础设施
-openclaw plugins install @partme.ai/nacos
-openclaw plugins install @partme.ai/prometheus
+openclaw plugins install @partme.ai/openclaw-nacos
+openclaw plugins install @partme.ai/openclaw-prometheus
 
 # 消息队列
-openclaw plugins install @partme.ai/mqtt
+openclaw plugins install @partme.ai/openclaw-mqtt
 ```
 
 安装后重启 Gateway：
@@ -25,7 +27,7 @@ openclaw gateway restart
 
 ## 配置
 
-每个插件有独立的配置指南，参见 [guides/](./guides/)。通用配置模式：
+每个插件有独立的配置指南，参见 [文档索引](./README.md#插件文档--plugin-docs)。通用配置模式：
 
 ```json
 {

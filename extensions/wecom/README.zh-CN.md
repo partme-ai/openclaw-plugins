@@ -6,7 +6,7 @@
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-ISC-green)
 
-[English](./README.en.md) | [简体中文](./README.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ---
 
@@ -24,7 +24,7 @@
 - **命令授权**：按账号控制命令权限，支持访问组
 - **多账号支持**：独立 Bot / Agent 配置，互不干扰，支持账号级字段覆盖
 - **MCP 工具集成**（`wecom_mcp`），含拦截器管道（biz-error, media, smartpage-create, smartpage-export 等）
-- **10 个内置 Skills**：联系人、文档、待办、会议、日程、消息、smartsheet、模板卡片等
+- **11 个内置 Skills**：联系人、文档、待办、会议、日程、消息、smartsheet、模板卡片、预检等
 - **动态 Agent 路由**：按用户 / 群组自动创建隔离 Agent 实例
 - **本地文件发送**：可配置 `mediaLocalRoots` 白名单
 - **智能媒体降级**：图片 10MB -> 文件、视频 10MB -> 文件、语音 2MB/仅AMR -> 文件，上限 20MB
@@ -267,6 +267,18 @@ Bot 和 Agent 可在同一账号同时运行。Bot 处理 WebSocket 流式消息
 | `channels.wecom.dynamicAgents.groupEnabled` | 为群聊启用动态 Agent | `true` |
 | `channels.wecom.dynamicAgents.adminUsers` | 管理员用户（绕过动态路由，使用主 Agent） | `[]` |
 
+## 详细文档
+
+Monorepo 内专题文档见 [`doc/wecom/`](../../doc/wecom/)：
+
+| 文档 | 说明 |
+|------|------|
+| [架构设计](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | 双模式拓扑、源码模块地图、入站主流程、流式概要 |
+| [配置指南](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | 双模安装、多账号、访问控制、流式/footer 配置 |
+| [流式架构](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` 生命周期、6 分钟窗口、846608 降级、状态机 |
+| [联调测试](../../doc/wecom/OpenClaw-WeCom-Testing.md) | `message send`、`agent --deliver`、`user:` 前缀（93006）、配对 |
+| [Feishu SDK 对照](../../doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | OpenClaw plugin-sdk 与飞书通道映射、message-sdk 承接 |
+
 ## 访问控制
 
 ### 私聊（DM）访问
@@ -323,6 +335,10 @@ openclaw cron add \
 **编辑 `jobs.json`（需重启 Gateway）：** 文件路径 `~/.openclaw/cron/jobs.json`
 
 **对话创建：** 在企微对话中让 AI Agent 直接创建，如"每天早上 9 点向全公司发送今日简报"。
+
+## 联调测试
+
+Gateway 环境下的手工联调步骤见上文 [联调测试](../../doc/wecom/OpenClaw-WeCom-Testing.md) 文档（主动发消息、多 Bot、`message send` / `agent --deliver`、93006 等）。
 
 ## 开发
 
@@ -381,7 +397,7 @@ openclaw config set channels.wecom.network.egressProxyUrl "http://proxy.company.
 每个插件在 npm 上独立发布，位于 `@partme.ai` 作用域下：
 
 ```bash
-openclaw plugins install @partme.ai/nacos
+openclaw plugins install @partme.ai/openclaw-nacos
 openclaw plugins install @partme.ai/wecom
 ```
 

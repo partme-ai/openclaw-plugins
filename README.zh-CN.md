@@ -498,6 +498,7 @@ npm 已发布版本：[@partme.ai on npm](https://www.npmjs.com/search?q=%40part
 | [message-sdk 架构](./extensions/message-sdk/docs/ARCHITECTURE.md) | Wire vs Transcript、bridge API |
 | [Nacos 指南](./doc/nacos/zh/OpenClaw-Nacos-Guide_CN.md) | 配置中心与服务注册 |
 | [WeCom 配置](./doc/wecom/OpenClaw-WeCom-Configuration.md) | 企业微信完整配置 |
+| [WeCom 联调测试](./doc/wecom/OpenClaw-WeCom-Testing.md) | 主动发消息、多 Bot、CLI 联调 |
 | [Bridge README](./extensions/bridge/README.zh-CN.md) | 21 渠道统一配置 |
 | [文档索引](./doc/README.md) | 全部专题指南（prometheus、gotify、rocketmq 等） |
 

@@ -58,12 +58,12 @@
 | 集群 Dashboard（Overview + Metrics） | ✅ | 多实例切换支持 |
 | Grafana README 更新 | ✅ | 新 dashboard 说明 |
 
-**新增文件**：
+**新增文件**（文档位于 `doc/prometheus/`）：
 - `grafana/cluster/dashboard-overview.json`（8 个面板）
 - `grafana/cluster/dashboard-metrics.json`（10 个面板）
-- `grafana/CLUSTER.md`（集群部署指南）
-- `docs/DOWNGRADE.md`（降级策略）
-- `docs/TROUBLESHOOTING.md`（故障排查）
+- [OpenClaw-Prometheus-Grafana-Cluster.md](./grafana/OpenClaw-Prometheus-Grafana-Cluster.md)（集群部署指南）
+- [OpenClaw-Prometheus-Downgrade.md](./OpenClaw-Prometheus-Downgrade.md)（降级策略）
+- [OpenClaw-Prometheus-Troubleshooting.md](./OpenClaw-Prometheus-Troubleshooting.md)（故障排查）
 
 ---
 
@@ -84,25 +84,28 @@
 ## 📋 文件结构
 
 ```
-extensions/prometheus/
-├── grafana/
-│   ├── cluster/
-│   │   ├── dashboard-overview.json    ✨ 新增（8 个面板）
-│   │   └── dashboard-metrics.json    ✨ 新增（10 个面板）
-│   ├── README.md                    🔄 更新（集群说明）
-│   └── CLUSTER.md                    🔄 新增（集群指南）
-├── alerts/
-│   └── prometheus.yml              ✨ 新增（11 条告警规则）
-├── config/
-│   └── prometheus.example.yaml    ✨ 新增（配置模板）
-├── docs/
-│   ├── DOWNGRADE.md             ✨ 新增（降级策略）
-│   └── TROUBLESHOOTING.md       ✨ 新增（故障排查）
+extensions/prometheus/          # 插件源码与运行时配置
+├── alerts/prometheus.yml
+├── config/prometheus.example.yaml
 └── src/
-    └── (所有优化已完成)
+
+doc/prometheus/                 # 用户文档（本目录）
+├── OpenClaw-Prometheus-Architecture.md
+├── OpenClaw-Prometheus-Deployment.md
+├── OpenClaw-Prometheus-Metrics.md
+├── OpenClaw-Prometheus-Downgrade.md
+├── OpenClaw-Prometheus-Troubleshooting.md
+├── grafana/
+│   ├── OpenClaw-Prometheus-Grafana-README.md
+│   ├── OpenClaw-Prometheus-Grafana-Cluster.md
+│   └── cluster/
+│       ├── dashboard-overview.json
+│       └── dashboard-metrics.json
+└── zh/
+    └── OpenClaw-Prometheus-Guide_CN.md
 ```
 
-> 插件源码路径：`/path/to/openclaw-plugins/extensions/prometheus`（monorepo 内相对路径 `extensions/prometheus/`）。
+> 插件源码路径：`extensions/prometheus/`（monorepo 内相对路径）。
 
 ---
 
@@ -224,13 +227,13 @@ groups:
 
 | 文件 | 类型 | 说明 |
 |------|------|------|
-| `ARCHITECTURE.md` | 架构文档 | 系统架构、数据流、指标分类 |
-| `grafana/README.md` | Grafana 说明 | 集群 Dashboard 导入指南、多实例支持 |
-| `grafana/CLUSTER.md` | 集群指南 | RabbitMQ 设计参考、部署建议 |
-| `alerts/prometheus.yml` | 告警规则 | 11 条告警规则、标签分类 |
-| `config/prometheus.example.yaml` | 配置模板 | Instance Label 支持 |
-| `docs/DOWNGRADE.md` | 降级策略 | RPC 失败降级行为、降级指标 |
-| `docs/TROUBLESHOOTING.md` | 故障排查 | 10 个常见问题及解决方案 |
+| [OpenClaw-Prometheus-Architecture.md](./OpenClaw-Prometheus-Architecture.md) | 架构文档 | 系统架构、数据流、指标分类 |
+| [OpenClaw-Prometheus-Grafana-README.md](./grafana/OpenClaw-Prometheus-Grafana-README.md) | Grafana 说明 | 集群 Dashboard 导入指南、多实例支持 |
+| [OpenClaw-Prometheus-Grafana-Cluster.md](./grafana/OpenClaw-Prometheus-Grafana-Cluster.md) | 集群指南 | RabbitMQ 设计参考、部署建议 |
+| `extensions/prometheus/alerts/prometheus.yml` | 告警规则 | 11 条告警规则、标签分类 |
+| `extensions/prometheus/config/prometheus.example.yaml` | 配置模板 | Instance Label 支持 |
+| [OpenClaw-Prometheus-Downgrade.md](./OpenClaw-Prometheus-Downgrade.md) | 降级策略 | RPC 失败降级行为、降级指标 |
+| [OpenClaw-Prometheus-Troubleshooting.md](./OpenClaw-Prometheus-Troubleshooting.md) | 故障排查 | 10 个常见问题及解决方案 |
 
 ---
 

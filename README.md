@@ -498,6 +498,7 @@ Check npm for published versions: [@partme.ai on npm](https://www.npmjs.com/sear
 | [message-sdk ARCHITECTURE](./extensions/message-sdk/docs/ARCHITECTURE.md) | Wire vs Transcript, bridge API |
 | [Nacos Guide](./doc/nacos/OpenClaw-Nacos-Guide.md) / [中文](./doc/nacos/zh/OpenClaw-Nacos-Guide_CN.md) | Config center & registration |
 | [WeCom Configuration](./doc/wecom/OpenClaw-WeCom-Configuration.md) | WeChat Work full setup |
+| [WeCom Testing](./doc/wecom/OpenClaw-WeCom-Testing.md) | Outbound messaging, multi-bot, CLI integration |
 | [Bridge README](./extensions/bridge/README.md) | 21 channels, one config |
 | [Doc index](./doc/README.md) | All topic guides (prometheus, gotify, rocketmq, …) |
 
