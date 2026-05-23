@@ -2,11 +2,11 @@
  * @module kf/transfer-policy
  *
  * 转人工时自动选择在线接待人员（P3-01）。
- * 优先使用显式 `servicer_userid`；否则从 admin 缓存中选第一个在线坐席。
+ * 优先使用显式 `servicer_userid`；否则从运行时缓存中选第一个在线坐席。
  */
 
 import type { ResolvedAgentAccount } from "../types/index.js";
-import { getOnlineServicers, refreshServicersFromApi } from "../api/admin.js";
+import { getOnlineServicers, refreshServicersFromApi } from "./servicer-cache.js";
 
 export type ResolveTransferServicerResult =
   | { ok: true; servicerUserId: string; autoSelected: boolean }

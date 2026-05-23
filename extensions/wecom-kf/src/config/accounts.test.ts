@@ -4,8 +4,6 @@
  * 测试覆盖：
  * - 自定义 Agent 映射加载
  * - 账号映射注册和查询
- * - 接待人员缓存
- * - 在线接待人员过滤
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -15,9 +13,6 @@ import {
   loadKfAgentMappingsFromConfig,
   registerAccountMapping,
   getAccountMapping,
-  cacheServicers,
-  getCachedServicers,
-  getOnlineServicers,
   getCustomAgentMappings,
   setCustomAgentMapping,
   resolveKfAccountByOpenKfId,
@@ -26,7 +21,6 @@ import {
   applyKfEnvVarFallback,
   DEFAULT_ACCOUNT_ID,
 } from "./accounts.js";
-import type { ServicerInfo } from "../types/index.js";
 
 describe("自定义 Agent 映射", () => {
   beforeEach(() => {
@@ -117,31 +111,6 @@ describe("账号映射注册和查询", () => {
 
   it("查询不存在的映射应返回 undefined", () => {
     expect(getAccountMapping("non-existent")).toBeUndefined();
-  });
-});
-
-describe("接待人员缓存", () => {
-  const mockServicers: ServicerInfo[] = [
-    { userid: "user1", status: 0 },
-    { userid: "user2", status: 1 },
-    { userid: "user3", status: 0 },
-  ];
-
-  it("应缓存和获取接待人员列表", () => {
-    cacheServicers("kf_200", mockServicers);
-    const cached = getCachedServicers("kf_200");
-    expect(cached).toHaveLength(3);
-  });
-
-  it("getOnlineServicers 应仅返回 status=0 的接待人员", () => {
-    cacheServicers("kf_200", mockServicers);
-    const online = getOnlineServicers("kf_200");
-    expect(online).toHaveLength(2);
-    expect(online.every((s) => s.status === 0)).toBe(true);
-  });
-
-  it("未缓存的账号应返回空数组", () => {
-    expect(getOnlineServicers("kf_999")).toHaveLength(0);
   });
 });
 

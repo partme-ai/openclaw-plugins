@@ -22,7 +22,7 @@ import {
     listKfServicers,
     transferKfSession,
 } from "../agent/api-client.js";
-import { cacheServicers, refreshServicersFromApi } from "../api/admin.js";
+import { cacheServicers, refreshServicersFromApi } from "./servicer-cache.js";
 import {
     consumePendingKfSessionSideEffects,
     dispatchKfEventMessageByCode,

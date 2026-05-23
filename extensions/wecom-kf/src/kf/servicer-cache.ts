@@ -1,19 +1,12 @@
 /**
- * @module api/admin
+ * @module kf/servicer-cache
  *
- * KF 管理类 API 薄封装：接待人员缓存、刷新策略（P3-05）。
- * 与 `kf/control-tools.ts` 共用，避免 servicer 列表重复拉取。
+ * 转人工路由运行时：接待人员列表内存缓存与 94645 刷新。
+ * 供 `transfer-policy`、`control-tools` 共用，避免重复拉取。
  */
 
-import type { ResolvedAgentAccount } from "../types/index.js";
 import { listKfServicers } from "../agent/api-client.js";
-
-/** 接待人员缓存条目（94645） */
-export type ServicerInfo = {
-  userid: string;
-  status: number;
-  department_id?: number;
-};
+import type { ResolvedAgentAccount, ServicerInfo } from "../types/index.js";
 
 const servicerCache = new Map<string, ServicerInfo[]>();
 const servicerCacheUpdatedAt = new Map<string, number>();

@@ -60,22 +60,6 @@ export type AccountMapping = {
     agentId?: string;
 };
 
-export type ServicerInfo = {
-    userid: string;
-    status: number;
-    department_id?: number;
-};
-
-export {
-    cacheServicers,
-    getCachedServicers,
-    getOnlineServicers,
-    refreshServicersFromApi,
-    isServicerCacheStale,
-    SERVICER_CACHE_TTL_MS,
-} from "../api/admin.js";
-export type { ServicerInfo as AdminServicerInfo } from "../api/admin.js";
-
 const customAgentMappings: Record<string, string> = {};
 const accountMappings = new Map<string, AccountMapping>();
 
