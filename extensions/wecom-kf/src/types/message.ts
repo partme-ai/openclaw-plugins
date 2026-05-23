@@ -219,6 +219,8 @@ export type KfMessage = {
     msgid?: string;
     /** 消息序号 */
     sequence?: number;
+    /** sync_msg 发送时间（秒级 Unix 时间戳） */
+    send_time?: number;
     /** 文本内容 */
     text?: { content: string };
     /** 图片信息 */

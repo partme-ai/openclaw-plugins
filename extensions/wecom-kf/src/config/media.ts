@@ -5,7 +5,11 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk";
 export const DEFAULT_WECOM_MEDIA_MAX_BYTES = 80 * 1024 * 1024;
 
 export function resolveWecomMediaMaxBytes(cfg: OpenClawConfig): number {
-  const raw = (cfg.channels?.["wecom-cs"] as any)?.media?.maxBytes;
+  const kfRaw = (cfg.channels?.["wecom-kf"] as { media?: { maxBytes?: number } } | undefined)?.media
+    ?.maxBytes;
+  const csRaw = (cfg.channels?.["wecom-cs"] as { media?: { maxBytes?: number } } | undefined)?.media
+    ?.maxBytes;
+  const raw = kfRaw ?? csRaw;
   const n = typeof raw === "number" ? raw : Number(raw);
   if (Number.isFinite(n) && n > 0) {
     return Math.floor(n);

@@ -4,68 +4,111 @@
  * 欢迎语通过 kf/send_msg_on_event 发送，参考企微文档 95122
  */
 
-import type { KfMessage } from "../types/index.js";
-import { getAccessToken, sendEventMessage } from "./api-client.js";
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { KfMessage, EventMessagesConfig } from "../types/index.js";
+import { sendKfWelcomeMessage } from "./api-client.js";
+import { getEventMessagesConfig } from "../config/event-messages.js";
+import { resolveKfAgentAccount } from "../kf/call-context.js";
+import { getWecomRuntime } from "../runtime.js";
+
+type KfSystemEventAccountConfig = {
+  corpId?: string;
+  corpSecret?: string;
+  agentId?: number | string;
+  welcomeText?: string;
+  openKfId?: string;
+  [key: string]: unknown;
+};
 
 /**
- * 处理系统事件
- * origin=4 且 msgtype="event" 的消息进入此函数
- *
- * @param msg - 企微客服消息（系统事件）
- * @param accountConfig - 对应客服账号配置（需含 corpId/corpSecret/welcomeText）
+ * 从 event-messages 或账号 welcomeText 解析欢迎语文案。
+ */
+export async function resolveKfWelcomeText(params: {
+  openKfId: string;
+  accountConfig: KfSystemEventAccountConfig;
+}): Promise<string | undefined> {
+  const eventMessages = await getEventMessagesConfig(params.openKfId);
+  const fromEventMessages = extractWelcomeContent(eventMessages.welcome);
+  if (fromEventMessages) return fromEventMessages;
+  return params.accountConfig.welcomeText?.trim() || undefined;
+}
+
+/**
+ * 提取欢迎语配置中的文本内容。
+ */
+export function extractWelcomeContent(
+  welcome: EventMessagesConfig["welcome"] | undefined,
+): string | undefined {
+  if (!welcome?.enabled) return undefined;
+  const content = welcome.content as Record<string, unknown> | undefined;
+  if (!content) return undefined;
+
+  const nestedText = content.text as Record<string, unknown> | undefined;
+  if (typeof nestedText?.content === "string" && nestedText.content.trim()) {
+    return nestedText.content.trim();
+  }
+  if (typeof content.content === "string" && content.content.trim()) {
+    return content.content.trim();
+  }
+  return undefined;
+}
+
+/**
+ * 读取 sync_msg 系统事件 payload（msg.event.*）。
+ */
+export function readKfSystemEventFields(msg: KfMessage): {
+  eventType?: string;
+  welcomeCode?: string;
+  failMsgId?: string;
+  failType?: number;
+} {
+  const eventPayload = (msg as Record<string, unknown>).event as Record<string, unknown> | undefined;
+  return {
+    eventType: eventPayload?.event_type as string | undefined,
+    welcomeCode: eventPayload?.welcome_code as string | undefined,
+    failMsgId: eventPayload?.fail_msgid as string | undefined,
+    failType: eventPayload?.fail_type as number | undefined,
+  };
+}
+
+/**
+ * 处理系统事件（origin=4 且 msgtype=event）
  */
 export async function handleSystemEvent(
   msg: KfMessage,
-  accountConfig: {
-    corpId?: string;
-    corpSecret?: string;
-    agentId?: number | string;
-    welcomeText?: string;
-    openKfId?: string;
-    [key: string]: unknown;
-  }
+  accountConfig: KfSystemEventAccountConfig,
 ): Promise<void> {
-  const eventType = (msg as Record<string, unknown>).event_type as string | undefined;
+  const openKfId = (msg.open_kfid as string | undefined)?.trim() ?? accountConfig.openKfId?.trim() ?? "";
+  const { eventType, welcomeCode, failMsgId, failType } = readKfSystemEventFields(msg);
 
   if (eventType === "enter_session") {
-    const welcomeCode = (msg as Record<string, unknown>).welcome_code as string | undefined;
-    const welcomeText = accountConfig.welcomeText?.trim();
+    const welcomeText = await resolveKfWelcomeText({ openKfId, accountConfig });
+    if (!welcomeCode || !welcomeText) return;
 
-    if (!welcomeCode || !welcomeText) {
-      // No welcome code or welcome text configured - nothing to do
+    let cfg: OpenClawConfig;
+    try {
+      cfg = getWecomRuntime().config as OpenClawConfig;
+    } catch {
+      console.error("[wecom_kf] Cannot send welcome: runtime unavailable");
       return;
     }
 
-    if (!accountConfig.corpId || !accountConfig.corpSecret) {
+    const agent = resolveKfAgentAccount(cfg, openKfId);
+    if (!agent) {
       console.error("[wecom_kf] Cannot send welcome: corpId or corpSecret not configured");
       return;
     }
 
     try {
-      const token = await getAccessToken({
-        accountId: "kf-event",
-        enabled: true,
-        configured: true,
-        corpId: accountConfig.corpId,
-        corpSecret: accountConfig.corpSecret,
-        token: "",
-        encodingAESKey: "",
-        config: {
-          corpId: accountConfig.corpId,
-          corpSecret: accountConfig.corpSecret,
-          token: "",
-          encodingAESKey: "",
-        },
-      });
-      const result = await sendEventMessage({
-        accessToken: token,
+      const result = await sendKfWelcomeMessage(agent, {
         code: welcomeCode,
+        open_kfid: openKfId || undefined,
         msgtype: "text",
         text: { content: welcomeText },
       });
       if (result.errcode !== 0) {
         console.error(
-          `[wecom_kf] Welcome send failed: ${result.errmsg} (errcode=${result.errcode})`
+          `[wecom_kf] Welcome send failed: ${result.errmsg} (errcode=${result.errcode})`,
         );
       }
     } catch (error) {
@@ -75,14 +118,11 @@ export async function handleSystemEvent(
   }
 
   if (eventType === "msg_send_fail") {
-    const failMsgId = (msg as Record<string, unknown>).fail_msgid as string | undefined;
-    const failType = (msg as Record<string, unknown>).fail_type as number | undefined;
     console.warn(
-      `[wecom_kf] msg_send_fail: fail_msgid=${failMsgId ?? "unknown"} fail_type=${failType ?? "unknown"}`
+      `[wecom_kf] msg_send_fail: fail_msgid=${failMsgId ?? "unknown"} fail_type=${failType ?? "unknown"}`,
     );
     return;
   }
 
-  // Other system events are logged but not processed
   console.log(`[wecom_kf] Unhandled system event: ${eventType ?? "unknown"}`);
 }

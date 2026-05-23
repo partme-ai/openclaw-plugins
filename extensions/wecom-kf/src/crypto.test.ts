@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeWecomMsgSignature, decryptWecomEncrypted, encryptWecomPlaintext } from "./crypto.js";
+import { computeWecomMsgSignature, decryptWecomEncrypted, encryptWecomPlaintext, parseWecomCallback } from "./crypto.js";
 
 describe("wecom crypto", () => {
   it("round-trips plaintext", () => {
@@ -28,5 +28,22 @@ describe("wecom crypto", () => {
       encrypt: "ENCRYPT",
     });
     expect(sig).toMatch(/^[a-f0-9]{40}$/);
+  });
+
+  it("parseWecomCallback rejects invalid POST signature", () => {
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+      receiveId: "corp",
+      plaintext: "<xml><Event><![CDATA[kf_msg_or_event]]></Event></xml>",
+    });
+    expect(() =>
+      parseWecomCallback(
+        { msg_signature: "bad", timestamp: "1", nonce: "2" },
+        `<xml><Encrypt><![CDATA[${encrypt}]]></Encrypt></xml>`,
+        "token",
+        "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "corp",
+      ),
+    ).toThrow("Invalid signature");
   });
 });

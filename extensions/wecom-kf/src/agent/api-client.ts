@@ -4,12 +4,15 @@
  */
 
 import crypto from "node:crypto";
-import { API_ENDPOINTS, LIMITS } from "../types/constants.js";
+import path from "node:path";
+import { API_ENDPOINTS, KF_MEDIA_MAX_BYTES, LIMITS } from "../types/constants.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import { readResponseBodyAsBuffer, wecomFetch } from "../http.js";
 import { resolveWecomEgressProxyUrlFromNetwork } from "../config/index.js";
 import { resolveApiBaseUrl } from "../config/kf-routes.js";
+import { checkKfSendAllowed, recordKfOutboundSend } from "./kf-send-guard.js";
 import { stripMarkdown } from "./markdown-strip.js";
+import { needsTranscoding, transcodeBufferToAmr } from "./voice-transcode.js";
 
 /**
  * 按账号 `apiBaseUrl` 构造企微 OpenAPI 绝对 URL（默认官方域名）。
@@ -440,18 +443,74 @@ async function callAuthenticatedJson<T extends { errcode?: number; errmsg?: stri
   throw new Error("authenticated API call exhausted retries");
 }
 
+/** KF sync_msg 单条消息 */
+export type KfSyncMsgItem = {
+    msgid: string;
+    open_kfid?: string;
+    external_userid?: string;
+    send_time?: number;
+    origin?: number;
+    servicer_userid?: string;
+    msgtype: string;
+    [key: string]: unknown;
+};
+
+/** KF sync_msg 响应 */
+export type KfSyncMsgResponse = {
+    errcode: number;
+    errmsg: string;
+    next_cursor?: string;
+    has_more: number;
+    msg_list: KfSyncMsgItem[];
+};
+
+/** KF send_msg / send_msg_on_event 结果 */
+export type KfSendMsgResult = {
+    errcode: number;
+    errmsg: string;
+    msgid?: string;
+};
+
 /**
- * **KF syncMessages (客服消息同步)**
+ * **syncKfMessages (客服消息同步 — agent 认证)**
  *
- * 企微客服消息同步接口，用于拉取新消息。
  * POST /cgi-bin/kf/sync_msg
- *
- * @param accessToken - 访问令牌
- * @param cursor - 游标，首次拉取传空字符串
- * @param token - 回调事件中的 Token（首次拉取时传入）
- * @param openKfId - 客服账号 ID
- * @param limit - 每次拉取条数，默认 1000
- * @returns 同步结果
+ */
+export async function syncKfMessages(
+    agent: ResolvedAgentAccount,
+    params: {
+        cursor?: string;
+        token?: string;
+        open_kfid?: string;
+        limit?: number;
+        voice_format?: number;
+    },
+): Promise<KfSyncMsgResponse> {
+    const body: Record<string, unknown> = {};
+    if (params.cursor?.trim()) body.cursor = params.cursor.trim();
+    if (params.token?.trim()) body.token = params.token.trim();
+    if (params.open_kfid?.trim()) body.open_kfid = params.open_kfid.trim();
+    if (typeof params.limit === "number") body.limit = params.limit;
+    if (typeof params.voice_format === "number") body.voice_format = params.voice_format;
+
+    const data = await callAuthenticatedJson<KfSyncMsgResponse & { has_more?: number; msg_list?: KfSyncMsgItem[] }>(
+        agent,
+        (accessToken) => `${API_ENDPOINTS.KF_SYNC_MSG}?access_token=${encodeURIComponent(accessToken)}`,
+        { method: "POST", body: JSON.stringify(body) },
+    );
+
+    return {
+        errcode: data.errcode ?? 0,
+        errmsg: data.errmsg ?? "ok",
+        next_cursor: data.next_cursor,
+        has_more: data.has_more ?? 0,
+        msg_list: data.msg_list ?? [],
+    };
+}
+
+/**
+ * **syncMessages (兼容旧签名 — 内部转 syncKfMessages)**
+ * @deprecated 优先使用 syncKfMessages(agent, params)
  */
 export async function syncMessages(
     accessToken: string,
@@ -459,51 +518,32 @@ export async function syncMessages(
     token?: string,
     openKfId?: string,
     limit = 1000,
-): Promise<{
-    errcode: number;
-    errmsg: string;
-    next_cursor?: string;
-    has_more: number;
-    msg_list: Array<{
-        msgid: string;
-        open_kfid?: string;
-        external_userid?: string;
-        send_time?: number;
-        origin?: number;
-        servicer_userid?: string;
-        msgtype: string;
-        [key: string]: unknown;
-    }>;
-}> {
+): Promise<KfSyncMsgResponse> {
+    void accessToken;
+    const agent: ResolvedAgentAccount = {
+        accountId: "legacy-syncMessages",
+        enabled: true,
+        configured: true,
+        corpId: "",
+        corpSecret: "",
+        token: "",
+        encodingAESKey: "",
+        config: { corpId: "", corpSecret: "", token: "", encodingAESKey: "" },
+    };
+    const url = `${API_ENDPOINTS.KF_SYNC_MSG}?access_token=${encodeURIComponent(accessToken)}`;
     const body: Record<string, unknown> = {};
     if (cursor?.trim()) body.cursor = cursor.trim();
     if (token?.trim()) body.token = token.trim();
     if (openKfId?.trim()) body.open_kfid = openKfId.trim();
     if (typeof limit === "number" && limit > 0) body.limit = limit;
 
-    const url = `${API_ENDPOINTS.KF_SYNC_MSG}?access_token=${encodeURIComponent(accessToken)}`;
     const res = await wecomFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    const json = await res.json() as {
-        errcode: number;
-        errmsg: string;
-        next_cursor?: string;
-        has_more?: number;
-        msg_list?: Array<{
-            msgid: string;
-            open_kfid?: string;
-            external_userid?: string;
-            send_time?: number;
-            origin?: number;
-            servicer_userid?: string;
-            msgtype: string;
-            [key: string]: unknown;
-        }>;
-    };
-
+    const json = await res.json() as KfSyncMsgResponse & { has_more?: number; msg_list?: KfSyncMsgItem[] };
+    void agent;
     return {
         errcode: json.errcode ?? 0,
         errmsg: json.errmsg ?? "ok",
@@ -514,26 +554,98 @@ export async function syncMessages(
 }
 
 /**
- * **KF sendEventMessage (发送事件消息/欢迎语)**
+ * **sendKfMessage (发送客服消息 — agent 认证)**
  *
- * 用于发送欢迎语、满意度调查等事件消息。
- * POST /cgi-bin/kf/send_msg_on_event
- *
- * @param params - 发送参数
+ * POST /cgi-bin/kf/send_msg
  */
+export async function sendKfMessage(
+    agent: ResolvedAgentAccount,
+    params: {
+        touser: string;
+        open_kfid: string;
+        msgtype: string;
+        [key: string]: unknown;
+    },
+): Promise<KfSendMsgResult> {
+    const openKfId = String(params.open_kfid ?? "").trim();
+    const externalUserId = String(params.touser ?? "").trim();
+    const guard = checkKfSendAllowed({ openKfId, externalUserId });
+    if (!guard.allowed) {
+        console.warn(
+            `[wecom-kf] send_msg blocked open_kfid=${openKfId} user=${externalUserId} code=${guard.code}: ${guard.reason}`,
+        );
+        return { errcode: 95001, errmsg: guard.reason };
+    }
+
+    const body: Record<string, unknown> = {
+        touser: params.touser,
+        open_kfid: params.open_kfid,
+        msgtype: params.msgtype,
+    };
+    for (const [key, value] of Object.entries(params)) {
+        if (key !== "touser" && key !== "open_kfid" && key !== "msgtype") {
+            body[key] = value;
+        }
+    }
+
+    const result = await callAuthenticatedJson<KfSendMsgResult>(
+        agent,
+        (accessToken) => `${API_ENDPOINTS.KF_SEND_MSG}?access_token=${encodeURIComponent(accessToken)}`,
+        { method: "POST", body: JSON.stringify(body) },
+    );
+
+    if (result.errcode === 0) {
+        recordKfOutboundSend({ openKfId, externalUserId });
+    }
+
+    return result;
+}
+
+/**
+ * **sendKfWelcomeMessage (发送事件消息/欢迎语 — agent 认证)**
+ *
+ * POST /cgi-bin/kf/send_msg_on_event
+ */
+export async function sendKfWelcomeMessage(
+    agent: ResolvedAgentAccount,
+    params: {
+        code: string;
+        msgtype: string;
+        open_kfid?: string;
+        [key: string]: unknown;
+    },
+): Promise<KfSendMsgResult> {
+    const body: Record<string, unknown> = {
+        code: params.code,
+        msgtype: params.msgtype,
+    };
+    if (params.open_kfid?.trim()) body.open_kfid = params.open_kfid.trim();
+    for (const [key, value] of Object.entries(params)) {
+        if (key !== "code" && key !== "msgtype" && key !== "open_kfid") {
+            body[key] = value;
+        }
+    }
+
+    return callAuthenticatedJson<KfSendMsgResult>(
+        agent,
+        (accessToken) => `${API_ENDPOINTS.KF_SEND_MSG_ON_EVENT}?access_token=${encodeURIComponent(accessToken)}`,
+        { method: "POST", body: JSON.stringify(body) },
+    );
+}
+
+/** @deprecated 使用 sendKfWelcomeMessage(agent, params) */
 export async function sendEventMessage(params: {
     accessToken: string;
     code?: string;
     msgtype: string;
     open_kfid?: string;
     [key: string]: unknown;
-}): Promise<{ errcode: number; errmsg: string; msgid?: string }> {
+}): Promise<KfSendMsgResult> {
     const body: Record<string, unknown> = {
         code: params.code ?? "",
         msgtype: params.msgtype,
     };
     if (params.open_kfid?.trim()) body.open_kfid = params.open_kfid.trim();
-    // Copy extra fields (text, image, etc.)
     for (const [key, value] of Object.entries(params)) {
         if (key !== "accessToken" && key !== "code" && key !== "msgtype" && key !== "open_kfid") {
             body[key] = value;
@@ -546,29 +658,22 @@ export async function sendEventMessage(params: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    const json = await res.json() as { errcode: number; errmsg: string; msgid?: string };
-    return json;
+    return res.json() as Promise<KfSendMsgResult>;
 }
 
-/**
- * **KF sendMsg (发送客服消息)**
- *
- * POST /cgi-bin/kf/send_msg
- * 用于向客户主动发送消息。
- */
+/** @deprecated 使用 sendKfMessage(agent, params) */
 export async function sendKfMsg(params: {
     accessToken: string;
     touser: string;
     open_kfid: string;
     msgtype: string;
     [key: string]: unknown;
-}): Promise<{ errcode: number; errmsg: string; msgid?: string }> {
+}): Promise<KfSendMsgResult> {
     const body: Record<string, unknown> = {
         touser: params.touser,
         open_kfid: params.open_kfid,
         msgtype: params.msgtype,
     };
-    // Copy content fields (text, image, voice, video, file, etc.)
     for (const [key, value] of Object.entries(params)) {
         if (key !== "accessToken" && key !== "touser" && key !== "open_kfid" && key !== "msgtype") {
             body[key] = value;
@@ -581,8 +686,7 @@ export async function sendKfMsg(params: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    const json = await res.json() as { errcode: number; errmsg: string; msgid?: string };
-    return json;
+    return res.json() as Promise<KfSendMsgResult>;
 }
 
 /** KF 接待人员条目 */
@@ -767,13 +871,11 @@ export async function sendKfTextMessage(params: {
     throw new Error("openKfId not available for text sending");
   }
 
-  const accessToken = await getAccessToken(agent);
-  const chunks = splitMessageByBytes(stripMarkdown(params.text), 2048);
-  const results: Array<{ errcode: number; errmsg: string; msgid?: string }> = [];
+  const chunks = splitMessageByBytes(stripMarkdown(params.text), LIMITS.TEXT_MAX_BYTES);
+  const results: KfSendMsgResult[] = [];
 
   for (const chunk of chunks) {
-    const result = await sendKfMsg({
-      accessToken,
+    const result = await sendKfMessage(agent, {
       touser: externalUserId,
       open_kfid: openKfId,
       msgtype: "text",
@@ -812,4 +914,98 @@ export function summarizeSendResults(
 
   const last = results[results.length - 1];
   return { ok: true, msgid: last?.msgid };
+}
+
+/**
+ * 根据 MIME / 扩展名推断 KF 媒体类型。
+ */
+export function inferKfOutboundMediaType(params: {
+  contentType?: string;
+  filename: string;
+}): "image" | "voice" | "video" | "file" {
+  const contentType = String(params.contentType ?? "").toLowerCase();
+  const ext = path.extname(params.filename).slice(1).toLowerCase();
+  if (contentType.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp", "bmp"].includes(ext)) {
+    return "image";
+  }
+  if (
+    contentType.startsWith("audio/") ||
+    ["amr", "speex", "mp3", "wav", "m4a", "ogg"].includes(ext)
+  ) {
+    return "voice";
+  }
+  if (contentType.startsWith("video/") || ["mp4", "mov"].includes(ext)) {
+    return "video";
+  }
+  return "file";
+}
+
+/**
+ * 上传并通过 KF send_msg 发送单条媒体消息。
+ */
+export async function sendKfMediaMessage(params: {
+  agent: ResolvedAgentAccount;
+  externalUserId: string;
+  openKfId: string;
+  buffer: Buffer;
+  filename: string;
+  contentType?: string;
+  title?: string;
+  description?: string;
+}): Promise<KfSendMsgResult> {
+  const openKfId = params.openKfId.trim();
+  const externalUserId = params.externalUserId.trim();
+  if (!openKfId || !externalUserId) {
+    throw new Error("openKfId and externalUserId are required for KF media send");
+  }
+
+  let buffer = params.buffer;
+  let filename = params.filename.trim() || "media.bin";
+  let mediaType = inferKfOutboundMediaType({ contentType: params.contentType, filename });
+
+  if (mediaType === "voice") {
+    const ext = path.extname(filename).slice(1).toLowerCase() || "bin";
+    if (needsTranscoding(ext)) {
+      buffer = await transcodeBufferToAmr(buffer, ext);
+      filename = `${path.basename(filename, path.extname(filename)) || "voice"}.amr`;
+      mediaType = "voice";
+    }
+  }
+
+  const maxBytes = KF_MEDIA_MAX_BYTES[mediaType];
+  if (buffer.length > maxBytes) {
+    throw new Error(
+      `KF ${mediaType} exceeds size limit (${buffer.length} > ${maxBytes} bytes)`,
+    );
+  }
+
+  const mediaId = await uploadMedia({
+    agent: params.agent,
+    type: mediaType,
+    buffer,
+    filename,
+  });
+
+  const payload: Record<string, unknown> = {
+    touser: externalUserId,
+    open_kfid: openKfId,
+    msgtype: mediaType,
+  };
+
+  if (mediaType === "video") {
+    payload.video = {
+      media_id: mediaId,
+      title: params.title ?? path.basename(filename),
+      description: params.description ?? "",
+    };
+  } else {
+    payload[mediaType] = { media_id: mediaId };
+  }
+
+  return sendKfMessage(params.agent, payload as {
+    touser: string;
+    open_kfid: string;
+    msgtype: string;
+    [key: string]: unknown;
+  });
 }

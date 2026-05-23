@@ -4,6 +4,7 @@ import {
     collectWecomKfRoutePaths,
     DEFAULT_API_BASE_URL,
     DEFAULT_KF_WEBHOOK_PATH,
+    isIcsEnabled,
     isLegacyWecomCsEnabled,
     normalizeRoutePath,
     resolveApiBaseUrl,
@@ -48,6 +49,20 @@ describe("kf-routes", () => {
         expect(
             isLegacyWecomCsEnabled({
                 channels: { "wecom-kf": { legacyWecomCsEnabled: true } },
+            } as never),
+        ).toBe(true);
+    });
+
+    it("isIcsEnabled 默认 false，显式 true 时启用", () => {
+        expect(isIcsEnabled(undefined)).toBe(false);
+        expect(
+            isIcsEnabled({
+                channels: { "wecom-kf": {} },
+            } as never),
+        ).toBe(false);
+        expect(
+            isIcsEnabled({
+                channels: { "wecom-kf": { icsEnabled: true } },
             } as never),
         ).toBe(true);
     });

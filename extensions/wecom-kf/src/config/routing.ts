@@ -9,7 +9,7 @@ import { detectMode } from "./accounts.js";
  * - legacy（单账号兼容）: 维持历史行为，不强制拦截
  */
 export function resolveWecomFailClosedOnDefaultRoute(cfg: OpenClawConfig): boolean {
-    const wecom = cfg.channels?.["wecom-cs"] as WecomConfig | undefined;
+    const wecom = cfg.channels?.["wecom-kf"] as WecomConfig | undefined;
     const explicit = wecom?.routing?.failClosedOnDefaultRoute;
     if (typeof explicit === "boolean") return explicit;
     return detectMode(wecom) === "matrix";

@@ -12,7 +12,7 @@ import path from "path";
 import type { WSClient } from "@wecom/aibot-node-sdk";
 import { generateReqId } from "@wecom/aibot-node-sdk";
 import { resolveFileIoHelpers } from "./compat/plugin-sdk-shim.js";
-import type { WecomRuntimeEnv } from "./monitor/types.js";
+import type { WecomRuntimeEnv } from "./legacy/monitor/types.js";
 import { withTimeout } from "./timeout.js";
 
 // ============================================================================

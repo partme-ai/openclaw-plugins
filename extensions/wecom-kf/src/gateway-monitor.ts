@@ -12,8 +12,7 @@ import {
   resolveWecomAccountConflict,
   resolveKfAccountWebhookPath,
 } from "./config/index.js";
-import { registerAgentWebhookTarget, registerWecomWebhookTarget } from "./monitor.js";
-import { primeWecomKfCursor } from "./callback.js";
+import { primeWecomKfCursor } from "./webhook/callback.js";
 import { listKfAccountConfigs } from "./config/kf-callback.js";
 import type { ResolvedWecomAccount, WecomConfig } from "./types/index.js";
 import { WEBHOOK_PATHS } from "./types/constants.js";
@@ -114,7 +113,6 @@ function resolveBotRegistrationPaths(params: { accountId: string; matrixMode: bo
     return uniquePaths([
       `${WEBHOOK_PATHS.BOT_PLUGIN}/${params.accountId}`,
       `${WEBHOOK_PATHS.BOT_ALT}/${params.accountId}`,
-      // 兼容老路径：不带 accountId 后缀，签名验证会自动匹配到正确账号
       WEBHOOK_PATHS.BOT_PLUGIN,
       WEBHOOK_PATHS.BOT,
       WEBHOOK_PATHS.BOT_ALT,
@@ -128,7 +126,6 @@ function resolveAgentRegistrationPaths(params: { accountId: string; matrixMode: 
     return uniquePaths([
       `${WEBHOOK_PATHS.AGENT_PLUGIN}/${params.accountId}`,
       `${WEBHOOK_PATHS.AGENT}/${params.accountId}`,
-      // 兼容老路径
       WEBHOOK_PATHS.AGENT_PLUGIN,
       WEBHOOK_PATHS.AGENT,
     ]);
@@ -137,8 +134,7 @@ function resolveAgentRegistrationPaths(params: { accountId: string; matrixMode: 
 }
 
 /**
- * Keeps WeCom webhook targets registered for the account lifecycle.
- * The promise only settles after gateway abort/reload signals shutdown.
+ * 账号生命周期：KF-only 默认路径；legacy wecom-cs 仅在开关开启时加载 monitor。
  */
 export async function monitorWecomProvider(
   ctx: ChannelGatewayContext<ResolvedWecomAccount>,
@@ -185,8 +181,15 @@ export async function monitorWecomProvider(
   const legacyCsEnabled = isLegacyWecomCsEnabled(cfg);
   const kfOnlyAccount = !botConfigured && !agentConfigured;
 
-  if (kfOnlyAccount) {
-    void primeKfCursorsOnStartup(cfg, (message) => ctx.log?.info(message));
+  void primeKfCursorsOnStartup(cfg, (message) => ctx.log?.info(message));
+
+  if (kfOnlyAccount || !legacyCsEnabled) {
+    if (!kfOnlyAccount && !legacyCsEnabled) {
+      ctx.log?.warn(
+        `[${account.accountId}] 检测到 Bot/Agent 配置但 legacyWecomCsEnabled=false；` +
+          `仅 KF 回调生效。如需 wecom-cs 路径请设置 channels.wecom-kf.legacyWecomCsEnabled=true`,
+      );
+    }
     const webhookPath = resolveKfAccountWebhookPath({
       accountId: account.accountId,
       webhookPath: account.config.webhookPath,
@@ -203,35 +206,16 @@ export async function monitorWecomProvider(
     return;
   }
 
-  if (!legacyCsEnabled) {
-    ctx.log?.warn(
-      `[${account.accountId}] 检测到 Bot/Agent 配置但 legacyWecomCsEnabled=false；` +
-        `仅 KF 回调生效。如需 wecom-cs 路径请设置 channels.wecom-kf.legacyWecomCsEnabled=true`,
-    );
-    void primeKfCursorsOnStartup(cfg, (message) => ctx.log?.info(message));
-    ctx.setStatus({
-      accountId: account.accountId,
-      running: true,
-      configured: account.configured,
-      webhookPath: resolveKfAccountWebhookPath({
-        accountId: account.accountId,
-        webhookPath: account.config.webhookPath,
-      }),
-      lastStartAt: Date.now(),
-    });
-    await waitForAbortSignal(ctx.abortSignal);
-    return;
-  }
+  const { registerAgentWebhookTarget, registerWecomWebhookTarget } = await import("./legacy/monitor.js");
 
   const unregisters: Array<() => void> = [];
   const botPaths: string[] = [];
   const agentPaths: string[] = [];
   try {
     if (bot && botConfigured) {
-      const connectionMode = bot.connectionMode ?? 'webhook';
+      const connectionMode = bot.connectionMode ?? "webhook";
 
-      if (connectionMode === 'webhook') {
-        // Webhook 模式：注册 HTTP 路径（现有逻辑不变）
+      if (connectionMode === "webhook") {
         const paths = resolveBotRegistrationPaths({
           accountId: account.accountId,
           matrixMode,
@@ -279,8 +263,6 @@ export async function monitorWecomProvider(
     if (shouldLogSummary) {
       logRegisteredRouteSummary(ctx, expectedRouteSummaryAccountIds);
     }
-
-    void primeKfCursorsOnStartup(cfg, (message) => ctx.log?.info(message));
 
     ctx.setStatus({
       accountId: account.accountId,

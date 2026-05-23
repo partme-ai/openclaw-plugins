@@ -32,6 +32,14 @@ export const API_ENDPOINTS = {
     KF_SEND_MSG: "https://qyapi.weixin.qq.com/cgi-bin/kf/send_msg",
     /** KF 事件消息发送 (欢迎语等) */
     KF_SEND_MSG_ON_EVENT: "https://qyapi.weixin.qq.com/cgi-bin/kf/send_msg_on_event",
+    /** KF 接待人员列表 (94645) */
+    KF_SERVICER_LIST: "https://qyapi.weixin.qq.com/cgi-bin/kf/servicer/list",
+    /** KF 客服账号列表 (94661) */
+    KF_ACCOUNT_LIST: "https://qyapi.weixin.qq.com/cgi-bin/kf/account/list",
+    /** KF 客服账号链接 (94665) */
+    KF_ADD_CONTACT_WAY: "https://qyapi.weixin.qq.com/cgi-bin/kf/add_contact_way",
+    /** KF 会话状态变更 / 转接 (94669) */
+    KF_SERVICE_STATE_TRANS: "https://qyapi.weixin.qq.com/cgi-bin/kf/service_state/trans",
 } as const;
 
 /** 各类限制常量 */
@@ -44,6 +52,14 @@ export const LIMITS = {
     REQUEST_TIMEOUT_MS: 15_000,
     /** 最大请求体大小 */
     MAX_REQUEST_BODY_SIZE: 1024 * 1024,
+} as const;
+
+/** KF send_msg 媒体大小上限（企微文档 94677） */
+export const KF_MEDIA_MAX_BYTES = {
+    image: 10 * 1024 * 1024,
+    voice: 2 * 1024 * 1024,
+    video: 10 * 1024 * 1024,
+    file: 20 * 1024 * 1024,
 } as const;
 
 /** AES 加密常量 */

@@ -7,7 +7,7 @@ describe("wecomPlugin config.deleteAccount", () => {
   it("removes only the target matrix account", () => {
     const cfg: OpenClawConfig = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
           accounts: {
             "acct-a": {
@@ -30,18 +30,18 @@ describe("wecomPlugin config.deleteAccount", () => {
     } as OpenClawConfig;
 
     const next = wecomPlugin.config.deleteAccount!({ cfg, accountId: "acct-a" });
-    const accounts = (next.channels?.["wecom-cs"] as { accounts?: Record<string, unknown> } | undefined)
+    const accounts = (next.channels?.["wecom-kf"] as { accounts?: Record<string, unknown> } | undefined)
       ?.accounts;
 
     expect(accounts?.["acct-a"]).toBeUndefined();
     expect(accounts?.["acct-b"]).toBeDefined();
-    expect(next.channels?.["wecom-cs"]).toBeDefined();
+    expect(next.channels?.["wecom-kf"]).toBeDefined();
   });
 
   it("removes legacy wecom section when deleting default account", () => {
     const cfg: OpenClawConfig = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
           bot: {
             token: "token",
@@ -52,7 +52,7 @@ describe("wecomPlugin config.deleteAccount", () => {
     } as OpenClawConfig;
 
     const next = wecomPlugin.config.deleteAccount!({ cfg, accountId: "default" });
-    expect(next.channels?.["wecom-cs"]).toBeUndefined();
+    expect(next.channels?.["wecom-kf"]).toBeUndefined();
   });
 });
 
@@ -60,7 +60,7 @@ describe("wecomPlugin account conflict guards", () => {
   it("marks duplicate bot token account as unconfigured", async () => {
     const cfg: OpenClawConfig = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
           accounts: {
             "acct-a": {
@@ -86,7 +86,7 @@ describe("wecomPlugin account conflict guards", () => {
   it("marks duplicate bot aibotid account as unconfigured", async () => {
     const cfg: OpenClawConfig = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
           accounts: {
             "acct-a": {
@@ -110,7 +110,7 @@ describe("wecomPlugin account conflict guards", () => {
   it("marks duplicate corpId/agentId account as unconfigured", async () => {
     const cfg: OpenClawConfig = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
           accounts: {
             "acct-a": {

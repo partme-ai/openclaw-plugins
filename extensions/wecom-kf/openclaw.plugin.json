@@ -1,7 +1,7 @@
 {
   "id": "wecom-kf",
   "name": "@partme.ai/wecom-kf",
-  "description": "企业微信微信客服插件 — KF 消息收发 + 转人工 + 接待管理 + 知识库 RAG + 对话状态流 + ICS REST API",
+  "description": "企业微信微信客服插件 — KF 消息收发 + Control Tools（wecom_kf_*）；ICS / agents / skills 为可选运营资产",
   "main": "dist/index.js",
   "channels": [
     "wecom-kf"
@@ -9,11 +9,9 @@
   "commands": [
     "kf-status"
   ],
-  "skills": [
-    "./skills"
-  ],
+  "skills": [],
   "contracts": {
-    "tools": ["wecom_kf_mcp", "wecom_kf_servicer_list", "wecom_kf_account_list", "wecom_kf_account_link", "wecom_kf_session_status", "wecom_kf_session_transfer"]
+    "tools": ["wecom_kf_mcp", "wecom_kf_list_servicers", "wecom_kf_list_accounts", "wecom_kf_get_account_link", "wecom_kf_transfer_session"]
   },
   "capabilities": {
     "humanTransfer": true,
@@ -163,17 +161,16 @@
     }
   },
   "toolMetadata": {
-    "wecom_kf_servicer_list": { "optional": true, "description": "获取微信客服接待人员列表" },
-    "wecom_kf_account_list": { "optional": true, "description": "获取微信客服账号列表" },
-    "wecom_kf_account_link": { "optional": true, "description": "获取微信客服账号咨询链接" },
-    "wecom_kf_session_status": { "optional": true, "description": "查询客服会话状态" },
-    "wecom_kf_session_transfer": { "optional": true, "description": "变更会话状态（转人工/结束等）" },
+    "wecom_kf_list_servicers": { "optional": true, "description": "获取接待人员列表（控制面，不进 LLM 上下文）" },
+    "wecom_kf_list_accounts": { "optional": true, "description": "获取客服账号列表（控制面，不进 LLM 上下文）" },
+    "wecom_kf_get_account_link": { "optional": true, "description": "获取客服账号链接（控制面，不进 LLM 上下文）" },
+    "wecom_kf_transfer_session": { "optional": true, "description": "转接客服会话（控制面，不进 LLM 上下文）" },
     "wecom_kf_mcp": { "optional": true, "description": "企业微信客服 MCP 工具" }
   },
   "channelConfigs": {
     "wecom-kf": {
       "label": "WeCom CS（企业微信智能客服）",
-      "description": "企业微信多模态智能客服 — Bot + Agent + KF 三模式，多账户矩阵，RAG 知识库，对话状态流，ICS REST API",
+      "description": "企业微信微信客服 — KF 回调 + Control Tools；ICS/agents/skills 可选",
       "schema": {
         "type": "object",
         "additionalProperties": true,

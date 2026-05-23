@@ -66,6 +66,16 @@ export function isLegacyWecomCsEnabled(cfg: OpenClawConfig | undefined): boolean
 }
 
 /**
+ * 是否启用 ICS 运营 REST API（知识库 / bindings / event-messages / stats）。
+ *
+ * 默认 `false`：KF 核心仅注册回调 + Control Tools；运营后台需显式 `icsEnabled: true`。
+ */
+export function isIcsEnabled(cfg: OpenClawConfig | undefined): boolean {
+    const channel = cfg?.channels?.["wecom-kf"] as WecomKfConfig | undefined;
+    return channel?.icsEnabled === true;
+}
+
+/**
  * 解析账号在状态/UI 中展示的 KF webhookPath。
  */
 export function resolveKfAccountWebhookPath(params: {

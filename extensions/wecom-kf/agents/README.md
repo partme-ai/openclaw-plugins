@@ -20,7 +20,7 @@
 ## 配置说明
 
 - **Workspace**：各智能体 workspace 指向本目录下对应子目录（如 `<REPO_ROOT>/openclaw-plugins/wecom-kf/agents/1-presale-warm`），或部署时复制/链接到 `~/.openclaw/workspace-<agent-id>`。
-- **Config 片段**：可合并进主 openclaw 配置；路由按渠道或客服账号将会话绑定到对应 agent id（如 wecom-kf 下按 open_kfid 或 accountId 映射到 presale-warm / aftersale-considerate 等）。
+- **Config 片段**：可合并进主 openclaw 配置；每个 `channels.wecom-kf.accounts.{accountKey}` 需配置 `openKfId` 与 `agentId`（一客服账号一 OpenClaw Agent），可选 `agentMapping` 做接待人员级覆盖。
 - **话术与知识库**：需在各自工作区的 `TOOLS.md` 或 openclaw 配置中配置；回复仅以已配置的话术与知识库为准，不杜撰、不越权承诺，该转人工则转人工。
 
 若需模型、工具、会话、Memory Search 等运行时配置，可参考仓库内 `templates/presale-agent`、`templates/aftersale-agent`。
@@ -58,22 +58,57 @@ openclaw agents bindings
 
 ### 4. 按渠道绑定智能体（示例：wecom-kf）
 
-将 wecom-kf 渠道下某客服账号或会话路由到对应 agent：
+`bindings.match.accountId` 使用配置键 `channels.wecom-kf.accounts.{accountKey}`（推荐），也可与 `open_kfid` 对齐：
 
-```bash
-openclaw agents bind --agent presale-warm           --bind wecom-kf:presale-warm;
-openclaw agents bind --agent presale-professional   --bind wecom-kf:presale-professional;
-openclaw agents bind --agent presale-energetic      --bind wecom-kf:presale-energetic;
-openclaw agents bind --agent presale-steady         --bind wecom-kf:presale-steady;
-openclaw agents bind --agent presale-consultative   --bind wecom-kf:presale-consultative;
-openclaw agents bind --agent aftersale-considerate  --bind wecom-kf:aftersale-considerate;
-openclaw agents bind --agent aftersale-efficient    --bind wecom-kf:aftersale-efficient;
-openclaw agents bind --agent aftersale-patient      --bind wecom-kf:aftersale-patient;
-openclaw agents bind --agent aftersale-accountable  --bind wecom-kf:aftersale-accountable;
-openclaw agents bind --agent aftersale-gentle       --bind wecom-kf:aftersale-gentle;
+```json
+{
+  "bindings": [
+    {
+      "agentId": "presale-warm",
+      "match": { "channel": "wecom-kf", "accountId": "presale-desk" }
+    },
+    {
+      "agentId": "aftersale-efficient",
+      "match": { "channel": "wecom-kf", "accountId": "support-desk" }
+    }
+  ]
+}
 ```
 
-具体 binding 格式依 openclaw 与 wecom-kf 路由规则（如按 open_kfid / accountId 映射）调整。
+对应 `openclaw.json` 片段：
+
+```json
+{
+  "channels": {
+    "wecom-kf": {
+      "corpId": "ww_xxx",
+      "corpSecret": "xxx",
+      "token": "回调Token",
+      "encodingAESKey": "AES密钥",
+      "defaultAccount": "presale-desk",
+      "accounts": {
+        "presale-desk": {
+          "openKfId": "wk_presale_001",
+          "agentId": "presale-warm"
+        },
+        "support-desk": {
+          "openKfId": "wk_support_001",
+          "agentId": "aftersale-efficient"
+        }
+      }
+    }
+  }
+}
+```
+
+CLI 绑定示例（accountKey 与配置键一致）：
+
+```bash
+openclaw agents bind --agent presale-warm --bind wecom-kf:presale-desk;
+openclaw agents bind --agent aftersale-efficient --bind wecom-kf:support-desk;
+```
+
+环境变量（`WECOM_KF_*`）仅作为 **default** 单账号模式的回退，多账号场景请在 `accounts` 中显式配置。
 
 ## 文件结构（每智能体）
 

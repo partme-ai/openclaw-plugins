@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { parseXml } from "./shared/xml-parser.js";
 
 /**
  * **decodeEncodingAESKey (解码 AES Key)**
@@ -192,47 +193,71 @@ export function extractEncryptFromXml(xml: string): string {
 }
 
 /**
- * **parseWecomCallback (解析企微回调)**
+ * **parseWecomCallback (解析企微 KF 回调)**
  *
- * 解析企微回调请求的验签、解密等操作。
+ * 对齐企微官方回调协议：
+ * - GET：验签后对 query.echostr 解密并返回明文
+ * - POST：从 XML 提取 Encrypt → 验签 → 解密 → parseXml
  *
  * @param query - URL 查询参数
- * @param body - 请求体
- * @param token - 回调验证 Token
- * @param encodingAESKey - 回调加密 Key
- * @returns 解析结果
+ * @param body - POST 请求体（XML）
+ * @param token - 回调 Token
+ * @param encodingAESKey - 回调 EncodingAESKey
+ * @param receiveId - 接收者 ID（企微应用一般为 corpId）
  */
 export function parseWecomCallback(
-    query: { msg_signature?: string; timestamp?: string; nonce?: string; echostr?: string },
-    body: string | null,
-    token: string,
-    encodingAESKey: string
+  query: { msg_signature?: string; timestamp?: string; nonce?: string; echostr?: string },
+  body: string | null,
+  token: string,
+  encodingAESKey: string,
+  receiveId?: string,
 ): { type: "verify" | "event"; echostr?: string; data?: Record<string, unknown> } {
+  const timestamp = query.timestamp ?? "";
+  const nonce = query.nonce ?? "";
+  const signature = query.msg_signature ?? "";
+
+  // GET URL 验证：encrypt 参数为 query.echostr
+  if (query.echostr) {
+    const echostr = query.echostr;
     const signatureValid = verifyWecomSignature({
-        token,
-        timestamp: query.timestamp ?? "",
-        nonce: query.nonce ?? "",
-        encrypt: extractEncryptFromXml(body ?? ""),
-        signature: query.msg_signature ?? "",
+      token,
+      timestamp,
+      nonce,
+      encrypt: echostr,
+      signature,
     });
-
     if (!signatureValid) {
-        throw new Error("Invalid signature");
+      throw new Error("Invalid signature");
     }
-
-    if (query.echostr) {
-        return { type: "verify", echostr: query.echostr };
-    }
-
-    const decrypted = decryptWecomEncrypted({
-        encrypt: extractEncryptFromXml(body ?? ""),
-        encodingAESKey,
+    const plaintext = decryptWecomEncrypted({
+      encodingAESKey,
+      receiveId,
+      encrypt: echostr,
     });
+    return { type: "verify", echostr: plaintext };
+  }
 
-    try {
-        const data = JSON.parse(decrypted);
-        return { type: "event", data };
-    } catch {
-        return { type: "event", data: { message: decrypted } };
-    }
+  if (!body?.trim()) {
+    throw new Error("Missing request body");
+  }
+
+  const encrypt = extractEncryptFromXml(body);
+  const signatureValid = verifyWecomSignature({
+    token,
+    timestamp,
+    nonce,
+    encrypt,
+    signature,
+  });
+  if (!signatureValid) {
+    throw new Error("Invalid signature");
+  }
+
+  const decrypted = decryptWecomEncrypted({
+    encodingAESKey,
+    receiveId,
+    encrypt,
+  });
+  const data = parseXml(decrypted) as Record<string, unknown>;
+  return { type: "event", data };
 }

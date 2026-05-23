@@ -36,24 +36,81 @@
     │  │    wecom-kf 插件                    │
     │  │  ┌─────────────────────────────┐    │
     ▼  │  │                             │    │
-回调接口 ─┼──► callback.ts              │    │
-(POST)    │  │     │                    │    │
+回调接口 ─┼──► webhook/callback.ts      │    │
+(POST)    │  │     │ sync_msg          │    │
           │  │     ▼                    │    │
-          │  │ message-handler.ts ──────┼────┼──► OpenClaw Agent
+          │  │ dispatch.ts ────────────┼────┼──► OpenClaw Agent
           │  │     │                    │    │      (AI 回复)
           │  │     ▼                    │    │
-          │  │ system-event-handler.ts  │    │
-          │  │ (欢迎语/结束语/满意度)     │    │
+          │  │ agent/system-event.ts    │    │
+          │  │ (欢迎语 / 系统事件)       │    │
           │  │     │                    │    │
+          │  │ kf/control-tools.ts      │    │
+          │  │ (转人工 · 不进 transcript)│    │
           │  └─────┼────────────────────┘    │
           │        │                         │
           │        ▼                         │
-          │   wecom-api.ts ──────────────────┼──► 企微客服 API
-          │   (sync_msg, send_msg 等)         │
+          │   agent/api-client.ts ─────────┼──► 企微客服 API
+          │   (sync_msg, send_msg 等)       │
           └──────────────────────────────────┤
 ```
 
-## 目录结构
+## Directory Structure
+
+```
+wecom-kf/
+  index.ts                   # 插件入口：KF 核心 + Control Tools + 可选 ICS
+  openclaw.plugin.json       # channels: ["wecom-kf"]；contracts 仅 Control Tools
+  src/
+    webhook/callback.ts      # KF HTTP 回调（验签 → sync_msg → 分发）
+    dispatch.ts              # 客户消息 → Agent → send_msg
+    channel.ts               # wecom-kf 渠道 + 出站
+    agent/
+      api-client.ts          # 企微 KF API（sync / send / trans 等）
+      system-event.ts        # origin=4 系统事件（欢迎语等）
+    kf/
+      control-tools.ts       # wecom_kf_* 控制面 Tools（核心）
+      call-context.ts        # Tool / dispatch CallContext
+    intelligence/            # 对话状态机、intent、before_prompt_build（Phase 3B）
+    ics/
+      handlers/              # 可选运营 REST API（icsEnabled=true）
+      utils/                 # ICS 专用文件读写
+  agents/                    # 可选智能体 workspace 模板（核心不 import）
+  skills/                    # 可选技能（需手动安装；不在 plugin manifest）
+```
+
+### 模块分层
+
+| 层级 | 路径 | 注册方式 | Phase |
+|------|------|----------|:-----:|
+| **KF 核心** | `webhook/callback.ts`、`dispatch.ts`、`channel.ts`、`kf/control-tools.ts`、`kf/call-context.ts` | 默认启用 | 1 ✅ |
+| **媒体与策略** | `dm-policy.ts`、`media/`、`outbound/kf-send.ts` | 默认启用 | 2 实施中 |
+| **会话状态与智能化** | `src/intelligence/`、`dispatch.ts` dialogue 闭环、`agent/system-event.ts` | 默认启用 | 3 **当前** |
+| **ICS 运营（可选）** | `src/ics/handlers/`、`src/ics/utils/` | `channels.wecom-kf.icsEnabled: true` → 注册 `/ics/*` | 3 ✅（开关） |
+| **智能体模板（可选）** | `agents/` | 独立部署；`--workspace` 指向子目录 | — |
+| **Skills（可选）** | `skills/` | 复制/软链到 agent workspace；插件不自动加载 | — |
+| **Legacy wecom-cs** | `legacy/monitor.ts` 等 | `legacyWecomCsEnabled: true`（默认 **false**，Phase 2 移除中） | 废弃 |
+
+### Phase 3 模块说明（会话状态与智能化）
+
+| 模块 | 职责 | 状态 |
+|------|------|:----:|
+| **`wecom_kf_transfer_session`** | 94669 转人工/排队/结束；API 结果 audit 日志，不进 LLM | 部分完成 |
+| **`KfSessionSideEffectStore`** | 持久化 trans 返回的 `msg_code`，供事件消息发送 | 实施中 |
+| **`kf/transfer-policy.ts`** | 按在线 servicer 自动选席 | 实施中 |
+| **`session_status_change`** | state=3 停止 Agent 自动回复 | 实施中 |
+| **`send_msg_on_event`** | 欢迎语（✅）、排队/结束语/满意度（实施中） | 部分完成 |
+| **`src/intelligence/*` + prompt 注入** | 多轮状态机；dispatch 写入 + `before_prompt_build` 读取 | ✅ |
+| **`servicerCache`** | `config/accounts.ts` 缓存接待人员，与 Tools 对齐 | 部分完成 |
+| **`icsEnabled`** | 默认 `false`；ICS REST 与 KF 核心解耦 | ✅ |
+
+**Control Tools**（已注册）：`wecom_kf_list_servicers`、`wecom_kf_list_accounts`、`wecom_kf_get_account_link`、`wecom_kf_transfer_session`。
+
+**已废弃**（Phase 3B 已删除）：旧版 `src/kf/tools.ts` 与未接入的 `src/kf/knowledge.ts` RAG stub。
+
+**联调文档**：[Integration-Checklist.md](../../doc/wecom-kf/Integration-Checklist.md) · [Roadmap Phase 3](../../doc/wecom-kf/OpenClaw-WeCom-KF-Roadmap.md#phase-3--会话状态与智能化当前)
+
+旧版目录说明：
 
 ```
 wecom_kf/
@@ -272,7 +329,7 @@ wecom_kf/
 
 ## 智能转人工技能
 
-插件内置转人工技能（`skills/transfer-to-human/SKILL.md`），规范与 wecom 插件 skills 一致（frontmatter、分节、references）。Agent 可据此判断何时转接人工：
+可选技能位于 `skills/`（如 `skills/transfer-to-human/SKILL.md`），**不会**由插件 manifest 自动加载；需要时复制或软链到 agent workspace。规范与 wecom 插件 skills 一致（frontmatter、分节、references）。Agent 可据此判断何时转接人工：
 
 ```markdown
 # 转人工技能
@@ -355,6 +412,16 @@ pnpm dev   # watch 模式
 | `eventMessages.ending` | object | — | 默认结束语配置 |
 | `eventMessages.satisfaction` | object | — | 满意度评价配置 |
 | `humanTransfer.waitTimeout` | number | 300 | 无人工客服时等待超时（秒） |
+| `icsEnabled` | boolean | `false` | 为 `true` 时注册 `/ics/*` 运营 REST API；KF 核心不依赖此项 |
+
+## 文档
+
+| 文档 | 说明 |
+|------|------|
+| [Roadmap Phase 3](../../doc/wecom-kf/OpenClaw-WeCom-KF-Roadmap.md) | 任务状态与验收命令 |
+| [联调 Checklist](../../doc/wecom-kf/Integration-Checklist.md) | 回调、sync、多账号、媒体、Control Tools、icsEnabled |
+| [主架构](../../doc/wecom-kf/OpenClaw-WeCom-KF-Master-Architecture.md) | 事件矩阵与模块边界 |
+| [Tools 架构](../../doc/wecom-kf/OpenClaw-WeCom-KF-Tools-Architecture.md) | Control Tools 与 transcript 隔离 |
 
 ## OpenClaw 生态插件
 

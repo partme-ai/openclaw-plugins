@@ -1,10 +1,14 @@
 /**
- * WeCom 账号解析与模式检测
+ * WeCom KF 账号解析与模式检测
+ * 渠道键：channels.wecom-kf（独立于 wecom / wecom-cs）
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import { mergeChannelAccountConfig } from "@partme.ai/openclaw-message-sdk/config";
 import type {
     WecomConfig,
+    WecomKfConfig,
+    WecomKfAccountConfig,
     WecomAccountConfig,
     WecomBotConfig,
     WecomAgentConfig,
@@ -16,7 +20,22 @@ import type {
     ResolvedWecomAccounts,
 } from "../types/index.js";
 
+/** wecom-kf 渠道 ID，与 OpenClaw bindings.match.channel 对齐 */
+export const WECOM_KF_CHANNEL_ID = "wecom-kf";
+
 export const DEFAULT_ACCOUNT_ID = "default";
+
+/** 按 open_kfid 解析后的 KF 账号（一账号一 Agent） */
+export type ResolvedKfAccount = {
+    /** 配置键 channels.wecom-kf.accounts.{accountKey} */
+    accountKey: string;
+    /** 绑定的 OpenClaw Agent id */
+    agentId: string;
+    /** 企微客服 open_kfid */
+    openKfId: string;
+    /** 合并后的 flat 配置（供 callback / handler 使用） */
+    config: WecomAccountConfig;
+};
 
 export type CustomAgentAccountConfig = {
     openKfId?: string;
@@ -50,20 +69,110 @@ export function loadCustomAgentMappings(config: CustomAgentMappingsConfig): void
     }
 
     for (const account of Object.values(config.accounts ?? {})) {
-        const openKfId = account.openKfId?.trim();
-        const defaultAgentId = account.agentId?.trim();
-        if (openKfId && defaultAgentId) {
-            customAgentMappings[openKfId] = defaultAgentId;
-        }
+        registerCustomAgentMappingsForAccount(account);
+    }
+}
 
-        for (const [kfId, agentId] of Object.entries(account.agentMapping ?? {})) {
-            const normalizedKfId = kfId.trim();
-            const normalizedAgentId = agentId.trim();
-            if (normalizedKfId && normalizedAgentId) {
-                customAgentMappings[normalizedKfId] = normalizedAgentId;
-            }
+/**
+ * 从 openclaw.json channels.wecom-kf 加载 open_kfid → Agent 映射
+ */
+export function loadKfAgentMappingsFromConfig(cfg: OpenClawConfig): void {
+    const block = getWecomKfBlock(cfg);
+    if (!block) {
+        loadCustomAgentMappings({ accounts: {} });
+        return;
+    }
+
+    const accounts: Record<string, CustomAgentAccountConfig> = {};
+    const matrix = block.accounts;
+    if (matrix && Object.keys(matrix).length > 0) {
+        for (const [accountKey, entry] of Object.entries(matrix)) {
+            if (!entry) continue;
+            const merged = mergeKfAccountEntry(block, entry);
+            accounts[accountKey] = {
+                openKfId: merged.openKfId,
+                agentId: merged.agentId,
+                agentMapping: merged.agentMapping,
+            };
+        }
+    } else {
+        const legacy = applyKfEnvVarFallback(flattenKfFields(block), DEFAULT_ACCOUNT_ID);
+        accounts[DEFAULT_ACCOUNT_ID] = {
+            openKfId: legacy.openKfId as string | undefined,
+            agentId: legacy.agentId as string | undefined,
+            agentMapping: legacy.agentMapping as Record<string, string> | undefined,
+        };
+    }
+
+    loadCustomAgentMappings({ accounts });
+}
+
+function registerCustomAgentMappingsForAccount(account: CustomAgentAccountConfig): void {
+    const openKfId = account.openKfId?.trim();
+    const defaultAgentId = account.agentId?.trim();
+    if (openKfId && defaultAgentId) {
+        customAgentMappings[openKfId] = defaultAgentId;
+    }
+
+    for (const [key, agentId] of Object.entries(account.agentMapping ?? {})) {
+        const normalizedKey = key.trim();
+        const normalizedAgentId = agentId.trim();
+        if (normalizedKey && normalizedAgentId) {
+            customAgentMappings[normalizedKey] = normalizedAgentId;
         }
     }
+}
+
+function getWecomKfBlock(cfg: OpenClawConfig): WecomKfConfig | undefined {
+    return cfg.channels?.[WECOM_KF_CHANNEL_ID] as WecomKfConfig | undefined;
+}
+
+function flattenKfFields(source: Record<string, unknown>): Record<string, unknown> {
+    const kf = source.kf as Record<string, unknown> | undefined;
+    return {
+        ...source,
+        ...(kf ?? {}),
+    };
+}
+
+function mergeKfAccountEntry(
+    block: WecomKfConfig,
+    entry: WecomKfAccountConfig,
+): WecomAccountConfig {
+    const { accounts: _accounts, defaultAccount: _defaultAccount, ...base } = block;
+    const merged = mergeChannelAccountConfig(
+        flattenKfFields(base as Record<string, unknown>),
+        flattenKfFields(entry as unknown as Record<string, unknown>),
+        ["eventMessages"],
+    );
+    return merged as unknown as WecomAccountConfig;
+}
+
+function isKfAccountConfigured(config: WecomAccountConfig): boolean {
+    return Boolean(
+        config.corpId?.trim() &&
+            config.token?.trim() &&
+            config.encodingAESKey?.trim() &&
+            config.openKfId?.trim() &&
+            config.agentId?.trim(),
+    );
+}
+
+function toResolvedKfAccountFromWecomAccount(
+    accountKey: string,
+    account: ResolvedWecomAccount,
+): ResolvedKfAccount | undefined {
+    const agentId = account.config.agentId?.trim();
+    const openKfId = account.config.openKfId?.trim();
+    if (!agentId || !openKfId) {
+        return undefined;
+    }
+    return {
+        accountKey,
+        agentId,
+        openKfId,
+        config: account.config,
+    };
 }
 
 export function getCustomAgentMappings(): Record<string, string> {
@@ -110,9 +219,9 @@ export type WecomAccountConflict = {
 };
 
 /**
- * 检测配置中启用的模式
+ * 检测 KF 配置模式：matrix（多账号）或 legacy（单账号顶层）
  */
-export function detectMode(config: WecomConfig | undefined): ResolvedMode {
+export function detectMode(config: WecomKfConfig | WecomConfig | undefined): ResolvedMode {
     if (!config || config.enabled === false) return "disabled";
 
     const accounts = config.accounts;
@@ -201,44 +310,85 @@ function toResolvedAccount(params: {
     };
 }
 
-function resolveMatrixAccounts(wecom: WecomConfig): Record<string, ResolvedWecomAccount> {
-    const accounts = wecom.accounts;
+function resolveMatrixAccounts(wecomKf: WecomKfConfig): Record<string, ResolvedWecomAccount> {
+    const accounts = wecomKf.accounts;
     if (!accounts || typeof accounts !== "object") return {};
 
     const resolved: Record<string, ResolvedWecomAccount> = {};
     for (const [rawId, entry] of Object.entries(accounts)) {
         const accountId = rawId.trim();
         if (!accountId || !entry) continue;
-        const enabled = wecom.enabled !== false && entry.enabled !== false;
-        const config: WecomAccountConfig = {
-            enabled: entry.enabled,
-            name: entry.name,
-            bot: entry.bot,
-            agent: entry.agent,
-        };
-        resolved[accountId] = toResolvedAccount({
+        const enabled = wecomKf.enabled !== false && entry.enabled !== false;
+
+        // Legacy bot/agent 条目（与 KF 字段可共存，测试与历史路径保留）
+        if (entry.bot || entry.agent) {
+            const config: WecomAccountConfig = {
+                enabled: entry.enabled,
+                name: entry.name,
+                bot: entry.bot,
+                agent: entry.agent,
+                openKfId: entry.openKfId,
+                agentId: entry.agentId,
+                agentMapping: entry.agentMapping,
+                corpId: entry.corpId,
+                corpSecret: entry.corpSecret,
+                token: entry.token,
+                encodingAESKey: entry.encodingAESKey,
+            };
+            resolved[accountId] = toResolvedAccount({
+                accountId,
+                enabled,
+                name: entry.name,
+                config,
+                network: wecomKf.network,
+            });
+            continue;
+        }
+
+        let config = mergeKfAccountEntry(wecomKf, entry);
+        config = applyKfEnvVarFallback(
+            config as unknown as Record<string, unknown>,
             accountId,
-            enabled,
+        ) as WecomAccountConfig;
+        resolved[accountId] = {
+            accountId,
             name: entry.name,
+            enabled,
+            configured: isKfAccountConfigured(config),
             config,
-            network: wecom.network,
-        });
+        };
     }
     return resolved;
 }
 
-function resolveLegacyAccounts(wecom: WecomConfig): Record<string, ResolvedWecomAccount> {
-    const config: WecomAccountConfig = {
-        bot: wecom.bot,
-        agent: wecom.agent,
+function resolveLegacyAccounts(wecomKf: WecomKfConfig): Record<string, ResolvedWecomAccount> {
+    if (wecomKf.bot || wecomKf.agent) {
+        const config: WecomAccountConfig = {
+            bot: wecomKf.bot,
+            agent: wecomKf.agent,
+        };
+        return {
+            [DEFAULT_ACCOUNT_ID]: toResolvedAccount({
+                accountId: DEFAULT_ACCOUNT_ID,
+                enabled: wecomKf.enabled !== false,
+                config,
+                network: wecomKf.network,
+            }),
+        };
+    }
+
+    let config = applyKfEnvVarFallback(
+        flattenKfFields(wecomKf as unknown as Record<string, unknown>),
+        DEFAULT_ACCOUNT_ID,
+    ) as WecomAccountConfig;
+    return {
+        [DEFAULT_ACCOUNT_ID]: {
+            accountId: DEFAULT_ACCOUNT_ID,
+            enabled: wecomKf.enabled !== false,
+            configured: isKfAccountConfigured(config),
+            config,
+        },
     };
-    const account = toResolvedAccount({
-        accountId: DEFAULT_ACCOUNT_ID,
-        enabled: wecom.enabled !== false,
-        config,
-        network: wecom.network,
-    });
-    return { [DEFAULT_ACCOUNT_ID]: account };
 }
 
 function normalizeDuplicateKey(value: string): string {
@@ -340,10 +490,10 @@ export function resolveWecomAccountConflict(params: {
 }
 
 export function listWecomAccountIds(cfg: OpenClawConfig): string[] {
-    const wecom = cfg.channels?.["wecom-cs"] as WecomConfig | undefined;
-    const mode = detectMode(wecom);
-    if (mode === "matrix" && wecom?.accounts) {
-        const ids = Object.keys(wecom.accounts)
+    const wecomKf = getWecomKfBlock(cfg);
+    const mode = detectMode(wecomKf);
+    if (mode === "matrix" && wecomKf?.accounts) {
+        const ids = Object.keys(wecomKf.accounts)
             .map((id) => id.trim())
             .filter(Boolean)
             .sort((a, b) => a.localeCompare(b));
@@ -352,13 +502,19 @@ export function listWecomAccountIds(cfg: OpenClawConfig): string[] {
     return [DEFAULT_ACCOUNT_ID];
 }
 
+/** KF 多账号 ID 列表（与 listWecomAccountIds 等价，语义更清晰） */
+export const listKfAccountIds = listWecomAccountIds;
+
 export function resolveDefaultWecomAccountId(cfg: OpenClawConfig): string {
-    const wecom = cfg.channels?.["wecom-cs"] as WecomConfig | undefined;
+    const wecomKf = getWecomKfBlock(cfg);
     const ids = listWecomAccountIds(cfg);
-    const preferred = wecom?.defaultAccount?.trim();
+    const preferred = wecomKf?.defaultAccount?.trim();
     if (preferred && ids.includes(preferred)) return preferred;
     return ids[0] ?? DEFAULT_ACCOUNT_ID;
 }
+
+/** KF 默认账号键 */
+export const resolveDefaultKfAccountId = resolveDefaultWecomAccountId;
 
 export function resolveWecomAccount(params: {
     cfg: OpenClawConfig;
@@ -389,12 +545,12 @@ export function resolveWecomAccount(params: {
 }
 
 /**
- * 解析 WeCom 账号 (双模式)
+ * 解析 WeCom KF 账号集合
  */
 export function resolveWecomAccounts(cfg: OpenClawConfig): ResolvedWecomAccounts {
-    const wecom = cfg.channels?.["wecom-cs"] as WecomConfig | undefined;
+    const wecomKf = getWecomKfBlock(cfg);
 
-    if (!wecom || wecom.enabled === false) {
+    if (!wecomKf || wecomKf.enabled === false) {
         return {
             mode: "disabled",
             defaultAccountId: DEFAULT_ACCOUNT_ID,
@@ -402,8 +558,9 @@ export function resolveWecomAccounts(cfg: OpenClawConfig): ResolvedWecomAccounts
         };
     }
 
-    const mode = detectMode(wecom);
-    const accounts = mode === "matrix" ? resolveMatrixAccounts(wecom) : resolveLegacyAccounts(wecom);
+    const mode = detectMode(wecomKf);
+    const accounts =
+        mode === "matrix" ? resolveMatrixAccounts(wecomKf) : resolveLegacyAccounts(wecomKf);
     const defaultAccountId = resolveDefaultWecomAccountId(cfg);
     const defaultAccount = accounts[defaultAccountId] ?? accounts[DEFAULT_ACCOUNT_ID];
 
@@ -414,6 +571,48 @@ export function resolveWecomAccounts(cfg: OpenClawConfig): ResolvedWecomAccounts
         bot: defaultAccount?.bot,
         agent: defaultAccount?.agent,
     };
+}
+
+/**
+ * 按 open_kfid 解析 KF 账号 → accountKey + agentId + 合并配置
+ *
+ * @param params.cfg - OpenClaw 配置
+ * @param params.openKfId - 回调/sync_msg 中的 open_kfid；省略时返回 defaultAccount
+ */
+export function resolveKfAccountByOpenKfId(params: {
+    cfg: OpenClawConfig;
+    openKfId?: string | null;
+}): ResolvedKfAccount | undefined {
+    const resolved = resolveWecomAccounts(params.cfg);
+    const normalizedOpenKfId = params.openKfId?.trim();
+
+    if (normalizedOpenKfId) {
+        for (const [accountKey, account] of Object.entries(resolved.accounts)) {
+            if (account.enabled === false) continue;
+            if (account.config.openKfId?.trim() === normalizedOpenKfId) {
+                return toResolvedKfAccountFromWecomAccount(accountKey, account);
+            }
+        }
+        return undefined;
+    }
+
+    const defaultKey = resolved.defaultAccountId;
+    const defaultAccount = resolved.accounts[defaultKey] ?? resolved.accounts[DEFAULT_ACCOUNT_ID];
+    if (!defaultAccount || defaultAccount.enabled === false) {
+        return undefined;
+    }
+    return toResolvedKfAccountFromWecomAccount(defaultAccount.accountId, defaultAccount);
+}
+
+/**
+ * 创建 callback 层使用的 getAccountConfig(openKfId) 解析器
+ */
+export function createKfAccountConfigResolver(
+    cfg: OpenClawConfig,
+): (openKfId?: string) => WecomAccountConfig | undefined {
+    return (openKfId?: string) =>
+        resolveKfAccountByOpenKfId({ cfg, openKfId })?.config ??
+        resolveKfAccountByOpenKfId({ cfg, openKfId: null })?.config;
 }
 
 /**
@@ -444,5 +643,6 @@ export function applyKfEnvVarFallback(
   if (!result.openKfId) result.openKfId = process.env.WECOM_KF_OPEN_KF_ID?.trim();
   if (!result.token) result.token = process.env.WECOM_KF_TOKEN?.trim();
   if (!result.encodingAESKey) result.encodingAESKey = process.env.WECOM_KF_ENCODING_AES_KEY?.trim();
+  if (!result.agentId) result.agentId = process.env.WECOM_KF_AGENT_ID?.trim();
   return result;
 }

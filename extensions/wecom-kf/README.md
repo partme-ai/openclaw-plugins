@@ -68,6 +68,40 @@ Callback ─┼──► callback.ts              │    │
 ## Directory Structure
 
 ```
+wecom-kf/
+  index.ts                   # Plugin entry: KF core registration
+  openclaw.plugin.json       # channels: ["wecom-kf"]; contracts = Control Tools only
+  src/
+    callback.ts              # KF HTTP callback (core)
+    channel.ts               # wecom-kf channel + outbound
+    kf/
+      control-tools.ts       # wecom_kf_* Control Tools (core; API not in LLM context)
+      call-context.ts        # Tool / dispatch CallContext 解析
+    intelligence/            # 对话状态机、intent、prompt 注入（P3）
+    ics/
+      handlers/              # Optional ops REST API (icsEnabled=true)
+      utils/                 # ICS file/config helpers
+  agents/                    # Optional agent workspace templates (not imported by core)
+  skills/                    # Optional skills (manual install; not in plugin manifest)
+```
+
+### Module layers (Phase 2C)
+
+| Layer | Paths | Registration |
+|-------|--------|----------------|
+| **KF core** | `callback.ts`, `channel.ts`, `kf/control-tools.ts`, `kf/call-context.ts`, `dispatch.ts` | Always on |
+| **Intelligence (L2)** | `src/intelligence/` — dialogue state, intent, `before_prompt_build` | Always on |
+| **ICS ops (optional)** | `src/ics/handlers/`, `src/ics/utils/` | `channels.wecom-kf.icsEnabled: true` → `/ics/*` routes |
+| **Agent templates (optional)** | `agents/` | Deploy separately; point `--workspace` at subdirs |
+| **Skills (optional)** | `skills/` | Copy/symlink into agent workspace; not auto-loaded by plugin |
+
+**Control Tools** (registered): `wecom_kf_list_servicers`, `wecom_kf_list_accounts`, `wecom_kf_get_account_link`, `wecom_kf_transfer_session` — API payloads go to audit log, not LLM transcript.
+
+**Deprecated** (removed in Phase 3B): legacy `src/kf/tools.ts` and unused `src/kf/knowledge.ts` RAG stub.
+
+Legacy directory layout (pre-Phase 2C):
+
+```
 wecom_kf/
   package.json
   tsconfig.json
@@ -284,7 +318,7 @@ Copy the desired template into your Agent workspace and adjust model refs and pa
 
 ## Intelligent Human Transfer Skill
 
-The plugin includes a built-in skill (`skills/transfer-to-human/SKILL.md`) that enables agents to decide when to transfer to human agents. Structure follows the wecom plugin skill spec (frontmatter, sections, references).
+Optional skills live under `skills/` (e.g. `skills/transfer-to-human/SKILL.md`). They are **not** loaded by the plugin manifest; copy or symlink into your agent workspace when needed. Structure follows the wecom plugin skill spec (frontmatter, sections, references).
 
 ```markdown
 # Transfer to Human Skill

@@ -1,16 +1,23 @@
 /**
- * 超时控制工具模块
- *
- * 为异步操作提供统一的超时保护机制
+ * 超时控制工具（委托 message-sdk util，保留 `TimeoutError` 名称兼容）。
  */
+import {
+  withTimeout as sdkWithTimeout,
+  AsyncTimeoutError,
+} from "@partme.ai/openclaw-message-sdk/util";
 
 /**
- * 为 Promise 添加超时保护
- *
- * @param promise - 原始 Promise
- * @param timeoutMs - 超时时间（毫秒）
- * @param message - 超时错误消息
- * @returns 带超时保护的 Promise
+ * 超时错误（历史兼容：`name` 为 `TimeoutError`）。
+ */
+export class TimeoutError extends AsyncTimeoutError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
+/**
+ * 为 Promise 添加超时保护。
  */
 export function withTimeout<T>(
   promise: Promise<T>,
@@ -20,26 +27,10 @@ export function withTimeout<T>(
   if (timeoutMs <= 0 || !Number.isFinite(timeoutMs)) {
     return promise;
   }
-
-  let timeoutId: ReturnType<typeof setTimeout>;
-
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new TimeoutError(message ?? `Operation timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+  return sdkWithTimeout(promise, timeoutMs, message).catch((err: unknown) => {
+    if (err instanceof AsyncTimeoutError) {
+      throw new TimeoutError(err.message);
+    }
+    throw err;
   });
-
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    clearTimeout(timeoutId);
-  });
-}
-
-/**
- * 超时错误类型
- */
-export class TimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "TimeoutError";
-  }
 }

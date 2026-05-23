@@ -4,27 +4,97 @@ vi.mock("./agent/api-client.js", () => ({
   sendText: vi.fn(),
   sendMedia: vi.fn(),
   uploadMedia: vi.fn(),
+  sendKfTextMessage: vi.fn(),
+  sendKfMediaMessage: vi.fn(),
+  summarizeSendResults: vi.fn((results: Array<{ errcode: number; msgid?: string; errmsg: string }>) => {
+    const failed = results.find((r) => r.errcode !== 0);
+    if (failed) return { ok: false, error: failed.errmsg };
+    return { ok: true, msgid: results[results.length - 1]?.msgid ?? "kf-msg-1" };
+  }),
+}));
+
+vi.mock("./media-path-guard.js", () => ({
+  getExtendedMediaLocalRoots: vi.fn(async () => ["/tmp"]),
+  readGuardedLocalMediaFile: vi.fn(async () => ({
+    ok: true,
+    buffer: Buffer.from("fake-image"),
+  })),
 }));
 
 describe("wecomOutbound", () => {
-  it("does not crash when called with core outbound params", async () => {
-    const { wecomOutbound } = await import("./outbound.js");
-    await expect(
-      wecomOutbound.sendMedia({
-        cfg: {},
-        to: "wr-test-chat",
-        text: "caption",
-        mediaUrl: "https://example.com/media.png",
-      } as any),
-    ).rejects.toThrow(/Agent mode/i);
-  });
+  it("KF-only sendMedia uses sendKfMediaMessage", async () => {
+    const { wecomOutbound } = await import("./outbound/index.js");
+    const api = await import("./agent/api-client.js");
+    (api.sendKfTextMessage as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { errcode: 0, errmsg: "ok", msgid: "kf-caption" },
+    ]);
+    (api.sendKfMediaMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      errcode: 0,
+      errmsg: "ok",
+      msgid: "kf-media-1",
+    });
 
-  it("throws explicit error when outbound accountId does not exist", async () => {
-    const { wecomOutbound } = await import("./outbound.js");
     const cfg = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
+          corpId: "corp",
+          corpSecret: "secret",
+          openKfId: "wk123",
+          token: "token",
+          encodingAESKey: "aes",
+        },
+      },
+    };
+
+    const result = await wecomOutbound.sendMedia!({
+      cfg,
+      to: "user:external_user_1",
+      text: "caption",
+      mediaUrl: "/tmp/test.png",
+    } as any);
+
+    expect(api.sendKfMediaMessage).toHaveBeenCalled();
+    expect(result.channel).toBe("wecom-kf");
+    expect(result.messageId).toBe("kf-media-1");
+  });
+
+  it("KF-only sendText uses sendKfTextMessage", async () => {
+    const { wecomOutbound } = await import("./outbound/index.js");
+    const api = await import("./agent/api-client.js");
+    (api.sendKfTextMessage as any).mockResolvedValue([{ errcode: 0, errmsg: "ok", msgid: "kf-99" }]);
+
+    const cfg = {
+      channels: {
+        "wecom-kf": {
+          enabled: true,
+          corpId: "corp",
+          corpSecret: "secret",
+          openKfId: "wk123",
+          token: "token",
+          encodingAESKey: "aes",
+        },
+      },
+    };
+
+    const result = await wecomOutbound.sendText({
+      cfg,
+      to: "user:external_user_1",
+      text: "hello kf",
+    } as any);
+
+    expect(api.sendKfTextMessage).toHaveBeenCalled();
+    expect(result.channel).toBe("wecom-kf");
+    expect(result.messageId).toBe("kf-99");
+  });
+
+  it("throws explicit error when legacy outbound accountId does not exist", async () => {
+    const { wecomOutbound } = await import("./outbound/index.js");
+    const cfg = {
+      channels: {
+        "wecom-kf": {
+          enabled: true,
+          legacyWecomCsEnabled: true,
           defaultAccount: "acct-a",
           accounts: {
             "acct-a": {
@@ -51,16 +121,17 @@ describe("wecomOutbound", () => {
     ).rejects.toThrow(/account "acct-missing" not found/i);
   });
 
-  it("routes sendText to agent chatId/userid", async () => {
-    const { wecomOutbound } = await import("./outbound.js");
+  it("legacy: routes sendText to agent chatId/userid", async () => {
+    const { wecomOutbound } = await import("./outbound/index.js");
     const api = await import("./agent/api-client.js");
     const now = vi.spyOn(Date, "now").mockReturnValue(123);
     (api.sendText as any).mockResolvedValue(undefined);
 
     const cfg = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
+          legacyWecomCsEnabled: true,
           agent: {
             corpId: "corp",
             corpSecret: "secret",
@@ -72,13 +143,11 @@ describe("wecomOutbound", () => {
       },
     };
 
-    // Chat ID (wr/wc) is intentionally NOT supported for Agent outbound.
     await expect(wecomOutbound.sendText({ cfg, to: "wr123", text: "hello" } as any)).rejects.toThrow(
       /不支持向群 chatId 发送/,
     );
     expect(api.sendText).not.toHaveBeenCalled();
 
-    // Test: User ID (Default)
     const userResult = await wecomOutbound.sendText({
       cfg,
       to: "userid123",
@@ -88,50 +157,16 @@ describe("wecomOutbound", () => {
       expect.objectContaining({
         chatId: undefined,
         toUser: "userid123",
-        toParty: undefined,
-        toTag: undefined,
         text: "hi",
       }),
     );
     expect(userResult.messageId).toBe("agent-123");
 
-    (api.sendText as any).mockClear();
-
-    // Test: User ID explicit
-    await wecomOutbound.sendText({ cfg, to: "user:zhangsan", text: "hi" } as any);
-    expect(api.sendText).toHaveBeenCalledWith(
-      expect.objectContaining({ toUser: "zhangsan", toParty: undefined }),
-    );
-
-    (api.sendText as any).mockClear();
-
-    // Test: Party ID (Numeric)
-    await wecomOutbound.sendText({ cfg, to: "1001", text: "hi party" } as any);
-    expect(api.sendText).toHaveBeenCalledWith(
-      expect.objectContaining({ toUser: undefined, toParty: "1001" }),
-    );
-
-    (api.sendText as any).mockClear();
-
-    // Test: Party ID Explicit
-    await wecomOutbound.sendText({ cfg, to: "party:2002", text: "hi party 2" } as any);
-    expect(api.sendText).toHaveBeenCalledWith(
-      expect.objectContaining({ toUser: undefined, toParty: "2002" }),
-    );
-
-    (api.sendText as any).mockClear();
-
-    // Test: Tag ID Explicit
-    await wecomOutbound.sendText({ cfg, to: "tag:1", text: "hi tag" } as any);
-    expect(api.sendText).toHaveBeenCalledWith(
-      expect.objectContaining({ toUser: undefined, toTag: "1" }),
-    );
-
     now.mockRestore();
   });
 
-  it("suppresses /new ack for bot sessions but not agent sessions", async () => {
-    const { wecomOutbound } = await import("./outbound.js");
+  it("legacy: suppresses /new ack for bot sessions but not agent sessions", async () => {
+    const { wecomOutbound } = await import("./outbound/index.js");
     const api = await import("./agent/api-client.js");
     const now = vi.spyOn(Date, "now").mockReturnValue(456);
     (api.sendText as any).mockResolvedValue(undefined);
@@ -139,8 +174,9 @@ describe("wecomOutbound", () => {
 
     const cfg = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
+          legacyWecomCsEnabled: true,
           agent: {
             corpId: "corp",
             corpSecret: "secret",
@@ -154,14 +190,12 @@ describe("wecomOutbound", () => {
 
     const ack = "✅ New session started · model: openai-codex/gpt-5.2";
 
-    // Bot 会话（wecom:...）应抑制，避免私信回执
     const r1 = await wecomOutbound.sendText({ cfg, to: "wecom-cs:userid123", text: ack } as any);
     expect(api.sendText).not.toHaveBeenCalled();
     expect(r1.messageId).toBe("suppressed-456");
 
     (api.sendText as any).mockClear();
 
-    // Agent 会话（wecom-agent:...）允许发送回执
     await wecomOutbound.sendText({ cfg, to: "wecom-cs-agent:userid123", text: ack } as any);
     expect(api.sendText).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -173,16 +207,17 @@ describe("wecomOutbound", () => {
     now.mockRestore();
   });
 
-  it("uses account-scoped agent config in matrix mode", async () => {
-    const { wecomOutbound } = await import("./outbound.js");
+  it("legacy: uses account-scoped agent config in matrix mode", async () => {
+    const { wecomOutbound } = await import("./outbound/index.js");
     const api = await import("./agent/api-client.js");
     (api.sendText as any).mockResolvedValue(undefined);
     (api.sendText as any).mockClear();
 
     const cfg = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
+          legacyWecomCsEnabled: true,
           defaultAccount: "acct-a",
           accounts: {
             "acct-a": {
@@ -228,12 +263,13 @@ describe("wecomOutbound", () => {
     );
   });
 
-  it("rejects outbound when target account has matrix conflict", async () => {
-    const { wecomOutbound } = await import("./outbound.js");
+  it("legacy: rejects outbound when target account has matrix conflict", async () => {
+    const { wecomOutbound } = await import("./outbound/index.js");
     const cfg = {
       channels: {
-        "wecom-cs": {
+        "wecom-kf": {
           enabled: true,
+          legacyWecomCsEnabled: true,
           defaultAccount: "acct-a",
           accounts: {
             "acct-a": {

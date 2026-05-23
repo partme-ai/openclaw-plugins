@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createRuntimeEnv } from "../../test-utils/runtime-env.js";
 import { computeWecomMsgSignature, encryptWecomPlaintext } from "./crypto.js";
 import { wecomPlugin } from "./channel.js";
-import { handleWecomWebhookRequest } from "./monitor.js";
+import { handleWecomWebhookRequest } from "./legacy/monitor.js";
 import type { ResolvedWecomAccount } from "./types/index.js";
 
 function createMockRequest(params: {
@@ -177,7 +177,15 @@ describe("wecomPlugin gateway lifecycle", () => {
     const ctx = createCtx({ cfg, abortController });
 
     const startPromise = wecomPlugin.gateway!.startAccount!(ctx);
-    await Promise.resolve();
+    await vi.waitFor(async () => {
+      const probe = await sendWecomGetVerify({
+        path: "/wecom-cs/bot",
+        token,
+        encodingAESKey,
+        receiveId,
+      });
+      expect(probe.handled).toBe(true);
+    }, { timeout: 3000 });
 
     const activeLegacyRoute = await sendWecomGetVerify({
       path: "/wecom-cs/bot",

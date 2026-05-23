@@ -6,16 +6,22 @@ import { resolveWecomAccount } from "./accounts.js";
 describe("resolveWecomAccount", () => {
   const cfg: OpenClawConfig = {
     channels: {
-      "wecom-cs": {
+      "wecom-kf": {
         enabled: true,
         defaultAccount: "acct-a",
+        corpId: "ww123",
+        corpSecret: "secret",
+        token: "token-a",
+        encodingAESKey: "aes-a",
+        openKfId: "kf_a",
+        agentId: "agent-a",
         accounts: {
           "acct-a": {
             enabled: true,
-            bot: {
-              token: "token-a",
-              encodingAESKey: "aes-a",
-            },
+            openKfId: "kf_a",
+            agentId: "agent-a",
+            token: "token-a",
+            encodingAESKey: "aes-a",
           },
         },
       },

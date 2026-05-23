@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
-import type { ResolvedAgentAccount, WecomAccountConfig } from "../types/index.js";
+import type { ResolvedAgentAccount } from "../types/index.js";
 import {
     extractMsgType,
     extractFromUser,
@@ -24,6 +24,8 @@ import type { WecomAgentInboundMessage } from "../types/index.js";
 import { buildWecomUnauthorizedCommandPrompt, resolveWecomCommandAuthorization } from "../shared/command-auth.js";
 import { resolveWecomMediaMaxBytes, shouldRejectWecomDefaultRoute } from "../config/index.js";
 import { generateAgentId, shouldUseDynamicAgent, ensureDynamicAgentListed } from "../dynamic-agent.js";
+import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media-path-guard.js";
+import type { WecomConfig } from "../types/config.js";
 
 /** 错误提示信息 */
 const ERROR_HELP = "";
@@ -609,9 +611,15 @@ async function processAgentMessage(params: {
                             contentType = res.headers.get("content-type") || "application/octet-stream";
                             filename = new URL(mediaPath).pathname.split("/").pop() || "media";
                         } else {
-                            const fs = await import("node:fs/promises");
                             const pathModule = await import("node:path");
-                            buf = await fs.readFile(mediaPath);
+                            const runtimeCfg = getWecomRuntime()?.config?.loadConfig?.() as OpenClawConfig | undefined;
+                            const wecomConfig = runtimeCfg?.channels?.["wecom-cs"] as WecomConfig | undefined;
+                            const allowedRoots = await getExtendedMediaLocalRoots(wecomConfig);
+                            const guarded = await readGuardedLocalMediaFile({ filePath: mediaPath, allowedRoots });
+                            if (!guarded.ok) {
+                                throw new Error(guarded.error);
+                            }
+                            buf = guarded.buffer;
                             filename = pathModule.basename(mediaPath);
                             const ext = pathModule.extname(mediaPath).slice(1).toLowerCase();
                             const MIME_MAP: Record<string, string> = {
@@ -677,239 +685,4 @@ export async function handleAgentWebhook(params: AgentWebhookParams): Promise<bo
     }
 
     return false;
-}
-
-/**
- * **handleCustomerMessage (处理客户消息)**
- *
- * 处理企微客服客户消息 (origin=3)。
- * 将客户消息调度到 OpenClaw Agent 处理，并通过 KF API 发送回复。
- *
- * @param msg - 企微客服消息 (KfMessage)
- * @param accountConfig - 客服账号配置
- */
-export async function handleCustomerMessage(
-  msg: Record<string, unknown>,
-  accountConfig: WecomAccountConfig
-): Promise<void> {
-  const runtime = getWecomRuntime();
-  if (!runtime) {
-    console.error("[wecom_kf] Runtime not available for KF dispatch");
-    return;
-  }
-
-  const externalUserId = (msg.external_userid as string)?.trim();
-  const msgId = (msg.msgid as string)?.trim();
-  const openKfId = (msg.open_kfid as string)?.trim();
-
-  if (!externalUserId) {
-    console.warn(`[wecom_kf] Skip KF msg without external_userid, msgid=${msgId}`);
-    return;
-  }
-
-  // Extract text content
-  const rawText = extractKfInboundText(msg);
-  if (!rawText) {
-    console.log(`[wecom_kf] Skip unsupported KF msgtype=${msg.msgtype} msgid=${msgId}`);
-    return;
-  }
-
-  // ── State Flow: Load or create dialogue context ──
-  let dialogueCtx: Record<string, unknown> | undefined;
-  try {
-    const { createDialogueContext, DIALOGUE_SESSION_NAMESPACE } =
-      await import("../kf/dialogue-state.js");
-    const { transitionState } = await import("../kf/dialogue-transitions.js");
-    const { isHumanTransferRequest } = await import("../kf/intent-classifier.js");
-
-    // Try to get existing dialogue context from session extension
-    const sessionExt = runtime as Record<string, unknown>;
-    const stateApi = (sessionExt.session as Record<string, unknown> | undefined)?.state as Record<string, unknown> | undefined;
-    const getState = stateApi?.get as
-      ((namespace: string) => Promise<Record<string, unknown> | undefined>) | undefined;
-    const setState = stateApi?.set as
-      ((namespace: string, value: Record<string, unknown>) => Promise<void>) | undefined;
-
-    let ctx = await getState?.(DIALOGUE_SESSION_NAMESPACE);
-    if (!ctx) {
-      ctx = createDialogueContext({
-        sessionId: msgId ?? `kf-${externalUserId}-${Date.now()}`,
-        userId: externalUserId,
-      }) as unknown as Record<string, unknown>;
-    }
-
-    // Check for human transfer keywords
-    if (isHumanTransferRequest(rawText)) {
-      ctx = transitionState(
-        ctx as Parameters<typeof transitionState>[0],
-        { type: "handoff_request", reason: "user requested human via keywords" },
-      ) as unknown as Record<string, unknown>;
-    } else {
-      ctx = transitionState(
-        ctx as Parameters<typeof transitionState>[0],
-        { type: "user_message", text: rawText },
-      ) as unknown as Record<string, unknown>;
-    }
-
-    await setState?.(DIALOGUE_SESSION_NAMESPACE, ctx);
-    dialogueCtx = ctx;
-  } catch (err) {
-    // State flow is non-critical — log and continue without it
-    console.warn("[wecom_kf] Dialogue state flow error (non-blocking):", err);
-  }
-
-  const core = (runtime as Record<string, unknown>).core as Record<string, unknown> | undefined;
-  const channelApi = core?.channel as Record<string, unknown> | undefined;
-  const routing = channelApi?.routing as Record<string, unknown> | undefined;
-  const sessionApi = channelApi?.session as Record<string, unknown> | undefined;
-  const replyApi = channelApi?.reply as Record<string, unknown> | undefined;
-
-  const resolveAgentRoute = routing?.resolveAgentRoute as
-    ((params: Record<string, unknown>) => { sessionKey: string; accountId: string; agentId?: string; mainSessionKey?: string }) | undefined;
-  const recordInboundSession = sessionApi?.recordInboundSession as
-    ((params: Record<string, unknown>) => Promise<void>) | undefined;
-  const dispatchReply = replyApi?.dispatchReplyWithBufferedBlockDispatcher as
-    ((params: Record<string, unknown>) => Promise<void>) | undefined;
-
-  if (!resolveAgentRoute || !dispatchReply) {
-    console.error("[wecom_kf] Core routing/reply not available");
-    return;
-  }
-
-  // Resolve agent route
-  const route = resolveAgentRoute({
-    channel: "wecom-kf",
-    accountId: openKfId,
-    peer: { kind: "dm", id: externalUserId },
-  });
-
-  const from = `wecom-kf:user:${externalUserId}`;
-  const to = `user:${externalUserId}`;
-  const fromLabel = `KF客户:${externalUserId}`;
-
-  // Build inbound context
-  const ctxPayload: Record<string, unknown> = {
-    Body: rawText,
-    RawBody: rawText,
-    CommandBody: rawText,
-    From: from,
-    To: to,
-    SessionKey: route.sessionKey,
-    AccountId: route.accountId ?? openKfId ?? "default",
-    ChatType: "direct",
-    ConversationLabel: fromLabel,
-    SenderName: externalUserId,
-    SenderId: externalUserId,
-    Provider: "wecom-kf",
-    Surface: "wecom-kf",
-    MessageSid: msgId,
-    OriginatingChannel: "wecom-kf",
-    OriginatingTo: to,
-  };
-
-  // Record inbound session
-  if (recordInboundSession) {
-    try {
-      await recordInboundSession({
-        storePath: undefined,
-        sessionKey: route.sessionKey,
-        ctx: ctxPayload,
-        updateLastRoute: {
-          sessionKey: route.mainSessionKey ?? route.sessionKey,
-          channel: "wecom-kf",
-          to,
-          accountId: route.accountId ?? openKfId ?? "default",
-        },
-      });
-    } catch (error) {
-      console.error("[wecom_kf] recordInboundSession failed:", error);
-    }
-  }
-
-  // Collect agent response chunks
-  const responseChunks: string[] = [];
-  await dispatchReply({
-    ctx: ctxPayload,
-    dispatcherOptions: {
-      deliver: async (payload: { text?: string }) => {
-        const text = String(payload.text ?? "").trim();
-        if (!text) return;
-        responseChunks.push(text);
-      },
-      onError: (error: unknown, info: { kind: string }) => {
-        console.error(`[wecom_kf] ${info.kind} reply failed:`, error);
-      },
-    },
-  });
-
-  // Send response back via KF API
-  const combined = responseChunks.join("\n\n").trim();
-  if (!combined || !accountConfig.corpId || !accountConfig.corpSecret) return;
-
-  try {
-    const { getAccessToken } = await import("./api-client.js");
-    const { sendKfMsg } = await import("./api-client.js");
-    const token = await getAccessToken({
-      accountId: "kf-send",
-      enabled: true,
-      configured: true,
-      corpId: accountConfig.corpId,
-      corpSecret: accountConfig.corpSecret,
-      token: "",
-      encodingAESKey: "",
-      config: { corpId: accountConfig.corpId, corpSecret: accountConfig.corpSecret, token: "", encodingAESKey: "" },
-    });
-
-    const effectiveOpenKfId = openKfId || accountConfig.openKfId || "";
-    const chunks = splitKfText(combined, 2048);
-    for (const chunk of chunks) {
-      const result = await sendKfMsg({
-        accessToken: token,
-        touser: externalUserId,
-        open_kfid: effectiveOpenKfId,
-        msgtype: "text",
-        text: { content: chunk },
-      });
-      if (result.errcode !== 0) {
-        console.error(
-          `[wecom_kf] sendKfMsg failed: ${result.errmsg} (errcode=${result.errcode})`
-        );
-        break;
-      }
-    }
-  } catch (error) {
-    console.error("[wecom_kf] KF reply send error:", error);
-  }
-}
-
-/** Extract text content from a KF sync_msg item */
-function extractKfInboundText(msg: Record<string, unknown>): string | undefined {
-  const msgtype = (msg.msgtype as string) ?? "";
-  if (msgtype === "text") {
-    const text = (msg as Record<string, unknown>).text as Record<string, unknown> | undefined;
-    return (text?.content as string) ?? "";
-  }
-  // Other types (image, voice, video, file, event) — return placeholder for now
-  if (msgtype === "image") return "[图片消息]";
-  if (msgtype === "voice") return "[语音消息]";
-  if (msgtype === "video") return "[视频消息]";
-  if (msgtype === "file") return "[文件消息]";
-  return undefined;
-}
-
-/** Split text by UTF-8 byte length for KF API (2048 bytes max per message) */
-function splitKfText(text: string, maxBytes = 2048): string[] {
-  const chunks: string[] = [];
-  let current = "";
-  for (const char of text) {
-    const candidate = current + char;
-    if (Buffer.byteLength(candidate, "utf8") > maxBytes) {
-      if (current) chunks.push(current);
-      current = char;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks;
 }

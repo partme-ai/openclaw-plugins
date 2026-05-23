@@ -1,30 +1,23 @@
 import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { emptyPluginConfigSchema, ensureConfigHelpers } from "./src/compat/plugin-sdk-shim.js";
 
-import { handleWecomWebhookRequest } from "./src/monitor.js";
+import { createKfCallbackHandler } from "./src/webhook/callback.js";
 import { setWecomRuntime } from "./src/runtime.js";
 import { wecomPlugin } from "./src/channel.js";
 import { createWeComMcpTool } from "./src/mcp/index.js";
-import { createKfCallbackHandler } from "./src/callback.js";
 import { createKfAccountConfigGetter } from "./src/config/kf-callback.js";
 import {
   collectWecomKfRoutePaths,
+  isIcsEnabled,
   isLegacyWecomCsEnabled,
 } from "./src/config/kf-routes.js";
 import { WEBHOOK_PATHS } from "./src/types/constants.js";
 import type { WecomKfConfig } from "./src/types/config.js";
 
-// ── KF State Flow ──
-import { DIALOGUE_SESSION_NAMESPACE, buildStateAwarePrompt } from "./src/kf/index.js";
+// ── KF 智能化（dialogue state → before_prompt_build） ──
+import { registerIntelligenceHooks } from "./src/intelligence/hooks.js";
 
-// ── KF Agent Tools ──
-import {
-  createKfServicerListTool,
-  createKfAccountListTool,
-  createKfAccountLinkTool,
-  createKfSessionStatusTool,
-  createKfSessionTransferTool,
-} from "./src/kf/tools.js";
+// ── KF Control Tools（核心；API 响应不进 LLM 上下文） ──
 import {
   createWecomKfListServicersTool,
   createWecomKfListAccountsTool,
@@ -32,16 +25,13 @@ import {
   createWecomKfTransferSessionTool,
 } from "./src/kf/control-tools.js";
 
-// ── ICS (Intelligent Customer Service) REST API ──
-import { createKnowledgeHandler } from "./src/ics-handlers/knowledge.js";
-import { createBindingsHandler } from "./src/ics-handlers/bindings.js";
-import { createEventMessagesHandler } from "./src/ics-handlers/event-messages.js";
-import { createStatsHandler } from "./src/ics-handlers/stats.js";
+// ── ICS 可选运营模块（仅 icsEnabled=true 时 lazy 注册；见 src/ics/） ──
+import { registerIcsHttpRoutes } from "./src/ics/register.js";
 
 const plugin = {
   id: "wecom-kf",
   name: "WeCom KF",
-  description: "OpenClaw WeCom KF (WeChat Work Customer Service) — multi-agent mapping + ICS REST API",
+  description: "OpenClaw WeCom KF (WeChat Work Customer Service) — KF callback + Control Tools; ICS/agents/skills optional",
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
     void ensureConfigHelpers();
@@ -61,7 +51,7 @@ const plugin = {
       return true;
     };
 
-    // KF 客服回调（主路径；支持顶层与 accounts.*.webhookPath）
+    // ── KF 核心：客服回调（主路径） ──
     const initialCfg = getOpenClawConfig();
     const kfChannelConfig = initialCfg?.channels?.["wecom-kf"] as WecomKfConfig | undefined;
     for (const path of collectWecomKfRoutePaths(kfChannelConfig)) {
@@ -73,8 +63,16 @@ const plugin = {
       });
     }
 
-    // Legacy wecom-cs Bot / Agent 回调（Phase 2 删除；默认不注册）
+    // Legacy wecom-cs Bot / Agent 回调（默认不注册；lazy load legacy/monitor）
     if (isLegacyWecomCsEnabled(initialCfg)) {
+      let legacyWebhookHandler: typeof import("./src/legacy/monitor.js").handleWecomWebhookRequest | undefined;
+      const resolveLegacyWebhookHandler = async () => {
+        if (!legacyWebhookHandler) {
+          const mod = await import("./src/legacy/monitor.js");
+          legacyWebhookHandler = mod.handleWecomWebhookRequest;
+        }
+        return legacyWebhookHandler;
+      };
       const csRoutes = [
         WEBHOOK_PATHS.BOT_PLUGIN,
         WEBHOOK_PATHS.BOT,
@@ -85,31 +83,27 @@ const plugin = {
       for (const path of csRoutes) {
         api.registerHttpRoute({
           path,
-          handler: handleWecomWebhookRequest,
+          handler: async (req, res) => {
+            const handleWecomWebhookRequest = await resolveLegacyWebhookHandler();
+            return handleWecomWebhookRequest(req, res);
+          },
           auth: "plugin",
           match: "prefix",
         });
       }
     }
 
-    // ── ICS REST API routes (merged from @partme.ai/ics) ──
-    const runtime = api.runtime as unknown as Parameters<typeof createKnowledgeHandler>[0];
-    api.registerHttpRoute({ path: "/ics/agents", handler: createKnowledgeHandler(runtime), auth: "plugin" });
-    api.registerHttpRoute({ path: "/ics/config/bindings", handler: createBindingsHandler(runtime), auth: "plugin" });
-    api.registerHttpRoute({ path: "/ics/config/event-messages", handler: createEventMessagesHandler(runtime), auth: "plugin" });
-    api.registerHttpRoute({ path: "/ics/stats/overview", handler: createStatsHandler(runtime), auth: "plugin" });
+    // ── ICS 可选运营 REST API（默认关闭；agents/、skills/ 不在此 import 链） ──
+    if (isIcsEnabled(initialCfg)) {
+      registerIcsHttpRoutes(api);
+    }
+
+    registerIntelligenceHooks(api);
 
     // Register wecom_kf_mcp
     api.registerTool(createWeComMcpTool(), { name: "wecom_kf_mcp" });
 
-    // ── KF Agent Tools (客服行为) ──
-    api.registerTool(createKfServicerListTool(), { name: "wecom_kf_servicer_list", optional: true });
-    api.registerTool(createKfAccountListTool(), { name: "wecom_kf_account_list", optional: true });
-    api.registerTool(createKfAccountLinkTool(), { name: "wecom_kf_account_link", optional: true });
-    api.registerTool(createKfSessionStatusTool(), { name: "wecom_kf_session_status", optional: true });
-    api.registerTool(createKfSessionTransferTool(), { name: "wecom_kf_session_transfer", optional: true });
-
-    // ── KF 控制面 Tools（API 响应不进 LLM 上下文） ──
+    // ── KF Control Tools（wecom_kf_*；旧 kf/tools.ts 已 deprecated，不再注册） ──
     api.registerTool(
       (ctx) => createWecomKfListServicersTool({ ...ctx, config: getOpenClawConfig() }),
       { name: "wecom_kf_list_servicers", optional: true },
@@ -127,30 +121,7 @@ const plugin = {
       { name: "wecom_kf_transfer_session", optional: true },
     );
 
-    // State-aware dialogue prompt injection for KF sessions
-    api.on("before_prompt_build", async (_event, ctx) => {
-      // Only inject for wecom-kf channel KF surface sessions
-      if (ctx.channelId !== "wecom-kf") return;
-      if ((ctx as Record<string, unknown>).surface !== "wecom-kf") return;
-
-      // Load dialogue context
-      try {
-        const sessionExt = (api as Record<string, unknown>).session as { state?: { get?: (namespace: string) => Promise<Record<string, unknown> | undefined> } } | undefined;
-        const getState = sessionExt?.state?.get as
-          ((namespace: string) => Promise<Record<string, unknown> | undefined>) | undefined;
-        const dialogueCtx = await getState?.(DIALOGUE_SESSION_NAMESPACE);
-        if (!dialogueCtx) return;
-
-        const statePrompt = buildStateAwarePrompt(dialogueCtx as Parameters<typeof buildStateAwarePrompt>[0]);
-        if (!statePrompt) return;
-
-        return {
-          systemPrompt: statePrompt,
-        };
-      } catch {
-        // Non-blocking: if state flow fails, don't break the conversation
-      }
-    });
+    // State-aware dialogue prompt injection moved to src/intelligence/hooks.ts (registerIntelligenceHooks)
 
     // MEDIA instruction prompt injection (for all wecom-kf channel sessions)
     api.on("before_prompt_build", (_event, ctx) => {

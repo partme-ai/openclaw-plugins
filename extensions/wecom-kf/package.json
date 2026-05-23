@@ -29,7 +29,8 @@
     "zod": "^3.22.0",
     "undici": "^6.0.0",
     "fast-xml-parser": "^4.3.0",
-    "@wecom/aibot-node-sdk": "^1.0.0"
+    "@wecom/aibot-node-sdk": "^1.0.0",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22"
   },
   "files": [
     "dist",

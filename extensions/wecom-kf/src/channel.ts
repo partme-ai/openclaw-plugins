@@ -19,9 +19,9 @@ import {
 import type { ResolvedWecomAccount, WecomBotConfig } from "./types/index.js";
 import { monitorWecomProvider } from "./gateway-monitor.js";
 import { wecomKfOnboardingAdapter } from "./kf-onboarding.js";
-import { setWecomBotConfig } from "./onboarding.js";
+import { setWecomBotConfig } from "./legacy/onboarding.js";
 import { resolveKfAccountWebhookPath } from "./config/kf-routes.js";
-import { wecomOutbound } from "./outbound.js";
+import { wecomOutbound } from "./outbound/index.js";
 
 const meta = {
   id: "wecom-kf",
