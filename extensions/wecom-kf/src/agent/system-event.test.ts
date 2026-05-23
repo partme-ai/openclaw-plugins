@@ -5,19 +5,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   extractWelcomeContent,
+  handleSystemEvent,
+  inferServiceStateFromSessionChange,
   readKfSystemEventFields,
   resolveKfWelcomeText,
 } from "./system-event.js";
 
-vi.mock("../config/event-messages.js", () => ({
-  getEventMessagesConfig: vi.fn(async () => ({
-    welcome: {
-      enabled: true,
-      msgtype: "text",
-      content: { text: { content: "event-messages 欢迎语" } },
-    },
-  })),
-}));
+vi.mock("../config/event-messages.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config/event-messages.js")>();
+  return {
+    ...actual,
+    getEventMessagesConfig: vi.fn(async () => ({
+      welcome: {
+        enabled: true,
+        msgtype: "text",
+        content: { text: { content: "event-messages 欢迎语" } },
+      },
+    })),
+  };
+});
 
 describe("readKfSystemEventFields", () => {
   it("应从 msg.event 读取 event_type 与 welcome_code", () => {
@@ -94,5 +100,47 @@ describe("resolveKfWelcomeText", () => {
       accountConfig: { welcomeText: "账号级欢迎语" },
     });
     expect(text).toBe("event-messages 欢迎语");
+  });
+});
+
+describe("inferServiceStateFromSessionChange", () => {
+  it("优先使用 event.service_state", () => {
+    expect(inferServiceStateFromSessionChange({ serviceState: 3, changeType: 2 })).toBe(3);
+  });
+
+  it("change_type=3 映射为已结束(4)", () => {
+    expect(inferServiceStateFromSessionChange({ changeType: 3 })).toBe(4);
+  });
+});
+
+describe("handleSystemEvent session_status_change", () => {
+  it("state=3 时写入 session service state", async () => {
+    const sessionModule = await import("../kf/session-service-state.js");
+    const spy = vi.spyOn(sessionModule, "setKfSessionServiceState").mockResolvedValue();
+
+    await handleSystemEvent(
+      {
+        origin: 4,
+        msgtype: "event",
+        open_kfid: "wk1",
+        external_userid: "u1",
+        event: {
+          event_type: "session_status_change",
+          service_state: 3,
+          change_type: 2,
+        },
+      } as never,
+      { openKfId: "wk1" },
+    );
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openKfId: "wk1",
+        externalUserId: "u1",
+        serviceState: 3,
+      }),
+    );
+
+    spy.mockRestore();
   });
 });

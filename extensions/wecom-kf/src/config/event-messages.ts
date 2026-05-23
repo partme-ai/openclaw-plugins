@@ -14,8 +14,13 @@ const DEFAULT_EVENT_MESSAGES: EventMessagesConfig = {
     msgtype: "text",
     content: { text: { content: "您好！我是 AI 智能客服，有什么可以帮您？" } },
   },
+  queue: {
+    enabled: true,
+    msgtype: "text",
+    content: { text: { content: "当前咨询人数较多，已为您排队，请稍候，人工客服将尽快接入。" } },
+  },
   ending: {
-    enabled: false,
+    enabled: true,
     msgtype: "text",
     content: { text: { content: "感谢您的咨询，祝您生活愉快！" } },
   },
@@ -81,12 +86,33 @@ function mergeEventMessages(
 ): EventMessagesConfig {
   return {
     welcome: accountLevel?.welcome ?? channelLevel?.welcome ?? defaults.welcome,
+    queue: accountLevel?.queue ?? channelLevel?.queue ?? defaults.queue,
     ending: accountLevel?.ending ?? channelLevel?.ending ?? defaults.ending,
     satisfaction:
       accountLevel?.satisfaction ??
       channelLevel?.satisfaction ??
       defaults.satisfaction,
   };
+}
+
+/**
+ * 从事件消息模板提取纯文本内容（welcome / queue / ending）。
+ */
+export function extractEventMessageText(
+  template: EventMessagesConfig["welcome"] | undefined,
+): string | undefined {
+  if (!template?.enabled) return undefined;
+  const content = template.content as Record<string, unknown> | undefined;
+  if (!content) return undefined;
+
+  const nestedText = content.text as Record<string, unknown> | undefined;
+  if (typeof nestedText?.content === "string" && nestedText.content.trim()) {
+    return nestedText.content.trim();
+  }
+  if (typeof content.content === "string" && content.content.trim()) {
+    return content.content.trim();
+  }
+  return undefined;
 }
 
 /**

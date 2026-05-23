@@ -7,6 +7,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { __testing } from "./control-tools.js";
 import * as apiClient from "../agent/api-client.js";
+import { resetServicerCacheForTests } from "../api/admin.js";
 
 const {
     handleListServicers,
@@ -138,9 +139,15 @@ describe("wecom_kf_get_account_link handler", () => {
 describe("wecom_kf_transfer_session handler", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        resetServicerCacheForTests();
     });
 
     it("转人工成功时返回最小 ack", async () => {
+        vi.spyOn(apiClient, "listKfServicers").mockResolvedValue({
+            errcode: 0,
+            errmsg: "ok",
+            servicer_list: [{ userid: "zhangsan", status: 0 }],
+        });
         vi.spyOn(apiClient, "transferKfSession").mockResolvedValue({
             errcode: 0,
             errmsg: "ok",
@@ -158,6 +165,7 @@ describe("wecom_kf_transfer_session handler", () => {
             action: "transfer",
             serviceState: 3,
             hasMsgCode: true,
+            autoSelectedServicer: false,
         });
         expect(JSON.stringify(result)).not.toContain("MSG_CODE_SECRET");
     });
@@ -179,7 +187,13 @@ describe("wecom_kf_transfer_session handler", () => {
         );
     });
 
-    it("转人工缺少 servicer_userid 时返回错误 ack", async () => {
+    it("转人工缺少 servicer_userid 且无在线坐席时返回错误 ack", async () => {
+        vi.spyOn(apiClient, "listKfServicers").mockResolvedValue({
+            errcode: 0,
+            errmsg: "ok",
+            servicer_list: [],
+        });
+        vi.spyOn(apiClient, "transferKfSession");
         const result = await handleTransferSession(kfToolCtx, { service_state: 3 });
 
         expect(result.content).toEqual([]);

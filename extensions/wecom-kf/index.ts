@@ -16,6 +16,7 @@ import type { WecomKfConfig } from "./src/types/config.js";
 
 // ── KF 智能化（dialogue state → before_prompt_build） ──
 import { registerIntelligenceHooks } from "./src/intelligence/hooks.js";
+import { initKfSendGuardStore } from "./src/agent/kf-send-guard.js";
 
 // ── KF Control Tools（核心；API 响应不进 LLM 上下文） ──
 import {
@@ -35,6 +36,7 @@ const plugin = {
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
     void ensureConfigHelpers();
+    void initKfSendGuardStore();
 
     setWecomRuntime(api.runtime);
     api.registerChannel({ plugin: wecomPlugin });

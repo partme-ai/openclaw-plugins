@@ -22,6 +22,14 @@ import {
     listKfServicers,
     transferKfSession,
 } from "../agent/api-client.js";
+import { cacheServicers, refreshServicersFromApi } from "../api/admin.js";
+import {
+    consumePendingKfSessionSideEffects,
+    dispatchKfEventMessageByCode,
+} from "./event-message-dispatch.js";
+import { enqueueKfSessionSideEffect } from "./session-side-effect-store.js";
+import { setKfSessionServiceState } from "./session-service-state.js";
+import { resolveTransferServicerUserId } from "./transfer-policy.js";
 import {
     resolveKfAgentAccount,
     resolveKfCallContext,
@@ -80,6 +88,17 @@ async function handleListServicers(
             errcode: data.errcode,
             error: data.errmsg,
         });
+    }
+
+    if (callCtx.openKfId) {
+        cacheServicers(
+            callCtx.openKfId,
+            (data.servicer_list ?? []).map((item) => ({
+                userid: item.userid,
+                status: item.status,
+                department_id: item.department_id,
+            })),
+        );
     }
 
     const count = data.servicer_list?.length ?? 0;
@@ -165,13 +184,30 @@ async function handleTransferSession(
         return isolatedError(action, "service_state 必须为数字");
     }
 
-    if (serviceState === 3 && !(params.servicer_userid as string | undefined)?.trim()) {
-        return isolatedError(action, "转人工(service_state=3)时必须提供 servicer_userid");
-    }
-
     const agent = resolveKfAgentAccount(toolCtx.config, openKfId);
     if (!agent) {
         return isolatedError(action, "KF 账号未配置或缺少 corpId/corpSecret");
+    }
+
+    if (serviceState === 3) {
+        await refreshServicersFromApi({ agent, openKfId, force: false });
+    }
+
+    let servicerUserId = (params.servicer_userid as string | undefined)?.trim();
+    if (serviceState === 3 && !servicerUserId) {
+        const resolved = await resolveTransferServicerUserId({
+            agent,
+            openKfId,
+            refreshIfStale: false,
+        });
+        if (!resolved.ok) {
+            return isolatedError(action, resolved.error);
+        }
+        servicerUserId = resolved.servicerUserId;
+    }
+
+    if (serviceState === 3 && !servicerUserId) {
+        return isolatedError(action, "转人工(service_state=3)时必须提供 servicer_userid 或存在在线接待人员");
     }
 
     const data = await transferKfSession({
@@ -179,7 +215,7 @@ async function handleTransferSession(
         openKfId,
         externalUserId,
         serviceState,
-        servicerUserId: (params.servicer_userid as string | undefined)?.trim(),
+        servicerUserId,
     });
     auditLog(action, data);
 
@@ -192,11 +228,42 @@ async function handleTransferSession(
         });
     }
 
+    await setKfSessionServiceState({
+        openKfId,
+        externalUserId,
+        serviceState,
+        servicerUserId,
+    });
+
+    if (data.msg_code?.trim()) {
+        await enqueueKfSessionSideEffect({
+            msgCode: data.msg_code.trim(),
+            openKfId,
+            externalUserId,
+            serviceState,
+        });
+        void dispatchKfEventMessageByCode({
+            agent,
+            openKfId,
+            msgCode: data.msg_code.trim(),
+            serviceState,
+        }).then((result) => {
+            if (!result.ok) {
+                console.warn(
+                    `[wecom_kf] event message dispatch after transfer failed: ${result.errmsg ?? "unknown"}`,
+                );
+            }
+        });
+    }
+
+    void consumePendingKfSessionSideEffects({ agent, openKfId });
+
     return isolatedAck({
         ok: true,
         action,
         serviceState,
         hasMsgCode: Boolean(data.msg_code),
+        autoSelectedServicer: serviceState === 3 && !(params.servicer_userid as string | undefined)?.trim(),
     });
 }
 

@@ -282,17 +282,17 @@ export type SendTextParams = {
 /**
  * 事件消息配置。
  */
+export type EventMessageTemplate = {
+    enabled?: boolean;
+    msgtype?: string;
+    content?: Record<string, unknown>;
+};
+
 export type EventMessagesConfig = {
-    welcome?: {
-        enabled?: boolean;
-        msgtype?: string;
-        content?: Record<string, unknown>;
-    };
-    ending?: {
-        enabled?: boolean;
-        msgtype?: string;
-        content?: Record<string, unknown>;
-    };
+    welcome?: EventMessageTemplate;
+    /** 待接入池排队提示（service_state=2 + msg_code） */
+    queue?: EventMessageTemplate;
+    ending?: EventMessageTemplate;
     satisfaction?: {
         enabled?: boolean;
         head_content?: string;

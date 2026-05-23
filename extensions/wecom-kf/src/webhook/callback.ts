@@ -23,6 +23,11 @@ import type { KfMessage } from "../types/index.js";
 /** Account state tracking — updates via channel setStatus */
 const accountStatePatches = new Map<string, Record<string, unknown>>();
 
+export function trackAccountStatePatch(accountId: string, patch: Record<string, unknown>): void {
+  const existing = accountStatePatches.get(accountId) ?? {};
+  accountStatePatches.set(accountId, { ...existing, ...patch });
+}
+
 export function consumeAccountStatePatch(accountId: string): Record<string, unknown> | undefined {
   const patch = accountStatePatches.get(accountId);
   accountStatePatches.delete(accountId);
@@ -30,8 +35,7 @@ export function consumeAccountStatePatch(accountId: string): Record<string, unkn
 }
 
 function trackAccountEvent(accountId: string, patch: Record<string, unknown>): void {
-  const existing = accountStatePatches.get(accountId) ?? {};
-  accountStatePatches.set(accountId, { ...existing, ...patch });
+  trackAccountStatePatch(accountId, patch);
 }
 
 function buildCursorKey(accountKey: string, openKfId: string): string {
@@ -289,6 +293,10 @@ async function processSyncedMessage(
       break;
 
     case 5:
+      // Phase 4 (P4-01)：接待人员消息不触发 Bot/Agent 抢答，仅记录审计
+      console.log(
+        `[wecom_kf] origin=5 servicer message skipped open_kfid=${openKfId} msgid=${msg.msgid ?? "unknown"}`,
+      );
       break;
 
     default:

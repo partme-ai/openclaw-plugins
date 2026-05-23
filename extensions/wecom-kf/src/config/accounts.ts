@@ -59,9 +59,18 @@ export type ServicerInfo = {
     department_id?: number;
 };
 
+export {
+    cacheServicers,
+    getCachedServicers,
+    getOnlineServicers,
+    refreshServicersFromApi,
+    isServicerCacheStale,
+    SERVICER_CACHE_TTL_MS,
+} from "../api/admin.js";
+export type { ServicerInfo as AdminServicerInfo } from "../api/admin.js";
+
 const customAgentMappings: Record<string, string> = {};
 const accountMappings = new Map<string, AccountMapping>();
-const servicerCache = new Map<string, ServicerInfo[]>();
 
 export function loadCustomAgentMappings(config: CustomAgentMappingsConfig): void {
     for (const key of Object.keys(customAgentMappings)) {
@@ -195,20 +204,6 @@ export function registerAccountMapping(openKfId: string, mapping: AccountMapping
 export function getAccountMapping(openKfId: string): AccountMapping | undefined {
     const mapping = accountMappings.get(openKfId.trim());
     return mapping ? { ...mapping } : undefined;
-}
-
-export function cacheServicers(openKfId: string, servicers: ServicerInfo[]): void {
-    const normalizedKfId = openKfId.trim();
-    if (!normalizedKfId) return;
-    servicerCache.set(normalizedKfId, servicers.map((servicer) => ({ ...servicer })));
-}
-
-export function getCachedServicers(openKfId: string): ServicerInfo[] {
-    return (servicerCache.get(openKfId.trim()) ?? []).map((servicer) => ({ ...servicer }));
-}
-
-export function getOnlineServicers(openKfId: string): ServicerInfo[] {
-    return getCachedServicers(openKfId).filter((servicer) => servicer.status === 0);
 }
 
 export type WecomAccountConflict = {

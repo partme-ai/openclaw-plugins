@@ -10,6 +10,10 @@ import { extractInboundTextContent } from "./bot.js";
 import { checkKfDmPolicy } from "./dm-policy.js";
 import { buildKfInboundMediaContext } from "./dispatch/inbound-media.js";
 import { onKfCustomerInbound } from "./agent/kf-send-guard.js";
+import {
+  getKfSessionServiceState,
+  isKfAgentReplyBlocked,
+} from "./kf/session-service-state.js";
 import { resolveKfAccountByOpenKfId } from "./config/accounts.js";
 import { resolveKfAgentAccount } from "./kf/call-context.js";
 import {
@@ -99,7 +103,16 @@ export async function dispatchKfMessage(params: {
     return;
   }
 
-  onKfCustomerInbound({
+  const sessionState = await getKfSessionServiceState(openKfId, externalUserId);
+  if (isKfAgentReplyBlocked(sessionState?.serviceState)) {
+    logger.info(
+      `skip sender=${externalUserId} reason=service_state_${sessionState?.serviceState ?? "unknown"} ` +
+        `(human/closed session — Agent auto-reply disabled)`,
+    );
+    return;
+  }
+
+  await onKfCustomerInbound({
     openKfId,
     externalUserId,
     msgId: params.msg.msgid,

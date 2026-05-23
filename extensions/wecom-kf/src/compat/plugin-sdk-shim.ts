@@ -3,6 +3,11 @@
  *
  * 解决 v2026.3.23 中 plugin-sdk 子路径重构导致部分符号从主入口消失的问题。
  *
+ * **评估结论（2026-05-24）：保留。** `openclaw/plugin-sdk` 主入口仍不导出
+ * `deleteAccountFromConfigSection` / `setAccountEnabledInConfigSection` /
+ * `promptAccountId` / json-store helpers；channel.ts 与 onboarding 依赖本子路径探测。
+ * 待上游稳定导出后可删除本 shim，改为 `openclaw/plugin-sdk` 直引。
+ *
  * 策略：
  * 1. 纯类型 → 直接从 `openclaw/plugin-sdk` 主入口重导出（所有版本均可）
  * 2. DEFAULT_ACCOUNT_ID → 硬编码常量 "default"（所有版本一致）

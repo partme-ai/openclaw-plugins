@@ -569,7 +569,7 @@ export async function sendKfMessage(
 ): Promise<KfSendMsgResult> {
     const openKfId = String(params.open_kfid ?? "").trim();
     const externalUserId = String(params.touser ?? "").trim();
-    const guard = checkKfSendAllowed({ openKfId, externalUserId });
+    const guard = await checkKfSendAllowed({ openKfId, externalUserId });
     if (!guard.allowed) {
         console.warn(
             `[wecom-kf] send_msg blocked open_kfid=${openKfId} user=${externalUserId} code=${guard.code}: ${guard.reason}`,
@@ -595,7 +595,7 @@ export async function sendKfMessage(
     );
 
     if (result.errcode === 0) {
-        recordKfOutboundSend({ openKfId, externalUserId });
+        await recordKfOutboundSend({ openKfId, externalUserId });
     }
 
     return result;
