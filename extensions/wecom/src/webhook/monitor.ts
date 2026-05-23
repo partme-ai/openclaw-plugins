@@ -40,10 +40,16 @@ import {
   buildStreamResponse,
   buildStreamPlaceholderReply,
   buildStreamTextPlaceholderReply,
+  truncateUtf8Bytes,
 } from "./helpers.js";
 import { processDynamicRouting } from "../dynamic-routing.js";
 import { claimWecomInboundMsgid } from "./dedup.js";
 import { createWecomReplyDispatcher } from "./reply-pipeline.js";
+import {
+  applyWecomWebhookEmptyContentFallback,
+  resolveWecomStreamingConfig,
+  syncWecomStreamContent,
+} from "../streaming-config.js";
 import {
   getActiveReplyUrl,
   sendBotFallbackPromptNow,
@@ -393,6 +399,7 @@ export async function startAgentForStream(params: {
   const core = target.core;
   const config = target.config;
   const account = target.account;
+  const streamingConfig = resolveWecomStreamingConfig(account);
 
   const userid = resolveWecomSenderUserId(msg) || "unknown";
   const chatType = msg.chattype === "group" ? "group" : "direct";
@@ -846,21 +853,27 @@ export async function startAgentForStream(params: {
     const current = streamStore.getStream(streamId);
     if (current && !current.content?.trim()) {
       const ackText = resetCommandKind === "reset" ? "✅ 已重置会话。" : "✅ 已开启新会话。";
-      streamStore.updateStream(streamId, (s) => { s.content = ackText; s.finished = true; });
+      streamStore.updateStream(streamId, (s) => {
+        s.answerText = ackText;
+        syncWecomStreamContent(s, streamingConfig, {
+          includeAnswer: true,
+          includeFooter: true,
+          includeStatus: false,
+        });
+        s.content = truncateUtf8Bytes(s.content, STREAM_MAX_BYTES) || s.content;
+        s.finished = true;
+      });
     }
   }
 
-  // 空内容兜底
+  // 空内容兜底（按 streaming 配置合成气泡，与 WS finish-thinking 一致）
   streamStore.updateStream(streamId, (s) => {
-    if (!s.content.trim() && !(s.images?.length ?? 0)) {
-      const hasMediaDelivered = (s.agentMediaKeys?.length ?? 0) > 0;
-      const hasFallback = Boolean(s.fallbackMode);
-      if (hasMediaDelivered) {
-        s.content = "✅ 文件已发送。";
-      } else if (!hasFallback) {
-        s.content = "✅ 已处理完成。";
-      }
-    }
+    applyWecomWebhookEmptyContentFallback(s, streamingConfig, {
+      hasMediaDelivered: (s.agentMediaKeys?.length ?? 0) > 0,
+      hasFallback: Boolean(s.fallbackMode),
+      finishedAt: Date.now(),
+    });
+    s.content = truncateUtf8Bytes(s.content, STREAM_MAX_BYTES) || s.content;
   });
 
   streamStore.markFinished(streamId);

@@ -24,7 +24,12 @@ import {
   WSAuthFailureError,
   WSReconnectExhaustedError,
 } from "@wecom/aibot-node-sdk";
-import type { WsFrame, Logger } from "@wecom/aibot-node-sdk";
+import type {
+  EnterChatEvent,
+  EventMessageWith,
+  Logger,
+  WsFrame,
+} from "@wecom/aibot-node-sdk";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import {
@@ -42,6 +47,12 @@ import {
 import { checkDmPolicy } from "./dm-policy.js";
 import { processDynamicRouting } from "./dynamic-routing.js";
 import { checkGroupPolicy } from "./group-policy.js";
+import { enqueueWeComChatTask } from "./chat-queue.js";
+import {
+  buildAgentReplyTimeoutSummary,
+  buildDispatchErrorSummary,
+  resolveThinkingFinishText,
+} from "./finish-thinking.js";
 import type { WeComMonitorOptions, MessageState } from "./interface.js";
 import {
   downloadAndSaveImages,
@@ -70,6 +81,25 @@ import {
 } from "./template-card-manager.js";
 import { maskTemplateCardBlocks } from "./template-card-parser.js";
 import type { ResolvedWeComAccount, WeComConfig } from "./utils.js";
+import { resolveWecomAgentReplyTimeoutMs } from "./utils.js";
+import {
+  buildWecomStreamBubbleText,
+  resolveWecomEnterChatWelcomeText,
+  resolveWecomStreamingConfig,
+  resolveWecomStreamPlaceholder,
+  shouldShowWecomStatusLine,
+  WECOM_STATUS_COMPACTING,
+  WECOM_STATUS_GENERATING,
+  WECOM_STATUS_READING,
+  WECOM_STATUS_THINKING,
+  WECOM_STATUS_TOOL,
+  type ResolvedWecomStreamingConfig,
+} from "./streaming-config.js";
+import {
+  formatChannelProgressDraftLineForEntry,
+  isChannelProgressDraftWorkToolName,
+} from "openclaw/plugin-sdk/channel-streaming";
+import { TimeoutError, withTimeout } from "./timeout.js";
 import { PLUGIN_VERSION } from "./version.js";
 import { buildWecomNativeReplyImageItem } from "./ws-media.js";
 
@@ -110,7 +140,7 @@ interface WeComMessageEntry {
  */
 function buildMediaOversizeHintText(err: MediaOversizeError): string {
   const maxMb = err.maxBytes / 1024 / 1024;
-  return `当前OpenClaw限制文件不超过${maxMb}MB，请修改OpenClaw配置。`;
+  return `当前文件超过 ${maxMb}MB 限制，请调整 channels.wecom.media.maxBytes 或 agents.defaults.mediaMaxMb。`;
 }
 
 // ============================================================================
@@ -328,6 +358,107 @@ interface DeliverContext {
   state: MessageState;
   account: ResolvedWeComAccount;
   runtime: RuntimeEnv;
+  streamingConfig: ResolvedWecomStreamingConfig;
+}
+
+/**
+ * 推送 stream 气泡中间帧或关流帧（finish=false / true）。
+ */
+async function flushStreamingUpdate(
+  ctx: DeliverContext,
+  options: {
+    includeAnswer?: boolean;
+    includeFooter?: boolean;
+    includeStatus?: boolean;
+    finish?: boolean;
+  } = {},
+): Promise<void> {
+  const { wsClient, frame, state, runtime, streamingConfig } = ctx;
+  const body = frame.body as MessageBody;
+  const isEventCallback = body.msgtype === "event";
+
+  if (state.streamExpired && !options.finish) {
+    return;
+  }
+  if (isEventCallback && !options.finish) {
+    return;
+  }
+
+  const showAnswer =
+    options.includeAnswer === true ||
+    (options.includeAnswer !== false &&
+      streamingConfig.streaming &&
+      streamingConfig.streamingContent &&
+      Boolean(state.accumulatedText?.trim()));
+
+  const answerText =
+    showAnswer && state.accumulatedText
+      ? maskTemplateCardBlocks(state.accumulatedText, (...args: unknown[]) => runtime.log?.(...args))
+      : undefined;
+
+  const statusLine =
+    options.includeStatus !== false && shouldShowWecomStatusLine(streamingConfig)
+      ? state.statusLine
+      : undefined;
+
+  let bubbleText = buildWecomStreamBubbleText({
+    statusLine,
+    answerText: answerText || undefined,
+    includeStatus: options.includeStatus !== false,
+    includeAnswer: showAnswer,
+    includeFooter: false,
+  });
+
+  if (!bubbleText.trim()) {
+    if (options.finish) {
+      bubbleText = resolveThinkingFinishText(state, { streamingConfig });
+    } else {
+      return;
+    }
+  }
+
+  try {
+    if (options.finish) {
+      await sendWeComReply({
+        wsClient,
+        frame,
+        text: bubbleText,
+        runtime,
+        finish: true,
+        streamId: state.streamId,
+      });
+    } else {
+      await sendWeComReplyNonBlocking({
+        wsClient,
+        frame,
+        text: bubbleText,
+        runtime,
+        finish: false,
+        streamId: state.streamId!,
+      });
+    }
+  } catch (err) {
+    if (options.finish && err instanceof StreamExpiredError) {
+      throw err;
+    }
+    runtime.log?.(
+      `[wecom] ${options.finish ? "Final" : "Non-blocking intermediate"} stream update skipped or failed: ${String(err)}`,
+    );
+  }
+}
+
+/**
+ * 更新状态栏并推送中间帧（默认模式 / streaming.status）。
+ */
+async function updateWecomStatusLine(
+  ctx: DeliverContext,
+  nextStatus: string,
+): Promise<void> {
+  if (!shouldShowWecomStatusLine(ctx.streamingConfig)) {
+    return;
+  }
+  ctx.state.statusLine = nextStatus;
+  await flushStreamingUpdate(ctx, { includeAnswer: false });
 }
 
 /**
@@ -338,21 +469,25 @@ async function sendThinkingReply(params: {
   frame: WsFrame;
   streamId: string;
   runtime: RuntimeEnv;
+  account: ResolvedWeComAccount;
   state?: MessageState;
 }): Promise<void> {
-  const { wsClient, frame, streamId, runtime, state } = params;
+  const { wsClient, frame, streamId, runtime, account, state } = params;
+  const placeholder = resolveWecomStreamPlaceholder(account.config, THINKING_MESSAGE);
   try {
     await sendWeComReplyNonBlocking({
       wsClient,
       frame,
-      text: THINKING_MESSAGE,
+      text: placeholder,
       runtime,
       finish: false,
       streamId,
     });
   } catch (err) {
-    // sendWeComReplyNonBlocking 内部处理跳过逻辑，不会抛出 StreamExpiredError
     runtime.log?.(`[wecom] Non-blocking thinking reply skipped or failed: ${String(err)}`);
+  }
+  if (state && shouldShowWecomStatusLine(resolveWecomStreamingConfig(account))) {
+    state.statusLine = WECOM_STATUS_THINKING;
   }
 }
 
@@ -412,6 +547,7 @@ async function sendMediaBatch(ctx: DeliverContext, mediaUrls: string[]): Promise
  * 2. 有模板卡片发送成功 → "📋 卡片消息已发送。"
  * 3. 有媒体成功发送（通过 deliver 回调） → 用友好提示"文件已发送"
  * 4. 媒体发送失败 → 直接用错误摘要替换 thinking
+ * 5. dispatch 失败 / 超时 / 空回复 → 兜底文案，**必须**关闭 thinking 流
  *
  * 降级策略：
  * - 当 streamExpired=true（errcode 846608）时，流式通道已不可用（>6分钟），
@@ -421,54 +557,37 @@ async function sendMediaBatch(ctx: DeliverContext, mediaUrls: string[]): Promise
  *       processTemplateCardsIfNeeded 完成，此处只关心最后的消息发送。
  */
 async function finishThinkingStream(ctx: DeliverContext): Promise<void> {
-  const { wsClient, frame, state, runtime } = ctx;
+  const { wsClient, frame, state, runtime, streamingConfig } = ctx;
   const body = frame.body as MessageBody;
   const chatId = body.chatid || body.from.userid;
-  const visibleText = state.accumulatedText;
+  const finishText = resolveThinkingFinishText(state, { streamingConfig });
 
-  let finishText: string = state.accumulatedText;
-  if (visibleText) {
-    finishText = state.accumulatedText;
-  } else if (state.hasTemplateCard) {
-    finishText = "📋 卡片消息已发送。";
-  } else if (state.hasMedia) {
-    if (state.hasMediaFailed && state.mediaErrorSummary) {
-      finishText = finishText
-        ? `${finishText}\n\n${state.mediaErrorSummary}`
-        : state.mediaErrorSummary;
-    } else if (!finishText) {
-      finishText = "📎 文件已发送，请查收。";
-    }
-  }
-
-  if (finishText) {
-    // 尝试流式发送；若已知过期或发送时发现过期，统一降级为主动发送
-    let expired = state.streamExpired;
-    if (!expired) {
-      try {
-        await sendWeComReply({
-          wsClient,
-          frame,
-          text: finishText,
-          runtime,
-          finish: true,
-          streamId: state.streamId,
-        });
-      } catch (err) {
-        if (err instanceof StreamExpiredError) {
-          expired = true;
-        } else {
-          throw err;
-        }
+  // 尝试流式发送；若已知过期或发送时发现过期，统一降级为主动发送
+  let expired = state.streamExpired;
+  if (!expired) {
+    try {
+      await sendWeComReply({
+        wsClient,
+        frame,
+        text: finishText,
+        runtime,
+        finish: true,
+        streamId: state.streamId,
+      });
+    } catch (err) {
+      if (err instanceof StreamExpiredError) {
+        expired = true;
+      } else {
+        throw err;
       }
     }
-    if (expired) {
-      runtime.log?.(`[wecom] Stream expired, sending final text via sendMessage (proactive)`);
-      await wsClient.sendMessage(chatId, {
-        msgtype: "markdown",
-        markdown: { content: finishText },
-      });
-    }
+  }
+  if (expired) {
+    runtime.log?.(`[wecom] Stream expired, sending final text via sendMessage (proactive)`);
+    await wsClient.sendMessage(chatId, {
+      msgtype: "markdown",
+      markdown: { content: finishText },
+    });
   }
 }
 
@@ -504,7 +623,12 @@ async function routeAndDispatchMessage(params: {
     onCleanup,
   } = params;
   const core = getWeComRuntime();
-  const ctx: DeliverContext = { wsClient, frame, state, account, runtime };
+  const streamingConfig = resolveWecomStreamingConfig(account);
+  const showStatusLine = shouldShowWecomStatusLine(streamingConfig);
+  const showCompactionStatus =
+    streamingConfig.footerStatus ||
+    (streamingConfig.streaming && streamingConfig.streamingStatus);
+  const ctx: DeliverContext = { wsClient, frame, state, account, runtime, streamingConfig };
 
   // 防止 onCleanup 被多次调用（onError 回调与 catch 块可能重复触发）
   let cleanedUp = false;
@@ -516,6 +640,11 @@ async function routeAndDispatchMessage(params: {
   };
 
   let isShowThink = !(account.sendThinkingMessage ?? true);
+  const agentReplyTimeoutMs = resolveWecomAgentReplyTimeoutMs(config);
+  state.replyStartedAt = state.replyStartedAt ?? Date.now();
+  if (state.inboundHadMedia && streamingConfig.footerStatus) {
+    state.statusLine = WECOM_STATUS_READING;
+  }
 
   try {
     // 记录 inbound session 元数据（session 追踪）
@@ -537,113 +666,179 @@ async function routeAndDispatchMessage(params: {
       },
     });
 
-    await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-      ctx: ctxPayload,
-      cfg: config,
-      replyOptions: {
-        // 打印 LLM 返回的原始分片内容（在 openclaw 核心对 MEDIA: 指令解析之前），
-        // 用于排查流式分片导致 MEDIA 指令被切断、识别丢失等问题
-        // onPartialReply: (payload: unknown) => {
-        // runtime.log?.(`[openclaw -> plugin][partial] payload=${JSON.stringify(payload)}`);
-        // },
-      },
-      dispatcherOptions: {
-        onReplyStart: async () => {
-          if (!isShowThink && state.streamId && !state.accumulatedText) {
-            try {
-              await sendThinkingReply({
-                wsClient,
-                frame,
-                streamId: state.streamId,
-                runtime,
-                state,
-              });
-            } catch (e) {
-              runtime.error?.(`[wecom] sendThinkingReply threw err: ${String(e)}`);
-            }
-            isShowThink = true;
-          }
-        },
-        deliver: async (payload, info) => {
-          runtime.log?.(
-            `[openclaw -> plugin] kind=${info.kind}, payload=${JSON.stringify(payload)}, info=${JSON.stringify(info)}`,
-          );
-
-          // 累积文本
-          if (payload.text) {
-            state.accumulatedText += `${payload.text || ""}`;
-          }
-
-          // 发送媒体（统一走主动发送）
-          const mediaUrls = payload.mediaUrls?.length
-            ? payload.mediaUrls
-            : payload.mediaUrl
-              ? [payload.mediaUrl]
-              : [];
-          if (mediaUrls.length > 0) {
-            try {
-              await sendMediaBatch(ctx, mediaUrls);
-            } catch (mediaErr) {
-              // sendMediaBatch 内部异常（如 getDefaultMediaLocalRoots 不可用等）
-              // 必须标记 state，否则 finishThinkingStream 会显示"处理完成"误导用户
-              state.hasMediaFailed = true;
-              const errMsg = String(mediaErr);
-              const summary = `⚠️ 文件发送失败：内部处理异常，请升级 openclaw 到最新版本后重试。\n错误详情：${errMsg}`;
-              state.mediaErrorSummary = state.mediaErrorSummary
-                ? `${state.mediaErrorSummary}\n\n${summary}`
-                : summary;
-              runtime.error?.(`[wecom] sendMediaBatch threw: ${errMsg}`);
-            }
-
-            // 尝试为本地图片创建原生 WS 回复条目（补充主动发送，用于内联 msg_item）
-            for (const mUrl of mediaUrls) {
-              try {
-                const nativeItem = await buildWecomNativeReplyImageItem({
-                  source: mUrl,
-                  log: { debug: (msg) => runtime.log?.(msg) },
-                });
-                if (nativeItem) {
-                  runtime.log?.(`[wecom] Native WS image item created for ${mUrl}`);
+    await withTimeout(
+      core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+        ctx: ctxPayload,
+        cfg: config,
+        replyOptions: {
+          // 打印 LLM 返回的原始分片内容（在 openclaw 核心对 MEDIA: 指令解析之前），
+          // 用于排查流式分片导致 MEDIA 指令被切断、识别丢失等问题
+          // onPartialReply: (payload: unknown) => {
+          // runtime.log?.(`[openclaw -> plugin][partial] payload=${JSON.stringify(payload)}`);
+          // },
+          ...(showStatusLine ? { suppressDefaultToolProgressMessages: true as const } : {}),
+          onToolStart: showStatusLine
+            ? async (payload: {
+                name?: string;
+                phase?: string;
+                args?: Record<string, unknown>;
+                detailMode?: "explain" | "raw";
+              }) => {
+                if (!isChannelProgressDraftWorkToolName(payload.name)) {
+                  return;
                 }
-              } catch {
-                // 忽略失败，降级为已通过 sendMediaBatch 发送的标准流程
+                let nextStatus = WECOM_STATUS_TOOL;
+                if (streamingConfig.streaming && streamingConfig.streamingStatus) {
+                  const formatted = formatChannelProgressDraftLineForEntry(
+                    account.config,
+                    {
+                      event: "tool",
+                      name: payload.name,
+                      phase: payload.phase,
+                      args: payload.args,
+                    },
+                    { detailMode: payload.detailMode },
+                  );
+                  if (formatted) {
+                    nextStatus = formatted;
+                  }
+                }
+                try {
+                  await updateWecomStatusLine(ctx, nextStatus);
+                } catch (e) {
+                  runtime.log?.(`[wecom] status flush on tool start failed: ${String(e)}`);
+                }
+              }
+            : undefined,
+          onAssistantMessageStart: showStatusLine
+            ? async () => {
+                try {
+                  await updateWecomStatusLine(ctx, WECOM_STATUS_GENERATING);
+                } catch (e) {
+                  runtime.log?.(`[wecom] status flush on assistant start failed: ${String(e)}`);
+                }
+              }
+            : undefined,
+          onCompactionStart: showCompactionStatus
+            ? async () => {
+                try {
+                  await updateWecomStatusLine(ctx, WECOM_STATUS_COMPACTING);
+                } catch (e) {
+                  runtime.log?.(`[wecom] status flush on compaction start failed: ${String(e)}`);
+                }
+              }
+            : undefined,
+          onCompactionEnd: showCompactionStatus
+            ? async () => {
+                try {
+                  await updateWecomStatusLine(ctx, WECOM_STATUS_THINKING);
+                } catch (e) {
+                  runtime.log?.(`[wecom] status flush on compaction end failed: ${String(e)}`);
+                }
+              }
+            : undefined,
+        },
+        dispatcherOptions: {
+          onReplyStart: async () => {
+            state.replyStartedAt = state.replyStartedAt ?? Date.now();
+            if (shouldShowWecomStatusLine(streamingConfig)) {
+              state.statusLine = WECOM_STATUS_THINKING;
+            }
+            if (!isShowThink && state.streamId && !state.accumulatedText) {
+              try {
+                await sendThinkingReply({
+                  wsClient,
+                  frame,
+                  streamId: state.streamId,
+                  runtime,
+                  account,
+                  state,
+                });
+              } catch (e) {
+                runtime.error?.(`[wecom] sendThinkingReply threw err: ${String(e)}`);
+              }
+              isShowThink = true;
+            }
+            if (shouldShowWecomStatusLine(streamingConfig)) {
+              try {
+                await flushStreamingUpdate(ctx, { includeAnswer: false });
+              } catch (e) {
+                runtime.log?.(`[wecom] status flush on reply start failed: ${String(e)}`);
               }
             }
-          }
+          },
+          deliver: async (payload, info) => {
+            runtime.log?.(
+              `[openclaw -> plugin] kind=${info.kind}, payload=${JSON.stringify(payload)}, info=${JSON.stringify(info)}`,
+            );
 
-          // 中间帧：有可见文本时流式更新（流式过期后跳过，等 deliver 完成后主动发送）
-          // 使用 maskTemplateCardBlocks 遮罩正在构建中的模板卡片代码块，
-          // 避免 JSON 源码在流式输出过程中暴露给终端用户
-          if (state.accumulatedText && !state.streamExpired) {
-            try {
-              const displayText = maskTemplateCardBlocks(state.accumulatedText, (...args: any[]) =>
-                runtime.log?.(...args),
-              );
-              // if (displayText !== state.accumulatedText) {
-              //   runtime.log?.(`[wecom][template-card] Mid-frame masked: original=${state.accumulatedText.length}chars, masked=${displayText.length}chars`);
-              // }
-              await sendWeComReplyNonBlocking({
-                wsClient,
-                frame,
-                text: displayText!,
-                runtime,
-                finish: false,
-                streamId: state.streamId!,
-              });
-            } catch (err) {
-              // sendWeComReplyNonBlocking 内部处理跳过逻辑，不会抛出 StreamExpiredError
-              // 仅可能因网络/传输异常抛出，记录并继续
-              runtime.log?.(
-                `[wecom] Non-blocking intermediate reply skipped or failed: ${String(err)}`,
-              );
+            // 累积文本
+            if (payload.text) {
+              state.accumulatedText += `${payload.text || ""}`;
             }
-          }
+
+            // 发送媒体（统一走主动发送）
+            const mediaUrls = payload.mediaUrls?.length
+              ? payload.mediaUrls
+              : payload.mediaUrl
+                ? [payload.mediaUrl]
+                : [];
+            if (mediaUrls.length > 0) {
+              try {
+                await sendMediaBatch(ctx, mediaUrls);
+              } catch (mediaErr) {
+                // sendMediaBatch 内部异常（如 getDefaultMediaLocalRoots 不可用等）
+                // 必须标记 state，否则 finishThinkingStream 会显示"处理完成"误导用户
+                state.hasMediaFailed = true;
+                const errMsg = String(mediaErr);
+                const summary = `⚠️ 文件发送失败：内部处理异常，请升级 openclaw 到最新版本后重试。\n错误详情：${errMsg}`;
+                state.mediaErrorSummary = state.mediaErrorSummary
+                  ? `${state.mediaErrorSummary}\n\n${summary}`
+                  : summary;
+                runtime.error?.(`[wecom] sendMediaBatch threw: ${errMsg}`);
+              }
+
+              // 尝试为本地图片创建原生 WS 回复条目（补充主动发送，用于内联 msg_item）
+              for (const mUrl of mediaUrls) {
+                try {
+                  const nativeItem = await buildWecomNativeReplyImageItem({
+                    source: mUrl,
+                    log: { debug: (msg) => runtime.log?.(msg) },
+                  });
+                  if (nativeItem) {
+                    runtime.log?.(`[wecom] Native WS image item created for ${mUrl}`);
+                  }
+                } catch {
+                  // 忽略失败，降级为已通过 sendMediaBatch 发送的标准流程
+                }
+              }
+            }
+
+            // 中间帧：流式模式下推送答案增量；默认模式仅通过 statusLine 更新
+            if (!state.streamExpired) {
+              try {
+                if (streamingConfig.streaming && streamingConfig.streamingContent && state.accumulatedText) {
+                  await flushStreamingUpdate(ctx, { includeAnswer: true, includeStatus: true });
+                }
+              } catch (err) {
+                runtime.log?.(
+                  `[wecom] Non-blocking intermediate reply skipped or failed: ${String(err)}`,
+                );
+              }
+            }
+          },
+          onError: (err, info) => {
+            runtime.error?.(`[wecom] ${info.kind} reply failed: ${String(err)}`);
+            const summary = buildDispatchErrorSummary(info.kind, err);
+            state.dispatchErrorSummary = state.dispatchErrorSummary
+              ? `${state.dispatchErrorSummary}\n\n${summary}`
+              : summary;
+          },
         },
-        onError: (err, info) => {
-          runtime.error?.(`[wecom] ${info.kind} reply failed: ${String(err)}`);
-        },
-      },
-    });
+      }),
+      agentReplyTimeoutMs,
+      `Agent reply timed out after ${agentReplyTimeoutMs}ms`,
+    );
 
     // 模板卡片检测与发送（在关闭 thinking 流之前独立处理）
     const cardResult = await processTemplateCardsIfNeeded({
@@ -663,6 +858,14 @@ async function routeAndDispatchMessage(params: {
     safeCleanup();
   } catch (err) {
     runtime.error?.(`[wecom][plugin] Failed to process message: ${String(err)}`);
+    if (err instanceof TimeoutError) {
+      state.dispatchErrorSummary = buildAgentReplyTimeoutSummary(agentReplyTimeoutMs);
+      runtime.error?.(
+        `[wecom] Agent reply timed out after ${agentReplyTimeoutMs}ms, sending fallback to user`,
+      );
+    } else if (!state.dispatchErrorSummary) {
+      state.dispatchErrorSummary = buildDispatchErrorSummary("dispatch", err);
+    }
     // 即使 dispatch 抛异常，也需要处理卡片和关闭 thinking 流
     try {
       const cardResult = await processTemplateCardsIfNeeded({
@@ -836,7 +1039,11 @@ async function processWeComMessageNow(entry: WeComMessageEntry): Promise<void> {
   setReqIdForChat(chatId, reqId, account.accountId);
 
   const streamId = generateReqId("stream");
-  const state: MessageState = { accumulatedText: "", streamId };
+  const state: MessageState = {
+    accumulatedText: "",
+    streamId,
+    inboundHadMedia: mediaList.length > 0,
+  };
   setMessageState(messageId, state);
 
   const cleanupState = () => {
@@ -1070,6 +1277,25 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
       }
     });
 
+    // 进入会话事件 → 欢迎语（对齐 wecom-kf replyWelcome）
+    wsClient.on("event.enter_chat", async (frame: WsFrame<EventMessageWith<EnterChatEvent>>) => {
+      const welcomeText = resolveWecomEnterChatWelcomeText(account.config);
+      if (!welcomeText) {
+        return;
+      }
+      try {
+        await wsClient.replyWelcome(frame, {
+          msgtype: "text",
+          text: { content: welcomeText },
+        });
+        runtime.log?.(`[${account.accountId}] ws-event: sent enter_chat welcome`);
+      } catch (err) {
+        runtime.error?.(
+          `[${account.accountId}] ws-event: replyWelcome failed: ${String(err)}`,
+        );
+      }
+    });
+
     // 监听版本检查事件：收到 enter_check_update 时回复当前插件版本
     wsClient.on(EVENT_ENTER_CHECK_UPDATE as any, async (frame: WsFrame) => {
       try {
@@ -1092,17 +1318,17 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
         });
         if (!entry) return;
 
-        // 排队逻辑暂时关闭，直接处理消息
-        // const { status } = enqueueWeComChatTask({
-        //   accountId: entry.account.accountId,
-        //   chatId: entry.chatId,
-        //   task: () => processWeComMessageNow(entry),
-        // });
-        //
-        // if (status === "queued") {
-        //   runtime.log?.(`[wecom] Chat task queued for chat=${entry.chatId} (previous task still running)`);
-        // }
-        await processWeComMessageNow(entry);
+        const { status } = enqueueWeComChatTask({
+          accountId: entry.account.accountId,
+          chatId: entry.chatId,
+          task: () => processWeComMessageNow(entry),
+        });
+
+        if (status === "queued") {
+          runtime.log?.(
+            `[wecom] Chat task queued for chat=${entry.chatId} (previous task still running)`,
+          );
+        }
       } catch (err) {
         runtime.error?.(`[${account.accountId}] Failed to process message: ${String(err)}`);
       }
@@ -1154,7 +1380,11 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
           wsClient,
         });
         if (entry) {
-          await processWeComMessageNow(entry);
+          enqueueWeComChatTask({
+            accountId: entry.account.accountId,
+            chatId: entry.chatId,
+            task: () => processWeComMessageNow(entry),
+          });
         }
       } catch (err) {
         runtime.error?.(
@@ -1164,7 +1394,7 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
     });
 
     runtime.log?.(
-      `[${account.accountId}] Event listeners attached: message + event(template_card_event, auth_change_event)`,
+      `[${account.accountId}] Event listeners attached: message + event.enter_chat + event(template_card_event, auth_change_event)`,
     );
 
     // 启动前预热 reqId 缓存，确保完成后再建立连接，避免 getSync 在预热完成前返回 undefined
