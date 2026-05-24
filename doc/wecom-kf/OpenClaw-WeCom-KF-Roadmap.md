@@ -372,7 +372,7 @@ dispatchKfMessage (research)
 | **架构验收附件** | [主架构 §5 事件矩阵](./OpenClaw-WeCom-KF-Master-Architecture.md#5-事件类型处理矩阵) | origin / event_type 行为 |
 | **Tools 验收** | [Tools 架构 §6](./OpenClaw-WeCom-KF-Tools-Architecture.md#6-实现阶段划分) | transcript 无 PII |
 | **Preflight Skill** | `extensions/wecom-kf/skills/wecom-kf-preflight/SKILL.md` | 配置项检查（待与 US-015 对齐 executable checklist） |
-| **插件 README** | `extensions/wecom-kf/README.md` / `README.zh-CN.md` | 安装与配置概览 |
+| **插件 README** | `extensions/wecom-kf/README.md` / `README.en.md` | 安装与配置概览 |
 
 ### 7.2 联调前一键命令
 

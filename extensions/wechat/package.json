@@ -11,7 +11,8 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README.zh_CN.md",
+    "README.en.md",
+    "README.zh-CN.md",
     "CHANGELOG.md",
     "CHANGELOG.zh_CN.md",
     "LICENSE"

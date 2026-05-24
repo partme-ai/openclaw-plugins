@@ -4,7 +4,7 @@
 
 企业微信配置位于 `channels.wecom.*`。多账号配置使用 `channels.wecom.accounts.<accountId>`，账号级字段会覆盖顶层同名字段。
 
-相关文档：[架构](./OpenClaw-WeCom-Architecture.md)、[流式](./OpenClaw-WeCom-Streaming-Architecture.md)、[联调测试](./OpenClaw-WeCom-Testing.md)、[README](../../extensions/wecom/README.zh-CN.md)
+相关文档：[架构](./OpenClaw-WeCom-Architecture.md)、[流式](./OpenClaw-WeCom-Streaming-Architecture.md)、[联调测试](./OpenClaw-WeCom-Testing.md)、[README](../../extensions/wecom/README.md)
 
 ## 场景索引
 

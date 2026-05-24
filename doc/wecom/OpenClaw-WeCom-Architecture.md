@@ -421,7 +421,7 @@ sequenceDiagram
 | [Streaming Architecture](./OpenClaw-WeCom-Streaming-Architecture.md) | 流式协议细节、状态机、演进路线 |
 | [Testing](./OpenClaw-WeCom-Testing.md) | 联调、`user:` 前缀、93006 |
 | [Feishu SDK Inventory](./OpenClaw-WeCom-Feishu-SDK-Inventory.md) | plugin-sdk 映射 |
-| [extensions/wecom/README.zh-CN.md](../../extensions/wecom/README.zh-CN.md) | npm 包说明、Cron、构建 |
+| [extensions/wecom/README.md](../../extensions/wecom/README.md) | npm 包说明、Cron、构建 |
 
 ---
 

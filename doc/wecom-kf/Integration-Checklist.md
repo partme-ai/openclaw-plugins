@@ -375,7 +375,7 @@ grep -E '\[wecom_kf:audit\]|transfer|enter_session|session_status|send_msg_on_ev
 | Phase 任务状态 | [OpenClaw-WeCom-KF-Roadmap.md](./OpenClaw-WeCom-KF-Roadmap.md) |
 | 事件矩阵 / origin | [OpenClaw-WeCom-KF-Master-Architecture.md §5](./OpenClaw-WeCom-KF-Master-Architecture.md) |
 | Control Tools 设计 | [OpenClaw-WeCom-KF-Tools-Architecture.md](./OpenClaw-WeCom-KF-Tools-Architecture.md) |
-| 插件 README | `extensions/wecom-kf/README.zh-CN.md` |
+| 插件 README | `extensions/wecom-kf/README.md` |
 | wecom 客户联系（非 KF） | [OpenClaw-WeCom-Integration-Checklist.md](../wecom/OpenClaw-WeCom-Integration-Checklist.md) |
 | Preflight Skill | `extensions/wecom-kf/skills/wecom-kf-preflight/SKILL.md` |
 

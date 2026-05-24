@@ -4,7 +4,7 @@ This guide is the authoritative English configuration reference for `@partme.ai/
 
 Configuration lives under `channels.wecom.*`. Multi-account setups use `channels.wecom.accounts.<accountId>`, where account-level fields override top-level fields.
 
-Related docs: [Architecture](./OpenClaw-WeCom-Architecture.md), [Streaming](./OpenClaw-WeCom-Streaming-Architecture.md), [Testing](./OpenClaw-WeCom-Testing.md), [README](../../extensions/wecom/README.md)
+Related docs: [Architecture](./OpenClaw-WeCom-Architecture.md), [Streaming](./OpenClaw-WeCom-Streaming-Architecture.md), [Testing](./OpenClaw-WeCom-Testing.md), [README](../../extensions/wecom/README.en.md)
 
 ## Scenario Index
 

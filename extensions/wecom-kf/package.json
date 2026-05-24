@@ -36,6 +36,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
+    "README.en.md",
     "README.zh-CN.md",
     "skills"
   ],

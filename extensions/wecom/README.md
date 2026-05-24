@@ -2,72 +2,54 @@
 
 # OpenClaw WeCom
 
-**OpenClaw channel plugin for WeCom Bot WebSocket, Bot Webhook, and Agent self-built app delivery**
+**OpenClaw 企业微信渠道插件：Bot WebSocket、Bot Webhook 与自建应用 Agent 双模集成**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fwecom-blue)
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-ISC-green)
 
-[English](./README.md) | [Simplified Chinese](./README.zh-CN.md)
+[简体中文](./README.md) | [English](./README.en.md)
 
 </div>
 
-`@partme.ai/wecom` connects [OpenClaw](https://github.com/openclaw/openclaw) to WeCom / WeChat Work through Smart Robot Bot and self-built Agent app modes. Use Bot WebSocket for low-friction interactive chat and streaming replies; add Agent mode when you need proactive sends, Cron delivery, department or tag broadcasts, and full outbound file support.
+`@partme.ai/wecom` 用于把 OpenClaw 接入企业微信。它面向中国企业微信用户，支持智能机器人 Bot WebSocket、Bot HTTP Webhook 和自建应用 Agent 三条路径：Bot 负责低门槛交互式对话与流式回复，Agent 负责主动推送、Cron 定时投递、部门/标签广播和完整文件兜底。
 
-## Introduction
+当前版本：`2026.5.24`。依赖 `@partme.ai/openclaw-message-sdk`：`2026.5.24`。`pnpm test` 当前约 330 个 Vitest 用例，数量会随源码覆盖变化。
 
-The plugin is a production-oriented WeCom channel bridge for OpenClaw Gateway. It keeps runtime configuration flat under `channels.wecom`, supports account-level overrides under `channels.wecom.accounts.<accountId>`, and lets Bot and Agent coexist in the same account.
+## 核心能力
 
-Key behavior to know before you configure it:
+- **三种运行模式**：Bot WebSocket、Bot Webhook、自建应用 Agent 加密回调。
+- **流式回复**：支持 `replyStream` / Webhook `stream`，包含思考占位、状态文案、脚注和 846608 降级。
+- **Bot 与 Agent 共存**：生产环境通常用 Bot 做对话，用 Agent 做主动推送、Cron 和文件兜底。
+- **平铺配置**：运行时配置位于 `channels.wecom`；多账号位于 `channels.wecom.accounts.<accountId>`。
+- **多账号路由**：支持 `defaultAccount` 与账号级覆盖，用于多团队、多租户或多 Bot。
+- **访问控制**：私聊策略 `open` / `pairing` / `allowlist` / `disabled`，群聊策略 `open` / `allowlist` / `disabled`。
+- **媒体处理**：支持入站图片、语音、视频、文件、mixed 图文混排、引用消息；出站本地文件受 `mediaLocalRoots` 白名单保护。
+- **MCP 与 Skills**：注册 `wecom_mcp`，并提供联系人、文档、日程、会议、消息、媒体、模板卡片、smartsheet、待办、预检和统一操作等技能。
 
-- **Bot WebSocket wins when `botId` + `secret` exist**. Even if `connectionMode` is set to `webhook`, the runtime starts Bot WS when those credentials are present. For pure Bot Webhook, omit `botId` and `secret`.
-- **Agent can coexist with Bot**. In production, Bot usually handles interactive chat while Agent handles proactive send, Cron, file fallback, and API-driven delivery.
-- **`agent.agentId` is required for proactive paths**. Agent inbound can be configured with callback credentials, but proactive send, Cron, and fallback delivery also need `agent.agentId`.
-- **Markdown support depends on the outbound path**. Bot stream paths are plain-text stream carriers; Agent API and some active send paths can send Markdown, but WeCom may still normalize or strip formatting depending on message type and client behavior.
+## 重要事实
 
-## Core Capabilities
+- 只要同一账号存在 `botId` + `secret`，运行时优先启动 Bot WebSocket；即使 `connectionMode` 写成 `webhook` 也会走 WS。纯 Bot Webhook 请不要配置 `botId` 和 `secret`。
+- `agent.agentId` 是主动推送、Cron 和 Agent 兜底投递的必填字段。
+- Bot WebSocket 主动发送使用企业微信原始 `userid`，不要带 `user:` 前缀，否则可能触发 `93006 invalid chatid`。
+- Bot stream 是纯文本流式载体；Markdown 是否展示为富文本取决于实际出站路径与企业微信客户端。
 
-- **Three runtime paths**: Bot WebSocket, Bot HTTP Webhook, and Agent encrypted XML Webhook.
-- **Streaming Bot replies**: `replyStream` / Webhook `stream` with thinking placeholders, status text, footer, and 846608 fallback handling.
-- **Multi-account routing**: `defaultAccount` plus `accounts.<id>` for separate teams, tenants, environments, or Bot/Agent credentials.
-- **Access control**: DM policies (`open`, `pairing`, `allowlist`, `disabled`) and group policies (`open`, `allowlist`, `disabled`).
-- **Media handling**: inbound image, voice, video, file, mixed content, quoted messages, and guarded local-file outbound through `mediaLocalRoots`.
-- **Template cards**: `text_notice`, `news_notice`, `button_interaction`, `vote_interaction`, and `multiple_interaction` with callback handling.
-- **Dynamic Agent routing**: optional per-user and per-group isolated Agent/session routing.
-- **MCP and Skills**: `wecom_mcp` tool plus built-in WeCom Skills for contact, docs, schedule, meeting, message, media, template cards, smartsheet, todo, preflight, and unified operations.
-- **Operational safeguards**: heartbeat, exponential reconnect, persisted dedup, keyed chat queue, timeout fallback, and kicked-connection protection.
-
-## Quick Start
-
-### Prerequisites
-
-- OpenClaw `>= 2026.4.12`
-- Node.js `22+`
-- `@partme.ai/openclaw-message-sdk >= 2026.5.24`
-- WeCom admin access for Smart Robot API mode or self-built Agent app setup
-
-### Install
+## 安装与更新
 
 ```bash
 openclaw plugins install @partme.ai/wecom
+openclaw plugins update @partme.ai/wecom
 ```
 
-If local plugin security scanning blocks installation during development, review the warning first, then use the unsafe install flag only in trusted environments:
+本地开发安装如果被插件安全扫描拦截，请先确认来源可信，再使用：
 
 ```bash
 openclaw plugins install @partme.ai/wecom@latest --dangerously-force-unsafe-install
 ```
 
-### Choose a Setup Path
+## 快速开始：Bot WebSocket
 
-| Path | Use When | Command or Doc |
-|------|----------|----------------|
-| Interactive wizard | You want guided setup from the CLI | `openclaw channels add` |
-| Minimal CLI | You already have Bot ID and Secret | See [Bot WebSocket CLI](#bot-websocket-cli) |
-| Scenario guide | You need Bot, Agent, dual-mode, multi-account, media, RAG, proxy, or Cron examples | [Configuration guide](../../doc/wecom/OpenClaw-WeCom-Configuration.md) |
-| Production acceptance | You need real WeCom tenant verification | [Integration checklist](../../doc/wecom/OpenClaw-WeCom-Integration-Checklist.md) |
-
-### Bot WebSocket CLI
+适合最快接入私聊/群聊和流式对话，不需要公网回调地址。
 
 ```bash
 openclaw config set channels.wecom.enabled true
@@ -78,9 +60,7 @@ openclaw gateway restart
 openclaw channels status --probe
 ```
 
-Send a DM to the WeCom Smart Robot. Gateway logs should show WebSocket connection and authentication success.
-
-### Minimal JSON
+最小 JSON：
 
 ```json
 {
@@ -95,29 +75,11 @@ Send a DM to the WeCom Smart Robot. Gateway logs should show WebSocket connectio
 }
 ```
 
-Runtime config is flat under `channels.wecom.*`. Do not use nested `bot.*`, `botIds`, or `aibotid` as the primary runtime shape.
+在企业微信里向智能机器人发送 `你好`。Gateway 日志应出现 WebSocket 连接和鉴权成功，随后收到 Agent 回复。
 
-## Mode Selection
+## 生产双模配置
 
-| Mode | Connection | Credentials | Best For | Notes |
-|------|------------|-------------|----------|-------|
-| Bot WebSocket | Long-lived WS | `botId` + `secret` | Fastest interactive setup, DM/group chat, streaming replies | Default and preferred for chat; no public callback URL required. |
-| Bot Webhook | HTTPS callback | `token` + `encodingAESKey` + optional `receiveId` | Environments that cannot keep WS connections | Requires public callback URL and stream refresh handling. |
-| Agent app | HTTPS callback + WeCom API | `corpId` + `corpSecret` + `agentId` + `token` + `encodingAESKey` | Proactive send, Cron, departments, tags, full file fallback | Agent inbound is not Bot-style streaming; replies are sent through API. |
-| Dual mode | Bot WS + Agent | Bot credentials plus `agent.*` | Production default | Bot handles conversation; Agent handles push, Cron, and fallback. |
-
-Callback paths:
-
-| Runtime Path | Recommended URL |
-|--------------|-----------------|
-| Bot Webhook | `https://<GATEWAY_HOST>/plugins/wecom/bot/<accountId>` |
-| Agent Webhook | `https://<GATEWAY_HOST>/plugins/wecom/agent/<accountId>` |
-
-Legacy paths such as `/wecom`, `/wecom/bot`, and `/wecom/agent` remain for compatibility, but new deployments should prefer `/plugins/wecom/...`.
-
-## Production Dual-Mode Config
-
-Use this shape when you want Bot streaming chat plus Agent proactive and fallback delivery:
+需要 Bot 流式对话 + Agent 主动推送/文件兜底/Cron 时使用：
 
 ```json
 {
@@ -136,7 +98,7 @@ Use this shape when you want Bot streaming chat plus Agent proactive and fallbac
         "status": true,
         "elapsed": true
       },
-      "mediaLocalRoots": ["~/Downloads"],
+      "mediaLocalRoots": ["/data/wecom-media"],
       "media": {
         "maxBytes": 20971520
       },
@@ -156,72 +118,49 @@ Use this shape when you want Bot streaming chat plus Agent proactive and fallbac
 }
 ```
 
-Remove `network.egressProxyUrl` if you do not need a fixed egress proxy. Never commit real WeCom credentials.
+如果不需要固定出口代理，请删除 `network.egressProxyUrl`。不要把真实企业微信密钥提交到仓库。
 
-## Common CLI Tasks
+## 模式选择
+
+| 模式 | 连接方式 | 凭据 | 适合场景 |
+|------|----------|------|----------|
+| Bot WebSocket | 长连接 WS | `botId` + `secret` | 快速聊天、私聊/群聊、流式回复 |
+| Bot Webhook | HTTPS 回调 | `token` + `encodingAESKey` + 可选 `receiveId` | 无法保持 WS 的部署环境 |
+| Agent 自建应用 | HTTPS 回调 + 企微 API | `corpId` + `corpSecret` + `agentId` + `token` + `encodingAESKey` | 主动推送、Cron、部门/标签、文件兜底 |
+| 双模生产 | Bot WS + Agent | Bot 凭据 + `agent.*` | 生产默认方案 |
+
+推荐回调地址：
+
+| 路径 | 推荐 URL |
+|------|----------|
+| Bot Webhook | `https://<GATEWAY_HOST>/plugins/wecom/bot/<accountId>` |
+| Agent Webhook | `https://<GATEWAY_HOST>/plugins/wecom/agent/<accountId>` |
+
+旧路径 `/wecom`、`/wecom/bot`、`/wecom/agent` 仍用于兼容，新部署建议使用 `/plugins/wecom/...`。
+
+## 常用命令
 
 ```bash
-# Agent callback fields; configure Gateway before saving URL in WeCom admin.
+# 状态与诊断
+openclaw channels list
+openclaw channels status --probe
+openclaw plugins doctor
+
+# Agent 回调字段
 openclaw config set channels.wecom.agent.corpId "<CORP_ID>"
 openclaw config set channels.wecom.agent.corpSecret "<SECRET>"
 openclaw config set channels.wecom.agent.agentId 1000002
 openclaw config set channels.wecom.agent.token "<TOKEN>"
 openclaw config set channels.wecom.agent.encodingAESKey "<AES_KEY>"
 
-# Egress proxy for 60020 fixed-IP errors.
-openclaw config set channels.wecom.network.egressProxyUrl "http://proxy.company.local:3128"
+# Bot WS 主动发送：使用纯 userid
+openclaw message send --channel wecom --account default --target <USERID> --message "Bot WS 测试"
 
-# Bot WS active send uses a raw userid, not user:<id>.
-openclaw message send --channel wecom --account default --target <USERID> --message "Bot WS test"
-
-# Agent/Cron target formats support explicit prefixes.
-openclaw message send --channel wecom --account default --target user:<USER_ID> --message "Agent outbound test"
+# Agent/Cron 出站：支持显式前缀
+openclaw message send --channel wecom --account default --target user:<USER_ID> --message "Agent 出站测试"
 ```
 
-For Bot WebSocket active sends, `user:<id>` can produce `93006 invalid chatid`; use the raw WeCom userid. For Agent and Cron delivery, use `user:<id>`, `party:<id>`, `tag:<id>`, `group:<id>`, or `chat:<id>`.
-
-## Streaming and Text Formatting
-
-| Path | Streaming | Formatting Reality |
-|------|:---------:|--------------------|
-| Bot WebSocket | Yes | `replyStream` is a plain-text stream carrier. Markdown-like text may be shown as plain text or normalized by WeCom. |
-| Bot Webhook | Yes | Uses encrypted `msgtype: stream` plus `stream_refresh`; content is stream text with a 6-minute Bot window. |
-| Agent inbound reply | No | Sends one final API message; Markdown support depends on WeCom API message type and client rendering. |
-| Active outbound / fallback | Not Bot stream | Bot WS `sendMessage` or Agent API is selected by availability; WeCom may strip or normalize formatting by path. |
-
-Default behavior is `streaming: false` with status/footer updates and one complete final answer. Set `streaming: true` when you want typewriter-style content updates. See the [Streaming architecture](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) for `footer.status`, `footer.elapsed`, `streaming.status`, and `streaming.content`.
-
-## Media Capabilities
-
-| Direction | Type | Limit or Behavior | Notes |
-|-----------|------|-------------------|-------|
-| Inbound | Image, voice, video, file | Download/decrypt when supported by the current path | Media is added to the inbound context for the Agent. |
-| Inbound | Mixed and quoted messages | Parsed when present in Bot payloads | Exact fields depend on WeCom event shape. |
-| Outbound | Image | 10 MB Bot limit before fallback | Oversized image can fall back to file where possible. |
-| Outbound | Voice | 2 MB AMR | Non-AMR or oversized voice is treated as file. |
-| Outbound | Video | 10 MB Bot limit before fallback | Oversized video can fall back to file where possible. |
-| Outbound | File | `media.maxBytes`, commonly 20 MB | Full outbound file delivery requires Agent API or fallback support. |
-| Local path | Any local file | Must be under `mediaLocalRoots` | Paths outside allowlist are rejected before upload. |
-
-For safe local file sends:
-
-```bash
-openclaw config set channels.wecom.mediaLocalRoots '["/data/wecom-media"]'
-openclaw config set channels.wecom.media.maxBytes 20971520
-```
-
-## Access Control, Multi-Account, and Cron
-
-| Topic | Configuration |
-|-------|---------------|
-| DM policy | `channels.wecom.dmPolicy`: `open`, `pairing`, `allowlist`, `disabled` |
-| Group policy | `channels.wecom.groupPolicy`: `open`, `allowlist`, `disabled` |
-| User allowlist | `channels.wecom.allowFrom` |
-| Group allowlist | `channels.wecom.groupAllowFrom` and `channels.wecom.groups.<chatId>.allowFrom` |
-| Multi-account | `channels.wecom.defaultAccount` plus `channels.wecom.accounts.<accountId>` |
-| Cron delivery | Requires Agent mode and `agent.agentId` |
-
-Cron scheduled delivery is proactive outbound messaging, so it must use Agent mode:
+Cron 投递属于主动出站，必须配置 Agent：
 
 ```bash
 openclaw cron add \
@@ -229,84 +168,65 @@ openclaw cron add \
   --agent main \
   --cron "0 9 * * 1-5" \
   --tz "Asia/Shanghai" \
-  --message "Daily brief" \
+  --message "今日简报" \
   --announce \
   --channel wecom \
   --to "party:<PARTY_ID>"
 ```
 
-## MCP and Skills
+## 媒体与文件
 
-The plugin registers `wecom_mcp` for direct WeCom API access through the OpenClaw tool pipeline. The MCP transport includes interceptors for business errors, media handling, smart page creation, and smart page export.
-
-Built-in Skills include `wecom-contact`, `wecom-doc`, `wecom-meeting`, `wecom-msg`, `wecom-preflight`, `wecom-schedule`, `wecom-send-media`, `wecom-send-template-card`, `wecom-smartsheet`, `wecom-todo`, and `wecom-unified`.
-
-## Troubleshooting
-
-| Symptom | Likely Cause | Quick Fix |
-|---------|--------------|-----------|
-| `60020 not allow to access from your ip` | WeCom API call from an untrusted egress IP | Add the Gateway IP in WeCom admin or set `channels.wecom.network.egressProxyUrl`. |
-| `93006 invalid chatid` | Bot WS active send used `user:<id>` instead of raw userid | Use `--target <USERID>` for Bot WS active sends. |
-| `Kicked by server: a new connection was established elsewhere` | Multiple Gateway instances or duplicate account credentials | Keep one active WS connection per Bot account; the plugin avoids immediate restart loops. |
-| Bot Webhook never streams final content | Callback verification, dedup, or stream refresh path is wrong | Use the [Integration checklist](../../doc/wecom/OpenClaw-WeCom-Integration-Checklist.md#2-webhook-bot-mode). |
-| Local media path denied | File is outside `mediaLocalRoots` | Add a trusted directory to `mediaLocalRoots`; do not disable the guard. |
-| Cron does not deliver | Agent mode missing or `agent.agentId` omitted | Configure full `agent.*` fields and verify target visibility in WeCom. |
-
-Debug commands:
+| 方向 | 类型 | 行为 |
+|------|------|------|
+| 入站 | 图片、语音、视频、文件 | 当前路径支持时下载/解密并写入入站上下文 |
+| 入站 | mixed、引用消息 | Bot payload 存在时解析 |
+| 出站 | 图片/视频 | Bot 常见限制 10 MB，超限时尽量按文件兜底 |
+| 出站 | 语音 | AMR 且常见限制 2 MB；非 AMR 或超限按文件处理 |
+| 出站 | 文件 | 受 `media.maxBytes` 限制，完整能力依赖 Agent API 或兜底 |
+| 本地路径 | 任意本地文件 | 必须位于 `mediaLocalRoots`，白名单外路径会被拒绝 |
 
 ```bash
-openclaw channels list
-openclaw channels status --probe
-openclaw plugins doctor
-openclaw pairing list wecom
+openclaw config set channels.wecom.mediaLocalRoots '["/data/wecom-media"]'
+openclaw config set channels.wecom.media.maxBytes 20971520
 ```
 
-## Documentation
-
-In-repo guides under [`doc/wecom/`](../../doc/wecom/):
-
-| Document | Description |
-|----------|-------------|
-| [Configuration guide](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Authoritative scenario-based config for Bot WS, Bot Webhook, Agent, dual mode, multi-account, media, RAG, proxy, and Cron. |
-| [Integration checklist](../../doc/wecom/OpenClaw-WeCom-Integration-Checklist.md) | Real WeCom tenant acceptance checklist for Bot WS, Bot Webhook, Agent, security, smoke tests, and grep keywords. |
-| [Architecture](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | Dual-mode topology, source module map, inbound flows, outbound priority, MCP, and Skills. |
-| [Streaming architecture](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | Bot stream protocol, state model, 6-minute window, 846608 fallback, footer/status configuration. |
-| [Testing and debugging](../../doc/wecom/OpenClaw-WeCom-Testing.md) | Manual Gateway debugging, `message send`, `agent --deliver`, `user:` prefix / 93006, media checks. |
-
-Some ecosystem references linked from the configuration guide, such as knowledge plugin docs, are currently Chinese-only.
-
-## Build and Test
+## 本地开发与测试
 
 ```bash
+cd extensions/wecom
 pnpm build
 pnpm typecheck
 pnpm test
 pnpm run pack-dry
 ```
 
-`pnpm test` currently runs around 330 Vitest cases; the exact count changes as source coverage changes.
-
-## Update
+手工联调：
 
 ```bash
-openclaw plugins update @partme.ai/wecom
+openclaw gateway restart
+openclaw channels status --probe
+openclaw message send --channel wecom --account default --target <USERID> --message "测试"
 ```
 
-## About openclaw-plugins
+## 常见问题
 
-This plugin is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins), an enterprise OpenClaw plugin collection maintained by the **PartMe.AI team**. The collection covers IM channels, message queues, AI capabilities, and infrastructure integrations.
+| 现象 | 常见原因 | 处理方式 |
+|------|----------|----------|
+| `60020 not allow to access from your ip` | 企业微信 API 调用来自未授权出口 IP | 在企微后台加入 Gateway 出口 IP，或配置 `channels.wecom.network.egressProxyUrl` |
+| `93006 invalid chatid` | Bot WS 主动发送使用了 `user:<id>` | Bot WS 主动发送改用纯 `userid` |
+| `Kicked by server: a new connection was established elsewhere` | 多个 Gateway 或重复账号同时连接 | 同一 Bot 账号只保留一个 WS 连接 |
+| Bot Webhook 没有最终流式内容 | 回调验证、去重或 stream refresh 路径异常 | 按真实联调 Checklist 排查 |
+| 本地媒体路径被拒绝 | 文件不在 `mediaLocalRoots` 下 | 把可信目录加入 `mediaLocalRoots` |
+| Cron 没有投递 | 未配置 Agent 或缺少 `agent.agentId` | 补齐 `agent.*` 字段并确认目标可见范围 |
 
-Each plugin is published independently on npm under the `@partme.ai` scope:
+## 深入文档
 
-```bash
-openclaw plugins install @partme.ai/openclaw-nacos
-openclaw plugins install @partme.ai/wecom
-```
+- [配置指南](../../doc/wecom/OpenClaw-WeCom-Configuration.zh-CN.md)：Bot WS、Bot Webhook、Agent、双模、多账号、媒体、RAG、代理、Cron。
+- [真实联调 Checklist](../../doc/wecom/OpenClaw-WeCom-Integration-Checklist.md)：真实企业微信租户验收清单。
+- [架构设计](../../doc/wecom/OpenClaw-WeCom-Architecture.md)：双模式拓扑、模块地图、入站/出站优先级、MCP 和 Skills。
+- [流式架构](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md)：Bot stream 协议、6 分钟窗口、846608 降级。
+- [联调与测试](../../doc/wecom/OpenClaw-WeCom-Testing.md)：Gateway 手工联调、目标格式、设备授权和媒体检查。
 
-PartMe.AI specializes in AI customer service and enterprise AI Agent infrastructure, from WeCom / DingTalk / Feishu / QQ channel integration to RAG knowledge bases, memory, and production monitoring.
-
-Contact: partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)
-
-## License
+## 许可证
 
 ISC
