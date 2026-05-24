@@ -1,9 +1,7 @@
-# WeCom Progressive Configuration Examples (merged)
+# WeCom Progressive Configuration Examples
 
-Content has been consolidated into the authoritative guide:
+This file is kept as a compatibility entry point. The authoritative English guide is:
 
 **→ [OpenClaw-WeCom-Configuration.md](./OpenClaw-WeCom-Configuration.md)**
 
-That document includes Levels 1–10 with full JSON, bilingual field reference, verify steps, and appendices (Cron, FAQ, unimplemented keys).
-
-Edit `OpenClaw-WeCom-Configuration.md` only — do not maintain this stub.
+Use that guide for all current WeCom configuration scenarios.

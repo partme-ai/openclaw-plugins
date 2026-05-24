@@ -1,9 +1,7 @@
-# 企业微信渐进式配置示例（已合并）
+# 企业微信渐进式配置示例
 
-本文档内容已合并至权威配置指南：
+本文档仅保留为兼容入口。中文权威配置指南请查看：
 
-**→ [OpenClaw-WeCom-Configuration.md](./OpenClaw-WeCom-Configuration.md)**
+**→ [OpenClaw-WeCom-Configuration.zh-CN.md](./OpenClaw-WeCom-Configuration.zh-CN.md)**
 
-该文档包含 Level 1–10 全部场景的完整 JSON、中英文字段说明、验证步骤，以及 Cron、FAQ、未实现键速查等附录。
-
-请直接编辑 `OpenClaw-WeCom-Configuration.md`，勿再维护本文件。
+所有当前企业微信配置场景均以该指南为准。

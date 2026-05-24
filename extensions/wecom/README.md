@@ -118,7 +118,7 @@ In-repo guides under [`doc/wecom/`](../../doc/wecom/):
 
 | Document | Description |
 |----------|-------------|
-| [**Configuration guide (authoritative)**](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Levels 1–11 JSON, bilingual field reference, verify steps, FAQ |
+| [**Configuration guide (authoritative)**](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Levels 1–11 JSON, field reference, verification steps, FAQ |
 | [Architecture](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | Dual-mode topology, source module map, inbound flows, streaming overview |
 | [Streaming architecture](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` lifecycle, 6-minute window, 846608 fallback, state machine |
 | [Testing & debugging](../../doc/wecom/OpenClaw-WeCom-Testing.md) | `message send`, `agent --deliver`, `user:` prefix (93006), pairing |
@@ -126,7 +126,7 @@ In-repo guides under [`doc/wecom/`](../../doc/wecom/):
 
 ## Access control & Cron
 
-DM/group policies, pairing commands, and Cron target formats: see [Scenario 4](../../doc/wecom/OpenClaw-WeCom-Configuration.md#场景-4--访问控制--access-control) and [Scenario 11](../../doc/wecom/OpenClaw-WeCom-Configuration.md#场景-11--cron-定时推送--cron-scheduled-delivery) in the configuration guide.
+DM/group policies, pairing commands, and Cron target formats: see [Scenario 4](../../doc/wecom/OpenClaw-WeCom-Configuration.md#4-access-control-dm-and-group-policies) and [Scenario 11](../../doc/wecom/OpenClaw-WeCom-Configuration.md#11-cron-scheduled-delivery) in the configuration guide.
 
 ## Testing
 

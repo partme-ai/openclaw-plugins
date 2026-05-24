@@ -71,7 +71,7 @@ openclaw gateway restart
 
 从「最小 Bot WS」到「双模 + 多账号 + RAG + 高级项」，每场景含完整 JSON、字段说明与验证步骤：
 
-**[WeCom 配置指南（Level 1–11）](../../doc/wecom/OpenClaw-WeCom-Configuration.md)**
+**[WeCom 配置指南（Level 1–11）](../../doc/wecom/OpenClaw-WeCom-Configuration.zh-CN.md)**
 
 最小可用（场景 1）：
 
@@ -98,7 +98,7 @@ openclaw channels status --probe
 
 Bot / Agent / 双模 / 多账号 / 流式 / 访问控制 / 媒体 / RAG / 高级项的**完整 JSON 与字段说明**见：
 
-**[WeCom 配置指南](../../doc/wecom/OpenClaw-WeCom-Configuration.md)**
+**[WeCom 配置指南](../../doc/wecom/OpenClaw-WeCom-Configuration.zh-CN.md)**
 
 常用 CLI 速查：
 
@@ -124,7 +124,7 @@ Monorepo 内专题文档见 [`doc/wecom/`](../../doc/wecom/)：
 
 | 文档 | 说明 |
 |------|------|
-| [**配置指南（权威）**](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Level 1–11 场景 JSON、中英文字段说明、验证、FAQ |
+| [**配置指南（权威）**](../../doc/wecom/OpenClaw-WeCom-Configuration.zh-CN.md) | Level 1–11 场景 JSON、字段说明、验证步骤、FAQ |
 | [架构设计](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | 双模式拓扑、源码模块地图、入站主流程、流式概要 |
 | [流式架构](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` 生命周期、6 分钟窗口、846608 降级、状态机 |
 | [联调测试](../../doc/wecom/OpenClaw-WeCom-Testing.md) | `message send`、`agent --deliver`、`user:` 前缀（93006）、配对 |
@@ -132,7 +132,7 @@ Monorepo 内专题文档见 [`doc/wecom/`](../../doc/wecom/)：
 
 ## 访问控制与 Cron
 
-私聊/群聊策略、配对命令、Cron 目标格式与示例见配置指南 [场景 4](../../doc/wecom/OpenClaw-WeCom-Configuration.md#场景-4--访问控制--access-control)、[场景 11](../../doc/wecom/OpenClaw-WeCom-Configuration.md#场景-11--cron-定时推送--cron-scheduled-delivery)。
+私聊/群聊策略、配对命令、Cron 目标格式与示例见配置指南 [场景 4](../../doc/wecom/OpenClaw-WeCom-Configuration.zh-CN.md#4-访问控制私聊与群聊策略)、[场景 11](../../doc/wecom/OpenClaw-WeCom-Configuration.zh-CN.md#11-cron-定时推送)。
 
 ## 联调测试
 
