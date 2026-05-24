@@ -16,16 +16,46 @@
 
 当前版本：`2026.5.24`。依赖 `@partme.ai/openclaw-message-sdk`：`2026.5.24`。`pnpm test` 当前约 330 个 Vitest 用例，数量会随源码覆盖变化。
 
-## 核心能力
+## ✨ 核心能力
 
-- **三种运行模式**：Bot WebSocket、Bot Webhook、自建应用 Agent 加密回调。
-- **流式回复**：支持 `replyStream` / Webhook `stream`，包含思考占位、状态文案、脚注和 846608 降级。
-- **Bot 与 Agent 共存**：生产环境通常用 Bot 做对话，用 Agent 做主动推送、Cron 和文件兜底。
-- **平铺配置**：运行时配置位于 `channels.wecom`；多账号位于 `channels.wecom.accounts.<accountId>`。
-- **多账号路由**：支持 `defaultAccount` 与账号级覆盖，用于多团队、多租户或多 Bot。
-- **访问控制**：私聊策略 `open` / `pairing` / `allowlist` / `disabled`，群聊策略 `open` / `allowlist` / `disabled`。
-- **媒体处理**：支持入站图片、语音、视频、文件、mixed 图文混排、引用消息；出站本地文件受 `mediaLocalRoots` 白名单保护。
-- **MCP 与 Skills**：注册 `wecom_mcp`，并提供联系人、文档、日程、会议、消息、媒体、模板卡片、smartsheet、待办、预检和统一操作等技能。
+`@partme.ai/wecom` 已吸收研究版 WeCom 插件能力，并按当前 OpenClaw 插件实现统一到 `channels.wecom` 平铺配置。中文 README 是主文档；英文 README 跟随本页事实同步维护。
+
+### 连接、路由与投递
+
+- **三种运行模式**：Bot WebSocket、Bot HTTP Webhook、自建应用 Agent 加密回调可独立运行，也可以在同一账号中共存。
+- **Bot 优先、Agent 兜底**：同一账号存在 `botId` + `secret` 时优先启动 Bot WebSocket；Bot WS 不可用时可自动回退到 Agent HTTP API。
+- **私聊与群聊**：支持企业微信私聊、群聊入站消息，适合个人助手、群助手和团队自动化。
+- **主动推送**：支持发送到指定用户、群聊、部门、标签；Cron 定时投递和广播推荐使用 Agent 出站路径。
+- **多账号支持**：可通过 `defaultAccount` 和 `accounts.<accountId>` 运行多个企业微信账号，每个账号可拥有独立 Bot / Agent / 策略配置。
+- **动态 Agent 路由**：支持按用户或群创建隔离 Agent，避免不同用户、不同群之间共享上下文。
+
+### 消息、媒体与流式体验
+
+- **流式回复**：Bot 模式支持 `replyStream` / Webhook `stream`，包含 thinking 首帧占位、状态栏、耗时脚注和 846608 过期降级。
+- **Markdown 回复**：支持 Markdown / 文本出站；是否展示为富文本取决于实际出站路径和企业微信客户端。
+- **多媒体入站**：支持图片、语音、视频、文件、mixed 图文混排消息，并在可用路径中自动下载、解密和写入上下文。
+- **语音转文字**：Agent 回调可在 ASR 开启时提取语音转写文本，并追加到用户消息上下文。
+- **引用消息**：支持处理被引用的文本、图片、语音和文件消息，让 Agent 能理解上下文引用。
+- **本地文件发送**：支持 `MEDIA:` 指令发送本地文件，路径必须位于 `mediaLocalRoots` 白名单内。
+- **媒体大小策略**：图片 10 MB、视频 10 MB、语音 2 MB / AMR 优先，超限时尽量降级为文件；文件默认最大 20 MB。
+
+### 安全、权限与企业微信协议
+
+- **Agent 加密回调**：自建应用 Agent 使用 AES-256-CBC 加密 XML 回调，并进行 SHA1 签名校验。
+- **访问控制**：私聊策略支持 `pairing` / `open` / `allowlist` / `disabled`，群聊策略支持 `open` / `allowlist` / `disabled`。
+- **命令授权**：支持按账号与访问组进行命令权限控制，未授权命令会返回可见提示。
+- **可信出口代理**：企业微信 API 可信 IP 场景可配置 `channels.wecom.network.egressProxyUrl`，也支持环境变量代理回退。
+- **反踢保护**：检测到服务端踢下线时避免盲目重启互踢；同一个 Bot 账号仍应只保持一个 WS 连接。
+- **心跳与重连**：Bot WebSocket 具备心跳保活和重连能力；鉴权失败、重复连接和服务端踢线会在日志中显式暴露。
+
+### 卡片、MCP、Skills 与自动化
+
+- **模板卡片**：支持 `text_notice`、`news_notice`、`button_interaction`、`vote_interaction`、`multiple_interaction`，并处理 `template_card_event` 回调。
+- **MCP 工具集成**：注册 `wecom_mcp`，可列出或调用文档、通讯录、消息等企业微信 MCP 能力，并自动注入会话上下文。
+- **内置 Skills**：提供媒体发送、模板卡片、联系人、文档、日程、会议、待办、消息、smartsheet、预检和统一操作等企业微信技能。
+- **Cron 定时任务**：可通过 OpenClaw Cron 向用户、部门、标签或群聊定时投递；需要配置 `agent.agentId`。
+- **CLI 配置与诊断**：支持通过 `openclaw channels add`、`openclaw config set`、`openclaw channels status --probe` 和 `openclaw plugins doctor` 完成配置和排障。
+- **知识库解耦**：WeCom 插件不内置知识库 hooks；RAG 由独立 `@partme.ai/openclaw-knowledge` 插件提供，WeCom 只负责消息接入与出站。
 
 能力边界：
 
@@ -151,14 +181,105 @@ openclaw channels status --probe
 
 如果不需要固定出口代理，请删除 `network.egressProxyUrl`。不要把真实企业微信密钥提交到仓库。
 
-## 模式选择
+## 模式总览
 
-| 模式 | 连接方式 | 凭据 | 适合场景 |
-|------|----------|------|----------|
-| Bot WebSocket | 长连接 WS | `botId` + `secret` | 快速聊天、私聊/群聊、流式回复 |
-| Bot Webhook | HTTPS 回调 | `token` + `encodingAESKey` + 可选 `receiveId` | 无法保持 WS 的部署环境 |
-| Agent 自建应用 | HTTPS 回调 + 企微 API | `corpId` + `corpSecret` + `agentId` + `token` + `encodingAESKey` | 主动推送、Cron、部门/标签、文件兜底 |
-| 双模生产 | Bot WS + Agent | Bot 凭据 + `agent.*` | 生产默认方案 |
+插件支持 Bot WebSocket、Bot Webhook、Agent 自建应用三类连接路径。它们可以独立使用，也可以组合成生产双模：Bot 负责低延迟聊天和流式体验，Agent 负责企业微信 API 出站、Cron、部门/标签广播和媒体兜底。
+
+| 模式 | 连接方式 | 消息格式 | 凭据 | 适合场景 |
+|------|----------|----------|------|----------|
+| Bot WebSocket | 企业微信长连接 WS | JSON | `botId` + `secret` | 快速接入、私聊/群聊、流式回复 |
+| Bot Webhook | HTTPS 回调 | JSON | `token` + `encodingAESKey` + 可选 `receiveId` | 无法保持 WS 的部署环境 |
+| Agent 自建应用 | HTTPS 回调 + 企业微信 HTTP API | 加密 XML | `corpId` + `corpSecret` + `agentId` + `token` + `encodingAESKey` | 主动推送、Cron、部门/标签、文件兜底 |
+| 双模生产 | Bot WS + Agent | JSON + XML | Bot 凭据 + `agent.*` | 生产默认方案 |
+
+> 注意：Bot 连接模式通过 `channels.wecom.connectionMode` 选择，但只要同一账号存在 `botId` + `secret`，运行时会优先启动 Bot WebSocket。纯 Bot Webhook 请不要配置这两个字段。
+
+### Bot WebSocket
+
+Bot WebSocket 是默认和推荐的交互式对话入口，不需要公网回调地址，适合先跑通智能机器人私聊、群聊和流式回复。
+
+#### 配置步骤
+
+1. 在企业微信智能机器人后台获取 **Bot ID** 和 **Secret**。
+2. 写入 `channels.wecom` 平铺配置并重启 Gateway：
+
+```bash
+openclaw config set channels.wecom.enabled true
+openclaw config set channels.wecom.connectionMode websocket
+openclaw config set channels.wecom.botId "<YOUR_BOT_ID>"
+openclaw config set channels.wecom.secret "<YOUR_BOT_SECRET>"
+openclaw gateway restart
+openclaw channels status --probe
+```
+
+3. 在企业微信向智能机器人发送消息，确认 Gateway 日志出现 WebSocket 连接和鉴权成功。
+
+### Bot Webhook
+
+Bot Webhook 适合不能保持 WebSocket 长连接的部署。它使用企业微信 JSON 回调，支持 `stream` / `stream_refresh`，但生产环境通常仍优先使用 Bot WS。
+
+#### 配置步骤
+
+1. 确保 Gateway 具备公网 HTTPS 地址。
+2. 在企业微信后台准备 **Token**、**EncodingAESKey** 和可选 **ReceiveId**。
+3. 不配置 `botId` / `secret`，只写入 Webhook 字段：
+
+```bash
+openclaw config set channels.wecom.enabled true
+openclaw config set channels.wecom.connectionMode webhook
+openclaw config set channels.wecom.token "<YOUR_CALLBACK_TOKEN>"
+openclaw config set channels.wecom.encodingAESKey "<YOUR_43_CHAR_ENCODING_AES_KEY>"
+openclaw config set channels.wecom.receiveId "<YOUR_RECEIVE_ID>"
+openclaw gateway restart
+```
+
+4. 在企业微信后台填写回调地址：
+
+```text
+https://<GATEWAY_HOST>/plugins/wecom/bot/<accountId>
+```
+
+单账号可使用 `/plugins/wecom/bot` 兼容路径；新部署建议带 `<accountId>`。
+
+### Agent 自建应用
+
+Agent 使用企业微信自建应用加密 XML 回调和 HTTP API。它是主动推送、Cron、部门/标签广播、群聊投递和文件兜底的主路径。
+
+#### 配置步骤
+
+1. 在 [企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame#apps) 创建自建应用。
+2. 记录 **CorpID**、应用 **Secret** 和 **AgentId**。
+3. 进入应用的 “API 接收” 设置，准备 **Token** 和 **EncodingAESKey**，但先不要点击保存。
+4. 先在 Gateway 写入 `agent.*` 并重启：
+
+```bash
+openclaw config set channels.wecom.agent.corpId "<YOUR_CORP_ID>"
+openclaw config set channels.wecom.agent.corpSecret "<YOUR_CORP_SECRET>"
+openclaw config set channels.wecom.agent.agentId "<YOUR_AGENT_ID>"
+openclaw config set channels.wecom.agent.token "<YOUR_CALLBACK_TOKEN>"
+openclaw config set channels.wecom.agent.encodingAESKey "<YOUR_43_CHAR_ENCODING_AES_KEY>"
+openclaw config set channels.wecom.enabled true
+openclaw gateway restart
+```
+
+5. 回到企业微信后台保存回调 URL：
+
+```text
+https://<GATEWAY_HOST>/plugins/wecom/agent/<accountId>
+```
+
+企业微信保存时会立即发送 `echostr` 校验请求。Gateway 必须已配置 Token 和 EncodingAESKey，才能正确解密并返回校验结果。
+
+### 双模共存
+
+Bot 与 Agent 可以在同一账号同时配置。此时 Bot WS 优先处理交互式对话和流式体验，Agent API 负责主动推送、Cron、部门/标签广播和 Bot WS 不可用时的 HTTP 兜底。
+
+#### 配置步骤
+
+1. 先按 Bot WebSocket 步骤写入 `botId` + `secret`。
+2. 再按 Agent 步骤补齐 `agent.corpId`、`agent.corpSecret`、`agent.agentId`、`agent.token`、`agent.encodingAESKey`。
+3. 为 Agent 回调保存 `/plugins/wecom/agent/<accountId>`。
+4. 为 Cron 或主动发送配置目标 Agent，例如使用 `--agent main` 或在 `bindings` 中显式绑定。
 
 推荐回调地址：
 

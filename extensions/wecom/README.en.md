@@ -16,13 +16,46 @@
 
 Current version: `2026.5.24`. Message SDK version: `2026.5.24`. The test suite currently has about 330 Vitest cases.
 
-## Key Capabilities
+## ✨ Features
 
-- Bot WebSocket, Bot Webhook, and Agent encrypted webhook runtime paths.
-- Streaming Bot replies with thinking placeholders, status text, footers, and 846608 fallback.
-- Flat runtime config under `channels.wecom`, with account overrides under `channels.wecom.accounts.<accountId>`.
-- Bot and Agent coexistence in one account: Bot for conversations, Agent for push, Cron, and fallback.
-- DM and group access control, multi-account routing, inbound/outbound media handling, MCP tools, and built-in WeCom Skills.
+`@partme.ai/wecom` absorbs the strong capability set from the WeCom research plugin while matching the current OpenClaw plugin facts: package `@partme.ai/wecom@2026.5.24`, message SDK `2026.5.24`, flat `channels.wecom` config, Bot WS priority when `botId` + `secret` exist, Agent coexistence for proactive delivery, roughly 330 Vitest tests, and knowledge handled by the independent knowledge plugin.
+
+### Connectivity, Routing, and Delivery
+
+- **Three runtime modes**: Bot WebSocket, Bot HTTP Webhook, and self-built Agent encrypted callbacks can run independently or together.
+- **Bot-first, Agent-fallback delivery**: when the same account has `botId` + `secret`, Bot WebSocket starts first; if Bot WS is unavailable, outbound delivery can fall back to the Agent HTTP API.
+- **DM and group chat**: supports WeCom direct messages and group conversations for personal assistants, team assistants, and automation.
+- **Proactive messaging**: sends to specific users, groups, departments, or tags; Cron delivery and broadcasts should use the Agent outbound path.
+- **Multi-account support**: run multiple WeCom accounts with `defaultAccount` and `accounts.<accountId>`, each with independent Bot, Agent, and policy overrides.
+- **Dynamic Agent routing**: create isolated Agents per user or group so contexts do not leak across users or chats.
+
+### Messages, Media, and Streaming
+
+- **Streaming replies**: Bot mode supports `replyStream` / Webhook `stream`, thinking first-frame placeholders, status lines, elapsed footers, and 846608 expiry fallback.
+- **Markdown replies**: Markdown/text outbound is supported; rich rendering depends on the actual outbound path and WeCom client behavior.
+- **Inbound media**: receives image, voice, video, file, and **mixed** messages, then downloads/decrypts and attaches them to context when the path supports it.
+- **Voice-to-text**: Agent callbacks can append ASR transcripts from voice messages when voice ASR is enabled.
+- **Quoted messages**: processes quoted text, image, voice, and file messages so the Agent can understand referenced context.
+- **Local file sending**: supports `MEDIA:` directives for local files; paths must be inside `mediaLocalRoots`.
+- **Smart media size policy**: image 10 MB, video 10 MB, voice 2 MB / AMR preferred, oversized media downgraded to file when possible, and file max defaults to 20 MB.
+
+### Security, Access, and WeCom Protocols
+
+- **Agent encrypted callbacks**: Agent mode uses AES-256-CBC encrypted XML callbacks with SHA1 signature verification.
+- **Access control**: DM policy supports `pairing` / `open` / `allowlist` / `disabled`; group policy supports `open` / `allowlist` / `disabled`.
+- **Command authorization**: per-account command permission checks with access-group support; unauthorized commands receive visible guidance.
+- **Trusted egress proxy**: supports `channels.wecom.network.egressProxyUrl` and environment-variable proxy fallback for trusted-IP WeCom API calls.
+- **Anti-kick protection**: avoids blind restart loops when WeCom reports a server-side kick; each Bot account should still have only one active WS connection.
+- **Heartbeat and reconnect**: Bot WebSocket includes keep-alive and reconnect behavior, with auth failures, duplicate connections, and server kicks surfaced in logs.
+
+### Cards, MCP, Skills, and Automation
+
+- **Template cards**: supports `text_notice`, `news_notice`, `button_interaction`, `vote_interaction`, and `multiple_interaction`, with `template_card_event` callback handling.
+- **MCP integration**: registers `wecom_mcp` to list or call WeCom document, contact, message, and related MCP capabilities with session context injection.
+- **Built-in Skills**: media send, template cards, contact lookup, doc management, schedule, meeting, todo, messaging, smartsheet, preflight, and unified operation references.
+- **Cron jobs**: OpenClaw Cron can deliver to users, departments, tags, or group chats; configure `agent.agentId` for proactive sends.
+- **CLI setup and diagnostics**: use `openclaw channels add`, `openclaw config set`, `openclaw channels status --probe`, and `openclaw plugins doctor` for setup and troubleshooting.
+- **Decoupled knowledge / RAG**: WeCom does not embed knowledge hooks; RAG comes from the independent `@partme.ai/openclaw-knowledge` plugin, while WeCom transports messages in and out.
 
 Capability boundaries:
 
@@ -144,19 +177,112 @@ Send a DM to the WeCom Smart Robot. Gateway logs should show WebSocket connectio
 
 Remove `network.egressProxyUrl` if you do not need a fixed egress proxy. Never commit real WeCom credentials.
 
-## Mode Selection
+## Mode Overview
 
-| Mode | Connection | Credentials | Best For |
-|------|------------|-------------|----------|
-| Bot WebSocket | Long-lived WS | `botId` + `secret` | Interactive chat, DM/group messages, streaming replies |
-| Bot Webhook | HTTPS callback | `token` + `encodingAESKey` + optional `receiveId` | Environments that cannot keep WS connections |
-| Agent app | HTTPS callback + WeCom API | `corpId` + `corpSecret` + `agentId` + `token` + `encodingAESKey` | Proactive sends, Cron, departments, tags, file fallback |
-| Dual mode | Bot WS + Agent | Bot credentials plus `agent.*` | Production default |
+The plugin supports Bot WebSocket, Bot Webhook, and self-built Agent app connection paths. You can use them independently or combine them for production: Bot handles low-latency chat and streaming, while Agent handles WeCom API delivery, Cron, department/tag broadcasts, and media fallback.
+
+| Mode | Connection | Message Format | Credentials | Best For |
+|------|------------|----------------|-------------|----------|
+| Bot WebSocket | Long-lived WeCom WS | JSON | `botId` + `secret` | Fast setup, DM/group messages, streaming replies |
+| Bot Webhook | HTTPS callback | JSON | `token` + `encodingAESKey` + optional `receiveId` | Deployments that cannot keep WS connections |
+| Agent app | HTTPS callback + WeCom HTTP API | Encrypted XML | `corpId` + `corpSecret` + `agentId` + `token` + `encodingAESKey` | Proactive sends, Cron, departments, tags, file fallback |
+| Dual mode | Bot WS + Agent | JSON + XML | Bot credentials plus `agent.*` | Production default |
+
+> Note: Bot connection mode is selected by `channels.wecom.connectionMode`, but when the same account has `botId` + `secret`, runtime starts Bot WebSocket first. For pure Bot Webhook, omit both fields.
+
+### Bot WebSocket
+
+Bot WebSocket is the default and recommended interactive chat entry point. It does not require a public callback URL and is the fastest way to enable Smart Robot DM/group chat and streaming replies.
+
+#### Setup Steps
+
+1. Get the **Bot ID** and **Secret** from the WeCom Smart Robot console.
+2. Write flat `channels.wecom` config and restart Gateway:
+
+```bash
+openclaw config set channels.wecom.enabled true
+openclaw config set channels.wecom.connectionMode websocket
+openclaw config set channels.wecom.botId "<YOUR_BOT_ID>"
+openclaw config set channels.wecom.secret "<YOUR_BOT_SECRET>"
+openclaw gateway restart
+openclaw channels status --probe
+```
+
+3. Send a message to the Smart Robot in WeCom. Gateway logs should show WebSocket connection and authentication success.
+
+### Bot Webhook
+
+Bot Webhook is for deployments that cannot keep a WebSocket connection. It uses WeCom JSON callbacks and supports `stream` / `stream_refresh`, but Bot WS is usually preferred for production chat.
+
+#### Setup Steps
+
+1. Make sure Gateway has a public HTTPS URL.
+2. Prepare **Token**, **EncodingAESKey**, and optional **ReceiveId** in WeCom Admin.
+3. Do not configure `botId` or `secret`; set only the Webhook fields:
+
+```bash
+openclaw config set channels.wecom.enabled true
+openclaw config set channels.wecom.connectionMode webhook
+openclaw config set channels.wecom.token "<YOUR_CALLBACK_TOKEN>"
+openclaw config set channels.wecom.encodingAESKey "<YOUR_43_CHAR_ENCODING_AES_KEY>"
+openclaw config set channels.wecom.receiveId "<YOUR_RECEIVE_ID>"
+openclaw gateway restart
+```
+
+4. Save this callback URL in WeCom Admin:
+
+```text
+https://<GATEWAY_HOST>/plugins/wecom/bot/<accountId>
+```
+
+Single-account setups can use the compatible `/plugins/wecom/bot` path. New deployments should include `<accountId>`.
+
+### Agent App
+
+Agent mode uses self-built app encrypted XML callbacks and the WeCom HTTP API. It is the main path for proactive sends, Cron, department/tag broadcasts, group delivery, and file fallback.
+
+#### Setup Steps
+
+1. Create a self-built app in [WeCom Admin Console](https://work.weixin.qq.com/wework_admin/frame#apps).
+2. Record the **CorpID**, app **Secret**, and **AgentId**.
+3. In the app's "API Receive" settings, prepare **Token** and **EncodingAESKey**, but do not save yet.
+4. Configure `agent.*` in Gateway first, then restart:
+
+```bash
+openclaw config set channels.wecom.agent.corpId "<YOUR_CORP_ID>"
+openclaw config set channels.wecom.agent.corpSecret "<YOUR_CORP_SECRET>"
+openclaw config set channels.wecom.agent.agentId "<YOUR_AGENT_ID>"
+openclaw config set channels.wecom.agent.token "<YOUR_CALLBACK_TOKEN>"
+openclaw config set channels.wecom.agent.encodingAESKey "<YOUR_43_CHAR_ENCODING_AES_KEY>"
+openclaw config set channels.wecom.enabled true
+openclaw gateway restart
+```
+
+5. Go back to WeCom Admin and save this callback URL:
+
+```text
+https://<GATEWAY_HOST>/plugins/wecom/agent/<accountId>
+```
+
+WeCom sends an `echostr` verification request immediately when you save. Gateway must already have Token and EncodingAESKey configured so it can decrypt and respond correctly.
+
+### Dual Mode
+
+Bot and Agent can run together on the same account. Bot WS handles interactive chat and streaming first; Agent API handles proactive sends, Cron, department/tag broadcasts, and HTTP fallback when Bot WS is unavailable.
+
+#### Setup Steps
+
+1. Configure `botId` + `secret` using the Bot WebSocket steps.
+2. Add `agent.corpId`, `agent.corpSecret`, `agent.agentId`, `agent.token`, and `agent.encodingAESKey` using the Agent steps.
+3. Save `/plugins/wecom/agent/<accountId>` as the Agent callback URL.
+4. For Cron or proactive delivery, target the correct Agent, for example with `--agent main` or explicit `bindings`.
 
 Recommended callback URLs:
 
-- Bot Webhook: `https://<GATEWAY_HOST>/plugins/wecom/bot/<accountId>`
-- Agent Webhook: `https://<GATEWAY_HOST>/plugins/wecom/agent/<accountId>`
+| Path | Recommended URL |
+|------|-----------------|
+| Bot Webhook | `https://<GATEWAY_HOST>/plugins/wecom/bot/<accountId>` |
+| Agent Webhook | `https://<GATEWAY_HOST>/plugins/wecom/agent/<accountId>` |
 
 Legacy paths `/wecom`, `/wecom/bot`, and `/wecom/agent` remain compatible. New deployments should use `/plugins/wecom/...`.
 
