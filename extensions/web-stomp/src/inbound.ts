@@ -33,7 +33,7 @@ export type WebStompInboundContext = {
 export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise<void> {
   const runtime = getWebStompRuntime();
   if (!runtime) {
-    console.warn("[openclaw_web_stomp] Runtime not initialized, cannot dispatch message");
+    console.warn("[openclaw-web-stomp] Runtime not initialized, cannot dispatch message");
     return;
   }
 
@@ -56,7 +56,7 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
     idempotency: ctx.idempotencyKey ? idempotencyCache : undefined,
   });
   if (!parsed.accepted) {
-    console.log(`[openclaw_web_stomp] Duplicate inbound dropped: ${ctx.idempotencyKey}`);
+    console.log(`[openclaw-web-stomp] Duplicate inbound dropped: ${ctx.idempotencyKey}`);
     return;
   }
 

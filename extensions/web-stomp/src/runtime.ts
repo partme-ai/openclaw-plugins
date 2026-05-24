@@ -33,7 +33,7 @@ export function setWebStompRuntime(runtime: unknown): void {
 /** 获取 runtime。 */
 export function getWebStompRuntime(): WebStompRuntime {
   if (!runtimeRef) {
-    throw new Error("[openclaw_web_stomp] runtime is not initialized");
+    throw new Error("[openclaw-web-stomp] runtime is not initialized");
   }
   return runtimeRef;
 }

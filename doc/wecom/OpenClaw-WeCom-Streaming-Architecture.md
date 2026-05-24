@@ -490,7 +490,7 @@ openclaw config set channels.wecom.sendThinkingMessage true
 | 思考中 | `正在思考…` | `onReplyStart` / thinking 占位 |
 | 工具中 | `正在查资料…` | `onToolStart` |
 | 读文件中 | `正在阅读附件…` | 媒体解析队列 |
-| 生成中 | `正在组织回复…` | `onAssistantMessageStart` |
+| 生成中 | `正在输入…` | `onAssistantMessageStart` |
 | 完成 | （关流，展示最终答案） | `finish=true` |
 
 #### 用户可见文案（`*Text`）
@@ -503,7 +503,7 @@ openclaw config set channels.wecom.sendThinkingMessage true
 | `receivedText` | `已收到，正在处理…` | — | 入站 Ack（预留） |
 | `toolStatusText` | `正在查资料…` | `{toolName}` | `onToolStart` |
 | `readingText` | `正在阅读附件…` | — | 入站媒体解析 |
-| `generatingText` | `正在组织回复…` | — | `onAssistantMessageStart` |
+| `generatingText` | `正在输入…` | — | `onAssistantMessageStart` |
 | `compactionText` | `📦 正在压缩上下文…` | — | `onCompactionStart` |
 | `emptyReplyText` | `⚠️ 未能生成…` | — | 空回复关流 |
 | `finishFooterText` | `⏱ {elapsed}s · 已完成` | `{elapsed}` | `footer.elapsed` |

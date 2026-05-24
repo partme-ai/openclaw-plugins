@@ -64,7 +64,7 @@ export const WECOM_DEFAULT_TEMPLATES: ResolvedWecomTemplates = {
   received: "已收到，正在处理…",
   tool: "正在查资料…",
   reading: "正在阅读附件…",
-  generating: "正在组织回复…",
+  generating: "正在输入…",
   compaction: "📦 正在压缩上下文…",
   emptyReply: "⚠️ 未能生成可展示的回复，请稍后重试或发送文字消息。",
   finishFooter: "⏱ {elapsed}s · 已完成",

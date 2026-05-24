@@ -72,7 +72,7 @@ export function parseFrame(data: string): StompFrame | null {
 
     return { command, headers, body: body || undefined };
   } catch (err) {
-    console.error("[openclaw_web_stomp] Frame parse error:", err);
+    console.error("[openclaw-web-stomp] Frame parse error:", err);
     return null;
   }
 }

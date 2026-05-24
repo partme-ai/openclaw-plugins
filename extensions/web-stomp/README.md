@@ -42,7 +42,7 @@ Inspired by `rabbitmq_web_stomp`, this plugin bridges STOMP (Simple Text Oriente
 Web Browser / Enterprise System        OpenClaw Gateway
     │                                        │
     │  ┌─────────────────────────────────────┤
-    │  │    openclaw_web_stomp Plugin        │
+    │  │    openclaw-web-stomp Plugin        │
     │  │  ┌─────────────────────────────┐    │
     │  │  │                             │    │
     ├──┼──► stomp-server.ts             │    │
@@ -110,7 +110,7 @@ content-type:application/json
 ## Directory Structure
 
 ```
-openclaw_web_stomp/
+openclaw-web-stomp/
   package.json
   tsconfig.json
   tsup.config.ts
@@ -381,13 +381,13 @@ Multiple clients subscribed to same session for collaborative interactions.
 | [openclaw_prometheus](https://github.com/partme-ai/openclaw_prometheus) | Prometheus metrics exporter |
 | [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |
 | [openclaw_tracing](https://github.com/partme-ai/openclaw_tracing) | Distributed tracing |
-| [openclaw_web_mqtt](https://github.com/partme-ai/openclaw_web_mqtt) | WebSocket MQTT |
-| [openclaw_web_stomp](https://github.com/partme-ai/openclaw_web_stomp) | WebSocket STOMP |
+| [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt) | WebSocket MQTT |
+| [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp) | WebSocket STOMP |
 | [openclaw_wecom_kf](https://github.com/partme-ai/openclaw_wecom_kf) | WeChat Work customer service channel |
 
 ## Comparison with rabbitmq_web_stomp
 
-| Feature | rabbitmq_web_stomp | openclaw_web_stomp |
+| Feature | rabbitmq_web_stomp | openclaw-web-stomp |
 |---|---|---|
 | Protocol | STOMP 1.0, 1.1, 1.2 | STOMP 1.2 |
 | Transport | WebSocket, SockJS | WebSocket |
