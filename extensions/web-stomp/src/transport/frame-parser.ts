@@ -150,16 +150,21 @@ export function buildMessageFrame(
   subscriptionId: string,
   destination: string,
   messageId: string,
-  body: string
+  body: string,
+  ackId?: string,
 ): StompFrame {
+  const headers: Record<string, string> = {
+    subscription: subscriptionId,
+    "message-id": messageId,
+    destination,
+    "content-type": "text/plain",
+  };
+  if (ackId) {
+    headers.ack = ackId;
+  }
   return {
     command: "MESSAGE",
-    headers: {
-      subscription: subscriptionId,
-      "message-id": messageId,
-      destination,
-      "content-type": "text/plain",
-    },
+    headers,
     body,
   };
 }

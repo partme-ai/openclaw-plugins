@@ -47,9 +47,10 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
     return { accepted: false, reason: "payload_too_large" };
   }
 
-  const idempotencyKey = resolveWebMqttInboundIdempotencyKey(event);
+  const payloadText = event.payload.toString("utf-8");
+  const idempotencyKey = resolveWebMqttInboundIdempotencyKey(event, payloadText);
   const parsed = normalizeWireIngress({
-    rawPayload: event.payload.toString("utf-8"),
+    rawPayload: payloadText,
     mode: mapWebMqttWirePayloadMode(config.payload.mode),
     channel: WEB_MQTT_CHANNEL_ID,
     idempotencyKey,

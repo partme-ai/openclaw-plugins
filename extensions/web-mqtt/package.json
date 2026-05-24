@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:client": "tsx scripts/test-client.ts",
+    "test:client": "tsx test/test-client.ts",
     "test:all": "npm run test && npm run test:client",
     "prepublishOnly": "pnpm build"
   },

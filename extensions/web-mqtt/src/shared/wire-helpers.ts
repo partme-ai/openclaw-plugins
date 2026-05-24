@@ -41,11 +41,17 @@ export function getWebMqttIdempotencyCache(): IdempotencyCache {
 
 /**
  * 构造入站幂等键：优先 MQTT messageId，否则 client+topic+payload 指纹。
+ *
+ * @param event - 入站 MQTT 事件
+ * @param payloadText - 可选，已解码的 UTF-8 payload（避免重复 toString）
  */
-export function resolveWebMqttInboundIdempotencyKey(event: InboundEvent): string | undefined {
+export function resolveWebMqttInboundIdempotencyKey(
+  event: InboundEvent,
+  payloadText?: string,
+): string | undefined {
   if (event.messageId) {
     return event.messageId;
   }
-  const payloadPreview = event.payload.toString("utf-8").slice(0, 200);
-  return `${event.clientId}:${event.topic}:${payloadPreview}`;
+  const preview = (payloadText ?? event.payload.toString("utf-8")).slice(0, 200);
+  return `${event.clientId}:${event.topic}:${preview}`;
 }
