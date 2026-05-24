@@ -105,6 +105,15 @@ openclaw plugins install @partme.ai/openclaw-mqtt
 
 最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
 
+### message-sdk 复用
+
+| message-sdk 模块 | mqtt 挂载点 | 用途 |
+|------------------|-------------|------|
+| `bridge`（`normalizeWireIngress`、`dispatchChannelMessage`、`resolveChannelDispatchIdentity`） | `src/inbound.ts` | Wire 入站解析与 reply 管线派发 |
+| `dedup`（`createIdempotencyCache`） | `src/shared/wire-helpers.ts` | 入站 messageId 幂等（`getGlobalSingleton` 单例） |
+| `config`（`resolveChannelAgentReplyTimeoutMs`、`resolveChannelMediaMaxBytes`） | `src/config/resolvers.ts` | Agent 超时与媒体上限薄封装 |
+| `openclaw/plugin-sdk`（`chunkText`、`sanitizeForPlainText`） | `src/outbound.ts` | 出站文本分块与纯文本清理 |
+
 ### 最小配置
 
 ```json

@@ -18,12 +18,7 @@ import { getRockermqChannelConfig } from "./state/state.js";
 import { DEFAULT_ROCKERMQ_CONFIG, type RockermqConfig } from "./config.js";
 import { resolveInboundRoute, buildReplyTopicFromInbound, matchTopic } from "./routing/topic-router.js";
 import { upsertSessionContext } from "./routing/session-mapper.js";
-import {
-  createIdempotencyCache,
-  type PayloadParseMode,
-  type IdempotencyCache,
-  type ParsedTransportPayload,
-} from "@partme.ai/openclaw-message-sdk";
+import type { ParsedTransportPayload } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
@@ -31,6 +26,13 @@ import {
   type BridgePluginRuntime,
   type ChannelDispatchMode,
 } from "@partme.ai/openclaw-message-sdk/bridge";
+import type { ChannelLimitsOpenClawConfig } from "@partme.ai/openclaw-message-sdk/config";
+
+import { resolveRocketmqAgentReplyTimeoutMs } from "./config/resolvers.js";
+import {
+  getRocketmqIdempotencyCache,
+  mapRocketmqWirePayloadMode,
+} from "./shared/wire-helpers.js";
 import type { InboundEvent } from "./transport/server.js";
 
 type InboundResult = {
@@ -38,40 +40,6 @@ type InboundResult = {
   routeSource?: string;
   reason?: string;
 };
-
-let idempotencyCache: IdempotencyCache | undefined;
-let idempotencyCacheSig = "";
-
-/**
- * @description 按配置 TTL/容量懒创建或重建幂等缓存实例。
- * @param config - 当前 RocketMQ 配置。
- * @returns 启用幂等时的缓存，否则 `undefined`。
- * @throws 不抛出。
- */
-function getIdempotencyCache(config: RockermqConfig): IdempotencyCache | undefined {
-  if (!config.idempotency.enabled) return undefined;
-  const sig = `${config.idempotency.ttlMs}:${config.idempotency.maxEntries}`;
-  if (!idempotencyCache || idempotencyCacheSig !== sig) {
-    idempotencyCache = createIdempotencyCache({
-      ttlMs: config.idempotency.ttlMs,
-      maxEntries: config.idempotency.maxEntries,
-    });
-    idempotencyCacheSig = sig;
-  }
-  return idempotencyCache;
-}
-
-/**
- * @description 将 config.payload.mode 映射为 message-sdk PayloadParseMode。
- * @param mode - 配置中的 payload 模式。
- * @returns SDK 解析模式字符串。
- * @throws 不抛出。
- */
-function mapPayloadMode(mode: RockermqConfig["payload"]["mode"]): PayloadParseMode {
-  if (mode === "plainText") return "plain";
-  if (mode === "jsonOnly") return "jsonOnly";
-  return "jsonTextOrPlain";
-}
 
 /**
  * @description 处理 RocketMQ 入站消息（设备 / 上游 → Agent）。
@@ -101,10 +69,10 @@ export async function processInbound(
 
   const parsed = normalizeWireIngress({
     rawPayload: event.body.toString("utf-8"),
-    mode: mapPayloadMode(config.payload.mode),
+    mode: mapRocketmqWirePayloadMode(config.payload.mode),
     channel: "rocketmq",
     idempotencyKey,
-    idempotency: getIdempotencyCache(config),
+    idempotency: getRocketmqIdempotencyCache(config.idempotency),
   });
   if (!parsed.accepted) {
     return { accepted: true, routeSource: "idempotency" };
@@ -192,6 +160,10 @@ async function dispatchToRuntime(params: {
   }
 
   const mode = params.config.dispatch.mode as ChannelDispatchMode;
+  const timeoutMs = resolveRocketmqAgentReplyTimeoutMs(
+    rt.config as ChannelLimitsOpenClawConfig,
+    params.config.dispatch.timeoutMs,
+  );
 
   await dispatchChannelMessage({
     mode,
@@ -204,7 +176,7 @@ async function dispatchToRuntime(params: {
     sessionKey: params.sessionKey,
     unified: params.parsed.unified,
     sessionId: `rocketmq:${params.accountId ?? "default"}:${params.agentId}:${params.peerId}`,
-    timeoutMs: params.config.dispatch.timeoutMs,
+    timeoutMs,
     replyEnabled: params.config.dispatch.reply.enabled,
     extra: {
       topic: params.replyTopic,

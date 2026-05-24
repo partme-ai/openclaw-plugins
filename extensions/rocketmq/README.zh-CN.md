@@ -38,6 +38,15 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 
 最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
 
+### message-sdk 复用
+
+| message-sdk 模块 | rocketmq 挂载点 | 用途 |
+|------------------|-----------------|------|
+| `bridge`（`normalizeWireIngress`、`dispatchChannelMessage`） | `src/inbound.ts` | PushConsumer 入站 + 三 mode 派发 |
+| `dedup` + `util/getGlobalSingleton` | `src/shared/wire-helpers.ts` | 可配置幂等、`mapRocketmqWirePayloadMode` |
+| `config/resolveChannelAgentReplyTimeoutMs` | `src/config/resolvers.ts` | embedded/subagent 派发超时 |
+| `pipeline/serializeForTransport` | `src/outbound.ts` | 直连出站 `legacyJsonText` 序列化 |
+
 ### 最小配置
 
 ```json

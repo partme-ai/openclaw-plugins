@@ -72,6 +72,14 @@ openclaw plugins install npm:@partme.ai/openclaw-redis-stream
 
 最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
 
+### message-sdk 复用
+
+| message-sdk 模块 | redis-stream 挂载点 | 用途 |
+|------------------|---------------------|------|
+| `bridge`（`normalizeWireIngress`、`dispatchChannelMessage`） | `src/inbound.ts` | Pub/Sub 与 Stream 入站派发 |
+| `dedup` + `util/getGlobalSingleton` | `src/shared/wire-helpers.ts` | 入站幂等 + payload 模式映射 |
+| `config/resolveChannelAgentReplyTimeoutMs` | `src/config/resolvers.ts` | Agent 回复超时薄封装 |
+
 ### 最小配置
 
 ```jsonc

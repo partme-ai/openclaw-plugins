@@ -12,6 +12,8 @@
  * RocketMQ 出站 — Base Profile 入口。
  */
 
+import { serializeForTransport } from "@partme.ai/openclaw-message-sdk";
+
 import { DEFAULT_ROCKERMQ_CONFIG } from "./config.js";
 import { getRockermqChannelConfig } from "./state/state.js";
 import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
@@ -52,11 +54,19 @@ export const rockermqOutbound: ChannelOutboundAdapter = {
     const topic =
       sessionContext.replyTopic ??
       buildOutboundTopic(sessionContext.agentId, config.topicPrefix, peerId ?? undefined);
+    const wire = serializeForTransport({
+      channel: "rocketmq",
+      accountId: sessionContext.accountId ?? "default",
+      userId: peerId ?? sessionKey,
+      text: ctx.text,
+      agentId: sessionContext.agentId,
+      format: "legacyJsonText",
+    });
     const { publishMessage } = await import("./transport/server.js");
     const receipt = await publishMessage({
       topic,
       tag: sessionContext.replyTag,
-      payload: JSON.stringify({ text: ctx.text }),
+      payload: wire,
     });
     return {
       channel: "rocketmq",

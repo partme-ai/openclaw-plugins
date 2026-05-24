@@ -17,18 +17,18 @@ import {
 import { publishMessage } from "./transport/publisher.js";
 import { logger } from "./shared/logger.js";
 import type { RedisChannelConfig, RedisInboundMessage } from "./types.js";
-import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
+import {
+  getRedisStreamIdempotencyCache,
+  mapRedisStreamWirePayloadMode,
+} from "./shared/wire-helpers.js";
 
-const idempotencyCache = createIdempotencyCache({
-  ttlMs: 60_000,
-  maxEntries: 10_000,
-});
+const idempotencyCache = getRedisStreamIdempotencyCache();
 
 /**
  * @description 处理 Redis channel 入站消息（Pub/Sub 或 Stream 消费回调）。
@@ -85,8 +85,7 @@ export async function handleInboundMessage(
   // 3. payload 解析
   const parsed = normalizeWireIngress({
     rawPayload: message.message,
-    mode:
-      config.payload.mode === "jsonTextOrPlain" ? "jsonTextOrPlain" : "plain",
+    mode: mapRedisStreamWirePayloadMode(config.payload.mode),
     channel: "redis-stream",
     idempotencyKey: messageId,
     idempotency: idempotencyCache,

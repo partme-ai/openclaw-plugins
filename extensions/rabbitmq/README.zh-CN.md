@@ -74,6 +74,15 @@ openclaw plugins install @partme.ai/openclaw-rabbitmq
 
 最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
 
+### message-sdk 复用
+
+| message-sdk 模块 | rabbitmq 挂载点 | 用途 |
+|------------------|-----------------|------|
+| `bridge`（`normalizeWireIngress`、`dispatchChannelMessage`） | `src/inbound.ts` | Wire 入站 + 三 mode 派发 |
+| `dedup` + `util/getGlobalSingleton` | `src/shared/wire-helpers.ts` | 可配置幂等缓存、`mapRabbitmqWirePayloadMode` |
+| `config/resolveChannelAgentReplyTimeoutMs` | `src/config/resolvers.ts` | embedded/subagent 派发超时 |
+| `openclaw/plugin-sdk`（`chunkText`、`sanitizeForPlainText`） | `src/outbound.ts` | 出站分块（已移除本地 `text-chunking.ts`） |
+
 ### 最小配置（`openclaw.json`）
 
 ```json

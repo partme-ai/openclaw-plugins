@@ -20,16 +20,16 @@ import { upsertSessionContext } from "./routing/session-mapper.js";
 import { logAuditEvent } from "./transport/audit.js";
 import { getClientUsername } from "./transport/server.js";
 import { isUserActionAllowed } from "./transport/acl.js";
-import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
+import { getMqttIdempotencyCache } from "./shared/wire-helpers.js";
 
 /** MQTT 入站幂等缓存（messageId / 等价键）。 */
-const idempotencyCache = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10_000 });
+const idempotencyCache = getMqttIdempotencyCache();
 
 /**
  * 处理 MQTT 入站消息（设备 → Agent）：Topic 过滤、路由、ACL、message-sdk dispatch。

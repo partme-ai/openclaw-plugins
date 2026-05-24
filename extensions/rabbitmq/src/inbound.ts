@@ -19,18 +19,19 @@ import {
 } from "./routing/topic-router.js";
 import { upsertSessionContext } from "./routing/session-mapper.js";
 import {
-  createIdempotencyCache,
-  type PayloadParseMode,
-  type IdempotencyCache,
-} from "@partme.ai/openclaw-message-sdk";
-import {
   normalizeWireIngress,
   dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
   type ChannelDispatchMode,
 } from "@partme.ai/openclaw-message-sdk/bridge";
+import type { ChannelLimitsOpenClawConfig } from "@partme.ai/openclaw-message-sdk/config";
 
+import { resolveRabbitmqAgentReplyTimeoutMs } from "./config/resolvers.js";
+import {
+  getRabbitmqIdempotencyCache,
+  mapRabbitmqWirePayloadMode,
+} from "./shared/wire-helpers.js";
 import type { InboundEvent } from "./transport/server.js";
 
 /** @description 单条入站消息的处理结果（接受/拒绝及诊断字段）。 */
@@ -38,40 +39,6 @@ interface InboundResult {
   accepted: boolean;
   routeSource?: string;
   reason?: string;
-}
-
-let idempotencyCache: IdempotencyCache | undefined;
-let idempotencyCacheSig = "";
-
-/**
- * @description 按配置 TTL/容量懒创建或复用幂等缓存实例。
- * @param config - 含 `idempotency` 开关与容量参数的通道配置
- * @returns 幂等缓存实例；未启用时返回 undefined
- */
-function getIdempotencyCache(config: RabbitmqConfig): IdempotencyCache | undefined {
-  if (!config.idempotency.enabled) {
-    return undefined;
-  }
-  const sig = `${config.idempotency.ttlMs}:${config.idempotency.maxEntries}`;
-  if (!idempotencyCache || idempotencyCacheSig !== sig) {
-    idempotencyCache = createIdempotencyCache({
-      ttlMs: config.idempotency.ttlMs,
-      maxEntries: config.idempotency.maxEntries,
-    });
-    idempotencyCacheSig = sig;
-  }
-  return idempotencyCache;
-}
-
-/**
- * @description 将 RabbitMQ payload 解析模式映射为 message-sdk `PayloadParseMode`。
- * @param mode - 通道配置中的 payload.mode
- * @returns message-sdk 可识别的解析模式
- */
-function mapPayloadMode(mode: RabbitmqConfig["payload"]["mode"]): PayloadParseMode {
-  if (mode === "plainText") return "plain";
-  if (mode === "jsonOnly") return "jsonOnly";
-  return "jsonTextOrPlain";
 }
 
 /**
@@ -103,10 +70,10 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
 
   const parsed = normalizeWireIngress({
     rawPayload: event.content.toString("utf-8"),
-    mode: mapPayloadMode(config.payload.mode),
+    mode: mapRabbitmqWirePayloadMode(config.payload.mode),
     channel: "rabbitmq",
     idempotencyKey: correlationId,
-    idempotency: getIdempotencyCache(config),
+    idempotency: getRabbitmqIdempotencyCache(config.idempotency),
   });
   if (!parsed.accepted) {
     return { accepted: true, routeSource: "idempotency" };
@@ -182,6 +149,10 @@ async function dispatchToRuntime(
 
   const mode = config.dispatch.mode as ChannelDispatchMode;
   const outboundFormat = config.payload.outboundFormat ?? "envelope";
+  const timeoutMs = resolveRabbitmqAgentReplyTimeoutMs(
+    rt.config as ChannelLimitsOpenClawConfig,
+    config.dispatch.timeoutMs,
+  );
 
   await dispatchChannelMessage({
     mode,
@@ -194,7 +165,7 @@ async function dispatchToRuntime(
     sessionKey,
     unified: parsed.unified,
     sessionId: `rabbitmq:${routeResult.accountId}:${routeResult.agentId}:${peerId}`,
-    timeoutMs: config.dispatch.timeoutMs,
+    timeoutMs,
     replyEnabled: config.dispatch.reply.enabled,
     extra: {
       routingKey: inbound.routingKey,
