@@ -21,7 +21,10 @@
     "publish-changed": "node scripts/publish-changed.mjs",
     "sync-message-sdk-deps": "node scripts/sync-message-sdk-deps.mjs",
     "e2e": "node scripts/e2e/run-e2e.mjs",
-    "e2e:host": "OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs"
+    "e2e:host": "OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs",
+    "test:unit": "node scripts/test-plugins.mjs --unit-only",
+    "test:e2e": "node scripts/test-plugins.mjs --e2e-only",
+    "test:plugins": "node scripts/test-plugins.mjs"
   },
   "engines": {
     "node": ">=22.0.0"

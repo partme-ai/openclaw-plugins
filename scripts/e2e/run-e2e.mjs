@@ -120,6 +120,10 @@ Options:
   --skip-install            Skip build/pack/install (reuse prior install)
   --help                    Show this help
 
+Unit/E2E selection (prefer pnpm test:unit / pnpm test:e2e):
+  node scripts/test-plugins.mjs --unit-only [--plugins ...]
+  node scripts/test-plugins.mjs --e2e-only [--plugins ...] [e2e options above]
+
 Environment:
   OPENCLAW_E2E_HOST_GATEWAY=1   Run gateway on host instead of Docker openclaw service
   OPENCLAW_BIN                  Path to openclaw CLI (host mode)

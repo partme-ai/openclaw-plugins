@@ -1,5 +1,19 @@
 # OpenClaw 标准渠道测试套件 — 接入指南
 
+## 测试金字塔（monorepo 总览）
+
+| 层级 | 入口 | 需要 Docker | 说明 |
+|------|------|-------------|------|
+| **单元测试** | `pnpm test:unit` | 否 | 各 extension 的 Vitest；共享 `test-utils/` |
+| **标准渠道套件** | `pnpm test:standard`（插件内） | 视渠道 | 本目录 `testing/` + ChannelAdapter |
+| **E2E 冒烟** | `pnpm test:e2e` | 是* | `scripts/e2e/` 安装 + 网关 + 协议适配器 |
+
+统一入口：`pnpm test:plugins -- --unit-only` / `--e2e-only` / `--plugins mqtt,gotify`
+
+完整扩展矩阵见 `scripts/e2e/lib/registry.mjs` → `EXTENSION_INVENTORY`。
+
+---
+
 本目录为 **文档 + 数据集 + 可选 runner 模板**，不是可 import 的插件共享库。各渠道在自身 `extensions/{channel}/scripts/` 下实现 **ChannelAdapter**，再调用 `run-standard-tests.ts`。
 
 ## 为什么在 Control UI 里看不到测试对话？

@@ -8,14 +8,21 @@ Repeatable end-to-end workflow for validating **installed** OpenClaw plugins aga
 # From openclaw-plugins repo root
 pnpm install
 
-# Full queue/channel suite (host gateway — recommended on Mac)
-OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs
+# Unit tests only (no Docker) — all extensions
+pnpm test:unit
 
-# Subset
-OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins mqtt,rabbitmq
+# Unit tests for a subset
+pnpm test:unit -- --plugins mqtt,stomp,wecom
 
-# Keep Docker services running for debugging
-OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --keep-services
+# Full queue/channel e2e (Docker + gateway)
+pnpm test:e2e
+
+# Host gateway (recommended on Mac)
+OPENCLAW_E2E_HOST_GATEWAY=1 pnpm test:e2e
+
+# Combined runner (defaults to unit-only; pass --e2e-only for Docker path)
+pnpm test:plugins -- --unit-only --plugins gotify
+pnpm test:plugins -- --e2e-only --plugins mqtt,rabbitmq --skip-browser
 ```
 
 Report: `scripts/e2e/e2e-report.json` (gitignored)
@@ -52,6 +59,47 @@ Report: `scripts/e2e/e2e-report.json` (gitignored)
 | `datasets/` | Sample payloads (text/json) reused by adapters |
 | `bootstrap/` | Service setup (Gotify tokens, RocketMQ topic) |
 | `plugins/` | Per-plugin E2E test adapters |
+
+## Test pyramid
+
+| Layer | Command | Docker | Scope |
+|-------|---------|--------|-------|
+| **Unit** | `pnpm test:unit` | No | Vitest per extension — config, mappers, mocks |
+| **Standard channel** | `cd extensions/gotify && pnpm test:standard` | Optional | Agent send/wait/reply via `testing/` runner |
+| **E2E smoke** | `pnpm test:e2e` | Yes* | Install + gateway + protocol adapters |
+
+\* Embedded channels (mqtt, stomp, web-*) need gateway only; external brokers need compose services.
+
+## Extension inventory
+
+See `scripts/e2e/lib/registry.mjs` → `EXTENSION_INVENTORY` for the full matrix:
+
+- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (7 plugins today)
+- **e2eAdapter: false** — unit tests (+ optional `testing/` standard suite); no Docker e2e yet
+- **dockerRequired: true** — rabbitmq, rocketmq, gotify (redis-stream planned)
+
+### Plugins with e2e adapters (Docker optional per category)
+
+| Plugin | Docker services |
+|--------|-----------------|
+| mqtt, stomp, web-mqtt, web-stomp | None (embedded / browser) |
+| rabbitmq | rabbitmq |
+| rocketmq | rocketmq-namesrv, broker, proxy |
+| gotify | gotify |
+
+### Unit-only extensions (representative)
+
+wecom, wechat, douyin, redis-stream, nacos, bridge, cluster, knowledge, memory, message-sdk, …
+
+## Shared test utilities
+
+`test-utils/` (`@partme.ai/openclaw-test-utils`):
+
+- `createRuntimeEnv()` — mock plugin runtime env
+- `createMockPluginApi()` — minimal PluginApi
+- `channel-fixtures` — mqtt/gotify/stomp config fragments
+- `plugin-manifest` — manifest smoke test helper
+- `datasets` — re-export `scripts/e2e/datasets/*.json`
 
 ## Plugin categories (queue/channel focus)
 
