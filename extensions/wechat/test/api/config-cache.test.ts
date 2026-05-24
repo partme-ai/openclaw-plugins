@@ -4,11 +4,11 @@ const { mockGetConfig } = vi.hoisted(() => ({
   mockGetConfig: vi.fn(),
 }));
 
-vi.mock("./api.js", () => ({
+vi.mock("../../src/api/api.js", () => ({
   getConfig: mockGetConfig,
 }));
 
-import { WeixinConfigManager } from "./config-cache.js";
+import { WeixinConfigManager } from "../../src/api/config-cache.js";
 
 let dateNowMock: ReturnType<typeof vi.spyOn>;
 

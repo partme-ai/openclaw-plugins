@@ -4,7 +4,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -17,7 +17,7 @@ const { mockGetUploadUrl } = vi.hoisted(() => ({
   mockGetUploadUrl: vi.fn(),
 }));
 
-vi.mock("../api/api.js", () => ({
+vi.mock("../../src/api/api.js", () => ({
   getUploadUrl: mockGetUploadUrl,
 }));
 
@@ -26,7 +26,7 @@ const { mockFetch } = vi.hoisted(() => ({
 }));
 vi.stubGlobal("fetch", mockFetch);
 
-import { downloadRemoteImageToTemp, uploadFileToWeixin, uploadVideoToWeixin, uploadFileAttachmentToWeixin } from "./upload.js";
+import { downloadRemoteImageToTemp, uploadFileToWeixin, uploadVideoToWeixin, uploadFileAttachmentToWeixin } from "../../src/cdn/upload.js";
 
 beforeEach(() => {
   vi.clearAllMocks();

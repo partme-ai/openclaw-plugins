@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 // Import the exported functions — buildMessage is now public.
-import { deriveTraceId, generateMessageId, buildMessage } from "./message-bridge.js";
+import { deriveTraceId, generateMessageId, buildMessage } from "../../src/bridge/message-bridge.js";
 
 describe("deriveTraceId — 确定性追踪 ID", () => {
   it("same inputs always produce the same traceId", () => {

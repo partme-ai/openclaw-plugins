@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { setContextToken, getContextToken } from "./inbound.js";
+import { setContextToken, getContextToken } from "../../src/messaging/inbound.js";
 
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),

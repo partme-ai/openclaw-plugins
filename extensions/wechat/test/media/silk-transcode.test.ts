@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -18,7 +18,7 @@ describe("silkToWav", () => {
     vi.doMock("silk-wasm", () => {
       throw new Error("Cannot find module 'silk-wasm'");
     });
-    const { silkToWav } = await import("./silk-transcode.js");
+    const { silkToWav } = await import("../../src/media/silk-transcode.js");
     const result = await silkToWav(Buffer.from("fake-silk"));
     expect(result).toBeNull();
   });
@@ -31,7 +31,7 @@ describe("silkToWav", () => {
         duration: 10,
       }),
     }));
-    const { silkToWav } = await import("./silk-transcode.js");
+    const { silkToWav } = await import("../../src/media/silk-transcode.js");
     const result = await silkToWav(Buffer.from("fake-silk"));
     expect(result).not.toBeNull();
     expect(result!.length).toBe(44 + fakePcm.byteLength); // WAV header + PCM data
@@ -51,7 +51,7 @@ describe("silkToWav", () => {
     vi.doMock("silk-wasm", () => ({
       decode: vi.fn().mockRejectedValue(new Error("decode error")),
     }));
-    const { silkToWav } = await import("./silk-transcode.js");
+    const { silkToWav } = await import("../../src/media/silk-transcode.js");
     const result = await silkToWav(Buffer.from("bad-silk"));
     expect(result).toBeNull();
   });

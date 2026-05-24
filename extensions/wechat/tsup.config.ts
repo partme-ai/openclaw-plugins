@@ -6,8 +6,7 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  target: "es2022",
-  platform: "node",
+  target: "node22",
   outDir: "dist",
   external: [/^openclaw(\/.*)?$/],
 });

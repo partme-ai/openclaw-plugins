@@ -1,10 +1,12 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { buildChannelConfigSchema } from "openclaw/plugin-sdk/channel-config-schema";
 
-import { weixinPlugin } from "./src/channel.js";
-import { assertHostCompatibility } from "./src/compat.js";
-import { WeixinConfigSchema } from "./src/config/config-schema.js";
-import { setWeixinRuntime } from "./src/runtime.js";
+import { weixinPlugin } from "./channel.js";
+import { assertHostCompatibility } from "./shared/compat.js";
+import { WeixinConfigSchema } from "./config.js";
+import { setWeixinRuntime } from "./runtime.js";
+
+export { weixinPlugin } from "./channel.js";
 
 export default {
   id: "openclaw-weixin",

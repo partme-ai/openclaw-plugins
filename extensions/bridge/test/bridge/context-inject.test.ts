@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { registerContextInjection } from "./context-inject.js";
+import { registerContextInjection } from "../../src/bridge/context-inject.js";
 
 function createMockApi(pluginConfig?: Record<string, unknown>) {
   const hooks: Record<string, Function[]> = {};

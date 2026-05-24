@@ -7,7 +7,7 @@ import {
   stripAdvancedMarkdown,
   normalizeForChannel,
   getChannelNormalizer,
-} from "./normalize.js";
+} from "../../src/bridge/normalize.js";
 
 describe("stripMarkdown", () => {
   it("removes bold markers", () => {

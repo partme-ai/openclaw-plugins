@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 
 // Mock dependencies before importing module under test
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -30,7 +30,7 @@ afterEach(() => {
 async function loadModule() {
   // Clear module cache to pick up new env
   vi.resetModules();
-  return await import("./accounts.js");
+  return await import("../../src/auth/accounts.js");
 }
 
 describe("loadWeixinAccount", () => {

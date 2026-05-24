@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import os from "node:os";
-import { resolveStateDir } from "./state-dir.js";
+import { resolveStateDir } from "../../src/storage/state-dir.js";
 
 describe("resolveStateDir", () => {
   afterEach(() => {

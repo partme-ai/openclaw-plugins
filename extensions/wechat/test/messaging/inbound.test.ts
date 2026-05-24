@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { isMediaItem, weixinMessageToMsgContext, getContextTokenFromMsgContext } from "./inbound.js";
-import type { WeixinMsgContext } from "./inbound.js";
-import { MessageItemType } from "../api/types.js";
-import type { WeixinMessage, MessageItem } from "../api/types.js";
+import { isMediaItem, weixinMessageToMsgContext, getContextTokenFromMsgContext } from "../../src/messaging/inbound.js";
+import type { WeixinMsgContext } from "../../src/messaging/inbound.js";
+import { MessageItemType } from "../../src/api/types.js";
+import type { WeixinMessage, MessageItem } from "../../src/api/types.js";
 
 // Mock logger to avoid file I/O
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),

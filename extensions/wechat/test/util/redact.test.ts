@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { truncate, redactToken, redactBody, redactUrl } from "./redact.js";
+import { truncate, redactToken, redactBody, redactUrl } from "../../src/util/redact.js";
 
 describe("truncate", () => {
   it("returns empty string for undefined", () => {

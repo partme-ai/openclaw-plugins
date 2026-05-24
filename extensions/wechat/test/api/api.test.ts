@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock logger
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock("node:crypto", () => ({
   },
 }));
 
-import { getUpdates, getUploadUrl, sendMessage, getConfig, sendTyping } from "./api.js";
+import { getUpdates, getUploadUrl, sendMessage, getConfig, sendTyping } from "../../src/api/api.js";
 
 function mockResponse(body: object | string, status = 200, ok = true): Response {
   const text = typeof body === "string" ? body : JSON.stringify(body);

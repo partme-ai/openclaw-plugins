@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -13,11 +13,11 @@ const { mockSendMessageWeixin } = vi.hoisted(() => ({
   mockSendMessageWeixin: vi.fn(),
 }));
 
-vi.mock("./send.js", () => ({
+vi.mock("../../src/messaging/send.js", () => ({
   sendMessageWeixin: mockSendMessageWeixin,
 }));
 
-import { sendWeixinErrorNotice } from "./error-notice.js";
+import { sendWeixinErrorNotice } from "../../src/messaging/error-notice.js";
 
 beforeEach(() => {
   vi.clearAllMocks();

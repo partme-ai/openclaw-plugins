@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getMimeFromFilename, getExtensionFromMime, getExtensionFromContentTypeOrUrl } from "./mime.js";
+import { getMimeFromFilename, getExtensionFromMime, getExtensionFromContentTypeOrUrl } from "../../src/media/mime.js";
 
 describe("getMimeFromFilename", () => {
   it("returns correct MIME for known extensions", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveRawAccountId } from "./accounts.js";
+import { deriveRawAccountId } from "../../src/auth/accounts.js";
 
 describe("deriveRawAccountId", () => {
   it("converts -im-bot suffix to @im.bot", () => {

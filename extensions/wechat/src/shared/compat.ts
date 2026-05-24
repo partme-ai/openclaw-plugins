@@ -6,7 +6,7 @@
  * the supported range for this plugin version.
  */
 
-import { logger } from "./util/logger.js";
+import { logger } from "../util/logger.js";
 
 export const SUPPORTED_HOST_MIN = "2026.3.22";
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { PRESETS } from "./presets.js";
-import { ALL_CHANNELS } from "./channels.js";
-import type { ChannelContextPreset } from "./channels.js";
+import { PRESETS } from "../../src/bridge/presets.js";
+import { ALL_CHANNELS } from "../../src/bridge/channels.js";
+import type { ChannelContextPreset } from "../../src/bridge/channels.js";
 
 describe("Context Presets completeness", () => {
   it("has exactly one preset per channel", () => {

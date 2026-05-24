@@ -46,6 +46,12 @@
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm build"
   },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "setupEntry": "./dist/setup-entry.js"
+  },
   "peerDependencies": {
     "openclaw": ">=2026.4.12"
   },

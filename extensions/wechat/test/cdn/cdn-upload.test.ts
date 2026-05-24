@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -14,8 +14,8 @@ const { mockFetch } = vi.hoisted(() => ({
 }));
 vi.stubGlobal("fetch", mockFetch);
 
-import { encryptAesEcb, aesEcbPaddedSize } from "./aes-ecb.js";
-import { uploadBufferToCdn } from "./cdn-upload.js";
+import { encryptAesEcb, aesEcbPaddedSize } from "../../src/cdn/aes-ecb.js";
+import { uploadBufferToCdn } from "../../src/cdn/cdn-upload.js";
 import crypto from "node:crypto";
 
 beforeEach(() => {

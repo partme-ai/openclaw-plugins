@@ -5,7 +5,7 @@ import {
   getExternalChannels,
   getBundledChannels,
   type ChannelMeta,
-} from "./channels.js";
+} from "../../src/bridge/channels.js";
 
 describe("ALL_CHANNELS registry", () => {
   it("has exactly 22 channels registered", () => {

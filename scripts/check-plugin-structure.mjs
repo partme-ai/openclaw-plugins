@@ -31,7 +31,7 @@ const PLUGIN_PROFILE_OVERRIDE = Object.freeze({
   _template: "channel-base",
   wecom: "channel-extended",
   "wecom-kf": "channel-extended",
-  bridge: "channel-legacy",
+  bridge: "channel-base",
   memory: "capability-memory",
   openmem: "capability-memory",
   mtls: "capability",

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -15,7 +15,7 @@ const { mockUploadFileToWeixin, mockUploadVideoToWeixin, mockUploadFileAttachmen
   mockUploadFileAttachmentToWeixin: vi.fn(),
 }));
 
-vi.mock("../cdn/upload.js", () => ({
+vi.mock("../../src/cdn/upload.js", () => ({
   uploadFileToWeixin: mockUploadFileToWeixin,
   uploadVideoToWeixin: mockUploadVideoToWeixin,
   uploadFileAttachmentToWeixin: mockUploadFileAttachmentToWeixin,
@@ -27,13 +27,13 @@ const { mockSendImageMessageWeixin, mockSendVideoMessageWeixin, mockSendFileMess
   mockSendFileMessageWeixin: vi.fn(),
 }));
 
-vi.mock("./send.js", () => ({
+vi.mock("../../src/messaging/send.js", () => ({
   sendImageMessageWeixin: mockSendImageMessageWeixin,
   sendVideoMessageWeixin: mockSendVideoMessageWeixin,
   sendFileMessageWeixin: mockSendFileMessageWeixin,
 }));
 
-import { sendWeixinMediaFile } from "./send-media.js";
+import { sendWeixinMediaFile } from "../../src/messaging/send-media.js";
 
 const baseParams = {
   to: "user1",

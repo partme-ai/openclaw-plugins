@@ -3,8 +3,8 @@ import {
   ALL_CAPABILITIES,
   getChannelCapabilities,
   type ChannelCapabilities,
-} from "./capabilities.js";
-import { ALL_CHANNELS } from "./channels.js";
+} from "../../src/bridge/capabilities.js";
+import { ALL_CHANNELS } from "../../src/bridge/channels.js";
 
 describe("ALL_CAPABILITIES coverage", () => {
   it("every channel in ALL_CHANNELS has a capability declaration", () => {

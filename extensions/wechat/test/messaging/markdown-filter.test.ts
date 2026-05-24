@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { StreamingMarkdownFilter } from "./markdown-filter.js";
+import { StreamingMarkdownFilter } from "../../src/messaging/markdown-filter.js";
 
 /** Feed entire string at once (one-shot). */
 function oneShot(input: string): string {

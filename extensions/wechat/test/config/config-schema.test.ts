@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { WeixinConfigSchema } from "./config-schema.js";
+import { WeixinConfigSchema } from "../../src/config/config-schema.js";
 
 describe("WeixinConfigSchema", () => {
   it("parses minimal config with defaults", () => {

@@ -7,9 +7,9 @@ import {
   getRemainingPauseMs,
   assertSessionActive,
   _resetForTest,
-} from "./session-guard.js";
+} from "../../src/api/session-guard.js";
 
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }));
 

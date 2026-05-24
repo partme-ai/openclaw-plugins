@@ -5,15 +5,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mockStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "debug-mode-test-"));
 
-vi.mock("../storage/state-dir.js", () => ({
+vi.mock("../../src/storage/state-dir.js", () => ({
   resolveStateDir: () => mockStateDir,
 }));
 
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }));
 
-import { toggleDebugMode, isDebugMode, _resetForTest } from "./debug-mode.js";
+import { toggleDebugMode, isDebugMode, _resetForTest } from "../../src/messaging/debug-mode.js";
 
 describe("debug-mode", () => {
   beforeEach(() => {

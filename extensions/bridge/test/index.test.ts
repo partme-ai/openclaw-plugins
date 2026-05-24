@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-const pluginModule = await import("./index.js");
+const pluginModule = await import("../src/index.js");
 const plugin = pluginModule.default;
 
 describe("openclaw-bridge plugin", () => {

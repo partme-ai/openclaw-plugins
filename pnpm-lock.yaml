@@ -698,6 +698,9 @@ importers:
       silk-wasm:
         specifier: ^3.7.1
         version: 3.7.1
+      tsup:
+        specifier: ^8.2.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -781,15 +784,9 @@ importers:
       '@wecom/aibot-node-sdk':
         specifier: ^1.0.0
         version: 1.0.7
-      clawdbot:
-        specifier: '*'
-        version: 2026.1.24-3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(@types/express@5.0.6)(devtools-protocol@0.0.1632630)(typescript@5.9.3)
       fast-xml-parser:
         specifier: ^4.3.0
         version: 4.5.6
-      moltbot:
-        specifier: '*'
-        version: 0.1.0
       openclaw:
         specifier: '>=2026.4.12'
         version: 2026.5.18

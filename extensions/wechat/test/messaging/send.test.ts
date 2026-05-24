@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -13,7 +13,7 @@ const { mockSendMessageApi } = vi.hoisted(() => ({
   mockSendMessageApi: vi.fn(),
 }));
 
-vi.mock("../api/api.js", () => ({
+vi.mock("../../src/api/api.js", () => ({
   sendMessage: mockSendMessageApi,
 }));
 
@@ -39,8 +39,8 @@ import {
   sendImageMessageWeixin,
   sendVideoMessageWeixin,
   sendFileMessageWeixin,
-} from "./send.js";
-import type { UploadedFileInfo } from "../cdn/upload.js";
+} from "../../src/messaging/send.js";
+import type { UploadedFileInfo } from "../../src/cdn/upload.js";
 
 beforeEach(() => {
   vi.clearAllMocks();

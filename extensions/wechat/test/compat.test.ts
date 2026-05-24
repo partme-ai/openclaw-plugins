@@ -6,7 +6,7 @@ import {
   isHostVersionSupported,
   assertHostCompatibility,
   SUPPORTED_HOST_MIN,
-} from "./compat.js";
+} from "../src/shared/compat.js";
 
 describe("parseOpenClawVersion", () => {
   it("parses a standard version", () => {

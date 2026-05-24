@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-vi.mock("../util/logger.js", () => ({
+vi.mock("../../src/util/logger.js", () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -26,7 +26,7 @@ afterEach(() => {
 
 async function loadModule() {
   vi.resetModules();
-  return await import("./sync-buf.js");
+  return await import("../../src/storage/sync-buf.js");
 }
 
 describe("getSyncBufFilePath", () => {
