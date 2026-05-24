@@ -61,28 +61,18 @@ openclaw config set channels.wecom.enabled true
 openclaw gateway restart
 ```
 
-#### Option C: Progressive examples (recommended)
+#### Option C: Scenario-based guide (recommended)
 
 Copy-paste configs from minimal Bot WS through dual-mode, multi-account, RAG, and advanced options:
 
-**[Progressive configuration (Levels 1–10)](../../doc/wecom/configuration-examples.md)**
+**[WeCom Configuration Guide (Levels 1–11)](../../doc/wecom/OpenClaw-WeCom-Configuration.md)**
 
-**Level 1 minimum** (Bot WebSocket DM):
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "enabled": true,
-      "connectionMode": "websocket",
-      "botId": "<YOUR_BOT_ID>",
-      "secret": "<YOUR_BOT_SECRET>"
-    }
-  }
-}
-```
+Minimum setup (Scenario 1):
 
 ```bash
+openclaw config set channels.wecom.enabled true
+openclaw config set channels.wecom.botId "<YOUR_BOT_ID>"
+openclaw config set channels.wecom.secret "<YOUR_BOT_SECRET>"
 openclaw gateway restart
 openclaw channels status --probe
 ```
@@ -98,168 +88,29 @@ openclaw channels status --probe
 > - `websocket` (default) -- long-lived WS, requires `botId` + `secret`
 > - `webhook` -- HTTP callback, requires `token` + `encodingAESKey`
 
-## Bot Mode Configuration
+## Configuration reference
 
-### Core Settings
+Full JSON examples and field-by-field reference for Bot, Agent, dual-mode, multi-account, streaming, access control, media, RAG, and advanced options:
 
-| Config | Description | Values | Default |
-|--------|-------------|--------|---------|
-| `channels.wecom.enabled` | Enable channel | `true` / `false` | `false` |
-| `channels.wecom.connectionMode` | Bot connection mode | `websocket` / `webhook` | `websocket` |
-| `channels.wecom.name` | Display name | - | `WeCom` |
+**[WeCom Configuration Guide](../../doc/wecom/OpenClaw-WeCom-Configuration.md)**
 
-#### WebSocket Mode (default)
-
-| Config | Description | Default |
-|--------|-------------|---------|
-| `channels.wecom.botId` | WeCom Bot ID | - |
-| `channels.wecom.secret` | WeCom Bot Secret | - |
-| `channels.wecom.websocketUrl` | WebSocket endpoint | `wss://openws.work.weixin.qq.com` |
-| `channels.wecom.sendThinkingMessage` | Send "thinking" placeholder | `true` |
-
-#### Webhook Mode (`connectionMode: "webhook"`)
-
-| Config | Description |
-|--------|-------------|
-| `channels.wecom.token` | Webhook verification token |
-| `channels.wecom.encodingAESKey` | AES encryption key (43-char Base64) |
-| `channels.wecom.receiveId` | Receive ID (decryption verification) |
-| `channels.wecom.welcomeText` | Welcome message on enter-chat event |
-| `channels.wecom.streamPlaceholderText` | Bot stream first-frame placeholder |
-
-#### Access Control
-
-| Config | Description | Values | Default |
-|--------|-------------|--------|---------|
-| `channels.wecom.dmPolicy` | DM access policy | `pairing` / `open` / `allowlist` / `disabled` | `open` |
-| `channels.wecom.allowFrom` | DM allowlist (user IDs) | - | `[]` |
-| `channels.wecom.groupPolicy` | Group chat policy | `open` / `allowlist` / `disabled` | `open` |
-| `channels.wecom.groupAllowFrom` | Group allowlist (group IDs) | - | `[]` |
-| `channels.wecom.groups` | Per-group config (sender allowlist) | - | `{}` |
-
-#### Media Settings
-
-| Config | Description | Default |
-|--------|-------------|---------|
-| `channels.wecom.mediaLocalRoots` | Additional local paths for file sending | `[]` |
-| `channels.wecom.media.maxBytes` | Max media file size (bytes) | `20971520` (20MB) |
-| `channels.wecom.media.tempDir` | Media temp directory | — (**planned**, type only) |
-| `channels.wecom.media.retentionHours` | Media retention hours | — (**planned**) |
-| `channels.wecom.media.cleanupOnStart` | Clean temp media on startup | — (**planned**) |
-
-**Media size limits and auto-downgrade:**
-
-| Media Type | Max Limit | Downgrade |
-|------------|-----------|-----------|
-| Image | 10 MB | Exceed -> sent as file |
-| Video | 10 MB | Exceed -> sent as file |
-| Voice | 2 MB (AMR only) | Non-AMR or exceed -> sent as file |
-| File | 20 MB | Exceed -> rejected |
-
-#### Network Settings
-
-| Config | Description |
-|--------|-------------|
-| `channels.wecom.network.agentReplyTimeoutMs` | Agent reply timeout (ms); fallback message on expiry |
-| `channels.wecom.network.egressProxyUrl` | Egress proxy (fixed IP / error 60020) |
-| `channels.wecom.network.timeoutMs` | HTTP timeout on some code paths (ms) |
-| `channels.wecom.network.retries` | — (**planned**, not wired) |
-| `channels.wecom.network.retryDelayMs` | — (**planned**, not wired) |
-
-> **Egress proxy priority**: `channels.wecom.network.egressProxyUrl` > `OPENCLAW_WECOM_EGRESS_PROXY_URL` > `WECOM_EGRESS_PROXY_URL` > `HTTPS_PROXY` > `ALL_PROXY` > `HTTP_PROXY`
-
-## Agent Mode Configuration
-
-Agent mode uses HTTP webhook callbacks with encrypted XML payloads. Configure the callback URL in the WeCom admin console under "API Receive Messages".
-
-### Prerequisites
-
-1. Create a self-built app in the [WeCom Admin Console](https://work.weixin.qq.com/wework_admin/frame#apps)
-2. Note your **CorpID**, **CorpSecret**, and **AgentId**
-3. Under app settings -> "API Receive Messages", record the **Token** and **EncodingAESKey**
-
-### Setup Steps
-
-> **Important**: Configure the Gateway first, then save the callback URL in the WeCom admin console.
-
-**Step 1: Configure Gateway**
+Quick CLI:
 
 ```bash
-openclaw config set channels.wecom.agent.corpId <YOUR_CORP_ID>
-openclaw config set channels.wecom.agent.corpSecret <YOUR_CORP_SECRET>
-openclaw config set channels.wecom.agent.agentId <YOUR_AGENT_ID>
-openclaw config set channels.wecom.agent.token <YOUR_CALLBACK_TOKEN>
-openclaw config set channels.wecom.agent.encodingAESKey <YOUR_ENCODING_AES_KEY>
-openclaw config set channels.wecom.enabled true
-openclaw gateway restart
+# Bot WebSocket (Scenario 1)
+openclaw config set channels.wecom.botId "<YOUR_BOT_ID>"
+openclaw config set channels.wecom.secret "<YOUR_BOT_SECRET>"
+
+# Agent callback (Scenario 6) — configure Gateway before saving URL in WeCom admin
+openclaw config set channels.wecom.agent.corpId "<CORP_ID>"
+openclaw config set channels.wecom.agent.corpSecret "<SECRET>"
+openclaw config set channels.wecom.agent.agentId 1000002
+openclaw config set channels.wecom.agent.token "<TOKEN>"
+openclaw config set channels.wecom.agent.encodingAESKey "<AES_KEY>"
+
+# Egress proxy (error 60020)
+openclaw config set channels.wecom.network.egressProxyUrl "http://proxy.company.local:3128"
 ```
-
-**Step 2: Save callback URL in WeCom admin**
-
-URL: `https://<your-gateway-host>/plugins/wecom/agent/<accountId>`
-
-### Dual-mode combination
-
-Bot and Agent can run simultaneously on the same account:
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "enabled": true,
-      "botId": "your-bot-id",
-      "secret": "your-bot-secret",
-      "agent": {
-        "corpId": "ww1234567890abcdef",
-        "corpSecret": "your-corp-secret",
-        "agentId": 1000002,
-        "token": "your-callback-token",
-        "encodingAESKey": "your-encoding-aes-key-43-chars"
-      }
-    }
-  }
-}
-```
-
-### Multi-account configuration
-
-Configure multiple WeCom accounts via `accounts`, each with independent Bot and/or Agent settings:
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "enabled": true,
-      "defaultAccount": "main",
-      "accounts": {
-        "main": { "botId": "...", "agent": { ... } },
-        "support": { "dmPolicy": "allowlist", "agent": { ... } }
-      }
-    }
-  }
-}
-```
-
-### Dynamic Agent routing
-
-Auto-create isolated Agent instances per user/group:
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "dynamicAgents": {
-        "enabled": true,
-        "dmCreateAgent": true,
-        "groupEnabled": true,
-        "adminUsers": ["admin_user_id"]
-      }
-    }
-  }
-}
-```
-
-Generated Agent ID format: `wecom-{type}-{peerId}` (e.g., `wecom-dm-zhangsan`, `wecom-group-wr123456`).
 
 ## Documentation
 
@@ -267,51 +118,15 @@ In-repo guides under [`doc/wecom/`](../../doc/wecom/):
 
 | Document | Description |
 |----------|-------------|
-| [**Progressive configuration**](../../doc/wecom/configuration-examples.md) | Levels 1–10 JSON snippets, verify steps, RAG / advanced |
+| [**Configuration guide (authoritative)**](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Levels 1–11 JSON, bilingual field reference, verify steps, FAQ |
 | [Architecture](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | Dual-mode topology, source module map, inbound flows, streaming overview |
-| [Configuration](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Dual-mode setup, multi-account, access control, streaming/footer/**\*Text** config |
 | [Streaming architecture](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` lifecycle, 6-minute window, 846608 fallback, state machine |
 | [Testing & debugging](../../doc/wecom/OpenClaw-WeCom-Testing.md) | `message send`, `agent --deliver`, `user:` prefix (93006), pairing |
 | [Feishu SDK inventory](../../doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | OpenClaw plugin-sdk mapping vs Feishu channel |
 
-## Access Control
+## Access control & Cron
 
-### DM Policies
-
-- **open** (default) -- All users can send DMs freely
-- **pairing** -- Requires admin approval: `openclaw pairing list wecom` / `openclaw pairing approve wecom <CODE>`
-- **allowlist** -- Only users in `channels.wecom.allowFrom`
-- **disabled** -- All DMs blocked
-
-### Group Chat Policies
-
-- `"open"` -- All group messages allowed (default)
-- `"allowlist"` -- Only groups in `groupAllowFrom`
-- `"disabled"` -- All group messages blocked
-
-Per-group sender allowlist: `groups.<chatId>.allowFrom` limits which members can interact.
-
-## Cron Jobs
-
-Cron jobs use the **Agent outbound channel**, so Agent mode must be configured.
-
-### Target format
-
-`delivery.to` supports: `party:<id>`, `tag:<id>`, `user:<id>`, `group:<id>`, `chat:<id>`, and auto-detection.
-
-### CLI (instant effect)
-
-```bash
-openclaw cron add \
-  --name "daily-report" \
-  --agent main \
-  --cron "0 9 * * 1-5" \
-  --tz "Asia/Shanghai" \
-  --message "Generate today's briefing" \
-  --announce \
-  --channel wecom \
-  --to "party:1"
-```
+DM/group policies, pairing commands, and Cron target formats: see [Scenario 4](../../doc/wecom/OpenClaw-WeCom-Configuration.md#场景-4--访问控制--access-control) and [Scenario 11](../../doc/wecom/OpenClaw-WeCom-Configuration.md#场景-11--cron-定时推送--cron-scheduled-delivery) in the configuration guide.
 
 ## Testing
 

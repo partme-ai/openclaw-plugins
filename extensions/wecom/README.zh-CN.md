@@ -67,28 +67,18 @@ openclaw config set channels.wecom.enabled true
 openclaw gateway restart
 ```
 
-#### 方式三：渐进式配置示例（推荐）
+#### 方式三：分场景配置指南（推荐）
 
-从「最小 Bot WS」到「双模 + 多账号 + RAG + 高级项」，每级含完整 JSON、前置条件与验证步骤：
+从「最小 Bot WS」到「双模 + 多账号 + RAG + 高级项」，每场景含完整 JSON、字段说明与验证步骤：
 
-**[渐进式配置示例（Level 1–10）](../../doc/wecom/configuration-examples.zh-CN.md)**
+**[WeCom 配置指南（Level 1–11）](../../doc/wecom/OpenClaw-WeCom-Configuration.md)**
 
-**Level 1 最小可用**（私聊 Bot WebSocket）：
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "enabled": true,
-      "connectionMode": "websocket",
-      "botId": "<YOUR_BOT_ID>",
-      "secret": "<YOUR_BOT_SECRET>"
-    }
-  }
-}
-```
+最小可用（场景 1）：
 
 ```bash
+openclaw config set channels.wecom.enabled true
+openclaw config set channels.wecom.botId "<YOUR_BOT_ID>"
+openclaw config set channels.wecom.secret "<YOUR_BOT_SECRET>"
 openclaw gateway restart
 openclaw channels status --probe
 ```
@@ -104,195 +94,29 @@ openclaw channels status --probe
 > - `websocket`（默认）-- WebSocket 长连接，需 `botId` + `secret`
 > - `webhook` -- HTTP 回调，需 `token` + `encodingAESKey`
 
-### Bot 模式配置
+### 配置参考
 
-#### 核心设置
+Bot / Agent / 双模 / 多账号 / 流式 / 访问控制 / 媒体 / RAG / 高级项的**完整 JSON 与字段说明**见：
 
-| 配置项 | 说明 | 可选值 | 默认值 |
-|--------|------|--------|--------|
-| `channels.wecom.enabled` | 启用通道 | `true` / `false` | `false` |
-| `channels.wecom.connectionMode` | Bot 连接模式 | `websocket` / `webhook` | `websocket` |
-| `channels.wecom.name` | 账号显示名称 | - | `企业微信` |
+**[WeCom 配置指南](../../doc/wecom/OpenClaw-WeCom-Configuration.md)**
 
-#### WebSocket 模式（默认）
-
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `channels.wecom.botId` | 企业微信机器人 ID | - |
-| `channels.wecom.secret` | 企业微信机器人 Secret | - |
-| `channels.wecom.websocketUrl` | WebSocket 端点 | `wss://openws.work.weixin.qq.com` |
-| `channels.wecom.sendThinkingMessage` | 发送"思考中"占位消息 | `true` |
-
-#### Webhook 模式（`connectionMode: "webhook"`）
-
-| 配置项 | 说明 |
-|--------|------|
-| `channels.wecom.token` | Webhook 验证 Token |
-| `channels.wecom.encodingAESKey` | AES 加密密钥（43 位 Base64） |
-| `channels.wecom.receiveId` | 接收者 ID（解密校验用） |
-| `channels.wecom.welcomeText` | 进入聊天事件欢迎语 |
-| `channels.wecom.streamPlaceholderText` | Bot 流式首帧占位 |
-
-#### 访问控制
-
-| 配置项 | 说明 | 可选值 | 默认值 |
-|--------|------|--------|--------|
-| `channels.wecom.dmPolicy` | 私聊访问策略 | `pairing` / `open` / `allowlist` / `disabled` | `open` |
-| `channels.wecom.allowFrom` | 私聊白名单（用户 ID 列表） | - | `[]` |
-| `channels.wecom.groupPolicy` | 群聊访问策略 | `open` / `allowlist` / `disabled` | `open` |
-| `channels.wecom.groupAllowFrom` | 群聊白名单（群 ID 列表） | - | `[]` |
-| `channels.wecom.groups` | 按群配置（如发送者白名单） | - | `{}` |
-
-#### 媒体设置
-
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `channels.wecom.mediaLocalRoots` | 媒体发送允许的额外本地路径（支持 `~`） | `[]` |
-| `channels.wecom.media.maxBytes` | 最大媒体文件大小（字节） | `20971520`（20MB） |
-| `channels.wecom.media.tempDir` | 媒体处理临时目录 | —（**planned**，类型已定义未接线） |
-| `channels.wecom.media.retentionHours` | 媒体文件保留时长（小时） | —（**planned**） |
-| `channels.wecom.media.cleanupOnStart` | 启动时清理临时媒体文件 | —（**planned**） |
-
-**媒体大小限制与自动降级：**
-
-| 媒体类型 | 最大限制 | 降级行为 |
-|----------|----------|----------|
-| 图片 | 10 MB | 超出 -> 以文件形式发送 |
-| 视频 | 10 MB | 超出 -> 以文件形式发送 |
-| 语音 | 2 MB（仅 AMR） | 非 AMR 格式或超出 -> 以文件形式发送 |
-| 文件 | 20 MB | 超出 -> 拒绝发送 |
-
-#### 网络设置
-
-| 配置项 | 说明 |
-|--------|------|
-| `channels.wecom.network.agentReplyTimeoutMs` | Agent 回复总超时（毫秒），超时后降级提示 |
-| `channels.wecom.network.egressProxyUrl` | 出口代理 URL（固定 IP / 60020 场景） |
-| `channels.wecom.network.timeoutMs` | 部分 HTTP 路径超时（毫秒） |
-| `channels.wecom.network.retries` | —（**planned**，未接线） |
-| `channels.wecom.network.retryDelayMs` | —（**planned**，未接线） |
-
-> **出口代理优先级**：`channels.wecom.network.egressProxyUrl` > `OPENCLAW_WECOM_EGRESS_PROXY_URL` > `WECOM_EGRESS_PROXY_URL` > `HTTPS_PROXY` > `ALL_PROXY` > `HTTP_PROXY`
-
-### Agent 模式配置
-
-Agent 模式使用 HTTP Webhook 回调，消息体为 XML 加密格式。需在企业微信管理后台「API 接收消息」中配置回调 URL。
-
-#### 前置条件
-
-1. 在[企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame#apps)创建自建应用
-2. 记录 **CorpID**、**CorpSecret**（应用凭证）和 **AgentId**
-3. 在应用设置 ->「API 接收消息」中：记录 **Token** 和 **EncodingAESKey**
-
-#### 配置步骤
-
-> **重要**：必须先配置 Gateway，再在企微后台保存回调 URL。
-
-**第一步：配置 Gateway**
+常用 CLI 速查：
 
 ```bash
-openclaw config set channels.wecom.agent.corpId <YOUR_CORP_ID>
-openclaw config set channels.wecom.agent.corpSecret <YOUR_CORP_SECRET>
-openclaw config set channels.wecom.agent.agentId <YOUR_AGENT_ID>
-openclaw config set channels.wecom.agent.token <YOUR_CALLBACK_TOKEN>
-openclaw config set channels.wecom.agent.encodingAESKey <YOUR_ENCODING_AES_KEY>
-openclaw config set channels.wecom.enabled true
-openclaw gateway restart
+# Bot WebSocket（场景 1）
+openclaw config set channels.wecom.botId "<YOUR_BOT_ID>"
+openclaw config set channels.wecom.secret "<YOUR_BOT_SECRET>"
+
+# Agent 回调（场景 6）— 先配 Gateway，再在企微后台保存 URL
+openclaw config set channels.wecom.agent.corpId "<CORP_ID>"
+openclaw config set channels.wecom.agent.corpSecret "<SECRET>"
+openclaw config set channels.wecom.agent.agentId 1000002
+openclaw config set channels.wecom.agent.token "<TOKEN>"
+openclaw config set channels.wecom.agent.encodingAESKey "<AES_KEY>"
+
+# 出口代理（错误 60020）
+openclaw config set channels.wecom.network.egressProxyUrl "http://proxy.company.local:3128"
 ```
-
-**第二步：在企微后台保存回调 URL**
-
-URL：`https://<your-gateway-host>/plugins/wecom/agent/<accountId>`
-
-#### Agent 配置参考
-
-| 配置项 | 说明 | 必填 |
-|--------|------|------|
-| `channels.wecom.agent.corpId` | 企业 Corp ID | 是 |
-| `channels.wecom.agent.corpSecret` | 应用 Secret | 是 |
-| `channels.wecom.agent.agentId` | 应用 Agent ID | 否（主动发消息时需要） |
-| `channels.wecom.agent.token` | 回调验证 Token | 是 |
-| `channels.wecom.agent.encodingAESKey` | 回调加密密钥（43 位） | 是 |
-| `channels.wecom.agent.welcomeText` | 欢迎语 | 否 |
-| `channels.wecom.agent.dmPolicy` | DM 访问策略（覆盖顶层） | 否 |
-| `channels.wecom.agent.allowFrom` | DM 白名单（覆盖顶层） | 否 |
-
-### 双模式组合使用
-
-Bot 和 Agent 可在同一账号同时运行。Bot 处理 WebSocket 流式消息；Agent 处理 HTTP Webhook 回调及 API 驱动的主动消息。
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "enabled": true,
-      "botId": "your-bot-id",
-      "secret": "your-bot-secret",
-      "agent": {
-        "corpId": "ww1234567890abcdef",
-        "corpSecret": "your-corp-secret",
-        "agentId": 1000002,
-        "token": "your-callback-token",
-        "encodingAESKey": "your-encoding-aes-key-43-chars"
-      }
-    }
-  }
-}
-```
-
-### 多账号配置
-
-通过 `accounts` 配置多个企业微信账号，每个可独立配置 Bot 和/或 Agent。账号级字段覆盖顶层同名字段。
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "enabled": true,
-      "defaultAccount": "main",
-      "dmPolicy": "open",
-      "accounts": {
-        "main": {
-          "botId": "bot-id-1",
-          "secret": "secret-1",
-          "agent": { ... }
-        },
-        "support": {
-          "dmPolicy": "allowlist",
-          "allowFrom": ["admin1"],
-          "agent": { ... }
-        }
-      }
-    }
-  }
-}
-```
-
-### 动态 Agent 配置
-
-动态 Agent 路由可为每个用户或群组自动创建隔离的 Agent 实例：
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "dynamicAgents": {
-        "enabled": true,
-        "dmCreateAgent": true,
-        "groupEnabled": true,
-        "adminUsers": ["admin_user_id"]
-      }
-    }
-  }
-}
-```
-
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `channels.wecom.dynamicAgents.enabled` | 启用动态 Agent 路由 | `false` |
-| `channels.wecom.dynamicAgents.dmCreateAgent` | 为每个私聊用户创建隔离 Agent | `true` |
-| `channels.wecom.dynamicAgents.groupEnabled` | 为群聊启用动态 Agent | `true` |
-| `channels.wecom.dynamicAgents.adminUsers` | 管理员用户（绕过动态路由，使用主 Agent） | `[]` |
 
 ## 详细文档
 
@@ -300,69 +124,15 @@ Monorepo 内专题文档见 [`doc/wecom/`](../../doc/wecom/)：
 
 | 文档 | 说明 |
 |------|------|
-| [**渐进式配置示例**](../../doc/wecom/configuration-examples.zh-CN.md) | Level 1–10 完整 JSON、验证命令、RAG / 高级项 |
+| [**配置指南（权威）**](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Level 1–11 场景 JSON、中英文字段说明、验证、FAQ |
 | [架构设计](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | 双模式拓扑、源码模块地图、入站主流程、流式概要 |
-| [配置指南](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | 双模安装、多账号、访问控制、流式/footer 配置 |
 | [流式架构](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` 生命周期、6 分钟窗口、846608 降级、状态机 |
 | [联调测试](../../doc/wecom/OpenClaw-WeCom-Testing.md) | `message send`、`agent --deliver`、`user:` 前缀（93006）、配对 |
 | [Feishu SDK 对照](../../doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | OpenClaw plugin-sdk 与飞书通道映射、message-sdk 承接 |
 
-## 访问控制
+## 访问控制与 Cron
 
-### 私聊（DM）访问
-
-**默认**：`dmPolicy: "open"` -- 所有用户可自由发送私聊消息。
-
-- **配对审批**：`openclaw pairing list wecom` / `openclaw pairing approve wecom <CODE>`
-- **白名单模式**：通过 `channels.wecom.allowFrom` 配置允许的用户 ID
-- **开放模式**：`dmPolicy: "open"` 允许所有用户
-- **禁用模式**：`dmPolicy: "disabled"` 完全禁止私聊
-
-### 群聊访问
-
-- `"open"` -- 允许所有群消息（默认）
-- `"allowlist"` -- 仅允许 `groupAllowFrom` 中列出的群
-- `"disabled"` -- 禁用所有群消息
-
-支持群内发送者白名单：`groups.<chatId>.allowFrom` 限制群内哪些成员可以与机器人交互。
-
-## 定时任务（Cronjob）
-
-插件支持通过 OpenClaw 内置 Cron 服务进行定时消息投递。Cron 任务走 Agent 出站通道，因此必须配置 Agent 模式。
-
-### 目标格式
-
-`delivery.to` 字段支持以下格式：
-
-| 格式 | 目标 | 示例 |
-|------|------|------|
-| `party:<id>` | 部门（所有成员） | `party:1` |
-| `tag:<id>` | 标签组 | `tag:Ops` |
-| `user:<id>` | 指定用户 | `user:zhangsan` |
-| `group:<id>` / `chat:<id>` | 群聊 | `group:wr123abc` |
-| 纯数字 | 自动识别为部门 | `1` -> `party:1` |
-
-> 命名空间前缀（`wecom:`、`qywx:`、`wework:`、`wechatwork:`、`wecom-agent:`）在解析前自动剥离。
-
-### 创建方式
-
-**CLI（推荐，即时生效）：**
-
-```bash
-openclaw cron add \
-  --name "daily-report" \
-  --agent main \
-  --cron "0 9 * * 1-5" \
-  --tz "Asia/Shanghai" \
-  --message "早上好！这是今日简报。" \
-  --announce \
-  --channel wecom \
-  --to "party:1"
-```
-
-**编辑 `jobs.json`（需重启 Gateway）：** 文件路径 `~/.openclaw/cron/jobs.json`
-
-**对话创建：** 在企微对话中让 AI Agent 直接创建，如"每天早上 9 点向全公司发送今日简报"。
+私聊/群聊策略、配对命令、Cron 目标格式与示例见配置指南 [场景 4](../../doc/wecom/OpenClaw-WeCom-Configuration.md#场景-4--访问控制--access-control)、[场景 11](../../doc/wecom/OpenClaw-WeCom-Configuration.md#场景-11--cron-定时推送--cron-scheduled-delivery)。
 
 ## 联调测试
 
