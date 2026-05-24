@@ -44,6 +44,18 @@ describe("flattenWecomBotFields", () => {
     expect(flat.allowFrom).toEqual(["admin"]);
   });
 
+  it("maps bot.dmPolicy flat inside nested bot block", () => {
+    const flat = flattenWecomBotFields({
+      bot: {
+        dmPolicy: "allowlist",
+        allowFrom: ["admin"],
+      },
+    });
+
+    expect(flat.dmPolicy).toBe("allowlist");
+    expect(flat.allowFrom).toEqual(["admin"]);
+  });
+
   it("maps bot.dm.allow alias to allowFrom", () => {
     const flat = flattenWecomBotFields({
       bot: {

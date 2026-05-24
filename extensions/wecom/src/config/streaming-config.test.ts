@@ -145,6 +145,24 @@ describe("resolveWecomStreamPlaceholderText", () => {
   it("uses fallback when unset", () => {
     expect(resolveWecomStreamPlaceholderText({} as WeComConfig, "fb")).toBe("fb");
   });
+
+  it("falls back to research-era streamPlaceholderContent alias", () => {
+    expect(
+      resolveWecomStreamPlaceholderText(
+        { streamPlaceholderContent: "正在处理中..." } as WeComConfig,
+        "fb",
+      ),
+    ).toBe("正在处理中...");
+  });
+
+  it("prefers streamPlaceholderText over streamPlaceholderContent", () => {
+    expect(
+      resolveWecomStreamPlaceholderText({
+        streamPlaceholderText: "canonical",
+        streamPlaceholderContent: "legacy",
+      } as WeComConfig),
+    ).toBe("canonical");
+  });
 });
 
 describe("applyWecomWebhookEmptyContentFallback", () => {

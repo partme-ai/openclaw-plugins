@@ -155,6 +155,11 @@ export function resolveWecomStreamPlaceholderText(
   if (fromText) {
     return fromText;
   }
+  // 研究版 / 历史配置使用 streamPlaceholderContent；normalize 未跑到的路径仍可读
+  const fromLegacy = cfg.streamPlaceholderContent?.trim();
+  if (fromLegacy) {
+    return fromLegacy;
+  }
   const fb = fallback?.trim();
   return fb || undefined;
 }

@@ -83,6 +83,64 @@ describe("resolveWeComAccountMulti nested bot compatibility", () => {
     expect(resolved.secret).toBe("top-secret");
   });
 
+  it("inherits nested bot credentials from top-level base config", () => {
+    const resolved = resolveWeComAccountMulti({
+      cfg: cfg({
+        wecom: {
+          enabled: true,
+          dmPolicy: "open",
+          bot: {
+            botId: "base-bot",
+            secret: "base-secret",
+            connectionMode: "websocket",
+          },
+          accounts: {
+            "cs-assistant": {
+              name: "客服助理.AI",
+              enabled: true,
+            },
+          },
+        },
+      }),
+      accountId: "cs-assistant",
+    });
+
+    expect(resolved.name).toBe("客服助理.AI");
+    expect(resolved.botId).toBe("base-bot");
+    expect(resolved.secret).toBe("base-secret");
+    expect(resolved.config.connectionMode).toBe("websocket");
+    expect(resolved.config.dmPolicy).toBe("open");
+  });
+
+  it("lets account nested bot override base nested bot fields", () => {
+    const resolved = resolveWeComAccountMulti({
+      cfg: cfg({
+        wecom: {
+          enabled: true,
+          bot: {
+            botId: "base-bot",
+            secret: "base-secret",
+            connectionMode: "webhook",
+          },
+          accounts: {
+            main: {
+              bot: {
+                connectionMode: "websocket",
+                welcomeText: "账号欢迎",
+              },
+            },
+          },
+        },
+      }),
+      accountId: "main",
+    });
+
+    expect(resolved.botId).toBe("base-bot");
+    expect(resolved.secret).toBe("base-secret");
+    expect(resolved.config.connectionMode).toBe("websocket");
+    expect(resolved.config.welcomeText).toBe("账号欢迎");
+  });
+
   it("prefers flat account fields over nested bot fields", () => {
     const resolved = resolveWeComAccountMulti({
       cfg: cfg({
