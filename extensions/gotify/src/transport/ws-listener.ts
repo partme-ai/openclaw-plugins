@@ -91,6 +91,10 @@ export function createGotifyWsListener(
   let reconnectTimer: NodeJS.Timeout | null = null;
   let connectionTimeoutTimer: NodeJS.Timeout | null = null;
   let reconnectAttempts = 0;
+  const streamUrl =
+    account.clientToken && account.serverUrl
+      ? `${normalizeServerUrl(account.serverUrl).replace(/^http/i, "ws")}/stream?token=${encodeURIComponent(account.clientToken)}`
+      : null;
   /** 首次连接建立或失败时 resolve */
   let connectionGate: {
     resolve: () => void;
@@ -134,7 +138,7 @@ export function createGotifyWsListener(
    */
   const connect = () => {
     if (stopped) return;
-    if (!account.clientToken || !account.serverUrl) {
+    if (!streamUrl) {
       const error = "Missing clientToken or serverUrl";
       deps.onStateChange?.({ running: false, lastError: error });
       throw new GotifyConfigError("clientToken/serverUrl", error);
@@ -145,8 +149,7 @@ export function createGotifyWsListener(
       throw new GotifyWebSocketError(error, "MAX_RECONNECT_ATTEMPTS");
     }
 
-    const url = `${normalizeServerUrl(account.serverUrl).replace(/^http/i, "ws")}/stream?token=${encodeURIComponent(account.clientToken)}`;
-    socket = new WebSocketImpl(url) as unknown as WebSocket;
+    socket = new WebSocketImpl(streamUrl) as unknown as WebSocket;
 
     socket.onopen = () => {
       reconnectDelay = account.inbound.reconnectDelayMs;

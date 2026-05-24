@@ -202,6 +202,8 @@ export function startBroker(
       const clientId = client.id;
       console.log(`[openclaw-mqtt] Client disconnected: ${clientId}`);
       connectedClients.delete(clientId);
+      clientUsers.delete(clientId);
+      qos0InflightByClient.delete(clientId);
       logAuditEvent(config.audit, "info", "client_disconnected", { clientId });
       updateConnectionMetrics(connectedClients.size, 0, 1);
       onClientDisconnect?.(clientId);
@@ -469,6 +471,10 @@ export function getBrokerStats(): {
  * 验证客户端 username/password
  */
 function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): void {
+  const usersByName = new Map(
+    authConfig.users.map((user) => [user.username, user] as const),
+  );
+
   aedes.authenticate = (client, username, password, callback) => {
     const usernameStr = username?.toString();
     const passwordStr = password?.toString() ?? "";
@@ -510,9 +516,7 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       return;
     }
 
-    const user = authConfig.users.find(
-      (u) => u.username === usernameStr
-    );
+    const user = usersByName.get(usernameStr);
 
     if (!user) {
       console.warn(`[openclaw-mqtt] Auth failed — unknown user: ${usernameStr}`);
@@ -552,7 +556,7 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       cb(null);
       return;
     }
-    const user = authConfig.users.find((entry) => entry.username === clientUsers.get(client.id));
+    const user = usersByName.get(clientUsers.get(client.id) ?? "");
     if (!user) {
       cb(null);
       return;
@@ -578,7 +582,7 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       cb(null, sub);
       return;
     }
-    const user = authConfig.users.find((entry) => entry.username === clientUsers.get(client.id));
+    const user = usersByName.get(clientUsers.get(client.id) ?? "");
     if (!user) {
       cb(null, sub);
       return;

@@ -18,7 +18,7 @@ import {
 } from "./routing/topic-router.js";
 import { upsertSessionContext } from "./routing/session-mapper.js";
 import { logAuditEvent } from "./transport/audit.js";
-import { getClientUsername } from "./transport/server.js";
+import { getClientUsername, publishMessage } from "./transport/server.js";
 import { isUserActionAllowed } from "./transport/acl.js";
 import {
   normalizeWireIngress,
@@ -178,7 +178,6 @@ async function dispatchToRuntime(
     },
     reply: {
       deliver: async ({ wire }: { wire: Uint8Array | string }) => {
-        const { publishMessage } = await import("./transport/server.js");
         const payload = typeof wire === "string" ? wire : Buffer.from(wire).toString("utf8");
         publishMessage(replyTopic, payload);
       },
