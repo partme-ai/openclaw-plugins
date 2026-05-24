@@ -819,7 +819,7 @@ full 模式注册 Agent 工具 **`wecom_mcp`**（`mcp/tool.ts`）：
 
 ## 嵌套 `bot` 配置兼容（向后兼容）
 
-自 `@partme.ai/wecom@2026.5.26` 起，插件在**读取配置时**会自动将历史嵌套 `bot` 块规范化为运行时平铺字段。**推荐新配置继续使用平铺写法**（`channels.wecom.botId` / `accounts.<id>.botId`）；嵌套 `bot` 仅用于兼容旧版或 CLI 生成的配置。
+自 `@partme.ai/wecom@2026.5.25-1` 起，插件在**读取配置时**会自动将历史嵌套 `bot` 块规范化为运行时平铺字段。**推荐新配置继续使用平铺写法**（`channels.wecom.botId` / `accounts.<id>.botId`）；嵌套 `bot` 仅用于兼容旧版或 CLI 生成的配置。
 
 | 嵌套路径（兼容） | 运行时平铺字段（canonical） | 说明 |
 |------------------|----------------------------|------|

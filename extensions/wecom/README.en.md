@@ -814,7 +814,7 @@ Temporary HTTP media: `/wecom-media` route (15-minute TTL) for outbound links.
 
 ## Nested `bot` config compatibility (backward compatible)
 
-From `@partme.ai/wecom@2026.5.26`, the plugin **normalizes legacy nested `bot` blocks at read time** into flat runtime fields. **Prefer flat keys for new configs** (`channels.wecom.botId` / `accounts.<id>.botId`); nested `bot` remains accepted for older or CLI-generated layouts.
+From `@partme.ai/wecom@2026.5.25-1`, the plugin **normalizes legacy nested `bot` blocks at read time** into flat runtime fields. **Prefer flat keys for new configs** (`channels.wecom.botId` / `accounts.<id>.botId`); nested `bot` remains accepted for older or CLI-generated layouts.
 
 | Nested path (compat) | Flat runtime key (canonical) | Notes |
 |----------------------|------------------------------|-------|
