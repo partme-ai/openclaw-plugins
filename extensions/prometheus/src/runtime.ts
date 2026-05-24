@@ -1,5 +1,9 @@
 /**
- * Prometheus 插件运行时入口（Base Profile 平铺文件）。
+ * @fileoverview Prometheus Runtime 入口（Base 平铺）。
+ *
+ * @description re-export ws-bridge 层的 Gateway RPC 与配置访问 API。
+ *
+ * @module runtime
  */
 
 export {

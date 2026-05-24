@@ -1,7 +1,11 @@
 /**
- * Redis Channel/Stream channel 插件定义。
+ * @fileoverview Redis Stream Channel 插件定义。
  *
- * 完整的 ChannelPlugin：生命周期、账户管理、出站发送、状态快照、dmScope 会话隔离。
+ * @description
+ * Pub/Sub 与 Stream 双模式 ChannelPlugin：账户解析、gateway 生命周期、
+ * 出站适配与状态探针的组合导出。
+ *
+ * @module channel
  */
 
 import {
@@ -16,8 +20,10 @@ import {
   redisStreamSetupWizard,
 } from "./onboarding.js";
 
+/** @description 默认单账户 ID。 */
 export const DEFAULT_ACCOUNT_ID = "default";
 
+/** @description Redis Stream ChannelPlugin 实例。 */
 export const redisStreamChannel = {
   id: "redis-stream",
   name: "Redis Stream",

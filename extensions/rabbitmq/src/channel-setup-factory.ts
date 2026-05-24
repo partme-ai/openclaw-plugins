@@ -1,8 +1,12 @@
 // @ts-nocheck — large declarative wizard factory mirrors openclaw setup SDK surface; stubs vary by peer installs.
 /**
- * 共享 Channel setupWizard / setupAdapter 工厂。
+ * @fileoverview 共享 Channel setupWizard / setupAdapter 工厂。
  *
- * 供 extensions 下各渠道插件复用，减少重复声明式向导代码。
+ * @description
+ * 供 extensions 下各渠道插件复用，减少重复声明式向导代码；提供 URL、双凭据与
+ * 内嵌 Broker 等常见 setup 模板。
+ *
+ * @module channel-setup-factory
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
@@ -14,7 +18,7 @@ import {
   setSetupChannelEnabled,
 } from "openclaw/plugin-sdk/setup";
 
-/** 单条凭据字段映射（CLI inputKey → channels.<id> 配置键） */
+/** @description 单条凭据字段映射（CLI inputKey → channels.<id> 配置键）。 */
 export type SetupCredentialSpec = {
   inputKey: "token" | "secret" | "url" | "baseUrl" | "botToken" | "appToken" | "privateKey";
   configKey: string;
@@ -26,7 +30,7 @@ export type SetupCredentialSpec = {
   getValue: (cfg: OpenClawConfig, accountId?: string) => string | undefined;
 };
 
-/** 单条文本输入映射（CLI inputKey → channels.<id> 配置键） */
+/** @description 单条文本输入映射（CLI inputKey → channels.<id> 配置键）。 */
 export type SetupTextInputSpec = {
   inputKey: "url" | "baseUrl" | "httpPort" | "webhookPath" | "webhookUrl" | "token" | "secret";
   configKey: string;
@@ -38,6 +42,7 @@ export type SetupTextInputSpec = {
   required?: boolean;
 };
 
+/** @description 简化 Channel setup 工厂入参（凭据、文本输入与完成钩子）。 */
 export type SimpleChannelSetupParams = {
   channel: string;
   label: string;
@@ -51,7 +56,10 @@ export type SimpleChannelSetupParams = {
 };
 
 /**
- * 读取 channels.<channel> 配置节。
+ * @description 读取 `channels.<channel>` 配置节。
+ * @param cfg - OpenClaw 全局配置
+ * @param channel - 渠道 ID
+ * @returns 该渠道的配置对象（缺省为空对象）
  */
 export function getChannelSection(cfg: OpenClawConfig, channel: string): Record<string, unknown> {
   return ((cfg.channels as Record<string, unknown> | undefined)?.[channel] ?? {}) as Record<
@@ -61,7 +69,9 @@ export function getChannelSection(cfg: OpenClawConfig, channel: string): Record<
 }
 
 /**
- * 创建标准 declarative Channel setup 表面（adapter + wizard）。
+ * @description 创建标准 declarative Channel setup 表面（adapter + wizard）。
+ * @param params - 渠道标签、凭据/文本输入规格与完成逻辑
+ * @returns setupAdapter 与 setupWizard 元组
  */
 export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
   setupAdapter: ChannelSetupAdapter;
@@ -178,7 +188,9 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
 }
 
 /**
- * 基于连接 URL 的 MQ/消息中间件渠道 setup（channels.<id>.url）。
+ * @description 基于连接 URL 的 MQ/消息中间件渠道 setup（`channels.<id>.url`）。
+ * @param params - 渠道 ID、标签、文档路径与默认 URL
+ * @returns setupAdapter 与 setupWizard 元组
  */
 export function createUrlChannelSetup(params: {
   channel: string;
@@ -222,7 +234,9 @@ export function createUrlChannelSetup(params: {
 }
 
 /**
- * 双凭据渠道 setup（如 app_key + app_secret，映射到 token + secret 输入）。
+ * @description 双凭据渠道 setup（如 app_key + app_secret，映射到 token + secret 输入）。
+ * @param params - 渠道 ID、凭据字段名与环境变量提示
+ * @returns setupAdapter 与 setupWizard 元组
  */
 export function createAppKeySecretChannelSetup(params: {
   channel: string;
@@ -277,7 +291,9 @@ export function createAppKeySecretChannelSetup(params: {
 }
 
 /**
- * 仅启用 embedded broker 类渠道（配置节存在即视为已配置）。
+ * @description 仅启用 embedded broker 类渠道（配置节存在即视为已配置）。
+ * @param params - 渠道 ID、标签与引导文案
+ * @returns setupAdapter 与 setupWizard 元组
  */
 export function createEmbeddedBrokerChannelSetup(params: {
   channel: string;

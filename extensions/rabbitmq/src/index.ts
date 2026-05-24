@@ -1,6 +1,12 @@
 /**
- * openclaw-rabbitmq 入口。
- * 使用 defineChannelPluginEntry 注册 channel，并在 full 模式暴露状态路由。
+ * @fileoverview openclaw-rabbitmq 插件聚合导出面（门面模块）。
+ *
+ * @description
+ * 本文件位于插件包的公开 API 边界：通过 `defineChannelPluginEntry` 注册 RabbitMQ
+ * Channel 插件、注入 Runtime，并在 full 模式下暴露健康检查、统计与状态 HTTP 路由。
+ * Base Profile / 宿主在加载插件时从本入口获取稳定符号。
+ *
+ * @module index
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -17,7 +23,8 @@ import { registerRabbitmqTools } from "./tools/mq-tools.js";
 export { rabbitmqChannel } from "./channel.js";
 
 /**
- * channel plugin entry。
+ * @description Channel 插件默认导出：`defineChannelPluginEntry` 注册契约，含 full 模式 HTTP 路由。
+ * @see ./channel.js
  */
 export default defineChannelPluginEntry({
   id: "rabbitmq",

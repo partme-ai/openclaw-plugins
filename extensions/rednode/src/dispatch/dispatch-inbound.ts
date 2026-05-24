@@ -1,5 +1,15 @@
 /**
- * Webhook 入站经 message-sdk 解析并派发（reply-pipeline 或 publishInbound 回退）。
+ * @fileoverview Rednode Webhook 入站 dispatch：message-sdk 解析与 Agent 管线派发。
+ *
+ * @description
+ * 支持 reply-pipeline（BridgePluginRuntime）与 `publishInbound` 回退双路径；
+ * 内置 TTL 幂等缓存防止 Webhook 重试重复入站。
+ *
+ * @module dispatch/dispatch-inbound
+ */
+
+/**
+ * Rednode Webhook dispatch — Base Profile 入口。
  */
 
 import {
@@ -17,6 +27,7 @@ const idempotencyCache: IdempotencyCache = createIdempotencyCache({
   maxEntries: 10_000,
 });
 
+/** @description Webhook 派发入参。 */
 export type WebhookDispatchParams = {
   api: PluginApi;
   channel: string;
@@ -27,8 +38,15 @@ export type WebhookDispatchParams = {
   messageId?: string;
 };
 
+/** @description Webhook 派发结果：已分发 / 重复 / 跳过。 */
 export type WebhookDispatchResult = "dispatched" | "duplicate" | "skipped";
 
+/**
+ * @description 检测 runtime 是否具备 message-sdk Bridge 能力（reply + routing）。
+ * @param runtime - 宿主 runtime 对象。
+ * @returns 可 cast 为 BridgePluginRuntime 或 `null`。
+ * @throws 不抛出。
+ */
 function getBridgeRuntime(runtime: unknown): BridgePluginRuntime | null {
   const rt = runtime as Record<string, unknown> | null | undefined;
   const channel = rt?.channel as Record<string, unknown> | undefined;
@@ -44,7 +62,10 @@ function getBridgeRuntime(runtime: unknown): BridgePluginRuntime | null {
 }
 
 /**
- * 解析 Webhook body 并派发至 Agent 管线。
+ * @description 解析 Webhook body 并派发至 Agent 管线。
+ * @param params - Webhook 上下文（api、channel、shopId、rawBody 等）。
+ * @returns `dispatched` | `duplicate` | `skipped`。
+ * @throws dispatch 失败时向上抛出。
  */
 export async function dispatchWebhookInbound(
   params: WebhookDispatchParams,

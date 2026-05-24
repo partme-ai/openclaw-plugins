@@ -1,6 +1,11 @@
 /**
- * rabbitmq channel 插件定义。
- * 负责账户状态、gateway 生命周期与 outbound 回包逻辑。
+ * @fileoverview RabbitMQ Channel 插件定义。
+ *
+ * @description
+ * 遵循 OpenClaw Base Profile 的 `channel.ts` 契约：账户解析、gateway 生命周期、
+ * 入站消费回调与出站发布适配器的组合导出。
+ *
+ * @module channel
  */
 
 import { rabbitmqOutbound } from "./outbound.js";
@@ -10,13 +15,11 @@ import { getRabbitmqChannelConfig, setRabbitmqChannelConfig } from "./state/stat
 import { rabbitmqSetupAdapter, rabbitmqSetupWizard } from "./onboarding.js";
 import { processInbound } from "./inbound.js";
 
-/**
- * 单账户场景的 accountId。
- */
+/** @description 单账户场景下的默认 accountId。 */
 export const DEFAULT_ACCOUNT_ID = "default";
 
 /**
- * 导出的 channel plugin。
+ * @description 导出的 RabbitMQ ChannelPlugin 实例，供 index/setup-entry 引用。
  */
 export const rabbitmqChannel = {
   id: "rabbitmq",

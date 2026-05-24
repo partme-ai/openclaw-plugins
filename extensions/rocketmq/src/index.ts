@@ -1,6 +1,21 @@
 /**
- * openclaw-rocketmq 入口。
- * 使用 defineChannelPluginEntry 注册 channel，并在 full 模式暴露状态路由。
+ * @fileoverview OpenClaw RocketMQ 插件聚合导出面（Channel 插件入口）。
+ *
+ * @description
+ * 本文件位于 `openclaw-rocketmq` 包的公开 API 边界：注册 RocketMQ Channel、注入 Runtime，
+ * 并挂载 `/rocketmq/health`、`/rocketmq/stats`、`/rocketmq/status` 诊断 HTTP 路由。
+ * Base Profile / 宿主在加载插件时从本入口获取 Channel 定义与生命周期钩子。
+ *
+ * @module index
+ */
+
+/**
+ * openclaw-rocketmq — RocketMQ 渠道插件
+ *
+ * 功能：
+ * 1. PushConsumer 入站消费 → Topic/Tag 路由 → OpenClaw Agent 分发
+ * 2. Producer 出站发送 → 会话 replyTopic 回复
+ * 3. 诊断路由 — health / stats / status 快照
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -15,9 +30,7 @@ import { getStats } from "./transport/server.js";
 
 export { rockermqChannel } from "./channel.js";
 
-/**
- * 注册 RocketMQ channel plugin。
- */
+/** @description RocketMQ Channel 插件注册入口。 */
 export default defineChannelPluginEntry({
   id: "openclaw-rocketmq",
   name: "RocketMQ",

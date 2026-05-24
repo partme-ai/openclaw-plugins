@@ -1,8 +1,19 @@
+/**
+ * @fileoverview RabbitMQ 传输层：amqplib 连接、Exchange/Queue 声明与消费发布。
+ *
+ * @description
+ * 负责 Broker 生命周期、重连、重试队列、入站 ACK/NACK 处置与出站发布；
+ * 由 `channel.gateway.startAccount` 注入 `processInbound` 作为消费回调。
+ *
+ * @module transport/server
+ */
+
 import amqp from "amqplib";
 import { randomUUID } from "node:crypto";
 import type { ConsumeMessage, ChannelModel, Channel, Options } from "amqplib";
 import type { RabbitmqConfig } from "../config.js";
 
+/** @description 入站 AMQP 消息事件（routingKey + 原始 body + 属性）。 */
 export type InboundEvent = {
   routingKey: string;
   content: Buffer;
@@ -10,12 +21,15 @@ export type InboundEvent = {
   fields: ConsumeMessage["fields"];
 };
 
+/** @description 消费端对单条消息的处置结果（ACK / NACK / 重入队）。 */
 export type InboundDisposition =
   | { ok: true }
   | { ok: false; requeue?: boolean; reason?: string };
 
+/** @description 入站消息回调：由 channel.gateway 注入 processInbound。 */
 export type InboundHandler = (event: InboundEvent) => Promise<InboundDisposition>;
 
+/** @description RabbitMQ 连接与消息吞吐运行时统计快照。 */
 export type RabbitmqStats = {
   connected: boolean;
   lastConnectAt: number | null;
@@ -54,6 +68,11 @@ let stats: RabbitmqStats = {
   inFlight: 0,
 };
 
+/**
+ * @description 启动 RabbitMQ 服务：建立连接、声明 Exchange/Queue、绑定订阅并开始消费。
+ * @param cfg - 已解析的 RabbitMQ 通道配置
+ * @param handler - 入站消息处理器（通常为 processInbound）
+ */
 export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundHandler): Promise<void> {
   config = cfg;
   inboundHandler = handler;
@@ -61,6 +80,9 @@ export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundH
   await connectWithRetry();
 }
 
+/**
+ * @description 优雅关闭 RabbitMQ：取消消费、关闭 channel 与 connection。
+ */
 export async function stopRabbitmqServer(): Promise<void> {
   stopping = true;
   consumerTag = null;
@@ -92,6 +114,12 @@ export async function stopRabbitmqServer(): Promise<void> {
   stats.lastDisconnectAt = Date.now();
 }
 
+/**
+ * @description 向 Exchange 发布一条消息（出站 / Agent 回复）。
+ * @param routingKey - AMQP routing key（Topic）
+ * @param message - 消息体（通常为 JSON 或纯文本）
+ * @param opts - 可选持久化、自定义 headers、correlationId
+ */
 export async function publishMessage(routingKey: string, message: string, opts?: { persistent?: boolean; headers?: Record<string, unknown>; correlationId?: string }): Promise<void> {
   if (!publishChannel || !config) {
     throw new Error("RabbitMQ publish channel not initialized");
@@ -106,6 +134,13 @@ export async function publishMessage(routingKey: string, message: string, opts?:
   stats.messagesSent++;
 }
 
+/**
+ * @description RPC 风格请求：向指定队列发送消息并等待 reply-to 队列响应。
+ * @param params.queue - 目标队列名
+ * @param params.payload - 请求体
+ * @param params.timeoutMs - 等待响应超时（毫秒）
+ * @returns correlationId 与响应 payload
+ */
 export async function requestMessage(params: {
   queue: string;
   payload: string;
@@ -151,21 +186,30 @@ export async function requestMessage(params: {
   }
 }
 
+/** @description 返回当前 RabbitMQ 传输层统计快照（浅拷贝）。 */
 export function getStats(): RabbitmqStats {
   return { ...stats };
 }
 
+/** @description 入站消息被 channel 接受时的统计钩子（预留扩展）。 */
 export function trackInboundAccepted(): void {
 }
 
+/** @description 记录入站丢弃原因并递增错误计数。 @param reason - 丢弃原因标识 */
 export function trackInboundDropped(reason: string): void {
   stats.errors++;
   stats.lastError = `inbound_dropped:${reason}`;
 }
 
+/** @description 路由命中来源追踪钩子（binding / standard 等）。 @param source - 路由来源标识 */
 export function trackRoute(source: string): void {
 }
 
+/**
+ * @description 带指数退避的重连循环：在 `reconnectAttempts` 耗尽前反复调用 `connectOnce`。
+ * @returns 连接成功时 resolve；全部失败时抛出最后一次错误
+ * @throws 配置未设置或所有重连尝试均失败
+ */
 async function connectWithRetry(): Promise<void> {
   const cfg = config;
   if (!cfg) {
@@ -192,6 +236,12 @@ async function connectWithRetry(): Promise<void> {
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+/**
+ * @description 单次 AMQP 连接：声明 Exchange/Queue、绑定订阅模式并启动 consume 回调。
+ * @param cfg - 已解析的 RabbitMQ 通道配置
+ * @returns Promise，连接建立并开始消费后 resolve
+ * @throws amqplib 连接或声明失败
+ */
 async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
   const socketOptions: Options.Connect = {
     heartbeat: cfg.connection.heartbeatSeconds,
@@ -316,6 +366,10 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
   });
 }
 
+/**
+ * @description 连接意外关闭后的异步重连入口（非 stopping 状态下触发）。
+ * @returns Promise，重连失败时静默吞掉错误以避免未捕获 rejection
+ */
 async function reconnectAfterClose(): Promise<void> {
   const cfg = config;
   if (!cfg || stopping) {
@@ -328,6 +382,11 @@ async function reconnectAfterClose(): Promise<void> {
   await connectWithRetry().catch(() => {});
 }
 
+/**
+ * @description 汇总需绑定到 Queue 的 routing key 模式（subscribeTopics + topicBindings，默认 `{prefix}.#`）。
+ * @param cfg - 通道配置
+ * @returns 去重后的 binding pattern 数组
+ */
 function collectSubscribePatterns(cfg: RabbitmqConfig): string[] {
   const patterns = new Set<string>();
   for (const p of cfg.subscribeTopics) {
@@ -342,6 +401,11 @@ function collectSubscribePatterns(cfg: RabbitmqConfig): string[] {
   return [...patterns];
 }
 
+/**
+ * @description 异步 sleep 工具（重连退避与 retry 延迟）。
+ * @param ms - 等待毫秒数；≤0 时立即 resolve
+ * @returns 延迟结束的 Promise
+ */
 function sleep(ms: number): Promise<void> {
   if (ms <= 0) {
     return Promise.resolve();
@@ -349,6 +413,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * @description 将失败消息投递到 retry 队列（带 `x-attempt` 头），未超 maxAttempts 时 ACK 原消息。
+ * @param msg - 原始 AMQP 消费消息
+ * @returns 是否已由 retry 队列接管（true 时调用方无需再 nack）
+ */
 async function maybeRetryMessage(msg: ConsumeMessage): Promise<boolean> {
   const cfg = config;
   if (!cfg || !consumeChannel || !retryQueueName || !cfg.retry.enabled) {

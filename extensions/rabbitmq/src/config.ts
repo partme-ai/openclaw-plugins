@@ -1,3 +1,14 @@
+/**
+ * @fileoverview RabbitMQ 配置类型、默认值与 openclaw.json 解析/校验。
+ *
+ * @description
+ * Base Profile 平铺 `config.ts` 入口：定义 `RabbitmqConfig` 形状、默认常量，
+ * 以及从宿主运行时配置解析、校验与快照序列化的工具函数。
+ *
+ * @module config
+ */
+
+/** @description Topic 与 Agent 的显式绑定规则（routing key 模式 → agentId/accountId）。 */
 export interface TopicBinding {
   topicPattern: string;
   agentId: string;
@@ -5,8 +16,10 @@ export interface TopicBinding {
   replyTopicPattern?: string;
 }
 
+/** @description 入站消息分发至 OpenClaw 的模式（reply 管线 / 内嵌 Agent / 子 Agent）。 */
 export type DispatchMode = "reply-pipeline" | "embedded-agent" | "subagent";
 
+/** @description RabbitMQ Channel 完整运行时配置（与 `channels.rabbitmq` 对齐）。 */
 export type RabbitmqConfig = {
   url: string;
   exchange: string;
@@ -57,9 +70,7 @@ export type RabbitmqConfig = {
   };
 };
 
-/**
- * 默认配置
- */
+/** @description RabbitMQ Channel 默认配置常量（未在 openclaw.json 中覆盖时使用）。 */
 export const DEFAULT_RABBITMQ_CONFIG: RabbitmqConfig = {
   url: "amqp://localhost",
   exchange: "openclaw",
@@ -110,7 +121,9 @@ export const DEFAULT_RABBITMQ_CONFIG: RabbitmqConfig = {
 };
 
 /**
- * 从运行时配置解析 RabbitMQ 配置。
+ * @description 从宿主运行时 openclaw.json 解析 RabbitMQ 通道配置。
+ * @param cfg - 宿主全局配置对象（含 `channels.rabbitmq` 或顶层 `rabbitmq`）
+ * @returns 合并默认值后的完整 `RabbitmqConfig`
  */
 export function resolveRabbitmqConfig(cfg: Record<string, unknown>): RabbitmqConfig {
   const channels = (cfg.channels as Record<string, unknown> | undefined) ?? undefined;
@@ -249,7 +262,9 @@ export function resolveRabbitmqConfig(cfg: Record<string, unknown>): RabbitmqCon
 }
 
 /**
- * 验证 RabbitMQ 配置。
+ * @description 校验 RabbitMQ 配置必填项与 topicBindings 完整性。
+ * @param config - 已解析的配置对象
+ * @returns 问题描述字符串数组；空数组表示通过
  */
 export function validateRabbitmqConfig(config: RabbitmqConfig): string[] {
   const issues: string[] = [];
@@ -274,7 +289,9 @@ export function validateRabbitmqConfig(config: RabbitmqConfig): string[] {
 }
 
 /**
- * 构建 RabbitMQ 配置快照。
+ * @description 构建可序列化的 RabbitMQ 配置快照（供 HTTP `/rabbitmq/status` 响应）。
+ * @param config - 当前生效的配置对象
+ * @returns 浅拷贝的配置键值对象
  */
 export function buildRabbitmqConfigSnapshot(config: RabbitmqConfig): Record<string, unknown> {
   return {

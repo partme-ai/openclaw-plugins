@@ -1,10 +1,11 @@
 /**
- * openclaw-router — 企业级消息路由引擎
+ * @fileoverview openclaw-router 企业级消息路由引擎插件入口。
  *
- * 基于 OpenClaw Plugin Hooks：
- * - message_received — 入站转发（IM→MQ）
- * - message_sent — 出站转发（Agent 回复→MQ）
- * - reply_dispatch — 跨渠道 reply-via
+ * @description
+ * 基于 Plugin Hooks（message_received / message_sent / reply_dispatch）实现
+ * IM↔MQ 跨渠道 forward 与 reply-via；规则匹配、模板展开与幂等去重见本模块与 dedupe。
+ *
+ * @module index
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
@@ -16,6 +17,7 @@ import { RouteDedupeCache, buildRouteDedupeKey } from "./dedupe.js";
 // 类型
 // ============================================================================
 
+/** @description 路由规则：match 条件 + forward/reply-via 动作列表。 */
 interface RouterRule {
   id: string;
   match: {
@@ -30,6 +32,7 @@ interface RouterRule {
   >;
 }
 
+/** @description 插件根配置：enabled、rules、audit。 */
 interface RouterConfig {
   enabled: boolean;
   rules: RouterRule[];
@@ -45,6 +48,12 @@ const DEFAULTS: RouterConfig = {
 /** 全局幂等缓存（单 Gateway 进程内） */
 const dedupeCache = new RouteDedupeCache();
 
+/**
+ * @description 从 api.pluginConfig 合并默认 Router 配置。
+ * @param api - OpenClaw 插件 API。
+ * @returns 合并后的 `RouterConfig`。
+ * @throws 不抛出。
+ */
 function getConfig(api: OpenClawPluginApi): RouterConfig {
   const r = (api.pluginConfig ?? {}) as Partial<RouterConfig>;
   return {
@@ -59,7 +68,13 @@ function getConfig(api: OpenClawPluginApi): RouterConfig {
 }
 
 /**
- * 规则是否匹配当前渠道 / 方向 / topic / account。
+ * @description 判断路由规则是否匹配当前渠道、方向、topic 与 account。
+ * @param rule - 路由规则
+ * @param channelId - 来源渠道 ID
+ * @param direction - 入站或出站
+ * @param topic - 可选 topic 过滤
+ * @param accountId - 可选 account 过滤
+ * @returns 是否命中
  */
 export function matchRule(
   rule: RouterRule,
@@ -77,22 +92,43 @@ export function matchRule(
 }
 
 /**
- * 模板变量展开。
+ * @description 模板变量展开：将 {{channel}} 等占位符替换为实际上下文值。
+ * @param t - 模板字符串
+ * @param v - 变量表
+ * @returns 展开后的字符串
  */
 export function tmpl(t: string, v: Record<string, string>): string {
   return t.replace(/\{\{(\w+)\}\}/g, (_, k) => v[k] ?? `{{${k}}}`);
 }
 
+/**
+ * @description 安全读取非空 trim 字符串。
+ * @param value - 任意值。
+ * @returns trim 后字符串或 `undefined`。
+ * @throws 不抛出。
+ */
 function readString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+/**
+ * @description 从 Hook 上下文解析 accountId（含 agentAccountId 别名）。
+ * @param ctx - Hook 上下文字典。
+ * @returns accountId 或 `undefined`。
+ * @throws 不抛出。
+ */
 function resolveAccountId(ctx: Record<string, unknown>): string | undefined {
   return readString(ctx.accountId) ?? readString(ctx.agentAccountId);
 }
 
+/**
+ * @description 从 event 或 metadata 解析 topic 过滤字段。
+ * @param event - Hook 事件 payload。
+ * @returns topic 或 `undefined`。
+ * @throws 不抛出。
+ */
 function resolveTopic(event: Record<string, unknown>): string | undefined {
   const direct = readString(event.topic);
   if (direct) return direct;
@@ -103,6 +139,12 @@ function resolveTopic(event: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+/**
+ * @description 从 event 提取非空 content 字符串。
+ * @param event - Hook 事件 payload。
+ * @returns content 或 `undefined`。
+ * @throws 不抛出。
+ */
 function resolveContent(event: Record<string, unknown>): string | undefined {
   const content = event.content;
   if (typeof content === "string" && content.trim().length > 0) {
@@ -121,7 +163,10 @@ type PublishInboundFn = (params: {
 }) => void | Promise<void>;
 
 /**
- * 解析 publishInbound（兼容 api.publishInbound 与 runtime.channel.publishInbound）。
+ * @description 解析 publishInbound（兼容 api 直连与 runtime.channel.publishInbound）。
+ * @param api - OpenClaw 插件 API。
+ * @returns publish 函数或 `undefined`。
+ * @throws 不抛出。
  */
 function resolvePublishInbound(api: OpenClawPluginApi): PublishInboundFn | undefined {
   const direct = (api as OpenClawPluginApi & { publishInbound?: PublishInboundFn }).publishInbound;
@@ -135,7 +180,12 @@ function resolvePublishInbound(api: OpenClawPluginApi): PublishInboundFn | undef
 }
 
 /**
- * 执行 forward 动作。
+ * @description 执行规则中的 forward 动作（经 publishInbound 写目标渠道）。
+ * @param api - OpenClaw 插件 API。
+ * @param cfg - Router 配置（含 audit）。
+ * @param params - 规则、渠道、内容与 dedupe 键材料。
+ * @returns void
+ * @throws 不抛出；publish 失败写 error 日志。
  */
 function executeForward(
   api: OpenClawPluginApi,
@@ -208,7 +258,12 @@ function executeForward(
 }
 
 /**
- * 执行 reply-via 动作。
+ * @description 执行规则中的 reply-via 动作（将回复转发至另一渠道）。
+ * @param api - OpenClaw 插件 API。
+ * @param cfg - Router 配置（含 audit）。
+ * @param params - 规则、渠道、内容与 dedupe 键材料。
+ * @returns void
+ * @throws 不抛出；publish 失败写 error 日志。
  */
 function executeReplyVia(
   api: OpenClawPluginApi,
@@ -275,6 +330,7 @@ function executeReplyVia(
 // 插件入口
 // ============================================================================
 
+/** @description Router 插件 definePluginEntry 注册入口。 */
 export default definePluginEntry({
   id: "router",
   name: "Message Router",

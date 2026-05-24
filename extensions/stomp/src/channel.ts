@@ -1,20 +1,30 @@
 /**
- * STOMP TCP Channel 定义。
+ * @fileoverview STOMP TCP Channel 定义：Topic 绑定、单账号 default 与 outbound publish。
+ *
+ * @description
+ * 实现 OpenClaw ChannelPlugin：`sendText` 向 `/topic/session.<sessionKey>` 发布 STOMP MESSAGE。
+ *
+ * @module channel
+ */
+
+/**
+ * STOMP Channel — Base Profile 入口。
  */
 
 import { publishToDestination } from "./transport/server.js";
 import { stompTcpSetupAdapter, stompTcpSetupWizard } from "./onboarding.js";
 
 /**
- * 由会话键构造默认回复 topic。
+ * @description 由 OpenClaw sessionKey 构造默认 STOMP 回复 destination。
+ * @param sessionKey - 会话键。
+ * @returns STOMP destination 路径。
+ * @throws 不抛出。
  */
 function buildSessionDestination(sessionKey: string): string {
   return `/topic/session.${sessionKey}`;
 }
 
-/**
- * STOMP channel plugin（单账号 default）。
- */
+/** @description STOMP ChannelPlugin（渠道 id：`stomp-tcp`）。 */
 export const stompTcpChannel = {
   id: "stomp-tcp",
   meta: {
@@ -52,6 +62,12 @@ export const stompTcpChannel = {
   },
   outbound: {
     deliveryMode: "direct",
+    /**
+     * @description Channel 出站：向 session destination 发布文本。
+     * @param sessionKey - OpenClaw 会话键（作为 `to`）。
+     * @param text - 回复正文。
+     * @returns Promise，无返回值。
+     */
     sendText: async (sessionKey: string, text: string): Promise<void> => {
       const destination = buildSessionDestination(sessionKey);
       publishToDestination(destination, text);

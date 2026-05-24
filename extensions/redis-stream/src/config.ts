@@ -1,6 +1,11 @@
 /**
- * Zod schema for Redis Stream channel configuration.
- * Provides runtime validation and TypeScript type inference.
+ * @fileoverview Redis Stream 配置 Schema、解析与 openclaw.json 映射。
+ *
+ * @description
+ * Base Profile 平铺 `config.ts` 入口：Zod schema 校验、JSON Schema 文档导出、
+ * 运行时配置 merge 与 URL 脱敏工具。
+ *
+ * @module config
  */
 
 import { z } from "zod";
@@ -72,10 +77,9 @@ export const RedisStreamConfigSchema = z.object({
   connection: RedisConnectionConfigSchema,
 });
 
-/**
- * Type inference from Zod schema (matches RedisChannelConfig).
- */
+/** @description Zod 校验后的 Redis Stream 配置输入类型（parse 前）。 */
 export type RedisStreamConfigInput = z.input<typeof RedisStreamConfigSchema>;
+/** @description Zod 校验后的 Redis Stream 配置输出类型（含默认值填充）。 */
 export type RedisStreamConfigOutput = z.output<typeof RedisStreamConfigSchema>;
 
 /**
@@ -210,8 +214,10 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
 };
 
 /**
- * Validate and parse a Redis Stream configuration object.
- * Throws if the input is invalid.
+ * @description 严格校验并解析 Redis Stream 配置对象。
+ * @param input - 原始配置对象
+ * @returns 填充默认值后的配置
+ * @throws Zod 校验失败时抛出
  */
 export function validateRedisStreamConfig(
   input: unknown,
@@ -220,8 +226,9 @@ export function validateRedisStreamConfig(
 }
 
 /**
- * Safely parse a Redis Stream configuration object.
- * Returns success result or error details.
+ * @description 安全解析 Redis Stream 配置（不抛异常）。
+ * @param input - 原始配置对象
+ * @returns 成功时 `{ success: true, data }` 或失败时 `{ success: false, error }`
  */
 export function safeParseRedisStreamConfig(
   input: unknown,
@@ -231,7 +238,11 @@ export function safeParseRedisStreamConfig(
   return RedisStreamConfigSchema.safeParse(input);
 }
 
-/** 从 URL 中移除密码等敏感信息，避免泄露到日志或 HTTP 响应。 */
+/**
+ * @description 从 Redis URL 中移除密码等敏感信息，避免泄露到日志或 HTTP 响应。
+ * @param url - 原始连接 URL
+ * @returns 脱敏后的 URL 字符串
+ */
 export function redactUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -242,6 +253,7 @@ export function redactUrl(url: string): string {
   }
 }
 
+/** @description Redis Channel 默认配置常量。 */
 export const DEFAULT_REDIS_CHANNEL_CONFIG: RedisChannelConfig = {
   url: "redis://127.0.0.1:6379",
   channelMode: "pubsub",
@@ -274,7 +286,9 @@ export const DEFAULT_REDIS_CHANNEL_CONFIG: RedisChannelConfig = {
 };
 
 /**
- * 解析运行时 openclaw.json 中的 Redis channel 配置。
+ * @description 解析运行时 openclaw.json 中的 Redis channel 配置。
+ * @param cfg - 宿主全局配置（含 `channels.redis-stream`）
+ * @returns 合并默认值与环境变量后的 `RedisChannelConfig`
  */
 export function resolveRedisChannelConfig(
   cfg: Record<string, unknown>,

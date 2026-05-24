@@ -1,5 +1,15 @@
 /**
- * STOMP TCP 入站分发：经 message-sdk OpenClaw 桥接。
+ * @fileoverview STOMP 入站 dispatch：message-sdk 桥接 OpenClaw reply 管线。
+ *
+ * @description
+ * 接收 transport 层 `InboundMessage`，经 `normalizeWireIngress` 与
+ * `dispatchChannelMessage` 驱动 Agent；回复经 `publishToDestination` 写回 STOMP。
+ *
+ * @module inbound
+ */
+
+/**
+ * STOMP 入站 — Base Profile 入口。
  */
 
 import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
@@ -13,11 +23,14 @@ import { getStompRuntime } from "./runtime.js";
 import { publishToDestination } from "./transport/server.js";
 import type { InboundMessage } from "./types.js";
 
-/** STOMP TCP 入站幂等缓存。 */
+/** @description STOMP TCP 入站幂等缓存（60s TTL）。 */
 const idempotencyCache = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10_000 });
 
 /**
- * 将 STOMP 入站消息分发到 OpenClaw Runtime。
+ * @description 将 STOMP 入站消息分发到 OpenClaw Runtime reply 管线。
+ * @param message - transport 层路由后的入站消息。
+ * @returns Promise，成功时无返回值。
+ * @throws runtime 未初始化或 dispatch 失败时抛出/打日志。
  */
 export async function dispatchInboundMessage(message: InboundMessage): Promise<void> {
   const runtime = getStompRuntime();

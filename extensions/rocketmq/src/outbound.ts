@@ -1,6 +1,15 @@
 /**
- * RocketMQ 出站适配器。
- * Agent 回复通过 Producer 发送到目标 Topic。
+ * @fileoverview RocketMQ 出站适配器：Agent 文本回复经 Producer 发送到 reply Topic。
+ *
+ * @description
+ * 实现 OpenClaw Channel outbound 契约：`sendText` 根据 sessionKey 查 session-mapper
+ * 中的 replyTopic/replyTag，经 transport `publishMessage` 写回 RocketMQ。
+ *
+ * @module outbound
+ */
+
+/**
+ * RocketMQ 出站 — Base Profile 入口。
  */
 
 import { DEFAULT_ROCKERMQ_CONFIG } from "./config.js";
@@ -20,11 +29,17 @@ type ChannelOutboundAdapter = {
 };
 
 /**
- * 发送 OpenClaw 文本回复到 RocketMQ。
+ * @description RocketMQ Channel 出站适配器（direct 投递，4KB 文本分块上限）。
  */
 export const rockermqOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   textChunkLimit: 4000,
+  /**
+   * @description 将 OpenClaw 文本回复发送到会话绑定的 reply Topic。
+   * @param ctx - 出站上下文（`to` 为 sessionKey，`text` 为回复正文）。
+   * @returns 渠道名与 messageId（或占位 id）。
+   * @throws publish 失败时由 transport 层抛出。
+   */
   async sendText(ctx: ChannelOutboundContext) {
     const sessionKey = ctx.to;
     const peerId = getPeerIdBySession(sessionKey);

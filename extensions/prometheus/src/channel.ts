@@ -1,5 +1,5 @@
 /**
- * Prometheus 指标导出插件 — infra 占位 Channel 契约（供 setup-entry 轻量加载）。
+ * @description Prometheus infra 占位 Channel：满足 Base Profile 与 setupEntry 冷路径契约。
  */
 
 import { prometheusSetupAdapter, prometheusSetupWizard } from "./onboarding.js";

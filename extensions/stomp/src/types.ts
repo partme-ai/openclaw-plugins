@@ -1,11 +1,21 @@
 /**
- * openclaw-stomp 核心类型定义。
+ * @fileoverview openclaw-stomp 核心类型：STOMP 帧、连接、入站消息与配置。
+ *
+ * @description
+ * 集中导出 transport / inbound / config 共用的类型符号；无运行时逻辑。
+ *
+ * @module types
  */
 
+/**
+ * STOMP 共享类型 — Base Profile 入口。
+ */
+
+/** @description STOMP 订阅 ACK 模式。 */
 export type StompAckMode = "auto" | "client" | "client-individual";
 
 /**
- * Topic 与 agent 的显式绑定。
+ * @description Topic 模式与 Agent 的显式绑定。
  */
 export interface TopicBinding {
   topicPattern: string;
@@ -15,7 +25,7 @@ export interface TopicBinding {
 }
 
 /**
- * STOMP 服务器配置。
+ * @description STOMP TCP 服务器完整配置。
  */
 export interface StompTcpConfig {
   port: number;
@@ -43,12 +53,14 @@ export interface StompTcpConfig {
   prefetchCount: number;
 }
 
+/** @description 解析后的 STOMP 协议帧。 */
 export interface StompFrame {
   command: string;
   headers: Record<string, string>;
   body: string;
 }
 
+/** @description 对外暴露的连接摘要（诊断 API）。 */
 export interface StompConnection {
   id: string;
   remoteAddress: string;
@@ -61,6 +73,7 @@ export interface StompConnection {
   queuedCount: number;
 }
 
+/** @description 路由解析后的 STOMP 入站消息（尚未 wire 解析）。 */
 export interface InboundMessage {
   agentId: string;
   accountId: string;
@@ -73,8 +86,10 @@ export interface InboundMessage {
   idempotencyKey?: string;
 }
 
+/** @description transport 层入站回调类型。 */
 export type InboundHandler = (message: InboundMessage) => void;
 
+/** @description 路由/连接运行时统计快照。 */
 export interface StompStatusSnapshot {
   totalConnections: number;
   totalSubscriptions: number;

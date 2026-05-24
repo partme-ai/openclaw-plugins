@@ -1,15 +1,20 @@
 /**
- * openclaw-redis-stream 类型定义。
+ * @fileoverview openclaw-redis-stream 核心类型定义。
+ *
+ * @description
+ * 配置、路由结果、会话上下文与入站消息形状的类型聚合，供 routing/transport/inbound 共享。
+ *
+ * @module types
  */
 
-/** DM session scope（与 OpenClaw session.dmScope 一致） */
+/** @description DM 会话粒度（与 OpenClaw session.dmScope 一致）。 */
 export type DmScope =
   | "main"
   | "per-peer"
   | "per-channel-peer"
   | "per-account-channel-peer";
 
-/** channel → agent 绑定配置 */
+/** @description channel → agent 显式绑定规则。 */
 export interface RedisChannelBinding {
   channelPattern: string;
   agentId: string;
@@ -17,7 +22,7 @@ export interface RedisChannelBinding {
   replyChannel?: string;
 }
 
-/** topic 路由结果 */
+/** @description 入站 channel 路由解析结果。 */
 export interface RedisInboundRoute {
   agentId: string;
   accountId: string;
@@ -26,7 +31,7 @@ export interface RedisInboundRoute {
   source: "binding" | "standard" | "field";
 }
 
-/** 会话上下文 */
+/** @description 会话上下文（reply channel、最近入站 channel 等）。 */
 export interface RedisSessionContext {
   peerId: string;
   agentId: string;
@@ -36,7 +41,7 @@ export interface RedisSessionContext {
   updatedAt: number;
 }
 
-/** 入站消息 */
+/** @description Pub/Sub 或 Stream 消费回调传入的入站消息。 */
 export interface RedisInboundMessage {
   channel: string;
   pattern?: string;
@@ -48,7 +53,7 @@ export interface RedisInboundMessage {
   fieldReplyStream?: string;
 }
 
-/** 完整配置类型 */
+/** @description Redis Channel 完整运行时配置（与 `channels.redis-stream` 对齐）。 */
 export type RedisChannelConfig = {
   url: string;
   channelMode: "pubsub" | "stream";

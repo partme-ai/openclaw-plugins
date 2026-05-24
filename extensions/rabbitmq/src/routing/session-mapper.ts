@@ -1,6 +1,11 @@
 /**
- * RabbitMQ Session 上下文存储。
- * 仅保存 replyTopic 等路由信息用于出站适配，session key 由 OpenClaw 核心 resolveAgentRoute 生成。
+ * @fileoverview RabbitMQ Session 上下文存储。
+ *
+ * @description
+ * 仅保存 replyTopic 等路由信息供出站适配器使用；session key 由 OpenClaw 核心
+ * `resolveAgentRoute` 生成，本模块不自行拼接会话键。
+ *
+ * @module routing/session-mapper
  */
 
 import type { RabbitmqSessionContext } from "../types.js";
@@ -12,14 +17,18 @@ const sessionPeerMap = new Map<string, string>();
 const sessionContextMap = new Map<string, RabbitmqSessionContext>();
 
 /**
- * 根据 Session Key 查找关联的 RabbitMQ Peer ID。
+ * @description 根据 Session Key 查找关联的 RabbitMQ Peer ID。
+ * @param sessionKey - OpenClaw 会话键
+ * @returns peerId 或 null
  */
 export function getPeerIdBySession(sessionKey: string): string | null {
   return sessionPeerMap.get(sessionKey) ?? null;
 }
 
 /**
- * 以路由结果更新会话上下文。
+ * @description 以路由结果更新或创建会话上下文（含 peerId 反向映射）。
+ * @param sessionKey - OpenClaw 会话键
+ * @param context - 会话上下文（peerId、agentId、replyTopic 等）
  */
 export function upsertSessionContext(
   sessionKey: string,
@@ -30,14 +39,17 @@ export function upsertSessionContext(
 }
 
 /**
- * 获取会话上下文。
+ * @description 获取指定 sessionKey 的会话上下文快照。
+ * @param sessionKey - OpenClaw 会话键
+ * @returns 上下文对象或 null
  */
 export function getSessionContext(sessionKey: string): RabbitmqSessionContext | null {
   return sessionContextMap.get(sessionKey) ?? null;
 }
 
 /**
- * 移除 Peer 的所有会话映射。
+ * @description 移除指定 peerId 关联的全部 session 映射。
+ * @param peerId - RabbitMQ peer 标识
  */
 export function removePeerSessions(peerId: string): void {
   const toRemove: string[] = [];
@@ -51,7 +63,8 @@ export function removePeerSessions(peerId: string): void {
 }
 
 /**
- * 获取所有活跃的会话映射。
+ * @description 获取所有活跃 session ↔ peer 映射及上下文（诊断/HTTP 状态用）。
+ * @returns 映射条目数组
  */
 export function getAllSessionMappings(): Array<{
   peerId: string;
@@ -70,7 +83,8 @@ export function getAllSessionMappings(): Array<{
 }
 
 /**
- * 获取会话统计数据。
+ * @description 返回会话层聚合统计（活跃 session 数、唯一 peer 数等）。
+ * @returns 统计对象
  */
 export function getSessionStats(): {
   activeSessions: number;

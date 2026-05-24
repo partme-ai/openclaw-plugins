@@ -1,8 +1,16 @@
 // @ts-nocheck — large declarative wizard factory mirrors openclaw setup SDK surface; stubs vary by peer installs.
 /**
- * 共享 Channel setupWizard / setupAdapter 工厂。
+ * @fileoverview 共享 Channel setupWizard / setupAdapter 声明式工厂。
  *
- * 供 extensions 下各渠道插件复用，减少重复声明式向导代码。
+ * @description
+ * 供 extensions 下各 MQ/消息渠道插件复用，减少重复向导代码；提供 URL、双凭据、
+ * 内嵌 Broker 等常见 setup 模板。RocketMQ 插件通过 onboarding 间接引用本模块能力。
+ *
+ * @module channel-setup-factory
+ */
+
+/**
+ * 共享 Channel setup 工厂 — declarative wizard 构建器。
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";

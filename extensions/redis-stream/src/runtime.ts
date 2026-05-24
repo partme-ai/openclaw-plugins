@@ -1,7 +1,11 @@
 /**
- * 缓存 OpenClaw PluginRuntime，供 Redis 入站回调与 HTTP 路由使用。
+ * @fileoverview Redis Stream 插件 OpenClaw Runtime 引用存储。
  *
- * 与 openclaw-mqtt / openclaw-rabbitmq 模式一致。
+ * @description
+ * 在插件 `register` / `setRuntime` 阶段注入 Gateway 提供的 `PluginRuntime`，
+ * 供 inbound 分发与 HTTP 状态路由读取宿主能力。
+ *
+ * @module runtime
  */
 
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
@@ -9,14 +13,16 @@ import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 let runtime: PluginRuntime | null = null;
 
 /**
- * 在插件 register 阶段注入 Gateway 提供的 runtime。
+ * @description 在插件 register 阶段注入 Gateway 提供的 runtime。
+ * @param next - OpenClaw PluginRuntime 实例
  */
 export function setRedisStreamRuntime(next: PluginRuntime): void {
   runtime = next;
 }
 
 /**
- * 获取当前 runtime；若尚未注册则返回 null。
+ * @description 获取当前已注入的 runtime；若尚未注册则返回 null。
+ * @returns PluginRuntime 或 null
  */
 export function getRedisStreamRuntime(): PluginRuntime | null {
   return runtime;

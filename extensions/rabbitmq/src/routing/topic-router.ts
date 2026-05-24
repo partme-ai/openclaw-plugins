@@ -1,11 +1,16 @@
 /**
- * RabbitMQ Topic 路由模块
- * 将 RabbitMQ Topic 映射到 OpenClaw Agent，并支持显式 topic 绑定
+ * @fileoverview RabbitMQ Topic 路由模块。
+ *
+ * @description
+ * 将 RabbitMQ routing key（Topic）映射到 OpenClaw Agent：显式 `topicBindings` 优先，
+ * 标准格式 `{topicPrefix}.agent.<agentId>.in` 回退。支持 * / # 通配符匹配。
  *
  * Topic 规范：
- * - {topicPrefix}.agent.<agentId>.in          -- 设备发送消息给指定 Agent
- * - {topicPrefix}.agent.<agentId>.out         -- Agent 回复发布到此 Topic
- * - {topicPrefix}.agent.<agentId>.status      -- Agent 状态变更通知
+ * - `{topicPrefix}.agent.<agentId>.in` — 设备发送消息给指定 Agent
+ * - `{topicPrefix}.agent.<agentId>.out` — Agent 回复发布到此 Topic
+ * - `{topicPrefix}.agent.<agentId>.status` — Agent 状态变更通知
+ *
+ * @module routing/topic-router
  */
 
 import type { RabbitmqInboundRoute } from "../types.js";
@@ -17,12 +22,10 @@ import type { RabbitmqConfig, TopicBinding } from "../config.js";
 const AGENT_INBOUND_SUFFIX = ".in";
 
 /**
- * 解析 Topic 结构
- * 从标准 Topic 格式中提取 Agent ID 和 Peer ID
- *
- * @param topic - RabbitMQ Topic 字符串
+ * @description 解析 Topic 结构，从标准 Topic 格式中提取 Agent ID、Peer ID 与方向。
+ * @param topic - RabbitMQ routing key 字符串
  * @param topicPrefix - Topic 前缀
- * @returns 解析结果，null 表示非法 Topic
+ * @returns 解析结果；null 表示非标准格式或非法 Topic
  */
 export function parseTopic(topic: string, topicPrefix: string): {
   agentId: string;
@@ -58,11 +61,10 @@ export function parseTopic(topic: string, topicPrefix: string): {
 }
 
 /**
- * 根据 Topic 获取目标路由（显式绑定优先，标准格式回退）
- *
- * @param topic - 入站消息的 Topic
+ * @description 根据 routing key 获取目标路由（显式绑定优先，标准格式回退）。
+ * @param topic - 入站消息的 routing key
  * @param config - RabbitMQ 配置
- * @returns 路由结果，null 表示无匹配
+ * @returns 路由结果；null 表示无匹配
  */
 export function resolveInboundRoute(topic: string, config: RabbitmqConfig): RabbitmqInboundRoute | null {
   // First: check explicit topicBindings
@@ -99,11 +101,10 @@ export function resolveInboundRoute(topic: string, config: RabbitmqConfig): Rabb
 }
 
 /**
- * 从入站 Topic 推导默认回复 Topic
- *
- * @param inboundTopic - 入站 Topic
- * @param topicPrefix - Topic 前缀
- * @returns 推导出的回复 Topic
+ * @description 从入站 Topic 推导默认回复 Topic（`.in` → `.out`）。
+ * @param inboundTopic - 入站 routing key
+ * @param topicPrefix - Topic 前缀（保留参数以兼容调用方）
+ * @returns 推导出的回复 routing key
  */
 export function buildReplyTopicFromInbound(inboundTopic: string, topicPrefix: string): string {
   if (inboundTopic.endsWith(".in")) {
@@ -113,11 +114,11 @@ export function buildReplyTopicFromInbound(inboundTopic: string, topicPrefix: st
 }
 
 /**
- * 构建 Agent 默认出站 Topic
- *
+ * @description 构建 Agent 默认出站 Topic。
  * @param agentId - Agent ID
  * @param topicPrefix - Topic 前缀
- * @param peerId - Peer ID (optional)
+ * @param peerId - 可选 Peer ID（追加为 routing key 后缀）
+ * @returns 出站 routing key
  */
 export function buildOutboundTopic(agentId: string, topicPrefix: string, peerId?: string): string {
   const prefix = topicPrefix ? `${topicPrefix}.` : "";
@@ -128,10 +129,10 @@ export function buildOutboundTopic(agentId: string, topicPrefix: string, peerId?
 }
 
 /**
- * 从 Topic 中提取 Peer ID
- *
- * @param topic - 实际 Topic
- * @param pattern - 匹配模式
+ * @description 从实际 Topic 与匹配模式中通配符位置提取 Peer ID 片段。
+ * @param topic - 实际 routing key
+ * @param pattern - 绑定模式（含 * / #）
+ * @returns 提取的 peerId 字符串；不匹配时可能为空
  */
 function extractPeerIdFromTopic(topic: string, pattern: string): string {
   const topicParts = normalizeTopic(topic).split(".");
@@ -165,10 +166,10 @@ function extractPeerIdFromTopic(topic: string, pattern: string): string {
 }
 
 /**
- * 替换 Topic Pattern 中的变量
- *
- * @param pattern - 包含变量的 Pattern
- * @param actualTopic - 实际 Topic
+ * @description 将 replyTopicPattern 中的 `${agentId}` / `${peerId}` / `${rest}` 变量替换为实际 Topic 片段。
+ * @param pattern - 含变量占位符的模式字符串
+ * @param actualTopic - 实际入站 routing key
+ * @returns 替换后的 reply routing key
  */
 function replaceTopicPattern(pattern: string, actualTopic: string): string {
   const topicParts = normalizeTopic(actualTopic).split(".");
@@ -206,11 +207,10 @@ function replaceTopicPattern(pattern: string, actualTopic: string): string {
 }
 
 /**
- * RabbitMQ Topic 通配符匹配
- * 支持 * (单级) 和 # (多级) 通配符
- *
- * @param topic - 实际 Topic
+ * @description RabbitMQ Topic 通配符匹配（* 单级、# 多级）。
+ * @param topic - 实际 routing key
  * @param pattern - 匹配模式
+ * @returns 是否匹配
  */
 export function matchTopic(topic: string, pattern: string): boolean {
   const topicParts = normalizeTopic(topic).split(".");
@@ -247,6 +247,11 @@ export function matchTopic(topic: string, pattern: string): boolean {
   return topicIndex === topicParts.length;
 }
 
+/**
+ * @description 规范化 Topic 分隔符（将 `/` 统一为 `.` 以兼容 MQTT 风格 routing key）。
+ * @param topic - 原始 routing key
+ * @returns 规范化后的字符串
+ */
 function normalizeTopic(topic: string): string {
   return topic.replaceAll("/", ".");
 }

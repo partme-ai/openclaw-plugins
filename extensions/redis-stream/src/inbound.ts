@@ -1,8 +1,11 @@
 /**
- * 入站消息处理：channel 过滤、路由、调用 OpenClaw reply 管线。
+ * @fileoverview Redis 入站消息处理编排入口。
  *
- * 参考 feishu inbound.ts 模式 — sessionKey 由 OpenClaw 核心 resolveAgentRoute 返回，
- * 插件不自行拼接会话键。
+ * @description
+ * channel 白名单过滤、显式/标准/字段路由、幂等去重，并通过 message-sdk
+ * `dispatchChannelMessage` 分发至 OpenClaw reply 管线；sessionKey 由宿主解析。
+ *
+ * @module inbound
  */
 
 import { getRedisStreamRuntime } from "./runtime.js";
@@ -28,8 +31,10 @@ const idempotencyCache = createIdempotencyCache({
 });
 
 /**
- * 处理 Redis channel 入站消息。
- * 返回 false 时消息不应被 ACK（Stream 模式使用）。
+ * @description 处理 Redis channel 入站消息（Pub/Sub 或 Stream 消费回调）。
+ * @param message - 规范化后的入站消息
+ * @param config - 通道配置
+ * @returns true 表示可 ACK；false 时 Stream 模式保留在 pending list
  */
 export async function handleInboundMessage(
   message: RedisInboundMessage,
@@ -158,7 +163,10 @@ export async function handleInboundMessage(
 }
 
 /**
- * 检查 channel 是否在订阅白名单中。
+ * @description 检查 channel 是否在 `subscribeChannels` 白名单内；空白名单接受全部。
+ * @param channel - 实际 Redis channel 名
+ * @param subscribeChannels - 订阅模式列表（支持 * 通配符）
+ * @returns 是否应继续处理
  */
 function shouldProcessChannel(
   channel: string,
@@ -170,7 +178,11 @@ function shouldProcessChannel(
   return subscribeChannels.some((pattern) => matchChannel(channel, pattern));
 }
 
-/** 跳过已知出站/回复 channel，避免自循环覆盖。 */
+/**
+ * @description 跳过已知出站/回复 channel，避免 Agent 回复触发自循环消费。
+ * @param channel - Redis channel 名
+ * @returns 是否为出站 channel
+ */
 function isOutboundChannel(channel: string): boolean {
   if (channel.endsWith(":out")) return true;
   if (channel === "openclaw:agent:outbound") return true;

@@ -1,6 +1,15 @@
 /**
- * RocketMQ channel 插件定义。
- * 负责账户状态、gateway 生命周期与 outbound 回包逻辑。
+ * @fileoverview RocketMQ Channel 插件定义：gateway 生命周期与入站/出站绑定。
+ *
+ * @description
+ * 实现 OpenClaw ChannelPlugin 契约：`startAccount` 启动 transport PushConsumer，
+ * 入站经 `processInbound`，出站经 `rockermqOutbound`；status 暴露 `/rocketmq/status` 快照。
+ *
+ * @module channel
+ */
+
+/**
+ * RocketMQ Channel — Base Profile 入口。
  */
 
 import { rockermqSetupAdapter, rockermqSetupWizard } from "./onboarding.js";
@@ -21,11 +30,10 @@ import {
   trackRoute,
 } from "./transport/server.js";
 
+/** @description 默认单账户 ID。 */
 export const DEFAULT_ACCOUNT_ID = "default";
 
-/**
- * OpenClaw RocketMQ channel 插件。
- */
+/** @description 导出的 RocketMQ ChannelPlugin。 */
 export const rockermqChannel = {
   id: "rocketmq",
   name: "RocketMQ",
@@ -72,8 +80,12 @@ export const rockermqChannel = {
   },
   gateway: {
     /**
-     * 跟随 channel 生命周期启动 RocketMQ 客户端。
-     * ChannelGatewayContext 提供 cfg（完整配置）、abortSignal、log 等。
+     * @description 跟随 channel 生命周期启动 RocketMQ Producer/PushConsumer。
+     * @param root0 - ChannelGatewayContext。
+     * @param root0.cfg - 完整网关配置。
+     * @param root0.abortSignal - 账户停止时 abort，用于优雅 shutdown。
+     * @returns 在 abort 前保持运行的 Promise。
+     * @throws transport 连接失败或配置无效时可能抛出。
      */
     startAccount: async ({
       cfg,

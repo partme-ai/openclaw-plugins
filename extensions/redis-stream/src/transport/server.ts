@@ -1,8 +1,11 @@
 /**
- * Redis 传输层：Stream（消费组） + Pub/Sub（channel 订阅）。
+ * @fileoverview Redis Stream/PubSub 传输层。
  *
- * 使用 Redis 官方推荐的 Node.js 客户端 node-redis（npm 包 `redis`），
- * 全部使用 node-redis v5 高级 API，零裸 sendCommand。
+ * @description
+ * 连接管理、Pub/Sub 订阅、Stream 消费组轮询与 XADD/PUBLISH 出站；使用 node-redis v5
+ * 高级 API。Publisher 能力委托给 `./publisher` 以打破与 inbound 的循环依赖。
+ *
+ * @module transport/server
  */
 
 import { createClient, type RedisClientType } from "redis";
@@ -21,6 +24,7 @@ import {
   RedisTimeoutError,
 } from "../shared/errors.js";
 
+/** @description Redis 连接与消息读写统计快照。 */
 export type RedisStats = {
   connected: boolean;
   lastConnectAt: number | null;
@@ -47,7 +51,10 @@ const stats: RedisStats = {
 };
 
 /**
- * 统一启动 Redis：连接 + 可选消费组 + Pub/Sub 订阅 + 可选 Stream 消费循环。
+ * @description 统一启动 Redis：连接、可选 consumer group、Pub/Sub 订阅与 Stream 消费循环。
+ * @param config - 已解析的 Redis 通道配置
+ * @returns 启动完成后 resolve
+ * @throws RedisConnectionError 连接失败
  */
 export async function startRedisServer(
   config: RedisChannelConfig,
@@ -105,7 +112,8 @@ export async function startRedisServer(
 }
 
 /**
- * 停止 Redis：取消订阅 + 断开连接。
+ * @description 停止 Redis：取消订阅并断开主客户端与 publisher 注入。
+ * @returns 清理完成后 resolve
  */
 export async function stopRedisServer(): Promise<void> {
   running = false;
@@ -129,7 +137,9 @@ export async function stopRedisServer(): Promise<void> {
 // ─── Pub/Sub ──────────────────────────────────────────────────────
 
 /**
- * 启动 Redis Pub/Sub 订阅。
+ * @description 启动 Redis Pub/Sub 订阅（精确 SUBSCRIBE 与模式 PSUBSCRIBE）。
+ * @param config - 通道配置（含 subscribeChannels 白名单）
+ * @returns 订阅建立后 resolve
  */
 async function startPubSub(config: RedisChannelConfig): Promise<void> {
   if (!client) return;
@@ -194,7 +204,11 @@ async function startPubSub(config: RedisChannelConfig): Promise<void> {
 }
 
 /**
- * 发布消息到 Redis channel。
+ * @description 发布消息到 Redis Pub/Sub channel（主客户端路径，更新 server 层统计）。
+ * @param channel - 目标 channel 名
+ * @param message - 消息体字符串
+ * @returns 发布完成后 resolve
+ * @throws RedisConnectionError 客户端未初始化
  */
 export async function publishMessage(
   channel: string,
@@ -210,7 +224,11 @@ export async function publishMessage(
 // ─── Stream 操作 ──────────────────────────────────────────────────
 
 /**
- * 向 stream 追加一条消息。
+ * @description 向 Stream 追加一条 entry（`XADD`）。
+ * @param stream - Stream key
+ * @param values - 字段键值对
+ * @returns 新 entry ID
+ * @throws RedisConnectionError 客户端未初始化
  */
 export async function publishEntry(
   stream: string,
@@ -225,7 +243,11 @@ export async function publishEntry(
 }
 
 /**
- * 手动确认消费。
+ * @description 手动确认 Stream 消费（`XACK`）。
+ * @param stream - Stream key
+ * @param group - Consumer group 名
+ * @param id - Entry ID
+ * @returns ACK 完成后 resolve
  */
 export async function ackEntry(
   stream: string,
@@ -240,7 +262,8 @@ export async function ackEntry(
 }
 
 /**
- * 读取当前状态。
+ * @description 返回连接与读写统计快照（合并 publisher 侧写入计数）。
+ * @returns RedisStats 浅拷贝
  */
 export function getStats(): RedisStats {
   return {
@@ -250,7 +273,9 @@ export function getStats(): RedisStats {
 }
 
 /**
- * 保证 consumer group 已存在。
+ * @description 保证 inbound Stream 的 consumer group 已存在（`XGROUP CREATE` + MKSTREAM）。
+ * @param config - 含 stream.inboundKey 与 consumerGroup 的配置
+ * @throws RedisStreamError 创建失败且非 BUSYGROUP
  */
 async function ensureConsumerGroup(config: RedisChannelConfig): Promise<void> {
   if (!client) return;
@@ -272,11 +297,12 @@ async function ensureConsumerGroup(config: RedisChannelConfig): Promise<void> {
 }
 
 /**
- * 按 consumer group 轮询消费。
+ * @description 按 consumer group 阻塞轮询消费（`XREADGROUP`），成功处理后 ACK。
  *
- * node-redis v5 的 xReadGroup 返回已解析的 typed 结构：
- *   Array<{ name: string, messages: Array<{ id: string, message: Map<string, string> }> }> | null
- * 因此无需手写 raw reply 解析。
+ * node-redis v5 的 xReadGroup 返回已解析结构，无需手写 RESP 解析。
+ *
+ * @param config - Stream 消费参数（group、blockMs、count、fieldMapping）
+ * @returns 在 `running` 为 false 或客户端断开时结束
  */
 async function consumeLoop(config: RedisChannelConfig): Promise<void> {
   let consecutiveErrors = 0;
@@ -349,11 +375,20 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
   }
 }
 
+/**
+ * @description 异步 sleep（消费循环错误退避）。
+ * @param ms - 等待毫秒数
+ * @returns 延迟结束的 Promise
+ */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** 将 node-redis RESP2 MapReply（平铺数组或纯对象）转为 JS Map。 */
+/**
+ * @description 将 node-redis RESP2 平铺数组或 v5 纯对象转为字段 Map。
+ * @param fields - XREADGROUP 返回的 message 字段
+ * @returns 字符串键值 Map
+ */
 function toFieldMap(
   fields: Array<unknown> | Record<string, unknown>,
 ): Map<string, string> {

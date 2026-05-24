@@ -1,3 +1,17 @@
+/**
+ * @fileoverview STOMP TCP 传输层：原生 TCP/TLS STOMP 帧解析、订阅、ACK 与 destination 路由。
+ *
+ * @description
+ * 无第三方 Broker 依赖，Gateway 进程内嵌 STOMP Server；处理 CONNECT/SEND/SUBSCRIBE
+ * 等命令，将 SEND 帧路由为 `InboundMessage` 并支持 prefetch/ACK/NACK 投递控制。
+ *
+ * @module transport/server
+ */
+
+/**
+ * STOMP TCP 传输层 — 协议服务与出站 publish 入口。
+ */
+
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as tls from "node:tls";
@@ -69,6 +83,12 @@ const connections = new Map<string, InternalConnection>();
 const socketMap = new Map<string, net.Socket>();
 const durableSubscriptions = new Map<string, DurableSubscriptionState>();
 
+/**
+ * @description 从以 NUL 结尾的原始字符串解析单个 STOMP 帧。
+ * @param data - 含可选 trailing `\0` 的帧字节串（UTF-8）。
+ * @returns 解析后的 `StompFrame`，格式非法时 `null`。
+ * @throws 不抛出。
+ */
 function parseFrame(data: string): StompFrame | null {
   const nullIdx = data.indexOf("\0");
   const frameData = nullIdx >= 0 ? data.slice(0, nullIdx) : data;
@@ -94,6 +114,14 @@ function parseFrame(data: string): StompFrame | null {
   return { command, headers, body };
 }
 
+/**
+ * @description 构造 STOMP 协议帧字符串（command + headers + body + NUL）。
+ * @param command - STOMP 命令名（如 MESSAGE、CONNECTED）。
+ * @param headers - 帧头键值对。
+ * @param body - 可选消息体。
+ * @returns 完整帧字符串（含 `\0` 终止符）。
+ * @throws 不抛出。
+ */
 function buildFrame(command: string, headers: Record<string, string>, body = ""): string {
   let frame = `${command}\n`;
   for (const [key, value] of Object.entries(headers)) {
@@ -104,6 +132,12 @@ function buildFrame(command: string, headers: Record<string, string>, body = "")
   return frame;
 }
 
+/**
+ * @description 将 STOMP destination 归一化为 topic 路径（去掉 /topic/ 等前缀）。
+ * @param destination - 原始 destination 头。
+ * @returns 用于通配符比较的 topic 段。
+ * @throws 不抛出。
+ */
 function normalizeDestinationTopic(destination: string): string {
   if (destination.startsWith("/topic/")) return destination.slice("/topic/".length);
   if (destination.startsWith("/queue/")) return destination.slice("/queue/".length);
@@ -111,6 +145,13 @@ function normalizeDestinationTopic(destination: string): string {
   return destination.replace(/^\/+/, "");
 }
 
+/**
+ * @description STOMP/RabbitMQ 风格 destination 通配符匹配（`*` 单段、`#` 多级尾匹配）。
+ * @param pattern - 订阅或 binding 模式。
+ * @param destination - 实际 SEND destination。
+ * @returns 是否匹配。
+ * @throws 不抛出。
+ */
 function matchTopic(pattern: string, destination: string): boolean {
   const p = normalizeDestinationTopic(pattern).split("/");
   const d = normalizeDestinationTopic(destination).split("/");
@@ -129,11 +170,27 @@ function matchTopic(pattern: string, destination: string): boolean {
   return i === p.length - 1 && p[i] === "#";
 }
 
+/**
+ * @description 判断 destination 是否落在 subscribeTopics 白名单内（空列表表示全放行）。
+ * @param destination - SEND 目标 destination。
+ * @param cfg - STOMP 服务配置。
+ * @returns 是否允许入队/路由。
+ * @throws 不抛出。
+ */
 function queueAllowed(destination: string, cfg: StompTcpConfig): boolean {
   if (cfg.subscribeTopics.length === 0) return true;
   return cfg.subscribeTopics.some((pattern) => matchTopic(pattern, destination));
 }
 
+/**
+ * @description 将 SEND destination 解析为 Agent/account/peer 路由（topicBindings 优先）。
+ * @param destination - STOMP destination 头。
+ * @param conn - 当前连接上下文。
+ * @param frame - 完整 SEND 帧（读取 x-peer-id 等扩展头）。
+ * @param cfg - STOMP 服务配置。
+ * @returns 不含 rawPayload 的入站路由字段。
+ * @throws 不抛出。
+ */
 function resolveInboundRoute(
   destination: string,
   conn: InternalConnection,
@@ -169,12 +226,27 @@ function resolveInboundRoute(
   };
 }
 
+/**
+ * @description 向客户端写入 STOMP ERROR 帧并可携带 receipt-id。
+ * @param socket - 客户端 TCP socket。
+ * @param message - 错误描述。
+ * @param receipt - 可选 receipt 头回显。
+ * @returns void
+ * @throws 不抛出。
+ */
 function sendError(socket: net.Socket, message: string, receipt?: string): void {
   socket.write(
     buildFrame("ERROR", { message, ...(receipt ? { receipt } : {}) }, message),
   );
 }
 
+/**
+ * @description 按 prefetch 限制从订阅队列向客户端 flush MESSAGE 帧。
+ * @param subscription - 活跃订阅状态（含 pending ACK 与 queue）。
+ * @param connId - 连接 ID（查 socketMap）。
+ * @returns void
+ * @throws 不抛出。
+ */
 function flushSubscription(subscription: ActiveSubscription, connId: string): void {
   const socket = socketMap.get(connId);
   if (!socket || socket.destroyed) return;
@@ -209,6 +281,13 @@ function flushSubscription(subscription: ActiveSubscription, connId: string): vo
   }
 }
 
+/**
+ * @description 处理 SUBSCRIBE 帧：注册订阅、恢复 durable 队列并 flush。
+ * @param conn - 当前连接。
+ * @param frame - SUBSCRIBE 帧。
+ * @returns void
+ * @throws 不抛出。
+ */
 function handleSubscribe(conn: InternalConnection, frame: StompFrame): void {
   if (!activeConfig) return;
   const destination = frame.headers.destination ?? "";
@@ -248,6 +327,13 @@ function handleSubscribe(conn: InternalConnection, frame: StompFrame): void {
   flushSubscription(subscription, conn.id);
 }
 
+/**
+ * @description 处理 UNSUBSCRIBE 帧：迁移 durable 队列并移除订阅。
+ * @param conn - 当前连接。
+ * @param frame - UNSUBSCRIBE 帧。
+ * @returns void
+ * @throws 不抛出。
+ */
 function handleUnsubscribe(conn: InternalConnection, frame: StompFrame): void {
   const id = frame.headers.id ?? "";
   if (!id) return;
@@ -262,6 +348,14 @@ function handleUnsubscribe(conn: InternalConnection, frame: StompFrame): void {
   conn.subscriptionsById.delete(id);
 }
 
+/**
+ * @description 处理 ACK/NACK：确认或 requeue pending MESSAGE。
+ * @param conn - 当前连接。
+ * @param frame - ACK 或 NACK 帧。
+ * @param requeue - NACK 时是否 requeue（ACK 时为 false）。
+ * @returns void
+ * @throws 不抛出。
+ */
 function handleAckOrNack(conn: InternalConnection, frame: StompFrame, requeue: boolean): void {
   const ackId = frame.headers.id ?? frame.headers.ack;
   if (!ackId) return;
@@ -282,6 +376,14 @@ function handleAckOrNack(conn: InternalConnection, frame: StompFrame, requeue: b
   }
 }
 
+/**
+ * @description STOMP 命令分发器：CONNECT/SEND/SUBSCRIBE/ACK 等帧处理入口。
+ * @param conn - 当前连接状态。
+ * @param frame - 已解析 STOMP 帧。
+ * @param onInbound - SEND 路由后的入站回调。
+ * @returns void
+ * @throws 不抛出；未知命令写 ERROR 帧。
+ */
 function handleFrame(conn: InternalConnection, frame: StompFrame, onInbound: InboundHandler): void {
   const socket = socketMap.get(conn.id);
   if (!socket) return;
@@ -376,6 +478,13 @@ function handleFrame(conn: InternalConnection, frame: StompFrame, onInbound: Inb
   }
 }
 
+/**
+ * @description 新 TCP 连接生命周期：缓冲分帧、parseFrame → handleFrame、close 清理。
+ * @param socket - 客户端 socket。
+ * @param onInbound - SEND 入站回调。
+ * @returns void
+ * @throws 不抛出。
+ */
 function handleConnection(socket: net.Socket, onInbound: InboundHandler): void {
   if (!activeConfig) return;
   const frameLimit = activeConfig.maxFrameSize;
@@ -431,6 +540,11 @@ function handleConnection(socket: net.Socket, onInbound: InboundHandler): void {
   });
 }
 
+/**
+ * @description 启动 STOMP TCP（及可选 TLS）监听，注册入站 SEND 帧回调。
+ * @param config - STOMP 服务配置
+ * @param onInbound - 入站消息处理器（通常为 dispatchInboundMessage）
+ */
 export async function startStompTcpServer(config: StompTcpConfig, onInbound: InboundHandler): Promise<void> {
   activeConfig = config;
 
@@ -456,6 +570,7 @@ export async function startStompTcpServer(config: StompTcpConfig, onInbound: Inb
   }
 }
 
+/** @description 停止 STOMP 服务并销毁所有连接。 */
 export async function stopStompTcpServer(): Promise<void> {
   for (const socket of socketMap.values()) {
     socket.destroy();
@@ -476,6 +591,7 @@ export async function stopStompTcpServer(): Promise<void> {
   stats.ackPending = 0;
 }
 
+/** @description 列出当前活跃 STOMP 连接及订阅摘要。 */
 export function getConnectionInfoList(): StompConnection[] {
   const result: StompConnection[] = [];
   for (const conn of connections.values()) {
@@ -502,6 +618,7 @@ export function getConnectionInfoList(): StompConnection[] {
   return result;
 }
 
+/** @description 按 STOMP 协议版本聚合连接数统计。 */
 export function getConnectionStats(): { total: number; byVersion: Record<string, number> } {
   const byVersion: Record<string, number> = {};
   for (const conn of connections.values()) {
@@ -513,6 +630,7 @@ export function getConnectionStats(): { total: number; byVersion: Record<string,
   };
 }
 
+/** @description 返回路由/连接运行时统计快照。 */
 export function getStatusSnapshot(): StompStatusSnapshot {
   let totalSubscriptions = 0;
   for (const conn of connections.values()) {
@@ -522,6 +640,11 @@ export function getStatusSnapshot(): StompStatusSnapshot {
   return { ...stats };
 }
 
+/**
+ * @description 向已订阅指定 destination 的客户端推送 MESSAGE 帧（出站/Agent 回复）。
+ * @param destination - STOMP destination（如 /topic/session.xxx）
+ * @param body - 消息体
+ */
 export function publishToDestination(destination: string, body: string): void {
   for (const [connId, conn] of connections.entries()) {
     for (const subscription of conn.subscriptionsById.values()) {

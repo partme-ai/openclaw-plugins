@@ -1,3 +1,13 @@
+/**
+ * @fileoverview Prometheus 插件 Hook 观测与 SLI 指标刷新。
+ *
+ * @description
+ * 注册 OpenClaw Plugin SDK hooks（gateway、session、message、tool、agent 等），
+ * 将事件转为 Prometheus 指标；并周期性刷新 provider 快照、HTTP 延迟与 SLI 比率。
+ *
+ * @module runtime/observer
+ */
+
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { MetricSample } from "../types.js";
 import { getRuntimeStore, listObservedChannelAccounts, rememberObservedChannelAccount, setSnapshotState } from "./store.js";
@@ -8,6 +18,11 @@ const PROVIDER_STATUSES = ["ok", "missing", "error"] as const;
 const HTTP_LATENCY_SAMPLES: number[] = [];
 const HTTP_LATENCY_MAX_SAMPLES = 1000;
 
+/**
+ * @description 注册全部 Plugin SDK 观测 hooks 与 runtime 事件监听器。
+ *
+ * @param api - OpenClaw 插件 API
+ */
 export function registerPluginObservers(api: OpenClawPluginApi): void {
   registerLifecycleHooks(api);
   registerMessageHooks(api);
@@ -17,6 +32,7 @@ export function registerPluginObservers(api: OpenClawPluginApi): void {
   registerSupplementaryPluginHooks(api);
 }
 
+/** @description 注册 gateway / session 生命周期 hooks。 */
 function registerLifecycleHooks(api: OpenClawPluginApi): void {
   api.on("gateway_start", () => {
     const { registry, cfg } = getRuntimeStore();
@@ -60,6 +76,7 @@ function registerLifecycleHooks(api: OpenClawPluginApi): void {
   });
 }
 
+/** @description 注册 message_received / message_sent 入出站计数 hooks。 */
 function registerMessageHooks(api: OpenClawPluginApi): void {
   api.on("message_received", (_event, ctx) => {
     const { registry } = getRuntimeStore();
@@ -106,6 +123,7 @@ function registerMessageHooks(api: OpenClawPluginApi): void {
   });
 }
 
+/** @description 注册 before/after_tool_call 工具调用 hooks。 */
 function registerToolHooks(api: OpenClawPluginApi): void {
   api.on("before_tool_call", (event) => {
     const { registry } = getRuntimeStore();
@@ -142,6 +160,7 @@ function registerToolHooks(api: OpenClawPluginApi): void {
   });
 }
 
+/** @description 注册 agent_turn_prepare / agent_end 等 Agent 运行 hooks。 */
 function registerAgentHooks(api: OpenClawPluginApi): void {
   api.on("agent_turn_prepare", (_event, ctx) => {
     const { registry } = getRuntimeStore();
@@ -199,6 +218,7 @@ function registerAgentHooks(api: OpenClawPluginApi): void {
   });
 }
 
+/** @description 订阅 api.runtime.events 上的 Agent / 会话转录事件。 */
 function registerRuntimeEventListeners(api: OpenClawPluginApi): void {
   api.runtime.events?.onAgentEvent?.((event) => {
     try {
@@ -412,6 +432,11 @@ function registerSupplementaryPluginHooks(api: OpenClawPluginApi): void {
   });
 }
 
+/**
+ * @description 按 snapshotIntervalMs 刷新 modelAuth provider 快照与渠道活动 gauge。
+ *
+ * @param force - 为 true 时跳过间隔节流立即刷新
+ */
 export async function refreshRuntimeSnapshots(force = false): Promise<void> {
   const store = getRuntimeStore();
   const now = Date.now();
@@ -495,6 +520,9 @@ export async function refreshRuntimeSnapshots(force = false): Promise<void> {
   refreshChannelActivityGauges();
 }
 
+/**
+ * @description 刷新插件存活、uptime、runtime namespace 可用性等 housekeeping 指标。
+ */
 export function refreshHousekeepingMetrics(): void {
   const store = getRuntimeStore();
   const { registry, cfg } = store;
@@ -543,6 +571,7 @@ export function refreshHousekeepingMetrics(): void {
   });
 }
 
+/** @description 根据 api.runtime.channel.activity 刷新各渠道最后入/出站年龄 gauge。 */
 function refreshChannelActivityGauges(): void {
   const store = getRuntimeStore();
   const getActivity = store.api.runtime.channel?.activity?.get;
@@ -574,6 +603,7 @@ function refreshChannelActivityGauges(): void {
   }
 }
 
+/** @description 将非空字符串 trim 后返回，空则 undefined。 */
 function optionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -582,12 +612,18 @@ function optionalString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+/** @description 字符串 trim 后非空则返回，否则 fallback。 */
 function stringOr(value: unknown, fallback: string): string {
   return optionalString(value) ?? fallback;
 }
 
 // ─────────── HTTP 延迟环形缓冲区（用于计算 P95/P99） ───────────
 
+/**
+ * @description 记录一次 HTTP scrape 路由耗时样本（环形缓冲区，供 P95/P99）。
+ *
+ * @param seconds - 请求耗时（秒）
+ */
 export function recordHttpLatency(seconds: number): void {
   HTTP_LATENCY_SAMPLES.push(seconds);
   if (HTTP_LATENCY_SAMPLES.length > HTTP_LATENCY_MAX_SAMPLES) {
@@ -595,6 +631,9 @@ export function recordHttpLatency(seconds: number): void {
   }
 }
 
+/**
+ * @description 根据 HTTP_LATENCY_SAMPLES 刷新 P95/P99 与缓冲区使用率 gauge。
+ */
 export function refreshHttpLatencyMetrics(): void {
   const { registry } = getRuntimeStore();
 
@@ -620,6 +659,9 @@ export function refreshHttpLatencyMetrics(): void {
   });
 }
 
+/**
+ * @description 刷新消息投递、Agent、工具、渠道健康等 SLI 比率 gauge。
+ */
 export function refreshSliMetrics(): void {
   const store = getRuntimeStore();
   const { registry } = store;
@@ -654,6 +696,14 @@ export function refreshSliMetrics(): void {
   });
 }
 
+/**
+ * @description 对带指定 label 值的样本求和。
+ *
+ * @param samples - 指标样本列表
+ * @param label - 标签名
+ * @param expectedValue - 期望标签值
+ * @returns 匹配样本 value 之和
+ */
 function sumSamplesByLabel(
   samples: Array<{ labels?: Record<string, string>; value: number }>,
   label: string,

@@ -1,5 +1,16 @@
 /**
- * RocketMQ 入站消息处理：Topic/路由匹配、会话绑定、OpenClaw 分发。
+ * @fileoverview RocketMQ 入站编排：Topic/Tag 路由、幂等、会话绑定与 OpenClaw 分发。
+ *
+ * @description
+ * PushConsumer 回调经 `processInbound` 进入本模块：校验订阅范围 → 解析路由 →
+ * message-sdk `normalizeWireIngress` → `dispatchChannelMessage` 驱动 Agent；
+ * 出站回复经 transport `publishMessage` 写回 reply Topic。
+ *
+ * @module inbound
+ */
+
+/**
+ * RocketMQ 入站 — Base Profile 入口。
  */
 
 import { getRockermqRuntime } from "./runtime.js";
@@ -31,6 +42,12 @@ type InboundResult = {
 let idempotencyCache: IdempotencyCache | undefined;
 let idempotencyCacheSig = "";
 
+/**
+ * @description 按配置 TTL/容量懒创建或重建幂等缓存实例。
+ * @param config - 当前 RocketMQ 配置。
+ * @returns 启用幂等时的缓存，否则 `undefined`。
+ * @throws 不抛出。
+ */
 function getIdempotencyCache(config: RockermqConfig): IdempotencyCache | undefined {
   if (!config.idempotency.enabled) return undefined;
   const sig = `${config.idempotency.ttlMs}:${config.idempotency.maxEntries}`;
@@ -44,6 +61,12 @@ function getIdempotencyCache(config: RockermqConfig): IdempotencyCache | undefin
   return idempotencyCache;
 }
 
+/**
+ * @description 将 config.payload.mode 映射为 message-sdk PayloadParseMode。
+ * @param mode - 配置中的 payload 模式。
+ * @returns SDK 解析模式字符串。
+ * @throws 不抛出。
+ */
 function mapPayloadMode(mode: RockermqConfig["payload"]["mode"]): PayloadParseMode {
   if (mode === "plainText") return "plain";
   if (mode === "jsonOnly") return "jsonOnly";
@@ -51,7 +74,11 @@ function mapPayloadMode(mode: RockermqConfig["payload"]["mode"]): PayloadParseMo
 }
 
 /**
- * 处理 RocketMQ 入站消息（设备 -> Agent）。
+ * @description 处理 RocketMQ 入站消息（设备 / 上游 → Agent）。
+ * @param event - PushConsumer 归一化后的入站事件。
+ * @param config - 当前生效的 RocketMQ 配置。
+ * @returns 是否接受及路由来源 / 丢弃原因。
+ * @throws 不抛出；内部 dispatch 异常转为 `{ accepted: false, reason }`。
  */
 export async function processInbound(
   event: InboundEvent,
@@ -142,7 +169,10 @@ export async function processInbound(
 }
 
 /**
- * 分发至 OpenClaw Runtime（message-sdk dispatchChannelMessage）。
+ * @description 经 message-sdk `dispatchChannelMessage` 分发至 OpenClaw Runtime 并注册 MQ 回复 deliver。
+ * @param params - 会话、路由、prompt 与解析结果。
+ * @returns Promise，成功时无返回值。
+ * @throws 底层 dispatch 或 publish 失败时向上抛出。
  */
 async function dispatchToRuntime(params: {
   sessionKey: string;
@@ -201,7 +231,11 @@ async function dispatchToRuntime(params: {
 }
 
 /**
- * 判断 Topic 是否在订阅范围内。
+ * @description 判断 Topic 是否在 consumer.subscriptions 允许范围内（空列表表示全放行）。
+ * @param topic - 实际 Topic 名。
+ * @param config - 当前配置。
+ * @returns 是否应处理该 Topic。
+ * @throws 不抛出。
  */
 function shouldProcessTopic(topic: string, config: RockermqConfig): boolean {
   const subscriptions = config.consumer.subscriptions;

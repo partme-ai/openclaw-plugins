@@ -1,7 +1,11 @@
 /**
- * openclaw-prometheus 插件入口
+ * @fileoverview openclaw-prometheus 插件入口（infra Profile）。
  *
- * 仅依赖官方插件机制：manifest、entrypoint、runtime、hooks、events、plugin-owned routes。
+ * @description
+ * 注册指标采集器、HTTP scrape 路由与 Gateway RPC 扩展；无 messaging 入出站。
+ * 指标端点由 plugin 内 scrapeAuth 可选保护。
+ *
+ * @module index
  */
 
 import type {
@@ -62,9 +66,10 @@ let cache: CollectCache = new CollectCache(0);
 const collectorErrorCounts = new Map<string, number>();
 
 /**
- * 组装采集器列表
+ * @description 组装启用的 MetricCollector 列表。
  *
- * @param includeRuntime - 是否包含 Node 进程级指标
+ * @param includeRuntime - 是否包含 Node 进程级 RuntimeCollector
+ * @returns 采集器实例数组
  */
 function buildCollectors(includeRuntime: boolean): MetricCollector[] {
   const list: MetricCollector[] = [
@@ -88,7 +93,9 @@ function buildCollectors(includeRuntime: boolean): MetricCollector[] {
 }
 
 /**
- * 并行采集所有指标
+ * @description 并行执行所有 collector.collect() 并汇总定义、样本与诊断。
+ *
+ * @returns definitions、samples 与 per-collector diagnostics
  */
 const COLLECTOR_SUCCESS_DEF: MetricDefinition = {
   name: "openclaw_metrics_collector_success",
@@ -175,7 +182,11 @@ const SCRAPE_DURATION_DEF: MetricDefinition = {
 };
 
 /**
- * 在采集结果上追加 build info 与本次 scrape 耗时样本
+ * @description 在采集结果上追加 build info 与本次 scrape 耗时样本。
+ *
+ * @param definitions - 指标定义列表（会被 mutate）
+ * @param samples - 指标样本列表（会被 mutate）
+ * @param scrapeSeconds - 本次 scrape 墙钟耗时（秒）
  */
 function appendMetaSamples(
   definitions: MetricDefinition[],
@@ -206,7 +217,9 @@ function metricsChildPath(base: string, suffix: string): string {
 }
 
 /**
- * 注册 HTTP 路由与采集逻辑
+ * @description 注册 HTTP 路由、diagnostics 服务与 collector 生命周期。
+ *
+ * @param api - OpenClaw 插件 API
  */
 function registerMetricsRoutes(api: OpenClawPluginApi): void {
   const cfg = resolvePrometheusConfig(api.pluginConfig as Record<string, unknown> | undefined);
@@ -517,6 +530,7 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
   console.log(`  GET ${metricsChildPath(base, "/health")}      — plugin health`);
 }
 
+/** @description 从 collector 错误计数汇总 failed/total 诊断。 */
 function diagnosticsFromCollectorMap(): { total: number; failed: number } {
   const total = collectors.length;
   let failed = 0;
@@ -533,6 +547,7 @@ function diagnosticsFromCollectorMap(): { total: number; failed: number } {
   return { total, failed };
 }
 
+/** @description 是否存在依赖 RPC 的 collector（非 plugin-runtime/runtime/diagnostics）。 */
 function hasRpcCollectorsConfigured(): boolean {
   return collectors.some(
     (collector) =>
@@ -542,6 +557,7 @@ function hasRpcCollectorsConfigured(): boolean {
   );
 }
 
+/** @description 按 metric name 去重 MetricDefinition 列表。 */
 function dedupeDefinitions(definitions: MetricDefinition[]): MetricDefinition[] {
   const seen = new Set<string>();
   const deduped: MetricDefinition[] = [];
@@ -555,6 +571,7 @@ function dedupeDefinitions(definitions: MetricDefinition[]): MetricDefinition[] 
   return deduped;
 }
 
+/** @description 构建 JSON 格式 scrape 响应中的 rpc/collectors 元数据块。 */
 function buildJsonMeta(): {
   rpc: {
     initialized: boolean;
@@ -579,6 +596,14 @@ function buildJsonMeta(): {
   };
 }
 
+/**
+ * @description 包装 HTTP handler：记录请求计数与 duration histogram。
+ *
+ * @param routePath - 注册的路由路径
+ * @param req - 入站 HTTP 请求
+ * @param res - 出站 HTTP 响应
+ * @param fn - 实际 handler 逻辑
+ */
 async function withRouteMetrics(
   routePath: string,
   req: IncomingMessage,

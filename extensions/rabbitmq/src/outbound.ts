@@ -1,5 +1,11 @@
 /**
- * RabbitMQ 渠道出站适配器：将 Agent 回复发布到 RabbitMQ Topic。
+ * @fileoverview RabbitMQ 出站适配器门面。
+ *
+ * @description
+ * 将 Agent 文本回复发布到 reply Topic：通过 session-mapper 解析 peer 与会话上下文，
+ * 再调用 transport 层 `publishMessage` 写入 Exchange。
+ *
+ * @module outbound
  */
 
 import type {
@@ -14,9 +20,7 @@ import { getRabbitmqChannelConfig } from "./state/state.js";
 import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { buildOutboundTopic } from "./routing/topic-router.js";
 
-/**
- * OpenClaw ChannelOutboundAdapter：直连文本发布到 RabbitMQ。
- */
+/** @description OpenClaw ChannelOutboundAdapter：直连文本发布到 RabbitMQ Exchange。 */
 export const rabbitmqOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   chunker: chunkText,

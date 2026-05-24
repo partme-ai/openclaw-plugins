@@ -1,5 +1,15 @@
 /**
- * 小红书 Webhook 入站：POST /channels/xhs/webhook
+ * @fileoverview Rednode Webhook 入站 Adapter：验签、限流读取与 dispatch 编排。
+ *
+ * @description
+ * 接收小红书平台 Webhook POST：HMAC 验签 → 解析 shopId/messageId →
+ * 委托 `dispatchWebhookInbound` 进入 Agent 管线。
+ *
+ * @module inbound
+ */
+
+/**
+ * Rednode Webhook 入站 — Base Profile 入口。
  */
 
 import crypto from "node:crypto";
@@ -13,7 +23,12 @@ import { dispatchWebhookInbound } from "./dispatch/dispatch-inbound.js";
 import type { PluginApi, XhsAccountConfig } from "./types.js";
 
 /**
- * 小红书 Webhook 验签
+ * @description 小红书 Webhook HMAC-SHA256 验签。
+ * @param body - 原始请求体字符串。
+ * @param signatureHeader - 请求头中的签名（hex）。
+ * @param config - 账号配置（webhook_secret 或 app_secret）。
+ * @returns 验签是否通过。
+ * @throws 不抛出。
  */
 export function verifyXhsWebhook(
   body: string,
@@ -32,11 +47,24 @@ export function verifyXhsWebhook(
   }
 }
 
+/**
+ * @description 从请求头读取小红书签名（x-xhs-signature / x-signature）。
+ * @param req - HTTP 入站请求。
+ * @returns 签名字符串或 `undefined`。
+ * @throws 不抛出。
+ */
 function getSignatureFromRequest(req: IncomingMessage): string | undefined {
   const raw = req.headers["x-xhs-signature"] ?? req.headers["x-signature"];
   return Array.isArray(raw) ? raw[0] : raw;
 }
 
+/**
+ * @description 从 Webhook JSON body 或配置提取 shopId。
+ * @param body - 原始请求体。
+ * @param config - 账号配置（shop_id / seller_id 回退）。
+ * @returns 店铺/卖家标识。
+ * @throws 不抛出。
+ */
 function extractShopId(body: string, config: XhsAccountConfig): string {
   try {
     const raw = JSON.parse(body) as Record<string, unknown>;
@@ -49,6 +77,13 @@ function extractShopId(body: string, config: XhsAccountConfig): string {
   return config.shop_id ?? config.seller_id ?? "default";
 }
 
+/**
+ * @description 从请求头或 body 提取 Webhook 幂等 messageId。
+ * @param req - HTTP 入站请求。
+ * @param body - 原始请求体。
+ * @returns messageId 或 `undefined`。
+ * @throws 不抛出。
+ */
 function extractWebhookMessageId(req: IncomingMessage, body: string): string | undefined {
   const header = req.headers["msg-id"] ?? req.headers["x-msg-id"];
   const fromHeader = Array.isArray(header) ? header[0] : header;
@@ -66,7 +101,11 @@ function extractWebhookMessageId(req: IncomingMessage, body: string): string | u
 }
 
 /**
- * 创建小红书 Webhook 处理器
+ * @description 创建小红书 Webhook HTTP 处理器（验签 → dispatch → 200/403/413/500）。
+ * @param getConfig - 读取当前 xhs 账号配置。
+ * @param api - 插件 API（含 runtime）。
+ * @returns Express 风格 async handler。
+ * @throws handler 内部 catch 后写 500，不向外抛。
  */
 export function createXhsWebhookHandler(
   getConfig: () => XhsAccountConfig | undefined,

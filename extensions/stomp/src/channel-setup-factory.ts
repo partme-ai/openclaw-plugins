@@ -1,7 +1,14 @@
 /**
- * 共享 Channel setupWizard / setupAdapter 工厂。
+ * @fileoverview 共享 Channel setupWizard / setupAdapter 声明式工厂。
  *
- * 供 extensions 下各渠道插件复用，减少重复声明式向导代码。
+ * @description
+ * 供 extensions 下各渠道插件复用；STOMP 通过 onboarding 引用本模块 setup 模板。
+ *
+ * @module channel-setup-factory
+ */
+
+/**
+ * 共享 Channel setup 工厂 — declarative wizard 构建器。
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";

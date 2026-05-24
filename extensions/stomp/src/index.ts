@@ -1,5 +1,15 @@
 /**
- * openclaw-stomp 插件入口。
+ * @fileoverview OpenClaw STOMP 插件聚合导出面（stomp-tcp Channel 入口）。
+ *
+ * @description
+ * 注册 STOMP TCP Channel、注入 Runtime、挂载 `/stomp-tcp/status` 诊断路由，
+ * 并通过 `registerService` 启动进程内嵌 STOMP Server。
+ *
+ * @module index
+ */
+
+/**
+ * openclaw-stomp — 原生 TCP STOMP 渠道插件。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -19,6 +29,7 @@ import {
 import { dispatchInboundMessage } from "./inbound.js";
 import type { InboundMessage } from "./types.js";
 
+/** @description STOMP TCP Channel 插件 defineChannelPluginEntry 注册入口。 */
 export default defineChannelPluginEntry({
   id: "openclaw-stomp",
   name: "STOMP TCP",
@@ -54,6 +65,13 @@ export default defineChannelPluginEntry({
   },
 });
 
+/**
+ * @description 注册 STOMP 后台服务；宿主无 registerService 时直接 start。
+ * @param api - OpenClaw 插件 API。
+ * @param start - 服务启动函数。
+ * @returns void
+ * @throws 不抛出。
+ */
 function registerStompService(api: OpenClawPluginApi, start: () => Promise<void>): void {
   const withService = api as OpenClawPluginApi & {
     registerService?: (svc: { id: string; start: () => Promise<void>; stop?: () => Promise<void> }) => void;
@@ -71,6 +89,12 @@ function registerStompService(api: OpenClawPluginApi, start: () => Promise<void>
   });
 }
 
+/**
+ * @description transport 入站回调：异步 dispatch 至 OpenClaw（错误仅打日志）。
+ * @param message - 归一化后的 STOMP 入站消息。
+ * @returns void
+ * @throws 不抛出；dispatch 异常被 catch。
+ */
 function handleInbound(message: InboundMessage): void {
   dispatchInboundMessage(message).catch((error) => {
     console.error("[openclaw-stomp] Runtime dispatch failed:", error);

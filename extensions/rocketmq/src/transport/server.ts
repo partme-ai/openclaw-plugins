@@ -1,12 +1,21 @@
 /**
- * RocketMQ 传输层封装。
- * 封装 rocketmq-client-nodejs Producer 与 PushConsumer，
- * 提供连接管理、自动重连与状态上报。
+ * @fileoverview RocketMQ 传输层：Producer / PushConsumer 封装与连接统计。
+ *
+ * @description
+ * 基于 `rocketmq-client-nodejs` 管理长连接 Producer 与 PushConsumer，提供自动重连、
+ * 入站 ACK/重消费策略、出站 one-shot Producer 回退及诊断统计 API。
+ *
+ * @module transport/server
+ */
+
+/**
+ * RocketMQ MQ 传输层 — 消息收发与统计入口。
  */
 
 import { ConsumeResult, Producer, PushConsumer, type MessageView } from "rocketmq-client-nodejs";
 import type { RockermqConfig } from "../config.js";
 
+/** @description PushConsumer 回调的入站消息事件。 */
 export type InboundEvent = {
   topic: string;
   tag?: string;
@@ -16,10 +25,13 @@ export type InboundEvent = {
   deliveryAttempt?: number;
 };
 
+/** @description 消费端处置结果（SUCCESS / 触发 reconsume）。 */
 export type InboundDisposition = { ok: true } | { ok: false; reconsume?: boolean; reason?: string };
 
+/** @description 入站消息处理器类型。 */
 export type InboundHandler = (event: InboundEvent) => Promise<InboundDisposition>;
 
+/** @description RocketMQ 客户端连接与消息统计。 */
 export type RockermqStats = {
   connected: boolean;
   lastConnectAt: number | null;
@@ -59,7 +71,11 @@ const stats: RockermqStats = {
 };
 
 /**
- * 启动 RocketMQ producer / push consumer。
+ * @description 启动 RocketMQ Producer 与 PushConsumer（含重试连接）。
+ * @param cfg - RocketMQ 运行时配置。
+ * @param handler - 入站消息处置回调。
+ * @returns 首次连接成功后的 Promise。
+ * @throws 重试耗尽后抛出最后一次连接错误。
  */
 export async function startRockermqServer(
   cfg: RockermqConfig,
@@ -73,7 +89,9 @@ export async function startRockermqServer(
 }
 
 /**
- * 关闭 RocketMQ 客户端。
+ * @description 关闭 RocketMQ 客户端并清理重连定时器。
+ * @returns shutdown 完成后的 Promise。
+ * @throws 不抛出；shutdown 错误被吞掉。
  */
 export async function stopRockermqServer(): Promise<void> {
   stopping = true;
@@ -107,7 +125,10 @@ export async function stopRockermqServer(): Promise<void> {
 }
 
 /**
- * 发送 RocketMQ 消息。
+ * @description 发送 RocketMQ 消息；无长连 Producer 时使用 one-shot Producer。
+ * @param params - topic、tag、payload 及可选 endpoints/凭据覆盖。
+ * @returns SDK send receipt（含 messageId 等）。
+ * @throws endpoints 不可用或 send 失败时抛出。
  */
 export async function publishMessage(params: {
   topic: string;
@@ -157,30 +178,51 @@ export async function publishMessage(params: {
 }
 
 /**
- * 读取当前统计。
+ * @description 读取当前连接与消息统计快照（浅拷贝）。
+ * @returns `RockermqStats` 副本。
+ * @throws 不抛出。
  */
 export function getStats(): RockermqStats {
   return { ...stats };
 }
 
 /**
- * 入站追踪函数。
+ * @description 入站 accepted 追踪占位（统计经 messagesReceived/messagesAcked 体现）。
+ * @returns void
+ * @throws 不抛出。
  */
 export function trackInboundAccepted(): void {
   // accepted counts are tracked via messagesReceived + messagesAcked
 }
 
+/**
+ * @description 记录入站丢弃原因并递增 errors。
+ * @param reason - 丢弃原因码。
+ * @returns void
+ * @throws 不抛出。
+ */
 export function trackInboundDropped(reason: string): void {
   stats.errors++;
   stats.lastError = `inbound_dropped:${reason}`;
 }
 
+/**
+ * @description 路由来源追踪占位（binding / standard 等，供诊断扩展）。
+ * @param _source - 路由来源标签。
+ * @returns void
+ * @throws 不抛出。
+ */
 export function trackRoute(_source: string): void {
   // route tracking for diagnostics
 }
 
 // ─────────────── 内部实现 ───────────────
 
+/**
+ * @description 带固定间隔的重试连接（最多 5 次）。
+ * @returns 连接成功后的 Promise。
+ * @throws 重试耗尽后抛出最后一次错误。
+ */
 async function connectWithRetry(): Promise<void> {
   const cfg = config;
   if (!cfg) {
@@ -208,6 +250,12 @@ async function connectWithRetry(): Promise<void> {
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+/**
+ * @description 单次建立 Producer 与 PushConsumer 并注册 messageListener。
+ * @param cfg - RocketMQ 配置。
+ * @returns 连接完成后的 Promise。
+ * @throws SDK startup 失败时抛出。
+ */
 async function connectOnce(cfg: RockermqConfig): Promise<void> {
   producer = new Producer({
     endpoints: cfg.endpoints,
@@ -285,7 +333,10 @@ async function connectOnce(cfg: RockermqConfig): Promise<void> {
 }
 
 /**
- * 构建订阅集合。
+ * @description 合并 consumer.subscriptions 与 topicBindings 构建 PushConsumer 订阅表。
+ * @param cfg - RocketMQ 配置。
+ * @returns topic → filterExpression 映射。
+ * @throws 不抛出。
  */
 function buildSubscriptions(cfg: RockermqConfig): Map<string, string> {
   const subscriptions = new Map<string, string>();
@@ -303,6 +354,12 @@ function buildSubscriptions(cfg: RockermqConfig): Map<string, string> {
   return subscriptions;
 }
 
+/**
+ * @description 异步 sleep 工具（重连退避）。
+ * @param ms - 毫秒数。
+ * @returns 延迟 resolve 的 Promise。
+ * @throws 不抛出。
+ */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

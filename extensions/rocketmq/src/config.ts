@@ -1,10 +1,25 @@
 /**
- * RocketMQ 配置定义与解析（canonical）。
+ * @fileoverview RocketMQ 插件配置形状、默认值与解析/校验。
+ *
+ * @description
+ * `RockermqConfig` 与宿主 `openclaw.plugin.json` 中 `channels.rocketmq` 段对齐；
+ * `resolveRockermqConfig` 从网关全局配置合并默认值，`validateRockermqConfig` 做启动前校验，
+ * `buildRockermqConfigSnapshot` 供诊断接口脱敏输出。
+ *
+ * @module config
  */
 
+/**
+ * RocketMQ 配置 — Base Profile 入口。
+ */
+
+/** @description Agent 入站消息分发模式。 */
 export type DispatchMode = "reply-pipeline" | "embedded-agent" | "subagent";
+
+/** @description 入站 wire payload 解析策略。 */
 export type PayloadMode = "jsonTextOrPlain" | "jsonOnly" | "plainText";
 
+/** @description Topic + Tag 与 Agent/Account 的显式绑定项。 */
 export type TopicBinding = {
   topic: string;
   tag: string;
@@ -15,6 +30,7 @@ export type TopicBinding = {
   replyTag?: string;
 };
 
+/** @description RocketMQ 渠道完整运行时配置（Producer / Consumer / 路由 / 幂等）。 */
 export type RockermqConfig = {
   endpoints: string;
   namespace: string;
@@ -59,7 +75,8 @@ export type RockermqConfig = {
 };
 
 /**
- * 默认 RocketMQ 配置。
+ * @description 默认 RocketMQ 配置（本地开发 / 缺省合并基准）。
+ * @returns 不可变默认配置对象引用。
  */
 export const DEFAULT_ROCKERMQ_CONFIG: RockermqConfig = {
   endpoints: "127.0.0.1:8081",
@@ -98,7 +115,10 @@ export const DEFAULT_ROCKERMQ_CONFIG: RockermqConfig = {
 };
 
 /**
- * 解析运行时配置中的 RocketMQ 段。
+ * @description 从网关全局配置解析 `channels.rocketmq`（或顶层 `rocketmq`）并合并默认值。
+ * @param cfg - 宿主 runtime.config 或等价配置对象。
+ * @returns 合并后的 `RockermqConfig`。
+ * @throws 不抛出；非法字段回退至默认值。
  */
 export function resolveRockermqConfig(
   cfg: Record<string, unknown> | undefined | null,
@@ -226,7 +246,10 @@ export function resolveRockermqConfig(
 }
 
 /**
- * 校验 RocketMQ 配置。
+ * @description 校验 RocketMQ 必填项（endpoints、producer/consumer groupId 等）。
+ * @param config - 已解析配置。
+ * @returns 人类可读问题描述列表；空数组表示通过。
+ * @throws 不抛出。
  */
 export function validateRockermqConfig(config: RockermqConfig): string[] {
   const issues: string[] = [];
@@ -243,7 +266,10 @@ export function validateRockermqConfig(config: RockermqConfig): string[] {
 }
 
 /**
- * 构建脱敏后的配置快照。
+ * @description 构建脱敏后的配置快照（隐藏 accessSecret / securityToken）。
+ * @param config - 已解析配置。
+ * @returns 可 JSON 序列化的配置对象。
+ * @throws 不抛出。
  */
 export function buildRockermqConfigSnapshot(config: RockermqConfig): Record<string, unknown> {
   return {

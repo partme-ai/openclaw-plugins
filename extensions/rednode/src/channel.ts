@@ -1,11 +1,22 @@
 /**
- * 小红书渠道定义：注册到 OpenClaw 的 Channel，配置与出站占位
+ * @fileoverview 小红书（xhs）Channel 定义：多账户配置、Setup 向导与出站占位。
+ *
+ * @description
+ * 实现 OpenClaw ChannelDefinition：config 解析 channels.xhs 多账户表，
+ * outbound 委托 `xhsSendText` 占位实现。
+ *
+ * @module channel
+ */
+
+/**
+ * Rednode xhs Channel — Base Profile 入口。
  */
 
 import type { ChannelDefinition, XhsAccountConfig } from "./types.js";
 import { xhsSetupAdapter, xhsSetupWizard } from "./onboarding.js";
 import { xhsSendText } from "./outbound.js";
 
+/** @description 导出的 xhs ChannelPlugin。 */
 export const xhsChannel: ChannelDefinition = {
   id: "xhs",
   meta: {
