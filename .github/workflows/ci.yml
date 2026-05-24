@@ -39,7 +39,7 @@ jobs:
 
       - name: Base Profile gate (strict plugins)
         run: |
-          for id in amap douyin gotify meituan mqtt rabbitmq redis-stream rednode rocketmq stomp web-mqtt web-stomp; do
+          for id in amap bridge douyin gotify meituan mqtt rabbitmq redis-stream rednode rocketmq stomp web-mqtt web-stomp wechat wechat-ipad; do
             node scripts/check-plugin-structure.mjs --plugin "$id" || exit 1
           done
 

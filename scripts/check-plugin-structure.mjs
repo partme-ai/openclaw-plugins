@@ -51,6 +51,7 @@ const EXTENDED_STRICT_PLUGINS = new Set(["wecom-kf", "wecom"]);
 /** channel-base plugins enforced at error level in default mode (Tier A) */
 const BASE_STRICT_PLUGINS = new Set([
   "amap",
+  "bridge",
   "douyin",
   "gotify",
   "meituan",
@@ -62,6 +63,8 @@ const BASE_STRICT_PLUGINS = new Set([
   "stomp",
   "web-mqtt",
   "web-stomp",
+  "wechat",
+  "wechat-ipad",
 ]);
 
 /** Profiles that require Channel Base flat src/ files (doc §5.1) */
