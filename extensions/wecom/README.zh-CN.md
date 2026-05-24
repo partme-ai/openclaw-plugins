@@ -67,6 +67,32 @@ openclaw config set channels.wecom.enabled true
 openclaw gateway restart
 ```
 
+#### 方式三：渐进式配置示例（推荐）
+
+从「最小 Bot WS」到「双模 + 多账号 + RAG + 高级项」，每级含完整 JSON、前置条件与验证步骤：
+
+**[渐进式配置示例（Level 1–10）](../../doc/wecom/configuration-examples.zh-CN.md)**
+
+**Level 1 最小可用**（私聊 Bot WebSocket）：
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "enabled": true,
+      "connectionMode": "websocket",
+      "botId": "<YOUR_BOT_ID>",
+      "secret": "<YOUR_BOT_SECRET>"
+    }
+  }
+}
+```
+
+```bash
+openclaw gateway restart
+openclaw channels status --probe
+```
+
 ### 模式概览
 
 | 模式 | 连接方式 | 消息格式 | 适用场景 |
@@ -123,9 +149,9 @@ openclaw gateway restart
 |--------|------|--------|
 | `channels.wecom.mediaLocalRoots` | 媒体发送允许的额外本地路径（支持 `~`） | `[]` |
 | `channels.wecom.media.maxBytes` | 最大媒体文件大小（字节） | `20971520`（20MB） |
-| `channels.wecom.media.tempDir` | 媒体处理临时目录 | - |
-| `channels.wecom.media.retentionHours` | 媒体文件保留时长（小时） | - |
-| `channels.wecom.media.cleanupOnStart` | 启动时清理临时媒体文件 | - |
+| `channels.wecom.media.tempDir` | 媒体处理临时目录 | —（**planned**，类型已定义未接线） |
+| `channels.wecom.media.retentionHours` | 媒体文件保留时长（小时） | —（**planned**） |
+| `channels.wecom.media.cleanupOnStart` | 启动时清理临时媒体文件 | —（**planned**） |
 
 **媒体大小限制与自动降级：**
 
@@ -140,10 +166,11 @@ openclaw gateway restart
 
 | 配置项 | 说明 |
 |--------|------|
-| `channels.wecom.network.timeoutMs` | HTTP 请求超时（毫秒） |
-| `channels.wecom.network.retries` | 重试次数 |
-| `channels.wecom.network.retryDelayMs` | 重试间隔（毫秒） |
-| `channels.wecom.network.egressProxyUrl` | 出口代理 URL（固定 IP 场景） |
+| `channels.wecom.network.agentReplyTimeoutMs` | Agent 回复总超时（毫秒），超时后降级提示 |
+| `channels.wecom.network.egressProxyUrl` | 出口代理 URL（固定 IP / 60020 场景） |
+| `channels.wecom.network.timeoutMs` | 部分 HTTP 路径超时（毫秒） |
+| `channels.wecom.network.retries` | —（**planned**，未接线） |
+| `channels.wecom.network.retryDelayMs` | —（**planned**，未接线） |
 
 > **出口代理优先级**：`channels.wecom.network.egressProxyUrl` > `OPENCLAW_WECOM_EGRESS_PROXY_URL` > `WECOM_EGRESS_PROXY_URL` > `HTTPS_PROXY` > `ALL_PROXY` > `HTTP_PROXY`
 
@@ -273,6 +300,7 @@ Monorepo 内专题文档见 [`doc/wecom/`](../../doc/wecom/)：
 
 | 文档 | 说明 |
 |------|------|
+| [**渐进式配置示例**](../../doc/wecom/configuration-examples.zh-CN.md) | Level 1–10 完整 JSON、验证命令、RAG / 高级项 |
 | [架构设计](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | 双模式拓扑、源码模块地图、入站主流程、流式概要 |
 | [配置指南](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | 双模安装、多账号、访问控制、流式/footer 配置 |
 | [流式架构](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` 生命周期、6 分钟窗口、846608 降级、状态机 |

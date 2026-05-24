@@ -2,6 +2,8 @@
 
 `@partme.ai/wecom` 是 openclaw-plugins 的旗舰插件，支持企业微信智能机器人 + 自建应用双模式接入。
 
+**渐进式配置（Level 1–10 完整 JSON + 验证）**：[configuration-examples.zh-CN.md](./configuration-examples.zh-CN.md)
+
 **架构总览**（双模式、源码模块、入站主流程、流式概要）：**[OpenClaw-WeCom-Architecture.md](./OpenClaw-WeCom-Architecture.md)**
 
 ## 功能亮点
@@ -41,10 +43,12 @@ openclaw plugins install @partme.ai/wecom
 
 ```bash
 openclaw config set channels.wecom.enabled true
-openclaw config set channels.wecom.accounts.default.botId "<YOUR_BOT_ID>"
-openclaw config set channels.wecom.accounts.default.secret "<YOUR_SECRET>"
+openclaw config set channels.wecom.botId "<YOUR_BOT_ID>"
+openclaw config set channels.wecom.secret "<YOUR_SECRET>"
 openclaw gateway restart
 ```
+
+单账号也可平铺配置；多账号见 [Level 8 示例](./configuration-examples.zh-CN.md#level-8--多账号)。
 
 ### Agent 模式（需要公网 IP）
 
@@ -52,11 +56,11 @@ openclaw gateway restart
 
 ```bash
 openclaw config set channels.wecom.enabled true
-openclaw config set channels.wecom.accounts.default.agent.corpId "<CORP_ID>"
-openclaw config set channels.wecom.accounts.default.agent.corpSecret "<SECRET>"
-openclaw config set channels.wecom.accounts.default.agent.agentId 1000002
-openclaw config set channels.wecom.accounts.default.agent.token "<TOKEN>"
-openclaw config set channels.wecom.accounts.default.agent.encodingAESKey "<AES_KEY>"
+openclaw config set channels.wecom.agent.corpId "<CORP_ID>"
+openclaw config set channels.wecom.agent.corpSecret "<SECRET>"
+openclaw config set channels.wecom.agent.agentId 1000002
+openclaw config set channels.wecom.agent.token "<TOKEN>"
+openclaw config set channels.wecom.agent.encodingAESKey "<AES_KEY>"
 openclaw gateway restart
 ```
 
@@ -161,11 +165,11 @@ openclaw pairing approve wecom <CODE>
       },
       "network": {
         "egressProxyUrl": "http://proxy:3128",
+        "agentReplyTimeoutMs": 360000,
         "timeoutMs": 15000
       },
       "media": {
-        "maxBytes": 20971520,
-        "tempDir": "/tmp/wecom-media"
+        "maxBytes": 20971520
       },
       "accounts": {
         "main": {
@@ -184,6 +188,8 @@ openclaw pairing approve wecom <CODE>
   }
 }
 ```
+
+> **未接线配置项**（仅 TypeScript 类型，运行时勿依赖）：`media.tempDir`、`media.retentionHours`、`media.cleanupOnStart`、`network.retries`、`network.retryDelayMs`。详见 [渐进式配置 §未实现](./configuration-examples.zh-CN.md#未实现配置项速查)。
 
 ## Webhook 路径
 

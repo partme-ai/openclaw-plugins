@@ -17,7 +17,7 @@
 
 | 插件 | 文档入口 | 说明 |
 |------|----------|------|
-| **wecom** | [架构](./wecom/OpenClaw-WeCom-Architecture.md) · [配置](./wecom/OpenClaw-WeCom-Configuration.md) · [流式](./wecom/OpenClaw-WeCom-Streaming-Architecture.md) · [联调](./wecom/OpenClaw-WeCom-Testing.md) · [Feishu SDK 对照](./wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | 企业微信自建插件 |
+| **wecom** | [渐进式配置 CN](./wecom/configuration-examples.zh-CN.md) · [EN](./wecom/configuration-examples.md) · [架构](./wecom/OpenClaw-WeCom-Architecture.md) · [配置](./wecom/OpenClaw-WeCom-Configuration.md) · [流式](./wecom/OpenClaw-WeCom-Streaming-Architecture.md) · [联调](./wecom/OpenClaw-WeCom-Testing.md) · [Feishu SDK 对照](./wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | 企业微信自建插件 |
 | **lark** | [CLA](./lark/OpenClaw-Lark-CLA.md) | 贡献者协议；飞书/Lark 通道见官方 `@larksuite/openclaw-lark` + [openclaw-bridge](../extensions/bridge/README.zh-CN.md) |
 | **dingtalk** | — | 官方 `@dingtalk-real-ai/dingtalk-connector` + [openclaw-bridge](../extensions/bridge/README.zh-CN.md) |
 

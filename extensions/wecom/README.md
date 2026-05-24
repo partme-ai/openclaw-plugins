@@ -61,6 +61,32 @@ openclaw config set channels.wecom.enabled true
 openclaw gateway restart
 ```
 
+#### Option C: Progressive examples (recommended)
+
+Copy-paste configs from minimal Bot WS through dual-mode, multi-account, RAG, and advanced options:
+
+**[Progressive configuration (Levels 1–10)](../../doc/wecom/configuration-examples.md)**
+
+**Level 1 minimum** (Bot WebSocket DM):
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "enabled": true,
+      "connectionMode": "websocket",
+      "botId": "<YOUR_BOT_ID>",
+      "secret": "<YOUR_BOT_SECRET>"
+    }
+  }
+}
+```
+
+```bash
+openclaw gateway restart
+openclaw channels status --probe
+```
+
 ## Mode Overview
 
 | Mode | Connection | Message Format | Use Case |
@@ -117,9 +143,9 @@ openclaw gateway restart
 |--------|-------------|---------|
 | `channels.wecom.mediaLocalRoots` | Additional local paths for file sending | `[]` |
 | `channels.wecom.media.maxBytes` | Max media file size (bytes) | `20971520` (20MB) |
-| `channels.wecom.media.tempDir` | Media processing temp directory | - |
-| `channels.wecom.media.retentionHours` | Media retention hours | - |
-| `channels.wecom.media.cleanupOnStart` | Clean temp media on startup | - |
+| `channels.wecom.media.tempDir` | Media temp directory | — (**planned**, type only) |
+| `channels.wecom.media.retentionHours` | Media retention hours | — (**planned**) |
+| `channels.wecom.media.cleanupOnStart` | Clean temp media on startup | — (**planned**) |
 
 **Media size limits and auto-downgrade:**
 
@@ -134,10 +160,11 @@ openclaw gateway restart
 
 | Config | Description |
 |--------|-------------|
-| `channels.wecom.network.timeoutMs` | HTTP request timeout (ms) |
-| `channels.wecom.network.retries` | Retry count |
-| `channels.wecom.network.retryDelayMs` | Retry delay (ms) |
-| `channels.wecom.network.egressProxyUrl` | Egress proxy URL (fixed IP scenarios) |
+| `channels.wecom.network.agentReplyTimeoutMs` | Agent reply timeout (ms); fallback message on expiry |
+| `channels.wecom.network.egressProxyUrl` | Egress proxy (fixed IP / error 60020) |
+| `channels.wecom.network.timeoutMs` | HTTP timeout on some code paths (ms) |
+| `channels.wecom.network.retries` | — (**planned**, not wired) |
+| `channels.wecom.network.retryDelayMs` | — (**planned**, not wired) |
 
 > **Egress proxy priority**: `channels.wecom.network.egressProxyUrl` > `OPENCLAW_WECOM_EGRESS_PROXY_URL` > `WECOM_EGRESS_PROXY_URL` > `HTTPS_PROXY` > `ALL_PROXY` > `HTTP_PROXY`
 
@@ -240,6 +267,7 @@ In-repo guides under [`doc/wecom/`](../../doc/wecom/):
 
 | Document | Description |
 |----------|-------------|
+| [**Progressive configuration**](../../doc/wecom/configuration-examples.md) | Levels 1–10 JSON snippets, verify steps, RAG / advanced |
 | [Architecture](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | Dual-mode topology, source module map, inbound flows, streaming overview |
 | [Configuration](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Dual-mode setup, multi-account, access control, streaming/footer/**\*Text** config |
 | [Streaming architecture](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` lifecycle, 6-minute window, 846608 fallback, state machine |
