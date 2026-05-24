@@ -4,10 +4,10 @@
  * Loaded when the plugin is disabled or unconfigured, avoiding heavy Nacos client imports.
  * See https://docs.openclaw.ai/plugins/sdk-entrypoints (`defineSetupPluginEntry`).
  */
-import type { NacosPluginConfig } from "./types.js";
+import type { NacosPluginConfig } from "./shared/types.js";
 
 const pluginObject = {
-  id: "openclaw-nacos" as const,
+  id: "nacos" as const,
   configSchema: {
     type: "object" as const,
     properties: {

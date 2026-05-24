@@ -11,7 +11,7 @@
  */
 
 import { createConnection, type Socket } from "node:net";
-import type { ISessionStoreService, SessionStoreConfig } from "../types.js";
+import type { ISessionStoreService, SessionStoreConfig } from "../shared/types.js";
 
 /** Redis 键前缀 */
 const KEY_PREFIX = "openclaw:cluster:session:";

@@ -15,7 +15,7 @@
  * - 连接池管理
  */
 
-import type { SessionStoreConfig, ISessionStoreService } from "../types.js";
+import type { SessionStoreConfig, ISessionStoreService } from "../shared/types.js";
 
 /** 默认 Session TTL（秒） */
 const DEFAULT_SESSION_TTL = 3600;

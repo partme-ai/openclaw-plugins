@@ -16,7 +16,7 @@ type AgentToolResult<T = unknown> = {
   details: T | undefined;
 };
 
-import { getOrCreateStore } from '../hooks.js';
+import { getOrCreateStore } from '../runtime/hooks.js';
 import { hybridSearch } from '../retriever/hybrid.js';
 
 // ===================================================================

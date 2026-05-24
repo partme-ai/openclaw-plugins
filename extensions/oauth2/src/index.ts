@@ -17,10 +17,10 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { PluginApi, AuthOAuth2Config } from "./types.js";
-import { SaTokenDiscovery } from "./satoken-discovery.js";
-import { SaTokenIntrospection } from "./satoken-introspection.js";
-import { createAuthMiddleware } from "./middleware.js";
+import type { PluginApi, AuthOAuth2Config } from "./shared/types.js";
+import { SaTokenDiscovery } from "./auth/satoken-discovery.js";
+import { SaTokenIntrospection } from "./auth/satoken-introspection.js";
+import { createAuthMiddleware } from "./auth/middleware.js";
 
 /** 默认 OAuth2 配置 */
 const DEFAULT_CONFIG: AuthOAuth2Config = {

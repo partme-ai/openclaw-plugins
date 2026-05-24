@@ -9,7 +9,7 @@
  * @see https://github.com/Netflix/eureka/wiki/Eureka-REST-operations
  */
 
-import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../types.js";
+import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../shared/types.js";
 
 const DEFAULT_APP_NAME = "OPENCLAW-GATEWAY";
 const DEFAULT_REFRESH_MS = 10_000;

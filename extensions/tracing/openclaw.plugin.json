@@ -1,5 +1,5 @@
 {
-  "id": "openclaw-tracing",
+  "id": "tracing",
   "name": "openclaw-tracing",
   "version": "0.1.10",
   "description": "Message tracing and distributed tracing for OpenClaw",

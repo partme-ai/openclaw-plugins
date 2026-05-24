@@ -17,7 +17,7 @@
 
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { TracingBackend, TracingConfig, Span } from "../types.js";
+import type { TracingBackend, TracingConfig, Span } from "../shared/types.js";
 
 /** 默认追踪目录 */
 const DEFAULT_TRACE_DIR = "./traces";

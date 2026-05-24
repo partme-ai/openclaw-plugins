@@ -6,7 +6,7 @@
  * - grpc -- gRPC 代理（高性能，待实现）
  */
 
-import type { ProxyConfig, IProxyService } from "../types.js";
+import type { ProxyConfig, IProxyService } from "../shared/types.js";
 import { HttpProxyServer } from "./http-proxy.js";
 import { GrpcProxyServer } from "./grpc-proxy.js";
 

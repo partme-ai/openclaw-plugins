@@ -14,7 +14,7 @@ export default defineConfig({
   },
   external: ["openclaw/plugin-sdk/plugin-entry", "openclaw/plugin-sdk/setup-runtime", "openclaw/plugin-sdk/core", "nacos", "yaml"],
   onSuccess: async () => {
-    cpSync("src/uuid-shim.cjs", "dist/uuid-shim.cjs");
-    cpSync("src/bootstrap.cjs", "dist/bootstrap.cjs");
+    cpSync("src/shared/uuid-shim.cjs", "dist/uuid-shim.cjs");
+    cpSync("src/shared/bootstrap.cjs", "dist/bootstrap.cjs");
   },
 });

@@ -11,7 +11,7 @@
  * 适用于轻量部署。生产环境建议使用 etcd3 npm 包。
  */
 
-import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../types.js";
+import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../shared/types.js";
 
 /** etcd 中节点键的前缀 */
 const ETCD_PREFIX = "/openclaw/cluster/nodes/";

@@ -14,7 +14,7 @@
 
 import * as dns from "node:dns";
 import { promisify } from "node:util";
-import type { DiscoveryConfig, IDiscoveryService, ClusterNodeInfo } from "../types.js";
+import type { DiscoveryConfig, IDiscoveryService, ClusterNodeInfo } from "../shared/types.js";
 
 const resolveSrv = promisify(dns.resolveSrv);
 

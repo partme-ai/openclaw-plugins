@@ -27,7 +27,7 @@ import type {
   IConfigSyncService,
   ISessionStoreService,
   IProxyService,
-} from "./types.js";
+} from "./shared/types.js";
 import { createDiscoveryService } from "./discovery/discovery.js";
 import { createConfigSyncService } from "./config-sync/config-sync.js";
 import { createSessionStoreService } from "./session-store/session-store.js";
@@ -35,7 +35,7 @@ import { createProxyService } from "./proxy/proxy.js";
 import type { HttpProxyServer } from "./proxy/http-proxy.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { writeFile } from "node:fs/promises";
-import type { GatewayRuntime } from "./types.js";
+import type { GatewayRuntime } from "./shared/types.js";
 
 /** 默认集群配置 */
 const DEFAULT_CONFIG: ClusterConfig = {

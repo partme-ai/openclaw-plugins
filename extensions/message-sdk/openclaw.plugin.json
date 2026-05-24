@@ -1,0 +1,10 @@
+{
+  "id": "message-sdk",
+  "name": "OpenClaw Message SDK",
+  "description": "Unified message format SDK for OpenClaw channel plugins",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {}
+  }
+}

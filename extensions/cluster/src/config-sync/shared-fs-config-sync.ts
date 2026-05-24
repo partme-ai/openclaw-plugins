@@ -17,7 +17,7 @@
 import { readFile, writeFile, stat, unlink } from "node:fs/promises";
 import { watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
-import type { ConfigSyncConfig, IConfigSyncService } from "../types.js";
+import type { ConfigSyncConfig, IConfigSyncService } from "../shared/types.js";
 
 /** 默认同步间隔（毫秒） */
 const DEFAULT_SYNC_INTERVAL = 5000;

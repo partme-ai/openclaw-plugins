@@ -7,7 +7,7 @@
  * - 节点数量固定的小型部署
  */
 
-import type { ClusterNodeInfo, IDiscoveryService } from "../types.js";
+import type { ClusterNodeInfo, IDiscoveryService } from "../shared/types.js";
 
 /**
  * 静态节点发现服务

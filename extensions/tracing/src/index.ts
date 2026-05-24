@@ -12,9 +12,9 @@ import { LogBackend } from "./backends/log-backend.js";
 import { FileBackend } from "./backends/file-backend.js";
 import { OtlpBackend } from "./backends/otlp-backend.js";
 import { SkyWalkingBackend } from "./backends/skywalking-backend.js";
-import { registerTracingPluginHooks } from "./hooks.js";
-import { TracingSampler } from "./sampler.js";
-import type { TracingBackend, TracingConfig } from "./types.js";
+import { registerTracingPluginHooks } from "./runtime/hooks.js";
+import { TracingSampler } from "./runtime/sampler.js";
+import type { TracingBackend, TracingConfig } from "./shared/types.js";
 import {
   cleanupSessionTraces,
   getActiveSpanCount,
@@ -22,7 +22,7 @@ import {
   getTraceSpans,
   listRecentTraces,
   resetTraceStore,
-} from "./trace-store.js";
+} from "./runtime/trace-store.js";
 
 const PLUGIN_ID = "openclaw-tracing";
 
@@ -207,4 +207,4 @@ export default definePluginEntry({
   },
 });
 
-export type { Span, SpanKind, SpanStatus, TracingConfig } from "./types.js";
+export type { Span, SpanKind, SpanStatus, TracingConfig } from "./shared/types.js";

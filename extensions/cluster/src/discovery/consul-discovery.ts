@@ -13,7 +13,7 @@
  * @see https://developer.hashicorp.com/consul/api-docs/health
  */
 
-import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../types.js";
+import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../shared/types.js";
 
 /** 默认服务名 */
 const DEFAULT_SERVICE_NAME = "openclaw-gateway";

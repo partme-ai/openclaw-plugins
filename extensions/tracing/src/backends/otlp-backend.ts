@@ -13,7 +13,7 @@
  * - 降级到内存缓冲（endpoint 不可达时）
  */
 
-import type { TracingBackend, TracingConfig, Span } from "../types.js";
+import type { TracingBackend, TracingConfig, Span } from "../shared/types.js";
 
 /** 默认 OTLP endpoint */
 const DEFAULT_ENDPOINT = "http://localhost:4318";

@@ -10,7 +10,7 @@
  * 值：JSON 编码的完整配置
  */
 
-import type { ConfigSyncConfig, IConfigSyncService } from "../types.js";
+import type { ConfigSyncConfig, IConfigSyncService } from "../shared/types.js";
 
 /** etcd 中配置键 */
 const CONFIG_KEY = "/openclaw/cluster/config/current";

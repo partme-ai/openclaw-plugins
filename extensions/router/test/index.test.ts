@@ -5,7 +5,7 @@
  * 模板展开、路由分发逻辑、审计配置
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { matchRule, tmpl } from "./index.ts";
+import { matchRule, tmpl } from "../src/index.ts";
 
 // ============================================================================
 // tmpl — 模板展开

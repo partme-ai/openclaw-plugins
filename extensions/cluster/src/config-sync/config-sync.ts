@@ -7,7 +7,7 @@
  * - shared-fs -- 共享文件系统同步（NFS / EFS）
  */
 
-import type { ConfigSyncConfig, IConfigSyncService } from "../types.js";
+import type { ConfigSyncConfig, IConfigSyncService } from "../shared/types.js";
 import { EtcdConfigSync } from "./etcd-config-sync.js";
 import { SharedFsConfigSync } from "./shared-fs-config-sync.js";
 

@@ -10,7 +10,7 @@
  */
 
 import { createConnection, type Socket } from "node:net";
-import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../types.js";
+import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../shared/types.js";
 
 const DEFAULT_PREFIX = "openclaw:cluster:nodes";
 const NODE_TTL_SEC = 30;

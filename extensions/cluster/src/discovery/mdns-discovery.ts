@@ -9,7 +9,7 @@
  * @see https://github.com/mafintosh/multicast-dns
  */
 
-import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../types.js";
+import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../shared/types.js";
 
 const DEFAULT_SERVICE_TYPE = "_openclaw._tcp.local";
 const QUERY_INTERVAL_MS = 15_000;

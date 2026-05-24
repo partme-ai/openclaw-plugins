@@ -7,7 +7,7 @@
  * - postgresql -- PostgreSQL 存储（需要持久化时使用）
  */
 
-import type { SessionStoreConfig, ISessionStoreService } from "../types.js";
+import type { SessionStoreConfig, ISessionStoreService } from "../shared/types.js";
 import { RedisSessionStore } from "./redis-session-store.js";
 import { PostgresSessionStore } from "./pg-session-store.js";
 

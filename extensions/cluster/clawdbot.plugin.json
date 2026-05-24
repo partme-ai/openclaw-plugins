@@ -1,5 +1,5 @@
 {
-  "id": "openclaw-cluster",
+  "id": "cluster",
   "name": "openclaw-cluster",
   "version": "0.1.6",
   "description": "Cluster coordination — Discovery · Config Sync · Session Store · Proxy",

@@ -14,7 +14,7 @@ type AgentToolResult<T = unknown> = {
   details: T | undefined;
 };
 
-import { getOrCreateStore } from '../hooks.js';
+import { getOrCreateStore } from '../runtime/hooks.js';
 import { indexDocument } from '../indexer/scheduler.js';
 import { chunkText } from '../indexer/chunker.js';
 

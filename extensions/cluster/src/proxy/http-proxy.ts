@@ -14,7 +14,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
-import type { ProxyConfig, IProxyService, ClusterNodeInfo } from "../types.js";
+import type { ProxyConfig, IProxyService, ClusterNodeInfo } from "../shared/types.js";
 
 /**
  * 消息转发请求体

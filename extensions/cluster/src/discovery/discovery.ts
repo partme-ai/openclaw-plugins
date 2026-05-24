@@ -12,7 +12,7 @@
  * - mdns      -- mDNS/Bonjour 局域网零中心发现
  */
 
-import type { DiscoveryConfig, IDiscoveryService } from "../types.js";
+import type { DiscoveryConfig, IDiscoveryService } from "../shared/types.js";
 import { StaticDiscovery } from "./static-discovery.js";
 import { EtcdDiscovery } from "./etcd-discovery.js";
 import { DnsSrvDiscovery } from "./dns-srv-discovery.js";

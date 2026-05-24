@@ -13,8 +13,7 @@ type AgentToolResult<T = unknown> = {
   details: T | undefined;
 };
 
-import { getOrCreateStore } from '../hooks.js';
-import { invalidateStoreCache } from '../hooks.js';
+import { getOrCreateStore, invalidateStoreCache } from '../runtime/hooks.js';
 
 // ===================================================================
 // 类型定义

@@ -9,7 +9,7 @@
  * @see https://nacos.io/docs/latest/guide/user/open-api/
  */
 
-import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../types.js";
+import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../shared/types.js";
 
 const DEFAULT_SERVICE_NAME = "openclaw-gateway";
 const DEFAULT_GROUP = "DEFAULT_GROUP";

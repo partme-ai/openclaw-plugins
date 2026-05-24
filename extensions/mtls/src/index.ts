@@ -20,8 +20,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as tls from "node:tls";
 
-import type { MtlsConfig, ClientCertInfo, MtlsAuthContext, MtlsStatusSnapshot } from "./types.js";
-import { getMtlsStats } from "./stats.js";
+import type { MtlsConfig, ClientCertInfo, MtlsAuthContext, MtlsStatusSnapshot } from "./shared/types.js";
+import { getMtlsStats } from "./runtime/stats.js";
 
 const DEFAULT_CONFIG: MtlsConfig = {
   enabled: true,
@@ -303,4 +303,4 @@ export default function register(api: PluginApi): void {
   console.log("  /mtls/status  — Plugin status & configuration");
 }
 
-export { getMtlsStats } from "./stats.js";
+export { getMtlsStats } from "./runtime/stats.js";

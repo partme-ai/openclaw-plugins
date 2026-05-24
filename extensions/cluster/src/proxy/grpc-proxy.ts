@@ -16,7 +16,7 @@
  * - 超时控制
  */
 
-import type { ProxyConfig, IProxyService } from "../types.js";
+import type { ProxyConfig, IProxyService } from "../shared/types.js";
 
 /** 默认超时（毫秒） */
 const DEFAULT_TIMEOUT = 5000;
