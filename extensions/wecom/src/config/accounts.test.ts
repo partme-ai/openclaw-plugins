@@ -167,4 +167,23 @@ describe("resolveWeComAccountMulti nested bot compatibility", () => {
     expect(resolved.secret).toBe("flat-secret");
     expect(resolved.config.streamPlaceholderText).toBe("flat-placeholder");
   });
+
+  it("returns the same object reference when resolving the same cfg snapshot twice", () => {
+    const config = cfg({
+      wecom: {
+        enabled: true,
+        accounts: {
+          main: {
+            botId: "flat-bot",
+            secret: "flat-secret",
+          },
+        },
+      },
+    });
+
+    const first = resolveWeComAccountMulti({ cfg: config, accountId: "main" });
+    const second = resolveWeComAccountMulti({ cfg: config, accountId: "main" });
+
+    expect(second).toBe(first);
+  });
 });

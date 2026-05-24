@@ -9,6 +9,7 @@ import {
   getExtendedMediaLocalRoots,
   readGuardedLocalMediaFile,
   resolveAllowedRootForLocalPath,
+  _resetMediaPathGuardCacheForTests,
 } from "./media-path-guard.js";
 
 const tempDirs: string[] = [];
@@ -20,6 +21,7 @@ async function makeTempDir(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  _resetMediaPathGuardCacheForTests();
   await Promise.all(
     tempDirs.splice(0).map(async (dir) => {
       await fs.rm(dir, { recursive: true, force: true });
@@ -91,7 +93,18 @@ describe("getExtendedMediaLocalRoots", () => {
       mediaLocalRoots: [customRoot],
     });
 
-    expect(roots).toContain(customRoot);
+    const resolvedCustomRoot = await fs.realpath(customRoot);
+    expect(roots).toContain(resolvedCustomRoot);
     expect(roots.length).toBeGreaterThan(1);
+  });
+
+  it("returns cached roots for identical config without recomputing", async () => {
+    const customRoot = await makeTempDir("wecom-guard-cache-");
+    const config = { mediaLocalRoots: [customRoot] };
+
+    const first = await getExtendedMediaLocalRoots(config);
+    const second = await getExtendedMediaLocalRoots(config);
+
+    expect(second).toBe(first);
   });
 });

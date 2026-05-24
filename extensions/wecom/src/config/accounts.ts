@@ -17,6 +17,31 @@ import type { ResolvedAgentAccount } from "../types/account.js";
 import type { WecomAgentConfig } from "../types/config.js";
 import { flattenWecomBotFields } from "./bot-config-normalize.js";
 
+/** Per cfg object: resolved account cache (invalidates when cfg reference changes). */
+const resolvedAccountCache = new WeakMap<OpenClawConfig, Map<string, ResolvedWeComAccount>>();
+
+/**
+ * 从 WeakMap 读取或写入已解析账号，避免同一 cfg 快照重复 merge/flatten。
+ */
+function getCachedResolvedAccount(
+  cfg: OpenClawConfig,
+  accountId: string,
+  resolve: () => ResolvedWeComAccount,
+): ResolvedWeComAccount {
+  let byAccount = resolvedAccountCache.get(cfg);
+  if (!byAccount) {
+    byAccount = new Map();
+    resolvedAccountCache.set(cfg, byAccount);
+  }
+  const cached = byAccount.get(accountId);
+  if (cached) {
+    return cached;
+  }
+  const resolved = resolve();
+  byAccount.set(accountId, resolved);
+  return resolved;
+}
+
 // ============================================================================
 // 多账号配置结构
 // ============================================================================
@@ -154,13 +179,25 @@ export function resolveWeComAccountMulti(params: {
     ? normalizeAccountId(params.accountId!)
     : resolveDefaultWeComAccountId(params.cfg);
 
-  const wecomConfig = params.cfg.channels?.[CHANNEL_ID] as WeComMultiAccountConfig | undefined;
+  return getCachedResolvedAccount(params.cfg, accountId, () =>
+    resolveWeComAccountMultiUncached(params.cfg, accountId),
+  );
+}
+
+/**
+ * 解析单个企业微信账号的完整配置（无缓存，供 {@link resolveWeComAccountMulti} 内部使用）。
+ */
+function resolveWeComAccountMultiUncached(
+  cfg: OpenClawConfig,
+  accountId: string,
+): ResolvedWeComAccount {
+  const wecomConfig = cfg.channels?.[CHANNEL_ID] as WeComMultiAccountConfig | undefined;
 
   // 顶层 enabled 状态
   const baseEnabled = wecomConfig?.enabled !== false;
 
   // 合并配置
-  const merged = mergeWeComAccountConfig(params.cfg, accountId);
+  const merged = mergeWeComAccountConfig(cfg, accountId);
 
   // 账号级 enabled 状态
   const accountEnabled = merged.enabled !== false;

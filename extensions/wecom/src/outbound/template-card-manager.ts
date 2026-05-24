@@ -57,7 +57,7 @@ function pruneTemplateCardCache(): void {
 }
 
 function cloneTemplateCard(card: TemplateCard): TemplateCard {
-  return JSON.parse(JSON.stringify(card)) as TemplateCard;
+  return structuredClone(card);
 }
 
 export function saveTemplateCardToCache(params: {

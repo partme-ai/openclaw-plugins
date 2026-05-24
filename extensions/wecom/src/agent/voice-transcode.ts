@@ -17,10 +17,28 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+/** Cached ffmpeg availability probe (process-lifetime). */
+let ffmpegAvailabilityPromise: Promise<boolean> | undefined;
+
 /**
- * 检测系统是否安装 ffmpeg。
+ * @internal 测试专用：重置 ffmpeg 探测缓存
+ */
+export function _resetFfmpegAvailabilityCacheForTests(): void {
+  ffmpegAvailabilityPromise = undefined;
+}
+
+/**
+ * 检测系统是否安装 ffmpeg（结果在进程内缓存）。
  */
 export async function hasFfmpeg(): Promise<boolean> {
+  ffmpegAvailabilityPromise ??= probeFfmpegOnce();
+  return ffmpegAvailabilityPromise;
+}
+
+/**
+ * 执行一次 ffmpeg 版本探测。
+ */
+function probeFfmpegOnce(): Promise<boolean> {
   return new Promise((resolve) => {
     const p = spawn("ffmpeg", ["-version"], { stdio: "ignore" });
     p.on("error", () => resolve(false));

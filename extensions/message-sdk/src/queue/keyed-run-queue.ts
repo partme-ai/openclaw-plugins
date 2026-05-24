@@ -44,6 +44,8 @@ export type KeyedRunQueueOptions = {
 export type KeyedRunQueue = {
   enqueue: <T>(key: string, task: KeyedRunQueueTask<T>) => Promise<T>;
   deactivate: () => void;
+  /** O(1) check whether a key has a pending or running task chain. */
+  has: (key: string) => boolean;
   pendingKeys: () => string[];
   size: () => number;
 };
@@ -154,6 +156,16 @@ export function createKeyedRunQueue(options: KeyedRunQueueOptions = {}): KeyedRu
      */
     deactivate() {
       active = false;
+    },
+
+    /**
+     * 判断指定 key 是否仍有待处理或执行中的任务链。
+     *
+     * @param rawKey - 队列 key（如 `accountId:chatId`）
+     * @returns 该 key 是否在队列中
+     */
+    has(rawKey: string) {
+      return tails.has(normalizeQueueKey(rawKey));
     },
 
     /**

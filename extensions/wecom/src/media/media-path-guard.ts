@@ -29,6 +29,48 @@ import { getPathGuard } from "@partme.ai/openclaw-message-sdk";
 import { getDefaultMediaLocalRoots, resolveStateDir } from "../shared/openclaw-compat.js";
 import type { WeComConfig } from "../config/wecom-config.js";
 
+/** realpath 结果缓存（根目录路径在进程内稳定）。 */
+const resolvedPathCache = new Map<string, string>();
+
+/** getExtendedMediaLocalRoots 结果缓存键 → 根目录列表 */
+let extendedRootsCacheKey: string | undefined;
+let extendedRootsCache: string[] | undefined;
+
+/**
+ * @internal 测试专用：清空 media path guard 缓存
+ */
+export function _resetMediaPathGuardCacheForTests(): void {
+  resolvedPathCache.clear();
+  extendedRootsCacheKey = undefined;
+  extendedRootsCache = undefined;
+}
+
+/**
+ * 解析路径的 realpath，失败时回退 path.resolve；结果进程内缓存。
+ */
+async function resolvePathCached(targetPath: string): Promise<string> {
+  const cached = resolvedPathCache.get(targetPath);
+  if (cached) {
+    return cached;
+  }
+  let resolved: string;
+  try {
+    resolved = await fs.realpath(targetPath);
+  } catch {
+    resolved = path.resolve(targetPath);
+  }
+  resolvedPathCache.set(targetPath, resolved);
+  return resolved;
+}
+
+/**
+ * 构建 mediaLocalRoots 扩展列表的缓存键。
+ */
+function buildExtendedRootsCacheKey(config: WeComConfig | undefined, stateDir: string): string {
+  const customRoots = config?.mediaLocalRoots?.map((r) => r.trim()).filter(Boolean) ?? [];
+  return `${stateDir}\0${customRoots.join("\0")}`;
+}
+
 /**
  * Path Guard 读取本地媒体的结果。
  *
@@ -51,21 +93,31 @@ export type GuardedLocalMediaReadResult =
  * @returns 去重后的绝对路径白名单根目录列表
  */
 export async function getExtendedMediaLocalRoots(config?: WeComConfig): Promise<string[]> {
+  const stateDir = path.resolve(resolveStateDir());
+  const cacheKey = buildExtendedRootsCacheKey(config, stateDir);
+  if (extendedRootsCacheKey === cacheKey && extendedRootsCache) {
+    return extendedRootsCache;
+  }
+
   const defaults = await getDefaultMediaLocalRoots();
   const roots: string[] = [...defaults];
 
-  const stateDir = path.resolve(resolveStateDir());
-  if (!roots.includes(stateDir)) {
-    roots.push(stateDir);
+  const resolvedStateDir = await resolvePathCached(stateDir);
+  if (!roots.includes(resolvedStateDir)) {
+    roots.push(resolvedStateDir);
   }
   if (config?.mediaLocalRoots) {
     for (const r of config.mediaLocalRoots) {
-      const resolved = path.resolve(r.replace(/^~(?=\/|$)/, os.homedir()));
+      const expanded = r.replace(/^~(?=\/|$)/, os.homedir());
+      const resolved = await resolvePathCached(path.resolve(expanded));
       if (!roots.includes(resolved)) {
         roots.push(resolved);
       }
     }
   }
+
+  extendedRootsCacheKey = cacheKey;
+  extendedRootsCache = roots;
   return roots;
 }
 
@@ -88,20 +140,10 @@ export async function resolveAllowedRootForLocalPath(
   }
 
   // 优先解析真实路径，防止 ../ 或 symlink 逃逸
-  let resolved: string;
-  try {
-    resolved = await fs.realpath(mediaPath);
-  } catch {
-    resolved = path.resolve(mediaPath);
-  }
+  const resolved = await resolvePathCached(mediaPath);
 
   for (const root of localRoots) {
-    let resolvedRoot: string;
-    try {
-      resolvedRoot = await fs.realpath(root);
-    } catch {
-      resolvedRoot = path.resolve(root);
-    }
+    const resolvedRoot = await resolvePathCached(root);
     // 禁止将磁盘根目录作为白名单根（过于宽松）
     if (resolvedRoot === path.parse(resolvedRoot).root) {
       continue;
@@ -140,12 +182,7 @@ export async function readGuardedLocalMediaFile(params: {
   }
 
   try {
-    let resolvedPath: string;
-    try {
-      resolvedPath = await fs.realpath(filePath);
-    } catch {
-      resolvedPath = path.resolve(filePath);
-    }
+    const resolvedPath = await resolvePathCached(filePath);
 
     const guard = await getPathGuard();
     const buffer = await guard.readRegularFile(resolvedPath, {

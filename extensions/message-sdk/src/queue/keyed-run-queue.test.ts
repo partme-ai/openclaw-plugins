@@ -88,4 +88,26 @@ describe("createKeyedRunQueue", () => {
       KeyedRunQueueInactiveError,
     );
   });
+
+  it("has returns true while a key is active and false after drain", async () => {
+    const queue = createKeyedRunQueue();
+    const gate = deferred<void>();
+
+    expect(queue.has("chat-1")).toBe(false);
+
+    const run = queue.enqueue("chat-1", async () => {
+      await gate.promise;
+      return "done";
+    });
+
+    await Promise.resolve();
+    expect(queue.has("chat-1")).toBe(true);
+    expect(queue.pendingKeys()).toContain("chat-1");
+
+    gate.resolve(undefined);
+    await run;
+
+    await Promise.resolve();
+    expect(queue.has("chat-1")).toBe(false);
+  });
 });

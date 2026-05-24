@@ -41,7 +41,7 @@ export function buildQueueKey(accountId: string, chatId: string): string {
  * @returns 是否有活跃任务
  */
 export function hasActiveTask(key: string): boolean {
-  return chatQueue.pendingKeys().includes(key);
+  return chatQueue.has(key);
 }
 
 /**
@@ -61,7 +61,7 @@ export function enqueueWeComChatTask(params: {
 }): { status: QueueStatus; promise: Promise<void> } {
   const { accountId, chatId, task } = params;
   const key = buildQueueKey(accountId, chatId);
-  const status: QueueStatus = chatQueue.pendingKeys().includes(key) ? "queued" : "immediate";
+  const status: QueueStatus = chatQueue.has(key) ? "queued" : "immediate";
   const promise = chatQueue.enqueue(key, async () => {
     await task();
   });
