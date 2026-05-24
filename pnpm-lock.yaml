@@ -751,7 +751,7 @@ importers:
   extensions/wecom:
     dependencies:
       '@partme.ai/openclaw-message-sdk':
-        specifier: workspace:^2026.5.24
+        specifier: workspace:^2026.5.25
         version: link:../message-sdk
       '@wecom/aibot-node-sdk':
         specifier: ^1.0.6
@@ -818,6 +818,12 @@ importers:
       vitest:
         specifier: ^4.0.18
         version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
+
+  test-utils:
+    dependencies:
+      vitest:
+        specifier: '>=3.0.0'
+        version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@25.9.1)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
 
 packages:
 
