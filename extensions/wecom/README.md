@@ -20,42 +20,27 @@
 
 `@partme.ai/wecom` 已吸收研究版 WeCom 插件能力，并按当前 OpenClaw 插件实现统一到 `channels.wecom` 平铺配置。中文 README 是主文档；英文 README 跟随本页事实同步维护。
 
-### 连接、路由与投递
-
-- **三种运行模式**：Bot WebSocket、Bot HTTP Webhook、自建应用 Agent 加密回调可独立运行，也可以在同一账号中共存。
-- **Bot 优先、Agent 兜底**：同一账号存在 `botId` + `secret` 时优先启动 Bot WebSocket；Bot WS 不可用时可自动回退到 Agent HTTP API。
-- **私聊与群聊**：支持企业微信私聊、群聊入站消息，适合个人助手、群助手和团队自动化。
-- **主动推送**：支持发送到指定用户、群聊、部门、标签；Cron 定时投递和广播推荐使用 Agent 出站路径。
-- **多账号支持**：可通过 `defaultAccount` 和 `accounts.<accountId>` 运行多个企业微信账号，每个账号可拥有独立 Bot / Agent / 策略配置。
-- **动态 Agent 路由**：支持按用户或群创建隔离 Agent，避免不同用户、不同群之间共享上下文。
-
-### 消息、媒体与流式体验
-
-- **流式回复**：Bot 模式支持 `replyStream` / Webhook `stream`，包含 thinking 首帧占位、状态栏、耗时脚注和 846608 过期降级。
-- **Markdown 回复**：支持 Markdown / 文本出站；是否展示为富文本取决于实际出站路径和企业微信客户端。
-- **多媒体入站**：支持图片、语音、视频、文件、mixed 图文混排消息，并在可用路径中自动下载、解密和写入上下文。
-- **语音转文字**：Agent 回调可在 ASR 开启时提取语音转写文本，并追加到用户消息上下文。
-- **引用消息**：支持处理被引用的文本、图片、语音和文件消息，让 Agent 能理解上下文引用。
-- **本地文件发送**：支持 `MEDIA:` 指令发送本地文件，路径必须位于 `mediaLocalRoots` 白名单内。
-- **媒体大小策略**：图片 10 MB、视频 10 MB、语音 2 MB / AMR 优先，超限时尽量降级为文件；文件默认最大 20 MB。
-
-### 安全、权限与企业微信协议
-
-- **Agent 加密回调**：自建应用 Agent 使用 AES-256-CBC 加密 XML 回调，并进行 SHA1 签名校验。
-- **访问控制**：私聊策略支持 `pairing` / `open` / `allowlist` / `disabled`，群聊策略支持 `open` / `allowlist` / `disabled`。
-- **命令授权**：支持按账号与访问组进行命令权限控制，未授权命令会返回可见提示。
-- **可信出口代理**：企业微信 API 可信 IP 场景可配置 `channels.wecom.network.egressProxyUrl`，也支持环境变量代理回退。
-- **反踢保护**：检测到服务端踢下线时避免盲目重启互踢；同一个 Bot 账号仍应只保持一个 WS 连接。
-- **心跳与重连**：Bot WebSocket 具备心跳保活和重连能力；鉴权失败、重复连接和服务端踢线会在日志中显式暴露。
-
-### 卡片、MCP、Skills 与自动化
-
-- **模板卡片**：支持 `text_notice`、`news_notice`、`button_interaction`、`vote_interaction`、`multiple_interaction`，并处理 `template_card_event` 回调。
-- **MCP 工具集成**：注册 `wecom_mcp`，可列出或调用文档、通讯录、消息等企业微信 MCP 能力，并自动注入会话上下文。
-- **内置 Skills**：提供媒体发送、模板卡片、联系人、文档、日程、会议、待办、消息、smartsheet、预检和统一操作等企业微信技能。
-- **Cron 定时任务**：可通过 OpenClaw Cron 向用户、部门、标签或群聊定时投递；需要配置 `agent.agentId`。
-- **CLI 配置与诊断**：支持通过 `openclaw channels add`、`openclaw config set`、`openclaw channels status --probe` 和 `openclaw plugins doctor` 完成配置和排障。
-- **知识库解耦**：WeCom 插件不内置知识库 hooks；RAG 由独立 `@partme.ai/openclaw-knowledge` 插件提供，WeCom 只负责消息接入与出站。
+- 🔗 **双模式**：Bot（WebSocket / Webhook）与 Agent（HTTP webhook）可以独立运行，也可以同时启用。
+- 💬 同时支持私聊（DM）和群聊。
+- 📤 支持向指定用户、群聊、部门或标签主动推送消息。
+- 🖼️ 接收并处理图片、语音、视频、文件和 **mixed（图文混排）** 消息；在入站路径支持媒体访问时自动下载。
+- 🗣️ 语音转文字：Agent ASR 开启时自动提取语音消息转写文本。
+- 💬 引用消息支持：处理被引用的文本、图片、语音和文件消息。
+- ⏳ Bot 模式支持带「thinking」占位消息的流式回复。
+- 🔐 Agent 模式支持 AES-256-CBC 加密 XML 回调，并进行 SHA1 签名校验。
+- 📝 支持 Markdown / 文本格式回复；Agent HTTP 文本发送会剥离 Markdown 为纯文本，富文本展示取决于实际出站路径和企业微信客户端。
+- 🃏 支持模板卡片消息（`text_notice`、`news_notice`、`button_interaction`、`vote_interaction`、`multiple_interaction`），并处理 **事件回调**。
+- 🔒 内置访问控制：私聊策略（`pairing` / `open` / `allowlist` / `disabled`）和群聊策略（`open` / `allowlist` / `disabled`）。
+- 🔑 命令授权：支持按账号控制命令权限，并支持访问组。
+- 👥 多账号支持：可运行多个企业微信账号，每个账号拥有独立 Bot / Agent 配置。
+- 🧩 MCP 工具集成（`wecom_mcp`），包含拦截器管道（`biz-error`、`doc-auth-error`、`msg-media`、`smartpage-create`、`smartpage-export`、`smartsheet-upload`）。
+- 🎯 **11 个内置 Skill 包**：媒体发送、模板卡片、联系人查询、文档管理、待办、会议、日程、消息、smartsheet、预检和统一企业微信操作。
+- 🔀 动态 Agent 路由：按用户 / 群自动创建隔离 Agent。
+- 📁 本地文件发送支持可配置的媒体路径白名单（`mediaLocalRoots`）。
+- 📊 智能媒体大小限制与自动降级（图片 10MB → 文件，视频 10MB → 文件，语音 2MB / 仅 AMR → 文件，文件最大 20MB）。
+- 🔄 **Bot 优先、Agent 兜底** 出站投递：Bot WS 不可用时自动回退到 Agent HTTP API。
+- ⚡ 自动心跳保活与重连（最多 10 次重连尝试，5 次鉴权失败重试）。
+- 🛡️ 反踢保护：服务端断开连接时抑制自动重启，避免互踢循环。
 
 能力边界：
 

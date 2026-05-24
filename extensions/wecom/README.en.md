@@ -20,42 +20,27 @@ Current version: `2026.5.24`. Message SDK version: `2026.5.24`. The test suite c
 
 `@partme.ai/wecom` absorbs the strong capability set from the WeCom research plugin while matching the current OpenClaw plugin facts: package `@partme.ai/wecom@2026.5.24`, message SDK `2026.5.24`, flat `channels.wecom` config, Bot WS priority when `botId` + `secret` exist, Agent coexistence for proactive delivery, roughly 330 Vitest tests, and knowledge handled by the independent knowledge plugin.
 
-### Connectivity, Routing, and Delivery
-
-- **Three runtime modes**: Bot WebSocket, Bot HTTP Webhook, and self-built Agent encrypted callbacks can run independently or together.
-- **Bot-first, Agent-fallback delivery**: when the same account has `botId` + `secret`, Bot WebSocket starts first; if Bot WS is unavailable, outbound delivery can fall back to the Agent HTTP API.
-- **DM and group chat**: supports WeCom direct messages and group conversations for personal assistants, team assistants, and automation.
-- **Proactive messaging**: sends to specific users, groups, departments, or tags; Cron delivery and broadcasts should use the Agent outbound path.
-- **Multi-account support**: run multiple WeCom accounts with `defaultAccount` and `accounts.<accountId>`, each with independent Bot, Agent, and policy overrides.
-- **Dynamic Agent routing**: create isolated Agents per user or group so contexts do not leak across users or chats.
-
-### Messages, Media, and Streaming
-
-- **Streaming replies**: Bot mode supports `replyStream` / Webhook `stream`, thinking first-frame placeholders, status lines, elapsed footers, and 846608 expiry fallback.
-- **Markdown replies**: Markdown/text outbound is supported; rich rendering depends on the actual outbound path and WeCom client behavior.
-- **Inbound media**: receives image, voice, video, file, and **mixed** messages, then downloads/decrypts and attaches them to context when the path supports it.
-- **Voice-to-text**: Agent callbacks can append ASR transcripts from voice messages when voice ASR is enabled.
-- **Quoted messages**: processes quoted text, image, voice, and file messages so the Agent can understand referenced context.
-- **Local file sending**: supports `MEDIA:` directives for local files; paths must be inside `mediaLocalRoots`.
-- **Smart media size policy**: image 10 MB, video 10 MB, voice 2 MB / AMR preferred, oversized media downgraded to file when possible, and file max defaults to 20 MB.
-
-### Security, Access, and WeCom Protocols
-
-- **Agent encrypted callbacks**: Agent mode uses AES-256-CBC encrypted XML callbacks with SHA1 signature verification.
-- **Access control**: DM policy supports `pairing` / `open` / `allowlist` / `disabled`; group policy supports `open` / `allowlist` / `disabled`.
-- **Command authorization**: per-account command permission checks with access-group support; unauthorized commands receive visible guidance.
-- **Trusted egress proxy**: supports `channels.wecom.network.egressProxyUrl` and environment-variable proxy fallback for trusted-IP WeCom API calls.
-- **Anti-kick protection**: avoids blind restart loops when WeCom reports a server-side kick; each Bot account should still have only one active WS connection.
-- **Heartbeat and reconnect**: Bot WebSocket includes keep-alive and reconnect behavior, with auth failures, duplicate connections, and server kicks surfaced in logs.
-
-### Cards, MCP, Skills, and Automation
-
-- **Template cards**: supports `text_notice`, `news_notice`, `button_interaction`, `vote_interaction`, and `multiple_interaction`, with `template_card_event` callback handling.
-- **MCP integration**: registers `wecom_mcp` to list or call WeCom document, contact, message, and related MCP capabilities with session context injection.
-- **Built-in Skills**: media send, template cards, contact lookup, doc management, schedule, meeting, todo, messaging, smartsheet, preflight, and unified operation references.
-- **Cron jobs**: OpenClaw Cron can deliver to users, departments, tags, or group chats; configure `agent.agentId` for proactive sends.
-- **CLI setup and diagnostics**: use `openclaw channels add`, `openclaw config set`, `openclaw channels status --probe`, and `openclaw plugins doctor` for setup and troubleshooting.
-- **Decoupled knowledge / RAG**: WeCom does not embed knowledge hooks; RAG comes from the independent `@partme.ai/openclaw-knowledge` plugin, while WeCom transports messages in and out.
+- 🔗 **Dual-mode**: Bot (WebSocket / Webhook) and Agent (HTTP webhook) can run independently or together.
+- 💬 Supports both direct messages (DM) and group chat.
+- 📤 Proactive messaging to specific users, groups, departments, or tags.
+- 🖼️ Receives and processes image, voice, video, file, and **mixed (图文混排)** messages with automatic downloading where the inbound path supports media access.
+- 🗣️ Voice-to-text: automatically extracts transcribed text from voice messages when Agent ASR is enabled.
+- 💬 Quote message support: processes quoted text, image, voice, and file messages.
+- ⏳ Streaming replies with "thinking" placeholder messages (Bot mode).
+- 🔐 Agent mode: AES-256-CBC encrypted XML callbacks with SHA1 signature verification.
+- 📝 Markdown/text formatting support for replies; Agent HTTP text sends strip Markdown to plain text, and rich rendering depends on the outbound path and WeCom client.
+- 🃏 Template card messages (`text_notice`, `news_notice`, `button_interaction`, `vote_interaction`, `multiple_interaction`) with **event callback handling**.
+- 🔒 Built-in access control: DM Policy (`pairing` / `open` / `allowlist` / `disabled`) and Group Policy (`open` / `allowlist` / `disabled`).
+- 🔑 Command authorization: per-account command permission control with access group support.
+- 👥 Multi-account support: run multiple WeCom accounts with independent bot/agent configs.
+- 🧩 MCP tool integration (`wecom_mcp`) with interceptor pipeline (`biz-error`, `doc-auth-error`, `msg-media`, `smartpage-create`, `smartpage-export`, `smartsheet-upload`).
+- 🎯 **11 built-in Skill packs**: media sending, template cards, contact lookup, doc management, todo, meeting, schedule, messaging, smartsheet, preflight, and unified WeCom operations.
+- 🔀 Dynamic Agent routing: auto-create isolated agents per user/group.
+- 📁 Local file sending with configurable media path allowlist (`mediaLocalRoots`).
+- 📊 Smart media size limits with auto-downgrade (image 10MB → file, video 10MB → file, voice 2MB / AMR-only → file, max 20MB).
+- 🔄 **Bot-first, Agent-fallback** outbound delivery: auto fallback to Agent HTTP API when Bot WS is unavailable.
+- ⚡ Auto heartbeat keep-alive and reconnection (up to 10 reconnect attempts, 5 auth failure retries).
+- 🛡️ Anti-kick protection: suppresses auto-restart on server-side disconnection to prevent mutual kicking loops.
 
 Capability boundaries:
 
