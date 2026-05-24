@@ -2,15 +2,28 @@
  * Shared helpers for OpenClaw queue/channel installed-plugin E2E runs.
  */
 import net from "node:net";
+import { existsSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 export const REPO_ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
 export const E2E_DIR = `${REPO_ROOT}/scripts/e2e`;
 export const PROFILE = "queue-e2e";
-export const OPENCLAW_BIN =
-  process.env.OPENCLAW_BIN ??
-  `${process.env.HOME}/.openclaw/extensions/wecom/node_modules/.bin/openclaw`;
-export const STATE_DIR = `${process.env.HOME}/.openclaw-${PROFILE}`;
+
+/** Resolve OpenClaw CLI from repo devDependency or known host install. */
+function resolveOpenClawBin() {
+  if (process.env.OPENCLAW_BIN) return process.env.OPENCLAW_BIN;
+  const candidates = [
+    `${REPO_ROOT}/node_modules/.bin/openclaw`,
+    `${process.env.HOME}/.openclaw/extensions/wecom/node_modules/.bin/openclaw`,
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return candidates[0];
+}
+
+export const OPENCLAW_BIN = resolveOpenClawBin();
+export const STATE_DIR = process.env.OPENCLAW_E2E_STATE_DIR ?? `${process.env.HOME}/.openclaw-${PROFILE}`;
 export const GATEWAY_PORT = Number(process.env.E2E_GATEWAY_PORT ?? 19789);
 export const GATEWAY_HTTP = `http://127.0.0.1:${GATEWAY_PORT}`;
 

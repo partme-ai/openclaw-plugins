@@ -1,75 +1,78 @@
 #!/usr/bin/env node
 /**
- * Full OpenClaw installed-plugin E2E orchestrator for queue/channel plugins.
+ * OpenClaw plugin E2E orchestrator.
  *
- * Steps: Docker → Gotify tokens → build/install plugins → config → gateway → tests → report
+ * Usage:
+ *   node scripts/e2e/run-e2e.mjs
+ *   node scripts/e2e/run-e2e.mjs --plugins mqtt,rabbitmq
+ *   node scripts/e2e/run-e2e.mjs --keep-services
+ *   OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs
  */
-import { execSync, spawn } from "node:child_process";
-import { existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { bootstrapGotify } from "./bootstrap/gotify.mjs";
+import { bootstrapRocketmqTopic } from "./bootstrap/rocketmq-topic.mjs";
+import {
+  composeDown,
+  composeUp,
+  dockerPs,
+  DOCKER,
+  gatewayMode,
+  useHostGateway,
+} from "./lib/compose.mjs";
+import { generateOpenClawConfig } from "./lib/config.mjs";
+import { ensureGatewayRunning, gatewayLogTail } from "./lib/gateway.mjs";
+import { installPlugins } from "./lib/install.mjs";
+import { dockerServicesForPlugins, resolvePlugins } from "./lib/registry.mjs";
+import { baseReport, printSummary, writeReport } from "./lib/report.mjs";
 import {
   E2E_DIR,
+  GATEWAY_HTTP,
   OPENCLAW_BIN,
   PROFILE,
   REPO_ROOT,
-  STATE_DIR,
-  GATEWAY_HTTP,
-  GATEWAY_PORT,
   tcpReachable,
   waitFor,
 } from "./lib/utils.mjs";
+import { runBrowserTests, runPluginTests } from "./plugins/index.mjs";
 
-const DOCKER = process.env.DOCKER_BIN ?? "/usr/local/bin/docker";
-const DOCKER_PATH = "/Applications/Docker.app/Contents/Resources/bin";
-const COMPOSE_FILE = join(E2E_DIR, "docker-compose.yml");
-const dockerEnv = {
-  ...process.env,
-  PATH: `${DOCKER_PATH}:/opt/homebrew/bin:${process.env.PATH ?? ""}`,
-};
+/**
+ * @param {string[]} argv
+ */
+function parseArgs(argv) {
+  /** @type {{ plugins?: string[]; keepServices: boolean; skipBrowser: boolean; skipInstall: boolean; help: boolean }} */
+  const opts = {
+    keepServices: false,
+    skipBrowser: false,
+    skipInstall: false,
+    help: false,
+  };
 
-function run(cmd, opts = {}) {
-  console.log(`\n$ ${cmd}`);
-  return execSync(cmd, { stdio: "inherit", cwd: REPO_ROOT, env: dockerEnv, ...opts });
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--help" || arg === "-h") opts.help = true;
+    else if (arg === "--keep-services") opts.keepServices = true;
+    else if (arg === "--skip-browser") opts.skipBrowser = true;
+    else if (arg === "--skip-install") opts.skipInstall = true;
+    else if (arg === "--plugins") {
+      const val = argv[++i];
+      opts.plugins = val.split(",").map((s) => s.trim()).filter(Boolean);
+    } else if (arg.startsWith("--plugins=")) {
+      opts.plugins = arg.slice("--plugins=".length).split(",").map((s) => s.trim()).filter(Boolean);
+    }
+  }
+  return opts;
 }
 
-function dockerOk() {
-  try {
-    execSync(`${DOCKER} info`, { stdio: "ignore", env: dockerEnv });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function startDockerServices() {
-  if (!dockerOk()) {
-    console.warn("[docker] daemon unavailable — starting Docker Desktop");
-    run("open -a Docker", { stdio: "ignore" });
-    execSync("sleep 8");
-  }
-  if (!dockerOk()) {
-    return { ok: false, blocker: "Docker daemon not running after open -a Docker" };
-  }
-  run(`${DOCKER} compose -f "${COMPOSE_FILE}" up -d`);
-  return { ok: true };
-}
-
-function stopDockerServices() {
-  if (!dockerOk()) return;
-  try {
-    run(`${DOCKER} compose -f "${COMPOSE_FILE}" down`, { stdio: "pipe" });
-  } catch {
-    /* ignore */
-  }
-}
-
-async function waitDockerHealthy() {
-  const services = ["openclaw-e2e-rabbitmq", "openclaw-e2e-gotify"];
-  for (const name of services) {
+/** Wait for Docker health on backing services used by selected plugins. */
+async function waitDockerHealthy(pluginIds) {
+  const services = dockerServicesForPlugins(pluginIds);
+  if (services.includes("rabbitmq")) {
     await waitFor(
       () => {
         try {
-          const out = execSync(`${DOCKER} inspect -f '{{.State.Health.Status}}' ${name}`, {
+          const out = execSync(`${DOCKER} inspect -f '{{.State.Health.Status}}' openclaw-e2e-rabbitmq`, {
             encoding: "utf8",
           }).trim();
           return out === "healthy";
@@ -77,105 +80,144 @@ async function waitDockerHealthy() {
           return false;
         }
       },
-      { label: `${name} healthy`, timeoutMs: 120_000 },
+      { label: "rabbitmq healthy", timeoutMs: 120_000 },
     );
   }
-  // RocketMQ proxy — best effort
-  try {
-    await waitFor(() => tcpReachable(8081), { label: "rocketmq proxy 8081", timeoutMs: 180_000 });
-  } catch (err) {
-    console.warn("[rocketmq] proxy not healthy:", err.message);
+  if (services.includes("gotify")) {
+    await waitFor(
+      () => {
+        try {
+          const out = execSync(`${DOCKER} inspect -f '{{.State.Health.Status}}' openclaw-e2e-gotify`, {
+            encoding: "utf8",
+          }).trim();
+          return out === "healthy";
+        } catch {
+          return false;
+        }
+      },
+      { label: "gotify healthy", timeoutMs: 120_000 },
+    );
+  }
+  if (services.some((s) => s.startsWith("rocketmq"))) {
+    try {
+      await waitFor(() => tcpReachable(8081), { label: "rocketmq proxy 8081", timeoutMs: 180_000 });
+    } catch (err) {
+      console.warn("[rocketmq] proxy not healthy:", err.message);
+    }
   }
 }
 
-function startGateway() {
-  const logPath = join(E2E_DIR, "gateway.log");
-  const out = openSync(logPath, "a");
-  const child = spawn(
-    OPENCLAW_BIN,
-    ["--profile", PROFILE, "gateway", "run", "--force", "--allow-unconfigured", "--port", String(GATEWAY_PORT), "--verbose"],
-    { stdio: ["ignore", out, out], detached: true },
-  );
-  child.unref();
-  writeFileSync(join(E2E_DIR, ".gateway.pid"), String(child.pid));
-  return child.pid;
-}
+function printHelp() {
+  console.log(`OpenClaw plugin E2E orchestrator
 
-function stopGateway() {
-  const pidFile = join(E2E_DIR, ".gateway.pid");
-  if (!existsSync(pidFile)) return;
-  try {
-    process.kill(Number(readFileSync(pidFile, "utf8")), "SIGTERM");
-  } catch {
-    /* ignore */
-  }
+Usage:
+  node scripts/e2e/run-e2e.mjs [options]
+
+Options:
+  --plugins mqtt,rabbitmq   Subset of queue/channel plugins (default: all 7)
+  --keep-services           Do not docker compose down after run
+  --skip-browser            Skip Playwright browser tests
+  --skip-install            Skip build/pack/install (reuse prior install)
+  --help                    Show this help
+
+Environment:
+  OPENCLAW_E2E_HOST_GATEWAY=1   Run gateway on host instead of Docker openclaw service
+  OPENCLAW_BIN                  Path to openclaw CLI (host mode)
+  E2E_GATEWAY_PORT              Gateway port (default 19789)
+`);
 }
 
 async function main() {
-  const report = {
-    startedAt: new Date().toISOString(),
+  const opts = parseArgs(process.argv.slice(2));
+  if (opts.help) {
+    printHelp();
+    return;
+  }
+
+  const pluginIds = resolvePlugins(opts.plugins);
+  const backingServices = dockerServicesForPlugins(pluginIds);
+  const needsBackingDocker = backingServices.length > 0;
+  const needsOpenClawContainer = !useHostGateway();
+  const needsDocker = needsBackingDocker || needsOpenClawContainer;
+
+  const report = baseReport({
+    plugins: pluginIds,
+    gatewayMode: gatewayMode(),
     docker: {},
-    plugins: [],
     e2e: [],
     browser: [],
     commits: execSync("git rev-parse HEAD", { cwd: REPO_ROOT, encoding: "utf8" }).trim(),
-  };
+  });
 
-  console.log("=== OpenClaw Queue/Channel Installed Plugin E2E ===");
+  console.log("=== OpenClaw Plugin E2E ===");
+  console.log("plugins:", pluginIds.join(", "));
+  console.log("gateway mode:", report.gatewayMode);
 
-  report.docker = startDockerServices();
-  if (report.docker.ok) {
-    await waitDockerHealthy();
-    run(`node "${join(E2E_DIR, "setup-gotify-tokens.mjs")}"`);
-  } else {
-    console.warn("[docker] BLOCKED:", report.docker.blocker);
+  if (needsDocker) {
+    const services = backingServices;
+    report.docker = composeUp(services, { includeOpenClaw: needsOpenClawContainer });
+    if (report.docker.ok) {
+      await waitDockerHealthy(pluginIds);
+      if (pluginIds.includes("gotify")) {
+        report.gotify = await bootstrapGotify();
+      }
+    } else {
+      console.warn("[docker] BLOCKED:", report.docker.blocker);
+      if (backingServices.length) {
+        console.warn("[docker] External broker tests (rabbitmq, rocketmq, gotify) will likely FAIL without Docker.");
+      }
+    }
   }
 
-  run(`node "${join(E2E_DIR, "install-plugins.mjs")}"`);
-  if (report.docker.ok) {
-    run(`node "${join(E2E_DIR, "generate-openclaw-config.mjs")}"`);
-    run(`node "${join(E2E_DIR, "bootstrap-rocketmq-topic.mjs")}"`);
+  if (!opts.skipInstall) {
+    report.installed = installPlugins(pluginIds);
   }
 
-  stopGateway();
-  startGateway();
-  await waitFor(() => tcpReachable(GATEWAY_PORT), { label: `gateway :${GATEWAY_PORT}`, timeoutMs: 90_000 });
+  if (report.docker?.ok || pluginIds.some((id) => ["mqtt", "stomp", "web-mqtt", "web-stomp"].includes(id))) {
+    if (pluginIds.includes("gotify") && !report.gotify) {
+      const secretsPath = join(E2E_DIR, ".e2e-secrets.json");
+      if (existsSync(secretsPath)) {
+        report.gotify = JSON.parse(readFileSync(secretsPath, "utf8"));
+      }
+    }
+    report.config = generateOpenClawConfig(pluginIds, { gotifySecrets: report.gotify });
+    if (pluginIds.includes("rocketmq") && report.docker?.ok) {
+      await bootstrapRocketmqTopic(report.config.meta.rocketmqTopic);
+    }
+  }
 
-  const { runAllPluginTests, results } = await import("./test-installed-plugins.mjs");
-  await runAllPluginTests();
-  report.e2e = results;
+  report.gateway = await ensureGatewayRunning();
 
-  const { runBrowserTests, browserResults } = await import("./browser-web-channels.mjs");
-  await runBrowserTests();
-  report.browser = browserResults;
+  report.e2e = await runPluginTests(pluginIds);
+
+  if (!opts.skipBrowser && pluginIds.some((id) => id === "web-mqtt" || id === "web-stomp")) {
+    await runBrowserTests();
+    const { browserResults } = await import("./browser-web-channels.mjs");
+    report.browser = browserResults;
+  }
 
   try {
-    const list = execSync(`${OPENCLAW_BIN} --profile ${PROFILE} plugins list`, { encoding: "utf8" });
-    report.pluginsList = list;
+    report.pluginsList = execSync(`${OPENCLAW_BIN} --profile ${PROFILE} plugins list`, { encoding: "utf8" });
   } catch (err) {
     report.pluginsList = String(err);
   }
 
-  try {
-    report.dockerPs = execSync(`${DOCKER} ps --format '{{.Names}}\t{{.Status}}'`, { encoding: "utf8" });
-  } catch {
-    report.dockerPs = "unavailable";
-  }
+  report.dockerPs = dockerPs();
+  report.gatewayLogTail = gatewayLogTail();
+  report.serviceUrls = {
+    gateway: GATEWAY_HTTP,
+    rabbitmq: "amqp://127.0.0.1:5672",
+    gotify: "http://127.0.0.1:18080",
+    rocketmqProxy: "127.0.0.1:8081",
+  };
 
-  report.finishedAt = new Date().toISOString();
-  const reportPath = join(E2E_DIR, "e2e-report.json");
-  writeFileSync(reportPath, JSON.stringify(report, null, 2));
+  const reportPath = writeReport(report);
+  report.reportPath = reportPath;
+  printSummary(report);
 
-  console.log("\n=== E2E Results ===");
-  for (const r of report.e2e) {
-    console.log(`${r.plugin.padEnd(12)} ${r.result.padEnd(6)} ${r.method ?? ""} ${r.blocker ?? ""}`);
+  if (!opts.keepServices) {
+    composeDown(false);
   }
-  console.log("\nBrowser:");
-  for (const r of report.browser) {
-    console.log(`${r.plugin.padEnd(12)} ${r.result.padEnd(6)} ${r.blocker ?? r.evidence ?? ""}`);
-  }
-  console.log(`\nReport: ${reportPath}`);
-  console.log(`Gateway: ${GATEWAY_HTTP}`);
 
   const failed = report.e2e.filter((r) => r.result === "FAIL").length;
   if (failed > 0) process.exitCode = 1;

@@ -19,7 +19,9 @@
     "check-plugin-structure:strict-new": "node scripts/check-plugin-structure.mjs --strict-new",
     "check-plugin-structure:strict": "node scripts/check-plugin-structure.mjs --strict-base",
     "publish-changed": "node scripts/publish-changed.mjs",
-    "sync-message-sdk-deps": "node scripts/sync-message-sdk-deps.mjs"
+    "sync-message-sdk-deps": "node scripts/sync-message-sdk-deps.mjs",
+    "e2e": "node scripts/e2e/run-e2e.mjs",
+    "e2e:host": "OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -13,8 +13,8 @@ const EXT_DIRS = [
   "openclaw-rocketmq",
   "openclaw-gotify",
   "openclaw-stomp",
-  "web-mqtt",
-  "web-stomp",
+  "openclaw-web-mqtt",
+  "openclaw-web-stomp",
 ];
 
 const env = { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH ?? ""}` };
