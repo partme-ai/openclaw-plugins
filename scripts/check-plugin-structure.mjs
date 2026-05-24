@@ -3,13 +3,14 @@
  * check-plugin-structure.mjs — OpenClaw plugin structure standard checker.
  *
  * Standard reference: doc/OpenClaw-Plugin-Structure-Standard.md v1.0
- * Profiles: Base Profile (MUST for all plugins) + Extended Profile (complex Channel plugins)
+ * Profiles (doc §1.2): channel-base | channel-extended | channel-legacy |
+ *   capability-memory | capability | capability-cluster | infra | sdk-rag | sdk | utility-minimal
  *
  * Modes:
- *   default       — Base MUST drift → warn; _template Base MUST/SHOULD → error
- *   --strict-base — all Base Profile MUST violations → exit 1
- *   --strict-new  — Extended Profile violations on wecom-kf/wecom → exit 1
- *   --json        — machine-readable report
+ *   default       — Profile-aware rules; Tier A / _template channel-base MUST → error
+ *   --strict-base — all channel-base Base Profile MUST violations → exit 1
+ *   --strict-new  — channel-extended (wecom-kf/wecom) Extended thresholds → exit 1
+ *   --json        — machine-readable report (includes profile per plugin)
  *   --plugin <id> — single plugin filter
  *   --help        — usage
  */
@@ -23,10 +24,31 @@ const ROOT = new URL("..", import.meta.url).pathname;
 const EXTENSIONS_DIR = join(ROOT, "extensions");
 const BASE_TEMPLATE_ID = "_template";
 
+/** @typedef {'channel-base'|'channel-extended'|'channel-legacy'|'capability-memory'|'capability'|'capability-cluster'|'infra'|'sdk-rag'|'sdk'|'utility-minimal'} PluginProfile */
+
+/** Explicit plugin → profile mapping (doc §10.1.1). Overrides manifest/heuristic. */
+const PLUGIN_PROFILE_OVERRIDE = Object.freeze({
+  _template: "channel-base",
+  wecom: "channel-extended",
+  "wecom-kf": "channel-extended",
+  bridge: "channel-legacy",
+  memory: "capability-memory",
+  openmem: "capability-memory",
+  mtls: "capability",
+  oauth2: "capability",
+  cluster: "capability-cluster",
+  nacos: "infra",
+  tracing: "infra",
+  prometheus: "infra",
+  knowledge: "sdk-rag",
+  "message-sdk": "sdk",
+  router: "utility-minimal",
+});
+
 /** Plugins that MUST satisfy Extended Profile under --strict-new */
 const EXTENDED_STRICT_PLUGINS = new Set(["wecom-kf", "wecom"]);
 
-/** Base Profile plugins enforced at error level (default + --strict-base) */
+/** channel-base plugins enforced at error level in default mode (Tier A) */
 const BASE_STRICT_PLUGINS = new Set([
   "amap",
   "douyin",
@@ -42,7 +64,29 @@ const BASE_STRICT_PLUGINS = new Set([
   "web-stomp",
 ]);
 
-/** Base Profile — plugin root MUST (doc §4.1–§4.2, elevated from SHOULD where noted in checker) */
+/** Profiles that require Channel Base flat src/ files (doc §5.1) */
+const CHANNEL_PROFILES = new Set([
+  "channel-base",
+  "channel-extended",
+  "channel-legacy",
+]);
+
+/** Root MUST files for capability / infra / sdk-rag plugins */
+const CAPABILITY_ROOT_MUST = [
+  "openclaw.plugin.json",
+  "package.json",
+  "README.md",
+  ".gitignore",
+  "LICENSE",
+];
+
+/** Minimal root MUST for shared SDK packages */
+const SDK_ROOT_MUST = ["package.json", "README.md", ".gitignore", "LICENSE"];
+
+/** Minimal root MUST for utility plugins */
+const UTILITY_ROOT_MUST = ["openclaw.plugin.json", "package.json", "README.md"];
+
+/** Base Profile — plugin root MUST (doc §4.1–§4.2, channel profiles) */
 const BASE_ROOT_MUST = [
   "openclaw.plugin.json",
   "package.json",
@@ -225,7 +269,7 @@ function isEmptyCoreStub(rel, content) {
  * @param {Issue[]} issues
  * @param {ReturnType<typeof parseArgs>} flags
  */
-function checkBaseCoreSubstance(pluginDir, pluginId, issues, flags) {
+function checkBaseCoreSubstance(pluginDir, pluginId, profile, issues, flags) {
   const srcDir = join(pluginDir, "src");
   if (!existsSync(srcDir)) return;
 
@@ -243,6 +287,7 @@ function checkBaseCoreSubstance(pluginDir, pluginId, issues, flags) {
         message:
           "src/index.ts MUST orchestrate via defineChannelPluginEntry or register(api); move business logic to semantic modules",
         pluginId,
+        profile,
         category: "base-should",
         flags,
       });
@@ -263,6 +308,7 @@ function checkBaseCoreSubstance(pluginDir, pluginId, issues, flags) {
         path,
         message: `src/${rel} MUST contain real logic or a semantic barrel with exports (${lines} lines); see extensions/_template`,
         pluginId,
+        profile,
         category: "base-should",
         flags,
       });
@@ -282,6 +328,7 @@ function checkBaseCoreSubstance(pluginDir, pluginId, issues, flags) {
             path,
             message: `${rel} re-exports from unrelated module ${target}; use ./${baseStem}/ or inline logic`,
             pluginId,
+            profile,
             category: "base-should",
             flags,
           });
@@ -359,7 +406,7 @@ function isRootBaseFlatReExport(target) {
  * @param {Issue[]} issues
  * @param {ReturnType<typeof parseArgs>} flags
  */
-function checkBaseShimSemantics(pluginDir, pluginId, issues, flags) {
+function checkBaseShimSemantics(pluginDir, pluginId, profile, issues, flags) {
   const srcDir = join(pluginDir, "src");
   if (!existsSync(srcDir)) return;
 
@@ -389,6 +436,7 @@ function checkBaseShimSemantics(pluginDir, pluginId, issues, flags) {
           path,
           message: `${fileName} re-exports from Base flat ${target} (collapse to semantic module or import directly)`,
           pluginId,
+          profile,
           category: "base-should",
           flags,
         });
@@ -401,6 +449,7 @@ function checkBaseShimSemantics(pluginDir, pluginId, issues, flags) {
           path,
           message: `${fileName} (${lines} lines) re-exports from unrelated module ${target}; use ./${baseStem}/ or documented Migration.md target`,
           pluginId,
+          profile,
           category: "base-should",
           flags,
         });
@@ -458,24 +507,96 @@ Usage:
   node scripts/check-plugin-structure.mjs [options]
 
 Options:
-  --plugin <id>     Check a single extension (e.g. wecom-kf, _template)
-  --strict-base     Base Profile MUST violations fail the run (alias: --strict)
-  --strict-new      Extended drift thresholds fail for wecom-kf and wecom (not empty dirs)
-
-Enforced plugin sets:
-  Base strict: amap, douyin, gotify, meituan, mqtt, rabbitmq, redis-stream,
-               rednode, rocketmq, stomp, web-mqtt, web-stomp
-  Extended strict (--strict-new): wecom, wecom-kf
-  --json            Emit JSON report on stdout
+  --plugin <id>     Check a single extension (e.g. wecom-kf, memory, message-sdk)
+  --strict-base     channel-base Base Profile MUST violations fail the run (alias: --strict)
+  --strict-new      channel-extended drift thresholds fail for wecom-kf and wecom
+  --json            Emit JSON report on stdout (includes profile per plugin)
   --help, -h        Show this help
 
-Modes (doc §10.1):
-  default           Base MUST missing → warn; _template Base gaps → error
-  --strict-base     All plugins: Base MUST → exit 1
-  --strict-new      Sample Extended plugins: Extended rules → exit 1
+Profiles (doc §1.2):
+  channel-base      Tier A channels + _template — full Base flat src/
+  channel-extended  wecom, wecom-kf — Base + Extended semantic dirs
+  channel-legacy    bridge — Phase 2 migration target
+  capability-*      memory, mtls, oauth2, cluster — no channel.ts/inbound.ts
+  infra             nacos, tracing, prometheus
+  sdk / sdk-rag     message-sdk, knowledge
+  utility-minimal   router
+
+Tier A (channel-base, default error on MUST gaps):
+  amap, douyin, gotify, meituan, mqtt, rabbitmq, redis-stream,
+  rednode, rocketmq, stomp, web-mqtt, web-stomp
 
 Reference: doc/OpenClaw-Plugin-Structure-Standard.md
 `);
+}
+
+// ---------------------------------------------------------------------------
+// Profile detection (doc §1.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether the profile requires Channel Base flat src/ files.
+ * @param {PluginProfile} profile
+ */
+function isChannelProfile(profile) {
+  return CHANNEL_PROFILES.has(profile);
+}
+
+/**
+ * Resolve checker profile for a plugin directory.
+ * Priority: override map → manifest kind/channels → heuristics.
+ * @param {string} pluginId
+ * @param {string} pluginDir
+ * @returns {{ profile: PluginProfile, source: 'override'|'manifest'|'heuristic' }}
+ */
+function detectProfile(pluginId, pluginDir) {
+  if (PLUGIN_PROFILE_OVERRIDE[pluginId]) {
+    return { profile: PLUGIN_PROFILE_OVERRIDE[pluginId], source: "override" };
+  }
+
+  const manifest = readJson(join(pluginDir, "openclaw.plugin.json"));
+
+  if (manifest?.kind === "memory") {
+    return { profile: "capability-memory", source: "manifest" };
+  }
+
+  if (manifest?.kind === "channel") {
+    return { profile: "channel-base", source: "manifest" };
+  }
+
+  if (pluginId === "message-sdk" || pluginId.endsWith("-sdk")) {
+    return { profile: "sdk", source: "heuristic" };
+  }
+
+  const channels = manifest?.channels;
+  if (Array.isArray(channels) && channels.length > 0) {
+    return { profile: "channel-base", source: "heuristic" };
+  }
+
+  if (manifest && Array.isArray(channels) && channels.length === 0) {
+    return { profile: "capability", source: "heuristic" };
+  }
+
+  if (manifest) {
+    return { profile: "capability", source: "heuristic" };
+  }
+
+  if (pluginId === "message-sdk") {
+    return { profile: "sdk", source: "heuristic" };
+  }
+
+  return { profile: "channel-base", source: "heuristic" };
+}
+
+/**
+ * Root MUST file list for a given profile.
+ * @param {PluginProfile} profile
+ */
+function rootMustForProfile(profile) {
+  if (isChannelProfile(profile)) return BASE_ROOT_MUST;
+  if (profile === "sdk") return SDK_ROOT_MUST;
+  if (profile === "utility-minimal") return UTILITY_ROOT_MUST;
+  return CAPABILITY_ROOT_MUST;
 }
 
 // ---------------------------------------------------------------------------
@@ -546,25 +667,26 @@ function pushIssue(issues, issue) {
 }
 
 /**
- * Resolve severity for a rule given plugin id and CLI mode (doc §10.2).
+ * Resolve severity for a rule given plugin id, profile, and CLI mode (doc §10.2).
  */
-function levelFor({ rule, pluginId, category, flags }) {
+function levelFor({ rule, pluginId, profile, category, flags }) {
   const isTemplate = pluginId === BASE_TEMPLATE_ID;
   const isExtendedStrict = EXTENDED_STRICT_PLUGINS.has(pluginId);
   const isBaseStrict = BASE_STRICT_PLUGINS.has(pluginId);
+  const isChannel = isChannelProfile(profile);
 
   // Always error — committed artifacts (doc §4.2, §10.2)
   if (rule === "committed-dist" || rule === "committed-tgz") {
     return "error";
   }
 
-  // Extended Profile
+  // Extended Profile — channel-extended only
   if (category === "extended") {
     if (flags.strictNew && isExtendedStrict) return "error";
     return "warn";
   }
 
-  // Forbidden naming — always warn unless strict-new on extended plugins
+  // Forbidden naming — channel profiles; strict-new on extended
   if (category === "naming") {
     if (flags.strictNew && isExtendedStrict && rule === "forbidden-src-dir") {
       return "error";
@@ -575,22 +697,36 @@ function levelFor({ rule, pluginId, category, flags }) {
     return "warn";
   }
 
-  // Base MUST — _template + BASE_STRICT_PLUGINS always error; all plugins under --strict-base
+  // Capability / infra / sdk root MUST
+  if (category === "capability-must") {
+    if (flags.strictBase && isChannel) return "error";
+    return "warn";
+  }
+
+  // Plugin entry / extensions for non-channel profiles
+  if (category === "capability-manifest") {
+    return "warn";
+  }
+
+  // Base MUST — channel profiles: _template + Tier A always error; --strict-base → all channel-base
   if (category === "base-must") {
+    if (!isChannel) return "warn";
     if (flags.strictBase) return "error";
     if (isTemplate || isBaseStrict) return "error";
     return "warn";
   }
 
-  // Base SHOULD — _template + BASE_STRICT_PLUGINS treated as reference/enforced skeleton
+  // Base SHOULD — channel profiles
   if (category === "base-should") {
+    if (!isChannel) return "warn";
     if (flags.strictBase) return "error";
     if (isTemplate || isBaseStrict) return "error";
     return "warn";
   }
 
-  // Package / manifest MUST
+  // Package / manifest MUST — channel profiles
   if (category === "manifest-must") {
+    if (!isChannel) return "warn";
     if (flags.strictBase) return "error";
     if (isTemplate || isBaseStrict) return "error";
     return "warn";
@@ -598,6 +734,11 @@ function levelFor({ rule, pluginId, category, flags }) {
 
   // Root MUST NOT runtime ts — warn in all modes (doc §10.2)
   if (category === "root-must-not") {
+    return "warn";
+  }
+
+  // Profile migration advisory
+  if (category === "profile-advisory") {
     return "warn";
   }
 
@@ -614,27 +755,57 @@ function addIssue(issues, ctx) {
   });
 }
 
+/**
+ * Resolve plugin runtime entry path from package.json or manifest.
+ * @param {string} pluginDir
+ */
+function resolvePluginEntry(pluginDir) {
+  const pkg = readJson(join(pluginDir, "package.json"));
+  const manifest = readJson(join(pluginDir, "openclaw.plugin.json"));
+
+  const candidates = [
+    pkg?.openclaw?.extensions?.[0],
+    pkg?.main,
+    manifest?.main,
+    "src/index.ts",
+    "index.ts",
+  ].filter(Boolean);
+
+  for (const rel of candidates) {
+    const normalized = rel.replace(/^\.\//, "").replace(/\.js$/, ".ts");
+    const path = join(pluginDir, normalized);
+    if (existsSync(path)) return path;
+    const jsPath = join(pluginDir, rel.replace(/^\.\//, ""));
+    if (existsSync(jsPath)) return jsPath;
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Checks
 // ---------------------------------------------------------------------------
 
-function checkBaseRootMust(pluginDir, pluginId, issues, flags) {
-  for (const file of BASE_ROOT_MUST) {
+function checkBaseRootMust(pluginDir, pluginId, profile, issues, flags) {
+  for (const file of rootMustForProfile(profile)) {
     const path = join(pluginDir, file);
     if (!existsSync(path)) {
       addIssue(issues, {
-        rule: "base-root-must",
+        rule: isChannelProfile(profile) ? "base-root-must" : "capability-root-must",
         path,
-        message: `Base Profile MUST: missing ${file}`,
+        message: `${profile} MUST: missing ${file}`,
         pluginId,
-        category: "base-must",
+        profile,
+        category: isChannelProfile(profile) ? "base-must" : "capability-must",
         flags,
       });
     }
   }
 }
 
-function checkBaseRootShould(pluginDir, pluginId, issues, flags) {
+function checkBaseRootShould(pluginDir, pluginId, profile, issues, flags) {
+  if (!isChannelProfile(profile)) return;
+
   for (const file of BASE_ROOT_SHOULD) {
     const path = join(pluginDir, file);
     if (!existsSync(path)) {
@@ -643,6 +814,7 @@ function checkBaseRootShould(pluginDir, pluginId, issues, flags) {
         path,
         message: `Base Profile SHOULD: missing ${file}`,
         pluginId,
+        profile,
         category: "base-should",
         flags,
       });
@@ -650,13 +822,122 @@ function checkBaseRootShould(pluginDir, pluginId, issues, flags) {
   }
 }
 
-function checkManifestAndPackage(pluginDir, pluginId, issues, flags) {
+/**
+ * Capability / infra / sdk-rag / utility: entry point and openclaw.extensions.
+ * @param {string} pluginDir
+ * @param {string} pluginId
+ * @param {PluginProfile} profile
+ * @param {Issue[]} issues
+ * @param {ReturnType<typeof parseArgs>} flags
+ */
+function checkCapabilityEntry(pluginDir, pluginId, profile, issues, flags) {
+  if (isChannelProfile(profile) || profile === "sdk") return;
+
+  const entry = resolvePluginEntry(pluginDir);
+  if (!entry) {
+    addIssue(issues, {
+      rule: "capability-entry",
+      path: join(pluginDir, "src/index.ts"),
+      message: `${profile} MUST: missing plugin entry (src/index.ts, root index.ts, or manifest main)`,
+      pluginId,
+      profile,
+      category: "capability-manifest",
+      flags,
+    });
+  }
+
+  const pkgPath = join(pluginDir, "package.json");
+  const pkg = readJson(pkgPath);
+  const extensions = pkg?.openclaw?.extensions;
+
+  if (profile !== "utility-minimal" && profile !== "capability-memory") {
+    if (!Array.isArray(extensions) || extensions.length === 0) {
+      addIssue(issues, {
+        rule: "openclaw-extensions",
+        path: pkgPath,
+        message: `${profile} SHOULD: package.json#openclaw.extensions[]`,
+        pluginId,
+        profile,
+        category: "capability-manifest",
+        flags,
+      });
+    }
+  }
+}
+
+/**
+ * SDK profile: require src/ and forbid Channel flat files at src root.
+ * @param {string} pluginDir
+ * @param {string} pluginId
+ * @param {PluginProfile} profile
+ * @param {Issue[]} issues
+ * @param {ReturnType<typeof parseArgs>} flags
+ */
+function checkSdkProfile(pluginDir, pluginId, profile, issues, flags) {
+  if (profile !== "sdk") return;
+
+  const srcDir = join(pluginDir, "src");
+  if (!existsSync(srcDir)) {
+    addIssue(issues, {
+      rule: "sdk-src-dir",
+      path: srcDir,
+      message: "sdk profile MUST: plugin must contain src/",
+      pluginId,
+      profile,
+      category: "capability-must",
+      flags,
+    });
+    return;
+  }
+
+  for (const rel of BASE_SRC_MUST) {
+    if (rel === "index.ts") continue;
+    const path = join(srcDir, rel);
+    if (existsSync(path)) {
+      addIssue(issues, {
+        rule: "sdk-no-channel-flat",
+        path,
+        message: `sdk profile MUST NOT: Channel flat file src/${rel}`,
+        pluginId,
+        profile,
+        category: "capability-must",
+        flags,
+      });
+    }
+  }
+}
+
+/**
+ * Advisory for channel-legacy plugins pending Phase 2 migration.
+ * @param {string} pluginDir
+ * @param {string} pluginId
+ * @param {PluginProfile} profile
+ * @param {Issue[]} issues
+ * @param {ReturnType<typeof parseArgs>} flags
+ */
+function checkProfileAdvisory(pluginDir, pluginId, profile, issues, flags) {
+  if (profile === "channel-legacy") {
+    addIssue(issues, {
+      rule: "profile-migration",
+      path: pluginDir,
+      message:
+        "Profile channel-legacy: MUST migrate to channel-base in Phase 2 (full Base flat src/ skeleton)",
+      pluginId,
+      profile,
+      category: "profile-advisory",
+      flags,
+    });
+  }
+}
+
+function checkManifestAndPackage(pluginDir, pluginId, profile, issues, flags) {
   const manifestPath = join(pluginDir, "openclaw.plugin.json");
   const pkgPath = join(pluginDir, "package.json");
 
   const manifest = readJson(manifestPath);
   // _template keeps TEMPLATE_NAME placeholders until new-plugin.mjs materializes a real id
   if (
+    isChannelProfile(profile) &&
     pluginId !== BASE_TEMPLATE_ID &&
     manifest?.id &&
     manifest.id !== pluginId
@@ -666,6 +947,7 @@ function checkManifestAndPackage(pluginDir, pluginId, issues, flags) {
       path: manifestPath,
       message: `Manifest id "${manifest.id}" MUST match plugin directory "${pluginId}"`,
       pluginId,
+      profile,
       category: "manifest-must",
       flags,
     });
@@ -673,31 +955,58 @@ function checkManifestAndPackage(pluginDir, pluginId, issues, flags) {
 
   const pkg = readJson(pkgPath);
   const extensions = pkg?.openclaw?.extensions;
-  if (!Array.isArray(extensions) || extensions.length === 0) {
-    addIssue(issues, {
-      rule: "openclaw-extensions",
-      path: pkgPath,
-      message: "Base Profile MUST: package.json#openclaw.extensions[]",
-      pluginId,
-      category: "manifest-must",
-      flags,
-    });
-  }
 
-  const setupEntry = pkg?.openclaw?.setupEntry;
-  if (!setupEntry || typeof setupEntry !== "string" || setupEntry.trim() === "") {
-    addIssue(issues, {
-      rule: "openclaw-setup-entry",
-      path: pkgPath,
-      message: "Base Profile MUST: package.json#openclaw.setupEntry (MUST NOT reuse runtime entry)",
-      pluginId,
-      category: "manifest-must",
-      flags,
-    });
+  if (isChannelProfile(profile)) {
+    if (!Array.isArray(extensions) || extensions.length === 0) {
+      addIssue(issues, {
+        rule: "openclaw-extensions",
+        path: pkgPath,
+        message: "Base Profile MUST: package.json#openclaw.extensions[]",
+        pluginId,
+        profile,
+        category: "manifest-must",
+        flags,
+      });
+    }
+
+    const setupEntry = pkg?.openclaw?.setupEntry;
+    if (!setupEntry || typeof setupEntry !== "string" || setupEntry.trim() === "") {
+      addIssue(issues, {
+        rule: "openclaw-setup-entry",
+        path: pkgPath,
+        message: "Base Profile MUST: package.json#openclaw.setupEntry (MUST NOT reuse runtime entry)",
+        pluginId,
+        profile,
+        category: "manifest-must",
+        flags,
+      });
+    }
   }
 }
 
-function checkSrcMust(pluginDir, pluginId, issues, flags) {
+function checkSrcMust(pluginDir, pluginId, profile, issues, flags) {
+  if (!isChannelProfile(profile)) {
+    const srcDir = join(pluginDir, "src");
+    if (
+      profile !== "utility-minimal" &&
+      profile !== "capability-memory" &&
+      profile !== "sdk" &&
+      !existsSync(srcDir) &&
+      !existsSync(join(pluginDir, "index.ts"))
+    ) {
+      addIssue(issues, {
+        rule: "capability-src-or-entry",
+        path: srcDir,
+        message: `${profile} SHOULD: src/ directory or documented root entry`,
+        pluginId,
+        profile,
+        category: "capability-manifest",
+        flags,
+      });
+    }
+    return existsSync(srcDir) ? srcDir : null;
+  }
+
   const srcDir = join(pluginDir, "src");
   if (!existsSync(srcDir)) {
     addIssue(issues, {
@@ -705,6 +1014,7 @@ function checkSrcMust(pluginDir, pluginId, issues, flags) {
       path: srcDir,
       message: "Base Profile MUST: plugin must contain src/",
       pluginId,
+      profile,
       category: "base-must",
       flags,
     });
@@ -719,6 +1029,7 @@ function checkSrcMust(pluginDir, pluginId, issues, flags) {
         path,
         message: `Base Profile MUST: missing src/${rel}`,
         pluginId,
+        profile,
         category: "base-must",
         flags,
       });
@@ -728,7 +1039,9 @@ function checkSrcMust(pluginDir, pluginId, issues, flags) {
   return srcDir;
 }
 
-function checkTestDir(pluginDir, pluginId, issues, flags) {
+function checkTestDir(pluginDir, pluginId, profile, issues, flags) {
+  if (!isChannelProfile(profile)) return;
+
   const testDir = join(pluginDir, "test");
   if (!existsSync(testDir)) {
     addIssue(issues, {
@@ -757,7 +1070,14 @@ function checkTestDir(pluginDir, pluginId, issues, flags) {
   }
 }
 
-function checkRootMustNot(pluginDir, pluginId, issues, flags) {
+function checkRootMustNot(pluginDir, pluginId, profile, issues, flags) {
+  const allowRootEntry =
+    !isChannelProfile(profile) &&
+    (profile === "capability-memory" ||
+      profile === "utility-minimal" ||
+      profile === "sdk" ||
+      resolvePluginEntry(pluginDir) === join(pluginDir, "index.ts"));
+
   for (const entry of listDir(pluginDir)) {
     if (!entry.isFile()) continue;
     const name = entry.name;
@@ -787,6 +1107,9 @@ function checkRootMustNot(pluginDir, pluginId, issues, flags) {
     }
 
     if (name.endsWith(".ts") && !ALLOWED_ROOT_TS.has(name)) {
+      if (allowRootEntry && (name === "index.ts" || name === "index.test.ts")) {
+        continue;
+      }
       const rule = LEGACY_ROOT_RUNTIME_TS.has(name) ? "root-runtime-ts" : "root-ts";
       addIssue(issues, {
         rule,
@@ -950,24 +1273,31 @@ function checkExtendedProfile(pluginDir, pluginId, issues, flags) {
 
 function checkPlugin(pluginDir, flags) {
   const pluginId = basename(pluginDir);
+  const { profile, source: profileSource } = detectProfile(pluginId, pluginDir);
   /** @type {Issue[]} */
   const issues = [];
 
-  checkBaseRootMust(pluginDir, pluginId, issues, flags);
-  checkBaseRootShould(pluginDir, pluginId, issues, flags);
-  checkManifestAndPackage(pluginDir, pluginId, issues, flags);
-  const srcDir = checkSrcMust(pluginDir, pluginId, issues, flags);
-  checkTestDir(pluginDir, pluginId, issues, flags);
-  checkRootMustNot(pluginDir, pluginId, issues, flags);
+  checkBaseRootMust(pluginDir, pluginId, profile, issues, flags);
+  checkBaseRootShould(pluginDir, pluginId, profile, issues, flags);
+  checkManifestAndPackage(pluginDir, pluginId, profile, issues, flags);
+  const srcDir = checkSrcMust(pluginDir, pluginId, profile, issues, flags);
+  checkCapabilityEntry(pluginDir, pluginId, profile, issues, flags);
+  checkSdkProfile(pluginDir, pluginId, profile, issues, flags);
+  checkProfileAdvisory(pluginDir, pluginId, profile, issues, flags);
+  checkTestDir(pluginDir, pluginId, profile, issues, flags);
+  checkRootMustNot(pluginDir, pluginId, profile, issues, flags);
   checkCommittedArtifacts(pluginDir, pluginId, issues, flags);
   checkNaming(pluginDir, pluginId, issues, flags);
-  checkBaseShimSemantics(pluginDir, pluginId, issues, flags);
-  checkBaseCoreSubstance(pluginDir, pluginId, issues, flags);
 
-  if (EXTENDED_STRICT_PLUGINS.has(pluginId)) {
+  if (isChannelProfile(profile)) {
+    checkBaseShimSemantics(pluginDir, pluginId, profile, issues, flags);
+    checkBaseCoreSubstance(pluginDir, pluginId, profile, issues, flags);
+  }
+
+  if (profile === "channel-extended" || EXTENDED_STRICT_PLUGINS.has(pluginId)) {
     checkExtendedProfile(pluginDir, pluginId, issues, flags);
-  } else if (srcDir) {
-    // Base Profile plugins: warn on src/ root drift only — never require Extended .gitkeep dirs
+  } else if (srcDir && isChannelProfile(profile)) {
+    // channel-base / channel-legacy: warn on src/ root drift only
     const driftFiles = listSrcRootBusinessFiles(srcDir);
     const driftThreshold = srcRootDriftThreshold(pluginId, flags);
     if (pluginId !== BASE_TEMPLATE_ID && driftFiles.length > driftThreshold) {
@@ -976,13 +1306,14 @@ function checkPlugin(pluginDir, flags) {
         path: srcDir,
         message: `Base Profile: src/ root has ${driftFiles.length} non-Base .ts files (> ${driftThreshold}); consider moving into semantic dirs (doc §7.1): ${driftFiles.join(", ")}`,
         pluginId,
+        profile,
         category: "extended",
         flags,
       });
     }
   }
 
-  return { pluginId, issues };
+  return { pluginId, profile, profileSource, issues };
 }
 
 // ---------------------------------------------------------------------------
@@ -1017,6 +1348,8 @@ function main() {
   const results = pluginDirs.map((dir) => checkPlugin(dir, flags));
   const issueCount = results.reduce((sum, result) => sum + result.issues.length, 0);
   const failures = results.flatMap((result) => result.issues.filter(isFailure));
+  /** @type {Record<string, PluginProfile>} */
+  const profiles = Object.fromEntries(results.map((r) => [r.pluginId, r.profile]));
   const summary = {
     standardVersion: STANDARD_VERSION,
     mode: {
@@ -1024,6 +1357,7 @@ function main() {
       strictNew: flags.strictNew,
     },
     pluginCount: results.length,
+    profiles,
     issueCount,
     errorCount: failures.length,
     warnCount: issueCount - failures.length,
@@ -1041,7 +1375,7 @@ function main() {
     );
     for (const result of results) {
       if (result.issues.length === 0) continue;
-      console.log(`\n${result.pluginId}`);
+      console.log(`\n${result.pluginId} [${result.profile}]`);
       for (const issue of result.issues) {
         console.log(
           `  [${issue.level}] ${issue.rule}: ${relative(ROOT, issue.path)} — ${issue.message}`,
