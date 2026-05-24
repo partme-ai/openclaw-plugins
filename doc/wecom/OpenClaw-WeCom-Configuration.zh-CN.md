@@ -20,6 +20,12 @@
 10. [高级：dynamicAgents、出口代理、ASR、Bot Webhook 替代方案](#10-高级dynamicagents出口代理asrbot-webhook-替代方案)
 11. [Cron 定时推送](#11-cron-定时推送)
 
+## 如何使用本指南
+
+只需要 Bot 对话时从场景 1 开始；只需要自建应用、主动推送或 Cron 时从场景 6 开始；生产双模部署优先看场景 7。复制完整 JSON，替换占位符，重启 Gateway，再按对应场景的验证步骤执行。
+
+运行时配置是 `channels.wecom.*` 与 `channels.wecom.accounts.<accountId>.*` 的平铺结构。不要把 `bot.*`、`botIds`、`aibotid` 当作主要运行时配置；Bot WebSocket 使用 `botId` + `secret`，Bot Webhook 使用 `token` + `encodingAESKey`。
+
 ## 1. 最小 Bot WebSocket / 基础私聊对话
 
 ### 何时使用
@@ -29,7 +35,7 @@
 ### 前置条件
 
 - 安装插件：`openclaw plugins install @partme.ai/wecom`
-- 在企业微信后台创建 API 模式智能机器人。
+- 在企业微信后台进入 **安全与管理 -> 管理工具 -> 智能机器人**，创建 **API 模式**机器人，并复制 Bot ID 与 Secret。API 模式表示 OpenClaw 使用官方 Bot API 连接，而不是普通群机器人 Webhook。
 - 复制 Bot ID 和 Secret。
 - 使用 Node.js 22+ 与 OpenClaw 2026.4.12+。
 
@@ -56,6 +62,8 @@
 | `connectionMode` | 否 | 使用 `websocket` 表示 Bot WebSocket，这是默认模式。 |
 | `botId` | 是 | 企业微信智能机器人 Bot ID。 |
 | `secret` | 是 | 企业微信智能机器人 Secret。 |
+
+只要同一账号存在 `botId` + `secret`，插件就会启动 Bot WebSocket，即使 `connectionMode` 写成 `webhook`。如果要纯 Bot Webhook，请不要配置 `botId` 与 `secret`，见场景 10。
 
 ### 验证步骤
 
@@ -88,10 +96,16 @@ openclaw channels status --probe
       "botId": "<你的_BOT_ID>",
       "secret": "<你的_BOT_SECRET>",
       "welcomeText": "你好，我是企业 AI 助手，有什么可以帮你？",
+      "receivedText": "已收到，正在处理...",
       "thinkingText": "正在思考...",
       "toolStatusText": "正在调用 {toolName}...",
       "readingText": "正在读取附件...",
       "generatingText": "正在生成回答...",
+      "compactionText": "正在压缩上下文...",
+      "queuedText": "已加入队列，稍后处理。",
+      "mergedQueuedText": "已收到新消息，将合并到本次请求。",
+      "mergedDoneText": "已合并最近几条消息。",
+      "streamPlaceholderText": "1",
       "emptyReplyText": "抱歉，本次没有生成有效回答。",
       "timeoutText": "处理超时，请稍后再试。"
     }
@@ -104,12 +118,19 @@ openclaw channels status --probe
 | 字段 | 说明 |
 |------|------|
 | `welcomeText` | 用户进入会话或订阅时发送的欢迎语。 |
+| `receivedText` | 入站消息被接收后的可选确认文案。 |
 | `thinkingText` | 助手准备回答时展示的状态文案。 |
 | `toolStatusText` | 工具调用状态文案，支持 `{toolName}`。 |
 | `readingText` | 读取附件时展示的状态文案。 |
 | `generatingText` | 开始生成回答时展示的状态文案。 |
+| `compactionText` | 长上下文压缩时展示的状态文案。 |
+| `queuedText` | 请求排队时展示的确认文案。 |
+| `mergedQueuedText` / `mergedDoneText` | Bot Webhook 防抖合并消息时展示的文案。 |
+| `streamPlaceholderText` | Bot 流式首帧协议占位，不是欢迎语。 |
 | `emptyReplyText` | Agent 返回空内容时的兜底文案。 |
 | `timeoutText` | 请求处理超时时的兜底文案。 |
+
+其他支持的平铺文案键包括 `cardSentText`、`mediaSentText`、`mediaParseFailedText`、`mediaDeliveredText`、`processedCompleteText`、`dispatchErrorText`、`mediaErrorNoAccessText`、`mediaErrorReasonText`、`mediaErrorGenericText`、`sessionResetText`、`sessionNewText`。账号级文案会覆盖顶层文案。
 
 ### 验证步骤
 
@@ -156,11 +177,14 @@ openclaw channels status --probe
 }
 ```
 
+`streaming` 也支持布尔值。`false` 表示状态 / 最终整包模式，`true` 表示启用默认流式子选项。上面的对象形式是推荐写法，因为可以分别控制状态更新和正文增量更新。
+
 ### 字段说明
 
 | 字段 | 说明 |
 |------|------|
 | `sendThinkingMessage` | 是否发送思考占位消息，默认 `true`。 |
+| `streaming` | 布尔值或对象。推荐对象形式：`{ "enabled": true, "status": true, "content": true }`。 |
 | `streaming.enabled` | 启用增量流式输出。 |
 | `streaming.status` | 流式更新工具或阶段状态。 |
 | `streaming.content` | 流式更新回答正文。 |
@@ -231,6 +255,14 @@ openclaw pairing approve wecom <配对码>
 
 未授权用户私聊时应收到配对码。授权用户应正常收到回复。群聊中只有已配置的群与用户能触发 Bot。
 
+不同路径的策略字段不同：
+
+| 运行路径 | 私聊策略字段 | 群聊策略字段 | pairing 投递 |
+|----------|--------------|--------------|--------------|
+| Bot WebSocket | `channels.wecom.dmPolicy` | `channels.wecom.groupPolicy` | Bot WS 私聊 |
+| Bot Webhook | `channels.wecom.dmPolicy` | `channels.wecom.groupPolicy` | Webhook 响应 / stream |
+| Agent | `channels.wecom.agent.dmPolicy` | 不适用 | Agent API 私聊 |
+
 ## 5. 媒体：图片、文件、语音、视频、本地路径、大小上限
 
 ### 何时使用
@@ -276,12 +308,15 @@ openclaw pairing approve wecom <配对码>
 
 媒体行为：
 
-| 类型 | 限制 | 降级行为 |
-|------|------|----------|
-| 图片 | 10 MB | 尽可能降级为文件发送。 |
-| 视频 | 10 MB | 尽可能降级为文件发送。 |
-| 语音 | 2 MB AMR | 非 AMR 或超限时按文件处理。 |
-| 文件 | `media.maxBytes` | 超限时拒绝发送。 |
+| 方向 | 类型 | 限制 | 降级行为 |
+|------|------|------|----------|
+| 入站 | 图片、语音、视频、文件 | 受企业微信平台限制 | 支持时下载 / 解密后写入入站上下文。 |
+| 出站 | 图片 | 10 MB | 尽可能降级为文件发送。 |
+| 出站 | 视频 | 10 MB | 尽可能降级为文件发送。 |
+| 出站 | 语音 | 2 MB AMR | 非 AMR 或超限时按文件处理。 |
+| 出站 | 文件 | `media.maxBytes` | 超限时拒绝发送。 |
+
+本地文件发送受 `mediaLocalRoots` 白名单保护；白名单外路径会在上传前拒绝。`media.tempDir`、`media.retentionHours`、`media.cleanupOnStart` 目前只是类型 / 规划字段，运行时清理逻辑尚未接线。
 
 ### 验证步骤
 
@@ -298,9 +333,8 @@ openclaw pairing approve wecom <配对码>
 
 ### 前置条件
 
-- 创建企业微信自建应用。
-- 复制 Corp ID、Corp Secret、Agent ID。
-- 开启 API 接收消息，并复制 Token 与 EncodingAESKey。
+- 在企业微信后台创建 **自建应用**，记录 Corp ID、Secret 与 Agent ID，并确认应用可见范围包含测试用户。
+- 开启 **API 接收消息**，复制 Token 与 EncodingAESKey。请先在 Gateway 配置相同值，再回到企微后台保存回调 URL。
 - Gateway 需要能被企业微信公网访问，或使用内网穿透。
 - 先配置 Gateway，再到企业微信后台保存回调地址。
 
@@ -345,6 +379,8 @@ https://<你的_GATEWAY_HOST>/plugins/wecom/agent/default
 | `agent.welcomeText` | Agent 模式欢迎语。 |
 | `network.agentReplyTimeoutMs` | Agent 回复超时时间，单位毫秒。 |
 
+Agent 入站回复需要 `corpId`、`corpSecret`、`token`、`encodingAESKey`。主动发送、Cron 与兜底投递还需要 `agent.agentId`。如果企业微信返回 `60020 not allow to access from your ip`，请在企微后台加入可信 IP，或配置 `network.egressProxyUrl`。
+
 ### 验证步骤
 
 ```bash
@@ -354,6 +390,8 @@ openclaw message send --channel wecom --account default --target user:<用户_ID
 ```
 
 在企业微信中打开自建应用并发送私聊，应收到 Agent 回复。
+
+主动投递目标支持 `user:<id>`、`party:<id>`、`tag:<id>`、`group:<id>`、`chat:<id>`。
 
 ## 7. Bot WebSocket + Agent 双模生产配置
 
@@ -425,6 +463,8 @@ openclaw message send --channel wecom --account default --target user:<用户_ID
 3. 通过 Agent 发送本地文件，确认投递成功。
 4. 如使用 Cron，按场景 11 验证定时投递。
 
+兜底顺序是 Bot WS 优先，Agent HTTP API 兜底。常见误区：同一账号写了 `connectionMode: "webhook"`，但仍保留 `botId` + `secret`，运行时仍会优先启动 Bot WS。
+
 ## 8. 多账号
 
 ### 何时使用
@@ -485,6 +525,8 @@ openclaw message send --channel wecom --account default --target user:<用户_ID
 | `accounts.<accountId>.name` | 供人工识别和日志展示的名称。 |
 | 账号级 `botId`、`secret`、`agent`、`dmPolicy` | 覆盖顶层同名字段。 |
 
+覆盖优先级是账号级字段优先，其次是顶层 `channels.wecom` 字段，最后才是运行时默认值。多账号回调地址应带账号 ID，例如 `/plugins/wecom/bot/ops` 与 `/plugins/wecom/agent/ops`；默认账号还可能注册 `/default` 别名。
+
 ### 验证步骤
 
 ```bash
@@ -505,7 +547,7 @@ openclaw message send --channel wecom --account sales --target user:<用户_ID> 
 ### 前置条件
 
 - 企业微信 Bot 或 Agent 已可用。
-- 已单独安装并配置知识库插件。
+- 已单独安装并配置知识库插件。可先阅读 [知识库 RAG 指南](../knowledge/OpenClaw-Knowledge-RAG-Guide_CN.md) 与 [知识库 RAG 集成](../knowledge/OpenClaw-Knowledge-RAG-Integration_CN.md)。
 - 重要说明：`@partme.ai/wecom` 当前不内置 knowledge hooks。仅配置 `channels.wecom.knowledge.*` 不会启用 RAG，必须由知识库插件配置并由运行时接入。
 
 ### 完整 JSON
@@ -609,7 +651,6 @@ openclaw run knowledge:stats
       },
       "network": {
         "egressProxyUrl": "http://<你的代理主机>:3128",
-        "timeoutMs": 15000,
         "agentReplyTimeoutMs": 360000
       },
       "agent": {
@@ -637,6 +678,13 @@ Bot Webhook 回调地址：
 https://<你的_GATEWAY_HOST>/plugins/wecom/bot/default
 ```
 
+这个示例把 4 类高级能力放在同一个可复制配置中，你可以按需单独使用：
+
+- `dynamicAgents`：按私聊用户或群隔离 Agent / 会话。
+- `network.egressProxyUrl`：固定出口 IP，处理企业微信 `60020` 错误。
+- `agent.asr.*`：Agent 语音转文字。
+- Bot Webhook：`connectionMode: "webhook"` 替代方案，不需要 `botId` / `secret`。
+
 ### 字段说明
 
 | 字段 | 说明 |
@@ -650,8 +698,10 @@ https://<你的_GATEWAY_HOST>/plugins/wecom/bot/default
 | `dynamicAgents.groupEnabled` | 为每个群启用隔离 Agent。 |
 | `dynamicAgents.adminUsers` | 始终使用主 Agent 的管理员用户。 |
 | `network.egressProxyUrl` | 固定出口 IP 使用的 HTTP 代理，可解决企业微信 `60020` 错误。 |
-| `network.timeoutMs` | 部分 HTTP 路径超时时间。 |
+| `network.timeoutMs` | 规划 / 未接线的通用 HTTP 超时字段，目前不要依赖。 |
 | `agent.asr.*` | Agent 语音转文字所需的腾讯云 ASR 配置。 |
+
+`network.retries` 与 `network.retryDelayMs` 也是规划 / 未接线字段。目前运行时已接线的网络字段是 `network.agentReplyTimeoutMs` 与 `network.egressProxyUrl`。
 
 ### 验证步骤
 
@@ -722,6 +772,13 @@ openclaw cron add \
 
 确认任务已注册，然后等待调度触发，或通过你的 OpenClaw Cron 工作流手动触发。消息应由配置的 Agent 账号发送。
 
+常用验证命令：
+
+```bash
+openclaw channels status --probe
+openclaw message send --channel wecom --account default --target user:<用户_ID> --message "Cron 目标烟测"
+```
+
 ## 说明与排障
 
 ### Bot 与 Agent 选择
@@ -735,3 +792,7 @@ Bot WebSocket 适合交互式流式对话。Agent 模式用于主动推送、Cro
 ### 配置源码
 
 配置类型位于 `extensions/wecom/src/config/wecom-config.ts` 与 `extensions/wecom/src/types/config.ts`。
+
+### Probe 语义
+
+`openclaw channels status --probe` 会检查账号是否已配置，并报告 Bot WS 连接状态。它不能替代企业微信后台回调验证，也不能替代端到端消息测试。

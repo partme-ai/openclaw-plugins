@@ -385,18 +385,18 @@ Webhook 额外通过 `createChannelMessageReplyPipeline` 接入 typing 生命周
 | 要 tool/解析进度 | `streaming true` + `streaming.status true` |
 | 业务整包 | `streaming false` + `footer.status false`，或 Agent outbound |
 
-### 10.2 当前缺口
+### 10.2 当前能力
 
 | 能力 | 现状 |
 |------|------|
 | 关闭 thinking | ✅ `sendThinkingMessage: false` |
-| 关闭答案增量 | ❌ 待 `streaming` / `streaming.content` |
-| 状态栏阶段展示 | ❌ 待 `footer.status` |
-| 账号级关闭流式 | ✅ `streaming false`（待实现） |
+| 关闭答案增量 | ✅ `streaming` / `streaming.content` |
+| 状态栏阶段展示 | ✅ `footer.status` |
+| 账号级关闭流式 | ✅ `streaming: false` 或账号级覆盖 |
 | Webhook 占位文案 | ✅ `streamPlaceholderText` |
-| WS 占位文案 | ❌ 未接 `streamPlaceholderText` |
+| WS 占位文案 | ✅ `streamPlaceholderText` |
 
-### 10.3 建议配置：Feishu 式布尔开关（待实现）
+### 10.3 建议配置：Feishu 式布尔开关
 
 对齐飞书「几条 CLI 就能开关体验」的风格，**不用** `streamingMode` 枚举或 `routes` 路由。
 
@@ -495,7 +495,7 @@ openclaw config set channels.wecom.sendThinkingMessage true
 
 #### 用户可见文案（`*Text`）
 
-> **配置入口**：键表与 CLI 示例见 **[Configuration §用户可见文案](./OpenClaw-WeCom-Configuration.md#用户可见文案text)**。本节说明各文案在流式气泡中的触发时机。
+> **配置入口**：键表与 CLI 示例见 **[Configuration Scenario 2](./OpenClaw-WeCom-Configuration.md#2-welcome-message-and-user-facing-templates)**。本节说明各文案在流式气泡中的触发时机。
 
 | 配置键 | 默认 | 占位符 | 用途 |
 |--------|------|--------|------|
@@ -529,14 +529,14 @@ openclaw config set channels.wecom.accounts.bot2.thinkingText "Bot2 思考中…
 
 业务 Bot（整包结果）：`streaming false` + `footer.status false` + `sendThinkingMessage false`，或单独账号配置。
 
-### 10.4 实现要点（开发清单）
+### 10.4 实现要点（当前设计）
 
 1. **`resolveWecomStreamingConfig(account)`**：解析 `streaming` / `streaming.status` / `streaming.content` / `footer.*`。
-2. **默认模式**：`deliver` 只累积答案，中间帧只 `flushStreamingUpdate(statusLine)`，不推送 partial 答案。
-3. **流式模式**：`streaming.content` 时恢复 `wecom-openclaw-plugin` 式 `replyStreamNonBlocking` 中间帧。
-4. **`streaming.status` + `footer.status`**：`onToolStart` / 解析队列 → 更新 `statusLine`（参考 Feishu `updateStreamingStatusLine`）。
-5. **`footer.elapsed`**：记录 `onReplyStart` 时间，关流时 append `⏱ {elapsed}s`。
-6. **首帧占位**：`resolveWecomStreamPlaceholderText`（Webhook 默认 `"1"`，WS 默认 `THINKING_MESSAGE`）。
+2. **默认模式**：`deliver` 累积答案，可用状态栏表达阶段变化，最终写入完整答案。
+3. **流式模式**：`streaming.content` 时通过 `replyStreamNonBlocking` 推送中间帧。
+4. **`streaming.status` + `footer.status`**：工具、解析、压缩等阶段进入用户可见状态文案。
+5. **`footer.elapsed`**：关流时 append 耗时脚注。
+6. **首帧占位**：`resolveWecomStreamPlaceholderText`（Webhook 默认 `"1"`，WS 支持配置覆盖）。
 
 ---
 
@@ -571,27 +571,21 @@ replyStream 失败 (846608)
 
 ---
 
-## 12. 配置参考（现状）
+## 12. 配置参考（当前）
 
 | 配置项 | 作用 | 默认 | 模式 |
 |--------|------|------|------|
 | `connectionMode` | `websocket` / `webhook` | `websocket` | Bot |
 | `sendThinkingMessage` | 是否发 thinking 占位 | `true` | Bot |
-| `streamPlaceholderText` | Webhook 首次 stream 占位 | `"1"` | Webhook |
+| `streamPlaceholderText` | Bot 首次 stream 占位 | `"1"` / WS 默认兜底 | Bot |
 | `network.agentReplyTimeoutMs` | Agent 总超时 | 6min | 全局 |
-| `welcomeText` | enter_chat 欢迎语 | Bot WS / Webhook / kf WS |
-| `*Text` 字段 | 用户可见文案（`thinkingText`、`welcomeText` 等） | Bot WS / Webhook |
-
-**待实现（Feishu 式开关）**：
-
-| 配置项 | 说明 | 默认 |
-|--------|------|------|
-| `streaming` | `false`=默认模式；`true`=流式输出 | `false` |
-| `streaming.status` | 中间状态流式（tool/阶段） | `true` |
-| `streaming.content` | 结果内容流式（打字机） | `true` |
-| `footer.status` | 状态栏阶段文案 | `true` |
-| `footer.elapsed` | 关流展示耗时 | `false` |
-| WS 读取 `streamPlaceholderText` | 与 Webhook 占位统一 | ✅ |
+| `welcomeText` | enter_chat 欢迎语 | 空 | Bot WS / Webhook / kf WS |
+| `*Text` 字段 | 用户可见文案（`thinkingText`、`welcomeText` 等） | 默认模板 | Bot WS / Webhook |
+| `streaming` | `false`=默认模式；`true`=流式输出 | `false` | Bot |
+| `streaming.status` | 中间状态流式（tool/阶段） | `true` | Bot |
+| `streaming.content` | 结果内容流式（打字机） | `true` | Bot |
+| `footer.status` | 状态栏阶段文案 | `true` | Bot |
+| `footer.elapsed` | 关流展示耗时 | `false` | Bot |
 
 ---
 
@@ -609,13 +603,15 @@ replyStream 失败 (846608)
 
 ---
 
-## 14. 演进路线图
+## 14. 演进记录与后续路线
+
+以下表格保留历史规划语境。已完成项标记为 ✅，未完成项才代表后续路线。
 
 | 阶段 | 内容 | 优先级 |
 |------|------|:------:|
-| **P0** | Feishu 式 `streaming` + `footer.status`（默认模式 + 状态栏） | 高 |
-| **P0** | `streaming.status` / `streaming.content` 子开关 | 高 |
-| **P0** | WS 必关流 + `streamPlaceholderText` 统一 | 高 |
+| **P0** | Feishu 式 `streaming` + `footer.status`（默认模式 + 状态栏） | ✅ |
+| **P0** | `streaming.status` / `streaming.content` 子开关 | ✅ |
+| **P0** | WS 必关流 + `streamPlaceholderText` 统一 | ✅ |
 | **P1** | WS `enter_chat` 欢迎语（`replyWelcome` + `welcomeText` / 自定义占位） | ✅ |
 | **P1** | WS 侧 StreamState / `watchStreamReply` 与 kf 对齐（可选重构） | 中 |
 | **P2** | `onPartialReply` 与 block deliver 策略统一 | 低 |

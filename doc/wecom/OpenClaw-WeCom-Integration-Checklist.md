@@ -1,9 +1,12 @@
 # 企业微信（WeCom）真实联调 Checklist
 
-> 面向 `@partme.ai/wecom` 在**真实企微环境**下的 Bot WS / Webhook Bot / Agent 三路径联调。  
+> 面向 `@partme.ai/wecom` 在**真实企微环境**下的 Bot WS / Webhook Bot / Agent 三路径联调。
 > 单元测试见 `extensions/wecom` 内 `pnpm test`；CLI 出站示例见 [OpenClaw-WeCom-Testing.md](./OpenClaw-WeCom-Testing.md)。
 
 **关联文档**：[配置指南](./OpenClaw-WeCom-Configuration.md) · [架构设计](./OpenClaw-WeCom-Architecture.md) · [流式架构](./OpenClaw-WeCom-Streaming-Architecture.md)
+
+**适用人群**：准备在真实企业微信租户中验收 Bot WS、Bot Webhook 或 Agent 的开发者 / 运维。
+**预计耗时**：最小 Bot WS 15–30 分钟；三路径全量验收约 60–90 分钟，取决于企业微信后台权限与公网回调准备情况。
 
 ---
 
@@ -15,9 +18,9 @@
 - [ ] 插件已安装：`openclaw plugins install @partme.ai/wecom@latest --dangerously-force-unsafe-install`
 - [ ] 依赖版本对齐（monorepo 当前）：
   - `@partme.ai/wecom`：`2026.5.20`
-  - `@partme.ai/openclaw-message-sdk`：`2026.5.22`（workspace）
+  - `@partme.ai/openclaw-message-sdk`：`2026.5.24`（workspace）
   - `openclaw` peer：`>=2026.4.12`
-- [ ] 本地自检：`cd extensions/wecom && pnpm test && pnpm typecheck`
+- [ ] 本地自检：`cd extensions/wecom && pnpm test && pnpm typecheck`（当前约 330 个测试用例，数量会随源码变化）
 
 ### 0.2 通道状态
 
@@ -158,7 +161,7 @@ openclaw message send \
 | 现象 | 可能原因 | 排查 |
 |------|----------|------|
 | `Authentication successful` 不出现 | botId/secret 错误 | 核对后台凭证；grep `auth` / `Authentication` |
-| `Kicked by server: a new connection was established elsewhere` | 重复实例互踢 | 只保留一个 Gateway；检查多机/多容器重复部署 |
+| `Kicked by server: a new connection was established elsewhere` | 重复实例互踢 | 只保留一个 Gateway；插件会避免立即自动重启，防止互踢循环 |
 | 连接后无入站 | dm/group policy 拦截 | grep `policy blocked` |
 | `93006 invalid chatid` | CLI target 带 `user:` 前缀 | 改用纯 userid |
 | `60020 not allow to access from your ip` | 出口 IP 不在企微可信名单 | 配置 `channels.wecom.network.egressProxyUrl` |
@@ -189,7 +192,7 @@ grep -E 'Authentication successful|aibot_callback|Kicked by server|846608|policy
 
 - [ ] `connectionMode: "webhook"`
 - [ ] `token`、`encodingAESKey` 与后台一致
-- [ ] （可选）`botId` / `aibotid` 用于告警审计（非强制拦截）
+- [ ] 纯 Webhook 模式不要配置 `botId` + `secret`；`aibotid`、`botIds` 不作为主要运行时配置
 - [ ] `dmPolicy` / `groupPolicy` 与 WS 相同语义
 
 ```bash
@@ -376,11 +379,9 @@ grep -E '\[wecom-agent\]|duplicate msgId|dm policy blocked|media saved|welcome m
       "timeoutText": "处理超时，请稍后再试",
       "mediaLocalRoots": ["/data/wecom-media"],
       "media": {
-        "maxBytes": 20971520,
-        "tempDir": "/tmp/wecom-media"
+        "maxBytes": 20971520
       },
       "network": {
-        "timeoutMs": 15000,
         "agentReplyTimeoutMs": 360000,
         "egressProxyUrl": "http://proxy.company.local:3128"
       },
@@ -413,9 +414,18 @@ grep -E '\[wecom-agent\]|duplicate msgId|dm policy blocked|media saved|welcome m
 | 包 | 用途 |
 |----|------|
 | `@partme.ai/openclaw-message-sdk` | ingress command-auth、dedup、transcript 流式、keyed queue、config merge |
-| 版本 | 与 `@partme.ai/wecom` 同 monorepo 发布，当前 `2026.5.22` |
+| 版本 | 与 `@partme.ai/wecom` 同 monorepo 发布，当前 `2026.5.24` |
 
-### 4.3 安全清单
+### 4.3 未接线 / 规划字段
+
+以下字段存在于类型或规划中，但不要作为当前运行时能力验收：
+
+| 字段 | 状态 |
+|------|------|
+| `media.tempDir`、`media.retentionHours`、`media.cleanupOnStart` | 规划中的临时文件清理配置，当前不作为运行时清理开关 |
+| `network.timeoutMs`、`network.retries`、`network.retryDelayMs` | 规划中的通用 HTTP 重试配置，当前不要依赖 |
+
+### 4.4 安全清单
 
 - [ ] **allowlist**：生产环境 `dmPolicy` / `groupPolicy` 不用 `open`（按需收紧）
 - [ ] **allowFrom / groupAllowFrom**：白名单 userid / chatid 最小化
@@ -426,7 +436,7 @@ grep -E '\[wecom-agent\]|duplicate msgId|dm policy blocked|media saved|welcome m
 - [ ] **Token / Secret**：仅环境变量或加密配置，勿提交仓库
 - [ ] **公网回调**：HTTPS + 企微 IP 白名单（若启用）
 
-### 4.4 日志 grep 速查（全模式）
+### 4.5 日志 grep 速查（全模式）
 
 ```bash
 LOG=/tmp/openclaw/openclaw-$(date +%Y-%m-%d).log
@@ -447,7 +457,7 @@ grep -E '\[wecom-agent\]|gettoken|60020|93006' "$LOG"
 grep -E 'wecom-dedup|debounce|merged|queued' "$LOG"
 ```
 
-### 4.5 发布前 Smoke Test 顺序
+### 4.6 发布前 Smoke Test 顺序
 
 按依赖从底到顶，**约 15–30 分钟**：
 
@@ -479,4 +489,4 @@ grep -E 'wecom-dedup|debounce|merged|queued' "$LOG"
 
 ---
 
-**最后更新**：与 `@partme.ai/wecom@2026.5.20` 及 `openclaw-message-sdk@2026.5.22` 源码对齐。
+**最后更新**：与 `@partme.ai/wecom@2026.5.20` 及 `openclaw-message-sdk@2026.5.24` 源码对齐。

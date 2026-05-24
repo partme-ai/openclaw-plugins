@@ -10,15 +10,15 @@
 
 ---
 
-## 功能特性
+## 插件能力
 
 - **双模式架构**：Bot（WebSocket 长连接 / HTTP Webhook JSON 回调）和 Agent（HTTP Webhook XML 加密回调）可独立或组合运行
 - **消息类型全覆盖**：文本、图片、语音、视频、文件、图文混排（mixed），自动下载解密
 - **语音转文字**：自动提取语音消息中的识别文本
 - **引用消息**：支持被引用的文本、图片、语音、文件消息
-- **流式回复**：Bot 模式带"思考中"占位消息
+- **流式回复**：Bot 模式带“思考中”占位消息；企业微信部分出站路径可能按纯文本展示或剥离 Markdown 格式
 - **Agent 模式**：AES-256-CBC 加密 XML 回调 + SHA1 签名验证
-- **Markdown 格式回复**
+- **Markdown / 纯文本回复**：Agent API 与主动出站可发送 Markdown，Bot `replyStream` 按企业微信平台限制以纯文本为主
 - **模板卡片消息**：text_notice、news_notice、button_interaction、vote_interaction、multiple_interaction 及事件回调处理
 - **内置访问控制**：DM Policy（pairing / open / allowlist / disabled）和 Group Policy（open / allowlist / disabled）
 - **命令授权**：按账号控制命令权限，支持访问组
@@ -28,7 +28,7 @@
 - **动态 Agent 路由**：按用户 / 群组自动创建隔离 Agent 实例
 - **本地文件发送**：可配置 `mediaLocalRoots` 白名单
 - **智能媒体降级**：图片 10MB -> 文件、视频 10MB -> 文件、语音 2MB/仅AMR -> 文件，上限 20MB
-- **Bot 优先、Agent 兜底** 的出站策略：Bot WS 不可用时自动回退到 Agent HTTP API
+- **Bot 优先、Agent 兜底** 的出站策略：Bot WS 不可用且已配置 Agent 时回退到 Agent HTTP API
 - **自动心跳保活与重连**（最多 10 次重连，5 次鉴权重试）
 - **防互踢保护**：服务端主动断连时不自动重启，避免互踢循环
 - **交互式 CLI 配置向导**
@@ -46,7 +46,7 @@
 openclaw plugins install @partme.ai/wecom
 ```
 
-最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.24`。
 
 ### 配置
 
@@ -125,10 +125,11 @@ Monorepo 内专题文档见 [`doc/wecom/`](../../doc/wecom/)：
 | 文档 | 说明 |
 |------|------|
 | [**配置指南（权威）**](../../doc/wecom/OpenClaw-WeCom-Configuration.zh-CN.md) | Level 1–11 场景 JSON、字段说明、验证步骤、FAQ |
+| [真实联调 Checklist](../../doc/wecom/OpenClaw-WeCom-Integration-Checklist.md) | Bot WS、Bot Webhook、Agent 三路径真实企微验收清单 |
 | [架构设计](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | 双模式拓扑、源码模块地图、入站主流程、流式概要 |
 | [流式架构](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` 生命周期、6 分钟窗口、846608 降级、状态机 |
 | [联调测试](../../doc/wecom/OpenClaw-WeCom-Testing.md) | `message send`、`agent --deliver`、`user:` 前缀（93006）、配对 |
-| [Feishu SDK 对照](../../doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | OpenClaw plugin-sdk 与飞书通道映射、message-sdk 承接 |
+| [Feishu SDK 对照](../../doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | 内部工程参考：plugin-sdk / message-sdk 对齐关系 |
 
 ## 访问控制与 Cron
 
@@ -143,7 +144,7 @@ Gateway 环境下的手工联调步骤见上文 [联调测试](../../doc/wecom/O
 ```bash
 pnpm build          # tsc -> dist/
 pnpm typecheck      # tsc --noEmit
-pnpm test           # vitest run（279 个测试用例）
+pnpm test           # vitest run（约 330 个测试用例，数量随源码变化）
 pnpm run pack-dry   # 预览发布包内容
 ```
 

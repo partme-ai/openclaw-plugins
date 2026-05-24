@@ -1,6 +1,6 @@
 # 企业微信（WeCom）联调与测试指南
 
-本文档记录 `@partme.ai/wecom` 在本地 OpenClaw Gateway 上的**手工联调步骤**，重点说明已验证的**主动发消息**方法。单元测试见插件目录 `pnpm test`。
+本文档记录 `@partme.ai/wecom` 在本地 OpenClaw Gateway 上的**手工联调 / CLI 调试步骤**，重点说明主动发消息、目标格式、设备授权和常见错误。真实企微环境的完整验收请使用 [真实环境联调 Checklist](./OpenClaw-WeCom-Integration-Checklist.md)。
 
 相关文档：[配置指南](./OpenClaw-WeCom-Configuration.md) · [真实环境联调 Checklist](./OpenClaw-WeCom-Integration-Checklist.md)（Bot WS / Webhook / Agent 三模式可勾选清单）
 
@@ -47,6 +47,15 @@ pnpm typecheck
 3. 确认 Bot 流式/文本回复正常
 
 多 Bot 场景：分别向 **Bot1**、**Bot2** 发消息，日志中应出现对应账号前缀，例如 `[default]`、`[bot2]`。
+
+## 媒体快速测试
+
+完整媒体验收见 Checklist 的 Bot WS / Webhook / Agent 消息类型章节。这里只做本地调试最小集：
+
+1. 向 Bot 发送图片、文件、语音各一条，确认日志出现媒体下载或媒体保存记录。
+2. 配置 `channels.wecom.mediaLocalRoots`，用 Agent 路径发送白名单内文件，确认上传和发送成功。
+3. 尝试发送白名单外本地路径，确认返回 `mediaErrorNoAccessText` 类提示。
+4. 用接近上限的图片 / 视频 / 文件验证降级：图片和视频超过 Bot 限制时尽可能按文件发送，文件超过 `media.maxBytes` 时拒绝。
 
 ## 出站测试（OpenClaw → 用户）
 

@@ -10,20 +10,20 @@
 
 ---
 
-## Features
+## What This Plugin Does
 
 - **Bot + Agent dual-mode**: WebSocket real-time streaming + HTTP API for file/broadcast fallback
 - **Multi-account matrix**: Independent bot/agent configs per account with full isolation
 - **Webhook + WebSocket**: Bot supports both WebSocket long-connection and HTTP webhook modes
 - **11 built-in Skills**: Contacts, docs, calendar, tasks, meetings, smartsheet, messaging, template cards, preflight
 - **Full media support**: Image/video/voice/file receive and send with auto-downgrade
-- **Streaming replies**: Bot `replyStream` plain-text streaming with "thinking" placeholder (see Streaming doc)
+- **Streaming replies**: Bot `replyStream` plain-text streaming with "thinking" placeholder (WeCom may strip Markdown/plain-text formatting in some outbound paths)
 - **Access control**: Per-account DM/group policies (open, pairing, allowlist, disabled)
 - **Dynamic Agent routing**: Auto-create isolated agents per user/group
 - **MCP tool**: `wecom_mcp` for direct WeCom API access with interceptor pipeline
 - **CLI setup wizard**: Interactive configuration with multi-mode credential prompts
 - **Template card messages**: text_notice, news_notice, button_interaction, vote_interaction, multiple_interaction with event callback handling
-- **Auto-fallback**: Bot WS unavailable -> transparent fallback to Agent HTTP API
+- **Auto-fallback**: Bot WS unavailable -> fallback to Agent HTTP API when Agent is configured
 - **Heartbeat keepalive**: Auto-reconnect with exponential backoff (max 10 retries, 5 auth retries)
 - **Kick protection**: No auto-restart on server-initiated disconnect to avoid re-kick loops
 
@@ -40,7 +40,7 @@
 openclaw plugins install @partme.ai/wecom
 ```
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+Requires `@partme.ai/openclaw-message-sdk >= 2026.5.24`.
 
 ### Configuration
 
@@ -119,10 +119,13 @@ In-repo guides under [`doc/wecom/`](../../doc/wecom/):
 | Document | Description |
 |----------|-------------|
 | [**Configuration guide (authoritative)**](../../doc/wecom/OpenClaw-WeCom-Configuration.md) | Levels 1–11 JSON, field reference, verification steps, FAQ |
+| [Integration checklist](../../doc/wecom/OpenClaw-WeCom-Integration-Checklist.md) | Real WeCom acceptance checklist for Bot WS, Bot Webhook, and Agent |
 | [Architecture](../../doc/wecom/OpenClaw-WeCom-Architecture.md) | Dual-mode topology, source module map, inbound flows, streaming overview |
 | [Streaming architecture](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) | `replyStream` lifecycle, 6-minute window, 846608 fallback, state machine |
 | [Testing & debugging](../../doc/wecom/OpenClaw-WeCom-Testing.md) | `message send`, `agent --deliver`, `user:` prefix (93006), pairing |
-| [Feishu SDK inventory](../../doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | OpenClaw plugin-sdk mapping vs Feishu channel |
+| [Feishu SDK inventory](../../doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | Internal engineering reference for plugin-sdk/message-sdk parity |
+
+Some ecosystem references linked from the configuration guide, such as knowledge plugin docs, are currently Chinese-only.
 
 ## Access control & Cron
 
@@ -163,7 +166,7 @@ openclaw config set channels.wecom.network.egressProxyUrl "http://proxy.company.
 ```bash
 pnpm build          # tsc -> dist/
 pnpm typecheck      # tsc --noEmit
-pnpm test           # vitest run (279 tests)
+pnpm test           # vitest run (around 330 tests; count changes with source)
 pnpm run pack-dry   # Preview package contents before publish
 ```
 

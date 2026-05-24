@@ -91,7 +91,9 @@ flowchart TB
 | `websocket`（默认） | `botId` + `secret` | `monitorWeComProvider()` → `@wecom/aibot-node-sdk` WSClient |
 | `webhook` | `token` + `encodingAESKey` | `startWebhookGateway()` → `webhook/handler.ts` |
 
-Agent 与 Bot **并行注册**：只要 `agent.configured`，即注册 `/plugins/wecom/agent/*`；只要存在 `botId`+`secret` 或 webhook 凭证，即启动对应 Bot 路径。
+Agent 与 Bot **并行注册**：只要 `agent.configured`，即注册 `/plugins/wecom/agent/*`；只要存在 `botId` + `secret` 或 webhook 凭证，即启动对应 Bot 路径。
+
+**启动优先级**：`botId` + `secret` 优先于 `connectionMode`。如果同一账号既配置了 `botId` + `secret` 又写了 `connectionMode: "webhook"`，运行时仍会启动 Bot WebSocket；纯 Bot Webhook 账号应只配置 `token` + `encodingAESKey`。
 
 ### 2.4 出站策略：Bot 优先，Agent 兜底
 
@@ -237,6 +239,8 @@ sequenceDiagram
 
 **MessageState**（`interface.ts`）在 WS 路径跟踪：`accumulatedText`、`streamId`、`hasMedia`、`streamExpired`、`dispatchErrorSummary` 等。
 
+WS 连接可靠性由心跳、指数退避重连、最多 10 次重连与最多 5 次鉴权重试组成。若服务端提示已有新连接并主动踢下线，插件不会立即自动重启，避免多个 Gateway 实例互踢形成循环。
+
 ### 4.2 Bot Webhook
 
 ```mermaid
@@ -295,6 +299,19 @@ sequenceDiagram
 
 三条入站路径均在构建 **OpenClaw 标准 InboundContext** 后进入同一 **Agent Runtime**；差异仅在 **出站适配层**（WS stream / Webhook StreamState / Agent HTTP）。
 
+### 4.5 入站能力矩阵
+
+| 能力 | Bot WebSocket | Bot Webhook | Agent XML |
+|------|:-------------:|:-----------:|:---------:|
+| 文本 | ✅ | ✅ | ✅ |
+| 图片 / 文件 | ✅ 下载入站 | ✅ 下载入站 | ✅ 下载 / API 发送 |
+| 语音 | ✅ 作为媒体 | ✅ 作为媒体 | ✅ 可接 ASR |
+| mixed 图文混排 | ✅ | ✅ | 视企业微信 XML 类型而定 |
+| 引用消息 | ✅ | ✅ | 视 XML 字段而定 |
+| 群聊 | ✅ | ✅ | ❌ |
+| 流式回复 | ✅ | ✅ | ❌ |
+| 主动推送 / Cron | ❌ | ❌ | ✅ |
+
 ---
 
 ## 5. 流式输出设计（概要）
@@ -321,7 +338,8 @@ sequenceDiagram
     "wecom": {
       "streaming": false,
       "footer": { "status": true, "elapsed": false },
-      "templates": { "thinking": "...", "emptyReply": "..." }
+      "thinkingText": "...",
+      "emptyReplyText": "..."
     }
   }
 }
@@ -333,7 +351,7 @@ sequenceDiagram
 | `streaming: true` | 启用流式；可细调 `streaming.status`、`streaming.content` |
 | `footer.status` | 在 stream 气泡中展示阶段文案（tool / 阅读 / 生成等） |
 | `footer.elapsed` | 关流时展示耗时脚注 |
-| `*Text` | 各阶段用户可见文案（配置见 [Configuration §用户可见文案](./OpenClaw-WeCom-Configuration.md#用户可见文案text)；实现见 `templates.ts` + `text-config.ts`） |
+| `*Text` | 各阶段用户可见文案（配置见 [Configuration Scenario 2](./OpenClaw-WeCom-Configuration.md#2-welcome-message-and-user-facing-templates)；实现见 `templates.ts` + `text-config.ts`） |
 
 ### 5.3 streamId 生命周期
 
@@ -380,8 +398,8 @@ sequenceDiagram
 
 ### 6.3 MCP 与 Skills
 
-- `wecom_mcp`：`index.ts` 注册；`chatId` 经 `state-manager.getSessionChatInfo` 获取（避免 sessionKey 小写化问题）
-- 11 个内置 Skill：`skills/*/SKILL.md`（文档、日程、模板卡片等）
+- `wecom_mcp`：`index.ts` 注册；`chatId` 经 `state-manager.getSessionChatInfo` 获取（避免 sessionKey 小写化问题）；MCP 传输含 biz-error、media、smartpage-create、smartpage-export 等拦截器。
+- 11 个内置 Skill：`wecom-contact`、`wecom-doc`、`wecom-meeting`、`wecom-msg`、`wecom-preflight`、`wecom-schedule`、`wecom-send-media`、`wecom-send-template-card`、`wecom-smartsheet`、`wecom-todo`、`wecom-unified`。
 - `before_prompt_build` 注入 MEDIA: 与模板卡片 JSON 使用说明
 
 ### 6.4 与 openclaw-plugins 生态
