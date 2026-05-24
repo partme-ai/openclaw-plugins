@@ -143,6 +143,19 @@ openclaw_web_stomp/
 
 最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
 
+### message-sdk 复用
+
+STOMP over WebSocket 帧解析与订阅管理留在本插件；下列能力通过 **薄封装** 委托 message-sdk：
+
+| message-sdk 模块 | web-stomp 挂载点 | 用途 |
+|------------------|------------------|------|
+| `ingress/wire-ingress`（`normalizeWireIngress`） | `inbound.ts` | 入站 payload 解析 + 幂等短路 |
+| `dedup`（`createIdempotencyCache` + `getGlobalSingleton`） | `shared/wire-helpers.ts` | 入站 message-id 进程内去重 |
+| `bridge`（`dispatchChannelMessage`、`resolveChannelDispatchIdentity`） | `inbound.ts` | Wire 路径 OpenClaw reply 管线 |
+| `pipeline/serialize-payload` | `inbound.ts` reply.deliver | 出站 JSON 信封（`outboundFormat: envelope`） |
+| `config/resolveChannelAgentReplyTimeoutMs` | `config/resolvers.ts` | Agent 回复超时 |
+| `config/resolveChannelMediaMaxBytes` | `config/resolvers.ts` | 媒体/载荷上限解析 |
+
 ```json
 {
   "channels": {

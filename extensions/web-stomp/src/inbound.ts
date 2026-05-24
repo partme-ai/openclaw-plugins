@@ -2,17 +2,18 @@
  * Web STOMP 入站分发（message-sdk Wire 路径）。
  */
 
-import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
+import { WEB_STOMP_CHANNEL_ID } from "./config/resolvers.js";
 import { getWebStompRuntime } from "./runtime.js";
-
-/** Web STOMP 入站幂等缓存。 */
-const idempotencyCache = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10_000 });
+import {
+  getWebStompIdempotencyCache,
+  mapWebStompWirePayloadMode,
+} from "./shared/wire-helpers.js";
 
 /** Web STOMP 入站上下文（协议层 → Wire ingress）。 */
 export type WebStompInboundContext = {
@@ -38,7 +39,7 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
 
   const agentIdHint = ctx.agentId ?? "main";
   const { agentId, sessionKey } = await resolveChannelDispatchIdentity(runtime as unknown as BridgePluginRuntime, {
-    channel: "stomp",
+    channel: WEB_STOMP_CHANNEL_ID,
     accountId: "default",
     peerId: ctx.peerId,
     agentId: agentIdHint,
@@ -46,10 +47,11 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
 
   const replyDestination = `/topic/session.${ctx.peerId}`;
 
+  const idempotencyCache = getWebStompIdempotencyCache();
   const parsed = normalizeWireIngress({
     rawPayload: ctx.rawPayload,
-    mode: "jsonTextOrPlain",
-    channel: "stomp",
+    mode: mapWebStompWirePayloadMode("jsonTextOrPlain"),
+    channel: WEB_STOMP_CHANNEL_ID,
     idempotencyKey: ctx.idempotencyKey,
     idempotency: ctx.idempotencyKey ? idempotencyCache : undefined,
   });
@@ -61,7 +63,7 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
   await dispatchChannelMessage({
     mode: "reply-pipeline",
     runtime: runtime as unknown as BridgePluginRuntime,
-    channel: "stomp",
+    channel: WEB_STOMP_CHANNEL_ID,
     accountId: "default",
     peerId: ctx.peerId,
     text: parsed.text,

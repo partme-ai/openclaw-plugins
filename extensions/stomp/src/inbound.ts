@@ -12,19 +12,20 @@
  * STOMP 入站 — Base Profile 入口。
  */
 
-import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
+import { STOMP_TCP_CHANNEL_ID } from "./config/resolvers.js";
 import { getStompRuntime } from "./runtime.js";
+import {
+  getStompTcpIdempotencyCache,
+  mapStompTcpWirePayloadMode,
+} from "./shared/wire-helpers.js";
 import { publishToDestination } from "./transport/server.js";
 import type { InboundMessage } from "./types.js";
-
-/** @description STOMP TCP 入站幂等缓存（60s TTL）。 */
-const idempotencyCache = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10_000 });
 
 /**
  * @description 将 STOMP 入站消息分发到 OpenClaw Runtime reply 管线。
@@ -39,10 +40,11 @@ export async function dispatchInboundMessage(message: InboundMessage): Promise<v
     return;
   }
 
+  const idempotencyCache = getStompTcpIdempotencyCache();
   const parsed = normalizeWireIngress({
     rawPayload: message.rawPayload,
-    mode: "jsonTextOrPlain",
-    channel: "stomp-tcp",
+    mode: mapStompTcpWirePayloadMode("jsonTextOrPlain"),
+    channel: STOMP_TCP_CHANNEL_ID,
     idempotencyKey: message.idempotencyKey,
     idempotency: message.idempotencyKey ? idempotencyCache : undefined,
   });
@@ -54,7 +56,7 @@ export async function dispatchInboundMessage(message: InboundMessage): Promise<v
   const replyDestination = message.replyDestination ?? `/topic/session.${message.peerId}`;
 
   const { agentId, sessionKey } = await resolveChannelDispatchIdentity(runtime as unknown as BridgePluginRuntime, {
-    channel: "stomp-tcp",
+    channel: STOMP_TCP_CHANNEL_ID,
     accountId: message.accountId,
     peerId: message.peerId,
     agentId: message.agentId,
@@ -63,7 +65,7 @@ export async function dispatchInboundMessage(message: InboundMessage): Promise<v
   await dispatchChannelMessage({
     mode: "reply-pipeline",
     runtime: runtime as unknown as BridgePluginRuntime,
-    channel: "stomp-tcp",
+    channel: STOMP_TCP_CHANNEL_ID,
     accountId: message.accountId,
     peerId: message.peerId,
     text: parsed.text,
