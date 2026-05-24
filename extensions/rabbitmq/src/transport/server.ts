@@ -53,6 +53,8 @@ let inboundHandler: InboundHandler | null = null;
 let config: RabbitmqConfig | null = null;
 let stopping = false;
 let retryQueueName: string | null = null;
+let retryRoutingPrefix: string | null = null;
+let inboundLimiter: ReturnType<typeof createInboundLimiter> | null = null;
 let stats: RabbitmqStats = {
   connected: false,
   lastConnectAt: null,
@@ -85,7 +87,17 @@ export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundH
  */
 export async function stopRabbitmqServer(): Promise<void> {
   stopping = true;
-  consumerTag = null;
+  inboundLimiter = null;
+  retryRoutingPrefix = null;
+  retryQueueName = null;
+  try {
+    if (consumeChannel && consumerTag) {
+      await consumeChannel.cancel(consumerTag);
+    }
+  } catch {
+  } finally {
+    consumerTag = null;
+  }
   try {
     if (consumeChannel) {
       await consumeChannel.close();
@@ -274,7 +286,8 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
     arguments: Object.keys(queueArgs).length > 0 ? queueArgs : undefined,
   });
   retryQueueName = cfg.retry.enabled && queue.queue ? `${queue.queue}${cfg.retry.queueSuffix}` : null;
-  if (retryQueueName) {
+  retryRoutingPrefix = retryQueueName ? `${queue.queue}.retry` : null;
+  if (retryQueueName && retryRoutingPrefix) {
     await consumeCh.assertQueue(retryQueueName, {
       durable: cfg.queue.durable,
       exclusive: false,
@@ -285,13 +298,18 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
         "x-dead-letter-exchange": cfg.exchange,
       },
     });
+    await consumeCh.bindQueue(retryQueueName, cfg.exchange, `${retryRoutingPrefix}.#`);
   }
 
   const patterns = collectSubscribePatterns(cfg);
   for (const pattern of patterns) {
     await consumeCh.bindQueue(queue.queue, cfg.exchange, pattern);
   }
+  if (retryRoutingPrefix) {
+    await consumeCh.bindQueue(queue.queue, cfg.exchange, `${retryRoutingPrefix}.#`);
+  }
 
+  inboundLimiter = createInboundLimiter(cfg.consume.concurrency);
   const effectivePrefetch = Math.max(cfg.consume.prefetch, cfg.consume.concurrency);
   if (effectivePrefetch > 0) {
     await consumeCh.prefetch(effectivePrefetch);
@@ -300,32 +318,37 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
   const { consumerTag: tag } = await consumeCh.consume(
     queue.queue,
     (msg: ConsumeMessage | null) => {
-      if (!msg || !inboundHandler || !consumeChannel || !config) {
+      if (!msg || !inboundHandler || !consumeChannel || !config || !inboundLimiter) {
         return;
       }
+      const handler = inboundHandler;
+      const activeConfig = config;
+      const channel = consumeChannel;
+      const limiter = inboundLimiter;
       stats.messagesReceived++;
-      stats.inFlight++;
+      const routingKey = resolveInboundRoutingKey(msg);
       const event: InboundEvent = {
-        routingKey: msg.fields.routingKey,
+        routingKey,
         content: msg.content,
         properties: msg.properties,
-        fields: msg.fields,
+        fields: { ...msg.fields, routingKey },
       };
-      void (async () => {
+      void limiter(async () => {
+        stats.inFlight++;
         try {
-          const disposition = await inboundHandler(event);
+          const disposition = await handler(event);
           stats.lastConsumeAt = Date.now();
           if (disposition.ok) {
-            consumeChannel?.ack(msg);
+            channel.ack(msg);
             stats.messagesAcked++;
             return;
           }
-          const handledByRetry = await maybeRetryMessage(msg);
+          const handledByRetry = await maybeRetryMessage(msg, routingKey);
           if (handledByRetry) {
             return;
           }
-          const requeue = disposition.requeue ?? config.consume.requeueOnError;
-          consumeChannel?.nack(msg, false, requeue);
+          const requeue = disposition.requeue ?? activeConfig.consume.requeueOnError;
+          channel.nack(msg, false, requeue);
           stats.messagesNacked++;
           if (requeue) {
             stats.messagesRequeued++;
@@ -333,12 +356,12 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
         } catch (err) {
           stats.errors++;
           stats.lastError = err instanceof Error ? err.message : String(err);
-          const handledByRetry = await maybeRetryMessage(msg);
+          const handledByRetry = await maybeRetryMessage(msg, routingKey);
           if (handledByRetry) {
             return;
           }
-          const requeue = config.consume.requeueOnError;
-          consumeChannel?.nack(msg, false, requeue);
+          const requeue = activeConfig.consume.requeueOnError;
+          channel.nack(msg, false, requeue);
           stats.messagesNacked++;
           if (requeue) {
             stats.messagesRequeued++;
@@ -346,7 +369,7 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
         } finally {
           stats.inFlight = Math.max(0, stats.inFlight - 1);
         }
-      })();
+      });
     },
     { noAck: false },
   );
@@ -375,11 +398,107 @@ async function reconnectAfterClose(): Promise<void> {
   if (!cfg || stopping) {
     return;
   }
+  await teardownTransport();
   await sleep(cfg.connection.reconnectDelayMs);
   if (stopping) {
     return;
   }
   await connectWithRetry().catch(() => {});
+}
+
+/**
+ * @description 关闭当前 channel/connection 引用，便于重连前清理（不修改 stopping 标志）。
+ */
+async function teardownTransport(): Promise<void> {
+  inboundLimiter = null;
+  retryRoutingPrefix = null;
+  retryQueueName = null;
+  try {
+    if (consumeChannel && consumerTag) {
+      await consumeChannel.cancel(consumerTag);
+    }
+  } catch {
+  } finally {
+    consumerTag = null;
+  }
+  try {
+    if (consumeChannel) {
+      await consumeChannel.close();
+    }
+  } catch {
+  } finally {
+    consumeChannel = null;
+  }
+  try {
+    if (publishChannel) {
+      await publishChannel.close();
+    }
+  } catch {
+  } finally {
+    publishChannel = null;
+  }
+  try {
+    if (connection) {
+      await connection.close();
+    }
+  } catch {
+  } finally {
+    connection = null;
+  }
+  stats.connected = false;
+  stats.lastDisconnectAt = Date.now();
+}
+
+/**
+ * @description 限制入站 handler 并发，避免 prefetch 窗口内无界并行。
+ */
+function createInboundLimiter(concurrency: number) {
+  let running = 0;
+  const waiters: Array<() => void> = [];
+  const next = (): void => {
+    if (running >= concurrency) {
+      return;
+    }
+    const resume = waiters.shift();
+    if (resume) {
+      resume();
+    }
+  };
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = (): Promise<T> => {
+      running++;
+      return fn().finally(() => {
+        running--;
+        next();
+      });
+    };
+    if (running < concurrency) {
+      return run();
+    }
+    return new Promise<T>((resolve, reject) => {
+      waiters.push(() => {
+        run().then(resolve, reject);
+      });
+    });
+  };
+}
+
+/**
+ * @description 从 AMQP headers 解析原始 routing key（retry DLX 回流时保留业务 key）。
+ */
+function resolveInboundRoutingKey(msg: ConsumeMessage): string {
+  const headers = msg.properties.headers;
+  const raw = headers?.["x-original-routing-key"];
+  if (typeof raw === "string" && raw.length > 0) {
+    return raw;
+  }
+  if (raw && typeof raw === "object" && "value" in raw) {
+    const value = (raw as { value?: unknown }).value;
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return msg.fields.routingKey;
 }
 
 /**
@@ -418,12 +537,12 @@ function sleep(ms: number): Promise<void> {
  * @param msg - 原始 AMQP 消费消息
  * @returns 是否已由 retry 队列接管（true 时调用方无需再 nack）
  */
-async function maybeRetryMessage(msg: ConsumeMessage): Promise<boolean> {
+async function maybeRetryMessage(msg: ConsumeMessage, routingKey: string): Promise<boolean> {
   const cfg = config;
-  if (!cfg || !consumeChannel || !retryQueueName || !cfg.retry.enabled) {
+  if (!cfg || !consumeChannel || !retryQueueName || !retryRoutingPrefix || !cfg.retry.enabled) {
     return false;
   }
-  const raw = (msg.properties.headers as any)?.["x-attempt"];
+  const raw = (msg.properties.headers as Record<string, unknown> | undefined)?.["x-attempt"];
   const attempt =
     typeof raw === "number"
       ? raw
@@ -434,11 +553,13 @@ async function maybeRetryMessage(msg: ConsumeMessage): Promise<boolean> {
     return false;
   }
   const nextAttempt = attempt + 1;
+  const originalRoutingKey = resolveInboundRoutingKey(msg);
   const headers = {
     ...(typeof msg.properties.headers === "object" && msg.properties.headers ? msg.properties.headers : {}),
     "x-attempt": nextAttempt,
+    "x-original-routing-key": originalRoutingKey || routingKey,
   };
-  consumeChannel.sendToQueue(retryQueueName, msg.content, {
+  consumeChannel.publish(cfg.exchange, `${retryRoutingPrefix}.${routingKey}`, msg.content, {
     correlationId: msg.properties.correlationId,
     contentType: msg.properties.contentType ?? "application/json",
     headers,

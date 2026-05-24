@@ -47,6 +47,10 @@ export type RockermqStats = {
   inFlight: number;
 };
 
+/** RocketMQ 启动重连默认参数（与 RabbitMQ connection 默认值对齐）。 */
+const DEFAULT_RECONNECT_ATTEMPTS = 5;
+const DEFAULT_RECONNECT_DELAY_MS = 5000;
+
 let producer: Producer | null = null;
 let consumer: PushConsumer | null = null;
 let config: RockermqConfig | null = null;
@@ -99,29 +103,7 @@ export async function stopRockermqServer(): Promise<void> {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-
-  try {
-    if (consumer) {
-      await consumer.shutdown();
-    }
-  } catch {
-    // shutdown errors are non-fatal
-  } finally {
-    consumer = null;
-  }
-
-  try {
-    if (producer) {
-      await producer.shutdown();
-    }
-  } catch {
-    // shutdown errors are non-fatal
-  } finally {
-    producer = null;
-  }
-
-  stats.connected = false;
-  stats.lastDisconnectAt = Date.now();
+  await teardownTransport();
 }
 
 /**
@@ -228,7 +210,7 @@ async function connectWithRetry(): Promise<void> {
   if (!cfg) {
     throw new Error("RocketMQ config not set");
   }
-  const maxAttempts = 5;
+  const maxAttempts = DEFAULT_RECONNECT_ATTEMPTS + 1;
   let attempt = 0;
   let lastErr: unknown = null;
 
@@ -244,7 +226,7 @@ async function connectWithRetry(): Promise<void> {
       if (attempt >= maxAttempts) {
         break;
       }
-      await sleep(5000);
+      await sleep(DEFAULT_RECONNECT_DELAY_MS);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
@@ -257,6 +239,8 @@ async function connectWithRetry(): Promise<void> {
  * @throws SDK startup 失败时抛出。
  */
 async function connectOnce(cfg: RockermqConfig): Promise<void> {
+  await teardownTransport();
+
   producer = new Producer({
     endpoints: cfg.endpoints,
     namespace: cfg.namespace,
@@ -290,7 +274,7 @@ async function connectOnce(cfg: RockermqConfig): Promise<void> {
           disposition = await inboundHandler({
             topic: String(messageView.topic),
             tag: typeof messageView.tag === "string" ? messageView.tag : undefined,
-            body: Buffer.from(messageView.body),
+            body: toMessageBuffer(messageView.body),
             keys: Array.isArray(messageView.keys) ? messageView.keys.map(String) : undefined,
             messageId:
               typeof messageView.messageId === "string" ? messageView.messageId : undefined,
@@ -361,5 +345,52 @@ function buildSubscriptions(cfg: RockermqConfig): Map<string, string> {
  * @throws 不抛出。
  */
 function sleep(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * @description 将 SDK body 转为 Buffer，避免对已是 Buffer 的载荷重复拷贝。
+ */
+function toMessageBuffer(body: unknown): Buffer {
+  if (Buffer.isBuffer(body)) {
+    return body;
+  }
+  if (body instanceof Uint8Array) {
+    return Buffer.from(body);
+  }
+  if (typeof body === "string") {
+    return Buffer.from(body);
+  }
+  return Buffer.from(String(body ?? ""));
+}
+
+/**
+ * @description 关闭现有 Producer/Consumer 引用，便于重连前清理。
+ */
+async function teardownTransport(): Promise<void> {
+  try {
+    if (consumer) {
+      await consumer.shutdown();
+    }
+  } catch {
+    // shutdown errors are non-fatal
+  } finally {
+    consumer = null;
+  }
+
+  try {
+    if (producer) {
+      await producer.shutdown();
+    }
+  } catch {
+    // shutdown errors are non-fatal
+  } finally {
+    producer = null;
+  }
+
+  stats.connected = false;
+  stats.lastDisconnectAt = Date.now();
 }

@@ -46,7 +46,7 @@ export const rabbitmqOutbound: ChannelOutboundAdapter = {
     const cfg = getRabbitmqChannelConfig() ?? DEFAULT_RABBITMQ_CONFIG;
     const outTopic = sessionContext.replyTopic ?? buildOutboundTopic(agentId, cfg.topicPrefix, peerId);
 
-    publishMessage(outTopic, ctx.text);
+    await publishMessage(outTopic, ctx.text);
 
     console.log(`[openclaw-rabbitmq] Reply published to ${outTopic} for peer ${peerId}`);
     return { channel: "rabbitmq", messageId: sessionKey };

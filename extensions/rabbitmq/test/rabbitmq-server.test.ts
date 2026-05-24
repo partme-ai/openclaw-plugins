@@ -10,6 +10,7 @@ const consumeCh = {
   assertQueue: vi.fn().mockResolvedValue({ queue: "q" }),
   bindQueue: vi.fn(),
   prefetch: vi.fn(),
+  cancel: vi.fn(),
   consume: vi.fn(async (_q: string, cb: ConsumeCb) => {
     consumeCb = cb;
     return { consumerTag: "ctag" };
