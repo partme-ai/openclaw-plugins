@@ -14,11 +14,11 @@
 
 `@partme.ai/wecom` connects OpenClaw to WeCom / WeChat Work. It supports Bot WebSocket, Bot HTTP Webhook, and self-built Agent app modes. Use Bot WebSocket for low-friction interactive chat and streaming replies; add Agent mode for proactive sends, Cron delivery, departments, tags, and full outbound file fallback.
 
-Current version: `2026.5.24-2`. Message SDK version: `2026.5.24`. The test suite currently has about 330 Vitest cases.
+Current version: `2026.5.25`. Message SDK version: `2026.5.24`. The test suite currently has about 330 Vitest cases.
 
 ## ✨ Features
 
-`@partme.ai/wecom` absorbs the strong capability set from the WeCom research plugin while matching the current OpenClaw plugin facts: package `@partme.ai/wecom@2026.5.24-2`, message SDK `2026.5.24`, flat `channels.wecom` config, Bot WS priority when `botId` + `secret` exist, Agent coexistence for proactive delivery, roughly 330 Vitest tests, and knowledge handled by the independent knowledge plugin.
+`@partme.ai/wecom` absorbs the strong capability set from the WeCom research plugin while matching the current OpenClaw plugin facts: package `@partme.ai/wecom@2026.5.25`, message SDK `2026.5.24`, flat `channels.wecom` config, Bot WS priority when `botId` + `secret` exist, Agent coexistence for proactive delivery, roughly 330 Vitest tests, and knowledge handled by the independent knowledge plugin.
 
 - 🔗 **Dual-mode**: Bot (WebSocket / Webhook) and Agent (HTTP webhook) can run independently or together.
 - 💬 Supports both direct messages (DM) and group chat.
