@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { assertScrapeAuthorized } from "./scrape-auth.js";
-import type { ResolvedPrometheusConfig } from "./plugin-config.js";
+import { assertScrapeAuthorized } from "../src/config/scrape-auth.js";
+import type { ResolvedPrometheusConfig } from "../src/config/plugin-config.js";
 
 function mockRes(): ServerResponse {
   const writeHead = vi.fn();

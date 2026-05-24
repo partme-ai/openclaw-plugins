@@ -1,8 +1,8 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
-import type { ResolvedPrometheusConfig } from "./plugin-config.js";
-import type { MetricSample, MonitoredProviderSnapshot } from "./types.js";
-import { MetricsRegistry } from "./metrics-registry.js";
+import type { ResolvedPrometheusConfig } from "../config/plugin-config.js";
+import type { MetricSample, MonitoredProviderSnapshot } from "../types.js";
+import { MetricsRegistry } from "../diagnostics/metrics-registry.js";
 
 type ObservedChannelAccount = {
   channelId: string;

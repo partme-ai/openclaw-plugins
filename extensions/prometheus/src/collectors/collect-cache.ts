@@ -2,7 +2,7 @@
  * 指标采集结果缓存，降低高频 scrape 对 Gateway RPC 的压力。
  */
 
-import type { CollectorDiagnostic, MetricDefinition, MetricSample } from "./types.js";
+import type { CollectorDiagnostic, MetricDefinition, MetricSample } from "../types.js";
 
 export type CollectBundle = {
   definitions: MetricDefinition[];

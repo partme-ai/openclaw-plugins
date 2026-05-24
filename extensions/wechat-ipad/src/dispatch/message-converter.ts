@@ -6,8 +6,8 @@
  * - 出站：将 Agent 回复文本转为 iPad 协议服务的发送请求
  */
 
-import { WxMsgType } from "./types.js";
-import type { WxMessagePayload, SendMessageRequest } from "./types.js";
+import { WxMsgType } from "../types.js";
+import type { WxMessagePayload, SendMessageRequest } from "../types.js";
 
 /**
  * 将微信入站消息转换为 Agent 可处理的文本

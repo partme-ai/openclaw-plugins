@@ -7,8 +7,8 @@
 
 import { GatewayClient } from "openclaw/plugin-sdk/gateway-runtime";
 
-import type { GatewayRuntime } from "./types.js";
-import { recordRpcError, recordRpcSuccess, setRpcClientInitialized } from "./runtime-store.js";
+import type { GatewayRuntime } from "../types.js";
+import { recordRpcError, recordRpcSuccess, setRpcClientInitialized } from "./store.js";
 
 const CONNECT_TIMEOUT_MS = 15_000;
 const MAX_RECONNECT_ATTEMPTS = 3;

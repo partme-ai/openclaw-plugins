@@ -26,7 +26,7 @@ import type {
   WxFriendRequestPayload,
   SendMessageRequest,
   IpadApiResponse,
-} from "./types.js";
+} from "../types.js";
 
 /** 事件监听器类型 */
 type EventListener<T = unknown> = (data: T) => void;

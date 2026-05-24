@@ -35,9 +35,9 @@ describe("ws-bridge", () => {
   });
 
   it("creates a GatewayClient from runtime config and proxies rpcCall", async () => {
-    const bridge = await import("./ws-bridge.js");
-    const { initializeRuntimeStore } = await import("./runtime-store.js");
-    const { resolvePrometheusConfig } = await import("./plugin-config.js");
+    const bridge = await import("../src/runtime/ws-bridge.js");
+    const { initializeRuntimeStore } = await import("../src/runtime/store.js");
+    const { resolvePrometheusConfig } = await import("../src/config/plugin-config.js");
 
     initializeRuntimeStore(
       {
@@ -75,9 +75,9 @@ describe("ws-bridge", () => {
   });
 
   it("returns null entries for failed rpcBatch items", async () => {
-    const bridge = await import("./ws-bridge.js");
-    const { initializeRuntimeStore } = await import("./runtime-store.js");
-    const { resolvePrometheusConfig } = await import("./plugin-config.js");
+    const bridge = await import("../src/runtime/ws-bridge.js");
+    const { initializeRuntimeStore } = await import("../src/runtime/store.js");
+    const { resolvePrometheusConfig } = await import("../src/config/plugin-config.js");
 
     initializeRuntimeStore(
       {

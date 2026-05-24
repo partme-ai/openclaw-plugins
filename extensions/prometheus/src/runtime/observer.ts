@@ -1,6 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import type { MetricSample } from "./types.js";
-import { getRuntimeStore, listObservedChannelAccounts, rememberObservedChannelAccount, setSnapshotState } from "./runtime-store.js";
+import type { MetricSample } from "../types.js";
+import { getRuntimeStore, listObservedChannelAccounts, rememberObservedChannelAccount, setSnapshotState } from "./store.js";
 
 const PROVIDER_STATUSES = ["ok", "missing", "error"] as const;
 

@@ -4,9 +4,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { inboundToText, outboundFromText, extractXmlField } from "./message-converter.js";
-import { WxMsgType } from "./types.js";
-import type { WxMessagePayload, SendMessageRequest } from "./types.js";
+import { inboundToText, outboundFromText, extractXmlField } from "../src/dispatch/message-converter.js";
+import { WxMsgType } from "../src/types.js";
+import type { WxMessagePayload, SendMessageRequest } from "../src/types.js";
 
 /** 构造测试消息的辅助函数 */
 function makeMsg(overrides: Partial<WxMessagePayload>): WxMessagePayload {

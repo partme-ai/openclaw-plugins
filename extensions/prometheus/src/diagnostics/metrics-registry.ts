@@ -1,4 +1,4 @@
-import type { MetricDefinition, MetricSample, MetricType } from "./types.js";
+import type { MetricDefinition, MetricSample, MetricType } from "../types.js";
 
 type LabelValues = Record<string, string>;
 

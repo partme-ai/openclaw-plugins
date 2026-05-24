@@ -1,6 +1,6 @@
 {
-  "id": "openclaw_wechat_ipad",
-  "name": "openclaw_wechat_ipad",
+  "id": "wechat-ipad",
+  "name": "wechat-ipad",
   "version": "0.1.0",
   "description": "WeChat iPad protocol bridge for OpenClaw — personal WeChat account integration via iPad protocol service",
   "main": "dist/index.js",

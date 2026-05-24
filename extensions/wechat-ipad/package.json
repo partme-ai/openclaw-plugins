@@ -47,7 +47,13 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "setupEntry": "./dist/setup-entry.js",
+    "channel": {
+      "id": "wechat-ipad",
+      "label": "WeChat iPad",
+      "blurb": "WeChat iPad protocol bridge for personal WeChat account integration."
+    }
   },
   "peerDependencies": {
     "clawdbot": "*",

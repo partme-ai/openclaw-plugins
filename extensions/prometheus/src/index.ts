@@ -37,22 +37,22 @@ import { NodeCollector } from "./collectors/nodes.js";
 import { PresenceCollector } from "./collectors/presence.js";
 import { formatPrometheus } from "./formatters/prometheus.js";
 import { formatJson } from "./formatters/json.js";
-import { resolvePrometheusConfig } from "./plugin-config.js";
-import { assertScrapeAuthorized } from "./scrape-auth.js";
-import { CollectCache } from "./collect-cache.js";
-import { PLUGIN_VERSION } from "./version.js";
+import { resolvePrometheusConfig } from "./config.js";
+import { assertScrapeAuthorized } from "./transport/server.js";
+import { CollectCache } from "./collectors/collect-cache.js";
+import { PLUGIN_VERSION } from "./shared/version.js";
 import {
   initializeRuntimeStore,
   getRuntimeStore,
   updateRpcSamples,
-} from "./runtime-store.js";
+} from "./runtime/store.js";
 import {
   refreshHousekeepingMetrics,
   refreshRuntimeSnapshots,
   registerPluginObservers,
   recordHttpLatency,
-} from "./observer.js";
-import { setRuntime } from "./ws-bridge.js";
+} from "./runtime/observer.js";
+import { setRuntime } from "./runtime/ws-bridge.js";
 
 const PLUGIN_ID = "openclaw-prometheus";
 
