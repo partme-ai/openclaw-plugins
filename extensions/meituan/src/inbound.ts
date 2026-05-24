@@ -1,5 +1,10 @@
 /**
- * 美团 Webhook 入站：POST /channels/meituan/webhook — 验签与事件解析。
+ * 美团 Webhook 入站 HTTP 处理器。
+ *
+ * **架构角色**：`registerHttpRoute` 的 handler 工厂；负责读 body、验签、
+ * 提取 shopId/msgId，并委托 `dispatch/dispatch-inbound` 派发。
+ *
+ * **关键依赖**：`./runtime/runtime-api`、`./dispatch/dispatch-inbound`、`./types`
  */
 
 import crypto from "node:crypto";
@@ -13,7 +18,12 @@ import { dispatchWebhookInbound } from "./dispatch/dispatch-inbound.js";
 import type { MeituanAccountConfig, PluginApi, PluginLogger } from "./types.js";
 
 /**
- * 美团 Webhook 验签
+ * 校验美团 Webhook HMAC-SHA256 签名。
+ *
+ * @param body 原始请求体
+ * @param signatureHeader `X-Meituan-Signature` 或 `X-Signature`
+ * @param config 渠道配置（优先 webhook_secret，回退 app_secret）
+ * @returns 签名有效时为 true
  */
 export function verifyMeituanWebhook(
   body: string,
@@ -24,6 +34,7 @@ export function verifyMeituanWebhook(
   if (!secret || !signatureHeader?.trim()) return false;
   const expected = crypto.createHmac("sha256", secret).update(body, "utf8").digest("hex");
   const got = signatureHeader.trim();
+  // 长度不一致时 timingSafeEqual 会抛错，先短路
   if (got.length !== expected.length) return false;
   try {
     return crypto.timingSafeEqual(Buffer.from(got, "hex"), Buffer.from(expected, "hex"));
@@ -32,11 +43,13 @@ export function verifyMeituanWebhook(
   }
 }
 
+/** 从请求头读取签名（兼容 x-meituan-signature / x-signature） */
 function getSignatureFromRequest(req: IncomingMessage): string | undefined {
   const raw = req.headers["x-meituan-signature"] ?? req.headers["x-signature"];
   return Array.isArray(raw) ? raw[0] : raw;
 }
 
+/** 从 Webhook JSON 或配置回退解析 shop_id，用作 peerId */
 function extractShopId(body: string, config: MeituanAccountConfig): string {
   try {
     const raw = JSON.parse(body) as Record<string, unknown>;
@@ -49,6 +62,7 @@ function extractShopId(body: string, config: MeituanAccountConfig): string {
   return config.shop_id ?? "default";
 }
 
+/** 优先 msg-id 请求头，其次 body 内 msg_id / event_id 等字段 */
 function extractWebhookMessageId(req: IncomingMessage, body: string): string | undefined {
   const header = req.headers["msg-id"] ?? req.headers["x-msg-id"];
   const fromHeader = Array.isArray(header) ? header[0] : header;
@@ -66,7 +80,18 @@ function extractWebhookMessageId(req: IncomingMessage, body: string): string | u
 }
 
 /**
- * 创建美团 Webhook 处理器
+ * 创建美团 Webhook HTTP 处理器。
+ *
+ * **处理分支**：
+ * 1. 未配置 secret → 403
+ * 2. 验签失败 → 403
+ * 3. dispatch 成功/跳过 → 200 success
+ * 4. body 超限 → 413；其他异常 → 500
+ *
+ * @param getConfig 懒加载渠道配置
+ * @param api 插件 API（含 runtime，供 dispatch 使用）
+ * @param logger 可选结构化日志
+ * @returns Express 风格 async handler
  */
 export function createMeituanWebhookHandler(
   getConfig: () => MeituanAccountConfig | undefined,
@@ -87,6 +112,7 @@ export function createMeituanWebhookHandler(
         maxBytes: DEFAULT_WEBHOOK_MAX_BODY_BYTES,
       });
       const config = getConfig();
+      // 未配置 app_secret / webhook_secret 时拒绝一切入站
       if (!config?.app_secret && !config?.webhook_secret) {
         res.writeHead(403, { "Content-Type": "text/plain" });
         res.end("Forbidden: meituan channel not configured");
@@ -109,6 +135,7 @@ export function createMeituanWebhookHandler(
         rawBody: body,
         messageId,
       });
+      // 运行时无 bridge 且无 publishInbound 时 dispatch 返回 skipped
       if (result === "skipped") {
         logWarn("[meituan] inbound skipped: no dispatch runtime available");
       }

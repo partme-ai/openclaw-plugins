@@ -1,8 +1,9 @@
 /**
- * Gotify Runtime — 插件运行时状态管理。
+ * @file Gotify runtime — 进程内易失状态 hub。
  *
- * 管理运行时引用、账号运行状态快照、Application ID 缓存。
- * 所有状态通过 Map 按 accountId 隔离，支持多账号场景。
+ * @description 缓存 Host 注入 opaque `runtime`、账号 listener 运行健康摘要、
+ * **最近出站 Application id**（用于 stream 二次回环拦截）。全部 Map 作用域为单进程单插件实例。
+ * **模块角色**：Channel Plugin · Ephemeral coordination（非持久）。
  */
 
 import type { GotifyRuntimeSnapshot } from "./types.js";
@@ -110,8 +111,10 @@ export function getOwnApplicationId(
 }
 
 /**
- * 清空运行时缓存（仅测试使用）。
+ * **单元测试专用**：重置所有内存态。
  *
+ * @description 清空 runtime 引用、快照 Map、appid 缓存；
+ * 生产路径禁止调用以避免线上状态丢失。
  * @internal
  */
 export function resetGotifyRuntimeForTest(): void {
@@ -121,9 +124,10 @@ export function resetGotifyRuntimeForTest(): void {
 }
 
 /**
- * 构造新账号的默认运行态快照。
+ * 初始化账号快照模板。
  *
- * @returns 未运行、无错误、无时间戳的初始快照。
+ * @description 全部时间字段 `null`，`running=false`。
+ * @returns 默认值结构体。
  */
 function defaultSnapshot(): GotifyRuntimeSnapshot {
   return {

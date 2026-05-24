@@ -1,21 +1,21 @@
 /**
- * openclaw-cluster 插件入口
+ * @fileoverview OpenClaw Gateway「集群协调」基础设施插件入口模块。
  *
- * 多节点 OpenClaw Gateway 集群协调插件。
- * 参考 RabbitMQ clustering 和 Erlang OTP 分布式模型设计。
+ * @description 在 Gateway 进程中装配 discovery / config-sync / session-store / proxy 四层能力，
+ * 并向宿主注册 `/cluster/*` HTTP 运维面与健康观测接口；与 Erlang OTP / RabbitMQ 风格的分布式拓扑类比，
+ * 本插件负责「成员视图 + 配置传播 + 会话粘性路由依据 + 节点间转发通道」的胶水层。
  *
- * 核心功能模块：
- * - discovery     -- 节点发现与注册（static / etcd / DNS SRV）
- * - config-sync   -- 配置变更跨节点同步（etcd KV / shared FS）
- * - session-store -- 共享会话状态（memory / Redis / PostgreSQL）
- * - proxy         -- 节点间 HTTP 消息路由
+ * **架构分层（infra plugin 视角）**
+ * - **discovery**：维护集群成员列表，变更时驱动 proxy 路由表刷新。
+ * - **config-sync**：在多副本间对齐 Gateway 配置（etcd KV / 共享文件系统等）。
+ * - **session-store**：为多节点会话粘性或迁移提供共享视图（Redis / PostgreSQL / 内存降级）。
+ * - **proxy**：承载节点间消息转发传输层（默认可用 HTTP；gRPC 另行实现）。
  *
- * 集群 API 端点：
- * - GET /cluster/status      -- 集群状态概览（节点数、健康状态、leader）
- * - GET /cluster/nodes       -- 节点详细列表
- * - GET /cluster/config      -- 当前同步配置版本
- * - POST /cluster/config     -- 推送配置变更
- * - GET /cluster/sessions    -- Session 分布统计
+ * **对外 HTTP API（运维 / 可观测性）**
+ * - `GET /cluster/status` — 集群概要（节点数、后端类型、运行时长等）。
+ * - `GET /cluster/nodes` — 当前已知节点列表。
+ * - `GET|POST /cluster/config` — 查询或推送配置（推送依赖 config-sync 实现）。
+ * - `GET /cluster/sessions` — 基于 discovery 负载字段的会话分布快照。
  */
 
 import type {
@@ -37,7 +37,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { writeFile } from "node:fs/promises";
 import type { GatewayRuntime } from "./shared/types.js";
 
-/** 默认集群配置 */
+/**
+ * @description Gateway 未提供 `cluster.*` 配置段落时的安全默认值；保证工厂函数总能构造合法结构。
+ */
 const DEFAULT_CONFIG: ClusterConfig = {
   nodeId: `node-${Date.now()}`,
   discovery: {
@@ -62,21 +64,28 @@ const DEFAULT_CONFIG: ClusterConfig = {
 
 // ======================== 模块级状态 ========================
 
-/** 各子服务的引用（用于 API 查询和优雅关闭） */
+/**
+ * @description 子系统句柄缓存：`discoveryService`/`configSyncService`/`sessionStoreService`/`proxyService`
+ * 供 HTTP 处理器、`SIGTERM`/`SIGINT` 钩子共享；全部为 nullable 以便在未初始化阶段短路。
+ */
 let discoveryService: IDiscoveryService | null = null;
 let configSyncService: IConfigSyncService | null = null;
 let sessionStoreService: ISessionStoreService | null = null;
 let proxyService: IProxyService | null = null;
 
-/** 当前生效的集群配置 */
+/** @description `resolveClusterConfig` 之后的运行时快照；HTTP handler 只读该副本避免竞态。 */
 let activeConfig: ClusterConfig = DEFAULT_CONFIG;
 
-/** 启动时间 */
+/** @description 插件启动时刻（毫秒），用于 `/cluster/status` 中的 `uptimeSeconds`。 */
 let startTime: number = Date.now();
 
 /**
- * 安全的 onReady 替代方案
- * 优先 registerService → onReady → 延迟执行
+ * @description 兼容不同宿主版本的启动钩子：`registerService`（结构化生命周期）优于 `onReady`，
+ * 若皆不可用则在微任务队列异步启动，避免阻塞插件注册线程。
+ *
+ * @param api - Gateway 注入的插件 API（duck-typing 探测可选方法）。
+ * @param name - 注册的服务标识，便于宿主侧日志关联。
+ * @param callback - 异步集群初始化逻辑。
  */
 function safeOnReady(api: PluginApi, name: string, callback: () => Promise<void>): void {
   const a = api as unknown as Record<string, unknown>;
@@ -92,7 +101,9 @@ function safeOnReady(api: PluginApi, name: string, callback: () => Promise<void>
 // ======================== HTTP 处理器 ========================
 
 /**
- * 处理集群状态查询
+ * @description `GET /cluster/status`：聚合 discovery 节点视图与本节点元数据，给出运维可读的健康快照。
+ *
+ * @remarks `healthy` 在静态发现且无节点时仍视为 true（开发友好）；动态发现则以是否存在节点近似判断。
  */
 function statusHandler(_req: IncomingMessage, res: ServerResponse): void {
   const nodes = discoveryService?.getNodes() ?? [];
@@ -123,7 +134,7 @@ function statusHandler(_req: IncomingMessage, res: ServerResponse): void {
 }
 
 /**
- * 处理节点列表查询
+ * @description `GET /cluster/nodes`：返回 discovery 缓存的节点数组浅拷贝视图（JSON 序列化输出）。
  */
 function nodesHandler(_req: IncomingMessage, res: ServerResponse): void {
   const nodes = discoveryService?.getNodes() ?? [];
@@ -133,7 +144,8 @@ function nodesHandler(_req: IncomingMessage, res: ServerResponse): void {
 }
 
 /**
- * 处理配置查询/推送
+ * @description `GET /cluster/config` 输出当前生效后端类型摘要；`POST /cluster/config` 将 JSON body 交由
+ * `IConfigSyncService.pushConfig` 全网扩散（若无同步服务则 503）。
  */
 async function configHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method === "GET") {
@@ -179,7 +191,8 @@ async function configHandler(req: IncomingMessage, res: ServerResponse): Promise
 }
 
 /**
- * 处理 Session 分布查询
+ * @description `GET /cluster/sessions`：基于 discovery 报告的 `activeSessions/activeConnections` 字段做简易汇总；
+ * 并非所有发现后端都会填充真实计数，主要用于联调可视化。
  */
 function sessionsHandler(_req: IncomingMessage, res: ServerResponse): void {
   const nodes = discoveryService?.getNodes() ?? [];
@@ -205,13 +218,14 @@ function sessionsHandler(_req: IncomingMessage, res: ServerResponse): void {
 
 // ======================== 配置重载 ========================
 
-/** 配置变更防抖定时器 */
+/** @description 配置扇出可能在共享 FS / etcd 轮询场景下短时重复触发；防抖合并为单次落盘 + reload。 */
 let configReloadTimer: ReturnType<typeof setTimeout> | null = null;
 const CONFIG_RELOAD_DEBOUNCE_MS = 2000;
 
 /**
- * 解析当前节点的配置文件路径
- * 用于 etcd 同步时将拉取的配置写回本地文件后触发重载
+ * @description 从 `GatewayRuntime.config` 的隐藏字段中提取真实配置文件路径，供 etcd-kv 回写本地 JSON。
+ *
+ * @returns 解析到的绝对或相对路径；未知时返回 `null`（仅能触发 reload 钩子而无法持久化）。
  */
 function resolveConfigFilePath(runtime: GatewayRuntime): string | null {
   const c = runtime.config as Record<string, unknown>;
@@ -221,8 +235,9 @@ function resolveConfigFilePath(runtime: GatewayRuntime): string | null {
 }
 
 /**
- * 触发 Gateway 配置重载
- * 优先 gatewayCall("config.reload")，其次 invoke("config_reload")
+ * @description 尽量调用宿主暴露的配置热加载 API；若无则打印提示依赖文件监听。
+ *
+ * @remarks 方法名字符串与宿主实现耦合，属于集成契约而非集群算法的一部分。
  */
 async function triggerConfigReload(runtime: GatewayRuntime): Promise<void> {
   const r = runtime as unknown as Record<string, unknown>;
@@ -246,7 +261,12 @@ async function triggerConfigReload(runtime: GatewayRuntime): Promise<void> {
 }
 
 /**
- * 配置同步变更回调：写回本地文件（仅 etcd 需写回）+ 触发重载
+ * @description config-sync 回调统一入口：`etcd-kv` 模式下先把 JSON 写入本地配置文件再 reload；
+ * 其他模式可直接依赖宿主 watcher。
+ *
+ * @param runtime - Gateway 运行时句柄。
+ * @param syncType - 当前 `ClusterConfig.configSync.type` 字符串（用于分支判定）。
+ * @param newConfig - 对端合并后的完整配置对象。
  */
 async function onClusterConfigChange(
   runtime: GatewayRuntime,
@@ -283,7 +303,10 @@ async function onClusterConfigChange(
 // ======================== 工具函数 ========================
 
 /**
- * 读取 HTTP 请求体
+ * @description 小型 HTTP helper：聚合 `data` 事件缓冲为 UTF-8 字符串。
+ *
+ * @param req - Node.js `IncomingMessage`。
+ * @returns 完整 body；出错时 Promise reject。
  */
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -295,10 +318,10 @@ function readBody(req: IncomingMessage): Promise<string> {
 }
 
 /**
- * 从全局配置中解析集群配置
+ * @description 将宿主 `config.cluster` 片段与 `DEFAULT_CONFIG` 深度合并，避免遗漏字段导致工厂函数异常。
  *
- * @param globalConfig - OpenClaw 全局配置
- * @returns 合并后的集群配置
+ * @param globalConfig - OpenClaw 顶层配置对象。
+ * @returns 可用于创建各子服务的完整 `ClusterConfig`。
  */
 function resolveClusterConfig(
   globalConfig: Record<string, unknown>
@@ -329,10 +352,11 @@ function resolveClusterConfig(
 // ======================== 插件注册 ========================
 
 /**
- * 插件注册入口
- * 由 OpenClaw Gateway 在加载插件时调用
+ * @description **基础设施插件公共入口**：注册路由、拉起子系统、挂载进程信号优雅停机。
  *
- * @param api - Gateway 注入的插件 API
+ * @param api - Gateway 注入的 `PluginApi`（最小 duck-typing 表面：`runtime`、`registerHttpRoute`）。
+ *
+ * @public 作为默认导出由插件加载器 `import()` 调用；请勿从此模块再导出第二个默认函数以免破坏契约。
  */
 export default function register(api: PluginApi): void {
   // ──────────── 注册 HTTP API 端点 ────────────

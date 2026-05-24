@@ -1,10 +1,9 @@
 /**
- * Gotify Channel — ChannelPlugin 完整实现。
+ * @file Gotify Channel — `ChannelPlugin` 完整实现（生命周期 / 入站 / 出站 / 安全）。
  *
- * 负责渠道生命周期管理、消息收发、DM 访问控制、状态上报。
- *
+ * @description
  * ## 入站流程
- * WebSocket /stream 连接 → Zod 校验 → 自我回显过滤 → 幂等去重 →
+ * WebSocket /stream → Zod 校验 → 自我回显过滤 → 幂等去重 →
  * DM 访问控制 → Agent 路由 → Transcript 派发 → 消费后删除
  *
  * ## 出站流程
@@ -15,6 +14,9 @@
  * - 幂等去重：60s 窗口，按 accountId:messageId 去重
  * - 消费后删除：入站派发成功 + 出站回复成功 后从 Gotify 服务端删除消息
  * - 账号级并发锁：同一账号的 API 请求串行执行
+ *
+ * **模块角色**：Channel Plugin · Core lifecycle & dispatch orchestrator。
+ * **关键依赖**：`ws-listener`、`backlog-replay`、`message-mapper`、`inbound`、`gotify-api`。
  */
 
 import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
@@ -127,12 +129,24 @@ export function cleanupGotifyChannel(): void {
   inboundQueues.clear();
 }
 
+/**
+ * @description 将 Gotify message id 规范为正整数；无效时返回 0。
+ *
+ * @param id - stream/API 返回的 id 字段。
+ */
 function parsePositiveMessageId(id: number | string | undefined): number {
   const normalized =
     typeof id === "number" ? Math.trunc(id) : Number.parseInt(String(id ?? ""), 10);
   return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
 }
 
+/**
+ * @description 按账号串行化入站处理，避免同一 stream 并发写 transcript/session。
+ *
+ * @param accountId - Gotify 账号 ID。
+ * @param task - 单条消息的异步派发任务。
+ * @returns 排队后的 Promise，在前序任务完成后执行。
+ */
 function enqueueInbound(accountId: string, task: () => Promise<void>): Promise<void> {
   const previous = inboundQueues.get(accountId) ?? Promise.resolve();
   const next = previous

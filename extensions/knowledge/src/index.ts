@@ -1,14 +1,18 @@
 /**
- * Knowledge RAG 模块 — 统一导出入口
+ * @fileoverview Knowledge RAG 模块 — OpenClaw 内知识库能力的统一导出入口。
  *
- * 对外暴露的核心 API：
- * - indexFile()          — 单文件索引入口（文件上传时调用）
- * - searchByQuery()      — 按语义查询知识库
- * - registerKnowledgeHooks — 注册 OpenClaw before_prompt_build hook
- * - getOrCreateStore()   — 获取/创建命名空间的 Store 实例
- * - invalidateStoreCache() — 清除 Store 缓存
- * - createKnowledgeConfig() — 从原始配置创建标准配置
- * - validateKnowledgeConfig() — 校验配置
+ * @description
+ * 本文件衔接 **摄取（Indexing）→ 嵌入（Embedding）→ 向量存储（VectorStore）→ 检索（Retrieval）→
+ * 注入（Prompt Injection）** 的 RAG 管道：对外导出库式 API（`indexFile`、`searchByQuery` 等），
+ * 并注册默认插件对象（`before_prompt_build` 钩子 + `knowledge_*` 工具集），供渠道/编排层作为
+ * **基础设施类（infra/capability）** 插件挂载。
+ *
+ * 对外暴露的核心能力：
+ * - `indexFile` / `indexFiles` — 单/多文件索引入口（上传/落盘后调用）
+ * - `searchByQuery` — 面向查询的语义检索 + 上下文拼装
+ * - `registerKnowledgeHooks` — 在提示词构建前自动注入检索上下文
+ * - `getOrCreateStore` / `invalidateStoreCache` — Store 生命周期与缓存
+ * - `createKnowledgeConfig` / `validateKnowledgeConfig` — 配置校验与规范化
  *
  * @module knowledge
  */
@@ -59,6 +63,10 @@ export type { IndexResult };
 const INDEXABLE_EXTENSIONS = new Set(['.md', '.txt', '.csv', '.json', '.text']);
 
 /** 文件上传索引配置 */
+/**
+ * @description 单文件索引调用所需的选项：绑定已合并的 {@link KnowledgeConfig}、租户/会话命名空间，
+ *              以及可选的切分参数覆盖。
+ */
 export type FileIndexOptions = {
   /** 知识库配置（已合并） */
   config: KnowledgeConfig;
@@ -71,17 +79,12 @@ export type FileIndexOptions = {
 };
 
 /**
- * 索引单个上传文件
+ * @description 索引单个上传文件：走文档读取 → 切分 → 批量嵌入 → `upsert` 向量库的流水线，
+ *              并在入口处校验扩展名与文件可读性。
  *
- * 完整流程：
- * 1. 校验文件类型（仅支持 .md/.txt/.csv/.json）
- * 2. 确认文件存在且有大小
- * 3. 获取/创建命名空间的 Store 实例
- * 4. 调用 indexDocument() 完成切分 → 嵌入 → 存储
- *
- * @param filePath - 文件在磁盘上的绝对路径
- * @param options  - 索引选项
- * @returns 索引结果
+ * @param filePath - 待索引文件的磁盘路径（建议使用绝对路径）
+ * @param options - {@link FileIndexOptions}：命名空间、配置、`sourceId` 及可选 chunker 覆盖
+ * @returns `chunksAdded` / `success` / `error` 等指标封装 {@link IndexResult}
  */
 export async function indexFile(
   filePath: string,
@@ -122,11 +125,11 @@ export async function indexFile(
 }
 
 /**
- * 批量索引多个上传文件
+ * @description 顺序批量索引多个文件（逐项调用 {@link indexFile}）。
  *
- * @param files - 文件信息数组
- * @param getOptions - 为每个文件生成索引选项的回调函数
- * @returns 所有文件的索引结果
+ * @param files - 每项包含磁盘路径与稳定 `sourceId`
+ * @param getOptions - 为每条输入推导索引上下文（配置、`chunkerConfig`、`namespace` 等）
+ * @returns 与输入顺序一一对应的 {@link IndexResult} 数组
  */
 export async function indexFiles(
   files: { filePath: string; sourceId: string }[],
@@ -144,13 +147,12 @@ export async function indexFiles(
 }
 
 /**
- * 按语义查询知识库
+ * @description 语义检索的一站式封装：解析/embed → {@link retrieveContext} → 返回向量打分片段与会拼接上下文，
+ *              供自建链路或非钩子场景直接调用。
  *
- * 简化的查询入口，封装了 embedding + search 的调用。
- *
- * @param query   - 用户查询文本
- * @param options - 查询选项
- * @returns 检索结果（含排序后的文档块和上下文文本）
+ * @param query - 用户自然语言提问或多关键字短语
+ * @param options - `config`、`namespace`，可选 `topK`/`minScore`（阈值语义与各后端对齐）
+ * @returns `chunks`（向量打分条目）与 `contextText`（按序号展开的可读拼装文本）
  */
 export async function searchByQuery(
   query: string,
@@ -166,14 +168,19 @@ export async function searchByQuery(
 }
 
 /**
- * 判断文件扩展名是否属于可索引类型
+ * @description 基于静态后缀集合判断是否可被内置 ingest/chunker 接受。
+ *
+ * @param filePath - 任意路径或文件名（后缀取自 `path.extname`）
+ * @returns 若为支持的 `.md`/`.txt`/`.csv`/`.json`/`.text` 后缀则为 true
  */
 export function isIndexableFile(filePath: string): boolean {
   return INDEXABLE_EXTENSIONS.has(extname(filePath).toLowerCase());
 }
 
 /**
- * 获取支持的文件类型描述（用于提示用户）
+ * @description 返回可被 ingest UI/Prompt 提示复用的扩展名列表拼接字符串。
+ *
+ * @returns 逗号分隔的后缀清单（来自运行时常量）
  */
 export function getSupportedExtensions(): string {
   return Array.from(INDEXABLE_EXTENSIONS).join(', ');
@@ -190,12 +197,22 @@ import { createKnowledgeQueryTool } from './tools/knowledge-query.js';
 import { createKnowledgeUpdateTool } from './tools/knowledge-update.js';
 import { createKnowledgeDeleteTool } from './tools/knowledge-delete.js';
 
+/**
+ * @description OpenClaw 运行时注册的默认知识库插件：挂载钩子与 4 个托管工具，形成「自动 RAG 注入」+
+ *              「模型自服务 CRUD」双层能力面。
+ */
 const plugin = {
   id: 'knowledge',
   name: 'Knowledge RAG',
   description: '知识库 RAG 引擎 — 自动检索注入 + AI 自主知识管理',
   configSchema: { type: 'object' as const, additionalProperties: true, properties: {} },
 
+  /**
+   * @description 向 OpenClaw 注册 `before_prompt_build` 钩子和 `knowledge_add|query|update|delete` 工具。
+   *              当 `pluginConfig.enabled === false` 时提前返回，不注册任何能力。
+   *
+   * @param api - OpenClaw 插件 API（含 `config`、`pluginConfig`、`registerTool`、`logger` 等）
+   */
   register(api: OpenClawPluginApi) {
     const cfg = (api.pluginConfig ?? {}) as Record<string, unknown>;
     if (cfg.enabled === false) {

@@ -1,5 +1,12 @@
 /**
- * 高德渠道 setupWizard — API Key 声明式 CLI 配置。
+ * 高德渠道 CLI 引导（Onboarding / Setup Wizard）
+ *
+ * **架构角色**：为 `openclaw setup` 提供声明式向导，引导用户配置
+ * 高德 Web 服务 API Key 并写入 `channels.amap`。
+ *
+ * **关键依赖**：
+ * - `./channel-setup-factory` — 通用 Channel setup 工厂
+ * - `openclaw/plugin-sdk` — OpenClawConfig 类型
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
@@ -7,6 +14,15 @@ import { createSimpleChannelSetup, getChannelSection } from "./channel-setup-fac
 
 const CHANNEL_ID = "amap";
 
+/**
+ * 从 openclaw.json 解析指定账号的高德 API Key。
+ *
+ * 查找顺序：`channels.amap.accounts[accountId].key` → `channels.amap.key`。
+ *
+ * @param cfg - 当前 OpenClaw 配置
+ * @param accountId - 账号 ID，默认 `"default"`
+ * @returns API Key 字符串；未配置时返回 `undefined`
+ */
 function resolveAmapKey(cfg: OpenClawConfig, accountId?: string): string | undefined {
   const section = getChannelSection(cfg, CHANNEL_ID);
   const accounts = section.accounts as Record<string, Record<string, unknown>> | undefined;
@@ -38,5 +54,8 @@ const { setupAdapter, setupWizard } = createSimpleChannelSetup({
   ],
 });
 
+/** 写入 channels.amap 配置的 setup adapter。 */
 export const amapSetupAdapter = setupAdapter;
+
+/** 交互式 CLI setup wizard 定义。 */
 export const amapSetupWizard = setupWizard;

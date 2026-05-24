@@ -1,20 +1,24 @@
 /**
- * mDNS/Bonjour 节点发现实现
+ * @fileoverview **mDNS/Bonjour 局域网发现**：零配置组播 DNS 广播与 PTR 查询发现同网段节点。
  *
- * 局域网零中心发现：通过组播 DNS 广播本节点并发现同网段其他节点。
- * - 本节点：响应 PTR 查询，回复 SRV + A 记录
- * - 发现：周期性发送 PTR 查询，收集 response 中的 SRV/A 得到节点列表
+ * @description 集群插件 **discovery 层** 后端，适用于边缘/开发局域网；响应 PTR 查询并周期性 probe。
  *
- * 依赖可选包 multicast-dns，未安装时 start() 会抛出并提示安装。
+ * **关键依赖**
+ * - 可选 `multicast-dns` npm 包 — 未安装时 `start()` 抛出明确错误。
+ * - 环境变量 `OPENCLAW_CLUSTER_ADDRESS` / `OPENCLAW_CLUSTER_PORT`。
+ *
  * @see https://github.com/mafintosh/multicast-dns
  */
 
 import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../shared/types.js";
 
+/** @description 默认 mDNS 服务类型（PTR/SRV 查询名）。 */
 const DEFAULT_SERVICE_TYPE = "_openclaw._tcp.local";
+
+/** @description 主动 PTR 查询间隔（毫秒）。 */
 const QUERY_INTERVAL_MS = 15_000;
 
-/** multicast-dns 实例类型（创建后为 mdns() 返回值） */
+/** @description `multicast-dns` 实例 duck-typing 形状。 */
 type MdnsInstance = {
   on: (e: string, fn: (packet: MdnsPacket) => void) => void;
   removeListener?: (e: string, fn: (packet: MdnsPacket) => void) => void;
@@ -23,6 +27,11 @@ type MdnsInstance = {
   destroy: () => void;
 } | null;
 
+/**
+ * @description 动态加载 `multicast-dns`；缺失时返回 `null`。
+ *
+ * @returns mdns 实例或 `null`。
+ */
 async function createMdns(): Promise<MdnsInstance> {
   try {
     const { createRequire } = await import("node:module");
@@ -34,6 +43,11 @@ async function createMdns(): Promise<MdnsInstance> {
   }
 }
 
+/**
+ * @description 基于 mDNS 的局域网成员发现。
+ *
+ * @implements {IDiscoveryService}
+ */
 export class MdnsDiscovery implements IDiscoveryService {
   private readonly serviceType: string;
   private readonly nodeId: string;
@@ -58,6 +72,12 @@ export class MdnsDiscovery implements IDiscoveryService {
     this.instanceName = `openclaw-${nodeId.replace(/\./g, "-")}.${this.serviceType}`;
   }
 
+  /**
+   * @description 启动 mdns、注册 query/respond 处理器并开始周期性 PTR 查询。
+   *
+   * @returns mdns 就绪后 resolve。
+   * @throws {Error} 未安装 `multicast-dns` 依赖。
+   */
   async start(): Promise<void> {
     this.mdns = await createMdns();
     if (!this.mdns) {
@@ -94,6 +114,11 @@ export class MdnsDiscovery implements IDiscoveryService {
     this.queryTimer = setInterval(() => this.sendQuery(), QUERY_INTERVAL_MS);
   }
 
+  /**
+   * @description 销毁 mdns 实例并清空节点映射。
+   *
+   * @returns 解析即完成的 Promise。
+   */
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.queryTimer) clearInterval(this.queryTimer);
@@ -172,7 +197,7 @@ export class MdnsDiscovery implements IDiscoveryService {
   }
 }
 
-/** multicast-dns 包返回的 packet 结构 */
+/** @description multicast-dns 响应 packet 结构（questions/answers/additionals）。 */
 interface MdnsPacket {
   questions?: Array<{ name: string; type: string }>;
   answers?: MdnsRecord[];

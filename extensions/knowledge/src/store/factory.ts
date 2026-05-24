@@ -1,20 +1,30 @@
 /**
- * VectorStore 工厂 — 按 provider 名路由到对应后端
+ * @fileoverview VectorStore 工厂 — 按 `store.provider` 实例化向量后端。
  *
- * 当前支持的 provider：
- * - sqlite-vec: 基于 better-sqlite3 的持久化向量存储（默认）— 推荐轻量生产
- * - zvec: 纯 JS 内存向量引擎（零依赖）— 推荐开发/演示
- * - native-zvec: 阿里 ZVec (@zvec/zvec) C++ 原生引擎 — 备选，需安装依赖
+ * @description
+ * 当前内置：
+ * - `sqlite-vec` — better-sqlite3 持久化 + FTS5（默认生产推荐）；
+ * - `zvec` — 纯 JS 内存引擎（开发/演示）；
+ * - `native-zvec` — `@zvec/zvec` 原生 HNSW（可选重依赖）。
  *
- * 后续扩展：
- * - redis/pinecone/chroma/weaviate/qdrant/milvus/pgvector 等
+ * **模块角色**：Knowledge Plugin · Vector storage adapter registry。
+ * **关键依赖**：`zvec.js`（静态）、`sqlite-vec`/`native-zvec`（动态 import）。
+ *
+ * @module knowledge/store/factory
  */
 
 import type { VectorStore, KnowledgeStoreConfig } from '../types.js';
 import { ZVecStore } from './zvec.js';
 // 注意：SqliteVecStore / NativeZVecStore 是动态 import，仅在使用时加载
 
-/** 创建 VectorStore 实例 */
+/**
+ * @description 异步构造并 `initialize()` 目标 {@link VectorStore}。
+ *
+ * @param config - 必须含 `provider` 与 `namespace`；其余字段 provider 特化。
+ * @param dimensions - 嵌入向量维度，写入表结构/索引。
+ * @returns 已初始化的 Store 实例。
+ * @throws 不支持的 provider 或可选依赖未安装。
+ */
 export async function createVectorStore(
   config: Required<Pick<KnowledgeStoreConfig, 'provider' | 'namespace'>> & KnowledgeStoreConfig,
   dimensions: number,
@@ -70,7 +80,12 @@ export async function createVectorStore(
   }
 }
 
-/** 获取默认 store 配置（用于未配置时自动选择） */
+/**
+ * @description 未显式配置 `store` 时的 sqlite-vec 默认连接参数。
+ *
+ * @param namespace - 租户/会话隔离键，参与 db 文件名。
+ * @returns 含 `provider`、`namespace`、`dbPath` 的默认配置。
+ */
 export function getDefaultStoreConfig(namespace: string): KnowledgeStoreConfig {
   return {
     provider: 'sqlite-vec',

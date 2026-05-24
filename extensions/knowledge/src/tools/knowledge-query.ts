@@ -1,12 +1,11 @@
 /**
- * knowledge_query — 知识库检索 Tool
+ * @fileoverview `knowledge_query` — OpenClaw 知识库 **检索 Tool**。
  *
- * 支持三种检索策略：
- * - vector  — 纯向量相似度检索
- * - keyword — 纯关键词（FTS5）检索
- * - hybrid  — 向量 + 关键词加权融合（默认）
+ * @description 暴露 vector/keyword/hybrid 三种策略，返回结构化 JSON 供 Agent 引用。
+ * **模块角色**：Knowledge Plugin · Agent tool (read path)。
+ * **关键依赖**：`getOrCreateStore`、`hybridSearch`。
  *
- * 输出结构化检索结果，供 AI 参考回答用户问题。
+ * @module knowledge/tools/knowledge-query
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -81,7 +80,10 @@ function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').
 // ===================================================================
 
 /**
- * 创建 wecom_knowledge_query Tool 定义
+ * @description 注册 `knowledge_query` Tool 定义与 execute 路由。
+ *
+ * @param ctx - OpenClaw Tool 上下文（含 accountId/agentId/pluginConfig）。
+ * @returns Agent Tool 描述对象（JSON Schema + execute）。
  */
 export function createKnowledgeQueryTool(ctx: OpenClawPluginToolContext) {
   return {

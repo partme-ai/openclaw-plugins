@@ -1,17 +1,12 @@
 /**
- * 共享文件系统配置同步实现
- * 通过 NFS/EFS 等共享文件系统实现多节点配置同步
+ * @fileoverview **共享文件系统配置同步**：通过 NFS/EFS 等挂载目录在多副本间传播 Gateway JSON 配置。
  *
- * 工作原理：
- * 1. 使用 fs.watch() 监控共享目录下的配置文件
- * 2. 检测到文件变更后读取新配置并通知回调
- * 3. 推送配置时写入共享目录，其他节点通过文件监听自动检测
+ * @description 集群插件 **config-sync 层** 的无中心后端；`index.ts` 在变更回调中触发 Gateway 热重载。
+ * 写入路径使用文件锁 + 版本号文件（`.version`）检测变更；`fs.watch` 与轮询双保险以兼容 NFS。
  *
- * 文件布局：
- * <sharedPath>/
- * ├── openclaw.json        -- 主配置文件
- * ├── openclaw.json.lock   -- 写锁文件（防并发写入）
- * └── .version             -- 配置版本号（用于变更检测）
+ * **关键依赖**
+ * - `node:fs` / `node:fs/promises` — 监听、读写、原子锁。
+ * - `../shared/types.js` — `IConfigSyncService` 契约。
  */
 
 import { readFile, writeFile, stat, unlink } from "node:fs/promises";
@@ -19,15 +14,16 @@ import { watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import type { ConfigSyncConfig, IConfigSyncService } from "../shared/types.js";
 
-/** 默认同步间隔（毫秒） */
+/** @description 版本轮询默认间隔（毫秒），NFS 上 `fs.watch` 不可靠时的兜底。 */
 const DEFAULT_SYNC_INTERVAL = 5000;
 
-/** 锁文件超时（毫秒） */
+/** @description 写锁文件视为过期并可强制删除的阈值（毫秒）。 */
 const LOCK_TIMEOUT = 10_000;
 
 /**
- * 共享文件系统配置同步
- * 适用于 NFS、EFS、GlusterFS 等共享存储环境
+ * @description 基于共享目录的配置传播服务；适用于多 Pod 挂载同一 PVC 的 K8s 场景。
+ *
+ * @implements {IConfigSyncService}
  */
 export class SharedFsConfigSync implements IConfigSyncService {
   /** 共享目录路径 */
@@ -63,11 +59,9 @@ export class SharedFsConfigSync implements IConfigSyncService {
   }
 
   /**
-   * 启动配置同步
-   * 1. 检查共享目录可访问性
-   * 2. 读取当前版本
-   * 3. 启动 fs.watch 文件监听
-   * 4. 启动备用轮询（NFS 兼容）
+   * @description 校验共享目录、读取初始版本、启动 `fs.watch` 与轮询。
+   *
+   * @returns 监听就绪后 resolve。
    */
   async start(): Promise<void> {
     const configPath = this.getConfigPath();
@@ -123,7 +117,9 @@ export class SharedFsConfigSync implements IConfigSyncService {
   }
 
   /**
-   * 停止配置同步
+   * @description 关闭 watcher、轮询与防抖定时器。
+   *
+   * @returns 资源释放后 resolve。
    */
   async stop(): Promise<void> {
     if (this.watcher) {
@@ -142,10 +138,11 @@ export class SharedFsConfigSync implements IConfigSyncService {
   }
 
   /**
-   * 推送配置到共享文件系统
-   * 使用锁文件确保写入原子性
+   * @description 在文件锁保护下写入 `openclaw.json` 并 bump 版本号。
    *
-   * @param config - 配置对象
+   * @param config - 要扩散的完整 Gateway 配置对象。
+   * @returns 写入成功后 resolve。
+   * @throws {Error} 无法在超时内获取写锁。
    */
   async pushConfig(config: Record<string, unknown>): Promise<void> {
     const lockPath = this.getLockPath();
@@ -174,7 +171,9 @@ export class SharedFsConfigSync implements IConfigSyncService {
   }
 
   /**
-   * 注册配置变更监听
+   * @description 注册配置变更回调（版本号变化且 JSON 解析成功时触发）。
+   *
+   * @param callback - 接收新配置对象的观察者。
    */
   onConfigChange(callback: (config: Record<string, unknown>) => void): void {
     this.changeCallbacks.push(callback);

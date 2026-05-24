@@ -1,9 +1,10 @@
 /**
- * knowledge_delete — 知识库删除 Tool
+ * @fileoverview `knowledge_delete` — 知识库 **删除/清空** Tool。
  *
- * 支持两种删除操作：
- * - delete_by_source — 按 sourceId 删除特定来源的所有 chunks
- * - clear — 清空整个命名空间的所有知识库数据
+ * @description 支持 `delete_by_source` 与 namespace 级 `clear`；含 owner/会话 NS ACL。
+ * **模块角色**：Knowledge Plugin · Agent tool (delete path)。
+ *
+ * @module knowledge/tools/knowledge-delete
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -74,6 +75,12 @@ function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').
 
 /**
  * 创建 wecom_knowledge_delete Tool 定义
+ */
+/**
+ * @description 注册 `knowledge_delete` Tool — `delete_by_source` 或 namespace `clear`。
+ *
+ * @param ctx - OpenClaw Tool 上下文。
+ * @returns Agent Tool 描述对象。
  */
 export function createKnowledgeDeleteTool(ctx: OpenClawPluginToolContext) {
   return {

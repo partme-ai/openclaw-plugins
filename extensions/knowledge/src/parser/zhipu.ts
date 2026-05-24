@@ -1,11 +1,9 @@
 /**
- * ZhipuDocParserService — 智谱 AI GLM-OCR 文档解析实现（远程方案）
+ * @fileoverview 智谱 GLM-OCR layout_parsing — 远程 PDF/图像解析。
  *
- * 调用智谱 AI 的 layout_parsing API，使用 GLM-OCR 模型解析文档和图片的布局
- * 并提取文本内容。支持图片和 PDF 文档的 OCR 识别，返回 Markdown 格式结果和布局详情。
+ * **模块角色**：Knowledge Plugin · Parser provider (Zhipu)。
  *
- * API: POST https://open.bigmodel.cn/api/paas/v4/layout_parsing
- * 文档: https://docs.bigmodel.cn/api-reference/模型-api/文档解析
+ * @module knowledge/parser/zhipu
  */
 import type { DocParserService, KnowledgeParserConfig, ParsedDocument } from '../types.js';
 

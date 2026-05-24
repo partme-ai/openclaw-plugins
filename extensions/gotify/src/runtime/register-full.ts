@@ -1,5 +1,10 @@
 /**
- * Gotify full 模式注册：HTTP 诊断路由（status / health / doctor）。
+ * @file Gotify full-mode HTTP 路由注册器。
+ *
+ * @description 当插件以 **full** bundle 加载时，向 OpenClaw Host 注册只读 JSON 端点：
+ * `/gotify/status`（账号+runtime 聚合）、`/gotify/health`（逐账号 `/health`）、
+ * `/gotify/doctor`（深度诊断列表）。全部 `auth: "plugin"`。
+ * **模块角色**：Channel Plugin · Observability HTTP surface。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -15,9 +20,12 @@ import { doctorGotifyAccount } from "./bootstrap.js";
 import { healthCheck } from "../transport/gotify-api.js";
 
 /**
- * 注册 Gotify 插件 full 模式 HTTP 路由。
+ * 向 Host 注册上述诊断路由（幂等由 Host 侧保证）。
  *
- * @param api - OpenClaw 插件宿主 API。
+ * @description Handler 内通过 `api.runtime.config.current()` 拉取最新配置快照；
+ * 不做敏感 token 回传（`describeGotifyAccountSnapshot` 已脱敏 serverUrl）。
+ * @param api - `OpenClawPluginApi` —— 提供 `registerHttpRoute` 与 `runtime` 句柄。
+ * @returns `void`
  */
 export function registerGotifyFull(api: OpenClawPluginApi): void {
   api.registerHttpRoute({

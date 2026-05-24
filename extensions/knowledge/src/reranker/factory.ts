@@ -1,10 +1,10 @@
 /**
- * Reranker 引擎工厂
+ * @fileoverview Reranker 引擎工厂 — 二阶段精排可选节点。
  *
- * 根据 provider 字段路由到对应的 RerankerService 实现。
- * 支持 3 个 provider：zhipu（远程），jina（远程），ollama（本地）。
+ * @description 支持 `zhipu`、`jina`、`ollama`；无 provider 时默认本地 Ollama。
+ * **模块角色**：Knowledge Plugin · Reranker adapter registry。
  *
- * 未配置时默认使用 ollama 本地方案（零配置即可在本地部署 Qwen3-Reranker 模型）。
+ * @module knowledge/reranker/factory
  */
 import type { RerankerService, KnowledgeRerankerConfig } from '../types.js';
 import { ZhipuRerankerService } from './zhipu.js';
@@ -12,11 +12,11 @@ import { JinaRerankerService } from './jina.js';
 import { OllamaRerankerService } from './ollama.js';
 
 /**
- * 创建 RerankerService 实例
+ * @description 创建 {@link RerankerService}；未知 provider 时抛出。
  *
- * @param config 可选的 Reranker 配置
- * @returns RerankerService 实例
- * @throws Error 当配置了未知 provider 时
+ * @param config - 可选 Reranker 配置。
+ * @returns 精排服务实例。
+ * @throws 配置了不支持的 provider。
  */
 export function createRerankerService(config?: KnowledgeRerankerConfig): RerankerService {
   const provider = config?.provider?.toLowerCase() ?? '';

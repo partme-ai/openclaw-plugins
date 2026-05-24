@@ -1,21 +1,20 @@
 /**
- * 节点间代理服务工厂
+ * @fileoverview **节点间消息平面工厂**：选择 HTTP 或 gRPC（及其实验性降级路径）实现 `IProxyService`。
  *
- * 根据配置协议创建对应的代理实现：
- * - http -- HTTP 代理（默认，通用性好）
- * - grpc -- gRPC 代理（高性能，待实现）
+ * @description `HttpProxyServer` 为当前完整功能实现；`GrpcProxyServer` 通过动态 `require` 探测可选依赖。
  */
+
 
 import type { ProxyConfig, IProxyService } from "../shared/types.js";
 import { HttpProxyServer } from "./http-proxy.js";
 import { GrpcProxyServer } from "./grpc-proxy.js";
 
 /**
- * 创建代理服务实例
- * 工厂方法，根据配置协议返回对应实现
+ * @description 根据 `ProxyConfig.protocol` 构造节点间消息转发服务实例。
  *
- * @param config - 代理配置
- * @returns 代理服务实例
+ * @param config - `cluster.proxy` 配置段落。
+ * @returns 对应协议的 `IProxyService` 实现（尚未 `start()`）。
+ * @throws {Error} 协议字面量不在 `http` | `grpc` 范围内。
  */
 export function createProxyService(config: ProxyConfig): IProxyService {
   switch (config.protocol) {

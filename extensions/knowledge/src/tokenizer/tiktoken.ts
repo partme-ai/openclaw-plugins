@@ -1,10 +1,9 @@
 /**
- * TikTokToken — 基于 tiktoken 的本地 Tokenizer 实现
+ * @fileoverview tiktoken 本地 Tokenizer — 零网络 token 计数/截断。
  *
- * 使用 tiktoken 开源库在本地计算 token 数量，无需网络调用。
- * 默认编码 o200k_base 与 GLM-4 系列和 OpenAI 模型兼容。
+ * **模块角色**：Knowledge Plugin · Tokenizer provider (tiktoken)。
  *
- * 智谱 Tokenizer API 文档: https://docs.bigmodel.cn/api-reference/模型-api/文本分词器
+ * @module knowledge/tokenizer/tiktoken
  */
 import { get_encoding, type Tiktoken, type TiktokenEncoding } from 'tiktoken';
 import type { TokenizerService, KnowledgeTokenizerConfig } from '../types.js';

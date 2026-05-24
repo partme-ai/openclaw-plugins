@@ -1,8 +1,9 @@
 /**
- * Gotify Config Wizard — 交互式配置向导。
+ * @file Gotify Application 发现/创建向导核心逻辑。
  *
- * 查找或创建同名 Gotify Application，返回 appToken 供后续配置使用。
- * 支持首次配置和已有应用复用两种场景。
+ * @description 通过 Client token 列举 Application，按 `bootstrap.applicationName` 命中复用；
+ * 若不存在且允许 `autoCreateApplication` 则 `POST /application`。
+ * **模块角色**：Channel Plugin · Interactive provisioning（非 Host shell UI 本身）。
  */
 
 import { createApplication, listApplications } from "../transport/gotify-api.js";

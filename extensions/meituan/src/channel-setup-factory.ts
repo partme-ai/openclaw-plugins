@@ -1,7 +1,9 @@
 /**
  * 共享 Channel setupWizard / setupAdapter 工厂。
  *
- * 供 extensions 下各渠道插件复用，减少重复声明式向导代码。
+ * **架构角色**：extensions 下各渠道插件的声明式 CLI 配置复用层。
+ *
+ * **关键依赖**：`openclaw/plugin-sdk/setup`
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
@@ -37,6 +39,7 @@ export type SetupTextInputSpec = {
   required?: boolean;
 };
 
+/** `createSimpleChannelSetup` 入参 */
 export type SimpleChannelSetupParams = {
   channel: string;
   label: string;
@@ -50,7 +53,11 @@ export type SimpleChannelSetupParams = {
 };
 
 /**
- * 读取 channels.<channel> 配置节。
+ * 读取 `openclaw.json` 中指定渠道配置节。
+ *
+ * @param cfg OpenClaw 全局配置
+ * @param channel 渠道 id
+ * @returns 原始配置对象
  */
 export function getChannelSection(cfg: OpenClawConfig, channel: string): Record<string, unknown> {
   return ((cfg.channels as Record<string, unknown> | undefined)?.[channel] ?? {}) as Record<
@@ -60,7 +67,10 @@ export function getChannelSection(cfg: OpenClawConfig, channel: string): Record<
 }
 
 /**
- * 创建标准 declarative Channel setup 表面（adapter + wizard）。
+ * 创建标准声明式 Channel setup 表面（adapter + wizard）。
+ *
+ * @param params 渠道标识与输入字段规格
+ * @returns setupAdapter 与 setupWizard
  */
 export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
   setupAdapter: ChannelSetupAdapter;
@@ -177,7 +187,10 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
 }
 
 /**
- * 基于连接 URL 的 MQ/消息中间件渠道 setup（channels.<id>.url）。
+ * 基于连接 URL 的消息中间件类渠道 setup。
+ *
+ * @param params 渠道元数据与默认 URL
+ * @returns setupAdapter 与 setupWizard
  */
 export function createUrlChannelSetup(params: {
   channel: string;
@@ -221,7 +234,10 @@ export function createUrlChannelSetup(params: {
 }
 
 /**
- * 双凭据渠道 setup（如 app_key + app_secret，映射到 token + secret 输入）。
+ * 双凭据渠道 setup（app_key + app_secret）。
+ *
+ * @param params 渠道元数据与环境变量提示
+ * @returns setupAdapter 与 setupWizard
  */
 export function createAppKeySecretChannelSetup(params: {
   channel: string;
@@ -276,7 +292,10 @@ export function createAppKeySecretChannelSetup(params: {
 }
 
 /**
- * 仅启用 embedded broker 类渠道（配置节存在即视为已配置）。
+ * 内嵌 Broker 类渠道 setup。
+ *
+ * @param params 渠道元数据
+ * @returns setupAdapter 与 setupWizard
  */
 export function createEmbeddedBrokerChannelSetup(params: {
   channel: string;

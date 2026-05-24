@@ -1,11 +1,10 @@
 /**
- * DashScope (阿里云百炼) Embedding API 实现
+ * @fileoverview 阿里云 DashScope（百炼）Embedding — OpenAI 兼容模式。
  *
- * 按照官方推荐使用 OpenAI 兼容模式调用：
- *   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
- *   API 格式: 完全兼容 OpenAI embeddings API
+ * @description 端点 `https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings`。
+ * **模块角色**：Knowledge Plugin · Embedding provider (DashScope)。
  *
- * 官方文档: https://help.aliyun.com/zh/model-studio/embedding-interfaces-compatible-with-openai
+ * @module knowledge/embedding/dashscope
  */
 import type { EmbeddingService, KnowledgeEmbeddingConfig } from '../types.js';
 

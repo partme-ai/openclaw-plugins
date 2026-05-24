@@ -1,24 +1,21 @@
 /**
- * Tokenizer 引擎工厂
+ * @fileoverview Tokenizer 引擎工厂 — Prompt 上下文截断可选节点。
  *
- * 根据 provider 字段路由到对应的 TokenizerService 实现。
- * 支持 2 个 provider：zhipu（远程），tiktoken（本地）。
+ * @description 支持 `zhipu`（远程精确）、`tiktoken`（本地默认）。
+ * **模块角色**：Knowledge Plugin · Tokenizer adapter registry。
  *
- * 默认使用 tiktoken（本地），零配置即可工作。
+ * @module knowledge/tokenizer/factory
  */
 import type { TokenizerService, KnowledgeTokenizerConfig } from '../types.js';
 import { TikTokenTokenizerService } from './tiktoken.js';
 import { ZhipuTokenizerService } from './zhipu.js';
 
 /**
- * 创建 TokenizerService 实例
+ * @description 创建 {@link TokenizerService}；无 provider 时默认 tiktoken。
  *
- * 路由逻辑：
- * 1. 如果 config 中有 provider 字段 → 按 provider 名精确匹配
- * 2. 无 provider → 默认使用 tiktoken（本地方案）
- *
- * @param config 可选的 Tokenizer 配置
- * @returns TokenizerService 实例
+ * @param config - 可选 Tokenizer 配置。
+ * @returns Token 计数/截断服务实例。
+ * @throws 未知 provider。
  */
 export function createTokenizerService(config?: KnowledgeTokenizerConfig): TokenizerService {
   const provider = config?.provider?.toLowerCase() ?? '';

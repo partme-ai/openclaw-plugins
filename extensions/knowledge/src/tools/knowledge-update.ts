@@ -1,8 +1,10 @@
 /**
- * knowledge_update — 知识库更新 Tool
+ * @fileoverview `knowledge_update` — 按 sourceId **覆盖式更新** 知识条目 Tool。
  *
- * 按 sourceId 更新已有知识条目：删除旧 chunks → 重新切分、嵌入、写入。
- * Update = deleteBySource(sourceId) + store_text / store_file / store_summary
+ * @description Update = `deleteBySource` + 重新 ingest（text/file/summary 三路径）。
+ * **模块角色**：Knowledge Plugin · Agent tool (write/update path)。
+ *
+ * @module knowledge/tools/knowledge-update
  */
 
 import { stat } from 'node:fs/promises';
@@ -83,6 +85,12 @@ function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').
 
 /**
  * 创建 wecom_knowledge_update Tool 定义
+ */
+/**
+ * @description 注册 `knowledge_update` Tool — 按 sourceId 覆盖 text/file/summary。
+ *
+ * @param ctx - OpenClaw Tool 上下文。
+ * @returns Agent Tool 描述对象。
  */
 export function createKnowledgeUpdateTool(ctx: OpenClawPluginToolContext) {
   return {

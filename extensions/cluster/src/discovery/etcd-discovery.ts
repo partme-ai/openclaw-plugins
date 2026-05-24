@@ -1,22 +1,20 @@
 /**
- * etcd 节点发现实现
+ * @fileoverview **etcd 节点发现**：通过 etcd lease + KV 前缀查询实现带 TTL 的成员注册与发现。
  *
- * 通过 etcd 键值存储进行节点注册和发现：
- * - 每个节点在 etcd 中注册带 TTL 的 lease
- * - 节点定期续约 lease（心跳）
- * - 通过 watch 机制监听节点变更
- * - 节点离线时 lease 过期自动清理
+ * @description 集群插件 **discovery 层** 后端；本节点 grant lease 后 PUT JSON 条目，定期 keepalive，
+ * 前缀 range 拉取全部成员。使用 etcd v3 HTTP API，无 gRPC 依赖。
  *
- * 注意：本实现使用 etcd v3 HTTP API（无需额外 gRPC 依赖），
- * 适用于轻量部署。生产环境建议使用 etcd3 npm 包。
+ * **关键依赖**
+ * - `fetch` — etcd v3 gRPC-Gateway HTTP 端点。
+ * - 环境变量 `OPENCLAW_CLUSTER_ADDRESS` / `OPENCLAW_CLUSTER_PORT`。
  */
 
 import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../shared/types.js";
 
-/** etcd 中节点键的前缀 */
+/** @description etcd KV 键前缀：`/openclaw/cluster/nodes/{nodeId}`。 */
 const ETCD_PREFIX = "/openclaw/cluster/nodes/";
 
-/** 节点注册信息（存储在 etcd 中） */
+/** @description 写入 etcd 的节点注册 JSON 结构。 */
 interface EtcdNodeEntry {
   nodeId: string;
   address: string;
@@ -27,9 +25,9 @@ interface EtcdNodeEntry {
 }
 
 /**
- * etcd 节点发现服务
+ * @description 基于 etcd lease/KV 的集群成员发现。
  *
- * 使用 etcd v3 HTTP API 实现节点注册、心跳和发现。
+ * @implements {IDiscoveryService}
  */
 export class EtcdDiscovery implements IDiscoveryService {
   /** etcd 端点列表 */

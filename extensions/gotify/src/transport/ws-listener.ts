@@ -1,7 +1,10 @@
 /**
- * Gotify WebSocket Listener — /stream 实时消息监听器。
+ * @file Gotify WebSocket Listener — `/stream` 实时入站传输层。
  *
- * 与服务端建立 WebSocket 长连接，接收实时消息推送。
+ * @description 与服务端建立 WebSocket 长连接，Zod 校验后回调 `onMessage`；
+ * 含首次连接 15s 超时、指数退避重连与 `maxReconnectAttempts` 上限。
+ * **模块角色**：Channel Plugin · Inbound transport (WebSocket)。
+ * **关键依赖**：`ws`、`zod`、`gotify-api.normalizeServerUrl`。
  *
  * ## 连接管理
  * - 首次连接: 15 秒超时门控 (connectionTimeout)

@@ -1,25 +1,15 @@
 /**
- * Gotify REST API 客户端 — 完整 Gotify Server API 封装。
+ * @file Gotify REST & health 全量封装（含账号级串行锁与重试策略）。
  *
- * ## 消息 API (appToken)
- * - POST /message — 发送消息
- * - GET /message — 获取消息列表（游标分页）
- * - DELETE /message — 删除全部消息
- * - DELETE /message/{id} — 删除单条消息
+ * @description 提供 Message / Application / Client / Health / Doctor / Probe 等方法族；
+ * 所有写路径默认 `withAccountLock` 避免同账号 burst 触发 Gotify rate limit；
+ * `fetchWithRetry` 在 5xx 与瞬态网络故障时指数退避重试。
+ * **模块角色**：Channel Plugin · Outbound/admin HTTP client layer。
  *
- * ## Application API (clientToken)
- * - GET/POST/PUT/DELETE /application — CRUD
- * - POST /application/{id}/image — 上传图标
- *
- * ## Client API (clientToken)
- * - GET/POST/PUT/DELETE /client — CRUD
- *
- * ## 基础设施
- * - GET /health — 健康检查
- * - 账号级并发锁 (withAccountLock) — 串行化同账号请求
- * - HTTP 重试 (fetchWithRetry) — 5xx 自动重试
- * - 超时控制 (fetchWithTimeout) — AbortController
- * - 应用名称缓存 (resolveApplicationName) — per-account Map
+ * ### API 分组（token 维度）
+ * - **App token**：`POST /message` 出站；
+ * - **Client token**：消息删除、Application CRUD、Client CRUD、分页查询；
+ * - **匿名**：`/health`。
  */
 
 import type {

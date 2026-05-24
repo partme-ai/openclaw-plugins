@@ -1,57 +1,66 @@
 /**
- * PostgreSQL 会话存储实现
- * 使用原生 TCP 连接（pg 协议简化版）实现会话持久化
+ * @fileoverview **PostgreSQL 共享会话存储**：实现 `ISessionStoreService`，持久化 `sessionKey→nodeId` 映射。
  *
- * 表结构：
+ * @description 集群插件 **session-store 层** 的关系型后端；表 `openclaw_sessions` 存储会话归属，
+ * 配合进程内短 TTL 缓存减少查询压力。可选动态加载 `pg` 模块；不可用时降级为仅内存缓存模式。
+ *
+ * **关键依赖**
+ * - 可选 `pg` npm 包 — 通过 `createRequire` 动态加载。
+ * - `../shared/types.js` — 服务接口与配置类型。
+ *
+ * **表结构**
+ * ```sql
  * CREATE TABLE IF NOT EXISTS openclaw_sessions (
  *   session_key TEXT PRIMARY KEY,
  *   node_id     TEXT NOT NULL,
  *   updated_at  TIMESTAMP DEFAULT NOW()
  * );
- *
- * 特性：
- * - 会话注册/查询/删除
- * - TTL 过期自动清理
- * - 连接池管理
+ * ```
  */
 
 import type { SessionStoreConfig, ISessionStoreService } from "../shared/types.js";
 
-/** 默认 Session TTL（秒） */
+/** @description 默认会话 TTL（秒），与 Redis 后端语义对齐。 */
 const DEFAULT_SESSION_TTL = 3600;
 
-/** TTL 清理间隔（毫秒） */
+/** @description 后台 TTL 清理任务间隔（毫秒）。 */
 const CLEANUP_INTERVAL = 60_000;
 
 /**
- * PostgreSQL 会话存储
- * 通过 fetch API 调用 PostgreSQL REST 代理或使用原生协议
+ * @description 基于 PostgreSQL 的跨节点会话索引；`pg` 不可用时自动切换 cache-only 模式。
  *
- * 注意：生产环境建议引入 pg 依赖。这里使用简化的 HTTP 代理方案，
- * 兼容 PostgREST / Supabase / 任何 PostgreSQL HTTP 代理。
+ * @implements {ISessionStoreService}
  */
 export class PostgresSessionStore implements ISessionStoreService {
-  /** PostgreSQL 连接 URL */
+  /** @description PostgreSQL 连接串（`postgresql://...`）。 */
   private readonly postgresUrl: string;
 
-  /** 当前节点 ID */
+  /** @description 当前 Gateway 副本逻辑节点 ID。 */
   private readonly nodeId: string;
 
-  /** Session TTL（秒） */
+  /** @description 会话记录在 DB/缓存中的有效时长（秒）。 */
   private readonly sessionTtl: number;
 
-  /** 内存缓存（减少数据库查询） */
+  /** @description 进程内 L1 缓存：sessionKey → { nodeId, updatedAt }。 */
   private readonly cache = new Map<string, { nodeId: string; updatedAt: number }>();
 
-  /** 缓存 TTL（毫秒） */
+  /** @description L1 缓存条目最大存活时间（毫秒）。 */
   private readonly cacheTtl = 10_000;
 
-  /** 清理定时器 */
+  /** @description 周期性 TTL 清理的 `setInterval` 句柄。 */
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
-  /** 是否使用简化模式（无 pg 依赖） */
+  /**
+   * @description `true` 表示无法连接 PG，读写仅走内存缓存（开发/降级场景）。
+   */
   private simpleMode = true;
 
+  /**
+   * @description 绑定连接 URL、节点 ID 与会话 TTL。
+   *
+   * @param config - `cluster.sessionStore` 配置。
+   * @param nodeId - 当前副本 ID。
+   */
   constructor(config: SessionStoreConfig, nodeId: string) {
     this.postgresUrl = config.postgresUrl ?? "postgresql://localhost:5432/openclaw";
     this.nodeId = nodeId;
@@ -59,8 +68,9 @@ export class PostgresSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 启动 PostgreSQL 会话存储
-   * 创建表（如果不存在）并启动 TTL 清理定时器
+   * @description 建表（若不存在）并启动 TTL 清理定时器。
+   *
+   * @returns 初始化完成后 resolve；建表失败时进入 cache-only 模式仍 resolve。
    */
   async start(): Promise<void> {
     console.log(
@@ -94,7 +104,9 @@ export class PostgresSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 停止存储服务
+   * @description 停止清理定时器并清空 L1 缓存。
+   *
+   * @returns 解析即完成的 Promise。
    */
   async stop(): Promise<void> {
     if (this.cleanupTimer) {
@@ -106,11 +118,10 @@ export class PostgresSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 获取 Session 所在节点
-   * 先查缓存，缓存未命中再查数据库
+   * @description 先查 L1 缓存，未命中且非 simpleMode 时查 PostgreSQL。
    *
-   * @param sessionKey - 会话键
-   * @returns 节点 ID，不存在返回 null
+   * @param sessionKey - 会话唯一标识。
+   * @returns 节点 ID；不存在时返回 `null`。
    */
   async getSessionNode(sessionKey: string): Promise<string | null> {
     // 查缓存
@@ -141,10 +152,10 @@ export class PostgresSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 注册 Session 到当前节点
-   * 使用 UPSERT 确保幂等性
+   * @description UPSERT 会话映射到本节点（幂等）；同步更新 L1 缓存。
    *
-   * @param sessionKey - 会话键
+   * @param sessionKey - 会话唯一标识。
+   * @returns 写入完成后 resolve（DB 错误时仅打日志，缓存仍生效）。
    */
   async registerSession(sessionKey: string): Promise<void> {
     // 更新缓存
@@ -166,9 +177,10 @@ export class PostgresSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 移除 Session
+   * @description 从缓存与数据库删除会话映射。
    *
-   * @param sessionKey - 会话键
+   * @param sessionKey - 会话唯一标识。
+   * @returns 删除完成后 resolve。
    */
   async removeSession(sessionKey: string): Promise<void> {
     this.cache.delete(sessionKey);
@@ -185,8 +197,9 @@ export class PostgresSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 清理过期 Session
-   * 删除超过 TTL 的记录
+   * @description 清理 L1 缓存与 DB 中超过 `sessionTtl` 的过期行。
+   *
+   * @returns 清理完成后 resolve。
    */
   private async cleanup(): Promise<void> {
     // 清理内存缓存
@@ -211,11 +224,11 @@ export class PostgresSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 执行 SQL 查询
-   * 简化实现：通过环境中可用的 pg 模块或降级到缓存
+   * @description 动态加载 `pg` 并执行单次查询（每次新建 Client，无连接池）。
    *
-   * @param sql - SQL 语句
-   * @returns 查询结果行
+   * @param sql - 待执行的 SQL 语句。
+   * @returns 结果行数组。
+   * @throws {Error} `pg` 模块不可用或查询失败；失败时设置 `simpleMode = true`。
    */
   private async executeQuery(sql: string): Promise<Record<string, unknown>[]> {
     try {
@@ -245,7 +258,10 @@ export class PostgresSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 转义 SQL 字符串（防注入）
+   * @description SQL 字符串字面量转义（单引号加倍），非参数化查询的最低限度防护。
+   *
+   * @param str - 原始字符串。
+   * @returns 可嵌入 SQL 字面量的转义结果。
    */
   private escapeString(str: string): string {
     return str.replace(/'/g, "''");

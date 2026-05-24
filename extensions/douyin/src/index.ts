@@ -1,8 +1,15 @@
 /**
- * @partme.ai/openclaw-douyin — 抖音开放平台渠道（官方 defineChannelPluginEntry）
+ * @partme.ai/openclaw-douyin — 抖音开放平台渠道插件入口。
  *
- * - channels.douyin 多账号 / 混合配置
- * - Gateway 按账号注册 Webhook（auth: plugin）并入站派发
+ * **架构角色**：OpenClaw 渠道插件的 `defineChannelPluginEntry` 注册点，将
+ * `douyinChannelPlugin` 暴露给宿主，并在 full 模式下注册运营工具。
+ *
+ * **业务说明**：
+ * - 配置来源：`openclaw.json` → `channels.douyin`（支持顶层 + `accounts.<id>` 多账号）
+ * - 入站：Gateway 按账号注册 Webhook（`auth: plugin`），经 `inbound.ts` 验签后派发
+ * - 出站：占位实现（直连 DM 需抖店/OpenAPI）
+ *
+ * **关键依赖**：`openclaw/plugin-sdk/core`、`./channel`、`./runtime`、`./tools/tools`
  */
 
 import {
@@ -14,11 +21,14 @@ import { getDouyinRuntime, setDouyinRuntime } from "./runtime.js";
 import type { DouyinAccountConfig } from "./types.js";
 import { createDouyinTools } from "./tools/tools.js";
 
+/** 重新导出渠道插件与 runtime setter，供宿主或测试直接 import */
 export { douyinChannelPlugin } from "./channel.js";
 export { setDouyinRuntime, getDouyinRuntime } from "./runtime.js";
 
 /**
- * 从当前 PluginRuntime 读取 channels.douyin 供工具注册使用。
+ * 创建配置读取闭包，供 `createDouyinTools` 在 execute 时懒加载渠道凭据。
+ *
+ * @returns 无参 getter；运行时未初始化或配置缺失时返回 `undefined`
  */
 function createGetDouyinSectionConfig(): () => DouyinAccountConfig | undefined {
   return () => {

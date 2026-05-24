@@ -1,10 +1,10 @@
 /**
- * 配置同步服务工厂
+ * @fileoverview **配置同步总线工厂**：返回 `none`/`etcd-kv`/`shared-fs` 对应的 `IConfigSyncService`。
  *
- * 根据配置类型创建对应的配置同步实现：
- * - none      -- 无同步（单节点模式）
- * - etcd-kv   -- etcd 键值存储同步
- * - shared-fs -- 共享文件系统同步（NFS / EFS）
+ * @description
+ * - `none`：在单副本或外部 GitOps 接管配置时关闭集群内一致性协议；
+ * - `etcd-kv`：中心化键值存储 + revision 比对；
+ * - `shared-fs`：借助 POSIX `watch`/`poll` + 原子写锁兼容 NFS。
  */
 
 import type { ConfigSyncConfig, IConfigSyncService } from "../shared/types.js";
@@ -12,11 +12,11 @@ import { EtcdConfigSync } from "./etcd-config-sync.js";
 import { SharedFsConfigSync } from "./shared-fs-config-sync.js";
 
 /**
- * 创建配置同步服务实例
- * 工厂方法，根据配置类型返回对应实现
+ * @description 运行时工厂：`ConfigSyncConfig.type` → 具体适配器实例。
  *
- * @param config - 同步配置
- * @returns 配置同步服务实例
+ * @param config - `cluster.configSync`。
+ * @returns 已实现生命周期的服务对象（仍未 `start()`）。
+ * @throws {Error} type 字面量漂移。
  */
 export function createConfigSyncService(
   config: ConfigSyncConfig
@@ -34,22 +34,29 @@ export function createConfigSyncService(
 }
 
 /**
- * 空操作配置同步（无同步）
- * 单节点模式或不需要配置同步时使用
+ * @description **No-op / Pass-through**：既不写入外部媒介，也不会触发回调，
+ * 保证编排代码路径在单节点场景仍可统一 `await svc.start()`。
+ *
+ * @remarks `pushConfig` 亦为 stub——控制面 `/cluster/config` POST 仍会成功调用但因无 watcher，
+ * **不会扩散**。
  */
 class NoopConfigSync implements IConfigSyncService {
+  /** @inheritdoc */
   async start(): Promise<void> {
     console.log("[openclaw-cluster] Config sync: none (single-node mode)");
   }
 
+  /** @inheritdoc */
   async stop(): Promise<void> {
     // 无操作
   }
 
+  /** @inheritdoc */
   async pushConfig(_config: Record<string, unknown>): Promise<void> {
     // 无操作
   }
 
+  /** @inheritdoc */
   onConfigChange(_callback: (config: Record<string, unknown>) => void): void {
     // 无操作
   }

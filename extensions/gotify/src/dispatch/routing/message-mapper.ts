@@ -1,14 +1,16 @@
 /**
- * Gotify Message Mapper — OpenClaw ↔ Gotify 消息格式双向转换。
+ * @file Gotify message-mapper — OpenClaw ↔ Gotify payload 双向转换。
  *
- * ## 出站 (OpenClaw → Gotify)
- * - 将 OpenClaw ChannelOutboundContext 映射为 Gotify POST /message payload
- * - 自动注入 extras.openclaw.{source: "openclaw", outbound: true} 防止回环
- * - 映射 metadata.url → client::notification.click.url
- * - 映射 metadata.contentType → client::display.contentType
+ * @description
+ * ## 出站（Host → Gotify）
+ * - `ChannelOutboundContext` → `POST /message` JSON；
+ * - 自动写入 `extras.openclaw.outbound` 防止 `/stream` 回环；
+ * - 透传 `metadata.url` / `metadata.contentType` → Gotify client display/notification 命名空间。
  *
- * ## 入站检测
- * - isOpenClawOutboundStreamMessage() 检测 WebSocket 流中的自身回显
+ * ## 入站辅助
+ * - `isOpenClawOutboundStreamMessage` 基于 message-sdk 元数据侦测自身 echo。
+ *
+ * **模块角色**：Channel Plugin · Serialization / metadata bridge。
  */
 
 import type { ChannelOutboundContext } from "openclaw/plugin-sdk/channel-contract";

@@ -1,12 +1,23 @@
 /**
- * 美团运营工具：与《美团开放平台对接规格》EP-3 一致，封装美团 Open API 调用。
- * 供 registerTool 注册（若运行时提供）。实际 path 与参数以美团接口文档为准。
+ * 美团 Agent 运营工具注册模块。
+ *
+ * **架构角色**：封装美团 Open API 为 Agent 可调用工具（订单、评价、指标、核销等）。
+ *
+ * **业务说明**：与《美团开放平台对接规格》EP-3 对齐；path 以官方文档为准。
+ *
+ * **关键依赖**：`../meituan/meituan-api`、`../types`
  */
 
 import type { ToolDefinition } from "../types.js";
 import type { MeituanAccountConfig } from "../types.js";
 import { meituanApiCall } from "../meituan/meituan-api.js";
 
+/**
+ * 创建带运行时配置注入的美团工具列表。
+ *
+ * @param getConfig 懒加载 `MeituanAccountConfig` 的 getter
+ * @returns 可传给 `api.registerTool` 的工具定义数组
+ */
 export function createMeituanTools(
   getConfig: () => MeituanAccountConfig | undefined
 ): ToolDefinition[] {
@@ -93,7 +104,7 @@ export function createMeituanTools(
   ];
 }
 
-/** 兼容：无 getConfig 时返回占位工具（仅用于测试或未注入配置时） */
+/** 静态占位工具（无 getConfig，供测试或未注入配置时使用） */
 export const meituanQueryOrders: ToolDefinition = {
   name: "meituan_query_orders",
   description: "查询美团订单列表，支持按日期、状态筛选",

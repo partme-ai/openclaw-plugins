@@ -1,23 +1,19 @@
 /**
- * HTTP 节点间代理完整实现
+ * @fileoverview **HTTP 节点间代理**：集群消息平面的默认实现，接收/转发跨节点 POST 消息。
  *
- * 提供节点间消息路由能力：
- * - 启动一个 HTTP 服务器监听其他节点的转发请求
- * - 通过 HTTP POST 将消息转发到目标节点
- * - 支持健康检查和节点列表查询
- * - 包含超时和错误重试机制
+ * @description 集群插件 **proxy 层** 完整实现；discovery 变更时调用 `updateNodes` 刷新路由表。
+ * 暴露 `/forward`、`/proxy/health`、`/proxy/nodes` 端点。
  *
- * 端点：
- * - POST /forward        -- 接收转发消息
- * - GET  /proxy/health   -- 代理健康检查
- * - GET  /proxy/nodes    -- 已知节点列表
+ * **关键依赖**
+ * - `node:http` — 入站 HTTP server。
+ * - `fetch` — 出站转发到远端节点。
  */
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import type { ProxyConfig, IProxyService, ClusterNodeInfo } from "../shared/types.js";
 
 /**
- * 消息转发请求体
+ * @description 跨节点 HTTP 转发请求体 JSON 结构。
  */
 interface ForwardRequest {
   /** 源节点 ID */
@@ -31,10 +27,9 @@ interface ForwardRequest {
 }
 
 /**
- * HTTP 节点间代理
+ * @description HTTP 节点间消息代理；实现 `IProxyService` 并扩展 `updateNodes` / `onMessage`。
  *
- * 每个集群节点运行一个 HTTP 代理，
- * 负责接收来自其他节点的转发消息，并转发本地消息到远端节点。
+ * @implements {IProxyService}
  */
 export class HttpProxyServer implements IProxyService {
   /** 代理配置 */

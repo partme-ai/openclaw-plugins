@@ -1,8 +1,9 @@
 /**
- * 知识库配置合并模块
+ * @fileoverview 知识库配置的 **解析、校验与深度合并**。
  *
- * 提供从原始配置对象解析、校验、合并知识库配置的纯函数。
- * 供 hooks.ts 之外的模块独立使用，不依赖 Zod。
+ * @description
+ * - 运行于 **编排层上游**：把原始 JSON/YAML 片段转化为可用的冻结默认值骨架；
+ * - **不涉及运行时 Side‑effect**：纯函数实现（不依运行时钩子）。
  *
  * @module knowledge/config
  */
@@ -47,7 +48,7 @@ const DEFAULT_INJECTION: KnowledgeInjectionConfig = {
   template: '以下是相关知识库内容，请据此回答用户问题：\n\n{context}',
 };
 
-/** 完整默认知识库配置 */
+/** @description 插件禁用时仍可作为合并基线的冻结默认知识库配置快照。 */
 export const DEFAULT_KNOWLEDGE_CONFIG: KnowledgeConfig = Object.freeze({
   enabled: false,
   embedding: { ...DEFAULT_EMBEDDING },
@@ -61,18 +62,10 @@ export const DEFAULT_KNOWLEDGE_CONFIG: KnowledgeConfig = Object.freeze({
 // ===================================================================
 
 /**
- * 校验知识库配置，返回错误信息数组。
- * 空数组表示配置合法。
+ * @description 逐项校验 `KnowledgeConfig` 字段类型与取值范围，生成人类可读错误列表。
  *
- * 校验规则：
- * - enabled 必须是 boolean（如果存在）
- * - embedding.provider 如果有值必须是 string
- * - embedding.dimensions 如果有值必须是正整数
- * - store.provider 如果有值必须是 string
- * - retrieval.topK 如果有值必须是正整数
- * - retrieval.minScore 如果有值必须在 [0, 1] 区间
- * - retrieval.strategy 如果有值必须是 'hybrid' | 'vector' | 'keyword'
- * - injection.position 如果有值必须是 'system' | 'user'
+ * @param config - 候选配置（通常来自合并后的对象）
+ * @returns 若为空数组则表示通过；否则每项为一条中文错误说明
  */
 export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
   const errors: string[] = [];
@@ -184,16 +177,11 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
 // ===================================================================
 
 /**
- * 从原始配置对象解析并校验知识库配置。
+ * @description 将外部「松散对象」提升为强类型 `KnowledgeConfig`。仅当 `enabled===true` 时才返回实体；
+ *              否则返回 `null`（表示功能关闭）。
  *
- * 行为：
- * - 如果 raw 为 null/undefined/非对象，返回 null
- * - 如果 raw.enabled 不为 true，返回 null（禁用态）
- * - 使用 DEFAULT_KNOWLEDGE_CONFIG 作为基础，用 raw 中的字段覆盖
- * - 返回的配置保证所有子字段都有值（未设置的使用默认值）
- *
- * @param raw - 原始配置对象（通常来自 JSON 反序列化）
- * @returns 解析后的 KnowledgeConfig，或 null（禁用/无效）
+ * @param raw - 反序列化后的插件配置节点（可能缺字段或类型不完备）
+ * @returns 结构完整的启用配置，或 `null`
  */
 export function createKnowledgeConfig(raw: any): KnowledgeConfig | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -223,16 +211,12 @@ export function createKnowledgeConfig(raw: any): KnowledgeConfig | null {
 }
 
 /**
- * 深度合并知识库配置（全局 + account 覆盖）
+ * @description 在不触碰运行时状态的前提下合并全局模板与账号覆盖层：
+ *              `store.sources` **整体替换**，其余嵌套字段走浅合并。
  *
- * 规则与 hooks.ts 中的 deepMergeKnowledgeConfig 保持一致：
- * - enabled: 继承全局
- * - embedding/store/retrieval/injection/moderation: 浅层合并（cover）
- * - store.sources: 完全替换（不合并）
- *
- * @param global - 全局知识库配置
- * @param accountOverride - account 级覆盖配置（可选）
- * @returns 合并后的配置，或 null（全局未启用）
+ * @param global - 租户级默认配置（必须 `enabled===true` 才有意义）
+ * @param accountOverride - account 粒度补丁（递归可选）
+ * @returns 合并产物；若全局未启用则返回 `null`
  */
 export function mergeKnowledgeConfig(
   global?: KnowledgeConfig | null,
@@ -275,7 +259,10 @@ export function mergeKnowledgeConfig(
 // ===================================================================
 
 /**
- * 合并 Embedding 配置（使用默认值填充缺失字段）
+ * @description 将以 Partial 形式给出的 embedding 片段与默认值表对齐。
+ *
+ * @param raw - 任意来源的配置片段
+ * @returns 具备默认模型/provider/dimensions 的结构体
  */
 function mergeEmbeddingConfig(raw: any): KnowledgeEmbeddingConfig {
   if (!raw || typeof raw !== 'object') {
@@ -288,7 +275,10 @@ function mergeEmbeddingConfig(raw: any): KnowledgeEmbeddingConfig {
 }
 
 /**
- * 合并 Store 配置（使用默认值填充缺失字段）
+ * @description 合并向量存储连接参数并保留扩展字段（`sources`、`extra`）。
+ *
+ * @param raw - `store` 段落原始对象
+ * @returns 规范化后的 {@link KnowledgeStoreConfig}
  */
 function mergeStoreConfig(raw: any): KnowledgeStoreConfig {
   if (!raw || typeof raw !== 'object') {
@@ -327,7 +317,9 @@ function mergeStoreConfig(raw: any): KnowledgeStoreConfig {
 }
 
 /**
- * 合并检索配置（使用默认值填充缺失字段）
+ * @description 对齐检索默认策略/topK/minScore。
+ *
+ * @param raw - `retrieval` 段落
  */
 function mergeRetrievalConfig(raw: any): KnowledgeRetrievalConfig {
   if (!raw || typeof raw !== 'object') {
@@ -340,7 +332,9 @@ function mergeRetrievalConfig(raw: any): KnowledgeRetrievalConfig {
 }
 
 /**
- * 合并注入配置（使用默认值填充缺失字段）
+ * @description 对齐 Prompt 注入模板位置与占位符骨架。
+ *
+ * @param raw - `injection` 段落
  */
 function mergeInjectionConfig(raw: any): KnowledgeInjectionConfig {
   if (!raw || typeof raw !== 'object') {

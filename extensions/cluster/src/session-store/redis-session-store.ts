@@ -1,51 +1,60 @@
 /**
- * Redis 共享会话存储实现
+ * @fileoverview **Redis 共享会话存储**：实现 `ISessionStoreService`，为多节点会话粘性提供 `sessionKey→nodeId` 映射。
  *
- * 使用 Redis 作为跨节点共享会话状态的存储后端：
- * - 每个 Session 通过 SET key=sessionKey value=nodeId 记录所在节点
- * - 带 TTL 自动过期，避免僵尸会话
- * - 支持 Session 迁移（更新 nodeId）
+ * @description 集群插件 **session-store 层** 的生产后端之一；Gateway 通过工厂 `createSessionStoreService` 选用。
+ * 每个 Session 以 `SET openclaw:cluster:session:{key} {nodeId} EX ttl` 写入 Redis，支持 TTL 自动过期与跨节点迁移。
  *
- * 注意：使用原生 TCP 连接实现 Redis 协议，避免引入 ioredis/redis 依赖。
- * 生产环境建议使用 ioredis 替换此简化实现。
+ * **关键依赖**
+ * - Node.js `node:net` — 原生 TCP 连接，自实现 RESP 协议（无 ioredis/redis 依赖）。
+ * - `../shared/types.js` — `ISessionStoreService`、`SessionStoreConfig` 契约。
+ *
+ * @remarks 生产环境建议使用 ioredis 替换此简化 RESP 客户端以获得连接池与集群支持。
  */
 
 import { createConnection, type Socket } from "node:net";
 import type { ISessionStoreService, SessionStoreConfig } from "../shared/types.js";
 
-/** Redis 键前缀 */
+/** @description Redis 键命名空间前缀，避免与其他应用键冲突。 */
 const KEY_PREFIX = "openclaw:cluster:session:";
 
 /**
- * Redis 会话存储服务
+ * @description 基于 Redis 的跨节点会话索引服务。
  *
- * 通过 Redis 实现跨节点共享会话状态。
+ * @implements {ISessionStoreService}
  */
 export class RedisSessionStore implements ISessionStoreService {
-  /** Redis 连接 URL */
+  /** @description `redis://` 连接 URL（含可选密码）。 */
   private readonly redisUrl: string;
 
-  /** Session TTL（秒） */
+  /** @description 会话映射 TTL（秒），到期后 Redis 自动删除键。 */
   private readonly sessionTtl: number;
 
-  /** 当前节点 ID */
+  /** @description 当前 Gateway 副本的逻辑节点 ID，写入 `registerSession` 的值域。 */
   private readonly nodeId: string;
 
-  /** TCP Socket */
+  /** @description 与 Redis 的 TCP 连接句柄。 */
   private socket: Socket | null = null;
 
-  /** 请求队列（Redis 是 FIFO 响应） */
+  /**
+   * @description FIFO 响应队列：Redis 单连接下请求与响应严格一一对应。
+   */
   private responseQueue: Array<{
     resolve: (value: string) => void;
     reject: (err: Error) => void;
   }> = [];
 
-  /** 接收数据缓冲区 */
+  /** @description 未完整解析的 RESP 字节缓冲。 */
   private buffer = "";
 
-  /** 连接状态 */
+  /** @description TCP 连接是否已建立且可用。 */
   private connected = false;
 
+  /**
+   * @description 绑定 Redis URL、TTL 与本节点 ID。
+   *
+   * @param config - `cluster.sessionStore` 配置。
+   * @param nodeId - 当前副本 ID。
+   */
   constructor(config: SessionStoreConfig, nodeId: string) {
     this.redisUrl = config.redisUrl ?? "redis://localhost:6379";
     this.sessionTtl = config.sessionTtl ?? 3600;
@@ -53,7 +62,10 @@ export class RedisSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 启动 Redis 连接
+   * @description 建立 Redis TCP 连接；若 URL 含密码则先执行 `AUTH`。
+   *
+   * @returns 连接就绪后 resolve。
+   * @throws {Error} 连接失败或认证失败时 reject。
    */
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -99,7 +111,9 @@ export class RedisSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 关闭 Redis 连接
+   * @description 发送 `QUIT` 并销毁 socket，清空响应队列。
+   *
+   * @returns 关闭完成后 resolve（忽略 QUIT 异常）。
    */
   async stop(): Promise<void> {
     if (this.socket) {
@@ -117,10 +131,11 @@ export class RedisSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 获取 Session 所在节点
+   * @description 查询 Session 当前绑定的节点 ID。
    *
-   * @param sessionKey - 会话标识
-   * @returns 节点 ID，不存在返回 null
+   * @param sessionKey - 会话唯一标识。
+   * @returns 节点 ID；键不存在时返回 `null`。
+   * @throws {Error} Redis 未连接或命令失败。
    */
   async getSessionNode(sessionKey: string): Promise<string | null> {
     const result = await this.sendCommand("GET", `${KEY_PREFIX}${sessionKey}`);
@@ -128,18 +143,22 @@ export class RedisSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 注册 Session 到当前节点
+   * @description 将会话绑定到本节点并设置 TTL（支持迁移：覆盖旧 nodeId）。
    *
-   * @param sessionKey - 会话标识
+   * @param sessionKey - 会话唯一标识。
+   * @returns 命令成功后 resolve。
+   * @throws {Error} Redis 未连接或 SET 失败。
    */
   async registerSession(sessionKey: string): Promise<void> {
     await this.sendCommand("SET", `${KEY_PREFIX}${sessionKey}`, this.nodeId, "EX", String(this.sessionTtl));
   }
 
   /**
-   * 移除 Session
+   * @description 从 Redis 删除会话映射。
    *
-   * @param sessionKey - 会话标识
+   * @param sessionKey - 会话唯一标识。
+   * @returns 命令成功后 resolve。
+   * @throws {Error} Redis 未连接或 DEL 失败。
    */
   async removeSession(sessionKey: string): Promise<void> {
     await this.sendCommand("DEL", `${KEY_PREFIX}${sessionKey}`);
@@ -148,10 +167,11 @@ export class RedisSessionStore implements ISessionStoreService {
   // ======================== Redis 协议处理 ========================
 
   /**
-   * 发送 Redis RESP 命令
+   * @description 编码并发送 RESP 命令，等待对应响应入队 resolve。
    *
-   * @param args - 命令和参数列表
-   * @returns Redis 响应字符串
+   * @param args - Redis 命令及参数（如 `"SET"`, `"key"`, `"value"`）。
+   * @returns 原始 RESP 响应行或 bulk string 内容。
+   * @throws {Error} 未连接或收到 `-ERR` 错误行。
    */
   private sendCommand(...args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -182,9 +202,9 @@ export class RedisSessionStore implements ISessionStoreService {
   }
 
   /**
-   * 处理接收缓冲区中的数据
+   * @description 从接收缓冲中解析完整 RESP 响应并唤醒队首 Promise。
    *
-   * 解析完整的 RESP 响应并回调等待队列
+   * @remarks 支持 `+`/`-`/`:`/`$` 类型；数组类型做最小跳过处理。
    */
   private processBuffer(): void {
     while (this.buffer.length > 0 && this.responseQueue.length > 0) {

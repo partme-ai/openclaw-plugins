@@ -1,9 +1,9 @@
 /**
- * OpenClaw Gotify Channel — 配置 Schema 定义
+ * @file Gotify `ChannelConfigSchema` —— JSON Schema + Zod 双轨定义。
  *
- * OpenClaw SDK 使用 Zod 作为配置校验格式（参见 buildChannelConfigSchema）。
- * 这里直接构建符合 ChannelConfigSchema 规范的 JSON Schema 对象，
- * 与 buildCatchallMultiAccountChannelSchema + buildChannelConfigSchema 等效。
+ * @description `gotifyConfigSchema` 供 Host UI 动态表单渲染 / 校验；
+ * 并存 `GotifyAccountSchema`（Zod）以便未来迁移到 SDK `buildChannelConfigSchema` pipeline。
+ * **模块角色**：Channel Plugin · Declarative configuration contract。
  */
 
 import { z } from "zod";

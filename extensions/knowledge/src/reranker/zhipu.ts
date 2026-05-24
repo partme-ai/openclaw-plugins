@@ -1,11 +1,9 @@
 /**
- * ZhipuRerankerService — 智谱 AI Rerank API 实现（远程方案）
+ * @fileoverview 智谱 Rerank API — 远程二阶段精排。
  *
- * 调用智谱 AI 的 rerank API 对候选文档进行精细重排序。
- * 支持 query + documents（最多128条），返回相关性得分。
+ * **模块角色**：Knowledge Plugin · Reranker provider (Zhipu)。
  *
- * API: POST https://open.bigmodel.cn/api/paas/v4/rerank
- * 文档: https://docs.bigmodel.cn/api-reference/模型-api/文本重排序
+ * @module knowledge/reranker/zhipu
  */
 import type { RerankerService, KnowledgeRerankerConfig, ScoredDocument } from '../types.js';
 

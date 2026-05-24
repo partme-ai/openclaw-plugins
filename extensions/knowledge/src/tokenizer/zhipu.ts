@@ -1,11 +1,9 @@
 /**
- * ZhipuTokenizerService — 智谱 AI Tokenizer API 实现（远程方案）
+ * @fileoverview 智谱 Tokenizer API — 远程精确 token 计数。
  *
- * 调用智谱 AI 的 tokenizer API 准确计算指定模型下的 token 消耗。
- * 适用于需要精确匹配特定模型（如 glm-4.6、glm-4-flash）token 划分的场景。
+ * **模块角色**：Knowledge Plugin · Tokenizer provider (Zhipu)。
  *
- * API: POST https://open.bigmodel.cn/api/paas/v4/tokenizer
- * 文档: https://docs.bigmodel.cn/api-reference/模型-api/文本分词器
+ * @module knowledge/tokenizer/zhipu
  */
 import type { TokenizerService, KnowledgeTokenizerConfig } from '../types.js';
 

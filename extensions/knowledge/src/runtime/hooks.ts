@@ -1,14 +1,12 @@
 /**
- * Knowledge 内核 — 配置合并 + 运行时管理
+ * @fileoverview Knowledge 运行时核心 — **配置合并 / Store 缓存 / before_prompt_build 编排**。
  *
- * 核心逻辑：
- * 1. deepMergeKnowledgeConfig — 全局配置 + account 级覆盖的深度合并
- * 2. getOrCreateStore — 按 accountId:mode 命名空间获取/创建 VectorStore 实例
- * 3. before_prompt_build hook — 注入 RAG 上下文
+ * @description
+ * 在典型 RAG 流水线中的位置：**Intent Gate → Hybrid Search → （可选）Rerank → （可选）Tokenizer 截断
+ * → System/User Prompt 注入**。
+ * 本模块同时承担 **跨请求复用** 的 `VectorStore`+`EmbeddingService` 实例缓存，降低冷启动成本。
  *
- * 可选流水线节点：
- * - reranker: 检索后对 chunks 重排序（需配置 reranker.provider）
- * - tokenizer: 注入前对上下文做 token 截断（需配置 tokenizer.provider）
+ * @module knowledge/runtime/hooks
  */
 
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
@@ -43,13 +41,13 @@ const storeCache = new Map<string, { store: VectorStore; embedding: EmbeddingSer
 // ===================================================================
 
 /**
- * 深度合并知识库配置
+ * @description 将全局 `KnowledgeConfig` 与 account 专属覆盖进行浅层合并：
+ *              `tokenizer`/`reranker`/`parser` 等可选扩展字段一并纳入；
+ *              **store.sources** 若出现在覆盖层则完全替换全局定义。
  *
- * 规则：
- * - enabled: 继承全局（如果 account 级没配）
- * - embedding/store/retrieval/injection/moderation: 深度合并
- * - tokenizer/reranker/parser: 深度合并
- * - store.sources: 完全替换（不合并）
+ * @param global - 顶层启用配置（需 `enabled===true`）
+ * @param accountOverride - Account 补丁对象（递归 Partial）
+ * @returns 可用于运行时的合成配置；全局禁用时返回 `null`
  */
 export function deepMergeKnowledgeConfig(
   global?: KnowledgeConfig,
@@ -92,7 +90,12 @@ export function deepMergeKnowledgeConfig(
 // ===================================================================
 
 /**
- * 获取或创建指定命名空间的 VectorStore 实例
+ * @description Lazy‑initialize：`namespace` 粒度的 `{store,embedding}` 双实例；
+ *              命中内存缓存则直接返回引用。
+ *
+ * @param config - 已合并的最终配置（含维度/provider）
+ * @param namespace - 隔离键（惯例：`accountId:bot|agent`）
+ * @returns 可用于检索/写入的 Store 与其配套的 Embedding 服务
  */
 export async function getOrCreateStore(
   config: KnowledgeConfig,
@@ -115,7 +118,9 @@ export async function getOrCreateStore(
 }
 
 /**
- * 清除指定命名空间的缓存
+ * @description 在 Store 物理清空或后端重建后调用，以避免陈旧客户端句柄。
+ *
+ * @param namespace - 若传入则删除单个条目；省略则清空整张缓存 Map
  */
 export function invalidateStoreCache(namespace?: string): void {
   if (namespace) {
@@ -130,10 +135,11 @@ export function invalidateStoreCache(namespace?: string): void {
 // ===================================================================
 
 /**
- * 从 OpenClaw 配置中读取插件自身的 knowledge 配置
+ * @description 从宿主配置树裁剪 `knowledge` 段落：可选点路径穿透（例如渠道私有命名空间）。
  *
- * 当作为独立插件运行时，配置路径由调用方传入。
- * 默认为直接读取 config 对象中的 knowledge 字段。
+ * @param config - OpenClaw 根配置对象
+ * @param configPath - 以 `.` 分隔的路径；缺省时读取顶层 `config.knowledge`
+ * @returns `global` 为聚合模板，`accounts` 为账号 ID→补丁映射
  */
 export function extractKnowledgeConfig(
   config: any,
@@ -167,8 +173,9 @@ export function extractKnowledgeConfig(
 // ===================================================================
 
 /**
- * 创建 Reranker 实例
- * 仅在配置了 reranker.provider 时创建，否则返回 null（跳过重排序）
+ * @description 当 `reranker.provider` 可用且工厂构造成功时返回实例；任何异常均被吞并以 `null` 表示跳过。
+ *
+ * @param config - 运行时知识配置
  */
 function createRerankerIfConfigured(config: KnowledgeConfig): RerankerService | null {
   if (!config.reranker?.provider) return null;
@@ -184,8 +191,9 @@ function createRerankerIfConfigured(config: KnowledgeConfig): RerankerService | 
 // ===================================================================
 
 /**
- * 创建 Tokenizer 实例
- * 仅在配置了 tokenizer.provider 时创建，否则返回 null（跳过截断）
+ * @description 与 {@link createRerankerIfConfigured} 对称：为可选上下文截断准备 `TokenizerService`。
+ *
+ * @param config - 运行时知识配置
  */
 function createTokenizerIfConfigured(config: KnowledgeConfig): TokenizerService | null {
   if (!config.tokenizer?.provider) return null;
@@ -201,10 +209,12 @@ function createTokenizerIfConfigured(config: KnowledgeConfig): TokenizerService 
 // ===================================================================
 
 /**
- * 注册知识库 hooks
+ * @description 向 `OpenClawPluginApi` 订阅 `before_prompt_build`：
+ *              - **独立插件模式**：读取 `api.pluginConfig`；
+ *              - **嵌入式库模式**：可通过 `configPath` 穿透宿主配置。
  *
- * 直接从 api.pluginConfig 读取配置（与渠道无关，无需 configPath）。
- * 保留 configPath 参数用于向后兼容——渠道插件仍可指定独立配置路径。
+ * @param api - OpenClaw 插件宿主对象
+ * @param configPath - 可选的点分路径覆盖层
  */
 export function registerKnowledgeHooks(api: OpenClawPluginApi, configPath?: string): void {
   // 优先从 pluginConfig 读取（独立插件模式），fallback 到 configPath（库模式）
@@ -220,13 +230,11 @@ export function registerKnowledgeHooks(api: OpenClawPluginApi, configPath?: stri
 }
 
 /**
- * before_prompt_build 事件处理器
+ * @description Hook 回调体：串联意图门控 → 向量/混合检索 → 精排 → token 裁剪 → Prompt 拼装。
  *
- * 可选流水线（按配置决定是否执行每个节点）：
- * 1. 混合检索（hybridSearch） → 必需
- * 2. 重排序（reranker）      → 可选，配置 reranker.provider
- * 3. Token 截断（tokenizer） → 可选，配置 tokenizer.provider
- * 4. 注入 systemPrompt
+ * @param ctx - OpenClaw 传入的会话上下文（需含 `message` 与账号路由键）
+ * @param knowledgeConfig - 通过闭包捕获的原始配置节点（含 `accounts` 子树时参与合并）
+ * @returns 若需改写 system/user Prompt 则返回对应字段；跳过或失败时返回 `undefined`
  */
 async function handleBeforePromptBuild(
   ctx: BeforePromptBuildContext,
@@ -335,10 +343,10 @@ async function handleBeforePromptBuild(
 }
 
 /**
- * 解析当前 account 的知识库配置
+ * @description 依据 `accountId` 选取 `accounts[accountId].knowledge` 并执行 {@link deepMergeKnowledgeConfig}。
  *
- * 通过闭包传入的 knowledge 配置读取 knowledge 配置，
- * 替代了之前错误的 (ctx as any).config 方式。
+ * @param knowledgeConfig - 原始 knowledge 节点
+ * @param accountId - 当前路由到的业务账号标识
  */
 function resolveKnowledgeConfig(
   knowledgeConfig: any,

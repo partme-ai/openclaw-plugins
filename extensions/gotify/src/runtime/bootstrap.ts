@@ -1,8 +1,9 @@
 /**
- * Gotify Bootstrap — 自动创建 Application 和 Doctor 诊断。
+ * @file Gotify bootstrap & doctor 便捷封装。
  *
- * 在账号首次配置时，自动检测目标 Application 是否存在，
- * 按需创建并返回其 token。doctor 命令提供操作员可读的诊断报告。
+ * @description `bootstrapGotifyAccount` 面向 **Application 预置**（查找或创建 + token），
+ * `doctorGotifyAccount` 则薄封装 `runGotifyDoctor` 聚合报告。
+ * **模块角色**：Channel Plugin · Operator automation helpers。
  */
 
 import {
@@ -23,6 +24,7 @@ import type { GotifyDoctorReport, ResolvedGotifyAccount } from "../types.js";
  *
  * @param account - 已解析的 Gotify 账号配置。
  * @returns bootstrap 结果，包含是否创建新 Application、应用名以及可用 appToken。
+ * @throws GotifyConfigError —— bootstrap 未启用 / 禁止 auto-create 且应用不存在。
  */
 export async function bootstrapGotifyAccount(
   account: ResolvedGotifyAccount,

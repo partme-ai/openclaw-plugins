@@ -1,8 +1,10 @@
 /**
- * Gotify Setup Entry — 轻量 setup 入口。
+ * @file Gotify Setup Entry — OpenClaw 惰性 Setup 插件壳。
  *
- * 在渠道禁用/未配置/延迟加载时被 OpenClaw 加载，
- * 仅暴露渠道元数据，不导入重量级运行时模块。
+ * @description 当渠道尚未启用或未满足 **full bundle** 条件时，
+ * Host 仍可加载本默认导出以读取 **Channel meta / capabilities / docsPath**，
+ * **避免**静态拉取 `transport/*`、`gotify-api`、WebSocket 实现等重型依赖。
+ * **模块角色**：Channel Plugin · Lightweight discovery surface。
  */
 
 import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
@@ -10,6 +12,9 @@ import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import { gotifyChannel } from "./channel.js";
 
 /**
- * 轻量 setup 入口，便于 OpenClaw 在非 full 模式下读取渠道元数据。
+ * OpenClaw setup-runtime 使用的极小占位导出。
+ *
+ * @description 等价 `defineSetupPluginEntry(gotifyChannel)`；不产生运行时监听或 REST I/O。
+ * @returns `SetupPluginEntry` —— SDK 定义的 setup 插件描述对象。
  */
 export default defineSetupPluginEntry(gotifyChannel);

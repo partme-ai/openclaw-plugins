@@ -1,15 +1,11 @@
 /**
- * DNS SRV 节点发现实现
- * 通过 DNS SRV 记录发现集群节点，适用于 K8s Headless Service 环境
+ * @fileoverview **DNS SRV 节点发现**：通过 DNS SRV 记录发现 K8s Headless Service 后端 Pod。
  *
- * 工作原理：
- * 1. 定期查询 DNS SRV 记录获取节点地址列表
- * 2. 对比前次结果，检测节点上线/下线
- * 3. 查询失败时降级到上次成功的缓存
+ * @description 集群插件 **discovery 层** 后端；定期 `resolveSrv` 并将结果映射为 `ClusterNodeInfo`。
+ * 查询失败时保留上次缓存并将超时节点标为 `suspect`。
  *
- * K8s 部署示例：
- * - 创建 Headless Service（clusterIP: None）
- * - DNS SRV 记录：_openclaw._tcp.openclaw-headless.default.svc.cluster.local
+ * **关键依赖**
+ * - `node:dns` — 系统 DNS 解析器。
  */
 
 import * as dns from "node:dns";
@@ -25,8 +21,9 @@ const DEFAULT_REFRESH_INTERVAL = 30_000;
 const DEFAULT_NODE_TIMEOUT = 60_000;
 
 /**
- * DNS SRV 节点发现
- * 通过 DNS SRV 记录查询 K8s Headless Service 实现节点发现
+ * @description 基于 DNS SRV 的集群成员发现（无自注册，只读 DNS）。
+ *
+ * @implements {IDiscoveryService}
  */
 export class DnsSrvDiscovery implements IDiscoveryService {
   /** DNS SRV 域名 */

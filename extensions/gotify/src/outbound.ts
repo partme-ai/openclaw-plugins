@@ -1,8 +1,10 @@
 /**
- * Gotify Outbound — 出站消息适配器。
+ * @file Gotify outbound adapter — Host → Gotify REST `POST /message`。
  *
- * 将 OpenClaw 出站消息映射为 Gotify POST /message 请求，
- * 自动注入 openclaw extras 标记以防止 WebSocket 回环。
+ * @description 把 OpenClaw `ChannelOutboundContext` 经由 mapper 转成 payload，
+ * 补齐默认 priority，成功后缓存 `appid`、刷新账号快照 outbound 时间，
+ * **写 extras.openclaw.outbound** 切断 `/stream` 闭环。
+ * **模块角色**：Channel Plugin · Host-initiated delivery。
  */
 
 import type {
@@ -27,10 +29,15 @@ import { patchAccountSnapshot, setOwnApplicationId } from "./runtime.js";
 export const gotifyOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   /**
-   * 发送纯文本消息到 Gotify Message API。
+   * 发送纯文本消息至 Gotify Message API（Application token）。
    *
-   * @param ctx - OpenClaw 渠道出站上下文，包含配置、目标账号/地址和消息正文。
-   * @returns 渠道投递回执，包含 Gotify messageId 与实际使用的 accountId。
+   * @description 包含账号挑选、payload 映射、HTTP 发送、运行态写回。
+   * @param ctx - OpenClaw 渠道出站上下文。
+   * @returns `{ channel, messageId, accountId }` 投递收据。
+   * @throws GotifyApiError —— HTTP 非 2xx（由底层 `sendGotifyMessage` 抛出）。
+   * @throws GotifyConnectionError —— 网络不可用或重试耗尽。
+   * @throws GotifyTimeoutError —— Abort 超时。
+   * @throws GotifyConfigError —— 账号缺少 `serverUrl` / `appToken`。
    */
   async sendText(ctx: ChannelOutboundContext) {
     const accountId = selectAccountId(ctx);
@@ -62,15 +69,13 @@ export const gotifyOutbound: ChannelOutboundAdapter = {
 };
 
 /**
- * 解析本次发送应走的 Gotify 账号。
+ * 推导本轮出站应绑定账号。
  *
- * 选择优先级为：
- * 1. `ctx.accountId`
- * 2. `ctx.to` 中的 `gotify:<accountId>` 或裸 accountId
- * 3. 配置中的默认账号
+ * @description 优先级：`explicit accountId` > `gotify:<id>`/`裸 id` > `resolveDefaultGotifyAccountId`；
+ * `ctx.to` 中含空格或 `/` 视作非账号 token，忽略直达默认账号。
  *
- * @param ctx - 出站上下文的账号选择字段。
- * @returns 需要用于 `resolveGotifyAccount()` 的账号 ID。
+ * @param ctx - Partial outbound context（仅需 cfg/accountId/to）。
+ * @returns OpenClaw `accountId` key。
  */
 export function selectAccountId(
   ctx: Pick<ChannelOutboundContext, "cfg" | "accountId" | "to">,

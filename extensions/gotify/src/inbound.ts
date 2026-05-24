@@ -1,8 +1,10 @@
 /**
- * Gotify 入站 DM 访问控制 — 使用 OpenClaw channel-ingress-runtime SDK。
+ * @file Gotify inbound ingress — DM / pairing / allowlist 运行时裁决。
  *
- * 配置/UI 层仍由 createScopedDmSecurityResolver（channel.ts security.resolveDmPolicy）负责；
- * 运行时入站过滤统一走 resolveChannelMessageIngress，与 bundled 渠道语义一致。
+ * @description 封装 `resolveChannelMessageIngress`，把 Gotify 特有 **peerId ↔ appid**
+ * 别名语义映射到 OpenClaw ingress identity；**不负责** OpenClaw UI 侧策略提示——那部分由
+ * `createScopedDmSecurityResolver` 在 `channel/channel.ts` 聚合。
+ * **模块角色**：Channel Plugin · Inbound security gate。
  */
 
 import {
@@ -15,10 +17,11 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { ResolvedGotifyAccount } from "./types.js";
 
 /**
- * 规范化 Gotify allowlist / sender 标识。
+ * 规范化 allowlist / peer 标识令牌。
  *
- * @param value - allowFrom 条目、peerId 或 appid 字符串。
- * @returns 去除 `gotify:` 前缀并转小写后的标识；空值返回 null。
+ * @description 剥离可选 `gotify:` 渠道前缀并 lower-case，统一与 stream extras 中的 peer 别名比对。
+ * @param value - allowFrom 列表项、peerId、`appid` stringify 等。
+ * @returns 有效非空 token；否则 `null`。
  */
 function normalizeGotifyId(value: string): string | null {
   const normalized = value
@@ -29,11 +32,11 @@ function normalizeGotifyId(value: string): string | null {
 }
 
 /**
- * Gotify 入站身份定义。
+ * Stable ingress identity spec —— 让 allowlist 可同时匹配 **peerId / appid / gotify: 前缀形态**。
  *
- * primary identity 使用解析后的 peerId；appid 作为别名注册，使 allowlist 可以同时写
- * `peer-a` 或 `42`。这对 Gotify 很重要，因为 Gotify 本身没有 IM 用户概念，appid
- * 往往就是业务系统或外部应用的稳定身份。
+ * @description Primary subject 使用路由层 `peerId`；
+ * 额外注册 `appid` plug-in kind 别名，映射 Gotify Application 维度身份。
+ * wildcard `*` 条目由 `isWildcardEntry` 透传至 SDK open 语义。
  */
 export const gotifyIngressIdentity = defineStableChannelIngressIdentity({
   normalize: normalizeGotifyId,
@@ -49,10 +52,9 @@ export const gotifyIngressIdentity = defineStableChannelIngressIdentity({
 });
 
 /**
- * Gotify 入站访问控制结果。
+ * 运行时 DM ingress 决策裁剪视图。
  *
- * 该结构对外隐藏 channel-ingress-runtime 的完整细节，只保留 channel.ts
- * 处理入站消息时需要的布尔结果、阻断原因和决策名称。
+ * @description 屏蔽 SDK 完整 `IngressResult`，只暴露 channel 层需要的 `allowed + reason + decision`。
  */
 export interface GotifyInboundAccessResult {
   /** 是否允许当前入站消息进入 OpenClaw agent。 */
@@ -64,14 +66,17 @@ export interface GotifyInboundAccessResult {
 }
 
 /**
- * 检查 Gotify 入站消息是否通过 DM 策略（SDK resolveChannelMessageIngress）。
+ * 对单条 stream 事件执行 DM / pairing / disabled 组合策略检查。
  *
- * @param params - 入站访问控制上下文。
- * @param params.cfg - OpenClaw 当前完整配置，用于读取 accessGroups 和 pairing store。
- * @param params.account - 已解析 Gotify 账号配置，包含 dmPolicy 与 allowFrom。
- * @param params.peerId - 从 Gotify 消息解析出的稳定对端 ID。
- * @param params.appid - Gotify Application ID，作为 allowlist 别名参与匹配。
- * @returns 是否允许入站，以及阻断时的原因码。
+ * @description 读取 `account.dmPolicy`、`allowFrom`、`cfg.accessGroups`，并注入 `appid` 别名维度；
+ * pairing store 采用 SDK 默认路径。
+ *
+ * @param params - 入站裁决上下文。
+ * @param params.cfg - OpenClaw 聚合配置（accessGroups / pairing）。
+ * @param params.account - 解析后的账号运行时视图。
+ * @param params.peerId - `peer-resolver` 产出稳定 direct peer。
+ * @param params.appid - stream envelope `appid`，可为 number/string/null。
+ * @returns `{ allowed, reason?, decision? }`。
  */
 export async function checkGotifyInboundAccess(params: {
   cfg: OpenClawConfig;

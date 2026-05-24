@@ -1,10 +1,12 @@
 /**
- * Nacos 节点发现实现
+ * @fileoverview **Nacos 节点发现**：通过 Nacos Open API 注册临时实例并轮询健康实例列表。
  *
- * 通过 Nacos Open API 实现服务注册与发现（国内 Spring Cloud / Dubbo 常用）：
- * - 本节点注册为临时实例，定期发送心跳
- * - 轮询 /nacos/v2/ns/instance/list 获取健康实例列表
- * - 停止时注销实例
+ * @description 集群插件 **discovery 层** 后端，面向国内 Spring Cloud / Dubbo 生态；本节点注册 + 心跳，
+ * 定期拉取 `healthyOnly=true` 实例并映射为 `ClusterNodeInfo`。
+ *
+ * **关键依赖**
+ * - `fetch` — Nacos HTTP Open API。
+ * - 环境变量 `OPENCLAW_CLUSTER_ADDRESS` / `OPENCLAW_CLUSTER_PORT`。
  *
  * @see https://nacos.io/docs/latest/guide/user/open-api/
  */
@@ -16,11 +18,16 @@ const DEFAULT_GROUP = "DEFAULT_GROUP";
 const DEFAULT_REFRESH_MS = 10_000;
 const HEARTBEAT_INTERVAL_MS = 5_000;
 
-/** Nacos 实例列表接口返回 */
+/** @description Nacos `/instance/list` 响应中 hosts 数组结构。 */
 interface NacosInstanceList {
   hosts?: Array<{ ip?: string; port?: number; healthy?: boolean }>;
 }
 
+/**
+ * @description 基于 Nacos 服务注册中心的集群成员发现。
+ *
+ * @implements {IDiscoveryService}
+ */
 export class NacosDiscovery implements IDiscoveryService {
   private readonly baseUrl: string;
   private readonly serviceName: string;
@@ -47,6 +54,11 @@ export class NacosDiscovery implements IDiscoveryService {
     this.refreshInterval = config.heartbeatInterval ?? DEFAULT_REFRESH_MS;
   }
 
+  /**
+   * @description 注册临时实例并启动心跳与列表轮询。
+   *
+   * @returns 首次 refresh 完成后 resolve（注册失败仅打日志）。
+   */
   async start(): Promise<void> {
     console.log(
       `[openclaw-cluster] Nacos discovery started: ${this.baseUrl}, service=${this.serviceName}, nodeId=${this.nodeId}`
@@ -64,6 +76,11 @@ export class NacosDiscovery implements IDiscoveryService {
     );
   }
 
+  /**
+   * @description 注销实例、清除定时器与本地快照。
+   *
+   * @returns teardown 完成后 resolve。
+   */
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
@@ -78,10 +95,16 @@ export class NacosDiscovery implements IDiscoveryService {
     console.log("[openclaw-cluster] Nacos discovery stopped");
   }
 
+  /** @description 返回当前健康实例映射的成员列表浅拷贝。 */
   getNodes(): ClusterNodeInfo[] {
     return [...this.nodes];
   }
 
+  /**
+   * @description 注册拓扑变更观察者。
+   *
+   * @param callback - 成员列表变化时触发。
+   */
   onNodeChange(callback: (nodes: ClusterNodeInfo[]) => void): void {
     this.changeCallbacks.push(callback);
   }

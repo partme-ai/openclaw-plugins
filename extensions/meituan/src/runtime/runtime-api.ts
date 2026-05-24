@@ -1,5 +1,7 @@
 /**
- * Meituan 插件 message-sdk 薄 barrel。
+ * Meituan 插件 message-sdk 薄 barrel（re-export）。
+ *
+ * **架构角色**：统一 Webhook 读 body、幂等缓存与 bridge 派发 API 的导入路径。
  */
 
 export {

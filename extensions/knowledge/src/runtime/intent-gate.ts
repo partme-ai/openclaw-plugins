@@ -1,21 +1,11 @@
 /**
- * Intent Gate — 检索前意图判断
+ * @fileoverview Intent Gate — **检索前轻量级路由**：判断是否应为本次对话拉起向量检索。
  *
- * 核心逻辑：收到用户消息后，先判断"这次需不需要查知识库"。
- * 不需要即跳过整个 RAG 流水线，从根本上避免无关注入导致的上下文腐败。
+ * @description
+ * 处于整条链路的上游闸门前：**早于 Embedding/Web‑hook**。可减少上下文漂移和低相关知识段落混入，
+ * 也可在非 QA/small-talk 场景节省端到尾链路开销。
  *
- * 两种模式：
- * - 'rule'（默认）: 关键词匹配，零外部调用，≈0ms
- * - 'strict'：规则门 + reranker 低分兜底，更严格但需要 reranker 配合
- *
- * 规则门判断依据：
- * - 正向触发词（需要查的）：含"？"、"什么"、"如何"、"为什么"等事实查询
- * - 反向跳过词（不需要查的）：闲聊、创作、翻译、总结等自由任务
- *
- * 设计参考业界成熟方案：
- * - LangChain RouterChain / LlamaIndex RouterQueryEngine
- * - Cohere Command-R Tool-Use Gating
- * - Self-RAG / Adaptive RAG 的检索决策层
+ * @module knowledge/runtime/intent-gate
  */
 
 export type IntentGateMode = 'rule' | 'strict';
@@ -56,11 +46,11 @@ const DEFAULT_SKIPS = [
 ];
 
 /**
- * 判断一条用户消息是否需要触发知识库检索
+ * @description 对给定用户 utterance 执行布尔门控：**pass** 表示仍需进入检索路径；**skip** 表示整条 RAG 提前中止。
  *
- * @param message 用户消息
- * @param config 意图门配置（可选）
- * @returns 'pass' = 需要查知识库，'skip' = 跳过
+ * @param message - 本轮用户文本（已由上游渠道清洗）
+ * @param config - 可选自定义触发词/跳过词列表及模式切换
+ * @returns `'pass' | 'skip'` 判别结果
  */
 export function evaluateIntent(
   message: string,
@@ -89,8 +79,12 @@ export function evaluateIntent(
 }
 
 /**
- * 规则判断：命中触发词 → pass，命中跳过词 → skip
- * 触发词优先——如果同时命中触发词和跳过词，视为需要查
+ * @description **触发词优先**的子规则引擎：任一触发词命中即 pass；否则若命中跳过词则为 skip；
+ *              中性消息默认 pass（兼容历史行为）。
+ *
+ * @param message - 判别样本全文（会做 `.toLowerCase()`）
+ * @param triggers - 正向短语词典（中英文可按 substring）
+ * @param skips - 反向短语词典
  */
 function evaluateByRule(
   message: string,

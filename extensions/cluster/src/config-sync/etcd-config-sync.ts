@@ -1,24 +1,24 @@
 /**
- * etcd KV 配置同步实现
+ * @fileoverview **etcd KV 配置同步**：将 Gateway 配置存于 etcd 固定键，通过 revision 检测变更并回调本节点。
  *
- * 通过 etcd 键值存储实现跨节点配置同步：
- * - 配置变更写入 etcd 的固定键
- * - 节点定期轮询配置变更（或通过 watch 实时监听）
- * - 支持版本号检测，避免重复加载
+ * @description 集群插件 **config-sync 层** 的中心化后端；`index.ts` 收到变更后会写回本地 JSON 并触发 reload。
  *
- * 键格式：/openclaw/cluster/config/current
- * 值：JSON 编码的完整配置
+ * **关键依赖**
+ * - etcd v3 HTTP API（`fetch`）— 无 gRPC 客户端依赖。
+ * - 键：`/openclaw/cluster/config/current`，值为 JSON 字符串的 base64。
+ *
+ * @see https://etcd.io/docs/v3.5/dev-guide/api_grpc_gateway/
  */
 
 import type { ConfigSyncConfig, IConfigSyncService } from "../shared/types.js";
 
-/** etcd 中配置键 */
+/** @description etcd 中存放当前集群配置的键路径。 */
 const CONFIG_KEY = "/openclaw/cluster/config/current";
 
 /**
- * etcd KV 配置同步服务
+ * @description 基于 etcd KV 的配置传播；以 `mod_revision` 去重避免重复 reload。
  *
- * 通过 etcd v3 HTTP API 实现配置变更的跨节点同步。
+ * @implements {IConfigSyncService}
  */
 export class EtcdConfigSync implements IConfigSyncService {
   /** etcd 端点列表 */
@@ -45,9 +45,9 @@ export class EtcdConfigSync implements IConfigSyncService {
   }
 
   /**
-   * 启动配置同步
+   * @description 拉取初始配置并启动 revision 轮询。
    *
-   * 加载初始配置并启动轮询
+   * @returns 首次 poll 完成后 resolve。
    */
   async start(): Promise<void> {
     // 加载初始配置
@@ -65,7 +65,9 @@ export class EtcdConfigSync implements IConfigSyncService {
   }
 
   /**
-   * 停止配置同步
+   * @description 停止轮询并清空变更回调列表。
+   *
+   * @returns 解析即完成的 Promise。
    */
   async stop(): Promise<void> {
     this.stopped = true;
@@ -80,9 +82,11 @@ export class EtcdConfigSync implements IConfigSyncService {
   }
 
   /**
-   * 推送配置变更到 etcd
+   * @description 将配置 JSON PUT 到 etcd 固定键（base64 编码键值）。
    *
-   * @param config - 新配置
+   * @param config - 要写入的完整配置对象。
+   * @returns etcd 确认写入后 resolve。
+   * @throws {AggregateError} 所有 etcd 端点均失败。
    */
   async pushConfig(config: Record<string, unknown>): Promise<void> {
     const key = btoa(CONFIG_KEY);
@@ -94,7 +98,9 @@ export class EtcdConfigSync implements IConfigSyncService {
   }
 
   /**
-   * 注册配置变更监听
+   * @description 注册配置 revision 前进时的观察者。
+   *
+   * @param callback - 接收解析后的配置 JSON。
    */
   onConfigChange(callback: (config: Record<string, unknown>) => void): void {
     this.changeCallbacks.push(callback);

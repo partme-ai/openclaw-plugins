@@ -1,19 +1,11 @@
 /**
- * gRPC 代理实现
- * 通过 gRPC 协议实现高性能的节点间消息转发
+ * @fileoverview **gRPC 节点间代理**：可选高性能消息平面；依赖缺失时降级 HTTP fallback。
  *
- * 服务定义（proto 等效）：
- * service ClusterProxy {
- *   rpc ForwardMessage(ForwardRequest) returns (ForwardResponse);
- *   rpc HealthCheck(Empty) returns (HealthResponse);
- * }
+ * @description 集群插件 **proxy 层** 实验性实现；动态加载 `@grpc/grpc-js`，不可用时启动简易 HTTP 接收器。
  *
- * 依赖：@grpc/grpc-js + @grpc/proto-loader（可选，不可用时降级到 HTTP）
- *
- * 特性：
- * - 连接池管理（每个目标节点一个 gRPC Channel）
- * - 自动重连
- * - 超时控制
+ * **关键依赖**
+ * - 可选 `@grpc/grpc-js` — 通过 `createRequire` 动态加载。
+ * - `fetch` — gRPC 失败或不可用时的 HTTP 降级转发。
  */
 
 import type { ProxyConfig, IProxyService } from "../shared/types.js";
@@ -51,8 +43,9 @@ async function loadGrpc(): Promise<GrpcRuntime> {
 }
 
 /**
- * gRPC 代理服务
- * 如果 gRPC 依赖不可用，自动降级到 HTTP 代理
+ * @description gRPC 代理服务；`grpcAvailable=false` 时 `forwardMessage` 走 HTTP。
+ *
+ * @implements {IProxyService}
  */
 export class GrpcProxyServer implements IProxyService {
   /** 代理端口 */

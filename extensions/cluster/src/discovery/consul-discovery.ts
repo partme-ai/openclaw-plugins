@@ -1,16 +1,13 @@
 /**
- * Consul 节点发现实现
+ * @fileoverview **Consul 节点发现**：通过 Consul Agent API 注册服务并拉取 passing 健康实例。
  *
- * 通过 HashiCorp Consul Agent HTTP API 实现服务注册与发现：
- * - 本节点向 Consul Agent 注册服务（带 TTL 健康检查）
- * - 定期发送 TTL pass 维持健康状态
- * - 轮询 /V1/health/service/<name>?passing 获取健康节点列表
- * - 停止时注销服务
+ * @description 集群插件 **discovery 层** 后端；TTL 健康检查 + 定期 refresh，适用于 HashiCorp 栈。
  *
- * 适用于：多数据中心、与 Nomad/Vault 同栈、已有 Consul 基础设施的环境
+ * **关键依赖**
+ * - `fetch` — Consul HTTP API。
+ * - 环境变量 `OPENCLAW_CLUSTER_ADDRESS` / `OPENCLAW_CLUSTER_PORT`。
  *
  * @see https://developer.hashicorp.com/consul/api-docs/agent/service
- * @see https://developer.hashicorp.com/consul/api-docs/health
  */
 
 import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../shared/types.js";

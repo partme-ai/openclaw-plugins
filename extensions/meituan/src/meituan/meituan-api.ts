@@ -1,16 +1,25 @@
 /**
- * 美团 Open API 调用：鉴权与签名，与《美团开放平台对接规格》§5、接口对照表 API 文档一致。
- * 实际 base URL、path、签名算法以美团开放平台官方文档为准。
+ * 美团 Open API 调用层（鉴权与签名）。
+ *
+ * **架构角色**：tools 模块的 HTTP 客户端；负责参数扁平化、timestamp、HMAC 签名。
+ *
+ * **业务说明**：与《美团开放平台对接规格》§5 对齐；base URL 可通过 `MEITUAN_API_BASE` 覆盖。
+ *
+ * **关键依赖**：`node:crypto`、`../types`
  */
 
 import crypto from "node:crypto";
 import type { MeituanAccountConfig } from "../types.js";
 
+/** OpenAPI 网关 base URL（默认 api.meituan.com） */
 const MEITUAN_API_BASE = process.env.MEITUAN_API_BASE ?? "https://api.meituan.com";
 
 /**
- * 对请求参数按 key 排序后拼接为 key1=value1&key2=value2，再使用 app_secret 做 HMAC-SHA256 签名（常见约定）。
- * 具体算法以美团开放平台接口文档为准。
+ * 对请求参数按 key 字典序拼接后 HMAC-SHA256 签名。
+ *
+ * @param params 待签名字段（不含 sign）
+ * @param appSecret 应用 secret
+ * @returns 十六进制签名字符串
  */
 function signParams(params: Record<string, string>, appSecret: string): string {
   const sorted = Object.keys(params).sort();
@@ -19,8 +28,13 @@ function signParams(params: Record<string, string>, appSecret: string): string {
 }
 
 /**
- * 调用美团 Open API：GET/POST，带 app_key 与 sign。
- * 返回 JSON 解析结果；失败抛出或返回 { error }。
+ * 调用美团 Open API（GET/POST，自动附带 app_key、timestamp、sign）。
+ *
+ * @param config 渠道凭据；缺失时返回 `{ error: "meituan channel not configured" }`
+ * @param path API 路径（如 `/open/order/list`）
+ * @param method HTTP 方法
+ * @param params 业务 query/body 参数
+ * @returns 解析后的 JSON；HTTP 非 2xx 时返回 `{ error }`
  */
 export async function meituanApiCall(
   config: MeituanAccountConfig | undefined,
@@ -39,6 +53,7 @@ export async function meituanApiCall(
   flat.timestamp = String(Math.floor(Date.now() / 1000));
   flat.sign = signParams(flat, config.app_secret);
 
+  // GET：参数放 query；POST：同字段 JSON body（以官方文档为准）
   const url = `${MEITUAN_API_BASE}${path}?${new URLSearchParams(flat).toString()}`;
   const res = await fetch(method === "POST" ? MEITUAN_API_BASE + path : url, {
     method,

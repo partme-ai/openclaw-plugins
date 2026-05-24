@@ -1,15 +1,11 @@
 /**
- * ZVec — 纯 JS 零依赖的内存向量存储引擎
+ * @fileoverview ZVec — 纯 JS 内存向量引擎（零 npm 依赖）。
  *
- * 用于开发/轻量场景，所有数据保存在内存中并提供 JSON 持久化。
- * 特点：
- * - 零 npm 依赖（仅使用 Node.js 原生模块）
- * - 支持 cosine 相似度检索
- * - 可选 JSON 文件持久化
- * - 按命名空间隔离（namespace:chunkId）
+ * @description 开发/轻量场景；可选 JSON 文件异步持久化。生产推荐 `sqlite-vec`。
+ * **模块角色**：Knowledge Plugin · VectorStore (in-memory)。
+ * **关键依赖**：`./math` 余弦相似度。
  *
- * 注意：重启后数据丢失（除非配置了 dbPath 持久化文件）。
- * 生产环境推荐使用 sqlite-vec。
+ * @module knowledge/store/zvec
  */
 
 import { randomUUID } from 'node:crypto';

@@ -1,25 +1,10 @@
 /**
- * OllamaRerankerService — 基于 Ollama 的 Qwen3-Reranker 本地方案
+ * @fileoverview Ollama 本地 Reranker — 通过 Chat API 模拟 Qwen3-Reranker 打分。
  *
- * 使用 ollama SDK 调用本地部署的 Qwen3-Reranker 系列模型（或其他 rerank 模型）
- * 对候选文档进行重排序。利用模型 32k 上下文窗口，一次传入所有 documents
- * 让模型同时输出相关性排序。
+ * @description 将 query + documents 拼入 prompt，解析模型输出的相关性分数并排序。
+ * **模块角色**：Knowledge Plugin · Reranker provider (Ollama local)。
  *
- * 默认使用 dengcao/Qwen3-Reranker-4B:Q4_K_M（4B 量化，2.5GB，性价比最优）。
- * 轻量可选：dengcao/bge-reranker-v2-m3（0.5B）
- * 高精度可选：dengcao/Qwen3-Reranker-8B（8B）
- *
- * 安装模型：
- *   ollama pull dengcao/Qwen3-Reranker-4B:Q4_K_M
- *
- * Ollama 目前不原生支持 rerank API，这里通过 chat API 模拟：
- *   - 将 query 和所有 documents 格式化到 prompt 中
- *   - 模型输出每个文档的相关性分数
- *   - 按分数排序返回
- *
- * 参考:
- *   https://ollama.com/dengcao/Qwen3-Reranker-4B
- *   https://github.com/ollama/ollama-js
+ * @module knowledge/reranker/ollama
  */
 import { Ollama } from 'ollama';
 import type { RerankerService, KnowledgeRerankerConfig, ScoredDocument } from '../types.js';

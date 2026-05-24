@@ -1,7 +1,10 @@
 /**
- * @partme.ai/openclaw-gotify — OpenClaw Gotify Channel Plugin
+ * @file @partme.ai/openclaw-gotify — OpenClaw Gotify 渠道插件主入口。
  *
- * 入口：注册 Channel、注入 runtime、编排 full 模式 HTTP 路由。
+ * @description 以 `defineChannelPluginEntry` 将 **ChannelPlugin**、**运行时注入器**
+ * 与 full 模式 HTTP 路由注册到 OpenClaw 插件宿主；再透传对外稳定 API（REST 客户端、错误类型、
+ * 路由 mapper、WS factory、bootstrap / config wizard）。
+ * **模块角色**：Channel Plugin · Composition root（生命周期装配 + 公共 surface 聚合）。
  *
  * @packageDocumentation
  */
@@ -57,7 +60,10 @@ export { bootstrapGotifyAccount, doctorGotifyAccount } from "./runtime/bootstrap
 export { runConfigWizard } from "./config/config-wizard.js";
 
 /**
- * openclaw-gotify 插件入口 — Gotify channel plugin with REST API + WebSocket stream.
+ * OpenClaw 认可的 Gotify 渠道插件入口描述符。
+ *
+ * @description 在宿主加载时：绑定 `gotify` id、人类可读名称、渠道实现、runtime setter
+ * 以及 `registerFull` HTTP 扩展注册器。
  */
 const gotifyEntry: ReturnType<typeof defineChannelPluginEntry> = defineChannelPluginEntry({
   id: "gotify",

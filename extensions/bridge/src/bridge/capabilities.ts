@@ -1,40 +1,86 @@
 /**
+ * @fileoverview 各 IM 渠道的静态「能力矩阵」：`normalizeForChannel` 与控制面逻辑的参照源。
+ *
+ * @description
+ * **架构角色**：声明每条渠道支持的文本/HTML/Markdown 变体、媒体收发集合、长度上限与溢出策略、
+ * 线程/表情/群聊提及约束，以及出站转义方言。此为 **文档化常量数据**：不参与网络探测。
+ *
+ * **维护约定**：新增渠道时需同步补齐 `channels.ts` 与 `presets.ts`，否则将出现「已知渠道但无能力声明」空洞。
+ *
+ * @module bridge/capabilities
+ */
+
+/**
  * OpenClaw Bridge — 渠道能力声明
  *
  * 每个渠道的消息格式、媒体支持、文本限制、线程、反应等能力元数据。
  * 用于 outbound 消息规范化时查询渠道限制。
  */
 
+/** @description 宿主文本载荷抽象类别（逻辑标注，不等同于 MIME）。 */
 export type SupportedFormat = "text" | "markdown" | "html" | "rich-text" | "card";
+
+/** @description Bridge 内部抽象的二进制附件大类（用于 inbound/outbound 能力勾选）。 */
 export type MediaKind = "image" | "video" | "audio" | "document" | "sticker";
+
+/** @description Markdown 出站方言：驱动 `normalize.ts` 中的转换管线分支。 */
 export type MarkdownDialect = "none" | "basic" | "github" | "markdown-v2" | "mrkdwn" | "commonmark" | "html";
+
+/** @description 超长文本的处理策略：`truncate` 截断、`split` 切段、`error`（预留语义）。 */
 export type OverflowStrategy = "truncate" | "split" | "error";
 
+/**
+ * @description 单渠道的聚合能力快照（静态推断的工程近似，非实时 API 探测）。
+ */
 export interface ChannelCapabilities {
+  /** @description 与该记录键一致的渠道 ID（便于日志与调试自描述）。 */
   channelId: string;
+  /** @description 理论上可承载的内容格式集合（与具体 Bot API 子集可能仍有出入）。 */
   supportedFormats: SupportedFormat[];
+  /** @description 媒体：入站/出站允许的 `MediaKind`、单文件大小字节上限。 */
   media: {
     inbound: MediaKind[];
     outbound: MediaKind[];
     maxFileSizeBytes: number;
   };
+  /** @description 文本：单条气泡最大字符数建议值与溢出策略枚举。 */
   textLimits: {
     maxPerMessage: number;
     overflowStrategy: OverflowStrategy;
   };
+  /** @description `supported` 是否具备线程语义；`firstClass` 是否原生一等线程模型（对比「引用消息」模拟）。 */
   threading: { supported: boolean; firstClass: boolean };
+  /** @description 表情反应（emoji reacts）是否常见可用。 */
   reactions: { supported: boolean };
+  /** @description 群聊能力及是否强依赖 @提及 才触发机器人。 */
   groupChat: { supported: boolean; requireMention: boolean };
+  /** @description Markdown 方言：影响出站转义与裁剪策略。 */
   escaping: { markdownDialect: MarkdownDialect };
+  /** @description 非标行为 / 运营提示（给人看的注意事项集合）。 */
   quirks: string[];
 }
 
+/** @description 通用「全媒体 excluding sticker」集合复用模板。 */
 const MEDIA_FULL: MediaKind[] = ["image", "video", "audio", "document"];
+
+/** @description Telegram 等支持 Stickers 的渠道使用的媒体超集。 */
 const MEDIA_FULL_STICKER: MediaKind[] = ["image", "video", "audio", "document", "sticker"];
+
+/** @description 不包含 document 的媒体集合（例：部分 Mobile IM 仅图片/音视频）。 */
 const MEDIA_NO_DOC: MediaKind[] = ["image", "video", "audio"];
+
+/** @description 仅限图片与视频（例如去中心化协议侧重轻媒体）。 */
 const MEDIA_IMG_VID: MediaKind[] = ["image", "video"];
+
+/** @description 明确不支持任何附件类的渠道占位。 */
 const MEDIA_NONE: MediaKind[] = [];
 
+/**
+ * @description channelId → `ChannelCapabilities` 的全局只读注册表。
+ *
+ * @remarks 条目键 **必须** 与宿主路由层看到的 `channelId` 对齐；否则 `getChannelCapabilities` 将返回 `undefined`
+ * 并导致规范化模块退化为恒等或默认 Markdown 行为。
+ */
 export const ALL_CAPABILITIES: Record<string, ChannelCapabilities> = {
   // ═══ 外部官方插件 ═══
   "dingtalk-connector": {
@@ -283,7 +329,12 @@ export const ALL_CAPABILITIES: Record<string, ChannelCapabilities> = {
   },
 };
 
-/** 按 channelId 查找渠道能力 */
+/**
+ * @description 通过 `channelId` 检索预置能力记录。
+ * @param channelId - 与 `ALL_CAPABILITIES` 键一致的主机侧渠道标识。
+ * @returns 命中的能力对象；未知渠道返回 `undefined`。
+ * @throws 不抛出。
+ */
 export function getChannelCapabilities(channelId: string): ChannelCapabilities | undefined {
   return ALL_CAPABILITIES[channelId];
 }

@@ -1,11 +1,10 @@
 /**
- * Ollama Embedding Service
+ * @fileoverview Ollama 本地 Embedding — 通过官方 SDK 调用 `/api/embed`。
  *
- * 使用 Ollama 官方 SDK 调用本地嵌入模型，生成 L2 归一化的文本嵌入向量。
- * 调用 ollama.embed() — SDK 内部使用 POST /api/embed
+ * **模块角色**：Knowledge Plugin · Embedding provider (Ollama local)。
+ * **关键依赖**：`ollama` npm 包、`OLLAMA_HOST` 环境变量。
  *
- * 默认模型：embeddinggemma（Ollama 官方推荐）
- * SDK 默认连接 http://localhost:11434（可通过 OLLAMA_HOST 环境变量覆盖）
+ * @module knowledge/embedding/ollama
  */
 import { Ollama } from 'ollama';
 import type { EmbeddingService, KnowledgeEmbeddingConfig } from '../types.js';

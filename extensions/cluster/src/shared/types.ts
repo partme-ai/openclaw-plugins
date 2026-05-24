@@ -1,8 +1,9 @@
 /**
- * openclaw-cluster 核心类型定义
- * 集群协调层所需的数据结构和接口
+ * @fileoverview OpenClaw `cluster` 插件共享类型契约。
  *
- * 注意：此为骨架定义，接口设计阶段，尚未实现具体逻辑。
+ * @description 定义宿主注入的最小插件 API、`ClusterConfig` 与各子领域服务接口。
+ * 这些类型是 discovery / config-sync / session-store / proxy 实现与入口编排层之间的编译期契约，
+ * 不包含任何运行时逻辑。历史上部分字段为占位设计，仍以注释标明扩展方向。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -10,60 +11,76 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 // ─────────────────── OpenClaw Plugin API 类型 ───────────────────
 
 /**
- * OpenClaw 插件 API 接口
+ * @description Gateway 暴露给 infra 插件的最小宿主面：运行时上下文 + HTTP 路由挂载。
+ *
+ * @remarks 具体 Gateway 可能还会注入 `registerService`、`onReady` 等可选方法；
+ * `index.ts` 通过 duck-typing 读取，不强制体现在此接口中。
  */
 export interface PluginApi {
-  /** Gateway 运行时实例 */
+  /** @description Gateway 运行时（配置、可选内部 RPC）。 */
   runtime: GatewayRuntime;
 
-  /** 注册 HTTP 路由端点 */
+  /** @description 将处理器绑定到 Gateway HTTP 服务器的指定路径前缀之后。 */
   registerHttpRoute(route: HttpRouteDefinition): void;
 
 }
 
 /**
- * HTTP 路由定义
+ * @description HTTP 挂载点的路径字面量与异步/同步处理器二元组。
  */
 export interface HttpRouteDefinition {
+  /** @description URL pathname（例如 `/cluster/status`）。 */
   path: string;
+  /** @description Express-like handler；返回 Promise 时 Gateway 应等待 settled。 */
   handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void;
 }
 
 /**
- * Gateway 运行时
+ * @description `PluginApi.runtime` 的结构化视图；字段均为可选派生，避免强耦合具体 Gateway 版本。
  */
 export interface GatewayRuntime {
-  /** 当前配置 */
+  /** @description 当前载入并合并后的全局配置（包含隐藏字段如 `_configPath`）。 */
   config: Record<string, unknown>;
-  /** 可选：Gateway 内部调用（如 config.reload） */
+  /** @description 可选：Gateway 内部统一 RPC（如 `config.reload`）。 */
   gatewayCall?: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
-  /** 可选：通用调用 */
+  /** @description 可选：历史兼容调用入口。 */
   invoke?: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 }
 
 // ─────────────────── 集群配置类型 ───────────────────
 
 /**
- * 集群配置
+ * @description 描述单个 Gateway 副本在集群中的角色及其依赖的外部协调后端。
+ *
+ * **字段映射概览**
+ * - `discovery` —— 如何发现同伴节点；
+ * - `configSync` —— 如何在副本间对齐配置文件；
+ * - `sessionStore` —— 如何把会话映射到节点；
+ * - `proxy` —— 节点间消息平面监听参数。
  */
 export interface ClusterConfig {
-  /** 当前节点 ID（唯一标识） */
+  /** @description 逻辑节点 ID（应全局唯一）；会写入各注册后端。 */
   nodeId: string;
-  /** 节点发现方式 */
+  /** @description 节点发现子系统配置。 */
   discovery: DiscoveryConfig;
-  /** 配置同步方式 */
+  /** @description 配置传播子系统配置。 */
   configSync: ConfigSyncConfig;
-  /** 共享会话存储方式 */
+  /** @description 共享会话索引子系统配置。 */
   sessionStore: SessionStoreConfig;
-  /** 节点间通信配置 */
+  /** @description 节点间转发代理监听参数。 */
   proxy: ProxyConfig;
 }
 
 /**
- * 节点发现配置
+ * @description `createDiscoveryService` 的路由输入；不同 `type` 激活 mutually exclusive 字段集合。
  */
 export interface DiscoveryConfig {
-  /** 发现方式：static / etcd / dns-srv / consul / nacos / redis / eureka / mdns */
+  /**
+   * @description 发现实现选择器。
+   *
+   * - `static` —— 运维显式列举同伴；
+   * - `etcd` / `dns-srv` / `consul` / `nacos` / `redis` / `eureka` / `mdns` —— 各类注册中心或局域网广播。
+   */
   type:
     | "static"
     | "etcd"
@@ -73,176 +90,183 @@ export interface DiscoveryConfig {
     | "redis"
     | "eureka"
     | "mdns";
-  /** 静态节点列表（type=static 时使用） */
+  /** @description `static`：`host:port` 字面量列表。 */
   staticNodes?: string[];
-  /** etcd 端点（type=etcd 时使用） */
+  /** @description `etcd`：HTTP v3 API 端点列表。 */
   etcdEndpoints?: string[];
-  /** DNS SRV 域名（type=dns-srv 时使用） */
+  /** @description `dns-srv`：要查询的 SRV 名称。 */
   dnsDomain?: string;
-  /** Consul Agent 地址（type=consul 时使用） */
+  /** @description `consul`：Agent HTTP API 根地址。 */
   consulAddress?: string;
-  /** Consul 服务名（type=consul 时使用） */
+  /** @description `consul`：服务注册名。 */
   consulServiceName?: string;
-  /** Consul 数据中心 / ACL Token（可选） */
+  /** @description `consul`：数据中心 ID。 */
   consulDatacenter?: string;
+  /** @description `consul`：ACL token。 */
   consulToken?: string;
-  /** Nacos 服务地址（type=nacos 时使用，如 http://localhost:8848） */
+  /** @description `nacos`：Open API 根 URL。 */
   nacosAddress?: string;
-  /** Nacos 服务名（默认 openclaw-gateway） */
+  /** @description `nacos`：逻辑服务名。 */
   nacosServiceName?: string;
-  /** Nacos 命名空间 ID（可选） */
+  /** @description `nacos`：命名空间 ID。 */
   nacosNamespace?: string;
-  /** Nacos 分组（可选，默认 DEFAULT_GROUP） */
+  /** @description `nacos`：分组名。 */
   nacosGroupName?: string;
-  /** Redis URL（type=redis 时使用，如 redis://localhost:6379） */
+  /** @description `redis`：`redis://` URL。 */
   redisUrl?: string;
-  /** Redis 节点键前缀（默认 openclaw:cluster:nodes） */
+  /** @description `redis`：键前缀（集合成员 + per-node KV）。 */
   redisKeyPrefix?: string;
-  /** Eureka Server 地址（type=eureka 时使用，如 http://localhost:8761/eureka） */
+  /** @description `eureka`：注册中心 base path（包含 `/eureka` 后缀）。 */
   eurekaAddress?: string;
-  /** Eureka 应用名（默认 OPENCLAW-GATEWAY） */
+  /** @description `eureka`：大写 application 名。 */
   eurekaAppName?: string;
-  /** mDNS 服务类型（type=mdns 时使用，默认 _openclaw._tcp.local） */
+  /** @description `mdns`：PTR/SRV 服务类型字符串。 */
   mdnsServiceType?: string;
-  /** 心跳/刷新间隔（毫秒） */
+  /** @description 注册续约或轮询节奏（毫秒）；语义随实现略有差异。 */
   heartbeatInterval?: number;
-  /** 节点超时时间（毫秒） */
+  /** @description 下游判定失效的超时阈值（毫秒）；用于 TTL、 suspect 标记等。 */
   nodeTimeout?: number;
 }
 
 /**
- * 配置同步配置
+ * @description 控制配置如何在副本之间达成一致。
  */
 export interface ConfigSyncConfig {
-  /** 同步方式：etcd-kv / shared-fs / none */
+  /** @description `none` 禁用；`etcd-kv` 使用固定 KV；`shared-fs` 依赖 POSIX 文件与可选锁。 */
   type: "etcd-kv" | "shared-fs" | "none";
-  /** etcd 端点（type=etcd-kv 时使用） */
+  /** @description `etcd-kv` 端点列表。 */
   etcdEndpoints?: string[];
-  /** 共享文件系统路径（type=shared-fs 时使用） */
+  /** @description `shared-fs` 监视目录（需多方挂载同一存储）。 */
   sharedPath?: string;
-  /** 同步间隔（毫秒） */
+  /** @description 轮询或防抖相关的毫秒间隔。 */
   syncInterval?: number;
 }
 
 /**
- * 共享会话存储配置
+ * @description Session 粘性路由的外部真相来源（Shared nothing / Shared everything 之间的折中）。
  */
 export interface SessionStoreConfig {
-  /** 存储方式：redis / postgresql / memory */
+  /** @description `memory` 仅测试；生产常用 `redis` 或 `postgresql`。 */
   type: "redis" | "postgresql" | "memory";
-  /** Redis URL（type=redis 时使用） */
+  /** @description Redis DSN。 */
   redisUrl?: string;
-  /** PostgreSQL URL（type=postgresql 时使用） */
+  /** @description PostgreSQL DSN（依赖可选 `pg` 模块）。 */
   postgresUrl?: string;
-  /** Session TTL（秒） */
+  /** @description 会话映射 TTL（秒）。 */
   sessionTtl?: number;
 }
 
 /**
- * 节点间代理配置
+ * @description 节点间「消息平面」监听端口与超时；与 Gateway 面向用户的 HTTP/gRPC 端口解耦。
  */
 export interface ProxyConfig {
-  /** 代理端口 */
+  /** @description 本地 bind 端口。 */
   port: number;
-  /** 协议：grpc / http */
+  /** @description `http` 为当前默认完整实现；`grpc` 需可选依赖并可降级。 */
   protocol: "grpc" | "http";
-  /** 超时（毫秒） */
+  /** @description 出站 RPC/HTTP 调用的毫秒超时。 */
   timeout?: number;
 }
 
 // ─────────────────── 节点信息类型 ───────────────────
 
 /**
- * 集群节点信息
+ * @description Discovery 抽象的统一节点视图；额外负载字段可被 `/cluster/sessions` 汇总。
  */
 export interface ClusterNodeInfo {
-  /** 节点 ID */
+  /** @description 与注册后端一致的节点唯一键。 */
   nodeId: string;
-  /** 节点地址 */
+  /** @description L3/L4 可达地址（可能是主机名）。 */
   address: string;
-  /** 节点端口 */
+  /** @description `proxy` 平面端口（默认为插件约定端口）。 */
   port: number;
-  /** 节点状态 */
+  /** @description 成员状态机：`online` / `offline` / `suspect`。 */
   status: "online" | "offline" | "suspect";
-  /** 最后心跳时间 */
+  /** @description ISO-8601 时间戳字符串，供 UI 排序。 */
   lastHeartbeat: string;
-  /** 负载（活跃会话数） */
+  /** @description 活跃会话计数（实现可恒为 0）。 */
   activeSessions: number;
-  /** 负载（活跃连接数） */
+  /** @description 活跃 TCP/WebSocket 连接估计。 */
   activeConnections: number;
-  /** 节点加入时间 */
+  /** @description 节点首次_seen 时间。 */
   joinedAt: string;
 }
 
 /**
- * 集群状态概览
+ * @description `/cluster/status` 返回体的领域模型子集。
  */
 export interface ClusterStatus {
-  /** 当前节点 ID */
+  /** @description 本进程 `ClusterConfig.nodeId`。 */
   selfNodeId: string;
-  /** 集群中的节点列表 */
+  /** @description 当前缓存的全部成员。 */
   nodes: ClusterNodeInfo[];
-  /** 集群是否健康 */
+  /** @description 聚合健康比特；具体判定规则由编排层给出。 */
   healthy: boolean;
-  /** Leader 节点 ID（如果使用选举） */
+  /** @description 预留：若引入 raft/etcd 选举，可填充稳定 leader ID。 */
   leaderId?: string;
 }
 
 // ─────────────────── 接口定义（供各子模块实现） ───────────────────
 
 /**
- * 节点发现接口
+ * @description 节点成员子系统契约：生命周期 + 只读快照 + 推送变更事件。
  */
 export interface IDiscoveryService {
-  /** 启动发现服务 */
+  /** @description 建立与外部后端的会话并开始续约/轮询。 */
   start(): Promise<void>;
-  /** 停止发现服务 */
+  /** @description 释放资源；应幂等。 */
   stop(): Promise<void>;
-  /** 获取当前已知节点 */
+  /** @description 返回防御性拷贝或稳定快照（由实现决定）。 */
   getNodes(): ClusterNodeInfo[];
-  /** 注册节点变更监听 */
+  /** @description 注册拓扑变更观察者；不得假设回调同步执行。 */
   onNodeChange(callback: (nodes: ClusterNodeInfo[]) => void): void;
 }
 
 /**
- * 配置同步接口
+ * @description 配置传播子系统：把 JSON 可比对象写入共享媒介并回调本节点。
  */
 export interface IConfigSyncService {
-  /** 启动配置同步 */
+  /** @description 打开 watcher / poll loop。 */
   start(): Promise<void>;
-  /** 停止配置同步 */
+  /** @description 停止后台任务。 */
   stop(): Promise<void>;
-  /** 推送配置变更 */
+  /** @description 由控制面 API 触发，向其他副本扩散。 */
   pushConfig(config: Record<string, unknown>): Promise<void>;
-  /** 注册配置变更监听 */
+  /** @description 当媒介上版本前进时触发。 */
   onConfigChange(callback: (config: Record<string, unknown>) => void): void;
 }
 
 /**
- * 共享会话存储接口
+ * @description 会话 → 节点映射服务；Gateway 业务层可借助其做粘性与迁移。
  */
 export interface ISessionStoreService {
-  /** 启动存储服务 */
+  /** @description 建立到底层存储的连接。 */
   start(): Promise<void>;
-  /** 停止存储服务 */
+  /** @description 关闭连接并释放句柄。 */
   stop(): Promise<void>;
-  /** 获取 Session 所在节点 */
+  /** @description 查询某 `sessionKey` 当前绑定的 `nodeId`。 */
   getSessionNode(sessionKey: string): Promise<string | null>;
-  /** 注册 Session 到当前节点 */
+  /** @description 将 session 绑定到「本节点」。 */
   registerSession(sessionKey: string): Promise<void>;
-  /** 移除 Session */
+  /** @description 显式删除映射（例如会话结束）。 */
   removeSession(sessionKey: string): Promise<void>;
 }
 
 /**
- * 节点间代理接口
+ * @description 节点间转发通道；HTTP 实现额外提供 `updateNodes`/`onMessage` 类扩展方法。
  */
 export interface IProxyService {
-  /** 启动代理服务 */
+  /** @description 监听入站转发。 */
   start(): Promise<void>;
-  /** 停止代理服务 */
+  /** @description 停止 server / 断开池化连接。 */
   stop(): Promise<void>;
-  /** 转发消息到指定节点 */
+  /**
+   * @description 将一条逻辑消息投递到远端 `proxy` endpoint。
+   *
+   * @param targetNodeId - discovery 所知的节点 ID。
+   * @param sessionKey - 会话标识，用于下游路由。
+   * @param message - 透明负载（序列化由调用方决定）。
+   */
   forwardMessage(
     targetNodeId: string,
     sessionKey: string,

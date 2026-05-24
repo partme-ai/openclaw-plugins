@@ -1,20 +1,23 @@
 /**
- * Typed error classes for Gotify plugin.
+ * @file Gotify 插件可恢复错误类型集合。
  *
- * Following the plugin specification pattern, all errors extend Error
- * and include structured fields for programmatic handling.
+ * @description 所有可分类网络 / 配置 / 协议异常均派生自 `Error` 并附加只读结构化字段，
+ * 方便上层 (`channel.ts` / HTTP handler / CLI) 做**精确分支**或 operator 聚合展示。
+ * **不覆盖**泛型 SDK 异常，仅封装 Gotify 特化语义。
  */
 
 /**
- * Gotify API error with HTTP status code.
- * Thrown when Gotify API returns an error response.
+ * Gotify REST 返回非成功 HTTP 状态时的强类型异常。
+ *
+ * @description 携带 `statusCode`，用于区分 401/403/5xx 等，且 message 包含响应体摘要。
+ * @extends Error
  */
 export class GotifyApiError extends Error {
   readonly statusCode: number;
 
   /**
-   * @param message - 已包含 Gotify 响应正文摘要的错误消息。
-   * @param statusCode - Gotify HTTP 响应状态码。
+   * @param message - 人可读错误文本，通常包含 Gotify 端返回 JSON / 文本摘要。
+   * @param statusCode - 原始 HTTP 响应状态码。
    */
   constructor(message: string, statusCode: number) {
     super(message);
@@ -24,8 +27,9 @@ export class GotifyApiError extends Error {
 }
 
 /**
- * Gotify connection error.
- * Thrown when network connection to Gotify server fails.
+ * 网络层不可达、DNS、`fetch` 抛出或重试耗尽后的兜底异常。
+ *
+ * @description **非 HTTP 语义**，表示链路问题；消息前缀固定便于日志 grep。
  */
 export class GotifyConnectionError extends Error {
   readonly cause: string;
@@ -41,8 +45,9 @@ export class GotifyConnectionError extends Error {
 }
 
 /**
- * Gotify configuration error.
- * Thrown when required configuration is missing or invalid.
+ * operator 填写缺失字段或非法依赖组合（例如缺少必要 token）。
+ *
+ * @description `field` 指明配置键，`message`（继承自 Error.message）拼接 human reason。
  */
 export class GotifyConfigError extends Error {
   readonly field: string;
@@ -59,8 +64,9 @@ export class GotifyConfigError extends Error {
 }
 
 /**
- * Gotify WebSocket error.
- * Thrown when WebSocket connection fails or encounters an error.
+ * WebSocket `/stream` 建连失败、超时、被动关闭或被本地 `stop()` 中断时的封装。
+ *
+ * @description `code` 字段用于上层 metrics / UI 归类（非 wire close code）。
  */
 export class GotifyWebSocketError extends Error {
   readonly cause: string;
@@ -79,8 +85,9 @@ export class GotifyWebSocketError extends Error {
 }
 
 /**
- * Gotify timeout error.
- * Thrown when an API request exceeds the configured timeout.
+ * REST / WS 单次操作超过允许的最大等待时长。
+ *
+ * @description `timeoutMs` 与实际 `AbortController` 阈值一致。
  */
 export class GotifyTimeoutError extends Error {
   readonly timeoutMs: number;

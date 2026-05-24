@@ -1,4 +1,19 @@
 /**
+ * @fileoverview 各 IM 渠道的 `before_prompt_build` 系统上下文预设文案库。
+ *
+ * @description
+ * **架构角色**：为 `context-inject.ts` 提供只读字符串表；键为 `ChannelContextPreset`，
+ * 与 `channels.ts` 中 `ChannelMeta.contextPreset` 一一对应。
+ *
+ * **内容约定**：每条预设描述平台交互规则（格式限制、@提及、媒体指令等），
+ * 不重复宿主已注入的工具说明；全部为简体中文面向模型的系统补全片段。
+ *
+ * **依赖**：`ChannelContextPreset` 类型来自 `./channels.js`；消费方通过 `PRESETS[meta.contextPreset]` 取值。
+ *
+ * @module bridge/presets
+ */
+
+/**
  * OpenClaw Bridge — 21 渠道上下文预设
  *
  * 每个渠道注入 before_prompt_build 的平台特定系统上下文。
@@ -7,6 +22,13 @@
 
 import type { ChannelContextPreset } from "./channels.js";
 
+/**
+ * @description 渠道上下文预设全文映射：键为预设 ID，值为追加到系统提示的多行 Markdown 风格说明。
+ *
+ * @remarks
+ * - 缺失键表示 `channels.ts` 与 `presets.ts` 漂移，运行时 `context-inject` 会静默跳过。
+ * - 值通过 `.join("\n")` 组装，保持段落内 `-` 列表可读性。
+ */
 export const PRESETS: Record<ChannelContextPreset, string> = {
   // ═══ 外部官方插件 ═══
   dingtalk: [

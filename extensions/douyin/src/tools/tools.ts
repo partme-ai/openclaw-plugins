@@ -1,6 +1,12 @@
 /**
- * 抖音运营工具：与《抖音开放平台对接规格》EP-3 一致
- * 使用 client_token 调用生活服务 OpenAPI；供 registerTool 注册（若运行时提供）
+ * 抖音 Agent 运营工具注册模块。
+ *
+ * **架构角色**：在 `index.ts` registerFull 中注册 OpenAPI 封装工具，
+ * 供 Agent 查询订单、回复评价、拉取经营指标。
+ *
+ * **业务说明**：与《抖音开放平台对接规格》EP-3 对齐；部分接口仍为 TODO 占位。
+ *
+ * **关键依赖**：`../config/auth`、`../types`
  */
 
 import type { DouyinAccountConfig } from "../types.js";
@@ -9,7 +15,7 @@ import { getClientToken } from "../config/auth.js";
 
 const OPENAPI_BASE = "https://open.douyin.com";
 
-/** 使用 access_token 调用 GET goodlife 接口（示例：查询商品品类） */
+/** 生活服务 OpenAPI GET 请求封装（query 携带 access_token） */
 async function goodlifeGet(accessToken: string, path: string): Promise<unknown> {
   const url = path.startsWith("http") ? path : `${OPENAPI_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
   const res = await fetch(`${url}?access_token=${encodeURIComponent(accessToken)}`, {
@@ -20,7 +26,10 @@ async function goodlifeGet(accessToken: string, path: string): Promise<unknown> 
 }
 
 /**
- * 创建带配置注入的抖音工具（execute 内可获取 client_token 并调用 OpenAPI）
+ * 创建带运行时配置注入的抖音工具列表。
+ *
+ * @param getConfig 懒加载 `channels.douyin` 配置的 getter
+ * @returns 可传给 `api.registerTool` 的工具定义数组
  */
 export function createDouyinTools(
   getConfig: () => DouyinAccountConfig | undefined
@@ -89,7 +98,7 @@ export function createDouyinTools(
   ];
 }
 
-/** 兼容：无 getConfig 时返回占位工具（不调 OpenAPI） */
+/** 静态占位工具（无 getConfig 注入，不调 OpenAPI，供测试或文档示例） */
 export const douyinQueryOrders: ToolDefinition = {
   name: "douyin_query_orders",
   description: "查询抖音订单列表，支持按日期、状态筛选",

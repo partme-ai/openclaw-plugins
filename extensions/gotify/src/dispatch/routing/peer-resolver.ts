@@ -1,15 +1,9 @@
 /**
- * Gotify Peer Resolver — 入站消息的对等端标识解析。
+ * @file Gotify peer-resolver —— stream envelope → routing / UI 身份解析。
  *
- * ## Peer ID 解析优先级
- * 1. extras.openclaw.peerId（自定义标识）
- * 2. message.appid（Gotify 应用 ID）
- * 3. message.title（消息标题）
- * 4. fallback "gotify"
- *
- * ## 其他解析
- * - ConversationLabel: gotify:{appName}:{accountId}:direct:{peerId}
- * - SenderName: API 应用名 > title > extras.peerId > app {id} > peerId
+ * @description 将 **无原生 IM 用户模型** 的 Gotify 消息，稳定映射为 OpenClaw `peerId`、
+ * `ConversationLabel` 与 `SenderName`，供 session key、allowlist 与 Control UI 展示复用。
+ * **模块角色**：Channel Plugin · Identity projection layer。
  */
 
 import type { GotifyStreamEnvelope } from "../../types.js";

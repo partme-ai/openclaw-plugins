@@ -1,23 +1,34 @@
 /**
- * Redis 节点发现实现
+ * @fileoverview **Redis 节点发现**：通过 SET + SMEMBERS 实现轻量级 membership 注册与轮询。
  *
- * 使用 Redis SET/LIST + TTL 实现轻量级节点发现：
- * - 本节点：SADD {prefix}:nodes nodeId，SET {prefix}:node:{nodeId} "address:port" EX 30
- * - 定期刷新 TTL（心跳），轮询 SMEMBERS + GET 获取在线节点
- * - 可选：订阅 key 空间事件或 Pub/Sub 做变更通知（此处仅轮询）
+ * @description 集群插件 **discovery 层** 后端；本节点 SADD 集合并 SET 带 TTL 的 `address:port`，
+ * 其他副本轮询 SMEMBERS + GET 构建 `ClusterNodeInfo[]`，变更时通知 `proxy.updateNodes`。
  *
- * 使用与 redis-session-store 相同的 TCP+RESP 实现，无额外依赖。
+ * **关键依赖**
+ * - `node:net` — 内嵌 `MinimalRedisClient`（RESP，支持数组响应）。
+ * - 环境变量 `OPENCLAW_CLUSTER_ADDRESS` / `OPENCLAW_CLUSTER_PORT` — 自注册地址。
  */
 
 import { createConnection, type Socket } from "node:net";
 import type { ClusterNodeInfo, DiscoveryConfig, IDiscoveryService } from "../shared/types.js";
 
+/** @description 默认 Redis 键前缀（集合 + per-node KV）。 */
 const DEFAULT_PREFIX = "openclaw:cluster:nodes";
+
+/** @description 节点 KV 的 TTL（秒）；心跳需在此间隔内续期。 */
 const NODE_TTL_SEC = 30;
+
+/** @description 拉取成员列表的轮询间隔（毫秒）。 */
 const REFRESH_MS = 8_000;
+
+/** @description 本节点 TTL 续期（心跳）间隔（毫秒）。 */
 const HEARTBEAT_MS = 10_000;
 
-/** 最小 Redis 客户端（RESP，支持数组响应） */
+/**
+ * @description 最小 RESP 客户端：单连接 FIFO 队列，支持 bulk string 与数组类型。
+ *
+ * @remarks 与 `redis-session-store` 类似但 `readOne` 支持 `*` 数组，供 SMEMBERS 使用。
+ */
 class MinimalRedisClient {
   private socket: Socket | null = null;
   private queue: Array<{ resolve: (v: string | string[] | null) => void; reject: (e: Error) => void }> = [];
@@ -151,18 +162,45 @@ class MinimalRedisClient {
 }
 
 export class RedisDiscovery implements IDiscoveryService {
+  /** @description Redis 连接 URL。 */
   private readonly redisUrl: string;
+
+  /** @description 键前缀，隔离不同集群或环境。 */
   private readonly keyPrefix: string;
+
+  /** @description 本副本逻辑节点 ID。 */
   private readonly nodeId: string;
+
+  /** @description 注册到 Redis 的可达 IP/主机名。 */
   private readonly selfAddress: string;
+
+  /** @description 注册到 Redis 的 proxy 平面端口。 */
   private readonly selfPort: number;
+
+  /** @description RESP 客户端实例。 */
   private client: MinimalRedisClient | null = null;
+
+  /** @description 最近一次 refresh 得到的成员快照。 */
   private nodes: ClusterNodeInfo[] = [];
+
+  /** @description 拓扑变更订阅者。 */
   private changeCallbacks: Array<(nodes: ClusterNodeInfo[]) => void> = [];
+
+  /** @description 成员列表轮询定时器。 */
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** @description TTL 续约定时器。 */
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** @description 停止标志，防止定时器在 teardown 后继续执行。 */
   private stopped = false;
 
+  /**
+   * @description 解析 Redis URL 与自注册地址环境变量。
+   *
+   * @param config - `cluster.discovery` 配置。
+   * @param nodeId - 当前副本 ID。
+   */
   constructor(config: DiscoveryConfig, nodeId: string) {
     this.redisUrl = config.redisUrl ?? "redis://localhost:6379";
     this.keyPrefix = config.redisKeyPrefix ?? DEFAULT_PREFIX;
@@ -179,6 +217,11 @@ export class RedisDiscovery implements IDiscoveryService {
     return `${this.keyPrefix}:node:${id}`;
   }
 
+  /**
+   * @description 连接 Redis、自注册、启动心跳与成员轮询。
+   *
+   * @returns 首次 `refreshNodes` 完成后 resolve。
+   */
   async start(): Promise<void> {
     const u = new URL(this.redisUrl);
     const host = u.hostname || "127.0.0.1";
@@ -198,6 +241,11 @@ export class RedisDiscovery implements IDiscoveryService {
     );
   }
 
+  /**
+   * @description 注销本节点、断开 Redis、清空回调与快照。
+   *
+   * @returns teardown 完成后 resolve。
+   */
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
@@ -216,14 +264,25 @@ export class RedisDiscovery implements IDiscoveryService {
     console.log("[openclaw-cluster] Redis discovery stopped");
   }
 
+  /**
+   * @description 返回当前成员列表浅拷贝。
+   *
+   * @returns `ClusterNodeInfo[]` 快照。
+   */
   getNodes(): ClusterNodeInfo[] {
     return [...this.nodes];
   }
 
+  /**
+   * @description 注册成员集合变更回调。
+   *
+   * @param callback - 节点列表更新时触发。
+   */
   onNodeChange(callback: (nodes: ClusterNodeInfo[]) => void): void {
     this.changeCallbacks.push(callback);
   }
 
+  /** @description SADD 集合成员并 SET 带 TTL 的 address:port KV。 */
   private async registerSelf(): Promise<void> {
     const c = this.client!;
     const val = `${this.selfAddress}:${this.selfPort}`;

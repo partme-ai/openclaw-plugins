@@ -1,10 +1,11 @@
 /**
- * knowledge_add — 知识库写入 Tool
+ * @fileoverview `knowledge_add` — OpenClaw 侧的 **向量写入 Tool**。
  *
- * 三种写入方式：
- * - store_text   — 存入文字内容
- * - store_file   — 存入文件
- * - store_summary — 存入对话总结
+ * @description
+ * RAG 管道的 **写入（Ingest）** 分支：文本直写 / 结构化文件 ingest / 对话摘要固化。
+ * 每条路径均复用 `chunkText`→`embedBatch`→`upsert` 范式，并在进入前完成 **命名空间 ACL** 判定。
+ *
+ * @module knowledge/tools/knowledge-add
  */
 
 import { basename, extname } from 'node:path';
@@ -42,6 +43,11 @@ interface KnowledgeAddParams {
 /** 对话级 namespace 格式：{accountId}:{mode} */
 const SESSION_NS_PATTERN = /^[^:]+:(bot|agent)$/;
 
+/**
+ * @description 判断 `namespace` 是否符合 `{account}:(bot|agent)` 会话私有格式。
+ *
+ * @param namespace - 目标库隔离键
+ */
 function isSessionNamespace(namespace: string): boolean {
   return SESSION_NS_PATTERN.test(namespace);
 }
@@ -50,6 +56,7 @@ function isSessionNamespace(namespace: string): boolean {
 // 响应构造
 // ===================================================================
 
+/** @description 将结构化负载封装成 Agent Tool 文本响应骨架。 */
 function toolResult(data: Record<string, unknown>): AgentToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(data) }],
@@ -57,10 +64,12 @@ function toolResult(data: Record<string, unknown>): AgentToolResult {
   };
 }
 
+/** @description `success:true` 变体 — 额外字段扁平 merge 进 JSON。 */
 function successResult(data: Record<string, unknown>): AgentToolResult {
   return toolResult({ success: true, ...data });
 }
 
+/** @description 统一错误出口 — 仍保持 HTTP 200 + JSON 协议。 */
 function failedResult(message: string): AgentToolResult {
   return toolResult({ success: false, error: message });
 }
@@ -69,6 +78,11 @@ function failedResult(message: string): AgentToolResult {
 // 获取共享配置（通过 runtimeConfig 或合理默认值）
 // ===================================================================
 
+/**
+ * @description 从 `ctx.pluginConfig` 组装最小可用 `KnowledgeConfig` — 缺省即视为强制开启知识能力。
+ *
+ * @param ctx - OpenClaw Tool 上下文
+ */
 function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').KnowledgeConfig {
   const knowledgeConfig = (ctx.pluginConfig ?? {}) as import('../types.js').KnowledgeConfig;
   if (knowledgeConfig.enabled ?? true) {
@@ -81,6 +95,14 @@ function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').
 // 执行逻辑
 // ===================================================================
 
+/**
+ * @description `store_text` 分支：幂等语义 — 先 `deleteBySource` 再批量写入向量。
+ *
+ * @param content - 纯文本正文
+ * @param namespace - 向量隔离空间
+ * @param sourceId - 文档键（重复写入覆盖）
+ * @param ctx - Tool 上下文（读取插件配置）
+ */
 async function handleStoreText(
   content: string,
   namespace: string,
@@ -115,6 +137,14 @@ async function handleStoreText(
   return successResult({ chunksAdded: vectorChunks.length, sourceId });
 }
 
+/**
+ * @description `store_file` 分支：委托 {@link indexDocument} 完整 ingest（含 Parser 钩子预留）。
+ *
+ * @param filePath - 磁盘绝对/相对路径
+ * @param namespace - 向量隔离空间
+ * @param sourceId - 覆盖写入键
+ * @param ctx - Tool 上下文
+ */
 async function handleStoreFile(
   filePath: string,
   namespace: string,
@@ -150,6 +180,15 @@ async function handleStoreFile(
   return successResult({ chunksAdded: result.chunksAdded, sourceId });
 }
 
+/**
+ * @description `store_summary` 分支：模板化为固定 Markdown-ish 排版后再切块嵌入。
+ *
+ * @param topic - 会话主题标题
+ * @param text - 摘要正文
+ * @param namespace - 必须为会话 private NS（外层已校验）
+ * @param sourceId - 摘要条目 ID
+ * @param ctx - Tool 上下文
+ */
 async function handleStoreSummary(
   topic: string,
   text: string,
@@ -194,9 +233,10 @@ async function handleStoreSummary(
 // ===================================================================
 
 /**
- * 创建 wecom_knowledge_add Tool 定义
+ * @description OpenClaw `registerTool` 工厂：**knowledge_add** — 三类写入动作的参数路由器。
  *
- * 以工厂函数形式导出，以便 registerTool 传入 OpenClawPluginToolContext。
+ * @param ctx - 绑定账号/agent/bot 模式及插件配置的调用上下文
+ * @returns Agent Tool 描述对象（含 JSON Schema parameters）
  */
 export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext) {
   return {

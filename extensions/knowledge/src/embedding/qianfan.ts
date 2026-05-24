@@ -1,14 +1,9 @@
 /**
- * 百度千帆 Embedding API 实现
+ * @fileoverview 百度千帆 Embedding — OpenAI 兼容 `/v2/embeddings`。
  *
- * 使用千帆 OpenAI 兼容模式调用：
- *   POST https://qianfan.baidubce.com/v2/embeddings
- *   鉴权: Bearer bce-v3/ALTAK-...
- *   请求体: { model, input: [string], ... }  标准 OpenAI embeddings 格式
+ * **模块角色**：Knowledge Plugin · Embedding provider (Qianfan)。
  *
- * 官方文档:
- *   https://cloud.baidu.com/doc/qianfan/s/rmh4stp0j
- *   https://cloud.baidu.com/doc/qianfan-api/s/Fm7u3ropn
+ * @module knowledge/embedding/qianfan
  */
 import type { EmbeddingService, KnowledgeEmbeddingConfig } from '../types.js';
 

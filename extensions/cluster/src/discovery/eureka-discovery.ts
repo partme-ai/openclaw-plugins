@@ -1,10 +1,12 @@
 /**
- * Eureka 节点发现实现
+ * @fileoverview **Eureka 节点发现**：通过 Netflix Eureka REST API 注册实例并拉取 UP 状态成员。
  *
- * 通过 Netflix Eureka REST API 实现服务注册与发现（老版 Spring Cloud 常用）：
- * - 本节点注册到 Eureka，定期心跳
- * - 轮询 GET /eureka/v2/apps/{appName} 获取 UP 实例列表
- * - 停止时注销
+ * @description 集群插件 **discovery 层** 后端，兼容老版 Spring Cloud Netflix 栈；注册 + PUT 心跳，
+ * 轮询 `/eureka/v2/apps/{appName}` 获取实例列表。
+ *
+ * **关键依赖**
+ * - `fetch` — Eureka HTTP API。
+ * - 环境变量 `OPENCLAW_CLUSTER_ADDRESS` / `OPENCLAW_CLUSTER_PORT`。
  *
  * @see https://github.com/Netflix/eureka/wiki/Eureka-REST-operations
  */
@@ -28,6 +30,11 @@ interface EurekaAppResponse {
   };
 }
 
+/**
+ * @description 基于 Eureka 注册中心的集群成员发现。
+ *
+ * @implements {IDiscoveryService}
+ */
 export class EurekaDiscovery implements IDiscoveryService {
   private readonly baseUrl: string;
   private readonly appName: string;

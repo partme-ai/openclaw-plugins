@@ -1,11 +1,27 @@
 /**
- * 高德运营工具：与《高德开放平台对接规格》EP-3 一致，封装高德 Web 服务 API。
+ * 高德运营工具（Agent Tools）
+ *
+ * **架构角色**：向 OpenClaw 注册 Agent 可调用工具，封装高德 Web 服务 API，
+ * 与《高德开放平台对接规格》EP-3 能力清单一致。
+ *
+ * **关键依赖**：
+ * - `../types` — `ToolDefinition`、`AmapAccountConfig`
+ * - `../amap/amap-api` — 统一 HTTP 调用层
  */
 
 import type { ToolDefinition } from "../types.js";
 import type { AmapAccountConfig } from "../types.js";
 import { amapApiCall } from "../amap/amap-api.js";
 
+/**
+ * 创建高德 LBS 运营工具列表。
+ *
+ * 包含 POI 关键字查询、周边搜索、POI 详情三类工具；
+ * 执行时通过 `getConfig()` 读取当前 API Key。
+ *
+ * @param getConfig - 读取 channels.amap 配置的 getter
+ * @returns 可传给 `api.registerTool` 的工具定义数组
+ */
 export function createAmapTools(
   getConfig: () => AmapAccountConfig | undefined
 ): ToolDefinition[] {
@@ -27,6 +43,7 @@ export function createAmapTools(
       },
       execute: async (params) => {
         const p = params as Record<string, string | number | undefined>;
+        // 有 id 时走详情接口，否则走关键字搜索
         const path = p?.id ? "/v3/place/detail" : "/v3/place/text";
         return amapApiCall(getConfig(), path, p ?? {});
       },
