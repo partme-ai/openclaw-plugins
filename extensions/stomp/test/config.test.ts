@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { stompTcpChannelFixture } from "../../../test-utils/channel-fixtures.js";
 import { DEFAULT_STOMP_TCP_CONFIG, resolveStompTcpConfig } from "../src/config.js";
 
 describe("resolveStompTcpConfig", () => {
@@ -51,5 +52,27 @@ describe("resolveStompTcpConfig", () => {
     expect(cfg.heartbeat.clientMs).toBe(4000);
     expect(cfg.tls.enabled).toBe(true);
     expect(cfg.tls.certFile).toBe("/etc/cert.pem");
+  });
+
+  it("applies shared stompTcpChannelFixture values", () => {
+    const cfg = resolveStompTcpConfig(stompTcpChannelFixture());
+    expect(cfg.port).toBe(61673);
+    expect(cfg.auth.required).toBe(false);
+    expect(cfg.topicBindings[0]?.agentId).toBe("iot-agent");
+  });
+
+  it("preserves defaultAckMode and prefetchCount overrides", () => {
+    const cfg = resolveStompTcpConfig({
+      channels: {
+        "stomp-tcp": {
+          defaultAckMode: "client-individual",
+          prefetchCount: 5,
+          maxConnections: 50,
+        },
+      },
+    });
+    expect(cfg.defaultAckMode).toBe("client-individual");
+    expect(cfg.prefetchCount).toBe(5);
+    expect(cfg.maxConnections).toBe(50);
   });
 });
