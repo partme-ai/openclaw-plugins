@@ -14,6 +14,7 @@ let _resolvedConfig: WechatIpadConfig | null = null;
  * 注入 OpenClaw Gateway Runtime。
  *
  * @param runtime - Gateway 注入的运行时实例
+ * @returns void
  */
 export function setWechatIpadRuntime(runtime: GatewayRuntime): void {
   _runtime = runtime;
@@ -32,6 +33,7 @@ export function getWechatIpadRuntime(): GatewayRuntime | null {
  * 缓存解析后的插件配置。
  *
  * @param config - 合并默认值的插件配置
+ * @returns void
  */
 export function setResolvedWechatIpadConfig(config: WechatIpadConfig): void {
   _resolvedConfig = config;

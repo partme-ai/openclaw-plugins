@@ -1,3 +1,9 @@
+/**
+ * @module wechat/util/random
+ *
+ * 随机 ID / nonce 工具。
+ */
+
 import crypto from "node:crypto";
 
 /**

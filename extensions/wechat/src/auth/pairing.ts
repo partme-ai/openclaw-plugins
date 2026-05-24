@@ -1,3 +1,9 @@
+/**
+ * @module wechat/auth/pairing
+ *
+ * 微信配对 allowFrom 与框架路径解析。
+ */
+
 import fs from "node:fs";
 import path from "node:path";
 

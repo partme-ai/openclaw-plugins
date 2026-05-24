@@ -42,6 +42,9 @@ function createLogger(opts: { log?: (message: string) => void; error?: (message:
 
 /**
  * 将 sync_msg 客户消息派发到 OpenClaw Agent，并通过 KF API 回发文本。
+ *
+ * @param params - 含 cfg、accountConfig、msg、core 及日志回调
+ * @returns Promise；策略拒绝或超时路径可能提前结束
  */
 export async function dispatchKfMessage(params: {
   cfg: OpenClawConfig;

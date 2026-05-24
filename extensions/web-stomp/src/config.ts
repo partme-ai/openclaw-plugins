@@ -14,6 +14,9 @@ export const DEFAULT_STOMP_WS_CONFIG: StompServerConfig = {
 
 /**
  * 从全局网关配置解析 channels.stomp 配置。
+ *
+ * @param globalConfig - OpenClaw 全局配置对象
+ * @returns 合并默认值后的 StompServerConfig
  */
 export function resolveStompWsConfig(globalConfig: Record<string, unknown>): StompServerConfig {
   const channels = globalConfig.channels as Record<string, unknown> | undefined;

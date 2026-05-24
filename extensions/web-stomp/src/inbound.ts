@@ -25,6 +25,9 @@ export type WebStompInboundContext = {
 
 /**
  * 将入站 STOMP SEND 分发到 OpenClaw（normalizeWireIngress → dispatchChannelMessage）。
+ *
+ * @param ctx - 含 peerId、destination、rawPayload 的入站上下文
+ * @returns Promise；runtime 未初始化或重复消息时静默返回
  */
 export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise<void> {
   const runtime = getWebStompRuntime();

@@ -1,3 +1,9 @@
+/**
+ * @module wechat/auth/login-qr
+ *
+ * 微信扫码登录 QR 生成与轮询。
+ */
+
 import { randomUUID } from "node:crypto";
 
 import { apiGetFetch } from "../api/api.js";

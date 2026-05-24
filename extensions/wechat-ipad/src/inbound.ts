@@ -25,6 +25,7 @@ import { on as onBridgeEvent } from "./transport/ipad-bridge.js";
  * 将微信事件转换为 OpenClaw 消息管道调用。
  *
  * @param config - 插件配置
+ * @returns void
  */
 export function registerWechatIpadEventHandlers(config: WechatIpadConfig): void {
   onBridgeEvent<WxMessagePayload>("message" as IpadEventType, (msg) => {
@@ -51,6 +52,7 @@ export function registerWechatIpadEventHandlers(config: WechatIpadConfig): void 
  *
  * @param msg - 微信消息负载
  * @param config - 插件配置
+ * @returns void
  */
 export function handleWxMessage(
   msg: WxMessagePayload,

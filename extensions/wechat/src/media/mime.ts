@@ -1,3 +1,9 @@
+/**
+ * @module wechat/media/mime
+ *
+ * 微信媒体 MIME 推断。
+ */
+
 import path from "node:path";
 
 const EXTENSION_TO_MIME: Record<string, string> = {

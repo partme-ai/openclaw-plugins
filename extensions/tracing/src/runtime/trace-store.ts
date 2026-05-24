@@ -33,6 +33,7 @@ const toolSpanMap = new Map<string, string>();
  * 生成随机十六进制 ID。
  *
  * @param bytes - 字节长度（traceId=16, spanId=8）
+ * @returns 小写十六进制字符串
  */
 export function randomHexId(bytes: number): string {
   const arr = new Uint8Array(bytes);
@@ -44,6 +45,10 @@ export function randomHexId(bytes: number): string {
 
 /**
  * 创建 Span 并登记为活跃。
+ *
+ * @param name - Span 名称（如 `message.received`、`tool:search`）
+ * @param options - traceId、parentSpanId、kind、attributes 等可选字段
+ * @returns 新建且已写入 activeSpans 的 Span
  */
 export function createSpan(
   name: string,
@@ -72,6 +77,11 @@ export function createSpan(
 
 /**
  * 结束 Span，写入 recentTraces，并可选导出到后端。
+ *
+ * @param spanId - 待结束的 spanId
+ * @param status - 最终状态（ok / error / unset）
+ * @param backend - 非空时将 span 导出到追踪后端
+ * @returns 已结束的 Span；不存在时 undefined
  */
 export async function endSpan(
   spanId: string,
@@ -111,6 +121,9 @@ export async function endSpan(
 
 /**
  * 注册活跃 trace 上下文。
+ *
+ * @param ctx - 含 traceId、rootSpanId 及可选 sessionKey/runId 的上下文
+ * @returns void
  */
 export function registerActiveTrace(ctx: ActiveTraceContext): void {
   if (ctx.sessionKey) {
@@ -123,6 +136,10 @@ export function registerActiveTrace(ctx: ActiveTraceContext): void {
 
 /**
  * 按 runId 或 sessionKey 查找活跃 trace。
+ *
+ * @param sessionKey - OpenClaw 会话键（可选）
+ * @param runId - Agent run 标识（优先于 sessionKey）
+ * @returns 匹配的 ActiveTraceContext；未找到时 undefined
  */
 export function resolveActiveTrace(sessionKey?: string, runId?: string): ActiveTraceContext | undefined {
   if (runId) {
@@ -139,6 +156,10 @@ export function resolveActiveTrace(sessionKey?: string, runId?: string): ActiveT
 
 /**
  * 递增 trace 内 span 计数；超过上限时返回 false。
+ *
+ * @param active - 当前活跃 trace 上下文（会被原地修改 spanCount）
+ * @param maxSpansPerTrace - 单 trace 允许的最大 span 数
+ * @returns 未超限时 true，否则 false
  */
 export function incrementSpanCount(active: ActiveTraceContext, maxSpansPerTrace: number): boolean {
   active.spanCount += 1;
@@ -147,6 +168,10 @@ export function incrementSpanCount(active: ActiveTraceContext, maxSpansPerTrace:
 
 /**
  * 清理指定会话 / run 的 trace 映射。
+ *
+ * @param sessionKey - 要移除的 sessionKey（可选）
+ * @param runId - 要移除的 runId（可选）
+ * @returns void
  */
 export function clearActiveTrace(sessionKey?: string, runId?: string): void {
   if (runId) {
@@ -159,6 +184,10 @@ export function clearActiveTrace(sessionKey?: string, runId?: string): void {
 
 /**
  * 绑定 toolCallId 与 spanId。
+ *
+ * @param toolCallId - OpenClaw tool 调用 ID
+ * @param spanId - 对应的 client span ID
+ * @returns void
  */
 export function bindToolSpan(toolCallId: string, spanId: string): void {
   toolSpanMap.set(toolCallId, spanId);
@@ -166,6 +195,9 @@ export function bindToolSpan(toolCallId: string, spanId: string): void {
 
 /**
  * 取出并移除 toolCallId 对应的 spanId。
+ *
+ * @param toolCallId - OpenClaw tool 调用 ID
+ * @returns 绑定的 spanId；不存在时 undefined
  */
 export function takeToolSpanId(toolCallId: string): string | undefined {
   const spanId = toolSpanMap.get(toolCallId);
@@ -175,17 +207,30 @@ export function takeToolSpanId(toolCallId: string): string | undefined {
   return spanId;
 }
 
-/** 获取活跃 Span 数量 */
+/**
+ * 获取当前内存中活跃 Span 数量。
+ *
+ * @returns activeSpans Map 的大小
+ */
 export function getActiveSpanCount(): number {
   return activeSpans.size;
 }
 
-/** 获取 recent traces 数量 */
+/**
+ * 获取 recent traces 环形缓冲中的 trace 数量。
+ *
+ * @returns recentTraces Map 的大小
+ */
 export function getRecentTraceCount(): number {
   return recentTraces.size;
 }
 
-/** 列出最近 trace 摘要 */
+/**
+ * 列出最近 trace 摘要（按插入顺序取尾部 limit 条）。
+ *
+ * @param limit - 最大返回条数
+ * @returns trace 摘要数组（含 spanCount、时间范围、rootSpan 名称）
+ */
 export function listRecentTraces(limit: number): Array<{
   traceId: string;
   spanCount: number;
@@ -204,13 +249,20 @@ export function listRecentTraces(limit: number): Array<{
     }));
 }
 
-/** 获取单个 trace 的 spans */
+/**
+ * 获取单个 trace 的全部 spans。
+ *
+ * @param traceId - 目标 trace ID
+ * @returns 该 trace 的 Span 数组；不存在时 undefined
+ */
 export function getTraceSpans(traceId: string): Span[] | undefined {
   return recentTraces.get(traceId);
 }
 
 /**
  * 清理过期映射，防止内存泄漏。
+ *
+ * @returns void
  */
 export function cleanupSessionTraces(): void {
   if (sessionTraceMap.size > 10_000) {
@@ -235,6 +287,8 @@ export function cleanupSessionTraces(): void {
 
 /**
  * Gateway 停止或插件卸载时清空全部内存状态。
+ *
+ * @returns void
  */
 export function resetTraceStore(): void {
   activeSpans.clear();

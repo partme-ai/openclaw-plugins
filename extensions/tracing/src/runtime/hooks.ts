@@ -54,11 +54,16 @@ function readMessageContent(
 
 /**
  * 注册 Plugin Hooks（priority 100，优先于 router/prometheus 观测 hook）。
+ *
+ * @param api - OpenClaw 插件 API（用于 `api.on` 注册）
+ * @param hookCtx - 含 backend、sampler、config 的 hook 上下文
+ * @returns void
  */
 export function registerTracingPluginHooks(api: OpenClawPluginApi, hookCtx: TracingHookContext): void {
   const { backend, sampler, config } = hookCtx;
   const hookOpts = { priority: 100 };
 
+  // message_received：创建 root span 并注册 session/run 级 active trace
   api.on(
     "message_received",
     (event, ctx) => {
@@ -101,6 +106,7 @@ export function registerTracingPluginHooks(api: OpenClawPluginApi, hookCtx: Trac
     hookOpts,
   );
 
+  // before_tool_call：为每次 tool 调用创建 client span 并绑定 toolCallId
   api.on(
     "before_tool_call",
     (event, ctx) => {
@@ -133,6 +139,7 @@ export function registerTracingPluginHooks(api: OpenClawPluginApi, hookCtx: Trac
     hookOpts,
   );
 
+  // after_tool_call：结束 tool span 并导出到 backend
   api.on(
     "after_tool_call",
     async (event, ctx) => {
@@ -151,6 +158,7 @@ export function registerTracingPluginHooks(api: OpenClawPluginApi, hookCtx: Trac
     hookOpts,
   );
 
+  // agent_end：结束 root span 并清理 active trace
   api.on(
     "agent_end",
     async (_event, ctx) => {
@@ -168,6 +176,7 @@ export function registerTracingPluginHooks(api: OpenClawPluginApi, hookCtx: Trac
     hookOpts,
   );
 
+  // session_end：会话结束时清理 trace 映射
   api.on(
     "session_end",
     (_event, ctx) => {

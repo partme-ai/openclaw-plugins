@@ -41,7 +41,11 @@ export type InboundResult = {
 };
 
 /**
- * 处理一条入站消息并分发到 OpenClaw。
+ * 处理一条入站 MQTT 消息并分发到 OpenClaw。
+ *
+ * @param event - 入站事件（clientId、topic、payload 等）
+ * @param config - 当前 Web MQTT 通道配置
+ * @returns 是否接受及拒绝原因、路由来源
  */
 export async function processInbound(event: InboundEvent, config: WebMqttConfig): Promise<InboundResult> {
   const route = resolveInboundRoute(event.topic, config);

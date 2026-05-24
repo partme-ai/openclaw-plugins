@@ -1,3 +1,15 @@
+/**
+ * @module wechat/messaging/send-media
+ *
+ * 本地媒体文件 **上传 + 按 MIME 路由发送**（图片 / 视频 / 通用文件）。
+ *
+ * **职责**：
+ * - 根据 MIME 选择 CDN 上传 API 与对应 send*MessageWeixin
+ * - monitor 自动回复与 channel outbound 共用，保持行为一致
+ *
+ * **关键导出**：`sendWeixinMediaFile`
+ */
+
 import path from "node:path";
 import type { WeixinApiOptions } from "../api/api.js";
 import { logger } from "../util/logger.js";

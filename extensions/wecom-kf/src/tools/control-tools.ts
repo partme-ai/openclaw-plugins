@@ -270,6 +270,9 @@ async function handleTransferSession(
 
 /**
  * **wecom_kf_list_servicers** — 获取接待人员列表 (94645)
+ *
+ * @param toolCtx - OpenClaw 插件 tool 上下文（config、session 等）
+ * @returns 可注册的 Agent tool 定义
  */
 export function createWecomKfListServicersTool(toolCtx: OpenClawPluginToolContext) {
     return {
@@ -290,6 +293,9 @@ export function createWecomKfListServicersTool(toolCtx: OpenClawPluginToolContex
 
 /**
  * **wecom_kf_list_accounts** — 获取客服账号列表 (94661)
+ *
+ * @param toolCtx - OpenClaw 插件 tool 上下文
+ * @returns 可注册的 Agent tool 定义
  */
 export function createWecomKfListAccountsTool(toolCtx: OpenClawPluginToolContext) {
     return {
@@ -311,6 +317,9 @@ export function createWecomKfListAccountsTool(toolCtx: OpenClawPluginToolContext
 
 /**
  * **wecom_kf_get_account_link** — 获取客服账号链接 (94665)
+ *
+ * @param toolCtx - OpenClaw 插件 tool 上下文
+ * @returns 可注册的 Agent tool 定义
  */
 export function createWecomKfGetAccountLinkTool(toolCtx: OpenClawPluginToolContext) {
     return {
@@ -332,6 +341,9 @@ export function createWecomKfGetAccountLinkTool(toolCtx: OpenClawPluginToolConte
 
 /**
  * **wecom_kf_transfer_session** — 分配/转接客服会话 (94669)
+ *
+ * @param toolCtx - OpenClaw 插件 tool 上下文
+ * @returns 可注册的 Agent tool 定义
  */
 export function createWecomKfTransferSessionTool(toolCtx: OpenClawPluginToolContext) {
     return {

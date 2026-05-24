@@ -28,6 +28,9 @@ export function isUserActionAllowed(params: {
   return params.user.subscribeAllow.some((pattern) => matchTopic(params.topic, pattern));
 }
 
+/**
+ * 按 ACL 规则列表评估 topic 权限（deny 优先，无匹配规则时默认允许）。
+ */
 function evaluateAclRules(
   rules: WebMqttAclRule[],
   action: "publish" | "subscribe" | "inbound" | "outbound",

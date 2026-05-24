@@ -1,3 +1,9 @@
+/**
+ * @module wechat/media/media-download
+ *
+ * 微信媒体下载与落盘。
+ */
+
 import type { WeixinInboundMediaOpts } from "../messaging/inbound.js";
 import { logger } from "../util/logger.js";
 import { getMimeFromFilename } from "./mime.js";

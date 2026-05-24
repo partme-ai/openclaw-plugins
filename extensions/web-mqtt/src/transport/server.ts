@@ -146,6 +146,7 @@ export function getClientUsername(clientId: string): string | null {
 }
 
 function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandler): void {
+  // 连接计数：client 事件增、clientDisconnect 减并清理 username 映射
   broker!.on("client", () => {
     stats.connectedClients += 1;
   });
@@ -154,6 +155,7 @@ function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandle
     clientUsernameMap.delete(client.id);
   });
 
+  // 入站 publish：忽略 $SYS/ 与超 payload；转发给 OpenClaw inbound 管道
   broker!.on("publish", (packet: PublishPacket, client: Client | null) => {
     if (!client || packet.topic.startsWith("$SYS/")) return;
     if ((packet.payload as Buffer).length > config.limits.maxPayloadBytes) {
@@ -172,6 +174,9 @@ function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandle
   });
 }
 
+/**
+ * 配置 Aedes authenticate / authorizeSubscribe / authorizePublish 守卫。
+ */
 function configureAuthGuards(config: WebMqttConfig): void {
   (broker as any).authenticate = (client: Client, username: string | undefined, password: Buffer | undefined, done: (err: Error | null, success: boolean) => void) => {
     if (!config.auth.required) return done(null, true);
@@ -202,6 +207,9 @@ function configureAuthGuards(config: WebMqttConfig): void {
   };
 }
 
+/**
+ * 按 TLS 配置创建 HTTP 或 HTTPS 底层服务器。
+ */
 function createWebServer(config: WebMqttConfig): HttpServer | HttpsServer {
   if (!config.tls.enabled) return createHttpServer();
   const tlsOptions = {
@@ -215,6 +223,9 @@ function createWebServer(config: WebMqttConfig): HttpServer | HttpsServer {
   return createHttpsServer(tlsOptions);
 }
 
+/**
+ * 将 WebSocket 双向流桥接为 Aedes 可消费的 Duplex（含 idle 超时 terminate）。
+ */
 function createDuplexFromWs(ws: WebSocket, idleTimeoutMs: number): Duplex {
   const stream = new Duplex({
     read() {},
@@ -252,6 +263,9 @@ function createDuplexFromWs(ws: WebSocket, idleTimeoutMs: number): Duplex {
   return stream;
 }
 
+/**
+ * 按用户 ACL 规则或 publishAllow/subscribeAllow 白名单校验 topic 权限。
+ */
 function allowTopicByUser(
   config: WebMqttConfig,
   client: Client | null,
@@ -270,6 +284,9 @@ function allowTopicByUser(
   });
 }
 
+/**
+ * 校验 MQTT 密码：明文 timingSafeEqual 或 sha256/sha512 哈希比对。
+ */
 function verifyPassword(
   plainPassword: string | undefined,
   passwordHash: string | undefined,
@@ -285,6 +302,7 @@ function verifyPassword(
   return safeEqual(Buffer.from(passwordHash), Buffer.from(digest));
 }
 
+/** 恒定时间 Buffer 相等比较，防止时序侧信道。 */
 function safeEqual(a: Buffer, b: Buffer): boolean {
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);

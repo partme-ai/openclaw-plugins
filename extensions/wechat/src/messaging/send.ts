@@ -1,3 +1,19 @@
+/**
+ * @module wechat/messaging/send
+ *
+ * 微信 **出站消息发送**（文本 / 图片 / 视频 / 文件）。
+ *
+ * **职责**：
+ * - 构造 `SendMessageReq`（MessageItem 列表 + context_token + client_id）
+ * - 调用 `api/sendMessage`；流式回复经 `StreamingMarkdownFilter` 分块
+ *
+ * **上下游**：
+ * - 上游：Agent reply dispatcher、`process-message` deliver 回调
+ * - 下游：`api/api.ts` HTTP；`cdn/upload` 媒体上传
+ *
+ * **关键导出**：`sendMessageWeixin`、`sendImageMessageWeixin`、`StreamingMarkdownFilter`
+ */
+
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 
 import { sendMessage as sendMessageApi } from "../api/api.js";

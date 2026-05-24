@@ -1,3 +1,9 @@
+/**
+ * @module wechat/storage/state-dir
+ *
+ * 微信插件状态目录解析。
+ */
+
 import os from "node:os";
 import path from "node:path";
 

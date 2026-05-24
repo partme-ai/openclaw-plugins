@@ -1,3 +1,9 @@
+/**
+ * @module wechat/cdn/upload
+ *
+ * 微信 CDN 上传入口。
+ */
+
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";

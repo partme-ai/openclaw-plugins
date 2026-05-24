@@ -1,3 +1,15 @@
+/**
+ * @module wechat/api/session-guard
+ *
+ * Bot 会话过期 **冷却守卫**（errcode -14 触发后暂停 API 调用 1 小时）。
+ *
+ * **职责**：
+ * - `pauseSession`：收到 SESSION_EXPIRED 后进入冷却
+ * - `assertSessionActive`：出站 / 入站 API 调用前校验，避免无效请求风暴
+ *
+ * **适用场景**：`channel.ts` outbound、`api/api.ts` 调用链、`monitor` 入站循环。
+ */
+
 import { logger } from "../util/logger.js";
 
 const SESSION_PAUSE_DURATION_MS = 60 * 60 * 1000;

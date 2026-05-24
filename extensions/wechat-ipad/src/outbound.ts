@@ -12,6 +12,7 @@ import { getWxidBySessionKey, parseWxidFromSessionKey } from "./routing/session-
  *
  * @param sessionKey - OpenClaw 会话键（格式：wechat-ipad:{wxid}@{agentId}）
  * @param text - Agent 回复的文本内容
+ * @returns Promise；无法解析 wxid 或发送失败时记录错误并返回
  */
 export async function wechatIpadSendText(
   sessionKey: string,

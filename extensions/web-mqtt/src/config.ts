@@ -42,6 +42,9 @@ export const DEFAULT_WEB_MQTT_CONFIG: WebMqttConfig = {
 
 /**
  * 解析 channels.mqtt-ws 并返回运行时配置。
+ *
+ * @param globalConfig - OpenClaw 全局配置对象
+ * @returns 合并默认值后的 WebMqttConfig
  */
 export function resolveWebMqttConfig(globalConfig: Record<string, unknown>): WebMqttConfig {
   const channels = globalConfig.channels as Record<string, unknown> | undefined;
@@ -91,6 +94,9 @@ export function resolveWebMqttConfig(globalConfig: Record<string, unknown>): Web
 
 /**
  * 生成适合 status/debug 的脱敏配置快照。
+ *
+ * @param config - 完整 WebMqttConfig
+ * @returns 脱敏后的可序列化配置对象（密码字段仅保留 hasPassword 标志）
  */
 export function buildWebMqttConfigSnapshot(config: WebMqttConfig): Record<string, unknown> {
   return {
@@ -112,6 +118,9 @@ export function buildWebMqttConfigSnapshot(config: WebMqttConfig): Record<string
 
 /**
  * 对配置做启动前校验，返回告警信息。
+ *
+ * @param config - 待校验的 WebMqttConfig
+ * @returns 人类可读的问题描述列表（空数组表示无告警）
  */
 export function validateWebMqttConfig(config: WebMqttConfig): string[] {
   const issues: string[] = [];
@@ -128,7 +137,10 @@ export function validateWebMqttConfig(config: WebMqttConfig): string[] {
 }
 
 /**
- * 规范化 topic 前缀。
+ * 规范化 topic 前缀（保证以 `/` 结尾）。
+ *
+ * @param prefix - 原始 topic 前缀
+ * @returns 以 `/` 结尾的前缀字符串
  */
 export function normalizeTopicPrefix(prefix: string): string {
   return prefix.endsWith("/") ? prefix : `${prefix}/`;

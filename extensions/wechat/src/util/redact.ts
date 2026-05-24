@@ -1,3 +1,9 @@
+/**
+ * @module wechat/util/redact
+ *
+ * 敏感信息脱敏工具。
+ */
+
 const DEFAULT_BODY_MAX_LEN = 200;
 const DEFAULT_TOKEN_PREFIX_LEN = 6;
 

@@ -1,3 +1,20 @@
+/**
+ * @module wechat/channel
+ *
+ * 微信 OpenClaw **ChannelPlugin** 定义（通道契约实现）。
+ *
+ * **职责**：
+ * - 账号生命周期：登录 QR、配对、多账号解析、gateway startAccount → monitor 长轮询
+ * - 出站：文本 / 媒体（CDN 上传 + sendMessage）；contextToken 路由多账号
+ * - 安全：DM allowFrom、session 过期 guard、slash 命令
+ *
+ * **上下游**：
+ * - 上游：`auth/` 账号与登录；`config/` 配置 schema
+ * - 下游：`messaging/` 入站处理与出站发送；`api/` iLink HTTP；`monitor/` getUpdates 循环
+ *
+ * **关键导出**：`weixinPlugin`
+ */
+
 import path from "node:path";
 
 import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";

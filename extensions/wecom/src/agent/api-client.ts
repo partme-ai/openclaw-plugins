@@ -145,6 +145,7 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
  * @param params.toTag 接收标签 ID (单聊可选)
  * @param params.chatId 接收群 ID (群聊模式必填，互斥)
  * @param params.text 消息内容
+ * @returns Promise；企微 API 非 0 errcode 时抛错
  */
 export async function sendText(params: {
     agent: ResolvedAgentAccount;
@@ -298,6 +299,7 @@ export async function uploadMedia(params: {
  * @param params.mediaType 媒体类型
  * @param params.title 视频标题 (可选)
  * @param params.description 视频描述 (可选)
+ * @returns Promise；企微 API 非 0 errcode 时抛错
  */
 export async function sendMedia(params: {
     agent: ResolvedAgentAccount;
@@ -364,8 +366,9 @@ export async function sendMedia(params: {
  * **downloadMedia (下载媒体文件)**
  * 
  * 通过 media_id 从企业微信服务器下载临时素材。
- * 
- * @returns { buffer, contentType }
+ *
+ * @param params - agent、mediaId、可选 maxBytes 上限
+ * @returns buffer、contentType 及可选 filename
  */
 export async function downloadMedia(params: {
     agent: ResolvedAgentAccount;

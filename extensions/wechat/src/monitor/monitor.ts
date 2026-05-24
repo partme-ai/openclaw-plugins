@@ -1,3 +1,9 @@
+/**
+ * @module wechat/monitor/monitor
+ *
+ * 微信通道 monitor 生命周期。
+ */
+
 import type { ChannelAccountSnapshot } from "openclaw/plugin-sdk/channel-contract";
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 

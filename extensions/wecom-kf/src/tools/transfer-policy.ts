@@ -16,6 +16,10 @@ export const SERVICER_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * 写入接待人员缓存。
+ *
+ * @param openKfId - 客服账号 open_kfid
+ * @param servicers - 94645 返回的接待人员列表
+ * @returns void
  */
 export function cacheServicers(openKfId: string, servicers: ServicerInfo[]): void {
   const normalizedKfId = openKfId.trim();
@@ -29,6 +33,9 @@ export function cacheServicers(openKfId: string, servicers: ServicerInfo[]): voi
 
 /**
  * 读取缓存副本（可能为空）。
+ *
+ * @param openKfId - 客服账号 open_kfid
+ * @returns 接待人员列表副本
  */
 export function getCachedServicers(openKfId: string): ServicerInfo[] {
   return (servicerCache.get(openKfId.trim()) ?? []).map((servicer) => ({ ...servicer }));
@@ -36,6 +43,9 @@ export function getCachedServicers(openKfId: string): ServicerInfo[] {
 
 /**
  * 过滤在线接待人员（status=0）。
+ *
+ * @param openKfId - 客服账号 open_kfid
+ * @returns 在线接待人员列表
  */
 export function getOnlineServicers(openKfId: string): ServicerInfo[] {
   return getCachedServicers(openKfId).filter((servicer) => servicer.status === 0);
@@ -43,6 +53,10 @@ export function getOnlineServicers(openKfId: string): ServicerInfo[] {
 
 /**
  * 判断缓存是否过期。
+ *
+ * @param openKfId - 客服账号 open_kfid
+ * @param ttlMs - 过期毫秒数，默认 SERVICER_CACHE_TTL_MS
+ * @returns 无缓存或已过期时为 true
  */
 export function isServicerCacheStale(openKfId: string, ttlMs = SERVICER_CACHE_TTL_MS): boolean {
   const updatedAt = servicerCacheUpdatedAt.get(openKfId.trim());
@@ -52,6 +66,9 @@ export function isServicerCacheStale(openKfId: string, ttlMs = SERVICER_CACHE_TT
 
 /**
  * 从企微 API 刷新接待人员列表并更新缓存。
+ *
+ * @param params - agent、openKfId、可选 force 强制刷新
+ * @returns 刷新结果（ok、count、errcode/errmsg）
  */
 export async function refreshServicersFromApi(params: {
   agent: ResolvedAgentAccount;
@@ -96,6 +113,7 @@ export type ResolveTransferServicerResult =
  *
  * @param params.explicitServicerUserId - Tool/调用方显式指定
  * @param params.refreshIfStale - 缓存过期时自动刷新 94645
+ * @returns 解析到的 servicer_userid 或错误原因
  */
 export async function resolveTransferServicerUserId(params: {
   agent: ResolvedAgentAccount;

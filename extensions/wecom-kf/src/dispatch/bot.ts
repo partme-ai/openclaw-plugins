@@ -17,6 +17,9 @@ export type KfInboundMediaMsgType = (typeof KF_INBOUND_MEDIA_MSGTYPES)[number];
 
 /**
  * 判定是否为 origin=3 客户消息。
+ *
+ * @param msg - 企微 KF 消息对象
+ * @returns 类型收窄为 KfInboundCustomerMessage
  */
 export function isInboundCustomerMessage(msg: KfMessage): msg is KfInboundCustomerMessage {
   return msg.origin === 3;
@@ -24,6 +27,9 @@ export function isInboundCustomerMessage(msg: KfMessage): msg is KfInboundCustom
 
 /**
  * 从 KF 消息中提取 media_id（若存在）。
+ *
+ * @param msg - 企微 KF 消息对象
+ * @returns media_id 字符串；无媒体时 undefined
  */
 export function extractInboundMediaId(msg: KfMessage): string | undefined {
   const msgtype = String(msg.msgtype ?? "").trim();
@@ -34,6 +40,9 @@ export function extractInboundMediaId(msg: KfMessage): string | undefined {
 
 /**
  * 提取客户可读文本/占位描述；无法识别时返回 undefined。
+ *
+ * @param msg - 企微 KF 消息对象
+ * @returns 文本或 `[图片]` 等占位描述；非客户消息时 undefined
  */
 export function extractInboundTextContent(msg: KfMessage): string | undefined {
   if (!isInboundCustomerMessage(msg)) return undefined;
@@ -94,6 +103,9 @@ export function extractInboundTextContent(msg: KfMessage): string | undefined {
 
 /**
  * 提取客户文本内容；非 origin=3 或无内容时返回 undefined。
+ *
+ * @param msg - 企微 KF 消息对象
+ * @returns 文本内容
  * @deprecated 使用 extractInboundTextContent
  */
 export function extractInboundText(msg: KfMessage): string | undefined {
@@ -109,6 +121,9 @@ export function isInboundCustomerTextMessage(
 
 /**
  * 判断 msgtype 是否为需下载的媒体类型。
+ *
+ * @param msg - 企微 KF 消息对象
+ * @returns 类型收窄为含 KfInboundMediaMsgType 的客户消息
  */
 export function isInboundMediaMessage(msg: KfMessage): msg is KfMessage & { msgtype: KfInboundMediaMsgType } {
   if (!isInboundCustomerMessage(msg)) return false;

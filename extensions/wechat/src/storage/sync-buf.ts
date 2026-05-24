@@ -1,3 +1,9 @@
+/**
+ * @module wechat/storage/sync-buf
+ *
+ * 微信 sync buffer 持久化。
+ */
+
 import fs from "node:fs";
 import path from "node:path";
 

@@ -14,6 +14,9 @@ import { startStompServer, stopStompServer, getConnectionInfoList } from "./tran
 import { getSubscriptionStats } from "./transport/subscription-mgr.js";
 import { getAckStats } from "./transport/ack-handler.js";
 
+/**
+ * 兼容无 registerService 的宿主：直接 start / onReady / 延迟 fallback。
+ */
 function registerStompWsService(api: OpenClawPluginApi, start: () => Promise<void>): void {
   const withService = api as OpenClawPluginApi & {
     registerService?: (svc: { id: string; start: () => Promise<void>; stop?: () => Promise<void> }) => void;
@@ -80,6 +83,9 @@ export default defineChannelPluginEntry({
   },
 });
 
+/**
+ * STOMP 入站 SEND 帧回调：记录日志并异步 dispatch 到 OpenClaw inbound 管道。
+ */
 function handleInboundMessage(ctx: import("./inbound.js").WebStompInboundContext): void {
   console.log(
     `[openclaw_web_stomp] Inbound: agent=${ctx.agentId}, peer=${ctx.peerId}, destination=${ctx.destination}`,

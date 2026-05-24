@@ -162,6 +162,9 @@ export type AgentInboundProcessDecision = {
  * - event 回调（如 enter_agent/subscribe）不应触发会话与自动回复
  * - 系统发送者（sys）不应触发会话与自动回复
  * - 缺失发送者时默认丢弃，避免写入异常会话
+ *
+ * @param params - msgType、fromUser、可选 eventType
+ * @returns 是否应 dispatch 及原因码
  */
 export function shouldProcessAgentInboundMessage(params: {
     msgType: string;
@@ -759,10 +762,11 @@ async function processAgentMessage(params: {
 }
 
 /**
- * **handleAgentWebhook (Agent Webhook 入口)**
- *
  * 统一处理 Agent 模式的 POST 消息回调请求。
  * URL 验证与验签/解密由 monitor 层统一处理后再调用本函数。
+ *
+ * @param params - 含 req/res、target、verifiedPost 等 Agent 回调上下文
+ * @returns POST 消息是否已处理
  */
 export async function handleAgentWebhook(params: AgentWebhookParams): Promise<boolean> {
     const { req } = params;

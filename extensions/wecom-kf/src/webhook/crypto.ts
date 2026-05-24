@@ -1,11 +1,18 @@
+/**
+ * @module wecom-kf/webhook/crypto
+ *
+ * 企业微信客服回调加解密与签名校验（AES-CBC + PKCS#7 block=32 + SHA1 签名）。
+ */
+
 import crypto from "node:crypto";
 import { parseXml } from "../shared/xml-parser.js";
 
 /**
- * **decodeEncodingAESKey (解码 AES Key)**
- * 
- * 将企业微信配置的 Base64 编码的 AES Key 解码为 Buffer。
- * 包含补全 Padding 和长度校验 (必须32字节)。
+ * 将企业微信配置的 Base64 EncodingAESKey 解码为 32 字节 Buffer。
+ *
+ * @param encodingAESKey - 企微后台配置的 EncodingAESKey
+ * @returns 32 字节 AES key Buffer
+ * @throws 缺失或解码后长度不为 32 字节
  */
 export function decodeEncodingAESKey(encodingAESKey: string): Buffer {
   const trimmed = encodingAESKey.trim();
@@ -30,10 +37,12 @@ function pkcs7Pad(buf: Buffer, blockSize: number): Buffer {
 }
 
 /**
- * **pkcs7Unpad (去除 PKCS#7 填充)**
- * 
- * 移除 AES 解密后的 PKCS#7 填充字节。
- * 包含填充合法性校验。
+ * 移除 AES 解密后的 PKCS#7 填充（企微 block size = 32）。
+ *
+ * @param buf - 解密后的 padded buffer
+ * @param blockSize - PKCS#7 块大小（企微为 32）
+ * @returns 去除填充后的 buffer
+ * @throws 填充非法或 payload 过短
  */
 export function pkcs7Unpad(buf: Buffer, blockSize: number): Buffer {
   if (buf.length === 0) throw new Error("invalid pkcs7 payload");
@@ -58,9 +67,10 @@ function sha1Hex(input: string): string {
 }
 
 /**
- * **computeWecomMsgSignature (计算消息签名)**
- * 
- * 算法：sha1(sort(token, timestamp, nonce, encrypt_msg))
+ * 计算企微回调 msg_signature（sha1(sort(token, timestamp, nonce, encrypt))）。
+ *
+ * @param params - token、timestamp、nonce、encrypt
+ * @returns 小写 hex SHA1 签名
  */
 export function computeWecomMsgSignature(params: {
   token: string;
@@ -75,9 +85,10 @@ export function computeWecomMsgSignature(params: {
 }
 
 /**
- * **verifyWecomSignature (验证消息签名)**
- * 
- * 比较计算出的签名与企业微信传入的签名是否一致。
+ * 验证企微回调 msg_signature 是否与计算值一致。
+ *
+ * @param params - token、timestamp、nonce、encrypt、signature
+ * @returns 签名是否有效
  */
 export function verifyWecomSignature(params: {
   token: string;
@@ -96,15 +107,11 @@ export function verifyWecomSignature(params: {
 }
 
 /**
- * **decryptWecomEncrypted (解密企业微信消息)**
- * 
- * 将企业微信的 AES 加密包解密为明文。
- * 流程：
- * 1. Base64 解码 AESKey 并获取 IV (前16字节)。
- * 2. AES-CBC 解密。
- * 3. 去除 PKCS#7 填充。
- * 4. 拆解协议包结构: [16字节随机串][4字节长度][消息体][接收者ID]。
- * 5. 校验接收者ID (ReceiveId)。
+ * 解密企微 AES 加密包为明文 XML/文本。
+ *
+ * @param params - encodingAESKey、encrypt（Base64）、可选 receiveId 校验
+ * @returns 解密后的明文字符串
+ * @throws 解密失败或 receiveId 不匹配
  */
 export function decryptWecomEncrypted(params: {
   encodingAESKey: string;
@@ -146,14 +153,10 @@ export function decryptWecomEncrypted(params: {
 }
 
 /**
- * **encryptWecomPlaintext (加密回复消息)**
- * 
- * 将明文消息打包为企业微信的加密格式。
- * 流程：
- * 1. 构造协议包: [16字节随机串][4字节长度][消息体][接收者ID]。
- * 2. PKCS#7 填充。
- * 3. AES-CBC 加密。
- * 4. 转 Base64。
+ * 将明文打包并 AES 加密为企微回调响应格式（Base64）。
+ *
+ * @param params - encodingAESKey、plaintext、可选 receiveId
+ * @returns Base64 密文
  */
 export function encryptWecomPlaintext(params: {
   encodingAESKey: string;
@@ -177,12 +180,11 @@ export function encryptWecomPlaintext(params: {
 }
 
 /**
- * **extractEncryptFromXml (从 XML 提取加密内容)**
- *
  * 从企微回调 XML 中提取 Encrypt 字段。
  *
- * @param xml - XML 字符串
- * @returns 加密内容
+ * @param xml - 回调 XML 字符串
+ * @returns Encrypt 节点内容
+ * @throws 未找到 Encrypt 字段
  */
 export function extractEncryptFromXml(xml: string): string {
     const match = xml.match(/<Encrypt>(<!\[CDATA\[)?(.*?)(\]\]>)?<\/Encrypt>/s);
@@ -193,17 +195,15 @@ export function extractEncryptFromXml(xml: string): string {
 }
 
 /**
- * **parseWecomCallback (解析企微 KF 回调)**
+ * 解析企微 KF 回调（GET 验 URL / POST 解密事件）。
  *
- * 对齐企微官方回调协议：
- * - GET：验签后对 query.echostr 解密并返回明文
- * - POST：从 XML 提取 Encrypt → 验签 → 解密 → parseXml
- *
- * @param query - URL 查询参数
- * @param body - POST 请求体（XML）
+ * @param query - URL 查询参数（msg_signature、timestamp、nonce、echostr）
+ * @param body - POST 请求体 XML；GET 验证时为 null
  * @param token - 回调 Token
  * @param encodingAESKey - 回调 EncodingAESKey
- * @param receiveId - 接收者 ID（企微应用一般为 corpId）
+ * @param receiveId - 接收者 ID（一般为 corpId）
+ * @returns verify 或 event 解析结果
+ * @throws 签名无效、缺少 body 或解密失败
  */
 export function parseWecomCallback(
   query: { msg_signature?: string; timestamp?: string; nonce?: string; echostr?: string },

@@ -1,5 +1,18 @@
 /**
- * KF 回调 sync_msg 编排：游标预热、批量拉取、账号状态跟踪。
+ * @module wecom-kf/webhook/handler
+ *
+ * KF 回调 **sync_msg 编排层**（游标预热、批量拉取、并发派发）。
+ *
+ * **职责**：
+ * - 维护账号运行时状态补丁（`trackAccountEvent` / `consumeAccountStatePatch`）
+ * - 调用 `syncKfMessages` 拉取客户消息，经 dedup 后 `dispatchKfMessage` 或 `handleSystemEvent`
+ * - 并发限制（`MSG_PROCESS_CONCURRENCY`）防止单批消息打满 CPU
+ *
+ * **上下游**：
+ * - 上游：`webhook/callback.ts` 验签解密后的 POST
+ * - 下游：`dispatch/inbound-dispatcher`、`state/cursor-store`、`dedup/kf-inbound-dedup`
+ *
+ * **关键导出**：`processKfSyncMessages`、`trackAccountEvent`
  */
 
 import { syncKfMessages } from "../agent/api-client.js";

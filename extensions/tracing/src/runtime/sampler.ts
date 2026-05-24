@@ -43,16 +43,19 @@ export class TracingSampler {
   }
 
   /**
-   * 获取当前采样率
+   * 获取当前采样率。
+   *
+   * @returns 0.0 ~ 1.0 之间的采样率
    */
   getSampleRate(): number {
     return this.sampleRate;
   }
 
   /**
-   * 动态调整采样率
+   * 动态调整采样率。
    *
    * @param rate - 新采样率（0.0 ~ 1.0）
+   * @returns void
    */
   setSampleRate(rate: number): void {
     this.sampleRate = Math.max(0, Math.min(1, rate));

@@ -9,7 +9,12 @@ import { isUserActionAllowed } from "./transport/acl.js";
 import { getWebMqttChannelConfig } from "./state/mqtt-state.js";
 
 /**
- * 发布回复文本。
+ * 发布回复文本到 MQTT topic。
+ *
+ * @param sessionKey - OpenClaw 会话键（用于查找 replyTopic / client 上下文）
+ * @param text - 出站文本内容
+ * @param topicPrefix - 默认出站 topic 前缀（无 replyTopic 时使用）
+ * @returns Promise；ACL 拒绝或无会话上下文时静默返回
  */
 export async function publishOutboundText(sessionKey: string, text: string, topicPrefix: string): Promise<void> {
   const context = getSessionContext(sessionKey);
