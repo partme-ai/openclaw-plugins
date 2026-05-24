@@ -33,7 +33,7 @@ export { rockermqChannel } from "./channel.js";
 /** @description RocketMQ Channel 插件注册入口。 */
 export default defineChannelPluginEntry({
   id: "openclaw-rocketmq",
-  name: "RocketMQ",
+  name: "OpenClaw RocketMQ",
   description: "OpenClaw RocketMQ channel plugin with producer and push-consumer support.",
   plugin: rockermqChannel,
   setRuntime: setRockermqRuntime,

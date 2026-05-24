@@ -32,7 +32,7 @@ import type { InboundMessage } from "./types.js";
 /** @description STOMP TCP Channel 插件 defineChannelPluginEntry 注册入口。 */
 export default defineChannelPluginEntry({
   id: "openclaw-stomp",
-  name: "STOMP TCP",
+  name: "OpenClaw STOMP TCP",
   description: "OpenClaw STOMP TCP channel plugin with topic binding and enterprise delivery controls",
   plugin: stompTcpChannel,
   setRuntime: setStompRuntime,

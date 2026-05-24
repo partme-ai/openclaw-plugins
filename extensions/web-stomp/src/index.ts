@@ -26,7 +26,7 @@ function registerStompWsService(api: OpenClawPluginApi, start: () => Promise<voi
     return;
   }
   withService.registerService({
-    id: "openclaw_web_stomp-server",
+    id: "openclaw-web-stomp-server",
     start: async () => {
       await start();
     },
@@ -37,7 +37,7 @@ function registerStompWsService(api: OpenClawPluginApi, start: () => Promise<voi
 }
 
 export default defineChannelPluginEntry({
-  id: "openclaw_web_stomp",
+  id: "openclaw-web-stomp",
   name: "STOMP over WebSocket",
   description: "STOMP over WebSocket bridge for OpenClaw enterprise integration",
   plugin: stompChannel,
@@ -71,14 +71,14 @@ export default defineChannelPluginEntry({
       const config = resolveStompWsConfig(runtimeCfg);
       try {
         await startStompServer(config, handleInboundMessage);
-        console.log("[openclaw_web_stomp] STOMP server started successfully");
+        console.log("[openclaw-web-stomp] STOMP server started successfully");
       } catch (err) {
-        console.error("[openclaw_web_stomp] Failed to start STOMP server:", err);
+        console.error("[openclaw-web-stomp] Failed to start STOMP server:", err);
       }
     });
 
-    console.log("[openclaw_web_stomp] Plugin registered — STOMP channel ready");
-    console.log("[openclaw_web_stomp] Endpoints:");
+    console.log("[openclaw-web-stomp] Plugin registered — STOMP channel ready");
+    console.log("[openclaw-web-stomp] Endpoints:");
     console.log("  /stomp/status — Server status & connections");
   },
 });
@@ -88,14 +88,14 @@ export default defineChannelPluginEntry({
  */
 function handleInboundMessage(ctx: import("./inbound.js").WebStompInboundContext): void {
   console.log(
-    `[openclaw_web_stomp] Inbound: agent=${ctx.agentId}, peer=${ctx.peerId}, destination=${ctx.destination}`,
+    `[openclaw-web-stomp] Inbound: agent=${ctx.agentId}, peer=${ctx.peerId}, destination=${ctx.destination}`,
   );
   dispatchInboundStomp(ctx).catch((error) => {
-    console.error(`[openclaw_web_stomp] Runtime dispatch failed for peer=${ctx.peerId}:`, error);
+    console.error(`[openclaw-web-stomp] Runtime dispatch failed for peer=${ctx.peerId}:`, error);
   });
 }
 
 process.on("SIGTERM", async () => {
-  console.log("[openclaw_web_stomp] Shutting down...");
+  console.log("[openclaw-web-stomp] Shutting down...");
   await stopStompServer();
 });

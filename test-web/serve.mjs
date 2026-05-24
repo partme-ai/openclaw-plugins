@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
-const port = Number(process.env.TEST_WEB_PORT ?? 8090);
+const port = Number(process.argv[2] ?? process.env.TEST_WEB_PORT ?? 8090);
 
 const mime = {
   ".html": "text/html; charset=utf-8",

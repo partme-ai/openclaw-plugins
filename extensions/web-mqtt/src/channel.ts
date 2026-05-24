@@ -68,8 +68,19 @@ export const mqttWsChannel = {
     },
   },
   gateway: {
-    startAccount: async ({ runtime, abortSignal }: { runtime: { config: Record<string, unknown> }; abortSignal: AbortSignal }) => {
-      const config = resolveWebMqttConfig(runtime.config);
+    /**
+     * @description 启动 Web MQTT 服务并挂起至 abort。
+     * @param root0.cfg - 完整网关配置（OpenClaw 2026.5+ ChannelGatewayContext）。
+     * @param root0.abortSignal - 停止信号。
+     */
+    startAccount: async ({
+      cfg,
+      abortSignal,
+    }: {
+      cfg: Record<string, unknown>;
+      abortSignal: AbortSignal;
+    }) => {
+      const config = resolveWebMqttConfig(cfg ?? {});
       setWebMqttChannelConfig(config);
       const issues = validateWebMqttConfig(config);
       for (const issue of issues) {

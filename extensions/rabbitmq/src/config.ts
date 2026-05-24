@@ -125,11 +125,12 @@ export const DEFAULT_RABBITMQ_CONFIG: RabbitmqConfig = {
  * @param cfg - 宿主全局配置对象（含 `channels.rabbitmq` 或顶层 `rabbitmq`）
  * @returns 合并默认值后的完整 `RabbitmqConfig`
  */
-export function resolveRabbitmqConfig(cfg: Record<string, unknown>): RabbitmqConfig {
-  const channels = (cfg.channels as Record<string, unknown> | undefined) ?? undefined;
+export function resolveRabbitmqConfig(cfg: Record<string, unknown> | undefined | null): RabbitmqConfig {
+  const root = cfg ?? {};
+  const channels = (root.channels as Record<string, unknown> | undefined) ?? undefined;
   const rabbitmqConfig =
     (channels?.rabbitmq as Record<string, unknown> | null | undefined) ??
-    ((cfg.rabbitmq as Record<string, unknown> | null | undefined) ?? {});
+    ((root.rabbitmq as Record<string, unknown> | null | undefined) ?? {});
   const payload = (rabbitmqConfig.payload as Record<string, unknown> | null | undefined) ?? {};
   const connection = (rabbitmqConfig.connection as Record<string, unknown> | null | undefined) ?? {};
   const consume = (rabbitmqConfig.consume as Record<string, unknown> | null | undefined) ?? {};

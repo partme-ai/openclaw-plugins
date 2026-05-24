@@ -63,8 +63,20 @@ export const rabbitmqChannel = {
     },
   },
   gateway: {
-    startAccount: async ({ runtime, abortSignal }: { runtime: { config: Record<string, unknown> }; abortSignal: AbortSignal }) => {
-      const config = resolveRabbitmqConfig(runtime.config);
+    /**
+     * @description 跟随 channel 生命周期启动 RabbitMQ 消费端。
+     * @param root0 - ChannelGatewayContext（OpenClaw 2026.5+ 注入 `cfg`）。
+     * @param root0.cfg - 完整网关配置。
+     * @param root0.abortSignal - 账户停止时 abort，用于优雅 shutdown。
+     */
+    startAccount: async ({
+      cfg,
+      abortSignal,
+    }: {
+      cfg: Record<string, unknown>;
+      abortSignal: AbortSignal;
+    }) => {
+      const config = resolveRabbitmqConfig(cfg ?? {});
       setRabbitmqChannelConfig(config);
       const issues = validateRabbitmqConfig(config);
       for (const issue of issues) {

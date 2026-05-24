@@ -20,7 +20,7 @@ export { mqttWsChannel } from "./channel.js";
  */
 export default defineChannelPluginEntry({
   id: "openclaw-web-mqtt",
-  name: "Web MQTT",
+  name: "OpenClaw Web MQTT",
   description: "OpenClaw Web MQTT channel plugin with enterprise-grade controls.",
   plugin: mqttWsChannel,
   setRuntime: setWebMqttRuntime,

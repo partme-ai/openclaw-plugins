@@ -1,0 +1,55 @@
+# Temporary Docker services for OpenClaw queue/channel plugin E2E tests.
+# Usage: docker compose -f scripts/e2e/docker-compose.yml up -d
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: openclaw-e2e-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 15s
+
+  gotify:
+    image: gotify/server:latest
+    container_name: openclaw-e2e-gotify
+    ports:
+      - "18080:80"
+    environment:
+      GOTIFY_DEFAULTUSER_NAME: admin
+      GOTIFY_DEFAULTUSER_PASS: openclaw-e2e
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.2
+    container_name: openclaw-e2e-rmq-namesrv
+    command: sh mqnamesrv
+    ports:
+      - "9876:9876"
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.2
+    container_name: openclaw-e2e-rmq-broker
+    depends_on:
+      - rocketmq-namesrv
+    command: sh mqbroker -n rocketmq-namesrv:9876
+    ports:
+      - "10911:10911"
+      - "10912:10912"
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+
+  rocketmq-proxy:
+    image: apache/rocketmq:5.3.2
+    container_name: openclaw-e2e-rmq-proxy
+    depends_on:
+      - rocketmq-broker
+    command: sh mqproxy -n rocketmq-namesrv:9876
+    ports:
+      - "8081:8080"
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876

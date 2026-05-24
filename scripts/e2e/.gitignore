@@ -1,0 +1,8 @@
+# Local-only E2E artifacts (tokens, logs, reports)
+.e2e-secrets.json
+.e2e-config-meta.json
+.e2e-installed.json
+e2e-report.json
+gateway.log
+.gateway.pid
+.browser-*.log
