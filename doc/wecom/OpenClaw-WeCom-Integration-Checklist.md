@@ -17,7 +17,7 @@
 - [ ] OpenClaw Gateway 已启动：`openclaw gateway restart`
 - [ ] 插件已安装：`openclaw plugins install @partme.ai/wecom@latest --dangerously-force-unsafe-install`
 - [ ] 依赖版本对齐（monorepo 当前）：
-  - `@partme.ai/wecom`：`2026.5.20`
+  - `@partme.ai/wecom`：`2026.5.24`
   - `@partme.ai/openclaw-message-sdk`：`2026.5.24`（workspace）
   - `openclaw` peer：`>=2026.4.12`
 - [ ] 本地自检：`cd extensions/wecom && pnpm test && pnpm typecheck`（当前约 330 个测试用例，数量会随源码变化）
@@ -373,7 +373,7 @@ grep -E '\[wecom-agent\]|duplicate msgId|dm policy blocked|media saved|welcome m
       "thinkingText": "正在思考…",
       "toolStatusText": "正在调用 {toolName}…",
       "readingText": "正在阅读附件…",
-      "generatingText": "正在组织回复…",
+      "generatingText": "正在输入…",
       "streamPlaceholderText": "1",
       "finishFooterText": "⏱ {elapsed}s · 已完成",
       "timeoutText": "处理超时，请稍后再试",
@@ -489,4 +489,4 @@ grep -E 'wecom-dedup|debounce|merged|queued' "$LOG"
 
 ---
 
-**最后更新**：与 `@partme.ai/wecom@2026.5.20` 及 `openclaw-message-sdk@2026.5.24` 源码对齐。
+**最后更新**：与 `@partme.ai/wecom@2026.5.24` 及 `openclaw-message-sdk@2026.5.24` 源码对齐。
