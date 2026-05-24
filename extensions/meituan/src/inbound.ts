@@ -135,9 +135,10 @@ export function createMeituanWebhookHandler(
         rawBody: body,
         messageId,
       });
-      // 运行时无 bridge 且无 publishInbound 时 dispatch 返回 skipped
       if (result === "skipped") {
         logWarn("[meituan] inbound skipped: no dispatch runtime available");
+      } else if (result === "timed_out") {
+        logWarn("[meituan] inbound agent reply timed out");
       }
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("success");

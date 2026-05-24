@@ -141,6 +141,8 @@ export function createXhsWebhookHandler(
       });
       if (result === "skipped") {
         console.warn("[rednode] inbound skipped: no dispatch runtime available");
+      } else if (result === "timed_out") {
+        console.warn("[rednode] inbound agent reply timed out");
       }
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("success");

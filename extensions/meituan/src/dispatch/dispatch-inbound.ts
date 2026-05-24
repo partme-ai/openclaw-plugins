@@ -1,20 +1,17 @@
 /**
- * Webhook 入站派发模块（message-sdk bridge + publishInbound 回退）。
+ * Webhook 入站派发模块（message-sdk Transcript + publishInbound 回退）。
  *
  * **架构角色**：inbound handler 与 Agent 管线之间的适配层，负责 wire 解析、
- * 幂等去重、路由 identity 解析，以及 reply-pipeline / publishInbound 双路径派发。
- *
- * **关键依赖**：`../runtime/runtime-api`、`../types`
+ * 幂等去重、Transcript 派发（dispatchTranscriptTurn）与 publishInbound 回退。
  */
 
+import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 import {
   createIdempotencyCache,
   normalizeWireIngress,
-  dispatchChannelMessage,
-  resolveChannelDispatchIdentity,
-  type BridgePluginRuntime,
   type IdempotencyCache,
 } from "../runtime/runtime-api.js";
+import { dispatchMeituanTranscriptTurn } from "./transcript-dispatch.js";
 import type { PluginApi } from "../types.js";
 
 /** 模块级幂等缓存（msg-id，TTL 60s） */
@@ -25,56 +22,44 @@ const idempotencyCache: IdempotencyCache = createIdempotencyCache({
 
 /** dispatchWebhookInbound 入参 */
 export type WebhookDispatchParams = {
-  /** 插件 API（含 runtime） */
   api: PluginApi;
-  /** 渠道 id，如 meituan */
   channel: string;
-  /** 账号 id */
   accountId: string;
-  /** 对端 id（通常为 shopId） */
   peerId: string;
-  /** 门店 id，写入 session 与 extra */
   shopId: string;
-  /** Webhook 原始 body */
   rawBody: string;
-  /** 可选消息 id，用于幂等 */
   messageId?: string;
 };
 
-/** 派发结果：已派发 / 重复丢弃 / 无可用 runtime 跳过 */
-export type WebhookDispatchResult = "dispatched" | "duplicate" | "skipped";
+/** 派发结果 */
+export type WebhookDispatchResult = "dispatched" | "duplicate" | "skipped" | "timed_out";
 
 /**
- * 探测 runtime 是否具备 message-sdk bridge 能力（reply + routing）。
- *
- * @param runtime 宿主注入的 runtime 对象
- * @returns 满足 bridge 契约时返回 BridgePluginRuntime，否则 null
+ * 探测 runtime 是否具备 Transcript 派发能力。
  */
-function getBridgeRuntime(runtime: unknown): BridgePluginRuntime | null {
+function getTranscriptRuntime(runtime: unknown): PluginRuntime | null {
   const rt = runtime as Record<string, unknown> | null | undefined;
   const channel = rt?.channel as Record<string, unknown> | undefined;
   const reply = channel?.reply as Record<string, unknown> | undefined;
   const routing = channel?.routing as Record<string, unknown> | undefined;
   if (
-    typeof reply?.dispatchReplyFromConfig === "function" &&
+    typeof reply?.dispatchReplyWithBufferedBlockDispatcher === "function" &&
     typeof routing?.resolveAgentRoute === "function"
   ) {
-    return runtime as BridgePluginRuntime;
+    return runtime as PluginRuntime;
   }
   return null;
 }
 
+function logFromApi(api: PluginApi) {
+  return {
+    log: (msg: string) => api.logger?.info?.(msg) ?? console.log(msg),
+    error: (msg: string) => api.logger?.error?.(msg) ?? console.error(msg),
+  };
+}
+
 /**
- * 解析 Webhook body 并派发至 Agent 管线。
- *
- * **派发分支**：
- * 1. 幂等重复 → `duplicate`
- * 2. bridge runtime 可用 → `reply-pipeline` → `dispatched`
- * 3. 仅 publishInbound 可用 → 轻量写入 → `dispatched`
- * 4. 均不可用 → `skipped`
- *
- * @param params Webhook 上下文与原始 payload
- * @returns 派发结果枚举
+ * 解析 Webhook body 并派发至 Agent Transcript 管线。
  */
 export async function dispatchWebhookInbound(
   params: WebhookDispatchParams,
@@ -90,40 +75,35 @@ export async function dispatchWebhookInbound(
     return "duplicate";
   }
   const text = parsed.text ?? params.rawBody;
+  const logger = logFromApi(params.api);
 
-  const bridgeRuntime = getBridgeRuntime(params.api.runtime);
-  // 优先走完整 reply-pipeline（与 OpenClaw channel bridge 对齐）
-  if (bridgeRuntime) {
-    const { agentId, sessionKey } = await resolveChannelDispatchIdentity(bridgeRuntime, {
-      channel: params.channel,
+  const transcriptRuntime = getTranscriptRuntime(params.api.runtime);
+  if (transcriptRuntime) {
+    const cfg = (params.api.runtime.config ?? {}) as Record<string, unknown>;
+    const result = await dispatchMeituanTranscriptTurn({
+      runtime: transcriptRuntime,
+      cfg,
       accountId: params.accountId,
       peerId: params.peerId,
+      shopId: params.shopId,
+      rawText: text,
+      messageSid: params.messageId,
+      log: logger.log,
+      error: logger.error,
     });
-    await dispatchChannelMessage({
-      mode: "reply-pipeline",
-      runtime: bridgeRuntime,
-      channel: params.channel,
-      accountId: params.accountId,
-      peerId: params.peerId,
-      text,
-      agentId,
-      sessionKey,
-      unified: parsed.unified,
-      extra: {
-        shopId: params.shopId,
-        sessionId: `${params.channel}:${params.shopId}`,
-      },
-      reply: {
-        deliver: async () => {
-          // 出站由 channel outbound adapter 处理
-        },
-        outboundFormat: "plainText",
-      },
-    });
+    if (!result) {
+      return "skipped";
+    }
+    if (result.timedOut) {
+      logger.error(
+        result.timeoutUserMessage ??
+          `[meituan] agent reply timed out after ${result.dispatchTimeoutMs ?? "unknown"}ms`,
+      );
+      return "timed_out";
+    }
     return "dispatched";
   }
 
-  // 回退：宿主仅注入 publishInbound 时直接写入 Session
   const publish = params.api.runtime?.channel?.publishInbound;
   if (typeof publish === "function") {
     await publish({

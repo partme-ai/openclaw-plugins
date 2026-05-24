@@ -4,6 +4,8 @@
  * 契约见：partme-docs/6、OctoClaw/15、ddd4j-rednote-底座-API契约与实现清单.md
  */
 
+import { xhsFetch, readResponseBodyAsBuffer } from "../shared/http.js";
+
 export interface RednoteClientConfig {
   /** 底座服务根地址，如 https://xxx/ddd4j-rednote */
   baseUrl: string;
@@ -39,12 +41,12 @@ export async function rednoteExecute(
     params: normalizeParams(params),
   };
 
-  const res = await fetch(url, {
+  const res = await xhsFetch(undefined, url, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
   });
-  const text = await res.text();
+  const text = (await readResponseBodyAsBuffer(res)).toString("utf8");
   if (!res.ok) {
     return { error: text || res.statusText };
   }

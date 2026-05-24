@@ -9,6 +9,7 @@
  */
 
 import type { DouyinAccountConfig } from "../types.js";
+import { douyinFetch, readResponseBodyAsBuffer } from "../shared/http.js";
 
 const CLIENT_TOKEN_URL = "https://open.douyin.com/oauth/client_token/";
 
@@ -30,7 +31,7 @@ interface ClientTokenResponse {
 export async function getClientToken(config: DouyinAccountConfig | undefined): Promise<string | null> {
   if (!config?.app_key || !config?.app_secret) return null;
   try {
-    const res = await fetch(CLIENT_TOKEN_URL, {
+    const res = await douyinFetch(undefined, CLIENT_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -39,7 +40,7 @@ export async function getClientToken(config: DouyinAccountConfig | undefined): P
         client_secret: config.app_secret,
       }),
     });
-    const json = (await res.json()) as ClientTokenResponse;
+    const json = JSON.parse((await readResponseBodyAsBuffer(res)).toString("utf8")) as ClientTokenResponse;
     const token = json.data?.access_token;
     return token ?? null;
   } catch {

@@ -1,24 +1,18 @@
 /**
- * @fileoverview Rednode 出站适配占位：后续对接小红书开放平台消息发送 API。
- *
- * @description
- * 当前为 no-op 成功返回，满足 Channel outbound 契约；真实 API 集成时在本模块扩展。
- *
- * @module outbound
+ * @fileoverview Rednode 出站适配：MEDIA 指令解析占位。
  */
 
-/**
- * Rednode 出站 — Base Profile 入口。
- */
-
+import { parseMediaDirectives } from "./runtime/runtime-api.js";
 import type { SendTextParams } from "./types.js";
 
 /**
- * @description 占位 sendText（始终返回 `{ ok: true }`）。
- * @param _params - 出站参数（暂未使用）。
- * @returns 发送结果占位对象。
- * @throws 不抛出。
+ * @description 占位 sendText（解析 MEDIA 指令后返回 `{ ok: true }`）。
  */
-export async function xhsSendText(_params: SendTextParams): Promise<{ ok: boolean }> {
+export async function xhsSendText(params: SendTextParams): Promise<{ ok: boolean }> {
+  const parsed = parseMediaDirectives(params.text);
+  if (parsed.paths.length > 0) {
+    // 媒体由 dispatch/outbound-reply 在 Agent 回复链路解析
+  }
+  void parsed.text;
   return { ok: true };
 }

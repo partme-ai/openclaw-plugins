@@ -10,6 +10,7 @@
 
 import crypto from "node:crypto";
 import type { MeituanAccountConfig } from "../types.js";
+import { meituanFetch, readResponseBodyAsBuffer } from "../shared/http.js";
 
 /** OpenAPI 网关 base URL（默认 api.meituan.com） */
 const MEITUAN_API_BASE = process.env.MEITUAN_API_BASE ?? "https://api.meituan.com";
@@ -55,12 +56,12 @@ export async function meituanApiCall(
 
   // GET：参数放 query；POST：同字段 JSON body（以官方文档为准）
   const url = `${MEITUAN_API_BASE}${path}?${new URLSearchParams(flat).toString()}`;
-  const res = await fetch(method === "POST" ? MEITUAN_API_BASE + path : url, {
+  const res = await meituanFetch(undefined, method === "POST" ? MEITUAN_API_BASE + path : url, {
     method,
     headers: { "Content-Type": "application/json" },
     body: method === "POST" ? JSON.stringify(flat) : undefined,
   });
-  const text = await res.text();
+  const text = (await readResponseBodyAsBuffer(res)).toString("utf8");
   if (!res.ok) return { error: text || res.statusText };
   try {
     return JSON.parse(text) as unknown;

@@ -6,6 +6,7 @@
 import crypto from "node:crypto";
 import type { XhsAccountConfig } from "../types.js";
 import { rednoteExecute } from "./rednote-api-client.js";
+import { xhsFetch, readResponseBodyAsBuffer } from "../shared/http.js";
 
 const XHS_API_BASE = process.env.XHS_API_BASE ?? "https://open.xiaohongshu.com";
 
@@ -68,12 +69,12 @@ export async function xhsApiCall(
   flat.sign = signParams(flat, config.app_secret);
 
   const url = `${XHS_API_BASE}${path}?${new URLSearchParams(flat).toString()}`;
-  const res = await fetch(method === "POST" ? XHS_API_BASE + path : url, {
+  const res = await xhsFetch(undefined, method === "POST" ? XHS_API_BASE + path : url, {
     method,
     headers: { "Content-Type": "application/json" },
     body: method === "POST" ? JSON.stringify(flat) : undefined,
   });
-  const text = await res.text();
+  const text = (await readResponseBodyAsBuffer(res)).toString("utf8");
   if (!res.ok) return { error: text || res.statusText };
   try {
     return JSON.parse(text) as unknown;

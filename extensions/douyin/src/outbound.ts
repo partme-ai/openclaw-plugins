@@ -1,24 +1,21 @@
 /**
- * 抖音出站适配器占位。
- *
- * **架构角色**：满足 OpenClaw 渠道出站契约；抖音 DM 无对称 Webhook 回推通道，
- * 实际发消息需走抖店/OpenAPI 或 `douyin-cli`。
- *
- * **关键依赖**：`openclaw/plugin-sdk/channel-send-result`
+ * 抖音出站适配器：MEDIA 指令解析占位。
  */
 
 import { createEmptyChannelResult } from "openclaw/plugin-sdk/channel-send-result";
+import { parseMediaDirectives } from "./runtime/runtime-api.js";
 
 const CHANNEL_ID = "douyin";
 
 /**
- * 占位 `sendText`：无对称 DM 通道时返回空成功结果，避免渠道管线报错。
- *
- * @returns 带 stub messageId 的空 ChannelResult
+ * 占位 `sendText`：解析 MEDIA 指令后返回空成功结果。
  */
-export async function sendDouyinOutboundStub(): Promise<
+export async function sendDouyinOutboundStub(text?: string): Promise<
   Awaited<ReturnType<typeof createEmptyChannelResult>>
 > {
+  if (text) {
+    parseMediaDirectives(text);
+  }
   return createEmptyChannelResult(CHANNEL_ID, {
     messageId: `douyin-outbound-stub-${Date.now()}`,
   });
