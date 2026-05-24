@@ -17,7 +17,6 @@
     "dist/",
     "skills/",
     "openclaw.plugin.json",
-    "clawdbot.plugin.json",
     "README.md",
     "LICENSE"
   ],

@@ -30,8 +30,6 @@
   "files": [
     "dist",
     "openclaw.plugin.json",
-    "clawdbot.plugin.json",
-    "moltbot.plugin.json",
     "README.md",
     "README.zh-CN.md",
     "LICENSE",

@@ -37,8 +37,6 @@
     "README.md",
     "LICENSE",
     "README.zh-CN.md",
-    "clawdbot.plugin.json",
-    "moltbot.plugin.json",
     "tsconfig.json",
     "tsup.config.ts",
     "vitest.config.ts",

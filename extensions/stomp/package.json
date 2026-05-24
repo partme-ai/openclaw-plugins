@@ -31,9 +31,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md",
-    "clawdbot.plugin.json",
-    "moltbot.plugin.json"
+    "README_CN.md"
   ],
   "publishConfig": {
     "access": "public"
