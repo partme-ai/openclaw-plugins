@@ -47,7 +47,7 @@ import {
 import { checkDmPolicy } from "../config/dm-policy.js";
 import { processDynamicRouting } from "../config/dynamic-routing.js";
 import { checkGroupPolicy } from "../config/group-policy.js";
-import { enqueueWeComChatTask } from "./chat-queue.js";
+import { enqueueWeComChatTask, hasActiveTask, buildQueueKey } from "./chat-queue.js";
 import {
   buildAgentReplyTimeoutSummary,
   buildDispatchErrorSummary,
@@ -82,7 +82,13 @@ import { PLUGIN_VERSION } from "../types/version.js";
 import {
   createWsWecomReplyDispatcher,
   finalizeWsWecomReply,
+  sendThinkingReply,
 } from "../webhook/ws-reply-pipeline.js";
+import {
+  createWsTimingContext,
+  logWsTimingStage,
+  type WsTimingContext,
+} from "./ws-timing.js";
 
 // ============================================================================
 // 消息条目类型
@@ -111,6 +117,8 @@ interface WeComMessageEntry {
   chatId: string;
   /** 请求 ID */
   reqId: string;
+  /** WS 首响耗时观测（可选） */
+  timing?: WsTimingContext;
 }
 
 // ============================================================================
@@ -315,6 +323,7 @@ async function routeAndDispatchMessage(params: {
   state: MessageState;
   runtime: RuntimeEnv;
   onCleanup: () => void;
+  timing?: WsTimingContext;
 }): Promise<void> {
   const {
     ctxPayload,
@@ -329,6 +338,7 @@ async function routeAndDispatchMessage(params: {
     state,
     runtime,
     onCleanup,
+    timing,
   } = params;
   const core = getWeComRuntime();
   const streamingConfig = resolveWecomStreamingConfig(account);
@@ -377,6 +387,7 @@ async function routeAndDispatchMessage(params: {
         runtime.error?.(`[wecom] failed updating session meta: ${String(err)}`);
       },
     });
+    logWsTimingStage(timing ?? createWsTimingContext({ accountId: account.accountId, chatId, messageId: frame.body?.msgid ?? "" }), "session.recorded");
 
     await withTimeout(
       core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
@@ -435,11 +446,22 @@ async function prepareWeComMessage(params: {
   const chatType = body.chattype === "group" ? "group" : "direct";
   const messageId = body.msgid;
   const reqId = frame.headers.req_id;
+  const timing = createWsTimingContext({
+    accountId: account.accountId,
+    chatId,
+    messageId,
+  });
+  logWsTimingStage(timing, "ws.received");
 
   // Step 1: 解析消息内容
   const { textParts, imageUrls, imageAesKeys, fileUrls, fileAesKeys, quoteContent } =
     parseMessageContent(body);
   let text = textParts.join("\n").trim();
+  logWsTimingStage(timing, "parse.done", {
+    hasText: Boolean(text),
+    images: imageUrls.length,
+    files: fileUrls.length,
+  });
 
   // // 群聊中移除 @机器人 的提及标记
   // if (body.chattype === "group") {
@@ -469,6 +491,7 @@ async function prepareWeComMessage(params: {
     });
 
     if (!groupPolicyResult.allowed) {
+      logWsTimingStage(timing, "policy.group.denied");
       return null;
     }
   }
@@ -482,34 +505,36 @@ async function prepareWeComMessage(params: {
     frame,
     runtime,
   });
+  logWsTimingStage(timing, "policy.dm.done", { allowed: dmPolicyResult.allowed });
 
   if (!dmPolicyResult.allowed) {
     return null;
   }
 
-  // Step 4: 下载并保存图片和文件
-  let imageMediaList: Array<{ path: string; contentType?: string }>;
-  let fileMediaList: Array<{ path: string; contentType?: string }>;
-  try {
-    [imageMediaList, fileMediaList] = await Promise.all([
-      downloadAndSaveImages({
-        imageUrls,
-        imageAesKeys,
-        account,
-        config,
-        runtime,
-        wsClient,
-      }),
-      downloadAndSaveFiles({
-        fileUrls,
-        fileAesKeys,
-        account,
-        config,
-        runtime,
-        wsClient,
-      }),
-    ]);
-  } catch (err) {
+  // Step 4: 下载并保存图片和文件（纯文本消息跳过下载）
+  let imageMediaList: Array<{ path: string; contentType?: string }> = [];
+  let fileMediaList: Array<{ path: string; contentType?: string }> = [];
+  if (imageUrls.length > 0 || fileUrls.length > 0) {
+    try {
+      [imageMediaList, fileMediaList] = await Promise.all([
+        downloadAndSaveImages({
+          imageUrls,
+          imageAesKeys,
+          account,
+          config,
+          runtime,
+          wsClient,
+        }),
+        downloadAndSaveFiles({
+          fileUrls,
+          fileAesKeys,
+          account,
+          config,
+          runtime,
+          wsClient,
+        }),
+      ]);
+    } catch (err) {
     if (err instanceof MediaOversizeError) {
       // 附件超过 OpenClaw 配置的大小上限：向用户发送明确的中文提示并终止本次消息处理。
       const hintText = buildMediaOversizeHintText(err);
@@ -524,8 +549,10 @@ async function prepareWeComMessage(params: {
       return null;
     }
     throw err;
+    }
   }
   const mediaList = [...imageMediaList, ...fileMediaList];
+  logWsTimingStage(timing, "media.done", { mediaCount: mediaList.length });
 
   return {
     frame,
@@ -539,6 +566,7 @@ async function prepareWeComMessage(params: {
     messageId,
     chatId,
     reqId,
+    timing,
   };
 }
 
@@ -564,7 +592,10 @@ async function processWeComMessageNow(entry: WeComMessageEntry): Promise<void> {
     messageId,
     chatId,
     reqId,
+    timing,
   } = entry;
+
+  logWsTimingStage(timing ?? createWsTimingContext({ accountId: account.accountId, chatId, messageId }), "queue.start");
 
   // Step 5: 初始化消息状态
   setReqIdForChat(chatId, reqId, account.accountId);
@@ -581,11 +612,30 @@ async function processWeComMessageNow(entry: WeComMessageEntry): Promise<void> {
     deleteMessageState(messageId);
   };
 
-  // // Step 6: 发送"思考中"消息
-  // const shouldSendThinking = account.sendThinkingMessage ?? true;
-  // if (shouldSendThinking) {
-  //   await sendThinkingReply({ wsClient, frame, streamId, runtime });
-  // }
+  const timingCtx =
+    timing ?? createWsTimingContext({ accountId: account.accountId, chatId, messageId });
+
+  // Step 6: 尽早发送协议首帧 thinking，避免 Agent dispatch 启动前用户侧长时间空白
+  const shouldSendThinking = account.sendThinkingMessage ?? true;
+  if (shouldSendThinking) {
+    const templates = resolveWecomTemplates(account);
+    try {
+      await sendThinkingReply({
+        wsClient,
+        frame,
+        streamId,
+        runtime,
+        account,
+        state,
+        templates,
+      });
+      state.thinkingSentEarly = true;
+      logWsTimingStage(timingCtx, "thinking.early.sent");
+    } catch (err) {
+      runtime.error?.(`[wecom] Early thinking reply failed: ${String(err)}`);
+      logWsTimingStage(timingCtx, "thinking.early.failed");
+    }
+  }
 
   // Step 7: 构建上下文并路由到核心处理流程（带整体超时保护）
   const {
@@ -595,6 +645,7 @@ async function processWeComMessageNow(entry: WeComMessageEntry): Promise<void> {
     chatId: resolvedChatId,
     chatType,
   } = buildMessageContext(frame, account, config, text, mediaList, quoteContent, runtime);
+  logWsTimingStage(timingCtx, "context.built");
 
   // 以 sessionKey 为键记录「原始大小写」的 chatId 与 chatType，
   // 供 MCP 工具工厂（index.ts:registerTool）在构造工具闭包时取回，
@@ -610,6 +661,7 @@ async function processWeComMessageNow(entry: WeComMessageEntry): Promise<void> {
   // runtime.log?.(`[plugin -> openclaw] body=${text}, mediaPaths=${JSON.stringify(mediaList.map(m => m.path))}${quoteContent ? `, quote=${quoteContent}` : ''}`);
 
   try {
+    logWsTimingStage(timingCtx, "dispatch.start");
     await routeAndDispatchMessage({
       ctxPayload,
       route,
@@ -623,7 +675,9 @@ async function processWeComMessageNow(entry: WeComMessageEntry): Promise<void> {
       state,
       runtime,
       onCleanup: cleanupState,
+      timing: timingCtx,
     });
+    logWsTimingStage(timingCtx, "dispatch.end");
   } catch (err) {
     runtime.error?.(`[wecom][plugin] Message processing failed: ${String(err)}`);
     cleanupState();
@@ -864,6 +918,17 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
         });
         if (!entry) return;
 
+        logWsTimingStage(
+          entry.timing ??
+            createWsTimingContext({
+              accountId: entry.account.accountId,
+              chatId: entry.chatId,
+              messageId: entry.messageId,
+            }),
+          "prepare.done",
+          { queueImmediate: !hasActiveTask(buildQueueKey(entry.account.accountId, entry.chatId)) },
+        );
+
         const { status } = enqueueWeComChatTask({
           accountId: entry.account.accountId,
           chatId: entry.chatId,
@@ -871,8 +936,27 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
         });
 
         if (status === "queued") {
+          logWsTimingStage(
+            entry.timing ??
+              createWsTimingContext({
+                accountId: entry.account.accountId,
+                chatId: entry.chatId,
+                messageId: entry.messageId,
+              }),
+            "queue.enqueued",
+          );
           runtime.log?.(
             `[wecom] Chat task queued for chat=${entry.chatId} (previous task still running)`,
+          );
+        } else {
+          logWsTimingStage(
+            entry.timing ??
+              createWsTimingContext({
+                accountId: entry.account.accountId,
+                chatId: entry.chatId,
+                messageId: entry.messageId,
+              }),
+            "queue.immediate",
           );
         }
       } catch (err) {

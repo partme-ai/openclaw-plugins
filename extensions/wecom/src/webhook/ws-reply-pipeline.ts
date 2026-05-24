@@ -238,7 +238,7 @@ async function updateWecomStatusLine(ctx: WsDeliverContext, nextStatus: string):
  * @param params.templates - 中文模板
  * @returns Promise（失败仅打日志）
  */
-async function sendThinkingReply(params: {
+export async function sendThinkingReply(params: {
   wsClient: WSClient;
   frame: WsFrame;
   streamId: string;
@@ -403,7 +403,8 @@ export function createWsWecomReplyDispatcher(
     templates,
   };
 
-  let isShowThink = !(account.sendThinkingMessage ?? true);
+  // 若 processWeComMessageNow 已发协议首帧，则跳过 onReplyStartExtra 中的重复 thinking。
+  let isShowThink = Boolean(state.thinkingSentEarly) || !(account.sendThinkingMessage ?? true);
 
   const bundle = createTranscriptReplyDispatcherHooks({
     cfg: config,

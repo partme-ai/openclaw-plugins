@@ -56,6 +56,8 @@ export interface MessageState {
   statusLine?: string;
   /** Agent 回复开始时间（用于 footer.elapsed） */
   replyStartedAt?: number;
+  /** 是否已在 dispatch 前发送协议首帧 thinking（避免 ws-reply-pipeline 重复发送） */
+  thinkingSentEarly?: boolean;
 }
 
 // ============================================================================
