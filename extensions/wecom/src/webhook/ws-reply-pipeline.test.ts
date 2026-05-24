@@ -101,6 +101,23 @@ describe("ws-timing", () => {
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("account=default"));
     spy.mockRestore();
   });
+
+  it("logWsTimingStage emits slow stages without WECOM_WS_TIMING", () => {
+    delete process.env.WECOM_WS_TIMING;
+    const runtime = { log: vi.fn() };
+    const originalNow = performance.now;
+    let fakeNow = 2000;
+    vi.spyOn(performance, "now").mockImplementation(() => fakeNow);
+    const ctx = createWsTimingContext({
+      accountId: "default",
+      chatId: "user123456",
+      messageId: "msg-abcdefgh",
+    });
+    fakeNow += 1100;
+    logWsTimingStage(ctx, "dispatch.end", undefined, { runtime });
+    expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("[wecom-ws-slow]"));
+    vi.spyOn(performance, "now").mockImplementation(originalNow);
+  });
 });
 
 describe("createWsWecomReplyDispatcher early thinking dedup", () => {
