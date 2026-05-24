@@ -104,6 +104,21 @@ describe("inboundToText", () => {
     expect(result).toContain("打卡小程序");
     expect(result).toContain("PartMe");
   });
+
+  it("表情消息应返回标记", () => {
+    const result = inboundToText(makeMsg({ msgType: WxMsgType.Emoji }));
+    expect(result).toBe("[表情消息]");
+  });
+
+  it("视频消息应返回标记", () => {
+    const result = inboundToText(makeMsg({ msgType: WxMsgType.Video }));
+    expect(result).toBe("[视频消息]");
+  });
+
+  it("未知类型应回退到 content 或类型码", () => {
+    expect(inboundToText(makeMsg({ msgType: 999 as WxMsgType, content: "raw" }))).toBe("raw");
+    expect(inboundToText(makeMsg({ msgType: 999 as WxMsgType }))).toContain("999");
+  });
 });
 
 describe("outboundFromText", () => {

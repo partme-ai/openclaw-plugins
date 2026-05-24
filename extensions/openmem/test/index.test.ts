@@ -84,4 +84,91 @@ describe('createOpenMemSearchManager', () => {
     const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
     expect(await manager.probeVectorAvailability()).toBe(false)
   })
+
+  it('search honors maxResults option', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ chunks: [] }),
+    } as Response)
+
+    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
+    await manager.search('q', { maxResults: 3 })
+
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))
+    expect(body.limit).toBe(3)
+  })
+
+  it('search truncates snippet to 200 characters', async () => {
+    const long = 'x'.repeat(300)
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ chunks: [{ content: long, score: 0.5 }] }),
+    } as Response)
+
+    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
+    const results = await manager.search('x')
+    expect(results[0].snippet).toHaveLength(200)
+  })
+
+  it('search maps chunk metadata to MemorySearchResult shape', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        chunks: [{ content: 'payload', score: 0.42, source: 'memory:xyz' }],
+      }),
+    } as Response)
+
+    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
+    const results = await manager.search('payload')
+    expect(results[0]).toMatchObject({
+      path: 'openmem/chunk/0',
+      startLine: 1,
+      endLine: 1,
+      score: 0.42,
+      source: 'memory',
+    })
+  })
+
+  it('readFile returns empty text placeholder', async () => {
+    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
+    const file = await manager.readFile({ relPath: 'records/a.jsonl' })
+    expect(file).toEqual({ text: '', path: 'records/a.jsonl' })
+  })
+
+  it('status uses baseUrl as workspaceDir', () => {
+    const manager = createOpenMemSearchManager('http://mem.local:3317/')
+    expect(manager.status().workspaceDir).toBe('http://mem.local:3317/')
+  })
+
+  it('normalizes trailing slash on baseUrl for API calls', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ chunks: [] }),
+    } as Response)
+
+    const manager = createOpenMemSearchManager('http://127.0.0.1:3317/')
+    await manager.search('ping')
+
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toBe(
+      'http://127.0.0.1:3317/inspect/search',
+    )
+  })
+
+  it('search throws with statusText when error body empty', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      statusText: 'Bad Gateway',
+      text: async () => '',
+    } as Response)
+
+    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
+    await expect(manager.search('fail')).rejects.toThrow(/OpenMem 502/)
+  })
+
+  it('probeEmbeddingAvailability includes checkedAtMs timestamp', async () => {
+    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
+    const probe = await manager.probeEmbeddingAvailability()
+    expect(typeof probe.checkedAtMs).toBe('number')
+  })
 })
