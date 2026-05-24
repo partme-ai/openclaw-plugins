@@ -14,6 +14,9 @@ importers:
 
   extensions/_template:
     dependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: workspace:^2026.5.24
+        version: link:../message-sdk
       openclaw:
         specifier: '>=2026.4.12'
         version: 2026.5.18
