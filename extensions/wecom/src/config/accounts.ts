@@ -15,6 +15,7 @@ import type { WeComConfig, WeComAccountConfig, ResolvedWeComAccount } from "./we
 import { DefaultWsUrl } from "./wecom-config.js";
 import type { ResolvedAgentAccount } from "../types/account.js";
 import type { WecomAgentConfig } from "../types/config.js";
+import { flattenWecomBotFields } from "./bot-config-normalize.js";
 
 // ============================================================================
 // 多账号配置结构
@@ -105,9 +106,11 @@ function mergeWeComAccountConfig(cfg: OpenClawConfig, accountId: string): WeComC
   const wecomConfig = cfg.channels?.[CHANNEL_ID] as WeComMultiAccountConfig | undefined;
   const { accounts: _ignored, defaultAccount: _da, ...base } = wecomConfig ?? {};
   const account = findAccountConfig(wecomConfig?.accounts, accountId);
+  const normalizedBase = flattenWecomBotFields(base as Record<string, unknown>);
+  const normalizedAccount = flattenWecomBotFields(account as Record<string, unknown>);
   return mergeChannelAccountConfig(
-    base as WeComConfig & Record<string, unknown>,
-    account as Partial<WeComConfig & Record<string, unknown>>,
+    normalizedBase as WeComConfig & Record<string, unknown>,
+    normalizedAccount as Partial<WeComConfig & Record<string, unknown>>,
     ["groups"],
   );
 }

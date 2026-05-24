@@ -52,6 +52,15 @@ export type WecomNetworkConfig = {
  * Bot 模式配置 (智能体)
  * 用于接收 JSON 格式回调 + 流式回复
  */
+/** 嵌套 bot.dm 访问控制（历史配置，运行时规范化为 dmPolicy / allowFrom） */
+export type WecomBotDmConfig = {
+    /** 等价于平铺 dmPolicy */
+    policy?: 'open' | 'pairing' | 'allowlist' | 'disabled';
+    allowFrom?: Array<string | number>;
+    /** 历史别名，等价于 allowFrom */
+    allow?: Array<string | number>;
+};
+
 export type WecomBotConfig = {
     /** 智能机器人 ID（用于 Matrix 模式二次身份确认，webhook 模式） */
     aibotid?: string;
@@ -69,8 +78,14 @@ export type WecomBotConfig = {
     receiveId?: string;
     /** Bot 流式首帧占位（非欢迎语、非 thinkingText 状态栏） */
     streamPlaceholderText?: string;
+    /** 历史别名，等价于 streamPlaceholderText */
+    streamPlaceholderContent?: string;
+    /** enter_chat 欢迎语（嵌套 bot 块内历史写法，运行时规范化为平铺 welcomeText） */
+    welcomeText?: string;
     /** DM 策略: 'open' 允许所有人, 'pairing' 需要配对, 'allowlist' 仅允许列表, 'disabled' 禁用 */
     dmPolicy?: 'open' | 'pairing' | 'allowlist' | 'disabled';
+    /** 嵌套 DM 策略（历史写法，运行时规范化为 dmPolicy / allowFrom） */
+    dm?: WecomBotDmConfig;
     /** 允许的用户列表，为空表示允许所有人 */
     allowFrom?: Array<string | number>;
 

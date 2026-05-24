@@ -812,6 +812,45 @@ Session context is injected automatically: `requesterUserId`, `accountId`, `chat
 
 Temporary HTTP media: `/wecom-media` route (15-minute TTL) for outbound links.
 
+## Nested `bot` config compatibility (backward compatible)
+
+From `@partme.ai/wecom@2026.5.26`, the plugin **normalizes legacy nested `bot` blocks at read time** into flat runtime fields. **Prefer flat keys for new configs** (`channels.wecom.botId` / `accounts.<id>.botId`); nested `bot` remains accepted for older or CLI-generated layouts.
+
+| Nested path (compat) | Flat runtime key (canonical) | Notes |
+|----------------------|------------------------------|-------|
+| `bot.botId` | `botId` | WebSocket Bot credentials |
+| `bot.secret` | `secret` | WebSocket Bot credentials |
+| `bot.connectionMode` | `connectionMode` | `websocket` / `webhook` |
+| `bot.welcomeText` | `welcomeText` | enter_chat welcome |
+| `bot.streamPlaceholderContent` | `streamPlaceholderText` | Stream first-frame placeholder (legacy alias) |
+| `bot.dm.policy` | `dmPolicy` | DM policy |
+| `bot.dm.allowFrom` / `bot.dm.allow` | `allowFrom` | DM allowlist |
+
+**Priority**: flat keys at the same level **override** nested `bot.*` (incremental migration). Both `channels.wecom.bot.*` and `accounts.<id>.bot.*` are supported; nested `agent` is unchanged.
+
+Migration example (nested → flat):
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "accounts": {
+        "cs-assistant": {
+          "name": "CS Assistant",
+          "enabled": true,
+          "botId": "<BOT_ID>",
+          "secret": "<BOT_SECRET>",
+          "connectionMode": "websocket",
+          "welcomeText": "Hello!",
+          "streamPlaceholderText": "Working on it...",
+          "dmPolicy": "open"
+        }
+      }
+    }
+  }
+}
+```
+
 ## Multi-Account and Dynamic Agents
 
 Use multi-account configuration for multiple enterprises, Bots, or team-level isolation. Account-level fields override top-level fields with the same name.

@@ -817,6 +817,45 @@ full 模式注册 Agent 工具 **`wecom_mcp`**（`mcp/tool.ts`）：
 
 临时 HTTP 媒体：`/wecom-media` 路由供出站链接访问（15 分钟 TTL）。
 
+## 嵌套 `bot` 配置兼容（向后兼容）
+
+自 `@partme.ai/wecom@2026.5.26` 起，插件在**读取配置时**会自动将历史嵌套 `bot` 块规范化为运行时平铺字段。**推荐新配置继续使用平铺写法**（`channels.wecom.botId` / `accounts.<id>.botId`）；嵌套 `bot` 仅用于兼容旧版或 CLI 生成的配置。
+
+| 嵌套路径（兼容） | 运行时平铺字段（canonical） | 说明 |
+|------------------|----------------------------|------|
+| `bot.botId` | `botId` | WebSocket Bot 凭据 |
+| `bot.secret` | `secret` | WebSocket Bot 凭据 |
+| `bot.connectionMode` | `connectionMode` | `websocket` / `webhook` |
+| `bot.welcomeText` | `welcomeText` | enter_chat 欢迎语 |
+| `bot.streamPlaceholderContent` | `streamPlaceholderText` | 流式首帧占位（历史别名） |
+| `bot.dm.policy` | `dmPolicy` | 私聊策略 |
+| `bot.dm.allowFrom` / `bot.dm.allow` | `allowFrom` | 私聊白名单 |
+
+**优先级**：同层平铺字段 **高于** 嵌套 `bot.*`（便于渐进迁移）。顶层 `channels.wecom.bot.*` 与 `accounts.<id>.bot.*` 均支持；`agent` 嵌套块不受影响。
+
+迁移示例（嵌套 → 平铺）：
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "accounts": {
+        "cs-assistant": {
+          "name": "客服助理.AI",
+          "enabled": true,
+          "botId": "<BOT_ID>",
+          "secret": "<BOT_SECRET>",
+          "connectionMode": "websocket",
+          "welcomeText": "您好！",
+          "streamPlaceholderText": "正在处理中...",
+          "dmPolicy": "open"
+        }
+      }
+    }
+  }
+}
+```
+
 ## 多账号与动态 Agent
 
 多账号用于多个企业、多个 Bot 或多团队隔离。账号级字段会覆盖顶层同名字段。

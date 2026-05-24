@@ -24,12 +24,14 @@ import type { ResolvedAgentAccount } from "../types/account.js";
 import type { WeComUserTextConfig } from "./text-config.js";
 import type {
   WecomAgentConfig,
+  WecomBotConfig,
   WecomNetworkConfig,
   WecomMediaConfig,
   WecomDynamicAgentsConfig,
   WecomFooterConfig,
   WecomStreamingNestedConfig,
 } from "../types/config.js";
+import { flattenWecomBotFields } from "./bot-config-normalize.js";
 
 export type { WeComUserTextConfig } from "./text-config.js";
 
@@ -81,6 +83,13 @@ export interface WeComConfig extends WeComUserTextConfig {
   media?: WecomMediaConfig;
   /** 动态 Agent 配置 */
   dynamicAgents?: WecomDynamicAgentsConfig;
+  /**
+   * 历史嵌套 Bot 配置块（向后兼容）。
+   * 运行时由 flattenWecomBotFields 规范化为平铺字段；新配置请直接使用平铺字段。
+   */
+  bot?: WecomBotConfig;
+  /** 历史顶层别名，等价于 streamPlaceholderText */
+  streamPlaceholderContent?: string;
 
   // ── Webhook 模式扩展字段 ──────────────────────────────────────────
   /** 连接模式：webhook | websocket（默认 websocket） */
@@ -127,7 +136,9 @@ export interface ResolvedWeComAccount {
  * @returns 默认 accountId 下的 Bot 配置快照（不含 Agent 解析，见 accounts 模块）
  */
 export function resolveWeComAccount(cfg: OpenClawConfig): ResolvedWeComAccount {
-  const wecomConfig = (cfg.channels?.[CHANNEL_ID] ?? {}) as WeComConfig;
+  const wecomConfig = flattenWecomBotFields(
+    (cfg.channels?.[CHANNEL_ID] ?? {}) as Record<string, unknown>,
+  ) as WeComConfig;
 
   return {
     accountId: DEFAULT_ACCOUNT_ID,
