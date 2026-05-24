@@ -374,27 +374,52 @@ openclaw gateway restart
 
 ### 占位符
 
-| 占位符 | 适用模板 | 含义 |
-|--------|----------|------|
-| `{toolName}` | `toolStatusText` | 当前工具名（有则替换） |
-| `{elapsed}` | `finishFooterText` | 关流耗时秒数（至少 1s） |
-| `{minutes}` | `timeoutText` | 超时阈值分钟数 |
-| `{kind}` | `dispatchErrorText` | 错误类别 |
-| `{detail}` | `dispatchErrorText` | 截断后的错误详情 |
-| `{emptyReply}` | `mediaParseFailedText` | 嵌套 emptyReply 文案 |
-| `{mediaUrl}` | 媒体错误类 | 媒体路径或 URL |
-| `{reason}` | `mediaErrorReasonText` | 拒绝原因 |
+下列占位符由 `formatWecomTemplate` / message-sdk 在运行时替换；未列出的 `*Text` 键为**静态文案**（不含 `{…}`）。
 
-示例：
+| 占位符 | 适用配置键 | 含义 |
+|--------|------------|------|
+| `{toolName}` | `toolStatusText` | 当前工具名；模板含此占位符且传入工具名时替换，否则使用整段静态文案 |
+| `{elapsed}` | `finishFooterText` | 关流耗时秒数（至少 1s，见 `formatWecomElapsedFooter`） |
+| `{minutes}` | `timeoutText` | Agent 回复超时阈值分钟数（`timeoutMs / 60000` 取整） |
+| `{kind}` | `dispatchErrorText` | OpenClaw dispatch 错误类别标识 |
+| `{detail}` | `dispatchErrorText` | 截断后的错误详情（默认最长 200 字符） |
+| `{emptyReply}` | `mediaParseFailedText` | 运行时注入已解析的 `emptyReplyText` 全文 |
+| `{mediaUrl}` | `mediaErrorNoAccessText`、`mediaErrorGenericText` | 媒体本地路径或 URL |
+| `{reason}` | `mediaErrorReasonText` | 媒体发送被拒原因（`rejectReason` 或 `error`） |
+
+### 完整示例（全部 25 个 `*Text` 键）
+
+JSON 不支持注释；下方按职责分组排列：**欢迎与流式协议** → **状态栏** → **关流与兜底** → **卡片/媒体** → **错误** → **排队与会话命令**。可按需删除未使用的键，未配置项使用 `WECOM_DEFAULT_TEMPLATES` 默认值。
 
 ```json
 {
   "channels": {
     "wecom": {
-      "thinkingText": "正在为您分析，请稍候…",
+      "welcomeText": "您好！我是智能助手，发送消息即可开始对话。",
+      "streamPlaceholderText": "1",
+      "thinkingText": "正在思考…",
+      "receivedText": "已收到，正在处理…",
       "toolStatusText": "正在调用 {toolName}…",
-      "finishFooterText": "⏱ 用时 {elapsed}s",
-      "timeoutText": "⚠️ 已超过 {minutes} 分钟，请重新发送。"
+      "readingText": "正在阅读附件…",
+      "generatingText": "正在输入…",
+      "compactionText": "📦 正在压缩上下文…",
+      "emptyReplyText": "⚠️ 未能生成可展示的回复，请稍后重试或发送文字消息。",
+      "finishFooterText": "⏱ {elapsed}s · 已完成",
+      "cardSentText": "📋 卡片消息已发送。",
+      "mediaSentText": "📎 文件已发送，请查收。",
+      "mediaParseFailedText": "⚠️ 未能解析该媒体并生成回复。{emptyReply}",
+      "mediaDeliveredText": "✅ 文件已发送。",
+      "processedCompleteText": "✅ 已处理完成。",
+      "timeoutText": "⚠️ 处理超时（约 {minutes} 分钟），请稍后重试或发送文字消息。",
+      "dispatchErrorText": "⚠️ 回复生成失败（{kind}）：{detail}",
+      "mediaErrorNoAccessText": "⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}\n请在 openclaw.json 的 mediaLocalRoots 中添加该路径的父目录后重启生效。",
+      "mediaErrorReasonText": "⚠️ 文件发送失败：{reason}",
+      "mediaErrorGenericText": "⚠️ 文件发送失败：无法处理文件 {mediaUrl}，请稍后再试。",
+      "queuedText": "已收到，已排队处理中...",
+      "mergedQueuedText": "已收到，已合并排队处理中...",
+      "mergedDoneText": "✅ 已合并处理完成，请查看上一条回复。",
+      "sessionResetText": "✅ 已重置会话。",
+      "sessionNewText": "✅ 已开启新会话。"
     }
   }
 }

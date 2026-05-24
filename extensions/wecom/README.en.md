@@ -365,26 +365,52 @@ All `*Text` fields are flat under `channels.wecom` (or account overrides). They 
 
 ### Placeholders
 
-| Placeholder | Templates | Meaning |
-|-------------|-----------|---------|
-| `{toolName}` | `toolStatusText` | Current tool name when present |
-| `{elapsed}` | `finishFooterText` | Elapsed seconds on close (min 1s) |
-| `{minutes}` | `timeoutText` | Timeout threshold in minutes |
-| `{kind}` | `dispatchErrorText` | Error category |
-| `{detail}` | `dispatchErrorText` | Truncated error detail |
-| `{emptyReply}` | `mediaParseFailedText` | Nested empty-reply text |
-| `{mediaUrl}` | media error templates | Media path or URL |
-| `{reason}` | `mediaErrorReasonText` | Rejection reason |
+Runtime substitution uses `formatWecomTemplate` / message-sdk. Keys not listed below are **static copy** (no `{…}` placeholders).
 
-Example:
+| Placeholder | Config keys | Meaning |
+|-------------|-------------|---------|
+| `{toolName}` | `toolStatusText` | Current tool name; replaced when the template includes this token and a name is provided, otherwise the full static string is used |
+| `{elapsed}` | `finishFooterText` | Elapsed seconds on stream close (minimum 1s; see `formatWecomElapsedFooter`) |
+| `{minutes}` | `timeoutText` | Agent reply timeout threshold in minutes (`timeoutMs / 60000`, rounded) |
+| `{kind}` | `dispatchErrorText` | OpenClaw dispatch error category |
+| `{detail}` | `dispatchErrorText` | Truncated error detail (default max 200 characters) |
+| `{emptyReply}` | `mediaParseFailedText` | Resolved `emptyReplyText` injected at runtime |
+| `{mediaUrl}` | `mediaErrorNoAccessText`, `mediaErrorGenericText` | Local media path or URL |
+| `{reason}` | `mediaErrorReasonText` | Media send rejection reason (`rejectReason` or `error`) |
+
+### Full example (all 25 `*Text` keys)
+
+JSON does not allow comments. Keys are ordered by role: **welcome & stream protocol** → **status line** → **close / fallback** → **cards & media** → **errors** → **queue & session commands**. Omit keys you do not need; unset keys fall back to `WECOM_DEFAULT_TEMPLATES`.
 
 ```json
 {
   "channels": {
     "wecom": {
-      "thinkingText": "Analyzing your request…",
+      "welcomeText": "Hello! I'm your assistant—send a message to get started.",
+      "streamPlaceholderText": "1",
+      "thinkingText": "Thinking…",
+      "receivedText": "Got it, processing…",
       "toolStatusText": "Running {toolName}…",
-      "finishFooterText": "⏱ {elapsed}s done"
+      "readingText": "Reading attachment…",
+      "generatingText": "Writing reply…",
+      "compactionText": "📦 Compacting context…",
+      "emptyReplyText": "⚠️ No reply could be generated. Please retry or send a text message.",
+      "finishFooterText": "⏱ {elapsed}s · Done",
+      "cardSentText": "📋 Card message sent.",
+      "mediaSentText": "📎 File sent—please check your chat.",
+      "mediaParseFailedText": "⚠️ Could not parse this media for a reply. {emptyReply}",
+      "mediaDeliveredText": "✅ File delivered.",
+      "processedCompleteText": "✅ Processing complete.",
+      "timeoutText": "⚠️ Timed out (~{minutes} min). Please retry or send a text message.",
+      "dispatchErrorText": "⚠️ Reply failed ({kind}): {detail}",
+      "mediaErrorNoAccessText": "⚠️ File send failed: no access to {mediaUrl}\nAdd the parent directory to mediaLocalRoots in openclaw.json and restart.",
+      "mediaErrorReasonText": "⚠️ File send failed: {reason}",
+      "mediaErrorGenericText": "⚠️ File send failed: could not handle {mediaUrl}. Please try again later.",
+      "queuedText": "Received—queued for processing…",
+      "mergedQueuedText": "Received—merged and queued…",
+      "mergedDoneText": "✅ Merged processing complete—see the previous reply.",
+      "sessionResetText": "✅ Session reset.",
+      "sessionNewText": "✅ New session started."
     }
   }
 }
