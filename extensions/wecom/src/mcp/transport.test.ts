@@ -32,6 +32,16 @@ vi.mock("undici", () => ({
   fetch: fetchMock,
 }));
 
+const isWeComMcpDebugEnabledMock = vi.hoisted(() => vi.fn(() => false));
+const mcpDebugLogMock = vi.hoisted(() => vi.fn());
+
+vi.mock("./debug-log.js", () => ({
+  isWeComMcpDebugEnabled: isWeComMcpDebugEnabledMock,
+  mcpDebugLog: (message: string) => {
+    if (isWeComMcpDebugEnabledMock()) mcpDebugLogMock(message);
+  },
+}));
+
 import { WECOM_USERID_HEADER, clearCategoryCache, sendJsonRpc } from "./transport.js";
 
 function createJsonRpcResponse(result: unknown) {
@@ -88,5 +98,27 @@ describe("sendJsonRpc requester userid header", () => {
 
     expect(seenHeaders[0]?.[WECOM_USERID_HEADER]).toBeUndefined();
     expect(seenHeaders[1]?.[WECOM_USERID_HEADER]).toBeUndefined();
+  });
+
+  it("does not emit verbose mcpDebugLog when debug is off", async () => {
+    isWeComMcpDebugEnabledMock.mockReturnValue(false);
+    mcpDebugLogMock.mockClear();
+
+    await sendJsonRpc("contact", "tools/list", undefined, {
+      requesterUserId: "user-1",
+    });
+
+    expect(mcpDebugLogMock).not.toHaveBeenCalled();
+  });
+
+  it("emits mcpDebugLog when debug is on", async () => {
+    isWeComMcpDebugEnabledMock.mockReturnValue(true);
+    mcpDebugLogMock.mockClear();
+
+    await sendJsonRpc("contact", "tools/list", undefined, {
+      requesterUserId: "user-1",
+    });
+
+    expect(mcpDebugLogMock).toHaveBeenCalled();
   });
 });

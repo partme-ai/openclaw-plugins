@@ -12,16 +12,50 @@
  * - 上游：`@partme.ai/openclaw-message-sdk/queue`
  * - 下游：monitor 消息处理协程
  *
- * **关键导出**：`enqueueWeComChatTask`、`buildQueueKey`、`hasActiveTask`
+ * **关键导出**：`enqueueWeComChatTask`、`buildQueueKey`、`hasActiveTask`、`getWeComChatQueueSnapshot`
  */
 
-import { createKeyedRunQueue, type KeyedRunQueue } from "@partme.ai/openclaw-message-sdk/queue";
+import {
+  createKeyedRunQueue,
+  type KeyedRunQueue,
+  type KeyedRunQueueSnapshot,
+} from "@partme.ai/openclaw-message-sdk/queue";
 
 /** 入队结果：立即执行或排队等待 */
 type QueueStatus = "queued" | "immediate";
 
+/** 同 key 排队过久告警阈值（毫秒）。 */
+const CHAT_QUEUE_WAIT_WARN_MS = 30_000;
+
 /** 进程级单例队列 */
-let chatQueue: KeyedRunQueue = createKeyedRunQueue();
+let chatQueue: KeyedRunQueue = createWeComChatQueue();
+
+/**
+ * 创建带可观测性回调的 WeCom chat 队列实例。
+ */
+function createWeComChatQueue(): KeyedRunQueue {
+  return createKeyedRunQueue({
+    waitWarnMs: CHAT_QUEUE_WAIT_WARN_MS,
+    onWaitWarn: ({ key, waitMs, depth }) => {
+      console.warn(
+        `[wecom-queue] chat wait high key=${compactQueueKey(key)} waitMs=${waitMs} depth=${depth}`,
+      );
+    },
+  });
+}
+
+/**
+ * 压缩队列 key 用于日志（account/chat 部分脱敏）。
+ */
+function compactQueueKey(key: string): string {
+  const sep = key.indexOf(":");
+  if (sep <= 0) return key.slice(0, 8);
+  const account = key.slice(0, sep);
+  const chat = key.slice(sep + 1);
+  const accountCompact = account.length <= 6 ? account : `${account.slice(0, 4)}…`;
+  const chatCompact = chat.length <= 8 ? chat : `…${chat.slice(-6)}`;
+  return `${accountCompact}:${chatCompact}`;
+}
 
 /**
  * 构建队列键（accountId + chatId 维度）。
@@ -45,6 +79,13 @@ export function hasActiveTask(key: string): boolean {
 }
 
 /**
+ * 返回当前 chat 队列快照（可观测性）。
+ */
+export function getWeComChatQueueSnapshot(): KeyedRunQueueSnapshot {
+  return chatQueue.snapshot();
+}
+
+/**
  * 将任务加入串行队列。
  *
  * **串行保证**：同一 key 下任务严格 FIFO；不同 key 可并行。
@@ -62,8 +103,22 @@ export function enqueueWeComChatTask(params: {
   const { accountId, chatId, task } = params;
   const key = buildQueueKey(accountId, chatId);
   const status: QueueStatus = chatQueue.has(key) ? "queued" : "immediate";
+  const snap = chatQueue.snapshot();
+  const keyState = snap.keys[key];
+
+  if (status === "queued") {
+    console.log(
+      `[wecom-queue] enqueue queued key=${compactQueueKey(key)} depth=${keyState?.depth ?? "?"} queued=${snap.queuedCount}`,
+    );
+  }
+
   const promise = chatQueue.enqueue(key, async () => {
+    const startedAt = Date.now();
     await task();
+    const elapsed = Date.now() - startedAt;
+    if (elapsed > 1_000) {
+      console.log(`[wecom-queue] task done key=${compactQueueKey(key)} elapsedMs=${elapsed}`);
+    }
   });
   return { status, promise };
 }
@@ -71,5 +126,10 @@ export function enqueueWeComChatTask(params: {
 /** @internal 测试专用：重置所有队列状态 */
 export function _resetChatQueueState(): void {
   chatQueue.deactivate();
-  chatQueue = createKeyedRunQueue();
+  chatQueue = createWeComChatQueue();
+}
+
+/** @internal 测试专用：读取 wait warn 阈值 */
+export function _chatQueueWaitWarnMsForTest(): number {
+  return CHAT_QUEUE_WAIT_WARN_MS;
 }

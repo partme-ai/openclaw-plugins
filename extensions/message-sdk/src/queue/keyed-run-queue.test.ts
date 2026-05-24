@@ -110,4 +110,46 @@ describe("createKeyedRunQueue", () => {
     await Promise.resolve();
     expect(queue.has("chat-1")).toBe(false);
   });
+
+  it("snapshot reports depth and queued count", async () => {
+    const queue = createKeyedRunQueue();
+    const gate = deferred<void>();
+
+    queue.enqueue("chat-1", async () => {
+      await gate.promise;
+    });
+    queue.enqueue("chat-1", async () => undefined);
+    queue.enqueue("chat-2", async () => undefined);
+
+    await Promise.resolve();
+    const snap = queue.snapshot();
+    expect(snap.activeCount).toBe(2);
+    expect(snap.pendingKeys).toContain("chat-1");
+    expect(snap.pendingKeys).toContain("chat-2");
+    expect(snap.keys["chat-1"]?.depth).toBe(2);
+    expect(snap.queuedCount).toBeGreaterThanOrEqual(1);
+
+    gate.resolve(undefined);
+    await new Promise((r) => setTimeout(r, 5));
+  });
+
+  it("fires onWaitWarn when queued too long", async () => {
+    vi.useFakeTimers();
+    const onWaitWarn = vi.fn();
+    const queue = createKeyedRunQueue({ waitWarnMs: 100, onWaitWarn });
+    const gate = deferred<void>();
+
+    queue.enqueue("chat-1", async () => {
+      await gate.promise;
+    });
+    queue.enqueue("chat-1", async () => undefined);
+
+    await vi.advanceTimersByTimeAsync(101);
+    expect(onWaitWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "chat-1", depth: 2 }),
+    );
+
+    gate.resolve(undefined);
+    vi.useRealTimers();
+  });
 });

@@ -68,7 +68,14 @@ import {
   resolveWecomStreamingConfig,
   syncWecomStreamContent,
 } from "../config/streaming-config.js";
-import { resolveWecomTemplates, buildMediaErrorSummary } from "../config/templates.js";
+import {
+  resolveWecomTemplates,
+  buildMediaErrorSummary,
+  buildAgentReplyTimeoutSummary,
+  buildDispatchErrorSummary,
+} from "../config/templates.js";
+import { resolveWecomAgentReplyTimeoutMs } from "../config/wecom-config.js";
+import { TimeoutError, withTimeout } from "../shared/timeout.js";
 import {
   getExtendedMediaLocalRoots,
   readGuardedLocalMediaFile,
@@ -950,12 +957,42 @@ export async function startAgentForStream(params: {
     agentId: route.agentId,
   });
 
-  await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-    ctx: ctxPayload,
-    cfg: cfgForDispatch,
-    replyOptions,
-    dispatcherOptions,
-  });
+  const agentReplyTimeoutMs = resolveWecomAgentReplyTimeoutMs(config);
+  try {
+    await withTimeout(
+      core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+        ctx: ctxPayload,
+        cfg: cfgForDispatch,
+        replyOptions,
+        dispatcherOptions,
+      }),
+      agentReplyTimeoutMs,
+      `Agent reply timed out after ${agentReplyTimeoutMs}ms`,
+    );
+  } catch (err) {
+    target.runtime.error?.(
+      `[webhook] Agent reply failed (streamId=${streamId}): ${String(err)}`,
+    );
+    if (err instanceof TimeoutError) {
+      const summary = buildAgentReplyTimeoutSummary(agentReplyTimeoutMs, templates);
+      streamStore.updateStream(streamId, (s) => {
+        if (!s.content?.trim()) {
+          s.content = summary;
+          s.answerText = summary;
+        }
+        s.dispatchErrorSummary = summary;
+      });
+      target.runtime.error?.(
+        `[webhook] Agent reply timed out after ${agentReplyTimeoutMs}ms, finishing stream streamId=${streamId}`,
+      );
+    } else {
+      const summary = buildDispatchErrorSummary("dispatch", err, templates);
+      streamStore.updateStream(streamId, (s) => {
+        if (!s.content?.trim()) s.content = summary;
+        s.dispatchErrorSummary = summary;
+      });
+    }
+  }
 
   // ──────────────────────────────────────────────────────────────────
   // 13. 后处理：/new /reset 中文回执

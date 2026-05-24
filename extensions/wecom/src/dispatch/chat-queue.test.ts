@@ -6,6 +6,7 @@ import {
   buildQueueKey,
   hasActiveTask,
   enqueueWeComChatTask,
+  getWeComChatQueueSnapshot,
   _resetChatQueueState,
 } from "./chat-queue.ts";
 import {
@@ -131,6 +132,26 @@ describe("chat-queue", () => {
       // 给 microtask 时间清理
       await new Promise((r) => setTimeout(r, 10));
       expect(hasActiveTask("a1:c1")).toBe(false);
+    });
+
+    it("snapshot 暴露队列深度", async () => {
+      const gate = { open: false };
+      enqueueWeComChatTask({
+        accountId: "a1",
+        chatId: "c1",
+        task: async () => {
+          while (!gate.open) await new Promise((r) => setTimeout(r, 5));
+        },
+      });
+      enqueueWeComChatTask({
+        accountId: "a1",
+        chatId: "c1",
+        task: async () => undefined,
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      const snap = getWeComChatQueueSnapshot();
+      expect(snap.keys["a1:c1"]?.depth).toBeGreaterThanOrEqual(2);
+      gate.open = true;
     });
   });
 });

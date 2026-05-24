@@ -163,6 +163,8 @@ export interface StreamState {
   finished: boolean;
   /** 错误信息 */
   error?: string;
+  /** dispatch 失败/超时时的用户可见摘要 */
+  dispatchErrorSummary?: string;
   /** 已积累的响应内容（用于长轮询返回，为 status + answer 合成后的展示文本） */
   content: string;
   /** 原始累积答案（block deliver 拼接，不含状态栏） */
