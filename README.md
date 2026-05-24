@@ -477,7 +477,7 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # prerelease
 | Item | Current |
 |------|---------|
 | OpenClaw peer dependency | >= 2026.4.12 |
-| message-sdk | 2026.5.22 |
+| message-sdk | 2026.5.24 |
 | openclaw-nacos | 2026.5.24 |
 | openclaw-gotify | 2026.5.22 |
 | Most active plugins | 2026.5.20 |

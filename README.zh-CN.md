@@ -477,7 +477,7 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # 预发布
 | 项 | 当前 |
 |----|------|
 | OpenClaw peer 依赖 | >= 2026.4.12 |
-| message-sdk | 2026.5.22 |
+| message-sdk | 2026.5.24 |
 | openclaw-nacos | 2026.5.24 |
 | openclaw-gotify | 2026.5.22 |
 | 多数活跃插件 | 2026.5.20 |

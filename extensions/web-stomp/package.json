@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "ws": "^8.18.0",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.24"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

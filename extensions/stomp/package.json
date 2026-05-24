@@ -83,6 +83,6 @@
     }
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.24"
   }
 }
