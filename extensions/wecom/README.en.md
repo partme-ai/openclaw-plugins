@@ -451,7 +451,7 @@ All `*Text` fields are flat under `channels.wecom` (or account overrides). They 
 | `welcomeText` | welcome | (empty) | enter_chat / subscribe welcome |
 | `streamPlaceholderText` | — | see below | Bot stream **protocol first frame**, not welcome |
 | `thinkingText` | thinking | 正在思考… | Status: Agent started reasoning |
-| `receivedText` | received | 已收到，正在处理… | Status: message accepted |
+| `receivedText` | received | 已收到，正在处理… | WS status: after policy pass, before Agent starts |
 | `toolStatusText` | tool | 正在查资料… | Status: tool call in progress |
 | `readingText` | reading | 正在阅读附件… | Status: reading attachment |
 | `generatingText` | generating | 正在输入… | Status: answer block streaming |
@@ -468,7 +468,7 @@ All `*Text` fields are flat under `channels.wecom` (or account overrides). They 
 | `mediaErrorNoAccessText` | mediaErrorNoAccess | ⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}… | Path outside `mediaLocalRoots` |
 | `mediaErrorReasonText` | mediaErrorReason | ⚠️ 文件发送失败：{reason} | Media send rejected |
 | `mediaErrorGenericText` | mediaErrorGeneric | ⚠️ 文件发送失败：无法处理文件 {mediaUrl}… | Other media errors |
-| `queuedText` | queued | 已收到，已排队处理中... | Same-session queue |
+| `queuedText` | queued | 已收到，已排队处理中... | Same-session queue (WS status / Webhook placeholder) |
 | `mergedQueuedText` | mergedQueued | 已收到，已合并排队处理中... | Merged queue |
 | `mergedDoneText` | mergedDone | ✅ 已合并处理完成… | Merge complete |
 | `sessionResetText` | sessionReset | ✅ 已重置会话。 | Session reset command |

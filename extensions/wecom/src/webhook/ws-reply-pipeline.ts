@@ -210,6 +210,55 @@ async function flushStreamingUpdate(
 }
 
 /**
+ * 推送仅含状态栏的中间帧（policy 通过 / 排队 / 阶段切换）。
+ *
+ * WHY：prepare 与 queue 阶段尚无完整 WsDeliverContext，但需复用与 deliver 相同的气泡合成规则。
+ *
+ * @param params.wsClient - WS 客户端
+ * @param params.frame - 入站帧
+ * @param params.streamId - 流 ID
+ * @param params.runtime - 运行时
+ * @param params.account - 账号（流式配置）
+ * @param params.statusLine - 状态栏文案
+ * @returns Promise（失败仅打日志）
+ */
+export async function pushWecomStreamStatusLine(params: {
+  wsClient: WSClient;
+  frame: WsFrame;
+  streamId: string;
+  runtime: RuntimeEnv;
+  account: ResolvedWeComAccount;
+  statusLine: string;
+}): Promise<void> {
+  const { wsClient, frame, streamId, runtime, account, statusLine } = params;
+  const streamingConfig = resolveWecomStreamingConfig(account);
+  if (!shouldShowStreamStatusLine(streamingConfig)) {
+    return;
+  }
+  const bubbleText = buildWecomStreamBubbleText({
+    statusLine,
+    includeStatus: true,
+    includeAnswer: false,
+    includeFooter: false,
+  });
+  if (!bubbleText.trim()) {
+    return;
+  }
+  try {
+    await sendWeComReplyNonBlocking({
+      wsClient,
+      frame,
+      text: bubbleText,
+      runtime,
+      finish: false,
+      streamId,
+    });
+  } catch (err) {
+    runtime.log?.(`[wecom] Stream status update skipped or failed: ${String(err)}`);
+  }
+}
+
+/**
  * 更新状态栏并推送中间帧（streaming.status 模式）。
  *
  * @param ctx - WS deliver 上下文
@@ -248,6 +297,7 @@ export async function sendThinkingReply(params: {
   templates: ResolvedWecomTemplates;
 }): Promise<void> {
   const { wsClient, frame, streamId, runtime, account, state, templates } = params;
+  const streamingConfig = resolveWecomStreamingConfig(account);
   const placeholder =
     resolveWecomStreamPlaceholderText(account.config, THINKING_MESSAGE) ?? THINKING_MESSAGE;
   try {
@@ -262,8 +312,18 @@ export async function sendThinkingReply(params: {
   } catch (err) {
     runtime.log?.(`[wecom] Non-blocking thinking reply skipped or failed: ${String(err)}`);
   }
-  if (state && shouldShowStreamStatusLine(resolveWecomStreamingConfig(account))) {
-    state.statusLine = templates.thinking;
+  if (shouldShowStreamStatusLine(streamingConfig)) {
+    if (state) {
+      state.statusLine = templates.received;
+    }
+    await pushWecomStreamStatusLine({
+      wsClient,
+      frame,
+      streamId,
+      runtime,
+      account,
+      statusLine: templates.received,
+    });
   }
 }
 
@@ -433,9 +493,6 @@ export function createWsWecomReplyDispatcher(
     >[0]["formatToolProgressLine"],
     onReplyStartExtra: async () => {
       state.replyStartedAt = state.replyStartedAt ?? Date.now();
-      if (shouldShowStreamStatusLine(streamingConfig)) {
-        state.statusLine = templates.thinking;
-      }
       if (!isShowThink && state.streamId && !state.accumulatedText) {
         try {
           await sendThinkingReply({
@@ -453,6 +510,7 @@ export function createWsWecomReplyDispatcher(
         isShowThink = true;
       }
       if (shouldShowStreamStatusLine(streamingConfig)) {
+        state.statusLine = templates.thinking;
         try {
           await flushStreamingUpdate(deliverCtx, { includeAnswer: false });
         } catch (e) {

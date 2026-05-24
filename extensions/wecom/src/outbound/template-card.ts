@@ -13,6 +13,7 @@ import type { WecomWebhookTarget } from "../webhook/types.js";
 import { REQUEST_TIMEOUT_MS } from "../webhook/types.js";
 import { wecomFetch } from "../webhook/http.js";
 import { getActiveReplyUrl, useActiveReplyOnce } from "../webhook/active-reply.js";
+import { resolveWecomTemplates } from "../config/templates.js";
 
 export type TemplateCardDeliverParams = {
   target: WecomWebhookTarget;
@@ -76,9 +77,10 @@ export async function deliverTemplateCardIfPresent(
       target.runtime.log?.(
         `[webhook] sent template_card: task_id=${parsed.template_card.task_id}`,
       );
+      const cardSentText = resolveWecomTemplates(target.account).cardSent;
       streamStore.updateStream(streamId, (s) => {
         s.finished = true;
-        s.content = "[已发送交互卡片]";
+        s.content = cardSentText;
       });
       target.statusSink?.({ lastOutboundAt: Date.now() });
       return { handled: true };

@@ -22,6 +22,7 @@
 
 import { pathToFileURL } from "node:url";
 import os from "node:os";
+import { shouldShowStreamStatusLine } from "@partme.ai/openclaw-message-sdk/transcript";
 import type {
   WecomWebhookTarget,
   WebhookInboundMessage,
@@ -586,9 +587,7 @@ export async function startAgentForStream(params: {
       if (loaded.length > 0) {
         streamStore.updateStream(streamId, (s) => {
           s.images = loaded.map(({ base64, md5 }) => ({ base64, md5 }));
-          s.content = loaded.length === 1
-            ? `已发送图片（${pathModule.basename(loaded[0]!.path)}）`
-            : `已发送 ${loaded.length} 张图片`;
+          s.content = templates.mediaSent;
           s.finished = true;
         });
 
@@ -935,6 +934,17 @@ export async function startAgentForStream(params: {
     channel: "wecom",
     accountId: account.accountId,
   });
+
+  // 入站含媒体时展示 reading 状态栏（与 WS routeAndDispatch 对齐）
+  if (mediaPath && streamingConfig.footerStatus) {
+    if (shouldShowStreamStatusLine(streamingConfig)) {
+      streamStore.updateStream(streamId, (s) => {
+        s.statusLine = templates.reading;
+        syncWecomStreamContent(s, streamingConfig, { includeAnswer: false, templates });
+        s.content = truncateUtf8Bytes(s.content, STREAM_MAX_BYTES) || s.content;
+      });
+    }
+  }
 
   // ──────────────────────────────────────────────────────────────────
   // 11. 构造 dispatch config（禁用 message 工具）

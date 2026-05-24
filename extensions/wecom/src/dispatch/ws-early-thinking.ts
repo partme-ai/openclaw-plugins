@@ -10,7 +10,7 @@ import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { resolveWecomTemplates } from "../config/templates.js";
 import type { ResolvedWeComAccount } from "../config/wecom-config.js";
 import type { MessageState } from "../types/interface.js";
-import { sendThinkingReply } from "../webhook/ws-reply-pipeline.js";
+import { pushWecomStreamStatusLine, sendThinkingReply } from "../webhook/ws-reply-pipeline.js";
 import { logWsTimingStage, type WsTimingContext } from "./ws-timing.js";
 
 /** 生成 WS 流式回复 streamId。 */
@@ -84,4 +84,33 @@ export function fireWecomEarlyThinking(params: Parameters<typeof sendWecomEarlyT
   void sendWecomEarlyThinking(params).catch((err) => {
     params.runtime.error?.(`[wecom] Early thinking fire failed: ${String(err)}`);
   });
+}
+
+/**
+ * 同会话排队时，将 early stream 状态栏更新为 queuedText（需 prepare 已发首帧）。
+ *
+ * @returns 是否已推送 queued 状态
+ */
+export async function pushWecomQueuedStatusIfNeeded(params: {
+  wsClient: WSClient;
+  frame: WsFrame;
+  streamId?: string;
+  thinkingSentEarly?: boolean;
+  account: ResolvedWeComAccount;
+  runtime: RuntimeEnv;
+}): Promise<boolean> {
+  const { wsClient, frame, streamId, thinkingSentEarly, account, runtime } = params;
+  if (!thinkingSentEarly || !streamId) {
+    return false;
+  }
+  const templates = resolveWecomTemplates(account);
+  await pushWecomStreamStatusLine({
+    wsClient,
+    frame,
+    streamId,
+    runtime,
+    account,
+    statusLine: templates.queued,
+  });
+  return true;
 }

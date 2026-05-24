@@ -25,20 +25,20 @@ const transcriptHookCapture = vi.hoisted(() => ({
   onReplyStartExtra: undefined as (() => Promise<void>) | undefined,
 }));
 
-vi.mock("@partme.ai/openclaw-message-sdk/transcript", () => ({
-  createTranscriptReplyDispatcherHooks: vi.fn((opts: { onReplyStartExtra?: () => Promise<void> }) => {
-    transcriptHookCapture.onReplyStartExtra = opts.onReplyStartExtra;
-    return {
-      dispatcherOptions: { onError: undefined },
-      replyOptions: {},
-    };
-  }),
-  shouldShowStreamStatusLine: vi.fn(() => false),
-  createChannelMessageReplyPipeline: vi.fn(),
-  createReplyPrefixContext: vi.fn(),
-  isChannelProgressDraftWorkToolName: vi.fn(() => false),
-  formatChannelProgressDraftLineForEntry: vi.fn(),
-}));
+vi.mock("@partme.ai/openclaw-message-sdk/transcript", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@partme.ai/openclaw-message-sdk/transcript")>();
+  return {
+    ...actual,
+    createTranscriptReplyDispatcherHooks: vi.fn((opts: { onReplyStartExtra?: () => Promise<void> }) => {
+      transcriptHookCapture.onReplyStartExtra = opts.onReplyStartExtra;
+      return {
+        dispatcherOptions: { onError: undefined },
+        replyOptions: {},
+      };
+    }),
+    shouldShowStreamStatusLine: vi.fn(() => false),
+  };
+});
 
 vi.mock("../config/streaming-config.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/streaming-config.js")>();
@@ -50,6 +50,7 @@ vi.mock("../config/streaming-config.js", async (importOriginal) => {
       footerElapsed: false,
       streaming: false,
       streamingContent: false,
+      streamingStatus: true,
     })),
     resolveWecomStreamPlaceholderText: vi.fn((_cfg, fallback: string) => fallback),
   };
@@ -63,8 +64,10 @@ vi.mock("../config/templates.js", async (importOriginal) => {
   };
 });
 
-import { createWsWecomReplyDispatcher } from "./ws-reply-pipeline.js";
+import { createWsWecomReplyDispatcher, pushWecomStreamStatusLine, sendThinkingReply } from "./ws-reply-pipeline.js";
 import { isWeComWsTimingEnabled, logWsTimingStage, createWsTimingContext } from "../dispatch/ws-timing.js";
+import { shouldShowStreamStatusLine } from "@partme.ai/openclaw-message-sdk/transcript";
+import { WECOM_DEFAULT_TEMPLATES } from "../config/templates.js";
 
 describe("ws-timing", () => {
   const original = process.env.WECOM_WS_TIMING;
@@ -158,5 +161,45 @@ describe("createWsWecomReplyDispatcher early thinking dedup", () => {
     createWsWecomReplyDispatcher({ ...baseParams, state });
     await transcriptHookCapture.onReplyStartExtra?.();
     expect(sendWeComReplyNonBlockingMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sendThinkingReply received status", () => {
+  const frame = { body: { chatid: "c1", from: { userid: "u1" } }, headers: { req_id: "r1" } } as never;
+  const account = { accountId: "default", config: {} } as never;
+  const runtime = { log: vi.fn(), error: vi.fn() } as never;
+
+  beforeEach(() => {
+    sendWeComReplyNonBlockingMock.mockClear();
+    vi.mocked(shouldShowStreamStatusLine).mockReturnValue(true);
+  });
+
+  it("pushes receivedText after protocol placeholder", async () => {
+    const state = { statusLine: undefined as string | undefined };
+    await sendThinkingReply({
+      wsClient: {} as never,
+      frame,
+      streamId: "stream-received",
+      runtime,
+      account,
+      state,
+      templates: { ...WECOM_DEFAULT_TEMPLATES, received: "CUSTOM_RECEIVED" },
+    });
+    expect(sendWeComReplyNonBlockingMock).toHaveBeenCalledTimes(2);
+    expect(state.statusLine).toBe("CUSTOM_RECEIVED");
+    expect(sendWeComReplyNonBlockingMock.mock.calls[1]?.[0]?.text).toContain("CUSTOM_RECEIVED");
+  });
+
+  it("pushWecomStreamStatusLine sends queued template text", async () => {
+    await pushWecomStreamStatusLine({
+      wsClient: {} as never,
+      frame,
+      streamId: "stream-queued",
+      runtime,
+      account,
+      statusLine: "CUSTOM_QUEUED",
+    });
+    expect(sendWeComReplyNonBlockingMock).toHaveBeenCalledTimes(1);
+    expect(sendWeComReplyNonBlockingMock.mock.calls[0]?.[0]?.text).toContain("CUSTOM_QUEUED");
   });
 });

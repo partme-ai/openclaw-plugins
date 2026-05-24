@@ -455,7 +455,7 @@ openclaw gateway restart
 | `welcomeText` | welcome | （空） | enter_chat / subscribe 欢迎语 |
 | `streamPlaceholderText` | — | 见下方说明 | Bot 流式**协议首帧**占位，非欢迎语 |
 | `thinkingText` | thinking | 正在思考… | 状态栏：Agent 开始推理 |
-| `receivedText` | received | 已收到，正在处理… | 状态栏：已收到消息 |
+| `receivedText` | received | 已收到，正在处理… | WS 状态栏：policy 通过后、Agent 开始前 |
 | `toolStatusText` | tool | 正在查资料… | 状态栏：工具调用中 |
 | `readingText` | reading | 正在阅读附件… | 状态栏：阅读附件 |
 | `generatingText` | generating | 正在输入… | 状态栏：生成答案 block |
@@ -472,7 +472,7 @@ openclaw gateway restart
 | `mediaErrorNoAccessText` | mediaErrorNoAccess | ⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}… | 本地路径不在 `mediaLocalRoots` |
 | `mediaErrorReasonText` | mediaErrorReason | ⚠️ 文件发送失败：{reason} | 媒体发送被拒 |
 | `mediaErrorGenericText` | mediaErrorGeneric | ⚠️ 文件发送失败：无法处理文件 {mediaUrl}… | 其他媒体错误 |
-| `queuedText` | queued | 已收到，已排队处理中... | 同会话消息排队 |
+| `queuedText` | queued | 已收到，已排队处理中... | 同会话排队（WS 状态栏 / Webhook 占位） |
 | `mergedQueuedText` | mergedQueued | 已收到，已合并排队处理中... | 合并排队 |
 | `mergedDoneText` | mergedDone | ✅ 已合并处理完成，请查看上一条回复。 | 合并处理完成 |
 | `sessionResetText` | sessionReset | ✅ 已重置会话。 | 会话重置命令 |

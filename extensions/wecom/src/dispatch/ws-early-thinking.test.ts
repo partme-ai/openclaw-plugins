@@ -4,21 +4,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sendThinkingReplyMock = vi.hoisted(() => vi.fn(async () => undefined));
+const pushWecomStreamStatusLineMock = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("../webhook/ws-reply-pipeline.js", () => ({
   sendThinkingReply: sendThinkingReplyMock,
+  pushWecomStreamStatusLine: pushWecomStreamStatusLineMock,
 }));
 
 vi.mock("../config/templates.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/templates.js")>();
   return {
     ...actual,
-    resolveWecomTemplates: vi.fn(() => actual.WECOM_DEFAULT_TEMPLATES),
+    resolveWecomTemplates: vi.fn((accountOrConfig: unknown) =>
+      actual.resolveWecomTemplates(accountOrConfig as never),
+    ),
   };
 });
 
 import {
   createWecomEarlyThinkingStreamId,
+  pushWecomQueuedStatusIfNeeded,
   sendWecomEarlyThinking,
   shouldSendWecomEarlyThinking,
 } from "./ws-early-thinking.js";
@@ -39,6 +44,7 @@ describe("ws-early-thinking", () => {
 
   beforeEach(() => {
     sendThinkingReplyMock.mockClear();
+    pushWecomStreamStatusLineMock.mockClear();
     baseParams.runtime.log = vi.fn();
     baseParams.runtime.error = vi.fn();
   });
@@ -57,6 +63,38 @@ describe("ws-early-thinking", () => {
 
   it("createWecomEarlyThinkingStreamId returns non-empty id", () => {
     expect(createWecomEarlyThinkingStreamId()).toMatch(/^stream/);
+  });
+});
+
+describe("pushWecomQueuedStatusIfNeeded", () => {
+  const base = {
+    wsClient: {} as never,
+    frame: { body: {}, headers: { req_id: "r1" } } as never,
+    streamId: "stream-q",
+    thinkingSentEarly: true,
+    account: { accountId: "default", config: { queuedText: "CUSTOM_QUEUED" } } as never,
+    runtime: { log: vi.fn(), error: vi.fn() } as never,
+  };
+
+  beforeEach(() => {
+    pushWecomStreamStatusLineMock.mockClear();
+  });
+
+  it("pushes queuedText when early stream exists", async () => {
+    const pushed = await pushWecomQueuedStatusIfNeeded(base);
+    expect(pushed).toBe(true);
+    expect(pushWecomStreamStatusLineMock).toHaveBeenCalledWith(
+      expect.objectContaining({ statusLine: "CUSTOM_QUEUED", streamId: "stream-q" }),
+    );
+  });
+
+  it("skips when thinking was not sent early", async () => {
+    const pushed = await pushWecomQueuedStatusIfNeeded({
+      ...base,
+      thinkingSentEarly: false,
+    });
+    expect(pushed).toBe(false);
+    expect(pushWecomStreamStatusLineMock).not.toHaveBeenCalled();
   });
 });
 

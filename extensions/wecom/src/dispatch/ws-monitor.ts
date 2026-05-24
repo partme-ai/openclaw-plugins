@@ -89,6 +89,7 @@ import {
 } from "./ws-timing.js";
 import {
   createWecomEarlyThinkingStreamId,
+  pushWecomQueuedStatusIfNeeded,
   sendWecomEarlyThinking,
   shouldSendWecomEarlyThinking,
 } from "./ws-early-thinking.js";
@@ -984,6 +985,18 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
           runtime.log?.(
             `[wecom] Chat task queued for chat=${entry.chatId} (previous task still running)`,
           );
+          if (entry.thinkingSentEarly && entry.streamId) {
+            void pushWecomQueuedStatusIfNeeded({
+              wsClient,
+              frame: entry.frame,
+              streamId: entry.streamId,
+              thinkingSentEarly: entry.thinkingSentEarly,
+              account: entry.account,
+              runtime,
+            }).catch((err) => {
+              runtime.error?.(`[wecom] Failed to push queued status: ${String(err)}`);
+            });
+          }
         } else {
           logWsTimingStage(
             entry.timing ??
