@@ -115,15 +115,13 @@ Send a DM to the WeCom Smart Robot. Gateway logs should show WebSocket connectio
       "connectionMode": "websocket",
       "botId": "<YOUR_BOT_ID>",
       "secret": "<YOUR_BOT_SECRET>",
-      "streaming": {
-        "enabled": true,
-        "status": true,
-        "content": true
-      },
+      "streaming": true,
       "footer": {
         "status": true,
         "elapsed": true
       },
+      "sendThinkingMessage": true,
+      "streamPlaceholderText": "1",
       "mediaLocalRoots": ["/data/wecom-media"],
       "media": {
         "maxBytes": 20971520
@@ -199,6 +197,20 @@ Use this only when your deployment cannot keep a WebSocket connection. For pure 
 | `channels.wecom.encodingAESKey` | 43-character EncodingAESKey |
 | `channels.wecom.receiveId` | Receiver ID used for callback decrypt verification |
 | `channels.wecom.welcomeText` | Welcome text for enter-chat events |
+| `channels.wecom.streamPlaceholderText` | Bot stream first-frame placeholder (protocol layer) |
+| `channels.wecom.sendThinkingMessage` | Send stream placeholder before first Agent token, default `true` |
+| `channels.wecom.streaming` | Streaming master switch: `false` / `true` / `{ status?, content?, enabled? }` |
+| `channels.wecom.footer.status` | Include status line in stream bubble, default `true` |
+| `channels.wecom.footer.elapsed` | Show elapsed footer on close, default `false` |
+
+### Bot Basics (streaming-related)
+
+| Config | Description | Default |
+|--------|-------------|---------|
+| `channels.wecom.sendThinkingMessage` | WS sends first-frame placeholder before reply starts | `true` |
+| `channels.wecom.streamPlaceholderText` | Placeholder text; WS default `<think></think>`, Webhook often `"1"` | none |
+| `channels.wecom.streaming` | Streaming mode, see [Streaming Output](#streaming-output) | `false` |
+| `channels.wecom.footer` | Status and elapsed footer, see [Streaming Output](#streaming-output) | `{ status: true, elapsed: false }` |
 
 ### Agent App Config
 
@@ -274,6 +286,345 @@ Allow only specific groups and specific senders:
 | `channels.wecom.network.egressProxyUrl` | Fixed egress proxy, commonly used for trusted-IP requirements |
 
 Egress proxy priority: `channels.wecom.network.egressProxyUrl` > `OPENCLAW_WECOM_EGRESS_PROXY_URL` > `WECOM_EGRESS_PROXY_URL` > `HTTPS_PROXY` > `ALL_PROXY` > `HTTP_PROXY`.
+
+## Welcome Messages (enter_chat / subscribe)
+
+When a user opens a Bot session or subscribes to an Agent app, the plugin can send a configurable welcome message. Welcome text is separate from stream first-frame placeholders (`streamPlaceholderText`) and status-line copy (`thinkingText`).
+
+### When It Triggers
+
+| Mode | Event | Code Path | Delivery |
+|------|-------|-----------|----------|
+| Bot WebSocket | `event.enter_chat` | `dispatch/ws-monitor.ts` listens for `event.enter_chat` | SDK `replyWelcome(frame, { msgtype: "text", ... })` |
+| Bot Webhook | `msgtype=event` with `eventtype=enter_chat` | `webhook/monitor.ts` → `handleEnterChat` | Synchronous HTTP callback `{ msgtype: "text", text: { content } }` |
+| Agent app | `msgType=event` with `enter_chat` or `subscribe` | `agent/handler.ts` → `agent/welcome.ts` | Agent API `sendText` proactive send |
+
+If `welcomeText` is not configured: **Bot WS skips**; **Bot Webhook returns null**; **Agent does not call sendText**.
+
+### Config Keys and Priority
+
+| Config | Scope | Description |
+|--------|-------|-------------|
+| `channels.wecom.welcomeText` | Bot WS / Bot Webhook | enter_chat welcome text |
+| `channels.wecom.agent.welcomeText` | Agent callback | **Takes priority** over channel-level `welcomeText` |
+| `channels.wecom.accounts.<accountId>.welcomeText` | Multi-account | Account-level override |
+| `channels.wecom.accounts.<accountId>.agent.welcomeText` | Multi-account Agent | Account-level Agent welcome |
+
+Agent welcome resolution (`resolveAgentWelcomeText`): use `agent.welcomeText` when set; otherwise fall back to `channels.wecom.welcomeText`.
+
+### Example and Verification
+
+```bash
+openclaw config set channels.wecom.welcomeText "Hello, I am your WeCom assistant."
+openclaw config set channels.wecom.agent.welcomeText "Welcome to the self-built app."
+openclaw gateway restart
+```
+
+Verification:
+
+1. Open the Smart Robot chat in WeCom (triggers enter_chat).
+2. Check Gateway logs:
+   - Bot WS: `[<accountId>] ws-event: sent enter_chat welcome`
+   - Bot Webhook: `[webhook] enter_chat (userId=..., account=...)`
+   - Agent: user receives text, or `[wecom-agent] welcome message failed` on error
+3. Run tests: `pnpm test src/agent/welcome.test.ts src/config/streaming-config.test.ts`
+
+## User-Visible Text Templates
+
+All `*Text` fields are flat under `channels.wecom` (or account overrides). They map through `config/text-config.ts` to internal templates; defaults live in `WECOM_DEFAULT_TEMPLATES` in `config/templates.ts`.
+
+### Config Keys
+
+| Config key | Internal key | Default (zh) | Typical use |
+|------------|--------------|--------------|-------------|
+| `welcomeText` | welcome | (empty) | enter_chat / subscribe welcome |
+| `streamPlaceholderText` | — | see below | Bot stream **protocol first frame**, not welcome |
+| `thinkingText` | thinking | 正在思考… | Status: Agent started reasoning |
+| `receivedText` | received | 已收到，正在处理… | Status: message accepted |
+| `toolStatusText` | tool | 正在查资料… | Status: tool call in progress |
+| `readingText` | reading | 正在阅读附件… | Status: reading attachment |
+| `generatingText` | generating | 正在输入… | Status: answer block streaming |
+| `compactionText` | compaction | 📦 正在压缩上下文… | Status: context compaction |
+| `emptyReplyText` | emptyReply | ⚠️ 未能生成可展示的回复… | Fallback when closing stream with no body |
+| `finishFooterText` | finishFooter | ⏱ {elapsed}s · 已完成 | Elapsed-time footer on close |
+| `cardSentText` | cardSent | 📋 卡片消息已发送。 | Template card delivered |
+| `mediaSentText` | mediaSent | 📎 文件已发送，请查收。 | Media sent successfully |
+| `mediaParseFailedText` | mediaParseFailed | ⚠️ 未能解析该媒体…{emptyReply} | Inbound media parse failed |
+| `mediaDeliveredText` | mediaDelivered | ✅ 文件已发送。 | Webhook close when media sent separately |
+| `processedCompleteText` | processedComplete | ✅ 已处理完成。 | Webhook empty-content close fallback |
+| `timeoutText` | timeout | ⚠️ 处理超时（约 {minutes} 分钟）… | Agent reply timeout (default 6 min) |
+| `dispatchErrorText` | dispatchError | ⚠️ 回复生成失败（{kind}）：{detail} | OpenClaw dispatch error |
+| `mediaErrorNoAccessText` | mediaErrorNoAccess | ⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}… | Path outside `mediaLocalRoots` |
+| `mediaErrorReasonText` | mediaErrorReason | ⚠️ 文件发送失败：{reason} | Media send rejected |
+| `mediaErrorGenericText` | mediaErrorGeneric | ⚠️ 文件发送失败：无法处理文件 {mediaUrl}… | Other media errors |
+| `queuedText` | queued | 已收到，已排队处理中... | Same-session queue |
+| `mergedQueuedText` | mergedQueued | 已收到，已合并排队处理中... | Merged queue |
+| `mergedDoneText` | mergedDone | ✅ 已合并处理完成… | Merge complete |
+| `sessionResetText` | sessionReset | ✅ 已重置会话。 | Session reset command |
+| `sessionNewText` | sessionNew | ✅ 已开启新会话。 | New session command |
+
+### Placeholders
+
+| Placeholder | Templates | Meaning |
+|-------------|-----------|---------|
+| `{toolName}` | `toolStatusText` | Current tool name when present |
+| `{elapsed}` | `finishFooterText` | Elapsed seconds on close (min 1s) |
+| `{minutes}` | `timeoutText` | Timeout threshold in minutes |
+| `{kind}` | `dispatchErrorText` | Error category |
+| `{detail}` | `dispatchErrorText` | Truncated error detail |
+| `{emptyReply}` | `mediaParseFailedText` | Nested empty-reply text |
+| `{mediaUrl}` | media error templates | Media path or URL |
+| `{reason}` | `mediaErrorReasonText` | Rejection reason |
+
+Example:
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "thinkingText": "Analyzing your request…",
+      "toolStatusText": "Running {toolName}…",
+      "finishFooterText": "⏱ {elapsed}s done"
+    }
+  }
+}
+```
+
+## Streaming Output
+
+Only **Bot WebSocket** and **Bot Webhook** support WeCom `stream` / `replyStream`. **Agent inbound chat does not use Bot-style streaming**; outbound delivery is primarily one-shot Markdown / media via the Agent API.
+
+### Config Shape
+
+`channels.wecom.streaming` accepts boolean or object:
+
+| Value | Meaning |
+|-------|---------|
+| omitted / `false` | **Default mode**: status line + final bundled answer (`streamingContent=false`) |
+| `true` | **Streaming mode**: both status and answer block increments enabled |
+| `{ "status": false, "content": true }` | Answer increments only, no status line refresh |
+| `{ "enabled": false }` | Explicitly disable streaming in object form (`WecomStreamingNestedConfig`) |
+
+`channels.wecom.footer`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `footer.status` | `true` | Show status line (thinking / tool / reading) in the bubble |
+| `footer.elapsed` | `false` | Append elapsed footer (`finishFooterText`) on close |
+
+`sendThinkingMessage` (default `true`): when `false`, WS sends a **protocol first frame** via `sendThinkingReply` (`streamPlaceholderText` or built-in `<think></think>`) before the first Agent token.
+
+`streamPlaceholderText`: first `finish=false` stream content; distinct from `welcomeText` and `thinkingText`. Webhook often falls back to `"1"` when unset.
+
+Composition logic: `config/streaming-config.ts` (via `@partme.ai/openclaw-message-sdk/transcript`) merges status / answer / footer into a **single plain-text** `replyStream` payload.
+
+### Mode Differences
+
+| Capability | Bot WebSocket | Bot Webhook | Agent |
+|------------|---------------|-------------|-------|
+| Stream carrier | `replyStream` / `replyStreamNonBlocking` | HTTP `msgtype: stream` + `stream_refresh` | No Bot stream |
+| First frame | `sendThinkingReply` + `streamPlaceholderText` | `resolveWecomStreamPlaceholderText`, default `"1"` | N/A |
+| Status line | `footer.status` or `streaming.status` | Same, via `webhook/reply-pipeline.ts` | N/A |
+| Media outbound | proactive `aibot_send_msg`, does not overwrite thinking stream | `outbound/reply-deliver.ts` updates streamStore | Agent API upload |
+| Close text | `dispatch/finish-thinking.ts` → `resolveThinkingFinishText` | same + `applyWecomWebhookEmptyContentFallback` | final API message |
+
+### Hard Limits and Fallback
+
+- **Plain text only** in `replyStream`; Markdown rendering depends on fallback paths (e.g. `sendMessage` markdown).
+- **6-minute window**: no stream update for 6 minutes → WeCom **errcode 846608** (`STREAM_EXPIRED_ERRCODE`). `finishWsThinkingStream` catches this and falls back to proactive `sendMessage`.
+- **Agent reply timeout**: default `network.agentReplyTimeoutMs` = 360000 ms; user sees `timeoutText`.
+- **Blank close**: empty content cannot `finish=true`; plugin uses `emptyReplyText` and other visible fallbacks.
+
+### Sample Configs
+
+**Stable non-streaming (default, good for atomic business replies):**
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "streaming": false,
+      "footer": { "status": true, "elapsed": true }
+    }
+  }
+}
+```
+
+**Typewriter + tool progress:**
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "streaming": true,
+      "footer": { "status": true, "elapsed": true },
+      "sendThinkingMessage": true
+    }
+  }
+}
+```
+
+**Status line only, answer on close:**
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "streaming": { "status": true, "content": false },
+      "footer": { "status": true, "elapsed": false }
+    }
+  }
+}
+```
+
+### Verification
+
+```bash
+cd extensions/wecom
+pnpm test src/config/streaming-config.test.ts src/dispatch/finish-thinking.test.ts
+openclaw gateway restart
+grep -E '846608|stream expired|sendThinkingReply|enter_chat welcome|finish=true' /tmp/openclaw/openclaw-*.log
+```
+
+See [Streaming architecture](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md).
+
+## Knowledge / RAG
+
+**Accurate statement**: `@partme.ai/wecom` does **not** embed knowledge hooks. There is **no** `channels.wecom.knowledge` or `registerKnowledgeHooks` in this extension. Setting `channels.wecom.knowledge.*` alone **does not** enable RAG.
+
+Knowledge is provided by the separate **`@partme.ai/openclaw-knowledge`** plugin (`before_prompt_build` auto-retrieval + `knowledge_query` / `knowledge_add` tools). WeCom only transports messages into the OpenClaw Agent runtime; once the Agent loads the knowledge plugin, WeCom conversations can be answered from the knowledge base.
+
+### Message Flow
+
+```text
+WeCom user message
+  → WeCom inbound (WS / Webhook / Agent callback)
+  → OpenClaw dispatch (bindings / dynamicAgents)
+  → Agent Runtime
+       ├─ [knowledge plugin] before_prompt_build retrieval → system injection
+       └─ [optional] Agent calls knowledge_* tools
+  → Reply via WeCom outbound (Bot stream or Agent API)
+```
+
+### Config Example
+
+Configure WeCom and knowledge **separately**:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "knowledge": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "embedding": {
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536
+          },
+          "store": {
+            "provider": "zvec",
+            "dbPath": "./data/knowledge-wecom.db"
+          },
+          "retrieval": {
+            "strategy": "hybrid",
+            "topK": 5,
+            "minScore": 0.3
+          },
+          "injection": {
+            "position": "system",
+            "maxContextLength": 2000
+          }
+        }
+      }
+    }
+  },
+  "channels": {
+    "wecom": {
+      "enabled": true,
+      "connectionMode": "websocket",
+      "botId": "<YOUR_BOT_ID>",
+      "secret": "<YOUR_BOT_SECRET>"
+    }
+  },
+  "bindings": [
+    {
+      "agentId": "main",
+      "match": { "channel": "wecom", "accountId": "default" }
+    }
+  ]
+}
+```
+
+### Verification
+
+```bash
+openclaw plugins install @partme.ai/openclaw-knowledge
+openclaw gateway restart
+openclaw run knowledge:stats
+```
+
+Ask the assistant to remember a test fact in WeCom, then ask again in a new message; the answer should use the configured knowledge store.
+
+Further reading:
+
+- [Knowledge RAG guide](../../doc/knowledge/OpenClaw-Knowledge-RAG-Guide_CN.md)
+- [Knowledge RAG integration](../../doc/knowledge/OpenClaw-Knowledge-RAG-Integration_CN.md)
+- [Configuration guide §9 Knowledge](../../doc/wecom/OpenClaw-WeCom-Configuration.md#9-knowledge--rag-integration)
+
+## Media, MEDIA Directive, Template Cards, MCP, and Skills
+
+### before_prompt_build Injection
+
+In `index.ts`, the plugin registers `before_prompt_build` (only when `channelId === wecom`) and appends to Agent system context:
+
+- Use the **`MEDIA:`** directive to send image/video/voice/file → see `wecom-send-media` skill
+- Output a **JSON code block** with `card_type` for structured cards → see `wecom-send-template-card` skill
+
+This guides LLM output format; it does not send media or cards by itself.
+
+### MEDIA Directive
+
+Line-level directives in Agent replies:
+
+```text
+MEDIA: /absolute/path/to/file.png
+MEDIA: `/path/with spaces/report.pdf`
+```
+
+Parsed by `outbound/media-deliver.ts`, `media/media-uploader.ts`, and `agent/handler.ts`. Local paths must be under `mediaLocalRoots`. Media is sent via **proactive WS `aibot_send_msg`** so it does not overwrite the `replyStream` thinking flow.
+
+### Template Cards
+
+Markdown JSON code blocks in LLM output are extracted by `outbound/template-card-parser.ts`. Valid `card_type` values are in `VALID_CARD_TYPES` in `types/const.ts`. Incomplete JSON is masked during streaming via `maskTemplateCardBlocks`. After send, `cardSentText` can inform the user.
+
+### wecom_mcp Tool
+
+In full mode the plugin registers Agent tool **`wecom_mcp`** (`mcp/tool.ts`):
+
+| Action | Usage |
+|--------|-------|
+| `list` | List MCP tools for a category |
+| `call` | Invoke doc, contact, msg, etc. MCP methods |
+
+Session context is injected automatically: `requesterUserId`, `accountId`, `chatId`, `chatType`. Doc MCP endpoints can be fetched via Bot WS command `aibot_get_mcp_config` and persisted under state dir `wecomConfig/config.json` (`mcp/config-fetch.ts`).
+
+### Built-in Skills (extensions/wecom/skills/)
+
+| Skill | Purpose |
+|-------|---------|
+| `wecom-send-media` | MEDIA directive for local files |
+| `wecom-send-template-card` | Template card JSON format |
+| `wecom-doc` | WeCom document MCP |
+| `wecom-contact` | Contacts |
+| `wecom-schedule` / `wecom-meeting` / `wecom-todo` | Schedule, meeting, todo |
+| `wecom-msg` | Chat history and media download |
+| `wecom-smartsheet` | Smart sheet |
+| `wecom-preflight` | Pre-send checks |
+| `wecom-unified` | Unified operation references |
+
+Temporary HTTP media: `/wecom-media` route (15-minute TTL) for outbound links.
 
 ## Multi-Account and Dynamic Agents
 

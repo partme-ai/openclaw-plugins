@@ -122,15 +122,13 @@ openclaw channels status --probe
       "connectionMode": "websocket",
       "botId": "<YOUR_BOT_ID>",
       "secret": "<YOUR_BOT_SECRET>",
-      "streaming": {
-        "enabled": true,
-        "status": true,
-        "content": true
-      },
+      "streaming": true,
       "footer": {
         "status": true,
         "elapsed": true
       },
+      "sendThinkingMessage": true,
+      "streamPlaceholderText": "1",
       "mediaLocalRoots": ["/data/wecom-media"],
       "media": {
         "maxBytes": 20971520
@@ -208,6 +206,20 @@ openclaw channels status --probe
 | `channels.wecom.encodingAESKey` | 43 位 EncodingAESKey |
 | `channels.wecom.receiveId` | 回调解密校验用接收方 ID，按企业微信后台配置填写 |
 | `channels.wecom.welcomeText` | 进入会话事件的欢迎语 |
+| `channels.wecom.streamPlaceholderText` | Bot 流式首帧占位（协议层，非欢迎语） |
+| `channels.wecom.sendThinkingMessage` | 是否在 Agent 首 token 前发送流式首帧占位，默认 `true` |
+| `channels.wecom.streaming` | 流式总开关：`false` / `true` / `{ status?, content?, enabled? }` |
+| `channels.wecom.footer.status` | 状态栏是否写入 stream 气泡，默认 `true` |
+| `channels.wecom.footer.elapsed` | 关流是否展示耗时脚注，默认 `false` |
+
+### Bot 基础配置（补充）
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `channels.wecom.sendThinkingMessage` | WS 是否在回复开始前发送首帧占位 | `true` |
+| `channels.wecom.streamPlaceholderText` | 首帧占位文案；未设时 WS 用 `<think></think>`，Webhook 常见 `"1"` | 无 |
+| `channels.wecom.streaming` | 流式模式开关，见 [流式输出](#流式输出) | `false` |
+| `channels.wecom.footer` | 状态栏与耗时脚注，见 [流式输出](#流式输出) | `{ status: true, elapsed: false }` |
 
 ### Agent 自建应用配置
 
@@ -283,6 +295,347 @@ https://<GATEWAY_HOST>/plugins/wecom/agent/<accountId>
 | `channels.wecom.network.egressProxyUrl` | 固定出口代理，常用于可信 IP 场景 |
 
 出口代理优先级：`channels.wecom.network.egressProxyUrl` > `OPENCLAW_WECOM_EGRESS_PROXY_URL` > `WECOM_EGRESS_PROXY_URL` > `HTTPS_PROXY` > `ALL_PROXY` > `HTTP_PROXY`。
+
+## 欢迎语（enter_chat / subscribe）
+
+用户首次进入 Bot 会话或关注 Agent 应用时，插件可发送可配置的欢迎语。欢迎语与流式首帧占位（`streamPlaceholderText`）、状态栏文案（`thinkingText`）职责不同，请勿混用。
+
+### 触发时机
+
+| 模式 | 事件 | 实现路径 | 发送方式 |
+|------|------|----------|----------|
+| Bot WebSocket | `event.enter_chat` | `dispatch/ws-monitor.ts` 监听 `event.enter_chat` | SDK `replyWelcome(frame, { msgtype: "text", ... })` |
+| Bot Webhook | `msgtype=event` 且 `eventtype=enter_chat` | `webhook/monitor.ts` → `handleEnterChat` | HTTP 回调同步返回 `{ msgtype: "text", text: { content } }` |
+| Agent 自建应用 | `msgType=event` 且 `eventType` 为 `enter_chat` 或 `subscribe` | `agent/handler.ts` → `agent/welcome.ts` | Agent API `sendText` 主动发送 |
+
+未配置 `welcomeText` 时：**Bot WS 直接跳过**；**Bot Webhook 返回 null**；**Agent 不调用 sendText**。
+
+### 配置键与优先级
+
+| 配置项 | 作用域 | 说明 |
+|--------|--------|------|
+| `channels.wecom.welcomeText` | Bot WS / Bot Webhook | enter_chat 欢迎语 |
+| `channels.wecom.agent.welcomeText` | Agent 回调 | **优先**于渠道级 `welcomeText` |
+| `channels.wecom.accounts.<accountId>.welcomeText` | 多账号 | 账号级覆盖顶层同名字段 |
+| `channels.wecom.accounts.<accountId>.agent.welcomeText` | 多账号 Agent | 账号级 Agent 欢迎语 |
+
+Agent 欢迎语解析逻辑（`resolveAgentWelcomeText`）：`agent.welcomeText` 非空则使用；否则回退到 `channels.wecom.welcomeText`。
+
+### 示例与验证
+
+```bash
+openclaw config set channels.wecom.welcomeText "你好，我是企业微信助手，有什么可以帮您？"
+openclaw config set channels.wecom.agent.welcomeText "欢迎使用自建应用，我会尽快回复您。"
+openclaw gateway restart
+```
+
+验证步骤：
+
+1. 在企业微信中打开智能机器人会话（触发 enter_chat）。
+2. 查看 Gateway 日志：
+   - Bot WS：`[<accountId>] ws-event: sent enter_chat welcome`
+   - Bot Webhook：`[webhook] enter_chat (userId=..., account=...)`
+   - Agent：`[wecom-agent] welcome message failed`（失败时）或用户收到文本（成功时）
+3. 运行单元测试：`pnpm test src/agent/welcome.test.ts src/config/streaming-config.test.ts`
+
+## 用户可见文案模板
+
+所有 `*Text` 字段平铺在 `channels.wecom`（或账号级覆盖），由 `config/text-config.ts` 映射到内部模板，默认值见 `config/templates.ts` 的 `WECOM_DEFAULT_TEMPLATES`。
+
+### 配置键一览
+
+| 配置键 | 内部键 | 默认文案 | 典型使用场景 |
+|--------|--------|----------|--------------|
+| `welcomeText` | welcome | （空） | enter_chat / subscribe 欢迎语 |
+| `streamPlaceholderText` | — | 见下方说明 | Bot 流式**协议首帧**占位，非欢迎语 |
+| `thinkingText` | thinking | 正在思考… | 状态栏：Agent 开始推理 |
+| `receivedText` | received | 已收到，正在处理… | 状态栏：已收到消息 |
+| `toolStatusText` | tool | 正在查资料… | 状态栏：工具调用中 |
+| `readingText` | reading | 正在阅读附件… | 状态栏：阅读附件 |
+| `generatingText` | generating | 正在输入… | 状态栏：生成答案 block |
+| `compactionText` | compaction | 📦 正在压缩上下文… | 状态栏：上下文压缩 |
+| `emptyReplyText` | emptyReply | ⚠️ 未能生成可展示的回复… | 关流时无正文兜底 |
+| `finishFooterText` | finishFooter | ⏱ {elapsed}s · 已完成 | 关流耗时脚注 |
+| `cardSentText` | cardSent | 📋 卡片消息已发送。 | 模板卡片已投递 |
+| `mediaSentText` | mediaSent | 📎 文件已发送，请查收。 | 媒体发送成功提示 |
+| `mediaParseFailedText` | mediaParseFailed | ⚠️ 未能解析该媒体…{emptyReply} | 入站媒体解析失败 |
+| `mediaDeliveredText` | mediaDelivered | ✅ 文件已发送。 | Webhook 关流前媒体已单独投递 |
+| `processedCompleteText` | processedComplete | ✅ 已处理完成。 | Webhook 空 content 关流兜底 |
+| `timeoutText` | timeout | ⚠️ 处理超时（约 {minutes} 分钟）… | Agent 回复超时（默认 6 分钟） |
+| `dispatchErrorText` | dispatchError | ⚠️ 回复生成失败（{kind}）：{detail} | OpenClaw dispatch 错误 |
+| `mediaErrorNoAccessText` | mediaErrorNoAccess | ⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}… | 本地路径不在 `mediaLocalRoots` |
+| `mediaErrorReasonText` | mediaErrorReason | ⚠️ 文件发送失败：{reason} | 媒体发送被拒 |
+| `mediaErrorGenericText` | mediaErrorGeneric | ⚠️ 文件发送失败：无法处理文件 {mediaUrl}… | 其他媒体错误 |
+| `queuedText` | queued | 已收到，已排队处理中... | 同会话消息排队 |
+| `mergedQueuedText` | mergedQueued | 已收到，已合并排队处理中... | 合并排队 |
+| `mergedDoneText` | mergedDone | ✅ 已合并处理完成，请查看上一条回复。 | 合并处理完成 |
+| `sessionResetText` | sessionReset | ✅ 已重置会话。 | 会话重置命令 |
+| `sessionNewText` | sessionNew | ✅ 已开启新会话。 | 新会话命令 |
+
+### 占位符
+
+| 占位符 | 适用模板 | 含义 |
+|--------|----------|------|
+| `{toolName}` | `toolStatusText` | 当前工具名（有则替换） |
+| `{elapsed}` | `finishFooterText` | 关流耗时秒数（至少 1s） |
+| `{minutes}` | `timeoutText` | 超时阈值分钟数 |
+| `{kind}` | `dispatchErrorText` | 错误类别 |
+| `{detail}` | `dispatchErrorText` | 截断后的错误详情 |
+| `{emptyReply}` | `mediaParseFailedText` | 嵌套 emptyReply 文案 |
+| `{mediaUrl}` | 媒体错误类 | 媒体路径或 URL |
+| `{reason}` | `mediaErrorReasonText` | 拒绝原因 |
+
+示例：
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "thinkingText": "正在为您分析，请稍候…",
+      "toolStatusText": "正在调用 {toolName}…",
+      "finishFooterText": "⏱ 用时 {elapsed}s",
+      "timeoutText": "⚠️ 已超过 {minutes} 分钟，请重新发送。"
+    }
+  }
+}
+```
+
+## 流式输出
+
+仅 **Bot WebSocket** 与 **Bot Webhook** 支持企业微信 `stream` / `replyStream` 流式载体；**Agent 自建应用入站对话不支持 Bot 式流式**，出站以 `sendMessage` 一次性 Markdown / 媒体为主。
+
+### 配置形式
+
+`channels.wecom.streaming` 支持布尔或对象：
+
+| 写法 | 含义 |
+|------|------|
+| 省略 / `false` | **默认模式**：仅状态栏 + 关流时整包答案（`streamingContent=false`） |
+| `true` | **流式模式**：中间 status 与 answer block 增量均开启 |
+| `{ "status": false, "content": true }` | 仅答案增量，不刷状态行 |
+| `{ "enabled": false }` | 显式关闭对象形式下的流式（见 `WecomStreamingNestedConfig`） |
+
+`channels.wecom.footer`：
+
+| 键 | 默认 | 说明 |
+|----|------|------|
+| `footer.status` | `true` | 是否在气泡中展示状态行（thinking / tool / reading 等） |
+| `footer.elapsed` | `false` | 关流时是否附加耗时脚注（`finishFooterText`） |
+
+`sendThinkingMessage`（默认 `true`）：为 `false` 时，WS 在 Agent 首 token 前会通过 `sendThinkingReply` 发送**协议首帧**（`streamPlaceholderText` 或内置 `<think></think>`），避免长时间空白气泡。
+
+`streamPlaceholderText`：Bot 流式通道的第一条 `finish=false` 内容，与 `welcomeText`、`thinkingText` 不同。Webhook 未配置时常见回退为 `"1"`（企微要求先回一条非空 stream）。
+
+解析与合成逻辑：`config/streaming-config.ts`（委托 `@partme.ai/openclaw-message-sdk/transcript`），将 status / answer / footer 拼成**单条纯文本** `replyStream` 内容。
+
+### 三种模式行为差异
+
+| 能力 | Bot WebSocket | Bot Webhook | Agent |
+|------|---------------|-------------|-------|
+| 流式载体 | `replyStream` / `replyStreamNonBlocking` | HTTP `msgtype: stream` + `stream_refresh` 轮询 | 无 Bot stream |
+| 首帧占位 | `sendThinkingReply` + `streamPlaceholderText` | `resolveWecomStreamPlaceholderText`，默认 `"1"` | 不适用 |
+| 状态栏 | `footer.status` 或 `streaming.status` | 同左，`webhook/reply-pipeline.ts` | 不适用 |
+| 媒体出站 | `aibot_send_msg` 主动发送，不覆盖 thinking 流 | `outbound/reply-deliver.ts` 写入 streamStore | Agent API 上传发送 |
+| 关流文案 | `dispatch/finish-thinking.ts` → `resolveThinkingFinishText` | 同逻辑 + `applyWecomWebhookEmptyContentFallback` | 最终 API 消息 |
+
+### 硬约束与降级
+
+- **纯文本**：`replyStream` 内容不支持 Markdown；最终展示是否富文本取决于降级路径（如 `sendMessage` markdown）。
+- **6 分钟窗口**：流式超过 6 分钟未更新，企微返回 **errcode 846608**（`STREAM_EXPIRED_ERRCODE`）。插件在 `finishWsThinkingStream` 捕获后降级为 `sendMessage` 主动发送。
+- **Agent 回复超时**：默认 `network.agentReplyTimeoutMs` = 360000 ms（6 分钟），超时用户可见 `timeoutText`。
+- **空白关流**：纯空白 content 无法 `finish=true`；插件用 `emptyReplyText` 等可见字符兜底。
+
+### 推荐配置样例
+
+**稳定非流式（默认，适合业务整包回复）：**
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "streaming": false,
+      "footer": { "status": true, "elapsed": true }
+    }
+  }
+}
+```
+
+**打字机 + 工具进度：**
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "streaming": true,
+      "footer": { "status": true, "elapsed": true },
+      "sendThinkingMessage": true
+    }
+  }
+}
+```
+
+**仅状态栏、答案关流时一次展示：**
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "streaming": { "status": true, "content": false },
+      "footer": { "status": true, "elapsed": false }
+    }
+  }
+}
+```
+
+### 验证
+
+```bash
+cd extensions/wecom
+pnpm test src/config/streaming-config.test.ts src/dispatch/finish-thinking.test.ts
+openclaw gateway restart
+# 发送长推理问题，观察状态栏与增量；grep 846608 / stream expired / sendMessage
+grep -E '846608|stream expired|sendThinkingReply|enter_chat welcome|finish=true' /tmp/openclaw/openclaw-*.log
+```
+
+详见 [流式架构](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md)。
+
+## 知识库 / RAG
+
+**准确结论**：`@partme.ai/wecom` **不内置**知识库 hooks，源码中**不存在** `channels.wecom.knowledge` 或 `registerKnowledgeHooks`。仅配置 `channels.wecom.knowledge.*` **不会**启用 RAG。
+
+知识能力由独立的 **`@partme.ai/openclaw-knowledge`** 插件提供（`before_prompt_build` 自动检索注入 + `knowledge_query` / `knowledge_add` 等工具）。WeCom 插件只负责把用户消息送入 OpenClaw Agent 运行时；Agent 绑定 knowledge 插件后，即可在企微对话中检索并回答。
+
+### 消息路径
+
+```text
+企业微信用户消息
+  → WeCom 入站（WS / Webhook / Agent 回调）
+  → OpenClaw dispatch（bindings / dynamicAgents）
+  → Agent Runtime
+       ├─ [knowledge 插件] before_prompt_build 检索 → 注入 system 上下文
+       └─ [可选] Agent 调用 knowledge_* 工具
+  → 回复经 WeCom 出站（Bot stream 或 Agent API）
+```
+
+### 配置示例
+
+WeCom 与 knowledge **分开配置**：
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "knowledge": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "embedding": {
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536
+          },
+          "store": {
+            "provider": "zvec",
+            "dbPath": "./data/knowledge-wecom.db"
+          },
+          "retrieval": {
+            "strategy": "hybrid",
+            "topK": 5,
+            "minScore": 0.3
+          },
+          "injection": {
+            "position": "system",
+            "maxContextLength": 2000
+          }
+        }
+      }
+    }
+  },
+  "channels": {
+    "wecom": {
+      "enabled": true,
+      "connectionMode": "websocket",
+      "botId": "<YOUR_BOT_ID>",
+      "secret": "<YOUR_BOT_SECRET>"
+    }
+  },
+  "bindings": [
+    {
+      "agentId": "main",
+      "match": { "channel": "wecom", "accountId": "default" }
+    }
+  ]
+}
+```
+
+### 验证
+
+```bash
+openclaw plugins install @partme.ai/openclaw-knowledge
+openclaw gateway restart
+openclaw run knowledge:stats
+```
+
+在企微中让助手记住一条测试事实，再用新消息询问；应答应引用知识库内容。
+
+延伸阅读：
+
+- [知识库 RAG 指南](../../doc/knowledge/OpenClaw-Knowledge-RAG-Guide_CN.md)
+- [知识库 RAG 集成](../../doc/knowledge/OpenClaw-Knowledge-RAG-Integration_CN.md)
+- [配置指南 §9 知识库](../../doc/wecom/OpenClaw-WeCom-Configuration.zh-CN.md#9-知识库--rag-集成)
+
+## 媒体、MEDIA 指令、模板卡片、MCP 与 Skills
+
+### before_prompt_build 提示注入
+
+插件在 `index.ts` 注册 `before_prompt_build`（仅 `channelId === wecom` 时），向 Agent system 追加：
+
+- 发送图片/视频/语音/文件时使用 **`MEDIA:`** 指令 → 详见 `wecom-send-media` skill
+- 发送结构化卡片时在回复中输出 **JSON 代码块**（含 `card_type`）→ 详见 `wecom-send-template-card` skill
+
+这不会自动发媒体/卡片，而是指导 LLM 输出可被出站管线解析的格式。
+
+### MEDIA 指令
+
+Agent 回复中的行级指令：
+
+```text
+MEDIA: /absolute/path/to/file.png
+MEDIA: `/path/with spaces/report.pdf`
+```
+
+出站时由 `outbound/media-deliver.ts`、`media/media-uploader.ts` 等解析；本地路径必须在 `mediaLocalRoots` 白名单内。Agent 回调路径在 `agent/handler.ts` 亦解析 `MEDIA:` 行。媒体通过 **WS 主动 `aibot_send_msg`** 发送，避免覆盖 `replyStream` thinking 流。
+
+### 模板卡片
+
+LLM 输出中的 markdown JSON 代码块由 `outbound/template-card-parser.ts` 提取；合法 `card_type` 见 `types/const.ts` 的 `VALID_CARD_TYPES`。流式中间帧会用 `maskTemplateCardBlocks` 隐藏未完成的 JSON，避免用户看到源码。卡片发送后可用 `cardSentText` 提示。
+
+### wecom_mcp 工具
+
+full 模式注册 Agent 工具 **`wecom_mcp`**（`mcp/tool.ts`）：
+
+| 操作 | 用法 |
+|------|------|
+| `list` | `wecom_mcp call ...` / action=list，列出某品类 MCP 工具 |
+| `call` | 调用 doc、contact、msg 等品类下的 MCP 方法 |
+
+会话上下文自动注入：`requesterUserId`、`accountId`、`chatId`、`chatType`（来自 OpenClaw session）。文档类 MCP 端点可通过 Bot WS 命令 `aibot_get_mcp_config` 拉取并持久化到 state 目录 `wecomConfig/config.json`（`mcp/config-fetch.ts`）。
+
+### 内置 Skills（extensions/wecom/skills/）
+
+| Skill | 用途 |
+|-------|------|
+| `wecom-send-media` | MEDIA 指令发送本地文件 |
+| `wecom-send-template-card` | 模板卡片 JSON 格式 |
+| `wecom-doc` | 企微文档 MCP |
+| `wecom-contact` | 通讯录 |
+| `wecom-schedule` / `wecom-meeting` / `wecom-todo` | 日程、会议、待办 |
+| `wecom-msg` | 聊天记录与媒体下载 |
+| `wecom-smartsheet` | 智能表格 |
+| `wecom-preflight` | 发送前检查 |
+| `wecom-unified` | 统一操作参考 |
+
+临时 HTTP 媒体：`/wecom-media` 路由供出站链接访问（15 分钟 TTL）。
 
 ## 多账号与动态 Agent
 
