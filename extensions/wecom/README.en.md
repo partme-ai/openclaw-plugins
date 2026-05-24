@@ -420,6 +420,55 @@ JSON does not allow comments. Keys are ordered by role: **welcome & stream proto
 
 Only **Bot WebSocket** and **Bot Webhook** support WeCom `stream` / `replyStream`. **Agent inbound chat does not use Bot-style streaming**; outbound delivery is primarily one-shot Markdown / media via the Agent API.
 
+### Streaming Configuration Quick Reference
+
+The commands below come from the [Streaming architecture](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md) guide and are safe to copy when switching runtime behavior.
+
+```bash
+# Default mode: status line during work + final bundled answer
+openclaw config set channels.wecom.streaming false
+openclaw config set channels.wecom.footer.status true
+openclaw config set channels.wecom.footer.elapsed true
+
+# Enable streaming: status progress + typewriter answer content
+openclaw config set channels.wecom.streaming true
+openclaw config set channels.wecom.streaming.status true
+openclaw config set channels.wecom.streaming.content true
+
+# Content-only typewriter mode: no intermediate status line refresh
+openclaw config set channels.wecom.streaming true
+openclaw config set channels.wecom.streaming.status false
+openclaw config set channels.wecom.streaming.content true
+
+# Disable streaming
+openclaw config set channels.wecom.streaming false
+
+# Thinking placeholder
+openclaw config set channels.wecom.sendThinkingMessage true
+```
+
+Equivalent JSON:
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "streaming": {
+        "status": true,
+        "content": true
+      },
+      "footer": {
+        "status": true,
+        "elapsed": true
+      },
+      "sendThinkingMessage": true
+    }
+  }
+}
+```
+
+`streaming` accepts either a boolean or an object. CLI paths such as `channels.wecom.streaming.status` and `channels.wecom.streaming.content` write the object shape; runtime parsing accepts `true`, `false`, and `{ "enabled"?, "status"?, "content"? }`. To explicitly disable object-form streaming, use `{ "enabled": false }` or run `openclaw config set channels.wecom.streaming false`.
+
 ### Config Shape
 
 `channels.wecom.streaming` accepts boolean or object:
@@ -438,7 +487,7 @@ Only **Bot WebSocket** and **Bot Webhook** support WeCom `stream` / `replyStream
 | `footer.status` | `true` | Show status line (thinking / tool / reading) in the bubble |
 | `footer.elapsed` | `false` | Append elapsed footer (`finishFooterText`) on close |
 
-`sendThinkingMessage` (default `true`): when `false`, WS sends a **protocol first frame** via `sendThinkingReply` (`streamPlaceholderText` or built-in `<think></think>`) before the first Agent token.
+`sendThinkingMessage` (default `true`): when `true`, WS sends a **protocol first frame** via `sendThinkingReply` (`streamPlaceholderText` or built-in `<think></think>`) before the first Agent token; when `false`, it skips that thinking first frame.
 
 `streamPlaceholderText`: first `finish=false` stream content; distinct from `welcomeText` and `thinkingText`. Webhook often falls back to `"1"` when unset.
 
@@ -730,6 +779,91 @@ Dynamic Agents create isolated sessions by user or group. Use them when differen
 | `channels.wecom.dynamicAgents.dmCreateAgent` | Create one isolated Agent per DM user | `true` |
 | `channels.wecom.dynamicAgents.groupEnabled` | Enable dynamic Agents for groups | `true` |
 | `channels.wecom.dynamicAgents.adminUsers` | Admin users that bypass dynamic routing and use the main Agent | `[]` |
+
+## Practical CLI Quick Reference
+
+### Welcome and User-Visible Text
+
+```bash
+openclaw config set channels.wecom.welcomeText "Hello, I am your WeCom assistant."
+openclaw config set channels.wecom.agent.welcomeText "Welcome to the self-built app."
+openclaw config set channels.wecom.thinkingText "Thinking…"
+openclaw config set channels.wecom.toolStatusText "Running {toolName}…"
+openclaw config set channels.wecom.finishFooterText "⏱ {elapsed}s · Done"
+openclaw gateway restart
+```
+
+To verify, re-open the Bot chat to trigger `enter_chat`, then check logs for `enter_chat welcome`. `welcomeText` is the enter-chat welcome message; `streamPlaceholderText` is the Bot stream protocol first frame.
+
+### Access Control and Pairing
+
+```bash
+# Require pairing approval for new DM users
+openclaw config set channels.wecom.dmPolicy pairing
+
+# Allow only selected groups
+openclaw config set channels.wecom.groupPolicy allowlist
+openclaw config set channels.wecom.groupAllowFrom '["<GROUP_CHAT_ID>"]'
+
+# Review and approve pairing requests
+openclaw pairing list wecom
+openclaw pairing approve wecom <PAIRING_CODE>
+```
+
+Bot WS and Bot Webhook use `channels.wecom.dmPolicy` / `channels.wecom.groupPolicy`. Agent DMs can override with `channels.wecom.agent.dmPolicy` and `channels.wecom.agent.allowFrom`.
+
+### Knowledge / RAG
+
+The WeCom plugin does not embed `channels.wecom.knowledge.*`. Install and configure the knowledge plugin separately; WeCom only transports messages into the Agent Runtime.
+
+```bash
+openclaw plugins install @partme.ai/openclaw-knowledge
+openclaw gateway restart
+openclaw run knowledge:stats
+```
+
+See [Knowledge / RAG](#knowledge--rag) and [Configuration guide §9](../../doc/wecom/OpenClaw-WeCom-Configuration.md#9-knowledge--rag-integration).
+
+### Media Tests and Limits
+
+```bash
+openclaw config set channels.wecom.mediaLocalRoots '["/data/wecom-media"]'
+openclaw config set channels.wecom.media.maxBytes 20971520
+openclaw gateway restart
+```
+
+Recommended checks:
+
+1. Send an image, file, and voice message to the Bot; logs should show media download or save records.
+2. Ask the Agent to reply with `MEDIA: /data/wecom-media/report.pdf`; allowlisted files should send.
+3. Try a path outside `mediaLocalRoots`; the user should see a `mediaErrorNoAccessText`-style message.
+4. Test near-limit image / video / file behavior: common image and video limits are 10 MB, voice is commonly 2 MB AMR, and files are controlled by `media.maxBytes`.
+
+### Verification and Troubleshooting Commands
+
+```bash
+# Basic health checks
+openclaw channels list
+openclaw channels status --probe
+openclaw plugins doctor
+
+# CLI device authorization: message send / agent --deliver need operator.write
+openclaw devices list
+openclaw devices approve --latest
+
+# Bot WS active send: use raw userid, not user:<id>
+openclaw message send --channel wecom --account default --target <USERID> --message "Bot WS test"
+
+# Agent / Cron targets support explicit prefixes
+openclaw message send --channel wecom --account default --target user:<USER_ID> --message "Agent outbound test"
+
+# Useful log grep commands
+LOG=/tmp/openclaw/openclaw-$(date +%Y-%m-%d).log
+grep -E 'Authentication successful|WebSocket connected|Kicked by server|\[webhook\]' "$LOG"
+grep -E 'aibot_callback|policy blocked|authz:|duplicate msgId' "$LOG"
+grep -E '846608|stream expired|stream_refresh|finalizeWsWecomReply|active-reply' "$LOG"
+grep -E '\[wecom-agent\]|gettoken|60020|93006|Agent reply timed out' "$LOG"
+```
 
 ## Verification and CLI Usage
 
