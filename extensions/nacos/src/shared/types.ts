@@ -7,6 +7,8 @@ export type PluginLog = {
 };
 
 /**
+ * @module nacos/shared/types
+ *
  * Subset of OpenClaw config used for Gateway port and Hooks path resolution.
  */
 export type OpenClawConfigSlice = {

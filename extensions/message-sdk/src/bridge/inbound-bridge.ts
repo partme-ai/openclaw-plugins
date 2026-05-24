@@ -30,6 +30,7 @@ export interface DispatchInboundResult extends ReplyBridgeResult {
  * 流程：resolveAgentRoute → finalizeInboundContext → createReplyHandler → dispatchReplyFromConfig。
  *
  * @param params - 入站参数与 reply 配置
+ * @returns 含 ctx 与 reply 分发结果的 DispatchInboundResult
  */
 export async function dispatchInbound(params: DispatchInboundParams): Promise<DispatchInboundResult> {
   const { runtime, channel, accountId, peerId, text, chatType, agentId, unified, extra, reply } =

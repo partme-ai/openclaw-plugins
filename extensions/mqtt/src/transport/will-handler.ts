@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/transport/will-handler
+ *
  * MQTT Last Will 消息处理模块
  * 当设备意外断线时，Broker 自动发布 Will 消息
  *

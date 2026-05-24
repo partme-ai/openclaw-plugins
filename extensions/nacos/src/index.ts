@@ -1,5 +1,7 @@
 /**
- * OpenClaw plugin: Nacos Config Center (merge + backup + subscribe) and Nacos naming registration for Gateway/Hooks.
+ * @fileoverview OpenClaw Nacos 插件 — Config Center 同步 + Gateway Naming 注册 + 集群发现。
+ *
+ * @module nacos
  *
  * Follows https://docs.openclaw.ai/plugins/sdk-entrypoints (`definePluginEntry` from `plugin-entry`),
  * https://docs.openclaw.ai/plugins/sdk-runtime (`api.runtime.config` async load/write).
@@ -72,7 +74,7 @@ function sanitizeError(err: unknown): string {
     .replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, "[ip]");
 }
 
-/** Adapt OpenClaw's optional-debug PluginLogger to this plugin's stricter logger surface. */
+/** 将 OpenClaw PluginLogger 适配为本插件的 {@link PluginLog} 接口。 */
 function toPluginLog(logger: OpenClawPluginServiceContext["logger"]): PluginLog {
   return {
     info: (msg: string) => logger.info(msg),
@@ -86,7 +88,9 @@ function toPluginLog(logger: OpenClawPluginServiceContext["logger"]): PluginLog 
 let activeClusterService: WebhookClusterService | null = null;
 
 /**
- * Nacos Config Center: pull, merge, backup, replaceConfig, subscribe.
+ * 注册 Nacos Config Center 同步服务（pull / merge / backup / subscribe）。
+ *
+ * @param api - OpenClaw 插件 API
  */
 function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
   let sync: NacosConfigSyncService | null = null;
@@ -140,7 +144,9 @@ function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
 }
 
 /**
- * Nacos naming: register Gateway instance with Hooks metadata.
+ * 注册 Gateway 实例到 Nacos Naming（含 Hooks 元数据）。
+ *
+ * @param api - OpenClaw 插件 API
  */
 function registerNacosNamingService(api: OpenClawPluginApi): void {
   let registry: GatewayNacosRegistry | null = null;
@@ -193,7 +199,9 @@ function registerNacosNamingService(api: OpenClawPluginApi): void {
 }
 
 /**
- * Nacos Cluster Discovery: subscribe to naming changes and maintain live peer list.
+ * 注册 Webhook 集群发现服务（订阅 naming 变更，维护 peer 列表）。
+ *
+ * @param api - OpenClaw 插件 API
  */
 function registerNacosClusterService(api: OpenClawPluginApi): void {
   let cluster: WebhookClusterService | null = null;
@@ -254,6 +262,11 @@ export default definePluginEntry({
     restartPrefixes: [...NACOS_PLUGIN_RELOAD.restartPrefixes],
     hotPrefixes: [...NACOS_PLUGIN_RELOAD.hotPrefixes],
   },
+  /**
+   * 完整注册模式：Config Center、Naming、Cluster 三个 service + 诊断 HTTP 路由。
+   *
+   * @param api - OpenClaw 插件 API；`registrationMode !== "full"` 时 no-op
+   */
   register(api: OpenClawPluginApi) {
     /** Long-lived clients only in full registration; see sdk-entrypoints "Registration mode". */
     if (api.registrationMode !== "full") {

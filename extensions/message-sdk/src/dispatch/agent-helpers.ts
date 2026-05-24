@@ -46,6 +46,8 @@ export function sanitizeSessionId(id: string): string {
 
 /**
  * 生成 run / correlation 标识 / Generate a UUID run id.
+ *
+ * @returns UUID v4 字符串
  */
 export function createDispatchRunId(): string {
   return randomUUID();
@@ -57,6 +59,7 @@ export function createDispatchRunId(): string {
  * 依次尝试 result.text、result.message，否则 JSON.stringify。
  *
  * @param result - waitForRun 返回值
+ * @returns 提取的回复文本或 JSON 字符串
  */
 export function extractSubagentResultText(result: unknown): string {
   if (typeof (result as { text?: unknown })?.text === "string") {

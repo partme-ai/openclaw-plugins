@@ -1,5 +1,7 @@
 /**
- * OIDC Discovery + JWKS 自动获取与缓存
+ * @fileoverview OIDC Discovery + JWKS 自动获取与缓存。
+ *
+ * @module oauth2/auth/satoken-discovery
  *
  * 职责：
  * - 启动时从 issuerUrl/.well-known/openid-configuration 拉取配置
@@ -45,6 +47,12 @@ export class SaTokenDiscovery {
   /** 定时刷新器 */
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * 创建 Discovery 管理器。
+   *
+   * @param issuerUrl - Sa-Token OAuth2 Issuer（无末尾 `/`）
+   * @param jwksCacheTtl - JWKS 定时刷新间隔（秒），默认 3600
+   */
   constructor(issuerUrl: string, jwksCacheTtl?: number) {
     // 移除末尾 /
     this.issuerUrl = issuerUrl.replace(/\/+$/, "");
@@ -52,8 +60,9 @@ export class SaTokenDiscovery {
   }
 
   /**
-   * 初始化 Discovery
-   * 拉取 OIDC 配置和 JWKS 公钥，启动定时刷新
+   * 初始化 Discovery：拉取 OIDC 配置与 JWKS，并启动定时刷新。
+   *
+   * @returns Promise，失败时抛出网络/解析错误（OIDC 可降级到 fallback）
    */
   async init(): Promise<void> {
     // 拉取 OIDC 配置
@@ -86,14 +95,18 @@ export class SaTokenDiscovery {
   }
 
   /**
-   * 获取 OIDC 配置
+   * 获取缓存的 OIDC Discovery 配置。
+   *
+   * @returns OIDC 配置；尚未 init 或拉取失败且无 fallback 时为 null
    */
   getOidcConfig(): OidcConfig | null {
     return this.oidcConfig;
   }
 
   /**
-   * 获取 Introspection 端点 URL
+   * 获取 Introspection 端点 URL。
+   *
+   * @returns RFC 7662 introspection 端点；未拉取 OIDC 配置时为 null
    */
   getIntrospectionEndpoint(): string | null {
     return this.oidcConfig?.introspection_endpoint ?? null;
@@ -120,7 +133,9 @@ export class SaTokenDiscovery {
   }
 
   /**
-   * 获取第一个可用公钥（无 kid header 时使用）
+   * 获取第一个可用 JWKS 公钥（JWT header 无 kid 时使用）。
+   *
+   * @returns KeyObject 或 null（缓存为空）
    */
   getFirstKey(): KeyObject | null {
     const keys = Array.from(this.keyCache.values());

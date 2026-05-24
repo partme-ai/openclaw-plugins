@@ -1,3 +1,9 @@
+/**
+ * @module runtime/nacos-connection
+ *
+ * Nacos Config / Naming 客户端连接参数解析：serverAddr、namespace、profile、dataId 模板。
+ */
+
 import { resolveConfigServerList } from "../config/spring-normalize.js";
 import { DEFAULT_GROUP, DEFAULT_NAMESPACE } from "../shared/shared.js";
 import type { NacosPluginConfig } from "../shared/types.js";
@@ -31,6 +37,12 @@ export function expandDataIdTemplate(template: string, profile: string): string 
     .replace(/\$\{profile\}/g, profile);
 }
 
+/**
+ * Config Center 使用的 namespace（优先 configCenter.namespace，否则顶层 namespace）。
+ *
+ * @param cfg - 已解析的 Nacos 插件配置
+ * @returns Nacos tenant / namespace id
+ */
 export function resolveConfigNamespace(cfg: NacosPluginConfig): string {
   const ccNs = cfg.configCenter?.namespace?.trim();
   if (ccNs) {
@@ -39,10 +51,22 @@ export function resolveConfigNamespace(cfg: NacosPluginConfig): string {
   return cfg.namespace?.trim() || DEFAULT_NAMESPACE;
 }
 
+/**
+ * Naming 注册使用的 namespace（顶层 `namespace`，默认 public）。
+ *
+ * @param cfg - 已解析的 Nacos 插件配置
+ * @returns Nacos tenant / namespace id
+ */
 export function resolveNamingNamespace(cfg: NacosPluginConfig): string {
   return cfg.namespace?.trim() || DEFAULT_NAMESPACE;
 }
 
+/**
+ * 解析 Nacos 配置 group，缺省为 `DEFAULT_GROUP`。
+ *
+ * @param explicit - 显式 group 名
+ * @returns 非空 group 字符串
+ */
 export function resolveGroupName(explicit?: string): string {
   return explicit?.trim() || DEFAULT_GROUP;
 }

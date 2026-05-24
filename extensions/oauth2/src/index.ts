@@ -1,5 +1,7 @@
 /**
- * openclaw-oauth2 插件入口
+ * @fileoverview openclaw-oauth2 插件入口 — Sa-Token OAuth2 Resource Server。
+ *
+ * @module oauth2
  *
  * OAuth 2.0 认证后端插件 — 深度整合 Sa-Token OAuth2 Server
  *
@@ -50,8 +52,11 @@ let discovery: SaTokenDiscovery | null = null;
 let introspection: SaTokenIntrospection | null = null;
 
 /**
- * 安全的 onReady 替代方案
- * 优先 registerService → onReady → 延迟执行
+ * 在 Gateway 就绪后延迟执行 OAuth2 初始化。
+ *
+ * @param api - 插件 API
+ * @param name - 服务 id
+ * @param callback - 异步初始化（Discovery + 中间件注册）
  */
 function safeOnReady(api: PluginApi, name: string, callback: () => Promise<void>): void {
   const a = api as unknown as Record<string, unknown>;

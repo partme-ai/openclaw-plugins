@@ -1,4 +1,6 @@
 /**
+ * @module nacos/config/spring-normalize
+ *
  * Maps Spring Cloud / application.yml style `nacos` blocks into the flat
  * {@link NacosPluginConfig} shape consumed by {@link parseNacosPluginConfig}.
  *

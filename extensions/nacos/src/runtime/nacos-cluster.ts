@@ -1,3 +1,9 @@
+/**
+ * @module runtime/nacos-cluster
+ *
+ * 基于 Nacos 命名订阅的 Webhook 集群发现：维护 peer 列表并排除自身实例。
+ */
+
 import { NacosNamingClient } from "nacos";
 import { resolveNamingServerList } from "../config/spring-normalize.js";
 import { resolveRegisterIp } from "../config/resolve-endpoint.js";

@@ -1,3 +1,9 @@
+/**
+ * @fileoverview Gateway/Hooks 端点解析 — 端口、Hooks 路径、Nacos 注册 IP。
+ *
+ * @module nacos/config/resolve-endpoint
+ */
+
 import { networkInterfaces } from "node:os";
 import type { OpenClawConfigSlice } from "../shared/types.js";
 
@@ -37,7 +43,11 @@ function parseGatewayPortEnvValue(raw: string | undefined): number | null {
 }
 
 /**
- * Resolves the Gateway listen port from env and config (OpenClaw-compatible).
+ * 解析 Gateway 监听端口（兼容 OPENCLAW_GATEWAY_PORT 与 config.gateway.port）。
+ *
+ * @param cfg - OpenClaw 配置片段
+ * @param env - 环境变量表，默认 `process.env`
+ * @returns 有效端口号
  */
 export function resolveGatewayPort(
   cfg: OpenClawConfigSlice | undefined,
@@ -55,7 +65,10 @@ export function resolveGatewayPort(
 }
 
 /**
- * Resolves Hooks base path and enabled flag from OpenClaw hooks config.
+ * 解析 Hooks 基路径与启用状态。
+ *
+ * @param cfg - OpenClaw 配置片段
+ * @returns hooks 是否启用及规范化 base path
  */
 export function resolveHooksInfo(cfg: OpenClawConfigSlice | undefined): {
   hooksEnabled: boolean;
@@ -95,7 +108,12 @@ function pickFirstNonInternalIPv4(): string | null {
 }
 
 /**
- * Resolves the IP to register in Nacos: config → env → first LAN IPv4 → 127.0.0.1.
+ * 解析注册到 Nacos 的实例 IP（config → env → 首个 LAN IPv4 → 127.0.0.1）。
+ *
+ * @param params.configIp - 配置中的 registerIp
+ * @param params.env - 环境变量表
+ * @param params.warn - 回退到 127.0.0.1 时的 warn 回调
+ * @returns 用于 Nacos 注册的 IP 字符串
  */
 export function resolveRegisterIp(params: {
   configIp?: string;

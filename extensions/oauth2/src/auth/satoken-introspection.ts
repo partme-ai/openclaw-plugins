@@ -1,5 +1,7 @@
 /**
- * Token Introspection 降级回调模块
+ * @fileoverview Token Introspection 降级回调模块。
+ *
+ * @module oauth2/auth/satoken-introspection
  *
  * 触发条件：
  * - Token 不是 JWT 格式（不含 "."）

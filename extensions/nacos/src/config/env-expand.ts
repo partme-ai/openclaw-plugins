@@ -1,8 +1,17 @@
 /**
- * Expands `${VAR}` and `${VAR:default}` in string leaves using `process.env`-style lookup.
+ * @module nacos/config/env-expand
+ *
+ * @fileoverview 展开配置字符串中的 `${VAR}` / `${VAR:default}` 环境变量占位符。
  */
 const PLACEHOLDER = /\$\{([^}:]+)(?::([^}]*))?\}/g;
 
+/**
+ * 递归展开配置值中的环境变量占位符。
+ *
+ * @param value - 字符串、数组或对象配置片段
+ * @param env - 环境变量表（通常为 `process.env`）
+ * @returns 展开后的值（结构与原值一致）
+ */
 export function expandEnvPlaceholdersInValue(value: unknown, env: NodeJS.ProcessEnv): unknown {
   if (typeof value === "string") {
     return value.replace(PLACEHOLDER, (_m, name: string, def?: string) => {

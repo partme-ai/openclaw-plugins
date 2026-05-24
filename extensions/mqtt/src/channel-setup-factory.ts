@@ -1,3 +1,7 @@
+/**
+ * @module mqtt/channel-setup-factory
+ */
+
 // @ts-nocheck — large declarative wizard factory mirrors openclaw setup SDK surface; stubs vary by peer installs.
 /**
  * 共享 Channel setupWizard / setupAdapter 工厂。

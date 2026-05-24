@@ -1,3 +1,9 @@
+/**
+ * @module runtime/nacos-registry
+ *
+ * Gateway 实例 Nacos 命名服务注册：解析端口/IP、写入 Hooks 元数据、生命周期 deregister。
+ */
+
 import { NacosNamingClient } from "nacos";
 import { resolveNamingServerList } from "../config/spring-normalize.js";
 import type { OpenClawConfigSlice, NacosPluginConfig, PluginLog } from "../shared/types.js";

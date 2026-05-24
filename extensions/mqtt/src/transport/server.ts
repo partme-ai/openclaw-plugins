@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/transport/server
+ *
  * MQTT Broker 管理模块
  * 基于 aedes 实现轻量级内嵌 MQTT Broker
  *
@@ -323,8 +325,9 @@ export function startBroker(
 }
 
 /**
- * 停止 MQTT Broker
- * 清理所有连接和资源
+ * 停止 MQTT Broker 并释放 TCP/TLS/Redis/Aedes 资源。
+ *
+ * @returns Broker 完全关闭后 resolve
  */
 export async function stopBroker(): Promise<void> {
   return new Promise<void>((resolve) => {
@@ -370,11 +373,10 @@ export async function stopBroker(): Promise<void> {
 }
 
 /**
- * 发布消息到指定 Topic
- * 用于将 Agent 回复推送给设备
+ * 发布消息到指定 Topic（Agent 回复推送给设备）。
  *
  * @param topic - 目标 Topic
- * @param payload - 消息内容
+ * @param payload - 消息内容（UTF-8 字符串）
  * @param qos - QoS 级别（0 或 1）
  * @param retain - 是否保留消息
  */
@@ -425,21 +427,28 @@ export function publishMessage(
 }
 
 /**
- * 获取所有已连接客户端信息
+ * 获取所有已连接客户端信息快照。
+ *
+ * @returns 当前在线客户端列表
  */
 export function getConnectedClients(): MqttClientInfo[] {
   return Array.from(connectedClients.values());
 }
 
 /**
- * 根据 clientId 获取用户名（用于 ACL 与审计）。
+ * 根据 clientId 获取认证用户名（ACL 与审计用）。
+ *
+ * @param clientId - MQTT clientId
+ * @returns 用户名；未映射时为 undefined
  */
 export function getClientUsername(clientId: string): string | undefined {
   return clientUsers.get(clientId);
 }
 
 /**
- * 获取当前 Broker 统计数据
+ * 获取当前 Broker 运行统计。
+ *
+ * @returns 连接数、运行状态、QoS0 丢弃与 inflight 客户端计数
  */
 export function getBrokerStats(): {
   connectedClients: number;

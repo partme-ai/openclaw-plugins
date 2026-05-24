@@ -22,6 +22,7 @@ import type {
  *
  * @param message - 内嵌统一消息
  * @param headers - 可选传输 headers
+ * @returns version=1 MessageEnvelope
  */
 export function buildEnvelope(
   message: UnifiedMessage,
@@ -44,6 +45,7 @@ export function buildEnvelope(
  * @param params.agentId - 可选 agent ID
  * @param params.replyToMessageId - 可选回复目标
  * @param params.headers - 可选信封 headers
+ * @returns direction=outbound 的 MessageEnvelope
  */
 export function buildOutboundEnvelope(params: {
   channel: string;
@@ -105,6 +107,7 @@ export function parseEnvelope(raw: string): MessageEnvelope | null {
  * 从 UnifiedMessage.metadata 提取路由元数据 / Extract correlation/idempotency from message metadata.
  *
  * @param msg - 统一消息
+ * @returns correlationId 与 idempotencyKey（若存在）
  */
 export function extractRoutingMetadata(msg: UnifiedMessage): {
   correlationId?: string;
@@ -140,6 +143,7 @@ export function mergeReplyRouteIntoHeaders(
  * 序列化信封为 JSON 字符串 / Serialize envelope to JSON string.
  *
  * @param envelope - version=1 信封
+ * @returns JSON 字符串
  */
 export function serializeEnvelope(envelope: MessageEnvelope): string {
   return JSON.stringify(envelope);

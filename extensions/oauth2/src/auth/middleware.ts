@@ -1,5 +1,7 @@
 /**
- * Bearer Token 拦截中间件 + AuthContext 注入
+ * @fileoverview Bearer Token 拦截中间件 + AuthContext 注入。
+ *
+ * @module oauth2/auth/middleware
  *
  * 职责：
  * - 拦截所有 HTTP 请求

@@ -1,7 +1,7 @@
 /**
- * @module openclaw-message-sdk
+ * @fileoverview @partme.ai/openclaw-message-sdk — 统一消息格式 SDK + 公共工具库。
  *
- * @partme.ai/openclaw-message-sdk — 统一消息格式 SDK + 公共工具库。
+ * @module openclaw-message-sdk
  *
  * **职责**：
  * - 统一消息类型、信封、入站/出站队列
@@ -9,21 +9,25 @@
  * - OpenClaw 桥接（子路径 bridge）
  * - 媒体 / HTTP / ASR / OCR / TTS 工具
  *
- * **子模块**：见各 `@module` 注释（media、http、asr、ocr、tts、metadata 等）。
+ * **子模块**：见各 `@module` 注释（media、http、asr、ocr、tts、metadata、dispatch、ingress 等）。
  */
 
+/** 核心类型：UnifiedMessage、MessageEnvelope、buildMessage 等 */
 export * from "./core/index.js";
 
+/** OpenClaw Plugin SDK 动态加载与 state 目录解析 */
 export {
   importOpenClawPluginSdk,
   resolveOpenClawStateDir,
 } from "./openclaw/index.js";
 
+/** 入站归一化：渠道原始 payload → UnifiedMessage */
 export {
   normalizeIngress,
   type NormalizeIngressParams,
 } from "./ingress/index.js";
 
+/** 消息分发：Wire / Transcript / Channel / Embedded / Subagent 五条路径 */
 export {
   dispatchWireMessage,
   dispatchTranscriptTurn,

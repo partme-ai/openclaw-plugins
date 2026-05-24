@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/routing/session-mapper
+ *
  * MQTT Session 映射模块
  * 管理 MQTT Client 到 OpenClaw Session 的映射关系
  *

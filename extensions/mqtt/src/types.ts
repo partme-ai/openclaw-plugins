@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/types
+ *
  * openclaw-mqtt 核心类型定义（MQTT 协议与载荷）。
  */
 

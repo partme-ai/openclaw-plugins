@@ -1,5 +1,9 @@
 /**
- * openclaw-mqtt 插件入口：按 OpenClaw 文档使用 defineChannelPluginEntry，注册 ChannelPlugin、HTTP 状态路由、注入 PluginRuntime。
+ * @fileoverview openclaw-mqtt 插件入口 — ChannelPlugin + HTTP 状态路由。
+ *
+ * @module mqtt
+ *
+ * 按 OpenClaw 文档使用 defineChannelPluginEntry，注册 ChannelPlugin、HTTP 状态路由、注入 PluginRuntime。
  *
  * @see https://docs.openclaw.ai/plugins/sdk-channel-plugins
  * @see https://docs.openclaw.ai/plugins/sdk-entrypoints#definechannelpluginentry
@@ -29,6 +33,8 @@ export default defineChannelPluginEntry({
   setRuntime: setMqttRuntime,
   /**
    * 仅在 registrationMode === "full" 时注册 HTTP 路由（与官方 channel 示例中 webhook 写法一致）。
+   *
+   * @param api - OpenClaw 插件 API
    */
   registerFull(api: OpenClawPluginApi) {
     api.registerHttpRoute({
@@ -76,6 +82,7 @@ export default defineChannelPluginEntry({
 });
 
 process.on("SIGTERM", async () => {
+  /** Graceful shutdown：停止 QoS handler 与 embedded Aedes broker。 */
   console.log("[openclaw-mqtt] Shutting down...");
   const { stopQosHandler } = await import("./transport/qos-handler.js");
   const { stopBroker } = await import("./transport/server.js");

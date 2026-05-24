@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/transport/gateway-mqtt
+ *
  * Gateway 账号生命周期：启动/停止内嵌 Aedes，与 OpenClaw `startAccount` 对齐。
  */
 

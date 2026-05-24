@@ -1,6 +1,9 @@
 /**
- * MQTT Prometheus metrics collector
- * Provides comprehensive metrics for monitoring MQTT broker health and performance
+ * @fileoverview MQTT Prometheus metrics collector — broker 健康与性能指标。
+ *
+ * @module mqtt/shared/metrics
+ *
+ * Provides comprehensive metrics for monitoring MQTT broker health and performance.
  */
 
 import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics } from "prom-client";
@@ -116,7 +119,11 @@ export const mqttSessionsPendingExpiry = new Gauge({
 // ─────────────────── Update Functions ───────────────────
 
 /**
- * Update connection metrics
+ * 更新连接相关 Prometheus 指标。
+ *
+ * @param connected - 当前连接客户端数
+ * @param connections - 本次新增连接数（累加到 counter）
+ * @param disconnections - 本次断开连接数（累加到 counter）
  */
 export function updateConnectionMetrics(connected: number, connections: number, disconnections: number): void {
   mqttConnectedClients.set(connected);
@@ -125,7 +132,11 @@ export function updateConnectionMetrics(connected: number, connections: number, 
 }
 
 /**
- * Update message metrics
+ * 更新消息收发 Prometheus 指标。
+ *
+ * @param topic - MQTT topic
+ * @param qos - QoS 级别（0/1/2）
+ * @param direction - 入站或出站方向
  */
 export function updateMessageMetrics(
   topic: string,
@@ -141,42 +152,52 @@ export function updateMessageMetrics(
 }
 
 /**
- * Update dropped message metrics
+ * 更新因超限丢弃的消息计数。
+ *
+ * @param reason - 丢弃原因（oversized / qos0_soft_limit / auth）
  */
 export function updateDroppedMetrics(reason: "oversized" | "qos0_soft_limit" | "auth"): void {
   mqttMessagesDroppedTotal.inc({ reason });
 }
 
-/**
- * Update QoS 0 dropped metrics
- */
+/** 累加 QoS0 软限制丢弃计数。 */
 export function updateQos0Dropped(): void {
   mqttQos0DroppedTotal.inc();
 }
 
 /**
- * Update message latency
+ * 记录消息处理延迟直方图样本。
+ *
+ * @param latencyMs - 处理耗时（毫秒）
  */
 export function updateMessageLatency(latencyMs: number): void {
   mqttMessageLatency.observe(latencyMs / 1000);
 }
 
 /**
- * Update authentication metrics
+ * 累加认证尝试计数。
+ *
+ * @param success - 认证是否成功
  */
 export function updateAuthMetrics(success: boolean): void {
   mqttAuthAttemptsTotal.inc({ result: success ? "success" : "failure" });
 }
 
 /**
- * Update ACL denial metrics
+ * 累加 ACL 拒绝计数。
+ *
+ * @param action - ACL 动作（publish/subscribe 等）
+ * @param topic - 被拒绝的 topic
  */
 export function updateAclDenials(action: string, topic: string): void {
   mqttAclDenialsTotal.inc({ action, topic });
 }
 
 /**
- * Update session metrics
+ * 更新会话相关 Gauge 指标。
+ *
+ * @param active - 活跃 session 数
+ * @param pendingExpiry - 待过期 session 数
  */
 export function updateSessionMetrics(active: number, pendingExpiry: number): void {
   mqttActiveSessions.set(active);
@@ -184,14 +205,18 @@ export function updateSessionMetrics(active: number, pendingExpiry: number): voi
 }
 
 /**
- * Get metrics in Prometheus format
+ * 以 Prometheus 文本格式导出全部指标。
+ *
+ * @returns Prometheus exposition format 字符串
  */
 export async function getMetrics(): Promise<string> {
   return mqttRegistry.metrics();
 }
 
 /**
- * Get metrics in JSON format
+ * 以 JSON 格式导出全部指标。
+ *
+ * @returns prom-client JSON 指标数组
  */
 export async function getMetricsJson(): Promise<unknown> {
   return mqttRegistry.getMetricsAsJSON();

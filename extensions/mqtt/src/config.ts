@@ -1,5 +1,7 @@
 /**
- * MQTT 渠道账号与 `channels.mqtt` 配置解析。
+ * @fileoverview MQTT 渠道账号与 `channels.mqtt` 配置解析。
+ *
+ * @module mqtt/config
  */
 
 import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk";
@@ -81,6 +83,9 @@ export const DEFAULT_BROKER_CONFIG: MqttChannelConfig = {
 
 /**
  * 列出当前支持的账号 id（单账号阶段仅 default）。
+ *
+ * @param _cfg - OpenClaw 全局配置（预留多账号扩展）
+ * @returns 账号 id 列表
  */
 export function listMqttAccountIds(_cfg: OpenClawConfig): string[] {
   return [DEFAULT_MQTT_ACCOUNT_ID];
@@ -88,6 +93,9 @@ export function listMqttAccountIds(_cfg: OpenClawConfig): string[] {
 
 /**
  * 解析默认账号 id。
+ *
+ * @param _cfg - OpenClaw 全局配置
+ * @returns 默认账号 id（当前固定 `default`）
  */
 export function resolveDefaultMqttAccountId(_cfg: OpenClawConfig): string {
   return DEFAULT_MQTT_ACCOUNT_ID;
@@ -95,6 +103,10 @@ export function resolveDefaultMqttAccountId(_cfg: OpenClawConfig): string {
 
 /**
  * 解析指定账号（单账号阶段忽略 accountId 细节，仅返回统一视图）。
+ *
+ * @param cfg - OpenClaw 全局配置
+ * @param accountId - 可选账号 id
+ * @returns 解析后的 MQTT 账号视图
  */
 export function resolveMqttAccount(cfg: OpenClawConfig, accountId?: string | null): ResolvedMqttAccount {
   const id = accountId?.trim() || DEFAULT_MQTT_ACCOUNT_ID;
@@ -111,6 +123,9 @@ export function resolveMqttAccount(cfg: OpenClawConfig, accountId?: string | nul
 
 /**
  * 从 OpenClaw 全局配置解析 `channels.mqtt` 为 Broker/Channel 共用结构。
+ *
+ * @param globalConfig - OpenClaw 运行时配置对象
+ * @returns 合并默认值后的 MQTT 渠道/Broker 配置
  */
 export function resolveBrokerConfig(globalConfig: Record<string, unknown>): MqttChannelConfig {
   const channels = globalConfig.channels as Record<string, unknown> | undefined;
@@ -207,6 +222,9 @@ const VALID_OPENCLAW_DM_SCOPES: OpenClawDmScope[] = [
 
 /**
  * 解析 OpenClaw 全局 `session.dmScope`；缺失或非法时回退 `main`。
+ *
+ * @param globalConfig - OpenClaw 运行时配置
+ * @returns 有效的 DM scope 枚举值
  */
 export function resolveOpenClawDmScope(globalConfig: Record<string, unknown>): OpenClawDmScope {
   const raw = (globalConfig.session as { dmScope?: unknown } | undefined)?.dmScope;
@@ -219,6 +237,9 @@ export function resolveOpenClawDmScope(globalConfig: Record<string, unknown>): O
 /**
  * 检测遗留误配：`channels.mqtt.session.dmScope`。
  * 插件会忽略该字段，始终使用 OpenClaw 全局 `session.dmScope`。
+ *
+ * @param globalConfig - OpenClaw 运行时配置
+ * @returns 是否配置了已废弃的 mqtt 级 dmScope
  */
 export function hasLegacyMqttDmScope(globalConfig: Record<string, unknown>): boolean {
   const channels = globalConfig.channels as Record<string, unknown> | undefined;
@@ -228,6 +249,10 @@ export function hasLegacyMqttDmScope(globalConfig: Record<string, unknown>): boo
 
 /**
  * 构建账号列表行（Channel status / describe）。
+ *
+ * @param account - 已解析的 MQTT 账号
+ * @param port - Broker 监听端口；未启动时为 null
+ * @returns OpenClaw ChannelAccountSnapshot
  */
 export function describeMqttAccountSnapshot(
   account: ResolvedMqttAccount,

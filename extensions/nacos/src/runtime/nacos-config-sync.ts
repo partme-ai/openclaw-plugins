@@ -1,3 +1,7 @@
+/**
+ * @module nacos/runtime/nacos-config-sync
+ */
+
 import { copyFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { NacosConfigClient } from "nacos";

@@ -1,3 +1,9 @@
+/**
+ * @fileoverview Nacos SDK 辅助函数与默认常量。
+ *
+ * @module nacos/shared/shared
+ */
+
 import type { PluginLog } from "./types.js";
 
 export const DEFAULT_GROUP = "DEFAULT_GROUP";
@@ -5,7 +11,10 @@ export const DEFAULT_NAMESPACE = "public";
 export const DEFAULT_SERVICE = "openclaw-gateway";
 
 /**
- * Creates a console-like logger for Nacos SDK (requires `logger` property).
+ * 创建 Nacos SDK 所需的 console 风格 logger。
+ *
+ * @param log - OpenClaw 插件日志接口
+ * @returns 适配 Nacos SDK `logger` 属性的对象
  */
 export function createNacosSdkLogger(log: PluginLog): typeof console {
   return {
@@ -18,15 +27,21 @@ export function createNacosSdkLogger(log: PluginLog): typeof console {
 }
 
 /**
- * Type guard for plain objects (not null, not arrays).
+ * 判断是否为 plain object（非 null、非数组）。
+ *
+ * @param v - 待检测值
+ * @returns 是否为 Record 对象
  */
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /**
- * Safely closes a Nacos client by calling its `close` method if available.
- * Used for both `NacosConfigClient` and `NacosNamingClient`.
+ * 安全关闭 Nacos 客户端（调用 `close` 若存在）。
+ *
+ * @param client - NacosConfigClient 或 NacosNamingClient 实例
+ * @param logger - 插件日志
+ * @param label - 日志前缀标签
  */
 export async function tryCloseNacosClient(
   client: unknown,

@@ -1,6 +1,7 @@
 /**
- * openclaw-oauth2 类型定义
- * 深度整合 Sa-Token OAuth2 的类型
+ * @fileoverview openclaw-oauth2 类型定义 — Sa-Token / OIDC / AuthContext。
+ *
+ * @module oauth2/shared/types
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";

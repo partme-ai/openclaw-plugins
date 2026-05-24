@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/outbound
+ *
  * MQTT 渠道出站适配器：将 Agent 回复发布到 MQTT Topic。
  */
 

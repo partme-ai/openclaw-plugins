@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/routing/topic-router
+ *
  * MQTT Topic 路由模块
  * 将 MQTT Topic 映射到 OpenClaw Agent，并支持显式 topic 绑定
  *

@@ -1,5 +1,7 @@
 /**
- * JWT 本地验证模块（零网络开销主路径）
+ * @fileoverview JWT 本地验证模块（零网络开销主路径）。
+ *
+ * @module oauth2/auth/satoken-jwt
  *
  * 职责：
  * - 判断 Token 是否为 JWT：包含 2 个 "." 分隔符

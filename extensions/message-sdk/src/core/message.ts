@@ -226,6 +226,7 @@ export function buildMessage(params: BuildMessageParams): UnifiedMessage {
  * @param userId - 用户 ID
  * @param text - 文本内容
  * @param chatType - 会话类型，默认 direct
+ * @returns 纯文本 UnifiedMessage
  */
 export function buildTextMessage(
   channel: string,
@@ -246,6 +247,7 @@ export function buildTextMessage(
  * @param text - 伴随文本
  * @param media - 媒体引用列表
  * @param chatType - 会话类型
+ * @returns 带 media 附件的 UnifiedMessage
  */
 export function buildMediaMessage(
   channel: string,
@@ -264,6 +266,7 @@ export function buildMediaMessage(
  * @param url - 媒体 URL
  * @param fileName - 可选文件名（用于 kind 推断）
  * @param sizeBytes - 可选字节大小
+ * @returns MediaReference
  */
 export function createMediaRef(url: string, fileName?: string, sizeBytes?: number): MediaReference {
   return {
@@ -281,6 +284,7 @@ export function createMediaRef(url: string, fileName?: string, sizeBytes?: numbe
  * @param url - 图片 URL
  * @param base64 - 可选内联 base64
  * @param fileName - 可选文件名（用于 MIME 推断）
+ * @returns kind=image 的 MediaReference
  */
 export function createImageRef(url: string, base64?: string, fileName?: string): MediaReference {
   const ext = fileName?.split(".").pop()?.toLowerCase() ?? "png";

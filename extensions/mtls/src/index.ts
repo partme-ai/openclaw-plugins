@@ -1,5 +1,7 @@
 /**
- * mTLS 安全鉴权插件入口
+ * @fileoverview mTLS 安全鉴权插件入口 — Mutual TLS 双向证书认证。
+ *
+ * @module mtls
  *
  * mTLS (Mutual TLS) 双向证书认证插件
  *
@@ -56,6 +58,12 @@ interface PluginApi {
   onReady?(cb: () => Promise<void>): void;
 }
 
+/**
+ * 从 TLS socket 提取对端客户端证书信息。
+ *
+ * @param socket - Node.js TLSSocket；非 TLS 或未提供证书时返回 undefined
+ * @returns 解析后的证书 subject/issuer/fingerprint 等，或 undefined
+ */
 function extractCertInfo(socket: tls.TLSSocket | undefined): ClientCertInfo | undefined {
   if (!socket) return undefined;
   try {
@@ -83,6 +91,12 @@ function extractCertInfo(socket: tls.TLSSocket | undefined): ClientCertInfo | un
   }
 }
 
+/**
+ * 由客户端证书构造 mTLS 认证上下文。
+ *
+ * @param cert - 客户端证书信息；缺失时 authenticated=false
+ * @returns 注入到请求对象的 MtlsAuthContext
+ */
 function buildAuthContext(cert: ClientCertInfo | undefined): MtlsAuthContext {
   return {
     authenticated: !!cert?.subject,
@@ -93,6 +107,13 @@ function buildAuthContext(cert: ClientCertInfo | undefined): MtlsAuthContext {
   };
 }
 
+/**
+ * 判断 URL 路径是否受 mTLS 保护（排除 skipPaths 后匹配 protectedPaths）。
+ *
+ * @param cfg - mTLS 插件配置
+ * @param urlPath - 不含 query 的路径
+ * @returns 是否需要客户端证书
+ */
 function isPathProtected(cfg: MtlsConfig, urlPath: string): boolean {
   if (cfg.skipPaths.some((p) => urlPath === p || urlPath.startsWith(p + "/"))) {
     return false;
@@ -103,6 +124,13 @@ function isPathProtected(cfg: MtlsConfig, urlPath: string): boolean {
   });
 }
 
+/**
+ * 校验客户端是否在 allowedClients 白名单内；白名单为空时允许任意已验证客户端。
+ *
+ * @param cfg - mTLS 插件配置
+ * @param cert - 客户端证书信息
+ * @returns 是否允许访问受保护路径
+ */
 function isClientAllowed(cfg: MtlsConfig, cert: ClientCertInfo | undefined): boolean {
   if (!cert?.subject) return false;
   if (cfg.allowedClients.length === 0) return true;
@@ -114,6 +142,7 @@ function isClientAllowed(cfg: MtlsConfig, cert: ClientCertInfo | undefined): boo
   });
 }
 
+/** 返回 401 JSON 并设置 WWW-Authenticate: Mutual。 */
 function sendUnauthorized(res: ServerResponse, message = "mTLS authentication required"): void {
   res.writeHead(401, {
     "Content-Type": "application/json",
@@ -122,6 +151,13 @@ function sendUnauthorized(res: ServerResponse, message = "mTLS authentication re
   res.end(JSON.stringify({ error: "unauthorized", message }));
 }
 
+/**
+ * 创建 mTLS HTTP 中间件：校验证书、白名单，并将 AuthContext 注入请求。
+ *
+ * @param cfg - mTLS 配置
+ * @param stats - 可变的请求统计快照（就地更新）
+ * @returns Express 风格 `(req, res, next)` 中间件
+ */
 function createMtlsMiddleware(cfg: MtlsConfig, stats: MtlsStatusSnapshot) {
   return async (
     req: IncomingMessage,
@@ -179,6 +215,12 @@ function createMtlsMiddleware(cfg: MtlsConfig, stats: MtlsStatusSnapshot) {
   };
 }
 
+/**
+ * 从 OpenClaw 全局配置合并 mTLS 默认值。
+ *
+ * @param globalConfig - `openclaw.json` 运行时配置对象
+ * @returns 完整 MtlsConfig
+ */
 function resolveConfig(globalConfig: Record<string, unknown>): MtlsConfig {
   const mtls = (globalConfig.mtls as Partial<MtlsConfig> | undefined) ?? {};
 
@@ -201,6 +243,13 @@ function resolveConfig(globalConfig: Record<string, unknown>): MtlsConfig {
   };
 }
 
+/**
+ * 在 Gateway 就绪后延迟执行初始化（registerService → onReady → microtask）。
+ *
+ * @param api - 插件 API
+ * @param name - 服务 id / 日志前缀
+ * @param callback - 异步初始化逻辑
+ */
 function safeOnReady(api: PluginApi, name: string, callback: () => Promise<void>): void {
   const a = api as unknown as Record<string, unknown>;
   if (typeof a.registerService === "function") {
@@ -212,6 +261,11 @@ function safeOnReady(api: PluginApi, name: string, callback: () => Promise<void>
   }
 }
 
+/**
+ * OpenClaw mTLS 插件注册入口：状态路由 + 全局证书校验中间件。
+ *
+ * @param api - Gateway 注入的插件 API
+ */
 export default function register(api: PluginApi): void {
   const stats = getMtlsStats();
 

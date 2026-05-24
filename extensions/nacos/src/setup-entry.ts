@@ -1,4 +1,6 @@
 /**
+ * @module nacos/setup-entry
+ *
  * Lightweight setup entry for openclaw-nacos.
  *
  * Loaded when the plugin is disabled or unconfigured, avoiding heavy Nacos client imports.

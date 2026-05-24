@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/runtime/mqtt-plugin
+ *
  * OpenClaw MQTT 渠道插件定义（ChannelPlugin）。
  */
 

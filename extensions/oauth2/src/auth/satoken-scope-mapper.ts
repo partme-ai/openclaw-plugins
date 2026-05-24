@@ -1,5 +1,7 @@
 /**
- * Scope → OpenClaw 权限映射模块
+ * @fileoverview Scope → OpenClaw 权限映射模块。
+ *
+ * @module oauth2/auth/satoken-scope-mapper
  *
  * 默认映射（可通过 configSchema 覆盖）：
  * - openclaw:admin    → Role admin   （权限: read, write, admin）
