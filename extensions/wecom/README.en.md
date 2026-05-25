@@ -471,7 +471,7 @@ Keep copy short and lightweight (e.g. `🤔 正在思考…`). On WS, pushed via
 |------------|--------------|--------------|-------------|
 | `thinkingText` | thinking | 🤔 正在思考… | Agent started reasoning |
 | `receivedText` | received | 📩 已收到… | WS: after policy pass, before Agent starts |
-| `toolStatusText` | tool | 🔍 正在查资料… | Tool call in progress (`{toolName}` optional) |
+| `toolStatusText` | tool | 🔧 Running {toolName}… | Tool call in progress (`{toolName}` optional) |
 | `readingText` | reading | 📎 正在阅读附件… | Reading inbound attachment |
 | `generatingText` | generating | ✍️ 正在输入… | Answer block streaming |
 | `compactionText` | compaction | 📦 正在压缩… | Context compaction |
@@ -532,7 +532,7 @@ JSON does not allow comments. Keys are ordered by role: **welcome & stream proto
       "streamPlaceholderText": "1",
       "thinkingText": "🤔 Thinking…",
       "receivedText": "📩 Got it…",
-      "toolStatusText": "Running {toolName}…",
+      "toolStatusText": "🔧 Running {toolName}…",
       "readingText": "📎 Reading attachment…",
       "generatingText": "✍️ Writing reply…",
       "compactionText": "📦 Compacting…",
@@ -574,7 +574,7 @@ openclaw config set channels.wecom.streamPlaceholderText "1"
 # typing — status line during finish=false
 openclaw config set channels.wecom.thinkingText "🤔 正在思考…"
 openclaw config set channels.wecom.receivedText "📩 已收到…"
-openclaw config set channels.wecom.toolStatusText "正在调用 {toolName}…"
+openclaw config set channels.wecom.toolStatusText "🔧 正在调用 {toolName}…"
 openclaw config set channels.wecom.readingText "📎 正在阅读附件…"
 openclaw config set channels.wecom.generatingText "✍️ 正在输入…"
 openclaw config set channels.wecom.compactionText "📦 正在压缩…"
@@ -1022,7 +1022,7 @@ Dynamic Agents create isolated sessions by user or group. Use them when differen
 openclaw config set channels.wecom.welcomeText "Hello, I am your WeCom assistant."
 openclaw config set channels.wecom.agent.welcomeText "Welcome to the self-built app."
 openclaw config set channels.wecom.thinkingText "Thinking…"
-openclaw config set channels.wecom.toolStatusText "Running {toolName}…"
+openclaw config set channels.wecom.toolStatusText "🔧 Running {toolName}…"
 openclaw config set channels.wecom.finishFooterText "⏱ {elapsed}s · Done"
 openclaw gateway restart
 ```
