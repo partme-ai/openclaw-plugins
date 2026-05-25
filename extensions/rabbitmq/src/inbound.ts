@@ -22,6 +22,7 @@ import {
   normalizeWireIngress,
   dispatchChannelMessage,
   resolveChannelDispatchIdentity,
+  createDeferredDeliveryAck,
   type BridgePluginRuntime,
   type ChannelDispatchMode,
 } from "@partme.ai/openclaw-message-sdk/bridge";
@@ -39,6 +40,8 @@ interface InboundResult {
   accepted: boolean;
   routeSource?: string;
   reason?: string;
+  /** 为 true 时 transport 层不再 auto-ack（delivery 已由 inbound 显式 settle） */
+  manualAck?: boolean;
 }
 
 /**
@@ -76,7 +79,8 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
     idempotency: getRabbitmqIdempotencyCache(config.idempotency),
   });
   if (!parsed.accepted) {
-    return { accepted: true, routeSource: "idempotency" };
+    event.delivery.ack();
+    return { accepted: true, routeSource: "idempotency", manualAck: true };
   }
   const text = parsed.text;
 
@@ -110,10 +114,16 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
 
   try {
     await dispatchToRuntime(sessionKey, route.peerId, agentId, text, event, route, replyTopic, config, parsed);
-    return { accepted: true, routeSource: route.source };
+    return { accepted: true, routeSource: route.source, manualAck: true };
   } catch (error) {
     console.error(`[openclaw-rabbitmq] Runtime dispatch failed for peer=${route.peerId}:`, error);
-    return { accepted: false, reason: `dispatch_error:${String(error)}` };
+    if (!event.delivery.settled) {
+      event.delivery.nack({
+        requeue: config.consume.requeueOnError,
+        reason: `dispatch_error:${String(error)}`,
+      });
+    }
+    return { accepted: false, reason: `dispatch_error:${String(error)}`, manualAck: true };
   }
 }
 
@@ -154,34 +164,48 @@ async function dispatchToRuntime(
     config.dispatch.timeoutMs,
   );
 
-  await dispatchChannelMessage({
-    mode,
-    runtime: rt as unknown as BridgePluginRuntime,
-    channel: "rabbitmq",
-    accountId: routeResult.accountId,
-    peerId,
-    text,
-    agentId,
-    sessionKey,
-    unified: parsed.unified,
-    sessionId: `rabbitmq:${routeResult.accountId}:${routeResult.agentId}:${peerId}`,
-    timeoutMs,
-    replyEnabled: config.dispatch.reply.enabled,
-    extra: {
-      routingKey: inbound.routingKey,
-      desiredAgentId: agentId,
-      sessionKey,
-    },
-    reply: {
-      deliver: async ({ wire, runId }) => {
-        const { publishMessage } = await import("./transport/server.js");
-        await publishMessage(replyTopic, wire, runId ? { correlationId: runId } : undefined);
-      },
-      outboundFormat,
-      replyRoute: { routingKey: replyTopic },
-      userId: sessionKey,
-    },
+  const deferredAck = createDeferredDeliveryAck({
+    delivery: inbound.delivery,
+    requireReply: config.dispatch.reply.enabled,
+    requeueOnMissingReply: config.consume.requeueOnError,
   });
+
+  const baseDeliver = async ({ wire, runId }: { wire: string; runId?: string }) => {
+    const { publishMessage } = await import("./transport/server.js");
+    await publishMessage(replyTopic, wire, runId ? { correlationId: runId } : undefined);
+  };
+
+  try {
+    await dispatchChannelMessage({
+      mode,
+      runtime: rt as unknown as BridgePluginRuntime,
+      channel: "rabbitmq",
+      accountId: routeResult.accountId,
+      peerId,
+      text,
+      agentId,
+      sessionKey,
+      unified: parsed.unified,
+      sessionId: `rabbitmq:${routeResult.accountId}:${routeResult.agentId}:${peerId}`,
+      timeoutMs,
+      replyEnabled: config.dispatch.reply.enabled,
+      extra: {
+        routingKey: inbound.routingKey,
+        desiredAgentId: agentId,
+        sessionKey,
+      },
+      reply: {
+        deliver: deferredAck.wrapReplyDeliver(baseDeliver),
+        outboundFormat,
+        replyRoute: { routingKey: replyTopic },
+        userId: sessionKey,
+      },
+    });
+    deferredAck.finalizeAfterDispatch();
+  } catch (error) {
+    deferredAck.nackOnFailure(config.consume.requeueOnError, "reply_publish_or_dispatch_failed");
+    throw error;
+  }
 }
 
 /**

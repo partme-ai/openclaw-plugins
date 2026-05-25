@@ -38,6 +38,12 @@ export {
 } from "./wire-ingress.js";
 
 export {
+  createDeferredDeliveryAck,
+  type CreateDeferredDeliveryAckOptions,
+  type IngressDeliveryControls,
+} from "./deferred-delivery-ack.js";
+
+export {
   runIngressPolicyChain,
   createAllowlistIngressHook,
   type IngressPolicyContext,

@@ -86,6 +86,15 @@ export const rabbitmqChannel = {
       await startRabbitmqServer(config, async (event) => {
         try {
           const result = await processInbound(event, config);
+          if (result.manualAck) {
+            if (result.accepted) {
+              trackInboundAccepted();
+              if (result.routeSource) trackRoute(result.routeSource);
+            } else {
+              trackInboundDropped(result.reason ?? "unknown_drop_reason");
+            }
+            return { ok: true as const, ackMode: "manual" as const };
+          }
           if (result.accepted) {
             trackInboundAccepted();
             if (result.routeSource) trackRoute(result.routeSource);
@@ -96,7 +105,13 @@ export const rabbitmqChannel = {
           }
         } catch (error) {
           trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
-          return { ok: false as const, requeue: config.consume.requeueOnError, reason: "dispatch_error" };
+          if (!event.delivery.settled) {
+            event.delivery.nack({
+              requeue: config.consume.requeueOnError,
+              reason: "dispatch_error",
+            });
+          }
+          return { ok: true as const, ackMode: "manual" as const };
         }
       });
 

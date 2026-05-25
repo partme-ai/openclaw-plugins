@@ -13,17 +13,28 @@ import { randomUUID } from "node:crypto";
 import type { ConsumeMessage, ChannelModel, Channel, Options } from "amqplib";
 import type { RabbitmqConfig } from "../config.js";
 
-/** @description 入站 AMQP 消息事件（routingKey + 原始 body + 属性）。 */
+/** @description 入站 AMQP 消息的投递处置句柄（deferred ack）。 */
+export type InboundDeliveryHandle = {
+  /** 是否已通过 ack/nack 处置 */
+  readonly settled: boolean;
+  /** 确认消息已成功处理 */
+  ack: () => void;
+  /** 拒绝消息，可选 requeue 与原因 */
+  nack: (options?: { requeue?: boolean; reason?: string }) => void;
+};
+
+/** @description 入站 AMQP 消息事件（routingKey + 原始 body + 属性 + delivery 句柄）。 */
 export type InboundEvent = {
   routingKey: string;
   content: Buffer;
   properties: ConsumeMessage["properties"];
   fields: ConsumeMessage["fields"];
+  delivery: InboundDeliveryHandle;
 };
 
-/** @description 消费端对单条消息的处置结果（ACK / NACK / 重入队）。 */
+/** @description 消费端对单条消息的处置结果（ACK / NACK / 重入队 / 手动 ack）。 */
 export type InboundDisposition =
-  | { ok: true }
+  | { ok: true; ackMode?: "auto" | "manual" }
   | { ok: false; requeue?: boolean; reason?: string };
 
 /** @description 入站消息回调：由 channel.gateway 注入 processInbound。 */
@@ -55,6 +66,7 @@ let stopping = false;
 let retryQueueName: string | null = null;
 let retryRoutingPrefix: string | null = null;
 let inboundLimiter: ReturnType<typeof createInboundLimiter> | null = null;
+const pendingDeliveries = new Set<InboundDeliveryHandle>();
 let stats: RabbitmqStats = {
   connected: false,
   lastConnectAt: null,
@@ -87,6 +99,7 @@ export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundH
  */
 export async function stopRabbitmqServer(): Promise<void> {
   stopping = true;
+  nackAllPendingDeliveries(false, "server_stop");
   inboundLimiter = null;
   retryRoutingPrefix = null;
   retryQueueName = null;
@@ -142,7 +155,10 @@ export async function publishMessage(routingKey: string, message: string, opts?:
     headers: opts?.headers,
     contentType: "application/json",
   };
-  publishChannel.publish(config.exchange, routingKey, Buffer.from(message), options);
+  const published = publishChannel.publish(config.exchange, routingKey, Buffer.from(message), options);
+  if (!published) {
+    throw new Error(`RabbitMQ publish backpressure for routingKey=${routingKey}`);
+  }
   stats.messagesSent++;
 }
 
@@ -327,11 +343,13 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
       const limiter = inboundLimiter;
       stats.messagesReceived++;
       const routingKey = resolveInboundRoutingKey(msg);
+      const delivery = createInboundDeliveryHandle(msg, channel, activeConfig);
       const event: InboundEvent = {
         routingKey,
         content: msg.content,
         properties: msg.properties,
         fields: { ...msg.fields, routingKey },
+        delivery,
       };
       void limiter(async () => {
         stats.inFlight++;
@@ -339,8 +357,21 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
           const disposition = await handler(event);
           stats.lastConsumeAt = Date.now();
           if (disposition.ok) {
-            channel.ack(msg);
-            stats.messagesAcked++;
+            if (disposition.ackMode === "manual") {
+              if (!delivery.settled) {
+                delivery.nack({
+                  requeue: activeConfig.consume.requeueOnError,
+                  reason: "manual_ack_unsettled",
+                });
+              }
+              return;
+            }
+            if (!delivery.settled) {
+              delivery.ack();
+            }
+            return;
+          }
+          if (delivery.settled) {
             return;
           }
           const handledByRetry = await maybeRetryMessage(msg, routingKey);
@@ -348,25 +379,21 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
             return;
           }
           const requeue = disposition.requeue ?? activeConfig.consume.requeueOnError;
-          channel.nack(msg, false, requeue);
-          stats.messagesNacked++;
-          if (requeue) {
-            stats.messagesRequeued++;
-          }
+          delivery.nack({ requeue, reason: disposition.reason });
         } catch (err) {
           stats.errors++;
           stats.lastError = err instanceof Error ? err.message : String(err);
+          if (delivery.settled) {
+            return;
+          }
           const handledByRetry = await maybeRetryMessage(msg, routingKey);
           if (handledByRetry) {
             return;
           }
           const requeue = activeConfig.consume.requeueOnError;
-          channel.nack(msg, false, requeue);
-          stats.messagesNacked++;
-          if (requeue) {
-            stats.messagesRequeued++;
-          }
+          delivery.nack({ requeue, reason: err instanceof Error ? err.message : String(err) });
         } finally {
+          pendingDeliveries.delete(delivery);
           stats.inFlight = Math.max(0, stats.inFlight - 1);
         }
       });
@@ -410,6 +437,7 @@ async function reconnectAfterClose(): Promise<void> {
  * @description 关闭当前 channel/connection 引用，便于重连前清理（不修改 stopping 标志）。
  */
 async function teardownTransport(): Promise<void> {
+  nackAllPendingDeliveries(false, "transport_teardown");
   inboundLimiter = null;
   retryRoutingPrefix = null;
   retryQueueName = null;
@@ -568,4 +596,57 @@ async function maybeRetryMessage(msg: ConsumeMessage, routingKey: string): Promi
   consumeChannel.ack(msg);
   stats.messagesAcked++;
   return true;
+}
+
+/**
+ * @description 为单条消费消息创建 deferred ack 句柄并纳入 pending 跟踪。
+ */
+function createInboundDeliveryHandle(
+  msg: ConsumeMessage,
+  channel: Channel,
+  activeConfig: RabbitmqConfig,
+): InboundDeliveryHandle {
+  let settled = false;
+  const handle: InboundDeliveryHandle = {
+    get settled() {
+      return settled;
+    },
+    ack: () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      channel.ack(msg);
+      stats.messagesAcked++;
+    },
+    nack: (options) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      const requeue = options?.requeue ?? activeConfig.consume.requeueOnError;
+      channel.nack(msg, false, requeue);
+      stats.messagesNacked++;
+      if (requeue) {
+        stats.messagesRequeued++;
+      }
+      if (options?.reason) {
+        stats.lastError = `inbound_nack:${options.reason}`;
+      }
+    },
+  };
+  pendingDeliveries.add(handle);
+  return handle;
+}
+
+/**
+ * @description 停止/重连前 nack 所有尚未 settle 的 pending 投递。
+ */
+function nackAllPendingDeliveries(requeue: boolean, reason: string): void {
+  for (const delivery of pendingDeliveries) {
+    if (!delivery.settled) {
+      delivery.nack({ requeue, reason });
+    }
+  }
+  pendingDeliveries.clear();
 }

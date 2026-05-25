@@ -51,6 +51,12 @@ export {
 } from "../ingress/wire-ingress.js";
 
 export {
+  createDeferredDeliveryAck,
+  type CreateDeferredDeliveryAckOptions,
+  type IngressDeliveryControls,
+} from "../ingress/deferred-delivery-ack.js";
+
+export {
   resolveChannelAgentRoute,
   resolveChannelDispatchIdentity,
   type ChannelAgentRoute,
