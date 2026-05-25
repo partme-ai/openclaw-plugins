@@ -34,6 +34,7 @@ const StreamConfigSchema = z.object({
   blockMs: z.number().int().positive().default(5000),
   count: z.number().int().positive().default(10),
   createGroup: z.boolean().default(true),
+  pendingClaimIdleMs: z.number().int().nonnegative().default(120_000),
 });
 
 /**
@@ -155,6 +156,12 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
         blockMs: { type: "number", default: 5000 },
         count: { type: "number", default: 10 },
         createGroup: { type: "boolean", default: true },
+        pendingClaimIdleMs: {
+          type: "number",
+          default: 120000,
+          description:
+            "XAUTOCLAIM min-idle ms for stale PEL entries; 0 disables reclaim",
+        },
       },
       default: {
         inboundKey: "openclaw:inbound",
@@ -164,6 +171,7 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
         blockMs: 5000,
         count: 10,
         createGroup: true,
+        pendingClaimIdleMs: 120000,
       },
     },
     payload: {
@@ -266,6 +274,7 @@ export const DEFAULT_REDIS_CHANNEL_CONFIG: RedisChannelConfig = {
     blockMs: 5000,
     count: 10,
     createGroup: true,
+    pendingClaimIdleMs: 120_000,
   },
   subscribeChannels: [],
   channelBindings: [],
@@ -371,6 +380,10 @@ export function resolveRedisChannelConfig(
           ? stream.count
           : DEFAULT_REDIS_CHANNEL_CONFIG.stream.count,
       createGroup: stream.createGroup !== false,
+      pendingClaimIdleMs:
+        typeof stream.pendingClaimIdleMs === "number" && stream.pendingClaimIdleMs >= 0
+          ? stream.pendingClaimIdleMs
+          : DEFAULT_REDIS_CHANNEL_CONFIG.stream.pendingClaimIdleMs,
     },
     subscribeChannels,
     channelBindings,

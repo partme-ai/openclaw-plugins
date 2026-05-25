@@ -46,6 +46,8 @@ export interface RedisInboundMessage {
   channel: string;
   pattern?: string;
   message: string;
+  /** Stream 模式 entry ID（用于 XACK / 幂等） */
+  streamEntryId?: string;
   /** Stream 模式：通过 fieldMapping 提取的字段，覆盖路由解析 */
   fieldAgentId?: string;
   fieldPeerId?: string;
@@ -67,6 +69,8 @@ export type RedisChannelConfig = {
     blockMs: number;
     count: number;
     createGroup: boolean;
+    /** XAUTOCLAIM 最小 idle 毫秒；0 表示禁用 pending 回收 */
+    pendingClaimIdleMs: number;
   };
   subscribeChannels: string[];
   channelBindings: RedisChannelBinding[];

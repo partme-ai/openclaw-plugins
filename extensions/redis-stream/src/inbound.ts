@@ -53,9 +53,9 @@ export async function handleInboundMessage(
     return true; // 非匹配 channel 不算失败，消息可以 ACK
   }
 
-  // 2. Deduplication check (use message ID if available, fallback to content hash)
+  // 2. Deduplication check (use stream entry ID if available, fallback to content hash)
   const messageId =
-    (message as unknown as { id?: string }).id ??
+    message.streamEntryId ??
     `${channel}:${message.message.slice(0, 100)}`;
 
   // 2. 路由解析（显式绑定优先，Stream fieldAgentId 字段覆盖）

@@ -48,6 +48,31 @@ describe("resolveRedisChannelConfig", () => {
     expect(config.channelMode).toBe("stream");
   });
 
+  it("reads pendingClaimIdleMs for stream mode", () => {
+    const config = resolveRedisChannelConfig({
+      channels: {
+        "redis-stream": {
+          url: "redis://localhost:6379",
+          channelMode: "stream",
+          stream: { pendingClaimIdleMs: 60_000 },
+        },
+      },
+    });
+    expect(config.stream.pendingClaimIdleMs).toBe(60_000);
+  });
+
+  it("defaults pendingClaimIdleMs when omitted", () => {
+    const config = resolveRedisChannelConfig({
+      channels: {
+        "redis-stream": {
+          url: "redis://localhost:6379",
+          channelMode: "stream",
+        },
+      },
+    });
+    expect(config.stream.pendingClaimIdleMs).toBe(120_000);
+  });
+
   it("defaults to pubsub for invalid channelMode", () => {
     const config = resolveRedisChannelConfig({
       channels: {

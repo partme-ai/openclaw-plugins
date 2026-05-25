@@ -56,7 +56,7 @@ describe("web-mqtt ws-server integration", () => {
       client.publish(topic, payload, (err) => (err ? reject(err) : resolve()));
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 300));
     client.end(true);
 
     expect(inboundSpy).toHaveBeenCalledTimes(1);

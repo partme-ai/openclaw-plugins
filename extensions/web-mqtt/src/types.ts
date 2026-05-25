@@ -124,5 +124,5 @@ export interface WebMqttServiceStats {
   brokerReady: boolean;
 }
 
-/** 入站消息回调 */
-export type InboundHandler = (event: InboundEvent) => void;
+/** 入站消息回调（可 async；transport 层通过 per-client 串行队列调度） */
+export type InboundHandler = (event: InboundEvent) => void | Promise<void>;

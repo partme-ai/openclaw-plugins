@@ -88,16 +88,12 @@ export const mqttWsChannel = {
       }
 
       await startWebMqttServer(config, async (event) => {
-        try {
-          const result = await processInbound(event, config);
-          if (result.accepted) {
-            trackInboundAccepted();
-            if (result.routeSource) trackRoute(result.routeSource);
-          } else {
-            trackInboundDropped(result.reason ?? "unknown_drop_reason");
-          }
-        } catch (error) {
-          trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
+        const result = await processInbound(event, config);
+        if (result.accepted) {
+          trackInboundAccepted();
+          if (result.routeSource) trackRoute(result.routeSource);
+        } else {
+          trackInboundDropped(result.reason ?? "unknown_drop_reason");
         }
       });
 

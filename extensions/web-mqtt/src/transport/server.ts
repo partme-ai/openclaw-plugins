@@ -12,6 +12,7 @@ import { Duplex } from "node:stream";
 import type { Socket } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { createKeyedRunQueue, type KeyedRunQueue } from "@partme.ai/openclaw-message-sdk";
 import type { InboundHandler, WebMqttConfig, WebMqttServiceStats } from "../types.js";
 import { isUserActionAllowed } from "./acl.js";
 
@@ -21,6 +22,7 @@ let broker: AedesBroker | null = null;
 let server: HttpServer | HttpsServer | null = null;
 let wss: InstanceType<typeof WebSocketServer> | null = null;
 let currentConfig: WebMqttConfig | null = null;
+let inboundQueue: KeyedRunQueue | null = null;
 const clientUsernameMap = new Map<string, string>();
 
 const stats: WebMqttServiceStats = {
@@ -38,6 +40,12 @@ const stats: WebMqttServiceStats = {
  */
 export async function startWebMqttServer(config: WebMqttConfig, onInbound: InboundHandler): Promise<void> {
   currentConfig = config;
+  inboundQueue = createKeyedRunQueue({
+    onError: (error, clientId) => {
+      trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
+      stats.lastError = `[${clientId}] ${String(error)}`;
+    },
+  });
   broker = createBroker({
     concurrency: 100,
     heartbeatInterval: 30000,
@@ -81,6 +89,10 @@ export async function stopWebMqttServer(): Promise<void> {
   if (broker) {
     await new Promise<void>((resolve) => broker!.close(() => resolve()));
     broker = null;
+  }
+  if (inboundQueue) {
+    inboundQueue.deactivate();
+    inboundQueue = null;
   }
   stats.connectedClients = 0;
   stats.brokerReady = false;
@@ -173,7 +185,7 @@ function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandle
       trackInboundDropped("payload_too_large");
       return;
     }
-    onInbound({
+    const event = {
       topic: packet.topic,
       payload: packet.payload as Buffer,
       clientId: client.id,
@@ -181,6 +193,14 @@ function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandle
         packet.messageId !== undefined && packet.messageId !== null
           ? String(packet.messageId)
           : undefined,
+    };
+    const queue = inboundQueue;
+    if (!queue) {
+      trackInboundDropped("inbound_queue_not_ready");
+      return;
+    }
+    void queue.enqueue(event.clientId, async () => {
+      await onInbound(event);
     });
   });
 }

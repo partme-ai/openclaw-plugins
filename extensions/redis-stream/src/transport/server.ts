@@ -33,6 +33,7 @@ export type RedisStats = {
   messagesRead: number;
   messagesWritten: number;
   messagesAcked: number;
+  messagesReclaimed: number;
   subscribedChannels: string[];
 };
 
@@ -47,6 +48,7 @@ const stats: RedisStats = {
   messagesRead: 0,
   messagesWritten: 0,
   messagesAcked: 0,
+  messagesReclaimed: 0,
   subscribedChannels: [],
 };
 
@@ -306,8 +308,16 @@ async function ensureConsumerGroup(config: RedisChannelConfig): Promise<void> {
  */
 async function consumeLoop(config: RedisChannelConfig): Promise<void> {
   let consecutiveErrors = 0;
+  let pendingClaimCursor = "0-0";
   while (running && client) {
     try {
+      if (config.stream.pendingClaimIdleMs > 0) {
+        pendingClaimCursor = await reclaimStalePendingEntries(
+          config,
+          pendingClaimCursor,
+        );
+      }
+
       const result = await client
         .xReadGroup(
           config.stream.consumerGroup,
@@ -345,6 +355,7 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
           const inbound: RedisInboundMessage = {
             channel,
             message: text,
+            streamEntryId: id,
             fieldAgentId:
               fieldMap.get(config.fieldMapping.agentIdField) || undefined,
             fieldPeerId:
@@ -405,4 +416,73 @@ function toFieldMap(
     }
   }
   return map;
+}
+
+/**
+ * @description 回收 idle 超过阈值的 PEL 条目（XAUTOCLAIM），供崩溃/重启后重试。
+ * @param config - Stream 消费配置
+ * @param startId - 上次 claim 游标
+ * @returns 下次 claim 起始 ID
+ */
+async function reclaimStalePendingEntries(
+  config: RedisChannelConfig,
+  startId: string,
+): Promise<string> {
+  if (!client || config.stream.pendingClaimIdleMs <= 0) {
+    return startId;
+  }
+
+  try {
+    const claimResult = await client.xAutoClaim(
+      config.stream.inboundKey,
+      config.stream.consumerGroup,
+      config.stream.consumerName,
+      config.stream.pendingClaimIdleMs,
+      startId,
+      { COUNT: config.stream.count },
+    );
+
+    const nextStartId = String(claimResult.nextId ?? startId);
+    const claimed = claimResult.messages ?? [];
+
+    for (const entry of claimed) {
+      stats.messagesReclaimed++;
+      stats.messagesRead++;
+      stats.lastReadAt = Date.now();
+
+      const fieldMap = toFieldMap(
+        entry.message as unknown as Array<unknown> | Record<string, unknown>,
+      );
+      const text = fieldMap.get(config.fieldMapping.textField) ?? "";
+      const inbound: RedisInboundMessage = {
+        channel: config.stream.inboundKey,
+        message: text,
+        streamEntryId: String(entry.id),
+        fieldAgentId:
+          fieldMap.get(config.fieldMapping.agentIdField) || undefined,
+        fieldPeerId:
+          fieldMap.get(config.fieldMapping.peerIdField) || undefined,
+        fieldAccountId:
+          fieldMap.get(config.fieldMapping.accountIdField) || undefined,
+        fieldReplyStream:
+          fieldMap.get(config.fieldMapping.replyStreamField) || undefined,
+      };
+      const accepted = await handleInboundMessage(inbound, config);
+      if (accepted !== false) {
+        await ackEntry(
+          config.stream.inboundKey,
+          config.stream.consumerGroup,
+          String(entry.id),
+        );
+      }
+    }
+
+    return nextStartId;
+  } catch (error) {
+    logger.warn(
+      "XAUTOCLAIM pending reclaim failed:",
+      error instanceof Error ? error.message : String(error),
+    );
+    return startId;
+  }
 }
