@@ -53,12 +53,12 @@ export async function handleInboundMessage(
     return true; // 非匹配 channel 不算失败，消息可以 ACK
   }
 
-  // 2. Deduplication check (use stream entry ID if available, fallback to content hash)
+  // 2. 幂等键（Stream entry ID 优先，否则 channel + 载荷前缀）
   const messageId =
     message.streamEntryId ??
     `${channel}:${message.message.slice(0, 100)}`;
 
-  // 2. 路由解析（显式绑定优先，Stream fieldAgentId 字段覆盖）
+  // 3. 路由解析（显式绑定优先，Stream fieldAgentId 字段覆盖）
   let route = message.fieldAgentId
     ? {
         agentId: message.fieldAgentId,
@@ -82,7 +82,20 @@ export async function handleInboundMessage(
     }
   }
 
-  // 3. payload 解析
+  // 已成功处理过的重复投递：Stream 可 ACK，Pub/Sub 静默跳过
+  if (idempotencyCache.has(messageId)) {
+    logger.info(`Duplicate message skipped: ${messageId.slice(0, 50)}...`);
+    return true;
+  }
+
+  // 4. Runtime 须在 remember 之前检查，避免未 dispatch 却占用幂等键导致 PEL 无法重试
+  const rt = getRedisStreamRuntime();
+  if (!rt) {
+    logger.warn("Runtime not initialized, cannot dispatch message");
+    return false;
+  }
+
+  // 5. payload 解析 + 进程内幂等 remember
   const parsed = normalizeWireIngress({
     rawPayload: message.message,
     mode: mapRedisStreamWirePayloadMode(config.payload.mode),
@@ -96,22 +109,16 @@ export async function handleInboundMessage(
   }
   const text = parsed.text;
 
-  // 4. 回复 channel 推导（fieldReplyStream 优先 > binding replyChannel > 标准格式）
+  // 6. 回复 channel 推导（fieldReplyStream 优先 > binding replyChannel > 标准格式）
   const replyChannel =
     message.fieldReplyStream ??
     route.replyChannel ??
     buildReplyChannelFromInbound(channel);
 
-  // 5. peerId 使用 channel 名称（可通过 fieldPeerId 覆盖）
+  // 7. peerId 使用 channel 名称（可通过 fieldPeerId 覆盖）
   const peerId = message.fieldPeerId ?? channel;
 
-  // 6. 分发到 OpenClaw Runtime
-  const rt = getRedisStreamRuntime();
-  if (!rt) {
-    logger.warn("Runtime not initialized, cannot dispatch message");
-    return false;
-  }
-
+  // 8. 分发到 OpenClaw Runtime
   try {
     logger.info(
       `Inbound: channel=${channel}, agent=${route.agentId}, ` +

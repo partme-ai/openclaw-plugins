@@ -29,6 +29,7 @@ vi.mock("../src/transport/publisher.js", () => ({
 import { resolveRedisChannelConfig } from "../src/config.js";
 import { handleInboundMessage } from "../src/inbound.js";
 import { setRedisStreamRuntime } from "../src/runtime.js";
+import { getRedisStreamIdempotencyCache } from "../src/shared/wire-helpers.js";
 import type { RedisChannelConfig, RedisInboundMessage } from "../src/types.js";
 
 const { dispatchChannelMessage, resolveChannelDispatchIdentity, publishMessage } = mocks;
@@ -50,9 +51,11 @@ function baseConfig(overrides: Partial<RedisChannelConfig> = {}): RedisChannelCo
 }
 
 function makeMessage(overrides: Partial<RedisInboundMessage> = {}): RedisInboundMessage {
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return {
     channel: "openclaw:agent:demo:in",
-    message: "hello redis",
+    message: `hello redis ${suffix}`,
+    streamEntryId: `redis-entry-${suffix}`,
     ...overrides,
   };
 }
@@ -60,6 +63,7 @@ function makeMessage(overrides: Partial<RedisInboundMessage> = {}): RedisInbound
 describe("handleInboundMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getRedisStreamIdempotencyCache().clear();
     setRedisStreamRuntime({ config: {} } as never);
   });
 
@@ -83,7 +87,7 @@ describe("handleInboundMessage", () => {
 
   it("dispatches bound channel messages", async () => {
     const ok = await handleInboundMessage(
-      makeMessage({ message: "bound msg", id: `redis-in-${Date.now()}` }),
+      makeMessage({ message: "bound msg" }),
       baseConfig(),
     );
 
@@ -102,7 +106,6 @@ describe("handleInboundMessage", () => {
         channel: "openclaw:agent:demo:in",
         fieldAgentId: "field-agent",
         fieldAccountId: "team-a",
-        id: `redis-field-${Date.now()}`,
       }),
       baseConfig(),
     );
@@ -114,10 +117,7 @@ describe("handleInboundMessage", () => {
   });
 
   it("reply deliver publishes to reply channel", async () => {
-    await handleInboundMessage(
-      makeMessage({ id: `redis-reply-${Date.now()}` }),
-      baseConfig(),
-    );
+    await handleInboundMessage(makeMessage(), baseConfig());
 
     const reply = dispatchChannelMessage.mock.calls[0][0].reply as {
       deliver: (p: { wire: string }) => Promise<void>;
@@ -127,9 +127,8 @@ describe("handleInboundMessage", () => {
   });
 
   it("drops duplicate message ids", async () => {
-    const id = `redis-dedup-${Date.now()}`;
+    const msg = makeMessage({ message: "once" });
     const config = baseConfig();
-    const msg = makeMessage({ id, message: "once" });
 
     expect(await handleInboundMessage(msg, config)).toBe(true);
     expect(await handleInboundMessage(msg, config)).toBe(true);
@@ -138,10 +137,7 @@ describe("handleInboundMessage", () => {
 
   it("returns false when runtime is missing", async () => {
     setRedisStreamRuntime(null as never);
-    const ok = await handleInboundMessage(
-      makeMessage({ id: `redis-no-rt-${Date.now()}` }),
-      baseConfig(),
-    );
+    const ok = await handleInboundMessage(makeMessage(), baseConfig());
     expect(ok).toBe(false);
     expect(dispatchChannelMessage).not.toHaveBeenCalled();
   });
@@ -150,7 +146,6 @@ describe("handleInboundMessage", () => {
     await handleInboundMessage(
       makeMessage({
         channel: "custom:events:ingress",
-        id: `redis-default-${Date.now()}`,
       }),
       baseConfig({
         subscribeChannels: [],
