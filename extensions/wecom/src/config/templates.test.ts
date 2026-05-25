@@ -57,9 +57,9 @@ describe("formatWecomTemplate", () => {
 describe("resolveWecomToolStatusLine", () => {
   it("uses toolName when template includes placeholder", () => {
     const templates = resolveWecomTemplates({
-      toolStatusText: "🔧 正在调用 {toolName}…",
+      toolStatusText: "🧩 正在调用 {toolName}…",
     } as WeComConfig);
-    expect(resolveWecomToolStatusLine(templates, "web_search")).toBe("🔧 正在调用 web_search…");
+    expect(resolveWecomToolStatusLine(templates, "web_search")).toBe("🧩 正在调用 web_search…");
   });
 
   it("falls back to static tool template without placeholder", () => {
@@ -70,7 +70,7 @@ describe("resolveWecomToolStatusLine", () => {
 
   it("substitutes toolName in default tool template", () => {
     expect(resolveWecomToolStatusLine(WECOM_DEFAULT_TEMPLATES, "web_search")).toBe(
-      "🔧 正在调用 web_search…",
+      "🧩 正在调用 web_search…",
     );
   });
 });

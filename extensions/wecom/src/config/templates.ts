@@ -66,7 +66,7 @@ export type ResolvedWecomTemplates = {
 export const WECOM_DEFAULT_TEMPLATES: ResolvedWecomTemplates = {
   thinking: "🤔 正在思考…",
   received: "📩 已收到…",
-  tool: "🔧 正在调用 {toolName}…",
+  tool: "🧩 正在调用 {toolName}…",
   reading: "📎 正在阅读附件…",
   generating: "✍️ 正在输入…",
   compaction: "📦 正在压缩…",

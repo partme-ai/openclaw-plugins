@@ -374,7 +374,7 @@ export const wecomSetupWizard: ChannelSetupWizard = {
       "用户可见文案（推荐平铺 *Text，openclaw config set）：",
       '  channels.wecom.welcomeText "你好，我是助手"',
       '  channels.wecom.thinkingText "正在思考…"',
-      '  channels.wecom.toolStatusText "🔧 正在调用 {toolName}…"',
+      '  channels.wecom.toolStatusText "🧩 正在调用 {toolName}…"',
       '  channels.wecom.streamPlaceholderText "1"   # Bot 流式首帧占位（非欢迎语）',
     ],
     shouldShow: ({ cfg, accountId }) => !isConfigured(cfg, accountId),
