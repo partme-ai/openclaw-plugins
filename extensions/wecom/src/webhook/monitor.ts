@@ -70,10 +70,13 @@ import {
   syncWecomStreamContent,
 } from "../config/streaming-config.js";
 import {
-  resolveWecomTemplates,
-  buildMediaErrorSummary,
+  applyWecomWebhookStreamFinishContent,
   buildAgentReplyTimeoutSummary,
   buildDispatchErrorSummary,
+} from "../dispatch/finish-thinking.js";
+import {
+  resolveWecomTemplates,
+  buildMediaErrorSummary,
 } from "../config/templates.js";
 import { resolveWecomAgentReplyTimeoutMs } from "../config/wecom-config.js";
 import { TimeoutError, withTimeout } from "../shared/timeout.js";
@@ -986,10 +989,6 @@ export async function startAgentForStream(params: {
     if (err instanceof TimeoutError) {
       const summary = buildAgentReplyTimeoutSummary(agentReplyTimeoutMs, templates);
       streamStore.updateStream(streamId, (s) => {
-        if (!s.content?.trim()) {
-          s.content = summary;
-          s.answerText = summary;
-        }
         s.dispatchErrorSummary = summary;
       });
       target.runtime.error?.(
@@ -998,7 +997,6 @@ export async function startAgentForStream(params: {
     } else {
       const summary = buildDispatchErrorSummary("dispatch", err, templates);
       streamStore.updateStream(streamId, (s) => {
-        if (!s.content?.trim()) s.content = summary;
         s.dispatchErrorSummary = summary;
       });
     }
@@ -1025,8 +1023,13 @@ export async function startAgentForStream(params: {
     }
   }
 
-  // 空内容兜底（按 streaming 配置合成气泡，与 WS finish-thinking 一致）
+  // 空内容 / 失败兜底（按 streaming 配置合成气泡，与 WS finish-thinking 一致；failed 文案仅在关流阶段写入）
   streamStore.updateStream(streamId, (s) => {
+    if (s.dispatchErrorSummary && !s.answerText?.trim()) {
+      applyWecomWebhookStreamFinishContent(s, streamingConfig, templates, {
+        finishedAt: Date.now(),
+      });
+    }
     applyWecomWebhookEmptyContentFallback(s, streamingConfig, {
       hasMediaDelivered: (s.agentMediaKeys?.length ?? 0) > 0,
       hasFallback: Boolean(s.fallbackMode),

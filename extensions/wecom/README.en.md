@@ -442,35 +442,66 @@ Verification:
 
 ## User-Visible Text Templates
 
-All `*Text` fields are flat under `channels.wecom` (or account overrides). They map through `config/text-config.ts` to internal templates; defaults live in `WECOM_DEFAULT_TEMPLATES` in `config/templates.ts`.
+All `*Text` fields are flat under `channels.wecom` (or account overrides). They map through `config/text-config.ts` to internal templates; defaults live in `WECOM_DEFAULT_TEMPLATES` in `config/templates.ts`. Stage constants are in `config/text-stages.ts`.
 
-### Config Keys
+### Stages
+
+| Stage | When shown | Length guidance | Notes |
+|-------|------------|-----------------|-------|
+| **welcome** | enter_chat / subscribe | Can be longer | One-shot greeting, not stream typing |
+| **protocol** | Bot stream first frame `finish=false` | Very short (e.g. `"1"`) | `streamPlaceholderText`; protocol placeholder, not status bar |
+| **typing** | While processing, `finish=false` | **Keep short** (emoji + brief phrase, ~≤24 chars) | Status line / queue hint; updates frequently |
+| **failed** | Stream close `finish=true` or final fallback | Can be longer | Timeout, dispatch error, empty reply, media errors; **do not** use mid-stream |
+| **finalSuccess** | Successful close messages | Medium | Card sent, media delivered, session reset; **not** failed |
+
+`emptyReplyText` is **failed**: used only when closing with no displayable body. It is **never** used as a typing status line.
+
+### welcome & protocol
 
 | Config key | Internal key | Default (zh) | Typical use |
 |------------|--------------|--------------|-------------|
 | `welcomeText` | welcome | (empty) | enter_chat / subscribe welcome |
-| `streamPlaceholderText` | — | see below | Bot stream **protocol first frame**, not welcome |
-| `thinkingText` | thinking | 正在思考… | Status: Agent started reasoning |
-| `receivedText` | received | 已收到，正在处理… | WS status: after policy pass, before Agent starts |
-| `toolStatusText` | tool | 正在查资料… | Status: tool call in progress |
-| `readingText` | reading | 正在阅读附件… | Status: reading attachment |
-| `generatingText` | generating | 正在输入… | Status: answer block streaming |
-| `compactionText` | compaction | 📦 正在压缩上下文… | Status: context compaction |
-| `emptyReplyText` | emptyReply | ⚠️ 未能生成可展示的回复… | Fallback when closing stream with no body |
-| `finishFooterText` | finishFooter | ⏱ {elapsed}s · 已完成 | Elapsed-time footer on close |
-| `cardSentText` | cardSent | 📋 卡片消息已发送。 | Template card delivered |
-| `mediaSentText` | mediaSent | 📎 文件已发送，请查收。 | Media sent successfully |
-| `mediaParseFailedText` | mediaParseFailed | ⚠️ 未能解析该媒体…{emptyReply} | Inbound media parse failed |
-| `mediaDeliveredText` | mediaDelivered | ✅ 文件已发送。 | Webhook close when media sent separately |
-| `processedCompleteText` | processedComplete | ✅ 已处理完成。 | Webhook empty-content close fallback |
+| `streamPlaceholderText` | — | see below | Bot stream **protocol first frame**, not welcome or thinking status |
+
+### typing (`finish=false` status line)
+
+Keep copy short and lightweight (e.g. `🤔 正在思考…`). On WS, pushed via `statusLine` + `finish=false`; Webhook merge-queue ack uses the same category.
+
+| Config key | Internal key | Default (zh) | Typical use |
+|------------|--------------|--------------|-------------|
+| `thinkingText` | thinking | 🤔 正在思考… | Agent started reasoning |
+| `receivedText` | received | 📩 已收到… | WS: after policy pass, before Agent starts |
+| `toolStatusText` | tool | 🔍 正在查资料… | Tool call in progress (`{toolName}` optional) |
+| `readingText` | reading | 📎 正在阅读附件… | Reading inbound attachment |
+| `generatingText` | generating | ✍️ 正在输入… | Answer block streaming |
+| `compactionText` | compaction | 📦 正在压缩… | Context compaction |
+| `queuedText` | queued | ⏳ 排队中… | Same-session queue (WS status / Webhook placeholder) |
+| `mergedQueuedText` | mergedQueued | ⏳ 已合并排队… | Merged queue ack |
+
+### failed (final fallback / errors, close stage only)
+
+Long copy only makes sense here. Dispatch timeout/errors set `dispatchErrorSummary`; `resolveThinkingFinishText` / `applyWecomWebhookStreamFinishContent` compose final content **before close**, not during typing polls.
+
+| Config key | Internal key | Default (zh) | Typical use |
+|------------|--------------|--------------|-------------|
+| `emptyReplyText` | emptyReply | ⚠️ 未能生成可展示的回复… | **Final** empty-reply fallback on close |
 | `timeoutText` | timeout | ⚠️ 处理超时（约 {minutes} 分钟）… | Agent reply timeout (default 6 min) |
 | `dispatchErrorText` | dispatchError | ⚠️ 回复生成失败（{kind}）：{detail} | OpenClaw dispatch error |
+| `mediaParseFailedText` | mediaParseFailed | ⚠️ 未能解析该媒体…{emptyReply} | Inbound media parse failed (`{emptyReply}` at close) |
 | `mediaErrorNoAccessText` | mediaErrorNoAccess | ⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}… | Path outside `mediaLocalRoots` |
 | `mediaErrorReasonText` | mediaErrorReason | ⚠️ 文件发送失败：{reason} | Media send rejected |
 | `mediaErrorGenericText` | mediaErrorGeneric | ⚠️ 文件发送失败：无法处理文件 {mediaUrl}… | Other media errors |
-| `queuedText` | queued | 已收到，已排队处理中... | Same-session queue (WS status / Webhook placeholder) |
-| `mergedQueuedText` | mergedQueued | 已收到，已合并排队处理中... | Merged queue |
-| `mergedDoneText` | mergedDone | ✅ 已合并处理完成… | Merge complete |
+
+### finalSuccess (successful close, not typing or failed)
+
+| Config key | Internal key | Default (zh) | Typical use |
+|------------|--------------|--------------|-------------|
+| `finishFooterText` | finishFooter | ⏱ {elapsed}s · 已完成 | Elapsed-time footer appended to body |
+| `cardSentText` | cardSent | 📋 卡片消息已发送。 | Template card delivered |
+| `mediaSentText` | mediaSent | 📎 文件已发送，请查收。 | Media sent (finish frame) |
+| `mediaDeliveredText` | mediaDelivered | ✅ 文件已发送。 | Webhook close when media sent separately |
+| `processedCompleteText` | processedComplete | ✅ 已处理完成。 | Webhook empty-content successful close |
+| `mergedDoneText` | mergedDone | ✅ 已合并处理完成… | Merge complete (`finish=true`) |
 | `sessionResetText` | sessionReset | ✅ 已重置会话。 | Session reset command |
 | `sessionNewText` | sessionNew | ✅ 已开启新会话。 | New session command |
 
@@ -499,12 +530,12 @@ JSON does not allow comments. Keys are ordered by role: **welcome & stream proto
     "wecom": {
       "welcomeText": "Hello! I'm your assistant—send a message to get started.",
       "streamPlaceholderText": "1",
-      "thinkingText": "Thinking…",
-      "receivedText": "Got it, processing…",
+      "thinkingText": "🤔 Thinking…",
+      "receivedText": "📩 Got it…",
       "toolStatusText": "Running {toolName}…",
-      "readingText": "Reading attachment…",
-      "generatingText": "Writing reply…",
-      "compactionText": "📦 Compacting context…",
+      "readingText": "📎 Reading attachment…",
+      "generatingText": "✍️ Writing reply…",
+      "compactionText": "📦 Compacting…",
       "emptyReplyText": "⚠️ No reply could be generated. Please retry or send a text message.",
       "finishFooterText": "⏱ {elapsed}s · Done",
       "cardSentText": "📋 Card message sent.",
@@ -517,8 +548,8 @@ JSON does not allow comments. Keys are ordered by role: **welcome & stream proto
       "mediaErrorNoAccessText": "⚠️ File send failed: no access to {mediaUrl}\nAdd the parent directory to mediaLocalRoots in openclaw.json and restart.",
       "mediaErrorReasonText": "⚠️ File send failed: {reason}",
       "mediaErrorGenericText": "⚠️ File send failed: could not handle {mediaUrl}. Please try again later.",
-      "queuedText": "Received—queued for processing…",
-      "mergedQueuedText": "Received—merged and queued…",
+      "queuedText": "⏳ Queued…",
+      "mergedQueuedText": "⏳ Merged queue…",
       "mergedDoneText": "✅ Merged processing complete—see the previous reply.",
       "sessionResetText": "✅ Session reset.",
       "sessionNewText": "✅ New session started."

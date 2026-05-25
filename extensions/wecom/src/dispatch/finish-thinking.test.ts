@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyWecomWebhookStreamFinishContent,
   buildAgentReplyTimeoutSummary,
   buildDispatchErrorSummary,
   resolveThinkingFinishText,
 } from "./finish-thinking.js";
 import type { MessageState } from "../types/interface.js";
+import { WECOM_DEFAULT_TEMPLATES } from "../config/templates.js";
+import { isWecomTypingTemplateKey } from "../config/text-stages.js";
 
 describe("resolveThinkingFinishText", () => {
   it("优先返回累积文本", () => {
@@ -56,7 +59,12 @@ describe("resolveThinkingFinishText", () => {
 
   it("完全空状态时仍返回通用 fallback，避免 thinking 残留", () => {
     const text = resolveThinkingFinishText({ accumulatedText: "" });
-    expect(text.length).toBeGreaterThan(0);
+    expect(text).toBe(WECOM_DEFAULT_TEMPLATES.emptyReply);
+  });
+
+  it("emptyReply 不在 typing 模板键中", () => {
+    expect(isWecomTypingTemplateKey("emptyReply")).toBe(false);
+    expect(isWecomTypingTemplateKey("thinking")).toBe(true);
   });
 
   it("footer.elapsed 时在答案后附加耗时脚注", () => {
@@ -74,6 +82,43 @@ describe("resolveThinkingFinishText", () => {
     );
     expect(text).toContain("答案");
     expect(text).toContain("⏱ 12s · 已完成");
+  });
+});
+
+describe("applyWecomWebhookStreamFinishContent", () => {
+  it("writes dispatch error summary only at finish, clearing status line", () => {
+    const state = {
+      content: WECOM_DEFAULT_TEMPLATES.thinking,
+      statusLine: WECOM_DEFAULT_TEMPLATES.thinking,
+      answerText: "",
+      dispatchErrorSummary: "⚠️ 处理超时",
+    };
+    applyWecomWebhookStreamFinishContent(state, {
+      streaming: false,
+      streamingStatus: false,
+      streamingContent: false,
+      footerStatus: true,
+      footerElapsed: false,
+    });
+    expect(state.content).toBe("⚠️ 处理超时");
+    expect(state.statusLine).toBeUndefined();
+    expect(state.content).not.toBe(WECOM_DEFAULT_TEMPLATES.thinking);
+  });
+
+  it("does not replace visible answer when dispatch succeeded", () => {
+    const state = {
+      content: "partial",
+      answerText: "partial",
+      statusLine: WECOM_DEFAULT_TEMPLATES.generating,
+    };
+    applyWecomWebhookStreamFinishContent(state, {
+      streaming: false,
+      streamingStatus: false,
+      streamingContent: false,
+      footerStatus: true,
+      footerElapsed: false,
+    });
+    expect(state.content).toBe("partial");
   });
 });
 

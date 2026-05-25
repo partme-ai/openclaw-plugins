@@ -3,6 +3,8 @@
  *
  * WeCom 用户可见文案：平铺 *Text 字段与内部 resolved 键映射。
  *
+ * **阶段分类**（welcome / typing / failed / finalSuccess / protocol）见 {@link ./text-stages.js}。
+ *
  * **职责**：定义 `channels.wecom` 下可配置的 `*Text` 字段类型，
  * 以及内部 `ResolvedWecomTemplates` 键 → config 字段名的映射表，
  * 供 `resolveWecomTemplates` 合并默认值。
@@ -24,17 +26,21 @@ import type { ResolvedWecomTemplates } from "./templates.js";
  * 与内部 `ResolvedWecomTemplates` 键一一对应，见 {@link WECOM_TEXT_KEY_MAPPING}。
  */
 export type WeComUserTextConfig = {
-  /** enter_chat / subscribe 欢迎语 */
+  /** enter_chat / subscribe 欢迎语（welcome 类） */
   welcomeText?: string;
-  /** Bot 流式首帧 replyStream 占位（协议层，见 resolveWecomStreamPlaceholderText） */
+  /** Bot 流式首帧 replyStream 占位（protocol 类，见 resolveWecomStreamPlaceholderText） */
   streamPlaceholderText?: string;
+  /** typing：`finish=false` 状态栏 */
   thinkingText?: string;
+  /** typing：WS policy 通过后、Agent 开始前 */
   receivedText?: string;
   toolStatusText?: string;
   readingText?: string;
   generatingText?: string;
   compactionText?: string;
+  /** failed：关流时无正文兜底（非 typing 状态） */
   emptyReplyText?: string;
+  /** finalSuccess：关流耗时脚注模板 */
   finishFooterText?: string;
   cardSentText?: string;
   mediaSentText?: string;

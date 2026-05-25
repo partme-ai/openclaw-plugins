@@ -58,14 +58,18 @@ export type ResolvedWecomTemplates = {
   sessionNew: string;
 };
 
-/** 内置默认文案（与历史硬编码行为一致） */
+/**
+ * 内置默认文案（与历史硬编码行为一致）。
+ *
+ * typing 类宜短（emoji + 短句）；failed 类仅用于 finish=true 关流兜底，见 `text-stages.ts`。
+ */
 export const WECOM_DEFAULT_TEMPLATES: ResolvedWecomTemplates = {
-  thinking: "正在思考…",
-  received: "已收到，正在处理…",
-  tool: "正在查资料…",
-  reading: "正在阅读附件…",
-  generating: "正在输入…",
-  compaction: "📦 正在压缩上下文…",
+  thinking: "🤔 正在思考…",
+  received: "📩 已收到…",
+  tool: "🔍 正在查资料…",
+  reading: "📎 正在阅读附件…",
+  generating: "✍️ 正在输入…",
+  compaction: "📦 正在压缩…",
   emptyReply: "⚠️ 未能生成可展示的回复，请稍后重试或发送文字消息。",
   finishFooter: "⏱ {elapsed}s · 已完成",
   welcome: "",
@@ -80,8 +84,8 @@ export const WECOM_DEFAULT_TEMPLATES: ResolvedWecomTemplates = {
     "⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}\n请在 openclaw.json 的 mediaLocalRoots 中添加该路径的父目录后重启生效。",
   mediaErrorReason: "⚠️ 文件发送失败：{reason}",
   mediaErrorGeneric: "⚠️ 文件发送失败：无法处理文件 {mediaUrl}，请稍后再试。",
-  queued: "已收到，已排队处理中...",
-  mergedQueued: "已收到，已合并排队处理中...",
+  queued: "⏳ 排队中…",
+  mergedQueued: "⏳ 已合并排队…",
   mergedDone: "✅ 已合并处理完成，请查看上一条回复。",
   sessionReset: "✅ 已重置会话。",
   sessionNew: "✅ 已开启新会话。",
