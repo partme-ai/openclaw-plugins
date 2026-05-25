@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-stomp",
-  "version": "2026.5.20",
+  "version": "2026.5.25-2",
   "description": "OpenClaw STOMP channel plugin — native TCP STOMP with topic bindings, ACK/NACK and enterprise delivery controls",
   "type": "module",
   "main": "dist/index.js",
@@ -83,6 +83,6 @@
     }
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.24"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.25"
   }
 }

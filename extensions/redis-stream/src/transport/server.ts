@@ -446,6 +446,7 @@ async function reclaimStalePendingEntries(
     const claimed = claimResult.messages ?? [];
 
     for (const entry of claimed) {
+      if (!entry) continue;
       stats.messagesReclaimed++;
       stats.messagesRead++;
       stats.lastReadAt = Date.now();
