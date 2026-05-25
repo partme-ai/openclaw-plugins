@@ -161,6 +161,17 @@ npm run test:client
 - `STOMP_TEST_DEST_1`、`STOMP_TEST_DEST_2`
 - `STOMP_TEST_BODY_1`、`STOMP_TEST_BODY_2`
 
+## 企业级可靠性
+
+> 完整说明：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)
+
+| 项 | 行为 |
+|----|------|
+| **分级** | 协议限制需文档约束 |
+| **入站 SEND** | 无应用级 deferred ACK；dispatch 失败不自动重投 |
+| **出站 MESSAGE** | prefetch + client ACK；TCP NACK 可 requeue |
+| **隔离** | `subscribeTopics` destination allowlist |
+
 ## 状态接口
 
 `GET /stomp-tcp/status` 返回：

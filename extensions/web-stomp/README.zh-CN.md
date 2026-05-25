@@ -322,6 +322,17 @@ heart-beat:10000,10000
 ^@
 ```
 
+## 企业级可靠性
+
+> 完整说明：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)
+
+| 项 | 行为 |
+|----|------|
+| **分级** | 协议限制需文档约束 |
+| **入站** | SEND → `/queue/agent/*`；无 deferred ACK |
+| **出站** | MESSAGE client ACK + prefetch；**NACK 不重投** |
+| **隔离** | 入站 queue、回复 `/topic/session.*` |
+
 ## 监控
 
 通过 HTTP 访问服务器状态：

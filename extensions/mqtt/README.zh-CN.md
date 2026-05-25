@@ -293,6 +293,20 @@ openclaw-mqtt/
 
 通过 `topicBindings` 配置 `topicPattern` 与 `agentId`，可选配置 `replyTopic`。
 
+## 企业级可靠性
+
+> 完整说明：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)
+
+| 项 | 行为 |
+|----|------|
+| **分级** | 可企业试点 |
+| **入站 ACK** | MQTT 协议无 consumer ACK；dispatch 失败仅日志 |
+| **出站 reply** | `publishMessage` await Aedes 回调 |
+| **自消费** | broker 侧 publish（`client==null`）不触发入站 |
+| **背压** | QoS0 mailbox 软限制；QoS1 出站 ACK 重试 |
+| **幂等** | messageId 60s 内存 dedup |
+| **生产** | 开启 `auth`、TLS；多实例用 redis persistence |
+
 ## 相关链接
 
 | 资源 | 链接 |

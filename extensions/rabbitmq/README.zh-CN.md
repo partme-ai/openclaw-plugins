@@ -494,6 +494,20 @@ openclaw-rabbitmq/
 - [清单](https://docs.openclaw.ai/plugins/manifest)（`openclaw.plugin.json`、`package.json` `openclaw` 字段）
 - [架构](https://docs.openclaw.ai/plugins/architecture)
 
+## 企业级可靠性
+
+> 完整矩阵、生产配置与检查清单：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)
+
+| 项 | 行为 |
+|----|------|
+| **分级** | 可企业试点 |
+| **入站 ACK** | 延迟 ACK：`reply publish` 成功 + dispatch 完成后 ACK；失败 nack/requeue |
+| **出站** | `publish` 背压返回 false 时抛错（非 Publisher Confirm） |
+| **重试** | 可选 retry 队列 + TTL + DLX；超过 `maxAttempts` 后 nack |
+| **停止** | `nackAllPendingDeliveries` 清理 in-flight |
+| **幂等** | `idempotency.enabled`（**默认 false**，生产建议开启） |
+| **隔离** | `subscribeTopics` 勿包含 `*.out` reply 模式 |
+
 ## ❓ 常见问题
 
 ### 此插件是否需要外部 RabbitMQ 服务器？
