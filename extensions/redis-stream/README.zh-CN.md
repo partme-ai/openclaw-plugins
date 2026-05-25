@@ -333,3 +333,7 @@ MIT
 ⭐ **Star us on GitHub** — 你的支持是 PartMe 用爱发电的动力！
 
 </div>
+
+## 消息格式指南
+
+Redis Stream 使用共享的 OpenClaw 队列 wire 契约完成入站解析与 envelope 回复，并额外支持 Stream 字段映射。标准 `MessageEnvelope`、非标准消息归一化与多语言 SDK 适配说明见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。

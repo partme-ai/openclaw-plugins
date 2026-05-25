@@ -150,6 +150,12 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
     topicBindings,
     payload: {
       mode: mqttConfig?.payload?.mode ?? DEFAULT_BROKER_CONFIG.payload.mode,
+      outboundFormat:
+        mqttConfig?.payload?.outboundFormat === "envelope" ||
+        mqttConfig?.payload?.outboundFormat === "legacyJsonText" ||
+        mqttConfig?.payload?.outboundFormat === "plainText"
+          ? mqttConfig.payload?.outboundFormat
+          : DEFAULT_BROKER_CONFIG.payload.outboundFormat,
     },
     auth: {
       enabled: mqttConfig?.auth?.enabled ?? DEFAULT_BROKER_CONFIG.auth.enabled,

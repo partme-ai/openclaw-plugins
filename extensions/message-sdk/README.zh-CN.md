@@ -559,3 +559,7 @@ export async function transcribeMyProvider(
 ### 添加新的 TTS 提供商
 
 实现 `synthesizeXxx(text: string, config: TTSConfig): Promise<TTSResult>`。
+
+## 队列消息格式指南
+
+队列插件 wire 格式、适配器行为与多语言 SDK 指南见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。

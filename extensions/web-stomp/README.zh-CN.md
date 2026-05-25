@@ -432,3 +432,7 @@ pnpm dev   # watch 模式
 ## 许可证
 
 MIT
+
+## 消息格式指南
+
+Web STOMP 使用共享的 OpenClaw 队列 wire 契约完成入站解析，并固定以 envelope 回复。标准 `MessageEnvelope`、非标准消息归一化、固定 envelope 回复与多语言 SDK 适配说明见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。

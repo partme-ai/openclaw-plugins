@@ -541,3 +541,7 @@ openclaw plugins install @partme.ai/openclaw-nacos
 **PartMe.AI** specializes in AI customer service and enterprise AI agent infrastructure, providing end-to-end solutions from WeChat Work/DingTalk/Feishu/QQ channel integration to RAG knowledge bases, multi-layer memory, and production monitoring.
 
 > Contact: partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)
+
+## Queue Message Format Guide
+
+For queue plugin wire formats, adapter behavior, and cross-language SDK guidance, see [OpenClaw Queue Message Format Guide](../../doc/OpenClaw-Queue-Message-Format-Guide.en.md).

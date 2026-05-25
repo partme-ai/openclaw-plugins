@@ -322,3 +322,7 @@ This project is licensed under the [MIT License](LICENSE).
 Made with love by PartMe
 
 </div>
+
+## Message Format Guide
+
+MQTT uses the shared OpenClaw queue wire contract for inbound parsing and reply serialization. See [OpenClaw Queue Message Format Guide](../../doc/OpenClaw-Queue-Message-Format-Guide.en.md) for standard `MessageEnvelope` payloads, non-standard normalization, `payload.outboundFormat`, and cross-language SDK adapter guidance.

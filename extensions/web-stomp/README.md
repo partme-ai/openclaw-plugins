@@ -397,3 +397,7 @@ Multiple clients subscribed to same session for collaborative interactions.
 ## License
 
 MIT
+
+## Message Format Guide
+
+Web STOMP uses the shared OpenClaw queue wire contract for inbound parsing and envelope replies. See [OpenClaw Queue Message Format Guide](../../doc/OpenClaw-Queue-Message-Format-Guide.en.md) for standard `MessageEnvelope` payloads, non-standard normalization, fixed envelope replies, and cross-language SDK adapter guidance.

@@ -31,6 +31,24 @@ describe("resolveWebMqttConfig", () => {
     expect(config.subscribeTopics).toEqual(["devices/+/in"]);
     expect(config.topicBindings).toHaveLength(1);
   });
+
+  /**
+   * 验证出站 wire 格式配置会传递给 reply 序列化层。
+   */
+  it("should preserve outbound wire format", () => {
+    const config = resolveWebMqttConfig({
+      channels: {
+        "mqtt-ws": {
+          payload: {
+            mode: "jsonTextOrPlain",
+            outboundFormat: "plainText",
+          },
+        },
+      },
+    });
+
+    expect(config.payload.outboundFormat).toBe("plainText");
+  });
 });
 
 describe("validateWebMqttConfig", () => {

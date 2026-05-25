@@ -312,3 +312,7 @@ Built on top of [node-redis](https://github.com/redis/node-redis) by the Redis t
 ⭐ **Star us on GitHub** — your support keeps PartMe going!
 
 </div>
+
+## Message Format Guide
+
+Redis Stream uses the shared OpenClaw queue wire contract for inbound parsing and envelope replies, with additional Stream field mapping for non-standard entries. See [OpenClaw Queue Message Format Guide](../../doc/OpenClaw-Queue-Message-Format-Guide.en.md) for standard `MessageEnvelope` payloads, non-standard normalization, and cross-language SDK adapter guidance.

@@ -61,6 +61,12 @@ export function resolveWebMqttConfig(globalConfig: Record<string, unknown>): Web
     topicBindings: normalizeBindings(raw.topicBindings),
     payload: {
       mode: raw.payload?.mode === "jsonTextOrPlain" ? "jsonTextOrPlain" : DEFAULT_WEB_MQTT_CONFIG.payload.mode,
+      outboundFormat:
+        raw.payload?.outboundFormat === "envelope" ||
+        raw.payload?.outboundFormat === "legacyJsonText" ||
+        raw.payload?.outboundFormat === "plainText"
+          ? raw.payload?.outboundFormat
+          : DEFAULT_WEB_MQTT_CONFIG.payload.outboundFormat,
     },
     auth: {
       required: raw.auth?.required ?? DEFAULT_WEB_MQTT_CONFIG.auth.required,

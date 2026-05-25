@@ -90,6 +90,21 @@ describe("resolveBrokerConfig", () => {
     expect(r.auth.users[0]?.aclRules?.length).toBe(2);
   });
 
+  it("preserves configured outbound wire format", () => {
+    const r = resolveBrokerConfig({
+      channels: {
+        mqtt: {
+          payload: {
+            mode: "jsonTextOrPlain",
+            outboundFormat: "legacyJsonText",
+          },
+        },
+      },
+    });
+
+    expect(r.payload.outboundFormat).toBe("legacyJsonText");
+  });
+
   it("applies defaults when channels.mqtt is missing", () => {
     const r = resolveBrokerConfig({});
     expect(r.port).toBe(1883);

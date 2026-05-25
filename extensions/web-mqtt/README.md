@@ -207,3 +207,7 @@ Reference: [RabbitMQ Web MQTT](https://www.rabbitmq.com/docs/web-mqtt)
 ## License
 
 MIT
+
+## Message Format Guide
+
+Web MQTT uses the shared OpenClaw queue wire contract for inbound parsing and reply serialization. See [OpenClaw Queue Message Format Guide](../../doc/OpenClaw-Queue-Message-Format-Guide.en.md) for standard `MessageEnvelope` payloads, non-standard normalization, `payload.outboundFormat`, and cross-language SDK adapter guidance.

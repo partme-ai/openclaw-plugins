@@ -433,3 +433,7 @@ openclaw-gotify/
 Made with ❤️ by PartMe
 
 </div>
+
+## 消息格式指南
+
+Gotify 使用原生 Message API 与 WebSocket Stream JSON，不直接消费通用 MQ wire envelope。Gotify 如何映射到 `UnifiedMessage`，以及其它队列插件的标准消息契约，见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。
