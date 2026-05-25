@@ -179,7 +179,7 @@ async function dispatchToRuntime(
     reply: {
       deliver: async ({ wire }: { wire: Uint8Array | string }) => {
         const payload = typeof wire === "string" ? wire : Buffer.from(wire).toString("utf8");
-        publishMessage(replyTopic, payload);
+        await publishMessage(replyTopic, payload);
       },
       outboundFormat,
       replyRoute: { topic: replyTopic },

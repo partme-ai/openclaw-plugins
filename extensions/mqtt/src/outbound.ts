@@ -65,7 +65,7 @@ export const mqttOutbound: ChannelOutboundAdapter = {
       return { channel: "mqtt", messageId: "acl-denied" };
     }
 
-    publishMessage(outTopic, ctx.text, 0, cfg.retain.outboundRetain);
+    await publishMessage(outTopic, ctx.text, 0, cfg.retain.outboundRetain);
 
     console.log(`[openclaw-mqtt] Reply published to ${outTopic} for client ${clientId}`);
     return { channel: "mqtt", messageId: sessionKey };

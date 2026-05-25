@@ -104,23 +104,34 @@ export function trackRoute(source: "binding" | "standard"): void {
 
 /**
  * 发布消息到 topic。
+ *
+ * @returns 发布完成时 resolve；broker 未就绪或 Aedes 回调报错时 reject
  */
-export function publishToTopic(topic: string, payload: string): void {
-  if (!broker) return;
+export async function publishToTopic(topic: string, payload: string): Promise<void> {
+  if (!broker) {
+    throw new Error("[openclaw-web-mqtt] Cannot publish — broker not running");
+  }
   stats.outboundMessages += 1;
-  broker.publish(
-    {
-      topic,
-      payload: Buffer.from(payload, "utf-8"),
-      qos: 0 as const,
-      retain: false,
-      cmd: "publish" as const,
-      dup: false,
-    },
-    (err?: Error | null) => {
-      if (err) stats.lastError = String(err);
-    },
-  );
+  await new Promise<void>((resolve, reject) => {
+    broker!.publish(
+      {
+        topic,
+        payload: Buffer.from(payload, "utf-8"),
+        qos: 0 as const,
+        retain: false,
+        cmd: "publish" as const,
+        dup: false,
+      },
+      (err?: Error | null) => {
+        if (err) {
+          stats.lastError = String(err);
+          reject(err);
+          return;
+        }
+        resolve();
+      },
+    );
+  });
 }
 
 /**

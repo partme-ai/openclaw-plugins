@@ -90,7 +90,7 @@ describe("web-mqtt ws-server integration", () => {
       received.push(payload.toString("utf-8"));
     });
 
-    publishToTopic(replyTopic, "outbound-from-server");
+    await publishToTopic(replyTopic, "outbound-from-server");
     await new Promise((resolve) => setTimeout(resolve, 150));
     client.end(true);
 

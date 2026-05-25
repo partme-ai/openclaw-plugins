@@ -381,51 +381,54 @@ export async function stopBroker(): Promise<void> {
  * @param payload - 消息内容（UTF-8 字符串）
  * @param qos - QoS 级别（0 或 1）
  * @param retain - 是否保留消息
+ * @returns 发布完成时 resolve；broker 未就绪、载荷超限或 Aedes 回调报错时 reject
  */
-export function publishMessage(
+export async function publishMessage(
   topic: string,
   payload: string,
   qos: 0 | 1 = 0,
-  retain = false
-): void {
+  retain = false,
+): Promise<void> {
   if (!aedesInstance) {
-    console.warn("[openclaw-mqtt] Cannot publish — broker not running");
-    return;
+    throw new Error("[openclaw-mqtt] Cannot publish — broker not running");
   }
   if (activeBrokerConfig && Buffer.byteLength(payload, "utf-8") > activeBrokerConfig.limits.maxPayloadBytes) {
-    console.warn(
-      `[openclaw-mqtt] Cannot publish — payload exceeds maxPayloadBytes(${activeBrokerConfig.limits.maxPayloadBytes})`,
-    );
     logAuditEvent(activeBrokerConfig.audit, "warn", "outbound_payload_dropped_oversized", {
       topic,
       bytes: Buffer.byteLength(payload, "utf-8"),
       maxPayloadBytes: activeBrokerConfig.limits.maxPayloadBytes,
     });
-    return;
+    throw new Error(
+      `[openclaw-mqtt] Cannot publish — payload exceeds maxPayloadBytes(${activeBrokerConfig.limits.maxPayloadBytes})`,
+    );
   }
 
-  // Track outbound message
   updateMessageMetrics(topic, qos, "outbound");
 
-  aedesInstance.publish(
-    {
-      topic,
-      payload: Buffer.from(payload, "utf-8"),
-      qos,
-      retain,
-      cmd: "publish",
-      dup: false,
-    },
-    (err: Error | undefined) => {
-      if (err) {
-        console.error(`[openclaw-mqtt] Publish error on topic ${topic}:`, err);
-        logAuditEvent(activeBrokerConfig?.audit, "error", "outbound_publish_failed", {
-          topic,
-          error: String(err),
-        });
-      }
-    }
-  );
+  await new Promise<void>((resolve, reject) => {
+    aedesInstance!.publish(
+      {
+        topic,
+        payload: Buffer.from(payload, "utf-8"),
+        qos,
+        retain,
+        cmd: "publish",
+        dup: false,
+      },
+      (err: Error | undefined) => {
+        if (err) {
+          console.error(`[openclaw-mqtt] Publish error on topic ${topic}:`, err);
+          logAuditEvent(activeBrokerConfig?.audit, "error", "outbound_publish_failed", {
+            topic,
+            error: String(err),
+          });
+          reject(err);
+          return;
+        }
+        resolve();
+      },
+    );
+  });
 }
 
 /**

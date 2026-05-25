@@ -38,5 +38,5 @@ export async function publishOutboundText(sessionKey: string, text: string, topi
     }
   }
 
-  publishToTopic(topic, text);
+  await publishToTopic(topic, text);
 }
