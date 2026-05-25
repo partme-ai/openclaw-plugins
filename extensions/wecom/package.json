@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/wecom",
-  "version": "2026.5.25-2",
+  "version": "2026.5.25-3",
   "type": "module",
   "description": "OpenClaw WeCom (WeChat Work) intelligent bot channel plugin",
   "main": "./dist/index.js",
