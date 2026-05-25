@@ -562,34 +562,44 @@ JSON does not allow comments. Keys are ordered by role: **welcome & stream proto
 
 Use `channels.wecom.<key>` for global default copy. In multi-account setups, replace the prefix with `channels.wecom.accounts.<accountId>.<key>` for account-level overrides, for example `channels.wecom.accounts.cs-assistant.thinkingText`. The Agent app currently supports a separate welcome override only: `channels.wecom.agent.welcomeText`; other runtime text templates still use the global or account-level flat `*Text` fields.
 
-The sample values below use the Chinese copy from the JSON example; replace them with localized copy as needed. Keep placeholders such as `{toolName}`, `{elapsed}`, `{minutes}`, `{kind}`, `{detail}`, `{mediaUrl}`, `{reason}`, and `{emptyReply}` unchanged because runtime code replaces them.
+The sample values below use the Chinese copy from the JSON example; replace them with localized copy as needed. Keep placeholders such as `{toolName}`, `{elapsed}`, `{minutes}`, `{kind}`, `{detail}`, `{mediaUrl}`, `{reason}`, and `{emptyReply}` unchanged because runtime code replaces them. The commands below are grouped by five stages: **welcome**, **protocol**, **typing**, **failed**, and **finalSuccess**.
 
 ```bash
+# welcome — session/subscription greeting
 openclaw config set channels.wecom.welcomeText "您好！我是智能助手，发送消息即可开始对话。"
+
+# protocol — Bot stream first-frame placeholder (finish=false)
 openclaw config set channels.wecom.streamPlaceholderText "1"
+
+# typing — status line during finish=false
 openclaw config set channels.wecom.thinkingText "🤔 正在思考…"
 openclaw config set channels.wecom.receivedText "📩 已收到…"
 openclaw config set channels.wecom.toolStatusText "正在调用 {toolName}…"
 openclaw config set channels.wecom.readingText "📎 正在阅读附件…"
 openclaw config set channels.wecom.generatingText "✍️ 正在输入…"
 openclaw config set channels.wecom.compactionText "📦 正在压缩…"
+openclaw config set channels.wecom.queuedText "⏳ 排队中…"
+openclaw config set channels.wecom.mergedQueuedText "⏳ 已合并排队…"
+
+# failed — final fallback/errors at stream finish only
 openclaw config set channels.wecom.emptyReplyText "⚠️ 未能生成可展示的回复，请稍后重试或发送文字消息。"
-openclaw config set channels.wecom.finishFooterText "⏱ {elapsed}s · 已完成"
-openclaw config set channels.wecom.cardSentText "📋 卡片消息已发送。"
-openclaw config set channels.wecom.mediaSentText "📎 文件已发送，请查收。"
-openclaw config set channels.wecom.mediaParseFailedText "⚠️ 未能解析该媒体并生成回复。{emptyReply}"
-openclaw config set channels.wecom.mediaDeliveredText "✅ 文件已发送。"
-openclaw config set channels.wecom.processedCompleteText "✅ 已处理完成。"
 openclaw config set channels.wecom.timeoutText "⚠️ 处理超时（约 {minutes} 分钟），请稍后重试或发送文字消息。"
 openclaw config set channels.wecom.dispatchErrorText "⚠️ 回复生成失败（{kind}）：{detail}"
 openclaw config set channels.wecom.mediaErrorNoAccessText $'⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}\n请在 openclaw.json 的 mediaLocalRoots 中添加该路径的父目录后重启生效。'
 openclaw config set channels.wecom.mediaErrorReasonText "⚠️ 文件发送失败：{reason}"
 openclaw config set channels.wecom.mediaErrorGenericText "⚠️ 文件发送失败：无法处理文件 {mediaUrl}，请稍后再试。"
-openclaw config set channels.wecom.queuedText "⏳ 排队中…"
-openclaw config set channels.wecom.mergedQueuedText "⏳ 已合并排队…"
+openclaw config set channels.wecom.mediaParseFailedText "⚠️ 未能解析该媒体并生成回复。{emptyReply}"
+
+# finalSuccess — final success messages when stream closes
+openclaw config set channels.wecom.finishFooterText "⏱ {elapsed}s · 已完成"
+openclaw config set channels.wecom.cardSentText "📋 卡片消息已发送。"
+openclaw config set channels.wecom.mediaSentText "📎 文件已发送，请查收。"
+openclaw config set channels.wecom.mediaDeliveredText "✅ 文件已发送。"
+openclaw config set channels.wecom.processedCompleteText "✅ 已处理完成。"
 openclaw config set channels.wecom.mergedDoneText "✅ 已合并处理完成，请查看上一条回复。"
 openclaw config set channels.wecom.sessionResetText "✅ 已重置会话。"
 openclaw config set channels.wecom.sessionNewText "✅ 已开启新会话。"
+
 openclaw gateway restart
 ```
 
