@@ -357,6 +357,17 @@ The reply pipeline uses `serializeForTransport()` and defaults to standard `enve
 
 ## Cross-language SDK Strategy
 
+In-repo lightweight SDKs with tests: [sdk/README.en.md](../sdk/README.en.md) (中文：[sdk/README.md](../sdk/README.md)). JSON Schema: [sdk/schema/openclaw-message-envelope-v1.schema.json](../sdk/schema/openclaw-message-envelope-v1.schema.json).
+
+| Language | Path | Key APIs |
+|----------|------|----------|
+| TypeScript | [sdk/typescript](../sdk/typescript/) | `parseTransportPayload`, `serializeForTransport`, `buildEnvelope` |
+| Python | [sdk/python](../sdk/python/) | `parse_transport_payload`, `serialize_for_transport` |
+| Go | [sdk/go](../sdk/go/) | `ParseTransportPayload`, `SerializeForTransport` |
+| Java / Kotlin | [sdk/java](../sdk/java/) | `OpenClawMessageSdk.parseTransportPayload`, `serializeForTransport` |
+
+Runtime plugins still use `extensions/message-sdk`; `sdk/` targets devices and polyglot integrators with **no OpenClaw runtime dependency**.
+
 Every SDK should provide the same four capabilities:
 
 1. `parseStandardEnvelope(raw)`: parse `MessageEnvelope` v1.
@@ -366,10 +377,10 @@ Every SDK should provide the same four capabilities:
 
 ### TypeScript / JavaScript
 
-Use `@partme.ai/openclaw-message-sdk` directly:
+Use [sdk/typescript](../sdk/typescript/) (future npm package `@partme/openclaw-message-sdk`):
 
 ```ts
-import { parseTransportPayload, serializeForTransport } from "@partme.ai/openclaw-message-sdk";
+import { parseTransportPayload, serializeForTransport } from "@partme/openclaw-message-sdk";
 
 const parsed = parseTransportPayload(rawPayload, "jsonTextOrPlain");
 const reply = serializeForTransport({
@@ -388,20 +399,20 @@ const reply = serializeForTransport({
 
 ### Java / Kotlin
 
-Use Jackson or kotlinx.serialization DTOs mirroring `MessageEnvelope` and `UnifiedMessage`. Parse standard envelope first, then legacy `UnifiedMessage`, then `{text}`, then plain text. Replies should preserve `correlationId` and `replyRoute`.
+See [sdk/java](../sdk/java/) (zero-deps + Maven tests). Kotlin can depend on the Java module directly. Production code may also use Jackson DTOs with the same parse order. Replies should preserve `correlationId` and `replyRoute`.
 
 ### Python
 
-Use dataclasses or pydantic models with the same parse order. Keep `ensure_ascii=False` when serializing multilingual content.
+See [sdk/python](../sdk/python/). Use dataclasses/TypedDict with the same parse order. Keep `ensure_ascii=False` when serializing multilingual content.
 
 ### Go
 
-Use typed structs for `MessageEnvelope`, `UnifiedMessage`, and `ParsedPayload`. Unknown fields should be tolerated to preserve forward compatibility.
+See [sdk/go](../sdk/go/). Typed structs for `MessageEnvelope`, `UnifiedMessage`, and `ParsedTransportPayload`. Unknown JSON fields are tolerated for forward compatibility.
 
 ## Enterprise Follow-ups
 
-- Publish dedicated packages: `openclaw-message-sdk-java`, `openclaw-message-sdk-python`, and `openclaw-message-sdk-go`.
-- Maintain an official JSON Schema for `MessageEnvelope` v1 and validate examples in CI.
+- Publish [sdk/](../sdk/) packages to npm / PyPI / Maven Central / Go module proxy.
+- Validate [JSON Schema](../sdk/schema/openclaw-message-envelope-v1.schema.json) and sample payloads in CI.
 - Add configurable `payload.outboundFormat` to Redis Stream direct outbound behavior.
 - Add explicit payload configuration to STOMP/Web STOMP instead of relying on fixed envelope behavior.
 - Document Gotify as a native notification protocol mapper, not a generic MQ wire transport.

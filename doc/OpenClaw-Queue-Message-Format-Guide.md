@@ -471,6 +471,17 @@ Gotify does not consume the queue wire envelope directly. Inbound `/stream` mess
 
 ## 多语言 SDK 策略
 
+仓库已提供可复制的轻量 SDK 源码与测试，入口：[sdk/README.md](../sdk/README.md)（英文：[sdk/README.en.md](../sdk/README.en.md)）。JSON Schema 见 [sdk/schema/openclaw-message-envelope-v1.schema.json](../sdk/schema/openclaw-message-envelope-v1.schema.json)。
+
+| 语言 | 路径 | 主要 API |
+|------|------|----------|
+| TypeScript | [sdk/typescript](../sdk/typescript/) | `parseTransportPayload`, `serializeForTransport`, `buildEnvelope` |
+| Python | [sdk/python](../sdk/python/) | `parse_transport_payload`, `serialize_for_transport` |
+| Go | [sdk/go](../sdk/go/) | `ParseTransportPayload`, `SerializeForTransport` |
+| Java / Kotlin | [sdk/java](../sdk/java/) | `OpenClawMessageSdk.parseTransportPayload`, `serializeForTransport` |
+
+运行时插件仍依赖 `extensions/message-sdk`；`sdk/` 面向设备端与异构对接方，**无 OpenClaw 运行时依赖**。
+
 所有语言 SDK 应提供相同四类能力：
 
 1. `parseStandardEnvelope(raw)`：解析 `MessageEnvelope` v1，失败返回 `null`/`None`/`nil`。
@@ -480,13 +491,13 @@ Gotify does not consume the queue wire envelope directly. Inbound `/stream` mess
 
 ### TypeScript / JavaScript
 
-首选直接使用 `@partme.ai/openclaw-message-sdk`：
+首选使用仓库内 [sdk/typescript](../sdk/typescript/)（后续可发布为 `@partme/openclaw-message-sdk`）：
 
 ```ts
 import {
   parseTransportPayload,
   serializeForTransport,
-} from "@partme.ai/openclaw-message-sdk";
+} from "@partme/openclaw-message-sdk";
 
 const parsed = parseTransportPayload(rawPayload, "jsonTextOrPlain");
 
@@ -506,9 +517,18 @@ const reply = serializeForTransport({
 
 ### Java
 
-建议提供 `openclaw-message-sdk-java`，使用 Jackson：
+实现见 [sdk/java](../sdk/java/)（零第三方依赖 + Maven 测试）。生产环境也可改用 Jackson 绑定同一 DTO：
 
 ```java
+// 推荐：OpenClawMessageSdk（见 sdk/java）
+ParsedTransportPayload parsed = OpenClawMessageSdk.parseTransportPayload(raw, "jsonTextOrPlain");
+String reply = OpenClawMessageSdk.serializeForTransport(
+    "mqtt", "default", "device-001", "done", null,
+    OpenClawMessageSdk.FORMAT_ENVELOPE, null,
+    parsed.replyRoute()
+);
+
+// 可选：Jackson 手写 normalize（与 message-sdk 契约一致）
 record ParsedPayload(
     String text,
     MessageEnvelope envelope,
@@ -558,6 +578,25 @@ fun formatLegacyReply(text: String): String = objectMapper.writeValueAsString(ma
 
 ### Python
 
+实现见 [sdk/python](../sdk/python/)：
+
+```python
+from openclaw_message_sdk import parse_transport_payload, serialize_for_transport
+
+parsed = parse_transport_payload(raw)
+reply = serialize_for_transport({
+    "channel": "mqtt",
+    "accountId": "default",
+    "userId": "device-001",
+    "text": "done",
+    "format": "envelope",
+    "replyRoute": parsed.get("replyRoute") or {"topic": "devices/device-001/out"},
+})
+```
+
+<details>
+<summary>内联参考实现（与 SDK 等价）</summary>
+
 ```python
 import json
 import time
@@ -605,7 +644,23 @@ def format_reply(text: str, route: dict | None = None) -> str:
     }, ensure_ascii=False)
 ```
 
+</details>
+
 ### Go
+
+实现见 [sdk/go](../sdk/go/)：
+
+```go
+parsed := openclaw.ParseTransportPayload([]byte(raw), openclaw.ParseJSONTextOrPlain)
+wire, _ := openclaw.SerializeForTransport(openclaw.SerializeOutboundParams{
+    Channel: "mqtt", AccountID: "default", UserID: "device-001", Text: "done",
+    Format: openclaw.FormatEnvelope,
+    ReplyRoute: parsed.ReplyRoute,
+})
+```
+
+<details>
+<summary>内联参考实现（与 SDK 等价）</summary>
 
 ```go
 type ParsedPayload struct {
@@ -641,6 +696,8 @@ func NormalizePayload(raw []byte) ParsedPayload {
 }
 ```
 
+</details>
+
 ## 用户使用建议
 
 - 新系统：发送 `MessageEnvelope` v1，回复也订阅/消费 `envelope`。
@@ -652,8 +709,8 @@ func NormalizePayload(raw []byte) ParsedPayload {
 
 ## 企业级后续建议
 
-- 发布独立多语言 SDK 包：`openclaw-message-sdk-java`、`openclaw-message-sdk-python`、`openclaw-message-sdk-go`。
-- 为 `MessageEnvelope` v1 维护正式 JSON Schema，并在 CI 中校验示例 payload。
+- 将 [sdk/](../sdk/) 各语言包发布到 npm / PyPI / Maven Central / Go module proxy。
+- 为 `MessageEnvelope` v1 在 CI 中校验 [JSON Schema](../sdk/schema/openclaw-message-envelope-v1.schema.json) 与示例 payload。
 - 为 Redis Stream 增加可配置 `payload.outboundFormat`，让直接 outbound adapter 与 reply pipeline 策略一致。
 - 为 STOMP/Web STOMP 增加显式 payload 配置项，减少“固定 envelope”隐式行为。
 - 为 Gotify 文档强调它是原生通知协议映射，不是通用 MQ wire transport。

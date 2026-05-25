@@ -32,6 +32,7 @@
 | 插件 | 文档入口 |
 |------|----------|
 | **队列消息格式（总览）** | [标准消息格式指南 (CN)](./OpenClaw-Queue-Message-Format-Guide.md) · [Message Format Guide (EN)](./OpenClaw-Queue-Message-Format-Guide.en.md) |
+| **多语言 Queue Message SDK** | [SDK 总览 (CN)](../sdk/README.md) · [SDK Overview (EN)](../sdk/README.en.md) · [JSON Schema](../sdk/schema/openclaw-message-envelope-v1.schema.json) |
 | **队列可靠性（总览）** | [企业级可靠性指南 (CN)](./OpenClaw-Queue-Reliability-Guide.md) · [Summary (EN)](./OpenClaw-Queue-Reliability-Guide.en.md) |
 | **redis-stream** | [Guide (EN)](./redis-stream/OpenClaw-Redis-Stream-Guide.md) · [指南 (CN)](./redis-stream/OpenClaw-Redis-Stream-Guide_CN.md) · [架构 (CN)](./redis-stream/OpenClaw-Redis-Stream-Architecture_CN.md) · [参考 (CN)](./redis-stream/OpenClaw-Redis-Stream-Reference_CN.md) |
 | **rocketmq** | [Guide](./rocketmq/OpenClaw-RocketMQ-Guide.md) · [Architecture](./rocketmq/OpenClaw-RocketMQ-Architecture.md) · [API](./rocketmq/OpenClaw-RocketMQ-API.md) · [Technical](./rocketmq/OpenClaw-RocketMQ-Technical.md) · [Development](./rocketmq/OpenClaw-RocketMQ-Development.md) |

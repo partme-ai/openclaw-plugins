@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openclaw.partme.ai/schema/openclaw-message-envelope-v1.schema.json",
+  "title": "OpenClaw MessageEnvelope v1",
+  "description": "Versioned wire transport envelope for OpenClaw queue plugins.",
+  "type": "object",
+  "required": ["version", "message"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1"
+    },
+    "message": {
+      "$ref": "#/$defs/UnifiedMessage"
+    },
+    "headers": {
+      "type": "object",
+      "properties": {
+        "correlationId": { "type": "string" },
+        "idempotencyKey": { "type": "string" },
+        "replyRoute": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "properties": {
+            "topic": { "type": "string" },
+            "routingKey": { "type": "string" },
+            "exchange": { "type": "string" },
+            "destination": { "type": "string" },
+            "queue": { "type": "string" }
+          }
+        },
+        "encoding": {
+          "type": "string",
+          "enum": ["json", "plain"]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "UnifiedMessage": {
+      "type": "object",
+      "required": ["messageId", "traceId", "timestamp", "source", "contentType", "text", "media", "direction"],
+      "properties": {
+        "messageId": { "type": "string" },
+        "traceId": { "type": "string" },
+        "timestamp": { "type": "integer" },
+        "source": {
+          "type": "object",
+          "required": ["channel", "accountId", "userId", "chatType"],
+          "properties": {
+            "channel": { "type": "string" },
+            "accountId": { "type": "string" },
+            "userId": { "type": "string" },
+            "chatType": { "type": "string", "enum": ["direct", "group"] },
+            "agentId": { "type": "string" }
+          }
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "channels": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "routingRule": { "type": "string" }
+          }
+        },
+        "contentType": {
+          "type": "string",
+          "enum": ["text", "markdown", "mixed"]
+        },
+        "text": { "type": "string" },
+        "markdown": { "type": "string" },
+        "media": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MediaReference" }
+        },
+        "replyToMessageId": { "type": "string" },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["inbound", "outbound"]
+        }
+      }
+    },
+    "MediaReference": {
+      "type": "object",
+      "required": ["url", "kind", "mimeType"],
+      "properties": {
+        "url": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["image", "video", "audio", "document", "archive", "other"]
+        },
+        "mimeType": { "type": "string" },
+        "fileName": { "type": "string" },
+        "sizeBytes": { "type": "integer" },
+        "base64": { "type": "string" },
+        "thumbnailUrl": { "type": "string" },
+        "durationSeconds": { "type": "number" },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" }
+      }
+    }
+  }
+}
