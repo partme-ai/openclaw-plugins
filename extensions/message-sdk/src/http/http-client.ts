@@ -135,7 +135,7 @@ export function defaultShouldRetry(error: unknown): boolean {
     if (error.name === "TypeError" || error.name === "TimeoutError") return true;
     if ("status" in error && typeof (error as { status: number }).status === "number") {
       const status = (error as { status: number }).status;
-      return status >= 500 && status < 600;
+      return status === 429 || (status >= 500 && status < 600);
     }
   }
   return false;

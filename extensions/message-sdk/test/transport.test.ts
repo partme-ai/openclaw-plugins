@@ -132,8 +132,8 @@ describe("isUserActionAllowed", () => {
     expect(isUserActionAllowed({ user, action: "publish", topic: "openclaw/x/in" })).toBe(true);
   });
 
-  it("no matching rules = default allow", () => {
-    expect(isUserActionAllowed({ user, action: "inbound", topic: "anything" })).toBe(true);
+  it("no matching rules = default deny", () => {
+    expect(isUserActionAllowed({ user, action: "inbound", topic: "anything" })).toBe(false);
   });
 
   it("undefined user = deny", () => {

@@ -25,7 +25,7 @@
   "author": "PartMe",
   "license": "MIT",
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.25"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
   },
   "files": [
     "dist",

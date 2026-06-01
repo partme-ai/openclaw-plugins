@@ -14,7 +14,7 @@
 
 `@partme.ai/wecom` 用于把 OpenClaw 接入企业微信。它面向中国企业微信用户，支持智能机器人 Bot WebSocket、Bot HTTP Webhook 和自建应用 Agent 三条路径：Bot 负责低门槛交互式对话与流式回复，Agent 负责主动推送、Cron 定时投递、部门/标签广播和完整文件兜底。
 
-当前版本：`2026.5.25`。依赖 `@partme.ai/openclaw-message-sdk`：`2026.5.24`。`pnpm test` 当前约 330 个 Vitest 用例，数量会随源码覆盖变化。
+当前版本：`2026.6.1`。依赖 `@partme.ai/openclaw-message-sdk`：`2026.6.1`。`pnpm test` 当前 395 个 Vitest 用例。
 
 ## ✨ 核心能力
 
@@ -446,407 +446,51 @@ openclaw gateway restart
 
 ## 用户可见文案模板
 
-所有 `*Text` 字段平铺在 `channels.wecom`（或账号级覆盖），由 `config/text-config.ts` 映射到内部模板，默认值见 `config/templates.ts` 的 `WECOM_DEFAULT_TEMPLATES`。阶段分类常量见 `config/text-stages.ts`。
+所有 `*Text` 字段平铺在 `channels.wecom`（或账号级覆盖），按 5 个阶段分类：welcome → protocol → typing → failed → finalSuccess。
 
-### 阶段说明
+完整 25 个配置键说明、占位符参考和逐项命令设置见 [docs/text-templates.md](./docs/text-templates.md)。
 
-| 阶段 | 何时展示 | 文案长度建议 | 说明 |
-|------|----------|--------------|------|
-| **welcome** | enter_chat / subscribe | 可较长 | 一次性欢迎，不属于流式 typing |
-| **protocol** | Bot 流式首帧 `finish=false` | 极短（如 `"1"`） | `streamPlaceholderText`，占住协议通道，非状态栏 |
-| **typing** | 处理过程中 `finish=false` | **宜短**（emoji + 短句，约 ≤24 字） | 状态栏/排队提示，会频繁刷新 |
-| **failed** | 关流 `finish=true` 或等价最终兜底 | 可较长 | 超时、dispatch 失败、空回复、媒体错误等；**不要**用于中间状态 |
-| **finalSuccess** | 成功关流时的最终提示 | 中等 | 卡片已发、媒体已投递、会话重置等；**不是** failed |
-
-`emptyReplyText` 属于 **failed**：仅在 Agent 未产出可展示正文、关流时需要兜底时使用，**不会**作为 typing 状态栏文案。
-
-### welcome 与 protocol
-
-| 配置键 | 内部键 | 默认文案 | 典型使用场景 |
-|--------|--------|----------|--------------|
-| `welcomeText` | welcome | （空） | enter_chat / subscribe 欢迎语 |
-| `streamPlaceholderText` | — | 见下方说明 | Bot 流式**协议首帧**占位，非欢迎语、非 thinking 状态栏 |
-
-### typing（`finish=false` 状态栏）
-
-宜短、轻量，适合频繁更新（如 `🤔 正在思考…`）。在 WS 上通过 `statusLine` + `finish=false` 推送；Webhook 合并排队占位亦使用此类文案。
-
-| 配置键 | 内部键 | 默认文案 | 典型使用场景 |
-|--------|--------|----------|--------------|
-| `thinkingText` | thinking | 🤔 正在思考… | Agent 开始推理 |
-| `receivedText` | received | 📩 已收到… | WS：policy 通过后、Agent 开始前 |
-| `toolStatusText` | tool | 🧩 正在调用 {toolName}… | 工具调用中（可含 `{toolName}`） |
-| `readingText` | reading | 📎 正在阅读附件… | 阅读入站附件 |
-| `generatingText` | generating | ✍️ 正在输入… | 生成答案 block |
-| `compactionText` | compaction | 📦 正在压缩… | 上下文压缩 |
-| `queuedText` | queued | ⏳ 排队中… | 同会话排队（WS 状态栏 / Webhook 占位） |
-| `mergedQueuedText` | mergedQueued | ⏳ 已合并排队… | 合并排队回执 |
-
-### failed（最终兜底 / 错误，仅关流阶段）
-
-长文案仅在此阶段有意义；dispatch 超时/失败时写入 `dispatchErrorSummary`，由 `resolveThinkingFinishText` / `applyWecomWebhookStreamFinishContent` 在 **关流前** 合成最终 content，不在 typing 中间帧刷屏。
-
-| 配置键 | 内部键 | 默认文案 | 典型使用场景 |
-|--------|--------|----------|--------------|
-| `emptyReplyText` | emptyReply | ⚠️ 未能生成可展示的回复… | **最终**空回复兜底（无正文关流） |
-| `timeoutText` | timeout | ⚠️ 处理超时（约 {minutes} 分钟）… | Agent 回复超时（默认 6 分钟） |
-| `dispatchErrorText` | dispatchError | ⚠️ 回复生成失败（{kind}）：{detail} | OpenClaw dispatch 错误 |
-| `mediaParseFailedText` | mediaParseFailed | ⚠️ 未能解析该媒体…{emptyReply} | 入站媒体解析失败（关流时注入 `{emptyReply}`） |
-| `mediaErrorNoAccessText` | mediaErrorNoAccess | ⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}… | 本地路径不在 `mediaLocalRoots` |
-| `mediaErrorReasonText` | mediaErrorReason | ⚠️ 文件发送失败：{reason} | 媒体发送被拒 |
-| `mediaErrorGenericText` | mediaErrorGeneric | ⚠️ 文件发送失败：无法处理文件 {mediaUrl}… | 其他媒体错误 |
-
-### finalSuccess（成功关流提示，非 typing、非 failed）
-
-| 配置键 | 内部键 | 默认文案 | 典型使用场景 |
-|--------|--------|----------|--------------|
-| `finishFooterText` | finishFooter | ⏱ {elapsed}s · 已完成 | 关流耗时脚注（附加在正文后） |
-| `cardSentText` | cardSent | 📋 卡片消息已发送。 | 模板卡片已投递 |
-| `mediaSentText` | mediaSent | 📎 文件已发送，请查收。 | 媒体发送成功（finish 帧） |
-| `mediaDeliveredText` | mediaDelivered | ✅ 文件已发送。 | Webhook 关流前媒体已单独投递 |
-| `processedCompleteText` | processedComplete | ✅ 已处理完成。 | Webhook 空 content 成功关流兜底 |
-| `mergedDoneText` | mergedDone | ✅ 已合并处理完成，请查看上一条回复。 | 合并处理完成（`finish=true`） |
-| `sessionResetText` | sessionReset | ✅ 已重置会话。 | `/reset` 等会话重置命令 |
-| `sessionNewText` | sessionNew | ✅ 已开启新会话。 | `/new` 新会话命令 |
-
-### 占位符
-
-下列占位符由 `formatWecomTemplate` / message-sdk 在运行时替换；未列出的 `*Text` 键为**静态文案**（不含 `{…}`）。
-
-| 占位符 | 适用配置键 | 含义 |
-|--------|------------|------|
-| `{toolName}` | `toolStatusText` | 当前工具名；模板含此占位符且传入工具名时替换，否则使用整段静态文案 |
-| `{elapsed}` | `finishFooterText` | 关流耗时秒数（至少 1s，见 `formatWecomElapsedFooter`） |
-| `{minutes}` | `timeoutText` | Agent 回复超时阈值分钟数（`timeoutMs / 60000` 取整） |
-| `{kind}` | `dispatchErrorText` | OpenClaw dispatch 错误类别标识 |
-| `{detail}` | `dispatchErrorText` | 截断后的错误详情（默认最长 200 字符） |
-| `{emptyReply}` | `mediaParseFailedText` | 运行时注入已解析的 `emptyReplyText` 全文 |
-| `{mediaUrl}` | `mediaErrorNoAccessText`、`mediaErrorGenericText` | 媒体本地路径或 URL |
-| `{reason}` | `mediaErrorReasonText` | 媒体发送被拒原因（`rejectReason` 或 `error`） |
-
-### 完整示例（全部 25 个 `*Text` 键）
-
-JSON 不支持注释；下方按职责分组排列：**欢迎与流式协议** → **状态栏** → **关流与兜底** → **卡片/媒体** → **错误** → **排队与会话命令**。可按需删除未使用的键，未配置项使用 `WECOM_DEFAULT_TEMPLATES` 默认值。
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "welcomeText": "您好！我是智能助手，发送消息即可开始对话。",
-      "streamPlaceholderText": "1",
-      "thinkingText": "🤔 正在思考…",
-      "receivedText": "📩 已收到…",
-      "toolStatusText": "🧩 正在调用 {toolName}…",
-      "readingText": "📎 正在阅读附件…",
-      "generatingText": "✍️ 正在输入…",
-      "compactionText": "📦 正在压缩…",
-      "emptyReplyText": "⚠️ 未能生成可展示的回复，请稍后重试或发送文字消息。",
-      "finishFooterText": "⏱ {elapsed}s · 已完成",
-      "cardSentText": "📋 卡片消息已发送。",
-      "mediaSentText": "📎 文件已发送，请查收。",
-      "mediaParseFailedText": "⚠️ 未能解析该媒体并生成回复。{emptyReply}",
-      "mediaDeliveredText": "✅ 文件已发送。",
-      "processedCompleteText": "✅ 已处理完成。",
-      "timeoutText": "⚠️ 处理超时（约 {minutes} 分钟），请稍后重试或发送文字消息。",
-      "dispatchErrorText": "⚠️ 回复生成失败（{kind}）：{detail}",
-      "mediaErrorNoAccessText": "⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}\n请在 openclaw.json 的 mediaLocalRoots 中添加该路径的父目录后重启生效。",
-      "mediaErrorReasonText": "⚠️ 文件发送失败：{reason}",
-      "mediaErrorGenericText": "⚠️ 文件发送失败：无法处理文件 {mediaUrl}，请稍后再试。",
-      "queuedText": "⏳ 排队中…",
-      "mergedQueuedText": "⏳ 已合并排队…",
-      "mergedDoneText": "✅ 已合并处理完成，请查看上一条回复。",
-      "sessionResetText": "✅ 已重置会话。",
-      "sessionNewText": "✅ 已开启新会话。"
-    }
-  }
-}
-```
-
-### 逐项命令设置
-
-全局默认文案使用 `channels.wecom.<key>`。多账号场景下，账号级覆盖可将前缀替换为 `channels.wecom.accounts.<accountId>.<key>`，例如 `channels.wecom.accounts.cs-assistant.thinkingText`。自建应用当前仅支持独立覆盖欢迎语：`channels.wecom.agent.welcomeText`；其他运行中文案仍使用全局或账号级平铺 `*Text` 字段。
-
-下面命令可直接复制执行；包含 `{toolName}`、`{elapsed}`、`{minutes}`、`{kind}`、`{detail}`、`{mediaUrl}`、`{reason}`、`{emptyReply}` 的占位符需要原样保留，由运行时替换。以下命令按五类阶段分组：**welcome**（欢迎）、**protocol**（流式协议占位）、**typing**（处理中状态栏）、**failed**（关流兜底/错误）、**finalSuccess**（成功关流提示）。
+快速示例：
 
 ```bash
-# welcome（进入会话/订阅欢迎）
 openclaw config set channels.wecom.welcomeText "您好！我是智能助手，发送消息即可开始对话。"
-
-# protocol（Bot 流式协议首帧占位，finish=false）
-openclaw config set channels.wecom.streamPlaceholderText "1"
-
-# typing（finish=false 期间的状态栏/占位）
 openclaw config set channels.wecom.thinkingText "🤔 正在思考…"
-openclaw config set channels.wecom.receivedText "📩 已收到…"
-openclaw config set channels.wecom.toolStatusText "🧩 正在调用 {toolName}…"
-openclaw config set channels.wecom.readingText "📎 正在阅读附件…"
-openclaw config set channels.wecom.generatingText "✍️ 正在输入…"
-openclaw config set channels.wecom.compactionText "📦 正在压缩…"
-openclaw config set channels.wecom.queuedText "⏳ 排队中…"
-openclaw config set channels.wecom.mergedQueuedText "⏳ 已合并排队…"
-
-# failed（最终兜底 / 错误，仅关流阶段）
-openclaw config set channels.wecom.emptyReplyText "⚠️ 未能生成可展示的回复，请稍后重试或发送文字消息。"
-openclaw config set channels.wecom.timeoutText "⚠️ 处理超时（约 {minutes} 分钟），请稍后重试或发送文字消息。"
-openclaw config set channels.wecom.dispatchErrorText "⚠️ 回复生成失败（{kind}）：{detail}"
-openclaw config set channels.wecom.mediaErrorNoAccessText $'⚠️ 文件发送失败：没有权限访问路径 {mediaUrl}\n请在 openclaw.json 的 mediaLocalRoots 中添加该路径的父目录后重启生效。'
-openclaw config set channels.wecom.mediaErrorReasonText "⚠️ 文件发送失败：{reason}"
-openclaw config set channels.wecom.mediaErrorGenericText "⚠️ 文件发送失败：无法处理文件 {mediaUrl}，请稍后再试。"
-openclaw config set channels.wecom.mediaParseFailedText "⚠️ 未能解析该媒体并生成回复。{emptyReply}"
-
-# finalSuccess（成功关流时的最终提示）
-openclaw config set channels.wecom.finishFooterText "⏱ {elapsed}s · 已完成"
-openclaw config set channels.wecom.cardSentText "📋 卡片消息已发送。"
-openclaw config set channels.wecom.mediaSentText "📎 文件已发送，请查收。"
-openclaw config set channels.wecom.mediaDeliveredText "✅ 文件已发送。"
-openclaw config set channels.wecom.processedCompleteText "✅ 已处理完成。"
-openclaw config set channels.wecom.mergedDoneText "✅ 已合并处理完成，请查看上一条回复。"
-openclaw config set channels.wecom.sessionResetText "✅ 已重置会话。"
-openclaw config set channels.wecom.sessionNewText "✅ 已开启新会话。"
-
+openclaw config set channels.wecom.emptyReplyText "⚠️ 未能生成可展示的回复，请稍后重试。"
 openclaw gateway restart
-```
-
-`mediaErrorNoAccessText` 含换行，zsh/bash 推荐使用上面的 ANSI-C quoting（`$'...\n...'`）。如果你的 shell 不支持该写法，请改用 JSON/文件方式写入配置，避免把 `\n` 写成普通文本。
-
-自建应用欢迎语可单独覆盖：
-
-```bash
-openclaw config set channels.wecom.agent.welcomeText "欢迎使用自建应用，我会尽快回复您。"
 ```
 
 ## 流式输出
 
-仅 **Bot WebSocket** 与 **Bot Webhook** 支持企业微信 `stream` / `replyStream` 流式载体；**Agent 自建应用入站对话不支持 Bot 式流式**，出站以 `sendMessage` 一次性 Markdown / 媒体为主。
+仅 Bot WebSocket 与 Bot Webhook 支持流式载体。支持 3 种模式：默认（状态栏 + 整包答案）、打字机（增量答案）、仅状态栏。
 
-### 流式输出配置速查
-
-下面几组命令来自 [流式架构](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md)，适合直接复制到本地环境中切换体验。
+快速切换：
 
 ```bash
-# 默认模式：状态栏过程 + 最终整包答案（推荐大多数业务 Bot）
+# 默认模式（推荐）
 openclaw config set channels.wecom.streaming false
 openclaw config set channels.wecom.footer.status true
 openclaw config set channels.wecom.footer.elapsed true
 
-# 开启流式输出：状态进度 + 答案打字机
+# 打字机 + 工具进度
 openclaw config set channels.wecom.streaming true
 openclaw config set channels.wecom.streaming.status true
 openclaw config set channels.wecom.streaming.content true
-
-# 仅答案打字机：不刷中间状态行
-openclaw config set channels.wecom.streaming true
-openclaw config set channels.wecom.streaming.status false
-openclaw config set channels.wecom.streaming.content true
-
-# 关闭流式输出
-openclaw config set channels.wecom.streaming false
-
-# thinking 占位消息
-openclaw config set channels.wecom.sendThinkingMessage true
 ```
 
-JSON 等价写法：
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "streaming": {
-        "status": true,
-        "content": true
-      },
-      "footer": {
-        "status": true,
-        "elapsed": true
-      },
-      "sendThinkingMessage": true
-    }
-  }
-}
-```
-
-`streaming` 可以是布尔值，也可以是对象。CLI 中的 `channels.wecom.streaming.status` / `channels.wecom.streaming.content` 会写入对象形态；源码解析会同时接受 `true`、`false` 和 `{ "enabled"?, "status"?, "content"? }`。若要显式关闭对象形态下的流式，可写 `{ "enabled": false }` 或直接执行 `openclaw config set channels.wecom.streaming false`。
-
-### 配置形式
-
-`channels.wecom.streaming` 支持布尔或对象：
-
-| 写法 | 含义 |
-|------|------|
-| 省略 / `false` | **默认模式**：仅状态栏 + 关流时整包答案（`streamingContent=false`） |
-| `true` | **流式模式**：中间 status 与 answer block 增量均开启 |
-| `{ "status": false, "content": true }` | 仅答案增量，不刷状态行 |
-| `{ "enabled": false }` | 显式关闭对象形式下的流式（见 `WecomStreamingNestedConfig`） |
-
-`channels.wecom.footer`：
-
-| 键 | 默认 | 说明 |
-|----|------|------|
-| `footer.status` | `true` | 是否在气泡中展示状态行（thinking / tool / reading 等） |
-| `footer.elapsed` | `false` | 关流时是否附加耗时脚注（`finishFooterText`） |
-
-`sendThinkingMessage`（默认 `true`）：为 `true` 时，WS 在 Agent 首 token 前会通过 `sendThinkingReply` 发送**协议首帧**（`streamPlaceholderText` 或内置 `<think></think>`），避免长时间空白气泡；为 `false` 时跳过该 thinking 首帧。
-
-`streamPlaceholderText`：Bot 流式通道的第一条 `finish=false` 内容，与 `welcomeText`、`thinkingText` 不同。Webhook 未配置时常见回退为 `"1"`（企微要求先回一条非空 stream）。
-
-解析与合成逻辑：`config/streaming-config.ts`（委托 `@partme.ai/openclaw-message-sdk/transcript`），将 status / answer / footer 拼成**单条纯文本** `replyStream` 内容。
-
-### 三种模式行为差异
-
-| 能力 | Bot WebSocket | Bot Webhook | Agent |
-|------|---------------|-------------|-------|
-| 流式载体 | `replyStream` / `replyStreamNonBlocking` | HTTP `msgtype: stream` + `stream_refresh` 轮询 | 无 Bot stream |
-| 首帧占位 | `sendThinkingReply` + `streamPlaceholderText` | `resolveWecomStreamPlaceholderText`，默认 `"1"` | 不适用 |
-| 状态栏 | `footer.status` 或 `streaming.status` | 同左，`webhook/reply-pipeline.ts` | 不适用 |
-| 媒体出站 | `aibot_send_msg` 主动发送，不覆盖 thinking 流 | `outbound/reply-deliver.ts` 写入 streamStore | Agent API 上传发送 |
-| 关流文案 | `dispatch/finish-thinking.ts` → `resolveThinkingFinishText` | 同逻辑 + `applyWecomWebhookEmptyContentFallback` | 最终 API 消息 |
-
-### 硬约束与降级
-
-- **纯文本**：`replyStream` 内容不支持 Markdown；最终展示是否富文本取决于降级路径（如 `sendMessage` markdown）。
-- **6 分钟窗口**：流式超过 6 分钟未更新，企微返回 **errcode 846608**（`STREAM_EXPIRED_ERRCODE`）。插件在 `finishWsThinkingStream` 捕获后降级为 `sendMessage` 主动发送。
-- **Agent 回复超时**：默认 `network.agentReplyTimeoutMs` = 360000 ms（6 分钟），超时用户可见 `timeoutText`。
-- **空白关流**：纯空白 content 无法 `finish=true`；插件用 `emptyReplyText` 等可见字符兜底。
-
-### 推荐配置样例
-
-**稳定非流式（默认，适合业务整包回复）：**
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "streaming": false,
-      "footer": { "status": true, "elapsed": true }
-    }
-  }
-}
-```
-
-**打字机 + 工具进度：**
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "streaming": true,
-      "footer": { "status": true, "elapsed": true },
-      "sendThinkingMessage": true
-    }
-  }
-}
-```
-
-**仅状态栏、答案关流时一次展示：**
-
-```json
-{
-  "channels": {
-    "wecom": {
-      "streaming": { "status": true, "content": false },
-      "footer": { "status": true, "elapsed": false }
-    }
-  }
-}
-```
-
-### 验证
-
-```bash
-cd extensions/wecom
-pnpm test src/config/streaming-config.test.ts src/dispatch/finish-thinking.test.ts
-openclaw gateway restart
-# 发送长推理问题，观察状态栏与增量；grep 846608 / stream expired / sendMessage
-grep -E '846608|stream expired|sendThinkingReply|enter_chat welcome|finish=true' /tmp/openclaw/openclaw-*.log
-```
-
-详见 [流式架构](../../doc/wecom/OpenClaw-WeCom-Streaming-Architecture.md)。
+完整配置参考、三种模式行为差异、硬约束与降级策略见 [docs/streaming.md](./docs/streaming.md)。
 
 ## 知识库 / RAG
 
-**准确结论**：`@partme.ai/wecom` **不内置**知识库 hooks，源码中**不存在** `channels.wecom.knowledge` 或 `registerKnowledgeHooks`。仅配置 `channels.wecom.knowledge.*` **不会**启用 RAG。
-
-知识能力由独立的 **`@partme.ai/openclaw-knowledge`** 插件提供（`before_prompt_build` 自动检索注入 + `knowledge_query` / `knowledge_add` 等工具）。WeCom 插件只负责把用户消息送入 OpenClaw Agent 运行时；Agent 绑定 knowledge 插件后，即可在企微对话中检索并回答。
-
-### 消息路径
-
-```text
-企业微信用户消息
-  → WeCom 入站（WS / Webhook / Agent 回调）
-  → OpenClaw dispatch（bindings / dynamicAgents）
-  → Agent Runtime
-       ├─ [knowledge 插件] before_prompt_build 检索 → 注入 system 上下文
-       └─ [可选] Agent 调用 knowledge_* 工具
-  → 回复经 WeCom 出站（Bot stream 或 Agent API）
-```
-
-### 配置示例
-
-WeCom 与 knowledge **分开配置**：
-
-```json
-{
-  "plugins": {
-    "entries": {
-      "knowledge": {
-        "enabled": true,
-        "config": {
-          "enabled": true,
-          "embedding": {
-            "provider": "openai",
-            "model": "text-embedding-3-small",
-            "dimensions": 1536
-          },
-          "store": {
-            "provider": "zvec",
-            "dbPath": "./data/knowledge-wecom.db"
-          },
-          "retrieval": {
-            "strategy": "hybrid",
-            "topK": 5,
-            "minScore": 0.3
-          },
-          "injection": {
-            "position": "system",
-            "maxContextLength": 2000
-          }
-        }
-      }
-    }
-  },
-  "channels": {
-    "wecom": {
-      "enabled": true,
-      "connectionMode": "websocket",
-      "botId": "<YOUR_BOT_ID>",
-      "secret": "<YOUR_BOT_SECRET>"
-    }
-  },
-  "bindings": [
-    {
-      "agentId": "main",
-      "match": { "channel": "wecom", "accountId": "default" }
-    }
-  ]
-}
-```
-
-### 验证
+`@partme.ai/wecom` **不内置**知识库。知识能力由独立的 `@partme.ai/openclaw-knowledge` 插件提供（`before_prompt_build` 自动检索注入）。
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-knowledge
 openclaw gateway restart
-openclaw run knowledge:stats
 ```
 
-在企微中让助手记住一条测试事实，再用新消息询问；应答应引用知识库内容。
+消息路径：企微用户消息 → WeCom 入站 → OpenClaw dispatch → Agent Runtime（knowledge 插件注入上下文）→ 回复经 WeCom 出站。
 
-延伸阅读：
-
-- [知识库 RAG 指南](../../doc/knowledge/OpenClaw-Knowledge-RAG-Guide_CN.md)
-- [知识库 RAG 集成](../../doc/knowledge/OpenClaw-Knowledge-RAG-Integration_CN.md)
-- [配置指南 §9 知识库](../../doc/wecom/OpenClaw-WeCom-Configuration.zh-CN.md#9-知识库--rag-集成)
+配置示例见 [配置指南 §9](../../doc/wecom/OpenClaw-WeCom-Configuration.zh-CN.md#9-知识库--rag-集成)。
 
 ## 媒体、MEDIA 指令、模板卡片、MCP 与 Skills
 
@@ -1195,7 +839,7 @@ openclaw message send --channel wecom --account default --target <USERID> --mess
 
 建议验证顺序：
 
-1. `pnpm test` 通过，确认约 330 个 Vitest 用例仍可运行。
+1. `pnpm test` 通过，确认 395 个 Vitest 用例仍可运行。
 2. `openclaw channels status --probe` 能看到 WeCom 渠道启用和账号状态。
 3. Bot WS 场景下，Gateway 日志出现连接和鉴权成功。
 4. Agent 场景下，先验证企业微信后台回调 URL 保存成功，再测试主动投递。

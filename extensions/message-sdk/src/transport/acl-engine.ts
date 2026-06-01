@@ -44,7 +44,7 @@ export type AclAction = "publish" | "subscribe" | "inbound" | "outbound";
  * 评估逻辑：
  * 1. 有 `aclRules` → 按 deny 优先、allow 其次评估
  * 2. 否则走旧格式 `publishAllow` / `subscribeAllow`
- * 3. 无规则时默认允许
+ * 3. 无规则时默认拒绝（安全优先）
  *
  * @param params.user - ACL 用户
  * @param params.action - 动作类型
@@ -66,17 +66,17 @@ export function isUserActionAllowed(params: {
     return evaluateAclRules(rules, action, topic, accountId);
   }
 
-  // 兼容旧配置
+  // 兼容旧配置 — 保持安全一致性，默认拒绝
   if (action === "publish" || action === "inbound") {
-    if (!user.publishAllow || user.publishAllow.length === 0) return true;
+    if (!user.publishAllow || user.publishAllow.length === 0) return false;
     return user.publishAllow.some((p) => matchTopic(topic, p));
   }
   if (action === "subscribe" || action === "outbound") {
-    if (!user.subscribeAllow || user.subscribeAllow.length === 0) return true;
+    if (!user.subscribeAllow || user.subscribeAllow.length === 0) return false;
     return user.subscribeAllow.some((p) => matchTopic(topic, p));
   }
 
-  return true;
+  return false;
 }
 
 /**
@@ -84,7 +84,7 @@ export function isUserActionAllowed(params: {
  *
  * - deny 优先：匹配到 deny 直接返回 false
  * - 有 allow 匹配返回 true
- * - 无该 action 的规则 → 默认允许
+ * - 无该 action 的规则 → 默认拒绝（安全优先）
  */
 function evaluateAclRules(
   rules: AclRule[],
@@ -102,8 +102,8 @@ function evaluateAclRules(
     hasAllowMatch = true;
   }
 
-  // 如果没有任何该 action 的规则，默认允许
+  // 如果没有任何该 action 的规则，默认拒绝（安全优先）
   const hasActionRules = rules.some((r) => r.action === action);
-  if (!hasActionRules) return true;
+  if (!hasActionRules) return false;
   return hasAllowMatch;
 }

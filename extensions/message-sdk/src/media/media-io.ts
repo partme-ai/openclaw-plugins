@@ -307,12 +307,6 @@ export async function downloadToTempFile(url: string, options: DownloadToTempFil
     if (cl) { const declared = parseInt(cl, 10); if (!Number.isNaN(declared) && declared > maxSize) throw new FileSizeLimitError(`Content-Length ${declared} > ${maxSize}`, declared, maxSize); }
     const body = response.body;
     if (!body) throw new Error("Response body is null");
-    const chunks: Uint8Array[] = [];
-    let totalBytes = 0;
-    const reader = body.getReader();
-    try {
-      while (true) { const { done, value } = await reader.read(); if (done) break; totalBytes += value.length; if (totalBytes > maxSize) { reader.cancel(); throw new FileSizeLimitError(`Stream size ${totalBytes} > ${maxSize}`, totalBytes, maxSize); } chunks.push(value); }
-    } finally { reader.releaseLock(); }
     const sourceName = sourceFileName || parseContentDispositionFilename(response.headers.get("content-disposition")) || resolveFileNameFromUrl(url) || "file";
     const safePrefix = sanitizeFileName(tempPrefix) || "media";
     const ext = resolveExtension(contentType, sourceName);
@@ -320,8 +314,21 @@ export async function downloadToTempFile(url: string, options: DownloadToTempFil
     const fileName = `${safePrefix}-${Date.now()}-${random}${ext}`;
     const fullPath = path.join(tempDir, fileName);
     await fsPromises.mkdir(tempDir, { recursive: true });
-    const buffer = Buffer.concat(chunks.map((c) => Buffer.from(c)));
-    await fsPromises.writeFile(fullPath, buffer);
+    let totalBytes = 0;
+    const reader = body.getReader();
+    const writeStream = fs.createWriteStream(fullPath);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > maxSize) { reader.cancel(); throw new FileSizeLimitError(`Stream size ${totalBytes} > ${maxSize}`, totalBytes, maxSize); }
+        if (!writeStream.write(Buffer.from(value))) {
+          await new Promise<void>((resolve) => writeStream.once("drain", resolve));
+        }
+      }
+    } finally { reader.releaseLock(); writeStream.destroy(); }
+    await new Promise<void>((resolve, reject) => writeStream.end(() => resolve()));
     return { path: fullPath, fileName, contentType, size: totalBytes, sourceFileName: sourceName };
   } catch (err) { if (err instanceof Error && err.name === "AbortError") throw new MediaTimeoutError(`Timeout after ${timeout}ms`, timeout); throw err; }
   finally { clearTimeout(timeoutId); }
@@ -417,6 +424,8 @@ export async function pruneInboundMediaDir(options: PruneInboundMediaDirOptions)
     let files: string[] = [];
     try { files = await fsPromises.readdir(dirPath); } catch { continue; }
     for (const file of files) { const fp = path.join(dirPath, file); try { const fst = await fsPromises.stat(fp); if (fst.isFile() && (fst.mtimeMs || fst.ctimeMs || 0) < cutoff) await fsPromises.unlink(fp); } catch { /* ignore */ } }
+    // Remove the dated directory if it's now empty
+    try { const remaining = await fsPromises.readdir(dirPath); if (remaining.length === 0) await fsPromises.rmdir(dirPath); } catch { /* ignore */ }
   }
 }
 

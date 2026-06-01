@@ -64,11 +64,15 @@ export class OutboundMessageQueue {
     if (sessionKey) {
       const list = this.bySession.get(sessionKey);
       if (!list?.length) return undefined;
-      return list.shift();
+      const item = list.shift();
+      if (list.length === 0) this.bySession.delete(sessionKey);
+      return item;
     }
-    for (const [, list] of this.bySession) {
+    for (const [key, list] of this.bySession) {
       if (list.length > 0) {
-        return list.shift();
+        const item = list.shift();
+        if (list.length === 0) this.bySession.delete(key);
+        return item;
       }
     }
     return undefined;

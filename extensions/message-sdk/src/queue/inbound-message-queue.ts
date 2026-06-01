@@ -14,6 +14,8 @@
 import type { UnifiedMessage } from "../core/types.js";
 import type { IdempotencyCache } from "../dedup/idempotency-cache.js";
 
+const DEFAULT_MAX_QUEUE_SIZE = 10_000;
+
 /**
  * 入站消息入队参数。
  *
@@ -52,10 +54,12 @@ export interface InboundQueueItem {
  *
  * @property idempotency - 可选内存幂等缓存，用于拒绝重复 messageId/key
  * @property onPush - 入队后立即触发的处理器
+ * @property maxSize - 队列最大容量（默认 10_000）；超出时 push 返回 false
  */
 export interface InboundMessageQueueOptions {
   idempotency?: IdempotencyCache;
   onPush?: InboundQueueHandler;
+  maxSize?: number;
 }
 
 /**
@@ -77,6 +81,7 @@ export class InboundMessageQueue {
   private readonly queue: InboundQueueItem[] = [];
   private readonly idempotency?: IdempotencyCache;
   private readonly onPush?: InboundQueueHandler;
+  private readonly maxSize: number;
 
   /**
    * 创建一个入站队列实例。
@@ -86,6 +91,7 @@ export class InboundMessageQueue {
   constructor(options: InboundMessageQueueOptions = {}) {
     this.idempotency = options.idempotency;
     this.onPush = options.onPush;
+    this.maxSize = options.maxSize ?? DEFAULT_MAX_QUEUE_SIZE;
   }
 
   /**
@@ -99,6 +105,10 @@ export class InboundMessageQueue {
   async push(params: InboundPushParams): Promise<boolean> {
     const key = params.idempotencyKey ?? params.message.messageId;
     if (this.idempotency?.remember(key)) {
+      return false;
+    }
+
+    if (this.queue.length >= this.maxSize) {
       return false;
     }
 

@@ -80,10 +80,11 @@ export async function safeFetch(input: string | URL, init?: SafeFetchOptions): P
 
   // 降级：本地 fetch + 可选超时
   const timeoutMs = init?.timeoutMs;
-  const signal =
-    timeoutMs && timeoutMs > 0
-      ? AbortSignal.timeout(timeoutMs)
-      : init?.signal;
+  let signal = init?.signal;
+  if (timeoutMs && timeoutMs > 0) {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    signal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  }
 
   return fetch(input, { ...init, signal });
 }

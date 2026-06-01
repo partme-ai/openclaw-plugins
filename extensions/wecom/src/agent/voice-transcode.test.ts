@@ -1,27 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { spawn } from "node:child_process";
 import {
   _resetFfmpegAvailabilityCacheForTests,
   hasFfmpeg,
 } from "./voice-transcode.js";
 
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  return {
-    ...actual,
-    spawn: vi.fn(),
-  };
-});
-
-const spawnMock = vi.mocked(spawn);
+const spawnMock = vi.fn();
 
 describe("hasFfmpeg", () => {
+  const originalGetBuiltinModule = (process as unknown as Record<string, unknown>).getBuiltinModule;
+
   afterEach(() => {
     _resetFfmpegAvailabilityCacheForTests();
     spawnMock.mockReset();
+    (process as unknown as Record<string, unknown>).getBuiltinModule = originalGetBuiltinModule;
   });
 
   it("caches probe result and spawns ffmpeg only once", async () => {
+    // Mock process.getBuiltinModule to return our mock spawn
+    (process as unknown as Record<string, unknown>).getBuiltinModule = vi.fn(() => ({
+      spawn: spawnMock,
+    }));
+
     spawnMock.mockImplementation(() => {
       const handlers: Record<string, Array<(code?: number) => void>> = {};
       return {
@@ -33,7 +32,7 @@ describe("hasFfmpeg", () => {
           }
           return undefined;
         },
-      } as ReturnType<typeof spawn>;
+      };
     });
 
     await expect(hasFfmpeg()).resolves.toBe(true);

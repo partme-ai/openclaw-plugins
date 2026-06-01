@@ -164,6 +164,8 @@ export function parseEnvelopeAny(
   if (typeof input === "object" && input !== null) {
     const o = input as Record<string, unknown>;
     if (o.version === "1" && o.message) {
+      const msg = o.message as UnifiedMessage;
+      if (!msg.messageId || !msg.source?.channel) return null;
       return o as unknown as MessageEnvelope;
     }
     const unified = parseMessageAny(input);

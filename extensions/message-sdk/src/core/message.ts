@@ -16,6 +16,7 @@ import type {
   UnifiedMessage,
 } from "./types.js";
 import type { BuildMessageParams } from "./types.js";
+import crypto from "node:crypto";
 
 /** 重新导出构造参数类型 / Re-export build params type */
 export type { BuildMessageParams } from "./types.js";
@@ -148,8 +149,10 @@ export function parseMessageAny(input: string | Buffer | Uint8Array | unknown): 
     const o = input as Record<string, unknown>;
     // 兼容 envelope 嵌套：{ message: UnifiedMessage }
     if (o.message && typeof o.message === "object") {
-      return (o.message as UnifiedMessage) ?? null;
+      return parseMessage(JSON.stringify(o.message));
     }
+    if (!o.messageId || !(o.source as Record<string, unknown>)?.channel) return null;
+    if (typeof o.text !== "string") return null;
     return input as UnifiedMessage;
   }
   return null;
@@ -161,9 +164,7 @@ export function parseMessageAny(input: string | Buffer | Uint8Array | unknown): 
  * @returns 形如 `{ts36}-{random}` 的 trace id
  */
 export function generateTraceId(): string {
-  const ts = Date.now().toString(36);
-  const r = Math.random().toString(36).slice(2, 10);
-  return `${ts}-${r}`;
+  return crypto.randomUUID();
 }
 
 /**
@@ -174,9 +175,7 @@ export function generateTraceId(): string {
  */
 export function generateMessageId(channel?: string): string {
   const prefix = channel ? `${channel}-` : "";
-  const ts = Date.now().toString(36);
-  const r = Math.random().toString(36).slice(2, 8);
-  return `${prefix}${ts}-${r}`;
+  return `${prefix}${crypto.randomUUID()}`;
 }
 
 /**

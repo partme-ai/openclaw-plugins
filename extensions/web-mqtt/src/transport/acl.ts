@@ -9,7 +9,7 @@ import {
   type AclAction,
 } from "@partme.ai/openclaw-message-sdk/transport";
 
-import type { WebMqttAclRule, WebMqttUser } from "../types.js";
+import type { WebMqttUser } from "../types.js";
 
 export { matchTopic };
 

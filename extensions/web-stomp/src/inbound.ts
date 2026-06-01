@@ -15,6 +15,8 @@ import {
   getWebStompIdempotencyCache,
 } from "./shared/wire-helpers.js";
 
+const DEFAULT_PAYLOAD_MODE = "jsonTextOrPlain" as const;
+
 /** Web STOMP 入站上下文（协议层 → Wire ingress）。 */
 export type WebStompInboundContext = {
   peerId: string;
@@ -50,7 +52,7 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
   const idempotencyCache = getWebStompIdempotencyCache();
   const parsed = normalizeWireIngress({
     rawPayload: ctx.rawPayload,
-    mode: resolvePayloadMode("jsonTextOrPlain"),
+    mode: resolvePayloadMode(DEFAULT_PAYLOAD_MODE),
     channel: WEB_STOMP_CHANNEL_ID,
     idempotencyKey: ctx.idempotencyKey,
     idempotency: ctx.idempotencyKey ? idempotencyCache : undefined,

@@ -38,8 +38,9 @@ export function isUserActionAllowed(params: {
   topic: string;
   accountId?: string;
 }): boolean {
+  if (!params.user) return false;
   return isUserActionAllowedShared({
-    user: params.user as import("@partme.ai/openclaw-message-sdk/transport").AclUser | undefined,
+    user: params.user as import("@partme.ai/openclaw-message-sdk/transport").AclUser,
     action: params.action as AclAction,
     topic: params.topic,
     accountId: params.accountId,
