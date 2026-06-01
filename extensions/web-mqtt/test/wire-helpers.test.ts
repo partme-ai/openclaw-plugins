@@ -1,17 +1,18 @@
 /**
- * Web MQTT wire-helpers 单元测试。
+ * Web MQTT wire-helpers 单元测试：幂等缓存与幂等键。
+ * payload 模式映射已迁移到 message-sdk/transport。
  */
 import { describe, expect, it } from "vitest";
 
 import {
   getWebMqttIdempotencyCache,
-  mapWebMqttWirePayloadMode,
   resolveWebMqttInboundIdempotencyKey,
 } from "../src/shared/wire-helpers.js";
+import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 
-describe("mapWebMqttWirePayloadMode", () => {
+describe("resolvePayloadMode (shared)", () => {
   it("maps jsonTextOrPlain", () => {
-    expect(mapWebMqttWirePayloadMode("jsonTextOrPlain")).toBe("jsonTextOrPlain");
+    expect(resolvePayloadMode("jsonTextOrPlain")).toBe("jsonTextOrPlain");
   });
 });
 

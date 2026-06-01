@@ -16,6 +16,8 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as tls from "node:tls";
 
+import { matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
+
 import type {
   InboundHandler,
   InboundMessage,
@@ -146,28 +148,13 @@ function normalizeDestinationTopic(destination: string): string {
 }
 
 /**
- * @description STOMP/RabbitMQ 风格 destination 通配符匹配（`*` 单段、`#` 多级尾匹配）。
- * @param pattern - 订阅或 binding 模式。
- * @param destination - 实际 SEND destination。
- * @returns 是否匹配。
- * @throws 不抛出。
+ * STOMP/RabbitMQ 风格 destination 通配符匹配 — 归一化后委托 message-sdk/transport。
  */
 function matchTopic(pattern: string, destination: string): boolean {
-  const p = normalizeDestinationTopic(pattern).split("/");
-  const d = normalizeDestinationTopic(destination).split("/");
-  let i = 0;
-  let j = 0;
-  while (i < p.length && j < d.length) {
-    if (p[i] === "#") return true;
-    if (p[i] === "*" || p[i] === d[j]) {
-      i += 1;
-      j += 1;
-      continue;
-    }
-    return false;
-  }
-  if (i === p.length && j === d.length) return true;
-  return i === p.length - 1 && p[i] === "#";
+  return matchTopicShared(
+    normalizeDestinationTopic(destination),
+    normalizeDestinationTopic(pattern),
+  );
 }
 
 /**

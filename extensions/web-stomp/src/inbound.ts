@@ -10,9 +10,9 @@ import {
 } from "@partme.ai/openclaw-message-sdk/bridge";
 import { WEB_STOMP_CHANNEL_ID } from "./config/resolvers.js";
 import { getWebStompRuntime } from "./runtime.js";
+import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 import {
   getWebStompIdempotencyCache,
-  mapWebStompWirePayloadMode,
 } from "./shared/wire-helpers.js";
 
 /** Web STOMP 入站上下文（协议层 → Wire ingress）。 */
@@ -50,7 +50,7 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
   const idempotencyCache = getWebStompIdempotencyCache();
   const parsed = normalizeWireIngress({
     rawPayload: ctx.rawPayload,
-    mode: mapWebStompWirePayloadMode("jsonTextOrPlain"),
+    mode: resolvePayloadMode("jsonTextOrPlain"),
     channel: WEB_STOMP_CHANNEL_ID,
     idempotencyKey: ctx.idempotencyKey,
     idempotency: ctx.idempotencyKey ? idempotencyCache : undefined,

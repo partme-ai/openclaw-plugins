@@ -82,6 +82,14 @@
     "./text": {
       "types": "./src/text/index.ts",
       "default": "./src/text/index.ts"
+    },
+    "./transport": {
+      "types": "./src/transport/index.ts",
+      "default": "./src/transport/index.ts"
+    },
+    "./transport/metrics": {
+      "types": "./src/transport/metrics.ts",
+      "default": "./src/transport/metrics.ts"
     }
   },
   "peerDependencies": {

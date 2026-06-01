@@ -20,9 +20,9 @@ import {
 } from "@partme.ai/openclaw-message-sdk/bridge";
 import { STOMP_TCP_CHANNEL_ID } from "./config/resolvers.js";
 import { getStompRuntime } from "./runtime.js";
+import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 import {
   getStompTcpIdempotencyCache,
-  mapStompTcpWirePayloadMode,
 } from "./shared/wire-helpers.js";
 import { publishToDestination } from "./transport/server.js";
 import type { InboundMessage } from "./types.js";
@@ -43,7 +43,7 @@ export async function dispatchInboundMessage(message: InboundMessage): Promise<v
   const idempotencyCache = getStompTcpIdempotencyCache();
   const parsed = normalizeWireIngress({
     rawPayload: message.rawPayload,
-    mode: mapStompTcpWirePayloadMode("jsonTextOrPlain"),
+    mode: resolvePayloadMode("jsonTextOrPlain"),
     channel: STOMP_TCP_CHANNEL_ID,
     idempotencyKey: message.idempotencyKey,
     idempotency: message.idempotencyKey ? idempotencyCache : undefined,

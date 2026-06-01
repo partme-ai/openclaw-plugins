@@ -16,9 +16,9 @@ import {
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
 import { WEB_MQTT_CHANNEL_ID } from "./config/resolvers.js";
+import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 import {
   getWebMqttIdempotencyCache,
-  mapWebMqttWirePayloadMode,
   resolveWebMqttInboundIdempotencyKey,
 } from "./shared/wire-helpers.js";
 
@@ -51,7 +51,7 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
   const idempotencyKey = resolveWebMqttInboundIdempotencyKey(event, payloadText);
   const parsed = normalizeWireIngress({
     rawPayload: payloadText,
-    mode: mapWebMqttWirePayloadMode(config.payload.mode),
+    mode: resolvePayloadMode(config.payload.mode),
     channel: WEB_MQTT_CHANNEL_ID,
     idempotencyKey,
     idempotency: getWebMqttIdempotencyCache(),

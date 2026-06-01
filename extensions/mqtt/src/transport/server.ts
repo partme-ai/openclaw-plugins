@@ -12,7 +12,6 @@
  */
 
 import { createServer, type Server as TcpServer } from "node:net";
-import { createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer as createTlsServer, type Server as TlsServer } from "node:tls";
 import { createBroker } from "aedes";
@@ -30,6 +29,7 @@ import type {
   MqttInboundMessage,
 } from "../types.js";
 import { logAuditEvent } from "./audit.js";
+import { verifyPassword, matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
 import { isUserActionAllowed, aclTopicMatches } from "./acl.js";
 import {
   updateConnectionMetrics,
@@ -605,25 +605,6 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
     }
     cb(null, allowed ? sub : null);
   };
-}
-
-function verifyPassword(
-  plain: string,
-  expectedPlain?: string,
-  expectedHash?: string,
-  algorithm: "sha256" | "sha512" = "sha256",
-): boolean {
-  if (typeof expectedPlain === "string") {
-    return expectedPlain === plain;
-  }
-  if (typeof expectedHash !== "string") {
-    return false;
-  }
-  const actualHex = createHash(algorithm).update(plain, "utf-8").digest("hex");
-  const actualBuf = Buffer.from(actualHex, "hex");
-  const expectedBuf = Buffer.from(expectedHash, "hex");
-  if (actualBuf.length !== expectedBuf.length) return false;
-  return timingSafeEqual(actualBuf, expectedBuf);
 }
 
 function isWillAllowed(topic: string, allow: boolean, patterns: string[]): boolean {

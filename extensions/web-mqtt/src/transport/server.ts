@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { Duplex } from "node:stream";
 import type { Socket } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { verifyPassword as verifyPasswordShared, safeEqualBuffer, matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
 import { createKeyedRunQueue, type KeyedRunQueue } from "@partme.ai/openclaw-message-sdk";
 import type { InboundHandler, WebMqttConfig, WebMqttServiceStats } from "../types.js";
 import { isUserActionAllowed } from "./acl.js";
@@ -217,7 +217,7 @@ function configureAuthGuards(config: WebMqttConfig): void {
     const user = config.auth.users.find((item) => item.username === username);
     if (!user) return done(new Error("invalid_credentials"), false);
 
-    const ok = verifyPassword(user.password, user.passwordHash, user.hashAlgorithm, password);
+    const ok = verifyPasswordAdapted(user.password, user.passwordHash, user.hashAlgorithm, password);
     if (!ok) return done(new Error("invalid_credentials"), false);
     clientUsernameMap.set(client.id, username);
     return done(null, true);
@@ -316,25 +316,18 @@ function allowTopicByUser(
 }
 
 /**
- * 校验 MQTT 密码：明文 timingSafeEqual 或 sha256/sha512 哈希比对。
+ * 适配层：将 web-mqtt 的密码校验参数格式转换为共享 verifyPassword。
  */
-function verifyPassword(
+function verifyPasswordAdapted(
   plainPassword: string | undefined,
   passwordHash: string | undefined,
   algorithm: "sha256" | "sha512" | undefined,
   incoming: Buffer,
 ): boolean {
+  const input = incoming.toString("utf-8");
   if (plainPassword) {
-    return safeEqual(Buffer.from(plainPassword), incoming);
+    return safeEqualBuffer(Buffer.from(plainPassword), incoming);
   }
   if (!passwordHash) return false;
-  const hashName = algorithm ?? "sha256";
-  const digest = createHash(hashName).update(incoming).digest("hex");
-  return safeEqual(Buffer.from(passwordHash), Buffer.from(digest));
-}
-
-/** 恒定时间 Buffer 相等比较，防止时序侧信道。 */
-function safeEqual(a: Buffer, b: Buffer): boolean {
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  return verifyPasswordShared(input, undefined, passwordHash, algorithm ?? "sha256");
 }

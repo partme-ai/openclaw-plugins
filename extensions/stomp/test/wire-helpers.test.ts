@@ -1,16 +1,15 @@
 /**
- * STOMP wire-helpers 单元测试：payload 模式映射与幂等缓存。
+ * STOMP wire-helpers 单元测试：幂等缓存。
+ * payload 模式映射已迁移到 message-sdk/transport，不再在此测试。
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  getStompTcpIdempotencyCache,
-  mapStompTcpWirePayloadMode,
-} from "../src/shared/wire-helpers.js";
+import { getStompTcpIdempotencyCache } from "../src/shared/wire-helpers.js";
+import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 
-describe("mapStompTcpWirePayloadMode", () => {
+describe("resolvePayloadMode (shared)", () => {
   it("maps jsonTextOrPlain to message-sdk mode", () => {
-    expect(mapStompTcpWirePayloadMode("jsonTextOrPlain")).toBe("jsonTextOrPlain");
+    expect(resolvePayloadMode("jsonTextOrPlain")).toBe("jsonTextOrPlain");
   });
 });
 
