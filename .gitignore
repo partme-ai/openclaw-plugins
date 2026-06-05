@@ -8,6 +8,7 @@ bin/
 Cargo.lock
 *.swp
 *.swo
+*.tgz
 
 ### STS ###
 .apt_generated
