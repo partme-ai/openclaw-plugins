@@ -22,6 +22,7 @@ import { resolveKfAccountByOpenKfId } from "../config/accounts.js";
 import { claimWecomKfInboundMsgid } from "../dedup/kf-inbound-dedup.js";
 import { resolveKfAgentAccount } from "../tools/call-context.js";
 import { getWecomRuntime } from "../runtime/index.js";
+import { handleKfSystemEvent } from "./event-handler.js";
 import type { KfMessage } from "../types/index.js";
 
 /** Account state tracking — updates via channel setStatus */
@@ -295,6 +296,7 @@ async function processSyncedMessage(
     case 4:
       if (msgtype === "event") {
         await handleSystemEvent(msg as KfMessage, effectiveAccountConfig);
+        await handleKfSystemEvent(msg as KfMessage, effectiveAccountConfig);
       }
       break;
 
@@ -313,4 +315,3 @@ async function processSyncedMessage(
       }
   }
 }
-

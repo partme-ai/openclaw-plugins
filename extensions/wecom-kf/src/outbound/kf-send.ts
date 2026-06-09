@@ -19,6 +19,7 @@ import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media/
 import type { ResolvedAgentAccount } from "../types/index.js";
 import type { WecomConfig } from "../types/config.js";
 import { getWecomKfChannelBlock } from "../config/channel-block.js";
+import { prepareKfOutboundText } from "./text-utils.js";
 
 /**
  * 规范化 KF 外部联系人 ID（external_userid）。
@@ -98,7 +99,8 @@ export async function sendKfOutboundText(params: {
   const results = await sendKfTextMessage({
     agent,
     externalUserId,
-    text: params.text,
+    text: prepareKfOutboundText(params.text).join("\n\n"),
+
     openKfId,
   });
   const summary = summarizeSendResults(results);
@@ -208,15 +210,17 @@ export async function deliverKfAgentReplyPayload(params: {
   mediaUrls?: string[];
 }): Promise<{ ok: boolean; error?: string }> {
   const parsed = parseMediaDirectives(params.text);
+  const prepared = prepareKfOutboundText(parsed.text);
+  const replyText = prepared.join("\n\n");
   const mediaPaths = Array.from(
     new Set([...(params.mediaUrls ?? []), ...parsed.paths].map((item) => item.trim()).filter(Boolean)),
   );
 
-  if (parsed.text.trim()) {
+  if (replyText.trim()) {
     const textResults = await sendKfTextMessage({
       agent: params.agent,
       externalUserId: params.externalUserId,
-      text: parsed.text,
+      text: replyText,
       openKfId: params.openKfId,
     });
     const textSummary = summarizeSendResults(textResults);
