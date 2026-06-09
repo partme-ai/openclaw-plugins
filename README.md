@@ -2,9 +2,9 @@
 
 # openclaw-plugins
 
-**28 Enterprise Plugins. One Unified Ecosystem.**
+**29 个企业级插件。一个统一生态。**
 
-*IM channels · Message queues · AI capabilities · Infrastructure — production-ready, independently published.*
+*IM 渠道 · 消息队列 · AI 能力 · 基础设施 — 生产级品质，独立发布。*
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai-cb3837?logo=npm)](https://www.npmjs.com/search?q=%40partme.ai)
 [![GitHub](https://img.shields.io/badge/github-partme--ai%2Fopenclaw--plugins-green.svg)](https://github.com/partme-ai/openclaw-plugins)
@@ -12,278 +12,298 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-9-orange.svg)](https://pnpm.io)
 
-English | [简体中文](./README.zh-CN.md)
+[English](./README.md) | 简体中文
 
-[Introduction](#-introduction) ·
-[Design Principles](#-core-design-principles) ·
-[Architecture](#-architecture) ·
-[Plugins](#-plugin-catalog) ·
-[Quick Start](#-quick-start) ·
-[Core Features](#-core-features) ·
-[Development](#-plugin-development) ·
+[简介](#-简介) ·
+[设计理念](#-核心设计理念) ·
+[架构](#-架构) ·
+[插件](#-插件目录) ·
+[快速开始](#-快速开始) ·
+[核心功能](#-核心功能) ·
+[开发](#-插件开发) ·
 [CI/CD](#-cicd) ·
-[Docs](#-documentation) ·
-[Contributing](#-contributing)
+[文档](#-文档) ·
+[贡献](#-贡献指南)
 
 </div>
 
 ---
 
-## 📖 Introduction
+## 📖 简介
 
-**openclaw-plugins** is the official enterprise plugin ecosystem for [OpenClaw](https://github.com/partme-ai/openclaw) — a **pnpm monorepo** of **28 independently published npm packages** under the `@partme.ai` scope, maintained by **PartMe.AI**.
+**openclaw-plugins** 是 [OpenClaw](https://github.com/partme-ai/openclaw) 的官方企业级插件生态 — 一个 **pnpm monorepo**，包含 **29 个独立发布的 npm 包**，统一使用 `@partme.ai` scope，由 **PartMe.AI** 团队维护。
 
-OpenClaw Gateway runs AI Agents at the center. This repository connects **IM channels**, **message queues**, **RAG knowledge**, **long-term memory**, **observability**, and **enterprise infrastructure** into one closed-loop, multi-platform information flow.
+OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息队列**、**RAG 知识库**、**长期记忆**、**可观测性** 与 **企业基础设施** 连接成闭环的多平台信息流。
 
-Each plugin is **self-contained**: zero cross-plugin runtime dependencies (except the shared `@partme.ai/openclaw-message-sdk` library). Install only what you need; version and publish independently.
+每个插件**完全自包含**：除共享库 `@partme.ai/openclaw-message-sdk` 外，零跨插件运行时依赖。按需安装，独立版本管理与发布。
 
-### Problems We Solve
+### 我们要解决的问题
 
-| Gap | Problem | Solution |
-|-----|---------|----------|
-| **Cross-channel routing** | IM messages cannot auto-forward to MQ; MQ messages cannot reply to IM | [@partme.ai/openclaw-router](./extensions/router) |
-| **Knowledge out-of-the-box** | Agents must manually call RAG tools | Router + [@partme.ai/openclaw-knowledge](./extensions/knowledge) auto-inject via `before_prompt_build` |
-| **Long-term memory** | Every conversation starts from zero | [@partme.ai/openclaw-memory](./extensions/memory) (L0→L3) + [@partme.ai/openclaw-openmem](./extensions/openmem) |
-| **Message audit** | No unified message record | Router audit + MQ forward-copy rules |
-| **Unified wire format** | Each MQ plugin reimplements parsing | [@partme.ai/openclaw-message-sdk](./extensions/message-sdk) Wire / Transcript dual path |
+| 缺口 | 问题 | 解决方案 |
+|------|------|----------|
+| **跨渠道路由** | IM 消息无法自动转发到 MQ；MQ 消息无法回复到 IM | [@partme.ai/openclaw-router](./extensions/router) |
+| **知识库开箱即用** | Agent 需主动调用 RAG 工具 | Router + [@partme.ai/openclaw-knowledge](./extensions/knowledge) 通过 `before_prompt_build` 自动注入 |
+| **长期记忆** | 每次对话从零开始 | [@partme.ai/openclaw-memory](./extensions/memory)（L0→L3）+ [@partme.ai/openclaw-openmem](./extensions/openmem) |
+| **消息审计** | 缺少统一消息记录 | Router 审计 + MQ forward-copy 规则 |
+| **统一线传输格式** | 各 MQ 插件重复实现解析 | [@partme.ai/openclaw-message-sdk](./extensions/message-sdk) Wire / Transcript 双路径 |
 
-See the full design in [Architecture](./doc/OpenClaw-Plugins-Architecture.md).
-
----
-
-## 🎯 Core Design Principles
-
-#### **Self-Contained Plugins**
-
-- One npm package per plugin under `extensions/<name>/`
-- No runtime dependency on sibling plugins
-- **Exception**: `@partme.ai/openclaw-message-sdk` — shared message types, ingress/egress, and OpenClaw bridge helpers
-- **Monorepo dev**: consumers use `workspace:^<sdkVersion>`; `publish-changed.mjs` materializes to `^version` on npm publish, then restores
-
-#### **Never Modify Channel Code**
-
-> OpenClaw's `api.on("agent_end", ctx)` fires for **all** channels. Non-channel plugins can observe every message flow.
-
-The **router** and **bridge** sit outside channel plugins, listening to `agent_end` and `before_prompt_build`. Cross-channel routing, audit forwarding, and context injection work without forking wecom, mqtt, or any upstream channel.
-
-#### **message-sdk Dual Path (Wire vs Transcript)**
-
-| Path | Typical plugins | SDK entry | Use case |
-|------|-----------------|-----------|----------|
-| **Wire** | mqtt, rabbitmq, redis-stream, rocketmq, stomp, web-mqtt, web-stomp | `dispatchWireMessage` → `dispatchInbound` | Machine-to-machine JSON envelopes |
-| **Transcript** | gotify, wecom, feishu-style IM | `dispatchTranscriptTurn` → `turn.runAssembled` | Human-readable Control UI turns |
-
-Both paths share `UnifiedMessage`, dedup, and reply helpers. Details: [message-sdk ARCHITECTURE](./extensions/message-sdk/docs/ARCHITECTURE.md).
-
-#### **Multi-Account Isolation**
-
-Most channel plugins support `accounts` + `defaultAccount`. Sessions, Agents, and runtime state are fully isolated per `accountId` — one Gateway, many tenants.
+完整设计见 [架构设计](./doc/OpenClaw-Plugins-Architecture_CN.md)。
 
 ---
 
-## ✨ Ecosystem Capabilities
+## 🎯 核心设计理念
 
-| Layer | Category | Count | Representative packages | Key capabilities |
-|-------|----------|-------|-------------------------|------------------|
-| L1 | **IM (self-built)** | 6 | wecom, weixin, wecom-kf, wechat-ipad, douyin, gotify | Bot/Webhook/Agent modes · media · dedup · Skills |
-| L1 | **IM (bridge)** | 1 + 21 upstream | openclaw-bridge | Context injection · UnifiedMessage MQ forwarding · 21 bundled channels |
-| L1 | **Message queues** | 8 | mqtt, web-mqtt, stomp, web-stomp, rabbitmq, redis-stream, rocketmq, cluster | topicBindings · Wire dispatch · idempotency · multi-protocol discovery |
-| L2 | **AI capabilities** | 5 | knowledge, memory, router, openmem, message-sdk | RAG · L0–L3 memory · routing rules · OpenMem HTTP bridge · unified wire format |
-| L2–L4 | **Infrastructure** | 5 | nacos, prometheus, tracing, oauth2, mtls | Config center · metrics · OTel · auth · mTLS |
-| — | **Platform integrations** | 3 | amap, meituan, rednode | POI/shop webhooks · Xiaohongshu dual-mode |
+#### **插件自包含**
 
-**Full plugin matrix** (all 28 packages, npm names, feature notes): [Architecture — Plugin Overview](./doc/OpenClaw-Plugins-Architecture.md).
+- 每个插件对应 `extensions/<name>/` 下一个 npm 包
+- 运行时不依赖兄弟插件
+- **例外**：`@partme.ai/openclaw-message-sdk` — 共享消息类型、入栈/出栈与 OpenClaw 桥接
+- **Monorepo 开发**：消费者使用 `workspace:^<sdkVersion>`；`publish-changed.mjs` 在 npm 发布时临时 materialize 为 `^version`，发布后还原
+
+#### **绝不修改渠道代码**
+
+> OpenClaw 的 `api.on("agent_end", ctx)` 对**所有**渠道触发。非渠道插件可观察全部消息流。
+
+**router** 与 **bridge** 位于渠道插件外部，监听 `agent_end` 与 `before_prompt_build`，实现跨渠道路由、审计转发与上下文注入，无需 fork wecom、mqtt 或任何上游渠道。
+
+#### **message-sdk 双路径（Wire vs Transcript）**
+
+| 路径 | 典型插件 | SDK 入口 | 场景 |
+|------|----------|----------|------|
+| **Wire** | mqtt、rabbitmq、redis-stream、rocketmq、stomp、web-mqtt、web-stomp | `dispatchWireMessage` → `dispatchInbound` | 机读 JSON 信封 |
+| **Transcript** | gotify、wecom、类飞书 IM | `dispatchTranscriptTurn` → `turn.runAssembled` | Control UI 人类可读轮次 |
+
+两路径共享 `UnifiedMessage`、去重与回复辅助。详见 [message-sdk 架构](./extensions/message-sdk/docs/ARCHITECTURE.md)。
+
+#### 平台集成渠道 SDK 复用（douyin · meituan · rednode）
+
+公域 Webhook 渠道采用 **Transcript 路径**（与 wecom-kf / gotify 对齐），复用 message-sdk 能力如下：
+
+| SDK 能力 | 插件落点 | 说明 |
+|----------|----------|------|
+| `readRequestBodyWithLimit` | `src/inbound.ts` | Webhook body 限流读取，超限 413 |
+| `createIdempotencyCache` | `src/dispatch/dispatch-inbound.ts` | `msg-id` 内存幂等（60s TTL） |
+| `dispatchTranscriptTurn` | `src/dispatch/transcript-dispatch.ts` | `turn.runAssembled` 优先，Control UI transcript |
+| `parseMediaDirectives` / `resolveOutboundMedia` | `src/dispatch/outbound-reply.ts` | Agent 回复 MEDIA 指令与出站媒体解析 |
+| `buildAgentReplyTimeoutSummary` | `transcript-dispatch.ts` | Agent 超时用户可见文案 |
+| `resolveChannelMediaMaxBytes` 等 | `src/config/resolvers.ts` | 媒体上限、Agent 超时、出口代理 |
+| `undiciFetch` | `src/shared/http.ts` → OpenAPI 客户端 | 替代裸 `fetch`，支持 egress 代理 |
+
+参考实现：`extensions/wecom-kf/src/dispatch/kf-transcript-dispatch.ts`（KF 专用逻辑勿复制，仅复用编排模式）。
+
+#### **多账户隔离**
+
+多数渠道插件支持 `accounts` + `defaultAccount`。会话、Agent 与运行时状态按 `accountId` 完全隔离 — 一个 Gateway，多租户。
 
 ---
 
-## 🏢 Use Cases
+## ✨ 生态能力
 
-| Scenario | Typical plugin stack |
-|----------|---------------------|
-| **Enterprise IM customer service** | wecom / wecom-kf + knowledge + memory + router |
-| **Business system ↔ Agent** | mqtt / rabbitmq + message-sdk Wire path |
-| **Multi-cloud config & registration** | nacos + cluster |
-| **Production observability** | prometheus + tracing |
-| **Omnichannel without forking upstream** | openclaw-bridge + official dingtalk / lark / qq connectors |
-| **Local-first external memory** | openmem + OpenMem sidecar (port 3317) |
-| **Push alerts to mobile** | gotify + prometheus / custom publishers |
+| 层级 | 分类 | 数量 | 代表包 | 核心能力 |
+|------|------|------|--------|----------|
+| L1 | **IM（自建）** | 6 | wecom、wechat、wecom-kf、wechat-ipad、douyin、gotify | Bot/Webhook/Agent · 媒体 · 去重 · Skills |
+| L1 | **IM（桥接）** | 1 + 21 上游 | openclaw-bridge | 上下文注入 · UnifiedMessage MQ 转发 · 21 个内置渠道 |
+| L1 | **消息队列** | 9 | mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq、cluster | topicBindings · Wire 分发 · 幂等 · 多协议发现 |
+| L2 | **AI 能力** | 5 | knowledge、memory、router、openmem、message-sdk | RAG · L0–L3 记忆 · 路由规则 · OpenMem HTTP 桥 · 统一线格式 |
+| L2–L4 | **基础设施** | 5 | nacos、prometheus、tracing、oauth2、mtls | 配置中心 · 指标 · OTel · 认证 · mTLS |
+| — | **平台集成** | 3 | amap、meituan、rednode | POI/店铺 Webhook · 小红书双模式 |
 
----
-
-## 📦 Project Positioning
-
-**openclaw-plugins** targets **production enterprise AI agent infrastructure**, not demos:
-
-- **Independent npm publishing** — each `@partme.ai/*` package versioned separately (`YYYY.M.D` for active plugins)
-- **Composable** — Gateway + only the plugins you need
-- **Upstream-friendly** — official DingTalk / Feishu / QQ plugins are **not forked**; integrate via bridge
-- **OpenClaw-native** — implements OpenClaw Plugin API, ChannelPlugin, Memory Host SDK, and setupEntry patterns
+**完整插件矩阵**（29 个包、npm 名、功能说明）：[架构设计 — 插件总览](./doc/OpenClaw-Plugins-Architecture_CN.md)。
 
 ---
 
-## 🏗️ Architecture
+## 🏢 适用场景
 
-### Five-Layer Model
+| 场景 | 典型插件组合 |
+|------|--------------|
+| **企业 IM 智能客服** | wecom / wecom-kf + knowledge + memory + router |
+| **业务系统 ↔ Agent** | mqtt / rabbitmq + message-sdk Wire 路径 |
+| **多云配置与注册** | nacos + cluster |
+| **生产可观测** | prometheus + tracing |
+| **全渠道接入且不 fork 上游** | openclaw-bridge + 官方钉钉 / 飞书 / QQ 连接器 |
+| **本地优先外部记忆** | openmem + OpenMem 侧车（端口 3317） |
+| **移动端推送告警** | gotify + prometheus / 自定义发布者 |
+
+---
+
+## 📦 项目定位
+
+**openclaw-plugins** 面向**生产级企业 AI Agent 基础设施**，而非 Demo：
+
+- **独立 npm 发布** — 每个 `@partme.ai/*` 包单独版本（活跃插件使用 `YYYY.M.D`）
+- **可组合** — Gateway + 按需插件
+- **上游友好** — 官方钉钉 / 飞书 / QQ 插件**不 fork**，经 bridge 接入
+- **OpenClaw 原生** — 实现 Plugin API、ChannelPlugin、Memory Host SDK、setupEntry 等契约
+
+---
+
+## 🏗️ 架构
+
+### 五层模型
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 5 — Business Applications                            │
-│  SCRM dashboard · Live chat console · Data analytics          │
-│  Subscribe to MQ topics for real-time conversation feed     │
+│  第五层 — 业务应用                                          │
+│  SCRM 仪表盘 · 在线客服控制台 · 数据分析                      │
+│  订阅 MQ 话题获取实时会话流                                  │
 └────────────────────────────┬────────────────────────────────┘
                              │
 ┌────────────────────────────▼────────────────────────────────┐
-│  Layer 4 — Router + Bridge                                  │
-│  Rule engine · Forward engine · Audit · Knowledge/Memory inj. │
+│  第四层 — 路由 + 桥接                                       │
+│  规则引擎 · 转发引擎 · 审计 · 知识/记忆注入                    │
 └────────────────────────────┬────────────────────────────────┘
                              │
 ┌────────────────────────────▼────────────────────────────────┐
-│  Layer 3 — OpenClaw Agents                                  │
-│  Agent-1 (ops) · Agent-2 (sales) · Agent-3 (support) …      │
-│  bindings[].match → agentId · memory + knowledge + tools      │
+│  第三层 — OpenClaw Agent                                    │
+│  Agent-1（运维）· Agent-2（销售）· Agent-3（客服）…           │
+│  bindings[].match → agentId · memory + knowledge + tools    │
 └────────────────────────────┬────────────────────────────────┘
                              │
 ┌────────────────────────────▼────────────────────────────────┐
-│  Layer 2 — AI Capabilities                                  │
-│  knowledge (RAG) · memory (L0→L3) · openmem · tracing       │
+│  第二层 — AI 能力                                           │
+│  knowledge（RAG）· memory（L0→L3）· openmem · tracing        │
 └────────────────────────────┬────────────────────────────────┘
                              │
 ┌────────────────────────────▼────────────────────────────────┐
-│  Layer 1 — Channels (no modification needed)                │
-│  IM: wecom wechat wecom-kf gotify … + bridge (21 upstream)  │
-│  MQ: mqtt rabbitmq redis-stream rocketmq stomp cluster …    │
+│  第一层 — 渠道层（无需修改渠道代码）                           │
+│  IM：wecom wechat wecom-kf gotify … + bridge（21 上游）      │
+│  MQ：mqtt rabbitmq redis-stream rocketmq stomp cluster …    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Monorepo Layout
+### Monorepo 结构
 
 ```
 openclaw-plugins/
-├── extensions/              # 28 npm packages (excludes _template)
-│   ├── wecom/ mqtt/ …         # Channel & capability plugins
-│   └── message-sdk/           # Shared library (not a Gateway plugin)
-├── doc/                       # Architecture, getting started, contributing
-├── spec/PLUGIN_SPEC.md        # Plugin contract
+├── extensions/              # 29 个 npm 包（不含 _template）
+│   ├── wecom/ mqtt/ …         # 渠道与能力插件
+│   └── message-sdk/           # 共享库（非 Gateway 插件）
+├── sdk/                       # 多语言消息 SDK（TypeScript、Go、Java、Python）
+├── doc/                       # 架构、入门、贡献
+├── spec/PLUGIN_SPEC.md        # 插件契约
 ├── scripts/
-│   ├── publish-changed.mjs    # npm publish with workspace materialize
+│   ├── publish-changed.mjs    # npm 发布 + workspace materialize
+│   ├── new-plugin.mjs         # 从 _template 脚手架生成插件
 │   └── sync-message-sdk-deps.mjs
-└── .github/workflows/         # CI, nacos build, publish
+├── testing/                   # 标准测试运行器与测试数据集
+├── test-utils/                # 共享测试 fixtures 与 mocks
+└── .github/workflows/         # CI、nacos 构建、发布
 ```
 
-### message-sdk Layers
+### message-sdk 分层
 
-| Layer | Responsibility | Location |
-|-------|----------------|----------|
-| **Transport** | Connect, subscribe, publish, ACK, platform protocol | Each MQ/IM extension |
-| **Message** | UnifiedMessage, parse/serialize, dedup, bridge dispatch | message-sdk |
-| **Agent** | Routing, session, LLM | OpenClaw Gateway |
+| 层级 | 职责 | 位置 |
+|------|------|------|
+| **传输层** | 连接、订阅、发布、ACK、平台协议 | 各 MQ/IM 扩展 |
+| **消息层** | UnifiedMessage、解析/序列化、去重、bridge 分发 | message-sdk |
+| **智能体层** | 路由、会话、LLM | OpenClaw Gateway |
 
-### Three Message Flows
+### 三种消息流
 
-**Flow 1 — IM inbound (user → Agent → MQ audit)**
-
-```
-Customer @WeCom → [wecom] → Agent → reply to WeCom
-                              └── [router] agent_end → forward-copy → [mqtt] audit topic → SCRM
-```
-
-**Flow 2 — MQ inbound (business system → Agent → IM reply)**
+**流 1 — IM 入站（用户 → Agent → MQ 审计）**
 
 ```
-Monitoring → MQTT publish → [mqtt] → Agent → reply on topic
-                              └── [router] agent_end → reply-via:wecom → ops engineer notified
+用户 @企业微信 → [wecom] → Agent → 回复企业微信
+                              └── [router] agent_end → forward-copy → [mqtt] 审计话题 → SCRM
 ```
 
-**Flow 3 — Enhancement (every conversation)**
+**流 2 — MQ 入站（业务系统 → Agent → IM 回复）**
 
 ```
-Any message → [router] before_prompt_build
-                ├─ [knowledge] auto-search → inject into system context
-                └─ [memory] auto-recall → inject user history
-              → Agent sees RAG + memory without explicit tool calls
+监控系统 → MQTT 发布 → [mqtt] → Agent → 同话题回复
+                              └── [router] agent_end → reply-via:wecom → 运维收到告警
 ```
 
-Full diagrams: [Architecture §2.3](./doc/OpenClaw-Plugins-Architecture.md).
+**流 3 — 增强（每次对话）**
+
+```
+任意消息 → [router] before_prompt_build
+             ├─ [knowledge] 自动检索 → 注入 system 上下文
+             └─ [memory] 自动召回 → 注入用户历史
+           → Agent 无需显式 tool call 即获得 RAG + 记忆
+```
+
+完整流程图：[架构设计 §2.3](./doc/OpenClaw-Plugins-Architecture_CN.md)。
 
 ---
 
-## 📋 Plugin Catalog
+## 📋 插件目录
 
-Summary by category. For npm names, channel IDs, ports, and feature matrices, see [Architecture doc](./doc/OpenClaw-Plugins-Architecture.md).
+按分类摘要。npm 名称、渠道 ID、端口与功能矩阵见 [架构设计文档](./doc/OpenClaw-Plugins-Architecture_CN.md)。
 
-| Category | Packages | Highlights |
-|----------|----------|------------|
-| **IM (self-built)** | 6 | WeCom dual-mode · WeChat OA · WeCom KF · WeChat iPad · Douyin · Gotify push |
-| **IM (bridge)** | 1 | 21 upstream channels via single config — see [bridge README](./extensions/bridge/README.md) |
-| **AI & routing** | 5 | knowledge · memory · router · openmem · message-sdk |
-| **Message queues** | 8 | MQTT/STOMP/RabbitMQ/Redis/RocketMQ + Web variants + cluster discovery |
-| **Infrastructure** | 5 | nacos · prometheus · tracing · oauth2 · mtls |
-| **Platform** | 3 | amap · meituan · rednode (XHS) |
+| 分类 | 包数量 | 亮点 |
+|------|--------|------|
+| **IM（自建）** | 6 | 企业微信双模式 · 微信公众号 · 企业微信客服 · 微信 iPad · 抖音 · Gotify 推送 |
+| **IM（桥接）** | 1 | 21 个上游渠道统一配置 — 见 [bridge README](./extensions/bridge/README.zh-CN.md) |
+| **AI 与路由** | 5 | knowledge · memory · router · openmem · message-sdk |
+| **消息队列** | 9 | MQTT/WebSocket/STOMP/RabbitMQ/Redis/RocketMQ + Web 变体 + 集群发现 |
+| **基础设施** | 5 | nacos · prometheus · tracing · oauth2 · mtls |
+| **平台集成** | 3 | amap · meituan · rednode（小红书）|
 
-**MQ plugins share**: `topicBindings` · `payload.mode` (jsonTextOrPlain / jsonOnly / plainText) · `dispatch.mode` (reply-pipeline / embedded-agent / subagent) · `idempotency` (TTL dedup).
+**MQ 插件共性**：`topicBindings` · `payload.mode`（jsonTextOrPlain / jsonOnly / plainText）· `dispatch.mode`（reply-pipeline / embedded-agent / subagent）· `idempotency`（TTL 去重）。
 
-Per-plugin READMEs live under `extensions/<name>/README.md` and `README.zh-CN.md`.
+各插件详细说明见 `extensions/<name>/README.zh-CN.md`。
 
 ---
 
-## 🔗 Official Upstreams
+## 🔗 官方上游
 
-These IM channels are maintained by platform teams. Integrate via `@partme.ai/openclaw-bridge` — **no local forks**:
+以下 IM 渠道由平台官方维护，通过 `@partme.ai/openclaw-bridge` 接入 PartMe.AI 生态 — **无需本地 fork**：
 
-| Platform | Official plugin | Repository | Docs |
-|----------|----------------|------------|------|
-| DingTalk | `@dingtalk-real-ai/dingtalk-connector` | [dingtalk-openclaw-connector](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector) | [dws CLI](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli) |
-| Feishu / Lark | `@larksuite/openclaw-lark` | [openclaw-lark](https://github.com/larksuite/openclaw-lark) | [Official docs](https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh) |
+| 平台 | 官方插件 | 仓库 | 文档 |
+|------|---------|------|------|
+| 钉钉 | `@dingtalk-real-ai/dingtalk-connector` | [dingtalk-openclaw-connector](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector) | [dws CLI](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli) |
+| 飞书 / Lark | `@larksuite/openclaw-lark` | [openclaw-lark](https://github.com/larksuite/openclaw-lark) | [官方文档](https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh) |
 | QQ | `@tencent-connect/openclaw-qqbot` | [openclaw-qqbot](https://github.com/tencent-connect/openclaw-qqbot) | — |
 
-### Bundled Channels (18)
+### Bundled 渠道（18 个）
 
-Shipped with OpenClaw, bridged via `@partme.ai/openclaw-bridge` with zero extra install:
+随 OpenClaw 内置，通过 `@partme.ai/openclaw-bridge` 配置即可接入，无需额外安装：
 
 `discord` `slack` `telegram` `whatsapp` `signal` `line` `matrix` `irc` `msteams` `googlechat` `imessage` `mattermost` `nextcloud-talk` `nostr` `zalo` `twitch` `tlon` `synology-chat`
 
 ---
 
-## 📖 Quick Start
+## 📖 快速开始
 
-#### Prerequisites
+#### 前置要求
 
 - **Node.js** >= 22.0.0
-- **pnpm** >= 9 (monorepo contributors)
-- **OpenClaw** >= 2026.4.12 — [OpenClaw repository](https://github.com/partme-ai/openclaw)
+- **pnpm** >= 9（Monorepo 贡献者）
+- **OpenClaw** >= 2026.4.12 — [OpenClaw 仓库](https://github.com/partme-ai/openclaw)
 
-#### 1. Install OpenClaw Gateway
+#### 1. 安装 OpenClaw Gateway
 
-Follow the OpenClaw project docs to install and start the Gateway on your host or cluster.
+按 OpenClaw 项目文档在主机或集群上安装并启动 Gateway。
 
-#### 2. Install plugins
+#### 2. 安装插件
 
 ```bash
-# Self-built IM channels
+# 自建 IM 渠道
 openclaw plugins install @partme.ai/wecom
 openclaw plugins install @partme.ai/openclaw-gotify
 
-# Official upstream (install separately, then bridge)
+# 官方上游（单独安装后由 bridge 统一接入）
 openclaw plugins install @dingtalk-real-ai/dingtalk-connector
 openclaw plugins install @larksuite/openclaw-lark
 openclaw plugins install @tencent-connect/openclaw-qqbot
 
-# Bridge adapter (unifies all channels into PartMe.AI ecosystem)
+# 桥接适配器
 openclaw plugins install @partme.ai/openclaw-bridge
 
-# AI capabilities & infrastructure
+# AI 能力与基础设施
 openclaw plugins install @partme.ai/openclaw-knowledge
 openclaw plugins install @partme.ai/openclaw-memory
 openclaw plugins install @partme.ai/openclaw-router
 openclaw plugins install @partme.ai/openclaw-nacos
 openclaw plugins install @partme.ai/openclaw-prometheus
 
-# Message queues
+# 消息队列
 openclaw plugins install @partme.ai/openclaw-mqtt
 openclaw plugins install @partme.ai/openclaw-rabbitmq
 ```
 
-#### 3. Configure (minimal example)
+#### 3. 配置（最小示例）
 
 ```json
 {
@@ -304,15 +324,15 @@ openclaw plugins install @partme.ai/openclaw-rabbitmq
 }
 ```
 
-Common fields: `enabled`, `dmPolicy`, `groupPolicy`, `allowFrom`, `accounts`, `defaultAccount`. See [Getting Started](./doc/OpenClaw-Plugins-Getting-Started.md).
+常用字段：`enabled`、`dmPolicy`、`groupPolicy`、`allowFrom`、`accounts`、`defaultAccount`。详见 [快速开始](./doc/OpenClaw-Plugins-Getting-Started_CN.md)。
 
-#### 4. Restart Gateway
+#### 4. 重启 Gateway
 
 ```bash
 openclaw gateway restart
 ```
 
-#### 5. Develop from source
+#### 5. 源码开发
 
 ```bash
 git clone https://github.com/partme-ai/openclaw-plugins.git
@@ -322,13 +342,13 @@ pnpm build
 pnpm typecheck
 
 cd extensions/wecom
-pnpm dev            # watch mode
+pnpm dev            # 监视模式
 pnpm test           # vitest
 ```
 
-#### 6. Monorepo: sync message-sdk deps
+#### 6. Monorepo：同步 message-sdk 依赖
 
-After bumping `extensions/message-sdk` version:
+升级 `extensions/message-sdk` 版本后：
 
 ```bash
 pnpm sync-message-sdk-deps
@@ -337,227 +357,230 @@ pnpm install
 
 ---
 
-## 📝 Core Features
+## 📝 核心功能
 
-#### 1. Cross-Channel Routing (router)
+#### 1. 跨渠道路由（router）
 
-- Listens to `agent_end` on **all** channels
-- Rule engine: forward-copy, reply-via, topic templating
-- Audit logging to MQ without modifying channel code
-- ~118 lines of core routing logic — see [router](./extensions/router)
+- 监听**所有**渠道的 `agent_end`
+- 规则引擎：按 channel / direction / topic / accountId 匹配，支持 `forward` 和 `reply-via` 动作
+- 模板变量展开（`{{channel}}`、`{{topic}}` 等）支持动态路由目标
+- `RouteDedupeCache`（TTL + 容量上限）防止 webhook 重试导致重复路由
+- 审计日志写入 MQ，无需修改渠道代码 — 见 [router](./extensions/router)
 
-#### 2. RAG Knowledge (knowledge)
+#### 2. RAG 知识库（knowledge）
 
-- 5 embedding providers (OpenAI, DashScope, Zhipu, Qianfan, Ollama)
-- 3 vector stores (sqlite-vec, zvec, zvec-native)
-- Hybrid retrieval, reranker, intent gate
-- Auto-injection via `before_prompt_build` when combined with router
+- 5 种 embedding 提供商（OpenAI、DashScope、智谱、千帆、Ollama）
+- 3 种重排序提供商（Ollama、Jina、智谱）
+- 3 种向量存储（sqlite-vec、zvec、zvec-native）
+- 混合检索（向量相似度 + 关键词搜索）、重排序、意图门控
+- 与 router 配合时通过 `before_prompt_build` 自动注入
 
-#### 3. Long-Term Memory (memory + openmem)
+#### 3. 长期记忆（memory + openmem）
 
-- **memory**: L0→L3 levels, `kind: "memory"` contract, JSONL storage, keyword search, auto-recall
-- **openmem**: HTTP bridge to OpenMem sidecar — hybrid recall via `/inspect/search`, ingest via `/events/ingest`, `openmem_search` tool
+- **memory**：L0→L3 层级、`kind: "memory"` 契约、JSONL 存储、关键词搜索、自动召回
+- **openmem**：OpenMem 侧车 HTTP 桥 — `/inspect/search` 混合召回、`/events/ingest` 写入、`openmem_search` 工具
 
-#### 4. Unified MQ Access (message-sdk + MQ plugins)
+#### 4. 统一 MQ 接入（message-sdk + MQ 插件）
 
-- Wire JSON envelope v1 with backward-compatible plain text
-- Shared `topicBindings`, dispatch modes, idempotency cache
-- Plugins: mqtt, rabbitmq, redis-stream, rocketmq, stomp, web-mqtt, web-stomp, cluster
+- Wire JSON 信封 v1，兼容纯文本
+- 3 种分发模式：`reply-pipeline`（默认 Wire 信封）、`embedded-agent`（进程内）、`subagent`（子 Agent）
+- 共享 `topicBindings`、幂等缓存（TTL-based `IdempotencyCache`）
+- 插件：mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq、cluster
+- 插件：mqtt、rabbitmq、redis-stream、rocketmq、stomp、web-mqtt、web-stomp、cluster
 
-#### 5. Enterprise Infrastructure
+#### 5. 企业基础设施
 
-- **nacos**: Spring Cloud compatible config merge, service registration, cluster peer discovery ([Nacos docs](./doc/nacos/OpenClaw-Nacos-Guide.md))
-- **oauth2**: Sa-Token, Keycloak, Auth0, Azure AD, generic JWT/introspection
-- **mtls**: Client cert whitelist, protected paths, passthrough mode
+- **cluster**：8 种可插拔发现后端（Consul、DNS SRV、Etcd、Eureka、mDNS、Nacos、Redis、Static），支持自注册、TTL 心跳与拓扑变更回调
+- **nacos**：Spring Cloud 兼容配置合并、服务注册、集群发现（[Nacos 文档](./doc/nacos/zh/OpenClaw-Nacos-Guide_CN.md)）
+- **oauth2**：Sa-Token、Keycloak、Auth0、Azure AD、通用 JWT/introspection
+- **mtls**：客户端证书白名单、保护路径、透传模式
 
-#### 6. Observability
+#### 6. 可观测性
 
-- **prometheus**: Port 9090, scrape auth, model usage histograms, Grafana dashboards ([Prometheus docs](./doc/prometheus/OpenClaw-Prometheus-Deployment.md))
-- **tracing**: OpenTelemetry — log / file / OTLP / SkyWalking backends, sampling, span limits
+- **prometheus**：端口 9090、scrape 认证、模型用量直方图、Grafana 仪表盘
+- **tracing**：OpenTelemetry — log / file / OTLP / SkyWalking 后端、采样、跨度限制
 
 ---
 
-## 🛠️ Plugin Development
+## 🛠️ 插件开发
 
-All plugins follow the [Plugin Specification](./spec/PLUGIN_SPEC.md). Scaffold:
+所有插件遵循 [插件规范](./spec/PLUGIN_SPEC.md)。脚手架：
 
 ```bash
-pnpm new-plugin <name> --label "Display Name" --desc "Description"
+pnpm new-plugin <name> --label "显示名称" --desc "描述"
 ```
 
-| File | Purpose |
-|------|---------|
-| `index.ts` | Entry: `id`, `name`, `configSchema`, `register(api)` |
-| `openclaw.plugin.json` | Manifest: channels, config schema, contracts |
-| `package.json` | npm metadata, `openclaw` block, `@partme.ai/<name>` |
-| `src/channel.ts` | ChannelPlugin (channel plugins) |
-| `src/config.ts` | Zod schema + JSON Schema export |
-| `src/runtime.ts` | Runtime singleton |
-| `src/monitor.ts` | Dedup (60s TTL, 10K max) + webhook handler |
-| `src/media.ts` | `detectMediaType`, `loadMedia`, `downloadMedia` |
+| 文件 | 用途 |
+|------|------|
+| `index.ts` | 入口：`id`、`name`、`configSchema`、`register(api)` |
+| `openclaw.plugin.json` | 清单：渠道、配置 schema、契约 |
+| `package.json` | npm 元数据、`openclaw` 块、`@partme.ai/<name>` |
+| `src/channel.ts` | ChannelPlugin 实现（渠道插件） |
+| `src/config.ts` | Zod schema + JSON Schema 导出 |
+| `src/runtime.ts` | 运行时单例 |
+| `src/monitor.ts` | 去重（60s TTL，10K 上限）+ webhook 处理 |
+| `src/media.ts` | `detectMediaType`、`loadMedia`、`downloadMedia` |
 
-### Entry Point Patterns
+### 入口模式
 
 ```typescript
-// Style A: Direct object export (most plugins)
+// 模式 A：直接对象导出（大多数插件）
 const plugin = { id, name, configSchema, register(api) { ... } };
 export default plugin;
 
-// Style B: defineChannelPluginEntry (wechat, some MQ plugins)
+// 模式 B：defineChannelPluginEntry（wechat、部分 MQ 插件）
 export default defineChannelPluginEntry({ id, plugin, setRuntime });
 
-// Style C: Re-export from src/ (infrastructure & platform plugins)
+// 模式 C：src/ 重导出（基础设施与平台插件）
 export { default } from "./src/index.js";
 ```
 
-### Manifest Patterns
+### Manifest 模式
 
-| Pattern | Plugin type | Example |
-|---------|-------------|---------|
-| Full channel + channelConfigs schema | Channel plugins | wecom, mqtt, gotify, rabbitmq |
-| Simple channel config | Lightweight channels | amap, meituan, wechat-ipad |
-| Pure capability (no channels) | Infrastructure / AI | knowledge, prometheus, nacos, tracing |
-| Minimal (`additionalProperties: true`) | Router, bridge | router, bridge |
+| 模式 | 插件类型 | 示例 |
+|------|----------|------|
+| 完整 channel + channelConfigs schema | 渠道插件 | wecom、mqtt、gotify、rabbitmq |
+| 简单 channel 配置 | 轻量渠道 | amap、meituan、wechat-ipad |
+| 纯能力（无 channels） | 基础设施 / AI | knowledge、prometheus、nacos、tracing |
+| 最小化（`additionalProperties: true`） | Router、bridge | router、bridge |
 
-Requirements: TypeScript strict, Zod validation, co-located tests, 80%+ coverage target. Full guide: [Contributing](./doc/OpenClaw-Plugins-Contributing.md).
+要求：TypeScript strict、Zod 校验、同目录测试、80%+ 覆盖率目标。完整指南：[贡献指南](./doc/OpenClaw-Plugins-Contributing_CN.md)。
 
 ---
 
 ## 🔄 CI/CD
 
-| Workflow | File | Description |
-|----------|------|-------------|
-| CI | `.github/workflows/ci.yml` | Matrix build per changed plugin: install → typecheck → build |
-| Nacos | `.github/workflows/build-nacos.yml` | Dedicated strict build + test for nacos |
-| Publish | `.github/workflows/publish.yml` | Manual trigger, dry-run by default |
+| 工作流 | 文件 | 说明 |
+|--------|------|------|
+| CI | `.github/workflows/ci.yml` | 按变更插件矩阵：install → typecheck → build |
+| Nacos | `.github/workflows/build-nacos.yml` | nacos 独立严格构建 + 测试 |
+| 发布 | `.github/workflows/publish.yml` | 手动触发，默认 dry-run |
 
-### Publishing
+### 发布
 
 ```bash
 node scripts/publish-changed.mjs --dry-run
 node scripts/publish-changed.mjs --plugin wecom
 node scripts/publish-changed.mjs
-node scripts/publish-changed.mjs --plugin wecom --tag next   # prerelease
+node scripts/publish-changed.mjs --plugin wecom --tag next   # 预发布
 ```
 
-**Workspace deps**: consumers declare `workspace:^<sdkVersion>` in dev; publish script temporarily replaces with `^version` for npm, then restores `package.json`.
+**Workspace 依赖**：开发时消费者声明 `workspace:^<sdkVersion>`；发布脚本临时替换为 npm `^version`，发布后还原 `package.json`。
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ 技术栈
 
-#### Core
+#### 核心
 
-- **Node.js** 22+ (ESM)
-- **TypeScript** 5.x strict mode
+- **Node.js** 22+（ESM）
+- **TypeScript** 5.x strict
 - **pnpm** 9 workspaces
 - **OpenClaw** Plugin API >= 2026.4.6
 
-#### Build & Test
+#### 构建与测试
 
-- **tsup** (ES2022) / **tsc** — production builds
-- **Vitest** 4.x — co-located `*.test.ts`
-- **Zod** 4.x — runtime config validation
+- **tsup**（ES2022）/ **tsc** — 生产构建
+- **Vitest** 4.x — 同目录 `*.test.ts`
+- **Zod** 4.x — 运行时配置校验
 
-#### Integration
+#### 集成
 
-- **undici** — HTTP client (where applicable)
-- **@partme.ai/openclaw-message-sdk** — unified wire format + bridge
-- Platform SDKs per plugin (nacos, amqp, mqtt, etc.)
+- **undici** — HTTP 客户端（适用场景）
+- **@partme.ai/openclaw-message-sdk** — 统一线格式 + bridge
+- 各插件平台 SDK（nacos、amqp、mqtt 等）
 
-#### Observability
+#### 可观测性
 
-- **Prometheus** metrics exporter
-- **OpenTelemetry** tracing (OTLP / SkyWalking / file / log)
+- **Prometheus** 指标导出
+- **OpenTelemetry** 追踪（OTLP / SkyWalking / file / log）
 
 ---
 
-## 📦 Version Information
+## 📦 版本信息
 
-| Item | Current |
-|------|---------|
-| OpenClaw peer dependency | >= 2026.4.12 |
+| 项 | 当前 |
+|----|------|
+| OpenClaw peer 依赖 | >= 2026.4.12 |
 | message-sdk | 2026.5.24 |
 | openclaw-nacos | 2026.5.24 |
 | openclaw-gotify | 2026.5.22 |
-| Most active plugins | 2026.5.20 |
-| Version scheme | `YYYY.M.D` (active) · semver (stable) · prerelease via `--tag next` |
+| 多数活跃插件 | 2026.5.20 |
+| 版本策略 | `YYYY.M.D`（活跃）· semver（稳定）· 预发布 `--tag next` |
 
-Check npm for published versions: [@partme.ai on npm](https://www.npmjs.com/search?q=%40partme.ai).
-
----
-
-## 📚 Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Architecture](./doc/OpenClaw-Plugins-Architecture.md) / [架构设计](./doc/OpenClaw-Plugins-Architecture_CN.md) | Full five-layer design & plugin matrix |
-| [Getting Started](./doc/OpenClaw-Plugins-Getting-Started.md) / [快速开始](./doc/OpenClaw-Plugins-Getting-Started_CN.md) | Install, configure, multi-account |
-| [Contributing](./doc/OpenClaw-Plugins-Contributing.md) / [贡献指南](./doc/OpenClaw-Plugins-Contributing_CN.md) | New plugin scaffold & test conventions |
-| [Plugin Spec](./spec/PLUGIN_SPEC.md) | Plugin contract |
-| [message-sdk ARCHITECTURE](./extensions/message-sdk/docs/ARCHITECTURE.md) | Wire vs Transcript, bridge API |
-| [Nacos Guide](./doc/nacos/OpenClaw-Nacos-Guide.md) / [中文](./doc/nacos/zh/OpenClaw-Nacos-Guide_CN.md) | Config center & registration |
-| [WeCom Configuration](./doc/wecom/OpenClaw-WeCom-Configuration.md) | WeChat Work full setup |
-| [WeCom Testing](./doc/wecom/OpenClaw-WeCom-Testing.md) | Outbound messaging, multi-bot, CLI integration |
-| [Bridge README](./extensions/bridge/README.md) | 21 channels, one config |
-| [Doc index](./doc/README.md) | All topic guides (prometheus, gotify, rocketmq, …) |
+npm 已发布版本：[@partme.ai on npm](https://www.npmjs.com/search?q=%40partme.ai)。
 
 ---
 
-## 🔗 Related Links
+## 📚 文档
 
-#### Official resources
-
-- **OpenClaw**: [github.com/partme-ai/openclaw](https://github.com/partme-ai/openclaw)
-- **openclaw-plugins**: [github.com/partme-ai/openclaw-plugins](https://github.com/partme-ai/openclaw-plugins)
-- **npm scope**: [npmjs.com — @partme.ai](https://www.npmjs.com/search?q=%40partme.ai)
-- **Issues**: [GitHub Issues](https://github.com/partme-ai/openclaw-plugins/issues)
-
-#### Upstream connectors
-
-- [DingTalk OpenClaw Connector](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector)
-- [Feishu OpenClaw Lark](https://github.com/larksuite/openclaw-lark)
-- [Tencent QQ Bot](https://github.com/tencent-connect/openclaw-qqbot)
-
----
-
-## 🤝 Contributing
-
-We welcome contributions. Typical flow:
-
-1. Fork this repository
-2. Create a feature branch (`git checkout -b feature/my-plugin`)
-3. Commit changes (`git commit -m 'feat(wecom): add example handler'`)
-4. Push to the branch (`git push origin feature/my-plugin`)
-5. Open a Pull Request
-
-Use `pnpm new-plugin` for scaffolding. Ensure `pnpm test` and `pnpm typecheck` pass in your plugin directory. See [Contributing guide](./doc/OpenClaw-Plugins-Contributing.md).
+| 文档 | 说明 |
+|------|------|
+| [Architecture](./doc/OpenClaw-Plugins-Architecture.md) / [架构设计](./doc/OpenClaw-Plugins-Architecture_CN.md) | 五层架构与插件矩阵 |
+| [Getting Started](./doc/OpenClaw-Plugins-Getting-Started.md) / [快速开始](./doc/OpenClaw-Plugins-Getting-Started_CN.md) | 安装、配置、多账户 |
+| [Contributing](./doc/OpenClaw-Plugins-Contributing.md) / [贡献指南](./doc/OpenClaw-Plugins-Contributing_CN.md) | 新插件脚手架与测试约定 |
+| [Plugin Spec](./spec/PLUGIN_SPEC.md) | 插件契约 |
+| [message-sdk 架构](./extensions/message-sdk/docs/ARCHITECTURE.md) | Wire vs Transcript、bridge API |
+| [Nacos 指南](./doc/nacos/zh/OpenClaw-Nacos-Guide_CN.md) | 配置中心与服务注册 |
+| [WeCom 配置](./doc/wecom/OpenClaw-WeCom-Configuration.md) | 企业微信完整配置 |
+| [WeCom 联调测试](./doc/wecom/OpenClaw-WeCom-Testing.md) | 主动发消息、多 Bot、CLI 联调 |
+| [Bridge README](./extensions/bridge/README.zh-CN.md) | 21 渠道统一配置 |
+| [文档索引](./doc/README.md) | 全部专题指南（prometheus、gotify、rocketmq 等） |
 
 ---
 
-## 📄 License
+## 🔗 相关链接
 
-Plugins are released under their respective licenses.  
-Core infrastructure and self-built plugins: **MIT License**.  
-Forked or upstream-derived plugins retain their original licenses.
+#### 官方资源
+
+- **OpenClaw**：[github.com/partme-ai/openclaw](https://github.com/partme-ai/openclaw)
+- **openclaw-plugins**：[github.com/partme-ai/openclaw-plugins](https://github.com/partme-ai/openclaw-plugins)
+- **npm scope**：[npmjs.com — @partme.ai](https://www.npmjs.com/search?q=%40partme.ai)
+- **Issues**：[GitHub Issues](https://github.com/partme-ai/openclaw-plugins/issues)
+
+#### 上游连接器
+
+- [钉钉 OpenClaw Connector](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector)
+- [飞书 OpenClaw Lark](https://github.com/larksuite/openclaw-lark)
+- [腾讯 QQ Bot](https://github.com/tencent-connect/openclaw-qqbot)
 
 ---
 
-## 🙏 Acknowledgments
+## 🤝 贡献指南
 
-Thanks to the teams and projects that make this ecosystem possible:
+欢迎贡献。典型流程：
 
-- [OpenClaw](https://github.com/partme-ai/openclaw) — AI agent gateway
-- [Nacos](https://nacos.io) — configuration & service discovery
-- [Vitest](https://vitest.dev) — test runner
-- [pnpm](https://pnpm.io) — monorepo package manager
-- DingTalk / Feishu / Tencent — official channel connectors
+1. Fork 本仓库
+2. 创建特性分支（`git checkout -b feature/my-plugin`）
+3. 提交更改（`git commit -m 'feat(wecom): add example handler'`）
+4. 推送到分支（`git push origin feature/my-plugin`）
+5. 提交 Pull Request
+
+使用 `pnpm new-plugin` 生成脚手架。请在插件目录内通过 `pnpm test` 与 `pnpm typecheck`。详见 [贡献指南](./doc/OpenClaw-Plugins-Contributing_CN.md)。
+
+---
+
+## 📄 许可证
+
+各插件按各自许可证发布。核心基础设施与自建插件：**MIT License**。上游衍生插件保留原许可证。
+
+---
+
+## 🙏 致谢
+
+感谢以下项目与团队：
+
+- [OpenClaw](https://github.com/partme-ai/openclaw) — AI Agent 网关
+- [Nacos](https://nacos.io) — 配置与服务发现
+- [Vitest](https://vitest.dev) — 测试框架
+- [pnpm](https://pnpm.io) — Monorepo 包管理
+- 钉钉 / 飞书 / 腾讯 — 官方渠道连接器
 
 ---
 
 <div align="center">
 
-**If this project helps you, please give us a ⭐️**
+**如果这个项目对你有帮助，请给我们一个 ⭐️**
 
 Made with ❤️ by PartMe.AI Team
 
