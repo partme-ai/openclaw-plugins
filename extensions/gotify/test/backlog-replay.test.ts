@@ -4,8 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { replayBacklogForAccount } from "../src/backlog-replay.js";
-import { readBacklogCursor, writeBacklogCursor } from "../src/backlog-cursor.js";
+import { replayBacklogForAccount } from "../src/dispatch/backlog-replay.js";
+import { readBacklogCursor, writeBacklogCursor } from "../src/dispatch/backlog-cursor.js";
 import { resolveGotifyAccount } from "../src/config.js";
 
 function makeAccount() {

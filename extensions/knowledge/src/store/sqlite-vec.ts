@@ -1,18 +1,11 @@
 /**
- * SQLite-Vec 存储后端 — 生产推荐方案
+ * @fileoverview SQLite-Vec 持久化向量存储 — 生产默认后端。
  *
- * 基于 better-sqlite3 的 SQLite 向量扩展 + FTS5 全文搜索，数据持久化到本地文件。
- * 特点：
- * - 原生 SQLite 支持，无需外部数据库服务
- * - 余弦相似度检索 + FTS5 关键词检索双通道
- * - 按命名空间分表隔离
- * - 持久化到文件（重启不丢失）
+ * @description better-sqlite3 + BLOB 向量 + FTS5 双通道检索；按 namespace 分表隔离。
+ * **模块角色**：Knowledge Plugin · VectorStore (sqlite-vec)。
+ * **关键依赖**：`better-sqlite3`（动态 import，未安装时 initialize 抛错）。
  *
- * 安装依赖：
- *   npm install better-sqlite3 @types/better-sqlite3
- *
- * 注意：这是一个可选后端，使用前需要安装 better-sqlite3 依赖。
- * 如果未安装，initialize() 会抛出错误提示。
+ * @module knowledge/store/sqlite-vec
  */
 
 import { randomUUID } from 'node:crypto';

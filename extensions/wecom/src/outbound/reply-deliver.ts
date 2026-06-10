@@ -1,15 +1,27 @@
 /**
- * WeCom Webhook 出站回复投递（stream 更新、媒体、模板卡片）。
+ * @module outbound/reply-deliver
+ *
+ * 企微 **Webhook Bot** 出站回复投递（stream 增量 + 媒体 + 模板卡片）。
+ *
+ * **职责**：
+ * - 预处理 Markdown/表格（`preprocessOutboundReply`）
+ * - 检测 template_card JSON 并经 response_url 发送
+ * - 将文本/图片写入 streamStore，同步 streaming 配置与 footer
+ * - 非图片媒体委托 `media-deliver`（Agent DM fallback）
+ *
+ * **上下游**：
+ * - 上游：`webhook/reply-pipeline` dispatch deliver 回调
+ * - 下游：`streaming-config`、`template-card`、`media-deliver`
  */
 
-import type { PluginRuntime, ReplyPayload } from "../runtime-api.js";
+import type { PluginRuntime, ReplyPayload } from "../runtime/runtime-api.js";
 import {
   extractLocalImagePathsFromText,
   formatReasoningMessage,
   isImageContentType,
   preprocessOutboundReply,
   resolveOutboundMedia,
-} from "../runtime-api.js";
+} from "../runtime/runtime-api.js";
 import { getWeComRuntime } from "../runtime.js";
 import type { WecomWebhookTarget } from "../webhook/types.js";
 import { STREAM_MAX_BYTES } from "../webhook/types.js";
@@ -19,10 +31,16 @@ import {
   computeMd5,
   MIME_BY_EXT,
   truncateUtf8Bytes,
-} from "../webhook/helpers.js";
+} from "../webhook/inbound-helpers.js";
 import { deliverTemplateCardIfPresent } from "./template-card.js";
 import { handleBotWindowNearTimeout } from "./bot-window.js";
 import { deliverMediaLoadError, deliverNonImageMedia } from "./media-deliver.js";
+import {
+  resolveWecomStreamingConfig,
+  syncWecomStreamContent,
+} from "../config/streaming-config.js";
+import { resolveWecomTemplates } from "../config/templates.js";
+
 export type DeliverWecomReplyContext = {
   payload: ReplyPayload;
   info: { kind?: string };
@@ -33,11 +51,15 @@ export type DeliverWecomReplyContext = {
   tableMode: Parameters<PluginRuntime["channel"]["text"]["convertMarkdownTables"]>[1];
 };
 
-/** 将 Agent 回复写入 stream 并触发企微侧投递。 */
+/**
+ * 将 Agent 回复写入 stream 并触发企微侧 refresh 投递。
+ */
 export async function deliverWecomReply(ctx: DeliverWecomReplyContext): Promise<void> {
   const core = getWeComRuntime();
   const { payload, info, target, streamId, chatType, rawBody, tableMode } = ctx;
   const { streamStore } = getMonitorState();
+  const streamingConfig = resolveWecomStreamingConfig(target.account);
+  const templates = resolveWecomTemplates(target.account);
 
   const pre = await preprocessOutboundReply({
     payload,
@@ -116,13 +138,30 @@ export async function deliverWecomReply(ctx: DeliverWecomReplyContext): Promise<
   }
 
   if (streamStore.getStream(streamId)?.fallbackMode) return;
-  const nextText = current.content ? `${current.content}\n\n${text}`.trim() : text.trim();
+
+  const isFinal = info?.kind === "final";
+  const pushAnswerIncrementally =
+    streamingConfig.streaming && streamingConfig.streamingContent && !isFinal;
+
   streamStore.updateStream(streamId, (s) => {
-    s.content = truncateUtf8Bytes(nextText, STREAM_MAX_BYTES);
+    if (text.trim()) {
+      const nextAnswer = s.answerText ? `${s.answerText}\n\n${text}`.trim() : text.trim();
+      s.answerText = nextAnswer;
+    }
+    syncWecomStreamContent(s, streamingConfig, {
+      includeAnswer: isFinal || pushAnswerIncrementally,
+      includeFooter: isFinal,
+      includeStatus: true,
+      templates,
+    });
+    s.content = truncateUtf8Bytes(s.content, STREAM_MAX_BYTES) || s.content;
     if (current.images?.length) s.images = current.images;
   });
+
   target.statusSink?.({ lastOutboundAt: Date.now() });
-  if (info?.kind === "final") {
-    target.runtime.log?.(`[webhook] deliver final streamId=${streamId} len=${text.length}`);
+  if (isFinal) {
+    target.runtime.log?.(
+      `[webhook] deliver final streamId=${streamId} len=${text.length} answerLen=${current.answerText?.length ?? 0}`,
+    );
   }
 }

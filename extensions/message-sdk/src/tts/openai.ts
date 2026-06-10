@@ -1,9 +1,11 @@
 /**
- * OpenAI TTS 语音合成
+ * @module tts/openai
  *
- * 基于 OpenAI TTS API（tts-1 / tts-1-hd），支持 6 种内置语音。
- * 需要 OpenAI API Key。
- * 参考：llm-study/llm-text-to-speech/openai/ + llm-text-to-speech Claude.md
+ * OpenAI TTS 语音合成 — tts-1 / tts-1-hd，6 种内置语音。
+ *
+ * **参考**：llm-study/llm-text-to-speech/openai/
+ *
+ * **关键导出**：`synthesizeOpenAI`
  */
 
 import {
@@ -37,17 +39,23 @@ function resolveFormat(format?: string): OutputFormat {
 }
 
 /**
- * OpenAI TTS 语音合成
+ * 调用 OpenAI `/audio/speech` 将文本合成为音频。
  *
- * 语音说明：
- *   alloy  - 中性、通用
- *   echo   - 温暖、深沉
- *   fable  - 英式、叙述
- *   onyx   - 深沉、权威感
- *   nova   - 温暖、亲和
- *   shimmer - 清晰、自信
+ * 语音：alloy / echo / fable / onyx / nova / shimmer
+ * 模型：tts-1（标准）或 tts-1-hd（高保真）
  *
- * 模型：tts-1（标准）/ tts-1-hd（高保真）
+ * @param text - 待合成文本（长度受 `config.maxTextLength` 限制）
+ * @param config - API 密钥、模型、语音与输出格式
+ * @returns 音频 Buffer 与元数据
+ * @throws {@link TTSAuthError} {@link TTSEmptyResultError} 等
+ *
+ * @example
+ * ```ts
+ * const { audio } = await synthesizeOpenAI("你好", {
+ *   apiKey: process.env.OPENAI_API_KEY!,
+ *   voice: "nova",
+ * });
+ * ```
  */
 export async function synthesizeOpenAI(
   text: string,

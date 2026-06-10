@@ -14,7 +14,7 @@ import type {
   MetricCollector, MetricDefinition, MetricSample,
   ChannelsStatusSnapshot,
 } from "../types.js";
-import { rpcCall } from "../ws-bridge.js";
+import { rpcCall } from "../runtime/ws-bridge.js";
 
 const PREFIX = "openclaw_channel";
 const CHANNELS_STATUS_PARAMS = {

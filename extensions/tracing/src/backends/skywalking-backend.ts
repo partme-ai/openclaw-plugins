@@ -9,7 +9,7 @@
  * - 内置多种库自动 instrumentation
  */
 
-import type { TracingBackend, TracingConfig, Span } from "../types.js";
+import type { TracingBackend, TracingConfig, Span } from "../shared/types.js";
 
 /** 默认 SkyWalking Collector 地址 */
 const DEFAULT_COLLECTOR_ADDRESS = "127.0.0.1:11800";

@@ -1,8 +1,12 @@
 /**
- * OpenAI 兼容 Embedding API 实现
+ * @fileoverview OpenAI 兼容 Embedding API 适配器。
  *
- * 支持任意 OpenAI 兼容的 Embedding API（OpenAI、Azure、Ollama、智谱、月之暗面等）。
- * 默认复用 OpenClaw 主 LLM 配置的 baseUrl/apiKey，零额外配置成本。
+ * @description 支持 OpenAI / Azure / 任意 OpenAI-compatible `/embeddings` 端点；
+ * 默认复用 `OPENAI_*` 环境变量，零额外配置即可接入主 LLM 凭据。
+ *
+ * **模块角色**：Knowledge Plugin · Embedding provider (OpenAI-compatible)。
+ *
+ * @module knowledge/embedding/openai
  */
 
 import type { EmbeddingService, KnowledgeEmbeddingConfig } from '../types.js';
@@ -12,12 +16,16 @@ const DEFAULT_MODEL = 'text-embedding-ada-002';
 /** 默认维度 */
 const DEFAULT_DIMENSIONS = 1536;
 
+/** OpenAI 兼容 Embedding 客户端。 */
 export class OpenAIEmbeddingService implements EmbeddingService {
   readonly dimensions: number;
   readonly modelName: string;
   private baseUrl: string;
   private apiKey: string;
 
+  /**
+   * @param config - 可选 baseUrl/apiKey/model/dimensions 覆盖。
+   */
   constructor(config?: KnowledgeEmbeddingConfig) {
     this.baseUrl = config?.baseUrl ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
     this.apiKey = config?.apiKey ?? process.env.OPENAI_API_KEY ?? '';

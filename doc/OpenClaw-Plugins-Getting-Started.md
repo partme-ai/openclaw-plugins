@@ -7,14 +7,16 @@ Each plugin installs independently:
 ```bash
 # IM Channels
 openclaw plugins install @partme.ai/wecom
-openclaw plugins install @partme.ai/dingtalk
+
+# DingTalk / Lark / QQ and other upstream channels: use openclaw-bridge, e.g.:
+# openclaw plugins install @dingtalk-real-ai/dingtalk-connector
 
 # Infrastructure
-openclaw plugins install @partme.ai/nacos
-openclaw plugins install @partme.ai/prometheus
+openclaw plugins install @partme.ai/openclaw-nacos
+openclaw plugins install @partme.ai/openclaw-prometheus
 
 # Message Queues
-openclaw plugins install @partme.ai/mqtt
+openclaw plugins install @partme.ai/openclaw-mqtt
 ```
 
 Restart the Gateway after installation:
@@ -25,7 +27,7 @@ openclaw gateway restart
 
 ## Configuration
 
-Each plugin has its own configuration guide under [guides/](./guides/). Common pattern:
+Each plugin has its own configuration guide in the [documentation index](./README.md#plugin-docs). Common pattern:
 
 ```json
 {

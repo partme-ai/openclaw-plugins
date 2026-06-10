@@ -1,11 +1,19 @@
 /**
- * 企微 template_card JSON 检测与 response_url 投递（插件协议层）。
+ * @module outbound/template-card
+ *
+ * 企微 **template_card** 交互卡片出站（Webhook response_url 协议层）。
+ *
+ * **职责**：
+ * - 检测 Agent 输出中的 template_card JSON
+ * - 单聊且有 active response_url 时 POST 发送卡片
+ * - 群聊或无 URL 时降级为 Markdown 文本摘要
  */
 
 import type { WecomWebhookTarget } from "../webhook/types.js";
 import { REQUEST_TIMEOUT_MS } from "../webhook/types.js";
 import { wecomFetch } from "../webhook/http.js";
 import { getActiveReplyUrl, useActiveReplyOnce } from "../webhook/active-reply.js";
+import { resolveWecomTemplates } from "../config/templates.js";
 
 export type TemplateCardDeliverParams = {
   target: WecomWebhookTarget;
@@ -69,9 +77,10 @@ export async function deliverTemplateCardIfPresent(
       target.runtime.log?.(
         `[webhook] sent template_card: task_id=${parsed.template_card.task_id}`,
       );
+      const cardSentText = resolveWecomTemplates(target.account).cardSent;
       streamStore.updateStream(streamId, (s) => {
         s.finished = true;
-        s.content = "[已发送交互卡片]";
+        s.content = cardSentText;
       });
       target.statusSink?.({ lastOutboundAt: Date.now() });
       return { handled: true };

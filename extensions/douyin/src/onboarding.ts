@@ -1,5 +1,10 @@
 /**
- * 抖音渠道 setupWizard — App Key / App Secret 声明式 CLI 配置。
+ * 抖音渠道 CLI 引导（onboarding）配置。
+ *
+ * **架构角色**：声明式 setup wizard，引导用户写入 app_key / app_secret，
+ * 与 `channel.ts` 中 `setup` / `setupWizard` 字段配对。
+ *
+ * **关键依赖**：`./channel-setup-factory`、`./config`
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
@@ -27,7 +32,11 @@ export const douyinSetupAdapter = setupAdapter;
 export const douyinSetupWizard = setupWizard;
 
 /**
- * 解析抖音账号是否已配置（供 channel 状态展示复用）。
+ * 判断抖音账号是否已具备有效凭据（供渠道状态展示复用）。
+ *
+ * @param cfg OpenClaw 全局配置
+ * @param accountId 可选账号 id
+ * @returns 当 app_key 与 app_secret 均非空时为 true
  */
 export function isDouyinConfigured(cfg: OpenClawConfig, accountId?: string): boolean {
   return resolveDouyinAccount(cfg, accountId).configured;

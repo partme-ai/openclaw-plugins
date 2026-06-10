@@ -1,8 +1,14 @@
 /**
- * Webhook 入站媒体处理
+ * @module webhook/media
  *
- * 从 @mocrane/wecom media.ts 部分迁移（仅入站解密）。
- * 负责：AES-CBC 解密企微加密媒体文件、MIME 类型检测。
+ * Webhook **入站媒体**解密（企微 AES-CBC + PKCS#7）。
+ *
+ * **职责**：下载加密媒体 URL → AES 解密 → 返回 Buffer 与 HTTP 元信息。
+ *
+ * **与 message-sdk 关系**：解密后的 Buffer 由 helpers `processInboundMessage` 交给
+ * OpenClaw `saveMediaBuffer` 归档；出站 Path Guard 见 `media-path-guard`。
+ *
+ * **关键导出**：`decryptWecomMediaWithMeta`、`DecryptedWecomMedia`、`WECOM_PKCS7_BLOCK_SIZE`
  */
 
 import crypto from "node:crypto";
@@ -32,10 +38,15 @@ export type DecryptedWecomMedia = {
 
 
 /**
- * **decryptWecomMediaWithMeta (解密企业微信媒体并返回源信息)**
+ * 解密企微加密媒体并保留下载响应元信息（Content-Type / 文件名 / 最终 URL）。
  *
- * 在返回解密结果的同时，保留下载响应中的元信息（content-type / filename / final url），
- * 供上层更准确地推断文件后缀和 MIME。
+ * WHY：企微媒体 URL 内容为 AES 加密；解密后需结合 HTTP 头与 magic bytes 推断 MIME。
+ *
+ * @param url - 企微提供的加密媒体下载 URL
+ * @param encodingAESKey - AES 密钥（43 字符 Base64）
+ * @param params.maxBytes - 可选最大下载字节
+ * @param params.http - 出站 HTTP 选项（代理/超时）
+ * @returns 解密结果 {@link DecryptedWecomMedia}
  */
 export async function decryptWecomMediaWithMeta(
   url: string,

@@ -1,7 +1,9 @@
 /**
- * Gotify Client — 高层业务 Client 封装。
+ * @file GotifyClient façade —— OOP 风格薄包装（可选依赖）。
  *
- * 基于 gotify-api 原始函数进一步封装 Gotify Application/Client/Message 管理。
+ * @description Channel 主流路径仍直接用 `gotify-api` 方法以便注入 `fetchImpl`；
+ * 本类适合脚本 / REPL / 未来子命令重用 **已绑定账号** 的语义。
+ * **模块角色**：Channel Plugin · Ergonomic helper（非 hot path）。
  */
 
 import type {

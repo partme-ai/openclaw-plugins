@@ -1,20 +1,23 @@
 /**
- * OCR 公共类型
+ * @module ocr/types
  *
- * 所有 OCR 提供商共用此接口定义。
- * 来源：借鉴 Spring AI OCR 示例 (spring-ai-ollama-ocr-*)
+ * OCR 公共类型 — 所有 OCR 提供商共用。
+ *
+ * **关键导出**：`OCRConfig`、`OCRInput`、`OCRResult`、`OCRProvider`
  */
-
-import type { OCRError } from "./errors.js";
 
 // ============================================================================
 // 配置
 // ============================================================================
 
 /**
- * OCRConfig 描述 ocr 模块公开 API 的结构化参数或返回值。
+ * OCR 提供商连接配置 / Provider connection config.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property baseUrl - API 端点 URL
+ * @property apiKey - API 密钥
+ * @property model - 模型名称（各提供商默认不同）
+ * @property timeoutMs - 超时毫秒（默认 30000）
+ * @property maxImageBytes - 最大图片字节（默认 10MB）
  */
 export interface OCRConfig {
   /** API 端点 URL */
@@ -34,9 +37,12 @@ export interface OCRConfig {
 // ============================================================================
 
 /**
- * OCRInput 描述 ocr 模块公开 API 的结构化参数或返回值。
+ * OCR 输入 — 三选一提供图片 / Image input (provide one of url/base64/filePath).
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property url - 图片 HTTP(S) URL
+ * @property base64 - Base64 编码图片数据
+ * @property filePath - 本地文件路径（部分提供商支持）
+ * @property mimeType - 与 base64 配合的 MIME（默认 `image/png`）
  */
 export interface OCRInput {
   /** 图片 URL (http/https) */
@@ -54,9 +60,11 @@ export interface OCRInput {
 // ============================================================================
 
 /**
- * OCRWord 描述 ocr 模块公开 API 的结构化参数或返回值。
+ * 识别到的词 / Recognized word with optional bbox.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property text - 词文本
+ * @property confidence - 置信度 0–1
+ * @property bbox - 边界框 [x1, y1, x2, y2]（可选）
  */
 export interface OCRWord {
   /** 识别的文字 */
@@ -68,9 +76,7 @@ export interface OCRWord {
 }
 
 /**
- * OCRLine 描述 ocr 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * 识别到的行 / Line of text with words.
  */
 export interface OCRLine {
   /** 行文本 */
@@ -84,9 +90,7 @@ export interface OCRLine {
 }
 
 /**
- * OCRBlock 描述 ocr 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * 文本块 / Block containing lines.
  */
 export interface OCRBlock {
   /** 块文本 */
@@ -100,9 +104,14 @@ export interface OCRBlock {
 }
 
 /**
- * OCRResult 描述 ocr 模块公开 API 的结构化参数或返回值。
+ * OCR 统一结果 / Normalized OCR result across providers.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property text - 完整识别文本
+ * @property blocks - 结构化块列表
+ * @property provider - 提供商标识
+ * @property model - 使用的模型名
+ * @property elapsedMs - 处理耗时毫秒
+ * @property imageSize - 原图尺寸（可选）
  */
 export interface OCRResult {
   /** 完整识别文本 */
@@ -124,9 +133,7 @@ export interface OCRResult {
 // ============================================================================
 
 /**
- * OCRProvider 描述 ocr 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * OCR 提供商契约 / OCR provider plugin interface.
  */
 export interface OCRProvider {
   readonly name: string;

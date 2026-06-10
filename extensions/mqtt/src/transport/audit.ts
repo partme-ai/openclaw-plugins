@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/transport/audit
+ *
  * MQTT 审计日志工具。
  * 支持按配置输出结构化 JSON，便于接入 ELK / Loki / SIEM。
  */

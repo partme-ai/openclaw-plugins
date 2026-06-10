@@ -15,8 +15,8 @@
  */
 
 import type { MetricCollector, MetricDefinition, MetricSample, SessionEntry } from "../types.js";
-import { rpcCall } from "../ws-bridge.js";
-import { sanitizeLabel } from "../utils.js";
+import { rpcCall } from "../runtime/ws-bridge.js";
+import { sanitizeLabel } from "../shared/label-sanitize.js";
 
 const PREFIX = "openclaw_session";
 const SESSIONS_LIST_PARAMS = {

@@ -1,0 +1,140 @@
+{
+  "id": "web-socket",
+  "name": "web-socket",
+  "version": "0.1.0",
+  "description": "WebSocket channel for OpenClaw — ws client and/or embedded server with JSON frames",
+  "main": "dist/index.js",
+  "channels": ["web-socket"],
+  "commands": [],
+  "skills": [],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["client", "server", "both"],
+        "default": "server",
+        "description": "client=connect outbound WS; server=embedded WS; both=both"
+      },
+      "url": {
+        "type": "string",
+        "description": "External WebSocket URL (required for client/both)"
+      },
+      "wsPort": {
+        "type": "number",
+        "default": 18789,
+        "description": "WebSocket listener port"
+      },
+      "path": {
+        "type": "string",
+        "default": "/openclaw/ws",
+        "description": "WebSocket HTTP upgrade path"
+      },
+      "host": {
+        "type": "string",
+        "default": "0.0.0.0",
+        "description": "Bind host"
+      },
+      "maxConnections": {
+        "type": "number",
+        "default": 1000,
+        "description": "Maximum concurrent WebSocket connections"
+      },
+      "defaultAgentId": {
+        "type": "string",
+        "description": "Default agent when no binding matches"
+      },
+      "agentBindings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "connectionId": { "type": "string" },
+            "connectionIdPrefix": { "type": "string" },
+            "agentId": { "type": "string" },
+            "accountId": { "type": "string" }
+          },
+          "required": ["agentId"]
+        },
+        "default": [],
+        "description": "Route inbound messages by connection id or prefix"
+      },
+      "auth": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "token": { "type": "string" },
+          "tokens": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          }
+        }
+      },
+      "payload": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["jsonTextOrPlain"],
+            "default": "jsonTextOrPlain"
+          },
+          "outboundFormat": {
+            "type": "string",
+            "enum": ["envelope", "plain"],
+            "default": "envelope"
+          }
+        }
+      },
+      "limits": {
+        "type": "object",
+        "properties": {
+          "maxPayloadBytes": {
+            "type": "number",
+            "default": 1048576
+          }
+        }
+      },
+      "session": {
+        "type": "object",
+        "properties": {
+          "maxExpirySeconds": { "type": "number", "default": 86400 },
+          "persistentAcrossReconnect": { "type": "boolean", "default": true }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "wsPort": { "label": "WebSocket Port", "placeholder": "18789" },
+    "path": { "label": "WebSocket Path", "placeholder": "/openclaw/ws" },
+    "defaultAgentId": { "label": "Default Agent ID" },
+    "agentBindings": { "label": "Connection → Agent Bindings" },
+    "auth.enabled": { "label": "Require Token", "type": "toggle" },
+    "auth.token": { "label": "Shared Token", "type": "password" }
+  },
+  "channelConfigs": {
+    "web-socket": {
+      "label": "WebSocket",
+      "description": "Native WebSocket channel — JSON message protocol for web and app clients",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "wsPort": { "type": "number", "default": 18789 },
+          "path": { "type": "string", "default": "/openclaw/ws" },
+          "defaultAgentId": { "type": "string" },
+          "auth": {
+            "type": "object",
+            "properties": {
+              "enabled": { "type": "boolean", "default": false },
+              "token": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "protocolBridge": true
+  }
+}

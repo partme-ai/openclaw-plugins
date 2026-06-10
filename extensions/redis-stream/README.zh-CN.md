@@ -72,6 +72,14 @@ openclaw plugins install npm:@partme.ai/openclaw-redis-stream
 
 最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
 
+### message-sdk 复用
+
+| message-sdk 模块 | redis-stream 挂载点 | 用途 |
+|------------------|---------------------|------|
+| `bridge`（`normalizeWireIngress`、`dispatchChannelMessage`） | `src/inbound.ts` | Pub/Sub 与 Stream 入站派发 |
+| `dedup` + `util/getGlobalSingleton` | `src/shared/wire-helpers.ts` | 入站幂等 + payload 模式映射 |
+| `config/resolveChannelAgentReplyTimeoutMs` | `src/config/resolvers.ts` | Agent 回复超时薄封装 |
+
 ### 最小配置
 
 ```jsonc
@@ -160,6 +168,7 @@ Channel 模式支持 `*` 通配符（glob 风格，以冒号分隔）。独立�
 | `stream.blockMs` | `number` | `5000` | `XREADGROUP` 阻塞超时 |
 | `stream.count` | `number` | `10` | 每批次最大消息数 |
 | `stream.createGroup` | `boolean` | `true` | 自动创建消费者组 |
+| `stream.pendingClaimIdleMs` | `number` | `120000` | XAUTOCLAIM 回收 idle PEL 条目（0=禁用） |
 
 ### 负载解析
 
@@ -208,6 +217,18 @@ openclaw-redis-stream/
     ├── session-mapper.test.ts
     └── channel.test.ts
 ```
+
+## 企业级可靠性
+
+> 完整说明：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)
+
+| 模式 | 分级 | ACK | 备注 |
+|------|------|-----|------|
+| **stream** | 可企业试点 | 成功处理后 XACK | `pendingClaimIdleMs` XAUTOCLAIM 回收 PEL |
+| **pubsub** | 协议限制 | 无 | at-most-once；避免空白名单 `*` |
+
+- 出站 channel 以 `:out` 结尾自动跳过，防自消费
+- 生产请使用 `channelMode: "stream"` + 显式 `subscribeChannels`
 
 ## 常见问题
 
@@ -312,3 +333,7 @@ MIT
 ⭐ **Star us on GitHub** — 你的支持是 PartMe 用爱发电的动力！
 
 </div>
+
+## 消息格式指南
+
+Redis Stream 使用共享的 OpenClaw 队列 wire 契约完成入站解析与 envelope 回复，并额外支持 Stream 字段映射。标准 `MessageEnvelope`、非标准消息归一化与多语言 SDK 适配说明见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。

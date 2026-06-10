@@ -338,7 +338,6 @@ flowchart TB
 ## 10. References
 
 - `extensions/message-sdk/docs/ARCHITECTURE.md`
-- `doc/im-channels/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md`
-- `doc/im-channels/gotify/OpenClaw-Gotify-Architecture.md`
-- `doc/im-channels/gotify/OpenClaw-Gotify-Known-Gaps.md`（ARC-2）
+- `doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md`
+- `doc/gotify/OpenClaw-Gotify-Architecture_CN.md`
 - `extensions/wecom/src/webhook/reply-pipeline.ts`

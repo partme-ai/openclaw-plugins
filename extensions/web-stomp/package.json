@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-web-stomp",
-  "version": "2026.5.20",
+  "version": "2026.5.25-2",
   "description": "STOMP over WebSocket bridge for OpenClaw — enterprise integration with Spring STOMP clients and web apps",
   "type": "module",
   "main": "dist/index.js",
@@ -29,9 +29,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md",
-    "clawdbot.plugin.json",
-    "moltbot.plugin.json"
+    "README_CN.md"
   ],
   "publishConfig": {
     "access": "public"
@@ -48,7 +46,7 @@
   },
   "dependencies": {
     "ws": "^8.18.0",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

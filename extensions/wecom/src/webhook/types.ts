@@ -1,12 +1,21 @@
 /**
- * Webhook 模式专用类型定义
+ * @module webhook/types
  *
- * 从 @mocrane/wecom monitor/types.ts 完整迁移，适配目标项目类型体系。
+ * Webhook 模式专用类型与常量定义。
+ *
+ * **职责**：StreamState、PendingInbound、ActiveReplyState、WebhookInboundMessage 等
+ * 企微 Bot 回调领域模型；TTL / 防抖 / 路径常量。
+ *
+ * **与 message-sdk 关系**：
+ * - `PendingInbound` 形状与 message-sdk `BasePendingInbound` 对齐（供 StreamSessionStore 泛型）
+ * - `STREAM_MAX_BYTES` 等与 SDK `STREAM_SESSION_LIMITS` 保持一致
+ *
+ * **关键导出**：`StreamState`、`WebhookInboundMessage`、`WEBHOOK_PATHS`、各 TTL 常量
  */
 
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
-import type { WeComConfig, ResolvedWeComAccount } from "../utils.js";
+import type { WeComConfig, ResolvedWeComAccount } from "../config/wecom-config.js";
 
 // ============================================================================
 // 常量
@@ -88,8 +97,8 @@ export interface ResolvedWebhookAccount extends ResolvedWeComAccount {
  * 包含基础的日志和错误报告接口，用于解耦对 PluginRuntime 的直接依赖。
  */
 export interface WecomRuntimeEnv {
-  log?: (message: string) => void;
-  error?: (message: string) => void;
+  log?: (...args: unknown[]) => void;
+  error?: (...args: unknown[]) => void;
 }
 
 // ============================================================================
@@ -154,8 +163,16 @@ export interface StreamState {
   finished: boolean;
   /** 错误信息 */
   error?: string;
-  /** 已积累的响应内容（用于长轮询返回） */
+  /** dispatch 失败/超时时的用户可见摘要 */
+  dispatchErrorSummary?: string;
+  /** 已积累的响应内容（用于长轮询返回，为 status + answer 合成后的展示文本） */
   content: string;
+  /** 原始累积答案（block deliver 拼接，不含状态栏） */
+  answerText?: string;
+  /** 当前状态栏文案 */
+  statusLine?: string;
+  /** Agent 回复开始时间（footer.elapsed） */
+  replyStartedAt?: number;
   /** 过程中生成的图片（Base64 + MD5） */
   images?: Array<{ base64: string; md5: string }>;
   /** 兜底模式（仅作为内部状态，不暴露给企微） */

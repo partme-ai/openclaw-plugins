@@ -599,8 +599,8 @@ curl -s http://127.0.0.1:18789/metrics | grep -E 'openclaw_up|openclaw_ready|ope
 - **Prometheus 文档**: https://prometheus.io/docs
 - **Grafana 文档**: https://grafana.com/docs
 - **OpenClaw 文档**: https://docs.openclaw.ai
-- **插件 README**: [../README.md](../README.md)
-- **架构文档**: [../ARCHITECTURE.md](../ARCHITECTURE.md)
+- **插件 README**: [../../extensions/prometheus/README.md](../../extensions/prometheus/README.md)
+- **架构文档**: [OpenClaw-Prometheus-Architecture.md](./OpenClaw-Prometheus-Architecture.md)
 
 ---
 

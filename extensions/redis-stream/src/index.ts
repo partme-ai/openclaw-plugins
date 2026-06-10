@@ -1,17 +1,16 @@
 /**
- * openclaw-redis-stream 入口。
+ * @fileoverview openclaw-redis-stream 插件聚合导出面（门面模块）。
  *
- * 注册 Redis Channel/Stream channel plugin ——
- * 支持 Redis Pub/Sub channel 消息接收（多 topic 订阅 + agent 绑定）和
- * Redis Stream 消费组模式，会话隔离完全使用 OpenClaw dmScope。
+ * @description
+ * 通过 `defineChannelPluginEntry` 注册 Redis Stream Channel 插件、注入 Runtime，
+ * 并在 full 模式下暴露健康检查与状态 HTTP 路由；可选注册 CLI 元数据占位。
+ *
+ * @module index
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
-import type {
-  OpenClawPluginApi,
-  PluginRuntime,
-} from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
 import { redisStreamChannel } from "./channel.js";
 import { getStats } from "./transport/server.js";
 import { resolveRedisChannelConfig, redactUrl } from "./config.js";
@@ -19,17 +18,13 @@ import { setRedisStreamRuntime } from "./runtime.js";
 import { getSessionStats } from "./routing/session-mapper.js";
 
 export default defineChannelPluginEntry({
-  id: "openclaw-redis-stream",
+  id: "redis-stream",
   name: "Redis Stream",
-  description:
-    "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
-
+  description: "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
   plugin: redisStreamChannel,
-
   setRuntime(runtime: PluginRuntime) {
     setRedisStreamRuntime(runtime);
   },
-
   registerCliMetadata(api: OpenClawPluginApi) {
     api.registerCli(
       () => {

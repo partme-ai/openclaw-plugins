@@ -6,8 +6,8 @@ import type {
   ModelAuthStatusSnapshot,
   ModelAuthWindow,
 } from "../types.js";
-import { rpcCall } from "../ws-bridge.js";
-import { sanitizeLabel } from "../utils.js";
+import { rpcCall } from "../runtime/ws-bridge.js";
+import { sanitizeLabel } from "../shared/label-sanitize.js";
 
 const PREFIX = "openclaw_model_auth";
 const PROVIDER_STATUSES = ["ok", "expiring", "expired", "missing", "static"] as const;

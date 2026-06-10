@@ -93,6 +93,24 @@ await dispatchWireMessage({ runtime, channel: "mqtt", text: ingress.text, unifie
 await dispatchTranscriptTurn({ channelRuntime, cfg, channel: "gotify", /* ... */ delivery: { deliver } });
 ```
 
+### deferred-delivery-ack（MQ 延迟 ACK）
+
+RabbitMQ 等通道使用 `createDeferredDeliveryAck`：**reply publish 成功后再 ACK**，失败 nack/requeue。详见 [队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)。
+
+```typescript
+import { createDeferredDeliveryAck } from "@partme.ai/openclaw-message-sdk/bridge";
+
+const deferredAck = createDeferredDeliveryAck({
+  delivery: brokerDelivery,
+  requireReply: true,
+  requeueOnMissingReply: true,
+});
+await dispatchChannelMessage({
+  reply: { deliver: deferredAck.wrapReplyDeliver(publishReply) },
+});
+deferredAck.finalizeAfterDispatch();
+```
+
 ### 幂等去重（createIdempotencyCache）
 
 推荐所有通道插件使用 SDK 导出的 `createIdempotencyCache`，勿自建 `Map`：
@@ -541,3 +559,7 @@ export async function transcribeMyProvider(
 ### 添加新的 TTS 提供商
 
 实现 `synthesizeXxx(text: string, config: TTSConfig): Promise<TTSResult>`。
+
+## 队列消息格式指南
+
+队列插件 wire 格式、适配器行为与多语言 SDK 指南见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。

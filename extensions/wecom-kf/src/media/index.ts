@@ -12,4 +12,4 @@ export {
   FILE_MAX_BYTES,
   ABSOLUTE_MAX_BYTES,
   VOICE_SUPPORTED_MIMES,
-} from "./const.js";
+} from "./uploader.js";

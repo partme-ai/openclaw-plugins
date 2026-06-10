@@ -102,7 +102,7 @@ openclaw plugins install
 **解决**：
 - 使用新版 `dashboard-advanced.json`（支持 `histogram_quantile()`）
 - 更新 Grafana 变量：使用 `openclaw_agent_run_duration_seconds_bucket` 而不是 `_sum`
-- 查看 `grafana/README.md` 中的新 dashboard 说明
+- 查看 [OpenClaw-Prometheus-Grafana-README.md](./grafana/OpenClaw-Prometheus-Grafana-README.md) 中的 dashboard 说明
 
 ### 10. 集群场景下 Instance Label 不唯一
 

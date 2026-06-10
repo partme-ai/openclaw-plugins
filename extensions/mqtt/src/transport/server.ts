@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/transport/server
+ *
  * MQTT Broker 管理模块
  * 基于 aedes 实现轻量级内嵌 MQTT Broker
  *
@@ -10,7 +12,6 @@
  */
 
 import { createServer, type Server as TcpServer } from "node:net";
-import { createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer as createTlsServer, type Server as TlsServer } from "node:tls";
 import { createBroker } from "aedes";
@@ -28,6 +29,7 @@ import type {
   MqttInboundMessage,
 } from "../types.js";
 import { logAuditEvent } from "./audit.js";
+import { verifyPassword, matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
 import { isUserActionAllowed, aclTopicMatches } from "./acl.js";
 import {
   updateConnectionMetrics,
@@ -38,7 +40,7 @@ import {
   updateAuthMetrics,
   updateAclDenials,
   updateSessionMetrics,
-} from "../metrics.js";
+} from "../shared/metrics.js";
 
 type AedesBroker = NonNullable<ReturnType<typeof createBroker>>;
 
@@ -200,6 +202,8 @@ export function startBroker(
       const clientId = client.id;
       console.log(`[openclaw-mqtt] Client disconnected: ${clientId}`);
       connectedClients.delete(clientId);
+      clientUsers.delete(clientId);
+      qos0InflightByClient.delete(clientId);
       logAuditEvent(config.audit, "info", "client_disconnected", { clientId });
       updateConnectionMetrics(connectedClients.size, 0, 1);
       onClientDisconnect?.(clientId);
@@ -323,8 +327,9 @@ export function startBroker(
 }
 
 /**
- * 停止 MQTT Broker
- * 清理所有连接和资源
+ * 停止 MQTT Broker 并释放 TCP/TLS/Redis/Aedes 资源。
+ *
+ * @returns Broker 完全关闭后 resolve
  */
 export async function stopBroker(): Promise<void> {
   return new Promise<void>((resolve) => {
@@ -370,76 +375,85 @@ export async function stopBroker(): Promise<void> {
 }
 
 /**
- * 发布消息到指定 Topic
- * 用于将 Agent 回复推送给设备
+ * 发布消息到指定 Topic（Agent 回复推送给设备）。
  *
  * @param topic - 目标 Topic
- * @param payload - 消息内容
+ * @param payload - 消息内容（UTF-8 字符串）
  * @param qos - QoS 级别（0 或 1）
  * @param retain - 是否保留消息
+ * @returns 发布完成时 resolve；broker 未就绪、载荷超限或 Aedes 回调报错时 reject
  */
-export function publishMessage(
+export async function publishMessage(
   topic: string,
   payload: string,
   qos: 0 | 1 = 0,
-  retain = false
-): void {
+  retain = false,
+): Promise<void> {
   if (!aedesInstance) {
-    console.warn("[openclaw-mqtt] Cannot publish — broker not running");
-    return;
+    throw new Error("[openclaw-mqtt] Cannot publish — broker not running");
   }
   if (activeBrokerConfig && Buffer.byteLength(payload, "utf-8") > activeBrokerConfig.limits.maxPayloadBytes) {
-    console.warn(
-      `[openclaw-mqtt] Cannot publish — payload exceeds maxPayloadBytes(${activeBrokerConfig.limits.maxPayloadBytes})`,
-    );
     logAuditEvent(activeBrokerConfig.audit, "warn", "outbound_payload_dropped_oversized", {
       topic,
       bytes: Buffer.byteLength(payload, "utf-8"),
       maxPayloadBytes: activeBrokerConfig.limits.maxPayloadBytes,
     });
-    return;
+    throw new Error(
+      `[openclaw-mqtt] Cannot publish — payload exceeds maxPayloadBytes(${activeBrokerConfig.limits.maxPayloadBytes})`,
+    );
   }
 
-  // Track outbound message
   updateMessageMetrics(topic, qos, "outbound");
 
-  aedesInstance.publish(
-    {
-      topic,
-      payload: Buffer.from(payload, "utf-8"),
-      qos,
-      retain,
-      cmd: "publish",
-      dup: false,
-    },
-    (err: Error | undefined) => {
-      if (err) {
-        console.error(`[openclaw-mqtt] Publish error on topic ${topic}:`, err);
-        logAuditEvent(activeBrokerConfig?.audit, "error", "outbound_publish_failed", {
-          topic,
-          error: String(err),
-        });
-      }
-    }
-  );
+  await new Promise<void>((resolve, reject) => {
+    aedesInstance!.publish(
+      {
+        topic,
+        payload: Buffer.from(payload, "utf-8"),
+        qos,
+        retain,
+        cmd: "publish",
+        dup: false,
+      },
+      (err: Error | undefined) => {
+        if (err) {
+          console.error(`[openclaw-mqtt] Publish error on topic ${topic}:`, err);
+          logAuditEvent(activeBrokerConfig?.audit, "error", "outbound_publish_failed", {
+            topic,
+            error: String(err),
+          });
+          reject(err);
+          return;
+        }
+        resolve();
+      },
+    );
+  });
 }
 
 /**
- * 获取所有已连接客户端信息
+ * 获取所有已连接客户端信息快照。
+ *
+ * @returns 当前在线客户端列表
  */
 export function getConnectedClients(): MqttClientInfo[] {
   return Array.from(connectedClients.values());
 }
 
 /**
- * 根据 clientId 获取用户名（用于 ACL 与审计）。
+ * 根据 clientId 获取认证用户名（ACL 与审计用）。
+ *
+ * @param clientId - MQTT clientId
+ * @returns 用户名；未映射时为 undefined
  */
 export function getClientUsername(clientId: string): string | undefined {
   return clientUsers.get(clientId);
 }
 
 /**
- * 获取当前 Broker 统计数据
+ * 获取当前 Broker 运行统计。
+ *
+ * @returns 连接数、运行状态、QoS0 丢弃与 inflight 客户端计数
  */
 export function getBrokerStats(): {
   connectedClients: number;
@@ -460,6 +474,10 @@ export function getBrokerStats(): {
  * 验证客户端 username/password
  */
 function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): void {
+  const usersByName = new Map(
+    authConfig.users.map((user) => [user.username, user] as const),
+  );
+
   aedes.authenticate = (client, username, password, callback) => {
     const usernameStr = username?.toString();
     const passwordStr = password?.toString() ?? "";
@@ -501,9 +519,7 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       return;
     }
 
-    const user = authConfig.users.find(
-      (u) => u.username === usernameStr
-    );
+    const user = usersByName.get(usernameStr);
 
     if (!user) {
       console.warn(`[openclaw-mqtt] Auth failed — unknown user: ${usernameStr}`);
@@ -543,7 +559,7 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       cb(null);
       return;
     }
-    const user = authConfig.users.find((entry) => entry.username === clientUsers.get(client.id));
+    const user = usersByName.get(clientUsers.get(client.id) ?? "");
     if (!user) {
       cb(null);
       return;
@@ -569,7 +585,7 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       cb(null, sub);
       return;
     }
-    const user = authConfig.users.find((entry) => entry.username === clientUsers.get(client.id));
+    const user = usersByName.get(clientUsers.get(client.id) ?? "");
     if (!user) {
       cb(null, sub);
       return;
@@ -589,25 +605,6 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
     }
     cb(null, allowed ? sub : null);
   };
-}
-
-function verifyPassword(
-  plain: string,
-  expectedPlain?: string,
-  expectedHash?: string,
-  algorithm: "sha256" | "sha512" = "sha256",
-): boolean {
-  if (typeof expectedPlain === "string") {
-    return expectedPlain === plain;
-  }
-  if (typeof expectedHash !== "string") {
-    return false;
-  }
-  const actualHex = createHash(algorithm).update(plain, "utf-8").digest("hex");
-  const actualBuf = Buffer.from(actualHex, "hex");
-  const expectedBuf = Buffer.from(expectedHash, "hex");
-  if (actualBuf.length !== expectedBuf.length) return false;
-  return timingSafeEqual(actualBuf, expectedBuf);
 }
 
 function isWillAllowed(topic: string, allow: boolean, patterns: string[]): boolean {

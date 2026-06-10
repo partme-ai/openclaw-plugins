@@ -1,26 +1,26 @@
 /**
- * Gateway 注册的抖音 Webhook：验签、挑战应答，并经 message-sdk 入站派发。
+ * 抖音 Webhook 入站 HTTP 处理器。
+ *
+ * **架构角色**：Gateway `registerPluginHttpRoute` 的 handler 工厂，负责
+ * 挑战应答、SHA1 验签、幂等去重，并经 message-sdk Transcript 派发至 Agent。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { getDouyinRuntime } from "./runtime.js";
 import type { ResolvedDouyinAccount } from "./types.js";
 import {
-  createIdempotencyCache,
   readRequestBodyWithLimit,
   isRequestBodyLimitError,
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,
-  normalizeWireIngress,
-  dispatchChannelMessage,
-  resolveChannelDispatchIdentity,
-  type BridgePluginRuntime,
-} from "./runtime-api.js";
+} from "./runtime/runtime-api.js";
+import { dispatchDouyinWebhookInbound } from "./dispatch/dispatch-inbound.js";
 import {
   extractDouyinSenderId,
   tryParseVerifyWebhookChallenge,
   verifyDouyinSignature,
-} from "./webhook-utils.js";
+} from "./webhook/webhook-utils.js";
 
+/** Gateway 注入的可选日志接口 */
 export type DouyinGatewayLog = {
   info?: (message: string) => void;
   warn?: (message: string) => void;
@@ -28,11 +28,8 @@ export type DouyinGatewayLog = {
   debug?: (message: string) => void;
 };
 
-/** 抖音 Webhook 入站幂等缓存（msg-id）。 */
-const idempotencyCache = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 5000 });
-
 /**
- * 构建符合 registerPluginHttpRoute 的处理器：返回 true 表示已响应请求。
+ * 构建符合 `registerPluginHttpRoute` 签名的 HTTP 处理器。
  */
 export function createDouyinPluginHttpHandler(params: {
   account: ResolvedDouyinAccount;
@@ -69,59 +66,25 @@ export function createDouyinPluginHttpHandler(params: {
 
       const msgIdHeader = req.headers["msg-id"] as string | undefined;
       const messageId = msgIdHeader ?? `douyin-${Date.now()}`;
-
-      const parsed = normalizeWireIngress({
-        rawPayload: body,
-        mode: "jsonTextOrPlain",
-        channel: "douyin",
-        idempotencyKey: msgIdHeader,
-        idempotency: msgIdHeader ? idempotencyCache : undefined,
-      });
-      if (!parsed.accepted) {
-        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end("success");
-        return true;
-      }
-      const text = parsed.text ?? body;
       const runtime = getDouyinRuntime();
+      const cfg = (runtime.config ?? {}) as Record<string, unknown>;
       const peerId =
         extractDouyinSenderId(body) ?? `anonymous:${account.shop_id ?? account.accountId}`;
-      const shopRef = account.shop_id ?? account.accountId;
 
-      const { agentId, sessionKey } = await resolveChannelDispatchIdentity(
-        runtime as unknown as BridgePluginRuntime,
-        {
-          channel: "douyin",
-          accountId: account.accountId,
-          peerId,
-        },
-      );
-
-      await dispatchChannelMessage({
-        mode: "reply-pipeline",
-        runtime: runtime as unknown as BridgePluginRuntime,
-        channel: "douyin",
-        accountId: account.accountId,
+      const result = await dispatchDouyinWebhookInbound({
+        runtime,
+        cfg,
+        account,
+        rawBody: body,
+        text: body,
         peerId,
-        text,
-        agentId,
-        sessionKey,
-        unified: parsed.unified,
-        extra: {
-          rawBody: body,
-          messageId,
-          shopId: shopRef,
-        },
-        reply: {
-          deliver: async () => {
-            log?.warn?.(
-              "[douyin] 出站 DM 未接开放平台对称通道；请用抖店/OpenAPI 或 douyin-cli 发送回复。",
-            );
-          },
-          outboundFormat: "plainText",
-          replyRoute: { shopId: shopRef },
-        },
+        messageId: msgIdHeader ?? messageId,
+        log,
       });
+
+      if (result === "skipped") {
+        log?.warn?.("[douyin] inbound skipped: no transcript runtime available");
+      }
 
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("success");

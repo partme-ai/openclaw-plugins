@@ -12,17 +12,17 @@
  * 6. Webhook cluster: peer discovery and self-filtering
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseNacosPluginConfig } from "../src/config-parse.js";
-import { GatewayNacosRegistry } from "../src/nacos-registry.js";
-import { WebhookClusterService } from "../src/nacos-cluster.js";
-import { NacosConfigSyncService } from "../src/nacos-config-sync.js";
-import { flattenSpringNacosPluginConfig } from "../src/spring-normalize.js";
-import { resolveGatewayPort, resolveHooksInfo, resolveRegisterIp } from "../src/resolve-endpoint.js";
-import { deepMerge } from "../src/merge-deep.js";
-import { backupOpenClawConfig, resolveConfigFileForBackup } from "../src/nacos-config-sync.js";
-import { expandEnvPlaceholdersInValue } from "../src/env-expand.js";
-import { formatTimestampYyyyMMddHHmmss } from "../src/format-timestamp.js";
-import { DEFAULT_GROUP, DEFAULT_SERVICE } from "../src/shared.js";
+import { parseNacosPluginConfig } from "./config/config-parse.js";
+import { GatewayNacosRegistry } from "./runtime/nacos-registry.js";
+import { WebhookClusterService } from "./runtime/nacos-cluster.js";
+import { NacosConfigSyncService } from "./runtime/nacos-config-sync.js";
+import { flattenSpringNacosPluginConfig } from "./config/spring-normalize.js";
+import { resolveGatewayPort, resolveHooksInfo, resolveRegisterIp } from "./config/resolve-endpoint.js";
+import { deepMerge } from "./config/merge-deep.js";
+import { backupOpenClawConfig, resolveConfigFileForBackup } from "./runtime/nacos-config-sync.js";
+import { expandEnvPlaceholdersInValue } from "./config/env-expand.js";
+import { formatTimestampYyyyMMddHHmmss } from "./shared/format-timestamp.js";
+import { DEFAULT_GROUP, DEFAULT_SERVICE } from "./shared/shared.js";
 
 // Mock nacos SDK module — intercepts at import level
 vi.mock("nacos", () => {

@@ -1,19 +1,27 @@
 /**
- * Webhook HTTP 请求处理
+ * @module webhook/handler
  *
- * 从 @mocrane/wecom monitor.ts handleWecomWebhookRequest 部分迁移 + 重构。
- * 负责：
- * 1. GET/POST 请求分流
- * 2. 签名验证（调用 crypto 模块）
- * 3. 消息解密
- * 4. 按消息类型分发到 monitor 层
+ * Webhook **HTTP 请求入口**（GET 验证 + POST 消息回调）。
+ *
+ * **职责**：
+ * - 签名验证、AES 解密、多账号 Target 匹配
+ * - 按 msgtype 分发到 monitor 层（入站 / stream_refresh / 事件）
+ * - 加密 JSON 响应（企微 text/plain 协议）
+ *
+ * **与 message-sdk 关系**：
+ * - 入站 body 限流：`readRequestBodyWithLimit`（webhook-ingress 对齐）
+ * - 解密后消息进入 SDK StreamSessionStore 防抖队列
+ *
+ * **关键流程**：`handleWecomWebhookRequest` → decrypt → `dispatchMessage`
+ *
+ * **关键导出**：`handleWecomWebhookRequest`
  */
 
 import crypto from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { getRegisteredTargets, getWebhookTargetsMap, parseWebhookPath } from "./target.js";
 import type { WecomWebhookTarget, WebhookInboundMessage } from "./types.js";
-import { resolveWecomEgressProxyUrl } from "../utils.js";
+import { resolveWecomEgressProxyUrl } from "../config/wecom-config.js";
 import {
   handleInboundMessage,
   handleStreamRefresh,
@@ -23,13 +31,13 @@ import {
 import { hasActiveTargets } from "./target.js";
 import {
   resolveWecomSenderUserId,
-} from "./helpers.js";
+} from "./inbound-helpers.js";
 import { WecomCrypto } from "@wecom/aibot-node-sdk";
 import {
   readRequestBodyWithLimit,
   isRequestBodyLimitError,
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,
-} from "../runtime-api.js";
+} from "../runtime/runtime-api.js";
 
 // ============================================================================
 // 辅助函数
@@ -296,10 +304,11 @@ function findMatchingTarget(
 // ============================================================================
 
 /**
- * Webhook HTTP 请求总入口
+ * Webhook HTTP 请求总入口。
  *
- * 处理企微 Bot Webhook 的 GET（URL 验证）和 POST（消息回调）请求。
- * 返回 true 表示已处理，false 表示不匹配（交给其他 handler）。
+ * @param req - Node HTTP 入站请求
+ * @param res - Node HTTP 响应
+ * @returns 已处理（true）或未匹配路由（false，交给其他 handler）
  */
 export async function handleWecomWebhookRequest(
   req: IncomingMessage,

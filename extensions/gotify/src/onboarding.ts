@@ -1,5 +1,9 @@
 /**
- * Gotify 渠道 setupWizard — Server URL + App Token 声明式 CLI 配置。
+ * @file Gotify onboarding — declarative CLI / UI setupWizard 编排。
+ *
+ * @description 通过 `createSimpleChannelSetup` factory 组装凭据字段、向导提示语与 finalize 钩子，
+ * 并把 Server URL、App Token、Client Token patch 至 `channels.gotify`。
+ * **模块角色**：Channel Plugin · Operator guided provisioning。
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
@@ -9,11 +13,12 @@ import { createSimpleChannelSetup } from "./channel-setup-factory.js";
 const CHANNEL_ID = "gotify";
 
 /**
- * 判断 Gotify 账号是否已配置 serverUrl 与 appToken。
+ * 判断账号是否具备 **最小出站组合**。
  *
- * @param cfg - OpenClaw 当前配置。
- * @param accountId - 可选账号 ID；为空时检查默认账号。
- * @returns true 表示账号具备最小出站配置。
+ * @description `resolveGotifyAccount()` 推导 `configured`：`serverUrl` ∧ `appToken`。
+ * @param cfg - OpenClaw 当前运行时配置快照。
+ * @param accountId - 可选账号；缺省解析默认账号。
+ * @returns `true` —— 出站路径可用（不代表 Stream / bootstrap 就绪）。
  */
 function isGotifyConfigured(cfg: OpenClawConfig, accountId?: string): boolean {
   const account = resolveGotifyAccount(
@@ -92,7 +97,16 @@ const { setupAdapter, setupWizard } = createSimpleChannelSetup({
   ],
 });
 
-/** Gotify setup adapter，负责把 setup 输入 patch 到 `channels.gotify` 配置节。 */
+/**
+ * Setup adapter —— Host 写入配置时调用的薄桥接层。
+ *
+ * @description 接收交互式输入生成的 patch，应用至 `channels.gotify[...]`，
+ * 不负责启动 WebSocket（需 operator `gateway restart`）。
+ */
 export const gotifySetupAdapter = setupAdapter;
-/** Gotify setup wizard，负责向 OpenClaw CLI/UI 暴露配置步骤与状态。 */
+/**
+ * Declarative wizard 元数据宿主对象。
+ *
+ * @description 提供给 OpenClaw UI/CLI：`status / intro / credentials / finalize / completion` 全链路。
+ */
 export const gotifySetupWizard = setupWizard;

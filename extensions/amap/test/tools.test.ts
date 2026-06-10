@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createAmapTools } from "../src/tools.js";
+import { createAmapTools } from "../src/tools/tools.js";
 import type { AmapAccountConfig } from "../src/types.js";
 
 describe("createAmapTools", () => {

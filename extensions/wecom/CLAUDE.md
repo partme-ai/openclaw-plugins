@@ -229,7 +229,7 @@ Configuration is validated via Zod (`src/types/config.ts`):
     token: string,              // Bot webhook token
     encodingAESKey: string,     // AES encryption key
     receiveId: string?,         // Optional receive ID
-    streamPlaceholderContent: string?,  // "Thinking..."
+    streamPlaceholderText: string?,  // Bot stream first-frame placeholder
     welcomeText: string?,
     dm: { policy, allowFrom }
   },

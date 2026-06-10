@@ -1,0 +1,19 @@
+{
+  "name": "@partme.ai/openclaw-test-utils",
+  "version": "2026.5.24",
+  "private": true,
+  "type": "module",
+  "description": "Shared Vitest helpers for OpenClaw plugin unit tests",
+  "exports": {
+    ".": "./index.js",
+    "./runtime-env": "./runtime-env.js",
+    "./mock-plugin-api": "./mock-plugin-api.js",
+    "./channel-fixtures": "./channel-fixtures.js",
+    "./plugin-manifest": "./plugin-manifest.js",
+    "./message-sdk-mocks": "./message-sdk-mocks.js",
+    "./datasets": "./datasets.js"
+  },
+  "peerDependencies": {
+    "vitest": ">=3.0.0"
+  }
+}

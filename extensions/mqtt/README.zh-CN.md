@@ -105,6 +105,15 @@ openclaw plugins install @partme.ai/openclaw-mqtt
 
 最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
 
+### message-sdk 复用
+
+| message-sdk 模块 | mqtt 挂载点 | 用途 |
+|------------------|-------------|------|
+| `bridge`（`normalizeWireIngress`、`dispatchChannelMessage`、`resolveChannelDispatchIdentity`） | `src/inbound.ts` | Wire 入站解析与 reply 管线派发 |
+| `dedup`（`createIdempotencyCache`） | `src/shared/wire-helpers.ts` | 入站 messageId 幂等（`getGlobalSingleton` 单例） |
+| `config`（`resolveChannelAgentReplyTimeoutMs`、`resolveChannelMediaMaxBytes`） | `src/config/resolvers.ts` | Agent 超时与媒体上限薄封装 |
+| `openclaw/plugin-sdk`（`chunkText`、`sanitizeForPlainText`） | `src/outbound.ts` | 出站文本分块与纯文本清理 |
+
 ### 最小配置
 
 ```json
@@ -284,6 +293,20 @@ openclaw-mqtt/
 
 通过 `topicBindings` 配置 `topicPattern` 与 `agentId`，可选配置 `replyTopic`。
 
+## 企业级可靠性
+
+> 完整说明：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)
+
+| 项 | 行为 |
+|----|------|
+| **分级** | 可企业试点 |
+| **入站 ACK** | MQTT 协议无 consumer ACK；dispatch 失败仅日志 |
+| **出站 reply** | `publishMessage` await Aedes 回调 |
+| **自消费** | broker 侧 publish（`client==null`）不触发入站 |
+| **背压** | QoS0 mailbox 软限制；QoS1 出站 ACK 重试 |
+| **幂等** | messageId 60s 内存 dedup |
+| **生产** | 开启 `auth`、TLS；多实例用 redis persistence |
+
 ## 相关链接
 
 | 资源 | 链接 |
@@ -322,3 +345,7 @@ openclaw-mqtt/
 Made with love by PartMe
 
 </div>
+
+## 消息格式指南
+
+MQTT 使用共享的 OpenClaw 队列 wire 契约完成入站解析与回复序列化。标准 `MessageEnvelope`、非标准消息归一化、`payload.outboundFormat` 与多语言 SDK 适配说明见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。

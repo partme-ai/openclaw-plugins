@@ -1,3 +1,9 @@
+/**
+ * @module wechat/auth/accounts
+ *
+ * 微信 iLink 账号解析、持久化与多账号配置加载。
+ */
+
 import fs from "node:fs";
 import path from "node:path";
 

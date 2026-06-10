@@ -1,5 +1,5 @@
 {
-  "id": "openclaw-oauth2",
+  "id": "oauth2",
   "name": "openclaw-oauth2",
   "version": "0.1.0",
   "description": "OAuth 2.0 authentication backend — Sa-Token · JWT · Introspection",

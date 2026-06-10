@@ -1,5 +1,7 @@
 /**
- * OpenClaw plugin: Nacos Config Center (merge + backup + subscribe) and Nacos naming registration for Gateway/Hooks.
+ * @fileoverview OpenClaw Nacos 插件 — Config Center 同步 + Gateway Naming 注册 + 集群发现。
+ *
+ * @module nacos
  *
  * Follows https://docs.openclaw.ai/plugins/sdk-entrypoints (`definePluginEntry` from `plugin-entry`),
  * https://docs.openclaw.ai/plugins/sdk-runtime (`api.runtime.config` async load/write).
@@ -11,43 +13,43 @@ import {
   type OpenClawPluginApi,
   type OpenClawPluginServiceContext,
 } from "openclaw/plugin-sdk/plugin-entry";
-import { parseNacosPluginConfig } from "./config-parse.js";
-import { NacosConfigSyncService } from "./nacos-config-sync.js";
-import { GatewayNacosRegistry } from "./nacos-registry.js";
-import { WebhookClusterService } from "./nacos-cluster.js";
-import { resolveGatewayPort } from "./resolve-endpoint.js";
-import type { ClusterPeer, OpenClawConfigSlice, PluginLog } from "./types.js";
+import { parseNacosPluginConfig } from "./config/config-parse.js";
+import { NacosConfigSyncService } from "./runtime/nacos-config-sync.js";
+import { GatewayNacosRegistry } from "./runtime/nacos-registry.js";
+import { WebhookClusterService } from "./runtime/nacos-cluster.js";
+import { resolveGatewayPort } from "./config/resolve-endpoint.js";
+import type { ClusterPeer, OpenClawConfigSlice, PluginLog } from "./shared/types.js";
 
 export {
   NacosConfigSyncService,
   backupOpenClawConfig,
   resolveConfigFileForBackup,
-} from "./nacos-config-sync.js";
-export { expandEnvPlaceholdersInValue } from "./env-expand.js";
-export { buildInstanceMetadata, GatewayNacosRegistry } from "./nacos-registry.js";
+} from "./runtime/nacos-config-sync.js";
+export { expandEnvPlaceholdersInValue } from "./config/env-expand.js";
+export { buildInstanceMetadata, GatewayNacosRegistry } from "./runtime/nacos-registry.js";
 export {
   resolveGatewayPort,
   resolveHooksInfo,
   resolveRegisterIp,
   DEFAULT_GATEWAY_PORT,
-} from "./resolve-endpoint.js";
-export { deepMerge } from "./merge-deep.js";
-export { formatTimestampYyyyMMddHHmmss } from "./format-timestamp.js";
+} from "./config/resolve-endpoint.js";
+export { deepMerge } from "./config/merge-deep.js";
+export { formatTimestampYyyyMMddHHmmss } from "./shared/format-timestamp.js";
 export {
   buildNacosConfigClientOptions,
   expandDataIdTemplate,
   resolveProfile,
   resolveServerAddr,
-} from "./nacos-connection.js";
-export { parseNacosPluginConfig } from "./config-parse.js";
+} from "./runtime/nacos-connection.js";
+export { parseNacosPluginConfig } from "./config/config-parse.js";
 export {
   flattenSpringNacosPluginConfig,
   resolveConfigServerList,
   resolveNamingServerList,
-} from "./spring-normalize.js";
-export { WebhookClusterService } from "./nacos-cluster.js";
-export { createNacosSdkLogger, DEFAULT_GROUP, DEFAULT_NAMESPACE, DEFAULT_SERVICE, isPlainObject, tryCloseNacosClient } from "./shared.js";
-export type { ClusterPeer, NacosPluginConfig, OpenClawConfigSlice, PluginLog } from "./types.js";
+} from "./config/spring-normalize.js";
+export { WebhookClusterService } from "./runtime/nacos-cluster.js";
+export { createNacosSdkLogger, DEFAULT_GROUP, DEFAULT_NAMESPACE, DEFAULT_SERVICE, isPlainObject, tryCloseNacosClient } from "./shared/shared.js";
+export type { ClusterPeer, NacosPluginConfig, OpenClawConfigSlice, PluginLog } from "./shared/types.js";
 
 /** Prefixes for Gateway config reload planning after Nacos merges write to disk (see plugin `reload` field). */
 const NACOS_PLUGIN_RELOAD = {
@@ -72,7 +74,7 @@ function sanitizeError(err: unknown): string {
     .replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, "[ip]");
 }
 
-/** Adapt OpenClaw's optional-debug PluginLogger to this plugin's stricter logger surface. */
+/** 将 OpenClaw PluginLogger 适配为本插件的 {@link PluginLog} 接口。 */
 function toPluginLog(logger: OpenClawPluginServiceContext["logger"]): PluginLog {
   return {
     info: (msg: string) => logger.info(msg),
@@ -86,7 +88,9 @@ function toPluginLog(logger: OpenClawPluginServiceContext["logger"]): PluginLog 
 let activeClusterService: WebhookClusterService | null = null;
 
 /**
- * Nacos Config Center: pull, merge, backup, replaceConfig, subscribe.
+ * 注册 Nacos Config Center 同步服务（pull / merge / backup / subscribe）。
+ *
+ * @param api - OpenClaw 插件 API
  */
 function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
   let sync: NacosConfigSyncService | null = null;
@@ -140,7 +144,9 @@ function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
 }
 
 /**
- * Nacos naming: register Gateway instance with Hooks metadata.
+ * 注册 Gateway 实例到 Nacos Naming（含 Hooks 元数据）。
+ *
+ * @param api - OpenClaw 插件 API
  */
 function registerNacosNamingService(api: OpenClawPluginApi): void {
   let registry: GatewayNacosRegistry | null = null;
@@ -193,7 +199,9 @@ function registerNacosNamingService(api: OpenClawPluginApi): void {
 }
 
 /**
- * Nacos Cluster Discovery: subscribe to naming changes and maintain live peer list.
+ * 注册 Webhook 集群发现服务（订阅 naming 变更，维护 peer 列表）。
+ *
+ * @param api - OpenClaw 插件 API
  */
 function registerNacosClusterService(api: OpenClawPluginApi): void {
   let cluster: WebhookClusterService | null = null;
@@ -245,7 +253,7 @@ function registerNacosClusterService(api: OpenClawPluginApi): void {
 }
 
 export default definePluginEntry({
-  id: "openclaw-nacos",
+  id: "nacos",
   name: "Nacos gateway registration",
   description:
     "Nacos Config Center (merge, backup, subscribe) and Gateway/Hooks naming registration",
@@ -254,6 +262,11 @@ export default definePluginEntry({
     restartPrefixes: [...NACOS_PLUGIN_RELOAD.restartPrefixes],
     hotPrefixes: [...NACOS_PLUGIN_RELOAD.hotPrefixes],
   },
+  /**
+   * 完整注册模式：Config Center、Naming、Cluster 三个 service + 诊断 HTTP 路由。
+   *
+   * @param api - OpenClaw 插件 API；`registrationMode !== "full"` 时 no-op
+   */
   register(api: OpenClawPluginApi) {
     /** Long-lived clients only in full registration; see sdk-entrypoints "Registration mode". */
     if (api.registrationMode !== "full") {

@@ -1,8 +1,5 @@
 /**
- * openclaw-prometheus 类型定义
- *
- * 基于 OpenClaw 插件系统的真实接口，
- * 以及 Gateway RPC 方法的实际响应结构。
+ * @description openclaw-prometheus 类型定义：Plugin API、指标模型与 Gateway RPC 响应结构。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";

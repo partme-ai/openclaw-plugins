@@ -1,20 +1,20 @@
 /**
- * ASR 错误类型
+ * @module asr/errors
  *
- * 来源：openclaw-china packages/shared/src/asr/errors.ts (MIT License)
- * 版权：原始版权归 openclaw-china 项目所有
+ * ASR 错误类型 — 所有 ASR 提供商（腾讯云、百度、阿里云等）共用。
  *
- * 所有 ASR 提供商（腾讯云、百度、阿里云等）共用此错误体系。
- * 新增 ASR 提供商时直接 import 即可，无需重复定义。
+ * **关键导出**：`ASRError` 及子类、`ASRErrorKind`
  */
 
+/** ASR 错误种类 / ASR error classification */
 export type ASRErrorKind = "timeout" | "auth" | "request" | "response_parse" | "service" | "empty_result";
 
 /**
- * ASRError 表示 asr 模块中的可实例化能力。
+ * ASR 基础错误 / Base error for all ASR providers.
  *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
+ * @property kind - 错误分类
+ * @property provider - 提供商标识（如 `tencent-flash`）
+ * @property retryable - 是否建议重试
  */
 export class ASRError extends Error {
   constructor(
@@ -28,12 +28,7 @@ export class ASRError extends Error {
   }
 }
 
-/**
- * ASRTimeoutError 表示 asr 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 请求超时（可重试）/ Request timed out */
 export class ASRTimeoutError extends ASRError {
   constructor(provider: string, public readonly timeoutMs: number) {
     super(`ASR request timeout after ${timeoutMs}ms`, "timeout", provider, true);
@@ -41,12 +36,7 @@ export class ASRTimeoutError extends ASRError {
   }
 }
 
-/**
- * ASRAuthError 表示 asr 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 鉴权失败（不可重试）/ Authentication failed */
 export class ASRAuthError extends ASRError {
   constructor(provider: string, message: string, public readonly status?: number) {
     super(message, "auth", provider, false);
@@ -54,12 +44,7 @@ export class ASRAuthError extends ASRError {
   }
 }
 
-/**
- * ASRRequestError 表示 asr 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** HTTP/传输层请求失败（可重试）/ Transport or HTTP failure */
 export class ASRRequestError extends ASRError {
   constructor(provider: string, message: string, public readonly status?: number) {
     super(message, "request", provider, true);
@@ -67,12 +52,7 @@ export class ASRRequestError extends ASRError {
   }
 }
 
-/**
- * ASRResponseParseError 表示 asr 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 响应非合法 JSON / Response body is not valid JSON */
 export class ASRResponseParseError extends ASRError {
   constructor(provider: string, public readonly bodySnippet: string) {
     super("ASR response is not valid JSON", "response_parse", provider, false);
@@ -80,12 +60,7 @@ export class ASRResponseParseError extends ASRError {
   }
 }
 
-/**
- * ASRServiceError 表示 asr 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 服务商返回业务错误码 / Provider service-level error */
 export class ASRServiceError extends ASRError {
   constructor(provider: string, message: string, public readonly serviceCode?: number) {
     super(message, "service", provider, false);
@@ -93,12 +68,7 @@ export class ASRServiceError extends ASRError {
   }
 }
 
-/**
- * ASREmptyResultError 表示 asr 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 识别结果为空 / Empty transcript */
 export class ASREmptyResultError extends ASRError {
   constructor(provider: string) {
     super("ASR returned empty transcript", "empty_result", provider, false);

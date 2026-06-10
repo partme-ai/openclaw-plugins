@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-gotify",
-  "version": "2026.5.22",
+  "version": "2026.5.25-2",
   "description": "OpenClaw Gotify channel plugin — REST delivery, WebSocket stream inbound, bootstrap helpers, and config validation",
   "type": "module",
   "main": "dist/index.js",
@@ -37,8 +37,6 @@
     "README.md",
     "LICENSE",
     "README.zh-CN.md",
-    "clawdbot.plugin.json",
-    "moltbot.plugin.json",
     "tsconfig.json",
     "tsup.config.ts",
     "vitest.config.ts",
@@ -53,7 +51,7 @@
     "directory": "extensions/gotify"
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1",
     "ws": "^8.20.1",
     "zod": "^4.3.6"
   },

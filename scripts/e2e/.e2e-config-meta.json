@@ -1,0 +1,9 @@
+{
+  "rocketmqTopic": "openclaw-e2e-1779630350039",
+  "plugins": [
+    "mqtt",
+    "stomp",
+    "web-mqtt",
+    "web-stomp"
+  ]
+}

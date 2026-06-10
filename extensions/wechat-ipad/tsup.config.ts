@@ -5,7 +5,7 @@ import { defineConfig } from "tsup";
  * noExternal: ws 打包进 dist（插件安装不运行 npm install）
  */
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/setup-entry.ts"],
   format: ["esm"],
   dts: true,
   clean: true,

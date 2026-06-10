@@ -1,18 +1,29 @@
 /**
- * 统一传输层入站载荷解析（替代各 MQ 插件内重复的 parseInboundText）。
+ * @module pipeline/parse-payload
+ *
+ * 统一传输层入站载荷解析。
+ *
+ * **职责**：替代各 MQ 插件内重复的 parseInboundText，将 raw payload 解析为
+ * 文本 + 可选 UnifiedMessage + correlationId/idempotencyKey/replyRoute。
+ *
+ * **解析顺序**：envelope → unified message → legacy `{ text }` JSON → plain fallback。
+ *
+ * **关键导出**：`parseTransportPayload`
  */
 
 import { parseEnvelopeAny } from "../core/envelope.js";
 import { parseMessageAny } from "../core/message.js";
 import type { ParsedTransportPayload, PayloadParseMode } from "../core/types.js";
 
-/**
- * 重新导出该模块的公共类型，方便调用方从 barrel 或实现文件按需导入。
- */
+/** 重新导出解析结果与模式类型 / Re-export parse types */
 export type { ParsedTransportPayload, PayloadParseMode } from "../core/types.js";
 
 /**
- * 解析原始载荷为文本与可选 UnifiedMessage。
+ * 解析原始载荷为文本与可选 UnifiedMessage / Parse raw transport payload.
+ *
+ * @param rawPayload - 原始字符串（JSON 或 plain text）
+ * @param mode - 解析模式，默认 jsonTextOrPlain
+ * @returns 解析结果，含 text、unified、路由元数据
  */
 export function parseTransportPayload(
   rawPayload: string,
@@ -22,6 +33,7 @@ export function parseTransportPayload(
     return { text: rawPayload, unified: null };
   }
 
+  // 1. 优先 version=1 信封
   const envelope = parseEnvelopeAny(rawPayload);
   if (envelope?.message?.text) {
     const meta = envelope.message.metadata ?? {};
@@ -38,6 +50,7 @@ export function parseTransportPayload(
     };
   }
 
+  // 2. Legacy UnifiedMessage JSON
   const unifiedMsg = parseMessageAny(rawPayload);
   if (unifiedMsg?.text) {
     const meta = unifiedMsg.metadata ?? {};
@@ -53,6 +66,7 @@ export function parseTransportPayload(
     return { text: "", unified: null };
   }
 
+  // 3. Legacy `{ text: "..." }` JSON
   try {
     const parsed = JSON.parse(rawPayload) as {
       text?: unknown;
@@ -70,7 +84,7 @@ export function parseTransportPayload(
       };
     }
   } catch {
-    // fallback plain
+    // 4. 最终 fallback：整段当作 plain text
   }
 
   return { text: rawPayload, unified: null };

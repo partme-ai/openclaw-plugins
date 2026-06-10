@@ -1,9 +1,20 @@
 /**
- * STOMP TCP 运行时配置解析。
+ * @fileoverview STOMP TCP 运行时配置解析（channels.stomp-tcp）。
+ *
+ * @description
+ * `resolveStompTcpConfig` 从网关全局配置合并默认值；topicBindings 经
+ * `normalizeTopicBindings` 过滤无效项。
+ *
+ * @module config
+ */
+
+/**
+ * STOMP 配置 — Base Profile 入口。
  */
 
 import type { StompTcpConfig, TopicBinding } from "./types.js";
 
+/** @description 默认 STOMP TCP 服务配置（端口、心跳、auth、prefetch 等）。 */
 export const DEFAULT_STOMP_TCP_CONFIG: StompTcpConfig = {
   port: 61613,
   tlsPort: 61614,
@@ -19,7 +30,10 @@ export const DEFAULT_STOMP_TCP_CONFIG: StompTcpConfig = {
 };
 
 /**
- * 从全局网关配置解析 stomp-tcp 渠道配置。
+ * @description 从全局网关配置解析 `channels.stomp-tcp` 并合并默认值。
+ * @param globalConfig - 宿主 runtime.config。
+ * @returns 合并后的 `StompTcpConfig`。
+ * @throws 不抛出。
  */
 export function resolveStompTcpConfig(globalConfig: Record<string, unknown>): StompTcpConfig {
   const channels = (globalConfig.channels as Record<string, unknown> | undefined) ?? {};
@@ -52,6 +66,12 @@ export function resolveStompTcpConfig(globalConfig: Record<string, unknown>): St
   };
 }
 
+/**
+ * @description 过滤并规范化 topicBindings 数组（要求 topicPattern + agentId）。
+ * @param input - 原始配置值。
+ * @returns 有效的 TopicBinding 列表。
+ * @throws 不抛出。
+ */
 function normalizeTopicBindings(input: unknown): TopicBinding[] {
   if (!Array.isArray(input)) return [];
   const result: TopicBinding[] = [];

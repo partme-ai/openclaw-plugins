@@ -1,9 +1,9 @@
 /**
- * Gotify Config — 配置解析与账号管理。
+ * @file Gotify `channels.gotify` 配置解析与账号枚举。
  *
- * 支持单账号（顶层配置）和多账号（channels.gotify.accounts.<id>）两种模式。
- * 多账号模式下，顶层字段作为所有账号的默认值，账号级字段可覆盖。
- * 解析时自动补齐默认值（priority=5, dmPolicy=open, reconnect 参数等）。
+ * @description 统一 **单账号平面 + 多账号 accounts map** 合并策略：账号级覆盖顶层默认，
+ * 并对 `inbound` / `bootstrap` 做二级浅+深合并；输出 `ResolvedGotifyAccount` 供 channel / transport 零判空消费。
+ * **模块角色**：Channel Plugin · Configuration normalization layer。
  */
 
 import type {

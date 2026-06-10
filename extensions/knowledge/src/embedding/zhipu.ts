@@ -1,16 +1,9 @@
 /**
- * 智谱 AI Embedding API 实现
+ * @fileoverview 智谱 AI Embedding API 适配器（OpenAI 兼容 `/embeddings`）。
  *
- * 智谱 Embedding API 兼容 OpenAI 格式：
- *   POST https://open.bigmodel.cn/api/paas/v4/embeddings
- *   鉴权: Bearer <token>
- *   请求体: { model, input, dimensions }
+ * **模块角色**：Knowledge Plugin · Embedding provider (Zhipu)。
  *
- * - embedding-3 支持自定义维度 (2048/1024/512/256)，默认 2048
- * - embedding-2 固定 1024 维，不支持 dimensions 参数
- * - 支持批量：embedding-3 最大 64 条/请求
- *
- * 官方文档: https://docs.bigmodel.cn/api-reference/模型-api/文本嵌入
+ * @module knowledge/embedding/zhipu
  */
 import type { EmbeddingService, KnowledgeEmbeddingConfig } from '../types.js';
 

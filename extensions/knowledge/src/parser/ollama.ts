@@ -1,18 +1,9 @@
 /**
- * OllamaDocParserService — Ollama VLM 文档解析实现（本地方案）
+ * @fileoverview Ollama VLM 文档解析 — 本地 glm-ocr 等视觉模型 OCR。
  *
- * 通过 Ollama 运行多模态视觉语言模型（如 GLM-OCR、PaddleOCR-VL 等）完成文档 OCR。
- * 将图片/PDF 转为 base64，调用 Ollama chat API 的多模态能力提取文本内容。
+ * **模块角色**：Knowledge Plugin · Parser provider (Ollama local)。
  *
- * 默认使用 glm-ocr（0.9B，Ollama 原生支持）：
- *   ollama run glm-ocr
- *
- * 可选模型：
- *   ollama run MedAIBase/PaddleOCR-VL
- *   ollama run prithivMLmods/chandra-ocr-2-GGUF
- *
- * Ollama chat API: POST {baseUrl}/api/chat
- * body: { model, messages: [{ role: 'user', content: '...', images: ['base64...'] }], stream: false }
+ * @module knowledge/parser/ollama
  */
 import type { DocParserService, KnowledgeParserConfig, ParsedDocument } from '../types.js';
 import { readFileSync } from 'node:fs';

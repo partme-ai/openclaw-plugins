@@ -1,5 +1,5 @@
 {
-  "id": "openclaw-mtls",
+  "id": "mtls",
   "name": "openclaw-mtls",
   "version": "0.1.0",
   "description": "mTLS mutual TLS authentication plugin for OpenClaw",

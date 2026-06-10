@@ -1,7 +1,12 @@
 /**
- * 共享 Channel setupWizard / setupAdapter 工厂。
+ * 共享 Channel setupWizard / setupAdapter 工厂（Setup Infrastructure）
  *
- * 供 extensions 下各渠道插件复用，减少重复声明式向导代码。
+ * **架构角色**：为 extensions 下各渠道插件提供声明式 CLI 引导模板，
+ * 减少重复的 onboard / 凭据写入 / 启用渠道逻辑。
+ *
+ * **关键依赖**：
+ * - `openclaw/plugin-sdk` — OpenClawConfig
+ * - `openclaw/plugin-sdk/setup` — adapter / wizard 构建器
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
@@ -13,11 +18,18 @@ import {
   setSetupChannelEnabled,
 } from "openclaw/plugin-sdk/setup";
 
-/** 单条凭据字段映射（CLI inputKey → channels.<id> 配置键） */
+/**
+ * 单条凭据字段映射（CLI inputKey → channels.\<id\> 配置键）。
+ *
+ * 用于 API Key、Secret 等敏感字段的交互式采集与环境变量回退。
+ */
 export type SetupCredentialSpec = {
+  /** CLI 向导使用的输入键名 */
   inputKey: "token" | "secret" | "url" | "baseUrl" | "botToken" | "appToken" | "privateKey";
+  /** 写入 openclaw.json 的配置键名 */
   configKey: string;
   label: string;
+  /** 优先提示使用的环境变量名 */
   preferredEnvVar?: string;
   helpTitle?: string;
   helpLines?: string[];
@@ -25,7 +37,11 @@ export type SetupCredentialSpec = {
   getValue: (cfg: OpenClawConfig, accountId?: string) => string | undefined;
 };
 
-/** 单条文本输入映射（CLI inputKey → channels.<id> 配置键） */
+/**
+ * 单条文本输入映射（CLI inputKey → channels.\<id\> 配置键）。
+ *
+ * 用于 URL、端口等非凭据类配置项。
+ */
 export type SetupTextInputSpec = {
   inputKey: "url" | "baseUrl" | "httpPort" | "webhookPath" | "webhookUrl" | "token" | "secret";
   configKey: string;
@@ -34,13 +50,18 @@ export type SetupTextInputSpec = {
   helpTitle?: string;
   helpLines?: string[];
   getValue: (cfg: OpenClawConfig, accountId?: string) => string | undefined;
+  /** 是否必填，默认 `true` */
   required?: boolean;
 };
 
+/** 通用 declarative Channel setup 工厂入参。 */
 export type SimpleChannelSetupParams = {
+  /** channels 下的渠道键，如 `"amap"` */
   channel: string;
+  /** 人类可读渠道名 */
   label: string;
   docsPath?: string;
+  /** 判断当前账号是否已完成必要配置 */
   resolveConfigured: (cfg: OpenClawConfig, accountId?: string) => boolean;
   credentials?: SetupCredentialSpec[];
   textInputs?: SetupTextInputSpec[];
@@ -50,7 +71,11 @@ export type SimpleChannelSetupParams = {
 };
 
 /**
- * 读取 channels.<channel> 配置节。
+ * 读取 `channels.<channel>` 配置节。
+ *
+ * @param cfg - 当前 OpenClaw 配置
+ * @param channel - 渠道 ID
+ * @returns 渠道配置对象；不存在时返回空对象
  */
 export function getChannelSection(cfg: OpenClawConfig, channel: string): Record<string, unknown> {
   return ((cfg.channels as Record<string, unknown> | undefined)?.[channel] ?? {}) as Record<
@@ -61,6 +86,12 @@ export function getChannelSection(cfg: OpenClawConfig, channel: string): Record<
 
 /**
  * 创建标准 declarative Channel setup 表面（adapter + wizard）。
+ *
+ * adapter 负责将 CLI 输入 patch 到 `channels.<channel>.accounts.<id>`；
+ * wizard 提供状态展示、凭据/文本采集、完成提示与 disable 能力。
+ *
+ * @param params - 渠道标签、配置检测与字段映射
+ * @returns `{ setupAdapter, setupWizard }` 供 Channel 定义挂载
  */
 export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
   setupAdapter: ChannelSetupAdapter;
@@ -177,7 +208,10 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
 }
 
 /**
- * 基于连接 URL 的 MQ/消息中间件渠道 setup（channels.<id>.url）。
+ * 基于连接 URL 的 MQ / 消息中间件渠道 setup（`channels.<id>.url`）。
+ *
+ * @param params - 渠道标识、默认 URL 与可选 env 变量
+ * @returns setup adapter 与 wizard
  */
 export function createUrlChannelSetup(params: {
   channel: string;
@@ -222,6 +256,9 @@ export function createUrlChannelSetup(params: {
 
 /**
  * 双凭据渠道 setup（如 app_key + app_secret，映射到 token + secret 输入）。
+ *
+ * @param params - 键名字段、环境变量与引导文案
+ * @returns setup adapter 与 wizard
  */
 export function createAppKeySecretChannelSetup(params: {
   channel: string;
@@ -277,6 +314,11 @@ export function createAppKeySecretChannelSetup(params: {
 
 /**
  * 仅启用 embedded broker 类渠道（配置节存在即视为已配置）。
+ *
+ * 适用于内嵌 Broker、无需外部 URL 或凭据的渠道。
+ *
+ * @param params - 渠道标识与引导文案
+ * @returns setup adapter 与 wizard
  */
 export function createEmbeddedBrokerChannelSetup(params: {
   channel: string;

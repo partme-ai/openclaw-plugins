@@ -1,13 +1,9 @@
 /**
- * JinaRerankerService — Jina AI Reranker 云端 API 实现
+ * @fileoverview Jina AI Reranker 云端 API。
  *
- * 通过 Jina AI 的云端 rerank 端点对候选文档进行重排序。
- * 支持中英文混合场景，需要 Jina AI API Key。
+ * **模块角色**：Knowledge Plugin · Reranker provider (Jina)。
  *
- * API: POST https://api.jina.ai/v1/rerank
- * body: { model, query, documents, top_n }
- * response: { results: [{ index, relevance_score }] }
- * 文档: https://jina.ai/reranker
+ * @module knowledge/reranker/jina
  */
 import type { RerankerService, KnowledgeRerankerConfig, ScoredDocument } from '../types.js';
 

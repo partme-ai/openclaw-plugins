@@ -1,3 +1,9 @@
+/**
+ * @module wechat/api/config-cache
+ *
+ * 微信 API 配置缓存与 TTL 刷新。
+ */
+
 import { getConfig } from "./api.js";
 
 /** Subset of getConfig fields that we actually need; add new fields here as needed. */

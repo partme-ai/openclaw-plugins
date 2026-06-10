@@ -1,5 +1,5 @@
 import { resolveGotifyAccount } from "../src/config.js";
-import { bootstrapGotifyAccount, doctorGotifyAccount } from "../src/bootstrap.js";
+import { bootstrapGotifyAccount, doctorGotifyAccount } from "../src/runtime/bootstrap.js";
 import { sendGotifyMessage } from "../src/transport/gotify-api.js";
 
 /**

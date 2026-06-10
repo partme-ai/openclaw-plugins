@@ -1,5 +1,5 @@
 {
-  "id": "openclaw-bridge",
+  "id": "bridge",
   "name": "OpenClaw Bridge",
   "description": "统一 IM 渠道适配层 — 将所有 OpenClaw IM 渠道（钉钉/飞书/QQ/Discord/Slack/Telegram 等 21 个）接入 PartMe.AI 生态",
   "configSchema": {

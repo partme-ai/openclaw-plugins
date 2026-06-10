@@ -11,7 +11,7 @@
  */
 
 import type { MetricCollector, MetricDefinition, MetricSample, PresenceEntry } from "../types.js";
-import { rpcCall } from "../ws-bridge.js";
+import { rpcCall } from "../runtime/ws-bridge.js";
 
 const PREFIX = "openclaw_presence";
 

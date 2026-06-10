@@ -1,11 +1,10 @@
 /**
- * Gotify 配置与消息类型定义。
+ * @file Gotify 领域类型定义 —— 配置 / API DTO / 运行态快照。
  *
- * 本文件集中声明插件内部共享的结构化类型，避免 transport、channel、setup
- * 层各自重复描述 Gotify message、application、client 与运行态字段。
- * 类型命名保持两层边界：
- * - `Gotify*`：Gotify 官方 API 或配置语义。
- * - `Resolved*`：OpenClaw 插件已经合并默认值后的运行时语义。
+ * @description 集中声明跨层共享结构，命名约定：
+ * - `Gotify*`：贴近官方 REST / stream JSON；
+ * - `Resolved*`：已应用默认、适合 TypeScript strict 直接访问。
+ * **模块角色**：Channel Plugin · Shared contract types（无运行逻辑）。
  */
 
 /** WebSocket `/stream` 监听相关配置。 */

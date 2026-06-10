@@ -1,28 +1,31 @@
 /**
- * MCP Streamable HTTP 传输层模块
+ * @module mcp/transport
  *
- * 负责:
- * - MCP JSON-RPC over HTTP 通信（发送请求、解析响应）
- * - Streamable HTTP session 生命周期管理（initialize 握手 → Mcp-Session-Id 维护 → 失效重建）
- * - 自动检测无状态 Server：如果 initialize 响应未返回 Mcp-Session-Id，
- *   则标记为无状态模式，后续请求跳过握手和 session 管理
- * - SSE 流式响应解析
- * - MCP 配置运行时缓存（通过 WSClient 拉取 URL 并缓存在内存中）
+ * MCP **Streamable HTTP** 传输层（JSON-RPC over HTTP）。
+ *
+ * **职责**：
+ * - 通过 WSClient 拉取 MCP Server URL 并内存缓存（accountId:category 隔离）
+ * - initialize / notifications/initialized 握手与 Mcp-Session-Id 维护
+ * - 无状态 Server 自动探测（无 Session-Id 则跳过后续 session 管理）
+ * - SSE 响应解析；404 session 失效时自动重建并重试
+ * - 透传 `x-openclaw-wecom-userid` 供 MCP Server 鉴权
  */
 
 import { generateReqId } from "@wecom/aibot-node-sdk";
 import { fetch as undiciFetch } from "undici";
-import { DEFAULT_ACCOUNT_ID } from "../openclaw-compat.js";
-import { getWeComWebSocket } from "../state-manager.js";
-import { MCP_GET_CONFIG_CMD, MCP_CONFIG_FETCH_TIMEOUT_MS } from "../const.js";
-import { withTimeout } from "../timeout.js";
-import { PLUGIN_VERSION } from "../version.js";
+import { DEFAULT_ACCOUNT_ID } from "../shared/openclaw-compat.js";
+import { getWeComWebSocket } from "../state/state-manager.js";
+import { MCP_GET_CONFIG_CMD, MCP_CONFIG_FETCH_TIMEOUT_MS } from "../types/const.js";
+import { withTimeout } from "../shared/timeout.js";
+import { PLUGIN_VERSION } from "../types/version.js";
 import { getWeComRuntime } from "../runtime.js";
+import { mcpDebugLog } from "./debug-log.js";
+import { retryWeComFetch, shouldRetryWeComHttpResponse, WeComTransientHttpError } from "../webhook/http-retry.js";
 import {
   resolveDefaultWeComAccountId,
   listWeComAccountIds,
   resolveWeComAccountMulti,
-} from "../accounts.js";
+} from "../config/accounts.js";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 // ============================================================================
@@ -279,6 +282,7 @@ async function fetchMcpConfig(accountId: string, category: string): Promise<Reco
   }
 
   console.log(`${LOG_TAG} 配置拉取成功 (accountId="${accountId}", category="${category}")`);
+  mcpDebugLog(`${LOG_TAG} fetchMcpConfig body keys=${Object.keys(body).join(",")}`);
   return body as Record<string, unknown>;
 }
 
@@ -304,7 +308,7 @@ async function getMcpUrl(accountId: string, category: string): Promise<string> {
   // 写入缓存
   mcpConfigCache.set(key, body);
 
-  console.log(`${LOG_TAG} getMcpUrl ${accountId}/${category}: ${body.url}`);
+  mcpDebugLog(`${LOG_TAG} getMcpUrl ${accountId}/${category}: ${body.url}`);
 
   return body.url as string;
 }
@@ -343,20 +347,26 @@ async function sendRawJsonRpc(
     headers[WECOM_USERID_HEADER] = normalizedRequesterUserId;
   }
 
-  console.log(
+  mcpDebugLog(
     `${LOG_TAG} sendRawJsonRpc → ${body.method} | ${WECOM_USERID_HEADER}: ${headers[WECOM_USERID_HEADER] ?? "(not set)"}`,
   );
 
-  let response: Response;
-  try {
-    // 使用 undici 提供的 fetch，规避 Node 18.0–18.17 原生 fetch 无法自定义 User-Agent 的 bug；
-    // undici 是项目已有依赖，且在所有支持的 Node 版本上行为一致。
-    response = (await undiciFetch(url, {
+  const fetchOnce = async (): Promise<Response> => {
+    const res = (await undiciFetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     })) as unknown as Response;
+    if (shouldRetryWeComHttpResponse(res)) {
+      throw new WeComTransientHttpError(res.status, `MCP transient HTTP ${res.status}`);
+    }
+    return res;
+  };
+
+  let response: Response;
+  try {
+    response = await retryWeComFetch(fetchOnce, { label: `mcp ${body.method}` });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new Error(`MCP 请求超时 (${timeoutMs}ms)`);
@@ -425,7 +435,7 @@ async function initializeSession(
   const key = cacheKey(accountId, category);
   const session: McpSession = { sessionId: null, initialized: false, stateless: false };
 
-  console.log(`${LOG_TAG} 开始 initialize 握手 (accountId="${accountId}", category="${category}")`);
+  mcpDebugLog(`${LOG_TAG} 开始 initialize 握手 (accountId="${accountId}", category="${category}")`);
 
   // 1. 发送 initialize 请求
   const initBody: JsonRpcRequest = {
@@ -459,7 +469,7 @@ async function initializeSession(
     session.initialized = true;
     statelessCategories.add(key);
     mcpSessionCache.set(key, session);
-    console.log(`${LOG_TAG} 无状态 Server 确认 (accountId="${accountId}", category="${category}")`);
+    mcpDebugLog(`${LOG_TAG} 无状态 Server 确认 (accountId="${accountId}", category="${category}")`);
     return session;
   }
 
@@ -484,7 +494,9 @@ async function initializeSession(
 
   session.initialized = true;
   mcpSessionCache.set(key, session);
-  console.log(`${LOG_TAG} 有状态 Session 建立成功 (accountId="${accountId}", category="${category}", sessionId="${session.sessionId}")`);
+  mcpDebugLog(
+    `${LOG_TAG} 有状态 Session 建立成功 (accountId="${accountId}", category="${category}", sessionId="${session.sessionId}")`,
+  );
   return session;
 }
 
@@ -706,7 +718,7 @@ export async function sendJsonRpc(
     // 有状态 Server：session 失效时服务端返回 404，需要重新初始化并重试一次
     // 使用 McpHttpError.statusCode 精确匹配，避免字符串匹配 "404" 导致误判
     if (err instanceof McpHttpError && err.statusCode === 404) {
-      console.log(`${LOG_TAG} Session 失效 (accountId="${accountId}", category="${category}")，开始重建...`);
+      mcpDebugLog(`${LOG_TAG} Session 失效 (accountId="${accountId}", category="${category}")，开始重建...`);
       mcpSessionCache.delete(key);
 
       // 使用 rebuildSession 合并并发的 session 重建请求，避免竞态条件

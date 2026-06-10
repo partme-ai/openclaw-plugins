@@ -1,3 +1,9 @@
+/**
+ * @module wechat/cdn/pic-decrypt
+ *
+ * 微信 CDN 图片解密。
+ */
+
 import { decryptAesEcb } from "./aes-ecb.js";
 import { buildCdnDownloadUrl, ENABLE_CDN_URL_FALLBACK } from "./cdn-url.js";
 import { logger } from "../util/logger.js";

@@ -1,16 +1,23 @@
 /**
- * 美团渠道插件类型
- * 配置与《美团开放平台对接规格》channels.meituan 一致
+ * 美团渠道插件类型定义。
+ *
+ * **架构角色**：描述 `channels.meituan` 配置、Channel 契约、Plugin API 与工具形态，
+ * 与《美团开放平台对接规格》对齐。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-/** 美团渠道账号/单店铺配置 */
+/** 美团渠道账号/单店铺配置（openclaw.json → channels.meituan） */
 export interface MeituanAccountConfig {
+  /** 开放平台应用 key */
   app_key: string;
+  /** 开放平台应用 secret，用于 OpenAPI 签名与 Webhook 验签 */
   app_secret: string;
+  /** 开放平台配置的回调 URL（文档字段，运行时可选） */
   callback_url?: string;
+  /** 门店 id，Webhook 无 shop_id 时的 peer 回退 */
   shop_id?: string;
+  /** Webhook 专用签名密钥；缺省时使用 app_secret */
   webhook_secret?: string;
 }
 
@@ -30,18 +37,19 @@ export interface PluginLogger {
   debug?: (msg: string, ...args: unknown[]) => void;
 }
 
-/** 插件 API（与 OpenClaw 插件约定一致；可选字段见《自定义插件实现优化指南》） */
+/** 插件 API（与 OpenClaw 宿主约定一致） */
 export interface PluginApi {
   runtime: {
+    /** 宿主加载的全局配置（含 channels） */
     config: Record<string, unknown>;
-    /** 可选：入站写入 Session / 触发 Agent 管线；由运行时注入 */
+    /** 可选：轻量入站写入 Session；bridge 不可用时的回退路径 */
     channel?: {
       publishInbound?: (params: PublishInboundParams) => void | Promise<void>;
     };
   };
-  /** 可选：plugins.entries.<pluginId>.config，由宿主注入 */
+  /** `plugins.entries.<pluginId>.config` 覆盖层 */
   pluginConfig?: Record<string, unknown>;
-  /** 可选：带 [plugin:id] 前缀的 logger，由宿主注入 */
+  /** 带 `[plugin:id]` 前缀的 logger */
   logger?: PluginLogger;
   registerChannel: (options: { plugin: ChannelDefinition }) => void;
   registerHttpRoute: (params: { path: string; handler: HttpHandler }) => void;
@@ -49,12 +57,13 @@ export interface PluginApi {
   onReady?: (callback: () => Promise<void>) => void;
 }
 
+/** HTTP 路由 handler 签名 */
 export type HttpHandler = (
   req: IncomingMessage,
   res: ServerResponse
 ) => Promise<void> | void;
 
-/** 渠道定义（与 OpenClaw Channel 约定一致） */
+/** 渠道定义（与 OpenClaw Channel 注册契约一致） */
 export interface ChannelDefinition {
   id: string;
   meta: { id: string; label: string; blurb: string; aliases: string[] };
@@ -70,15 +79,17 @@ export interface ChannelDefinition {
     deliveryMode: "direct";
     sendText: (params: SendTextParams) => Promise<{ ok: boolean }>;
   };
-  /** OpenClaw CLI setup wizard（声明式 onboard 配置） */
   setupWizard?: unknown;
-  /** OpenClaw setup adapter（写入 channels 配置） */
   setup?: unknown;
 }
 
+/** 出站 sendText 参数 */
 export interface SendTextParams {
+  /** 待发送文本 */
   text: string;
+  /** 目标 peer（如 shopId / userId） */
   to: string;
+  /** 当前账号配置 */
   account: MeituanAccountConfig;
 }
 

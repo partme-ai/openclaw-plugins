@@ -72,7 +72,7 @@ export function parseFrame(data: string): StompFrame | null {
 
     return { command, headers, body: body || undefined };
   } catch (err) {
-    console.error("[openclaw_web_stomp] Frame parse error:", err);
+    console.error("[openclaw-web-stomp] Frame parse error:", err);
     return null;
   }
 }
@@ -150,16 +150,21 @@ export function buildMessageFrame(
   subscriptionId: string,
   destination: string,
   messageId: string,
-  body: string
+  body: string,
+  ackId?: string,
 ): StompFrame {
+  const headers: Record<string, string> = {
+    subscription: subscriptionId,
+    "message-id": messageId,
+    destination,
+    "content-type": "text/plain",
+  };
+  if (ackId) {
+    headers.ack = ackId;
+  }
   return {
     command: "MESSAGE",
-    headers: {
-      subscription: subscriptionId,
-      "message-id": messageId,
-      destination,
-      "content-type": "text/plain",
-    },
+    headers,
     body,
   };
 }

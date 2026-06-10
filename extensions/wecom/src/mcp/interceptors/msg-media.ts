@@ -12,7 +12,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { MEDIA_DOWNLOAD_TIMEOUT_MS } from "../transport.js";
 import { getWeComRuntime } from "../../runtime.js";
-import { detectMime } from "../../openclaw-compat.js";
+import { detectMime } from "../../shared/openclaw-compat.js";
 import type { CallInterceptor, CallContext } from "./types.js";
 
 // ============================================================================

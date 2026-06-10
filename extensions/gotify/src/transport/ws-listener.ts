@@ -1,7 +1,10 @@
 /**
- * Gotify WebSocket Listener — /stream 实时消息监听器。
+ * @file Gotify WebSocket Listener — `/stream` 实时入站传输层。
  *
- * 与服务端建立 WebSocket 长连接，接收实时消息推送。
+ * @description 与服务端建立 WebSocket 长连接，Zod 校验后回调 `onMessage`；
+ * 含首次连接 15s 超时、指数退避重连与 `maxReconnectAttempts` 上限。
+ * **模块角色**：Channel Plugin · Inbound transport (WebSocket)。
+ * **关键依赖**：`ws`、`zod`、`gotify-api.normalizeServerUrl`。
  *
  * ## 连接管理
  * - 首次连接: 15 秒超时门控 (connectionTimeout)
@@ -22,7 +25,7 @@ import { z } from "zod";
 
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from "../types.js";
 import { normalizeServerUrl } from "./gotify-api.js";
-import { GotifyWebSocketError, GotifyConfigError } from "../errors.js";
+import { GotifyWebSocketError, GotifyConfigError } from "../shared/errors.js";
 
 const GotifyStreamEnvelopeSchema = z.object({
   id: z.union([z.number(), z.string()]),
@@ -88,6 +91,10 @@ export function createGotifyWsListener(
   let reconnectTimer: NodeJS.Timeout | null = null;
   let connectionTimeoutTimer: NodeJS.Timeout | null = null;
   let reconnectAttempts = 0;
+  const streamUrl =
+    account.clientToken && account.serverUrl
+      ? `${normalizeServerUrl(account.serverUrl).replace(/^http/i, "ws")}/stream?token=${encodeURIComponent(account.clientToken)}`
+      : null;
   /** 首次连接建立或失败时 resolve */
   let connectionGate: {
     resolve: () => void;
@@ -131,7 +138,7 @@ export function createGotifyWsListener(
    */
   const connect = () => {
     if (stopped) return;
-    if (!account.clientToken || !account.serverUrl) {
+    if (!streamUrl) {
       const error = "Missing clientToken or serverUrl";
       deps.onStateChange?.({ running: false, lastError: error });
       throw new GotifyConfigError("clientToken/serverUrl", error);
@@ -142,8 +149,7 @@ export function createGotifyWsListener(
       throw new GotifyWebSocketError(error, "MAX_RECONNECT_ATTEMPTS");
     }
 
-    const url = `${normalizeServerUrl(account.serverUrl).replace(/^http/i, "ws")}/stream?token=${encodeURIComponent(account.clientToken)}`;
-    socket = new WebSocketImpl(url) as unknown as WebSocket;
+    socket = new WebSocketImpl(streamUrl) as unknown as WebSocket;
 
     socket.onopen = () => {
       reconnectDelay = account.inbound.reconnectDelayMs;

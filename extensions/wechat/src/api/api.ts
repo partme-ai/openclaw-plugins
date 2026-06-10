@@ -1,3 +1,18 @@
+/**
+ * @module wechat/api
+ *
+ * 微信 iLink Bot **HTTP API 客户端**（JSON over HTTPS）。
+ *
+ * **职责**：
+ * - 封装 `getUpdates` 长轮询、`sendMessage`、`getUploadUrl`、`getConfig`、`sendTyping`
+ * - 统一请求头（iLink-App-Id、Authorization、X-WECHAT-UIN、SKRouteTag）
+ * - 超时 / AbortController 与日志脱敏
+ *
+ * **协议**：`ilink/bot/*` CGI；每条请求附带 `base_info.channel_version`。
+ *
+ * **关键导出**：`getUpdates`、`sendMessage`、`getUploadUrl`、`buildBaseInfo`、`WeixinApiOptions`
+ */
+
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";

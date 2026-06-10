@@ -8,6 +8,6 @@ export {
   resolveDefaultWeComAccountId,
   hasMultiAccounts,
   type WeComMultiAccountConfig,
-} from "./accounts.js";
+} from "./config/accounts.js";
 
-export type { WeComConfig, ResolvedWeComAccount } from "./utils.js";
+export type { WeComConfig, ResolvedWeComAccount } from "./config/wecom-config.js";

@@ -13,7 +13,7 @@ import {
   trackRoute,
 } from "./transport/server.js";
 import { resolveWebMqttConfig, validateWebMqttConfig } from "./config.js";
-import { getWebMqttChannelConfig, setWebMqttChannelConfig } from "./mqtt-state.js";
+import { getWebMqttChannelConfig, setWebMqttChannelConfig } from "./state/mqtt-state.js";
 import { processInbound } from "./inbound.js";
 import { webMqttSetupAdapter, webMqttSetupWizard } from "./onboarding.js";
 
@@ -68,8 +68,19 @@ export const mqttWsChannel = {
     },
   },
   gateway: {
-    startAccount: async ({ runtime, abortSignal }: { runtime: { config: Record<string, unknown> }; abortSignal: AbortSignal }) => {
-      const config = resolveWebMqttConfig(runtime.config);
+    /**
+     * @description 启动 Web MQTT 服务并挂起至 abort。
+     * @param root0.cfg - 完整网关配置（OpenClaw 2026.5+ ChannelGatewayContext）。
+     * @param root0.abortSignal - 停止信号。
+     */
+    startAccount: async ({
+      cfg,
+      abortSignal,
+    }: {
+      cfg: Record<string, unknown>;
+      abortSignal: AbortSignal;
+    }) => {
+      const config = resolveWebMqttConfig(cfg ?? {});
       setWebMqttChannelConfig(config);
       const issues = validateWebMqttConfig(config);
       for (const issue of issues) {
@@ -77,16 +88,12 @@ export const mqttWsChannel = {
       }
 
       await startWebMqttServer(config, async (event) => {
-        try {
-          const result = await processInbound(event, config);
-          if (result.accepted) {
-            trackInboundAccepted();
-            if (result.routeSource) trackRoute(result.routeSource);
-          } else {
-            trackInboundDropped(result.reason ?? "unknown_drop_reason");
-          }
-        } catch (error) {
-          trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
+        const result = await processInbound(event, config);
+        if (result.accepted) {
+          trackInboundAccepted();
+          if (result.routeSource) trackRoute(result.routeSource);
+        } else {
+          trackInboundDropped(result.reason ?? "unknown_drop_reason");
         }
       });
 

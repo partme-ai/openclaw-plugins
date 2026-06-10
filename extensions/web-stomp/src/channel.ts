@@ -58,7 +58,7 @@ export const stompChannel: ChannelDefinition = {
       publishToDestination(destination, text);
 
       console.log(
-        `[openclaw_web_stomp] Reply published to ${destination}`
+        `[openclaw-web-stomp] Reply published to ${destination}`
       );
     },
   },

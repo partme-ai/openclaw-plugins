@@ -8,6 +8,8 @@ export * from "./constants.js";
 // 配置类型
 export type {
     WecomAccountConfig,
+    WecomKfAccountConfig,
+    WecomKfConfig,
     WecomDmConfig,
     WecomMediaConfig,
     WecomNetworkConfig,

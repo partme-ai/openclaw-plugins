@@ -4,12 +4,12 @@
   "type": "module",
   "description": "多级长期记忆系统 (L0→L3) — 对话录制、记忆提取、场景归纳、用户画像，自动召回",
   "license": "MIT",
-  "main": "index.ts",
+  "main": "dist/index.js",
   "files": [
-    "index.ts",
-    "src/",
+    "dist",
     "openclaw.plugin.json",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "repository": {
@@ -40,5 +40,10 @@
     "tsup": "^8.2.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
   }
 }

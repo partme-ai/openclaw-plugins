@@ -1,7 +1,7 @@
 {
   "name": "@partme.ai/wecom-kf",
   "version": "2026.5.20",
-  "description": "OpenClaw WeCom KF (WeChat Work Customer Service) — multi-agent mapping + ICS REST API",
+  "description": "OpenClaw WeCom KF (WeChat Work Customer Service) — multi-agent mapping + KF Control Tools",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -29,16 +29,16 @@
     "zod": "^3.22.0",
     "undici": "^6.0.0",
     "fast-xml-parser": "^4.3.0",
-    "@wecom/aibot-node-sdk": "^1.0.0"
+    "@wecom/aibot-node-sdk": "^1.0.0",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
   },
   "files": [
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md",
-    "skills",
-    "clawdbot.plugin.json",
-    "moltbot.plugin.json"
+    "README.en.md",
+    "README.zh-CN.md",
+    "skills"
   ],
   "publishConfig": {
     "access": "public",
@@ -48,6 +48,7 @@
     "extensions": [
       "./dist/index.js"
     ],
+    "setupEntry": "./dist/setup-entry.js",
     "channel": {
       "id": "wecom-kf",
       "label": "WeCom KF",
@@ -81,20 +82,13 @@
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
   },
-  "clawdbot": {
-    "extensions": [
-      "./dist/index.js"
-    ]
-  },
-  "moltbot": {
-    "extensions": [
-      "./dist/index.js"
-    ]
-  },
   "peerDependencies": {
-    "clawdbot": "*",
-    "moltbot": "*",
     "openclaw": ">=2026.4.12"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
   },
   "repository": {
     "type": "git",

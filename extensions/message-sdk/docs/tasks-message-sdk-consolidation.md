@@ -187,7 +187,7 @@ flowchart LR
 - [x] **T3-06** MQ dedup 用法统一文档  
   - **Phase**: P3  
   - **复杂度**: S  
-  - **Files**: `message-sdk/README.md`, `doc/im-channels/mqtt/`（若存在则更新）  
+  - **Files**: `message-sdk/README.md`（MQTT 等 MQ 插件文档见 `doc/` 索引）  
   - **Verify**: 文档 review
 
 - [x] **T3-07** 负向验证：MQ **仍** 使用 `dispatchWireMessage` / `dispatchChannelMessage`，无 `runAssembled`  
@@ -203,7 +203,7 @@ flowchart LR
 - [x] **T4-01** 调研 Feishu reply-dispatcher + ingress-runtime 对照 inventory  
   - **Phase**: P4  
   - **复杂度**: M  
-  - **Files**: `message-sdk/docs/feishu-hooks-mapping.md`, `doc/im-channels/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md`  
+  - **Files**: `message-sdk/docs/feishu-hooks-mapping.md`, `doc/wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md`  
   - **Verify**: 文档 review
 
 - [x] **T4-02** Feishu hooks 边界确认：渠道专属 reply hooks 留 Feishu 插件本地  

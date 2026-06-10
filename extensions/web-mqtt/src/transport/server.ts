@@ -11,7 +11,8 @@ import { readFileSync } from "node:fs";
 import { Duplex } from "node:stream";
 import type { Socket } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { verifyPassword as verifyPasswordShared, safeEqualBuffer, matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
+import { createKeyedRunQueue, type KeyedRunQueue } from "@partme.ai/openclaw-message-sdk";
 import type { InboundHandler, WebMqttConfig, WebMqttServiceStats } from "../types.js";
 import { isUserActionAllowed } from "./acl.js";
 
@@ -21,6 +22,7 @@ let broker: AedesBroker | null = null;
 let server: HttpServer | HttpsServer | null = null;
 let wss: InstanceType<typeof WebSocketServer> | null = null;
 let currentConfig: WebMqttConfig | null = null;
+let inboundQueue: KeyedRunQueue | null = null;
 const clientUsernameMap = new Map<string, string>();
 
 const stats: WebMqttServiceStats = {
@@ -38,6 +40,12 @@ const stats: WebMqttServiceStats = {
  */
 export async function startWebMqttServer(config: WebMqttConfig, onInbound: InboundHandler): Promise<void> {
   currentConfig = config;
+  inboundQueue = createKeyedRunQueue({
+    onError: (error, clientId) => {
+      trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
+      stats.lastError = `[${clientId}] ${String(error)}`;
+    },
+  });
   broker = createBroker({
     concurrency: 100,
     heartbeatInterval: 30000,
@@ -82,6 +90,10 @@ export async function stopWebMqttServer(): Promise<void> {
     await new Promise<void>((resolve) => broker!.close(() => resolve()));
     broker = null;
   }
+  if (inboundQueue) {
+    inboundQueue.deactivate();
+    inboundQueue = null;
+  }
   stats.connectedClients = 0;
   stats.brokerReady = false;
   clientUsernameMap.clear();
@@ -104,23 +116,34 @@ export function trackRoute(source: "binding" | "standard"): void {
 
 /**
  * 发布消息到 topic。
+ *
+ * @returns 发布完成时 resolve；broker 未就绪或 Aedes 回调报错时 reject
  */
-export function publishToTopic(topic: string, payload: string): void {
-  if (!broker) return;
+export async function publishToTopic(topic: string, payload: string): Promise<void> {
+  if (!broker) {
+    throw new Error("[openclaw-web-mqtt] Cannot publish — broker not running");
+  }
   stats.outboundMessages += 1;
-  broker.publish(
-    {
-      topic,
-      payload: Buffer.from(payload, "utf-8"),
-      qos: 0 as const,
-      retain: false,
-      cmd: "publish" as const,
-      dup: false,
-    },
-    (err?: Error | null) => {
-      if (err) stats.lastError = String(err);
-    },
-  );
+  await new Promise<void>((resolve, reject) => {
+    broker!.publish(
+      {
+        topic,
+        payload: Buffer.from(payload, "utf-8"),
+        qos: 0 as const,
+        retain: false,
+        cmd: "publish" as const,
+        dup: false,
+      },
+      (err?: Error | null) => {
+        if (err) {
+          stats.lastError = String(err);
+          reject(err);
+          return;
+        }
+        resolve();
+      },
+    );
+  });
 }
 
 /**
@@ -146,6 +169,7 @@ export function getClientUsername(clientId: string): string | null {
 }
 
 function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandler): void {
+  // 连接计数：client 事件增、clientDisconnect 减并清理 username 映射
   broker!.on("client", () => {
     stats.connectedClients += 1;
   });
@@ -154,13 +178,14 @@ function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandle
     clientUsernameMap.delete(client.id);
   });
 
+  // 入站 publish：忽略 $SYS/ 与超 payload；转发给 OpenClaw inbound 管道
   broker!.on("publish", (packet: PublishPacket, client: Client | null) => {
     if (!client || packet.topic.startsWith("$SYS/")) return;
     if ((packet.payload as Buffer).length > config.limits.maxPayloadBytes) {
       trackInboundDropped("payload_too_large");
       return;
     }
-    onInbound({
+    const event = {
       topic: packet.topic,
       payload: packet.payload as Buffer,
       clientId: client.id,
@@ -168,10 +193,21 @@ function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandle
         packet.messageId !== undefined && packet.messageId !== null
           ? String(packet.messageId)
           : undefined,
+    };
+    const queue = inboundQueue;
+    if (!queue) {
+      trackInboundDropped("inbound_queue_not_ready");
+      return;
+    }
+    void queue.enqueue(event.clientId, async () => {
+      await onInbound(event);
     });
   });
 }
 
+/**
+ * 配置 Aedes authenticate / authorizeSubscribe / authorizePublish 守卫。
+ */
 function configureAuthGuards(config: WebMqttConfig): void {
   (broker as any).authenticate = (client: Client, username: string | undefined, password: Buffer | undefined, done: (err: Error | null, success: boolean) => void) => {
     if (!config.auth.required) return done(null, true);
@@ -181,7 +217,7 @@ function configureAuthGuards(config: WebMqttConfig): void {
     const user = config.auth.users.find((item) => item.username === username);
     if (!user) return done(new Error("invalid_credentials"), false);
 
-    const ok = verifyPassword(user.password, user.passwordHash, user.hashAlgorithm, password);
+    const ok = verifyPasswordAdapted(user.password, user.passwordHash, user.hashAlgorithm, password);
     if (!ok) return done(new Error("invalid_credentials"), false);
     clientUsernameMap.set(client.id, username);
     return done(null, true);
@@ -202,6 +238,9 @@ function configureAuthGuards(config: WebMqttConfig): void {
   };
 }
 
+/**
+ * 按 TLS 配置创建 HTTP 或 HTTPS 底层服务器。
+ */
 function createWebServer(config: WebMqttConfig): HttpServer | HttpsServer {
   if (!config.tls.enabled) return createHttpServer();
   const tlsOptions = {
@@ -215,6 +254,9 @@ function createWebServer(config: WebMqttConfig): HttpServer | HttpsServer {
   return createHttpsServer(tlsOptions);
 }
 
+/**
+ * 将 WebSocket 双向流桥接为 Aedes 可消费的 Duplex（含 idle 超时 terminate）。
+ */
 function createDuplexFromWs(ws: WebSocket, idleTimeoutMs: number): Duplex {
   const stream = new Duplex({
     read() {},
@@ -252,6 +294,9 @@ function createDuplexFromWs(ws: WebSocket, idleTimeoutMs: number): Duplex {
   return stream;
 }
 
+/**
+ * 按用户 ACL 规则或 publishAllow/subscribeAllow 白名单校验 topic 权限。
+ */
 function allowTopicByUser(
   config: WebMqttConfig,
   client: Client | null,
@@ -270,22 +315,19 @@ function allowTopicByUser(
   });
 }
 
-function verifyPassword(
+/**
+ * 适配层：将 web-mqtt 的密码校验参数格式转换为共享 verifyPassword。
+ */
+function verifyPasswordAdapted(
   plainPassword: string | undefined,
   passwordHash: string | undefined,
   algorithm: "sha256" | "sha512" | undefined,
   incoming: Buffer,
 ): boolean {
+  const input = incoming.toString("utf-8");
   if (plainPassword) {
-    return safeEqual(Buffer.from(plainPassword), incoming);
+    return safeEqualBuffer(Buffer.from(plainPassword), incoming);
   }
   if (!passwordHash) return false;
-  const hashName = algorithm ?? "sha256";
-  const digest = createHash(hashName).update(incoming).digest("hex");
-  return safeEqual(Buffer.from(passwordHash), Buffer.from(digest));
-}
-
-function safeEqual(a: Buffer, b: Buffer): boolean {
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  return verifyPasswordShared(input, undefined, passwordHash, algorithm ?? "sha256");
 }

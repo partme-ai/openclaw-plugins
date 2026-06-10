@@ -385,6 +385,18 @@ openclaw-gotify/
 - [Gotify CLI](https://github.com/gotify/cli)
 - [Gotify Android](https://github.com/gotify/android)
 
+## 企业级可靠性
+
+> 完整说明：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md) · 专题：[Gotify 指南](../../doc/gotify/OpenClaw-Gotify-Guide_CN.md)
+
+| 项 | 行为 |
+|----|------|
+| **分级** | 协议限制需文档约束 |
+| **入站** | WebSocket 流；无 broker ACK |
+| **恢复** | backlog cursor + 重连 replay |
+| **幂等** | 60s 内存 dedup（多实例需业务幂等） |
+| **自消费** | `extras.openclaw.outbound` 过滤 |
+
 ## ❓ 常见问题
 
 **必须同时配置 appToken 和 clientToken 吗？**
@@ -421,3 +433,7 @@ openclaw-gotify/
 Made with ❤️ by PartMe
 
 </div>
+
+## 消息格式指南
+
+Gotify 使用原生 Message API 与 WebSocket Stream JSON，不直接消费通用 MQ wire envelope。Gotify 如何映射到 `UnifiedMessage`，以及其它队列插件的标准消息契约，见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。

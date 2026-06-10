@@ -25,13 +25,11 @@
   "author": "PartMe",
   "license": "MIT",
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.22"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
   },
   "files": [
     "dist",
     "openclaw.plugin.json",
-    "clawdbot.plugin.json",
-    "moltbot.plugin.json",
     "README.md",
     "README.zh-CN.md",
     "LICENSE",

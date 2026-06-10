@@ -219,6 +219,8 @@ export type KfMessage = {
     msgid?: string;
     /** 消息序号 */
     sequence?: number;
+    /** sync_msg 发送时间（秒级 Unix 时间戳） */
+    send_time?: number;
     /** 文本内容 */
     text?: { content: string };
     /** 图片信息 */
@@ -280,17 +282,17 @@ export type SendTextParams = {
 /**
  * 事件消息配置。
  */
+export type EventMessageTemplate = {
+    enabled?: boolean;
+    msgtype?: string;
+    content?: Record<string, unknown>;
+};
+
 export type EventMessagesConfig = {
-    welcome?: {
-        enabled?: boolean;
-        msgtype?: string;
-        content?: Record<string, unknown>;
-    };
-    ending?: {
-        enabled?: boolean;
-        msgtype?: string;
-        content?: Record<string, unknown>;
-    };
+    welcome?: EventMessageTemplate;
+    /** 待接入池排队提示（service_state=2 + msg_code） */
+    queue?: EventMessageTemplate;
+    ending?: EventMessageTemplate;
     satisfaction?: {
         enabled?: boolean;
         head_content?: string;

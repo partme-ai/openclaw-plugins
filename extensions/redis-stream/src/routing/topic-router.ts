@@ -1,11 +1,11 @@
 /**
- * Redis Channel 路由模块。
+ * @fileoverview Redis Channel 路由模块。
  *
- * 将 Redis Pub/Sub channel 映射到 OpenClaw Agent：
- * - 显式绑定优先（channelBindings）
- * - 标准格式回退：openclaw:agent:<agentId>:in / openclaw:agent:<agentId>:out
+ * @description
+ * 将 Redis Pub/Sub channel 映射到 OpenClaw Agent：显式 `channelBindings` 优先，
+ * 标准格式 `openclaw:agent:<agentId>:in` 回退。参考 openclaw-mqtt topic-router 模式。
  *
- * 参考 openclaw-mqtt topic-router.ts 模式。
+ * @module routing/topic-router
  */
 
 import type { RedisChannelBinding, RedisInboundRoute } from "../types.js";
@@ -18,8 +18,10 @@ const AGENT_INBOUND_SUFFIX = ":in";
 let loadedBindings: RedisChannelBinding[] = [];
 
 /**
- * 解析入站 channel → agent 路由。
- * 显式绑定优先，标准格式回退。
+ * @description 解析入站 channel → agent 路由（显式绑定优先，标准格式回退）。
+ * @param channel - 实际 Redis channel 名
+ * @param bindings - 可选绑定列表；缺省时使用模块内已加载规则
+ * @returns 路由结果；null 表示无匹配
  */
 export function resolveInboundRoute(
   channel: string,
@@ -64,7 +66,9 @@ export function resolveInboundRoute(
 }
 
 /**
- * 从入站 channel 推导默认回复 channel。
+ * @description 从入站 channel 推导默认回复 channel（`:in` → `:out`）。
+ * @param inboundChannel - 入站 channel 名
+ * @returns 回复 channel 名
  */
 export function buildReplyChannelFromInbound(inboundChannel: string): string {
   if (inboundChannel.endsWith(":in")) {
@@ -74,14 +78,17 @@ export function buildReplyChannelFromInbound(inboundChannel: string): string {
 }
 
 /**
- * 构建 Agent 默认出站 channel。
+ * @description 构建 Agent 默认出站 channel（`openclaw:agent:<agentId>:out`）。
+ * @param agentId - Agent ID
+ * @returns 出站 channel 名
  */
 export function buildOutboundChannel(agentId: string): string {
   return `openclaw:agent:${agentId}:out`;
 }
 
 /**
- * 加载显式 channel 绑定规则。
+ * @description 加载显式 channel 绑定规则到模块级缓存（gateway 启动时调用）。
+ * @param bindings - 来自配置的绑定数组
  */
 export function loadChannelBindings(bindings: RedisChannelBinding[]): void {
   loadedBindings = bindings.map((b) => ({
@@ -93,15 +100,18 @@ export function loadChannelBindings(bindings: RedisChannelBinding[]): void {
 }
 
 /**
- * 获取已加载的绑定规则（只读）。
+ * @description 获取已加载的绑定规则（只读快照）。
+ * @returns 绑定规则只读数组
  */
 export function getLoadedChannelBindings(): ReadonlyArray<RedisChannelBinding> {
   return loadedBindings;
 }
 
 /**
- * Redis glob 风格 channel 匹配。
- * 支持 * 通配符（匹配单级或多级，基于冒号分隔）。
+ * @description Redis glob 风格 channel 匹配（冒号分隔，* 匹配剩余级别）。
+ * @param channel - 实际 channel 名
+ * @param pattern - 匹配模式
+ * @returns 是否匹配
  */
 export function matchChannel(channel: string, pattern: string): boolean {
   if (pattern === "*") return true;

@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/transport/gateway-mqtt
+ *
  * Gateway 账号生命周期：启动/停止内嵌 Aedes，与 OpenClaw `startAccount` 对齐。
  */
 
@@ -18,7 +20,7 @@ import {
   resolveBrokerConfig,
   type ResolvedMqttAccount,
 } from "../config.js";
-import { setMqttChannelConfig } from "../mqtt-state.js";
+import { setMqttChannelConfig } from "../state/mqtt-state.js";
 import type { MqttTopicMapping } from "../types.js";
 
 /**

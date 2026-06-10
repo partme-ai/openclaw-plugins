@@ -37,8 +37,8 @@ import {
   resolveDefaultGotifyAccountId,
   describeGotifyAccountSnapshot,
 } from '../src/config.js';
-import { resolveGotifyPeerId } from '../src/routing/peer-resolver.js';
-import { mapGotifyToInbound, mapOutboundToGotify } from '../src/routing/message-mapper.js';
+import { resolveGotifyPeerId } from '../src/dispatch/routing/peer-resolver.js';
+import { mapGotifyToInbound, mapOutboundToGotify } from '../src/dispatch/routing/message-mapper.js';
 import { selectAccountId } from '../src/outbound.js';
 import type { GotifyMessagePayload, ResolvedGotifyAccount } from '../src/types.js';
 

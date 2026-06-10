@@ -1,5 +1,10 @@
 /**
- * 美团渠道 setupWizard — App Key / App Secret 声明式 CLI 配置。
+ * 美团渠道 CLI 引导（onboarding）配置。
+ *
+ * **架构角色**：基于 `createAppKeySecretChannelSetup` 生成声明式 wizard，
+ * 引导用户配置 app_key / app_secret。
+ *
+ * **关键依赖**：`./channel-setup-factory`
  */
 
 import { createAppKeySecretChannelSetup } from "./channel-setup-factory.js";

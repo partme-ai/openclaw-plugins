@@ -1,3 +1,16 @@
+/**
+ * @module wechat/runtime
+ *
+ * 微信插件 **PluginRuntime 持有层**（进程级单例）。
+ *
+ * **职责**：
+ * - `setWeixinRuntime`：Gateway register 时注入
+ * - `getWeixinRuntime` / `waitForWeixinRuntime`：messaging / monitor 获取 channel API
+ * - `resolveWeixinChannelRuntime`：优先 gateway ctx.channelRuntime，避免 register 竞态
+ *
+ * **关键导出**：`setWeixinRuntime`、`getWeixinRuntime`、`resolveWeixinChannelRuntime`
+ */
+
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import { logger } from "./util/logger.js";

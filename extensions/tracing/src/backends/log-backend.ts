@@ -7,7 +7,7 @@
  * - 日志聚合系统（如 ELK）已配置 stdout 采集
  */
 
-import type { TracingBackend, TracingConfig, Span } from "../types.js";
+import type { TracingBackend, TracingConfig, Span } from "../shared/types.js";
 
 /**
  * Console Log 追踪后端

@@ -4,7 +4,7 @@ import {
   resolveGotifyPeerId,
   resolveGotifyConversationLabel,
   resolveGotifySenderName,
-} from '../src/routing/peer-resolver.js';
+} from '../src/dispatch/routing/peer-resolver.js';
 
 describe('resolveGotifyPeerId', () => {
   it('prefers extras.openclaw.peerId over appid', () => {

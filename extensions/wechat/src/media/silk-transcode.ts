@@ -1,3 +1,9 @@
+/**
+ * @module wechat/media/silk-transcode
+ *
+ * SILK 语音转码工具。
+ */
+
 import { logger } from "../util/logger.js";
 
 /** Default sample rate for Weixin voice messages. */

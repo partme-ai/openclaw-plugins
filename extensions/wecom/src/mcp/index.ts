@@ -1,5 +1,15 @@
 /**
- * MCP 模块统一导出
+ * @module mcp
+ *
+ * 企业微信 **MCP（Model Context Protocol）** 集成模块。
+ *
+ * **职责**：
+ * - `tool`：Agent Tool `wecom_mcp`（list/call）
+ * - `transport`：Streamable HTTP JSON-RPC、session 生命周期、配置缓存
+ * - `interceptors`：call 前后管道（业务错误、文档授权、媒体 base64、本地文件等）
+ * - `schema`：Gemini 兼容的 inputSchema 清洗
+ *
+ * **拦截器职责概览**见 `mcp/interceptors/index.ts`。
  */
 
 export { createWeComMcpTool } from "./tool.js";

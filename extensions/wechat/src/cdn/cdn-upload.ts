@@ -1,3 +1,9 @@
+/**
+ * @module wechat/cdn/cdn-upload
+ *
+ * 微信 CDN 媒体上传。
+ */
+
 import { encryptAesEcb } from "./aes-ecb.js";
 import { buildCdnUploadUrl } from "./cdn-url.js";
 import { logger } from "../util/logger.js";

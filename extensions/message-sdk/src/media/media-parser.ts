@@ -1,11 +1,15 @@
 /**
- * 媒体解析器 — Markdown/HTML/MEDIA:指令/裸露路径的媒体提取引擎
+ * @module media/media-parser
  *
- * 来源：openclaw-china packages/shared/src/media/media-parser.ts (723行)
- * 适配：独立 TypeScript 模块，不依赖 openclaw-china/shared
+ * 媒体解析器 — Markdown/HTML/`MEDIA:` 指令/裸露路径的媒体提取引擎。
  *
- * 该模块只负责“识别文本中的媒体引用并结构化输出”，不读取文件内容、
- * 不下载远程资源，也不做路径安全授权。真实 I/O 由 media-io/path-guard 处理。
+ * **职责**：仅识别文本中的媒体引用并结构化输出；不读取文件、不下载远程资源、
+ * 不做路径安全授权。真实 I/O 由 `media-io` / `path-guard` 处理。
+ *
+ * **来源**：openclaw-china packages/shared/src/media/media-parser.ts (MIT License)
+ *
+ * **关键导出**：`extractMediaFromText`、`extractImagesFromText`、`extractFilesFromText`、
+ * `normalizeLocalPath`、`isHttpUrl`
  */
 
 import * as fs from "node:fs";
@@ -17,23 +21,22 @@ import { fileURLToPath } from "node:url";
 // 类型
 // ============================================================================
 
-/**
- * MediaType 是 media 模块的公开类型别名。
- *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
- */
+/** 媒体大类 / Media category inferred from path or URL */
 export type MediaType = "image" | "audio" | "video" | "file";
-/**
- * MediaSourceKind 是 media 模块的公开类型别名。
- *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
- */
+
+/** 引用来源语法 / Syntax that produced the media reference */
 export type MediaSourceKind = "markdown" | "markdown-linked" | "html" | "bare";
 
 /**
- * ExtractedMedia 描述 media 模块公开 API 的结构化参数或返回值。
+ * 从文本中提取的单条媒体引用 / One media reference extracted from text.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property source - 原始引用字符串（URL 或路径）
+ * @property localPath - 归一化后的本机绝对路径（远程 URL 时为 undefined）
+ * @property type - 推断的媒体类型
+ * @property isLocal - 是否为本地/attachment 引用
+ * @property isHttp - 是否为 http(s) URL
+ * @property fileName - 文件名（本地或 URL pathname 推断）
+ * @property sourceKind - 匹配到的语法种类
  */
 export interface ExtractedMedia {
   source: string;
@@ -46,9 +49,12 @@ export interface ExtractedMedia {
 }
 
 /**
- * MediaParseResult 描述 media 模块公开 API 的结构化参数或返回值。
+ * `extractMediaFromText` 返回值 / Result of full media extraction.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property text - 可选剥离媒体语法后的正文
+ * @property images - 图片引用列表
+ * @property files - 非图片文件引用列表
+ * @property all - 图片 + 文件合并列表（去重顺序保留）
  */
 export interface MediaParseResult {
   text: string;
@@ -58,9 +64,16 @@ export interface MediaParseResult {
 }
 
 /**
- * MediaParseOptions 描述 media 模块公开 API 的结构化参数或返回值。
+ * 媒体解析选项 / Options controlling parse behavior.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property removeFromText - 是否从正文中删除已识别的媒体语法（默认 true）
+ * @property checkExists - 本地路径是否必须存在才计入结果
+ * @property existsSync - 自定义存在性检查（测试用）
+ * @property parseMediaLines - 是否解析 `MEDIA:` 行指令
+ * @property parseMarkdownImages - 是否解析 Markdown/HTML 图片
+ * @property parseHtmlImages - 是否解析 `<img>` 标签
+ * @property parseBarePaths - 是否解析裸露路径
+ * @property parseMarkdownLinks - 是否解析 Markdown 文件链接
  */
 export interface MediaParseOptions {
   removeFromText?: boolean;
@@ -77,30 +90,14 @@ export interface MediaParseOptions {
 // 扩展名集合
 // ============================================================================
 
-/**
- * IMAGE_EXTENSIONS 是 media 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+/** 视为图片的扩展名集合 / Extensions treated as images */
 export const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "heic", "heif", "svg", "ico"]);
-/**
- * AUDIO_EXTENSIONS 是 media 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+/** 视为音频的扩展名集合 / Extensions treated as audio */
 export const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "ogg", "m4a", "amr", "flac", "aac", "wma"]);
-/**
- * VIDEO_EXTENSIONS 是 media 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+/** 视为视频的扩展名集合 / Extensions treated as video */
 export const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v"]);
 
-/**
- * NON_IMAGE_EXTENSIONS 是 media 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+/** 非图片文件扩展名（含文档、压缩包、音视频等）/ Non-image file extensions */
 export const NON_IMAGE_EXTENSIONS = new Set([
   "pdf", "doc", "docx", "xls", "xlsx", "csv", "ppt", "pptx", "txt", "md", "rtf", "odt", "ods",
   "zip", "rar", "7z", "tar", "gz", "tgz", "bz2",
@@ -383,12 +380,17 @@ export function extractMediaFromText(text: string, options: MediaParseOptions = 
 }
 
 /**
- * extractImagesFromText 是 media 模块对外暴露的操作入口。
+ * 仅从文本提取图片引用（不解析 Markdown 文件链接）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param text - 待解析文本
+ * @param options - 解析选项（不含 `parseMarkdownLinks`）
+ * @returns 剥离后的文本与图片列表
+ *
+ * @example
+ * ```ts
+ * extractImagesFromText("![a](/tmp/a.png) 附件");
+ * // => { text: " 附件", images: [{ source: "/tmp/a.png", type: "image", ... }] }
+ * ```
  */
 export function extractImagesFromText(text: string, options: Omit<MediaParseOptions, "parseMarkdownLinks"> = {}): { text: string; images: ExtractedMedia[] } {
   const r = extractMediaFromText(text, { ...options, parseMarkdownLinks: false });
@@ -396,12 +398,11 @@ export function extractImagesFromText(text: string, options: Omit<MediaParseOpti
 }
 
 /**
- * extractFilesFromText 是 media 模块对外暴露的操作入口。
+ * 仅从文本提取非图片文件引用（不解析 Markdown/HTML 图片）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param text - 待解析文本
+ * @param options - 解析选项（不含图片相关开关）
+ * @returns 剥离后的文本与文件列表
  */
 export function extractFilesFromText(text: string, options: Omit<MediaParseOptions, "parseMarkdownImages" | "parseHtmlImages"> = {}): { text: string; files: ExtractedMedia[] } {
   const r = extractMediaFromText(text, { ...options, parseMarkdownImages: false, parseHtmlImages: false });

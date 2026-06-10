@@ -1,5 +1,5 @@
 import type { MetricCollector, MetricDefinition, MetricSample, HealthSnapshot } from "../types.js";
-import { rpcCall } from "../ws-bridge.js";
+import { rpcCall } from "../runtime/ws-bridge.js";
 
 const GATEWAY_PREFIX = "openclaw_gateway";
 

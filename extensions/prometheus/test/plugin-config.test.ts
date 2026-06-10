@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolvePrometheusConfig, scrapeTokenEnvName } from "./plugin-config.js";
+import { resolvePrometheusConfig, scrapeTokenEnvName } from "../src/config/plugin-config.js";
 
 describe("resolvePrometheusConfig", () => {
   it("uses defaults when raw is empty", () => {

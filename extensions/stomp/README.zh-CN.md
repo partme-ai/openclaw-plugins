@@ -71,6 +71,19 @@ openclaw plugins install @partme.ai/openclaw-stomp
 
 最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
 
+### message-sdk 复用
+
+STOMP 协议与 ACK 逻辑留在本插件；下列能力通过 **薄封装** 委托 message-sdk：
+
+| message-sdk 模块 | stomp-tcp 挂载点 | 用途 |
+|------------------|------------------|------|
+| `ingress/wire-ingress`（`normalizeWireIngress`） | `inbound.ts` | 入站 payload 解析 + 幂等短路 |
+| `dedup`（`createIdempotencyCache` + `getGlobalSingleton`） | `shared/wire-helpers.ts` | 入站 message-id 进程内去重 |
+| `bridge`（`dispatchChannelMessage`、`resolveChannelDispatchIdentity`） | `inbound.ts` | Wire 路径 OpenClaw reply 管线 |
+| `pipeline/serialize-payload` | `inbound.ts` reply.deliver | 出站 JSON 信封（`outboundFormat: envelope`） |
+| `config/resolveChannelAgentReplyTimeoutMs` | `config/resolvers.ts` | Agent 回复超时（embedded/subagent 扩展） |
+| `config/resolveChannelMediaMaxBytes` | `config/resolvers.ts` | 媒体/载荷上限解析 |
+
 ### 最小配置（`openclaw.json`）
 
 ```json
@@ -148,6 +161,17 @@ npm run test:client
 - `STOMP_TEST_DEST_1`、`STOMP_TEST_DEST_2`
 - `STOMP_TEST_BODY_1`、`STOMP_TEST_BODY_2`
 
+## 企业级可靠性
+
+> 完整说明：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)
+
+| 项 | 行为 |
+|----|------|
+| **分级** | 协议限制需文档约束 |
+| **入站 SEND** | 无应用级 deferred ACK；dispatch 失败不自动重投 |
+| **出站 MESSAGE** | prefetch + client ACK；TCP NACK 可 requeue |
+| **隔离** | `subscribeTopics` destination allowlist |
+
 ## 状态接口
 
 `GET /stomp-tcp/status` 返回：
@@ -200,3 +224,7 @@ npm run test:client
 ## 许可证
 
 MIT
+
+## 消息格式指南
+
+STOMP 使用共享的 OpenClaw 队列 wire 契约完成入站解析，并固定以 envelope 回复。标准 `MessageEnvelope`、非标准消息归一化、固定 envelope 回复与多语言 SDK 适配说明见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。

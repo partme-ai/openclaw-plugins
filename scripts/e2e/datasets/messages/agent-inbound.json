@@ -1,0 +1,7 @@
+{
+  "text": "e2e agent inbound message",
+  "metadata": {
+    "suite": "queue-channel-e2e",
+    "kind": "agent-inbound"
+  }
+}

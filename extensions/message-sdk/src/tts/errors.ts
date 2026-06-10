@@ -1,17 +1,16 @@
 /**
- * TTS 错误类型
+ * @module tts/errors
  *
- * 所有 TTS 提供商共用此错误体系。
- * 新增 TTS 提供商时直接 import，无需重复定义。
+ * TTS 错误类型 — 所有 TTS 提供商共用。
+ *
+ * **关键导出**：`TTSError` 及子类、`TTSErrorKind`
  */
 
+/** TTS 错误种类 / TTS error classification */
 export type TTSErrorKind = "timeout" | "auth" | "request" | "response_parse" | "service" | "empty_result";
 
 /**
- * TTSError 表示 tts 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
+ * TTS 基础错误 / Base error for all TTS providers.
  */
 export class TTSError extends Error {
   constructor(
@@ -25,12 +24,7 @@ export class TTSError extends Error {
   }
 }
 
-/**
- * TTSTimeoutError 表示 tts 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 请求超时（可重试） */
 export class TTSTimeoutError extends TTSError {
   constructor(provider: string, public readonly timeoutMs: number) {
     super(`TTS request timeout after ${timeoutMs}ms`, "timeout", provider, true);
@@ -38,12 +32,7 @@ export class TTSTimeoutError extends TTSError {
   }
 }
 
-/**
- * TTSAuthError 表示 tts 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 鉴权失败 */
 export class TTSAuthError extends TTSError {
   constructor(provider: string, message: string, public readonly status?: number) {
     super(message, "auth", provider, false);
@@ -51,12 +40,7 @@ export class TTSAuthError extends TTSError {
   }
 }
 
-/**
- * TTSRequestError 表示 tts 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** HTTP/传输失败（可重试） */
 export class TTSRequestError extends TTSError {
   constructor(provider: string, message: string, public readonly status?: number) {
     super(message, "request", provider, true);
@@ -64,12 +48,7 @@ export class TTSRequestError extends TTSError {
   }
 }
 
-/**
- * TTSResponseParseError 表示 tts 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 响应解析失败 */
 export class TTSResponseParseError extends TTSError {
   constructor(provider: string, public readonly bodySnippet: string) {
     super("TTS response is not valid JSON", "response_parse", provider, false);
@@ -77,12 +56,7 @@ export class TTSResponseParseError extends TTSError {
   }
 }
 
-/**
- * TTSServiceError 表示 tts 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 服务商业务错误 */
 export class TTSServiceError extends TTSError {
   constructor(provider: string, message: string, public readonly serviceCode?: number) {
     super(message, "service", provider, false);
@@ -90,12 +64,7 @@ export class TTSServiceError extends TTSError {
   }
 }
 
-/**
- * TTSEmptyResultError 表示 tts 模块中的可实例化能力。
- *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
- */
+/** 返回空音频 */
 export class TTSEmptyResultError extends TTSError {
   constructor(provider: string) {
     super("TTS returned empty audio", "empty_result", provider, false);

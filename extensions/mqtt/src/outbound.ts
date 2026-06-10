@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/outbound
+ *
  * MQTT 渠道出站适配器：将 Agent 回复发布到 MQTT Topic。
  */
 
@@ -11,7 +13,7 @@ import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 
 import { publishMessage } from "./transport/server.js";
 import { DEFAULT_BROKER_CONFIG } from "./config.js";
-import { getMqttChannelConfig } from "./mqtt-state.js";
+import { getMqttChannelConfig } from "./state/mqtt-state.js";
 import { getClientIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { buildOutboundTopic } from "./routing/topic-router.js";
 import { getClientUsername } from "./transport/server.js";
@@ -63,7 +65,7 @@ export const mqttOutbound: ChannelOutboundAdapter = {
       return { channel: "mqtt", messageId: "acl-denied" };
     }
 
-    publishMessage(outTopic, ctx.text, 0, cfg.retain.outboundRetain);
+    await publishMessage(outTopic, ctx.text, 0, cfg.retain.outboundRetain);
 
     console.log(`[openclaw-mqtt] Reply published to ${outTopic} for client ${clientId}`);
     return { channel: "mqtt", messageId: sessionKey };

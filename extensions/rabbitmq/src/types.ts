@@ -1,5 +1,11 @@
 /**
- * openclaw-rabbitmq 核心类型定义（RabbitMQ 协议与载荷）。
+ * @fileoverview openclaw-rabbitmq 核心类型定义（RabbitMQ 协议与载荷）。
+ *
+ * @description
+ * 集中导出配置、路由、会话与消息信封相关的 TypeScript 类型，供 inbound/outbound、
+ * routing 与 transport 层共享，避免循环依赖。
+ *
+ * @module types
  */
 
 // ─────────────────── RabbitMQ 配置类型 ───────────────────

@@ -4,18 +4,35 @@
   "type": "module",
   "description": "OpenMem memory bridge for OpenClaw — HTTP recall and event ingest",
   "license": "MIT",
-  "main": "index.ts",
-  "files": ["index.ts", "openclaw.plugin.json", "README.md"],
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
   "keywords": ["openclaw", "openclaw-plugin", "openmem", "memory"],
   "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
     "openclaw": ">=2026.4.12"
   },
   "devDependencies": {
+    "tsup": "^8.2.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
   }
 }

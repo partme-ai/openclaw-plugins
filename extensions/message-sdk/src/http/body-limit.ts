@@ -1,38 +1,33 @@
 /**
+ * @module http/body-limit
+ *
  * Webhook / HTTP 请求体大小限制（对齐 OpenClaw webhook-ingress）。
+ *
+ * **职责**：读取 `IncomingMessage` body 时限制体积与等待时间，防止大 payload 拖垮进程。
+ *
+ * **关键导出**：`readRequestBodyWithLimit`、`RequestBodyLimitError`、`isRequestBodyLimitError`
  */
 
 import type { IncomingMessage } from "node:http";
 import { importOpenClawPluginSdk } from "../openclaw/loader.js";
 
-/**
- * DEFAULT_WEBHOOK_MAX_BODY_BYTES 是 http 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+/** Webhook 默认最大 body 字节数（1 MiB）/ Default max webhook body size */
 export const DEFAULT_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
-/**
- * DEFAULT_WEBHOOK_BODY_TIMEOUT_MS 是 http 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+
+/** Webhook 默认 body 读取超时（毫秒）/ Default body read timeout */
 export const DEFAULT_WEBHOOK_BODY_TIMEOUT_MS = 30_000;
 
-/**
- * RequestBodyLimitErrorCode 是 http 模块的公开类型别名。
- *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
- */
+/** 请求体限制错误码 / Request body limit error codes */
 export type RequestBodyLimitErrorCode =
   | "PAYLOAD_TOO_LARGE"
   | "REQUEST_BODY_TIMEOUT"
   | "CONNECTION_CLOSED";
 
 /**
- * RequestBodyLimitError 表示 http 模块中的可实例化能力。
+ * 请求体读取失败（过大、超时或连接中断）。
  *
- * 类实例通常持有内存状态或错误语义；调用方应通过公开方法读取或更新状态，
- * 不要依赖内部字段布局。
+ * @property code - 错误种类
+ * @property statusCode - 建议返回的 HTTP 状态码（413/408/400）
  */
 export class RequestBodyLimitError extends Error {
   readonly code: RequestBodyLimitErrorCode;
@@ -52,12 +47,11 @@ export class RequestBodyLimitError extends Error {
 }
 
 /**
- * isRequestBodyLimitError 是 http 模块对外暴露的操作入口。
+ * 类型守卫：判断是否为 {@link RequestBodyLimitError}。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param error - 待检测错误
+ * @param code - 可选：进一步匹配具体 code
+ * @returns 是否为（可选匹配 code 的）RequestBodyLimitError
  */
 export function isRequestBodyLimitError(
   error: unknown,
@@ -68,9 +62,11 @@ export function isRequestBodyLimitError(
 }
 
 /**
- * ReadRequestBodyOptions 是 http 模块的公开类型别名。
+ * 读取请求体选项 / Options for reading request body with limits.
  *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ * @property maxBytes - 最大字节数（默认 {@link DEFAULT_WEBHOOK_MAX_BODY_BYTES}）
+ * @property timeoutMs - 读取超时（默认 {@link DEFAULT_WEBHOOK_BODY_TIMEOUT_MS}）
+ * @property encoding - 输出字符串编码（默认 `utf8`）
  */
 export type ReadRequestBodyOptions = {
   maxBytes?: number;
@@ -80,6 +76,19 @@ export type ReadRequestBodyOptions = {
 
 /**
  * 读取 IncomingMessage body（带大小与超时限制）。
+ *
+ * 优先委托 OpenClaw `webhook-request-guards` SDK；不可用时使用本地 stream 实现。
+ *
+ * @param req - Node.js HTTP 入站请求
+ * @param options - 大小、超时与编码
+ * @returns 解码后的 body 字符串
+ * @throws {@link RequestBodyLimitError} 超限、超时或连接异常
+ *
+ * @example
+ * ```ts
+ * const raw = await readRequestBodyWithLimit(req, { maxBytes: 512 * 1024 });
+ * const payload = JSON.parse(raw);
+ * ```
  */
 export async function readRequestBodyWithLimit(
   req: IncomingMessage,
@@ -104,6 +113,7 @@ export async function readRequestBodyWithLimit(
   );
   const encoding = options.encoding ?? "utf8";
 
+  // 提前拒绝 Content-Length 已超限的请求
   const contentLength = parseContentLength(req);
   if (contentLength != null && contentLength > maxBytes) {
     req.destroy?.();
@@ -151,6 +161,7 @@ export async function readRequestBodyWithLimit(
   });
 }
 
+/** 解析 Content-Length 头；无效时返回 null */
 function parseContentLength(req: IncomingMessage): number | null {
   const header = req.headers["content-length"];
   const raw = Array.isArray(header) ? header[0] : header;

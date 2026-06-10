@@ -1,7 +1,10 @@
 /**
  * 共享 Channel setupWizard / setupAdapter 工厂。
  *
- * 供 extensions 下各渠道插件复用，减少重复声明式向导代码。
+ * **架构角色**：extensions 下各渠道插件的声明式 CLI 配置复用层，将凭据/文本输入
+ * 映射为 `channels.<id>` 配置 patch，减少重复 wizard 代码。
+ *
+ * **关键依赖**：`openclaw/plugin-sdk/setup`
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
@@ -37,20 +40,34 @@ export type SetupTextInputSpec = {
   required?: boolean;
 };
 
+/** `createSimpleChannelSetup` 入参：渠道 id、展示文案与字段规格 */
 export type SimpleChannelSetupParams = {
+  /** channels 配置键，如 douyin、meituan */
   channel: string;
+  /** 用户可见渠道名称 */
   label: string;
+  /** 文档路径，供 help 链接 */
   docsPath?: string;
+  /** 判断账号是否已配置完成 */
   resolveConfigured: (cfg: OpenClawConfig, accountId?: string) => boolean;
+  /** 凭据类输入（App Key/Secret 等） */
   credentials?: SetupCredentialSpec[];
+  /** 普通文本输入（URL、webhook_path 等） */
   textInputs?: SetupTextInputSpec[];
+  /** 向导开场说明（未配置时展示） */
   introLines?: string[];
+  /** 配置完成后的提示行 */
   completionLines?: string[];
+  /** 自定义 finalize；默认在已配置时启用渠道 */
   finalize?: NonNullable<ChannelSetupWizard["finalize"]>;
 };
 
 /**
- * 读取 channels.<channel> 配置节。
+ * 读取 `openclaw.json` 中指定渠道配置节。
+ *
+ * @param cfg OpenClaw 全局配置
+ * @param channel 渠道 id
+ * @returns 原始配置对象，不存在时为空对象
  */
 export function getChannelSection(cfg: OpenClawConfig, channel: string): Record<string, unknown> {
   return ((cfg.channels as Record<string, unknown> | undefined)?.[channel] ?? {}) as Record<
@@ -60,7 +77,10 @@ export function getChannelSection(cfg: OpenClawConfig, channel: string): Record<
 }
 
 /**
- * 创建标准 declarative Channel setup 表面（adapter + wizard）。
+ * 创建标准声明式 Channel setup 表面（adapter + wizard）。
+ *
+ * @param params 渠道标识、配置判定与输入字段规格
+ * @returns 可挂到 ChannelPlugin.setup / setupWizard 的适配器对
  */
 export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
   setupAdapter: ChannelSetupAdapter;
@@ -177,7 +197,10 @@ export function createSimpleChannelSetup(params: SimpleChannelSetupParams): {
 }
 
 /**
- * 基于连接 URL 的 MQ/消息中间件渠道 setup（channels.<id>.url）。
+ * 基于连接 URL 的消息中间件类渠道 setup（`channels.<id>.url`）。
+ *
+ * @param params 渠道元数据、默认 URL 与可选 env 变量名
+ * @returns setupAdapter 与 setupWizard
  */
 export function createUrlChannelSetup(params: {
   channel: string;
@@ -221,7 +244,12 @@ export function createUrlChannelSetup(params: {
 }
 
 /**
- * 双凭据渠道 setup（如 app_key + app_secret，映射到 token + secret 输入）。
+ * 双凭据渠道 setup（app_key + app_secret，CLI 映射为 token + secret 输入）。
+ *
+ * **业务说明**：抖音、美团等开放平台均使用此模式。
+ *
+ * @param params 渠道元数据、字段名与环境变量提示
+ * @returns setupAdapter 与 setupWizard
  */
 export function createAppKeySecretChannelSetup(params: {
   channel: string;
@@ -276,7 +304,10 @@ export function createAppKeySecretChannelSetup(params: {
 }
 
 /**
- * 仅启用 embedded broker 类渠道（配置节存在即视为已配置）。
+ * 内嵌 Broker 类渠道 setup（配置节存在即视为已配置，无需外部 URL）。
+ *
+ * @param params 渠道元数据
+ * @returns setupAdapter 与 setupWizard
  */
 export function createEmbeddedBrokerChannelSetup(params: {
   channel: string;

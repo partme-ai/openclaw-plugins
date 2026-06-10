@@ -46,6 +46,9 @@ const connections = new Map<string, WebSocket>();
 /** 连接信息：connectionId -> StompConnectionInfo */
 const connectionInfo = new Map<string, StompConnectionInfo>();
 
+/** 按 NUL 分帧的接收缓冲：connectionId -> 未完成帧字节 */
+const frameBuffers = new Map<string, string>();
+
 /** 入站消息回调 */
 let onInboundMessage: StompInboundCallback | null = null;
 
@@ -79,26 +82,31 @@ export function startStompServer(
         subscriptionCount: 0,
       });
 
-      console.log(`[openclaw_web_stomp] WebSocket connected: ${connectionId}`);
+      console.log(`[openclaw-web-stomp] WebSocket connected: ${connectionId}`);
 
-      // 处理收到的消息
+      // 处理收到的消息（按 NUL 分帧，支持单包多帧与跨包帧）
       ws.on("message", (data) => {
-        const raw = data.toString("utf-8");
-        const frame = parseFrame(raw);
+        let buffer = (frameBuffers.get(connectionId) ?? "") + data.toString("utf-8");
+        let nullIdx = buffer.indexOf("\0");
+        while (nullIdx >= 0) {
+          const rawFrame = buffer.slice(0, nullIdx + 1);
+          buffer = buffer.slice(nullIdx + 1);
+          const frame = parseFrame(rawFrame);
+          if (!frame) {
+            sendFrame(ws, buildErrorFrame("Malformed STOMP frame"));
+            nullIdx = buffer.indexOf("\0");
+            continue;
+          }
 
-        if (!frame) {
-          sendFrame(ws, buildErrorFrame("Malformed STOMP frame"));
-          return;
+          const info = connectionInfo.get(connectionId);
+          if (info) {
+            info.lastActiveAt = new Date().toISOString();
+          }
+
+          handleFrame(connectionId, ws, frame, config);
+          nullIdx = buffer.indexOf("\0");
         }
-
-        // 更新最后活跃时间
-        const info = connectionInfo.get(connectionId);
-        if (info) {
-          info.lastActiveAt = new Date().toISOString();
-        }
-
-        // 分发处理
-        handleFrame(connectionId, ws, frame, config);
+        frameBuffers.set(connectionId, buffer);
       });
 
       // 处理连接关闭
@@ -109,7 +117,7 @@ export function startStompServer(
       // 处理错误
       ws.on("error", (err) => {
         console.error(
-          `[openclaw_web_stomp] WebSocket error for ${connectionId}:`,
+          `[openclaw-web-stomp] WebSocket error for ${connectionId}:`,
           err
         );
         handleDisconnect(connectionId);
@@ -118,13 +126,13 @@ export function startStompServer(
 
     wss.on("listening", () => {
       console.log(
-        `[openclaw_web_stomp] STOMP server listening on ws://0.0.0.0:${config.wsPort}${config.path}`
+        `[openclaw-web-stomp] STOMP server listening on ws://0.0.0.0:${config.wsPort}${config.path}`
       );
       resolve();
     });
 
     wss.on("error", (err) => {
-      console.error("[openclaw_web_stomp] Server error:", err);
+      console.error("[openclaw-web-stomp] Server error:", err);
       reject(err);
     });
   });
@@ -144,7 +152,7 @@ export async function stopStompServer(): Promise<void> {
       }
 
       wss.close(() => {
-        console.log("[openclaw_web_stomp] STOMP server closed");
+        console.log("[openclaw-web-stomp] STOMP server closed");
         resolve();
       });
       wss = null;
@@ -177,12 +185,14 @@ export function publishToDestination(
       destination,
       sub.ack
     );
+    const ackId = sub.ack !== "auto" ? `ack-${messageId}` : undefined;
 
     const msgFrame = buildMessageFrame(
       sub.id,
       destination,
       messageId,
-      body
+      body,
+      ackId,
     );
     sendFrame(ws, msgFrame);
   }
@@ -229,12 +239,12 @@ function handleFrame(
       break;
 
     case "ACK":
-      handleAck(frame.headers["id"] ?? "");
+      handleAck(frame.headers["id"] ?? frame.headers["ack"] ?? "");
       if (receiptId) sendFrame(ws, buildReceiptFrame(receiptId));
       break;
 
     case "NACK":
-      handleNack(frame.headers["id"] ?? "");
+      handleNack(frame.headers["id"] ?? frame.headers["ack"] ?? "");
       if (receiptId) sendFrame(ws, buildReceiptFrame(receiptId));
       break;
 
@@ -274,7 +284,7 @@ function handleConnect(
 
   sendFrame(ws, buildConnectedFrame(heartbeat, connectionId));
   console.log(
-    `[openclaw_web_stomp] STOMP session established: ${connectionId} (login: ${login ?? "anonymous"})`
+    `[openclaw-web-stomp] STOMP session established: ${connectionId} (login: ${login ?? "anonymous"})`
   );
 }
 
@@ -291,7 +301,7 @@ function handleSend(
 
   if (!isSendable(destination)) {
     console.warn(
-      `[openclaw_web_stomp] Cannot SEND to non-queue destination: ${destination}`
+      `[openclaw-web-stomp] Cannot SEND to non-queue destination: ${destination}`
     );
     return;
   }
@@ -299,7 +309,7 @@ function handleSend(
   const route = parseDestination(destination);
   if (!route || route.target !== "agent") {
     console.warn(
-      `[openclaw_web_stomp] Invalid SEND destination: ${destination}`
+      `[openclaw-web-stomp] Invalid SEND destination: ${destination}`
     );
     return;
   }
@@ -313,7 +323,7 @@ function handleSend(
     `${connectionId}:${destination}:${rawBody.slice(0, 64)}:${Buffer.byteLength(rawBody, "utf-8")}`;
 
   console.log(
-    `[openclaw_web_stomp] SEND: connection=${connectionId}, agent=${agentId}, bytes=${Buffer.byteLength(rawBody, "utf-8")}`,
+    `[openclaw-web-stomp] SEND: connection=${connectionId}, agent=${agentId}, bytes=${Buffer.byteLength(rawBody, "utf-8")}`,
   );
 
   // 更新连接信息
@@ -354,7 +364,7 @@ function handleSubscribe(
 
   if (!isSubscribable(destination)) {
     console.warn(
-      `[openclaw_web_stomp] Cannot SUBSCRIBE to non-topic destination: ${destination}`
+      `[openclaw-web-stomp] Cannot SUBSCRIBE to non-topic destination: ${destination}`
     );
     return;
   }
@@ -397,7 +407,8 @@ function handleDisconnect(connectionId: string): void {
   cleanupConnection(connectionId);
   connections.delete(connectionId);
   connectionInfo.delete(connectionId);
-  console.log(`[openclaw_web_stomp] Connection closed: ${connectionId}`);
+  frameBuffers.delete(connectionId);
+  console.log(`[openclaw-web-stomp] Connection closed: ${connectionId}`);
 }
 
 /**

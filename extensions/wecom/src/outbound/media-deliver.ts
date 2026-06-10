@@ -1,5 +1,13 @@
 /**
- * 企微非图片媒体与错误 fallback（Agent DM + stream 状态）。
+ * @module outbound/media-deliver
+ *
+ * 企微 Webhook **非图片媒体** 与加载失败时的 Agent DM + stream fallback。
+ *
+ * **职责**：
+ * - 非图片媒体：尝试 `agentDmMedia` 私信用户，并设置 stream fallback 提示
+ * - 加载失败：同样尝试 Agent DM，再推送 error fallback 文案
+ *
+ * **适用场景**：Bot 被动回复窗口内无法直接发送 file/video 等大媒体时。
  */
 
 import type { WecomWebhookTarget } from "../webhook/types.js";

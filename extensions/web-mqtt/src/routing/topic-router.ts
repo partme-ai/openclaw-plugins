@@ -1,12 +1,21 @@
 /**
  * Topic 路由模块。
- * 提供 subscribeTopics 白名单、显式 bindings 路由、标准回退路由与通配符匹配。
+ * 提供 subscribeTopics 白名单、显式 bindings 路由、标准回退路由。
+ * 通配符匹配委托 message-sdk/transport。
  */
+
+import { matchTopic, isTopicAllowed } from "@partme.ai/openclaw-message-sdk/transport";
+
+export { matchTopic, isTopicAllowed };
 
 import type { InboundRoute, WebMqttConfig } from "../types.js";
 
 /**
- * 解析入站消息目标。
+ * 解析入站 MQTT topic 到 Agent 路由（binding 优先，其次标准 `<prefix>agent/<id>/in`）。
+ *
+ * @param topic - 入站 MQTT topic
+ * @param config - Web MQTT 通道配置
+ * @returns InboundRoute；不在白名单或不可路由时 null
  */
 export function resolveInboundRoute(topic: string, config: WebMqttConfig): InboundRoute | null {
   if (!isTopicAllowed(topic, config.subscribeTopics)) return null;
@@ -31,34 +40,6 @@ export function resolveInboundRoute(topic: string, config: WebMqttConfig): Inbou
     matchedPattern: `${config.topicPrefix}agent/<agentId>/in`,
     source: "standard",
   };
-}
-
-/**
- * 判断 topic 是否在订阅白名单中。
- */
-export function isTopicAllowed(topic: string, subscribeTopics: string[]): boolean {
-  if (subscribeTopics.length === 0) return true;
-  return subscribeTopics.some((pattern) => matchTopic(topic, pattern));
-}
-
-/**
- * MQTT topic 通配符匹配（支持 + 和 #）。
- */
-export function matchTopic(topic: string, pattern: string): boolean {
-  const topicParts = topic.split("/");
-  const patternParts = pattern.split("/");
-
-  for (let i = 0; i < patternParts.length; i += 1) {
-    const pp = patternParts[i];
-    if (pp === "#") return true;
-    if (pp === "+") {
-      if (i >= topicParts.length) return false;
-      continue;
-    }
-    if (topicParts[i] !== pp) return false;
-  }
-
-  return topicParts.length === patternParts.length;
 }
 
 /**

@@ -1,14 +1,28 @@
 /**
- * @partme.ai/wecom_kf 插件入口
+ * @module wecom-kf/index
  *
- * 企业微信客服渠道插件 — 对接企微微信客服 API，
- * 让 OpenClaw Agent 伪装为客服坐席，实现 7x24 智能客服。
+ * 企业微信 **客服（KF）** OpenClaw 插件轻量入口。
  *
- * NOTE: This file is a stub - the actual plugin implementation is in the root index.ts
- * This src/index.ts is kept for compatibility but the main entry point is now root index.ts
+ * **职责**：
+ * - 导出 plugin 元数据（id / configSchema / register）
+ * - 完整能力由 `runtime/register-full.ts` 在 full 模式注册（Channel、Webhook、Tools、Hooks）
+ *
+ * **关键导出**：默认 plugin、`types/index` 重导出
  */
 
-// Re-export types and core functions for external use
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+
+import { registerWecomKfFull } from "./runtime/register-full.js";
+
+const plugin = {
+  id: "wecom-kf",
+  name: "WeCom KF",
+  description:
+    "OpenClaw WeCom KF (WeChat Work Customer Service) — KF callback + Control Tools; agents/skills optional",
+  configSchema: emptyPluginConfigSchema(),
+  register: registerWecomKfFull,
+};
+
+export default plugin;
+
 export * from "./types/index.js";
-export { handleAgentWebhook } from "./agent/index.js";
-export { getAccessToken, sendText, uploadMedia, sendMedia, downloadMedia } from "./agent/api-client.js";

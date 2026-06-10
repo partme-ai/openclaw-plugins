@@ -1,25 +1,31 @@
 /**
- * 混合检索器 — 向量检索 + 简易关键词增强
+ * @fileoverview 混合检索器 — 向量语义 + 关键词（FTS/BM25 近似）融合召回。
  *
- * 策略说明：
- * - vector: 纯向量检索
- * - keyword: 纯关键词 BM25 近似（基于词频匹配）
- * - hybrid: 向量 + 关键词加权融合（默认权重 0.7:0.3）
+ * @description
+ * 支持三种策略：
+ * - `vector` — 纯余弦/内积向量检索；
+ * - `keyword` — 优先 `store.keywordSearch`（FTS5），否则降级词频匹配；
+ * - `hybrid` — 向量与关键词分数按权重融合（默认 0.7:0.3）。
+ *
+ * **模块角色**：Knowledge Plugin · Retrieval layer（`before_prompt_build` 与 `knowledge_query` 共用）。
+ * **关键依赖**：`EmbeddingService`、`VectorStore`、可选 FTS5 后端。
+ *
+ * @module knowledge/retriever/hybrid
  */
 
 import type { EmbeddingService, VectorStore, SearchOptions, ScoredChunk } from '../types.js';
 
-/** 混合检索配置 */
+/** 混合检索可调参数。 */
 export type HybridRetrievalConfig = {
-  /** 检索策略 */
+  /** 检索策略枚举。 */
   strategy: 'hybrid' | 'vector' | 'keyword';
-  /** 向量权重（0-1，仅在 hybrid 模式下生效） */
+  /** hybrid 模式下向量分支权重（0-1）。 */
   vectorWeight: number;
-  /** 关键词权重（0-1，仅在 hybrid 模式下生效） */
+  /** hybrid 模式下关键词分支权重（0-1）。 */
   keywordWeight: number;
-  /** BM25 参数 k1 */
+  /** BM25 参数 k1（预留，简易降级路径未使用）。 */
   k1: number;
-  /** BM25 参数 b */
+  /** BM25 参数 b（预留）。 */
   b: number;
 };
 
@@ -32,7 +38,14 @@ const DEFAULT_CONFIG: HybridRetrievalConfig = {
 };
 
 /**
- * 混合检索
+ * @description 按策略执行检索并返回按分数降序的 {@link ScoredChunk} 列表。
+ *
+ * @param query - 用户查询文本。
+ * @param embedding - 用于 vector/hybrid 分支的嵌入服务。
+ * @param store - 向量存储后端。
+ * @param options - 含 `topK`、`minScore`、`sourceId` 及可选 `config` 策略覆盖。
+ * @returns Top-K 打分块；hybrid 模式下按融合分数排序。
+ * @throws 未知 `strategy` 枚举值。
  */
 export async function hybridSearch(
   query: string,
@@ -54,7 +67,7 @@ export async function hybridSearch(
     }
 
     case 'hybrid': {
-      console.log('[Knowledge] hybrid search...');
+      // 双路并行召回，各自扩大 topK 供融合阶段裁剪
       const vector = await embedding.embed(query);
       const [vectorResults, keywordResults] = await Promise.all([
         store.search(vector, { ...options, topK: topK * 2 }),
@@ -76,7 +89,12 @@ export async function hybridSearch(
 }
 
 /**
- * 关键词检索 — 优先使用 store 内置的 FTS5 检索，否则降级到简易词频匹配
+ * @description 关键词分支入口：优先 FTS5，否则全量扫描 + 词频近似。
+ *
+ * @param query - 查询串。
+ * @param store - 向量库（可选实现 `keywordSearch`）。
+ * @param topK - 返回上限。
+ * @param sourceId - 可选来源过滤。
  */
 async function keywordSearch(
   query: string,
@@ -84,19 +102,17 @@ async function keywordSearch(
   topK: number,
   sourceId?: string,
 ): Promise<ScoredChunk[]> {
-  // 如果 store 支持 FTS5 关键词检索，优先使用
   if (store.keywordSearch) {
     return store.keywordSearch(query, topK, sourceId);
   }
 
-  // 降级：简易词频匹配（非 SQLite 后端使用）
   return simpleKeywordSearch(query, store, topK, sourceId);
 }
 
 /**
- * 简易关键词检索（基于词频 + TF 近似）
- * 不依赖外部索引，直接从 VectorStore 的 metadata.text 中匹配关键词
- * 仅作为无 FTS5 后端的降级方案
+ * @description 无 FTS 后端的降级路径：对 store 全量块做 query 词命中比例打分。
+ *
+ * @remarks 通过零向量大 topK 搜索近似拉取全表，仅适用于小型数据集。
  */
 async function simpleKeywordSearch(
   query: string,
@@ -131,7 +147,13 @@ async function simpleKeywordSearch(
 }
 
 /**
- * 融合向量结果和关键词结果
+ * @description 按 chunk.id 合并双路分数：`vectorScore * wV + keywordScore * wK`。
+ *
+ * @param vectorResults - 向量检索原始结果。
+ * @param keywordResults - 关键词检索原始结果。
+ * @param vectorWeight - 向量权重。
+ * @param keywordWeight - 关键词权重。
+ * @param topK - 最终返回条数。
  */
 function fuseResults(
   vectorResults: ScoredChunk[],
@@ -142,7 +164,6 @@ function fuseResults(
 ): ScoredChunk[] {
   const scores = new Map<string, { chunk: ScoredChunk['chunk']; score: number }>();
 
-  // 加入向量结果
   for (const item of vectorResults) {
     scores.set(item.chunk.id, {
       chunk: item.chunk,
@@ -150,7 +171,6 @@ function fuseResults(
     });
   }
 
-  // 融合关键词结果
   for (const item of keywordResults) {
     const existing = scores.get(item.chunk.id);
     if (existing) {
@@ -170,12 +190,11 @@ function fuseResults(
 }
 
 /**
- * 从 store 获取所有 chunks（通过搜索零向量近似来实现全量获取）
- * 注意：这是一个近似方法，仅适用于小型数据集
+ * @description 近似全量读取 store 内块（零向量 + 超大 topK）。
+ *
+ * @remarks 生产环境应替换为专用分页 API；当前为第一版 pragmatic 方案。
  */
 async function getAllChunks(store: VectorStore, sourceId?: string): Promise<ScoredChunk['chunk'][]> {
-  // 我们构造一个近似全量查询：用小维度的随机向量搜索大量结果
-  // 实际生产环境应该有更好的分页方法，但第一版够用
   const dummyVector = new Array(384).fill(0);
   const results = await store.search(dummyVector, {
     topK: 10000,
@@ -186,19 +205,18 @@ async function getAllChunks(store: VectorStore, sourceId?: string): Promise<Scor
 }
 
 /**
- * 简易中文分词（按字符 + 英文按空格）
+ * @description 简易中英分词：英文按词、中文单字 + 相邻二元组。
+ *
+ * @param text - 待分词原文。
+ * @returns 去重后的 token 列表（小写英文）。
  */
 function tokenize(text: string): string[] {
-  // 先按非字母数字字符切分英文单词
   const words: string[] = [];
 
-  // 提取英文单词
   const englishWords = text.match(/[a-zA-Z0-9]+/g) || [];
   words.push(...englishWords.map((w) => w.toLowerCase()));
 
-  // 提取中文字符（单字）
   const chineseChars = text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || [];
-  // 简单二元组
   for (let i = 0; i < chineseChars.length; i++) {
     words.push(chineseChars[i]);
     if (i + 1 < chineseChars.length) {

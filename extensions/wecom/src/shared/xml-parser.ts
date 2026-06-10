@@ -1,6 +1,10 @@
 /**
- * WeCom XML 解析器
- * 用于 Agent 模式解析 XML 格式消息
+ * WeCom Agent 模式 XML 入站解析器（shared/xml-parser）
+ *
+ * Agent 回调为 XML 明文/加密体，本模块负责解析为 `WecomAgentInboundMessage` 并提取常用字段。
+ * 与 message-sdk 无直接依赖：message-sdk 处理通用入站/出站管线，XML 形态为 WeCom Agent 专有协议。
+ *
+ * 使用 fast-xml-parser；字段名兼容企微大小写变体（MsgId/MsgID、MediaId/MediaID 等）。
  */
 
 import { XMLParser } from "fast-xml-parser";
@@ -15,7 +19,10 @@ const xmlParser = new XMLParser({
 });
 
 /**
- * 解析 XML 字符串为消息对象
+ * 解析 XML 字符串为扁平消息对象。
+ *
+ * @param xml 企微 Agent 回调原始 XML
+ * @returns 根节点 `xml` 下的字段对象，解析失败时返回空对象
  */
 export function parseXml(xml: string): WecomAgentInboundMessage {
     const obj = xmlParser.parse(xml);
@@ -24,21 +31,27 @@ export function parseXml(xml: string): WecomAgentInboundMessage {
 }
 
 /**
- * 从 XML 中提取消息类型
+ * 提取消息类型（小写），对应 XML 字段 MsgType。
+ *
+ * @param msg 已解析的 Agent 入站消息
  */
 export function extractMsgType(msg: WecomAgentInboundMessage): string {
     return String(msg.MsgType ?? "").toLowerCase();
 }
 
 /**
- * 从 XML 中提取发送者 ID
+ * 提取发送者 userid（FromUserName）。
+ *
+ * @param msg 已解析的 Agent 入站消息
  */
 export function extractFromUser(msg: WecomAgentInboundMessage): string {
     return String(msg.FromUserName ?? "");
 }
 
 /**
- * 从 XML 中提取文件名（主要用于 file 消息）
+ * 提取文件名（file 消息），兼容 FileName / Filename 等多种键名及 fast-xml-parser 的 `#text` 嵌套。
+ *
+ * @param msg 已解析的 Agent 入站消息
  */
 export function extractFileName(msg: WecomAgentInboundMessage): string | undefined {
     const raw = (msg as any).FileName ?? (msg as any).Filename ?? (msg as any).fileName ?? (msg as any).filename;
@@ -61,21 +74,19 @@ export function extractFileName(msg: WecomAgentInboundMessage): string | undefin
 }
 
 /**
- * 从 XML 中提取接收者 ID (CorpID)
+ * 提取接收方标识 ToUserName（通常为企业 CorpID）。
  */
 export function extractToUser(msg: WecomAgentInboundMessage): string {
     return String(msg.ToUserName ?? "");
 }
 
-/**
- * 从 XML 中提取群聊 ID
- */
+/** 提取群聊 ChatId（群会话时存在）。 */
 export function extractChatId(msg: WecomAgentInboundMessage): string | undefined {
     return msg.ChatId ? String(msg.ChatId) : undefined;
 }
 
 /**
- * 从 XML 中提取 AgentID（兼容 AgentID/agentid 等大小写）
+ * 提取应用 AgentID，兼容 AgentID / AgentId / agentid 等大小写。
  */
 export function extractAgentId(msg: WecomAgentInboundMessage): string | number | undefined {
     const raw =
@@ -91,11 +102,17 @@ export function extractAgentId(msg: WecomAgentInboundMessage): string | number |
 }
 
 /**
- * 从 XML 中提取消息内容
+ * 将各 MsgType 转为供 Agent 消费的文本摘要（非原始 XML）。
+ *
+ * 复杂逻辑：voice 优先 Recognition；image/link/location 等格式化为可读占位；
+ * event 类型拼接 Event + EventKey。
+ *
+ * @param msg 已解析的 Agent 入站消息
  */
 export function extractContent(msg: WecomAgentInboundMessage): string {
     const msgType = extractMsgType(msg);
 
+    /** 将 XML 节点值（含 #text / 数组）统一转为字符串 */
     const asText = (value: unknown): string => {
         if (value == null) return "";
         if (typeof value === "string") return value;
@@ -140,8 +157,8 @@ export function extractContent(msg: WecomAgentInboundMessage): string {
 }
 
 /**
- * 从 XML 中提取媒体 ID (Image, Voice, Video)
- * 根据官方文档，MediaId 在 Agent 回调中直接位于根节点
+ * 提取媒体 MediaId（图片/语音/视频等），位于 XML 根节点。
+ * 兼容 MediaId / MediaID / mediaid 等键名。
  */
 export function extractMediaId(msg: WecomAgentInboundMessage): string | undefined {
     const raw = (msg as any).MediaId ?? (msg as any).MediaID ?? (msg as any).mediaid ?? (msg as any).mediaId;
@@ -171,7 +188,7 @@ export function extractMediaId(msg: WecomAgentInboundMessage): string | undefine
 }
 
 /**
- * 从 XML 中提取 MsgId（用于去重）
+ * 提取 MsgId，供入站去重（与 message-sdk createPersistentDedupe 配合使用）。
  */
 export function extractMsgId(msg: WecomAgentInboundMessage): string | undefined {
     const raw = (msg as any).MsgId ?? (msg as any).MsgID ?? (msg as any).msgid ?? (msg as any).msgId;

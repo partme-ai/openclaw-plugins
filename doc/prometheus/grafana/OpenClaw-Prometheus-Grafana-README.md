@@ -59,5 +59,5 @@ grafana/cluster/dashboard-metrics.json
 
 ## 相关文档
 
-- [CLUSTER.md](./CLUSTER.md) - 集群版详细说明
-- [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) - 故障排查
+- [OpenClaw-Prometheus-Grafana-Cluster.md](./OpenClaw-Prometheus-Grafana-Cluster.md) - 集群版详细说明
+- [OpenClaw-Prometheus-Grafana-Troubleshooting.md](./OpenClaw-Prometheus-Grafana-Troubleshooting.md) - 故障排查

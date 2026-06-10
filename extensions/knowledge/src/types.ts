@@ -1,10 +1,15 @@
 /**
- * 知识库模块核心类型定义
+ * @fileoverview 知识模块 **纯类型与接口契约** — 定义 Embedding/VectorStore/Reranker/Tokenizer/Parser
+ *                 等可插拔能力的 TypeScript 边界，以及端到端 `KnowledgeConfig` 配置树。
  *
- * 设计原则：
- * - Embedding 接口抽象化：仅定义 contract，后端可无缝切换
- * - VectorStore 接口抽象化：支持多种向量数据库
- * - 所有类型均为纯数据对象，不含业务逻辑
+ * @description
+ * 贯穿 RAG 链路各阶段：
+ * - **摄取**：`TextChunk`、`VectorChunk` 描述切分后与持久化条目
+ * - **语义层**：`EmbeddingService`/`EmbeddingEngine` 抽象向量生成
+ * - **检索层**：`SearchOptions`、`ScoredChunk` 描述召回与打分
+ * - **编排/注入**：`RagContextResult`、`BeforePromptBuildContext|Result` 对接 OpenClaw 钩子语义
+ *
+ * @module knowledge/types
  */
 
 // ===================================================================
@@ -139,7 +144,7 @@ export interface EmbeddingEngine {
 // Configuration 相关
 // ===================================================================
 
-/** 支持的 Embedding Provider 列表 */
+/** @description OpenAI/DashScope/智谱等后端枚举 — 用于配置校验与工厂路由（字符串字面量联合导出）。 */
 export const EMBEDDING_PROVIDERS = [
   'openai',
   'dashscope',
@@ -163,7 +168,7 @@ export type KnowledgeEmbeddingConfig = {
   dimensions?: number;
 };
 
-/** 支持的 Tokenizer Provider 列表 */
+/** @description Tokenizer 后端枚举 — `zhipu`（远程精确）、`tiktoken`（本地估算）。 */
 export const TOKENIZER_PROVIDERS = ['zhipu', 'tiktoken'] as const;
 export type TokenizerProvider = typeof TOKENIZER_PROVIDERS[number];
 
@@ -191,7 +196,7 @@ export interface TokenizerService {
   health(): Promise<boolean>;
 }
 
-/** 支持的 Reranker Provider 列表 */
+/** @description Reranker 后端枚举 — 用于二阶段精排可选节点。 */
 export const RERANKER_PROVIDERS = ['zhipu', 'jina', 'ollama'] as const;
 export type RerankerProvider = typeof RERANKER_PROVIDERS[number];
 
@@ -236,7 +241,7 @@ export interface RerankerService {
   health(): Promise<boolean>;
 }
 
-/** 支持的 DocParser Provider 列表 */
+/** @description 文档解析（OCR/版式）后端枚举 — 将 PDF/图像等转为可切分 Markdown。 */
 export const PARSER_PROVIDERS = ['zhipu', 'ollama'] as const;
 export type ParserProvider = typeof PARSER_PROVIDERS[number];
 
@@ -485,18 +490,26 @@ export type RagContextResult = {
 // Hook 事件相关
 // ===================================================================
 
-/** before_prompt_build 事件的上下文（按 openclaw 规范） */
+/** `before_prompt_build` 钩子入参 — OpenClaw 渠道/Agent 路由上下文。 */
 export type BeforePromptBuildContext = {
+  /** 触发渠道 ID，例如 `wecom`、`gotify`。 */
   channelId: string;
+  /** 目标 Agent ID；缺省由宿主路由。 */
   agentId?: string;
+  /** 终端用户标识（若渠道提供）。 */
   userId?: string;
+  /** 业务账号 ID，用于 knowledge `accounts` 覆盖合并。 */
   accountId?: string;
+  /** 本轮用户消息正文；Intent Gate 与检索 query 来源。 */
   message?: string;
+  /** 宿主扩展字段透传。 */
   [key: string]: unknown;
 };
 
-/** before_prompt_build 事件的返回值 */
+/** `before_prompt_build` 钩子返回值 — 追加 system/user Prompt 片段。 */
 export type BeforePromptBuildResult = {
+  /** 注入 system 层的 RAG 上下文。 */
   systemPrompt?: string;
+  /** 注入 user 层的 RAG 上下文（当 injection.position=user）。 */
   userPrompt?: string;
 };

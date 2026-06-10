@@ -1,3 +1,16 @@
+/**
+ * @module wechat/messaging/inbound
+ *
+ * 入站消息 **上下文转换** 与 **contextToken 持久化**。
+ *
+ * **职责**：
+ * - `contextToken` 内存 Map + 磁盘 JSON（Gateway 重启后恢复 outbound 能力）
+ * - `weixinMessageToMsgContext`：WeixinMessage → OpenClaw MsgContext（含媒体路径）
+ * - 多账号 contextToken 反查（outbound 无显式 accountId 时）
+ *
+ * **关键导出**：`weixinMessageToMsgContext`、`setContextToken`、`restoreContextTokens`
+ */
+
 import fs from "node:fs";
 import path from "node:path";
 

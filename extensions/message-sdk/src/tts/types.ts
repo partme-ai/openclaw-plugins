@@ -1,8 +1,9 @@
 /**
- * TTS 公共类型
+ * @module tts/types
  *
- * 所有 TTS 提供商共用此接口定义。
- * 来源：借鉴 Spring AI / LangChain4j TTS 示例 + llm-study TTS 模块
+ * TTS 公共类型 — 所有 TTS 提供商共用。
+ *
+ * **关键导出**：`TTSConfig`、`TTSResult`、`TTSVoice`、`TTSProvider`
  */
 
 // ============================================================================
@@ -10,9 +11,18 @@
 // ============================================================================
 
 /**
- * TTSConfig 描述 tts 模块公开 API 的结构化参数或返回值。
+ * TTS 合成配置 / Text-to-speech synthesis config.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property baseUrl - 远程 API 端点（OpenAI 等）
+ * @property apiKey - API 密钥
+ * @property model - 模型名（如 `tts-1`）
+ * @property voice - 语音 ID（如 `zh-CN-XiaoxiaoNeural`）
+ * @property rate - 语速字符串（EdgeTTS：-100~+100）
+ * @property volume - 音量（EdgeTTS）
+ * @property pitch - 音调（EdgeTTS）
+ * @property outputFormat - 输出格式（默认 mp3）
+ * @property timeoutMs - 超时毫秒
+ * @property maxTextLength - 最大输入字符数（默认 4096）
  */
 export interface TTSConfig {
   /** API 端点 URL（远程模式） */
@@ -42,9 +52,7 @@ export interface TTSConfig {
 // ============================================================================
 
 /**
- * TTSResult 描述 tts 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * TTS 合成结果 / Synthesized audio result.
  */
 export interface TTSResult {
   /** 音频数据（Buffer） */
@@ -66,9 +74,7 @@ export interface TTSResult {
 // ============================================================================
 
 /**
- * TTSVoice 描述 tts 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * TTS 语音描述 / Voice metadata for UI or selection.
  */
 export interface TTSVoice {
   /** 语音短名（如 zh-CN-XiaoxiaoNeural） */
@@ -87,13 +93,11 @@ export interface TTSVoice {
 // 提供商类型
 // ============================================================================
 
-/** TTS 提供商种类 */
+/** TTS 提供商部署种类 / Remote vs local runtime */
 export type TTSProviderKind = "remote" | "local";
 
 /**
- * TTSProvider 描述 tts 模块公开 API 的结构化参数或返回值。
- *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * TTS 提供商元数据 / Provider descriptor (especially for local Python backends).
  */
 export interface TTSProvider {
   readonly name: string;

@@ -7,7 +7,7 @@ import { stompChannel } from "./channel.js";
 
 const setupChannelPlugin = {
   ...stompChannel,
-  id: "openclaw_web_stomp",
+  id: "openclaw-web-stomp",
 };
 
 export default defineSetupPluginEntry(setupChannelPlugin);

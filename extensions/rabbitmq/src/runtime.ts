@@ -1,12 +1,18 @@
 /**
- * 运行时管理。
- * 负责管理插件的运行时状态和配置。
+ * @fileoverview RabbitMQ 插件 OpenClaw Runtime 引用存储。
+ *
+ * @description
+ * 由 `defineChannelPluginEntry.setRuntime` 在插件注册阶段注入 Gateway 提供的
+ * `PluginRuntime`，供 inbound 调用 Agent 分发管线与 resolveAgentRoute。
+ *
+ * @module runtime
  */
 
 let runtime: any = null;
 
 /**
- * 设置运行时。
+ * @description 注入 Gateway 提供的 PluginRuntime。
+ * @param runtimeInstance - OpenClaw 运行时实例
  */
 export function setRabbitmqRuntime(runtimeInstance: any): void {
   runtime = runtimeInstance;
@@ -14,7 +20,8 @@ export function setRabbitmqRuntime(runtimeInstance: any): void {
 }
 
 /**
- * 获取运行时。
+ * @description 获取已注入的 OpenClaw Runtime；未初始化时返回 null。
+ * @returns PluginRuntime 或 null
  */
 export function getRabbitmqRuntime(): any {
   return runtime;

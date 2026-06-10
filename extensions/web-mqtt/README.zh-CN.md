@@ -60,6 +60,19 @@ openclaw plugins install @partme.ai/openclaw-web-mqtt
 
 最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
 
+### message-sdk 复用
+
+MQTT over WebSocket 传输与 ACL 留在本插件；下列能力通过 **薄封装** 委托 message-sdk：
+
+| message-sdk 模块 | web-mqtt 挂载点 | 用途 |
+|------------------|-----------------|------|
+| `ingress/wire-ingress`（`normalizeWireIngress`） | `inbound.ts` | 入站 payload 解析 + 幂等短路 |
+| `dedup`（`createIdempotencyCache` + `getGlobalSingleton`） | `shared/wire-helpers.ts` | 入站 messageId / 指纹去重 |
+| `bridge`（`dispatchChannelMessage`、`resolveChannelDispatchIdentity`） | `inbound.ts` | Wire 路径 OpenClaw reply 管线 |
+| `pipeline/serialize-payload` | `inbound.ts` reply.deliver | 出站 wire 序列化（envelope / legacyJsonText / plainText） |
+| `config/resolveChannelAgentReplyTimeoutMs` | `config/resolvers.ts` | Agent 回复超时 |
+| `config/resolveChannelMediaMaxBytes` | `config/resolvers.ts` | 媒体/载荷上限解析 |
+
 ### 最小配置（`openclaw.json`）
 
 ```json
@@ -111,6 +124,15 @@ openclaw plugins install @partme.ai/openclaw-web-mqtt
 ```
 
 ## 企业级加固建议
+
+> 可靠性矩阵与生产配置：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)
+
+| 项 | 行为 |
+|----|------|
+| **分级** | 协议限制需文档约束（QoS0 即时 PUBACK） |
+| **入站** | per-`clientId` 串行 dispatch；`processInbound` await |
+| **出站** | `publishToTopic` await |
+| **隔离** | server publish 不触发入站；ACL + topic 白名单 |
 
 - 强制替换默认账号，使用独立 MQTT 用户
 - 生产环境开启 `tls.enabled`，部署 WSS
@@ -207,3 +229,7 @@ npm run test:client
 ## 许可证
 
 MIT
+
+## 消息格式指南
+
+Web MQTT 使用共享的 OpenClaw 队列 wire 契约完成入站解析与回复序列化。标准 `MessageEnvelope`、非标准消息归一化、`payload.outboundFormat` 与多语言 SDK 适配说明见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。

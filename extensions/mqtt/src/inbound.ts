@@ -1,9 +1,11 @@
 /**
+ * @module mqtt/inbound
+ *
  * MQTT 入站消息处理：Topic 过滤、路由、调用 OpenClaw reply 管线。
  */
 
 import { getMqttRuntime } from "./runtime.js";
-import { getMqttChannelConfig } from "./mqtt-state.js";
+import { getMqttChannelConfig } from "./state/mqtt-state.js";
 import {
   DEFAULT_BROKER_CONFIG,
   type MqttChannelConfig,
@@ -16,21 +18,24 @@ import {
 } from "./routing/topic-router.js";
 import { upsertSessionContext } from "./routing/session-mapper.js";
 import { logAuditEvent } from "./transport/audit.js";
-import { getClientUsername } from "./transport/server.js";
+import { getClientUsername, publishMessage } from "./transport/server.js";
 import { isUserActionAllowed } from "./transport/acl.js";
-import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
+import { getMqttIdempotencyCache } from "./shared/wire-helpers.js";
 
 /** MQTT 入站幂等缓存（messageId / 等价键）。 */
-const idempotencyCache = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10_000 });
+const idempotencyCache = getMqttIdempotencyCache();
 
 /**
- * 处理 MQTT 入站消息（设备 -> Agent）。
+ * 处理 MQTT 入站消息（设备 → Agent）：Topic 过滤、路由、ACL、message-sdk dispatch。
+ *
+ * @param message - Aedes 解析后的入站 MQTT 消息（含 clientId、topic、payload、qos 等）
+ * @returns 完成 dispatch 或 policy 丢弃后 resolve；错误仅记录日志不抛出
  */
 export async function handleInboundMessage(message: MqttInboundMessage): Promise<void> {
   const config = getMqttChannelConfig() ?? DEFAULT_BROKER_CONFIG;
@@ -121,7 +126,16 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
 }
 
 /**
- * 将入站消息分发到 OpenClaw Runtime（经 message-sdk 桥接）。
+ * 将入站消息经 message-sdk `dispatchChannelMessage` 分发到 OpenClaw reply 管线。
+ *
+ * @param sessionKey - OpenClaw session 键
+ * @param peerId - 对端标识（MQTT clientId）
+ * @param agentId - 目标 Agent id
+ * @param text - 解析后的入站文本
+ * @param inbound - 原始 MQTT 入站消息
+ * @param routeResult - Topic 路由结果
+ * @param replyTopic - 出站回复 Topic
+ * @param unified - 可选 UnifiedMessage（供 enrich dispatch）
  */
 async function dispatchToRuntime(
   sessionKey: string,
@@ -164,9 +178,8 @@ async function dispatchToRuntime(
     },
     reply: {
       deliver: async ({ wire }: { wire: Uint8Array | string }) => {
-        const { publishMessage } = await import("./transport/server.js");
         const payload = typeof wire === "string" ? wire : Buffer.from(wire).toString("utf8");
-        publishMessage(replyTopic, payload);
+        await publishMessage(replyTopic, payload);
       },
       outboundFormat,
       replyRoute: { topic: replyTopic },
@@ -175,6 +188,7 @@ async function dispatchToRuntime(
   });
 }
 
+/** 判断 topic 是否匹配 subscribeTopics；列表为空时接受全部。 */
 function shouldProcessTopic(topic: string, subscribeTopics: string[]): boolean {
   if (!subscribeTopics.length) {
     return true;

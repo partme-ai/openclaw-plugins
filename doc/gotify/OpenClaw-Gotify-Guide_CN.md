@@ -48,14 +48,14 @@ docker run -d --name gotify \
 
 2) 访问 Web UI（示例：`http://<host>:8080`）
 
-配套截图（可选）：
-- Docker 示例：[bt-docker-godity.png](../media/bt-docker-godity.png)
-- 初始化示例：[bt-docker-godity-init.png](../media/bt-docker-godity-init.png)
-- 运行示例：[bt-docker-godity-runing.png](../media/bt-docker-godity-runing.png)
+配套截图（可选，文件名供运维文档配图参考）：
+- Docker 示例：`bt-docker-godity.png`
+- 初始化示例：`bt-docker-godity-init.png`
+- 运行示例：`bt-docker-godity-runing.png`
 
 3) 放行端口（如云服务器安全组/防火墙）
 
-示例截图：[bt-firewall-add-port.png](../media/bt-firewall-add-port.png)
+示例截图（可选）：`bt-firewall-add-port.png`
 
 ### 1.3 Nginx 反向代理（建议）
 

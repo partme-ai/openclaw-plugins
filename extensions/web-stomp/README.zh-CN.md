@@ -42,7 +42,7 @@ RabbitMQ web-stomp 插件将 STOMP 协议桥接到 WebSocket，让浏览器通�
 Web 浏览器 / 企业系统                  OpenClaw Gateway
     │                                        │
     │  ┌─────────────────────────────────────┤
-    │  │    openclaw_web_stomp 插件          │
+    │  │    openclaw-web-stomp 插件          │
     │  │  ┌─────────────────────────────┐    │
     │  │  │                             │    │
     ├──┼──► stomp-server.ts             │    │
@@ -110,7 +110,7 @@ content-type:application/json
 ## 目录结构
 
 ```
-openclaw_web_stomp/
+openclaw-web-stomp/
   package.json
   tsconfig.json
   tsup.config.ts
@@ -142,6 +142,19 @@ openclaw_web_stomp/
 ### openclaw.json 中的渠道配置
 
 最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+
+### message-sdk 复用
+
+STOMP over WebSocket 帧解析与订阅管理留在本插件；下列能力通过 **薄封装** 委托 message-sdk：
+
+| message-sdk 模块 | web-stomp 挂载点 | 用途 |
+|------------------|------------------|------|
+| `ingress/wire-ingress`（`normalizeWireIngress`） | `inbound.ts` | 入站 payload 解析 + 幂等短路 |
+| `dedup`（`createIdempotencyCache` + `getGlobalSingleton`） | `shared/wire-helpers.ts` | 入站 message-id 进程内去重 |
+| `bridge`（`dispatchChannelMessage`、`resolveChannelDispatchIdentity`） | `inbound.ts` | Wire 路径 OpenClaw reply 管线 |
+| `pipeline/serialize-payload` | `inbound.ts` reply.deliver | 出站 JSON 信封（`outboundFormat: envelope`） |
+| `config/resolveChannelAgentReplyTimeoutMs` | `config/resolvers.ts` | Agent 回复超时 |
+| `config/resolveChannelMediaMaxBytes` | `config/resolvers.ts` | 媒体/载荷上限解析 |
 
 ```json
 {
@@ -309,6 +322,17 @@ heart-beat:10000,10000
 ^@
 ```
 
+## 企业级可靠性
+
+> 完整说明：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)
+
+| 项 | 行为 |
+|----|------|
+| **分级** | 协议限制需文档约束 |
+| **入站** | SEND → `/queue/agent/*`；无 deferred ACK |
+| **出站** | MESSAGE client ACK + prefetch；**NACK 不重投** |
+| **隔离** | 入站 queue、回复 `/topic/session.*` |
+
 ## 监控
 
 通过 HTTP 访问服务器状态：
@@ -392,13 +416,13 @@ pnpm dev   # watch 模式
 | [openclaw_prometheus](https://github.com/partme-ai/openclaw_prometheus) | Prometheus 指标导出 |
 | [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP 服务端 |
 | [openclaw_tracing](https://github.com/partme-ai/openclaw_tracing) | 链路追踪 |
-| [openclaw_web_mqtt](https://github.com/partme-ai/openclaw_web_mqtt) | WebSocket MQTT |
-| [openclaw_web_stomp](https://github.com/partme-ai/openclaw_web_stomp) | WebSocket STOMP |
+| [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt) | WebSocket MQTT |
+| [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp) | WebSocket STOMP |
 | [openclaw_wecom_kf](https://github.com/partme-ai/openclaw_wecom_kf) | 企微客服渠道 |
 
 ## 与 rabbitmq_web_stomp 对比
 
-| 特性 | rabbitmq_web_stomp | openclaw_web_stomp |
+| 特性 | rabbitmq_web_stomp | openclaw-web-stomp |
 |---|---|---|
 | 协议 | STOMP 1.0, 1.1, 1.2 | STOMP 1.2 |
 | 传输 | WebSocket, SockJS | WebSocket |
@@ -408,3 +432,7 @@ pnpm dev   # watch 模式
 ## 许可证
 
 MIT
+
+## 消息格式指南
+
+Web STOMP 使用共享的 OpenClaw 队列 wire 契约完成入站解析，并固定以 envelope 回复。标准 `MessageEnvelope`、非标准消息归一化、固定 envelope 回复与多语言 SDK 适配说明见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。

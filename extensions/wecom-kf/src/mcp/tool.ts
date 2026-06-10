@@ -1,16 +1,16 @@
 /**
- * wecom_cs_mcp — 模拟 MCP 调用的 Agent Tool
+ * wecom_kf_mcp — 模拟 MCP 调用的 Agent Tool
  *
  * 通过 MCP Streamable HTTP 传输协议调用企业微信 MCP Server，
  * 提供 list（列出所有工具）和 call（调用工具）两个操作。
  *
  * 在 skills 中的使用方式：
- *   wecom_cs_mcp list <category>
- *   wecom_cs_mcp call <category> <method> '<jsonArgs>'
+ *   wecom_kf_mcp list <category>
+ *   wecom_kf_mcp call <category> <method> '<jsonArgs>'
  *
  * 示例：
- *   wecom_cs_mcp list contact
- *   wecom_cs_mcp call contact getContact '{}'
+ *   wecom_kf_mcp list contact
+ *   wecom_kf_mcp call contact getContact '{}'
  */
 
 import { sendJsonRpc, clearCategoryCache, type McpToolInfo } from "./transport.js";
@@ -20,7 +20,7 @@ import { cleanSchemaForGemini } from "./schema.js";
 // 类型定义
 // ============================================================================
 
-/** wecom_cs_mcp 的入参 */
+/** wecom_kf_mcp 的入参 */
 interface WeComToolsParams {
   /** 操作类型：list | call */
   action: "list" | "call";
@@ -159,11 +159,11 @@ const parseArgs = (args: string | Record<string, unknown> | undefined): Record<s
 // ============================================================================
 
 /**
- * 创建 wecom_cs_mcp Agent Tool 定义
+ * 创建 wecom_kf_mcp Agent Tool 定义
  */
 export function createWeComMcpTool() {
   return {
-    name: "wecom_cs_mcp",
+    name: "wecom_kf_mcp",
     label: "企业微信 MCP 工具",
     description: [
       "通过 HTTP 直接调用企业微信 MCP Server。",
@@ -172,12 +172,12 @@ export function createWeComMcpTool() {
       "  - call: 调用指定品类的某个 MCP 工具",
       "",
       "使用方式：",
-      "  wecom_cs_mcp list <category>",
-      "  wecom_cs_mcp call <category> <method> '<jsonArgs>'",
+      "  wecom_kf_mcp list <category>",
+      "  wecom_kf_mcp call <category> <method> '<jsonArgs>'",
       "",
       "示例：",
-      "  列出 contact 品类所有工具：wecom_cs_mcp list contact",
-      "  调用 contact 的 getContact：wecom_cs_mcp call contact getContact '{}'",
+      "  列出 contact 品类所有工具：wecom_kf_mcp list contact",
+      "  调用 contact 的 getContact：wecom_kf_mcp call contact getContact '{}'",
     ].join("\n"),
     parameters: {
       type: "object" as const,

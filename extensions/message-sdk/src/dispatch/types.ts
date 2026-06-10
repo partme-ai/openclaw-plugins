@@ -1,5 +1,12 @@
 /**
+ * @module dispatch/types
+ *
  * dispatch 层配置与参数类型（Wire / Transcript 双路径）。
+ *
+ * **职责**：定义 dispatchChannelMessage、dispatchWireMessage、dispatchTranscriptTurn、
+ * embedded/subagent dispatch 的入参、返回值与 Runtime 能力子集类型。
+ *
+ * **关键导出**：`ChannelDispatchParams`、`TranscriptDispatchParams`、`WireDispatchConfig`
  */
 
 import type { ChannelClass } from "../core/channel-class.js";
@@ -8,59 +15,87 @@ import type { DispatchInboundParams, DispatchInboundResult } from "../bridge/inb
 import type { BridgePluginRuntime } from "../bridge/types.js";
 import type { OutboundWireFormat } from "../pipeline/serialize-payload.js";
 
-/**
- * 重新导出该模块的公共类型，方便调用方从 barrel 或实现文件按需导入。
- */
+/** 重新导出通道类别 / Re-export channel class type */
 export type { ChannelClass };
 
-/** Wire MQ 插件 dispatch 模式。 */
+/**
+ * Wire 通道 dispatch 运行模式 / Channel dispatch mode for wire plugins.
+ *
+ * - `reply-pipeline`：OpenClaw dispatchInbound + reply pipeline
+ * - `embedded-agent`：进程内 runEmbeddedAgent
+ * - `subagent`：子 Agent run + waitForRun
+ */
 export type ChannelDispatchMode = "reply-pipeline" | "embedded-agent" | "subagent";
 
-/** dispatchChannelMessage deliver 回调参数。 */
+/** dispatchChannelMessage deliver 回调参数 / Deliver callback payload */
 export interface ChannelDispatchDeliverParams {
+  /** 序列化后的 wire 字符串 / Serialized wire payload */
   wire: string;
+  /** 原始回复文本 / Plain reply text */
   text?: string;
+  /** Agent run ID / Run id */
   runId?: string;
 }
 
-/** embedded / subagent / wire 共用的 reply 配置。 */
+/** embedded / subagent / wire 共用的 reply 配置 / Shared reply config for dispatch modes */
 export interface ChannelDispatchReplyConfig {
+  /** 出站 deliver 回调 / Outbound deliver callback */
   deliver: (payload: ChannelDispatchDeliverParams) => void | Promise<void>;
+  /** 出站 wire 格式 / Outbound wire format */
   outboundFormat?: OutboundWireFormat;
+  /** 回复路由（MQ topic 等）/ Reply route for publish */
   replyRoute?: Record<string, string>;
+  /** Agent ID / Agent id */
   agentId?: string;
+  /** Session key / Session key */
   sessionKey?: string;
-  /** embedded/subagent 序列化 userId 字段（默认 sessionKey）。 */
+  /** embedded/subagent 序列化 userId 字段（默认 sessionKey）/ userId for envelope */
   userId?: string;
 }
 
-/** dispatchChannelMessage 入参。 */
+/** dispatchChannelMessage 入参 / Params for unified channel dispatch */
 export interface ChannelDispatchParams {
+  /** 运行模式，默认 reply-pipeline / Dispatch mode */
   mode?: ChannelDispatchMode;
+  /** OpenClaw bridge runtime / Bridge runtime */
   runtime: BridgePluginRuntime;
+  /** 渠道 ID / Channel id */
   channel: string;
+  /** 账号 ID / Account id */
   accountId: string;
+  /** Peer ID / Peer id */
   peerId: string;
+  /** 入站文本 / Inbound text */
   text: string;
+  /** 可选 agent ID（可被 resolveAgentRoute 覆盖）/ Optional agent id */
   agentId?: string;
+  /** 可选 session key / Optional session key */
   sessionKey?: string;
+  /** 可选 UnifiedMessage / Optional unified message */
   unified?: UnifiedMessage | null;
+  /** 会话类型 / Chat type */
   chatType?: "direct" | "group";
+  /** 扩展字段（messageId 等）/ Extra metadata */
   extra?: Record<string, unknown>;
+  /** embedded 模式 sessionId / Embedded session id */
   sessionId?: string;
+  /** subagent 子 session key / Child session key for subagent */
   childSessionKey?: string;
+  /** 超时毫秒 / Timeout in ms */
   timeoutMs?: number;
+  /** subagent 是否等待并 deliver 回复 / Whether subagent delivers reply */
   replyEnabled?: boolean;
+  /** 回复配置 / Reply delivery config */
   reply: ChannelDispatchReplyConfig;
 }
 
-/** dispatchChannelMessage 返回值。 */
+/** dispatchChannelMessage 返回值 / Result discriminated by mode */
 export type ChannelDispatchResult =
   | { mode: "reply-pipeline"; wireResult: DispatchInboundResult }
   | { mode: "embedded-agent"; runId: string; delivered: boolean }
   | { mode: "subagent"; runId: string; delivered: boolean };
 
-/** embedded-agent runtime 能力子集。 */
+/** embedded-agent runtime 能力子集 / Embedded agent runtime capability subset */
 export interface EmbeddedAgentRuntime extends BridgePluginRuntime {
   agent: {
     resolveAgentDir: (cfg: Record<string, unknown>, agentId: string) => Promise<string>;
@@ -79,7 +114,7 @@ export interface EmbeddedAgentRuntime extends BridgePluginRuntime {
   };
 }
 
-/** subagent runtime 能力子集。 */
+/** subagent runtime 能力子集 / Subagent runtime capability subset */
 export interface SubagentRuntime extends BridgePluginRuntime {
   subagent: {
     run: (params: {
@@ -91,7 +126,7 @@ export interface SubagentRuntime extends BridgePluginRuntime {
   };
 }
 
-/** dispatchEmbeddedAgentMessage 入参。 */
+/** dispatchEmbeddedAgentMessage 入参 / Embedded agent dispatch params */
 export interface EmbeddedAgentDispatchParams {
   runtime: EmbeddedAgentRuntime;
   channel: string;
@@ -106,7 +141,7 @@ export interface EmbeddedAgentDispatchParams {
   reply: ChannelDispatchReplyConfig;
 }
 
-/** dispatchSubagentMessage 入参。 */
+/** dispatchSubagentMessage 入参 / Subagent dispatch params */
 export interface SubagentDispatchParams {
   runtime: SubagentRuntime;
   channel: string;
@@ -121,30 +156,26 @@ export interface SubagentDispatchParams {
   reply: ChannelDispatchReplyConfig;
 }
 
-/** Wire 路径 dispatch 配置（MQ 插件）。 */
+/** Wire 路径 dispatch 配置（MQ 插件）/ Wire dispatch config */
 export interface WireDispatchConfig {
   channelClass: "wire";
 }
 
-/** Transcript 路径 dispatch 配置（IM 插件）。 */
+/** Transcript 路径 dispatch 配置（IM 插件）/ Transcript dispatch config */
 export interface TranscriptDispatchConfig {
   channelClass: "transcript";
 }
 
-/**
- * DispatchConfig 是 dispatch 模块的公开类型别名。
- *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
- */
+/** Wire 与 Transcript 配置联合 / Dispatch config union */
 export type DispatchConfig = WireDispatchConfig | TranscriptDispatchConfig;
 
-/** dispatchWireMessage 入参，与 bridge.dispatchInbound 对齐。 */
+/** dispatchWireMessage 入参，与 bridge.dispatchInbound 对齐 / Wire dispatch params alias */
 export type WireDispatchParams = DispatchInboundParams;
 
-/** dispatchWireMessage 返回值，与 bridge.dispatchInbound 对齐。 */
+/** dispatchWireMessage 返回值 / Wire dispatch result alias */
 export type WireDispatchResult = DispatchInboundResult;
 
-/** Transcript 路径 recordInboundSession 参数子集。 */
+/** Transcript 路径 recordInboundSession 参数子集 / Transcript record params subset */
 export interface TranscriptRecordParams {
   storePath: string;
   sessionKey: string;
@@ -158,7 +189,7 @@ export interface TranscriptRecordParams {
   onRecordError?: (err: unknown) => void;
 }
 
-/** OpenClaw channel.turn.runAssembled 所需 runtime 子集。 */
+/** OpenClaw channel.turn.runAssembled 所需 runtime 子集 / Transcript channel runtime subset */
 export interface TranscriptChannelRuntime {
   turn?: {
     runAssembled?: (params: {
@@ -209,7 +240,7 @@ export interface TranscriptChannelRuntime {
   };
 }
 
-/** dispatchTranscriptTurn 入参。 */
+/** dispatchTranscriptTurn 入参 / Transcript turn dispatch params */
 export interface TranscriptDispatchParams {
   channelRuntime: TranscriptChannelRuntime;
   cfg: Record<string, unknown>;

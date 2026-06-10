@@ -272,3 +272,7 @@ Not directly. The plugin treats stream messages as inbound triggers and uses the
 ## License
 
 MIT
+
+## Message Format Guide
+
+Gotify uses native Gotify Message API and WebSocket Stream JSON rather than the generic MQ wire envelope. See [OpenClaw Queue Message Format Guide](../../doc/OpenClaw-Queue-Message-Format-Guide.en.md) for how Gotify maps native payloads to `UnifiedMessage`, plus the standard queue contract used by other MQ plugins.

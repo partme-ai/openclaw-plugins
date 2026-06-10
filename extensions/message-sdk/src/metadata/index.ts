@@ -1,31 +1,35 @@
 /**
- * Shared metadata carried inside channel-native extension fields.
+ * @module metadata
  *
- * Gotify stores it under `extras.openclaw`; MQ/webhook style transports can
- * carry the same shape in headers or JSON envelopes. Keeping this shape in the
- * SDK gives channels one place for echo guards, peer identity, tracing, and
- * cross-channel reply routing.
+ * 通道消息元数据 — 统一存放在 native `extras.openclaw` 字段。
+ *
+ * **职责**：
+ * - 出站回声检测（echo guard）
+ * - peer / correlation / trace 标识
+ * - 跨通道 reply 路由信息
+ *
+ * **适用**：Gotify `extras.openclaw`；MQ/Webhook 可在 header 或 JSON envelope 携带相同结构。
+ *
+ * **关键导出**：`readMetadata`、`mergeMetadata`、`markOutboundMetadata`、`isOutboundEcho`
  */
 
 import type { ReplyRoute } from "../core/types.js";
 
-/**
- * METADATA_EXTRAS_KEY 是 metadata 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+/** extras 中存放 OpenClaw 元数据的键名 / Key under channel-native extras */
 export const METADATA_EXTRAS_KEY = "openclaw";
-/**
- * METADATA_SOURCE 是 metadata 模块对外共享的常量或默认实现。
- *
- * 修改该值会影响多个通道插件的默认行为，变更前应同步更新相关测试与文档。
- */
+
+/** 标记元数据来源为 OpenClaw / Metadata source identifier */
 export const METADATA_SOURCE = "openclaw";
 
 /**
- * MessageMetadata 描述 metadata 模块公开 API 的结构化参数或返回值。
+ * 消息元数据契约 / Message metadata carried in extras.openclaw.
  *
- * 字段命名保持贴近业务语义，便于通道插件在不复制 SDK 实现的情况下组合能力。
+ * @property source - 来源标识（出站时为 {@link METADATA_SOURCE}）
+ * @property outbound - 是否为 SDK 发出的出站消息（用于 echo 过滤）
+ * @property peerId - 对端用户/会话 ID
+ * @property correlationId - 业务关联 ID（如 webhook 事件 ID）
+ * @property traceId - 分布式追踪 ID
+ * @property replyRoute - 跨通道回复路由键值对
  */
 export interface MessageMetadata {
   source?: string;
@@ -37,17 +41,11 @@ export interface MessageMetadata {
   [key: string]: unknown;
 }
 
-/**
- * NativeExtras 是 metadata 模块的公开类型别名。
- *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
- */
+/** 通道 native extras 对象 / Opaque extras record from transport */
 export type NativeExtras = Record<string, unknown>;
 
 /**
- * MetadataCarrier 是 metadata 模块的公开类型别名。
- *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ * 可携带元数据的输入形态 / Carrier that may hold extras or nested extras.
  */
 export type MetadataCarrier =
   | NativeExtras
@@ -58,12 +56,15 @@ export type MetadataCarrier =
   | undefined;
 
 /**
- * readMetadata 是 metadata 模块对外暴露的操作入口。
+ * 从 carrier 读取 `extras.openclaw` 元数据。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param input - extras 对象或 `{ extras }` 包装
+ * @returns 解析后的元数据；不存在或非 plain object 时返回 `undefined`
+ *
+ * @example
+ * ```ts
+ * const meta = readMetadata({ openclaw: { peerId: "u1" } });
+ * ```
  */
 export function readMetadata(input: MetadataCarrier): MessageMetadata | undefined {
   const extras = resolveExtrasRecord(input);
@@ -75,12 +76,11 @@ export function readMetadata(input: MetadataCarrier): MessageMetadata | undefine
 }
 
 /**
- * mergeMetadata 是 metadata 模块对外暴露的操作入口。
+ * 浅合并元数据 patch 到 extras（保留其它 extras 键）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param baseExtras - 原始 extras（可为 null）
+ * @param patch - 要写入 openclaw 子对象的字段
+ * @returns 新的 extras 对象（不 mutate 入参）
  */
 export function mergeMetadata(
   baseExtras?: NativeExtras | null,
@@ -98,12 +98,10 @@ export function mergeMetadata(
 }
 
 /**
- * markOutboundMetadata 是 metadata 模块对外暴露的操作入口。
+ * 标记 extras 为 OpenClaw 出站消息（供 {@link isOutboundEcho} 使用）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param baseExtras - 原始 extras
+ * @returns 带 `source` + `outbound: true` 的 extras
  */
 export function markOutboundMetadata(baseExtras?: NativeExtras | null): NativeExtras {
   return mergeMetadata(baseExtras, {
@@ -113,12 +111,10 @@ export function markOutboundMetadata(baseExtras?: NativeExtras | null): NativeEx
 }
 
 /**
- * isOutboundEcho 是 metadata 模块对外暴露的操作入口。
+ * 判断入站消息是否为自身出站回声。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param input - 入站 carrier
+ * @returns `true` 表示应跳过处理（避免 bot 回复触发自身）
  */
 export function isOutboundEcho(input: MetadataCarrier): boolean {
   const metadata = readMetadata(input);
@@ -126,12 +122,10 @@ export function isOutboundEcho(input: MetadataCarrier): boolean {
 }
 
 /**
- * resolveMetadataPeerId 是 metadata 模块对外暴露的操作入口。
+ * 解析元数据中的 peerId（trim 后非空才返回）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param input - metadata carrier
+ * @returns peer ID 或 undefined
  */
 export function resolveMetadataPeerId(input: MetadataCarrier): string | undefined {
   const peerId = readMetadata(input)?.peerId;
@@ -141,12 +135,10 @@ export function resolveMetadataPeerId(input: MetadataCarrier): string | undefine
 }
 
 /**
- * resolveMetadataCorrelationId 是 metadata 模块对外暴露的操作入口。
+ * 解析元数据中的 correlationId。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param input - metadata carrier
+ * @returns correlation ID 或 undefined
  */
 export function resolveMetadataCorrelationId(
   input: MetadataCarrier,
@@ -158,12 +150,10 @@ export function resolveMetadataCorrelationId(
 }
 
 /**
- * resolveMetadataTraceId 是 metadata 模块对外暴露的操作入口。
+ * 解析元数据中的 traceId。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param input - metadata carrier
+ * @returns trace ID 或 undefined
  */
 export function resolveMetadataTraceId(input: MetadataCarrier): string | undefined {
   const traceId = readMetadata(input)?.traceId;
@@ -173,12 +163,10 @@ export function resolveMetadataTraceId(input: MetadataCarrier): string | undefin
 }
 
 /**
- * resolveMetadataReplyRoute 是 metadata 模块对外暴露的操作入口。
+ * 解析并规范化 replyRoute（仅保留非空字符串值）。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * @param input - metadata carrier
+ * @returns 有效的 ReplyRoute 或 undefined
  */
 export function resolveMetadataReplyRoute(
   input: MetadataCarrier,
@@ -197,6 +185,7 @@ export function resolveMetadataReplyRoute(
   return Object.keys(normalized).length ? normalized : undefined;
 }
 
+/** 从 carrier 解包 extras 记录（支持 flat extras 或 `{ extras }`） */
 function resolveExtrasRecord(input: MetadataCarrier): NativeExtras | undefined {
   if (!isPlainObject(input)) {
     return undefined;
@@ -216,6 +205,7 @@ function resolveExtrasRecord(input: MetadataCarrier): NativeExtras | undefined {
   return input as NativeExtras;
 }
 
+/** 判断是否为 plain object（非数组、非 null） */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

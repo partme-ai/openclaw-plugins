@@ -1,23 +1,33 @@
 /**
- * @partme.ai/openclaw-message-sdk — 统一消息格式 SDK + 公共工具库
+ * @fileoverview @partme.ai/openclaw-message-sdk — 统一消息格式 SDK + 公共工具库。
  *
+ * @module openclaw-message-sdk
+ *
+ * **职责**：
  * - 统一消息类型、信封、入站/出站队列
  * - 传输层 parse/serialize 管线
  * - OpenClaw 桥接（子路径 bridge）
  * - 媒体 / HTTP / ASR / OCR / TTS 工具
+ *
+ * **子模块**：见各 `@module` 注释（media、http、asr、ocr、tts、metadata、dispatch、ingress 等）。
  */
 
+/** 核心类型：UnifiedMessage、MessageEnvelope、buildMessage 等 */
 export * from "./core/index.js";
 
+/** OpenClaw Plugin SDK 动态加载与 state 目录解析 */
 export {
   importOpenClawPluginSdk,
+  resolveOpenClawStateDir,
 } from "./openclaw/index.js";
 
+/** 入站归一化：渠道原始 payload → UnifiedMessage */
 export {
   normalizeIngress,
   type NormalizeIngressParams,
 } from "./ingress/index.js";
 
+/** 消息分发：Wire / Transcript / Channel / Embedded / Subagent 五条路径 */
 export {
   dispatchWireMessage,
   dispatchTranscriptTurn,
@@ -122,6 +132,92 @@ export {
 export { formatErrorMessage, formatErrorMessageSync } from "./util/format-error.js";
 
 export {
+  withTimeout,
+  AsyncTimeoutError,
+  truncateUtf8Bytes,
+  splitUtf8TextByMaxBytes,
+  formatTemplate,
+  getGlobalSingleton,
+  resetGlobalSingleton,
+} from "./util/index.js";
+
+export {
+  resolveChannelStreamingConfig,
+  shouldShowStreamStatusLine,
+  buildStreamBubbleText,
+  syncStreamContent,
+  resolveChannelTemplates,
+  type ChannelTextKeyMapping,
+  resolveChannelUserTexts,
+  resolveToolStatusLine,
+  formatElapsedFooter,
+  buildAgentReplyTimeoutSummary,
+  buildDispatchErrorSummary,
+  buildMediaErrorSummary,
+  resolveStreamFinishText,
+  createTranscriptReplyDispatcherHooks,
+  type ChannelStreamingRawConfig,
+  type ResolvedChannelStreamingConfig,
+  type StreamCompositionState,
+  type StreamFinishState,
+  type StreamFinishTemplates,
+  type ChannelStatusTemplates,
+  type TranscriptReplyPipelineParams,
+  type TranscriptReplyDispatchBundle,
+} from "./transcript/index.js";
+
+export {
+  mergeChannelAccountConfig,
+  resolveMergedChannelAccountConfig,
+  resolveChannelMediaMaxBytes,
+  resolveChannelAgentReplyTimeoutMs,
+  resolveChannelEgressProxyUrl,
+  type ChannelLimitsOpenClawConfig,
+} from "./config/index.js";
+
+export {
+  createSessionPeerCache,
+  type SessionPeerCache,
+  type SessionPeerInfo,
+} from "./routing/index.js";
+
+export {
+  createTtlMapStore,
+  createReqIdStore,
+  type TtlMapStore,
+  type TtlMapStoreOptions,
+  type ReqIdStore,
+  type ReqIdStoreOptions,
+} from "./util/ttl-map-store.js";
+
+export { stripMarkdown } from "./text/index.js";
+
+export {
+  looksLikeTextFile,
+  analyzeTextHeuristic,
+  previewHex,
+  buildTextFilePreview,
+  normalizeInboundTextContentType,
+} from "./file/text-heuristic.js";
+
+export {
+  undiciFetch,
+  readResponseBodyAsBuffer,
+  type UndiciFetchOptions,
+} from "./http/undici-fetch.js";
+
+export {
+  sanitizeDynamicIdPart,
+  shouldUseDynamicPeerAgent,
+  processDynamicPeerRouting,
+  readDynamicAgentsFromChannelConfig,
+  type DynamicPeerAgentConfig,
+  type AgentRouteLike,
+  type DynamicPeerRoutingParams,
+  type DynamicPeerRoutingResult,
+} from "./routing/index.js";
+
+export {
   InboundMessageQueue,
   type InboundPushParams,
   type InboundQueueItem,
@@ -148,6 +244,22 @@ export {
   type InboundDebounceFlush,
   type InboundDebounceFlushReason,
 } from "./queue/inbound-debounce-buffer.js";
+
+export {
+  StreamSessionStore,
+  StreamSessionMonitor,
+  STREAM_SESSION_LIMITS,
+  type BaseStreamSessionState,
+  type BasePendingInbound,
+  type PendingInboundStatus,
+  type StreamSessionStoreOptions,
+} from "./queue/stream-session-store.js";
+
+export {
+  ActiveReplyStore,
+  ACTIVE_REPLY_LIMITS,
+  type ActiveReplyState,
+} from "./ingress/active-reply-store.js";
 
 export {
   METADATA_EXTRAS_KEY,

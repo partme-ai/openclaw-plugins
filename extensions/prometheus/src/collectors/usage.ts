@@ -1,6 +1,6 @@
 import type { MetricCollector, MetricDefinition, MetricSample } from "../types.js";
-import { rpcCall } from "../ws-bridge.js";
-import { sanitizeLabel } from "../utils.js";
+import { rpcCall } from "../runtime/ws-bridge.js";
+import { sanitizeLabel } from "../shared/label-sanitize.js";
 
 const PREFIX = "openclaw_usage";
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createMeituanTools } from "../src/tools.js";
+import { createMeituanTools } from "../src/tools/tools.js";
 import type { MeituanAccountConfig } from "../src/types.js";
 
 describe("createMeituanTools", () => {

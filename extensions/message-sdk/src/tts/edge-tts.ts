@@ -1,11 +1,11 @@
 /**
- * Microsoft Edge TTS 语音合成
+ * @module tts/edge-tts
  *
- * 基于 Microsoft Edge 免费 TTS 服务，300+ 神经语音，中英文均支持。
- * 参考：llm-study/llm-text-to-speech/edge-tts/ + Spring AI EdgeTTS 示例
+ * Microsoft Edge TTS — 通过 `edge-tts` Python CLI 免费合成神经语音。
  *
- * 实现方式：通过 edge-tts Python CLI 调用（需要 pip install edge-tts）
- * 也可通过 WebSocket 直接调用 Microsoft Speech Service（无需 API Key）
+ * **安装**：`pip install edge-tts`
+ *
+ * **关键导出**：`synthesizeEdgeTTS`、`EDGE_TTS_VOICES`
  */
 
 import { execFile } from "node:child_process";
@@ -35,20 +35,17 @@ function buildArgs(text: string, config: TTSConfig): string[] {
 }
 
 /**
- * 通过 edge-tts CLI 合成语音
+ * 通过 edge-tts CLI 合成语音（输出 MP3 临时文件后读入 Buffer）。
  *
- * 需要安装: pip install edge-tts
- * 无需 API Key，完全免费。
+ * @param text - 待合成文本
+ * @param config - 语音、语速/音量/音调与超时
+ * @returns MP3 音频 Buffer
+ * @throws CLI 未安装或超时时 {@link TTSRequestError} / {@link TTSTimeoutError}
  *
- * 语音示例：
- *   zh-CN-XiaoxiaoNeural   - 中文女声（活泼）
- *   zh-CN-YunxiNeural       - 中文男声（新闻播报）
- *   zh-CN-YunyangNeural     - 中文男声（专业）
- *   zh-CN-liaoning-XiaobeiNeural - 辽宁方言女声
- *   en-US-JennyNeural       - 英文女声
- *   en-US-GuyNeural         - 英文男声
- *
- * 用 `edge-tts --list-voices` 查看全部 300+ 语音。
+ * @example
+ * ```ts
+ * const { audio } = await synthesizeEdgeTTS("你好", { voice: "zh-CN-XiaoxiaoNeural" });
+ * ```
  */
 export async function synthesizeEdgeTTS(
   text: string,
@@ -102,7 +99,9 @@ export async function synthesizeEdgeTTS(
 }
 
 /**
- * Edge TTS 常用中文语音列表
+ * Edge TTS 常用中文语音列表（UI 选型参考）。
+ *
+ * 完整列表：`edge-tts --list-voices`
  */
 export const EDGE_TTS_VOICES: TTSVoice[] = [
   { shortName: "zh-CN-XiaoxiaoNeural", locale: "zh-CN", gender: "Female", friendlyName: "小小（活泼）" },

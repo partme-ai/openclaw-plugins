@@ -96,17 +96,48 @@ Gotify 入站仍使用渠道专用的 `finalizeInboundContext`（Body/SessionKey
 src/
 ├── core/              # UnifiedMessage, Envelope, ChannelClass
 ├── pipeline/          # parseTransportPayload, serializeForTransport, reply-parts
-├── ingress/           # normalizeIngress, wire parse helpers
+├── ingress/           # normalizeIngress, wire parse, dm/group policy
 ├── dispatch/          # dispatchWireMessage, dispatchTranscriptTurn, dispatchChannelMessage
 ├── reply/             # createReplyDispatcherBundle, reply-parts re-export
 ├── lifecycle/         # typing lifecycle hooks
-├── openclaw/          # importOpenClawPluginSdk compat
-├── queue/             # InboundMessageQueue, OutboundMessageQueue, keyed queue, debounce buffer
+├── openclaw/          # importOpenClawPluginSdk, resolveOpenClawStateDir
+├── queue/             # InboundMessageQueue, OutboundMessageQueue, keyed queue, debounce buffer, stream-session-store
 ├── dedup/             # createIdempotencyCache, persistent dedupe, claimable dedupe
 ├── metadata/          # extras.openclaw 共享元数据、回环防护、peer/correlation/replyRoute 解析
 ├── bridge/            # dispatchInbound, createReplyHandler (legacy + re-export)
+├── util/              # withTimeout, truncateUtf8Bytes, formatTemplate, globalSingleton, ttl-map-store
+├── text/              # stripMarkdown（IM 纯文本降级）
+├── transcript/        # IM 流式：streaming-config, templates, finish-stream, reply-dispatcher-factory
+├── routing/           # dynamic-peer-agent, session-peer-cache
+├── config/            # mergeChannelAccountConfig, resolve-channel-limits
 └── media|http|asr|... # 横切工具
 ```
+
+## Transcript Streaming Kit（IM 优先）
+
+子路径：`@partme.ai/openclaw-message-sdk/transcript`
+
+| 模块 | 说明 | WeCom 使用 |
+|------|------|-----------|
+| `streaming-config` | Feishu 式 `streaming` / `footer` 解析、`buildStreamBubbleText` | `streaming-config.ts` 薄封装 |
+| `templates` | `resolveChannelTemplates`、错误/超时摘要 | `templates.ts` 薄封装 + 中文默认值 |
+| `finish-stream` | `resolveStreamFinishText` 关流非空兜底 | `finish-thinking.ts` |
+| `reply-dispatcher-factory` | `createTranscriptReplyDispatcherHooks` | `webhook/reply-pipeline.ts` |
+
+WeCom 已对齐 `createKeyedRunQueue`（`chat-queue.ts` 薄封装，替代自研 Map），以及 `StreamSessionStore` / `ActiveReplyStore`（`webhook/state.ts` 薄封装）。
+
+### WeCom P1 下沉（ingress / util / routing / config / text）
+
+| WeCom 模块 | SDK 目标 | 插件形态 |
+|------------|----------|----------|
+| `dm-policy.ts` | `ingress/dm-policy.ts` | 薄封装 + `sendPairingReply` 注入 |
+| `group-policy.ts` | `ingress/group-policy.ts` | 薄封装（`channelId=wecom`） |
+| `state-manager` MessageState TTL | `util/ttl-map-store.ts` | `createTtlMapStore` |
+| `reqid-store.ts` | `util/ttl-map-store.ts` | `createReqIdStore` re-export |
+| `state-manager` SessionChatInfo | `routing/session-peer-cache.ts` | `createSessionPeerCache` |
+| `utils` media/timeout/proxy | `config/resolve-channel-limits.ts` | 参数化 `channelId` 薄封装 |
+| `state-dir-resolve.ts` | `openclaw/state-dir.ts` | Gotify 同步 |
+| `agent/markdown-strip.ts` | `text/strip-markdown.ts` | re-export |
 
 ## 插件接入检查清单
 
@@ -115,6 +146,7 @@ src/
 1. `createClaimableDedupe`：`claim -> commit/release`，适合 webhook replay guard、in-flight 入站锁、可重试错误释放。
 2. `createKeyedRunQueue`：同一 conversation/chat/thread key 串行，不同 key 并行，适合 per-chat 顺序处理。
 3. `createInboundDebounceBuffer`：按 key debounce/coalesce，适合短时间文本合并、群聊 pending history 聚合。
+4. `StreamSessionStore` + `ActiveReplyStore` + `StreamSessionMonitor`：IM 流式回调的 stream 生命周期、response_url 存储、per-conversation 批次 debounce/排队（WeCom / wecom-kf 薄封装）。
 
 ### Wire（MQ）
 

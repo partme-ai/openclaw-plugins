@@ -12,9 +12,9 @@ import { LogBackend } from "./backends/log-backend.js";
 import { FileBackend } from "./backends/file-backend.js";
 import { OtlpBackend } from "./backends/otlp-backend.js";
 import { SkyWalkingBackend } from "./backends/skywalking-backend.js";
-import { registerTracingPluginHooks } from "./hooks.js";
-import { TracingSampler } from "./sampler.js";
-import type { TracingBackend, TracingConfig } from "./types.js";
+import { registerTracingPluginHooks } from "./runtime/hooks.js";
+import { TracingSampler } from "./runtime/sampler.js";
+import type { TracingBackend, TracingConfig } from "./shared/types.js";
 import {
   cleanupSessionTraces,
   getActiveSpanCount,
@@ -22,7 +22,7 @@ import {
   getTraceSpans,
   listRecentTraces,
   resetTraceStore,
-} from "./trace-store.js";
+} from "./runtime/trace-store.js";
 
 const PLUGIN_ID = "openclaw-tracing";
 
@@ -135,6 +135,9 @@ async function initTracing(api: OpenClawPluginApi): Promise<void> {
   api.logger.info("[openclaw-tracing] Tracing fully initialized");
 }
 
+/**
+ * GET /tracing/status — 返回 tracing 后端、采样率与内存 span 统计。
+ */
 function statusHandler(_req: IncomingMessage, res: ServerResponse): void {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(
@@ -156,6 +159,9 @@ function statusHandler(_req: IncomingMessage, res: ServerResponse): void {
   );
 }
 
+/**
+ * GET /tracing/traces?limit=N — 列出最近 trace 摘要（默认 50，最大 200）。
+ */
 function tracesHandler(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50", 10), 200);
@@ -163,6 +169,9 @@ function tracesHandler(req: IncomingMessage, res: ServerResponse): void {
   res.end(JSON.stringify({ ok: true, data: listRecentTraces(limit) }));
 }
 
+/**
+ * GET /tracing/trace?traceId=... — 返回指定 trace 的全部 span。
+ */
 function traceDetailHandler(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   const traceId = url.searchParams.get("traceId");
@@ -207,4 +216,4 @@ export default definePluginEntry({
   },
 });
 
-export type { Span, SpanKind, SpanStatus, TracingConfig } from "./types.js";
+export type { Span, SpanKind, SpanStatus, TracingConfig } from "./shared/types.js";

@@ -1,3 +1,9 @@
+/**
+ * @module wechat/config/config-schema
+ *
+ * 微信通道 Zod 配置 schema。
+ */
+
 import { z } from "zod";
 
 import { CDN_BASE_URL, DEFAULT_BASE_URL } from "../auth/accounts.js";

@@ -10,6 +10,7 @@ const consumeCh = {
   assertQueue: vi.fn().mockResolvedValue({ queue: "q" }),
   bindQueue: vi.fn(),
   prefetch: vi.fn(),
+  cancel: vi.fn(),
   consume: vi.fn(async (_q: string, cb: ConsumeCb) => {
     consumeCb = cb;
     return { consumerTag: "ctag" };
@@ -20,7 +21,7 @@ const consumeCh = {
 };
 
 const publishCh = {
-  publish: vi.fn(),
+  publish: vi.fn().mockReturnValue(true),
   close: vi.fn(),
 };
 
@@ -45,6 +46,15 @@ vi.mock("amqplib", () => ({
     connect: vi.fn(async () => connection),
   },
 }));
+
+function sampleMsg(overrides: Record<string, unknown> = {}) {
+  return {
+    content: Buffer.from("hi"),
+    fields: { routingKey: "rk" },
+    properties: {},
+    ...overrides,
+  };
+}
 
 describe("rabbitmq-server", () => {
   let startRabbitmqServer: typeof import("../src/transport/server.js").startRabbitmqServer;
@@ -81,17 +91,47 @@ describe("rabbitmq-server", () => {
     );
 
     expect(consumeCb).not.toBeNull();
-    consumeCb?.({
-      content: Buffer.from("hi"),
-      fields: { routingKey: "rk" },
-      properties: {},
-    });
+    consumeCb?.(sampleMsg());
 
     expect(consumeCh.ack).toHaveBeenCalledTimes(0);
     release?.();
     await new Promise((r) => setTimeout(r, 0));
     expect(consumeCh.ack).toHaveBeenCalledTimes(1);
     expect(consumeCh.nack).toHaveBeenCalledTimes(0);
+  });
+
+  it("defers ack until delivery.ack() in manual mode", async () => {
+    ({ startRabbitmqServer, stopRabbitmqServer } = await import("../src/transport/server.js"));
+    let ackedDuringHandler = false;
+
+    await startRabbitmqServer(DEFAULT_RABBITMQ_CONFIG, async (event) => {
+      expect(consumeCh.ack).toHaveBeenCalledTimes(0);
+      event.delivery.ack();
+      ackedDuringHandler = true;
+      return { ok: true as const, ackMode: "manual" as const };
+    });
+
+    consumeCb?.(sampleMsg());
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(ackedDuringHandler).toBe(true);
+    expect(consumeCh.ack).toHaveBeenCalledTimes(1);
+    expect(consumeCh.nack).toHaveBeenCalledTimes(0);
+  });
+
+  it("nacks when manual mode returns without settling delivery", async () => {
+    ({ startRabbitmqServer, stopRabbitmqServer } = await import("../src/transport/server.js"));
+
+    await startRabbitmqServer(DEFAULT_RABBITMQ_CONFIG, async () => {
+      return { ok: true as const, ackMode: "manual" as const };
+    });
+
+    consumeCb?.(sampleMsg());
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(consumeCh.ack).toHaveBeenCalledTimes(0);
+    expect(consumeCh.nack).toHaveBeenCalledTimes(1);
+    expect(consumeCh.nack).toHaveBeenCalledWith(expect.anything(), false, true);
   });
 
   it("nacks and requeues on handler error when configured", async () => {
@@ -103,11 +143,7 @@ describe("rabbitmq-server", () => {
       },
     );
 
-    consumeCb?.({
-      content: Buffer.from("hi"),
-      fields: { routingKey: "rk" },
-      properties: {},
-    });
+    consumeCb?.(sampleMsg());
     await new Promise((r) => setTimeout(r, 0));
 
     expect(consumeCh.nack).toHaveBeenCalledTimes(1);

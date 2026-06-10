@@ -518,6 +518,11 @@ Implement `synthesizeXxx(text: string, config: TTSConfig): Promise<TTSResult>`.
 | `@partme.ai/openclaw-message-sdk/asr` | Tencent Cloud Flash ASR |
 | `@partme.ai/openclaw-message-sdk/ocr` | OCR with 4 providers |
 | `@partme.ai/openclaw-message-sdk/tts` | TTS with Edge/openai/local providers |
+| `@partme.ai/openclaw-message-sdk/util` | withTimeout, truncateUtf8Bytes, formatTemplate, globalSingleton |
+| `@partme.ai/openclaw-message-sdk/transcript` | IM streaming config, finish-stream, reply dispatcher factory |
+| `@partme.ai/openclaw-message-sdk/routing` | dynamic-peer-agent routing |
+| `@partme.ai/openclaw-message-sdk/config` | mergeChannelAccountConfig |
+| `@partme.ai/openclaw-message-sdk/queue` | keyed run queue, debounce buffer |
 
 ## License
 
@@ -536,3 +541,7 @@ openclaw plugins install @partme.ai/openclaw-nacos
 **PartMe.AI** specializes in AI customer service and enterprise AI agent infrastructure, providing end-to-end solutions from WeChat Work/DingTalk/Feishu/QQ channel integration to RAG knowledge bases, multi-layer memory, and production monitoring.
 
 > Contact: partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)
+
+## Queue Message Format Guide
+
+For queue plugin wire formats, adapter behavior, and cross-language SDK guidance, see [OpenClaw Queue Message Format Guide](../../doc/OpenClaw-Queue-Message-Format-Guide.en.md).

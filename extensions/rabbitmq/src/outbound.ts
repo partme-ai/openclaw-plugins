@@ -1,22 +1,27 @@
 /**
- * RabbitMQ 渠道出站适配器：将 Agent 回复发布到 RabbitMQ Topic。
+ * @fileoverview RabbitMQ 出站适配器门面。
+ *
+ * @description
+ * 将 Agent 文本回复发布到 reply Topic：通过 session-mapper 解析 peer 与会话上下文，
+ * 再调用 transport 层 `publishMessage` 写入 Exchange。
+ *
+ * @module outbound
  */
 
 import type {
   ChannelOutboundAdapter,
   ChannelOutboundContext,
 } from "openclaw/plugin-sdk/channel-contract";
-import { chunkText, sanitizeForPlainText } from "./utils.js";
+import { chunkText } from "openclaw/plugin-sdk/reply-runtime";
+import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 
 import { publishMessage } from "./transport/server.js";
 import { DEFAULT_RABBITMQ_CONFIG } from "./config.js";
-import { getRabbitmqChannelConfig } from "./state.js";
+import { getRabbitmqChannelConfig } from "./state/state.js";
 import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { buildOutboundTopic } from "./routing/topic-router.js";
 
-/**
- * OpenClaw ChannelOutboundAdapter：直连文本发布到 RabbitMQ。
- */
+/** @description OpenClaw ChannelOutboundAdapter：直连文本发布到 RabbitMQ Exchange。 */
 export const rabbitmqOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   chunker: chunkText,
@@ -41,7 +46,7 @@ export const rabbitmqOutbound: ChannelOutboundAdapter = {
     const cfg = getRabbitmqChannelConfig() ?? DEFAULT_RABBITMQ_CONFIG;
     const outTopic = sessionContext.replyTopic ?? buildOutboundTopic(agentId, cfg.topicPrefix, peerId);
 
-    publishMessage(outTopic, ctx.text);
+    await publishMessage(outTopic, ctx.text);
 
     console.log(`[openclaw-rabbitmq] Reply published to ${outTopic} for peer ${peerId}`);
     return { channel: "rabbitmq", messageId: sessionKey };

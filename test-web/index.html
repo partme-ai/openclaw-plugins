@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenClaw Channel Test — Web STOMP & Web MQTT</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f8fb;
+      --card: #fff;
+      --accent: #3b82f6;
+      --muted: #64748b;
+      --ok: #16a34a;
+      --err: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Pro Text", system-ui, sans-serif;
+      background: linear-gradient(160deg, #eef6ff 0%, var(--bg) 40%);
+      color: #0f172a;
+      min-height: 100vh;
+    }
+    header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid #e2e8f0;
+      background: rgba(255,255,255,.85);
+      backdrop-filter: blur(8px);
+    }
+    h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+    p.sub { margin: .35rem 0 0; color: var(--muted); font-size: .9rem; }
+    main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      padding: 1rem 1.5rem 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    section {
+      background: var(--card);
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 1rem;
+      box-shadow: 0 4px 16px rgba(15,23,42,.04);
+    }
+    h2 { margin: 0 0 .75rem; font-size: 1rem; }
+    label { display: block; font-size: .75rem; color: var(--muted); margin-bottom: .2rem; }
+    input, textarea, select {
+      width: 100%;
+      padding: .45rem .55rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font: inherit;
+      margin-bottom: .55rem;
+    }
+    textarea { min-height: 72px; resize: vertical; }
+    .row { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .5rem; }
+    button {
+      border: none;
+      border-radius: 8px;
+      padding: .45rem .85rem;
+      font: inherit;
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+    }
+    button.secondary { background: #e2e8f0; color: #0f172a; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .status { font-size: .85rem; margin: .35rem 0 .75rem; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--err); }
+    pre.log {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 8px;
+      padding: .65rem;
+      font-size: .72rem;
+      max-height: 220px;
+      overflow: auto;
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>OpenClaw Channel Browser Test</h1>
+    <p class="sub">本地联调 Web STOMP（15674/ws）与 Web MQTT（15675/ws）。需先启动对应插件 gateway。</p>
+  </header>
+  <main>
+    <section id="stomp-panel">
+      <h2>Web STOMP</h2>
+      <label>WebSocket URL</label>
+      <input id="stomp-url" value="ws://127.0.0.1:15674/ws" />
+      <label>Subscribe destination</label>
+      <input id="stomp-sub-dest" value="/topic/session.demo" />
+      <label>Send destination</label>
+      <input id="stomp-send-dest" value="/queue/agent.demo" />
+      <label>Payload</label>
+      <textarea id="stomp-body">{"text":"hello from browser stomp"}</textarea>
+      <div class="row">
+        <button id="stomp-connect">Connect</button>
+        <button id="stomp-subscribe" class="secondary" disabled>Subscribe</button>
+        <button id="stomp-send" class="secondary" disabled>Send</button>
+        <button id="stomp-disconnect" class="secondary" disabled>Disconnect</button>
+      </div>
+      <div id="stomp-status" class="status">disconnected</div>
+      <pre id="stomp-log" class="log"></pre>
+    </section>
+
+    <section id="mqtt-panel">
+      <h2>Web MQTT</h2>
+      <label>WebSocket URL</label>
+      <input id="mqtt-url" value="ws://127.0.0.1:15675/ws" />
+      <label>Subscribe topic</label>
+      <input id="mqtt-sub-topic" value="openclaw/agent/demo/out" />
+      <label>Publish topic</label>
+      <input id="mqtt-pub-topic" value="openclaw/agent/demo/in" />
+      <label>Payload</label>
+      <textarea id="mqtt-body">{"text":"hello from browser mqtt"}</textarea>
+      <div class="row">
+        <button id="mqtt-connect">Connect</button>
+        <button id="mqtt-subscribe" class="secondary" disabled>Subscribe</button>
+        <button id="mqtt-publish" class="secondary" disabled>Publish</button>
+        <button id="mqtt-disconnect" class="secondary" disabled>Disconnect</button>
+      </div>
+      <div id="mqtt-status" class="status">disconnected</div>
+      <pre id="mqtt-log" class="log"></pre>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/mqtt@5.13.2/dist/mqtt.min.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

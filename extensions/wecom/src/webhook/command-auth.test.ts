@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { buildWecomUnauthorizedCommandPrompt } from "./command-auth.js";
-import { isSenderAllowed, checkGroupPolicy } from "../group-policy.ts";
+import { isSenderAllowed, checkGroupPolicy } from "../config/group-policy.ts";
 import {
   CHANNEL_ID,
   VALID_CARD_TYPES,
@@ -18,8 +18,8 @@ import {
   MESSAGE_PROCESS_TIMEOUT_MS,
   WS_MAX_RECONNECT_ATTEMPTS,
   TEMPLATE_CARD_CACHE_TTL_MS,
-} from "../const.ts";
-import type { ResolvedWeComAccount, WeComConfig } from "../utils.ts";
+} from "../types/const.ts";
+import type { ResolvedWeComAccount, WeComConfig } from "../config/wecom-config.ts";
 
 // ============================================================================
 // buildWecomUnauthorizedCommandPrompt

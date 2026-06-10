@@ -1,11 +1,20 @@
 /**
- * 小红书渠道插件类型
- * 配置与《小红书开放平台对接规格》channels.xhs 一致
+ * @fileoverview Rednode 插件的类型聚合（账户、PluginApi、Channel 契约）。
+ *
+ * @description
+ * 与《小红书开放平台对接规格》channels.xhs 字段对齐；集中导出供 inbound、
+ * dispatch、channel 等模块引用，避免循环依赖。
+ *
+ * @module types
+ */
+
+/**
+ * Rednode 共享类型 — Base Profile 入口。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-/** 小红书渠道账号/单店铺配置（直连模式：持 app_id/app_secret） */
+/** @description 小红书渠道账号/单店铺配置（直连或多租户底座模式）。 */
 export interface XhsAccountConfig {
   app_id: string;
   app_secret?: string;
@@ -19,7 +28,7 @@ export interface XhsAccountConfig {
   ddd4j_api_key?: string;
 }
 
-/** 入站发布参数：供运行时将 Webhook 事件写入 Session / 驱动 Agent */
+/** @description 入站发布参数：供运行时将 Webhook 事件写入 Session / 驱动 Agent。 */
 export interface PublishInboundParams {
   channel: string;
   sessionId: string;
@@ -27,7 +36,7 @@ export interface PublishInboundParams {
   content: string;
 }
 
-/** 插件专用 Logger（可选，由宿主注入；与 ZeroClaw/OpenClaw 对齐） */
+/** @description 插件专用 Logger（可选，由宿主注入）。 */
 export interface PluginLogger {
   info?: (msg: string) => void;
   warn?: (msg: string) => void;
@@ -35,7 +44,7 @@ export interface PluginLogger {
   debug?: (msg: string) => void;
 }
 
-/** 插件 API（与 OpenClaw 插件约定一致；可选字段见《自定义插件实现优化指南》） */
+/** @description 插件 API（与 OpenClaw 插件约定一致）。 */
 export interface PluginApi {
   runtime: {
     config: Record<string, unknown>;
@@ -53,12 +62,13 @@ export interface PluginApi {
   onReady?: (callback: () => Promise<void>) => void;
 }
 
+/** @description Gateway HTTP 路由处理器签名。 */
 export type HttpHandler = (
   req: IncomingMessage,
   res: ServerResponse
 ) => Promise<void> | void;
 
-/** 渠道定义（与 OpenClaw Channel 约定一致） */
+/** @description 渠道定义（与 OpenClaw Channel 约定一致）。 */
 export interface ChannelDefinition {
   id: string;
   meta: { id: string; label: string; blurb: string; aliases: string[] };
@@ -78,13 +88,14 @@ export interface ChannelDefinition {
   setup?: unknown;
 }
 
+/** @description 出站 sendText 参数。 */
 export interface SendTextParams {
   text: string;
   to: string;
   account: XhsAccountConfig;
 }
 
-/** 工具定义（与 OpenClaw registerTool 约定一致） */
+/** @description 工具定义（与 OpenClaw registerTool 约定一致）。 */
 export interface ToolDefinition {
   name: string;
   description: string;

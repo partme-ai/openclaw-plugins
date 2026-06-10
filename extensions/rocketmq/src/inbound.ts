@@ -1,18 +1,24 @@
 /**
- * RocketMQ 入站消息处理：Topic/路由匹配、会话绑定、OpenClaw 分发。
+ * @fileoverview RocketMQ 入站编排：Topic/Tag 路由、幂等、会话绑定与 OpenClaw 分发。
+ *
+ * @description
+ * PushConsumer 回调经 `processInbound` 进入本模块：校验订阅范围 → 解析路由 →
+ * message-sdk `normalizeWireIngress` → `dispatchChannelMessage` 驱动 Agent；
+ * 出站回复经 transport `publishMessage` 写回 reply Topic。
+ *
+ * @module inbound
+ */
+
+/**
+ * RocketMQ 入站 — Base Profile 入口。
  */
 
 import { getRockermqRuntime } from "./runtime.js";
-import { getRockermqChannelConfig } from "./state.js";
+import { getRockermqChannelConfig } from "./state/state.js";
 import { DEFAULT_ROCKERMQ_CONFIG, type RockermqConfig } from "./config.js";
 import { resolveInboundRoute, buildReplyTopicFromInbound, matchTopic } from "./routing/topic-router.js";
 import { upsertSessionContext } from "./routing/session-mapper.js";
-import {
-  createIdempotencyCache,
-  type PayloadParseMode,
-  type IdempotencyCache,
-  type ParsedTransportPayload,
-} from "@partme.ai/openclaw-message-sdk";
+import type { ParsedTransportPayload } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
@@ -20,6 +26,13 @@ import {
   type BridgePluginRuntime,
   type ChannelDispatchMode,
 } from "@partme.ai/openclaw-message-sdk/bridge";
+import type { ChannelLimitsOpenClawConfig } from "@partme.ai/openclaw-message-sdk/config";
+
+import { resolveRocketmqAgentReplyTimeoutMs } from "./config/resolvers.js";
+import {
+  getRocketmqIdempotencyCache,
+  mapRocketmqWirePayloadMode,
+} from "./shared/wire-helpers.js";
 import type { InboundEvent } from "./transport/server.js";
 
 type InboundResult = {
@@ -28,30 +41,12 @@ type InboundResult = {
   reason?: string;
 };
 
-let idempotencyCache: IdempotencyCache | undefined;
-let idempotencyCacheSig = "";
-
-function getIdempotencyCache(config: RockermqConfig): IdempotencyCache | undefined {
-  if (!config.idempotency.enabled) return undefined;
-  const sig = `${config.idempotency.ttlMs}:${config.idempotency.maxEntries}`;
-  if (!idempotencyCache || idempotencyCacheSig !== sig) {
-    idempotencyCache = createIdempotencyCache({
-      ttlMs: config.idempotency.ttlMs,
-      maxEntries: config.idempotency.maxEntries,
-    });
-    idempotencyCacheSig = sig;
-  }
-  return idempotencyCache;
-}
-
-function mapPayloadMode(mode: RockermqConfig["payload"]["mode"]): PayloadParseMode {
-  if (mode === "plainText") return "plain";
-  if (mode === "jsonOnly") return "jsonOnly";
-  return "jsonTextOrPlain";
-}
-
 /**
- * 处理 RocketMQ 入站消息（设备 -> Agent）。
+ * @description 处理 RocketMQ 入站消息（设备 / 上游 → Agent）。
+ * @param event - PushConsumer 归一化后的入站事件。
+ * @param config - 当前生效的 RocketMQ 配置。
+ * @returns 是否接受及路由来源 / 丢弃原因。
+ * @throws 不抛出；内部 dispatch 异常转为 `{ accepted: false, reason }`。
  */
 export async function processInbound(
   event: InboundEvent,
@@ -74,10 +69,10 @@ export async function processInbound(
 
   const parsed = normalizeWireIngress({
     rawPayload: event.body.toString("utf-8"),
-    mode: mapPayloadMode(config.payload.mode),
+    mode: mapRocketmqWirePayloadMode(config.payload.mode),
     channel: "rocketmq",
     idempotencyKey,
-    idempotency: getIdempotencyCache(config),
+    idempotency: getRocketmqIdempotencyCache(config.idempotency),
   });
   if (!parsed.accepted) {
     return { accepted: true, routeSource: "idempotency" };
@@ -142,7 +137,10 @@ export async function processInbound(
 }
 
 /**
- * 分发至 OpenClaw Runtime（message-sdk dispatchChannelMessage）。
+ * @description 经 message-sdk `dispatchChannelMessage` 分发至 OpenClaw Runtime 并注册 MQ 回复 deliver。
+ * @param params - 会话、路由、prompt 与解析结果。
+ * @returns Promise，成功时无返回值。
+ * @throws 底层 dispatch 或 publish 失败时向上抛出。
  */
 async function dispatchToRuntime(params: {
   sessionKey: string;
@@ -162,6 +160,10 @@ async function dispatchToRuntime(params: {
   }
 
   const mode = params.config.dispatch.mode as ChannelDispatchMode;
+  const timeoutMs = resolveRocketmqAgentReplyTimeoutMs(
+    rt.config as ChannelLimitsOpenClawConfig,
+    params.config.dispatch.timeoutMs,
+  );
 
   await dispatchChannelMessage({
     mode,
@@ -174,7 +176,7 @@ async function dispatchToRuntime(params: {
     sessionKey: params.sessionKey,
     unified: params.parsed.unified,
     sessionId: `rocketmq:${params.accountId ?? "default"}:${params.agentId}:${params.peerId}`,
-    timeoutMs: params.config.dispatch.timeoutMs,
+    timeoutMs,
     replyEnabled: params.config.dispatch.reply.enabled,
     extra: {
       topic: params.replyTopic,
@@ -201,7 +203,11 @@ async function dispatchToRuntime(params: {
 }
 
 /**
- * 判断 Topic 是否在订阅范围内。
+ * @description 判断 Topic 是否在 consumer.subscriptions 允许范围内（空列表表示全放行）。
+ * @param topic - 实际 Topic 名。
+ * @param config - 当前配置。
+ * @returns 是否应处理该 Topic。
+ * @throws 不抛出。
  */
 function shouldProcessTopic(topic: string, config: RockermqConfig): boolean {
   const subscriptions = config.consumer.subscriptions;

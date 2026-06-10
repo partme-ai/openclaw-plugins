@@ -49,7 +49,7 @@ export function addSubscription(
   connectionIndex.get(connectionId)!.add(key);
 
   console.log(
-    `[openclaw_web_stomp] Subscription added: ${key} -> ${subscription.destination}`
+    `[openclaw-web-stomp] Subscription added: ${key} -> ${subscription.destination}`
   );
 }
 
@@ -87,7 +87,7 @@ export function removeSubscription(
   }
 
   subscriptions.delete(key);
-  console.log(`[openclaw_web_stomp] Subscription removed: ${key}`);
+  console.log(`[openclaw-web-stomp] Subscription removed: ${key}`);
 }
 
 /**
@@ -117,7 +117,7 @@ export function removeAllSubscriptions(connectionId: string): void {
 
   connectionIndex.delete(connectionId);
   console.log(
-    `[openclaw_web_stomp] All subscriptions removed for connection: ${connectionId}`
+    `[openclaw-web-stomp] All subscriptions removed for connection: ${connectionId}`
   );
 }
 

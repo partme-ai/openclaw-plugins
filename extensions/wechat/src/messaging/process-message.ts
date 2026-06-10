@@ -1,3 +1,19 @@
+/**
+ * @module wechat/messaging/process-message
+ *
+ * 单条入站消息的 **完整处理管线**（slash → 鉴权 → 媒体下载 → Agent dispatch → 出站）。
+ *
+ * **职责**：
+ * - Slash 命令短路（不进入 AI pipeline）
+ * - DM / 命令授权（openclaw command-auth）
+ * - 媒体项下载（IMAGE/VIDEO/FILE/VOICE 优先级）并注入 MsgContext
+ * - 创建 typing 回调、流式 markdown 过滤、错误通知
+ *
+ * **适用场景**：`monitor/monitor.ts` getUpdates 循环对每条 `WeixinMessage` 调用。
+ *
+ * **关键导出**：`processOneMessage`、`ProcessMessageDeps`
+ */
+
 import path from "node:path";
 
 import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-runtime";

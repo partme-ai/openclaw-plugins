@@ -3,7 +3,7 @@
  * 与 openclaw-redis-stream / openclaw-gotify 的测试模式完全一致。
  */
 import { describe, it, expect } from "vitest";
-import { resolveDmScopeFromRuntimeConfig, buildSessionKeyFromDmScope } from "../src/dm-scope.js";
+import { resolveDmScopeFromRuntimeConfig, buildSessionKeyFromDmScope } from "../src/shared/dm-scope.js";
 
 describe("resolveDmScopeFromRuntimeConfig", () => {
   it("returns per-peer when no session config present (default)", () => {

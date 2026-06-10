@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { resolveGotifyAccount } from '../src/config.js';
-import { GotifyWebSocketError } from '../src/errors.js';
+import { GotifyWebSocketError } from '../src/shared/errors.js';
 import { createGotifyWsListener } from '../src/transport/ws-listener.js';
 
 class FakeWebSocket {

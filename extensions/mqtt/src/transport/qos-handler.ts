@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/transport/qos-handler
+ *
  * QoS 消息确认处理模块
  * 管理 MQTT QoS 0/1 级别的消息投递保证
  *

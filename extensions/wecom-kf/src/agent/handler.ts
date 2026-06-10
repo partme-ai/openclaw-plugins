@@ -4,10 +4,17 @@
  */
 
 import { pathToFileURL } from "node:url";
-import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
-import type { ResolvedAgentAccount, WecomAccountConfig } from "../types/index.js";
+import {
+    analyzeTextHeuristic,
+    buildTextFilePreview,
+    createIdempotencyCache,
+    normalizeInboundTextContentType,
+    previewHex,
+} from "@partme.ai/openclaw-message-sdk";
+import { deliverAgentReplyPayload } from "./agent-reply-delivery.js";
+import type { ResolvedAgentAccount } from "../types/index.js";
 import {
     extractMsgType,
     extractFromUser,
@@ -18,77 +25,18 @@ import {
     extractFileName,
     extractAgentId,
 } from "../shared/xml-parser.js";
-import { sendText, downloadMedia, uploadMedia, sendMedia as sendAgentMedia } from "./api-client.js";
-import { getWecomRuntime } from "../runtime.js";
+import { sendText, downloadMedia } from "./api-client.js";
 import type { WecomAgentInboundMessage } from "../types/index.js";
 import { buildWecomUnauthorizedCommandPrompt, resolveWecomCommandAuthorization } from "../shared/command-auth.js";
 import { resolveWecomMediaMaxBytes, shouldRejectWecomDefaultRoute } from "../config/index.js";
-import { generateAgentId, shouldUseDynamicAgent, ensureDynamicAgentListed } from "../dynamic-agent.js";
+import { generateAgentId, shouldUseDynamicAgent, ensureDynamicAgentListed } from "../channel/dynamic-agent.js";
 
 /** 错误提示信息 */
 const ERROR_HELP = "";
 
 // Agent webhook 幂等去重池（防止企微回调重试导致重复回复）
 // 注意：这是进程内内存去重，重启会清空；但足以覆盖企微的短周期重试。
-const RECENT_MSGID_TTL_MS = 10 * 60 * 1000;
-const recentAgentMsgIds = new Map<string, number>();
-
-function rememberAgentMsgId(msgId: string): boolean {
-    const now = Date.now();
-    const existing = recentAgentMsgIds.get(msgId);
-    if (existing && now - existing < RECENT_MSGID_TTL_MS) return false;
-    recentAgentMsgIds.set(msgId, now);
-    // 简单清理：只在写入时做一次线性 prune，避免无界增长
-    for (const [k, ts] of recentAgentMsgIds) {
-        if (now - ts >= RECENT_MSGID_TTL_MS) recentAgentMsgIds.delete(k);
-    }
-    return true;
-}
-
-function looksLikeTextFile(buffer: Buffer): boolean {
-    const sampleSize = Math.min(buffer.length, 4096);
-    if (sampleSize === 0) return true;
-    let bad = 0;
-    for (let i = 0; i < sampleSize; i++) {
-        const b = buffer[i]!;
-        const isWhitespace = b === 0x09 || b === 0x0a || b === 0x0d; // \t \n \r
-        const isPrintable = b >= 0x20 && b !== 0x7f;
-        if (!isWhitespace && !isPrintable) bad++;
-    }
-    // 非可打印字符占比太高，基本可判断为二进制
-    return bad / sampleSize <= 0.02;
-}
-
-function analyzeTextHeuristic(buffer: Buffer): { sampleSize: number; badCount: number; badRatio: number } {
-    const sampleSize = Math.min(buffer.length, 4096);
-    if (sampleSize === 0) return { sampleSize: 0, badCount: 0, badRatio: 0 };
-    let badCount = 0;
-    for (let i = 0; i < sampleSize; i++) {
-        const b = buffer[i]!;
-        const isWhitespace = b === 0x09 || b === 0x0a || b === 0x0d;
-        const isPrintable = b >= 0x20 && b !== 0x7f;
-        if (!isWhitespace && !isPrintable) badCount++;
-    }
-    return { sampleSize, badCount, badRatio: badCount / sampleSize };
-}
-
-function previewHex(buffer: Buffer, maxBytes = 32): string {
-    const n = Math.min(buffer.length, maxBytes);
-    if (n <= 0) return "";
-    return buffer
-        .subarray(0, n)
-        .toString("hex")
-        .replace(/(..)/g, "$1 ")
-        .trim();
-}
-
-function buildTextFilePreview(buffer: Buffer, maxChars: number): string | undefined {
-    if (!looksLikeTextFile(buffer)) return undefined;
-    const text = buffer.toString("utf8");
-    if (!text.trim()) return undefined;
-    const truncated = text.length > maxChars ? `${text.slice(0, maxChars)}\n…(已截断)` : text;
-    return truncated;
-}
+const agentMsgIdDedupe = createIdempotencyCache({ ttlMs: 10 * 60 * 1000, maxEntries: 10_000 });
 
 /**
  * **AgentWebhookParams (Webhook 处理器参数)**
@@ -238,8 +186,7 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
         const msgId = extractMsgId(msg);
         const eventType = String((msg as Record<string, unknown>).Event ?? "").trim().toLowerCase();
         if (msgId) {
-            const ok = rememberAgentMsgId(msgId);
-            if (!ok) {
+            if (agentMsgIdDedupe.remember(msgId)) {
                 log?.(`[wecom-agent] duplicate msgId=${msgId} from=${fromUser} chatId=${chatId ?? "N/A"} type=${msgType}; skipped`);
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -347,12 +294,11 @@ async function processAgentMessage(params: {
                 };
                 const textPreview = msgType === "file" ? buildTextFilePreview(buffer, 12_000) : undefined;
                 const looksText = Boolean(textPreview);
-                const originalExt = path.extname(originalFileName).toLowerCase();
-                const normalizedContentType =
-                    looksText && originalExt === ".md" ? "text/markdown" :
-                    looksText && (!contentType || contentType === "application/octet-stream")
-                        ? "text/plain; charset=utf-8"
-                        : contentType;
+                const normalizedContentType = normalizeInboundTextContentType({
+                    contentType,
+                    originalFileName,
+                    looksText,
+                });
 
                 const ext = extMap[normalizedContentType] || (looksText ? "txt" : "bin");
                 const filename = `${mediaId}.${ext}`;
@@ -417,8 +363,8 @@ async function processAgentMessage(params: {
                     content,
                     "",
                     `媒体处理失败：${String(err)}`,
-                    `提示：可在 OpenClaw 配置中提高 channels.wecom-cs.media.maxBytes（当前=${mediaMaxBytes}）`,
-                    `例如：openclaw config set channels.wecom-cs.media.maxBytes ${50 * 1024 * 1024}`,
+                    `提示：可在 OpenClaw 配置中提高 channels.wecom-kf.media.maxBytes（当前=${mediaMaxBytes}）`,
+                    `例如：openclaw config set channels.wecom-kf.media.maxBytes ${50 * 1024 * 1024}`,
                 ].join("\n");
             }
         } else {
@@ -430,7 +376,7 @@ async function processAgentMessage(params: {
     // 解析路由
     const route = core.channel.routing.resolveAgentRoute({
         cfg: config,
-        channel: "wecom-cs",
+        channel: "wecom-kf",
         accountId: agent.accountId,
         peer: { kind: isGroup ? "group" : "direct", id: peerId },
     });
@@ -445,9 +391,9 @@ async function processAgentMessage(params: {
     if (shouldRejectWecomDefaultRoute({ cfg: config, matchedBy: route.matchedBy, useDynamicAgent })) {
         const prompt =
             `当前账号（${agent.accountId}）未绑定 OpenClaw Agent，已拒绝回退到默认主智能体。` +
-            `请在 bindings 中添加：{"agentId":"你的Agent","match":{"channel":"wecom-cs","accountId":"${agent.accountId}"}}`;
+            `请在 bindings 中添加：{"agentId":"你的Agent","match":{"channel":"wecom-kf","accountId":"${agent.accountId}"}}`;
         error?.(
-            `[wecom-cs-agent] routing guard: blocked default fallback accountId=${agent.accountId} matchedBy=${route.matchedBy} from=${fromUser}`,
+            `[wecom-kf-agent] routing guard: blocked default fallback accountId=${agent.accountId} matchedBy=${route.matchedBy} from=${fromUser}`,
         );
         try {
             await sendText({ agent, toUser: fromUser, chatId: undefined, text: prompt });
@@ -465,10 +411,10 @@ async function processAgentMessage(params: {
             agent.accountId,
         );
         route.agentId = targetAgentId;
-        route.sessionKey = `agent:${targetAgentId}:wecom-cs:${agent.accountId}:${isGroup ? "group" : "dm"}:${peerId}`;
+        route.sessionKey = `agent:${targetAgentId}:wecom-kf:${agent.accountId}:${isGroup ? "group" : "dm"}:${peerId}`;
         // 异步添加到 agents.list（不阻塞）
         ensureDynamicAgentListed(targetAgentId, core).catch(() => {});
-        log?.(`[wecom-cs-agent] dynamic agent routing: ${targetAgentId}, sessionKey=${route.sessionKey}`);
+        log?.(`[wecom-kf-agent] dynamic agent routing: ${targetAgentId}, sessionKey=${route.sessionKey}`);
     }
     // ===== 动态 Agent 路由注入结束 =====
 
@@ -493,7 +439,7 @@ async function processAgentMessage(params: {
     const authz = await resolveWecomCommandAuthorization({
         core,
         cfg: config,
-        // Agent 门禁应读取 channels.wecom-cs.agent.dm（即 agent.config.dm），而不是 channels.wecom-cs.dm（不存在）
+        // Agent 门禁应读取 channels.wecom-kf.agent.dm（即 agent.config.dm），而不是 channels.wecom-kf.dm（不存在）
         accountConfig: agent.config,
         rawBody: finalContent,
         senderUserId: fromUser,
@@ -517,23 +463,23 @@ async function processAgentMessage(params: {
         RawBody: finalContent,
         CommandBody: finalContent,
         Attachments: attachments.length > 0 ? attachments : undefined,
-        From: isGroup ? `wecom-cs:group:${peerId}` : `wecom-cs:${fromUser}`,
+        From: isGroup ? `wecom-kf:group:${peerId}` : `wecom-kf:${fromUser}`,
         // 使用 wecom-agent: 前缀标记 Agent 会话，确保 outbound 路由不会混入 Bot WS 发送路径。
         // resolveWecomTarget 已支持剥离 wecom-agent: 前缀（target.ts L41），解析结果不变。
-        To: `wecom-cs-agent:${fromUser}`,
+        To: `wecom-kf-agent:${fromUser}`,
         SessionKey: route.sessionKey,
         AccountId: route.accountId,
         ChatType: isGroup ? "group" : "direct",
         ConversationLabel: fromLabel,
         SenderName: fromUser,
         SenderId: fromUser,
-        Provider: "wecom-cs",
+        Provider: "wecom-kf",
         Surface: "webchat",
-        OriginatingChannel: "wecom-cs",
+        OriginatingChannel: "wecom-kf",
         // 标记为 Agent 会话的回复路由目标，避免与 Bot 会话混淆：
         // - 用于让 /new /reset 这类命令回执不被 Bot 侧策略拦截
         // - 群聊场景也统一路由为私信触发者（与 deliver 策略一致）
-        OriginatingTo: `wecom-cs-agent:${fromUser}`,
+        OriginatingTo: `wecom-kf-agent:${fromUser}`,
         CommandAuthorized: authz.commandAuthorized ?? true,
         MediaPath: mediaPath,
         MediaType: mediaType,
@@ -556,105 +502,17 @@ async function processAgentMessage(params: {
         cfg: config,
         dispatcherOptions: {
             deliver: async (payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string }, info: { kind: string }) => {
-                let text = payload.text ?? "";
-
-                // ── 1. 解析 MEDIA: 指令（兜底处理核心 splitMediaFromOutput 未覆盖的边界情况）──
-                const mediaDirectivePaths: string[] = [];
-                const mediaDirectiveRe = /^MEDIA:\s*`?([^\n`]+?)`?\s*$/gm;
-                let _mdMatch: RegExpExecArray | null;
-                while ((_mdMatch = mediaDirectiveRe.exec(text)) !== null) {
-                    let p = (_mdMatch[1] ?? "").trim();
-                    if (!p) continue;
-                    if (p.startsWith("~/") || p === "~") {
-                        const home = process.env.HOME || "/root";
-                        p = p.replace(/^~/, home);
-                    }
-                    if (!mediaDirectivePaths.includes(p)) mediaDirectivePaths.push(p);
-                }
-                // 从回复文本中移除 MEDIA: 指令行
-                if (mediaDirectivePaths.length > 0) {
-                    text = text.replace(/^MEDIA:\s*`?[^\n`]+?`?\s*$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
-                }
-
-                // ── 2. 合并所有媒体 URL ──
-                const mediaUrls = Array.from(new Set([
-                    ...(payload.mediaUrls || []),
-                    ...(payload.mediaUrl ? [payload.mediaUrl] : []),
-                    ...mediaDirectivePaths,
-                ]));
-
-                // ── 3. 发送文本部分 ──
-                if (text.trim()) {
-                    try {
-                        await sendText({ agent, toUser: fromUser, chatId: undefined, text });
-                        log?.(`[wecom-agent] reply delivered (${info.kind}) to ${fromUser} (textLen=${text.length})`);
-                    } catch (err: unknown) {
-                        const message = err instanceof Error ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}` : String(err);
-                        error?.(`[wecom-agent] reply failed: ${message}`);
-                    }
-                }
-
-                // ── 4. 逐个发送媒体文件（通过 Agent API 上传 + 发送）──
-                for (const mediaPath of mediaUrls) {
-                    try {
-                        const isRemoteUrl = /^https?:\/\//i.test(mediaPath);
-                        let buf: Buffer;
-                        let contentType: string;
-                        let filename: string;
-
-                        if (isRemoteUrl) {
-                            const res = await fetch(mediaPath, { signal: AbortSignal.timeout(30_000) });
-                            if (!res.ok) throw new Error(`download failed: ${res.status}`);
-                            buf = Buffer.from(await res.arrayBuffer());
-                            contentType = res.headers.get("content-type") || "application/octet-stream";
-                            filename = new URL(mediaPath).pathname.split("/").pop() || "media";
-                        } else {
-                            const fs = await import("node:fs/promises");
-                            const pathModule = await import("node:path");
-                            buf = await fs.readFile(mediaPath);
-                            filename = pathModule.basename(mediaPath);
-                            const ext = pathModule.extname(mediaPath).slice(1).toLowerCase();
-                            const MIME_MAP: Record<string, string> = {
-                                jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif",
-                                webp: "image/webp", mp3: "audio/mpeg", wav: "audio/wav", amr: "audio/amr",
-                                mp4: "video/mp4", mov: "video/quicktime", pdf: "application/pdf",
-                                doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                txt: "text/plain", csv: "text/csv", json: "application/json", zip: "application/zip",
-                            };
-                            contentType = MIME_MAP[ext] ?? "application/octet-stream";
-                        }
-
-                        // 确定企微媒体类型
-                        let mediaType: "image" | "voice" | "video" | "file" = "file";
-                        if (contentType.startsWith("image/")) mediaType = "image";
-                        else if (contentType.startsWith("audio/")) mediaType = "voice";
-                        else if (contentType.startsWith("video/")) mediaType = "video";
-
-                        log?.(`[wecom-agent] uploading media: ${filename} (${mediaType}, ${contentType}, ${buf.length} bytes)`);
-
-                        const mediaId = await uploadMedia({ agent, type: mediaType, buffer: buf, filename });
-
-                        await sendAgentMedia({
-                            agent,
-                            toUser: fromUser,
-                            mediaId,
-                            mediaType,
-                            ...(mediaType === "video" ? { title: filename, description: "" } : {}),
-                        });
-
-                        log?.(`[wecom-agent] media sent (${info.kind}) to ${fromUser}: ${filename} (${mediaType})`);
-                    } catch (err: unknown) {
-                        const message = err instanceof Error ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}` : String(err);
-                        error?.(`[wecom-agent] media send failed: ${mediaPath}: ${message}`);
-                        // 降级：发文本通知用户
-                        try {
-                            await sendText({ agent, toUser: fromUser, chatId: undefined, text: `⚠️ 文件发送失败: ${mediaPath.split("/").pop() || mediaPath}\n${message}` });
-                        } catch { /* ignore */ }
-                    }
-                }
-
-                // 如果既没有文本也没有媒体，不做任何事（防止空回复）
+                await deliverAgentReplyPayload({
+                    cfg: config,
+                    agent,
+                    toUser: fromUser,
+                    text: String(payload.text ?? ""),
+                    mediaUrls: payload.mediaUrls,
+                    mediaUrl: payload.mediaUrl,
+                    log,
+                    error,
+                    infoKind: info.kind,
+                });
             },
             onError: (err: unknown, info: { kind: string }) => {
                 error?.(`[wecom-agent] ${info.kind} reply error: ${String(err)}`);
@@ -677,239 +535,4 @@ export async function handleAgentWebhook(params: AgentWebhookParams): Promise<bo
     }
 
     return false;
-}
-
-/**
- * **handleCustomerMessage (处理客户消息)**
- *
- * 处理企微客服客户消息 (origin=3)。
- * 将客户消息调度到 OpenClaw Agent 处理，并通过 KF API 发送回复。
- *
- * @param msg - 企微客服消息 (KfMessage)
- * @param accountConfig - 客服账号配置
- */
-export async function handleCustomerMessage(
-  msg: Record<string, unknown>,
-  accountConfig: WecomAccountConfig
-): Promise<void> {
-  const runtime = getWecomRuntime();
-  if (!runtime) {
-    console.error("[wecom_kf] Runtime not available for KF dispatch");
-    return;
-  }
-
-  const externalUserId = (msg.external_userid as string)?.trim();
-  const msgId = (msg.msgid as string)?.trim();
-  const openKfId = (msg.open_kfid as string)?.trim();
-
-  if (!externalUserId) {
-    console.warn(`[wecom_kf] Skip KF msg without external_userid, msgid=${msgId}`);
-    return;
-  }
-
-  // Extract text content
-  const rawText = extractKfInboundText(msg);
-  if (!rawText) {
-    console.log(`[wecom_kf] Skip unsupported KF msgtype=${msg.msgtype} msgid=${msgId}`);
-    return;
-  }
-
-  // ── State Flow: Load or create dialogue context ──
-  let dialogueCtx: Record<string, unknown> | undefined;
-  try {
-    const { createDialogueContext, DIALOGUE_SESSION_NAMESPACE } =
-      await import("../kf/dialogue-state.js");
-    const { transitionState } = await import("../kf/dialogue-transitions.js");
-    const { isHumanTransferRequest } = await import("../kf/intent-classifier.js");
-
-    // Try to get existing dialogue context from session extension
-    const sessionExt = runtime as Record<string, unknown>;
-    const stateApi = (sessionExt.session as Record<string, unknown> | undefined)?.state as Record<string, unknown> | undefined;
-    const getState = stateApi?.get as
-      ((namespace: string) => Promise<Record<string, unknown> | undefined>) | undefined;
-    const setState = stateApi?.set as
-      ((namespace: string, value: Record<string, unknown>) => Promise<void>) | undefined;
-
-    let ctx = await getState?.(DIALOGUE_SESSION_NAMESPACE);
-    if (!ctx) {
-      ctx = createDialogueContext({
-        sessionId: msgId ?? `kf-${externalUserId}-${Date.now()}`,
-        userId: externalUserId,
-      }) as unknown as Record<string, unknown>;
-    }
-
-    // Check for human transfer keywords
-    if (isHumanTransferRequest(rawText)) {
-      ctx = transitionState(
-        ctx as Parameters<typeof transitionState>[0],
-        { type: "handoff_request", reason: "user requested human via keywords" },
-      ) as unknown as Record<string, unknown>;
-    } else {
-      ctx = transitionState(
-        ctx as Parameters<typeof transitionState>[0],
-        { type: "user_message", text: rawText },
-      ) as unknown as Record<string, unknown>;
-    }
-
-    await setState?.(DIALOGUE_SESSION_NAMESPACE, ctx);
-    dialogueCtx = ctx;
-  } catch (err) {
-    // State flow is non-critical — log and continue without it
-    console.warn("[wecom_kf] Dialogue state flow error (non-blocking):", err);
-  }
-
-  const core = (runtime as Record<string, unknown>).core as Record<string, unknown> | undefined;
-  const channelApi = core?.channel as Record<string, unknown> | undefined;
-  const routing = channelApi?.routing as Record<string, unknown> | undefined;
-  const sessionApi = channelApi?.session as Record<string, unknown> | undefined;
-  const replyApi = channelApi?.reply as Record<string, unknown> | undefined;
-
-  const resolveAgentRoute = routing?.resolveAgentRoute as
-    ((params: Record<string, unknown>) => { sessionKey: string; accountId: string; agentId?: string; mainSessionKey?: string }) | undefined;
-  const recordInboundSession = sessionApi?.recordInboundSession as
-    ((params: Record<string, unknown>) => Promise<void>) | undefined;
-  const dispatchReply = replyApi?.dispatchReplyWithBufferedBlockDispatcher as
-    ((params: Record<string, unknown>) => Promise<void>) | undefined;
-
-  if (!resolveAgentRoute || !dispatchReply) {
-    console.error("[wecom_kf] Core routing/reply not available");
-    return;
-  }
-
-  // Resolve agent route
-  const route = resolveAgentRoute({
-    channel: "wecom-kf",
-    accountId: openKfId,
-    peer: { kind: "dm", id: externalUserId },
-  });
-
-  const from = `wecom-kf:user:${externalUserId}`;
-  const to = `user:${externalUserId}`;
-  const fromLabel = `KF客户:${externalUserId}`;
-
-  // Build inbound context
-  const ctxPayload: Record<string, unknown> = {
-    Body: rawText,
-    RawBody: rawText,
-    CommandBody: rawText,
-    From: from,
-    To: to,
-    SessionKey: route.sessionKey,
-    AccountId: route.accountId ?? openKfId ?? "default",
-    ChatType: "direct",
-    ConversationLabel: fromLabel,
-    SenderName: externalUserId,
-    SenderId: externalUserId,
-    Provider: "wecom-kf",
-    Surface: "wecom-kf",
-    MessageSid: msgId,
-    OriginatingChannel: "wecom-kf",
-    OriginatingTo: to,
-  };
-
-  // Record inbound session
-  if (recordInboundSession) {
-    try {
-      await recordInboundSession({
-        storePath: undefined,
-        sessionKey: route.sessionKey,
-        ctx: ctxPayload,
-        updateLastRoute: {
-          sessionKey: route.mainSessionKey ?? route.sessionKey,
-          channel: "wecom-kf",
-          to,
-          accountId: route.accountId ?? openKfId ?? "default",
-        },
-      });
-    } catch (error) {
-      console.error("[wecom_kf] recordInboundSession failed:", error);
-    }
-  }
-
-  // Collect agent response chunks
-  const responseChunks: string[] = [];
-  await dispatchReply({
-    ctx: ctxPayload,
-    dispatcherOptions: {
-      deliver: async (payload: { text?: string }) => {
-        const text = String(payload.text ?? "").trim();
-        if (!text) return;
-        responseChunks.push(text);
-      },
-      onError: (error: unknown, info: { kind: string }) => {
-        console.error(`[wecom_kf] ${info.kind} reply failed:`, error);
-      },
-    },
-  });
-
-  // Send response back via KF API
-  const combined = responseChunks.join("\n\n").trim();
-  if (!combined || !accountConfig.corpId || !accountConfig.corpSecret) return;
-
-  try {
-    const { getAccessToken } = await import("./api-client.js");
-    const { sendKfMsg } = await import("./api-client.js");
-    const token = await getAccessToken({
-      accountId: "kf-send",
-      enabled: true,
-      configured: true,
-      corpId: accountConfig.corpId,
-      corpSecret: accountConfig.corpSecret,
-      token: "",
-      encodingAESKey: "",
-      config: { corpId: accountConfig.corpId, corpSecret: accountConfig.corpSecret, token: "", encodingAESKey: "" },
-    });
-
-    const effectiveOpenKfId = openKfId || accountConfig.openKfId || "";
-    const chunks = splitKfText(combined, 2048);
-    for (const chunk of chunks) {
-      const result = await sendKfMsg({
-        accessToken: token,
-        touser: externalUserId,
-        open_kfid: effectiveOpenKfId,
-        msgtype: "text",
-        text: { content: chunk },
-      });
-      if (result.errcode !== 0) {
-        console.error(
-          `[wecom_kf] sendKfMsg failed: ${result.errmsg} (errcode=${result.errcode})`
-        );
-        break;
-      }
-    }
-  } catch (error) {
-    console.error("[wecom_kf] KF reply send error:", error);
-  }
-}
-
-/** Extract text content from a KF sync_msg item */
-function extractKfInboundText(msg: Record<string, unknown>): string | undefined {
-  const msgtype = (msg.msgtype as string) ?? "";
-  if (msgtype === "text") {
-    const text = (msg as Record<string, unknown>).text as Record<string, unknown> | undefined;
-    return (text?.content as string) ?? "";
-  }
-  // Other types (image, voice, video, file, event) — return placeholder for now
-  if (msgtype === "image") return "[图片消息]";
-  if (msgtype === "voice") return "[语音消息]";
-  if (msgtype === "video") return "[视频消息]";
-  if (msgtype === "file") return "[文件消息]";
-  return undefined;
-}
-
-/** Split text by UTF-8 byte length for KF API (2048 bytes max per message) */
-function splitKfText(text: string, maxBytes = 2048): string[] {
-  const chunks: string[] = [];
-  let current = "";
-  for (const char of text) {
-    const candidate = current + char;
-    if (Buffer.byteLength(candidate, "utf8") > maxBytes) {
-      if (current) chunks.push(current);
-      current = char;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks;
 }

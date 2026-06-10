@@ -1,7 +1,10 @@
 /**
- * 共享 Channel setupWizard / setupAdapter 工厂。
+ * @file OpenClaw 通用 Channel setup 工厂 —— decl-style wizard + adapter builder。
  *
- * 供 extensions 下各渠道插件复用，减少重复声明式向导代码。
+ * @description 将重复的「凭据读取 / patch 写入 / 状态判断 / finalize 启用」收敛为
+ * `createSimpleChannelSetup` 与若干变体 helper，**Gotify 与兄弟渠道共用**；
+ * 本模块不感知 Gotify 字段语义（由调用方传入 `credentials`/`resolveConfigured`）。
+ * **模块角色**：共享基础设施 · Setup UX codegen。
  */
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";

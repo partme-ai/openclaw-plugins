@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { resolveGotifyAccount } from '../src/config.js';
-import { bootstrapGotifyAccount } from "../src/bootstrap.js";
+import { bootstrapGotifyAccount } from "../src/runtime/bootstrap.js";
 
 describe('setup', () => {
   it('creates application when missing and auto-create enabled', async () => {

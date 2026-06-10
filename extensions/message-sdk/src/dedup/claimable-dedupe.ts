@@ -1,20 +1,35 @@
 /**
- * Claimable 去重：claim -> commit/release，适合 webhook replay guard 与入站处理锁。
+ * @module dedup/claimable-dedupe
+ *
+ * Claimable 去重：claim → commit/release 两阶段语义，适合 webhook replay guard 与入站处理锁。
+ *
+ * **职责**：
+ * - `claim` — 尝试占用 key；返回 claimed / duplicate / inflight / invalid
+ * - `commit` — 处理成功后标记为已提交（可写持久层）
+ * - `release` — 处理失败时释放 inflight 占用，允许重试
+ *
+ * **适用场景**：Webhook 并发重放、MQ 消费失败后需释放锁以便重试。
+ *
+ * **关键导出**：`createClaimableDedupe`、`ClaimableDedupe`、`ClaimableDedupeClaim`
  */
 
 import type { PersistentDedupe } from "./persistent-dedupe.js";
 
 /**
- * ClaimableDedupeClaimKind 是 dedup 模块的公开类型别名。
+ * claim 结果种类。
  *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ * - `claimed` — 成功占用，可开始处理
+ * - `duplicate` — TTL 内已提交过，应跳过
+ * - `inflight` — 其他协程正在处理，应跳过或等待
+ * - `invalid` — key 无效（空字符串等）
  */
 export type ClaimableDedupeClaimKind = "claimed" | "duplicate" | "inflight" | "invalid";
 
 /**
- * ClaimableDedupeClaim 是 dedup 模块的公开类型别名。
+ * claim 操作返回值。
  *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ * @property kind - claim 结果种类
+ * @property key - 归一化后的原始 key（invalid 时可能为空）
  */
 export type ClaimableDedupeClaim = {
   kind: ClaimableDedupeClaimKind;
@@ -22,9 +37,13 @@ export type ClaimableDedupeClaim = {
 };
 
 /**
- * ClaimableDedupeOptions 是 dedup 模块的公开类型别名。
+ * Claimable 去重实例配置。
  *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ * @property ttlMs - committed / inflight 记录的 TTL（毫秒）
+ * @property memoryMaxSize - 内存最大条目数
+ * @property persistent - 可选持久化去重层（commit 时写入）
+ * @property namespace - 默认 namespace
+ * @property onPersistentError - 持久层错误回调
  */
 export type ClaimableDedupeOptions = {
   ttlMs: number;
@@ -35,9 +54,10 @@ export type ClaimableDedupeOptions = {
 };
 
 /**
- * ClaimableDedupeClaimOptions 是 dedup 模块的公开类型别名。
+ * claim / commit / release 调用选项。
  *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ * @property now - 可选时间戳（测试用）
+ * @property namespace - 覆盖默认 namespace
  */
 export type ClaimableDedupeClaimOptions = {
   now?: number;
@@ -45,9 +65,10 @@ export type ClaimableDedupeClaimOptions = {
 };
 
 /**
- * ClaimableDedupeReleaseOptions 是 dedup 模块的公开类型别名。
+ * release 调用选项。
  *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ * @property error - 可选失败原因（当前实现未持久化，供扩展）
+ * @property namespace - 覆盖默认 namespace
  */
 export type ClaimableDedupeReleaseOptions = {
   error?: unknown;
@@ -55,9 +76,15 @@ export type ClaimableDedupeReleaseOptions = {
 };
 
 /**
- * ClaimableDedupe 是 dedup 模块的公开类型别名。
+ * Claimable 去重实例 API。
  *
- * 该类型用于收窄调用边界，确保不同通道插件复用同一套 SDK 契约。
+ * @property claim - 尝试占用 key
+ * @property commit - 标记处理成功
+ * @property release - 释放 inflight 占用（未 commit 时）
+ * @property hasRecent - 只读检查是否已提交且在 TTL 内
+ * @property clearMemory - 清空内存层
+ * @property memorySize - 内存条目数
+ * @property inflightSize - 当前 inflight 占用数
  */
 export type ClaimableDedupe = {
   claim: (key: string, options?: ClaimableDedupeClaimOptions) => Promise<ClaimableDedupeClaim>;
@@ -69,6 +96,7 @@ export type ClaimableDedupe = {
   inflightSize: () => number;
 };
 
+/** 内存记录：committedAt 表示已成功处理，inflightAt 表示正在处理。 */
 type MemoryRecord = {
   committedAt?: number;
   inflightAt?: number;
@@ -86,24 +114,42 @@ function scopedKey(namespace: string, key: string): string {
   return `${namespace}:${key}`;
 }
 
+/** 判断 committed 记录是否在 TTL 内仍有效。 */
 function isRecordRecent(record: MemoryRecord | undefined, now: number, ttlMs: number): boolean {
   const committedAt = record?.committedAt;
   return committedAt != null && (ttlMs <= 0 || now - committedAt < ttlMs);
 }
 
 /**
- * createClaimableDedupe 是 dedup 模块对外暴露的操作入口。
+ * 创建 Claimable 去重实例。
  *
- * 该函数封装本模块的边界逻辑，调用方应优先通过它复用 SDK 内部约定，
- * 避免在具体通道插件中重复实现解析、派发、去重或资源处理细节。
- * @param params - 调用该操作所需的输入；字段含义以同文件或相邻 types 文件中的类型定义为准。
- * @returns 返回标准化结果；异步函数会在底层 I/O、网络或 Runtime 调用失败时抛出对应错误。
+ * **状态机**：
+ * 1. `claim` 成功 → inflightAt 写入
+ * 2. 处理成功 → `commit` 写 committedAt（并可选持久化）
+ * 3. 处理失败 → `release` 清除 inflight（若未 commit）
+ *
+ * @param options - TTL、容量与可选持久层
+ * @returns Claimable 去重实例
+ *
+ * @example
+ * ```ts
+ * const dedupe = createClaimableDedupe({ ttlMs: 60_000, memoryMaxSize: 5000, persistent });
+ * const { kind } = await dedupe.claim(webhookId);
+ * if (kind !== "claimed") return;
+ * try {
+ *   await handleWebhook();
+ *   await dedupe.commit(webhookId);
+ * } catch (err) {
+ *   dedupe.release(webhookId, { error: err });
+ * }
+ * ```
  */
 export function createClaimableDedupe(options: ClaimableDedupeOptions): ClaimableDedupe {
   const ttlMs = Math.max(0, Math.floor(options.ttlMs));
   const memoryMaxSize = Math.max(0, Math.floor(options.memoryMaxSize));
   const memory = new Map<string, MemoryRecord>();
 
+  /** TTL 过期 + maxSize 淘汰：committed 与 inflight 均过期才删除。 */
   function prune(now: number): void {
     if (ttlMs > 0) {
       for (const [key, record] of memory) {
@@ -165,6 +211,7 @@ export function createClaimableDedupe(options: ClaimableDedupeOptions): Claimabl
       const scoped = scopedKey(namespace, normalized);
       const record = memory.get(scoped);
       if (isRecordRecent(record, now, ttlMs)) return { kind: "duplicate", key: normalized };
+      // inflight 且未过期：其他协程正在处理
       if (record?.inflightAt != null && (ttlMs <= 0 || now - record.inflightAt < ttlMs)) {
         return { kind: "inflight", key: normalized };
       }
@@ -203,6 +250,7 @@ export function createClaimableDedupe(options: ClaimableDedupeOptions): Claimabl
       const scoped = scopedKey(namespace, normalized);
       const record = memory.get(scoped);
       if (!record) return;
+      // 已 commit 的不释放，保留 duplicate 语义
       if (record.committedAt != null) {
         memory.set(scoped, { committedAt: record.committedAt });
         return;

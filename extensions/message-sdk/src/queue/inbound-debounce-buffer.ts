@@ -1,8 +1,14 @@
 /**
- * Debounce/coalesce buffer for inbound bursts keyed by conversation or peer.
+ * @module queue/inbound-debounce-buffer
  *
- * 多数 IM/MQ 平台会把用户连续输入拆成多条事件。该缓冲器用于把同一会话短时间内的
- * 入站消息合并为一个 flush，从而减少 Agent 运行次数，同时保留按 key 隔离的语义。
+ * 按会话/peer key 聚合的入站 burst 防抖缓冲器。
+ *
+ * **职责**：将同一会话短时间内的多条入站事件合并为一次 flush，减少 Agent 运行次数，
+ * 同时保留按 key 隔离的语义与可选 `maxBatchSize` 上限保护。
+ *
+ * **适用场景**：用户连续输入被 IM 平台拆成多条 webhook/MQ 事件时的 coalesce 处理。
+ *
+ * **关键导出**：`createInboundDebounceBuffer`、`InboundDebounceFlush`、`InboundDebounceBuffer`
  */
 
 export type InboundDebounceFlushReason = "timer" | "manual" | "cancel";
@@ -10,10 +16,10 @@ export type InboundDebounceFlushReason = "timer" | "manual" | "cancel";
 /**
  * 一次防抖 flush 的输出结构。
  *
- * @property key - 会话、peer 或调用方自定义的聚合 key。
- * @property items - 本次被 flush 的原始条目。
- * @property value - `coalesce` 产出的聚合值；未提供 coalesce 时为 items。
- * @property reason - 触发 flush 的原因。
+ * @property key - 会话、peer 或调用方自定义的聚合 key
+ * @property items - 本次被 flush 的原始条目
+ * @property value - `coalesce` 产出的聚合值；未提供 coalesce 时为 items
+ * @property reason - 触发 flush 的原因（timer / manual / cancel）
  */
 export type InboundDebounceFlush<T, R> = {
   key: string;
@@ -25,11 +31,11 @@ export type InboundDebounceFlush<T, R> = {
 /**
  * 入站防抖缓冲配置。
  *
- * @property debounceMs - 最后一条消息后等待多久触发 timer flush。
- * @property resolveKey - 从入站条目中解析会话/peer key。
- * @property coalesce - 可选聚合函数，用于把多条消息合并为一个值。
- * @property onFlush - flush 回调，通常在这里调用 Agent 派发。
- * @property maxBatchSize - 达到该数量时立即 flush，避免超长批次。
+ * @property debounceMs - 最后一条消息后等待多久触发 timer flush
+ * @property resolveKey - 从入站条目中解析会话/peer key
+ * @property coalesce - 可选聚合函数，用于把多条消息合并为一个值
+ * @property onFlush - flush 回调，通常在这里调用 Agent 派发
+ * @property maxBatchSize - 达到该数量时立即 flush，避免超长批次
  */
 export type InboundDebounceBufferOptions<T, R = readonly T[]> = {
   debounceMs: number;
@@ -42,11 +48,11 @@ export type InboundDebounceBufferOptions<T, R = readonly T[]> = {
 /**
  * 入站防抖缓冲器实例。
  *
- * @property enqueue - 添加一个条目并重置对应 key 的定时器。
- * @property flush - 手动 flush 指定 key 或全部 key。
- * @property cancel - 丢弃指定 key 或全部 key 的待处理条目。
- * @property pendingKeys - 返回仍有待处理条目的 key。
- * @property pendingSize - 返回指定 key 或全部 key 的待处理数量。
+ * @property enqueue - 添加一个条目并重置对应 key 的 debounce 定时器
+ * @property flush - 手动 flush 指定 key 或全部 key
+ * @property cancel - 丢弃指定 key 或全部 key 的待处理条目（不触发 onFlush）
+ * @property pendingKeys - 返回仍有待处理条目的 key
+ * @property pendingSize - 返回指定 key 或全部 key 的待处理数量
  */
 export type InboundDebounceBuffer<T> = {
   enqueue: (item: T) => Promise<void>;
@@ -56,12 +62,15 @@ export type InboundDebounceBuffer<T> = {
   pendingSize: (key?: string) => number;
 };
 
+/** 每个 key 对应的待处理批次及其 debounce 定时器。 */
 type PendingBatch<T> = {
   items: T[];
   timer?: ReturnType<typeof setTimeout>;
+  /** 串行化同一 key 的 flush，避免 onFlush 并发重叠。 */
   flushing: Promise<void>;
 };
 
+/** 将空 key 归一化为 `default`。 */
 function normalizeDebounceKey(key: string): string {
   return key?.trim() || "default";
 }
@@ -69,8 +78,24 @@ function normalizeDebounceKey(key: string): string {
 /**
  * 创建按 key 聚合的入站防抖缓冲器。
  *
- * @param options - 防抖时间、key 解析、聚合函数和 flush 回调。
- * @returns 内存缓冲器；调用方需要在 shutdown 时调用 `flush` 或 `cancel`。
+ * **Debounce 语义**：每次 `enqueue` 会重置该 key 的 timer；静默 `debounceMs` 后触发 timer flush。
+ * 若配置了 `maxBatchSize`，批次达到上限时立即 manual flush，不再等待 timer。
+ *
+ * @param options - 防抖时间、key 解析、聚合函数和 flush 回调
+ * @returns 内存缓冲器；调用方需要在 shutdown 时调用 `flush` 或 `cancel`
+ *
+ * @example
+ * ```ts
+ * const buffer = createInboundDebounceBuffer({
+ *   debounceMs: 500,
+ *   resolveKey: (msg) => msg.conversationKey,
+ *   coalesce: (items) => items.map((i) => i.text).join("\n"),
+ *   onFlush: async ({ value, key }) => dispatchAgent(key, value),
+ * });
+ * await buffer.enqueue({ conversationKey: "c1", text: "hello" });
+ * await buffer.enqueue({ conversationKey: "c1", text: "world" });
+ * // 500ms 后 onFlush 收到合并后的 value
+ * ```
  */
 export function createInboundDebounceBuffer<T, R = readonly T[]>(
   options: InboundDebounceBufferOptions<T, R>,
@@ -96,6 +121,7 @@ export function createInboundDebounceBuffer<T, R = readonly T[]>(
     }
   }
 
+  /** 重置 debounce timer：最后一条消息到达后 debounceMs 再 flush。 */
   function scheduleFlush(key: string, batch: PendingBatch<T>): void {
     clearBatchTimer(batch);
     batch.timer = setTimeout(() => {
@@ -129,6 +155,8 @@ export function createInboundDebounceBuffer<T, R = readonly T[]>(
   return {
     /**
      * 添加一个条目，并为其 key 重新安排 timer flush。
+     *
+     * @param item - 入站条目
      */
     async enqueue(item) {
       const key = normalizeDebounceKey(options.resolveKey(item));
@@ -143,6 +171,8 @@ export function createInboundDebounceBuffer<T, R = readonly T[]>(
 
     /**
      * 手动 flush 一个 key；不传 key 时 flush 全部 key。
+     *
+     * @param key - 可选；指定时只 flush 该 key
      */
     async flush(key) {
       if (key != null) {
@@ -153,7 +183,9 @@ export function createInboundDebounceBuffer<T, R = readonly T[]>(
     },
 
     /**
-     * 丢弃一个 key 的待处理条目；不传 key 时丢弃全部待处理条目。
+     * 丢弃待处理条目（清除 timer，不触发 onFlush）。
+     *
+     * @param key - 可选；指定时只 cancel 该 key
      */
     cancel(key) {
       const keys = key == null ? [...pending.keys()] : [normalizeDebounceKey(key)];
@@ -167,6 +199,8 @@ export function createInboundDebounceBuffer<T, R = readonly T[]>(
 
     /**
      * 返回当前有待处理条目的 key。
+     *
+     * @returns key 列表
      */
     pendingKeys() {
       return [...pending.keys()];
@@ -174,6 +208,9 @@ export function createInboundDebounceBuffer<T, R = readonly T[]>(
 
     /**
      * 返回指定 key 或全部 key 的待处理条目数量。
+     *
+     * @param key - 可选；指定时只统计该 key
+     * @returns 待处理条目数
      */
     pendingSize(key) {
       if (key != null) {

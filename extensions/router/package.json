@@ -4,12 +4,12 @@
   "type": "module",
   "description": "企业级消息路由引擎 — 跨渠道消息转发、知识库/记忆自动注入",
   "license": "MIT",
-  "main": "index.ts",
+  "main": "dist/index.js",
   "files": [
-    "index.ts",
-    "src/",
+    "dist",
     "openclaw.plugin.json",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "repository": {
@@ -40,5 +40,10 @@
     "tsup": "^8.2.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
   }
 }

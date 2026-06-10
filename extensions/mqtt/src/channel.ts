@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/channel
+ *
  * OpenClaw MQTT 渠道定义。
  */
 

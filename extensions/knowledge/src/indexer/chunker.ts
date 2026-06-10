@@ -1,22 +1,29 @@
 /**
- * 文档索引器 — 文本切分策略
+ * @fileoverview 文档切分器 — 将长文本拆分为可嵌入的 `TextChunk` 序列。
  *
- * 支持基于文本长度和段落结构的智能切分。
+ * @description
+ * 采用 **字符窗口 + 重叠 + 语义边界优先** 策略：在 `maxChars` 内优先于段落/句号处断开，
+ * 避免硬切 mid-sentence；对尾部 overlap 做非递增保护，防止配置错误导致无限循环。
+ *
+ * **模块角色**：Knowledge Plugin · Ingest preprocessing。
+ * **关键依赖**：无外部 I/O，仅依赖 {@link TextChunk} 类型契约。
+ *
+ * @module knowledge/indexer/chunker
  */
 
 import type { TextChunk } from '../types.js';
 
-/** 切分配置 */
+/** 切分器运行时参数。 */
 export type ChunkerConfig = {
-  /** 每块最大字符数 */
+  /** 单块最大字符数（硬上限）。 */
   maxChars: number;
-  /** 块间重叠字符数 */
+  /** 相邻块重叠字符数，用于保留跨块上下文。 */
   overlapChars: number;
-  /** 最小块字符数（小于此的块被合并到前一块） */
+  /** 过小块合并阈值；末块可例外保留。 */
   minChars: number;
 };
 
-/** 默认切分配置 */
+/** 默认切分参数（约 1k 字符块 + 200 重叠）。 */
 const DEFAULT_CONFIG: ChunkerConfig = {
   maxChars: 1000,
   overlapChars: 200,
@@ -24,7 +31,12 @@ const DEFAULT_CONFIG: ChunkerConfig = {
 };
 
 /**
- * 将纯文本切分为块
+ * @description 将整篇文档文本切分为带偏移信息的块列表。
+ *
+ * @param text - 原始 UTF-8 文档正文。
+ * @param sourceId - 写入 metadata 的来源标识。
+ * @param config - 可选参数覆盖 {@link DEFAULT_CONFIG}。
+ * @returns 按文档顺序排列的 {@link TextChunk} 数组；空文本返回 `[]`。
  */
 export function chunkText(
   text: string,
@@ -35,10 +47,9 @@ export function chunkText(
   const chunks: TextChunk[] = [];
   let startOffset = 0;
 
-  // 空文本
   if (text.length === 0) return chunks;
 
-  // 如果文本很短，直接作为一块
+  // 短文整篇作为单块，避免无意义切分
   if (text.length <= maxChars) {
     chunks.push({
       text: text.trim(),
@@ -61,14 +72,15 @@ export function chunkText(
       index++;
     }
 
-    // 已经消费到文本末尾时必须立即退出；否则 overlap 会把起点回退，
-    // 下一轮仍然切到同一个 endOffset，导致长文本最后一段无限循环。
+    /*
+     * 已消费到文末必须立即退出；否则 overlap 回退会导致 endOffset 不变，
+     * 长文档尾部陷入无限循环。
+     */
     if (endOffset >= text.length) {
       break;
     }
 
-    // 计算下一次起始位置（含重叠）。当 overlapChars 过大时，保证起点
-    // 至少前进 1 个字符，避免配置错误造成非递增循环。
+    // overlap 过大时保证起点至少前进 1 字符
     startOffset = Math.max(endOffset - overlapChars, startOffset + 1);
   }
 
@@ -76,10 +88,15 @@ export function chunkText(
 }
 
 /**
- * 在[maxChars]范围内找到合适的分割点
- * 优先：段落边界 → 句子边界 → 字符边界（兜底）
+ * @description 在 `[start, start+maxChars)` 窗口内寻找最佳断点。
  *
- * 使用 lastIndexOf 替代 matchAll 展开迭代器，避免大文本场景的 OOM。
+ * 优先级：段落 `\n\n` → 中文句号 `。` → 硬截断。
+ * 使用 `lastIndexOf` 自后向前扫描，避免大文本 `matchAll` OOM。
+ *
+ * @param text - 全文。
+ * @param start - 当前块起始偏移。
+ * @param maxChars - 窗口宽度上限。
+ * @returns 不含 start 的结束偏移（开区间右端点）。
  */
 function findSplitPoint(text: string, start: number, maxChars: number): number {
   const end = Math.min(start + maxChars, text.length);
@@ -88,14 +105,11 @@ function findSplitPoint(text: string, start: number, maxChars: number): number {
   const minSplit = Math.ceil(maxChars * 0.3);
   const segment = text.slice(start, end);
 
-  // 从后向前找段落分隔符
   const paraIdx = segment.lastIndexOf('\n\n', end - start - minSplit);
   if (paraIdx !== -1) return start + paraIdx + 2;
 
-  // 从后向前找句号
   const sentIdx = segment.lastIndexOf('。', end - start - minSplit);
   if (sentIdx !== -1) return start + sentIdx + 1;
 
-  // 兜底：直接截断
   return end;
 }

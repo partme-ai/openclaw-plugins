@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 
-import { resolveWecomFailClosedOnDefaultRoute, shouldRejectWecomDefaultRoute } from "./routing.js";
+import { resolveWecomFailClosedOnDefaultRoute, shouldRejectWecomDefaultRoute } from "./resolvers.js";
 
 describe("resolveWecomFailClosedOnDefaultRoute", () => {
     it("defaults to true in matrix mode", () => {
         const cfg: OpenClawConfig = {
             channels: {
-                "wecom-cs": {
+                "wecom-kf": {
                     enabled: true,
                     accounts: {
                         a: { enabled: true, bot: { token: "t1", encodingAESKey: "k1" } },
@@ -21,7 +21,7 @@ describe("resolveWecomFailClosedOnDefaultRoute", () => {
     it("defaults to false in legacy mode", () => {
         const cfg: OpenClawConfig = {
             channels: {
-                "wecom-cs": {
+                "wecom-kf": {
                     enabled: true,
                     bot: { token: "t1", encodingAESKey: "k1" },
                 },
@@ -33,7 +33,7 @@ describe("resolveWecomFailClosedOnDefaultRoute", () => {
     it("respects explicit override", () => {
         const cfg: OpenClawConfig = {
             channels: {
-                "wecom-cs": {
+                "wecom-kf": {
                     enabled: true,
                     bot: { token: "t1", encodingAESKey: "k1" },
                     routing: { failClosedOnDefaultRoute: true },
@@ -47,7 +47,7 @@ describe("resolveWecomFailClosedOnDefaultRoute", () => {
 describe("shouldRejectWecomDefaultRoute", () => {
     const matrixCfg = {
         channels: {
-            "wecom-cs": {
+            "wecom-kf": {
                 enabled: true,
                 accounts: {
                     a: { enabled: true, bot: { token: "t1", encodingAESKey: "k1" } },

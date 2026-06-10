@@ -1,3 +1,9 @@
+/**
+ * @module wechat/messaging/error-notice
+ *
+ * 微信错误通知与用户提示。
+ */
+
 import { logger } from "../util/logger.js";
 import { sendMessageWeixin } from "./send.js";
 

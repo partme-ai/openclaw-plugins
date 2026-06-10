@@ -1,20 +1,14 @@
 /**
- * Agent Mode Capabilities - Index
+ * @module agent/capabilities
  *
- * Exports all agent mode capabilities for WeCom plugin
+ * Agent 模式 **能力模块** 聚合导出。
+ *
+ * 包含：Markdown  stripping、欢迎语、ASR、语音转码、Stream 状态等。
+ * 供插件注册或测试按需引用。
  */
 
-// Markdown stripping
 export * from "./markdown-strip.js";
-
-// Welcome messages
 export * from "./welcome.js";
-
-// Voice ASR
 export * from "./asr.js";
-
-// Voice transcoding
 export * from "./voice-transcode.js";
-
-// Stream mode
 export * from "./stream.js";

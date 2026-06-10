@@ -1,4 +1,6 @@
 /**
+ * @module mqtt/onboarding
+ *
  * MQTT 渠道 setupWizard — 内嵌 Aedes Broker 的声明式 CLI 配置。
  */
 

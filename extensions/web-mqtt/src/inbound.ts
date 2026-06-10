@@ -9,27 +9,18 @@ import { tryGetWebMqttRuntime } from "./runtime.js";
 import type { InboundEvent, WebMqttConfig } from "./types.js";
 import { getClientUsername } from "./transport/server.js";
 import { isUserActionAllowed } from "./transport/acl.js";
-import { createIdempotencyCache } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
-
-/** Web MQTT 入站幂等缓存。 */
-const idempotencyCache = createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10_000 });
-
-/**
- * 构造入站幂等键：优先 MQTT messageId，否则 client+topic+payload 指纹。
- */
-function resolveInboundIdempotencyKey(event: InboundEvent): string | undefined {
-  if (event.messageId) {
-    return event.messageId;
-  }
-  const payloadPreview = event.payload.toString("utf-8").slice(0, 200);
-  return `${event.clientId}:${event.topic}:${payloadPreview}`;
-}
+import { WEB_MQTT_CHANNEL_ID } from "./config/resolvers.js";
+import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
+import {
+  getWebMqttIdempotencyCache,
+  resolveWebMqttInboundIdempotencyKey,
+} from "./shared/wire-helpers.js";
 
 /**
  * 入站处理结果。
@@ -41,7 +32,11 @@ export type InboundResult = {
 };
 
 /**
- * 处理一条入站消息并分发到 OpenClaw。
+ * 处理一条入站 MQTT 消息并分发到 OpenClaw。
+ *
+ * @param event - 入站事件（clientId、topic、payload 等）
+ * @param config - 当前 Web MQTT 通道配置
+ * @returns 是否接受及拒绝原因、路由来源
  */
 export async function processInbound(event: InboundEvent, config: WebMqttConfig): Promise<InboundResult> {
   const route = resolveInboundRoute(event.topic, config);
@@ -52,13 +47,14 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
     return { accepted: false, reason: "payload_too_large" };
   }
 
-  const idempotencyKey = resolveInboundIdempotencyKey(event);
+  const payloadText = event.payload.toString("utf-8");
+  const idempotencyKey = resolveWebMqttInboundIdempotencyKey(event, payloadText);
   const parsed = normalizeWireIngress({
-    rawPayload: event.payload.toString("utf-8"),
-    mode: config.payload.mode,
-    channel: "mqtt-ws",
+    rawPayload: payloadText,
+    mode: resolvePayloadMode(config.payload.mode),
+    channel: WEB_MQTT_CHANNEL_ID,
     idempotencyKey,
-    idempotency: idempotencyCache,
+    idempotency: getWebMqttIdempotencyCache(),
   });
   if (!parsed.accepted) {
     return { accepted: false, reason: "duplicate" };
@@ -74,7 +70,7 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
   }
 
   const { agentId, sessionKey } = await resolveChannelDispatchIdentity(runtime as unknown as BridgePluginRuntime, {
-    channel: "mqtt-ws",
+    channel: WEB_MQTT_CHANNEL_ID,
     accountId: route.accountId,
     peerId: event.clientId,
     agentId: route.agentId,
@@ -109,7 +105,7 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
   await dispatchChannelMessage({
     mode: "reply-pipeline",
     runtime: runtime as unknown as BridgePluginRuntime,
-    channel: "mqtt-ws",
+    channel: WEB_MQTT_CHANNEL_ID,
     accountId: route.accountId,
     peerId: event.clientId,
     text,
