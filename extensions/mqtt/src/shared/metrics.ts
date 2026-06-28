@@ -2,56 +2,108 @@
  * @fileoverview MQTT Prometheus metrics collector — 委托 message-sdk/transport 共享工厂。
  *
  * @module mqtt/shared/metrics
+ *
+ * prom-client 为可选依赖：未安装时指标更新函数静默 no-op，避免插件加载失败。
  */
 
-import { createTransportMetrics, type TransportMetrics } from "@partme.ai/openclaw-message-sdk/transport/metrics";
+import {
+  createTransportMetrics,
+  type TransportMetrics,
+} from "@partme.ai/openclaw-message-sdk/transport/metrics";
 
-/** MQTT 专用 TransportMetrics 实例 */
-const m: TransportMetrics = createTransportMetrics({ prefix: "mqtt_" });
+let metrics: TransportMetrics | null | undefined;
 
-// ──────────────────── 便捷导出 ────────────────────
-
-export const getMetrics = m.getMetrics;
-export const getMetricsJson = m.getMetricsJson;
-
-// ──────────────────── 更新函数 ────────────────────
-
-export function updateConnectionMetrics(connected: number, connections: number, disconnections: number): void {
-  m.setConnectedClients(connected);
-  m.incConnections(connections);
-  m.incDisconnections(disconnections);
+/**
+ * 懒加载 TransportMetrics；prom-client 缺失时返回 null。
+ */
+function getMetricsInstance(): TransportMetrics | null {
+  if (metrics !== undefined) {
+    return metrics;
+  }
+  try {
+    metrics = createTransportMetrics({ prefix: "mqtt_" });
+  } catch {
+    metrics = null;
+  }
+  return metrics;
 }
 
-export function updateMessageMetrics(topic: string, qos: 0 | 1 | 2, direction: "inbound" | "outbound"): void {
+/** 导出 Prometheus 文本指标；未启用 metrics 时返回空字符串。 */
+export async function getMetrics(): Promise<string> {
+  const instance = getMetricsInstance();
+  return instance ? instance.getMetrics() : "";
+}
+
+/** 导出 Prometheus JSON 指标；未启用 metrics 时返回空数组。 */
+export async function getMetricsJson(): Promise<unknown> {
+  const instance = getMetricsInstance();
+  return instance ? instance.getMetricsJson() : [];
+}
+
+/**
+ * 更新连接相关指标。
+ */
+export function updateConnectionMetrics(
+  connected: number,
+  connections: number,
+  disconnections: number,
+): void {
+  const instance = getMetricsInstance();
+  if (!instance) return;
+  instance.setConnectedClients(connected);
+  instance.incConnections(connections);
+  instance.incDisconnections(disconnections);
+}
+
+/**
+ * 更新消息收发指标。
+ */
+export function updateMessageMetrics(
+  topic: string,
+  qos: 0 | 1 | 2,
+  direction: "inbound" | "outbound",
+): void {
+  const instance = getMetricsInstance();
+  if (!instance) return;
   const labels = { topic, qos: `qos${qos}` };
   if (direction === "inbound") {
-    m.incMessagesReceived(labels);
+    instance.incMessagesReceived(labels);
   } else {
-    m.incMessagesPublished(labels);
+    instance.incMessagesPublished(labels);
   }
 }
 
+/**
+ * 更新丢弃消息指标。
+ */
 export function updateDroppedMetrics(reason: "oversized" | "qos0_soft_limit" | "auth"): void {
-  m.incMessagesDropped({ reason });
+  getMetricsInstance()?.incMessagesDropped({ reason });
 }
 
+/** 更新 QoS0 软限丢弃计数。 */
 export function updateQos0Dropped(): void {
-  m.incMessagesDropped({ reason: "qos0_soft_limit" });
+  getMetricsInstance()?.incMessagesDropped({ reason: "qos0_soft_limit" });
 }
 
+/** 记录消息处理延迟。 */
 export function updateMessageLatency(latencyMs: number): void {
-  m.observeMessageLatency(latencyMs);
+  getMetricsInstance()?.observeMessageLatency(latencyMs);
 }
 
+/** 更新认证尝试指标。 */
 export function updateAuthMetrics(success: boolean): void {
-  m.incAuthAttempts(success);
+  getMetricsInstance()?.incAuthAttempts(success);
 }
 
+/** 更新 ACL 拒绝指标。 */
 export function updateAclDenials(action: string, topic: string): void {
-  m.incAclDenials({ action, topic });
+  getMetricsInstance()?.incAclDenials({ action, topic });
 }
 
+/** 更新会话指标。 */
 export function updateSessionMetrics(active: number, pendingExpiry: number): void {
-  m.setActiveSessions(active);
-  m.setSessionsPendingExpiry(pendingExpiry);
+  const instance = getMetricsInstance();
+  if (!instance) return;
+  instance.setActiveSessions(active);
+  instance.setSessionsPendingExpiry(pendingExpiry);
 }

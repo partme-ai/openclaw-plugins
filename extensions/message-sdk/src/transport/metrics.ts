@@ -6,21 +6,27 @@
  * ⚠️ 可选依赖：需要安装 `prom-client`。未安装时调用 createTransportMetrics 会抛错。
  */
 
-let Registry: typeof import("prom-client").Registry;
-let Counter: typeof import("prom-client").Counter;
-let Gauge: typeof import("prom-client").Gauge;
-let Histogram: typeof import("prom-client").Histogram;
-let collectDefaultMetrics: typeof import("prom-client").collectDefaultMetrics;
+import { createRequire } from "node:module";
 
-try {
-  const promClient = await import("prom-client");
-  Registry = promClient.Registry;
-  Counter = promClient.Counter;
-  Gauge = promClient.Gauge;
-  Histogram = promClient.Histogram;
-  collectDefaultMetrics = promClient.collectDefaultMetrics;
-} catch {
-  // prom-client is optional; createTransportMetrics will throw if called without it.
+const require = createRequire(import.meta.url);
+
+type PromClientModule = typeof import("prom-client");
+
+let promClientModule: PromClientModule | null | undefined;
+
+/**
+ * 懒加载 prom-client，避免顶层 await 在 OpenClaw jiti(CJS) 插件加载路径下报错。
+ */
+function loadPromClientModule(): PromClientModule | null {
+  if (promClientModule !== undefined) {
+    return promClientModule;
+  }
+  try {
+    promClientModule = require("prom-client") as PromClientModule;
+  } catch {
+    promClientModule = null;
+  }
+  return promClientModule;
 }
 
 // ──────────────────── 类型 ────────────────────
@@ -54,79 +60,81 @@ export interface TransportMetricsOptions {
  * ⚠️ 需要 `prom-client` 已安装，否则抛错。
  */
 export function createTransportMetrics(opts: TransportMetricsOptions): TransportMetrics {
-  if (!Registry) {
+  const promClient = loadPromClientModule();
+  if (!promClient) {
     throw new Error(
       "prom-client is required for createTransportMetrics. Install it with: pnpm add prom-client",
     );
   }
 
+  const { Registry, Counter, Gauge, Histogram, collectDefaultMetrics } = promClient;
   const { prefix } = opts;
   const registry = new Registry();
 
-  collectDefaultMetrics!({ register: registry, prefix });
+  collectDefaultMetrics({ register: registry, prefix });
 
-  const connectedClients = new Gauge!({
+  const connectedClients = new Gauge({
     name: `${prefix}connected_clients`,
     help: "Current number of connected clients",
     registers: [registry],
   });
-  const connectionsTotal = new Counter!({
+  const connectionsTotal = new Counter({
     name: `${prefix}connections_total`,
     help: "Total connections since start",
     registers: [registry],
   });
-  const disconnectionsTotal = new Counter!({
+  const disconnectionsTotal = new Counter({
     name: `${prefix}disconnections_total`,
     help: "Total disconnections since start",
     registers: [registry],
   });
 
-  const messagesPublished = new Counter!({
+  const messagesPublished = new Counter({
     name: `${prefix}messages_published_total`,
     help: "Total messages published since start",
     labelNames: ["topic", "qos"],
     registers: [registry],
   });
-  const messagesReceived = new Counter!({
+  const messagesReceived = new Counter({
     name: `${prefix}messages_received_total`,
     help: "Total messages received since start",
     labelNames: ["topic", "qos"],
     registers: [registry],
   });
-  const messagesDropped = new Counter!({
+  const messagesDropped = new Counter({
     name: `${prefix}messages_dropped_total`,
     help: "Total messages dropped",
     labelNames: ["reason"],
     registers: [registry],
   });
 
-  const messageLatency = new Histogram!({
+  const messageLatency = new Histogram({
     name: `${prefix}message_latency_seconds`,
     help: "Message processing latency in seconds",
     buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
     registers: [registry],
   });
 
-  const authAttempts = new Counter!({
+  const authAttempts = new Counter({
     name: `${prefix}auth_attempts_total`,
     help: "Total authentication attempts",
     labelNames: ["result"],
     registers: [registry],
   });
 
-  const aclDenials = new Counter!({
+  const aclDenials = new Counter({
     name: `${prefix}acl_denials_total`,
     help: "Total ACL denials",
     labelNames: ["action", "topic"],
     registers: [registry],
   });
 
-  const activeSessions = new Gauge!({
+  const activeSessions = new Gauge({
     name: `${prefix}active_sessions`,
     help: "Current active sessions",
     registers: [registry],
   });
-  const sessionsPendingExpiry = new Gauge!({
+  const sessionsPendingExpiry = new Gauge({
     name: `${prefix}sessions_pending_expiry`,
     help: "Sessions pending expiry",
     registers: [registry],
