@@ -1,295 +1,191 @@
-/**
- * @fileoverview openclaw-memory — 企业级长期记忆插件（L0 录制 + L1 提取 + 关键词召回）。
- *
- * @module memory
- *
- * 遵循 OpenClaw Memory Host SDK 契约：
- * - 声明 kind: "memory"（OpenClaw 自动识别为记忆插件，无需手动监听事件注入）
- * - 实现 MemorySearchManager 接口
- * - 框架自动处理记忆召回、上下文注入、flush 等时机
- * - 插件只负责：存储（L0录制）、提取（L1关键词）、搜索（MemorySearchManager.search）
- *
- * 存储：本地 JSONL（L0 对话 + L1 记忆记录）
- * 搜索：关键词匹配（零外部依赖）
- */
-
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import type {
-  MemorySearchManager,
-  MemorySearchResult,
-  MemoryProviderStatus,
-  MemoryEmbeddingProbeResult,
-} from "openclaw/plugin-sdk/memory-core-host-engine-storage";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as crypto from "node:crypto";
+import {
+  buildJsonPluginConfigSchema,
+  definePluginEntry,
+  type OpenClawPluginDefinition,
+  type OpenClawPluginToolContext,
+} from "openclaw/plugin-sdk/plugin-entry";
 
-// ============================================================================
-// 配置
-// ============================================================================
+import { resolveConfig } from "./config.js";
+import {
+  buildMemoryRecords,
+  generateId,
+  normalizeTurnMessages,
+  sessionCounters,
+  shouldExtract,
+} from "./extraction.js";
+import { MemoryStore } from "./store.js";
+import { extractKeywords, keywordScore } from "./text.js";
 
-/** Memory 插件运行时配置（来自 `pluginConfig` + 默认值）。 */
-interface MemoryConfig {
-  enabled: boolean;
-  dataDir: string;
-  maxSearchResults: number;
-  retentionDays: number;
-}
-
-/** 默认 Memory 配置（`~/.openclaw/state/memory`、90 天保留等）。 */
-const DEFAULTS: MemoryConfig = {
-  enabled: true,
-  dataDir: "~/.openclaw/state/memory",
-  maxSearchResults: 10,
-  retentionDays: 90,
+const configSchema = {
+  type: "object" as const,
+  additionalProperties: false,
+  properties: {
+    enabled: { type: "boolean" as const, default: true },
+    dataDir: { type: "string" as const, default: "~/.openclaw/state/memory" },
+    maxSearchResults: { type: "number" as const, minimum: 1, maximum: 100, default: 10 },
+    retentionDays: { type: "number" as const, minimum: 1, maximum: 3650, default: 90 },
+    extractionInterval: { type: "number" as const, minimum: 1, maximum: 100, default: 5 },
+    maxRecordBytes: { type: "number" as const, minimum: 1024, maximum: 1048576, default: 65536 },
+    profileScope: { type: "string" as const, enum: ["session", "agent"], default: "session" },
+    encryptionKeyEnv: { type: "string" as const },
+  },
 };
 
-/**
- * 合并插件配置与默认值，并展开 `~` 为 HOME 目录。
- *
- * @param api - OpenClaw 插件 API（读取 `pluginConfig`）
- * @returns 解析后的 Memory 配置
- */
-function resolveConfig(api: OpenClawPluginApi): MemoryConfig {
-  const r = (api.pluginConfig ?? {}) as Partial<MemoryConfig>;
-  const c = { ...DEFAULTS, ...r };
-  if (c.dataDir.startsWith("~")) c.dataDir = path.join(process.env.HOME ?? "/root", c.dataDir.slice(1));
-  return c;
-}
-
-// ============================================================================
-// 数据管理
-// ============================================================================
-
-/**
- * 确保 L0/L1 存储目录存在（conversations、records）。
- *
- * @param base - 数据根目录
- */
-function initDirs(base: string): void {
-  for (const d of ["conversations", "records"]) fs.mkdirSync(path.join(base, d), { recursive: true });
-}
-
-/**
- * 生成时间戳 + 随机 hex 的唯一 ID。
- *
- * @returns 形如 `{timestamp}_{hex}` 的字符串
- */
-export function generateId(): string {
-  return `${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-}
-
-// ============================================================================
-// 关键词搜索
-// ============================================================================
-
-/**
- * 从文本提取去重关键词（中英文/数字，长度 ≥ 2）。
- *
- * @param text - 原始文本
- * @returns 去重后的关键词数组
- */
-export function extractKeywords(text: string): string[] {
-  return [...new Set(text.replace(/[^一-龥a-zA-Z0-9]/g, " ").split(/\s+/).filter((w) => w.length >= 2))];
-}
-
-/**
- * 计算查询词在内容中的命中比例（0–1）。
- *
- * @param query - 搜索查询
- * @param content - 待匹配的记忆内容
- * @returns 命中词数 / 查询词总数；无查询词时返回 0
- */
-export function keywordScore(query: string, content: string): number {
-  const qWords = extractKeywords(query);
-  if (qWords.length === 0) return 0;
-  const lower = content.toLowerCase();
-  let hits = 0;
-  for (const w of qWords) if (lower.includes(w.toLowerCase())) hits++;
-  return hits / qWords.length;
-}
-
-// ============================================================================
-// 录制与提取
-// ============================================================================
-
-/**
- * 将 agent_end 消息追加写入 L0 对话 JSONL（按日分文件）。
- *
- * @param base - 数据根目录
- * @param sessionKey - OpenClaw session 键
- * @param messages - 本轮对话消息列表
- */
-function recordMessages(base: string, sessionKey: string, messages: Array<{ role: string; content: string }>): void {
-  const date = new Date().toISOString().slice(0, 10);
-  const file = path.join(base, "conversations", `${date}.jsonl`);
-  const now = Date.now();
-  for (const msg of messages) {
-    fs.appendFileSync(file, JSON.stringify({ id: generateId(), role: msg.role, content: msg.content, timestamp: now, sessionKey }) + "\n");
-  }
-}
-
-/**
- * 从用户消息提取关键词并写入 L1 记忆 JSONL（episodic 类型）。
- *
- * @param base - 数据根目录
- * @param sessionKey - OpenClaw session 键
- * @param messages - 本轮对话消息列表（仅处理 role=user）
- */
-function extractMemories(base: string, sessionKey: string, messages: Array<{ role: string; content: string }>): void {
-  const date = new Date().toISOString().slice(0, 10);
-  const file = path.join(base, "records", `${date}.jsonl`);
-  for (const msg of messages) {
-    if (msg.role !== "user") continue;
-    const keywords = extractKeywords(msg.content);
-    if (keywords.length <= 2) continue;
-    fs.appendFileSync(file, JSON.stringify({ id: generateId(), content: `用户提到：${keywords.join("、")}。${msg.content.slice(0, 300)}`, type: "episodic", sessionKey, createdAt: new Date().toISOString() }) + "\n");
-  }
-}
-
-/**
- * 各 session 的用户消息计数，用于控制 L1 提取频率（每 N 条触发一次）。
- *
- * @remarks 键为 OpenClaw sessionKey，值为累计计数
- */
-export const sessionCounters = new Map<string, number>();
-
-/**
- * 判断当前 session 是否应触发 L1 记忆提取（每 N 条用户消息一次）。
- *
- * @param sessionKey - OpenClaw session 键
- * @param everyN - 提取间隔（默认每 5 条）
- * @returns 是否应执行 extractMemories
- */
-export function shouldExtract(sessionKey: string, everyN = 5): boolean {
-  const c = (sessionCounters.get(sessionKey) ?? 0) + 1;
-  sessionCounters.set(sessionKey, c);
-  return c % everyN === 0;
-}
-
-// ============================================================================
-// MemorySearchManager — 框架通过此接口自动召回记忆
-// ============================================================================
-
-/**
- * 创建基于本地 JSONL 的关键词 MemorySearchManager。
- *
- * @param base - 数据根目录（含 conversations/、records/ 子目录）
- * @returns 实现 Memory Host SDK 搜索/读取/status 接口的管理器
- */
-export function createSearchManager(base: string): MemorySearchManager {
+function createMemoryTool(store: MemoryStore, context: OpenClawPluginToolContext, maxResults: number) {
+  const agentId = context.agentId?.trim() || "main";
+  const manager = store.createSearchManager(agentId);
   return {
-    async search(query, opts) {
-      const results: MemorySearchResult[] = [];
-      const dir = path.join(base, "records");
-      if (!fs.existsSync(dir)) return results;
-
-      for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl")).sort().reverse().slice(0, 30)) {
-        let n = 0;
-        for (const line of fs.readFileSync(path.join(dir, file), "utf-8").split("\n")) {
-          n++;
-          if (!line.trim()) continue;
-          try {
-            const r = JSON.parse(line);
-            const s = keywordScore(query, r.content);
-            if (s > 0) results.push({ path: `records/${file}`, startLine: n, endLine: n, score: s, snippet: r.content.slice(0, 200), source: "memory" });
-          } catch { /* skip */ }
-        }
-      }
-      results.sort((a, b) => b.score - a.score);
-      return results.slice(0, opts?.maxResults ?? 10);
+    name: "memory_search",
+    label: "Memory Search",
+    description: "搜索当前 Agent 的长期记忆；默认按会话隔离。",
+    parameters: {
+      type: "object" as const,
+      additionalProperties: false,
+      properties: {
+        query: { type: "string" as const, minLength: 1, description: "搜索查询" },
+        limit: { type: "number" as const, minimum: 1, maximum: 100, description: "返回上限" },
+      },
+      required: ["query"],
     },
-
-    async readFile({ relPath, from, lines }) {
-      const fp = path.join(base, relPath);
-      if (!fs.existsSync(fp)) return { text: "", path: relPath };
-      let text = fs.readFileSync(fp, "utf-8");
-      if (from != null) { const ls = text.split("\n"); text = ls.slice(from, lines != null ? from + lines : ls.length).join("\n"); }
-      return { text, path: relPath };
-    },
-
-    status(): MemoryProviderStatus {
-      return { backend: "builtin", provider: "keyword", files: 0, sources: ["memory"], workspaceDir: base };
-    },
-
-    async probeEmbeddingAvailability(): Promise<MemoryEmbeddingProbeResult> {
-      return { ok: false, checked: true, checkedAtMs: Date.now() };
-    },
-
-    async probeVectorAvailability(): Promise<boolean> {
-      return false;
+    async execute(_id: string, params: Record<string, unknown>) {
+      const query = typeof params.query === "string" ? params.query.trim() : "";
+      if (!query) throw new Error("query must not be empty");
+      const requested = typeof params.limit === "number" ? params.limit : maxResults;
+      const results = await manager.search(query, {
+        maxResults: Math.min(Math.max(Math.floor(requested), 1), maxResults),
+        ...(context.sessionKey ? { sessionKey: context.sessionKey } : {}),
+      });
+      return {
+        content: [{
+          type: "text" as const,
+          text: results.length === 0
+            ? "未找到相关记忆。"
+            : results.map((result, index) => `${index + 1}. ${result.snippet} (${result.citation})`).join("\n"),
+        }],
+        details: { count: results.length, agentId, sessionScoped: Boolean(context.sessionKey) },
+      };
     },
   };
 }
 
-// ============================================================================
-// 插件入口
-// ============================================================================
-
-/** OpenClaw Memory 插件定义（kind=memory，注册 runtime + memory_search 工具）。 */
-const plugin = {
+const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "memory",
   name: "Memory",
-  kind: "memory" as const,
-  description: "企业级长期记忆系统 — L0 对话录制 + L1 记忆提取，遵循 OpenClaw Memory Host SDK",
-  configSchema: { type: "object" as const, additionalProperties: true, properties: {} },
-
-  /**
-   * 注册 Memory runtime、memory_search 工具与 agent_end 录制/提取钩子。
-   *
-   * @param api - OpenClaw 插件 API
-   */
+  kind: "memory",
+  description: "本地分层长期记忆：L0 对话、L1 情景、L2 场景、L3 画像，支持隔离、保留和可选加密",
+  configSchema: buildJsonPluginConfigSchema(configSchema, { cacheKey: "openclaw-memory" }),
   register(api: OpenClawPluginApi) {
-    const cfg = resolveConfig(api);
-    if (!cfg.enabled) { api.logger.info("[memory] Disabled"); return; }
+    if (api.registrationMode !== "full") return;
+    const config = resolveConfig(api);
+    if (!config.enabled) {
+      api.logger.info("[memory] disabled");
+      return;
+    }
 
-    initDirs(cfg.dataDir);
-    const manager = createSearchManager(cfg.dataDir);
+    const store = new MemoryStore(config);
+    const managers = new Map<string, ReturnType<MemoryStore["createSearchManager"]>>();
+    let cleanupTimer: NodeJS.Timeout | undefined;
+    const managerFor = (agentId: string) => {
+      const key = agentId.trim() || "main";
+      const existing = managers.get(key);
+      if (existing) return existing;
+      const manager = store.createSearchManager(key);
+      managers.set(key, manager);
+      return manager;
+    };
 
-    // 注册 Memory runtime — 框架按 agent/purpose 拉取 manager 并在 before_prompt_build 时注入记忆。
+    api.registerService({
+      id: "openclaw-memory-store",
+      start: async ({ logger }) => {
+        await store.initialize();
+        const removed = await store.cleanup();
+        if (removed > 0) logger.info(`[memory] retention cleanup removed ${removed} expired file(s)`);
+        cleanupTimer = setInterval(() => {
+          store.cleanup().then((count) => {
+            if (count > 0) logger.info(`[memory] retention cleanup removed ${count} expired file(s)`);
+          }).catch((error: unknown) => logger.warn(`[memory] retention cleanup failed: ${String(error)}`));
+        }, 24 * 60 * 60 * 1000);
+        cleanupTimer.unref();
+      },
+      stop: async () => {
+        if (cleanupTimer) clearInterval(cleanupTimer);
+        cleanupTimer = undefined;
+        await store.close();
+        managers.clear();
+        sessionCounters.clear();
+      },
+    });
+
     api.registerMemoryCapability({
       runtime: {
-        async getMemorySearchManager() {
-          return { manager };
+        async getMemorySearchManager({ agentId }) {
+          return { manager: managerFor(agentId) };
         },
         resolveMemoryBackendConfig() {
           return { backend: "builtin" };
         },
-      },
-    });
-    api.logger.info("[memory] Memory runtime registered — framework handles injection");
-
-    // memory_search 工具 — Agent 主动搜索
-    api.registerTool({
-      name: "memory_search",
-      label: "Memory Search",
-      description: "搜索用户的长期记忆。",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "搜索查询" },
-          limit: { type: "number", description: "返回上限 (默认10)" },
+        async closeMemorySearchManager({ agentId }) {
+          const manager = managers.get(agentId);
+          await manager?.close?.();
+          managers.delete(agentId);
         },
-        required: ["query"],
+        async closeAllMemorySearchManagers() {
+          await Promise.all([...managers.values()].map((manager) => manager.close?.()));
+          managers.clear();
+        },
       },
-      async execute(_id: string, params: Record<string, unknown>) {
-        const results = await manager.search(String(params.query ?? ""), { maxResults: Math.min(Math.max(Number(params.limit) || 10, 1), 20) });
-        return { content: [{ type: "text" as const, text: results.length === 0 ? "未找到相关记忆。" : results.map((r, i) => `${i + 1}. ${r.snippet}`).join("\n") }], details: { count: results.length } };
-      },
-    }, { name: "memory_search" });
-
-    // agent_end: L0 录制 + L1 提取
-    api.on("agent_end", (event, ctx) => {
-      const e = event as Record<string, unknown>;
-      const msgs = (Array.isArray(e.messages) ? e.messages : []) as Array<{ role: string; content: string }>;
-      if (msgs.length === 0 || !e.success) return;
-      const sk = ctx.sessionKey ?? "unknown";
-      recordMessages(cfg.dataDir, sk, msgs);
-      if (shouldExtract(sk)) extractMemories(cfg.dataDir, sk, msgs);
     });
 
-    api.logger.info("[memory] Registered — kind=memory, L0 capture, L1 extraction, memory_search tool");
+    api.registerTool(
+      (context) => createMemoryTool(store, context, config.maxSearchResults),
+      { name: "memory_search" },
+    );
+
+    api.on("agent_end", async (event, context) => {
+      if (!event.success) return;
+      const messages = normalizeTurnMessages(event.messages);
+      if (messages.length === 0) return;
+      const agentId = context.agentId?.trim() || "main";
+      const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim() || "unknown";
+      const runId = event.runId?.trim();
+      try {
+        const appended = await store.appendTurn({
+          id: generateId(),
+          level: "L0",
+          type: "conversation",
+          agentId,
+          sessionKey,
+          ...(context.senderId ? { senderId: context.senderId } : {}),
+          ...(runId ? { runId } : {}),
+          messages,
+          createdAt: new Date().toISOString(),
+        });
+        if (!appended) return;
+        const counterKey = `${agentId}\u0000${sessionKey}`;
+        await store.appendRecords(buildMemoryRecords({
+          agentId,
+          sessionKey,
+          ...(context.senderId ? { senderId: context.senderId } : {}),
+          ...(runId ? { runId } : {}),
+          messages,
+          createScenario: shouldExtract(counterKey, config.extractionInterval),
+        }));
+      } catch (error) {
+        api.logger.warn(`[memory] failed to persist completed turn: ${String(error)}`);
+      }
+    });
+
+    api.logger.info(
+      `[memory] registered (retention=${config.retentionDays}d, encrypted=${Boolean(config.encryptionKeyEnv)}, profileScope=${config.profileScope})`,
+    );
   },
-};
+});
+
+export { resolveConfig } from "./config.js";
+export { buildMemoryRecords, generateId, normalizeTurnMessages, sessionCounters, shouldExtract } from "./extraction.js";
+export { MemoryStore } from "./store.js";
+export { extractKeywords, keywordScore } from "./text.js";
+export type * from "./model.js";
 
 export default plugin;

@@ -84,6 +84,8 @@ export function resolveDouyinAccount(
     configured: Boolean(app_key && app_secret),
     app_key,
     app_secret,
+    account_id: merged.account_id ?? merged.shop_id,
+    poi_id: merged.poi_id,
     shop_id: merged.shop_id,
     webhook_path,
     config: getRawAccountConfig(channelCfg, id),

@@ -22,7 +22,7 @@ describe("subscription manager", () => {
     addSubscription("conn-1", {
       id: "sub-1",
       destination: "/topic/chat",
-      ackMode: "auto",
+      ack: "auto",
     });
 
     const subs = getSubscribers("/topic/chat");
@@ -35,28 +35,34 @@ describe("subscription manager", () => {
   });
 
   it("lists subscriptions for a connection", () => {
-    addSubscription("conn-1", { id: "sub-a", destination: "/topic/a", ackMode: "auto" });
-    addSubscription("conn-1", { id: "sub-b", destination: "/topic/b", ackMode: "auto" });
+    addSubscription("conn-1", { id: "sub-a", destination: "/topic/a", ack: "auto" });
+    addSubscription("conn-1", { id: "sub-b", destination: "/topic/b", ack: "auto" });
 
     expect(getConnectionSubscriptions("conn-1")).toHaveLength(2);
   });
 
+  it("rejects duplicate subscription ids on one connection", () => {
+    expect(addSubscription("conn-1", { id: "same", destination: "/topic/a", ack: "auto" })).toBe(true);
+    expect(addSubscription("conn-1", { id: "same", destination: "/topic/b", ack: "auto" })).toBe(false);
+    expect(getConnectionSubscriptions("conn-1")).toHaveLength(1);
+  });
+
   it("removes a single subscription", () => {
-    addSubscription("conn-1", { id: "sub-rm", destination: "/topic/rm", ackMode: "auto" });
+    addSubscription("conn-1", { id: "sub-rm", destination: "/topic/rm", ack: "auto" });
     removeSubscription("conn-1", "sub-rm");
     expect(getSubscribers("/topic/rm")).toHaveLength(0);
   });
 
   it("removeAllSubscriptions clears connection subscriptions", () => {
-    addSubscription("conn-2", { id: "sub-x", destination: "/topic/x", ackMode: "auto" });
+    addSubscription("conn-2", { id: "sub-x", destination: "/topic/x", ack: "auto" });
     removeAllSubscriptions("conn-2");
     expect(getConnectionSubscriptions("conn-2")).toHaveLength(0);
     expect(getSubscriptionStats().totalSubscriptions).toBe(0);
   });
 
   it("tracks aggregate stats", () => {
-    addSubscription("conn-1", { id: "sub-1", destination: "/topic/one", ackMode: "auto" });
-    addSubscription("conn-2", { id: "sub-2", destination: "/topic/two", ackMode: "auto" });
+    addSubscription("conn-1", { id: "sub-1", destination: "/topic/one", ack: "auto" });
+    addSubscription("conn-2", { id: "sub-2", destination: "/topic/two", ack: "auto" });
 
     const stats = getSubscriptionStats();
     expect(stats.totalSubscriptions).toBe(2);

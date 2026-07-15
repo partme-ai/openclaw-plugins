@@ -37,6 +37,8 @@ export interface MqttTopicBinding {
  * MQTT Channel 配置（channels.mqtt）
  */
 export interface MqttChannelConfig {
+  /** TCP 监听地址；默认仅 loopback */
+  host?: string;
   /** TCP 监听端口 */
   port: number;
   /** WebSocket 监听端口（兼容字段，当前不启用） */
@@ -73,6 +75,8 @@ export interface MqttChannelConfig {
  * MQTT Broker 配置
  */
 export interface MqttBrokerConfig {
+  /** TCP 监听地址；默认仅 loopback */
+  host?: string;
   /** TCP 端口，默认 1883 */
   port: number;
   /** WebSocket 端口，默认 8883 */
@@ -217,6 +221,8 @@ export interface MqttPersistenceConfig {
     password?: string;
     keyPrefix?: string;
     subscriptionTTL?: number;
+    /** 离线 QoS 消息 TTL（秒，0 表示不限制） */
+    packetTTL?: number;
     retainedTTL?: number;
   };
   /** MongoDB 配置 */

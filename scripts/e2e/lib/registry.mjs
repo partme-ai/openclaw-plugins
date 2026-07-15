@@ -34,7 +34,6 @@ export const EXTENSION_INVENTORY = [
   { id: "amap", filter: "@partme.ai/openclaw-amap", dir: "extensions/amap", type: "channel", category: "webhook-platform", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "meituan", filter: "@partme.ai/openclaw-meituan", dir: "extensions/meituan", type: "channel", category: "webhook-platform", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "bridge", filter: "@partme.ai/openclaw-bridge", dir: "extensions/bridge", type: "capability", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
-  { id: "cluster", filter: "@partme.ai/openclaw-cluster", dir: "extensions/cluster", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "router", filter: "@partme.ai/openclaw-router", dir: "extensions/router", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "nacos", filter: "@partme.ai/openclaw-nacos", dir: "extensions/nacos", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "mtls", filter: "@partme.ai/openclaw-mtls", dir: "extensions/mtls", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },

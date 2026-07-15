@@ -30,7 +30,7 @@ import type { ChannelLimitsOpenClawConfig } from "@partme.ai/openclaw-message-sd
 
 import { resolveRabbitmqAgentReplyTimeoutMs } from "./config/resolvers.js";
 import {
-  getRabbitmqIdempotencyCache,
+  getRabbitmqClaimableDedupe,
   mapRabbitmqWirePayloadMode,
 } from "./shared/wire-helpers.js";
 import type { InboundEvent } from "./transport/server.js";
@@ -76,7 +76,6 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
     mode: mapRabbitmqWirePayloadMode(config.payload.mode),
     channel: "rabbitmq",
     idempotencyKey: correlationId,
-    idempotency: getRabbitmqIdempotencyCache(config.idempotency),
   });
   if (!parsed.accepted) {
     event.delivery.ack();
@@ -112,10 +111,23 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
     `[openclaw-rabbitmq] Inbound: topic=${event.routingKey}, agent=${agentId}, account=${route.accountId}, source=${route.source}, session=${sessionKey}, bytes=${Buffer.byteLength(text, "utf-8")}`,
   );
 
+  const dedupe = correlationId ? getRabbitmqClaimableDedupe(config.idempotency) : undefined;
+  const claim = dedupe && correlationId ? await dedupe.claim(correlationId) : undefined;
+  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
+    event.delivery.ack();
+    return { accepted: true, routeSource: "idempotency", manualAck: true };
+  }
+
   try {
     await dispatchToRuntime(sessionKey, route.peerId, agentId, text, event, route, replyTopic, config, parsed);
+    if (dedupe && correlationId && claim?.kind === "claimed") {
+      await dedupe.commit(correlationId);
+    }
     return { accepted: true, routeSource: route.source, manualAck: true };
   } catch (error) {
+    if (dedupe && correlationId && claim?.kind === "claimed") {
+      dedupe.release(correlationId);
+    }
     console.error(`[openclaw-rabbitmq] Runtime dispatch failed for peer=${route.peerId}:`, error);
     if (!event.delivery.settled) {
       event.delivery.nack({

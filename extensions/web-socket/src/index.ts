@@ -54,7 +54,13 @@ export default defineChannelPluginEntry({
               sessions: sessionStats,
               serverClients,
               connections: allConnections,
-              config,
+              config: config
+                ? {
+                    ...config,
+                    server: { ...config.server, auth: { enabled: config.server.auth.enabled } },
+                    client: { ...config.client, token: config.client.token ? "[redacted]" : undefined, headers: {} },
+                  }
+                : null,
               policy: policyMeta,
             },
           }),
@@ -67,12 +73,4 @@ export default defineChannelPluginEntry({
     console.log("[openclaw-web-socket] Plugin registered — WebSocket channel ready");
     console.log("[openclaw-web-socket] Endpoints: /web-socket/status");
   },
-});
-
-process.on("SIGTERM", async () => {
-  console.log("[openclaw-web-socket] Shutting down...");
-  const { stopWebSocketClient } = await import("./transport/client.js");
-  const { stopWebSocketServer } = await import("./transport/server.js");
-  await stopWebSocketClient();
-  await stopWebSocketServer();
 });

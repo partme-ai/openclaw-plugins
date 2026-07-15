@@ -34,6 +34,11 @@ describe("openclaw-mqtt 功能集成测试", () => {
         allowAnonymous: true,
         users: [
           {
+            username: "anonymous",
+            publishAllow: ["openclaw/agent/+/in", "devices/#"],
+            subscribeAllow: ["openclaw/agent/+/in", "devices/#"],
+          },
+          {
             username: "test-user",
             password: "test-pass",
             publishAllow: ["openclaw/agent/+/in", "devices/+/data"],

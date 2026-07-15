@@ -1,7 +1,7 @@
 {
   "name": "@partme.ai/openclaw-oauth2",
   "version": "2026.5.20",
-  "description": "OAuth 2.0 authentication backend for OpenClaw — Sa-Token · JWT · Introspection",
+  "description": "Standard OAuth2/OIDC client reverse proxy for OpenClaw, powered by openid-client",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,8 +19,8 @@
     "openclaw",
     "plugin",
     "oauth2",
-    "jwt",
-    "sa-token",
+    "oidc",
+    "openid-client",
     "authentication"
   ],
   "author": "PartMe",
@@ -29,7 +29,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md"
+    "README.zh-CN.md"
   ],
   "publishConfig": {
     "access": "public"
@@ -39,10 +39,9 @@
     "url": "https://github.com/partme-ai/openclaw-plugins.git",
     "directory": "extensions/oauth2"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
+  "dependencies": {
+    "ioredis": "^5.10.1",
+    "openid-client": "^6.8.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

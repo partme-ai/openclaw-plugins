@@ -5,25 +5,28 @@
  */
 
 import {
-  createIdempotencyCache,
+  createClaimableDedupe,
   getGlobalSingleton,
-  type IdempotencyCache,
+  type ClaimableDedupe,
   type PayloadParseMode,
 } from "@partme.ai/openclaw-message-sdk";
 
 import { REDIS_STREAM_CHANNEL_ID } from "../config/resolvers.js";
 
-const DEFAULT_IDEMPOTENCY_TTL_MS = 60_000;
-const DEFAULT_IDEMPOTENCY_MAX_ENTRIES = 10_000;
-
 /**
- * 返回 Redis Stream 入站幂等缓存（进程内单例）。
+ * Returns a claim/commit/release dedupe store. Failed processing releases its claim.
  */
-export function getRedisStreamIdempotencyCache(): IdempotencyCache {
-  return getGlobalSingleton(`message-sdk:${REDIS_STREAM_CHANNEL_ID}:idempotency`, () =>
-    createIdempotencyCache({
-      ttlMs: DEFAULT_IDEMPOTENCY_TTL_MS,
-      maxEntries: DEFAULT_IDEMPOTENCY_MAX_ENTRIES,
+export function getRedisStreamClaimableDedupe(params: {
+  enabled: boolean;
+  ttlMs: number;
+  maxEntries: number;
+}): ClaimableDedupe | undefined {
+  if (!params.enabled) return undefined;
+  const signature = `${params.ttlMs}:${params.maxEntries}`;
+  return getGlobalSingleton(`message-sdk:${REDIS_STREAM_CHANNEL_ID}:claimable:${signature}`, () =>
+    createClaimableDedupe({
+      ttlMs: params.ttlMs,
+      memoryMaxSize: params.maxEntries,
     }),
   );
 }

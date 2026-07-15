@@ -79,14 +79,14 @@ describe("createDouyinPluginHttpHandler", () => {
     expect(res.body).toBe("method not allowed");
   });
 
-  it("returns challenge for verify_webhook without signature", async () => {
+  it("returns signed verify_webhook challenge as JSON", async () => {
     const handler = createDouyinPluginHttpHandler({ account });
     const body = JSON.stringify({ event: "verify_webhook", content: { challenge: 98765 } });
     const res = mockResponse();
 
-    await handler(makePostReq(body), res);
+    await handler(makePostReq(body, { "x-douyin-signature": signBody(account.app_secret, body) }), res);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toBe("98765");
+    expect(res.body).toBe('{"challenge":98765}');
     expect(dispatchDouyinWebhookInboundMock).not.toHaveBeenCalled();
   });
 
@@ -131,13 +131,22 @@ describe("createDouyinPluginHttpHandler", () => {
     const signature = signBody(account.app_secret, body);
     const res = mockResponse();
 
-    await handler(makePostReq(body, { "x-douyin-signature": signature }), res);
+    await handler(makePostReq(body, { "x-douyin-signature": signature, "msg-id": "anon-1" }), res);
 
     expect(dispatchDouyinWebhookInboundMock).toHaveBeenCalledWith(
       expect.objectContaining({
         peerId: "anonymous:shop-1",
       }),
     );
+  });
+
+  it("rejects a signed event without Msg-Id", async () => {
+    const handler = createDouyinPluginHttpHandler({ account });
+    const body = JSON.stringify({ content: "{\"text\":\"hello\"}" });
+    const res = mockResponse();
+    await handler(makePostReq(body, { "x-douyin-signature": signBody(account.app_secret, body) }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toBe("missing Msg-Id");
   });
 
   it("returns 413 when body exceeds limit", async () => {

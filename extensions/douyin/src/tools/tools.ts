@@ -1,142 +1,127 @@
-/**
- * 抖音 Agent 运营工具注册模块。
- *
- * **架构角色**：在 `index.ts` registerFull 中注册 OpenAPI 封装工具，
- * 供 Agent 查询订单、回复评价、拉取经营指标。
- *
- * **业务说明**：与《抖音开放平台对接规格》EP-3 对齐；部分接口仍为 TODO 占位。
- *
- * **关键依赖**：`../config/auth`、`../types`
- */
+/** 抖音生活服务 OpenAPI 工具。 */
 
-import type { DouyinAccountConfig } from "../types.js";
-import type { ToolDefinition } from "../types.js";
-import { getClientToken } from "../config/auth.js";
+import type { ChannelLimitsOpenClawConfig } from "../runtime/runtime-api.js";
+import type { DouyinAccountConfig, ToolDefinition } from "../types.js";
+import { requestDouyinOpenApi } from "../api/openapi.js";
 
-const OPENAPI_BASE = "https://open.douyin.com";
+export type DouyinToolsConfig = {
+  rootConfig: ChannelLimitsOpenClawConfig;
+  section?: DouyinAccountConfig;
+};
 
-/** 生活服务 OpenAPI GET 请求封装（query 携带 access_token） */
-async function goodlifeGet(accessToken: string, path: string): Promise<unknown> {
-  const url = path.startsWith("http") ? path : `${OPENAPI_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
-  const res = await fetch(`${url}?access_token=${encodeURIComponent(accessToken)}`, {
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-  });
-  return res.json();
+function resolveToolAccount(
+  section: DouyinAccountConfig | undefined,
+  accountName: unknown,
+): DouyinAccountConfig | undefined {
+  if (!section) return undefined;
+  const name = typeof accountName === "string" && accountName.trim() ? accountName.trim() : undefined;
+  if (name) return { ...section, ...(section.accounts?.[name] ?? {}) };
+  if (section.app_key && section.app_secret) return section;
+  const first = Object.values(section.accounts ?? {})[0];
+  return first ? { ...section, ...first } : section;
 }
 
-/**
- * 创建带运行时配置注入的抖音工具列表。
- *
- * @param getConfig 懒加载 `channels.douyin` 配置的 getter
- * @returns 可传给 `api.registerTool` 的工具定义数组
- */
-export function createDouyinTools(
-  getConfig: () => DouyinAccountConfig | undefined
-): ToolDefinition[] {
+function requiredString(value: unknown, field: string): string {
+  const normalized = typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+  if (!normalized) throw new Error(`[douyin] ${field} is required`);
+  return normalized;
+}
+
+function optionalInteger(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new Error(`[douyin] ${field} must be an integer`);
+  return parsed;
+}
+
+/** 创建带运行时配置注入的真实抖音生活服务工具。 */
+export function createDouyinTools(getConfig: () => DouyinToolsConfig): ToolDefinition[] {
   return [
     {
       name: "douyin_query_orders",
-      description: "查询抖音订单列表，支持按日期、状态筛选",
+      description: "通过抖音生活服务 OpenAPI 查询订单列表或订单详情",
       parameters: {
         type: "object",
+        additionalProperties: false,
         properties: {
-          date_from: { type: "string", description: "开始日期" },
-          date_to: { type: "string", description: "结束日期" },
-          status: { type: "string", description: "订单状态" },
-          page: { type: "integer", description: "页码" },
-          page_size: { type: "integer", description: "每页条数" },
+          account: { type: "string", description: "OpenClaw 中配置的抖音账号名称" },
+          account_id: { type: "string", description: "来客商户根账户 ID；未传时读取配置" },
+          page_num: { type: "integer", minimum: 1, default: 1 },
+          page_size: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+          cursor: { type: "string" },
+          order_id: { type: "string" },
+          ext_order_id: { type: "string" },
+          open_id: { type: "string" },
+          order_status: { type: "integer" },
+          create_order_start_time: { type: "integer", description: "创单起始秒时间戳" },
+          create_order_end_time: { type: "integer", description: "创单结束秒时间戳" },
+          update_order_start_time: { type: "integer", description: "修改起始秒时间戳" },
+          update_order_end_time: { type: "integer", description: "修改结束秒时间戳" },
         },
       },
-      execute: async () => {
-        const token = await getClientToken(getConfig());
-        if (!token) return { error: "missing config or token" };
-        // TODO: 调用抖音生活服务订单列表接口，见接口对照表清单
-        return { data: [] };
+      execute: async (args) => {
+        const current = getConfig();
+        const account = resolveToolAccount(current.section, args.account);
+        if (!account) throw new Error("[douyin] channels.douyin is not configured");
+        const accountId = requiredString(args.account_id ?? account.account_id ?? account.shop_id, "account_id");
+        const pageNum = optionalInteger(args.page_num, "page_num") ?? 1;
+        const pageSize = optionalInteger(args.page_size, "page_size") ?? 20;
+        if (pageNum < 1 || pageSize < 1 || pageSize > 100 || pageNum * pageSize > 10_000) {
+          throw new Error("[douyin] page_num/page_size exceed the official pagination limits");
+        }
+        return requestDouyinOpenApi({
+          context: { account, rootConfig: current.rootConfig },
+          path: "/goodlife/v1/trade/order/query/",
+          method: "GET",
+          retrySafe: true,
+          query: {
+            account_id: accountId,
+            page_num: pageNum,
+            page_size: pageSize,
+            cursor: args.cursor,
+            order_id: args.order_id,
+            ext_order_id: args.ext_order_id,
+            open_id: args.open_id,
+            order_status: optionalInteger(args.order_status, "order_status"),
+            create_order_start_time: optionalInteger(args.create_order_start_time, "create_order_start_time"),
+            create_order_end_time: optionalInteger(args.create_order_end_time, "create_order_end_time"),
+            update_order_start_time: optionalInteger(args.update_order_start_time, "update_order_start_time"),
+            update_order_end_time: optionalInteger(args.update_order_end_time, "update_order_end_time"),
+          },
+        });
       },
     },
     {
       name: "douyin_reply_review",
-      description: "回复抖音店铺评价",
+      description: "通过抖音生活服务餐饮评价接口回复门店评价",
       parameters: {
         type: "object",
+        additionalProperties: false,
         properties: {
-          review_id: { type: "string", description: "评价ID" },
-          content: { type: "string", description: "回复内容" },
+          account: { type: "string", description: "OpenClaw 中配置的抖音账号名称" },
+          account_id: { type: "string", description: "来客商户根账户 ID；未传时读取配置" },
+          poi_id: { type: "string", description: "门店 POI ID；未传时读取配置" },
+          rate_id: { type: "string", description: "评价 ID" },
+          text: { type: "string", minLength: 1, description: "回复内容" },
         },
+        required: ["rate_id", "text"],
       },
-      execute: async () => {
-        const token = await getClientToken(getConfig());
-        if (!token) return { error: "missing config or token" };
-        // TODO: 调用抖音生活服务评价回复接口
-        return { ok: true };
-      },
-    },
-    {
-      name: "douyin_query_shop_metrics",
-      description: "查询抖音店铺经营指标",
-      parameters: {
-        type: "object",
-        properties: {
-          date_from: { type: "string" },
-          date_to: { type: "string" },
-        },
-      },
-      execute: async () => {
-        const config = getConfig();
-        const token = await getClientToken(config);
-        if (!token) return { error: "missing config or token" };
-        // 真实对接示例：调用生活服务「查询商品品类」接口（scope: life.capacity.goods.query）
-        try {
-          const data = await goodlifeGet(token, "/goodlife/v1/goods/category/get/");
-          return { data };
-        } catch (e) {
-          return { error: String(e) };
-        }
+      execute: async (args) => {
+        const current = getConfig();
+        const account = resolveToolAccount(current.section, args.account);
+        if (!account) throw new Error("[douyin] channels.douyin is not configured");
+        return requestDouyinOpenApi({
+          context: { account, rootConfig: current.rootConfig },
+          path: "/goodlife/v1/akte/comment/reply/",
+          method: "POST",
+          body: {
+            account_id: requiredString(args.account_id ?? account.account_id ?? account.shop_id, "account_id"),
+            poi_id: requiredString(args.poi_id ?? account.poi_id, "poi_id"),
+            rate_id: requiredString(args.rate_id, "rate_id"),
+            text: requiredString(args.text, "text"),
+          },
+        });
       },
     },
   ];
 }
-
-/** 静态占位工具（无 getConfig 注入，不调 OpenAPI，供测试或文档示例） */
-export const douyinQueryOrders: ToolDefinition = {
-  name: "douyin_query_orders",
-  description: "查询抖音订单列表，支持按日期、状态筛选",
-  parameters: {
-    type: "object",
-    properties: {
-      date_from: { type: "string", description: "开始日期" },
-      date_to: { type: "string", description: "结束日期" },
-      status: { type: "string", description: "订单状态" },
-      page: { type: "integer", description: "页码" },
-      page_size: { type: "integer", description: "每页条数" },
-    },
-  },
-  execute: async () => ({ data: [] }),
-};
-
-export const douyinReplyReview: ToolDefinition = {
-  name: "douyin_reply_review",
-  description: "回复抖音店铺评价",
-  parameters: {
-    type: "object",
-    properties: {
-      review_id: { type: "string", description: "评价ID" },
-      content: { type: "string", description: "回复内容" },
-    },
-  },
-  execute: async () => ({ ok: true }),
-};
-
-export const douyinQueryShopMetrics: ToolDefinition = {
-  name: "douyin_query_shop_metrics",
-  description: "查询抖音店铺经营指标",
-  parameters: {
-    type: "object",
-    properties: {
-      date_from: { type: "string" },
-      date_to: { type: "string" },
-    },
-  },
-  execute: async () => ({}),
-};

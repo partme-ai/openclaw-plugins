@@ -4,6 +4,7 @@ import {
   hasLegacyMqttDmScope,
   resolveBrokerConfig,
   resolveOpenClawDmScope,
+  validateBrokerConfig,
 } from "../src/config.js";
 
 describe("resolveBrokerConfig", () => {
@@ -108,6 +109,7 @@ describe("resolveBrokerConfig", () => {
   it("applies defaults when channels.mqtt is missing", () => {
     const r = resolveBrokerConfig({});
     expect(r.port).toBe(1883);
+    expect(r.host).toBe("127.0.0.1");
     expect(r.subscribeTopics).toEqual([]);
     expect(r.topicBindings).toEqual([]);
     expect(r.tls.enabled).toBe(false);
@@ -122,6 +124,18 @@ describe("resolveBrokerConfig", () => {
     expect(r.audit.format).toBe("json");
     expect(r.will.allow).toBe(true);
     expect(r.will.allowedTopicPatterns).toEqual([]);
+  });
+
+  it("rejects an unauthenticated broker exposed beyond loopback", () => {
+    const config = resolveBrokerConfig({ channels: { mqtt: { host: "0.0.0.0" } } });
+    expect(() => validateBrokerConfig(config)).toThrow(/authentication/i);
+  });
+
+  it("requires an explicit ACL-bearing anonymous identity", () => {
+    const config = resolveBrokerConfig({
+      channels: { mqtt: { auth: { enabled: true, allowAnonymous: true, users: [] } } },
+    });
+    expect(() => validateBrokerConfig(config)).toThrow(/anonymous/i);
   });
 
   it("reads OpenClaw global session.dmScope", () => {

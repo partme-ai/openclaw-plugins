@@ -1,89 +1,77 @@
-/**
- * @module web-socket/transport/server
- *
- * 基于 `ws` 的嵌入式 WebSocket 服务端。
- */
-
+/** Embedded, authenticated WebSocket server with bounded resource usage. */
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
-import { randomUUID } from "node:crypto";
-import { WebSocketServer, WebSocket } from "ws";
+import type { Duplex } from "node:stream";
+import { WebSocket, WebSocketServer } from "ws";
 
+import { parseClientFrame, serializeConnectedFrame, serializeErrorFrame, serializePongFrame } from "../protocol.js";
 import type { WebsocketChannelConfig, WebsocketConnectionInfo } from "../types.js";
-import {
-  parseClientFrame,
-  serializeConnectedFrame,
-  serializeErrorFrame,
-  serializePongFrame,
-} from "../protocol.js";
 import {
   getAllConnectionInfo,
   registerConnection,
   sendToConnection,
+  touchConnection,
   unregisterConnection,
 } from "./connection-hub.js";
 
-/** 入站文本消息回调 */
 export type WebsocketInboundCallback = (ctx: {
   connectionId: string;
   rawPayload: string;
   frameAgentId?: string;
   messageId?: string;
   peerId?: string;
-}) => void;
+}) => Promise<void> | void;
 
 let httpServer: ReturnType<typeof createServer> | null = null;
 let wss: WebSocketServer | null = null;
-let onInboundMessage: WebsocketInboundCallback | null = null;
 let activeConfig: WebsocketChannelConfig | null = null;
 let serverRunning = false;
-const serverConnectionIds = new Set<string>();
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+const serverConnections = new Map<string, WebSocket>();
+const awaitingPong = new Map<string, number>();
 
-/**
- * 从升级请求提取 Bearer / query token。
- */
-function extractAuthToken(req: IncomingMessage): string | undefined {
-  const authHeader = req.headers.authorization;
-  if (typeof authHeader === "string" && authHeader.toLowerCase().startsWith("bearer ")) {
-    return authHeader.slice(7).trim();
-  }
+function tokenDigest(value: string): Buffer {
+  return createHash("sha256").update(value, "utf8").digest();
+}
+
+function extractAuthToken(req: IncomingMessage, allowQueryToken: boolean): string | undefined {
+  const auth = req.headers.authorization;
+  if (typeof auth === "string" && /^bearer\s/i.test(auth)) return auth.replace(/^bearer\s+/i, "").trim();
+  if (!allowQueryToken) return undefined;
   try {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const token = url.searchParams.get("token");
-    return token?.trim() || undefined;
+    return new URL(req.url ?? "/", "http://localhost").searchParams.get("token")?.trim() || undefined;
   } catch {
     return undefined;
   }
 }
 
-/**
- * 校验入站连接 token（server.auth）。
- */
 function verifyAuthToken(req: IncomingMessage, config: WebsocketChannelConfig): boolean {
   const auth = config.server.auth;
-  if (!auth.enabled) {
-    return true;
-  }
-  const allowed = new Set<string>();
-  if (auth.token?.trim()) {
-    allowed.add(auth.token.trim());
-  }
-  for (const t of auth.tokens) {
-    if (t.trim()) {
-      allowed.add(t.trim());
-    }
-  }
-  if (allowed.size === 0) {
-    return false;
-  }
-  const presented = extractAuthToken(req);
-  return Boolean(presented && allowed.has(presented));
+  if (!auth.enabled) return true;
+  const presented = extractAuthToken(req, auth.allowQueryToken);
+  if (!presented) return false;
+  const actual = tokenDigest(presented);
+  return auth.tokens.some((token) => timingSafeEqual(actual, tokenDigest(token)));
+}
+
+function rejectUpgrade(socket: Duplex, status: number, message: string): void {
+  if (socket.destroyed) return;
+  socket.write(
+    `HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(message)}\r\n\r\n${message}`,
+  );
+  socket.destroy();
+}
+
+function isOriginAllowed(req: IncomingMessage, config: WebsocketChannelConfig): boolean {
+  const allowed = config.server.allowedOrigins;
+  if (allowed.length === 0) return true;
+  const origin = req.headers.origin;
+  if (typeof origin !== "string") return true;
+  return allowed.includes("*") || allowed.includes(origin);
 }
 
 export { sendToConnection };
 
-/**
- * 启动 WebSocket 服务端。
- */
 export function startWebSocketServer(
   config: WebsocketChannelConfig,
   messageHandler: WebsocketInboundCallback,
@@ -91,154 +79,157 @@ export function startWebSocketServer(
   onDisconnect?: (connectionId: string) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (serverRunning) {
-      resolve();
-      return;
-    }
-    onInboundMessage = messageHandler;
+    if (serverRunning) return resolve();
     activeConfig = config;
-    const { server: serverCfg } = config;
-
-    httpServer = createServer((_req, res) => {
-      res.writeHead(426, { "Content-Type": "text/plain" });
+    const serverCfg = config.server;
+    const nextHttpServer = createServer((_req, res) => {
+      res.writeHead(426, { "Content-Type": "text/plain", Connection: "close" });
       res.end("Upgrade Required");
     });
+    const nextWss = new WebSocketServer({ noServer: true, maxPayload: config.limits.maxPayloadBytes });
+    httpServer = nextHttpServer;
+    wss = nextWss;
 
-    wss = new WebSocketServer({
-      server: httpServer,
-      path: serverCfg.path,
-      maxPayload: config.limits.maxPayloadBytes,
+    nextHttpServer.on("upgrade", (req, socket, head) => {
+      let pathname = "";
+      try { pathname = new URL(req.url ?? "/", "http://localhost").pathname; } catch { /* rejected below */ }
+      if (pathname !== serverCfg.path) return rejectUpgrade(socket, 404, "Not Found");
+      if (!isOriginAllowed(req, config)) return rejectUpgrade(socket, 403, "Forbidden");
+      if (!verifyAuthToken(req, config)) return rejectUpgrade(socket, 401, "Unauthorized");
+      if (serverConnections.size >= serverCfg.maxConnections) return rejectUpgrade(socket, 503, "Service Unavailable");
+      nextWss.handleUpgrade(req, socket, head, (ws) => nextWss.emit("connection", ws, req));
     });
 
-    wss.on("connection", (ws, req) => {
-      if (!verifyAuthToken(req, config)) {
-        ws.close(4401, "Unauthorized");
-        return;
-      }
-      if (serverConnectionIds.size >= serverCfg.maxConnections) {
-        ws.send(serializeErrorFrame("Max connections reached"));
-        ws.close(1013, "Try again later");
-        return;
-      }
-
+    nextWss.on("connection", (ws, req) => {
       const connectionId = randomUUID();
-      const remoteAddress = req.socket.remoteAddress;
-      serverConnectionIds.add(connectionId);
+      let cleaned = false;
+      let pending = 0;
+      let queue = Promise.resolve();
+      let windowStart = Date.now();
+      let windowMessages = 0;
+      serverConnections.set(connectionId, ws);
       registerConnection(connectionId, ws, {
         connectedAt: new Date().toISOString(),
         lastActiveAt: new Date().toISOString(),
-        remoteAddress,
+        remoteAddress: req.socket.remoteAddress,
       });
-
-      ws.send(serializeConnectedFrame(connectionId));
+      sendToConnection(connectionId, serializeConnectedFrame(connectionId), config.limits.maxBufferedBytes);
       onConnect?.(connectionId);
-      console.log(`[openclaw-web-socket] Server connection: ${connectionId}`);
 
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        awaitingPong.delete(connectionId);
+        serverConnections.delete(connectionId);
+        unregisterConnection(connectionId);
+        onDisconnect?.(connectionId);
+      };
+
+      ws.on("pong", () => {
+        awaitingPong.delete(connectionId);
+        touchConnection(connectionId);
+      });
       ws.on("message", (data, isBinary) => {
-        if (isBinary) {
-          ws.send(serializeErrorFrame("Binary frames not supported"));
+        touchConnection(connectionId);
+        const now = Date.now();
+        if (now - windowStart >= 60_000) {
+          windowStart = now;
+          windowMessages = 0;
+        }
+        if (++windowMessages > config.limits.messagesPerMinute) {
+          ws.close(1008, "Message rate limit exceeded");
           return;
         }
-        const raw = data.toString("utf-8");
+        if (isBinary) {
+          ws.close(1003, "Binary frames not supported");
+          return;
+        }
+        const raw = data.toString("utf8");
         const parsed = parseClientFrame(raw);
         if (parsed === "ping") {
-          ws.send(serializePongFrame());
+          sendToConnection(connectionId, serializePongFrame(), config.limits.maxBufferedBytes);
           return;
         }
         if (!parsed) {
-          ws.send(serializeErrorFrame("Invalid message frame"));
+          sendToConnection(connectionId, serializeErrorFrame("Invalid message frame"), config.limits.maxBufferedBytes);
           return;
         }
-        onInboundMessage?.({
-          connectionId,
-          rawPayload: raw,
-          frameAgentId: parsed.agentId,
-          messageId: parsed.messageId,
-          peerId: parsed.peerId,
-        });
+        if (pending >= config.limits.maxPendingMessages) {
+          ws.close(1013, "Inbound queue full");
+          return;
+        }
+        pending += 1;
+        queue = queue
+          .then(() => messageHandler({ connectionId, rawPayload: raw, frameAgentId: parsed.agentId, messageId: parsed.messageId, peerId: parsed.peerId }))
+          .catch((error: unknown) => {
+            console.error(`[openclaw-web-socket] Inbound handler failed ${connectionId}:`, error);
+            sendToConnection(connectionId, serializeErrorFrame("Message processing failed"), config.limits.maxBufferedBytes);
+          })
+          .finally(() => { pending -= 1; });
       });
-
-      const cleanup = () => {
-        serverConnectionIds.delete(connectionId);
-        unregisterConnection(connectionId);
-        onDisconnect?.(connectionId);
-        console.log(`[openclaw-web-socket] Server disconnected: ${connectionId}`);
-      };
-
       ws.on("close", cleanup);
-      ws.on("error", (err) => {
-        console.error(`[openclaw-web-socket] Server socket error ${connectionId}:`, err);
+      ws.on("error", (error) => {
+        console.error(`[openclaw-web-socket] Server socket error ${connectionId}:`, error);
         cleanup();
       });
     });
 
-    httpServer.on("error", (err) => {
-      console.error("[openclaw-web-socket] HTTP server error:", err);
-      reject(err);
-    });
-
-    httpServer.listen(serverCfg.wsPort, serverCfg.host, () => {
+    const onStartupError = (error: Error) => {
+      activeConfig = null;
+      httpServer = null;
+      wss = null;
+      nextWss.close();
+      reject(error);
+    };
+    nextHttpServer.once("error", onStartupError);
+    nextHttpServer.listen(serverCfg.wsPort, serverCfg.host, () => {
+      nextHttpServer.off("error", onStartupError);
+      nextHttpServer.on("error", (error) => console.error("[openclaw-web-socket] HTTP server error:", error));
       serverRunning = true;
-      console.log(
-        `[openclaw-web-socket] Server listening ws://${serverCfg.host}:${serverCfg.wsPort}${serverCfg.path}`,
-      );
+      heartbeatTimer = setInterval(() => {
+        const now = Date.now();
+        for (const [connectionId, ws] of serverConnections) {
+          const sentAt = awaitingPong.get(connectionId);
+          if (sentAt && now - sentAt > config.limits.heartbeatTimeoutMs) {
+            ws.terminate();
+            continue;
+          }
+          if (ws.readyState === WebSocket.OPEN && !sentAt) {
+            awaitingPong.set(connectionId, now);
+            ws.ping();
+          }
+        }
+      }, config.limits.heartbeatIntervalMs);
+      heartbeatTimer.unref();
       resolve();
     });
   });
 }
 
-/**
- * 停止 WebSocket 服务端。
- */
 export async function stopWebSocketServer(): Promise<void> {
-  for (const connectionId of serverConnectionIds) {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+  for (const [connectionId, ws] of serverConnections) {
     sendToConnection(connectionId, serializeErrorFrame("Server shutting down"));
+    ws.terminate();
     unregisterConnection(connectionId);
   }
-  serverConnectionIds.clear();
-  onInboundMessage = null;
+  serverConnections.clear();
+  awaitingPong.clear();
+  const closingWss = wss;
+  const closingHttp = httpServer;
+  wss = null;
+  httpServer = null;
   activeConfig = null;
   serverRunning = false;
-
-  await new Promise<void>((resolve) => {
-    if (wss) {
-      wss.close(() => resolve());
-      wss = null;
-    } else {
-      resolve();
-    }
-  });
-
-  await new Promise<void>((resolve) => {
-    if (httpServer) {
-      httpServer.close(() => resolve());
-      httpServer = null;
-    } else {
-      resolve();
-    }
-  });
+  await new Promise<void>((resolve) => closingWss ? closingWss.close(() => resolve()) : resolve());
+  await new Promise<void>((resolve) => closingHttp ? closingHttp.close(() => resolve()) : resolve());
 }
 
-/**
- * 服务端运行状态。
- */
-export function getServerStats(): {
-  running: boolean;
-  connectionCount: number;
-  wsPort: number | null;
-  path: string | null;
-} {
-  return {
-    running: serverRunning,
-    connectionCount: serverConnectionIds.size,
-    wsPort: activeConfig?.server.wsPort ?? null,
-    path: activeConfig?.server.path ?? null,
-  };
+export function getServerStats(): { running: boolean; connectionCount: number; wsPort: number | null; path: string | null } {
+  return { running: serverRunning, connectionCount: serverConnections.size, wsPort: activeConfig?.server.wsPort ?? null, path: activeConfig?.server.path ?? null };
 }
 
-/**
- * 服务端入站连接列表。
- */
 export function getConnectedClients(): WebsocketConnectionInfo[] {
-  return getAllConnectionInfo().filter((c) => serverConnectionIds.has(c.connectionId));
+  return getAllConnectionInfo().filter((item) => serverConnections.has(item.connectionId));
 }

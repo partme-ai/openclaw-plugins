@@ -1,54 +1,97 @@
 {
   "id": "oauth2",
   "name": "openclaw-oauth2",
-  "version": "0.1.0",
-  "description": "OAuth 2.0 authentication backend — Sa-Token · JWT · Introspection",
+  "version": "2026.5.20",
+  "description": "Standard OAuth2/OIDC client reverse proxy for OpenClaw, powered by openid-client",
   "main": "dist/index.js",
-  "channels": [],
-  "commands": [],
-  "skills": [],
+  "security": ["oauth2", "oidc", "trusted-proxy"],
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "oauth2": {
+      "enabled": { "type": "boolean", "default": false },
+      "issuerUrl": { "type": "string", "description": "OAuth2/OIDC authorization server issuer URL" },
+      "clientId": { "type": "string", "default": "openclaw-gateway" },
+      "clientSecret": { "type": "string", "description": "OAuth2 client secret; omit only for clientAuthMethod=none" },
+      "scopeMapping": { "type": "object", "additionalProperties": { "type": "string" } },
+      "proxy": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "issuerUrl": {
+          "listenHost": { "type": "string", "default": "0.0.0.0" },
+          "listenPort": { "type": "integer", "minimum": 0, "maximum": 65535, "default": 18080 },
+          "upstreamHost": { "type": "string", "default": "127.0.0.1" },
+          "upstreamPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 18789 },
+          "requestTimeoutMs": { "type": "integer", "minimum": 1000, "default": 30000 },
+          "userHeader": { "type": "string", "default": "x-forwarded-user" },
+          "tenantHeader": { "type": "string", "default": "x-openclaw-tenant" }
+        }
+      },
+      "client": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "discovery": { "type": "boolean", "default": true },
+          "redirectUri": { "type": "string" },
+          "scopes": { "type": "array", "items": { "type": "string" }, "default": ["openid", "profile"] },
+          "authorizationEndpoint": { "type": "string" },
+          "tokenEndpoint": { "type": "string" },
+          "revokeEndpoint": { "type": "string" },
+          "userInfoEndpoint": { "type": "string" },
+          "introspectionEndpoint": { "type": "string" },
+          "clientAuthMethod": {
             "type": "string",
-            "description": "OIDC Issuer URL (Sa-Token backend)"
+            "enum": ["client_secret_post", "client_secret_basic", "none"],
+            "default": "client_secret_post"
           },
-          "clientId": {
-            "type": "string",
-            "description": "OAuth2 Client ID"
+          "authorizationParameters": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Additional authorize parameters such as audience, resource, prompt, organization"
           },
-          "clientSecret": {
-            "type": "string",
-            "description": "OAuth2 Client Secret (introspection)"
+          "tokenParameters": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Additional token/refresh parameters"
           },
-          "tokenFormat": {
-            "type": "string",
-            "enum": [
-              "jwt-prefer",
-              "jwt-only",
-              "introspection-only"
-            ],
-            "default": "jwt-prefer"
-          },
-          "provider": {
-            "type": "string",
-            "enum": [
-              "sa-token",
-              "keycloak",
-              "auth0",
-              "azure-ad",
-              "generic"
-            ],
-            "default": "sa-token"
+          "requestTimeoutMs": { "type": "integer", "minimum": 1000, "default": 5000 },
+          "successRedirect": { "type": "string", "default": "/" },
+          "sessionSecret": { "type": "string", "minLength": 32 },
+          "sessionCookieName": { "type": "string", "default": "openclaw_oauth2_session" },
+          "sessionTtlSeconds": { "type": "integer", "minimum": 60, "default": 28800 },
+          "stateTtlSeconds": { "type": "integer", "minimum": 60, "default": 300 },
+          "secureCookies": { "type": "boolean", "default": true },
+          "userIdField": { "type": "string", "default": "sub" },
+          "tenantIdField": { "type": "string", "default": "tenantId" },
+          "unauthorizedMode": { "type": "string", "enum": ["auto", "redirect", "unauthorized"], "default": "auto" },
+          "sessionStore": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string", "enum": ["memory", "redis"], "default": "memory" },
+              "redisUrl": { "type": "string" },
+              "keyPrefix": { "type": "string", "default": "openclaw:oauth2" }
+            }
           }
         }
       }
     }
   },
-  "uiHints": {},
-  "channelConfigs": {}
+  "uiHints": {
+    "clientSecret": { "label": "OAuth2 Client Secret", "sensitive": true },
+    "client.sessionSecret": { "label": "Session Signing Secret", "sensitive": true },
+    "client.sessionStore.redisUrl": { "label": "Redis URL", "sensitive": true }
+  },
+  "channelConfigs": {},
+  "capabilities": {
+    "authentication": true,
+    "reverseProxy": true,
+    "websocketProxy": true,
+    "oidcDiscovery": true,
+    "authorizationCode": true,
+    "pkce": true,
+    "refreshToken": true,
+    "tokenRevocation": true,
+    "tokenIntrospection": true
+  }
 }

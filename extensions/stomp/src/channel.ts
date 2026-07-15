@@ -1,41 +1,65 @@
-/**
- * @fileoverview STOMP TCP Channel 定义：Topic 绑定、单账号 default 与 outbound publish。
- *
- * @description
- * 实现 OpenClaw ChannelPlugin：`sendText` 向 `/topic/session.<sessionKey>` 发布 STOMP MESSAGE。
- *
- * @module channel
- */
+/** OpenClaw 2026.7.1 ChannelPlugin lifecycle for native STOMP TCP/TLS. */
+import type { ChannelAccountSnapshot, ChannelGatewayContext, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
+import { deleteAccountFromConfigSection, setAccountEnabledInConfigSection } from "openclaw/plugin-sdk/core";
+import type { ChannelOutboundContext } from "openclaw/plugin-sdk/channel-contract";
+import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 
-/**
- * STOMP Channel — Base Profile 入口。
- */
-
-import { publishToDestination } from "./transport/server.js";
+import {
+  describeStompTcpAccount,
+  listStompTcpAccountIds,
+  resolveStompTcpAccount,
+  resolveStompTcpConfig,
+  STOMP_TCP_ACCOUNT_ID,
+} from "./config.js";
+import { dispatchInboundMessage } from "./inbound.js";
 import { stompTcpSetupAdapter, stompTcpSetupWizard } from "./onboarding.js";
+import { getStatusSnapshot, publishToDestination, startStompTcpServer, stopStompTcpServer } from "./transport/server.js";
+import type { ResolvedStompTcpAccount } from "./types.js";
 
-/**
- * @description 由 OpenClaw sessionKey 构造默认 STOMP 回复 destination。
- * @param sessionKey - 会话键。
- * @returns STOMP destination 路径。
- * @throws 不抛出。
- */
-function buildSessionDestination(sessionKey: string): string {
-  return `/topic/session.${sessionKey}`;
+function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
 }
 
-/** @description STOMP ChannelPlugin（渠道 id：`stomp-tcp`）。 */
-export const stompTcpChannel = {
+function normalizeTarget(raw: string): string | undefined {
+  const value = raw.trim().replace(/^stomp-tcp:/i, "").trim();
+  return value || undefined;
+}
+
+async function monitor(ctx: ChannelGatewayContext<ResolvedStompTcpAccount>): Promise<void> {
+  const config = resolveStompTcpConfig(ctx.cfg as unknown as Record<string, unknown>);
+  try {
+    await startStompTcpServer(config, dispatchInboundMessage);
+    ctx.setStatus({
+      accountId: ctx.account.accountId,
+      configured: true,
+      running: true,
+      port: config.port || config.tlsPort,
+      webhookPath: "/stomp-tcp/status",
+      lastStartAt: Date.now(),
+    } as ChannelAccountSnapshot);
+    await waitForAbort(ctx.abortSignal);
+  } catch (error) {
+    ctx.setStatus({ accountId: ctx.account.accountId, running: false, lastError: String(error) } as ChannelAccountSnapshot);
+    throw error;
+  } finally {
+    await stopStompTcpServer();
+    ctx.setStatus({ accountId: ctx.account.accountId, running: false, lastStopAt: Date.now() } as ChannelAccountSnapshot);
+  }
+}
+
+export const stompTcpChannel: ChannelPlugin<ResolvedStompTcpAccount> = {
   id: "stomp-tcp",
   meta: {
     id: "stomp-tcp",
     label: "STOMP TCP",
-    selectionLabel: "STOMP over TCP (Native)",
+    selectionLabel: "STOMP 1.2 over TCP/TLS",
     docsPath: "/channels/stomp-tcp",
     docsLabel: "stomp-tcp",
-    blurb: "Native TCP STOMP protocol bridge with topic binding and enterprise delivery controls.",
-    aliases: ["stomp-tcp", "stomp"],
+    blurb: "Native STOMP 1.2 TCP/TLS channel with bounded in-memory delivery controls.",
+    aliases: ["stomp-tcp"],
     order: 92,
+    quickstartAllowFrom: false,
   },
   capabilities: {
     chatTypes: ["direct"],
@@ -49,28 +73,75 @@ export const stompTcpChannel = {
   reload: { configPrefixes: ["channels.stomp-tcp"] },
   setupWizard: stompTcpSetupWizard,
   setup: stompTcpSetupAdapter,
+  configSchema: { schema: { type: "object", additionalProperties: true, properties: {} } },
   config: {
-    listAccountIds: () => ["default"],
-    defaultAccountId: () => "default",
-    resolveAccount: () => ({
-      accountId: "default",
-      name: "default",
-      enabled: true,
-      configured: true,
+    listAccountIds: (cfg: OpenClawConfig) => listStompTcpAccountIds(cfg),
+    defaultAccountId: () => STOMP_TCP_ACCOUNT_ID,
+    resolveAccount: (cfg: OpenClawConfig) => resolveStompTcpAccount(cfg),
+    setAccountEnabled: ({ cfg, accountId, enabled }) => setAccountEnabledInConfigSection({
+      cfg,
+      sectionKey: "stomp-tcp",
+      accountId,
+      enabled,
+      allowTopLevel: true,
     }),
-    isConfigured: () => true,
+    deleteAccount: ({ cfg, accountId }) => deleteAccountFromConfigSection({
+      cfg,
+      sectionKey: "stomp-tcp",
+      accountId,
+      clearBaseFields: [],
+    }),
+    isConfigured: (account) => account.configured,
+    unconfiguredReason: () => "channels.stomp-tcp is missing",
+    describeAccount: (account, cfg) => describeStompTcpAccount(account, resolveStompTcpConfig(cfg as unknown as Record<string, unknown>)),
+  },
+  groups: { resolveRequireMention: () => false },
+  threading: { resolveReplyToMode: () => "off" },
+  messaging: {
+    normalizeTarget,
+    targetResolver: { looksLikeId: (raw) => Boolean(raw.trim()), hint: "<STOMP topic or session key>" },
   },
   outbound: {
     deliveryMode: "direct",
-    /**
-     * @description Channel 出站：向 session destination 发布文本。
-     * @param sessionKey - OpenClaw 会话键（作为 `to`）。
-     * @param text - 回复正文。
-     * @returns Promise，无返回值。
-     */
-    sendText: async (sessionKey: string, text: string): Promise<void> => {
-      const destination = buildSessionDestination(sessionKey);
-      publishToDestination(destination, text);
+    sanitizeText: ({ text }) => sanitizeForPlainText(text),
+    sendText: async (ctx: ChannelOutboundContext) => {
+      const destination = ctx.to.startsWith("/topic/") ? ctx.to : `/topic/session.${ctx.to}`;
+      const delivered = publishToDestination(destination, ctx.text);
+      return { channel: "stomp-tcp", messageId: `${destination}:${delivered}` };
+    },
+  },
+  status: {
+    defaultRuntime: { accountId: STOMP_TCP_ACCOUNT_ID, running: false, lastStartAt: null, lastStopAt: null, lastError: null },
+    buildChannelSummary: ({ snapshot }) => ({
+      configured: snapshot.configured ?? false,
+      running: snapshot.running ?? false,
+      webhookPath: snapshot.webhookPath ?? null,
+      lastStartAt: snapshot.lastStartAt ?? null,
+      lastStopAt: snapshot.lastStopAt ?? null,
+      lastError: snapshot.lastError ?? null,
+    }),
+    probeAccount: async () => ({ ok: getStatusSnapshot().running }),
+    buildAccountSnapshot: ({ account, runtime, cfg }) => {
+      const config = resolveStompTcpConfig(cfg as unknown as Record<string, unknown>);
+      return {
+        accountId: account.accountId,
+        name: account.name,
+        enabled: account.enabled,
+        configured: account.configured,
+        running: runtime?.running ?? getStatusSnapshot().running,
+        port: config.port || config.tlsPort,
+        webhookPath: "/stomp-tcp/status",
+        lastStartAt: runtime?.lastStartAt ?? null,
+        lastStopAt: runtime?.lastStopAt ?? null,
+        lastError: runtime?.lastError ?? null,
+      };
+    },
+  },
+  gateway: {
+    startAccount: monitor,
+    stopAccount: async (ctx) => {
+      await stopStompTcpServer();
+      ctx.setStatus({ accountId: ctx.account.accountId, running: false, lastStopAt: Date.now() });
     },
   },
 };

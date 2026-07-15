@@ -61,6 +61,12 @@ describe("parseFrame", () => {
   it("空数据应返回 null", () => {
     expect(parseFrame("")).toBeNull();
   });
+
+  it("content-length 必须按 UTF-8 字节数精确匹配", () => {
+    expect(parseFrame("SEND\ndestination:/queue/agent\ncontent-length:6\n\n你好\0")?.body).toBe("你好");
+    expect(parseFrame("SEND\ndestination:/queue/agent\ncontent-length:2\n\n你好\0")).toBeNull();
+    expect(parseFrame("SEND\ndestination:/queue/agent\ncontent-length:nope\n\nhello\0")).toBeNull();
+  });
 });
 
 describe("serializeFrame", () => {

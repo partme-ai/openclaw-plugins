@@ -12,10 +12,22 @@ export type DouyinChannelConfig = {
   app_key?: string;
   /** 对应开放平台 client_secret */
   app_secret?: string;
+  /** 抖音来客商户根账户 ID */
+  account_id?: string;
+  /** 门店 POI ID */
+  poi_id?: string;
+  /** @deprecated 使用 account_id；保留用于兼容旧配置 */
   shop_id?: string;
   /** Gateway 上注册的 Webhook 路径，默认 /channels/douyin/webhook */
   webhook_path?: string;
   callback_url?: string;
+  /** OpenAPI 请求超时，默认 10000ms */
+  request_timeout_ms?: number;
+  network?: {
+    egressProxyUrl?: string;
+    agentReplyTimeoutMs?: number;
+  };
+  media?: { maxBytes?: number };
   dmPolicy?: "open" | "allowlist" | "pairing" | "disabled";
   allowFrom?: Array<string | number>;
   accounts?: Record<string, Partial<DouyinChannelConfig>>;
@@ -36,7 +48,11 @@ export type ResolvedDouyinAccount = {
   app_key: string;
   /** 开放平台 client_secret，用于 Webhook 验签与 client_token */
   app_secret: string;
-  /** 抖店/门店 id，用于 replyRoute 与匿名 peer 占位 */
+  /** 抖音来客商户根账户 ID */
+  account_id?: string;
+  /** 门店 POI ID */
+  poi_id?: string;
+  /** 旧版商户标识，用于兼容历史配置与匿名 peer 命名 */
   shop_id?: string;
   /** Gateway 注册的 HTTP 路径 */
   webhook_path: string;

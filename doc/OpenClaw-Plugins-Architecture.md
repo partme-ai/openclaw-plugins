@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-openclaw-plugins is an enterprise OpenClaw plugin collection developed and further developed by the **PartMe.AI team**, containing 29 plugins. Its goal is to use OpenClaw Agents as the hub, connecting IM channels, message queues, knowledge bases, and long-term memory into a closed-loop multi-platform information flow.
+openclaw-plugins is an enterprise OpenClaw plugin collection developed and further developed by the **PartMe.AI team**, containing 28 plugins. Its goal is to use OpenClaw Agents as the hub, connecting IM channels, message queues, knowledge bases, and long-term memory into a closed-loop multi-platform information flow.
 
 ### 1.1 What We Have
 
@@ -326,7 +326,7 @@ User message → before_prompt_build
 | openclaw-router core | ✅ |
 | openclaw-memory core | ✅ |
 | Enterprise architecture doc | ✅ |
-| 29 plugins governed in the monorepo and Profiles | ✅ |
+| 28 plugins governed in the monorepo and Profiles | ✅ |
 | Existing plugin structure convergence | In progress |
 
 ### Phase 2: Deep Integration (in progress)
@@ -447,7 +447,7 @@ openclaw plugins install @partme.ai/openclaw-knowledge
 
 ## About openclaw-plugins
 
-This document is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — an enterprise OpenClaw plugin collection developed and further developed by the **PartMe.AI team**, containing 29 plugins across IM channels, message queues, AI capabilities, and infrastructure.
+This document is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — an enterprise OpenClaw plugin collection developed and further developed by the **PartMe.AI team**, containing 28 plugins across IM channels, message queues, AI capabilities, and infrastructure.
 
 **PartMe.AI** specializes in AI customer service and enterprise AI agent infrastructure.
 

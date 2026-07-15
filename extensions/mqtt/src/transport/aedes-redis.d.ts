@@ -7,29 +7,12 @@ declare module "aedes-persistence-redis" {
   import { Redis } from "ioredis";
 
   interface RedisPersistenceOptions {
-    redis: Redis;
-    prefix?: string;
-    ttl?: {
-      subscriptions?: number;
-      packets?: number;
-      messages?: number;
-    };
+    conn: Redis;
+    packetTTL?: (packet: unknown) => number;
   }
 
   function RedisPersistence(options: RedisPersistenceOptions): unknown;
   export = RedisPersistence;
-}
-
-// MQEmitter Redis
-declare module "mqemitter-redis" {
-  import { Redis } from "ioredis";
-
-  interface MQEmitterRedisOptions {
-    redis: Redis;
-  }
-
-  function MQEmitterRedis(options: MQEmitterRedisOptions): unknown;
-  export = MQEmitterRedis;
 }
 
 // MongoDB

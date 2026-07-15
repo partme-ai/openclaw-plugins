@@ -6,35 +6,36 @@
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-[简体中文](./README.md) | [English](./README.en.md)
+[简体中文](./README.zh-CN.md) | [English](./README.md)
 
 ---
 
 ## 概述
 
-`@partme.ai/openclaw-memory` 为 OpenClaw Agent 提供多级长期记忆能力。它实现了 OpenClaw Memory Host SDK 契约，声明 `kind: "memory"` — 框架自动处理记忆召回、上下文注入和 flush 时机。插件仅负责存储（L0 录制）、提取（L1 关键词记忆）和搜索（通过 `MemorySearchManager`）。
+`@partme.ai/openclaw-memory` 为 OpenClaw Agent 提供本地多级长期记忆能力。它实现 OpenClaw 2026.7.1 Memory Host SDK 契约并声明 `kind: "memory"`，由框架调用 `MemorySearchManager` 完成自动召回和上下文注入。
 
-**零外部依赖** — 数据存储在本地 JSONL 文件中，使用纯关键词匹配，无需外部数据库或 API。
+**零外部依赖** — 数据以 JSONL 保存，使用本地词法召回，无需数据库、嵌入模型或外部 API。它不是向量/语义检索插件。
 
 ## 架构
 
 ```
 记忆层级架构：
 
-L0 — 对话录制：自动捕获每轮对话到本地 JSONL 文件
-L1 — 记忆提取：从对话中提取结构化关键词记忆
-L2 — 场景归纳：基于 L1 记忆归纳场景块（通过 memory_search 工具）
-L3 — 用户画像：生成/更新用户画像（通过 memory_search 工具）
+L0 — 对话录制：按 runId 幂等保存当前轮消息
+L1 — 情景记忆：保存当前用户输入及检索关键词
+L2 — 场景归纳：按配置周期生成会话场景记录
+L3 — 用户画像：从明确偏好、身份和长期指令中提取画像事实
 
 自动召回：对话前自动搜索相关记忆并注入上下文
 ```
 
 ### 工作原理
 
-1. **L0 录制**：每次 `agent_end` 事件结束时，所有对话消息追加到按日分割的 JSONL 文件中（`conversations/YYYY-MM-DD.jsonl`）
-2. **L1 提取**：每第 5 次 `agent_end`，扫描用户消息提取关键词。包含足够关键词的消息记录为情景记忆（`records/YYYY-MM-DD.jsonl`）
-3. **自动召回**：`MemorySearchManager.search()` 被 OpenClaw 框架在 `before_prompt_build` 期间自动调用 — 相关记忆自动注入对话上下文
-4. **手动搜索**：Agent 可在对话中通过 `memory_search` 工具显式搜索记忆
+1. **L0 录制**：成功的 `agent_end` 只截取当前轮消息，以 `runId` 防重复后异步追加到按日文件
+2. **L1 提取**：每轮用户输入形成情景记忆；中文词组同时生成二元词，改善无空格查询召回
+3. **L2/L3 提取**：默认每 5 轮生成场景记录；明确的偏好、身份和长期指令形成可跨会话召回的画像事实
+4. **自动召回**：OpenClaw 调用 `MemorySearchManager.search()` 注入相关记忆；全部层级默认按 session 隔离
+5. **手动搜索**：`memory_search` 使用宿主提供的可信 `agentId` 和 `sessionKey`，工具参数不能切换租户
 
 ## 特性
 
@@ -42,9 +43,11 @@ L3 — 用户画像：生成/更新用户画像（通过 memory_search 工具）
 - **L1 关键词提取** — 从对话中提取结构化关键词记忆
 - **自动召回** — 框架自动调用 `MemorySearchManager.search()` 注入相关记忆到上下文
 - **关键词搜索** — 纯关键词匹配 + 评分（零外部 API 调用）
-- **30 文件窗口扫描** — 搜索最近 30 个记录文件以寻找相关记忆
+- **有界时间窗口** — 最多扫描保留期内最近 365 个按日文件
 - **`memory_search` 工具** — Agent 可在对话中主动搜索用户记忆
-- **保留管理** — 可配置的保留周期（默认 90 天）
+- **保留管理** — 启动时和每日自动删除超过保留期的文件
+- **安全存储** — Agent 物理分区、session 过滤、目录穿越防护、0600 文件权限
+- **可选静态加密** — 通过环境变量提供密钥，使用 AES-256-GCM 逐行加密
 - **纯本地运行** — 无外部依赖，无需 API 密钥，无需向量数据库
 - **可配置** — 数据目录、搜索结果上限、保留天数均可配置
 
@@ -84,7 +87,11 @@ openclaw plugins install @partme.ai/openclaw-memory
         "config": {
           "dataDir": "~/.openclaw/state/memory",   // 数据存储目录
           "maxSearchResults": 10,                   // 每次搜索最大结果数（默认 10）
-          "retentionDays": 90                       // 数据保留天数（默认 90）
+          "retentionDays": 90,                      // 数据保留天数（默认 90）
+          "extractionInterval": 5,                  // L2 场景归纳周期
+          "maxRecordBytes": 65536,                  // 单条 L0 记录最大字节数
+          "profileScope": "session",               // 安全默认；单用户 Agent 可设为 agent
+          "encryptionKeyEnv": "OPENCLAW_MEMORY_KEY" // 可选：密钥环境变量名
         }
       }
     }
@@ -97,7 +104,11 @@ openclaw plugins install @partme.ai/openclaw-memory
 | `enabled` | boolean | `true` | 启用记忆插件 |
 | `dataDir` | string | `~/.openclaw/state/memory` | 数据存储目录 |
 | `maxSearchResults` | number | `10` | 每次搜索返回的最大结果数 |
-| `retentionDays` | number | `90` | 数据保留天数（参考值，不自动删除） |
+| `retentionDays` | number | `90` | 数据保留天数，启动时及每日自动清理 |
+| `extractionInterval` | number | `5` | 每多少轮生成一次 L2 场景记录 |
+| `maxRecordBytes` | number | `65536` | 单条 L0 记录上限，防止异常大消息耗尽磁盘 |
+| `profileScope` | `session` \| `agent` | `session` | L3 画像召回范围；仅单用户 Agent 才建议设为 `agent` |
+| `encryptionKeyEnv` | string | 无 | AES-256-GCM 密钥所在的环境变量名；配置后缺失密钥会启动失败 |
 
 ## 记忆搜索工具
 
@@ -110,7 +121,7 @@ Agent 可在对话中使用 `memory_search` 工具主动搜索用户记忆：
   "description": "搜索用户的长期记忆。",
   "parameters": {
     "query": "搜索查询字符串",
-    "limit": "最大结果数（默认 10，最大 20）"
+    "limit": "最大结果数（不超过 maxSearchResults）"
   }
 }
 ```
@@ -120,11 +131,11 @@ Agent 可在对话中使用 `memory_search` 工具主动搜索用户记忆：
 ### 目录结构
 
 ```
-{dataDir}/
-├── conversations/        # L0 对话日志（按日 JSONL 文件）
-│   └── 2026-05-22.jsonl
-└── records/              # L1 提取的记忆（按日 JSONL 文件）
-    └── 2026-05-22.jsonl
+{dataDir}/agents/{agent-slug-hash}/
+├── conversations/        # L0 当前轮对话
+├── memories/             # L1 情景记忆
+├── scenarios/            # L2 场景记录
+└── profiles/             # L3 用户画像事实
 ```
 
 ### 对话记录格式（L0）
@@ -132,10 +143,13 @@ Agent 可在对话中使用 `memory_search` 工具主动搜索用户记忆：
 ```json
 {
   "id": "1747891234567_a1b2c3d4",
-  "role": "user",
-  "content": "退款政策是什么？",
-  "timestamp": 1747891234567,
-  "sessionKey": "session_abc123"
+  "level": "L0",
+  "type": "conversation",
+  "agentId": "main",
+  "sessionKey": "session_abc123",
+  "runId": "run_123",
+  "messages": [{ "role": "user", "content": "退款政策是什么？" }],
+  "createdAt": "2026-07-15T10:00:00.000Z"
 }
 ```
 
@@ -144,7 +158,9 @@ Agent 可在对话中使用 `memory_search` 工具主动搜索用户记忆：
 ```json
 {
   "id": "1747891234567_e5f6g7h8",
-  "content": "用户提到：退款、政策、退货。退款政策是什么？",
+  "level": "L1",
+  "content": "退款政策是什么？",
+  "keywords": ["退款政策是什么", "退款", "款政"],
   "type": "episodic",
   "sessionKey": "session_abc123",
   "createdAt": "2026-05-22T10:00:00.000Z"
@@ -153,10 +169,10 @@ Agent 可在对话中使用 `memory_search` 工具主动搜索用户记忆：
 
 ## 范围与限制
 
-- **存储**：仅支持本地 JSONL 文件，不适合分布式/集群部署
-- **搜索**：纯关键词匹配 + 中文二元分词。不支持语义/向量搜索
-- **性能**：扫描最近 30 个记录文件，性能受文件大小影响
-- **提取频率**：默认每第 5 次对话进行记忆提取（可通过 `shouldExtract()` 配置）
+- **部署边界**：本地 JSONL 面向单节点进程；多节点共享记忆应改用 OpenMem 等外部后端
+- **搜索边界**：词法匹配 + 中文二元词，不宣称语义或向量检索
+- **提取边界**：L2/L3 是确定性规则提取，不调用 LLM；复杂归纳应使用专门记忆后端
+- **身份边界**：物理隔离单位为 Agent，所有层级默认再按 session 过滤；只有明确为单用户的 Agent 才应配置 `profileScope: "agent"`
 - **Memory Host SDK**：实现了标准的 `MemorySearchManager` 接口，框架负责注入时机
 
 ## 开发
@@ -184,7 +200,7 @@ pnpm typecheck
 
 ## 关于 openclaw-plugins
 
-本项目是 [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) monorepo 的一员 — 由 **PartMe.AI 团队** 研发与二次开发的 OpenClaw 企业级插件集合，包含 30+ 独立插件，覆盖 IM 渠道、消息队列、AI 能力、基础设施四大领域。
+本项目是 [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) monorepo 的一员 — 由 **PartMe.AI 团队** 研发与二次开发的 OpenClaw 企业级插件集合，覆盖 IM 渠道、消息队列、AI 能力和基础设施。
 
 每个插件独立发布到 npm（`@partme.ai` scope），可单独安装：
 

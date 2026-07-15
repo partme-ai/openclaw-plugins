@@ -14,7 +14,7 @@ import {
   matchChannel,
   buildReplyChannelFromInbound,
 } from "./routing/topic-router.js";
-import { publishMessage } from "./transport/publisher.js";
+import { publishEntry, publishMessage } from "./transport/publisher.js";
 import { logger } from "./shared/logger.js";
 import type { RedisChannelConfig, RedisInboundMessage } from "./types.js";
 import {
@@ -24,11 +24,9 @@ import {
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
 import {
-  getRedisStreamIdempotencyCache,
+  getRedisStreamClaimableDedupe,
   mapRedisStreamWirePayloadMode,
 } from "./shared/wire-helpers.js";
-
-const idempotencyCache = getRedisStreamIdempotencyCache();
 
 /**
  * @description 处理 Redis channel 入站消息（Pub/Sub 或 Stream 消费回调）。
@@ -53,10 +51,8 @@ export async function handleInboundMessage(
     return true; // 非匹配 channel 不算失败，消息可以 ACK
   }
 
-  // 2. 幂等键（Stream entry ID 优先，否则 channel + 载荷前缀）
-  const messageId =
-    message.streamEntryId ??
-    `${channel}:${message.message.slice(0, 100)}`;
+  // Pub/Sub has no stable delivery ID; only Stream entries participate in dedupe.
+  const messageId = message.streamEntryId ? `${channel}:${message.streamEntryId}` : undefined;
 
   // 3. 路由解析（显式绑定优先，Stream fieldAgentId 字段覆盖）
   let route = message.fieldAgentId
@@ -82,31 +78,19 @@ export async function handleInboundMessage(
     }
   }
 
-  // 已成功处理过的重复投递：Stream 可 ACK，Pub/Sub 静默跳过
-  if (idempotencyCache.has(messageId)) {
-    logger.info(`Duplicate message skipped: ${messageId.slice(0, 50)}...`);
-    return true;
-  }
-
-  // 4. Runtime 须在 remember 之前检查，避免未 dispatch 却占用幂等键导致 PEL 无法重试
+  // Runtime must exist before claiming the delivery.
   const rt = getRedisStreamRuntime();
   if (!rt) {
     logger.warn("Runtime not initialized, cannot dispatch message");
     return false;
   }
 
-  // 5. payload 解析 + 进程内幂等 remember
+  // Parse payload without eagerly recording idempotency.
   const parsed = normalizeWireIngress({
     rawPayload: message.message,
     mode: mapRedisStreamWirePayloadMode(config.payload.mode),
     channel: "redis-stream",
-    idempotencyKey: messageId,
-    idempotency: idempotencyCache,
   });
-  if (!parsed.accepted) {
-    logger.info(`Duplicate message skipped: ${messageId.slice(0, 50)}...`);
-    return true;
-  }
   const text = parsed.text;
 
   // 6. 回复 channel 推导（fieldReplyStream 优先 > binding replyChannel > 标准格式）
@@ -117,6 +101,13 @@ export async function handleInboundMessage(
 
   // 7. peerId 使用 channel 名称（可通过 fieldPeerId 覆盖）
   const peerId = message.fieldPeerId ?? channel;
+
+  const dedupe = getRedisStreamClaimableDedupe(config.idempotency);
+  const claim = dedupe && messageId ? await dedupe.claim(messageId) : undefined;
+  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
+    logger.info(`Duplicate message skipped: ${messageId?.slice(0, 80)}`);
+    return true;
+  }
 
   // 8. 分发到 OpenClaw Runtime
   try {
@@ -153,7 +144,16 @@ export async function handleInboundMessage(
       },
       reply: {
         deliver: async ({ wire }) => {
-          await publishMessage(replyChannel, wire);
+          if (config.channelMode === "stream") {
+            await publishEntry(replyChannel, {
+              [config.fieldMapping.textField]: wire,
+              agentId,
+              peerId,
+              accountId: route.accountId,
+            });
+          } else {
+            await publishMessage(replyChannel, wire);
+          }
         },
         outboundFormat: "envelope",
         replyRoute: { topic: replyChannel },
@@ -161,8 +161,15 @@ export async function handleInboundMessage(
       },
     });
 
+    if (dedupe && messageId && claim?.kind === "claimed") {
+      await dedupe.commit(messageId);
+    }
+
     return true;
   } catch (error) {
+    if (dedupe && messageId && claim?.kind === "claimed") {
+      dedupe.release(messageId);
+    }
     logger.error(`Runtime dispatch failed for channel=${channel}:`, error);
     return false;
   }

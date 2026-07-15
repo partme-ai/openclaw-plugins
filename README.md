@@ -2,7 +2,7 @@
 
 # openclaw-plugins
 
-**29 个企业级插件。一个统一生态。**
+**28 个企业级插件。一个统一生态。**
 
 *IM 渠道 · 消息队列 · AI 能力 · 基础设施 — 生产级品质，独立发布。*
 
@@ -31,7 +31,7 @@
 
 ## 📖 简介
 
-**openclaw-plugins** 是 [OpenClaw](https://github.com/partme-ai/openclaw) 的官方企业级插件生态 — 一个 **pnpm monorepo**，包含 **29 个独立发布的 npm 包**，统一使用 `@partme.ai` scope，由 **PartMe.AI** 团队维护。
+**openclaw-plugins** 是 [OpenClaw](https://github.com/partme-ai/openclaw) 的官方企业级插件生态 — 一个 **pnpm monorepo**，包含 **28 个独立发布的 npm 包**，统一使用 `@partme.ai` scope，由 **PartMe.AI** 团队维护。
 
 OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息队列**、**RAG 知识库**、**长期记忆**、**可观测性** 与 **企业基础设施** 连接成闭环的多平台信息流。
 
@@ -103,12 +103,12 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 |------|------|------|--------|----------|
 | L1 | **IM（自建）** | 6 | wecom、wechat、wecom-kf、wechat-ipad、douyin、gotify | Bot/Webhook/Agent · 媒体 · 去重 · Skills |
 | L1 | **IM（桥接）** | 1 + 21 上游 | openclaw-bridge | 上下文注入 · UnifiedMessage MQ 转发 · 21 个内置渠道 |
-| L1 | **消息队列** | 9 | mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq、cluster | topicBindings · Wire 分发 · 幂等 · 多协议发现 |
+| L1 | **消息队列** | 8 | mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq | topicBindings · Wire 分发 · 幂等 · 多协议接入 |
 | L2 | **AI 能力** | 5 | knowledge、memory、router、openmem、message-sdk | RAG · L0–L3 记忆 · 路由规则 · OpenMem HTTP 桥 · 统一线格式 |
 | L2–L4 | **基础设施** | 5 | nacos、prometheus、tracing、oauth2、mtls | 配置中心 · 指标 · OTel · 认证 · mTLS |
 | — | **平台集成** | 3 | amap、meituan、rednode | POI/店铺 Webhook · 小红书双模式 |
 
-**完整插件矩阵**（29 个包、npm 名、功能说明）：[架构设计 — 插件总览](./doc/OpenClaw-Plugins-Architecture_CN.md)。
+**完整插件矩阵**（28 个包、npm 名、功能说明）：[架构设计 — 插件总览](./doc/OpenClaw-Plugins-Architecture_CN.md)。
 
 ---
 
@@ -118,7 +118,7 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 |------|--------------|
 | **企业 IM 智能客服** | wecom / wecom-kf + knowledge + memory + router |
 | **业务系统 ↔ Agent** | mqtt / rabbitmq + message-sdk Wire 路径 |
-| **多云配置与注册** | nacos + cluster |
+| **配置中心与节点发现** | nacos |
 | **生产可观测** | prometheus + tracing |
 | **全渠道接入且不 fork 上游** | openclaw-bridge + 官方钉钉 / 飞书 / QQ 连接器 |
 | **本地优先外部记忆** | openmem + OpenMem 侧车（端口 3317） |
@@ -167,7 +167,7 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 ┌────────────────────────────▼────────────────────────────────┐
 │  第一层 — 渠道层（无需修改渠道代码）                           │
 │  IM：wecom wechat wecom-kf gotify … + bridge（21 上游）      │
-│  MQ：mqtt rabbitmq redis-stream rocketmq stomp cluster …    │
+│  MQ：mqtt rabbitmq redis-stream rocketmq stomp …            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -175,7 +175,7 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 
 ```
 openclaw-plugins/
-├── extensions/              # 29 个 npm 包（不含 _template）
+├── extensions/              # 28 个 npm 包（不含 _template）
 │   ├── wecom/ mqtt/ …         # 渠道与能力插件
 │   └── message-sdk/           # 共享库（非 Gateway 插件）
 ├── sdk/                       # 多语言消息 SDK（TypeScript、Go、Java、Python）
@@ -385,14 +385,12 @@ pnpm install
 - Wire JSON 信封 v1，兼容纯文本
 - 3 种分发模式：`reply-pipeline`（默认 Wire 信封）、`embedded-agent`（进程内）、`subagent`（子 Agent）
 - 共享 `topicBindings`、幂等缓存（TTL-based `IdempotencyCache`）
-- 插件：mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq、cluster
-- 插件：mqtt、rabbitmq、redis-stream、rocketmq、stomp、web-mqtt、web-stomp、cluster
+- 插件：mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq
 
 #### 5. 企业基础设施
 
-- **cluster**：8 种可插拔发现后端（Consul、DNS SRV、Etcd、Eureka、mDNS、Nacos、Redis、Static），支持自注册、TTL 心跳与拓扑变更回调
 - **nacos**：Spring Cloud 兼容配置合并、服务注册、集群发现（[Nacos 文档](./doc/nacos/zh/OpenClaw-Nacos-Guide_CN.md)）
-- **oauth2**：Sa-Token、Keycloak、Auth0、Azure AD、通用 JWT/introspection
+- **oauth2**：基于 `openid-client` 对接标准 OAuth2/OIDC 服务
 - **mtls**：客户端证书白名单、保护路径、透传模式
 
 #### 6. 可观测性

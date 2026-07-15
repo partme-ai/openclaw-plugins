@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     sessionKey: "agent:main:redis-stream:direct:openclaw:agent:demo:in",
   }),
   publishMessage: vi.fn().mockResolvedValue(undefined),
+  publishEntry: vi.fn().mockResolvedValue("1-0"),
 }));
 
 vi.mock("@partme.ai/openclaw-message-sdk/bridge", async (importOriginal) => {
@@ -23,13 +24,13 @@ vi.mock("@partme.ai/openclaw-message-sdk/bridge", async (importOriginal) => {
 
 vi.mock("../src/transport/publisher.js", () => ({
   publishMessage: mocks.publishMessage,
-  publishEntry: vi.fn(),
+  publishEntry: mocks.publishEntry,
 }));
 
 import { resolveRedisChannelConfig } from "../src/config.js";
 import { handleInboundMessage } from "../src/inbound.js";
 import { setRedisStreamRuntime } from "../src/runtime.js";
-import { getRedisStreamIdempotencyCache } from "../src/shared/wire-helpers.js";
+import { getRedisStreamClaimableDedupe } from "../src/shared/wire-helpers.js";
 import type { RedisChannelConfig, RedisInboundMessage } from "../src/types.js";
 
 const { dispatchChannelMessage, resolveChannelDispatchIdentity, publishMessage } = mocks;
@@ -63,7 +64,7 @@ function makeMessage(overrides: Partial<RedisInboundMessage> = {}): RedisInbound
 describe("handleInboundMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getRedisStreamIdempotencyCache().clear();
+    getRedisStreamClaimableDedupe(baseConfig().idempotency)?.clearMemory();
     setRedisStreamRuntime({ config: {} } as never);
   });
 
@@ -126,6 +127,19 @@ describe("handleInboundMessage", () => {
     expect(publishMessage).toHaveBeenCalledWith("openclaw:agent:demo:out", '{"text":"pong"}');
   });
 
+  it("writes replies with XADD in Stream mode", async () => {
+    await handleInboundMessage(makeMessage(), baseConfig({ channelMode: "stream" }));
+    const reply = dispatchChannelMessage.mock.calls[0][0].reply as {
+      deliver: (p: { wire: string }) => Promise<void>;
+    };
+    await reply.deliver({ wire: '{"text":"durable pong"}' });
+    expect(mocks.publishEntry).toHaveBeenCalledWith(
+      "openclaw:agent:demo:out",
+      expect.objectContaining({ text: '{"text":"durable pong"}', agentId: "main" }),
+    );
+    expect(publishMessage).not.toHaveBeenCalled();
+  });
+
   it("drops duplicate message ids", async () => {
     const msg = makeMessage({ message: "once" });
     const config = baseConfig();
@@ -133,6 +147,25 @@ describe("handleInboundMessage", () => {
     expect(await handleInboundMessage(msg, config)).toBe(true);
     expect(await handleInboundMessage(msg, config)).toBe(true);
     expect(dispatchChannelMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases an idempotency claim when dispatch fails", async () => {
+    const msg = makeMessage({ message: "retry me" });
+    const config = baseConfig();
+    dispatchChannelMessage.mockRejectedValueOnce(new Error("temporary failure"));
+
+    expect(await handleInboundMessage(msg, config)).toBe(false);
+    expect(await handleInboundMessage(msg, config)).toBe(true);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not dedupe Pub/Sub messages without a stable delivery id", async () => {
+    const msg = makeMessage({ streamEntryId: undefined, message: "legitimate repeated payload" });
+    const config = baseConfig();
+
+    expect(await handleInboundMessage(msg, config)).toBe(true);
+    expect(await handleInboundMessage(msg, config)).toBe(true);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
   });
 
   it("returns false when runtime is missing", async () => {

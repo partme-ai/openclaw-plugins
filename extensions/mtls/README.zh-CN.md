@@ -31,19 +31,20 @@ mTLS（Mutual TLS）是一种安全机制，在这种机制下，客户端和服
 ```
 客户端 (携带客户端证书)
     → HTTPS + mTLS
-    → OpenClaw Gateway
-    → mTLS 中间件 (验证客户端证书)
-    → 下游处理器
+    → mTLS HTTPS 反向代理（本插件，默认 :18443）
+    → 覆盖可信身份 Header
+    → OpenClaw Gateway（loopback :18789，trusted-proxy 模式）
 ```
 
 ### 生命周期
 
-- 插件通过 `registerHttpRoute` 在 Gateway 加载时注册
-- mTLS 中间件拦截受保护路径上的 HTTP 请求
-- 从 TLS socket 中提取客户端证书
+- 插件通过 `registerService` 启动独立 HTTPS 代理
+- 代理同时转发普通 HTTP 与 WebSocket Upgrade
+- 从代理 TLS socket 中提取客户端证书
 - 根据 `allowedClients` 白名单验证证书（如已配置）
-- 将认证上下文附加到请求中供下游使用
-- 状态端点：`GET /mtls/status`
+- 删除客户端伪造的身份 Header，再写入证书 CN
+- OpenClaw 使用官方 `gateway.auth.mode: "trusted-proxy"` 完成最终鉴权
+- 代理状态端点：`GET https://<host>:18443/mtls/status`
 
 ## 🚀 快速开始
 
@@ -63,27 +64,44 @@ openclaw plugins install @partme.ai/openclaw-mtls
 
 ```json
 {
-  "mtls": {
-    "enabled": true,
-    "tls": {
-      "enabled": true,
-      "certFile": "/path/to/server-cert.pem",
-      "keyFile": "/path/to/server-key.pem",
-      "caFile": "/path/to/ca-cert.pem",
-      "requestCert": true,
-      "rejectUnauthorized": true
-    },
-    "protectedPaths": [
-      { "path": "/", "match": "prefix", "allowUnauthenticated": false }
-    ],
-    "allowedClients": [
-      { "cn": "trusted-client-1" },
-      { "cn": "trusted-client-2", "issuer": "My CA" }
-    ],
-    "skipPaths": ["/health", "/auth/status", "/mtls/status"],
-    "passthrough": false,
-    "headerName": "X-Client-Cert",
-    "headerCertField": "subject"
+  "gateway": {
+    "bind": "loopback",
+    "port": 18789,
+    "trustedProxies": ["127.0.0.1", "::1"],
+    "auth": {
+      "mode": "trusted-proxy",
+      "trustedProxy": {
+        "allowLoopback": true,
+        "userHeader": "x-forwarded-user",
+        "allowUsers": ["trusted-client-1", "trusted-client-2"]
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "mtls": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "tls": {
+            "certFile": "/path/to/server-cert.pem",
+            "keyFile": "/path/to/server-key.pem",
+            "caFile": "/path/to/ca-cert.pem"
+          },
+          "proxy": {
+            "listenHost": "0.0.0.0",
+            "listenPort": 18443,
+            "upstreamHost": "127.0.0.1",
+            "upstreamPort": 18789,
+            "userHeader": "x-forwarded-user"
+          },
+          "allowedClients": [
+            { "cn": "trusted-client-1" },
+            { "cn": "trusted-client-2", "issuer": "My CA" }
+          ]
+        }
+      }
+    }
   }
 }
 ```
@@ -94,8 +112,9 @@ openclaw plugins install @partme.ai/openclaw-mtls
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `enabled` | `true` | 启用/禁用 mTLS 插件 |
+| `enabled` | `false` | 启用/禁用 mTLS 代理；启用后证书缺失会启动失败 |
 | `tls` | — | TLS 服务器配置 |
+| `proxy` | `:18443 → 127.0.0.1:18789` | mTLS 监听地址与 Gateway 上游 |
 | `protectedPaths` | `[{path:"/",match:"prefix"}]` | 需要 mTLS 认证的路径 |
 | `allowedClients` | `[]` | 允许的客户端证书白名单 |
 | `skipPaths` | 见下方 | 跳过认证的路径 |
@@ -164,9 +183,12 @@ git push origin main --follow-tags
 ```
 openclaw-mtls/
 ├── src/
-│   ├── index.ts              # 插件入口 — registerHttpRoute 中间件
-│   ├── types.ts              # 类型定义
-│   └── stats.ts             # 统计信息追踪
+│   ├── index.ts              # 插件生命周期与状态路由
+│   ├── config.ts             # Fail-closed 配置校验
+│   ├── policy.ts             # 证书与路径策略
+│   ├── proxy-server.ts       # HTTPS + WebSocket 反向代理
+│   ├── shared/types.ts       # 类型定义
+│   └── runtime/stats.ts      # 统计信息追踪
 ├── test/
 │   └── mtls.test.ts         # 单元测试
 ├── .github/workflows/
@@ -191,7 +213,7 @@ openclaw-mtls/
 
 **Gateway 如何处理 mTLS？**
 
-OpenClaw Gateway 在代理/负载均衡层终止 TLS。mTLS 插件从 TLS socket 中提取客户端证书信息并强制执行认证策略。
+本插件自身终止 TLS，并把已验证证书的 CN 写入 `x-forwarded-user`。Gateway 必须绑定在受保护的上游地址，并启用官方 `trusted-proxy` 认证；不要把 Gateway 上游端口直接暴露到公网。
 
 **如何只允许特定客户端？**
 

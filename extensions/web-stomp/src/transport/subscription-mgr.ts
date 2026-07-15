@@ -26,8 +26,9 @@ const connectionIndex = new Map<string, Set<string>>();
 export function addSubscription(
   connectionId: string,
   subscription: Omit<StompSubscription, "connectionId">
-): void {
+): boolean {
   const key = buildSubscriptionKey(connectionId, subscription.id);
+  if (subscriptions.has(key)) return false;
 
   const fullSub: StompSubscription = {
     ...subscription,
@@ -51,6 +52,7 @@ export function addSubscription(
   console.log(
     `[openclaw-web-stomp] Subscription added: ${key} -> ${subscription.destination}`
   );
+  return true;
 }
 
 /**
@@ -160,6 +162,16 @@ export function getConnectionSubscriptions(
     if (sub) result.push(sub);
   }
   return result;
+}
+
+export function hasSubscription(connectionId: string, subscriptionId: string): boolean {
+  return subscriptions.has(buildSubscriptionKey(connectionId, subscriptionId));
+}
+
+export function clearSubscriptions(): void {
+  subscriptions.clear();
+  destinationIndex.clear();
+  connectionIndex.clear();
 }
 
 /**

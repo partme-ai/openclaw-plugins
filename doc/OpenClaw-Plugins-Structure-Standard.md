@@ -29,7 +29,6 @@
 | **channel-legacy** | `bridge` | MUST（Phase 2 迁移） | 待对齐 | 暂标记为 Channel；Phase 2 MUST 迁移至 channel-base |
 | **capability-memory** | `memory`、`openmem` | MUST NOT | 根或 `src/` 入口 + manifest | `kind: memory`；无 `channel.ts` / `inbound.ts` |
 | **capability** | `mtls`、`oauth2` | MUST NOT | `src/index.ts` 或 manifest `main` | 安全/认证等横切能力 |
-| **capability-cluster** | `cluster` | MUST NOT | `src/index.ts` + `openclaw.extensions[]` | 集群协调；无 setup 冷路径 |
 | **infra** | `nacos`、`tracing`、`prometheus` | MUST NOT | `src/index.ts` + `openclaw.extensions[]` | 观测/配置/注册；`prometheus` MAY 后续升级 channel-capability 混合 |
 | **sdk-rag** | `knowledge` | MUST NOT | `src/index.ts` + manifest | RAG 引擎；领域 `src/` 收敛 |
 | **sdk** | `message-sdk` | MUST NOT | `src/index.ts` | 共享库/SDK；最小集：`.gitignore`、`src/`、`LICENSE` |
@@ -312,7 +311,6 @@ Base Profile 必须先成立。Extended Profile 在 Base 之上叠加语义子�
 |---------|---------|
 | `memory`、`openmem` | capability-memory |
 | `mtls`、`oauth2` | capability |
-| `cluster` | capability-cluster |
 | `nacos`、`tracing`、`prometheus` | infra |
 | `knowledge` | sdk-rag |
 | `message-sdk` | sdk |

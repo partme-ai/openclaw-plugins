@@ -67,13 +67,13 @@ describe("isUserActionAllowed", () => {
     ).toBe(true);
   });
 
-  it("should allow inbound/outbound when no rules defined", () => {
+  it("should deny inbound/outbound when no rules are defined", () => {
     const noRulesUser = { username: "norules" };
     expect(
       isUserActionAllowed({ user: noRulesUser, action: "inbound", topic: "any/topic" }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isUserActionAllowed({ user: noRulesUser, action: "outbound", topic: "any/topic" }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });

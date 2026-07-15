@@ -32,7 +32,12 @@ export type WebsocketServerConfig = {
     enabled: boolean;
     token?: string;
     tokens: string[];
+    /** 兼容旧浏览器客户端；会把凭据暴露给 URL 日志，默认关闭。 */
+    allowQueryToken: boolean;
   };
+  allowedOrigins: string[];
+  /** 显式接受远程明文 ws；生产环境应优先由反向代理终止 TLS。 */
+  allowInsecureRemote: boolean;
 };
 
 /** WebSocket 客户端（连外部 WS）配置 */
@@ -42,6 +47,9 @@ export type WebsocketClientConfig = {
   headers: Record<string, string>;
   token?: string;
   clientId: string;
+  connectTimeoutMs: number;
+  /** 显式接受连接远程明文 ws。 */
+  allowInsecureRemote: boolean;
   reconnect: {
     enabled: boolean;
     initialDelayMs: number;
@@ -55,6 +63,8 @@ export type WebsocketChannelConfig = {
   server: WebsocketServerConfig;
   client: WebsocketClientConfig;
   defaultAgentId?: string;
+  /** 是否信任入站帧声明 agentId；默认由服务端配置决定路由。 */
+  allowFrameAgentId: boolean;
   agentBindings: WebsocketAgentBinding[];
   payload: {
     mode: "jsonTextOrPlain";
@@ -62,6 +72,11 @@ export type WebsocketChannelConfig = {
   };
   limits: {
     maxPayloadBytes: number;
+    maxBufferedBytes: number;
+    maxPendingMessages: number;
+    messagesPerMinute: number;
+    heartbeatIntervalMs: number;
+    heartbeatTimeoutMs: number;
   };
   session: {
     maxExpirySeconds: number;

@@ -5,6 +5,7 @@ import {
   isServerModeEnabled,
   isWebsocketChannelConfigured,
   resolveWebsocketConfig,
+  validateWebsocketConfig,
 } from "../src/config.js";
 
 describe("resolveWebsocketConfig", () => {
@@ -56,6 +57,22 @@ describe("resolveWebsocketConfig", () => {
     const cfg = resolveWebsocketConfig({});
     expect(cfg.mode).toBe("server");
     expect(cfg.server.wsPort).toBe(18789);
+    expect(cfg.server.host).toBe("127.0.0.1");
+    expect(cfg.server.auth.allowQueryToken).toBe(false);
+  });
+
+  it("rejects an anonymous or implicit remote plaintext listener", () => {
+    const anonymous = resolveWebsocketConfig({ channels: { "web-socket": { host: "0.0.0.0" } } });
+    expect(() => validateWebsocketConfig(anonymous)).toThrow(/requires server\.auth/);
+    const authenticated = resolveWebsocketConfig({
+      channels: { "web-socket": { host: "0.0.0.0", auth: { enabled: true, token: "secret" } } },
+    });
+    expect(() => validateWebsocketConfig(authenticated)).toThrow(/allowInsecureRemote/);
+  });
+
+  it("rejects a remote ws client unless explicitly allowed", () => {
+    const cfg = resolveWebsocketConfig({ channels: { "web-socket": { mode: "client", url: "ws://example.com/ws" } } });
+    expect(() => validateWebsocketConfig(cfg)).toThrow(/remote plaintext client/);
   });
 });
 

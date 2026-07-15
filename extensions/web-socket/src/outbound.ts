@@ -46,7 +46,7 @@ export const webSocketOutbound: ChannelOutboundAdapter = {
         ? ctx.text
         : serializeReplyFrame(ctx.text, { sessionKey });
 
-    const ok = sendToConnection(connectionId, frame);
+    const ok = sendToConnection(connectionId, frame, cfg.limits.maxBufferedBytes);
     if (!ok) {
       console.warn(`[openclaw-web-socket] Send failed — socket closed: ${connectionId}`);
       return { channel: "web-socket", messageId: "socket-closed" };

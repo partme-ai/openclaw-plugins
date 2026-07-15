@@ -62,9 +62,10 @@ export function registerMessage(
  * @param messageId - 被确认的消息 ID
  * @returns 被确认的消息数量
  */
-export function handleAck(messageId: string): number {
+export function handleAck(messageId: string, connectionId?: string): number {
   const msg = pendingMessages.get(messageId);
   if (!msg) return 0;
+  if (connectionId && msg.connectionId !== connectionId) return 0;
 
   if (msg.ackMode === "client-individual") {
     // 仅确认该条消息
@@ -100,7 +101,8 @@ export function handleAck(messageId: string): number {
  * @returns 被拒绝消息的元数据，null 表示消息不存在
  */
 export function handleNack(
-  messageId: string
+  messageId: string,
+  connectionId?: string,
 ): {
   subscriptionId: string;
   connectionId: string;
@@ -108,6 +110,7 @@ export function handleNack(
 } | null {
   const msg = pendingMessages.get(messageId);
   if (!msg) return null;
+  if (connectionId && msg.connectionId !== connectionId) return null;
 
   pendingMessages.delete(messageId);
 
@@ -158,4 +161,17 @@ export function getAckStats(): {
     pendingCount: pendingMessages.size,
     oldestPendingMs: oldest,
   };
+}
+
+export function getPendingAckCount(connectionId: string): number {
+  let count = 0;
+  for (const message of pendingMessages.values()) {
+    if (message.connectionId === connectionId) count += 1;
+  }
+  return count;
+}
+
+export function clearAckState(): void {
+  pendingMessages.clear();
+  messageIdCounter = 0;
 }

@@ -31,7 +31,8 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md"
+    "README.zh-CN.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
@@ -40,11 +41,6 @@
     "type": "git",
     "url": "https://github.com/partme-ai/openclaw-plugins.git",
     "directory": "extensions/stomp"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -73,7 +69,7 @@
     "channel": {
       "id": "stomp-tcp",
       "label": "STOMP TCP",
-      "blurb": "Native TCP STOMP channel bridge with topic binding and enterprise delivery controls."
+      "blurb": "Authenticated STOMP 1.2 over TCP/TLS with bounded in-memory delivery controls."
     }
   },
   "exports": {

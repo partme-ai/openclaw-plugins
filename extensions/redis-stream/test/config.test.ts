@@ -2,7 +2,7 @@
  * 配置解析测试。
  */
 import { describe, it, expect } from "vitest";
-import { resolveRedisChannelConfig, DEFAULT_REDIS_CHANNEL_CONFIG } from "../src/config.js";
+import { resolveRedisChannelConfig, DEFAULT_REDIS_CHANNEL_CONFIG, redactUrl, safeParseRedisStreamConfig } from "../src/config.js";
 
 describe("resolveRedisChannelConfig", () => {
   it("returns defaults when config is empty", () => {
@@ -71,6 +71,9 @@ describe("resolveRedisChannelConfig", () => {
       },
     });
     expect(config.stream.pendingClaimIdleMs).toBe(120_000);
+    expect(config.stream.maxAttempts).toBe(5);
+    expect(config.stream.deadLetterKey).toBe("openclaw:inbound:dlq");
+    expect(config.stream.maxLen).toBe(100_000);
   });
 
   it("defaults to pubsub for invalid channelMode", () => {
@@ -206,5 +209,25 @@ describe("resolveRedisChannelConfig", () => {
       },
     });
     expect(json.payload.mode).toBe("jsonTextOrPlain");
+  });
+
+  it("uses a process-unique consumer name by default", () => {
+    const config = resolveRedisChannelConfig({});
+    expect(config.stream.consumerName).toContain(`-${process.pid}`);
+  });
+
+  it("rejects non-Redis URL protocols", () => {
+    const result = safeParseRedisStreamConfig({
+      ...DEFAULT_REDIS_CHANNEL_CONFIG,
+      url: "https://redis.example.com",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("redacts both username and password", () => {
+    const value = redactUrl("rediss://secret-user:secret-pass@redis.example.com:6380");
+    expect(value).not.toContain("secret-user");
+    expect(value).not.toContain("secret-pass");
+    expect(value).toContain("redis.example.com");
   });
 });

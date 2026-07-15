@@ -36,19 +36,32 @@ export function unregisterConnection(connectionId: string): void {
   connectionInfo.delete(connectionId);
 }
 
+/** 标记连接有入站、出站或心跳活动。 */
+export function touchConnection(connectionId: string): void {
+  const info = connectionInfo.get(connectionId);
+  if (info) info.lastActiveAt = new Date().toISOString();
+}
+
 /**
  * 向指定 connectionId 发送文本帧。
  */
-export function sendToConnection(connectionId: string, payload: string): boolean {
+export function sendToConnection(
+  connectionId: string,
+  payload: string,
+  maxBufferedBytes = 1024 * 1024,
+): boolean {
   const ws = connections.get(connectionId);
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     return false;
   }
-  ws.send(payload);
-  const info = connectionInfo.get(connectionId);
-  if (info) {
-    info.lastActiveAt = new Date().toISOString();
+  if (ws.bufferedAmount + Buffer.byteLength(payload, "utf8") > maxBufferedBytes) {
+    ws.close(1013, "Outbound backpressure limit exceeded");
+    return false;
   }
+  ws.send(payload, (error) => {
+    if (error) ws.terminate();
+  });
+  touchConnection(connectionId);
   return true;
 }
 
@@ -70,6 +83,9 @@ export function getAllConnectionInfo(): WebsocketConnectionInfo[] {
  * 清空全部连接（shutdown）。
  */
 export function clearAllConnections(): void {
+  for (const ws of connections.values()) {
+    ws.terminate();
+  }
   connections.clear();
   connectionInfo.clear();
 }

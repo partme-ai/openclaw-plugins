@@ -1,65 +1,161 @@
-/**
- * STOMP Channel 定义模块
- * 将 STOMP 注册为 OpenClaw 的 Channel
- *
- * Channel 定义了 OpenClaw 如何通过 STOMP 协议发送出站消息：
- * - outbound.sendText: Agent 回复时推送到对应的 session Topic
- */
+/** OpenClaw 2026.7.1 ChannelPlugin lifecycle for STOMP over WebSocket. */
+import type {
+  ChannelAccountSnapshot,
+  ChannelGatewayContext,
+  ChannelPlugin,
+  OpenClawConfig,
+} from "openclaw/plugin-sdk";
+import { deleteAccountFromConfigSection, setAccountEnabledInConfigSection } from "openclaw/plugin-sdk/core";
+import type { ChannelOutboundContext } from "openclaw/plugin-sdk/channel-contract";
+import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 
-import type { ChannelDefinition } from "./types.js";
-import { publishToDestination } from "./transport/server.js";
-import { buildSessionDestination } from "./routing/destination-router.js";
+import {
+  describeStompAccount,
+  listStompAccountIds,
+  resolveStompAccount,
+  resolveStompWsConfig,
+  WEB_STOMP_ACCOUNT_ID,
+} from "./config.js";
+import { dispatchInboundStomp } from "./inbound.js";
 import { stompWsSetupAdapter, stompWsSetupWizard } from "./onboarding.js";
+import { buildSessionDestination } from "./routing/destination-router.js";
+import { getStompServerStats, publishToDestination, startStompServer, stopStompServer } from "./transport/server.js";
+import type { ResolvedWebStompAccount } from "./types.js";
 
-/**
- * STOMP Channel 定义
- * 注册到 OpenClaw 后，Agent 的回复将通过此 channel 发送
- */
-export const stompChannel: ChannelDefinition = {
+const meta = {
   id: "stomp",
-  name: "STOMP over WebSocket Bridge",
+  label: "STOMP over WebSocket",
+  selectionLabel: "STOMP over WebSocket (plugin)",
+  docsPath: "/channels/stomp",
+  docsLabel: "stomp",
+  blurb: "STOMP 1.2 over WebSocket/WSS with bounded enterprise delivery controls.",
+  aliases: ["stomp", "web-stomp"],
+  order: 91,
+  quickstartAllowFrom: false,
+};
 
-  meta: {
-    id: "stomp",
-    label: "STOMP",
-    selectionLabel: "STOMP over WebSocket Bridge",
-    docsPath: "/channels/stomp",
-    blurb: "STOMP over WebSocket for web and enterprise integration.",
-    aliases: ["stomp", "web-stomp"],
-    order: 91,
-  },
+function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+}
 
-  /** 渠道能力：协议桥接无原生命令，仅直连会话 */
+function normalizeTarget(raw: string): string | undefined {
+  const value = raw.trim().replace(/^(web-stomp|stomp):/i, "").trim();
+  return value || undefined;
+}
+
+async function monitor(ctx: ChannelGatewayContext<ResolvedWebStompAccount>): Promise<void> {
+  const config = resolveStompWsConfig(ctx.cfg as unknown as Record<string, unknown>);
+  try {
+    await startStompServer(config, (message) => dispatchInboundStomp(message));
+    ctx.setStatus({
+      accountId: ctx.account.accountId,
+      configured: true,
+      running: true,
+      port: config.wsPort,
+      webhookPath: "/stomp/status",
+      lastStartAt: Date.now(),
+    } as ChannelAccountSnapshot);
+    await waitForAbort(ctx.abortSignal);
+  } catch (error) {
+    ctx.setStatus({ accountId: ctx.account.accountId, running: false, lastError: String(error) } as ChannelAccountSnapshot);
+    throw error;
+  } finally {
+    await stopStompServer();
+    ctx.setStatus({ accountId: ctx.account.accountId, running: false, lastStopAt: Date.now() } as ChannelAccountSnapshot);
+  }
+}
+
+export const stompChannel: ChannelPlugin<ResolvedWebStompAccount> = {
+  id: "stomp",
+  meta,
   capabilities: {
     chatTypes: ["direct"],
+    media: false,
+    reactions: false,
+    threads: false,
+    polls: false,
+    nativeCommands: false,
+    blockStreaming: true,
   },
-
+  reload: { configPrefixes: ["channels.stomp"] },
   setupWizard: stompWsSetupWizard,
   setup: stompWsSetupAdapter,
-
+  configSchema: { schema: { type: "object", additionalProperties: true, properties: {} } },
   config: {
-    listAccountIds: () => ["default"],
-    resolveAccount: () => ({}),
+    listAccountIds: (cfg: OpenClawConfig) => listStompAccountIds(cfg),
+    defaultAccountId: () => WEB_STOMP_ACCOUNT_ID,
+    resolveAccount: (cfg: OpenClawConfig) => resolveStompAccount(cfg),
+    setAccountEnabled: ({ cfg, accountId, enabled }) => setAccountEnabledInConfigSection({
+      cfg,
+      sectionKey: "stomp",
+      accountId,
+      enabled,
+      allowTopLevel: true,
+    }),
+    deleteAccount: ({ cfg, accountId }) => deleteAccountFromConfigSection({
+      cfg,
+      sectionKey: "stomp",
+      accountId,
+      clearBaseFields: [],
+    }),
+    isConfigured: (account) => account.configured,
+    unconfiguredReason: () => "channels.stomp is missing",
+    describeAccount: (account, cfg) => describeStompAccount(account, resolveStompWsConfig(cfg as unknown as Record<string, unknown>)),
   },
-
+  groups: { resolveRequireMention: () => false },
+  threading: { resolveReplyToMode: () => "off" },
+  messaging: {
+    normalizeTarget,
+    targetResolver: { looksLikeId: (raw) => Boolean(raw.trim()), hint: "<STOMP topic or session key>" },
+  },
   outbound: {
-    /**
-     * 发送文本消息给 STOMP 客户端
-     * Agent 回复时由 OpenClaw 调用此方法
-     *
-     * @param sessionKey - OpenClaw 会话键（格式：stomp:<connectionId>@<agentId>）
-     * @param text - Agent 回复的文本内容
-     */
-    sendText: async (sessionKey: string, text: string): Promise<void> => {
-      // 构建会话 Topic Destination
-      const destination = buildSessionDestination(sessionKey);
-
-      // 向所有订阅该 session 的客户端推送
-      publishToDestination(destination, text);
-
-      console.log(
-        `[openclaw-web-stomp] Reply published to ${destination}`
-      );
+    deliveryMode: "direct",
+    sanitizeText: ({ text }) => sanitizeForPlainText(text),
+    sendText: async (ctx: ChannelOutboundContext) => {
+      const destination = ctx.to.startsWith("/topic/") ? ctx.to : buildSessionDestination(ctx.to);
+      const delivered = publishToDestination(destination, ctx.text);
+      return { channel: "stomp", messageId: `${destination}:${delivered}` };
+    },
+  },
+  status: {
+    defaultRuntime: {
+      accountId: WEB_STOMP_ACCOUNT_ID,
+      running: false,
+      lastStartAt: null,
+      lastStopAt: null,
+      lastError: null,
+    },
+    buildChannelSummary: ({ snapshot }) => ({
+      configured: snapshot.configured ?? false,
+      running: snapshot.running ?? false,
+      webhookPath: snapshot.webhookPath ?? null,
+      lastStartAt: snapshot.lastStartAt ?? null,
+      lastStopAt: snapshot.lastStopAt ?? null,
+      lastError: snapshot.lastError ?? null,
+    }),
+    probeAccount: async () => ({ ok: getStompServerStats().running }),
+    buildAccountSnapshot: ({ account, runtime, cfg }) => {
+      const config = resolveStompWsConfig(cfg as unknown as Record<string, unknown>);
+      return {
+        accountId: account.accountId,
+        name: account.name,
+        enabled: account.enabled,
+        configured: account.configured,
+        running: runtime?.running ?? getStompServerStats().running,
+        port: config.wsPort,
+        webhookPath: "/stomp/status",
+        lastStartAt: runtime?.lastStartAt ?? null,
+        lastStopAt: runtime?.lastStopAt ?? null,
+        lastError: runtime?.lastError ?? null,
+      };
+    },
+  },
+  gateway: {
+    startAccount: monitor,
+    stopAccount: async (ctx) => {
+      await stopStompServer();
+      ctx.setStatus({ accountId: ctx.account.accountId, running: false, lastStopAt: Date.now() });
     },
   },
 };

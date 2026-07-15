@@ -12,14 +12,16 @@ import type { RedisClientType } from "redis";
 import { RedisConnectionError } from "../shared/errors.js";
 
 let client: RedisClientType | null = null;
+let streamMaxLen = 0;
 let _messagesWritten = 0;
 
 /**
  * @description 由 transport/server 在连接建立后注入 Redis 客户端。
  * @param c - 已连接的 RedisClientType 实例
  */
-export function setPublisherClient(c: RedisClientType): void {
+export function setPublisherClient(c: RedisClientType, maxLen = 0): void {
   client = c;
+  streamMaxLen = Math.max(0, Math.floor(maxLen));
 }
 
 /**
@@ -27,6 +29,7 @@ export function setPublisherClient(c: RedisClientType): void {
  */
 export function clearPublisherClient(): void {
   client = null;
+  streamMaxLen = 0;
 }
 
 /**
@@ -83,7 +86,11 @@ export async function publishEntry(
       "Redis client is not initialized",
     );
   }
-  const id = await client.xAdd(stream, "*", values);
+  const id = streamMaxLen > 0
+    ? await client.xAdd(stream, "*", values, {
+        TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: streamMaxLen },
+      })
+    : await client.xAdd(stream, "*", values);
   _messagesWritten++;
   return String(id);
 }

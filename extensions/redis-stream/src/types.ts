@@ -71,6 +71,12 @@ export type RedisChannelConfig = {
     createGroup: boolean;
     /** XAUTOCLAIM 最小 idle 毫秒；0 表示禁用 pending 回收 */
     pendingClaimIdleMs: number;
+    /** Maximum delivery count before atomically moving an entry to deadLetterKey. */
+    maxAttempts: number;
+    /** Dead-letter stream key. */
+    deadLetterKey: string;
+    /** Approximate MAXLEN applied to plugin-owned output and DLQ streams; 0 disables trimming. */
+    maxLen: number;
   };
   subscribeChannels: string[];
   channelBindings: RedisChannelBinding[];
@@ -86,6 +92,13 @@ export type RedisChannelConfig = {
   };
   connection: {
     reconnectMs: number;
+    /** 0 means unlimited reconnects after the first successful connection. */
     maxRetries: number;
+    startupTimeoutMs: number;
+  };
+  idempotency: {
+    enabled: boolean;
+    ttlMs: number;
+    maxEntries: number;
   };
 };

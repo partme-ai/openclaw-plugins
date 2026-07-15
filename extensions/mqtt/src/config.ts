@@ -6,7 +6,7 @@
 
 import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk";
 
-import type { MqttChannelConfig, OpenClawDmScope, MqttPersistenceConfig } from "./types.js";
+import type { MqttBrokerConfig, MqttChannelConfig, OpenClawDmScope, MqttPersistenceConfig } from "./types.js";
 
 export type { MqttChannelConfig } from "./types.js";
 
@@ -25,6 +25,7 @@ export type ResolvedMqttAccount = {
 
 /** 与 {@link resolveBrokerConfig} 默认一致 */
 export const DEFAULT_BROKER_CONFIG: MqttChannelConfig = {
+  host: "127.0.0.1",
   port: 1883,
   wsPort: 8883,
   maxConnections: 1000,
@@ -44,6 +45,7 @@ export const DEFAULT_BROKER_CONFIG: MqttChannelConfig = {
       db: 0,
       keyPrefix: "mqtt",
       subscriptionTTL: 3600,
+      packetTTL: 0,
       retainedTTL: 0,
     },
   },
@@ -121,6 +123,33 @@ export function resolveMqttAccount(cfg: OpenClawConfig, accountId?: string | nul
   };
 }
 
+/** 在监听端口前验证会改变安全边界的 Broker 配置。 */
+export function validateBrokerConfig(config: MqttBrokerConfig): void {
+  const host = config.host?.trim() || "127.0.0.1";
+  const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
+  if (!loopbackHosts.has(host) && !config.auth.enabled) {
+    throw new Error("[openclaw-mqtt] authentication must be enabled when binding beyond loopback");
+  }
+  if (config.auth.enabled && !config.auth.allowAnonymous && config.auth.users.length === 0) {
+    throw new Error("[openclaw-mqtt] at least one authenticated user is required");
+  }
+  if (config.auth.enabled && config.auth.allowAnonymous) {
+    const anonymous = config.auth.users.find((user) => user.username === "anonymous");
+    const hasRules = Boolean(
+      anonymous &&
+        ((anonymous.aclRules?.length ?? 0) > 0 ||
+          (anonymous.publishAllow?.length ?? 0) > 0 ||
+          (anonymous.subscribeAllow?.length ?? 0) > 0),
+    );
+    if (!hasRules) {
+      throw new Error("[openclaw-mqtt] allowAnonymous requires an explicit anonymous user with ACL rules");
+    }
+  }
+  if (!Number.isInteger(config.maxConnections) || config.maxConnections < 1) {
+    throw new Error("[openclaw-mqtt] maxConnections must be a positive integer");
+  }
+}
+
 /**
  * 从 OpenClaw 全局配置解析 `channels.mqtt` 为 Broker/Channel 共用结构。
  *
@@ -143,6 +172,7 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
     : [];
 
   return {
+    host: mqttConfig?.host?.trim() || DEFAULT_BROKER_CONFIG.host,
     port: mqttConfig?.port ?? DEFAULT_BROKER_CONFIG.port,
     wsPort: mqttConfig?.wsPort ?? DEFAULT_BROKER_CONFIG.wsPort,
     maxConnections: mqttConfig?.maxConnections ?? DEFAULT_BROKER_CONFIG.maxConnections,
@@ -213,6 +243,7 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
         password: mqttConfig?.persistence?.redis?.password,
         keyPrefix: mqttConfig?.persistence?.redis?.keyPrefix ?? DEFAULT_BROKER_CONFIG.persistence.redis?.keyPrefix,
         subscriptionTTL: mqttConfig?.persistence?.redis?.subscriptionTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.subscriptionTTL,
+        packetTTL: mqttConfig?.persistence?.redis?.packetTTL ?? mqttConfig?.persistence?.redis?.retainedTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.packetTTL,
         retainedTTL: mqttConfig?.persistence?.redis?.retainedTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.retainedTTL,
       },
     },

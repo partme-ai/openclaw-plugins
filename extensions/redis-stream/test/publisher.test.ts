@@ -47,6 +47,19 @@ describe("transport/publisher", () => {
     expect(getMessagesWritten()).toBe(1);
   });
 
+  it("applies approximate MAXLEN to plugin-owned streams", async () => {
+    const xAdd = vi.fn().mockResolvedValue("171-0");
+    setPublisherClient({ xAdd } as never, 5000);
+
+    await publishEntry("openclaw:outbound", { text: "bounded" });
+    expect(xAdd).toHaveBeenCalledWith(
+      "openclaw:outbound",
+      "*",
+      { text: "bounded" },
+      { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: 5000 } },
+    );
+  });
+
   it("clearPublisherClient resets client reference", async () => {
     setPublisherClient({ publish: vi.fn() } as never);
     clearPublisherClient();

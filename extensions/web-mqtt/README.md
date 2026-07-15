@@ -68,6 +68,7 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
     "mqtt-ws": {
       "port": 15675,
       "path": "/ws",
+      "host": "127.0.0.1",
       "topicPrefix": "openclaw/",
       "subscribeTopics": [
         "openclaw/agent/+/in",
@@ -97,12 +98,13 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
         "enabled": false
       },
       "ws": {
-        "compress": true,
+        "compress": false,
         "idleTimeoutMs": 60000,
-        "maxFrameSize": 262144
+        "maxFrameSize": 262144,
+        "allowedOrigins": ["https://console.example.com"]
       },
       "limits": {
-        "maxPayloadBytes": 1048576,
+        "maxPayloadBytes": 262144,
         "maxSubscriptionsPerClient": 200
       }
     }
@@ -112,9 +114,11 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
 
 ## Enterprise hardening checklist
 
-- Replace default credentials and enforce dedicated users
-- Enable `tls.enabled` and deploy WSS in production
+- Bind plain WS to loopback only; non-loopback startup requires `tls.enabled=true`
+- Use dedicated users and preferably `passwordHash` instead of plaintext passwords
+- Set `ws.allowedOrigins` for every browser application; an unlisted browser Origin is rejected
 - Set strict `publishAllow` / `subscribeAllow`
+- Anonymous access requires an explicit `anonymous` user with a fail-closed ACL
 - Tune `maxPayloadBytes`, `maxFrameSize`, `idleTimeoutMs` by traffic profile
 - Use reverse proxy policy and network ACL for perimeter controls
 
@@ -164,8 +168,6 @@ Supported env vars:
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | Push / PR | install, typecheck, build, test, upload artifact |
 | `.github/workflows/release.yml` | tag `v*` / manual | build, test, publish npm (skip existing version) |
-
-Release details: [`RELEASING.md`](./RELEASING.md)
 
 ## RabbitMQ Web MQTT baseline
 

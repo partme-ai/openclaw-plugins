@@ -16,6 +16,8 @@ import {
 import { dispatchDouyinWebhookInbound } from "./dispatch/dispatch-inbound.js";
 import {
   extractDouyinSenderId,
+  extractDouyinWebhookText,
+  parseDouyinWebhookEnvelope,
   tryParseVerifyWebhookChallenge,
   verifyDouyinSignature,
 } from "./webhook/webhook-utils.js";
@@ -28,6 +30,10 @@ export type DouyinGatewayLog = {
   debug?: (message: string) => void;
 };
 
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 /**
  * 构建符合 `registerPluginHttpRoute` 签名的 HTTP 处理器。
  */
@@ -38,7 +44,7 @@ export function createDouyinPluginHttpHandler(params: {
   const { account, log } = params;
 
   return async (req, res): Promise<boolean> => {
-    if (req.method !== "POST" && req.method !== "GET") {
+    if (req.method !== "POST") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("method not allowed");
       return true;
@@ -49,14 +55,7 @@ export function createDouyinPluginHttpHandler(params: {
         maxBytes: DEFAULT_WEBHOOK_MAX_BODY_BYTES,
       });
 
-      const challenge = tryParseVerifyWebhookChallenge(body);
-      if (challenge != null) {
-        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end(challenge);
-        return true;
-      }
-
-      const signature = req.headers["x-douyin-signature"] as string | undefined;
+      const signature = firstHeader(req.headers["x-douyin-signature"]);
       const secret = account.app_secret ?? "";
       if (!verifyDouyinSignature(secret, body, signature)) {
         res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" });
@@ -64,30 +63,56 @@ export function createDouyinPluginHttpHandler(params: {
         return true;
       }
 
-      const msgIdHeader = req.headers["msg-id"] as string | undefined;
-      const messageId = msgIdHeader ?? `douyin-${Date.now()}`;
+      const envelope = parseDouyinWebhookEnvelope(body);
+      if (!envelope) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("invalid json");
+        return true;
+      }
+      if (envelope.client_key && envelope.client_key !== account.app_key) {
+        res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("client_key mismatch");
+        return true;
+      }
+
+      const challenge = tryParseVerifyWebhookChallenge(body);
+      if (challenge != null) {
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ challenge: /^-?\d+$/.test(challenge) ? Number(challenge) : challenge }));
+        return true;
+      }
+
+      const msgIdHeader = firstHeader(req.headers["msg-id"]);
+      if (!msgIdHeader?.trim()) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("missing Msg-Id");
+        return true;
+      }
       const runtime = getDouyinRuntime();
       const cfg = (runtime.config ?? {}) as Record<string, unknown>;
       const peerId =
         extractDouyinSenderId(body) ?? `anonymous:${account.shop_id ?? account.accountId}`;
 
-      const result = await dispatchDouyinWebhookInbound({
+      const dispatch = dispatchDouyinWebhookInbound({
         runtime,
         cfg,
         account,
         rawBody: body,
-        text: body,
+        text: extractDouyinWebhookText(body),
         peerId,
-        messageId: msgIdHeader ?? messageId,
+        messageId: msgIdHeader,
         log,
       });
 
-      if (result === "skipped") {
-        log?.warn?.("[douyin] inbound skipped: no transcript runtime available");
-      }
-
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("success");
+      void dispatch.then((result) => {
+        if (result === "skipped") {
+          log?.warn?.("[douyin] inbound skipped: no transcript runtime available");
+        }
+      }).catch((error: unknown) => {
+        log?.error?.(`[douyin] webhook dispatch failed: ${String(error)}`);
+      });
       return true;
     } catch (e) {
       if (isRequestBodyLimitError(e)) {

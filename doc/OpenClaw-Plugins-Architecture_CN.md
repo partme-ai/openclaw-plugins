@@ -2,7 +2,7 @@
 
 ## 1. 概述
 
-openclaw-plugins 由 **PartMe.AI 团队** 研发与二次开发，包含 29 个插件。其目标是以 OpenClaw 智能体为核心枢纽，打通 IM 渠道、消息队列、知识库、长期记忆，形成多平台信息流闭环。
+openclaw-plugins 由 **PartMe.AI 团队** 研发与二次开发，包含 28 个插件。其目标是以 OpenClaw 智能体为核心枢纽，打通 IM 渠道、消息队列、知识库、长期记忆，形成多平台信息流闭环。
 
 ### 1.1 已有能力
 
@@ -271,7 +271,7 @@ knowledge 插件自行注册 `before_prompt_build`，提供 RAG 自动检索注�
 | openclaw-router 核心 | ✅ |
 | openclaw-memory 核心 | ✅ |
 | 企业级架构文档 | ✅ |
-| 29 个插件纳入 monorepo 与 Profile 治理 | ✅ |
+| 28 个插件纳入 monorepo 与 Profile 治理 | ✅ |
 | 存量插件结构规范收敛 | 进行中 |
 
 ### Phase 2: 深度集成（进行中）
@@ -363,7 +363,7 @@ openclaw plugins install @partme.ai/openclaw-knowledge
 
 ## 关于 openclaw-plugins
 
-本文档属于 [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — 由 **PartMe.AI 团队** 研发与二次开发的 OpenClaw 企业级插件集合，包含 29 个插件，覆盖 IM 渠道、消息队列、AI 能力、基础设施四大领域。
+本文档属于 [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — 由 **PartMe.AI 团队** 研发与二次开发的 OpenClaw 企业级插件集合，包含 28 个插件，覆盖 IM 渠道、消息队列、AI 能力、基础设施四大领域。
 
 **PartMe.AI** 专注于 AI 智能客服与企业级 AI Agent 基础设施。
 

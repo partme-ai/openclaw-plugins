@@ -25,33 +25,17 @@ export default defineChannelPluginEntry({
   setRuntime(runtime: PluginRuntime) {
     setRedisStreamRuntime(runtime);
   },
-  registerCliMetadata(api: OpenClawPluginApi) {
-    api.registerCli(
-      () => {
-        // Redis Stream 目前只声明 CLI 元数据；命令实现由后续 CLI surface 接入。
-      },
-      {
-        descriptors: [
-          {
-            name: "redis-stream",
-            description: "Redis Stream channel status",
-            hasSubcommands: false,
-          },
-        ],
-      },
-    );
-  },
-
   registerFull(api: OpenClawPluginApi) {
     // 健康检查
     api.registerHttpRoute({
       path: "/redis-stream/health",
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
       async handler(_req: IncomingMessage, res: ServerResponse) {
         const s = getStats();
         res.writeHead(s.connected ? 200 : 503, {
           "Content-Type": "application/json",
+          "Cache-Control": "no-store",
         });
         res.end(
           JSON.stringify({
@@ -68,11 +52,11 @@ export default defineChannelPluginEntry({
     api.registerHttpRoute({
       path: "/redis-stream/status",
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
       async handler(_req: IncomingMessage, res: ServerResponse) {
         const cfg = (api.runtime?.config ?? {}) as Record<string, unknown>;
         const config = resolveRedisChannelConfig(cfg);
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(
           JSON.stringify({
             ok: true,

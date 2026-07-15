@@ -1,22 +1,12 @@
 /**
- * 抖音出站适配器：MEDIA 指令解析占位。
+ * 抖音生活服务 Webhook 不提供对称私信发送能力。
  */
-
-import { createEmptyChannelResult } from "openclaw/plugin-sdk/channel-send-result";
-import { parseMediaDirectives } from "./runtime/runtime-api.js";
-
-const CHANNEL_ID = "douyin";
 
 /**
- * 占位 `sendText`：解析 MEDIA 指令后返回空成功结果。
+ * 明确拒绝不受支持的通用渠道出站，避免向调用方返回假成功。
  */
-export async function sendDouyinOutboundStub(text?: string): Promise<
-  Awaited<ReturnType<typeof createEmptyChannelResult>>
-> {
-  if (text) {
-    parseMediaDirectives(text);
-  }
-  return createEmptyChannelResult(CHANNEL_ID, {
-    messageId: `douyin-outbound-stub-${Date.now()}`,
-  });
+export async function sendDouyinOutboundUnsupported(): Promise<never> {
+  throw new Error(
+    "[douyin] generic outbound messaging is unavailable for the Life Service Webhook; use a supported OpenAPI tool",
+  );
 }

@@ -1,230 +1,160 @@
+# OpenClaw STOMP TCP
 
+面向 OpenClaw 2026.7.1 的原生 TCP/TLS STOMP 1.2 渠道。插件接收有界的 STOMP 连接，将 `SEND` 帧路由到已配置的 Agent，并通过连接级主题返回 Agent 回复。
 
-# OpenClaw STOMP
+[English](README.md)
 
-**OpenClaw 渠道插件：原生 STOMP TCP 桥接，支持企业级投递控制**
+## 能力边界
 
-npm
-Node
-License
+- 支持 STOMP 1.2 的 `CONNECT`、`SEND`、`SUBSCRIBE`、`UNSUBSCRIBE`、`ACK`、`NACK`、`DISCONNECT`
+- 明文 TCP 仅允许回环地址；远程监听使用 TLS 1.2+
+- login/passcode 认证，凭证支持环境变量、SHA-256 或 SHA-512 哈希
+- 心跳协商、CONNECT 超时、消息限速、帧大小与 Socket 缓冲上限
+- 连接数、订阅数、入站队列、prefetch、ACK、持久订阅状态和单订阅队列均有上限
+- 正确实现 `client` 累计确认与 `client-individual` 单条确认
+- 可选的进程内持久订阅和 NACK 重入队
+- 默认启用 Agent 白名单、显式 Topic 绑定和连接级回复主题隔离
+- 接入 OpenClaw Gateway 生命周期，提供凭证脱敏的 `/stomp-tcp/status`
 
+本插件是内嵌 OpenClaw 渠道，不是持久化 Broker。“持久订阅”仅保存在当前进程内，Gateway 重启后丢失；不支持 STOMP 事务、磁盘持久化、死信队列、Broker 集群或 exactly-once。需要这些能力时应使用 RabbitMQ 等专业消息代理。
 
+## 配置
 
-[简体中文](./README.zh-CN.md) | [English](./README.md)
-
-## 简介
-
-`@partme.ai/openclaw-stomp` 是 OpenClaw 的 STOMP 渠道插件，内置原生 STOMP TCP 服务（`stomp-tcp`），将 STOMP 客户端消息桥接到 OpenClaw Agent。
-
-本次版本已按 OpenClaw 最新插件规范改造：
-
-- 使用 `defineChannelPluginEntry` 作为完整入口
-- 使用 `defineSetupPluginEntry` 作为 setup-only 轻量入口
-- `package.json` 配置 `openclaw.setupEntry`
-
-## 核心能力
-
-- STOMP `CONNECT` / `SEND` / `SUBSCRIBE` / `UNSUBSCRIBE` / `ACK` / `NACK` / `DISCONNECT`
-- STOMP 1.0/1.1/1.2 版本握手
-- ACK 模式：`auto`、`client`、`client-individual`
-- `prefetch-count` 流控
-- durable 订阅（`durable:true + auto-delete:false`）
-- 多 topic 白名单（`subscribeTopics`）
-- topic 与 agent 显式绑定（`topicBindings`）
-- TLS 监听支持
-- 状态接口：`GET /stomp-tcp/status`
-
-## 消息流程
-
-1. STOMP 客户端建立连接并订阅多个 topic。
-2. 客户端发送 `SEND`。
-3. 插件路由决策：
-  - 先命中 `topicBindings`
-  - 未命中则走 destination 默认推导
-4. 插件调用 OpenClaw runtime 分发到 Agent。
-5. Agent 回复发布到绑定 `replyDestination` 或会话默认 topic。
-6. `client/client-individual` 模式下，受 prefetch 限制并等待 `ACK`。
-
-## 会话隔离（遵循 OpenClaw `session.dmScope`）
-
-插件不再额外定义自有“会话隔离粒度”配置，直接遵循 OpenClaw 全局会话策略：
-
-- `session.dmScope: "main"`
-- `session.dmScope: "per-peer"`
-- `session.dmScope: "per-channel-peer"`
-- `session.dmScope: "per-account-channel-peer"`
-
-会话键隔离仅由 `session.dmScope` 决定。
-
-## 快速开始
-
-### 前置条件
-
-- OpenClaw `>= 2026.7.1`
-- Node.js `22+`
-
-### 安装
-
-```bash
-openclaw plugins install @partme.ai/openclaw-stomp
-```
-
-最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
-
-### message-sdk 复用
-
-STOMP 协议与 ACK 逻辑留在本插件；下列能力通过 **薄封装** 委托 message-sdk：
-
-| message-sdk 模块 | stomp-tcp 挂载点 | 用途 |
-|------------------|------------------|------|
-| `ingress/wire-ingress`（`normalizeWireIngress`） | `inbound.ts` | 入站 payload 解析 + 幂等短路 |
-| `dedup`（`createIdempotencyCache` + `getGlobalSingleton`） | `shared/wire-helpers.ts` | 入站 message-id 进程内去重 |
-| `bridge`（`dispatchChannelMessage`、`resolveChannelDispatchIdentity`） | `inbound.ts` | Wire 路径 OpenClaw reply 管线 |
-| `pipeline/serialize-payload` | `inbound.ts` reply.deliver | 出站 JSON 信封（`outboundFormat: envelope`） |
-| `config/resolveChannelAgentReplyTimeoutMs` | `config/resolvers.ts` | Agent 回复超时（embedded/subagent 扩展） |
-| `config/resolveChannelMediaMaxBytes` | `config/resolvers.ts` | 媒体/载荷上限解析 |
-
-### 最小配置（`openclaw.json`）
+默认明文监听为 `127.0.0.1:61613`。认证默认强制开启，未配置有效用户时拒绝启动。
 
 ```json
 {
   "channels": {
     "stomp-tcp": {
+      "enabled": true,
+      "host": "127.0.0.1",
       "port": 61613,
       "tlsPort": 61614,
-      "tls": {
-        "enabled": false
+      "defaultAgentId": "main",
+      "allowedAgentIds": ["support"],
+      "auth": {
+        "required": true,
+        "users": [
+          {
+            "login": "service-a",
+            "passwordEnv": "OPENCLAW_STOMP_TCP_PASSWORD"
+          }
+        ]
       },
-      "maxConnections": 1000,
-      "maxFrameSize": 4194304,
+      "heartbeat": {
+        "serverMs": 10000,
+        "clientMs": 10000
+      },
+      "limits": {
+        "maxConnections": 500,
+        "maxFrameSize": 262144,
+        "maxBufferedBytes": 1048576,
+        "maxSubscriptionsPerConnection": 100,
+        "maxQueueDepthPerSubscription": 1000,
+        "maxPendingMessages": 32,
+        "messagesPerMinute": 120,
+        "connectTimeoutMs": 10000,
+        "maxDurableSubscriptions": 1000
+      },
       "defaultAckMode": "auto",
       "prefetchCount": 100,
-      "subscribeTopics": [
-        "devices/*/in",
-        "openclaw/agent/*/in"
-      ],
-      "topicBindings": [
-        {
-          "topicPattern": "devices/*/in",
-          "agentId": "iot-agent",
-          "accountId": "default",
-          "replyTopic": "/topic/devices/reply"
-        }
-      ],
-      "auth": {
-        "required": false
-      }
+      "allowSharedTopics": false,
+      "allowDurableSubscriptions": false
     }
   }
 }
 ```
 
-## 配置说明
+远程环境应使用纯 TLS 监听，并通过 `port: 0` 关闭明文端口：
 
-
-| 配置项                                           | 类型       | 默认值       | 说明                       |
-| --------------------------------------------- | -------- | --------- | ------------------------ |
-| `port`                                        | number   | `61613`   | STOMP TCP 监听端口           |
-| `tlsPort`                                     | number   | `61614`   | STOMP TLS 监听端口（`0` 表示关闭） |
-| `tls.enabled`                                 | boolean  | `false`   | 是否开启 TLS                 |
-| `tls.certFile` / `tls.keyFile` / `tls.caFile` | string   | -         | TLS 证书文件                 |
-| `heartbeat.serverMs` / `heartbeat.clientMs`   | number   | `10000`   | 心跳参数                     |
-| `maxConnections`                              | number   | `1000`    | 最大连接数                    |
-| `maxFrameSize`                                | number   | `4194304` | 单帧最大字节数                  |
-| `auth.required`                               | boolean  | `true`    | 是否要求 CONNECT 认证          |
-| `auth.defaultUser` / `auth.defaultPass`       | string   | -         | 默认账号密码                   |
-| `subscribeTopics`                             | string[] | `[]`      | 入站 destination 白名单       |
-| `topicBindings`                               | object[] | `[]`      | topic 到 agent 显式绑定       |
-| `defaultAckMode`                              | enum     | `auto`    | 默认 ACK 模式                |
-| `prefetchCount`                               | number   | `100`     | 默认 prefetch              |
-
-
-## 测试
-
-### 单元测试
-
-```bash
-npm test
+```json
+{
+  "host": "127.0.0.1",
+  "port": 0,
+  "tlsPort": 61614,
+  "tls": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "keyFile": "/etc/openclaw/tls/stomp.key",
+    "certFile": "/etc/openclaw/tls/stomp.crt",
+    "caFile": "/etc/openclaw/tls/ca.crt",
+    "minVersion": "TLSv1.2",
+    "requestCert": false,
+    "rejectUnauthorized": false
+  }
+}
 ```
 
-### STOMP 测试端
+将两个客户端证书开关同时设为 `true` 即可强制 mTLS。`rejectUnauthorized: true` 但未开启 `requestCert` 会被拒绝。生产环境不要直接写 `password`，应使用 `passwordEnv` 或预计算的 `passwordHash`。
 
-```bash
-npm run test:client
+## 路由与会话隔离
+
+标准 Destination：
+
+| 操作 | Destination | 含义 |
+|---|---|---|
+| 发送 | `/queue/agent` | 路由到 `defaultAgentId` |
+| 发送 | `/queue/agent.support` | 路由到白名单 Agent `support` |
+| 订阅 | `/topic/session.stomp-tcp:SESSION_ID@support` | 接收本连接的 `support` 回复 |
+
+`CONNECTED` 帧会返回 `session:SESSION_ID`。默认 `allowSharedTopics: false`，服务端会拒绝当前连接会话主题之外的所有订阅。
+
+企业自定义 Destination 需要显式绑定：
+
+```json
+{
+  "subscribeTopics": ["devices/*/in"],
+  "topicBindings": [
+    {
+      "topicPattern": "devices/*/in",
+      "agentId": "iot-agent",
+      "accountId": "default",
+      "replyTopic": "/topic/devices/reply"
+    }
+  ],
+  "allowSharedTopics": true
+}
 ```
 
-可用环境变量：
+`subscribeTopics` 是可选的入站 Destination 白名单。自定义 `replyTopic` 属于共享主题，因此只有显式开启 `allowSharedTopics` 后客户端才能订阅。
 
-- `STOMP_HOST`、`STOMP_PORT`、`STOMP_TIMEOUT_MS`
-- `STOMP_TEST_SUBSCRIBE_TOPICS`
-- `STOMP_TEST_PUBLISH_CASES`（JSON 数组）
-- `STOMP_TEST_DEST_1`、`STOMP_TEST_DEST_2`
-- `STOMP_TEST_BODY_1`、`STOMP_TEST_BODY_2`
+## 协议流程
 
-## 企业级可靠性
+```text
+CONNECT
+accept-version:1.2
+heart-beat:10000,10000
+login:service-a
+passcode:<runtime-secret>
 
-> 完整说明：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md)
+\0
 
-| 项 | 行为 |
-|----|------|
-| **分级** | 协议限制需文档约束 |
-| **入站 SEND** | 无应用级 deferred ACK；dispatch 失败不自动重投 |
-| **出站 MESSAGE** | prefetch + client ACK；TCP NACK 可 requeue |
-| **隔离** | `subscribeTopics` destination allowlist |
+SEND
+destination:/queue/agent.support
+receipt:request-1
+content-type:application/json
 
-## 状态接口
+{"text":"你好"}\0
+```
 
-`GET /stomp-tcp/status` 返回：
+`SEND` 的 `RECEIPT` 只会在 OpenClaw 成功接收入站派发后返回。`ack:client` 会累计确认到指定消息，`ack:client-individual` 只确认指定消息。`NACK` 默认重入队；设置 `requeue:false` 可丢弃。
 
-- 连接列表
-- 协议版本分布
-- 统计快照：入站/出站路由量、丢弃量、待 ACK 数
+持久订阅需要同时配置 `allowDurableSubscriptions: true`，并在 `SUBSCRIBE` 帧中携带 `durable:true` 或 `persistent:true`。它只在同一 Gateway 进程和认证 login 下跨 TCP 重连保留，不能跨进程重启。
 
-## CI 与发版
+## 生产运维
 
+- 远程网络只暴露 TLS，并配置入口层和防火墙访问控制。
+- 将 `allowedAgentIds` 与 `topicBindings` 收紧到业务必需范围。
+- 没有明确需求时保持共享主题和持久订阅关闭。
+- 监控需要认证的 `/stomp-tcp/status`，观察队列、待 ACK、丢弃计数和监听状态。
+- 使用生产级消息大小压测慢消费者、队列上限、心跳超时和重连风暴。
 
-| 工作流                             | 触发方式                        | 作用                                 |
-| ------------------------------- | --------------------------- | ---------------------------------- |
-| `.github/workflows/ci.yml`      | push / PR 到 `main`/`master` | typecheck + build + test + 上传 dist |
-| `.github/workflows/release.yml` | tag `v*` / 手动触发             | 打包 + 测试 + 发布 npm                   |
+## 开发验证
 
+```bash
+pnpm --filter @partme.ai/openclaw-stomp typecheck
+pnpm --filter @partme.ai/openclaw-stomp test
+pnpm --filter @partme.ai/openclaw-stomp build
+```
 
-发版流程见 [RELEASING.md](./RELEASING.md)。
-
-## OpenClaw 官方文档
-
-### Plugins
-
-- [https://docs.openclaw.ai/tools/plugin](https://docs.openclaw.ai/tools/plugin)
-- [https://docs.openclaw.ai/plugins/community](https://docs.openclaw.ai/plugins/community)
-- [https://docs.openclaw.ai/plugins/bundles](https://docs.openclaw.ai/plugins/bundles)
-- [https://docs.openclaw.ai/plugins/voice-call](https://docs.openclaw.ai/plugins/voice-call)
-
-### Building plugins
-
-- [https://docs.openclaw.ai/plugins/building-plugins](https://docs.openclaw.ai/plugins/building-plugins)
-- [https://docs.openclaw.ai/plugins/sdk-channel-plugins](https://docs.openclaw.ai/plugins/sdk-channel-plugins)
-- [https://docs.openclaw.ai/plugins/sdk-provider-plugins](https://docs.openclaw.ai/plugins/sdk-provider-plugins)
-- [https://docs.openclaw.ai/plugins/sdk-migration](https://docs.openclaw.ai/plugins/sdk-migration)
-
-### SDK reference
-
-- [https://docs.openclaw.ai/plugins/sdk-overview](https://docs.openclaw.ai/plugins/sdk-overview)
-- [https://docs.openclaw.ai/plugins/sdk-entrypoints](https://docs.openclaw.ai/plugins/sdk-entrypoints)
-- [https://docs.openclaw.ai/plugins/sdk-runtime](https://docs.openclaw.ai/plugins/sdk-runtime)
-- [https://docs.openclaw.ai/plugins/sdk-setup](https://docs.openclaw.ai/plugins/sdk-setup)
-- [https://docs.openclaw.ai/plugins/sdk-testing](https://docs.openclaw.ai/plugins/sdk-testing)
-- [https://docs.openclaw.ai/plugins/manifest](https://docs.openclaw.ai/plugins/manifest)
-- [https://docs.openclaw.ai/plugins/architecture](https://docs.openclaw.ai/plugins/architecture)
-
-### RabbitMQ STOMP 参考
-
-- [https://www.rabbitmq.com/docs/stomp](https://www.rabbitmq.com/docs/stomp)
-
-## 许可证
-
-MIT
-
-## 消息格式指南
-
-STOMP 使用共享的 OpenClaw 队列 wire 契约完成入站解析，并固定以 envelope 回复。标准 `MessageEnvelope`、非标准消息归一化、固定 envelope 回复与多语言 SDK 适配说明见 [OpenClaw 队列消息格式指南](../../doc/OpenClaw-Queue-Message-Format-Guide.md)。
+许可证：MIT。

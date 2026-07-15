@@ -26,7 +26,9 @@
   "files": [
     "dist",
     "openclaw.plugin.json",
-    "README.md"
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
@@ -35,11 +37,6 @@
     "type": "git",
     "url": "https://github.com/partme-ai/openclaw-plugins.git",
     "directory": "extensions/web-socket"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   },
   "dependencies": {
     "ws": "^8.18.0",

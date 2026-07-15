@@ -7,11 +7,17 @@ import {
   resolveRabbitmqConfig,
   validateRabbitmqConfig,
   buildRabbitmqConfigSnapshot,
+  isRabbitmqConfigured,
   DEFAULT_RABBITMQ_CONFIG,
 } from '../src/config.js';
 
 describe('rabbitmq-config', () => {
   describe('resolveRabbitmqConfig', () => {
+    it('requires an explicitly configured URL before OpenClaw starts the account', () => {
+      expect(isRabbitmqConfigured({})).toBe(false);
+      expect(isRabbitmqConfigured({ channels: { rabbitmq: { url: '  ' } } })).toBe(false);
+      expect(isRabbitmqConfigured({ channels: { rabbitmq: { url: 'amqps://rabbitmq.example.com' } } })).toBe(true);
+    });
     it('should use defaults when no config provided', () => {
       const result = resolveRabbitmqConfig({});
       expect(result).toEqual(DEFAULT_RABBITMQ_CONFIG);
@@ -153,6 +159,16 @@ describe('rabbitmq-config', () => {
       const issues = validateRabbitmqConfig(config);
       expect(issues).toContain('topicBindings: agentId is required');
     });
+
+    it('rejects invalid protocols and unsafe quorum queue flags', () => {
+      const issues = validateRabbitmqConfig({
+        ...DEFAULT_RABBITMQ_CONFIG,
+        url: 'http://rabbitmq.example.com',
+        queue: { ...DEFAULT_RABBITMQ_CONFIG.queue, quorum: true, exclusive: true },
+      });
+      expect(issues).toContain('RabbitMQ URL protocol must be amqp:// or amqps://');
+      expect(issues).toContain('RabbitMQ quorum queue must be durable, non-exclusive, and non-auto-delete');
+    });
   });
 
   describe('buildRabbitmqConfigSnapshot', () => {
@@ -185,6 +201,16 @@ describe('rabbitmq-config', () => {
         dispatch: config.dispatch,
         idempotency: config.idempotency,
       });
+    });
+
+    it('redacts credentials in status snapshots', () => {
+      const snapshot = buildRabbitmqConfigSnapshot({
+        ...DEFAULT_RABBITMQ_CONFIG,
+        url: 'amqps://secret-user:secret-pass@rabbitmq.example.com/vhost',
+      });
+      expect(snapshot.url).not.toContain('secret-user');
+      expect(snapshot.url).not.toContain('secret-pass');
+      expect(snapshot.url).toContain('rabbitmq.example.com');
     });
   });
 });

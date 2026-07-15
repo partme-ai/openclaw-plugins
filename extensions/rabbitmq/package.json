@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-rabbitmq",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "RabbitMQ channel plugin for OpenClaw with multi-agent async collaboration and topic subscription support.",
   "type": "module",
   "main": "dist/index.js",
@@ -32,7 +32,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md"
+    "README.zh-CN.md"
   ],
   "publishConfig": {
     "access": "public"

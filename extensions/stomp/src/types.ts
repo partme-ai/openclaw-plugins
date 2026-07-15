@@ -1,22 +1,6 @@
-/**
- * @fileoverview openclaw-stomp 核心类型：STOMP 帧、连接、入站消息与配置。
- *
- * @description
- * 集中导出 transport / inbound / config 共用的类型符号；无运行时逻辑。
- *
- * @module types
- */
-
-/**
- * STOMP 共享类型 — Base Profile 入口。
- */
-
-/** @description STOMP 订阅 ACK 模式。 */
+/** Shared production types for the embedded STOMP 1.2 TCP channel. */
 export type StompAckMode = "auto" | "client" | "client-individual";
 
-/**
- * @description Topic 模式与 Agent 的显式绑定。
- */
 export interface TopicBinding {
   topicPattern: string;
   agentId: string;
@@ -24,47 +8,61 @@ export interface TopicBinding {
   replyTopic?: string;
 }
 
-/**
- * @description STOMP TCP 服务器完整配置。
- */
+export interface StompAuthUser {
+  login: string;
+  password?: string;
+  passwordEnv?: string;
+  passwordHash?: string;
+  hashAlgorithm?: "sha256" | "sha512";
+}
+
 export interface StompTcpConfig {
+  host: string;
   port: number;
   tlsPort: number;
   tls: {
     enabled: boolean;
+    host: string;
     certFile?: string;
     keyFile?: string;
     caFile?: string;
+    minVersion: "TLSv1.2" | "TLSv1.3";
+    requestCert: boolean;
+    rejectUnauthorized: boolean;
   };
-  heartbeat: {
-    serverMs: number;
-    clientMs: number;
-  };
+  heartbeat: { serverMs: number; clientMs: number };
   maxConnections: number;
   maxFrameSize: number;
-  auth: {
-    required: boolean;
-    defaultUser?: string;
-    defaultPass?: string;
-  };
+  maxBufferedBytes: number;
+  maxSubscriptionsPerConnection: number;
+  maxQueueDepthPerSubscription: number;
+  maxPendingMessages: number;
+  messagesPerMinute: number;
+  connectTimeoutMs: number;
+  maxDurableSubscriptions: number;
+  auth: { required: boolean; users: StompAuthUser[] };
   subscribeTopics: string[];
   topicBindings: TopicBinding[];
+  defaultAgentId: string;
+  allowedAgentIds: string[];
+  allowSharedTopics: boolean;
+  allowDurableSubscriptions: boolean;
   defaultAckMode: StompAckMode;
   prefetchCount: number;
 }
 
-/** @description 解析后的 STOMP 协议帧。 */
 export interface StompFrame {
   command: string;
   headers: Record<string, string>;
   body: string;
 }
 
-/** @description 对外暴露的连接摘要（诊断 API）。 */
 export interface StompConnection {
   id: string;
   remoteAddress: string;
   remotePort: number;
+  secure: boolean;
+  connected: boolean;
   version: string;
   user?: string;
   connectedAt: string;
@@ -73,28 +71,33 @@ export interface StompConnection {
   queuedCount: number;
 }
 
-/** @description 路由解析后的 STOMP 入站消息（尚未 wire 解析）。 */
 export interface InboundMessage {
   agentId: string;
   accountId: string;
   peerId: string;
   destination: string;
   replyDestination?: string;
-  /** STOMP SEND 帧原始 body（由 inbound 经 normalizeWireIngress 解析）。 */
   rawPayload: string;
-  /** 可选幂等键（message-id / receipt / 合成键）。 */
   idempotencyKey?: string;
 }
 
-/** @description transport 层入站回调类型。 */
-export type InboundHandler = (message: InboundMessage) => void;
+export type InboundHandler = (message: InboundMessage) => Promise<void> | void;
 
-/** @description 路由/连接运行时统计快照。 */
 export interface StompStatusSnapshot {
+  running: boolean;
   totalConnections: number;
   totalSubscriptions: number;
+  durableSubscriptions: number;
   routedInbound: number;
   routedOutbound: number;
   droppedInbound: number;
+  droppedOutbound: number;
   ackPending: number;
+}
+
+export interface ResolvedStompTcpAccount {
+  accountId: string;
+  name: string;
+  enabled: boolean;
+  configured: boolean;
 }

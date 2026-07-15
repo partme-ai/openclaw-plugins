@@ -1,7 +1,7 @@
 {
   "id": "web-mqtt",
   "name": "web-mqtt",
-  "version": "0.1.9",
+  "version": "2026.5.25-2",
   "description": "Enterprise MQTT over WebSocket channel plugin for OpenClaw",
   "channels": [
     "mqtt-ws"
@@ -10,7 +10,7 @@
   "skills": [],
   "configSchema": {
     "type": "object",
-    "additionalProperties": true,
+    "additionalProperties": false,
     "properties": {
       "channels": {
         "type": "object",
@@ -28,10 +28,11 @@
               },
               "host": {
                 "type": "string",
-                "default": "0.0.0.0"
+                "default": "127.0.0.1"
               },
               "maxConnections": {
                 "type": "number",
+                "minimum": 1,
                 "default": 5000
               },
               "topicPrefix": {
@@ -105,7 +106,8 @@
                           "type": "string"
                         },
                         "hashAlgorithm": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": ["sha256", "sha512"]
                         },
                         "publishAllow": {
                           "type": "array",
@@ -125,13 +127,15 @@
                             "type": "object",
                             "properties": {
                               "action": {
-                                "type": "string"
+                                "type": "string",
+                                "enum": ["publish", "subscribe", "inbound", "outbound"]
                               },
                               "topicPattern": {
                                 "type": "string"
                               },
                               "effect": {
-                                "type": "string"
+                                "type": "string",
+                                "enum": ["allow", "deny"]
                               },
                               "accountId": {
                                 "type": "string"
@@ -163,6 +167,7 @@
                   },
                   "minVersion": {
                     "type": "string",
+                    "enum": ["TLSv1.2", "TLSv1.3"],
                     "default": "TLSv1.2"
                   },
                   "requestCert": {
@@ -180,7 +185,7 @@
                 "properties": {
                   "compress": {
                     "type": "boolean",
-                    "default": true
+                    "default": false
                   },
                   "idleTimeoutMs": {
                     "type": "number",
@@ -188,7 +193,14 @@
                   },
                   "maxFrameSize": {
                     "type": "number",
+                    "minimum": 1024,
                     "default": 262144
+                  },
+                  "allowedOrigins": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": [],
+                    "description": "浏览器 WebSocket Origin 精确白名单；原生客户端可不发送 Origin"
                   }
                 }
               },
@@ -197,10 +209,12 @@
                 "properties": {
                   "maxPayloadBytes": {
                     "type": "number",
-                    "default": 1048576
+                    "minimum": 1,
+                    "default": 262144
                   },
                   "maxSubscriptionsPerClient": {
                     "type": "number",
+                    "minimum": 1,
                     "default": 200
                   }
                 }
@@ -251,7 +265,7 @@
       "description": "Enterprise MQTT over WebSocket channel plugin for OpenClaw",
       "schema": {
         "type": "object",
-        "additionalProperties": true,
+        "additionalProperties": false,
         "properties": {}
       }
     }

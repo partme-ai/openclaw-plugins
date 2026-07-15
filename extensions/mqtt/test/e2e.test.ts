@@ -30,6 +30,11 @@ describe("openclaw-mqtt E2E 功能验证", () => {
         allowAnonymous: true,
         users: [
           {
+            username: "anonymous",
+            publishAllow: ["openclaw/agent/+/in", "devices/#"],
+            subscribeAllow: ["openclaw/agent/+/out", "devices/#"],
+          },
+          {
             username: "iot-device",
             password: "device-pass",
             publishAllow: ["openclaw/agent/+/in", "devices/+/data", "sensors/+/reading"],

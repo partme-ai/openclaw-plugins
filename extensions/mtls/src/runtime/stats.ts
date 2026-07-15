@@ -23,6 +23,17 @@ export function getMtlsStats(): MtlsStatusSnapshot {
   return { ...stats };
 }
 
+export function recordMtlsRequest(kind: "authenticated" | "rejected" | "passthrough"): void {
+  stats.totalRequests++;
+  if (kind === "authenticated") stats.authenticatedRequests++;
+  if (kind === "rejected") stats.rejectedRequests++;
+  if (kind === "passthrough") stats.passthroughRequests++;
+}
+
+export function trackMtlsSession(delta: 1 | -1): void {
+  stats.activeSessions = Math.max(0, stats.activeSessions + delta);
+}
+
 /** 重置所有 mTLS 统计计数为 0（主要用于测试）。 */
 export function resetMtlsStats(): void {
   stats.totalRequests = 0;

@@ -159,19 +159,31 @@ openclaw plugins install @partme.ai/openclaw-rabbitmq
       "payload": {
         "mode": "jsonTextOrPlain"
       },
+      "queue": {
+        "name": "openclaw.rabbitmq",
+        "durable": true
+      },
+      "retry": {
+        "enabled": true,
+        "delayMs": 5000,
+        "maxAttempts": 5,
+        "queueSuffix": ".retry",
+        "deadLetterSuffix": ".dlq"
+      },
       "connection": {
         "timeoutMs": 30000,
         "heartbeatSeconds": 30,
         "reconnectAttempts": 5,
-        "reconnectDelayMs": 5000
+        "reconnectDelayMs": 5000,
+        "publishConfirmTimeoutMs": 10000
       },
       "consume": {
         "prefetch": 50,
         "concurrency": 4,
-        "requeueOnError": true
+        "requeueOnError": false
       },
       "idempotency": {
-        "enabled": false
+        "enabled": true
       }
     }
   },
@@ -501,12 +513,14 @@ openclaw-rabbitmq/
 | 项 | 行为 |
 |----|------|
 | **分级** | 可企业试点 |
-| **入站 ACK** | 延迟 ACK：`reply publish` 成功 + dispatch 完成后 ACK；失败 nack/requeue |
-| **出站** | `publish` 背压返回 false 时抛错（非 Publisher Confirm） |
-| **重试** | 可选 retry 队列 + TTL + DLX；超过 `maxAttempts` 后 nack |
-| **停止** | `nackAllPendingDeliveries` 清理 in-flight |
-| **幂等** | `idempotency.enabled`（**默认 false**，生产建议开启） |
+| **入站 ACK** | 延迟 ACK：dispatch 和回复发布完成后 ACK；失败进入已确认的重试/DLQ 链路 |
+| **出站** | 持久消息 + Publisher Confirm；同时处理 channel drain 背压与 confirm 超时 |
+| **重试** | 独立 `<exchange>.retry` + TTL；超过 `maxAttempts` 后进入 `<exchange>.dlx` / `<queue>.dlq` |
+| **停止** | 停止或重连时未完成投递统一 `requeue=true`，避免进程内丢失 |
+| **幂等** | 默认开启，仅对稳定 `correlationId` / `messageId` 生效；claim 成功后提交、失败释放 |
 | **隔离** | `subscribeTopics` 勿包含 `*.out` reply 模式 |
+
+默认队列名 `openclaw.rabbitmq` 让多个 Gateway 实例形成 competing consumers；如果每个实例都必须收到一份消息，应为实例配置不同队列名。当前幂等缓存是进程内缓存，无法提供跨实例 exactly-once；关键业务仍应在业务侧或共享存储中实现幂等键。
 
 ## ❓ 常见问题
 

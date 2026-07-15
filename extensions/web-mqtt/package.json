@@ -31,8 +31,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md",
-    "RELEASING.md"
+    "README.zh-CN.md"
   ],
   "publishConfig": {
     "access": "public"

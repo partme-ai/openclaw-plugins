@@ -34,12 +34,18 @@ export type RedisStats = {
   messagesWritten: number;
   messagesAcked: number;
   messagesReclaimed: number;
+  messagesFailed: number;
+  messagesDeadLettered: number;
+  lastDisconnectAt: number | null;
+  reconnecting: boolean;
   subscribedChannels: string[];
 };
 
 let client: RedisClientType | null = null;
+let consumerClient: RedisClientType | null = null;
 let subscriberClient: RedisClientType | null = null;
 let running = false;
+let consumeLoopPromise: Promise<void> | null = null;
 const stats: RedisStats = {
   connected: false,
   lastConnectAt: null,
@@ -49,6 +55,10 @@ const stats: RedisStats = {
   messagesWritten: 0,
   messagesAcked: 0,
   messagesReclaimed: 0,
+  messagesFailed: 0,
+  messagesDeadLettered: 0,
+  lastDisconnectAt: null,
+  reconnecting: false,
   subscribedChannels: [],
 };
 
@@ -65,51 +75,53 @@ export async function startRedisServer(
   loadChannelBindings(config.channelBindings ?? []);
 
   // 主客户端（用于 Stream 操作）
-  client = createClient({
+  const mainClient = createClient({
     url: config.url,
     socket: {
       reconnectStrategy: (retries: number) => {
-        if (retries >= config.connection.maxRetries) {
-          throw new RedisConnectionError(
-            config.url,
-            `max reconnection attempts (${config.connection.maxRetries}) exceeded`,
-          );
+        if (config.connection.maxRetries > 0 && retries >= config.connection.maxRetries) {
+          return false;
         }
         return config.connection.reconnectMs;
       },
     },
-  });
+  }) as unknown as RedisClientType;
+  client = mainClient;
+  attachClientEvents(mainClient);
 
   try {
-    await client.connect();
+    await withTimeout(mainClient.connect(), config.connection.startupTimeoutMs, "Redis startup connection");
+    if (config.channelMode === "stream") {
+      consumerClient = mainClient.duplicate();
+      await withTimeout(consumerClient.connect(), config.connection.startupTimeoutMs, "Redis consumer connection");
+    }
+    setPublisherClient(
+      mainClient as unknown as Parameters<typeof setPublisherClient>[0],
+      config.stream.maxLen,
+    );
+    running = true;
+    stats.connected = true;
+    stats.lastConnectAt = Date.now();
+    stats.lastError = null;
+
+    if (config.channelMode === "stream" && config.stream.createGroup) {
+      await ensureConsumerGroup(config);
+    }
+    if (config.channelMode === "pubsub") {
+      await startPubSub(config);
+    }
+    if (config.channelMode === "stream") {
+      consumeLoopPromise = consumeLoop(config).catch((error) => {
+        stats.lastError = error instanceof Error ? error.message : String(error);
+        logger.error("Consume loop crashed:", error);
+      });
+    }
   } catch (error) {
+    await stopRedisServer();
     throw new RedisConnectionError(
       config.url,
       error instanceof Error ? error.message : String(error),
     );
-  }
-  setPublisherClient(
-    client as unknown as Parameters<typeof setPublisherClient>[0],
-  );
-  running = true;
-  stats.connected = true;
-  stats.lastConnectAt = Date.now();
-
-  // Stream 消费组
-  if (config.channelMode === "stream" && config.stream.createGroup) {
-    await ensureConsumerGroup(config).catch(() => undefined);
-  }
-
-  // Pub/Sub 订阅
-  if (config.channelMode === "pubsub") {
-    await startPubSub(config);
-  }
-
-  // Stream 消费循环（仅在 stream 模式下）
-  if (config.channelMode === "stream") {
-    consumeLoop(config).catch((err) => {
-      logger.error("Consume loop crashed:", err);
-    });
   }
 }
 
@@ -119,6 +131,15 @@ export async function startRedisServer(
  */
 export async function stopRedisServer(): Promise<void> {
   running = false;
+  clearPublisherClient();
+
+  const activeConsumer = consumerClient;
+  consumerClient = null;
+  activeConsumer?.destroy();
+  if (consumeLoopPromise) {
+    await consumeLoopPromise.catch(() => undefined);
+    consumeLoopPromise = null;
+  }
 
   if (subscriberClient) {
     await subscriberClient.unsubscribe().catch(() => undefined);
@@ -131,8 +152,9 @@ export async function stopRedisServer(): Promise<void> {
     await client.quit().catch(() => undefined);
   }
   client = null;
-  clearPublisherClient();
   stats.connected = false;
+  stats.reconnecting = false;
+  stats.lastDisconnectAt = Date.now();
   stats.subscribedChannels = [];
 }
 
@@ -291,6 +313,7 @@ async function ensureConsumerGroup(config: RedisChannelConfig): Promise<void> {
       },
     );
   } catch (error) {
+    if (error instanceof Error && error.message.includes("BUSYGROUP")) return;
     throw new RedisStreamError(
       config.stream.inboundKey,
       error instanceof Error ? error.message : String(error),
@@ -309,7 +332,7 @@ async function ensureConsumerGroup(config: RedisChannelConfig): Promise<void> {
 async function consumeLoop(config: RedisChannelConfig): Promise<void> {
   let consecutiveErrors = 0;
   let pendingClaimCursor = "0-0";
-  while (running && client) {
+  while (running && consumerClient) {
     try {
       if (config.stream.pendingClaimIdleMs > 0) {
         pendingClaimCursor = await reclaimStalePendingEntries(
@@ -318,7 +341,7 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
         );
       }
 
-      const result = await client
+      const result = await consumerClient
         .xReadGroup(
           config.stream.consumerGroup,
           config.stream.consumerName,
@@ -370,6 +393,8 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
           // 仅在 handler 成功时才 ACK，失败的消息保留在 pending list 供后续重试
           if (accepted !== false) {
             await ackEntry(streamName, config.stream.consumerGroup, id);
+          } else {
+            await handleFailedEntry(streamName, config, id, fieldMap);
           }
         }
       }
@@ -428,12 +453,12 @@ async function reclaimStalePendingEntries(
   config: RedisChannelConfig,
   startId: string,
 ): Promise<string> {
-  if (!client || config.stream.pendingClaimIdleMs <= 0) {
+  if (!consumerClient || config.stream.pendingClaimIdleMs <= 0) {
     return startId;
   }
 
   try {
-    const claimResult = await client.xAutoClaim(
+    const claimResult = await consumerClient.xAutoClaim(
       config.stream.inboundKey,
       config.stream.consumerGroup,
       config.stream.consumerName,
@@ -475,6 +500,13 @@ async function reclaimStalePendingEntries(
           config.stream.consumerGroup,
           String(entry.id),
         );
+      } else {
+        await handleFailedEntry(
+          config.stream.inboundKey,
+          config,
+          String(entry.id),
+          fieldMap,
+        );
       }
     }
 
@@ -485,5 +517,75 @@ async function reclaimStalePendingEntries(
       error instanceof Error ? error.message : String(error),
     );
     return startId;
+  }
+}
+
+async function handleFailedEntry(
+  stream: string,
+  config: RedisChannelConfig,
+  id: string,
+  fields: Map<string, string>,
+): Promise<void> {
+  if (!client) throw new RedisConnectionError("", "Redis client is not initialized");
+  stats.messagesFailed++;
+  const pending = await client.xPendingRange(stream, config.stream.consumerGroup, id, id, 1);
+  const deliveries = Number(pending[0]?.deliveriesCounter ?? 1);
+  if (deliveries < config.stream.maxAttempts) return;
+
+  const args = [
+    "XADD",
+    config.stream.deadLetterKey,
+    ...(config.stream.maxLen > 0 ? ["MAXLEN", "~", String(config.stream.maxLen)] : []),
+    "*",
+    ...[...fields.entries()].flatMap(([key, value]) => [key, value]),
+    "_sourceStream", stream,
+    "_sourceId", id,
+    "_consumerGroup", config.stream.consumerGroup,
+    "_deliveryCount", String(deliveries),
+    "_failedAt", new Date().toISOString(),
+  ];
+  await client
+    .multi()
+    .addCommand(args)
+    .xAck(stream, config.stream.consumerGroup, id)
+    .exec();
+  stats.messagesDeadLettered++;
+  stats.messagesAcked++;
+}
+
+function attachClientEvents(activeClient: RedisClientType): void {
+  activeClient.on("error", (error) => {
+    stats.lastError = error instanceof Error ? error.message : String(error);
+  });
+  activeClient.on("reconnecting", () => {
+    stats.connected = false;
+    stats.reconnecting = true;
+    stats.lastDisconnectAt = Date.now();
+  });
+  activeClient.on("ready", () => {
+    stats.connected = true;
+    stats.reconnecting = false;
+    stats.lastConnectAt = Date.now();
+    stats.lastError = null;
+  });
+  activeClient.on("end", () => {
+    stats.connected = false;
+    stats.reconnecting = false;
+    stats.lastDisconnectAt = Date.now();
+  });
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

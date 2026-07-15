@@ -44,12 +44,14 @@ export type RabbitmqConfig = {
     delayMs: number;
     maxAttempts: number;
     queueSuffix: string;
+    deadLetterSuffix: string;
   };
   connection: {
     timeoutMs: number;
     heartbeatSeconds: number;
     reconnectAttempts: number;
     reconnectDelayMs: number;
+    publishConfirmTimeoutMs: number;
   };
   consume: {
     prefetch: number;
@@ -83,28 +85,30 @@ export const DEFAULT_RABBITMQ_CONFIG: RabbitmqConfig = {
     mode: "jsonTextOrPlain",
   },
   queue: {
-    name: undefined,
+    name: "openclaw.rabbitmq",
     durable: true,
     exclusive: false,
     autoDelete: false,
     quorum: false,
   },
   retry: {
-    enabled: false,
+    enabled: true,
     delayMs: 5000,
     maxAttempts: 5,
     queueSuffix: ".retry",
+    deadLetterSuffix: ".dlq",
   },
   connection: {
     timeoutMs: 30000,
     heartbeatSeconds: 30,
     reconnectAttempts: 5,
     reconnectDelayMs: 5000,
+    publishConfirmTimeoutMs: 10000,
   },
   consume: {
     prefetch: 50,
     concurrency: 4,
-    requeueOnError: true,
+    requeueOnError: false,
   },
   dispatch: {
     mode: "embedded-agent",
@@ -114,11 +118,21 @@ export const DEFAULT_RABBITMQ_CONFIG: RabbitmqConfig = {
     },
   },
   idempotency: {
-    enabled: false,
+    enabled: true,
     ttlMs: 10 * 60_000,
     maxEntries: 10_000,
   },
 };
+
+/** Returns true only when the user explicitly configured a non-empty RabbitMQ URL. */
+export function isRabbitmqConfigured(cfg: Record<string, unknown> | undefined | null): boolean {
+  const root = cfg ?? {};
+  const channels = root.channels as Record<string, unknown> | undefined;
+  const value = channels?.rabbitmq ?? root.rabbitmq;
+  if (!value || typeof value !== "object") return false;
+  const url = (value as Record<string, unknown>).url;
+  return typeof url === "string" && url.trim().length > 0;
+}
 
 /**
  * @description 从宿主运行时 openclaw.json 解析 RabbitMQ 通道配置。
@@ -180,22 +194,24 @@ export function resolveRabbitmqConfig(cfg: Record<string, unknown> | undefined |
       : DEFAULT_RABBITMQ_CONFIG.subscribeTopics,
     payload: {
       mode: payloadMode,
-      outboundFormat:
-        payload.outboundFormat === "envelope" ||
-        payload.outboundFormat === "legacyJsonText" ||
-        payload.outboundFormat === "plainText"
-          ? payload.outboundFormat
-          : undefined,
+      ...(payload.outboundFormat === "envelope" ||
+      payload.outboundFormat === "legacyJsonText" ||
+      payload.outboundFormat === "plainText"
+        ? { outboundFormat: payload.outboundFormat }
+        : {}),
     },
     queue: {
-      name: typeof queue.name === "string" && queue.name.trim().length > 0 ? queue.name.trim() : undefined,
+      name:
+        typeof queue.name === "string" && queue.name.trim().length > 0
+          ? queue.name.trim()
+          : DEFAULT_RABBITMQ_CONFIG.queue.name,
       durable: queue.durable !== false,
       exclusive: queue.exclusive === true,
       autoDelete: queue.autoDelete === true,
       quorum: queue.quorum === true,
     },
     retry: {
-      enabled: retry.enabled === true,
+      enabled: retry.enabled !== false,
       delayMs:
         typeof retry.delayMs === "number" && retry.delayMs > 0
           ? retry.delayMs
@@ -208,6 +224,10 @@ export function resolveRabbitmqConfig(cfg: Record<string, unknown> | undefined |
         typeof retry.queueSuffix === "string" && retry.queueSuffix.trim().length > 0
           ? retry.queueSuffix.trim()
           : DEFAULT_RABBITMQ_CONFIG.retry.queueSuffix,
+      deadLetterSuffix:
+        typeof retry.deadLetterSuffix === "string" && retry.deadLetterSuffix.trim().length > 0
+          ? retry.deadLetterSuffix.trim()
+          : DEFAULT_RABBITMQ_CONFIG.retry.deadLetterSuffix,
     },
     connection: {
       timeoutMs:
@@ -226,6 +246,10 @@ export function resolveRabbitmqConfig(cfg: Record<string, unknown> | undefined |
         typeof connection.reconnectDelayMs === "number" && connection.reconnectDelayMs >= 0
           ? connection.reconnectDelayMs
           : DEFAULT_RABBITMQ_CONFIG.connection.reconnectDelayMs,
+      publishConfirmTimeoutMs:
+        typeof connection.publishConfirmTimeoutMs === "number" && connection.publishConfirmTimeoutMs > 0
+          ? connection.publishConfirmTimeoutMs
+          : DEFAULT_RABBITMQ_CONFIG.connection.publishConfirmTimeoutMs,
     },
     consume: {
       prefetch:
@@ -236,7 +260,7 @@ export function resolveRabbitmqConfig(cfg: Record<string, unknown> | undefined |
         typeof consume.concurrency === "number" && consume.concurrency > 0
           ? consume.concurrency
           : DEFAULT_RABBITMQ_CONFIG.consume.concurrency,
-      requeueOnError: consume.requeueOnError !== false,
+      requeueOnError: consume.requeueOnError === true,
     },
     dispatch: {
       mode: dispatchMode,
@@ -249,7 +273,7 @@ export function resolveRabbitmqConfig(cfg: Record<string, unknown> | undefined |
       },
     },
     idempotency: {
-      enabled: idempotency.enabled === true,
+      enabled: idempotency.enabled !== false,
       ttlMs:
         typeof idempotency.ttlMs === "number" && idempotency.ttlMs > 0
           ? idempotency.ttlMs
@@ -278,6 +302,20 @@ export function validateRabbitmqConfig(config: RabbitmqConfig): string[] {
   if (!config.topicPrefix) {
     issues.push("RabbitMQ topicPrefix is required");
   }
+  if (config.queue.quorum && (config.queue.exclusive || config.queue.autoDelete || !config.queue.durable)) {
+    issues.push("RabbitMQ quorum queue must be durable, non-exclusive, and non-auto-delete");
+  }
+  if (!config.queue.name && (config.queue.durable || config.queue.quorum)) {
+    issues.push("RabbitMQ durable/quorum queue requires an explicit queue.name");
+  }
+  try {
+    const url = new URL(config.url);
+    if (url.protocol !== "amqp:" && url.protocol !== "amqps:") {
+      issues.push("RabbitMQ URL protocol must be amqp:// or amqps://");
+    }
+  } catch {
+    issues.push("RabbitMQ URL is invalid");
+  }
   for (const binding of config.topicBindings) {
     if (!binding.topicPattern) {
       issues.push("topicBindings: topicPattern is required");
@@ -296,7 +334,7 @@ export function validateRabbitmqConfig(config: RabbitmqConfig): string[] {
  */
 export function buildRabbitmqConfigSnapshot(config: RabbitmqConfig): Record<string, unknown> {
   return {
-    url: config.url,
+    url: redactRabbitmqUrl(config.url),
     exchange: config.exchange,
     exchangeType: config.exchangeType,
     exchangeDurable: config.exchangeDurable,
@@ -311,4 +349,16 @@ export function buildRabbitmqConfigSnapshot(config: RabbitmqConfig): Record<stri
     dispatch: config.dispatch,
     idempotency: config.idempotency,
   };
+}
+
+function redactRabbitmqUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (!url.username && !url.password) return value;
+    if (url.username) url.username = "***";
+    if (url.password) url.password = "***";
+    return url.toString();
+  } catch {
+    return "<invalid-rabbitmq-url>";
+  }
 }

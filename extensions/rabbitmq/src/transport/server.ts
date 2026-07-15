@@ -10,7 +10,8 @@
 
 import amqp from "amqplib";
 import { randomUUID } from "node:crypto";
-import type { ConsumeMessage, ChannelModel, Channel, Options } from "amqplib";
+import { once } from "node:events";
+import type { ConsumeMessage, ChannelModel, Channel, ConfirmChannel, Options } from "amqplib";
 import type { RabbitmqConfig } from "../config.js";
 
 /** @description 入站 AMQP 消息的投递处置句柄（deferred ack）。 */
@@ -52,19 +53,24 @@ export type RabbitmqStats = {
   messagesAcked: number;
   messagesNacked: number;
   messagesRequeued: number;
+  messagesRetried: number;
+  messagesDeadLettered: number;
+  publishConfirmed: number;
+  reconnecting: boolean;
   errors: number;
   inFlight: number;
 };
 
 let connection: ChannelModel | null = null;
 let consumeChannel: Channel | null = null;
-let publishChannel: Channel | null = null;
+let publishChannel: ConfirmChannel | null = null;
 let consumerTag: string | null = null;
 let inboundHandler: InboundHandler | null = null;
 let config: RabbitmqConfig | null = null;
 let stopping = false;
-let retryQueueName: string | null = null;
-let retryRoutingPrefix: string | null = null;
+let retryExchangeName: string | null = null;
+let deadLetterExchangeName: string | null = null;
+let reconnectPromise: Promise<void> | null = null;
 let inboundLimiter: ReturnType<typeof createInboundLimiter> | null = null;
 const pendingDeliveries = new Set<InboundDeliveryHandle>();
 let stats: RabbitmqStats = {
@@ -78,6 +84,10 @@ let stats: RabbitmqStats = {
   messagesAcked: 0,
   messagesNacked: 0,
   messagesRequeued: 0,
+  messagesRetried: 0,
+  messagesDeadLettered: 0,
+  publishConfirmed: 0,
+  reconnecting: false,
   errors: 0,
   inFlight: 0,
 };
@@ -99,10 +109,10 @@ export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundH
  */
 export async function stopRabbitmqServer(): Promise<void> {
   stopping = true;
-  nackAllPendingDeliveries(false, "server_stop");
+  nackAllPendingDeliveries(true, "server_stop");
   inboundLimiter = null;
-  retryRoutingPrefix = null;
-  retryQueueName = null;
+  retryExchangeName = null;
+  deadLetterExchangeName = null;
   try {
     if (consumeChannel && consumerTag) {
       await consumeChannel.cancel(consumerTag);
@@ -137,6 +147,7 @@ export async function stopRabbitmqServer(): Promise<void> {
   }
   stats.connected = false;
   stats.lastDisconnectAt = Date.now();
+  stats.reconnecting = false;
 }
 
 /**
@@ -150,15 +161,12 @@ export async function publishMessage(routingKey: string, message: string, opts?:
     throw new Error("RabbitMQ publish channel not initialized");
   }
   const options: Options.Publish = {
-    persistent: opts?.persistent === true,
+    persistent: opts?.persistent !== false,
     correlationId: opts?.correlationId,
     headers: opts?.headers,
     contentType: "application/json",
   };
-  const published = publishChannel.publish(config.exchange, routingKey, Buffer.from(message), options);
-  if (!published) {
-    throw new Error(`RabbitMQ publish backpressure for routingKey=${routingKey}`);
-  }
+  await publishConfirmed(publishChannel, config.exchange, routingKey, Buffer.from(message), options);
   stats.messagesSent++;
 }
 
@@ -255,6 +263,7 @@ async function connectWithRetry(): Promise<void> {
       lastErr = err;
       stats.errors++;
       stats.lastError = err instanceof Error ? err.message : String(err);
+      await teardownTransport();
       if (attempt >= maxAttempts) {
         break;
       }
@@ -284,11 +293,12 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
   stats.lastError = null;
 
   const consumeCh = await conn.createChannel();
-  const publishCh = await conn.createChannel();
+  const publishCh = await conn.createConfirmChannel();
   consumeChannel = consumeCh;
   publishChannel = publishCh;
 
   await consumeCh.assertExchange(cfg.exchange, cfg.exchangeType, { durable: cfg.exchangeDurable });
+  await publishCh.assertExchange(cfg.exchange, cfg.exchangeType, { durable: cfg.exchangeDurable });
 
   const queueName = cfg.queue.name?.trim() ? cfg.queue.name.trim() : "";
   const queueArgs: Record<string, unknown> = {};
@@ -301,9 +311,20 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
     autoDelete: queueName ? cfg.queue.autoDelete : true,
     arguments: Object.keys(queueArgs).length > 0 ? queueArgs : undefined,
   });
-  retryQueueName = cfg.retry.enabled && queue.queue ? `${queue.queue}${cfg.retry.queueSuffix}` : null;
-  retryRoutingPrefix = retryQueueName ? `${queue.queue}.retry` : null;
-  if (retryQueueName && retryRoutingPrefix) {
+  retryExchangeName = cfg.retry.enabled ? `${cfg.exchange}.retry` : null;
+  deadLetterExchangeName = `${cfg.exchange}.dlx`;
+  await consumeCh.assertExchange(deadLetterExchangeName, "topic", { durable: true });
+  const deadLetterQueueName = `${queue.queue}${cfg.retry.deadLetterSuffix}`;
+  await consumeCh.assertQueue(deadLetterQueueName, {
+    durable: true,
+    exclusive: false,
+    autoDelete: false,
+    arguments: cfg.queue.quorum ? { "x-queue-type": "quorum" } : undefined,
+  });
+  await consumeCh.bindQueue(deadLetterQueueName, deadLetterExchangeName, "#");
+  if (retryExchangeName) {
+    await consumeCh.assertExchange(retryExchangeName, "topic", { durable: true });
+    const retryQueueName = `${queue.queue}${cfg.retry.queueSuffix}`;
     await consumeCh.assertQueue(retryQueueName, {
       durable: cfg.queue.durable,
       exclusive: false,
@@ -314,15 +335,14 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
         "x-dead-letter-exchange": cfg.exchange,
       },
     });
-    await consumeCh.bindQueue(retryQueueName, cfg.exchange, `${retryRoutingPrefix}.#`);
+    for (const pattern of collectSubscribePatterns(cfg)) {
+      await consumeCh.bindQueue(retryQueueName, retryExchangeName, pattern);
+    }
   }
 
   const patterns = collectSubscribePatterns(cfg);
   for (const pattern of patterns) {
     await consumeCh.bindQueue(queue.queue, cfg.exchange, pattern);
-  }
-  if (retryRoutingPrefix) {
-    await consumeCh.bindQueue(queue.queue, cfg.exchange, `${retryRoutingPrefix}.#`);
   }
 
   inboundLimiter = createInboundLimiter(cfg.consume.concurrency);
@@ -374,8 +394,12 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
           if (delivery.settled) {
             return;
           }
-          const handledByRetry = await maybeRetryMessage(msg, routingKey);
-          if (handledByRetry) {
+          try {
+            if (await maybeRetryMessage(msg, routingKey, delivery)) return;
+          } catch (retryError) {
+            stats.errors++;
+            stats.lastError = retryError instanceof Error ? retryError.message : String(retryError);
+            delivery.nack({ requeue: true, reason: "retry_publish_failed" });
             return;
           }
           const requeue = disposition.requeue ?? activeConfig.consume.requeueOnError;
@@ -386,8 +410,12 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
           if (delivery.settled) {
             return;
           }
-          const handledByRetry = await maybeRetryMessage(msg, routingKey);
-          if (handledByRetry) {
+          try {
+            if (await maybeRetryMessage(msg, routingKey, delivery)) return;
+          } catch (retryError) {
+            stats.errors++;
+            stats.lastError = retryError instanceof Error ? retryError.message : String(retryError);
+            delivery.nack({ requeue: true, reason: "retry_publish_failed" });
             return;
           }
           const requeue = activeConfig.consume.requeueOnError;
@@ -411,7 +439,9 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
     stats.connected = false;
     stats.lastDisconnectAt = Date.now();
     if (!stopping) {
-      void reconnectAfterClose();
+      reconnectPromise ??= reconnectAfterClose().finally(() => {
+        reconnectPromise = null;
+      });
     }
   });
 }
@@ -425,22 +455,31 @@ async function reconnectAfterClose(): Promise<void> {
   if (!cfg || stopping) {
     return;
   }
-  await teardownTransport();
-  await sleep(cfg.connection.reconnectDelayMs);
-  if (stopping) {
-    return;
+  stats.reconnecting = true;
+  while (!stopping) {
+    await teardownTransport();
+    await sleep(cfg.connection.reconnectDelayMs);
+    if (stopping) return;
+    try {
+      await connectWithRetry();
+      stats.reconnecting = false;
+      return;
+    } catch (error) {
+      stats.errors++;
+      stats.lastError = error instanceof Error ? error.message : String(error);
+    }
   }
-  await connectWithRetry().catch(() => {});
+  stats.reconnecting = false;
 }
 
 /**
  * @description 关闭当前 channel/connection 引用，便于重连前清理（不修改 stopping 标志）。
  */
 async function teardownTransport(): Promise<void> {
-  nackAllPendingDeliveries(false, "transport_teardown");
+  nackAllPendingDeliveries(true, "transport_teardown");
   inboundLimiter = null;
-  retryRoutingPrefix = null;
-  retryQueueName = null;
+  retryExchangeName = null;
+  deadLetterExchangeName = null;
   try {
     if (consumeChannel && consumerTag) {
       await consumeChannel.cancel(consumerTag);
@@ -565,9 +604,13 @@ function sleep(ms: number): Promise<void> {
  * @param msg - 原始 AMQP 消费消息
  * @returns 是否已由 retry 队列接管（true 时调用方无需再 nack）
  */
-async function maybeRetryMessage(msg: ConsumeMessage, routingKey: string): Promise<boolean> {
+async function maybeRetryMessage(
+  msg: ConsumeMessage,
+  routingKey: string,
+  delivery: InboundDeliveryHandle,
+): Promise<boolean> {
   const cfg = config;
-  if (!cfg || !consumeChannel || !retryQueueName || !retryRoutingPrefix || !cfg.retry.enabled) {
+  if (!cfg || !cfg.retry.enabled || !publishChannel || !deadLetterExchangeName) {
     return false;
   }
   const raw = (msg.properties.headers as Record<string, unknown> | undefined)?.["x-attempt"];
@@ -577,25 +620,69 @@ async function maybeRetryMessage(msg: ConsumeMessage, routingKey: string): Promi
       : typeof raw === "string"
         ? Number.parseInt(raw, 10)
         : 0;
-  if (attempt >= cfg.retry.maxAttempts) {
-    return false;
+  const originalRoutingKey = resolveInboundRoutingKey(msg);
+  if (attempt >= cfg.retry.maxAttempts || !retryExchangeName) {
+    await publishConfirmed(
+      publishChannel,
+      deadLetterExchangeName,
+      originalRoutingKey || routingKey,
+      msg.content,
+      {
+        correlationId: msg.properties.correlationId,
+        messageId: msg.properties.messageId,
+        contentType: msg.properties.contentType ?? "application/json",
+        headers: {
+          ...(typeof msg.properties.headers === "object" && msg.properties.headers ? msg.properties.headers : {}),
+          "x-final-attempt": attempt,
+          "x-original-routing-key": originalRoutingKey || routingKey,
+        },
+        persistent: true,
+      },
+    );
+    delivery.ack();
+    stats.messagesDeadLettered++;
+    return true;
   }
   const nextAttempt = attempt + 1;
-  const originalRoutingKey = resolveInboundRoutingKey(msg);
   const headers = {
     ...(typeof msg.properties.headers === "object" && msg.properties.headers ? msg.properties.headers : {}),
     "x-attempt": nextAttempt,
     "x-original-routing-key": originalRoutingKey || routingKey,
   };
-  consumeChannel.publish(cfg.exchange, `${retryRoutingPrefix}.${routingKey}`, msg.content, {
+  await publishConfirmed(publishChannel, retryExchangeName, originalRoutingKey || routingKey, msg.content, {
     correlationId: msg.properties.correlationId,
+    messageId: msg.properties.messageId,
     contentType: msg.properties.contentType ?? "application/json",
     headers,
     persistent: true,
   });
-  consumeChannel.ack(msg);
-  stats.messagesAcked++;
+  delivery.ack();
+  stats.messagesRetried++;
   return true;
+}
+
+async function publishConfirmed(
+  channel: ConfirmChannel,
+  exchange: string,
+  routingKey: string,
+  content: Buffer,
+  options: Options.Publish,
+): Promise<void> {
+  const timeoutMs = config?.connection.publishConfirmTimeoutMs ?? 10000;
+  let timer: NodeJS.Timeout | undefined;
+  let writable = true;
+  const confirmation = new Promise<void>((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`RabbitMQ publish confirm timeout for routingKey=${routingKey}`)), timeoutMs);
+    timer.unref?.();
+    writable = channel.publish(exchange, routingKey, content, options, (error) => {
+      if (timer) clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  const drained = writable ? Promise.resolve() : once(channel, "drain").then(() => undefined);
+  await Promise.all([confirmation, drained]);
+  stats.publishConfirmed++;
 }
 
 /**

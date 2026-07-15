@@ -81,6 +81,7 @@ MQTT over WebSocket 传输与 ACL 留在本插件；下列能力通过 **薄封�
     "mqtt-ws": {
       "port": 15675,
       "path": "/ws",
+      "host": "127.0.0.1",
       "topicPrefix": "openclaw/",
       "subscribeTopics": [
         "openclaw/agent/+/in",
@@ -110,12 +111,13 @@ MQTT over WebSocket 传输与 ACL 留在本插件；下列能力通过 **薄封�
         "enabled": false
       },
       "ws": {
-        "compress": true,
+        "compress": false,
         "idleTimeoutMs": 60000,
-        "maxFrameSize": 262144
+        "maxFrameSize": 262144,
+        "allowedOrigins": ["https://console.example.com"]
       },
       "limits": {
-        "maxPayloadBytes": 1048576,
+        "maxPayloadBytes": 262144,
         "maxSubscriptionsPerClient": 200
       }
     }
@@ -134,9 +136,11 @@ MQTT over WebSocket 传输与 ACL 留在本插件；下列能力通过 **薄封�
 | **出站** | `publishToTopic` await |
 | **隔离** | server publish 不触发入站；ACL + topic 白名单 |
 
-- 强制替换默认账号，使用独立 MQTT 用户
-- 生产环境开启 `tls.enabled`，部署 WSS
+- 明文 WS 只能绑定 loopback；监听非 loopback 地址必须启用 `tls.enabled=true`
+- 使用独立 MQTT 用户，生产配置优先使用 `passwordHash`，避免明文密码
+- 浏览器应用必须加入 `ws.allowedOrigins` 精确白名单，未列出的 Origin 会被拒绝
 - 严格配置 `publishAllow` / `subscribeAllow`
+- 匿名访问必须显式配置 `anonymous` 用户及 fail-closed ACL
 - 按流量调优 `maxPayloadBytes`、`maxFrameSize`、`idleTimeoutMs`
 - 配合反向代理与网络 ACL 做边界隔离
 
@@ -186,8 +190,6 @@ npm run test:client
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | Push / PR | 安装、类型检查、构建、测试、上传产物 |
 | `.github/workflows/release.yml` | `v*` tag / 手动触发 | 构建、测试并发布 npm（已存在版本自动跳过） |
-
-发版细节见 [`RELEASING.md`](./RELEASING.md)。
 
 ## RabbitMQ Web-MQTT 兼容基线
 

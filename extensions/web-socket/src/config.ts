@@ -27,18 +27,23 @@ export type ResolvedWebsocketAccount = {
 const DEFAULT_SERVER = {
   wsPort: 18789,
   path: "/openclaw/ws",
-  host: "0.0.0.0",
+  host: "127.0.0.1",
   maxConnections: 1000,
   auth: {
     enabled: false,
     tokens: [] as string[],
+    allowQueryToken: false,
   },
+  allowedOrigins: [] as string[],
+  allowInsecureRemote: false,
 };
 
 const DEFAULT_CLIENT = {
   protocols: [] as string[],
   headers: {} as Record<string, string>,
   clientId: "openclaw-client",
+  connectTimeoutMs: 10_000,
+  allowInsecureRemote: false,
   reconnect: {
     enabled: true,
     initialDelayMs: 1_000,
@@ -51,12 +56,18 @@ export const DEFAULT_WEBSOCKET_CONFIG: WebsocketChannelConfig = {
   server: { ...DEFAULT_SERVER },
   client: { ...DEFAULT_CLIENT },
   agentBindings: [],
+  allowFrameAgentId: false,
   payload: {
     mode: "jsonTextOrPlain",
     outboundFormat: "envelope",
   },
   limits: {
     maxPayloadBytes: 1024 * 1024,
+    maxBufferedBytes: 1024 * 1024,
+    maxPendingMessages: 32,
+    messagesPerMinute: 120,
+    heartbeatIntervalMs: 30_000,
+    heartbeatTimeoutMs: 10_000,
   },
   session: {
     maxExpirySeconds: 86400,
@@ -191,7 +202,26 @@ function parseServerAuth(auth: Record<string, unknown>) {
     enabled: Boolean(auth.enabled),
     token: typeof auth.token === "string" ? auth.token : undefined,
     tokens,
+    allowQueryToken: auth.allowQueryToken === true,
   };
+}
+
+function positiveInteger(value: unknown, fallback: number, maximum: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? Math.min(value, maximum)
+    : fallback;
+}
+
+function nonNegativeInteger(value: unknown, fallback: number, maximum: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? Math.min(value, maximum)
+    : fallback;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))]
+    : [];
 }
 
 /**
@@ -257,19 +287,25 @@ export function resolveWebsocketConfig(
   return {
     mode,
     server: {
-      wsPort: wsPort > 0 ? wsPort : DEFAULT_SERVER.wsPort,
+      wsPort: positiveInteger(wsPort, DEFAULT_SERVER.wsPort, 65_535),
       path: pathRaw.startsWith("/") ? pathRaw.trim() : `/${pathRaw.trim()}`,
       host:
         (typeof serverSection.host === "string" ? serverSection.host.trim() : "") ||
         (typeof section.host === "string" ? section.host.trim() : "") ||
         DEFAULT_SERVER.host,
-      maxConnections:
-        (typeof serverSection.maxConnections === "number"
+      maxConnections: positiveInteger(
+        typeof serverSection.maxConnections === "number"
           ? serverSection.maxConnections
           : typeof section.maxConnections === "number"
             ? section.maxConnections
-            : DEFAULT_SERVER.maxConnections) || DEFAULT_SERVER.maxConnections,
+            : DEFAULT_SERVER.maxConnections,
+        DEFAULT_SERVER.maxConnections,
+        100_000,
+      ),
       auth: parseServerAuth(auth),
+      allowedOrigins: stringList(serverSection.allowedOrigins ?? section.allowedOrigins),
+      allowInsecureRemote:
+        serverSection.allowInsecureRemote === true || section.allowInsecureRemote === true,
     },
     client: {
       url,
@@ -282,22 +318,23 @@ export function resolveWebsocketConfig(
         (typeof clientSection.clientId === "string" ? clientSection.clientId.trim() : "") ||
         (typeof section.clientId === "string" ? section.clientId.trim() : "") ||
         DEFAULT_CLIENT.clientId,
+      connectTimeoutMs: positiveInteger(
+        clientSection.connectTimeoutMs,
+        DEFAULT_CLIENT.connectTimeoutMs,
+        120_000,
+      ),
+      allowInsecureRemote: clientSection.allowInsecureRemote === true,
       reconnect: {
         enabled:
           typeof clientReconnect.enabled === "boolean"
             ? clientReconnect.enabled
             : section.clientReconnect !== false,
-        initialDelayMs:
-          typeof clientReconnect.initialDelayMs === "number"
-            ? clientReconnect.initialDelayMs
-            : 1_000,
-        maxDelayMs:
-          typeof clientReconnect.maxDelayMs === "number"
-            ? clientReconnect.maxDelayMs
-            : 30_000,
+        initialDelayMs: positiveInteger(clientReconnect.initialDelayMs, 1_000, 300_000),
+        maxDelayMs: positiveInteger(clientReconnect.maxDelayMs, 30_000, 3_600_000),
       },
     },
     defaultAgentId,
+    allowFrameAgentId: section.allowFrameAgentId === true,
     agentBindings: parseAgentBindings(section.agentBindings),
     payload: {
       mode: "jsonTextOrPlain",
@@ -305,22 +342,50 @@ export function resolveWebsocketConfig(
         payload.outboundFormat === "plain" ? "plain" : "envelope",
     },
     limits: {
-      maxPayloadBytes:
-        typeof limits.maxPayloadBytes === "number" && limits.maxPayloadBytes > 0
-          ? limits.maxPayloadBytes
-          : DEFAULT_WEBSOCKET_CONFIG.limits.maxPayloadBytes,
+      maxPayloadBytes: positiveInteger(limits.maxPayloadBytes, DEFAULT_WEBSOCKET_CONFIG.limits.maxPayloadBytes, 16 * 1024 * 1024),
+      maxBufferedBytes: positiveInteger(limits.maxBufferedBytes, DEFAULT_WEBSOCKET_CONFIG.limits.maxBufferedBytes, 64 * 1024 * 1024),
+      maxPendingMessages: positiveInteger(limits.maxPendingMessages, DEFAULT_WEBSOCKET_CONFIG.limits.maxPendingMessages, 10_000),
+      messagesPerMinute: positiveInteger(limits.messagesPerMinute, DEFAULT_WEBSOCKET_CONFIG.limits.messagesPerMinute, 1_000_000),
+      heartbeatIntervalMs: positiveInteger(limits.heartbeatIntervalMs, DEFAULT_WEBSOCKET_CONFIG.limits.heartbeatIntervalMs, 300_000),
+      heartbeatTimeoutMs: positiveInteger(limits.heartbeatTimeoutMs, DEFAULT_WEBSOCKET_CONFIG.limits.heartbeatTimeoutMs, 300_000),
     },
     session: {
-      maxExpirySeconds:
-        typeof session.maxExpirySeconds === "number"
-          ? session.maxExpirySeconds
-          : DEFAULT_WEBSOCKET_CONFIG.session.maxExpirySeconds,
+      maxExpirySeconds: nonNegativeInteger(
+        session.maxExpirySeconds,
+        DEFAULT_WEBSOCKET_CONFIG.session.maxExpirySeconds,
+        30 * 24 * 60 * 60,
+      ),
       persistentAcrossReconnect:
         typeof session.persistentAcrossReconnect === "boolean"
           ? session.persistentAcrossReconnect
           : DEFAULT_WEBSOCKET_CONFIG.session.persistentAcrossReconnect,
     },
   };
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "::1" || host.toLowerCase() === "localhost";
+}
+
+/** 启动前拒绝容易意外暴露凭据或匿名端口的配置。 */
+export function validateWebsocketConfig(config: WebsocketChannelConfig): void {
+  if (isServerModeEnabled(config) && !isLoopbackHost(config.server.host)) {
+    if (!config.server.auth.enabled || config.server.auth.tokens.length === 0) {
+      throw new Error("remote WebSocket listener requires server.auth.enabled and at least one token");
+    }
+    if (!config.server.allowInsecureRemote) {
+      throw new Error("remote plaintext listener requires server.allowInsecureRemote=true; prefer a TLS reverse proxy to loopback");
+    }
+  }
+  if (isClientModeEnabled(config) && config.client.url) {
+    const url = new URL(config.client.url);
+    if (url.protocol !== "ws:" && url.protocol !== "wss:") {
+      throw new Error("client.url must use ws:// or wss://");
+    }
+    if (url.protocol === "ws:" && !isLoopbackHost(url.hostname) && !config.client.allowInsecureRemote) {
+      throw new Error("remote plaintext client URL requires client.allowInsecureRemote=true; use wss:// in production");
+    }
+  }
 }
 
 /**

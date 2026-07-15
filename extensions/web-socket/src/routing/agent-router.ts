@@ -40,7 +40,7 @@ export function resolveInboundRoute(
     }
   }
 
-  if (frameAgentId) {
+  if (config.allowFrameAgentId && frameAgentId) {
     return {
       agentId: frameAgentId,
       accountId: DEFAULT_ACCOUNT_ID,

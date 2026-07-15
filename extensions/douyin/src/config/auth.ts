@@ -8,6 +8,9 @@
  * **关键依赖**：`../types`
  */
 
+import { createHash } from "node:crypto";
+
+import type { ChannelLimitsOpenClawConfig } from "../runtime/runtime-api.js";
 import type { DouyinAccountConfig } from "../types.js";
 import { douyinFetch, readResponseBodyAsBuffer } from "../shared/http.js";
 
@@ -19,7 +22,19 @@ interface ClientTokenResponse {
     access_token?: string;
     expires_in?: number;
     error_code?: number;
+    description?: string;
   };
+  message?: string;
+}
+
+type TokenCacheEntry = { token: string; expiresAt: number };
+const tokenCache = new Map<string, TokenCacheEntry>();
+const tokenRequests = new Map<string, Promise<string>>();
+
+function cacheKey(config: DouyinAccountConfig): string {
+  return createHash("sha256")
+    .update(`${config.app_key}\0${config.app_secret}`)
+    .digest("hex");
 }
 
 /**
@@ -28,10 +43,19 @@ interface ClientTokenResponse {
  * @param config 渠道配置；缺少凭据时直接返回 null
  * @returns access_token 字符串；网络错误或接口失败时返回 null（不抛异常）
  */
-export async function getClientToken(config: DouyinAccountConfig | undefined): Promise<string | null> {
+export async function getClientToken(
+  config: DouyinAccountConfig | undefined,
+  rootConfig?: ChannelLimitsOpenClawConfig,
+): Promise<string | null> {
   if (!config?.app_key || !config?.app_secret) return null;
-  try {
-    const res = await douyinFetch(undefined, CLIENT_TOKEN_URL, {
+  const key = cacheKey(config);
+  const cached = tokenCache.get(key);
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+  const pending = tokenRequests.get(key);
+  if (pending) return pending;
+
+  const request = (async (): Promise<string> => {
+    const res = await douyinFetch(rootConfig, CLIENT_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -39,11 +63,37 @@ export async function getClientToken(config: DouyinAccountConfig | undefined): P
         client_key: config.app_key,
         client_secret: config.app_secret,
       }),
-    });
+    }, { timeoutMs: config.request_timeout_ms ?? 10_000 });
     const json = JSON.parse((await readResponseBodyAsBuffer(res)).toString("utf8")) as ClientTokenResponse;
     const token = json.data?.access_token;
-    return token ?? null;
-  } catch {
-    return null;
+    if (!res.ok || !token || json.data?.error_code !== 0) {
+      throw new Error(
+        `[douyin] client_token failed (${res.status}/${json.data?.error_code ?? "unknown"}): ${json.data?.description ?? json.message ?? "unknown error"}`,
+      );
+    }
+    tokenCache.set(key, {
+      token,
+      expiresAt: Date.now() + Math.max(60, json.data?.expires_in ?? 7200) * 1000,
+    });
+    return token;
+  })();
+  tokenRequests.set(key, request);
+  try {
+    return await request;
+  } finally {
+    tokenRequests.delete(key);
   }
+}
+
+/** 仅供测试和配置热更新时主动清理本地 token 缓存。 */
+export function clearClientTokenCache(): void {
+  tokenCache.clear();
+  tokenRequests.clear();
+}
+
+export function invalidateClientToken(config: DouyinAccountConfig): void {
+  if (!config.app_key || !config.app_secret) return;
+  const key = cacheKey(config);
+  tokenCache.delete(key);
+  tokenRequests.delete(key);
 }

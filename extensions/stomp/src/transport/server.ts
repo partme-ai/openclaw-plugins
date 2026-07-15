@@ -1,23 +1,12 @@
-/**
- * @fileoverview STOMP TCP 传输层：原生 TCP/TLS STOMP 帧解析、订阅、ACK 与 destination 路由。
- *
- * @description
- * 无第三方 Broker 依赖，Gateway 进程内嵌 STOMP Server；处理 CONNECT/SEND/SUBSCRIBE
- * 等命令，将 SEND 帧路由为 `InboundMessage` 并支持 prefetch/ACK/NACK 投递控制。
- *
- * @module transport/server
- */
-
-/**
- * STOMP TCP 传输层 — 协议服务与出站 publish 入口。
- */
-
-import * as fs from "node:fs";
+/** Hardened embedded STOMP 1.2 TCP/TLS transport. */
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import * as net from "node:net";
 import * as tls from "node:tls";
 
 import { matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
 
+import { assertValidStompTcpConfig } from "../config.js";
 import type {
   InboundHandler,
   InboundMessage,
@@ -26,618 +15,679 @@ import type {
   StompFrame,
   StompStatusSnapshot,
   StompTcpConfig,
+  TopicBinding,
 } from "../types.js";
 
-interface QueuedDelivery {
-  destination: string;
-  body: string;
-}
+type QueuedDelivery = { destination: string; body: string; redelivered?: boolean };
+type PendingDelivery = QueuedDelivery & { ackId: string; subscriptionId: string };
 
-interface PendingDelivery extends QueuedDelivery {
-  ackId: string;
-  subscriptionId: string;
-}
-
-interface ActiveSubscription {
+type ActiveSubscription = {
   id: string;
   destination: string;
   ackMode: StompAckMode;
   prefetchCount: number;
-  durable: boolean;
-  autoDelete: boolean;
+  durableKey?: string;
   pending: Map<string, PendingDelivery>;
   queue: QueuedDelivery[];
-}
+};
 
-interface DurableSubscriptionState {
+type DurableSubscription = {
   key: string;
-  destination: string;
-  queue: QueuedDelivery[];
-}
-
-interface InternalConnection {
+  user: string;
   id: string;
+  destination: string;
+  ackMode: StompAckMode;
+  prefetchCount: number;
+  queue: QueuedDelivery[];
+};
+
+type ConnectionState = {
+  id: string;
+  socket: net.Socket;
   remoteAddress: string;
   remotePort: number;
+  secure: boolean;
+  connected: boolean;
+  cleaned: boolean;
   version: string;
   user?: string;
-  clientId?: string;
   connectedAt: string;
-  subscriptionsById: Map<string, ActiveSubscription>;
-}
+  subscriptions: Map<string, ActiveSubscription>;
+  buffer: Buffer;
+  processing: Promise<void>;
+  pendingFrames: number;
+  windowStartedAt: number;
+  windowMessages: number;
+  lastInboundAt: number;
+  lastOutboundAt: number;
+  incomingHeartbeatMs: number;
+  outgoingHeartbeatMs: number;
+  connectTimer: ReturnType<typeof setTimeout>;
+};
 
 const stats: StompStatusSnapshot = {
+  running: false,
   totalConnections: 0,
   totalSubscriptions: 0,
+  durableSubscriptions: 0,
   routedInbound: 0,
   routedOutbound: 0,
   droppedInbound: 0,
+  droppedOutbound: 0,
   ackPending: 0,
 };
 
 let tcpServer: net.Server | null = null;
 let tlsServer: tls.Server | null = null;
 let activeConfig: StompTcpConfig | null = null;
-let connectionCounter = 0;
-let outboundCounter = 0;
+let inboundHandler: InboundHandler | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+const connections = new Map<string, ConnectionState>();
+const durableSubscriptions = new Map<string, DurableSubscription>();
 
-const connections = new Map<string, InternalConnection>();
-const socketMap = new Map<string, net.Socket>();
-const durableSubscriptions = new Map<string, DurableSubscriptionState>();
+const COMMANDS = new Set([
+  "CONNECT", "STOMP", "SEND", "SUBSCRIBE", "UNSUBSCRIBE", "ACK", "NACK", "DISCONNECT",
+]);
 
-/**
- * @description 从以 NUL 结尾的原始字符串解析单个 STOMP 帧。
- * @param data - 含可选 trailing `\0` 的帧字节串（UTF-8）。
- * @returns 解析后的 `StompFrame`，格式非法时 `null`。
- * @throws 不抛出。
- */
-function parseFrame(data: string): StompFrame | null {
-  const nullIdx = data.indexOf("\0");
-  const frameData = nullIdx >= 0 ? data.slice(0, nullIdx) : data;
-  const parts = frameData.split("\n\n");
-  if (parts.length < 1) return null;
-  const headerSection = parts[0];
-  const body = parts.length > 1 ? parts.slice(1).join("\n\n") : "";
-  const lines = headerSection.split("\n");
-  const command = lines[0]?.trim();
-  if (!command) return null;
-
-  const headers: Record<string, string> = {};
-  for (let i = 1; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (!line) continue;
-    const colonIdx = line.indexOf(":");
-    if (colonIdx <= 0) continue;
-    const key = line.slice(0, colonIdx).trim();
-    const value = line.slice(colonIdx + 1).trim();
-    headers[key] = value;
-  }
-
-  return { command, headers, body };
-}
-
-/**
- * @description 构造 STOMP 协议帧字符串（command + headers + body + NUL）。
- * @param command - STOMP 命令名（如 MESSAGE、CONNECTED）。
- * @param headers - 帧头键值对。
- * @param body - 可选消息体。
- * @returns 完整帧字符串（含 `\0` 终止符）。
- * @throws 不抛出。
- */
-function buildFrame(command: string, headers: Record<string, string>, body = ""): string {
-  let frame = `${command}\n`;
-  for (const [key, value] of Object.entries(headers)) {
-    frame += `${key}:${value}\n`;
-  }
-  if (body) frame += `content-length:${Buffer.byteLength(body)}\n`;
-  frame += `\n${body}\0`;
-  return frame;
-}
-
-/**
- * @description 将 STOMP destination 归一化为 topic 路径（去掉 /topic/ 等前缀）。
- * @param destination - 原始 destination 头。
- * @returns 用于通配符比较的 topic 段。
- * @throws 不抛出。
- */
 function normalizeDestinationTopic(destination: string): string {
-  if (destination.startsWith("/topic/")) return destination.slice("/topic/".length);
-  if (destination.startsWith("/queue/")) return destination.slice("/queue/".length);
-  if (destination.startsWith("/exchange/")) return destination.slice("/exchange/".length);
-  return destination.replace(/^\/+/, "");
+  return destination.replace(/^\/(?:topic|queue|exchange)\//, "").replace(/^\/+/, "");
 }
 
-/**
- * STOMP/RabbitMQ 风格 destination 通配符匹配 — 归一化后委托 message-sdk/transport。
- */
 function matchTopic(pattern: string, destination: string): boolean {
-  return matchTopicShared(
-    normalizeDestinationTopic(destination),
-    normalizeDestinationTopic(pattern),
-  );
+  return matchTopicShared(normalizeDestinationTopic(destination), normalizeDestinationTopic(pattern));
 }
 
-/**
- * @description 判断 destination 是否落在 subscribeTopics 白名单内（空列表表示全放行）。
- * @param destination - SEND 目标 destination。
- * @param cfg - STOMP 服务配置。
- * @returns 是否允许入队/路由。
- * @throws 不抛出。
- */
-function queueAllowed(destination: string, cfg: StompTcpConfig): boolean {
-  if (cfg.subscribeTopics.length === 0) return true;
-  return cfg.subscribeTopics.some((pattern) => matchTopic(pattern, destination));
-}
-
-/**
- * @description 将 SEND destination 解析为 Agent/account/peer 路由（topicBindings 优先）。
- * @param destination - STOMP destination 头。
- * @param conn - 当前连接上下文。
- * @param frame - 完整 SEND 帧（读取 x-peer-id 等扩展头）。
- * @param cfg - STOMP 服务配置。
- * @returns 不含 rawPayload 的入站路由字段。
- * @throws 不抛出。
- */
-function resolveInboundRoute(
-  destination: string,
-  conn: InternalConnection,
-  frame: StompFrame,
-  cfg: StompTcpConfig,
-): Omit<InboundMessage, "rawPayload" | "idempotencyKey"> {
-  const peerId =
-    frame.headers["x-peer-id"] ||
-    frame.headers["peer-id"] ||
-    frame.headers.sender ||
-    conn.user ||
-    conn.clientId ||
-    conn.id;
-  for (const binding of cfg.topicBindings) {
-    if (matchTopic(binding.topicPattern, destination)) {
-      return {
-        agentId: binding.agentId,
-        accountId: binding.accountId ?? "default",
-        peerId,
-        destination,
-        replyDestination: binding.replyTopic,
-      };
-    }
-  }
-
-  const agentMatch = destination.match(/\/(?:queue\/)?agent[./]([^/]+)/);
-  const agentId = agentMatch?.[1] ?? "default";
-  return {
-    agentId,
-    accountId: "default",
-    peerId,
-    destination,
-  };
-}
-
-/**
- * @description 向客户端写入 STOMP ERROR 帧并可携带 receipt-id。
- * @param socket - 客户端 TCP socket。
- * @param message - 错误描述。
- * @param receipt - 可选 receipt 头回显。
- * @returns void
- * @throws 不抛出。
- */
-function sendError(socket: net.Socket, message: string, receipt?: string): void {
-  socket.write(
-    buildFrame("ERROR", { message, ...(receipt ? { receipt } : {}) }, message),
-  );
-}
-
-/**
- * @description 按 prefetch 限制从订阅队列向客户端 flush MESSAGE 帧。
- * @param subscription - 活跃订阅状态（含 pending ACK 与 queue）。
- * @param connId - 连接 ID（查 socketMap）。
- * @returns void
- * @throws 不抛出。
- */
-function flushSubscription(subscription: ActiveSubscription, connId: string): void {
-  const socket = socketMap.get(connId);
-  if (!socket || socket.destroyed) return;
-  while (subscription.queue.length > 0) {
-    const inflight = subscription.pending.size;
-    if (subscription.ackMode !== "auto" && subscription.prefetchCount > 0 && inflight >= subscription.prefetchCount) {
-      return;
-    }
-    const item = subscription.queue.shift();
-    if (!item) return;
-    outboundCounter += 1;
-    const messageId = `msg-${Date.now()}-${outboundCounter}`;
-    const ackId = `ack-${messageId}`;
-    const headers: Record<string, string> = {
-      destination: item.destination,
-      "message-id": messageId,
-      subscription: subscription.id,
-      "content-type": "text/plain",
-    };
-    if (subscription.ackMode !== "auto") {
-      headers.ack = ackId;
-      subscription.pending.set(ackId, {
-        ackId,
-        subscriptionId: subscription.id,
-        destination: item.destination,
-        body: item.body,
-      });
-      stats.ackPending += 1;
-    }
-    socket.write(buildFrame("MESSAGE", headers, item.body));
-    stats.routedOutbound += 1;
-  }
-}
-
-/**
- * @description 处理 SUBSCRIBE 帧：注册订阅、恢复 durable 队列并 flush。
- * @param conn - 当前连接。
- * @param frame - SUBSCRIBE 帧。
- * @returns void
- * @throws 不抛出。
- */
-function handleSubscribe(conn: InternalConnection, frame: StompFrame): void {
-  if (!activeConfig) return;
-  const destination = frame.headers.destination ?? "";
-  if (!destination) return;
-  const ackMode = (frame.headers.ack as StompAckMode | undefined) ?? activeConfig.defaultAckMode;
-  const subscriptionId = frame.headers.id ?? `${destination}:${Date.now()}`;
-  const durable = frame.headers.durable === "true" || frame.headers.persistent === "true";
-  const autoDelete = frame.headers["auto-delete"] !== "false";
-  const prefetchCount = Number(frame.headers["prefetch-count"] ?? activeConfig.prefetchCount);
-  const subscription: ActiveSubscription = {
-    id: subscriptionId,
-    destination,
-    ackMode,
-    prefetchCount: Number.isFinite(prefetchCount) ? prefetchCount : activeConfig.prefetchCount,
-    durable,
-    autoDelete,
-    pending: new Map<string, PendingDelivery>(),
-    queue: [],
-  };
-
-  if (durable && !autoDelete) {
-    const durableKey = `${conn.user ?? "anonymous"}:${subscriptionId}:${destination}`;
-    const state = durableSubscriptions.get(durableKey);
-    if (state) {
-      subscription.queue.push(...state.queue);
-      state.queue.length = 0;
-    } else {
-      durableSubscriptions.set(durableKey, {
-        key: durableKey,
-        destination,
-        queue: [],
-      });
-    }
-  }
-
-  conn.subscriptionsById.set(subscriptionId, subscription);
-  flushSubscription(subscription, conn.id);
-}
-
-/**
- * @description 处理 UNSUBSCRIBE 帧：迁移 durable 队列并移除订阅。
- * @param conn - 当前连接。
- * @param frame - UNSUBSCRIBE 帧。
- * @returns void
- * @throws 不抛出。
- */
-function handleUnsubscribe(conn: InternalConnection, frame: StompFrame): void {
-  const id = frame.headers.id ?? "";
-  if (!id) return;
-  const subscription = conn.subscriptionsById.get(id);
-  if (!subscription) return;
-  if (subscription.durable && !subscription.autoDelete) {
-    const durableKey = `${conn.user ?? "anonymous"}:${id}:${subscription.destination}`;
-    const existing = durableSubscriptions.get(durableKey);
-    if (existing) existing.queue.push(...subscription.queue);
-  }
-  stats.ackPending = Math.max(0, stats.ackPending - subscription.pending.size);
-  conn.subscriptionsById.delete(id);
-}
-
-/**
- * @description 处理 ACK/NACK：确认或 requeue pending MESSAGE。
- * @param conn - 当前连接。
- * @param frame - ACK 或 NACK 帧。
- * @param requeue - NACK 时是否 requeue（ACK 时为 false）。
- * @returns void
- * @throws 不抛出。
- */
-function handleAckOrNack(conn: InternalConnection, frame: StompFrame, requeue: boolean): void {
-  const ackId = frame.headers.id ?? frame.headers.ack;
-  if (!ackId) return;
-
-  for (const subscription of conn.subscriptionsById.values()) {
-    const pending = subscription.pending.get(ackId);
-    if (!pending) continue;
-    subscription.pending.delete(ackId);
-    stats.ackPending = Math.max(0, stats.ackPending - 1);
-    if (requeue) {
-      subscription.queue.unshift({
-        destination: pending.destination,
-        body: pending.body,
-      });
-    }
-    flushSubscription(subscription, conn.id);
-    return;
-  }
-}
-
-/**
- * @description STOMP 命令分发器：CONNECT/SEND/SUBSCRIBE/ACK 等帧处理入口。
- * @param conn - 当前连接状态。
- * @param frame - 已解析 STOMP 帧。
- * @param onInbound - SEND 路由后的入站回调。
- * @returns void
- * @throws 不抛出；未知命令写 ERROR 帧。
- */
-function handleFrame(conn: InternalConnection, frame: StompFrame, onInbound: InboundHandler): void {
-  const socket = socketMap.get(conn.id);
-  if (!socket) return;
-
-  switch (frame.command) {
-    case "CONNECT":
-    case "STOMP": {
-      if (!activeConfig) return;
-      const login = frame.headers.login;
-      const passcode = frame.headers.passcode;
-      if (activeConfig.auth.required) {
-        const expectedUser = activeConfig.auth.defaultUser;
-        const expectedPass = activeConfig.auth.defaultPass;
-        if (expectedUser && expectedPass) {
-          if (login !== expectedUser || passcode !== expectedPass) {
-            sendError(socket, "Authentication failed");
-            socket.end();
-            return;
-          }
-        } else if (!login || !passcode) {
-          sendError(socket, "login/passcode is required");
-          socket.end();
-          return;
-        }
-      }
-      const acceptVersion = frame.headers["accept-version"] ?? "1.0";
-      conn.version = acceptVersion.includes("1.2")
-        ? "1.2"
-        : acceptVersion.includes("1.1")
-          ? "1.1"
-          : "1.0";
-      conn.user = login || activeConfig.auth.defaultUser || "anonymous";
-      conn.clientId = frame.headers["client-id"];
-      socket.write(
-        buildFrame("CONNECTED", {
-          version: conn.version,
-          server: "openclaw-stomp/0.1.11",
-          "heart-beat": `${activeConfig.heartbeat.serverMs},${activeConfig.heartbeat.clientMs}`,
-        }),
-      );
-      return;
-    }
-
-    case "SEND": {
-      if (!activeConfig) return;
-      const destination = frame.headers.destination ?? "";
-      if (!destination) {
-        sendError(socket, "destination is required");
-        return;
-      }
-      if (!queueAllowed(destination, activeConfig)) {
-        stats.droppedInbound += 1;
-        return;
-      }
-      const route = resolveInboundRoute(destination, conn, frame, activeConfig);
-      const rawBody = frame.body ?? "";
-      const idempotencyKey =
-        frame.headers["message-id"] ||
-        frame.headers.receipt ||
-        `${conn.id}:${destination}:${rawBody.slice(0, 64)}:${Buffer.byteLength(rawBody, "utf-8")}`;
-
-      onInbound({ ...route, rawPayload: rawBody, idempotencyKey });
-      stats.routedInbound += 1;
-      if (frame.headers.receipt) {
-        socket.write(buildFrame("RECEIPT", { "receipt-id": frame.headers.receipt }));
-      }
-      return;
-    }
-
-    case "SUBSCRIBE":
-      handleSubscribe(conn, frame);
-      return;
-    case "UNSUBSCRIBE":
-      handleUnsubscribe(conn, frame);
-      return;
-    case "ACK":
-      handleAckOrNack(conn, frame, false);
-      return;
-    case "NACK": {
-      const requeue = frame.headers.requeue !== "false";
-      handleAckOrNack(conn, frame, requeue);
-      return;
-    }
-    case "DISCONNECT":
-      if (frame.headers.receipt) {
-        socket.write(buildFrame("RECEIPT", { "receipt-id": frame.headers.receipt }));
-      }
-      socket.end();
-      return;
-    default:
-      sendError(socket, `Unknown STOMP command: ${frame.command}`);
-  }
-}
-
-/**
- * @description 新 TCP 连接生命周期：缓冲分帧、parseFrame → handleFrame、close 清理。
- * @param socket - 客户端 socket。
- * @param onInbound - SEND 入站回调。
- * @returns void
- * @throws 不抛出。
- */
-function handleConnection(socket: net.Socket, onInbound: InboundHandler): void {
-  if (!activeConfig) return;
-  const frameLimit = activeConfig.maxFrameSize;
-  const connId = `stomp-tcp-${++connectionCounter}`;
-  const conn: InternalConnection = {
-    id: connId,
-    remoteAddress: socket.remoteAddress ?? "unknown",
-    remotePort: socket.remotePort ?? 0,
-    version: "1.0",
-    connectedAt: new Date().toISOString(),
-    subscriptionsById: new Map(),
-  };
-  connections.set(connId, conn);
-  socketMap.set(connId, socket);
-  stats.totalConnections = connections.size;
-
-  let buffer = "";
-  socket.on("data", (chunk) => {
-    buffer += chunk.toString("utf-8");
-    if (buffer.length > frameLimit) {
-      sendError(socket, `Frame exceeds maxFrameSize=${frameLimit}`);
-      socket.end();
-      return;
-    }
-    let nullIdx = buffer.indexOf("\0");
-    while (nullIdx >= 0) {
-      const rawFrame = buffer.slice(0, nullIdx + 1);
-      buffer = buffer.slice(nullIdx + 1);
-      const frame = parseFrame(rawFrame);
-      if (frame) handleFrame(conn, frame, onInbound);
-      nullIdx = buffer.indexOf("\0");
-    }
-  });
-
-  socket.on("close", () => {
-    for (const [subscriptionId, subscription] of conn.subscriptionsById.entries()) {
-      if (subscription.durable && !subscription.autoDelete) {
-        const durableKey = `${conn.user ?? "anonymous"}:${subscriptionId}:${subscription.destination}`;
-        const state = durableSubscriptions.get(durableKey);
-        if (state) state.queue.push(...subscription.queue);
-      }
-      stats.ackPending = Math.max(0, stats.ackPending - subscription.pending.size);
-    }
-    connections.delete(connId);
-    socketMap.delete(connId);
-    stats.totalConnections = connections.size;
-  });
-
-  socket.on("error", () => {
-    connections.delete(connId);
-    socketMap.delete(connId);
-    stats.totalConnections = connections.size;
-  });
-}
-
-/**
- * @description 启动 STOMP TCP（及可选 TLS）监听，注册入站 SEND 帧回调。
- * @param config - STOMP 服务配置
- * @param onInbound - 入站消息处理器（通常为 dispatchInboundMessage）
- */
-export async function startStompTcpServer(config: StompTcpConfig, onInbound: InboundHandler): Promise<void> {
-  activeConfig = config;
-
-  tcpServer = net.createServer((socket) => handleConnection(socket, onInbound));
-  tcpServer.maxConnections = config.maxConnections;
-
-  await new Promise<void>((resolve, reject) => {
-    tcpServer?.listen(config.port, () => resolve());
-    tcpServer?.on("error", reject);
-  });
-
-  if (config.tls.enabled && config.tlsPort > 0 && config.tls.certFile && config.tls.keyFile) {
-    const tlsOptions: tls.TlsOptions = {
-      cert: fs.readFileSync(config.tls.certFile),
-      key: fs.readFileSync(config.tls.keyFile),
-    };
-    if (config.tls.caFile) tlsOptions.ca = fs.readFileSync(config.tls.caFile);
-    tlsServer = tls.createServer(tlsOptions, (socket) => handleConnection(socket, onInbound));
-    await new Promise<void>((resolve, reject) => {
-      tlsServer?.listen(config.tlsPort, () => resolve());
-      tlsServer?.on("error", reject);
-    });
-  }
-}
-
-/** @description 停止 STOMP 服务并销毁所有连接。 */
-export async function stopStompTcpServer(): Promise<void> {
-  for (const socket of socketMap.values()) {
-    socket.destroy();
-  }
-  socketMap.clear();
-  if (tcpServer) {
-    await new Promise<void>((resolve) => tcpServer?.close(() => resolve()));
-    tcpServer = null;
-  }
-  if (tlsServer) {
-    await new Promise<void>((resolve) => tlsServer?.close(() => resolve()));
-    tlsServer = null;
-  }
-  connections.clear();
-  activeConfig = null;
-  stats.totalConnections = 0;
-  stats.totalSubscriptions = 0;
-  stats.ackPending = 0;
-}
-
-/** @description 列出当前活跃 STOMP 连接及订阅摘要。 */
-export function getConnectionInfoList(): StompConnection[] {
-  const result: StompConnection[] = [];
-  for (const conn of connections.values()) {
-    let inflight = 0;
-    let queued = 0;
-    const subscriptions: string[] = [];
-    for (const subscription of conn.subscriptionsById.values()) {
-      inflight += subscription.pending.size;
-      queued += subscription.queue.length;
-      subscriptions.push(subscription.destination);
-    }
-    result.push({
-      id: conn.id,
-      remoteAddress: conn.remoteAddress,
-      remotePort: conn.remotePort,
-      version: conn.version,
-      user: conn.user,
-      connectedAt: conn.connectedAt,
-      subscriptions,
-      inflightCount: inflight,
-      queuedCount: queued,
-    });
+function unescapeHeader(value: string): string | null {
+  let result = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char !== "\\") { result += char; continue; }
+    const escaped = value[++index];
+    if (escaped === "n") result += "\n";
+    else if (escaped === "r") result += "\r";
+    else if (escaped === "c") result += ":";
+    else if (escaped === "\\") result += "\\";
+    else return null;
   }
   return result;
 }
 
-/** @description 按 STOMP 协议版本聚合连接数统计。 */
-export function getConnectionStats(): { total: number; byVersion: Record<string, number> } {
-  const byVersion: Record<string, number> = {};
-  for (const conn of connections.values()) {
-    byVersion[conn.version] = (byVersion[conn.version] ?? 0) + 1;
+function escapeHeader(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/:/g, "\\c");
+}
+
+function parseFrame(raw: Buffer): StompFrame | null {
+  if (raw.at(-1) !== 0) return null;
+  const text = raw.subarray(0, -1).toString("utf8");
+  const separator = text.search(/\r?\n\r?\n/);
+  if (separator < 0) return null;
+  const headerText = text.slice(0, separator).replace(/\r\n/g, "\n");
+  const separatorLength = text.startsWith("\r\n\r\n", separator) ? 4 : 2;
+  const body = text.slice(separator + separatorLength);
+  const lines = headerText.split("\n");
+  const command = lines.shift()?.trim().toUpperCase() ?? "";
+  if (!COMMANDS.has(command)) return null;
+  const headers: Record<string, string> = {};
+  for (const line of lines) {
+    const colon = line.indexOf(":");
+    if (colon <= 0) return null;
+    const key = unescapeHeader(line.slice(0, colon));
+    const value = unescapeHeader(line.slice(colon + 1));
+    if (key === null || value === null || key in headers) return null;
+    headers[key] = value;
   }
+  if (headers["content-length"] !== undefined) {
+    if (!/^\d+$/.test(headers["content-length"])) return null;
+    if (Buffer.byteLength(body, "utf8") !== Number(headers["content-length"])) return null;
+  }
+  return { command, headers, body };
+}
+
+function buildFrame(command: string, headers: Record<string, string | undefined>, body = ""): string {
+  const entries = Object.entries(headers).filter((entry): entry is [string, string] => entry[1] !== undefined);
+  if (body && !entries.some(([key]) => key === "content-length")) {
+    entries.push(["content-length", String(Buffer.byteLength(body, "utf8"))]);
+  }
+  return `${command}\n${entries.map(([key, value]) => `${escapeHeader(key)}:${escapeHeader(value)}`).join("\n")}\n\n${body}\0`;
+}
+
+function locateFrameEnd(buffer: Buffer): number {
+  const text = buffer.toString("latin1");
+  const lfSeparator = text.indexOf("\n\n");
+  const crlfSeparator = text.indexOf("\r\n\r\n");
+  const separator = lfSeparator < 0 ? crlfSeparator : crlfSeparator < 0 ? lfSeparator : Math.min(lfSeparator, crlfSeparator);
+  if (separator < 0) return -1;
+  const separatorLength = text.startsWith("\r\n\r\n", separator) ? 4 : 2;
+  const headerText = buffer.subarray(0, separator).toString("utf8").replace(/\r\n/g, "\n");
+  const contentLength = headerText.split("\n").find((line) => line.startsWith("content-length:"))?.slice(15);
+  if (contentLength !== undefined) {
+    if (!/^\d+$/.test(contentLength)) return -2;
+    const nulIndex = separator + separatorLength + Number(contentLength);
+    if (buffer.length <= nulIndex) return -1;
+    return buffer[nulIndex] === 0 ? nulIndex + 1 : -2;
+  }
+  const nul = buffer.indexOf(0, separator + separatorLength);
+  return nul < 0 ? -1 : nul + 1;
+}
+
+function secureEqual(left: string, right: string): boolean {
+  const a = createHash("sha256").update(left, "utf8").digest();
+  const b = createHash("sha256").update(right, "utf8").digest();
+  return timingSafeEqual(a, b);
+}
+
+function authenticate(login: string | undefined, passcode: string | undefined, config: StompTcpConfig): boolean {
+  if (!config.auth.required) return true;
+  if (!login || passcode === undefined) return false;
+  const user = config.auth.users.find((candidate) => secureEqual(candidate.login, login));
+  if (!user) return false;
+  const plain = user.passwordEnv ? process.env[user.passwordEnv] : user.password;
+  if (plain !== undefined) return secureEqual(plain, passcode);
+  if (!user.passwordHash) return false;
+  const digest = createHash(user.hashAlgorithm ?? "sha256").update(passcode, "utf8").digest("hex");
+  return secureEqual(user.passwordHash.toLowerCase(), digest.toLowerCase());
+}
+
+function parseHeartBeat(value: string | undefined): [number, number] {
+  if (!value) return [0, 0];
+  const match = /^(\d+),(\d+)$/.exec(value.trim());
+  if (!match) throw new Error("Invalid heart-beat header");
+  return [Math.min(Number(match[1]), 300_000), Math.min(Number(match[2]), 300_000)];
+}
+
+function sendRaw(state: ConnectionState, payload: string): boolean {
+  const config = activeConfig;
+  if (!config || state.socket.destroyed || !state.socket.writable) return false;
+  const bytes = Buffer.byteLength(payload, "utf8");
+  if (state.socket.writableLength + bytes > config.maxBufferedBytes) {
+    stats.droppedOutbound += 1;
+    state.socket.destroy(new Error("STOMP outbound backpressure limit exceeded"));
+    return false;
+  }
+  state.socket.write(payload);
+  state.lastOutboundAt = Date.now();
+  return true;
+}
+
+function sendFrame(state: ConnectionState, command: string, headers: Record<string, string | undefined>, body = ""): boolean {
+  return sendRaw(state, buildFrame(command, headers, body));
+}
+
+function failProtocol(state: ConnectionState, message: string, receiptId?: string, close = false): void {
+  sendFrame(state, "ERROR", { message, "receipt-id": receiptId }, message);
+  if (close) state.socket.end();
+}
+
+function allowedAgent(agentId: string, config: StompTcpConfig): boolean {
+  return agentId === config.defaultAgentId || config.allowedAgentIds.includes(agentId);
+}
+
+function findBinding(destination: string, config: StompTcpConfig): TopicBinding | undefined {
+  return config.topicBindings.find((binding) => matchTopic(binding.topicPattern, destination));
+}
+
+function resolveInboundRoute(destination: string, state: ConnectionState, config: StompTcpConfig): Omit<InboundMessage, "rawPayload" | "idempotencyKey"> {
+  const binding = findBinding(destination, config);
+  const match = destination.match(/^\/queue\/agent(?:[./]([^/]+))?$/);
+  if (!binding && !match) throw new Error("SEND destination is not configured");
+  const agentId = binding?.agentId ?? match?.[1] ?? config.defaultAgentId;
+  if (!binding && !allowedAgent(agentId, config)) throw new Error(`Agent is not allowed: ${agentId}`);
+  const peerId = `stomp-tcp:${state.id}@${agentId}`;
   return {
-    total: connections.size,
-    byVersion,
+    agentId,
+    accountId: binding?.accountId ?? "default",
+    peerId,
+    destination,
+    replyDestination: binding?.replyTopic,
   };
 }
 
-/** @description 返回路由/连接运行时统计快照。 */
-export function getStatusSnapshot(): StompStatusSnapshot {
-  let totalSubscriptions = 0;
-  for (const conn of connections.values()) {
-    totalSubscriptions += conn.subscriptionsById.size;
+function subscriptionAllowed(state: ConnectionState, destination: string, config: StompTcpConfig): boolean {
+  if (config.allowSharedTopics) return true;
+  return [...new Set([config.defaultAgentId, ...config.allowedAgentIds, ...config.topicBindings.map((item) => item.agentId)])]
+    .some((agentId) => destination === `/topic/session.stomp-tcp:${state.id}@${agentId}`);
+}
+
+function enqueue(queue: QueuedDelivery[], delivery: QueuedDelivery, config: StompTcpConfig): boolean {
+  if (queue.length >= config.maxQueueDepthPerSubscription) {
+    stats.droppedOutbound += 1;
+    return false;
   }
-  stats.totalSubscriptions = totalSubscriptions;
+  queue.push(delivery);
+  return true;
+}
+
+function flushSubscription(state: ConnectionState, subscription: ActiveSubscription): void {
+  const config = activeConfig;
+  if (!config || state.socket.destroyed || state.socket.writableNeedDrain) return;
+  while (subscription.queue.length > 0) {
+    if (subscription.ackMode !== "auto" && subscription.pending.size >= subscription.prefetchCount) return;
+    const delivery = subscription.queue.shift();
+    if (!delivery) return;
+    const messageId = randomUUID();
+    const ackId = randomUUID();
+    if (subscription.ackMode !== "auto") {
+      subscription.pending.set(ackId, { ...delivery, ackId, subscriptionId: subscription.id });
+      stats.ackPending += 1;
+    }
+    const sent = sendFrame(state, "MESSAGE", {
+      destination: delivery.destination,
+      "message-id": messageId,
+      subscription: subscription.id,
+      "content-type": "text/plain;charset=utf-8",
+      ack: subscription.ackMode === "auto" ? undefined : ackId,
+      redelivered: delivery.redelivered ? "true" : undefined,
+    }, delivery.body);
+    if (!sent) return;
+    stats.routedOutbound += 1;
+  }
+}
+
+function durableKey(user: string, id: string, destination: string): string {
+  return `${user}\0${id}\0${destination}`;
+}
+
+function handleSubscribe(state: ConnectionState, frame: StompFrame, config: StompTcpConfig): void {
+  const id = frame.headers.id;
+  const destination = frame.headers.destination;
+  const ack = (frame.headers.ack ?? config.defaultAckMode) as StompAckMode;
+  if (!id || !destination) throw new Error("SUBSCRIBE requires id and destination");
+  if (ack !== "auto" && ack !== "client" && ack !== "client-individual") throw new Error("Invalid SUBSCRIBE ack mode");
+  if (state.subscriptions.has(id)) throw new Error(`Duplicate subscription id: ${id}`);
+  if (!subscriptionAllowed(state, destination, config)) throw new Error("Subscription is outside this connection's session scope");
+  if (state.subscriptions.size >= config.maxSubscriptionsPerConnection) throw new Error("Subscription limit exceeded");
+  const prefetchRaw = Number(frame.headers["prefetch-count"] ?? config.prefetchCount);
+  const prefetchCount = Number.isInteger(prefetchRaw) && prefetchRaw > 0 ? Math.min(prefetchRaw, config.prefetchCount) : config.prefetchCount;
+  const durable = frame.headers.durable === "true" || frame.headers.persistent === "true";
+  if (durable && !config.allowDurableSubscriptions) throw new Error("Durable subscriptions are disabled");
+  let queue: QueuedDelivery[] = [];
+  let key: string | undefined;
+  if (durable) {
+    key = durableKey(state.user ?? "anonymous", id, destination);
+    let persisted = durableSubscriptions.get(key);
+    if (!persisted) {
+      if (durableSubscriptions.size >= config.maxDurableSubscriptions) throw new Error("Durable subscription limit exceeded");
+      persisted = { key, user: state.user ?? "anonymous", id, destination, ackMode: ack, prefetchCount, queue: [] };
+      durableSubscriptions.set(key, persisted);
+    }
+    queue = persisted.queue;
+  }
+  const subscription: ActiveSubscription = { id, destination, ackMode: ack, prefetchCount, durableKey: key, pending: new Map(), queue };
+  state.subscriptions.set(id, subscription);
+  flushSubscription(state, subscription);
+}
+
+function requeuePending(subscription: ActiveSubscription, deliveries: PendingDelivery[]): void {
+  const limit = activeConfig?.maxQueueDepthPerSubscription ?? 0;
+  for (const delivery of deliveries.reverse()) {
+    if (limit > 0 && subscription.queue.length >= limit) {
+      stats.droppedOutbound += 1;
+      continue;
+    }
+    subscription.queue.unshift({ destination: delivery.destination, body: delivery.body, redelivered: true });
+  }
+}
+
+function removeSubscription(state: ConnectionState, id: string, deleteDurable: boolean): void {
+  const subscription = state.subscriptions.get(id);
+  if (!subscription) throw new Error("Unknown subscription id");
+  const pending = [...subscription.pending.values()];
+  stats.ackPending = Math.max(0, stats.ackPending - pending.length);
+  requeuePending(subscription, pending);
+  subscription.pending.clear();
+  state.subscriptions.delete(id);
+  if (deleteDurable && subscription.durableKey) durableSubscriptions.delete(subscription.durableKey);
+}
+
+function handleAck(state: ConnectionState, frame: StompFrame, nack: boolean): void {
+  const ackId = frame.headers.id ?? frame.headers.ack;
+  if (!ackId) throw new Error(`${nack ? "NACK" : "ACK"} requires id`);
+  for (const subscription of state.subscriptions.values()) {
+    const ids = [...subscription.pending.keys()];
+    const position = ids.indexOf(ackId);
+    if (position < 0) continue;
+    const affected = subscription.ackMode === "client" ? ids.slice(0, position + 1) : [ackId];
+    const deliveries = affected.flatMap((id) => {
+      const delivery = subscription.pending.get(id);
+      subscription.pending.delete(id);
+      return delivery ? [delivery] : [];
+    });
+    stats.ackPending = Math.max(0, stats.ackPending - deliveries.length);
+    if (nack && frame.headers.requeue !== "false") requeuePending(subscription, deliveries);
+    flushSubscription(state, subscription);
+    return;
+  }
+  throw new Error("Unknown ACK id");
+}
+
+async function handleFrame(state: ConnectionState, frame: StompFrame, config: StompTcpConfig): Promise<void> {
+  const receiptId = frame.headers.receipt;
+  if (!state.connected && frame.command !== "CONNECT" && frame.command !== "STOMP") {
+    failProtocol(state, "CONNECT is required before other commands", receiptId, true);
+    return;
+  }
+  try {
+    switch (frame.command) {
+      case "CONNECT":
+      case "STOMP": {
+        if (state.connected) throw new Error("STOMP session is already connected");
+        const versions = (frame.headers["accept-version"] ?? "").split(",").map((item) => item.trim());
+        if (!versions.includes("1.2")) throw new Error("Only STOMP 1.2 is supported");
+        if (!authenticate(frame.headers.login, frame.headers.passcode, config)) throw new Error("Authentication failed");
+        const [clientOutgoing, clientIncoming] = parseHeartBeat(frame.headers["heart-beat"]);
+        state.incomingHeartbeatMs = clientOutgoing > 0 && config.heartbeat.clientMs > 0 ? Math.max(clientOutgoing, config.heartbeat.clientMs) : 0;
+        state.outgoingHeartbeatMs = clientIncoming > 0 && config.heartbeat.serverMs > 0 ? Math.max(clientIncoming, config.heartbeat.serverMs) : 0;
+        state.connected = true;
+        state.version = "1.2";
+        state.user = frame.headers.login ?? "anonymous";
+        clearTimeout(state.connectTimer);
+        sendFrame(state, "CONNECTED", {
+          version: "1.2",
+          server: "openclaw-stomp/2026.5.25-2",
+          session: state.id,
+          "heart-beat": `${config.heartbeat.serverMs},${config.heartbeat.clientMs}`,
+        });
+        return;
+      }
+      case "SEND": {
+        const destination = frame.headers.destination;
+        if (!destination) throw new Error("SEND requires destination");
+        if (config.subscribeTopics.length > 0 && !config.subscribeTopics.some((pattern) => matchTopic(pattern, destination))) {
+          throw new Error("SEND destination is not allowlisted");
+        }
+        const route = resolveInboundRoute(destination, state, config);
+        await inboundHandler?.({
+          ...route,
+          rawPayload: frame.body,
+          idempotencyKey: frame.headers["message-id"] || receiptId || createHash("sha256").update(`${state.id}\0${destination}\0${frame.body}`).digest("hex"),
+        });
+        stats.routedInbound += 1;
+        break;
+      }
+      case "SUBSCRIBE":
+        handleSubscribe(state, frame, config);
+        break;
+      case "UNSUBSCRIBE":
+        if (!frame.headers.id) throw new Error("UNSUBSCRIBE requires id");
+        removeSubscription(state, frame.headers.id, true);
+        break;
+      case "ACK":
+        handleAck(state, frame, false);
+        break;
+      case "NACK":
+        handleAck(state, frame, true);
+        break;
+      case "DISCONNECT":
+        if (receiptId) sendFrame(state, "RECEIPT", { "receipt-id": receiptId });
+        state.socket.end();
+        return;
+      default:
+        throw new Error(`Unsupported STOMP command: ${frame.command}`);
+    }
+    if (receiptId) sendFrame(state, "RECEIPT", { "receipt-id": receiptId });
+  } catch (error) {
+    if (frame.command === "SEND") stats.droppedInbound += 1;
+    failProtocol(state, error instanceof Error ? error.message : String(error), receiptId, frame.command === "CONNECT" || frame.command === "STOMP");
+  }
+}
+
+function cleanup(state: ConnectionState): void {
+  if (state.cleaned) return;
+  state.cleaned = true;
+  clearTimeout(state.connectTimer);
+  for (const subscription of state.subscriptions.values()) {
+    const pending = [...subscription.pending.values()];
+    stats.ackPending = Math.max(0, stats.ackPending - pending.length);
+    if (subscription.durableKey) requeuePending(subscription, pending);
+  }
+  state.subscriptions.clear();
+  connections.delete(state.id);
+  stats.totalConnections = connections.size;
+}
+
+function enqueueFrame(state: ConnectionState, frame: StompFrame, config: StompTcpConfig): void {
+  const now = Date.now();
+  if (now - state.windowStartedAt >= 60_000) { state.windowStartedAt = now; state.windowMessages = 0; }
+  if (++state.windowMessages > config.messagesPerMinute) {
+    state.socket.destroy(new Error("STOMP message rate limit exceeded"));
+    return;
+  }
+  if (state.pendingFrames >= config.maxPendingMessages) {
+    state.socket.destroy(new Error("STOMP inbound queue full"));
+    return;
+  }
+  state.pendingFrames += 1;
+  state.processing = state.processing
+    .then(() => handleFrame(state, frame, config))
+    .catch((error: unknown) => failProtocol(state, `Frame processing failed: ${String(error)}`))
+    .finally(() => { state.pendingFrames -= 1; });
+}
+
+function handleConnection(socket: net.Socket, secure: boolean, config: StompTcpConfig): void {
+  if (connections.size >= config.maxConnections) {
+    socket.end(buildFrame("ERROR", { message: "STOMP connection limit exceeded" }, "STOMP connection limit exceeded"));
+    return;
+  }
+  socket.setNoDelay(true);
+  socket.setKeepAlive(true, 30_000);
+  const now = Date.now();
+  const state: ConnectionState = {
+    id: randomUUID(),
+    socket,
+    remoteAddress: socket.remoteAddress ?? "unknown",
+    remotePort: socket.remotePort ?? 0,
+    secure,
+    connected: false,
+    cleaned: false,
+    version: "pending",
+    connectedAt: new Date(now).toISOString(),
+    subscriptions: new Map(),
+    buffer: Buffer.alloc(0),
+    processing: Promise.resolve(),
+    pendingFrames: 0,
+    windowStartedAt: now,
+    windowMessages: 0,
+    lastInboundAt: now,
+    lastOutboundAt: now,
+    incomingHeartbeatMs: 0,
+    outgoingHeartbeatMs: 0,
+    connectTimer: setTimeout(() => failProtocol(state, "STOMP CONNECT timeout", undefined, true), config.connectTimeoutMs),
+  };
+  state.connectTimer.unref();
+  connections.set(state.id, state);
+  stats.totalConnections = connections.size;
+
+  socket.on("data", (chunk) => {
+    state.lastInboundAt = Date.now();
+    state.buffer = Buffer.concat([state.buffer, chunk]);
+    while (state.buffer[0] === 10 || (state.buffer[0] === 13 && state.buffer[1] === 10)) {
+      state.buffer = state.buffer.subarray(state.buffer[0] === 10 ? 1 : 2);
+    }
+    let end = locateFrameEnd(state.buffer);
+    while (end !== -1) {
+      if (end === -2) {
+        failProtocol(state, "Malformed content-length", undefined, true);
+        return;
+      }
+      if (end > config.maxFrameSize) {
+        failProtocol(state, "STOMP frame exceeds maxFrameSize", undefined, true);
+        return;
+      }
+      const raw = state.buffer.subarray(0, end);
+      state.buffer = state.buffer.subarray(end);
+      const parsed = parseFrame(raw);
+      if (!parsed) failProtocol(state, "Malformed STOMP frame", undefined, true);
+      else enqueueFrame(state, parsed, config);
+      while (state.buffer[0] === 10 || (state.buffer[0] === 13 && state.buffer[1] === 10)) {
+        state.buffer = state.buffer.subarray(state.buffer[0] === 10 ? 1 : 2);
+      }
+      end = locateFrameEnd(state.buffer);
+    }
+    if (state.buffer.length > config.maxFrameSize) {
+      failProtocol(state, "STOMP frame exceeds maxFrameSize", undefined, true);
+    }
+  });
+  socket.on("drain", () => {
+    for (const subscription of state.subscriptions.values()) flushSubscription(state, subscription);
+  });
+  socket.on("close", () => cleanup(state));
+  socket.on("error", (error) => {
+    console.error(`[openclaw-stomp] connection ${state.id} error:`, error.message);
+    cleanup(state);
+  });
+}
+
+async function listen(server: net.Server, port: number, host: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once("error", onError);
+    server.listen(port, host, () => {
+      server.off("error", onError);
+      server.on("error", (error) => console.error("[openclaw-stomp] listener error:", error));
+      resolve();
+    });
+  });
+}
+
+async function closeServer(server: net.Server | tls.Server | null): Promise<void> {
+  if (!server?.listening) return;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+export async function startStompTcpServer(config: StompTcpConfig, onInbound: InboundHandler): Promise<void> {
+  if (stats.running) return;
+  assertValidStompTcpConfig(config);
+  activeConfig = config;
+  inboundHandler = onInbound;
+  try {
+    if (config.port > 0) {
+      tcpServer = net.createServer((socket) => handleConnection(socket, false, config));
+      await listen(tcpServer, config.port, config.host);
+    }
+    if (config.tls.enabled) {
+      const [key, cert, ca] = await Promise.all([
+        readFile(config.tls.keyFile!),
+        readFile(config.tls.certFile!),
+        config.tls.caFile ? readFile(config.tls.caFile) : Promise.resolve(undefined),
+      ]);
+      tlsServer = tls.createServer({
+        key,
+        cert,
+        ca,
+        minVersion: config.tls.minVersion,
+        requestCert: config.tls.requestCert,
+        rejectUnauthorized: config.tls.rejectUnauthorized,
+      }, (socket) => handleConnection(socket, true, config));
+      await listen(tlsServer, config.tlsPort, config.tls.host);
+    }
+  } catch (error) {
+    await closeServer(tlsServer);
+    await closeServer(tcpServer);
+    tcpServer = null;
+    tlsServer = null;
+    activeConfig = null;
+    inboundHandler = null;
+    throw error;
+  }
+  stats.running = true;
+  const heartbeatValues = [config.heartbeat.serverMs, config.heartbeat.clientMs].filter((value) => value > 0);
+  const intervalMs = Math.min(1_000, Math.max(50, Math.min(...heartbeatValues, 2_000) / 2));
+  heartbeatTimer = setInterval(() => {
+    const now = Date.now();
+    for (const state of connections.values()) {
+      if (!state.connected) continue;
+      if (state.incomingHeartbeatMs > 0 && now - state.lastInboundAt > state.incomingHeartbeatMs * 2) {
+        state.socket.destroy(new Error("STOMP heartbeat timeout"));
+      } else if (state.outgoingHeartbeatMs > 0 && now - state.lastOutboundAt >= state.outgoingHeartbeatMs) {
+        sendRaw(state, "\n");
+      }
+    }
+  }, intervalMs);
+  heartbeatTimer.unref();
+}
+
+export async function stopStompTcpServer(): Promise<void> {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+  for (const state of connections.values()) {
+    sendFrame(state, "ERROR", { message: "Server shutting down" }, "Server shutting down");
+    state.socket.destroy();
+    cleanup(state);
+  }
+  connections.clear();
+  await Promise.all([closeServer(tlsServer), closeServer(tcpServer)]);
+  tcpServer = null;
+  tlsServer = null;
+  activeConfig = null;
+  inboundHandler = null;
+  durableSubscriptions.clear();
+  Object.assign(stats, {
+    running: false,
+    totalConnections: 0,
+    totalSubscriptions: 0,
+    durableSubscriptions: 0,
+    routedInbound: 0,
+    routedOutbound: 0,
+    droppedInbound: 0,
+    droppedOutbound: 0,
+    ackPending: 0,
+  });
+}
+
+export function publishToDestination(destination: string, body: string): number {
+  const config = activeConfig;
+  if (!config) return 0;
+  let accepted = 0;
+  const activeDurable = new Set<string>();
+  for (const state of connections.values()) {
+    if (!state.connected) continue;
+    for (const subscription of state.subscriptions.values()) {
+      if (subscription.destination !== destination) continue;
+      if (subscription.durableKey) activeDurable.add(subscription.durableKey);
+      if (enqueue(subscription.queue, { destination, body }, config)) {
+        accepted += 1;
+        flushSubscription(state, subscription);
+      }
+    }
+  }
+  for (const durable of durableSubscriptions.values()) {
+    if (durable.destination !== destination || activeDurable.has(durable.key)) continue;
+    if (enqueue(durable.queue, { destination, body }, config)) accepted += 1;
+  }
+  return accepted;
+}
+
+export function getConnectionInfoList(): StompConnection[] {
+  return [...connections.values()].map((state) => ({
+    id: state.id,
+    remoteAddress: state.remoteAddress,
+    remotePort: state.remotePort,
+    secure: state.secure,
+    connected: state.connected,
+    version: state.version,
+    user: state.user,
+    connectedAt: state.connectedAt,
+    subscriptions: [...state.subscriptions.values()].map((item) => item.destination),
+    inflightCount: [...state.subscriptions.values()].reduce((sum, item) => sum + item.pending.size, 0),
+    queuedCount: [...state.subscriptions.values()].reduce((sum, item) => sum + item.queue.length, 0),
+  }));
+}
+
+export function getConnectionStats(): { total: number; byVersion: Record<string, number>; secure: number } {
+  const byVersion: Record<string, number> = {};
+  let secure = 0;
+  for (const state of connections.values()) {
+    byVersion[state.version] = (byVersion[state.version] ?? 0) + 1;
+    if (state.secure) secure += 1;
+  }
+  return { total: connections.size, byVersion, secure };
+}
+
+export function getStatusSnapshot(): StompStatusSnapshot {
+  stats.totalConnections = connections.size;
+  stats.totalSubscriptions = [...connections.values()].reduce((sum, state) => sum + state.subscriptions.size, 0);
+  stats.durableSubscriptions = durableSubscriptions.size;
   return { ...stats };
 }
 
-/**
- * @description 向已订阅指定 destination 的客户端推送 MESSAGE 帧（出站/Agent 回复）。
- * @param destination - STOMP destination（如 /topic/session.xxx）
- * @param body - 消息体
- */
-export function publishToDestination(destination: string, body: string): void {
-  for (const [connId, conn] of connections.entries()) {
-    for (const subscription of conn.subscriptionsById.values()) {
-      if (subscription.destination !== destination) continue;
-      subscription.queue.push({ destination, body });
-      flushSubscription(subscription, connId);
-    }
-  }
-}
+export function getActiveStompTcpConfig(): StompTcpConfig | null { return activeConfig; }

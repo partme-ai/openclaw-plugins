@@ -89,7 +89,7 @@ See `scripts/e2e/lib/registry.mjs` → `EXTENSION_INVENTORY` for the full matrix
 
 ### Unit-only extensions (representative)
 
-wecom, wechat, douyin, redis-stream, nacos, bridge, cluster, knowledge, memory, message-sdk, …
+wecom, wechat, douyin, redis-stream, nacos, bridge, knowledge, memory, message-sdk, …
 
 ## Shared test utilities
 

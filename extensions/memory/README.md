@@ -1,12 +1,12 @@
 # OpenClaw Memory
 
-> Multi-Level Long-Term Memory System (L0 to L3) — conversation recording, memory extraction, scenario induction, user profiling, and automatic recall.
+> Local layered memory (L0 to L3) with agent/session isolation, retention, optional encryption, and automatic recall.
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--memory-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-memory)
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-[简体中文](./README.md) | [English](./README.en.md)
+[简体中文](./README.zh-CN.md) | [English](./README.md)
 
 ---
 
@@ -14,27 +14,27 @@
 
 `@partme.ai/openclaw-memory` provides multi-level long-term memory for OpenClaw agents. It implements the OpenClaw Memory Host SDK contract with `kind: "memory"` — the framework automatically handles memory recall, context injection, and flush timing. The plugin is responsible only for storage (L0 recording), extraction (L1 keyword memory), and search (via `MemorySearchManager`).
 
-**Zero external dependencies** — data is stored in local JSONL files with pure keyword matching, no external databases or APIs needed.
+**Zero external dependencies** — data is stored in local JSONL files with lexical matching. This plugin does not claim vector or semantic search.
 
 ## Architecture
 
 ```
 Memory Level Architecture:
 
-L0 — Conversation Recording: Auto-capture every conversation turn to local JSONL
-L1 — Memory Extraction: Extract structured keyword memories from conversations
-L2 — Scenario Induction: Summarize scenario blocks from L1 memories (via memory_search tool)
-L3 — User Profiling: Generate/update user profiles (via memory_search tool)
+L0 — Conversation Recording: Idempotent current-turn capture by runId
+L1 — Episodic Memory: User input plus searchable terms
+L2 — Scenario Induction: Periodic deterministic session scenario records
+L3 — User Profile: Explicit preferences, identity facts, and durable instructions
 
 Auto-Recall: Automatic memory injection into context before each conversation
 ```
 
 ### How It Works
 
-1. **L0 Recording**: On each `agent_end` event, all conversation messages are appended to a daily JSONL file (`conversations/YYYY-MM-DD.jsonl`)
-2. **L1 Extraction**: On every 5th `agent_end`, user messages are scanned for keywords. Messages with sufficient keywords are recorded as episodic memories (`records/YYYY-MM-DD.jsonl`)
-3. **Auto-Recall**: The `MemorySearchManager.search()` method is called by the OpenClaw framework during `before_prompt_build` — relevant memories are automatically injected into the conversation context
-4. **Manual Search**: Agents can explicitly search memories via the `memory_search` tool
+1. **L0 Recording**: Successful `agent_end` hooks persist only the current turn and deduplicate by `runId`.
+2. **L1/L2/L3 Extraction**: Each user turn creates L1 episodic memory, periodic turns create L2 scenarios, and explicit durable facts create L3 profile records.
+3. **Auto-Recall**: OpenClaw invokes `MemorySearchManager.search()`; all levels are session-filtered by default.
+4. **Manual Search**: The tool factory uses trusted host `agentId` and `sessionKey`; tool arguments cannot switch tenants.
 
 ## Features
 
@@ -42,7 +42,7 @@ Auto-Recall: Automatic memory injection into context before each conversation
 - **L1 Keyword Extraction** — Extract structured keyword memories with semantic tagging
 - **Automatic Recall** — Framework-invoked `MemorySearchManager.search()` auto-injects relevant memories
 - **Keyword Search** — Pure keyword matching with scoring (zero external API calls)
-- **30-File Window Scan** — Searches the most recent 30 record files for relevant memories
+- **Bounded Time Window** — Scans at most 365 daily files within the configured retention period
 - **`memory_search` Tool** — Agent can actively search for user memories during conversation
 - **Retention Management** — Configurable retention period (default 90 days)
 - **Fully Local** — No external dependencies, no API keys, no vector databases
@@ -97,7 +97,11 @@ openclaw plugins install @partme.ai/openclaw-memory
 | `enabled` | boolean | `true` | Enable the memory plugin |
 | `dataDir` | string | `~/.openclaw/state/memory` | Data storage directory |
 | `maxSearchResults` | number | `10` | Maximum results returned per search |
-| `retentionDays` | number | `90` | Data retention period in days (not auto-deleted, used for reference) |
+| `retentionDays` | number | `90` | Retention period; cleanup runs at startup and daily |
+| `extractionInterval` | number | `5` | Turns between L2 scenario records |
+| `maxRecordBytes` | number | `65536` | Maximum L0 record size |
+| `profileScope` | `session` \| `agent` | `session` | L3 recall scope; use `agent` only for a single-user agent |
+| `encryptionKeyEnv` | string | unset | Environment variable containing the optional AES-256-GCM key |
 
 ## Memory Search Tool
 
@@ -153,10 +157,10 @@ Agents can use the `memory_search` tool to actively search user memories during 
 
 ## Scoping and Limitations
 
-- **Storage**: Local JSONL files only. Not suitable for distributed/clustered deployments.
-- **Search**: Pure keyword matching with Chinese bigram tokenization. No semantic/vector search.
-- **Performance**: Scans the most recent 30 record files. Performance depends on file sizes.
-- **Extraction frequency**: Memories are extracted every 5th conversation turn by default (configurable via `shouldExtract()`).
+- **Deployment**: Local JSONL targets a single node. Use an external memory backend for shared multi-node memory.
+- **Search**: Lexical matching with Chinese bigrams; no semantic/vector search.
+- **Isolation**: Data is physically partitioned by agent and all levels are session-filtered by default. Cross-session L3 requires explicit `profileScope: "agent"` opt-in.
+- **Extraction**: L2/L3 use deterministic rules rather than an LLM.
 - **Memory Host SDK**: Implements the standard `MemorySearchManager` interface — the framework handles injection timing.
 
 ## Development
@@ -184,7 +188,7 @@ Licensed under the [MIT License](LICENSE).
 
 ## About openclaw-plugins
 
-This plugin is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — an enterprise OpenClaw plugin collection developed and maintained by the **PartMe.AI team**, featuring 30+ plugins across IM channels, message queues, AI capabilities, and infrastructure.
+This plugin is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins), an enterprise OpenClaw plugin collection covering IM channels, message queues, AI capabilities, and infrastructure.
 
 Each plugin is published independently on npm under the `@partme.ai` scope:
 

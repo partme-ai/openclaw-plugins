@@ -70,6 +70,12 @@ export function parseFrame(data: string): StompFrame | null {
         ? lines.slice(bodyStartIdx).join(LF)
         : undefined;
 
+    const declaredLength = headers["content-length"];
+    if (declaredLength !== undefined) {
+      if (!/^\d+$/.test(declaredLength)) return null;
+      if (Buffer.byteLength(body ?? "", "utf8") !== Number(declaredLength)) return null;
+    }
+
     return { command, headers, body: body || undefined };
   } catch (err) {
     console.error("[openclaw-web-stomp] Frame parse error:", err);
@@ -95,7 +101,7 @@ export function serializeFrame(frame: StompFrame): string {
   }
 
   // 如果有 body，添加 content-length header
-  if (frame.body) {
+  if (frame.body !== undefined && !("content-length" in frame.headers)) {
     const bodyBytes = Buffer.byteLength(frame.body, "utf-8");
     parts.push(`content-length:${bodyBytes}`);
     parts.push(LF);
@@ -105,7 +111,7 @@ export function serializeFrame(frame: StompFrame): string {
   parts.push(LF);
 
   // body
-  if (frame.body) {
+  if (frame.body !== undefined) {
     parts.push(frame.body);
   }
 
@@ -126,7 +132,7 @@ export function buildConnectedFrame(heartbeat: string, session?: string): StompF
   const headers: Record<string, string> = {
     version: "1.2",
     "heart-beat": heartbeat,
-    server: "openclaw-web-stomp/0.1.0",
+    server: "openclaw-web-stomp/2026.5.25-2",
   };
   if (session) {
     headers.session = session;

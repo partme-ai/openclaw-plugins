@@ -2,7 +2,8 @@
  * Web STOMP 服务器集成测试（WebSocket + STOMP 帧）。
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "node:net";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 
 import {
@@ -11,14 +12,30 @@ import {
   stopStompServer,
 } from "../src/transport/server.js";
 import type { StompServerConfig } from "../src/types.js";
+import { DEFAULT_STOMP_WS_CONFIG } from "../src/config.js";
 
-const baseConfig: StompServerConfig = {
-  wsPort: 35674,
-  path: "/ws",
-  heartbeatIncoming: 10_000,
-  heartbeatOutgoing: 10_000,
-  maxConnections: 50,
-};
+let baseConfig: StompServerConfig;
+
+async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
+beforeEach(async () => {
+  baseConfig = {
+    ...DEFAULT_STOMP_WS_CONFIG,
+    wsPort: await freePort(),
+    heartbeatIncoming: 0,
+    heartbeatOutgoing: 0,
+    allowedAgentIds: ["demo"],
+    auth: { required: false, users: [] },
+    tls: { ...DEFAULT_STOMP_WS_CONFIG.tls },
+  };
+});
 
 afterEach(async () => {
   await stopStompServer();
@@ -33,9 +50,9 @@ function frame(command: string, headers: Record<string, string> = {}, body = "")
   return output;
 }
 
-async function connectWs(): Promise<WebSocket> {
+async function connectWs(config = baseConfig): Promise<WebSocket> {
   return await new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${baseConfig.wsPort}${baseConfig.path}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${config.wsPort}${config.path}`);
     ws.once("open", () => resolve(ws));
     ws.once("error", reject);
   });
@@ -94,18 +111,21 @@ describe("web-stomp server integration", () => {
     await startStompServer(baseConfig, vi.fn());
     const ws = await connectWs();
     ws.send(frame("CONNECT", { "accept-version": "1.2" }));
-    await readUntil(ws, "CONNECTED");
+    const connected = await readUntil(ws, "CONNECTED");
 
+    const connectionId = /\nsession:([^\n]+)/.exec(connected)?.[1];
+    expect(connectionId).toBeTruthy();
+    const destination = `/topic/session.stomp:${connectionId}@demo`;
     ws.send(
       frame("SUBSCRIBE", {
         id: "sub-1",
-        destination: "/topic/session.demo",
+        destination,
         ack: "client-individual",
       }),
     );
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    publishToDestination("/topic/session.demo", "reply-body");
+    publishToDestination(destination, "reply-body");
     const delivery = await readUntil(ws, "reply-body");
     expect(delivery).toContain("MESSAGE");
     expect(delivery).toMatch(/\back:/);

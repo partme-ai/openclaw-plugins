@@ -22,6 +22,8 @@ export interface WebMqttWsOptions {
   compress: boolean;
   idleTimeoutMs: number;
   maxFrameSize: number;
+  /** 浏览器 Origin 白名单；非浏览器客户端通常不发送 Origin */
+  allowedOrigins: string[];
 }
 
 /** 鉴权用户 */

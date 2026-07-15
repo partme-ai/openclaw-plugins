@@ -39,7 +39,9 @@ flowchart LR
 - Outbound `WebSocket` client with reconnect（`client` / `both`）
 - Inbound via `@partme.ai/openclaw-message-sdk`
 - Session ↔ connection mapping
-- Optional token auth（server 入站 / client 出站）
+- HTTP upgrade 阶段的 Bearer token 鉴权（server 入站 / client 出站）
+- Origin 白名单、每连接速率限制、异步入站队列与出站背压保护
+- WebSocket ping/pong 心跳、连接超时、指数退避重连与可等待停机
 - HTTP status: `GET /web-socket/status`
 
 ## Client protocol
@@ -126,9 +128,26 @@ Plain text (non-JSON) is also accepted as the message body.
 | `wsPort` | `18789` | 内置服务端口（server/both） |
 | `path` | `/openclaw/ws` | 内置服务路径 |
 | `defaultAgentId` | — | 默认 Agent |
+| `allowFrameAgentId` | `false` | 是否信任客户端帧中的 `agentId`；生产默认关闭 |
 | `clientId` | `openclaw-client` | client 模式下的 peer 前缀 |
-| `clientToken` | — | 连外部 WS 的 Bearer / query token |
-| `auth.*` | — | 内置服务入站认证 |
+| `host` | `127.0.0.1` | 内置服务监听地址；默认不暴露到网络 |
+| `clientToken` | — | 连外部 WS 的 `Authorization: Bearer` token |
+| `auth.*` | — | 内置服务入站认证；`allowQueryToken` 默认关闭 |
+| `allowedOrigins` | `[]` | 浏览器 Origin 精确白名单；不发送 Origin 的原生客户端不受影响 |
+| `allowInsecureRemote` | `false` | 显式允许远程明文监听；生产应优先使用 TLS 反向代理 |
+| `limits.maxBufferedBytes` | `1048576` | 慢客户端的最大待发送字节数 |
+| `limits.maxPendingMessages` | `32` | 每连接最大待处理入站消息数 |
+| `limits.messagesPerMinute` | `120` | 每连接每分钟消息上限 |
+| `limits.heartbeatIntervalMs` | `30000` | ping 周期 |
+| `limits.heartbeatTimeoutMs` | `10000` | pong 超时 |
+
+## 生产部署约束
+
+- 默认仅监听 `127.0.0.1`。推荐由 Nginx、Envoy 或云网关在同机终止 TLS，再转发到本插件，外部只暴露 `wss://`。
+- 非 loopback 明文监听必须同时配置 token 并显式设置 `allowInsecureRemote: true`；这是风险确认开关，不会把明文连接变安全。
+- 远程客户端默认只接受 `wss://`。确需远程 `ws://` 时，在 `client.allowInsecureRemote` 中显式确认。
+- token 默认只从 `Authorization: Bearer` 读取。`auth.allowQueryToken` 仅用于无法设置 header 的旧客户端，因为 URL 可能进入代理和访问日志。
+- `/web-socket/status` 由 OpenClaw 插件认证保护，并对 token 和自定义 client headers 脱敏。
 
 ## Build
 

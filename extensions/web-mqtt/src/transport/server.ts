@@ -15,6 +15,7 @@ import { verifyPassword as verifyPasswordShared, safeEqualBuffer, matchTopic as 
 import { createKeyedRunQueue, type KeyedRunQueue } from "@partme.ai/openclaw-message-sdk";
 import type { InboundHandler, WebMqttConfig, WebMqttServiceStats } from "../types.js";
 import { isUserActionAllowed } from "./acl.js";
+import { validateWebMqttConfig } from "../config.js";
 
 type AedesBroker = NonNullable<ReturnType<typeof createBroker>>;
 
@@ -24,6 +25,8 @@ let wss: InstanceType<typeof WebSocketServer> | null = null;
 let currentConfig: WebMqttConfig | null = null;
 let inboundQueue: KeyedRunQueue | null = null;
 const clientUsernameMap = new Map<string, string>();
+const pendingClients = new Set<string>();
+const clientSubscriptions = new Map<string, Set<string>>();
 
 const stats: WebMqttServiceStats = {
   connectedClients: 0,
@@ -39,6 +42,10 @@ const stats: WebMqttServiceStats = {
  * 启动服务。
  */
 export async function startWebMqttServer(config: WebMqttConfig, onInbound: InboundHandler): Promise<void> {
+  if (broker || server || wss) throw new Error("[openclaw-web-mqtt] server is already running");
+  const issues = validateWebMqttConfig(config);
+  if (issues.length > 0) throw new Error(`[openclaw-web-mqtt] invalid configuration: ${issues.join(" ")}`);
+  resetStats();
   currentConfig = config;
   inboundQueue = createKeyedRunQueue({
     onError: (error, clientId) => {
@@ -47,9 +54,17 @@ export async function startWebMqttServer(config: WebMqttConfig, onInbound: Inbou
     },
   });
   broker = createBroker({
-    concurrency: 100,
+    concurrency: config.maxConnections,
     heartbeatInterval: 30000,
   });
+  broker.preConnect = (client, _packet, done) => {
+    if (stats.connectedClients + pendingClients.size >= config.maxConnections) {
+      done(new Error("maximum_connections_reached"), false);
+      return;
+    }
+    pendingClients.add(client.id);
+    done(null, true);
+  };
   bindBrokerEventHandlers(config, onInbound);
   configureAuthGuards(config);
 
@@ -60,6 +75,18 @@ export async function startWebMqttServer(config: WebMqttConfig, onInbound: Inbou
     perMessageDeflate: config.ws.compress,
     maxPayload: config.ws.maxFrameSize,
     clientTracking: true,
+    verifyClient: (info, done) => {
+      const origin = info.origin;
+      if (wss && wss.clients.size >= config.maxConnections) {
+        done(false, 503, "maximum connections reached");
+        return;
+      }
+      if (origin && !config.ws.allowedOrigins.includes(origin)) {
+        done(false, 403, "origin forbidden");
+        return;
+      }
+      done(true);
+    },
   });
 
   wss.on("connection", (ws) => {
@@ -67,36 +94,57 @@ export async function startWebMqttServer(config: WebMqttConfig, onInbound: Inbou
     broker!.handle(stream as unknown as Socket);
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server!.listen(config.port, config.host, () => resolve());
-    server!.on("error", reject);
-  });
-  stats.brokerReady = true;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(config.port, config.host, () => {
+        server!.off("error", reject);
+        resolve();
+      });
+    });
+    stats.brokerReady = true;
+  } catch (error) {
+    await stopWebMqttServer().catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
  * 停止服务。
  */
 export async function stopWebMqttServer(): Promise<void> {
-  if (wss) {
-    wss.close();
-    wss = null;
-  }
-  if (server) {
-    await new Promise<void>((resolve) => server!.close(() => resolve()));
-    server = null;
-  }
-  if (broker) {
-    await new Promise<void>((resolve) => broker!.close(() => resolve()));
-    broker = null;
-  }
-  if (inboundQueue) {
-    inboundQueue.deactivate();
-    inboundQueue = null;
-  }
+  const activeWss = wss;
+  const activeServer = server;
+  const activeBroker = broker;
+  const queue = inboundQueue;
+  wss = null;
+  server = null;
+  broker = null;
+  inboundQueue = null;
+  currentConfig = null;
+  queue?.deactivate();
+  activeWss?.clients.forEach((client) => client.terminate());
+
+  const closeWss = new Promise<void>((resolve) => {
+    if (!activeWss) return resolve();
+    activeWss.close(() => resolve());
+  });
+  const closeServer = new Promise<void>((resolve, reject) => {
+    if (!activeServer) return resolve();
+    activeServer.close((error) => (error ? reject(error) : resolve()));
+  });
+  const closeBroker = new Promise<void>((resolve, reject) => {
+    if (!activeBroker) return resolve();
+    activeBroker.close((error?: Error) => (error ? reject(error) : resolve()));
+  });
+  const results = await Promise.allSettled([closeWss, closeServer, closeBroker]);
   stats.connectedClients = 0;
   stats.brokerReady = false;
   clientUsernameMap.clear();
+  clientSubscriptions.clear();
+  pendingClients.clear();
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failure) throw failure.reason;
 }
 
 /**
@@ -122,6 +170,13 @@ export function trackRoute(source: "binding" | "standard"): void {
 export async function publishToTopic(topic: string, payload: string): Promise<void> {
   if (!broker) {
     throw new Error("[openclaw-web-mqtt] Cannot publish — broker not running");
+  }
+  const payloadBytes = Buffer.byteLength(payload, "utf-8");
+  if (currentConfig && payloadBytes > currentConfig.limits.maxPayloadBytes) {
+    stats.lastError = "outbound_payload_too_large";
+    throw new Error(
+      `[openclaw-web-mqtt] Cannot publish — payload exceeds maxPayloadBytes(${currentConfig.limits.maxPayloadBytes})`,
+    );
   }
   stats.outboundMessages += 1;
   await new Promise<void>((resolve, reject) => {
@@ -170,12 +225,20 @@ export function getClientUsername(clientId: string): string | null {
 
 function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandler): void {
   // 连接计数：client 事件增、clientDisconnect 减并清理 username 映射
-  broker!.on("client", () => {
+  broker!.on("client", (client: Client) => {
+    pendingClients.delete(client.id);
     stats.connectedClients += 1;
   });
   broker!.on("clientDisconnect", (client: Client) => {
     stats.connectedClients = Math.max(0, stats.connectedClients - 1);
     clientUsernameMap.delete(client.id);
+    clientSubscriptions.delete(client.id);
+    pendingClients.delete(client.id);
+  });
+  broker!.on("connectionError", (client: Client) => pendingClients.delete(client.id));
+  broker!.on("unsubscribe", (topics: string[], client: Client) => {
+    const subscriptions = clientSubscriptions.get(client.id);
+    topics.forEach((topic) => subscriptions?.delete(topic));
   });
 
   // 入站 publish：忽略 $SYS/ 与超 payload；转发给 OpenClaw inbound 管道
@@ -209,17 +272,24 @@ function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandle
  * 配置 Aedes authenticate / authorizeSubscribe / authorizePublish 守卫。
  */
 function configureAuthGuards(config: WebMqttConfig): void {
-  (broker as any).authenticate = (client: Client, username: string | undefined, password: Buffer | undefined, done: (err: Error | null, success: boolean) => void) => {
-    if (!config.auth.required) return done(null, true);
-    if (config.auth.allowAnonymous && !username) return done(null, true);
-    if (!username || !password) return done(new Error("missing_credentials"), false);
+  (broker as any).authenticate = (client: Client, username: Buffer | undefined, password: Buffer | undefined, done: (err: Error | null, success: boolean) => void) => {
+    const usernameText = username?.toString("utf-8");
+    if (!config.auth.required) {
+      clientUsernameMap.set(client.id, "anonymous");
+      return done(null, true);
+    }
+    if (config.auth.allowAnonymous && !usernameText) {
+      clientUsernameMap.set(client.id, "anonymous");
+      return done(null, true);
+    }
+    if (!usernameText || !password) return done(new Error("missing_credentials"), false);
 
-    const user = config.auth.users.find((item) => item.username === username);
+    const user = config.auth.users.find((item) => item.username === usernameText);
     if (!user) return done(new Error("invalid_credentials"), false);
 
     const ok = verifyPasswordAdapted(user.password, user.passwordHash, user.hashAlgorithm, password);
     if (!ok) return done(new Error("invalid_credentials"), false);
-    clientUsernameMap.set(client.id, username);
+    clientUsernameMap.set(client.id, usernameText);
     return done(null, true);
   };
 
@@ -228,11 +298,20 @@ function configureAuthGuards(config: WebMqttConfig): void {
     sub: Subscription,
     done: (error: Error | null, subscription?: Subscription) => void,
   ) => {
-    const allowed = allowTopicByUser(config, client, sub.topic, "subscribe");
-    done(allowed ? null : new Error("topic_forbidden"), sub);
+    const subscriptions = clientSubscriptions.get(client.id) ?? new Set<string>();
+    const overLimit = !subscriptions.has(sub.topic) && subscriptions.size >= config.limits.maxSubscriptionsPerClient;
+    const allowed = !overLimit && allowTopicByUser(config, client, sub.topic, "subscribe");
+    if (allowed) {
+      subscriptions.add(sub.topic);
+      clientSubscriptions.set(client.id, subscriptions);
+    }
+    // Aedes requires a null subscription (not an Error) to emit SUBACK QoS 128.
+    // Returning an Error leaves MQTT.js waiting for a SUBACK and only emits clientError.
+    done(null, allowed ? sub : undefined);
   };
 
   (broker as any).authorizePublish = (client: Client | null, packet: { topic: string }, done: (error?: Error | null) => void) => {
+    if (!client) return done(null);
     const allowed = allowTopicByUser(config, client, packet.topic, "publish");
     done(allowed ? null : new Error("topic_forbidden"));
   };
@@ -304,7 +383,7 @@ function allowTopicByUser(
   mode: "publish" | "subscribe",
 ): boolean {
   if (!config.auth.required) return true;
-  const username = (client as Client & { conn?: { username?: string } })?.conn?.username;
+  const username = client ? clientUsernameMap.get(client.id) : undefined;
   if (!username) return config.auth.allowAnonymous;
   const user = config.auth.users.find((item) => item.username === username);
   if (!user) return false;
@@ -330,4 +409,15 @@ function verifyPasswordAdapted(
   }
   if (!passwordHash) return false;
   return verifyPasswordShared(input, undefined, passwordHash, algorithm ?? "sha256");
+}
+
+function resetStats(): void {
+  stats.connectedClients = 0;
+  stats.acceptedMessages = 0;
+  stats.droppedMessages = 0;
+  stats.routedByBinding = 0;
+  stats.routedByStandard = 0;
+  stats.outboundMessages = 0;
+  stats.lastError = undefined;
+  stats.brokerReady = false;
 }

@@ -2,7 +2,7 @@
  * 抖音渠道插件定义 — `ChannelPlugin` 装配层。
  *
  * **架构角色**：将抖音业务配置、Gateway 生命周期、Webhook 路由、DM 安全策略
- * 与出站占位整合为 OpenClaw 标准 `createChatChannelPlugin` 实例。
+ * 与显式不支持的通用出站契约整合为 OpenClaw 标准 `createChatChannelPlugin` 实例。
  *
  * **关键依赖**：`openclaw/plugin-sdk/*`、`./config`、`./inbound`、`./onboarding`、`./outbound`
  */
@@ -10,7 +10,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/account-resolution";
 import { createHybridChannelConfigAdapter } from "openclaw/plugin-sdk/channel-config-helpers";
 import { waitUntilAbort } from "openclaw/plugin-sdk/channel-lifecycle";
-import { sendDouyinOutboundStub } from "./outbound.js";
+import { sendDouyinOutboundUnsupported } from "./outbound.js";
 import { createChatChannelPlugin, type ChannelPlugin } from "openclaw/plugin-sdk/core";
 import { createEmptyChannelDirectoryAdapter } from "openclaw/plugin-sdk/directory-runtime";
 import { registerPluginHttpRoute } from "openclaw/plugin-sdk/webhook-ingress";
@@ -33,9 +33,12 @@ const douyinHybridConfig = createHybridChannelConfigAdapter<ResolvedDouyinAccoun
   clearBaseFields: [
     "app_key",
     "app_secret",
+    "account_id",
+    "poi_id",
     "shop_id",
     "webhook_path",
     "callback_url",
+    "request_timeout_ms",
     "dmPolicy",
     "allowFrom",
     "enabled",
@@ -160,7 +163,7 @@ export function createDouyinChannelPlugin(): ChannelPlugin<ResolvedDouyinAccount
         messageToolHints: () => [
           "",
           "### 抖音渠道",
-          "- 入站来自开放平台 Webhook；出站直连发消息需走抖店/OpenAPI，本插件出站为占位。",
+          "- 入站来自生活服务 Webhook；该协议不提供对称私信，业务操作请使用抖音 OpenAPI 工具。",
         ],
       },
     },
@@ -177,7 +180,7 @@ export function createDouyinChannelPlugin(): ChannelPlugin<ResolvedDouyinAccount
     outbound: {
       deliveryMode: "gateway",
       textChunkLimit: 4000,
-      sendText: async () => sendDouyinOutboundStub(),
+      sendText: async () => sendDouyinOutboundUnsupported(),
     },
   }) as ChannelPlugin<ResolvedDouyinAccount>;
 }

@@ -37,7 +37,7 @@
 
 #### 1. 内嵌 Broker
 
-Aedes MQTT broker 随进程启动，支持 MQTT 3.1.1 和 MQTT 5.0 协议版本，无需外部依赖。
+Aedes MQTT broker 随进程启动，支持 MQTT 3.1 和 MQTT 3.1.1。当前 Aedes 版本不支持 MQTT 5.0。
 
 #### 2. Topic 路由
 
@@ -60,7 +60,7 @@ Aedes MQTT broker 随进程启动，支持 MQTT 3.1.1 和 MQTT 5.0 协议版本�
 
 ### 水平扩展
 
-默认单进程内存运行，启用持久化即可实现多 Gateway 水平扩展：
+默认单进程内存运行。多 Gateway 水平扩展必须使用 Redis 后端；它同时提供 Aedes 持久化与带集群前缀的 MQEmitter Pub/Sub：
 
 ```json
 {
@@ -71,7 +71,11 @@ Aedes MQTT broker 随进程启动，支持 MQTT 3.1.1 和 MQTT 5.0 协议版本�
         "backend": "redis",
         "redis": {
           "host": "redis.example.com",
-          "port": 6379
+          "port": 6379,
+          "db": 0,
+          "password": "replace-with-secret",
+          "keyPrefix": "prod-openclaw-mqtt",
+          "packetTTL": 86400
         }
       }
     }
@@ -79,7 +83,7 @@ Aedes MQTT broker 随进程启动，支持 MQTT 3.1.1 和 MQTT 5.0 协议版本�
 }
 ```
 
-支持多种持久化后端：memory、redis、mongodb、level、nedb。
+`keyPrefix` 必须按环境/集群唯一，避免共享 Redis 时消息串流。`packetTTL` 是离线 QoS 消息保留秒数，`0` 表示不限制。memory、mongodb、level、nedb 可作为单节点持久化后端，但不提供 Redis MQEmitter 的跨节点消息总线。
 
 ## 消息处理流程
 
@@ -121,6 +125,7 @@ openclaw plugins install @partme.ai/openclaw-mqtt
   "channels": {
     "mqtt": {
       "port": 1883,
+      "host": "127.0.0.1",
       "maxConnections": 1000,
       "subscribeTopics": [
         "devices/+/in",
@@ -136,6 +141,19 @@ openclaw plugins install @partme.ai/openclaw-mqtt
       ],
       "payload": {
         "mode": "jsonTextOrPlain"
+      },
+      "auth": {
+        "enabled": true,
+        "allowAnonymous": false,
+        "users": [
+          {
+            "username": "iot-device",
+            "passwordHash": "replace-with-sha256-or-sha512-hash",
+            "hashAlgorithm": "sha256",
+            "publishAllow": ["devices/+/in"],
+            "subscribeAllow": ["devices/+/out"]
+          }
+        ]
       }
     }
   },
@@ -168,6 +186,7 @@ openclaw plugins install @partme.ai/openclaw-mqtt
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | `port` | `1883` | MQTT TCP 监听端口 |
+| `host` | `127.0.0.1` | 监听地址；未启用认证时只允许 loopback |
 | `maxConnections` | `1000` | 最大并发连接数 |
 | `subscribeTopics` | `[]` | 允许接收的入站 topic 模式 |
 | `topicBindings` | `[]` | 显式 topic → agent 绑定规则 |
@@ -179,6 +198,8 @@ openclaw plugins install @partme.ai/openclaw-mqtt
 | `auth.enabled` | `false` | 启用客户端认证 |
 | `auth.allowAnonymous` | `false` | 允许匿名连接 |
 | `auth.users` | `[]` | 用户列表，支持每用户 publish/subscribe ACL |
+
+安全规则：绑定到非 loopback 地址时必须开启认证；认证模式不得使用空用户列表；`allowAnonymous: true` 时必须显式配置名为 `anonymous` 且带 ACL 的用户。没有匹配 ACL 的 publish/subscribe 默认拒绝。
 
 ### TLS
 
@@ -269,7 +290,7 @@ openclaw-mqtt/
 
 | 项目 | 版本 |
 |------|------|
-| @partme.ai/openclaw-mqtt | 0.1.13 |
+| @partme.ai/openclaw-mqtt | 2026.5.25-2 |
 | 推荐 Node | 20+ |
 
 ## 安全

@@ -37,32 +37,32 @@ export default defineChannelPluginEntry({
     api.registerHttpRoute({
       path: "/rabbitmq/health",
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
       handler: async (_req: IncomingMessage, res: ServerResponse) => {
         const s = getStats();
         const response = {
           ok: true,
-          healthy: s.connected && s.lastError === null,
+          healthy: s.connected && !s.reconnecting,
           data: s,
         };
-        res.writeHead(response.healthy ? 200 : 503, { "Content-Type": "application/json" });
+        res.writeHead(response.healthy ? 200 : 503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify(response));
       },
     });
     api.registerHttpRoute({
       path: "/rabbitmq/stats",
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
       handler: async (_req: IncomingMessage, res: ServerResponse) => {
         const response = { ok: true, data: { stats: getStats(), sessions: getSessionStats() } };
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify(response));
       },
     });
     api.registerHttpRoute({
       path: "/rabbitmq/status",
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
       handler: async (_req: IncomingMessage, res: ServerResponse) => {
         const runtimeConfig = resolveRabbitmqConfig(((api.runtime as { config?: Record<string, unknown> })?.config ?? {}) as Record<string, unknown>);
         const activeConfig = getRabbitmqChannelConfig() ?? runtimeConfig;
@@ -74,7 +74,7 @@ export default defineChannelPluginEntry({
             config: buildRabbitmqConfigSnapshot(activeConfig),
           },
         };
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify(response));
       },
     });

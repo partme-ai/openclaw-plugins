@@ -10,7 +10,7 @@
 
 ## 📖 Introduction
 
-`@partme.ai/openclaw-mtls` is an OpenClaw security plugin that provides **mTLS (Mutual TLS)** bidirectional certificate-based authentication for the OpenClaw Gateway.
+`@partme.ai/openclaw-mtls` is an HTTPS/mTLS reverse proxy for OpenClaw. It validates client certificates, overwrites spoofable identity headers, proxies HTTP and WebSocket traffic, and integrates with OpenClaw's official `trusted-proxy` authentication mode.
 
 ### What is mTLS?
 
@@ -31,19 +31,20 @@ mTLS (Mutual TLS) is a security mechanism where both the client and server authe
 ```
 Client (with client cert)
     → HTTPS + mTLS
-    → OpenClaw Gateway
-    → mTLS Middleware (validates client cert)
-    → Downstream handlers
+    → mTLS HTTPS proxy (this plugin, default :18443)
+    → Verified identity headers
+    → OpenClaw Gateway (loopback :18789, trusted-proxy mode)
 ```
 
 ### Lifecycle
 
-- Plugin registers via `registerHttpRoute` when Gateway loads the plugin
-- mTLS middleware intercepts HTTP requests on protected paths
-- Client certificate is extracted from the TLS socket
+- Plugin starts a dedicated HTTPS proxy through `registerService`
+- The proxy supports both HTTP requests and WebSocket upgrades
+- Client certificate is extracted from the proxy TLS socket
 - Certificate is validated against `allowedClients` whitelist (if configured)
-- Authenticated context is attached to the request for downstream use
-- Status endpoint available at `GET /mtls/status`
+- Spoofable identity headers are removed and replaced with the verified certificate CN
+- OpenClaw performs final authorization through `gateway.auth.mode: "trusted-proxy"`
+- Proxy status is available at `GET https://<host>:18443/mtls/status`
 
 ## 🚀 Quick Start
 
@@ -63,27 +64,39 @@ openclaw plugins install @partme.ai/openclaw-mtls
 
 ```json
 {
-  "mtls": {
-    "enabled": true,
-    "tls": {
-      "enabled": true,
-      "certFile": "/path/to/server-cert.pem",
-      "keyFile": "/path/to/server-key.pem",
-      "caFile": "/path/to/ca-cert.pem",
-      "requestCert": true,
-      "rejectUnauthorized": true
-    },
-    "protectedPaths": [
-      { "path": "/", "match": "prefix", "allowUnauthenticated": false }
-    ],
-    "allowedClients": [
-      { "cn": "trusted-client-1" },
-      { "cn": "trusted-client-2", "issuer": "My CA" }
-    ],
-    "skipPaths": ["/health", "/auth/status", "/mtls/status"],
-    "passthrough": false,
-    "headerName": "X-Client-Cert",
-    "headerCertField": "subject"
+  "gateway": {
+    "bind": "loopback",
+    "port": 18789,
+    "trustedProxies": ["127.0.0.1", "::1"],
+    "auth": {
+      "mode": "trusted-proxy",
+      "trustedProxy": {
+        "allowLoopback": true,
+        "userHeader": "x-forwarded-user",
+        "allowUsers": ["trusted-client-1"]
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "mtls": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "tls": {
+            "certFile": "/path/to/server-cert.pem",
+            "keyFile": "/path/to/server-key.pem",
+            "caFile": "/path/to/ca-cert.pem"
+          },
+          "proxy": {
+            "listenPort": 18443,
+            "upstreamHost": "127.0.0.1",
+            "upstreamPort": 18789
+          },
+          "allowedClients": [{ "cn": "trusted-client-1" }]
+        }
+      }
+    }
   }
 }
 ```
@@ -94,8 +107,9 @@ openclaw plugins install @partme.ai/openclaw-mtls
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `enabled` | `true` | Enable/disable the mTLS plugin |
+| `enabled` | `false` | Enable the mTLS proxy; missing certificates fail startup |
 | `tls` | — | TLS server configuration |
+| `proxy` | `:18443 → 127.0.0.1:18789` | Listener and upstream Gateway configuration |
 | `protectedPaths` | `[{path:"/",match:"prefix"}]` | Paths requiring mTLS authentication |
 | `allowedClients` | `[]` | Whitelist of allowed client certificates |
 | `skipPaths` | See below | Paths to skip authentication |
@@ -164,9 +178,12 @@ git push origin main --follow-tags
 ```
 openclaw-mtls/
 ├── src/
-│   ├── index.ts              # Plugin entry — registerHttpRoute middleware
-│   ├── types.ts              # Type definitions
-│   └── stats.ts             # Statistics tracking
+│   ├── index.ts              # Plugin lifecycle and status route
+│   ├── config.ts             # Fail-closed configuration validation
+│   ├── policy.ts             # Certificate and path policy
+│   ├── proxy-server.ts       # HTTPS + WebSocket reverse proxy
+│   ├── shared/types.ts       # Type definitions
+│   └── runtime/stats.ts      # Statistics tracking
 ├── test/
 │   └── mtls.test.ts         # Unit tests
 ├── .github/workflows/

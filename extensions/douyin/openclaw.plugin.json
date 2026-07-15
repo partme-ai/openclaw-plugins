@@ -1,7 +1,7 @@
 {
   "id": "douyin",
   "name": "@partme.ai/openclaw-douyin",
-  "version": "0.1.0",
+  "version": "2026.5.20",
   "description": "抖音开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
   "main": "dist/index.js",
   "channels": [
@@ -9,7 +9,9 @@
   ],
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
+      "enabled": { "type": "boolean", "default": true },
       "app_key": {
         "type": "string",
         "description": "抖音开放平台 AppKey"
@@ -24,11 +26,70 @@
       },
       "shop_id": {
         "type": "string",
-        "description": "店铺/POI ID（单店铺）"
+        "description": "旧版商户 ID 配置；新配置请使用 account_id"
       },
-      "webhook_secret": {
+      "account_id": {
         "type": "string",
-        "description": "Webhook 验签密钥（若平台要求）"
+        "description": "抖音来客商户根账户 ID"
+      },
+      "poi_id": {
+        "type": "string",
+        "description": "餐饮评价等接口使用的门店 POI ID"
+      },
+      "webhook_path": {
+        "type": "string",
+        "default": "/channels/douyin/webhook"
+      },
+      "request_timeout_ms": { "type": "integer", "minimum": 1000, "default": 10000 },
+      "network": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "egressProxyUrl": { "type": "string" },
+          "agentReplyTimeoutMs": { "type": "integer", "minimum": 1000 }
+        }
+      },
+      "media": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxBytes": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "dmPolicy": { "type": "string", "enum": ["open", "allowlist", "pairing", "disabled"], "default": "open" },
+      "allowFrom": { "type": "array", "items": { "type": ["string", "number"] } },
+      "accounts": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "app_key": { "type": "string" },
+            "app_secret": { "type": "string" },
+            "account_id": { "type": "string" },
+            "poi_id": { "type": "string" },
+            "shop_id": { "type": "string" },
+            "webhook_path": { "type": "string" },
+            "callback_url": { "type": "string" },
+            "request_timeout_ms": { "type": "integer", "minimum": 1000 },
+            "network": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "egressProxyUrl": { "type": "string" },
+                "agentReplyTimeoutMs": { "type": "integer", "minimum": 1000 }
+              }
+            },
+            "media": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": { "maxBytes": { "type": "integer", "minimum": 1 } }
+            },
+            "dmPolicy": { "type": "string", "enum": ["open", "allowlist", "pairing", "disabled"] },
+            "allowFrom": { "type": "array", "items": { "type": ["string", "number"] } }
+          }
+        }
       }
     }
   },
@@ -38,9 +99,20 @@
       "description": "抖音开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
       "schema": {
         "type": "object",
-        "additionalProperties": true,
-        "properties": {}
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "app_key": { "type": "string" },
+          "app_secret": { "type": "string" },
+          "account_id": { "type": "string" },
+          "poi_id": { "type": "string" },
+          "webhook_path": { "type": "string" },
+          "request_timeout_ms": { "type": "integer", "minimum": 1000 }
+        }
       }
     }
+  },
+  "uiHints": {
+    "app_secret": { "label": "App Secret", "sensitive": true }
   }
 }

@@ -63,6 +63,7 @@ export async function handleInboundMessage(message: WebsocketInboundMessage): Pr
         type: "error",
         message: "No agent route: set defaultAgentId or agentBindings",
       }),
+      config.limits.maxBufferedBytes,
     );
     return;
   }
@@ -169,10 +170,10 @@ async function dispatchToRuntime(
         const payload =
           typeof wire === "string" ? wire : Buffer.from(wire).toString("utf8");
         if (config.payload.outboundFormat === "plain") {
-          sendToConnection(inbound.connectionId, serializeReplyFrame(payload, { sessionKey }));
+          sendToConnection(inbound.connectionId, serializeReplyFrame(payload, { sessionKey }), config.limits.maxBufferedBytes);
           return;
         }
-        sendToConnection(inbound.connectionId, payload);
+        sendToConnection(inbound.connectionId, payload, config.limits.maxBufferedBytes);
       },
       outboundFormat,
       replyRoute: { connectionId: inbound.connectionId },

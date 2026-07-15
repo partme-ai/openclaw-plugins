@@ -12,8 +12,8 @@ import { dispatchDouyinTranscriptTurn } from "./transcript-dispatch.js";
 import type { ResolvedDouyinAccount } from "../types.js";
 
 const idempotencyCache: IdempotencyCache = createIdempotencyCache({
-  ttlMs: 60_000,
-  maxEntries: 5000,
+  ttlMs: 24 * 60 * 60 * 1000,
+  maxEntries: 10_000,
 });
 
 export type DouyinWebhookDispatchParams = {

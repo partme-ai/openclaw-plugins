@@ -17,6 +17,7 @@ import { createServer as createTlsServer, type Server as TlsServer } from "node:
 import { createBroker } from "aedes";
 import type { Client, PublishPacket, Subscription } from "aedes";
 import { Redis } from "ioredis";
+import type { RedisOptions } from "ioredis";
 import MQEmitterRedis from "mqemitter-redis";
 import RedisPersistence from "aedes-persistence-redis";
 import MongoDbPersistence from "aedes-persistence-mongodb";
@@ -31,6 +32,7 @@ import type {
 import { logAuditEvent } from "./audit.js";
 import { verifyPassword, matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
 import { isUserActionAllowed, aclTopicMatches } from "./acl.js";
+import { validateBrokerConfig } from "../config.js";
 import {
   updateConnectionMetrics,
   updateMessageMetrics,
@@ -43,6 +45,13 @@ import {
 } from "../shared/metrics.js";
 
 type AedesBroker = NonNullable<ReturnType<typeof createBroker>>;
+type MQEmitterRedisFactory = {
+  (options?: RedisOptions): unknown;
+  MQEmitterRedisPrefix: new (
+    prefix: string,
+    options?: RedisOptions,
+  ) => unknown;
+};
 
 /** Aedes 实例 */
 let aedesInstance: AedesBroker | null = null;
@@ -56,11 +65,12 @@ let qos0DropCount = 0;
 
 /** Redis clients */
 let redisClient: Redis | null = null;
-let mqEmitter: ReturnType<typeof MQEmitterRedis> | null = null;
+let mqEmitter: unknown = null;
 
 /** 已连接的客户端映射表 */
 const connectedClients = new Map<string, MqttClientInfo>();
 const clientUsers = new Map<string, string>();
+const pendingClients = new Set<string>();
 
 /**
  * 启动 MQTT Broker
@@ -69,14 +79,14 @@ const clientUsers = new Map<string, string>();
  * @param config - Broker 配置（包含 persistence 配置）
  * @param onMessage - 收到客户端消息时的回调
  */
-export function startBroker(
+export async function startBroker(
   config: MqttBrokerConfig,
   onMessage: (message: MqttInboundMessage) => void,
   onClientConnect?: (clientId: string) => void,
   onClientDisconnect?: (clientId: string) => void
 ): Promise<void> {
-  return new Promise(async (resolve, reject) => {
-    activeBrokerConfig = config;
+  validateBrokerConfig(config);
+  activeBrokerConfig = config;
 
     // 创建持久化和集群配置（支持多种后端）
     let persistence: unknown = undefined;
@@ -92,34 +102,32 @@ export function startBroker(
         case "redis": {
           const redisConfig = config.persistence?.redis;
           const keyPrefix = redisConfig?.keyPrefix ?? "mqtt";
-          const subscriptionTTL = redisConfig?.subscriptionTTL ?? 3600;
 
           // 创建 Redis 客户端
-          redisClient = new Redis({
+          const redisOptions = {
             host: redisConfig?.host || "localhost",
             port: redisConfig?.port || 6379,
             db: redisConfig?.db || 0,
             password: redisConfig?.password,
             retryStrategy: (times: number) => Math.min(times * 50, 2000),
             maxRetriesPerRequest: 3,
-          });
+            keyPrefix: `${keyPrefix}:`,
+          };
+          redisClient = new Redis(redisOptions);
+          await redisClient.ping();
 
-          // 创建 MQEmitter for clustering
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          mqEmitter = MQEmitterRedis({
-            redis: redisClient,
-          } as any);
+          // mqemitter-redis owns two dedicated Pub/Sub connections. Its API accepts
+          // ioredis options directly (not an existing `redis` client). Prefixing
+          // topics isolates independent OpenClaw clusters sharing one Redis.
+          const PrefixEmitter = (MQEmitterRedis as unknown as MQEmitterRedisFactory).MQEmitterRedisPrefix;
+          mqEmitter = new PrefixEmitter(`${keyPrefix}:mq:`, redisOptions);
+          emitter = mqEmitter;
 
           // 创建 Redis persistence
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           persistence = RedisPersistence({
-            redis: redisClient,
-            prefix: keyPrefix,
-            ttl: {
-              subscriptions: subscriptionTTL,
-              packets: 0,
-              messages: 0,
-            },
+            conn: redisClient,
+            packetTTL: () => redisConfig?.packetTTL ?? redisConfig?.retainedTTL ?? 0,
           } as any);
 
           console.log(`[openclaw-mqtt] Redis persistence enabled (prefix: ${keyPrefix})`);
@@ -171,6 +179,19 @@ export function startBroker(
       mq: emitter,
     });
 
+    aedesInstance.preConnect = (client, _packet, callback) => {
+      if (connectedClients.size + pendingClients.size >= config.maxConnections) {
+        logAuditEvent(config.audit, "warn", "connection_rejected_limit", {
+          clientId: client.id,
+          maxConnections: config.maxConnections,
+        });
+        callback(new Error("maximum MQTT connections reached"), false);
+        return;
+      }
+      pendingClients.add(client.id);
+      callback(null, true);
+    };
+
     // 配置认证
     if (config.auth.enabled) {
       setupAuthentication(aedesInstance, config.auth);
@@ -179,6 +200,7 @@ export function startBroker(
     // 监听客户端连接事件
     aedesInstance.on("client", (client: Client) => {
       const clientId = client.id;
+      pendingClients.delete(clientId);
       const remoteAddress = (client.conn as { remoteAddress?: string } | undefined)?.remoteAddress;
       console.log(`[openclaw-mqtt] Client connected: ${clientId}`);
       onClientConnect?.(clientId);
@@ -200,6 +222,7 @@ export function startBroker(
     // 监听客户端断开事件
     aedesInstance.on("clientDisconnect", (client: Client) => {
       const clientId = client.id;
+      pendingClients.delete(clientId);
       console.log(`[openclaw-mqtt] Client disconnected: ${clientId}`);
       connectedClients.delete(clientId);
       clientUsers.delete(clientId);
@@ -207,6 +230,10 @@ export function startBroker(
       logAuditEvent(config.audit, "info", "client_disconnected", { clientId });
       updateConnectionMetrics(connectedClients.size, 0, 1);
       onClientDisconnect?.(clientId);
+    });
+
+    aedesInstance.on("connectionError", (client: Client) => {
+      pendingClients.delete(client.id);
     });
 
     // 监听收到的消息（publish 事件）
@@ -280,8 +307,8 @@ export function startBroker(
       startTasks.push(
         new Promise<void>((res, rej) => {
           tcpServer = createServer(aedesInstance!.handle);
-          tcpServer.listen(config.port, () => {
-            console.log(`[openclaw-mqtt] MQTT Broker listening on tcp://0.0.0.0:${config.port}`);
+          tcpServer.listen(config.port, config.host ?? "127.0.0.1", () => {
+            console.log(`[openclaw-mqtt] MQTT Broker listening on tcp://${config.host ?? "127.0.0.1"}:${config.port}`);
             res();
           });
           tcpServer.on("error", (err) => {
@@ -307,8 +334,8 @@ export function startBroker(
               rejectUnauthorized: config.tls.rejectUnauthorized ?? false,
             };
             tlsServer = createTlsServer(tlsOptions, aedesInstance!.handle);
-            tlsServer.listen(config.tls.port, () => {
-              console.log(`[openclaw-mqtt] MQTT TLS listening on tls://0.0.0.0:${config.tls.port}`);
+            tlsServer.listen(config.tls.port, config.host ?? "127.0.0.1", () => {
+              console.log(`[openclaw-mqtt] MQTT TLS listening on tls://${config.host ?? "127.0.0.1"}:${config.tls.port}`);
               res();
             });
             tlsServer.on("error", (err) => {
@@ -322,8 +349,12 @@ export function startBroker(
       );
     }
 
-    Promise.all(startTasks).then(() => resolve()).catch((err) => reject(err));
-  });
+  try {
+    await Promise.all(startTasks);
+  } catch (error) {
+    await stopBroker().catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
@@ -332,46 +363,44 @@ export function startBroker(
  * @returns Broker 完全关闭后 resolve
  */
 export async function stopBroker(): Promise<void> {
-  return new Promise<void>((resolve) => {
-    if (tcpServer) {
-      tcpServer.close(() => {
-        console.log("[openclaw-mqtt] TCP server closed");
-      });
-      tcpServer = null;
-    }
+  const tcp = tcpServer;
+  const tls = tlsServer;
+  const redis = redisClient;
+  const aedes = aedesInstance;
+  tcpServer = null;
+  tlsServer = null;
+  redisClient = null;
+  aedesInstance = null;
+  mqEmitter = null;
 
-    if (tlsServer) {
-      tlsServer.close(() => {
-        console.log("[openclaw-mqtt] TLS server closed");
-      });
-      tlsServer = null;
-    }
-
-    // 关闭 Redis 连接
-    if (redisClient) {
-      redisClient.quit().then(() => {
-        console.log("[openclaw-mqtt] Redis client closed");
-      });
-      redisClient = null;
-    }
-    mqEmitter = null;
-
-    if (aedesInstance) {
-      aedesInstance.close(() => {
-        console.log("[openclaw-mqtt] Aedes broker closed");
-        resolve();
-      });
-      aedesInstance = null;
-    } else {
-      resolve();
-    }
-
-    connectedClients.clear();
-    clientUsers.clear();
-    activeBrokerConfig = null;
-    qos0InflightByClient.clear();
-    qos0DropCount = 0;
+  const closeNetServer = (server: TcpServer | TlsServer | null): Promise<void> =>
+    new Promise((resolve, reject) => {
+      if (!server) return resolve();
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  const closeAedes = new Promise<void>((resolve, reject) => {
+    if (!aedes) return resolve();
+    aedes.close((error?: Error) => (error ? reject(error) : resolve()));
   });
+  // Redis persistence owns and disconnects the shared connection through Aedes.destroy().
+  // Only close it directly when Aedes was never created (partial startup failure).
+  const closeRedis = redis && !aedes ? redis.quit().then(() => undefined) : Promise.resolve();
+
+  connectedClients.clear();
+  clientUsers.clear();
+  activeBrokerConfig = null;
+  qos0InflightByClient.clear();
+  qos0DropCount = 0;
+  pendingClients.clear();
+
+  const results = await Promise.allSettled([
+    closeNetServer(tcp),
+    closeNetServer(tls),
+    closeAedes,
+    closeRedis,
+  ]);
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failure) throw failure.reason;
 }
 
 /**
@@ -483,6 +512,14 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
     const passwordStr = password?.toString() ?? "";
     const willTopic = (client as { will?: { topic?: string } }).will?.topic;
 
+    if (connectedClients.size >= (activeBrokerConfig?.maxConnections ?? 1_000)) {
+      logAuditEvent(activeBrokerConfig?.audit, "warn", "auth_failed_connection_limit", {
+        clientId: client.id,
+      });
+      callback(null, false);
+      return;
+    }
+
     if (willTopic && !isWillAllowed(willTopic, activeBrokerConfig?.will.allow ?? true, activeBrokerConfig?.will.allowedTopicPatterns ?? [])) {
       logAuditEvent(activeBrokerConfig?.audit, "warn", "will_rejected_by_policy", {
         clientId: client.id,
@@ -494,6 +531,11 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
 
     if (!usernameStr) {
       if (authConfig.allowAnonymous) {
+        const anonymousUser = usersByName.get("anonymous");
+        if (!anonymousUser) {
+          callback(null, false);
+          return;
+        }
         clientUsers.set(client.id, "anonymous");
         logAuditEvent(activeBrokerConfig?.audit, "info", "auth_success_anonymous", {
           clientId: client.id,
@@ -508,14 +550,13 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       return;
     }
 
-    // 如果没有配置用户列表则允许所有连接
+    // 认证模式必须显式配置用户，禁止“有用户名即通过”。
     if (!authConfig.users.length) {
-      clientUsers.set(client.id, usernameStr);
-      logAuditEvent(activeBrokerConfig?.audit, "info", "auth_success_no_userlist", {
+      logAuditEvent(activeBrokerConfig?.audit, "warn", "auth_failed_no_userlist", {
         clientId: client.id,
         username: usernameStr,
       });
-      callback(null, true);
+      callback(null, false);
       return;
     }
 
@@ -561,7 +602,8 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
     }
     const user = usersByName.get(clientUsers.get(client.id) ?? "");
     if (!user) {
-      cb(null);
+      updateAclDenials("publish", packet.topic);
+      cb(new Error("publish not allowed for unknown identity"));
       return;
     }
     const allowed = isUserActionAllowed({
@@ -587,7 +629,8 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
     }
     const user = usersByName.get(clientUsers.get(client.id) ?? "");
     if (!user) {
-      cb(null, sub);
+      updateAclDenials("subscribe", sub.topic);
+      cb(new Error("subscribe not allowed for unknown identity"), null);
       return;
     }
     const allowed = isUserActionAllowed({

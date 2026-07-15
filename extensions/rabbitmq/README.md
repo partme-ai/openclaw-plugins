@@ -150,19 +150,31 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
       "payload": {
         "mode": "jsonTextOrPlain"
       },
+      "queue": {
+        "name": "openclaw.rabbitmq",
+        "durable": true
+      },
+      "retry": {
+        "enabled": true,
+        "delayMs": 5000,
+        "maxAttempts": 5,
+        "queueSuffix": ".retry",
+        "deadLetterSuffix": ".dlq"
+      },
       "connection": {
         "timeoutMs": 30000,
         "heartbeatSeconds": 30,
         "reconnectAttempts": 5,
-        "reconnectDelayMs": 5000
+        "reconnectDelayMs": 5000,
+        "publishConfirmTimeoutMs": 10000
       },
       "consume": {
         "prefetch": 50,
         "concurrency": 4,
-        "requeueOnError": true
+        "requeueOnError": false
       },
       "idempotency": {
-        "enabled": false
+        "enabled": true
       }
     }
   },
@@ -475,6 +487,14 @@ Official docs for plugins, the SDK, and this channel's building blocks:
 - [Architecture](https://docs.openclaw.ai/plugins/architecture)
 
 ## ❓ FAQ
+
+## Production reliability
+
+- Outbound replies, retries, and dead-letter transfers use RabbitMQ Publisher Confirms and persistent messages. The original delivery is ACKed only after the broker confirms the next durable hop.
+- Failed deliveries go through a dedicated `<exchange>.retry` exchange and TTL queue. After `maxAttempts`, they are confirmed into `<exchange>.dlx` and `<queue>.dlq`.
+- The default stable queue name (`openclaw.rabbitmq`) gives Gateway replicas competing-consumer semantics. Use distinct queue names when every replica must receive a copy.
+- Idempotency is enabled by default for messages carrying `correlationId` or `messageId`; it is claim/commit based, so failed processing releases the claim. The cache is process-local, so cross-replica exactly-once still requires a business idempotency store.
+- Status endpoints redact credentials from AMQP URLs. Use `amqps://` for remote brokers and grant the RabbitMQ account only the exchange/queue permissions it needs.
 
 ### Does this plugin require an external RabbitMQ server?
 

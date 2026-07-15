@@ -60,6 +60,41 @@ describe("validateWebMqttConfig", () => {
     const issues = validateWebMqttConfig(config);
     expect(issues.length).toBeGreaterThan(0);
   });
+
+  it("should reject insecure non-loopback and unsupported proxy protocol", () => {
+    const config = resolveWebMqttConfig({
+      channels: { "mqtt-ws": { host: "0.0.0.0", auth: { required: false }, proxyProtocol: true } },
+    });
+    const issues = validateWebMqttConfig(config);
+    expect(issues).toContain("未启用 TLS 时仅允许监听 loopback 地址。");
+    expect(issues).toContain("proxyProtocol 尚未实现，禁止启用以避免错误信任来源地址。");
+  });
+
+  it("should require an explicit anonymous user ACL", () => {
+    const config = resolveWebMqttConfig({
+      channels: { "mqtt-ws": { host: "127.0.0.1", auth: { required: true, allowAnonymous: true } } },
+    });
+    expect(validateWebMqttConfig(config)).toContain(
+      "auth.allowAnonymous=true 时必须配置 username=anonymous 的用户及 ACL。",
+    );
+  });
+
+  it("should normalize browser origin allowlist and disable compression by default", () => {
+    const config = resolveWebMqttConfig({
+      channels: { "mqtt-ws": { ws: { allowedOrigins: ["https://console.example.com"] } } },
+    });
+    expect(config.ws.allowedOrigins).toEqual(["https://console.example.com"]);
+    expect(config.ws.compress).toBe(false);
+  });
+
+  it("should reject a payload limit larger than the WebSocket frame limit", () => {
+    const config = resolveWebMqttConfig({
+      channels: { "mqtt-ws": { ws: { maxFrameSize: 1024 }, limits: { maxPayloadBytes: 2048 } } },
+    });
+    expect(validateWebMqttConfig(config)).toContain(
+      "limits.maxPayloadBytes 不能大于 ws.maxFrameSize，否则 WebSocket 会先行断开。",
+    );
+  });
 });
 
 describe("buildWebMqttConfigSnapshot", () => {

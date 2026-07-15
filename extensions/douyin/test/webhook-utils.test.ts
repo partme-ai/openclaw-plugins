@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { tryParseVerifyWebhookChallenge, verifyDouyinSignature, extractDouyinSenderId } from "../src/webhook/webhook-utils.js";
+import {
+  extractDouyinSenderId,
+  extractDouyinWebhookText,
+  tryParseVerifyWebhookChallenge,
+  verifyDouyinSignature,
+} from "../src/webhook/webhook-utils.js";
 
 describe("tryParseVerifyWebhookChallenge", () => {
   it("returns challenge string for verify_webhook event", () => {
@@ -53,11 +58,11 @@ describe("verifyDouyinSignature", () => {
     expect(verifyDouyinSignature("secret", "body", "")).toBe(false);
   });
 
-  it("is case-sensitive", () => {
+  it("accepts an uppercase hexadecimal representation", () => {
     const secret = "test";
     const body = "data";
     const sig = createHash("sha1").update(secret + body, "utf8").digest("hex");
-    expect(verifyDouyinSignature(secret, body, sig.toUpperCase())).toBe(false);
+    expect(verifyDouyinSignature(secret, body, sig.toUpperCase())).toBe(true);
   });
 });
 
@@ -70,6 +75,15 @@ describe("extractDouyinSenderId", () => {
   it("extracts user_id from content", () => {
     const body = JSON.stringify({ content: { user_id: "user-456" } });
     expect(extractDouyinSenderId(body)).toBe("user-456");
+  });
+
+  it("extracts sender and text from string-encoded Webhook content", () => {
+    const body = JSON.stringify({
+      event: "message",
+      content: JSON.stringify({ from_user_id: "string-user", text: "hello from string" }),
+    });
+    expect(extractDouyinSenderId(body)).toBe("string-user");
+    expect(extractDouyinWebhookText(body)).toBe("hello from string");
   });
 
   it("extracts user_open_id from content", () => {

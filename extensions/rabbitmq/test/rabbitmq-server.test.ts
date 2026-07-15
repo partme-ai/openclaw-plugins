@@ -21,7 +21,11 @@ const consumeCh = {
 };
 
 const publishCh = {
-  publish: vi.fn().mockReturnValue(true),
+  assertExchange: vi.fn(),
+  publish: vi.fn((_exchange: string, _routingKey: string, _content: Buffer, _options: unknown, callback?: (error: Error | null) => void) => {
+    callback?.(null);
+    return true;
+  }),
   close: vi.fn(),
 };
 
@@ -37,6 +41,7 @@ const requestCh = {
 
 const connection = {
   createChannel: vi.fn(),
+  createConfirmChannel: vi.fn(),
   on: vi.fn(),
   close: vi.fn(),
 };
@@ -60,13 +65,14 @@ describe("rabbitmq-server", () => {
   let startRabbitmqServer: typeof import("../src/transport/server.js").startRabbitmqServer;
   let stopRabbitmqServer: typeof import("../src/transport/server.js").stopRabbitmqServer;
   let requestMessage: typeof import("../src/transport/server.js").requestMessage;
+  let publishMessage: typeof import("../src/transport/server.js").publishMessage;
 
   beforeEach(() => {
     consumeCb = null;
     vi.clearAllMocks();
     connection.createChannel.mockImplementationOnce(async () => consumeCh as any);
-    connection.createChannel.mockImplementationOnce(async () => publishCh as any);
     connection.createChannel.mockImplementation(async () => requestCh as any);
+    connection.createConfirmChannel.mockImplementation(async () => publishCh as any);
   });
 
   afterEach(async () => {
@@ -76,7 +82,7 @@ describe("rabbitmq-server", () => {
   });
 
   it("acks only after inbound handler resolves", async () => {
-    ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/transport/server.js"));
+    ({ startRabbitmqServer, stopRabbitmqServer, requestMessage, publishMessage } = await import("../src/transport/server.js"));
     let release: (() => void) | null = null;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -131,13 +137,17 @@ describe("rabbitmq-server", () => {
 
     expect(consumeCh.ack).toHaveBeenCalledTimes(0);
     expect(consumeCh.nack).toHaveBeenCalledTimes(1);
-    expect(consumeCh.nack).toHaveBeenCalledWith(expect.anything(), false, true);
+    expect(consumeCh.nack).toHaveBeenCalledWith(expect.anything(), false, false);
   });
 
   it("nacks and requeues on handler error when configured", async () => {
     ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/transport/server.js"));
     await startRabbitmqServer(
-      { ...DEFAULT_RABBITMQ_CONFIG, consume: { ...DEFAULT_RABBITMQ_CONFIG.consume, requeueOnError: true } },
+      {
+        ...DEFAULT_RABBITMQ_CONFIG,
+        retry: { ...DEFAULT_RABBITMQ_CONFIG.retry, enabled: false },
+        consume: { ...DEFAULT_RABBITMQ_CONFIG.consume, requeueOnError: true },
+      },
       async () => {
         throw new Error("boom");
       },
@@ -166,5 +176,46 @@ describe("rabbitmq-server", () => {
     const result = await promise;
     expect(result.correlationId).toBe("cid");
     expect(result.payload).toContain("ok");
+  });
+
+  it("waits for publisher confirm and persists outbound messages by default", async () => {
+    ({ startRabbitmqServer, stopRabbitmqServer, publishMessage } = await import("../src/transport/server.js"));
+    await startRabbitmqServer(DEFAULT_RABBITMQ_CONFIG, async () => ({ ok: true as const }));
+
+    await publishMessage("openclaw.agent.main.out.device-1", "reply");
+
+    expect(publishCh.publish).toHaveBeenCalledWith(
+      DEFAULT_RABBITMQ_CONFIG.exchange,
+      "openclaw.agent.main.out.device-1",
+      expect.any(Buffer),
+      expect.objectContaining({ persistent: true }),
+      expect.any(Function),
+    );
+  });
+
+  it("confirm-publishes failures to retry exchange and exhausted messages to DLQ", async () => {
+    ({ startRabbitmqServer, stopRabbitmqServer } = await import("../src/transport/server.js"));
+    await startRabbitmqServer(DEFAULT_RABBITMQ_CONFIG, async () => ({ ok: false as const, reason: "boom" }));
+
+    consumeCb?.(sampleMsg());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(publishCh.publish).toHaveBeenCalledWith(
+      `${DEFAULT_RABBITMQ_CONFIG.exchange}.retry`,
+      "rk",
+      expect.any(Buffer),
+      expect.objectContaining({ headers: expect.objectContaining({ "x-attempt": 1 }) }),
+      expect.any(Function),
+    );
+
+    publishCh.publish.mockClear();
+    consumeCb?.(sampleMsg({ properties: { headers: { "x-attempt": DEFAULT_RABBITMQ_CONFIG.retry.maxAttempts } } }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(publishCh.publish).toHaveBeenCalledWith(
+      `${DEFAULT_RABBITMQ_CONFIG.exchange}.dlx`,
+      "rk",
+      expect.any(Buffer),
+      expect.objectContaining({ headers: expect.objectContaining({ "x-final-attempt": DEFAULT_RABBITMQ_CONFIG.retry.maxAttempts }) }),
+      expect.any(Function),
+    );
   });
 });

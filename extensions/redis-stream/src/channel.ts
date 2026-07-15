@@ -13,7 +13,7 @@ import {
   startRedisServer,
   stopRedisServer,
 } from "./transport/server.js";
-import { resolveRedisChannelConfig, redactUrl } from "./config.js";
+import { resolveRedisChannelConfig, redactUrl, validateRedisStreamConfig } from "./config.js";
 import { redisStreamOutbound } from "./outbound.js";
 import {
   redisStreamSetupAdapter,
@@ -106,6 +106,7 @@ export const redisStreamChannel = {
     }) => {
       try {
         const config = resolveRedisChannelConfig(runtime.config);
+        validateRedisStreamConfig(config);
         await startRedisServer(config);
         setStatus?.({
           running: true,
@@ -114,13 +115,15 @@ export const redisStreamChannel = {
           lastError: null,
         });
 
-        await new Promise<void>((resolve) => {
-          abortSignal.addEventListener("abort", () => resolve(), {
-            once: true,
-          });
-        });
-
-        await stopRedisServer();
+        try {
+          if (!abortSignal.aborted) {
+            await new Promise<void>((resolve) => {
+              abortSignal.addEventListener("abort", () => resolve(), { once: true });
+            });
+          }
+        } finally {
+          await stopRedisServer();
+        }
       } catch (error) {
         setStatus?.({
           running: false,

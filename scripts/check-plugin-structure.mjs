@@ -4,7 +4,7 @@
  *
  * Standard reference: doc/OpenClaw-Plugin-Structure-Standard.md v1.0
  * Profiles (doc §1.2): channel-base | channel-extended | channel-legacy |
- *   capability-memory | capability | capability-cluster | infra | sdk-rag | sdk | utility-minimal
+ *   capability-memory | capability | infra | sdk-rag | sdk | utility-minimal
  *
  * Modes:
  *   default       — Profile-aware rules; Tier A / _template channel-base MUST → error
@@ -24,7 +24,7 @@ const ROOT = new URL("..", import.meta.url).pathname;
 const EXTENSIONS_DIR = join(ROOT, "extensions");
 const BASE_TEMPLATE_ID = "_template";
 
-/** @typedef {'channel-base'|'channel-extended'|'channel-legacy'|'capability-memory'|'capability'|'capability-cluster'|'infra'|'sdk-rag'|'sdk'|'utility-minimal'} PluginProfile */
+/** @typedef {'channel-base'|'channel-extended'|'channel-legacy'|'capability-memory'|'capability'|'infra'|'sdk-rag'|'sdk'|'utility-minimal'} PluginProfile */
 
 /** Explicit plugin → profile mapping (doc §10.1.1). Overrides manifest/heuristic. */
 const PLUGIN_PROFILE_OVERRIDE = Object.freeze({
@@ -36,7 +36,6 @@ const PLUGIN_PROFILE_OVERRIDE = Object.freeze({
   openmem: "capability-memory",
   mtls: "capability",
   oauth2: "capability",
-  cluster: "capability-cluster",
   nacos: "infra",
   tracing: "infra",
   prometheus: "infra",
@@ -520,7 +519,7 @@ Profiles (doc §1.2):
   channel-base      Tier A channels + _template — full Base flat src/
   channel-extended  wecom, wecom-kf — Base + Extended semantic dirs
   channel-legacy    bridge — Phase 2 migration target
-  capability-*      memory, mtls, oauth2, cluster — no channel.ts/inbound.ts
+  capability-*      memory, mtls, oauth2 — no channel.ts/inbound.ts
   infra             nacos, tracing, prometheus
   sdk / sdk-rag     message-sdk, knowledge
   utility-minimal   router

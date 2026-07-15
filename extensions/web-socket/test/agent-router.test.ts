@@ -27,4 +27,10 @@ describe("resolveInboundRoute", () => {
   it("returns null when no route", () => {
     expect(resolveInboundRoute("x", DEFAULT_WEBSOCKET_CONFIG)).toBeNull();
   });
+
+  it("does not trust frame agentId unless explicitly enabled", () => {
+    expect(resolveInboundRoute("x", DEFAULT_WEBSOCKET_CONFIG, "admin-agent")).toBeNull();
+    const config = { ...DEFAULT_WEBSOCKET_CONFIG, allowFrameAgentId: true };
+    expect(resolveInboundRoute("x", config, "allowed-agent")?.source).toBe("frame");
+  });
 });

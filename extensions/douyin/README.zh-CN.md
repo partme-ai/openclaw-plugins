@@ -1,42 +1,19 @@
-# 抖音开放平台
+# 抖音生活服务插件
 
-> **OpenClaw 插件 -- 抖音开放平台渠道与运营工具，公域 Agent-First 智能运营**
+`@partme.ai/openclaw-douyin` 对接抖音生活服务商家应用，提供 Webhook 事件入站和经过官方 `client_token` 鉴权的运营工具。
 
-[![npm](https://img.shields.io/npm/v/@partme.ai/openclaw-douyin)](https://www.npmjs.com/package/@partme.ai/openclaw-douyin)
-[![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![OpenClaw](https://img.shields.io/badge/OpenClaw-%3E=2026.7.1-blueviolet)](https://github.com/partme-ai/openclaw)
+## 能力边界
 
-[简体中文](./README.md)
+- Webhook：校验 `X-Douyin-Signature = SHA1(app_secret + rawBody)`，校验 `client_key`，按 `Msg-Id` 去重。
+- 回调验证：对签名有效的 `verify_webhook` 返回 `{"challenge": ...}` JSON。
+- 事件处理：兼容 object 和 JSON 字符串两种 `content`，先在官方 2.5 秒窗口内确认接收，再异步进入 Agent Transcript 管线。
+- OpenAPI：缓存 `client_token`，合并并发刷新；Token 失效时刷新一次；查询类请求支持有限重试。
+- 工具：实现官方订单查询、餐饮评价回复接口。
+- 多账号：支持顶层账号及 `accounts.<id>` 覆盖。
 
-## 简介
-
-`@partme.ai/openclaw-douyin` 是 OpenClaw 的渠道插件，集成抖音开放平台（生活服务商家应用），提供 Webhook 事件入站、client_token 鉴权与店铺运营工具。
-
-插件支持多账号混合配置，每个账号独立注册 Gateway Webhook 路由，入站消息通过 `dispatchInboundDirectDmWithRuntime` 派发至 Agent 管线。
-
-### 核心能力
-
-- **渠道通道** `douyin` -- 基于 `createChatChannelPlugin` 的完整渠道生命周期（start/stop/inbound/outbound）
-- **Gateway Webhook** -- 每个账号在 Gateway 上注册独立 HTTP 路由（`auth: "plugin"`），支持 SHA1 签名验签与 `verify_webhook` 挑战应答
-- **client_token 鉴权** -- 自动获取 `client_credential` grant_type 的 access_token，用于生活服务 OpenAPI 调用
-- **消息去重** -- 基于 `msg-id` 请求头的内存去重（最大 1000 条，先进先出淘汰）
-- **入站派发** -- 校验签名后通过 SDK 将事件写为 Direct DM 消息，驱动 Agent 响应
-- **多账号支持** -- 支持 `channels.douyin` 顶层配置与 `accounts.<id>` 多账号覆盖，自动解析合并
-
-## 安装
-
-```bash
-openclaw plugins install @partme.ai/openclaw-douyin
-```
-
-最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+生活服务 Webhook 不是私信协议，不提供对称消息发送 API。因此通用 `sendText` 会明确失败，不会返回虚假消息 ID。Agent 若要执行业务动作，应调用对应 OpenAPI 工具。
 
 ## 配置
-
-安装后在 `openclaw.json` 的 `channels.douyin` 中配置凭据与 Webhook 参数。
-
-### 单账号配置
 
 ```jsonc
 {
@@ -45,32 +22,33 @@ openclaw plugins install @partme.ai/openclaw-douyin
       "enabled": true,
       "app_key": "your_client_key",
       "app_secret": "your_client_secret",
-      "shop_id": "your_shop_id",
+      "account_id": "your_life_account_id",
+      "poi_id": "your_poi_id",
       "webhook_path": "/channels/douyin/webhook",
-      "callback_url": "https://your-domain.com/channels/douyin/webhook",
-      "dmPolicy": "open",
-      "allowFrom": []
+      "callback_url": "https://example.com/channels/douyin/webhook",
+      "request_timeout_ms": 10000,
+      "dmPolicy": "open"
     }
   }
 }
 ```
 
-### 多账号配置
+`account_id` 是抖音来客商户根账户 ID；`poi_id` 是评价回复等接口需要的门店 ID。旧字段 `shop_id` 仅作为 `account_id` 的兼容回退，新配置不应继续使用。
+
+多账号示例：
 
 ```jsonc
 {
   "channels": {
     "douyin": {
-      "enabled": true,
-      "app_key": "default_client_key",
-      "app_secret": "default_client_secret",
-      "webhook_path": "/channels/douyin/webhook",
       "accounts": {
-        "shop2": {
-          "app_key": "shop2_client_key",
-          "app_secret": "shop2_client_secret",
-          "shop_id": "shop2_id",
-          "webhook_path": "/channels/douyin/webhook-shop2"
+        "shop-a": {
+          "enabled": true,
+          "app_key": "client_key_a",
+          "app_secret": "client_secret_a",
+          "account_id": "account_a",
+          "poi_id": "poi_a",
+          "webhook_path": "/channels/douyin/webhook-shop-a"
         }
       }
     }
@@ -78,82 +56,45 @@ openclaw plugins install @partme.ai/openclaw-douyin
 }
 ```
 
-### 环境变量
+## OpenAPI 工具
 
-| 变量名 | 说明 |
-|--------|------|
-| `DOUYIN_APP_KEY` | 抖音开放平台 client_key |
-| `DOUYIN_APP_SECRET` | 抖音开放平台 client_secret |
+### `douyin_query_orders`
 
-## 配置参考
+调用 `GET https://open.douyin.com/goodlife/v1/trade/order/query/`。
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enabled` | `boolean` | `true` | 是否启用该渠道 |
-| `app_key` | `string` | -- | 抖音开放平台 client_key |
-| `app_secret` | `string` | -- | 抖音开放平台 client_secret |
-| `shop_id` | `string` | -- | 店铺 / POI ID（单店铺） |
-| `webhook_path` | `string` | `/channels/douyin/webhook` | Gateway Webhook 路由路径 |
-| `callback_url` | `string` | -- | 在抖音开放平台配置的回调 URL |
-| `dmPolicy` | `string` | `"open"` | DM 安全策略：`open` / `allowlist` / `pairing` / `disabled` |
-| `allowFrom` | `string[]` | `[]` | DM 白名单（配合 `allowlist` 策略使用） |
+主要参数：`account`、`account_id`、`page_num`、`page_size`、`cursor`、`order_id`、`ext_order_id`、`open_id`、`order_status`、创单/修改时间范围。
 
-## 工具列表
+要求应用具备 `life.capacity.order.query` 权限。`page_size` 为 1–100，普通分页窗口不能超过 10000 条，超出后应使用 `cursor`。
 
-| 工具名称 | 说明 | 主要参数 |
-|----------|------|---------|
-| `douyin_query_orders` | 查询抖音订单列表 | `date_from`, `date_to`, `status`, `page`, `page_size` |
-| `douyin_reply_review` | 回复抖音店铺评价 | `review_id`, `content` |
-| `douyin_query_shop_metrics` | 查询店铺经营指标 | `date_from`, `date_to` |
+### `douyin_reply_review`
 
-工具通过 `client_token` 鉴权调用抖音生活服务 OpenAPI，运行时自动获取 access_token。
+调用 `POST https://open.douyin.com/goodlife/v1/akte/comment/reply/`。
 
-## 架构说明
+参数：`account`、`account_id`、`poi_id`、`rate_id`、`text`。要求应用具备 `life.capacity.catering.comment` 和评价回复权限。
 
-### Webhook 入站流程
+## Webhook 配置
 
-```
-抖音开放平台 Webhook
-  --> Gateway HTTP 路由 (/channels/douyin/webhook)
-    --> SHA1 签名验签 (app_secret + rawBody)
-      --> verify_webhook 挑战应答
-        --> msg-id 去重
-          --> dispatchInboundDirectDmWithRuntime
-            --> Agent 管线处理
+抖音生活服务 Webhook 只接受 HTTPS 回调。将平台回调地址设置为：
+
+```text
+https://<公开域名>/channels/douyin/webhook
 ```
 
-### 鉴权流程
+生产环境需保证反向代理完整保留原始请求体、`Msg-Id` 和 `X-Douyin-Signature`，不能重新序列化 JSON 后再转发。
 
-```
-插件启动
-  --> 读取 channels.douyin 配置
-    --> 调用 POST /oauth/client_token/ (client_credential)
-      --> 获取 access_token
-        --> 携带 access_token 调用生活服务 OpenAPI
-```
-
-## 开发
+## 验证
 
 ```bash
-# 安装依赖
-pnpm install
-
-# 构建
-pnpm build
-
-# 类型检查
-pnpm typecheck
-
-# 运行测试
-pnpm test
+pnpm --dir extensions/douyin typecheck
+pnpm --dir extensions/douyin test
+pnpm --dir extensions/douyin build
 ```
 
-## 许可
+本地测试使用协议级 Mock Server，不会调用真实抖音账号。正式上线前仍需使用已获权限的生活服务应用验证回调、订单查询和评价回复。
 
-MIT License
+官方参考：
 
----
-
-**PartMe.AI** -- 专注于 AI 智能客服与企业级 AI Agent 基础设施
-
-[联系我们](mailto:partmeai@gmail.com) | [GitHub](https://github.com/partme-ai/openclaw-plugins)
+- [WebHooks 接入](https://partner.open-douyin.com/docs/resource/zh-CN/local-life/develop/preparation/webhooks)
+- [生成 client_token](https://partner.open-douyin.com/docs/resource/zh-CN/dop/develop/openapi/account-permission/client-token)
+- [订单查询](https://partner.open-douyin.com/docs/resource/zh-CN/local-life/develop/OpenAPI/general-capabilities/order.query/query)
+- [回复评价](https://developer.open-douyin.com/docs/resource/zh-CN/local-life/develop/OpenAPI/catering/dining-group-solution/food-review/reply_comment)

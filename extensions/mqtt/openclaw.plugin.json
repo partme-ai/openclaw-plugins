@@ -1,7 +1,7 @@
 {
   "id": "mqtt",
   "name": "mqtt",
-  "version": "0.1.13",
+  "version": "2026.5.25-2",
   "description": "MQTT 3.1.1/5.0 protocol bridge for OpenClaw - IoT device integration via embedded Aedes MQTT broker",
   "main": "dist/index.js",
   "channels": ["mqtt"],
@@ -9,16 +9,17 @@
   "skills": [],
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
+      "host": {
+        "type": "string",
+        "default": "127.0.0.1",
+        "description": "MQTT TCP/TLS listener host"
+      },
       "port": {
         "type": "number",
         "default": 1883,
         "description": "MQTT TCP listener port"
-      },
-      "tlsPort": {
-        "type": "number",
-        "default": 8883,
-        "description": "MQTT TLS listener port (0 to disable)"
       },
       "tls": {
         "type": "object",
@@ -27,6 +28,11 @@
             "type": "boolean",
             "default": false,
             "description": "Enable TLS for MQTT connections"
+          },
+          "port": {
+            "type": "number",
+            "default": 8883,
+            "description": "MQTT TLS listener port"
           },
           "certFile": {
             "type": "string",
@@ -227,7 +233,18 @@
               "password": { "type": "string" },
               "keyPrefix": { "type": "string", "default": "mqtt" },
               "subscriptionTTL": { "type": "number", "default": 3600 },
-              "retainedTTL": { "type": "number", "default": 0 }
+              "packetTTL": {
+                "type": "number",
+                "minimum": 0,
+                "default": 0,
+                "description": "离线 QoS 消息 TTL（秒，0 表示不限制）"
+              },
+              "retainedTTL": {
+                "type": "number",
+                "minimum": 0,
+                "default": 0,
+                "description": "兼容旧配置；未设置 packetTTL 时作为离线消息 TTL"
+              }
             }
           }
         }
@@ -236,7 +253,8 @@
   },
   "uiHints": {
     "port": { "label": "MQTT Port", "placeholder": "1883" },
-    "tlsPort": { "label": "MQTT TLS Port", "placeholder": "8883" },
+    "host": { "label": "MQTT Listen Host", "placeholder": "127.0.0.1" },
+    "tls.port": { "label": "MQTT TLS Port", "placeholder": "8883" },
     "tls.enabled": { "label": "Enable TLS", "type": "toggle" },
     "tls.certFile": { "label": "TLS Certificate", "type": "file" },
     "tls.keyFile": { "label": "TLS Key", "type": "file" },

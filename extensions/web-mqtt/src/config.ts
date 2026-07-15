@@ -11,7 +11,7 @@ import type { WebMqttConfig, WebMqttTopicBinding, WebMqttUser } from "./types.js
 export const DEFAULT_WEB_MQTT_CONFIG: WebMqttConfig = {
   port: 15675,
   path: "/ws",
-  host: "0.0.0.0",
+  host: "127.0.0.1",
   maxConnections: 5000,
   topicPrefix: "openclaw/",
   subscribeTopics: [],
@@ -29,12 +29,13 @@ export const DEFAULT_WEB_MQTT_CONFIG: WebMqttConfig = {
     rejectUnauthorized: false,
   },
   ws: {
-    compress: true,
+    compress: false,
     idleTimeoutMs: 60000,
     maxFrameSize: 256 * 1024,
+    allowedOrigins: [],
   },
   limits: {
-    maxPayloadBytes: 1024 * 1024,
+    maxPayloadBytes: 256 * 1024,
     maxSubscriptionsPerClient: 200,
   },
   proxyProtocol: false,
@@ -86,6 +87,7 @@ export function resolveWebMqttConfig(globalConfig: Record<string, unknown>): Web
       compress: raw.ws?.compress ?? DEFAULT_WEB_MQTT_CONFIG.ws.compress,
       idleTimeoutMs: asSafeInteger(raw.ws?.idleTimeoutMs, DEFAULT_WEB_MQTT_CONFIG.ws.idleTimeoutMs),
       maxFrameSize: asSafeInteger(raw.ws?.maxFrameSize, DEFAULT_WEB_MQTT_CONFIG.ws.maxFrameSize),
+      allowedOrigins: normalizeStringArray(raw.ws?.allowedOrigins),
     },
     limits: {
       maxPayloadBytes: asSafeInteger(raw.limits?.maxPayloadBytes, DEFAULT_WEB_MQTT_CONFIG.limits.maxPayloadBytes),
@@ -133,13 +135,37 @@ export function validateWebMqttConfig(config: WebMqttConfig): string[] {
   if (config.auth.required && !config.auth.allowAnonymous && config.auth.users.length === 0) {
     issues.push("auth.required=true 且未配置 auth.users，客户端将无法通过认证。");
   }
+  if (config.auth.required && config.auth.allowAnonymous) {
+    const anonymous = config.auth.users.find((user) => user.username === "anonymous");
+    if (!anonymous || !hasUserAcl(anonymous)) {
+      issues.push("auth.allowAnonymous=true 时必须配置 username=anonymous 的用户及 ACL。");
+    }
+  }
+  if (!config.tls.enabled && !isLoopbackHost(config.host)) {
+    issues.push("未启用 TLS 时仅允许监听 loopback 地址。");
+  }
   if (config.tls.enabled && (!config.tls.keyFile || !config.tls.certFile)) {
     issues.push("tls.enabled=true 但未同时提供 tls.keyFile 与 tls.certFile。");
   }
   if (config.topicBindings.length > 0 && config.subscribeTopics.length === 0) {
     issues.push("配置了 topicBindings 但 subscribeTopics 为空，建议设置订阅白名单。");
   }
+  if (config.limits.maxPayloadBytes > config.ws.maxFrameSize) {
+    issues.push("limits.maxPayloadBytes 不能大于 ws.maxFrameSize，否则 WebSocket 会先行断开。");
+  }
+  if (config.proxyProtocol) {
+    issues.push("proxyProtocol 尚未实现，禁止启用以避免错误信任来源地址。");
+  }
   return issues;
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.");
+}
+
+function hasUserAcl(user: WebMqttUser): boolean {
+  return Boolean(user.aclRules?.length || user.publishAllow?.length || user.subscribeAllow?.length);
 }
 
 /**

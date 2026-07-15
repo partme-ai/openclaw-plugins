@@ -22,6 +22,14 @@ export function isUserActionAllowed(params: {
   topic: string;
   accountId?: string;
 }): boolean {
+  const legacyRules =
+    params.action === "publish" || params.action === "inbound"
+      ? params.user.publishAllow
+      : params.user.subscribeAllow;
+  const actionRules = params.user.aclRules?.filter(
+    (rule) => rule.action === params.action,
+  );
+  if (!legacyRules?.length && !actionRules?.length) return false;
   return isUserActionAllowedShared({
     user: params.user as import("@partme.ai/openclaw-message-sdk/transport").AclUser,
     action: params.action as AclAction,

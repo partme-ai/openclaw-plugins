@@ -9,14 +9,17 @@ import type { ChannelAccountSnapshot, ChannelGatewayContext } from "openclaw/plu
 import { handleInboundMessage } from "../inbound.js";
 import {
   configureSessionExpiry,
+  clearSessionMappings,
   handleConnectionDisconnected,
   markConnectionConnected,
+  removeConnectionSessions,
 } from "../routing/session-mapper.js";
 import {
   isClientModeEnabled,
   isServerModeEnabled,
   resolveOpenClawDmScope,
   resolveWebsocketConfig,
+  validateWebsocketConfig,
   type ResolvedWebsocketAccount,
 } from "../config.js";
 import { setWebsocketChannelConfig } from "../state/web-socket-state.js";
@@ -39,9 +42,8 @@ function waitForAbortSignal(abortSignal: AbortSignal): Promise<void> {
   });
 }
 
-const inboundHandler = (message: Parameters<typeof handleInboundMessage>[0]) => {
-  void handleInboundMessage(message);
-};
+const inboundHandler = (message: Parameters<typeof handleInboundMessage>[0]) =>
+  handleInboundMessage(message);
 
 /**
  * 长驻监控：按 mode 启动传输层直至 abort。
@@ -52,6 +54,7 @@ export async function monitorWebSocketChannel(
   try {
     const globalConfig = ctx.cfg as unknown as Record<string, unknown>;
     const config = resolveWebsocketConfig(globalConfig);
+    validateWebsocketConfig(config);
     const dmScope = resolveOpenClawDmScope(globalConfig);
     setWebsocketChannelConfig(config, dmScope);
     configureSessionExpiry(
@@ -79,7 +82,7 @@ export async function monitorWebSocketChannel(
         config,
         inboundHandler,
         markConnectionConnected,
-        handleConnectionDisconnected,
+        removeConnectionSessions,
       );
       ctx.log?.info?.(
         `[${ctx.account.accountId}] WebSocket server ws://${config.server.host}:${config.server.wsPort}${config.server.path}`,
@@ -106,6 +109,7 @@ export async function monitorWebSocketChannel(
   } finally {
     await stopWebSocketClient();
     await stopWebSocketServer();
+    clearSessionMappings();
     setWebsocketChannelConfig(null);
     ctx.setStatus({
       accountId: ctx.account.accountId,

@@ -37,7 +37,7 @@
 
 #### 1. Embedded Broker
 
-Aedes MQTT broker starts in-process with zero external dependencies. Supports MQTT 3.1.1 and MQTT 5.0 protocol versions.
+Aedes starts in-process and supports MQTT 3.1 and MQTT 3.1.1. The current Aedes version does not support MQTT 5.0.
 
 #### 2. Topic Routing
 
@@ -60,7 +60,7 @@ Aedes MQTT broker starts in-process with zero external dependencies. Supports MQ
 
 ### Scaling
 
-Default single-process in-memory deployment. Enable persistence for multi-Gateway horizontal scaling:
+The default is a single-process in-memory deployment. Multi-Gateway horizontal scaling requires the Redis backend, which provides both Aedes persistence and namespaced MQEmitter Pub/Sub:
 
 ```json
 {
@@ -71,7 +71,11 @@ Default single-process in-memory deployment. Enable persistence for multi-Gatewa
         "backend": "redis",
         "redis": {
           "host": "redis.example.com",
-          "port": 6379
+          "port": 6379,
+          "db": 0,
+          "password": "replace-with-secret",
+          "keyPrefix": "prod-openclaw-mqtt",
+          "packetTTL": 86400
         }
       }
     }
@@ -79,7 +83,7 @@ Default single-process in-memory deployment. Enable persistence for multi-Gatewa
 }
 ```
 
-Supports multiple persistence backends: memory, redis, mongodb, level, nedb.
+`keyPrefix` must be unique per environment/cluster to prevent message crossover on a shared Redis. `packetTTL` is the offline QoS packet TTL in seconds; `0` means unlimited. The memory, MongoDB, LevelDB, and NeDB backends are suitable for single-node persistence but do not provide Redis MQEmitter's cross-node message bus.
 
 ## Message Flow
 
@@ -112,6 +116,7 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
   "channels": {
     "mqtt": {
       "port": 1883,
+      "host": "127.0.0.1",
       "maxConnections": 1000,
       "subscribeTopics": [
         "devices/+/in",
@@ -159,6 +164,7 @@ Routing priority: `topicBindings` → Standard inbound parsing → Drop
 | Field | Default | Description |
 |-------|---------|-------------|
 | `port` | `1883` | MQTT TCP listener port |
+| `host` | `127.0.0.1` | Listener address; unauthenticated mode is restricted to loopback |
 | `maxConnections` | `1000` | Maximum concurrent connections |
 | `subscribeTopics` | `[]` | Allowed inbound topic patterns |
 | `topicBindings` | `[]` | Explicit topic → agent bindings |
@@ -170,6 +176,8 @@ Routing priority: `topicBindings` → Standard inbound parsing → Drop
 | `auth.enabled` | `false` | Enable client authentication |
 | `auth.allowAnonymous` | `false` | Allow anonymous connections |
 | `auth.users` | `[]` | User list with per-user publish/subscribe ACL |
+
+Binding beyond loopback requires authentication. Authenticated mode rejects an empty user list. Anonymous access requires an explicit `anonymous` user with ACL rules, and unmatched publish/subscribe operations are denied by default.
 
 ### TLS
 
@@ -260,7 +268,7 @@ openclaw-mqtt/
 
 | Item | Version |
 |------|---------|
-| @partme.ai/openclaw-mqtt | 0.1.13 |
+| @partme.ai/openclaw-mqtt | 2026.5.25-2 |
 | Recommended Node | 20+ |
 
 ## Security

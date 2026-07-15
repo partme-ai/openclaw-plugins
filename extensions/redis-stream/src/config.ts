@@ -9,6 +9,7 @@
  */
 
 import { z } from "zod";
+import { hostname } from "node:os";
 import type { RedisChannelBinding, RedisChannelConfig } from "./types.js";
 
 export type { RedisChannelBinding, RedisChannelConfig } from "./types.js";
@@ -30,11 +31,14 @@ const StreamConfigSchema = z.object({
   inboundKey: z.string().default("openclaw:inbound"),
   outboundKey: z.string().default("openclaw:outbound"),
   consumerGroup: z.string().default("openclaw-group"),
-  consumerName: z.string().default("openclaw-consumer-1"),
+  consumerName: z.string().default(""),
   blockMs: z.number().int().positive().default(5000),
   count: z.number().int().positive().default(10),
   createGroup: z.boolean().default(true),
   pendingClaimIdleMs: z.number().int().nonnegative().default(120_000),
+  maxAttempts: z.number().int().positive().default(5),
+  deadLetterKey: z.string().min(1).default("openclaw:inbound:dlq"),
+  maxLen: z.number().int().nonnegative().default(100_000),
 });
 
 /**
@@ -60,14 +64,24 @@ const RedisFieldMappingSchema = z.object({
  */
 const RedisConnectionConfigSchema = z.object({
   reconnectMs: z.number().int().positive().default(3000),
-  maxRetries: z.number().int().positive().default(10),
+  maxRetries: z.number().int().nonnegative().default(0),
+  startupTimeoutMs: z.number().int().positive().default(30_000),
+});
+
+const RedisIdempotencyConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  ttlMs: z.number().int().positive().default(600_000),
+  maxEntries: z.number().int().positive().default(10_000),
 });
 
 /**
  * Complete Zod schema for Redis Stream channel configuration.
  */
 export const RedisStreamConfigSchema = z.object({
-  url: z.string().url().default("redis://localhost:6379"),
+  url: z.string().url().refine((value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === "redis:" || protocol === "rediss:";
+  }, "Redis URL protocol must be redis:// or rediss://").default("redis://localhost:6379"),
   channelMode: z.enum(["pubsub", "stream"]).default("pubsub"),
   defaultAgentId: z.string().default(""),
   stream: StreamConfigSchema,
@@ -76,6 +90,7 @@ export const RedisStreamConfigSchema = z.object({
   payload: RedisPayloadConfigSchema,
   fieldMapping: RedisFieldMappingSchema,
   connection: RedisConnectionConfigSchema,
+  idempotency: RedisIdempotencyConfigSchema,
 });
 
 /** @description Zod 校验后的 Redis Stream 配置输入类型（parse 前）。 */
@@ -162,16 +177,22 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
           description:
             "XAUTOCLAIM min-idle ms for stale PEL entries; 0 disables reclaim",
         },
+        maxAttempts: { type: "number", minimum: 1, default: 5 },
+        deadLetterKey: { type: "string", default: "openclaw:inbound:dlq" },
+        maxLen: { type: "number", minimum: 0, default: 100000 },
       },
       default: {
         inboundKey: "openclaw:inbound",
         outboundKey: "openclaw:outbound",
         consumerGroup: "openclaw-group",
-        consumerName: "openclaw-consumer-1",
+        consumerName: "",
         blockMs: 5000,
         count: 10,
         createGroup: true,
         pendingClaimIdleMs: 120000,
+        maxAttempts: 5,
+        deadLetterKey: "openclaw:inbound:dlq",
+        maxLen: 100000,
       },
     },
     payload: {
@@ -210,12 +231,24 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
       additionalProperties: false,
       properties: {
         reconnectMs: { type: "number", default: 3000 },
-        maxRetries: { type: "number", default: 10 },
+        maxRetries: { type: "number", minimum: 0, default: 0 },
+        startupTimeoutMs: { type: "number", minimum: 1, default: 30000 },
       },
       default: {
         reconnectMs: 3000,
-        maxRetries: 10,
+        maxRetries: 0,
+        startupTimeoutMs: 30000,
       },
+    },
+    idempotency: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean", default: true },
+        ttlMs: { type: "number", minimum: 1, default: 600000 },
+        maxEntries: { type: "number", minimum: 1, default: 10000 },
+      },
+      default: { enabled: true, ttlMs: 600000, maxEntries: 10000 },
     },
   },
   required: ["url"],
@@ -254,6 +287,7 @@ export function safeParseRedisStreamConfig(
 export function redactUrl(url: string): string {
   try {
     const u = new URL(url);
+    if (u.username) u.username = "***";
     if (u.password) u.password = "***";
     return u.toString();
   } catch {
@@ -270,11 +304,14 @@ export const DEFAULT_REDIS_CHANNEL_CONFIG: RedisChannelConfig = {
     inboundKey: "openclaw:inbound",
     outboundKey: "openclaw:outbound",
     consumerGroup: "openclaw-group",
-    consumerName: "openclaw-consumer-1",
+    consumerName: `openclaw-${hostname()}-${process.pid}`,
     blockMs: 5000,
     count: 10,
     createGroup: true,
     pendingClaimIdleMs: 120_000,
+    maxAttempts: 5,
+    deadLetterKey: "openclaw:inbound:dlq",
+    maxLen: 100_000,
   },
   subscribeChannels: [],
   channelBindings: [],
@@ -290,7 +327,13 @@ export const DEFAULT_REDIS_CHANNEL_CONFIG: RedisChannelConfig = {
   },
   connection: {
     reconnectMs: 3000,
-    maxRetries: 10,
+    maxRetries: 0,
+    startupTimeoutMs: 30_000,
+  },
+  idempotency: {
+    enabled: true,
+    ttlMs: 600_000,
+    maxEntries: 10_000,
   },
 };
 
@@ -313,6 +356,8 @@ export function resolveRedisChannelConfig(
     (redisChannel.payload as Record<string, unknown> | undefined) ?? {};
   const connection =
     (redisChannel.connection as Record<string, unknown> | undefined) ?? {};
+  const idempotency =
+    (redisChannel.idempotency as Record<string, unknown> | undefined) ?? {};
 
   const rawBindings = (
     Array.isArray(redisChannel.channelBindings)
@@ -369,7 +414,9 @@ export function resolveRedisChannelConfig(
           DEFAULT_REDIS_CHANNEL_CONFIG.stream.consumerGroup,
       ),
       consumerName: String(
-        stream.consumerName ?? DEFAULT_REDIS_CHANNEL_CONFIG.stream.consumerName,
+        typeof stream.consumerName === "string" && stream.consumerName.trim()
+          ? stream.consumerName.trim()
+          : DEFAULT_REDIS_CHANNEL_CONFIG.stream.consumerName,
       ),
       blockMs:
         typeof stream.blockMs === "number" && stream.blockMs >= 0
@@ -384,6 +431,18 @@ export function resolveRedisChannelConfig(
         typeof stream.pendingClaimIdleMs === "number" && stream.pendingClaimIdleMs >= 0
           ? stream.pendingClaimIdleMs
           : DEFAULT_REDIS_CHANNEL_CONFIG.stream.pendingClaimIdleMs,
+      maxAttempts:
+        typeof stream.maxAttempts === "number" && stream.maxAttempts > 0
+          ? Math.floor(stream.maxAttempts)
+          : DEFAULT_REDIS_CHANNEL_CONFIG.stream.maxAttempts,
+      deadLetterKey:
+        typeof stream.deadLetterKey === "string" && stream.deadLetterKey.trim()
+          ? stream.deadLetterKey.trim()
+          : DEFAULT_REDIS_CHANNEL_CONFIG.stream.deadLetterKey,
+      maxLen:
+        typeof stream.maxLen === "number" && stream.maxLen >= 0
+          ? Math.floor(stream.maxLen)
+          : DEFAULT_REDIS_CHANNEL_CONFIG.stream.maxLen,
     },
     subscribeChannels,
     channelBindings,
@@ -421,9 +480,24 @@ export function resolveRedisChannelConfig(
           ? connection.reconnectMs
           : DEFAULT_REDIS_CHANNEL_CONFIG.connection.reconnectMs,
       maxRetries:
-        typeof connection.maxRetries === "number" && connection.maxRetries > 0
-          ? connection.maxRetries
+        typeof connection.maxRetries === "number" && connection.maxRetries >= 0
+          ? Math.floor(connection.maxRetries)
           : DEFAULT_REDIS_CHANNEL_CONFIG.connection.maxRetries,
+      startupTimeoutMs:
+        typeof connection.startupTimeoutMs === "number" && connection.startupTimeoutMs > 0
+          ? Math.floor(connection.startupTimeoutMs)
+          : DEFAULT_REDIS_CHANNEL_CONFIG.connection.startupTimeoutMs,
+    },
+    idempotency: {
+      enabled: idempotency.enabled !== false,
+      ttlMs:
+        typeof idempotency.ttlMs === "number" && idempotency.ttlMs > 0
+          ? Math.floor(idempotency.ttlMs)
+          : DEFAULT_REDIS_CHANNEL_CONFIG.idempotency.ttlMs,
+      maxEntries:
+        typeof idempotency.maxEntries === "number" && idempotency.maxEntries > 0
+          ? Math.floor(idempotency.maxEntries)
+          : DEFAULT_REDIS_CHANNEL_CONFIG.idempotency.maxEntries,
     },
   };
 }

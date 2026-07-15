@@ -43,11 +43,13 @@ function mockDelivery() {
   };
 }
 
+let eventSequence = 0;
+
 function buildEvent(routingKey: string, delivery = mockDelivery()): InboundEvent {
   return {
     routingKey,
     content: Buffer.from(JSON.stringify({ text: "hello" })),
-    properties: { correlationId: "cid-1" },
+    properties: { correlationId: `cid-${++eventSequence}` },
     fields: { routingKey, exchange: "ex", deliveryTag: 1, redelivered: false, consumerTag: "c" },
     delivery,
   };

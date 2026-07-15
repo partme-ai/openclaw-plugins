@@ -56,6 +56,13 @@ describe("handleAck", () => {
   it("returns 0 for unknown message id", () => {
     expect(handleAck("missing")).toBe(0);
   });
+
+  it("does not allow another connection to ACK a delivery", () => {
+    const id = registerMessage("sub-1", "conn-a", "/topic/a", "client-individual");
+    expect(handleAck(id, "conn-b")).toBe(0);
+    expect(getAckStats().pendingCount).toBe(1);
+    expect(handleAck(id, "conn-a")).toBe(1);
+  });
 });
 
 describe("handleNack", () => {

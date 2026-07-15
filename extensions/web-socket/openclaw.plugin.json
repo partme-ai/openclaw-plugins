@@ -32,8 +32,18 @@
       },
       "host": {
         "type": "string",
-        "default": "0.0.0.0",
+        "default": "127.0.0.1",
         "description": "Bind host"
+      },
+      "allowInsecureRemote": {
+        "type": "boolean",
+        "default": false,
+        "description": "Explicitly allow a remote plaintext listener; prefer a TLS reverse proxy"
+      },
+      "allowedOrigins": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": []
       },
       "maxConnections": {
         "type": "number",
@@ -43,6 +53,11 @@
       "defaultAgentId": {
         "type": "string",
         "description": "Default agent when no binding matches"
+      },
+      "allowFrameAgentId": {
+        "type": "boolean",
+        "default": false,
+        "description": "Trust agentId supplied by an inbound frame"
       },
       "agentBindings": {
         "type": "array",
@@ -68,7 +83,8 @@
             "type": "array",
             "items": { "type": "string" },
             "default": []
-          }
+          },
+          "allowQueryToken": { "type": "boolean", "default": false }
         }
       },
       "payload": {
@@ -92,7 +108,12 @@
           "maxPayloadBytes": {
             "type": "number",
             "default": 1048576
-          }
+          },
+          "maxBufferedBytes": { "type": "number", "default": 1048576 },
+          "maxPendingMessages": { "type": "number", "default": 32 },
+          "messagesPerMinute": { "type": "number", "default": 120 },
+          "heartbeatIntervalMs": { "type": "number", "default": 30000 },
+          "heartbeatTimeoutMs": { "type": "number", "default": 10000 }
         }
       },
       "session": {
@@ -121,15 +142,20 @@
         "properties": {
           "enabled": { "type": "boolean" },
           "wsPort": { "type": "number", "default": 18789 },
+          "host": { "type": "string", "default": "127.0.0.1" },
           "path": { "type": "string", "default": "/openclaw/ws" },
           "defaultAgentId": { "type": "string" },
           "auth": {
             "type": "object",
             "properties": {
               "enabled": { "type": "boolean", "default": false },
-              "token": { "type": "string" }
+              "token": { "type": "string" },
+              "tokens": { "type": "array", "items": { "type": "string" } },
+              "allowQueryToken": { "type": "boolean", "default": false }
             }
-          }
+          },
+          "allowedOrigins": { "type": "array", "items": { "type": "string" } },
+          "allowInsecureRemote": { "type": "boolean", "default": false }
         }
       }
     }
