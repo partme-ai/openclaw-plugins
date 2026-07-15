@@ -99,7 +99,7 @@
 
 #### Prerequisites
 
-- [OpenClaw](https://github.com/openclaw/openclaw) **2026.4.6+** (see `peerDependencies` and `openclaw.compat` / `openclaw.build` in `package.json`)
+- [OpenClaw](https://github.com/openclaw/openclaw) **2026.7.1+** (see `peerDependencies` and `openclaw.compat` / `openclaw.build` in `package.json`)
 - **Node.js 22+** ([Building plugins](https://docs.openclaw.ai/plugins/building-plugins) prerequisites; also in `engines`)
 - **Nacos Server** reachable from the Gateway host (compatible with [nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs))
 

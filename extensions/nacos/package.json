@@ -40,7 +40,7 @@
     "directory": "extensions/nacos"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -67,12 +67,12 @@
     "setupEntry": "./dist/setup-entry.js",
     "providers": [],
     "compat": {
-      "pluginApi": ">=2026.4.6",
-      "minGatewayVersion": "2026.4.6"
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
     },
     "build": {
-      "openclawVersion": "2026.4.6",
-      "pluginSdkVersion": "2026.4.6"
+      "openclawVersion": "2026.7.1",
+      "pluginSdkVersion": "2026.7.1"
     }
   },
   "exports": {

@@ -61,7 +61,7 @@ Session-key partitioning is driven only by `session.dmScope`.
 
 ### Prerequisites
 
-- OpenClaw `>= 2026.4.x`
+- OpenClaw `>= 2026.7.1`
 - Node.js `22+`
 
 ### Install

@@ -38,7 +38,7 @@
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -48,7 +48,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.2.0",
-    "openclaw": "^2026.4.9",
+    "openclaw": "2026.7.1",
     "tsup": "^8.4.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
@@ -72,12 +72,12 @@
       "./dist/index.js"
     ],
     "compat": {
-      "pluginApi": ">=2026.2.24",
-      "minGatewayVersion": "2026.2.24"
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
     },
     "build": {
-      "openclawVersion": "2026.4.9",
-      "pluginSdkVersion": "2026.4.9"
+      "openclawVersion": "2026.7.1",
+      "pluginSdkVersion": "2026.7.1"
     }
   },
   "bugs": {

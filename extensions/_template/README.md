@@ -21,7 +21,7 @@ TEMPLATE_LABEL（`@partme.ai/openclaw-TEMPLATE_NAME`）是 [OpenClaw](https://gi
 
 ### 前置条件
 
-- [OpenClaw](https://github.com/openclaw/openclaw) **2026.4.12+**
+- [OpenClaw](https://github.com/openclaw/openclaw) **2026.7.1+**
 - **Node.js 22+**
 
 ### 安装

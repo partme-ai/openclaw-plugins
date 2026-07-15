@@ -145,7 +145,8 @@ async function dispatchToRuntime(
     return;
   }
 
-  const outboundFormat = config.payload.outboundFormat ?? "envelope";
+  const outboundFormat =
+    config.payload.outboundFormat === "plain" ? "plainText" : "envelope";
 
   await dispatchChannelMessage({
     mode: "reply-pipeline",

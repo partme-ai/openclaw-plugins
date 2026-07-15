@@ -75,7 +75,7 @@ Default `{path}` is `/metrics`.
 
 ### Prerequisites
 
-- OpenClaw `>= 2026.4.0`
+- OpenClaw `>= 2026.7.1`
 - Node.js `20+`
 
 ### Install

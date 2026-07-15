@@ -9,7 +9,10 @@
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import {
+  definePluginEntry,
+  type OpenClawPluginDefinition,
+} from "openclaw/plugin-sdk/plugin-entry";
 
 import { RouteDedupeCache, buildRouteDedupeKey } from "./dedupe.js";
 
@@ -331,7 +334,7 @@ function executeReplyVia(
 // ============================================================================
 
 /** @description Router 插件 definePluginEntry 注册入口。 */
-export default definePluginEntry({
+const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "router",
   name: "Message Router",
   description: "企业级消息路由引擎 — 跨渠道 IM↔MQ 消息转发",
@@ -444,3 +447,5 @@ export default definePluginEntry({
     api.logger.info("[router] Registered — message_received / message_sent / reply_dispatch hooks");
   },
 });
+
+export default plugin;

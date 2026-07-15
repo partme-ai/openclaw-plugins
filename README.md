@@ -270,7 +270,7 @@ openclaw-plugins/
 
 - **Node.js** >= 22.0.0
 - **pnpm** >= 9（Monorepo 贡献者）
-- **OpenClaw** >= 2026.4.12 — [OpenClaw 仓库](https://github.com/partme-ai/openclaw)
+- **OpenClaw** >= 2026.7.1 — [OpenClaw 仓库](https://github.com/partme-ai/openclaw)
 
 #### 1. 安装 OpenClaw Gateway
 
@@ -476,7 +476,7 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # 预发布
 - **Node.js** 22+（ESM）
 - **TypeScript** 5.x strict
 - **pnpm** 9 workspaces
-- **OpenClaw** Plugin API >= 2026.4.6
+- **OpenClaw** Plugin API >= 2026.7.1
 
 #### 构建与测试
 
@@ -501,7 +501,7 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # 预发布
 
 | 项 | 当前 |
 |----|------|
-| OpenClaw peer 依赖 | >= 2026.4.12 |
+| OpenClaw peer 依赖 | >= 2026.7.1 |
 | message-sdk | 2026.5.24 |
 | openclaw-nacos | 2026.5.24 |
 | openclaw-gotify | 2026.5.22 |

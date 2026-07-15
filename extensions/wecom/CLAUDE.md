@@ -357,7 +357,7 @@ streamStore.updateStream(streamId, (state) => {
 - `fast-xml-parser`: XML parsing for Agent callbacks
 - `file-type`: MIME type detection from file buffers
 - `zod`: Configuration validation
-- `openclaw`: Peer dependency (>=2026.4.12)
+- `openclaw`: Peer dependency (>=2026.7.1)
 
 ## WeCom API Endpoints Used
 

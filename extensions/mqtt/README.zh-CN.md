@@ -94,7 +94,7 @@ Aedes MQTT broker 随进程启动，支持 MQTT 3.1.1 和 MQTT 5.0 协议版本�
 
 ### 前置条件
 
-- OpenClaw `>= 2026.4.0`
+- OpenClaw `>= 2026.7.1`
 - Node.js `20+`
 
 ### 安装

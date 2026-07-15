@@ -72,7 +72,7 @@
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -85,11 +85,11 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "build": {
-      "openclawVersion": "2026.4.0"
+      "openclawVersion": "2026.7.1"
     },
     "compat": {
-      "pluginApi": ">=2026.3.24-beta.2",
-      "minGatewayVersion": "2026.3.24-beta.2"
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
     },
     "channel": {
       "id": "gotify",

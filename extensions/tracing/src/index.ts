@@ -5,7 +5,10 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import {
+  definePluginEntry,
+  type OpenClawPluginDefinition,
+} from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { LogBackend } from "./backends/log-backend.js";
@@ -193,7 +196,7 @@ function traceDetailHandler(req: IncomingMessage, res: ServerResponse): void {
   res.end(JSON.stringify({ ok: true, data: { traceId, spans } }));
 }
 
-export default definePluginEntry({
+const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: PLUGIN_ID,
   name: "openclaw-tracing",
   description: "Distributed tracing for OpenClaw — Plugin Hooks based message and tool span capture",
@@ -215,5 +218,7 @@ export default definePluginEntry({
     api.logger.info("[openclaw-tracing] Plugin registered — awaiting gateway_start");
   },
 });
+
+export default plugin;
 
 export type { Span, SpanKind, SpanStatus, TracingConfig } from "./shared/types.js";

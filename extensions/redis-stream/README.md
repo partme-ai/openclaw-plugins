@@ -58,7 +58,7 @@ It uses the official [node-redis](https://github.com/redis/node-redis) client an
 
 - Node.js >= 22
 - Redis >= 7.0 (with Pub/Sub support)
-- OpenClaw Gateway >= 2026.4.0
+- OpenClaw Gateway >= 2026.7.1
 
 ### Install
 

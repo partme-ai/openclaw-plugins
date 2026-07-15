@@ -39,7 +39,7 @@
 
 ## 前置要求
 
-- 已安装 [OpenClaw](https://github.com/openclaw/openclaw)（`>=2026.4.0`，见 `package.json` 中 `peerDependencies` 与 `openclaw.compat` / `openclaw.build`）
+- 已安装 [OpenClaw](https://github.com/openclaw/openclaw)（`>=2026.7.1`，见 `package.json` 中 `peerDependencies` 与 `openclaw.compat` / `openclaw.build`）
 - **Node.js 22+**（与官方 [Building plugins](https://docs.openclaw.ai/plugins/building-plugins) 前置要求一致）
 - 一个运行中的 [Gotify 服务器](https://gotify.net/docs/install)（v2.x+）
 

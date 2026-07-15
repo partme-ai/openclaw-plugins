@@ -254,7 +254,7 @@ Shipped with OpenClaw, bridged via `@partme.ai/openclaw-bridge` with zero extra 
 
 - **Node.js** >= 22.0.0
 - **pnpm** >= 9 (monorepo contributors)
-- **OpenClaw** >= 2026.4.12 — [OpenClaw repository](https://github.com/partme-ai/openclaw)
+- **OpenClaw** >= 2026.7.1 — [OpenClaw repository](https://github.com/partme-ai/openclaw)
 
 #### 1. Install OpenClaw Gateway
 
@@ -459,7 +459,7 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # prerelease
 - **Node.js** 22+ (ESM)
 - **TypeScript** 5.x strict mode
 - **pnpm** 9 workspaces
-- **OpenClaw** Plugin API >= 2026.4.6
+- **OpenClaw** Plugin API >= 2026.7.1
 
 #### Build & Test
 
@@ -484,7 +484,7 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # prerelease
 
 | Item | Current |
 |------|---------|
-| OpenClaw peer dependency | >= 2026.4.12 |
+| OpenClaw peer dependency | >= 2026.7.1 |
 | message-sdk | 2026.5.24 |
 | openclaw-nacos | 2026.5.24 |
 | openclaw-gotify | 2026.5.22 |

@@ -62,7 +62,7 @@
 
 ### 先决条件
 
-- OpenClaw `>= 2026.4.0`
+- OpenClaw `>= 2026.7.1`
 - Node.js `20+`
 - RabbitMQ 服务器 `>= 3.8`
 

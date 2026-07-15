@@ -60,7 +60,7 @@ License
 
 ### 前置条件
 
-- OpenClaw `>= 2026.4.x`
+- OpenClaw `>= 2026.7.1`
 - Node.js `22+`
 
 ### 安装

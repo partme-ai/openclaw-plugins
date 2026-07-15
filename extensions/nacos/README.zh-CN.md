@@ -99,7 +99,7 @@
 
 ## 前置要求
 
-- 已安装 [OpenClaw](https://github.com/openclaw/openclaw)（**2026.4.6+**，见 `package.json` 中 `peerDependencies` 与 `openclaw.compat` / `openclaw.build`）
+- 已安装 [OpenClaw](https://github.com/openclaw/openclaw)（**2026.7.1+**，见 `package.json` 中 `peerDependencies` 与 `openclaw.compat` / `openclaw.build`）
 - **Node.js 22+**（与官方 [Building plugins](https://docs.openclaw.ai/plugins/building-plugins) 前置要求一致；`engines` 亦声明 `>=22`）
 - Gateway 所在机器能访问 **Nacos Server**（与 [nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs) 兼容的版本）
 

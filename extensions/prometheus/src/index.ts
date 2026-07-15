@@ -17,7 +17,10 @@ import type {
 } from "./types.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { performance } from "node:perf_hooks";
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import {
+  definePluginEntry,
+  type OpenClawPluginDefinition,
+} from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { DiagnosticsCollector } from "./diagnostics/collector.js";
@@ -641,7 +644,7 @@ async function withRouteMetrics(
   }
 }
 
-export default definePluginEntry({
+const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: PLUGIN_ID,
   name: "openclaw-prometheus",
   description:
@@ -650,3 +653,5 @@ export default definePluginEntry({
     registerMetricsRoutes(api);
   },
 });
+
+export default plugin;

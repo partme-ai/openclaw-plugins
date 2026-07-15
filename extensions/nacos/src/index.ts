@@ -11,6 +11,7 @@ import {
   definePluginEntry,
   emptyPluginConfigSchema,
   type OpenClawPluginApi,
+  type OpenClawPluginDefinition,
   type OpenClawPluginServiceContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { parseNacosPluginConfig } from "./config/config-parse.js";
@@ -252,7 +253,7 @@ function registerNacosClusterService(api: OpenClawPluginApi): void {
   });
 }
 
-export default definePluginEntry({
+const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "nacos",
   name: "Nacos gateway registration",
   description:
@@ -320,3 +321,5 @@ export default definePluginEntry({
     });
   },
 });
+
+export default plugin;

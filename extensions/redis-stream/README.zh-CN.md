@@ -58,7 +58,7 @@
 
 - Node.js >= 22
 - Redis >= 7.0（需 Pub/Sub 支持）
-- OpenClaw Gateway >= 2026.4.0
+- OpenClaw Gateway >= 2026.7.1
 
 ### 安装
 

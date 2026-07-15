@@ -32,7 +32,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {

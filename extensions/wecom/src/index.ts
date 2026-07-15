@@ -9,7 +9,11 @@
  * 业务 ChannelPlugin 定义见 channel.ts；setup 轻量入口见 setup-entry.ts。
  */
 
-import type { OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
+import type {
+  OpenClawPluginApi,
+  OpenClawPluginDefinition,
+  OpenClawPluginToolContext,
+} from "openclaw/plugin-sdk/core";
 import { emptyChannelConfigSchema } from "openclaw/plugin-sdk/core";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 
@@ -29,7 +33,7 @@ export { setWeComRuntime, getWeComRuntime } from "./runtime.js";
  *
  * @param api OpenClaw 插件 API（full 模式下注册路由与 MCP）
  */
-export default defineChannelPluginEntry({
+const plugin: OpenClawPluginDefinition = defineChannelPluginEntry({
   id: "wecom",
   name: "企业微信",
   description: "企业微信 OpenClaw 插件",
@@ -107,3 +111,5 @@ export default defineChannelPluginEntry({
     });
   },
 });
+
+export default plugin;

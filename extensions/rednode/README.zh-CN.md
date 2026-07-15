@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/@partme.ai/openclaw-rednode)](https://www.npmjs.com/package/@partme.ai/openclaw-rednode)
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![OpenClaw](https://img.shields.io/badge/OpenClaw-%3E=2026.4.12-blueviolet)](https://github.com/partme-ai/openclaw)
+[![OpenClaw](https://img.shields.io/badge/OpenClaw-%3E=2026.7.1-blueviolet)](https://github.com/partme-ai/openclaw)
 
 [简体中文](./README.md)
 

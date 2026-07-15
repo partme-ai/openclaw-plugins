@@ -62,7 +62,7 @@ function probeFfmpegOnce(): Promise<boolean> {
     const spawn = await getSpawn();
     const p = spawn("ffmpeg", ["-version"], { stdio: "ignore" });
     p.on("error", () => resolve(false));
-    p.on("exit", (code) => resolve(code === 0));
+    p.on("exit", (code: number | null) => resolve(code === 0));
   });
 }
 
@@ -86,9 +86,9 @@ export async function transcodeToAmr(inputPath: string, outputPath: string): Pro
     const spawn = await getSpawn();
     const p = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
     let err = "";
-    p.stderr?.on("data", (d) => (err += String(d)));
-    p.on("error", (e) => reject(e));
-    p.on("exit", (code) => {
+    p.stderr?.on("data", (d: Buffer) => (err += String(d)));
+    p.on("error", (e: Error) => reject(e));
+    p.on("exit", (code: number | null) => {
       if (code === 0) return resolve();
       reject(new Error(`ffmpeg transcode failed (code=${code}): ${err.slice(0, 2000)}`));
     });

@@ -49,7 +49,7 @@ It provides a hardened embedded MQTT-over-WebSocket broker for browser and web a
 
 ### Prerequisites
 
-- OpenClaw `>= 2026.4.0`
+- OpenClaw `>= 2026.7.1`
 - Node.js `22+`
 
 ### Install

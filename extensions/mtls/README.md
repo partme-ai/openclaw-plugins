@@ -49,7 +49,7 @@ Client (with client cert)
 
 ### Prerequisites
 
-- OpenClaw `>= 2026.4.0`
+- OpenClaw `>= 2026.7.1`
 - Node.js `20+`
 - TLS certificates (server cert/key and CA for client cert validation)
 
