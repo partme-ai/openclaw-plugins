@@ -266,12 +266,12 @@ OpenClaw 插件系统是一个**进程内可扩展架构**，允许第三方开�
     },
     "providers": ["my-provider"],
     "compat": {
-      "pluginApi": ">=2026.3.24-beta.2",
-      "minGatewayVersion": "2026.3.24-beta.2"
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
     },
     "build": {
-      "openclawVersion": "2026.3.24-beta.2",
-      "pluginSdkVersion": "2026.3.24-beta.2"
+      "openclawVersion": "2026.7.1",
+      "pluginSdkVersion": "2026.7.1"
     }
   }
 }

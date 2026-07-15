@@ -5,7 +5,7 @@
 > **关联文档：**  
 > - [主架构](./OpenClaw-WeCom-KF-Master-Architecture.md)  
 > - [Tools 架构](./OpenClaw-WeCom-KF-Tools-Architecture.md)  
-> - [PRD（User Stories / 联调清单）](../../../.omx/plans/prd-wecom-kf-intelligent-cs.md)
+> - 历史内部 PRD（未随本仓库分发）
 
 **用途：** 一页看清目标形态、目录收敛方向、当前 Phase 任务与验收命令。实现 PR 请按本表拆任务，完成后在 PR 描述中勾选对应行。
 
@@ -368,7 +368,6 @@ dispatchKfMessage (research)
 | 资源 | 路径 | 用途 |
 |------|------|------|
 | **联调 Checklist（权威）** | [Integration-Checklist.md](./Integration-Checklist.md) | 回调、sync、多账号、媒体、Control Tools、icsEnabled 可勾选清单 |
-| **PRD 联调附件** | [PRD §8 联调 Checklist](../../../.omx/plans/prd-wecom-kf-intelligent-cs.md#8-联调-checklist验收附件) | 企微后台 + Gateway + 功能 + 多账号 + 回归 |
 | **架构验收附件** | [主架构 §5 事件矩阵](./OpenClaw-WeCom-KF-Master-Architecture.md#5-事件类型处理矩阵) | origin / event_type 行为 |
 | **Tools 验收** | [Tools 架构 §6](./OpenClaw-WeCom-KF-Tools-Architecture.md#6-实现阶段划分) | transcript 无 PII |
 | **Preflight Skill** | `extensions/wecom-kf/skills/wecom-kf-preflight/SKILL.md` | 配置项检查（待与 US-015 对齐 executable checklist） |

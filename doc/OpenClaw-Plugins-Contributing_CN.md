@@ -3,37 +3,43 @@
 ## 新建插件
 
 ```bash
-pnpm new-plugin <name> --label "显示名称" --desc "插件描述"
+pnpm new-plugin PLUGIN_NAME --label "显示名称" --desc "插件描述"
 ```
 
 这会从 `extensions/_template` 生成完整骨架：
 
 ```
 extensions/<name>/
-├── index.ts              # 插件入口
 ├── openclaw.plugin.json  # OpenClaw 清单
 ├── package.json          # npm 元数据
 ├── tsconfig.json         # TypeScript 配置
 ├── tsup.config.ts        # 构建配置
 ├── vitest.config.ts      # 测试配置
-└── src/
-    ├── channel.ts        # ChannelPlugin 实现
-    ├── config.ts         # Zod schema + JSON Schema
-    ├── media.ts          # 媒体处理
-    ├── monitor.ts        # 消息去重 + webhook
-    ├── runtime.ts        # 运行时状态
-    └── types.ts          # 类型定义
+├── src/
+│   ├── index.ts          # 运行时入口：defineChannelPluginEntry
+│   ├── setup-entry.ts    # Setup 冷路径入口
+│   ├── channel.ts        # ChannelPlugin 实现
+│   ├── channel-setup-factory.ts # Setup Adapter 与 Wizard
+│   ├── onboarding.ts     # Setup 流程导出
+│   ├── inbound.ts        # 入站消息处理
+│   ├── outbound.ts       # 出站消息适配
+│   ├── config.ts         # 配置解析与校验
+│   ├── runtime.ts        # 运行时状态
+│   ├── types.ts          # 类型定义
+│   └── transport/
+│       └── server.ts     # Webhook、HTTP 或 Broker I/O
+└── test/
+    └── *.test.ts         # 插件单元测试
 ```
 
 ## 开发流程
 
 ```bash
-cd extensions/<name>
-pnpm install           # 安装依赖
-pnpm dev               # 开发模式（tsup watch）
-pnpm typecheck         # 类型检查
-pnpm test              # 运行测试
-pnpm build             # 生产构建
+pnpm install                                      # 在仓库根目录安装依赖
+pnpm --filter './extensions/<name>' dev           # 开发模式（tsup watch）
+pnpm --filter './extensions/<name>' typecheck     # 类型检查
+pnpm --filter './extensions/<name>' test          # 运行测试
+pnpm --filter './extensions/<name>' build         # 生产构建
 ```
 
 ## 规范要求
@@ -46,23 +52,23 @@ pnpm build             # 生产构建
 | Zod + JSON Schema | `src/config.ts` 导出 Zod schema 和 JSON Schema |
 | 类型化错误 | 自定义 Error 子类，包含结构化字段 |
 | 状态上报 | 通过 `setStatus` 报告生命周期事件 |
-| Co-located 测试 | `src/foo.test.ts` 与 `src/foo.ts` 同目录 |
+| 测试目录 | 新插件单元测试统一放在 `test/*.test.ts`；迁移期允许保留已有 `src/**/*.test.ts` |
 | 80%+ 覆盖率 | `vitest run --coverage` |
 
 ## 测试规范
 
 ```bash
-pnpm test                    # 运行所有测试
-npx vitest run src/media     # 运行单个模块
+pnpm --filter './extensions/<name>' test
+pnpm --filter './extensions/<name>' exec vitest run test/media.test.ts
 ```
 
-命名：`<module>.<feature>.test.ts`
+新插件测试放在 `test/`，命名为 `<module>.<feature>.test.ts`：
 
 ```
-src/media.test.ts
-src/media.errors.test.ts
-src/monitor.test.ts
-src/monitor.webhook.test.ts
+test/media.test.ts
+test/media.errors.test.ts
+test/monitor.test.ts
+test/monitor.webhook.test.ts
 ```
 
 ## 发布

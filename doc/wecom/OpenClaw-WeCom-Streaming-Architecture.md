@@ -341,7 +341,7 @@ Webhook 额外通过 `createChannelMessageReplyPipeline` 接入 typing 生命周
 | 配置 | `streaming` / `renderMode` / `blockStreaming` | `sendThinkingMessage`、`streamPlaceholderText` |
 | 关流 | `streaming_mode: false` | `finish=true` |
 
-详见 [OpenClaw-WeCom-Feishu-SDK-Inventory.md](./OpenClaw-WeCom-Feishu-SDK-Inventory.md)。
+本节对照基于当前 OpenClaw Plugin SDK 与本仓库 WeCom 实现。
 
 ### 9.4 与 `wecom-kf` 插件对照
 
@@ -625,7 +625,6 @@ replyStream 失败 (846608)
 
 - [OpenClaw-WeCom-Configuration.md](./OpenClaw-WeCom-Configuration.md) — 安装与配置
 - [OpenClaw-WeCom-Testing.md](./OpenClaw-WeCom-Testing.md) — 联调步骤
-- [OpenClaw-WeCom-Feishu-SDK-Inventory.md](./OpenClaw-WeCom-Feishu-SDK-Inventory.md) — SDK 对照
 
 **核心源码索引**
 

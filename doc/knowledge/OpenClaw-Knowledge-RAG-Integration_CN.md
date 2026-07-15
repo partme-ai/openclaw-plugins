@@ -1,6 +1,6 @@
 # OpenClaw Knowledge 知识库 RAG 集成文档
 
-> **将 `@partme.ai/openclaw-knowledge` 独立知识库引擎集成到任意渠道插件中**，为 AI 机器人提供完整的 RAG 能力：文档自动索引、语义检索、多租户隔离、AI 主动 CRUD 操作。
+> **OpenClaw 2026.7.1 推荐将 `@partme.ai/openclaw-knowledge` 作为独立插件安装。** 插件会自行注册自动 RAG 注入和知识库 CRUD 工具；只有定制渠道配置路径时才需要使用本文的库模式 API。
 
 ---
 
@@ -25,47 +25,32 @@
 | 📄 **文档索引** | 自动切分、嵌入、存储 `.md/.txt/.csv/.json` 等文本文件 |
 | 🧠 **AI 主动 CRUD** | 4 个 Tool（add/query/update/delete）让 AI 自主操作知识库 |
 | 🔒 **多租户隔离** | 基于 `{accountId}:{mode}` 命名空间的严格数据隔离 |
-| ⚡ **零依赖起步** | 内置 ZVec 纯 JS 向量引擎，无需外部数据库即可运行 |
+| ⚡ **本地起步** | 默认 SQLite-Vec，也支持 ZVec / ZVec Native，无需独立数据库服务 |
 | 🔗 **可选增强** | Reranker 重排序、Tokenizer 上下文截断、DocParser 文档解析 |
 | 🎯 **Intent Gate** | 规则/关键词门控，只在需要时触发检索，节省 Token |
 
 ### 1.2 与其他插件的关系
 
-`@partme.ai/openclaw-knowledge` 是一个**独立的知识库引擎**，不依赖特定渠道插件。它通过标准 API 集成到渠道插件中：
+`@partme.ai/openclaw-knowledge` 是一个**独立插件**，不依赖特定渠道。OpenClaw 加载后，它会自行注册 `before_prompt_build` 和四个知识库工具：
 
 ```text
-渠道插件（wecom/lark/dingtalk...）
-  │
-  ├── 引入 @partme.ai/openclaw-knowledge 作为 npm 依赖
-  │
-  ├── 在 onRegister 中调用 registerKnowledgeHooks(api, 'channels.{channel}.knowledge')
-  │     └── 注册 before_prompt_build hook → 对话时自动检索注入
-  │
-  └── 注册 4 个知识库 Tool（或按需选择）
+OpenClaw Gateway
+  └── knowledge 独立插件
+        ├── before_prompt_build → 自动检索并注入上下文
         └── knowledge_add / query / update / delete → AI 主动读写知识库
 ```
 
 ```
-┌─────────────────────────────────────────────────┐
-│              渠道插件（如 openclaw-wecom）           │
-│  ┌─────────────┐  ┌──────────────────────────┐  │
-│  │ Bot / Agent  │  │   @partme.ai/            │  │
-│  │ 消息处理     │  │   openclaw-knowledge     │  │
-│  │             │  │                          │  │
-│  │ 用户消息 →  │  │  registerKnowledgeHooks │  │
-│  │ 发送回复    │  │  createKnowledgeAddTool  │  │
-│  │             │  │  createKnowledgeQueryTool│  │
-│  │             │  │  createKnowledgeUpdateTool│  │
-│  │             │  │  createKnowledgeDeleteTool│  │
-│  └─────────────┘  └──────────────────────────┘  │
-└─────────────────────────────────────────────────┘
+任意渠道消息 → Agent Prompt 构建 → knowledge 自动检索 → 注入 RAG 上下文
 ```
+
+若某个自定义渠道必须从 `channels.<channel>.knowledge` 读取配置，可把本包作为 npm 库，引入 `registerKnowledgeHooks` 和 Tool 工厂；这是高级兼容模式，不是默认安装方式。
 
 ---
 
-## 2. 多渠道集成方式对比
+## 2. 高级模式：嵌入渠道插件
 
-`@partme.ai/openclaw-knowledge` 可集成至任意 OpenClaw 渠道插件中。不同渠道的集成方式有所差异，下表提供快速对比：
+以下内容仅适用于需要自定义渠道级配置路径的库模式。标准部署不需要修改任何渠道插件。
 
 | 渠道 | 配置路径 | 推荐注册工具 | 集成复杂度 | 说明 |
 |------|----------|-------------|-----------|------|
@@ -80,15 +65,16 @@
 所有渠道共享同一套集成代码结构，只需修改配置路径：
 
 ```typescript
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 import { registerKnowledgeHooks, createKnowledgeAddTool, createKnowledgeQueryTool,
   createKnowledgeUpdateTool, createKnowledgeDeleteTool } from '@partme.ai/openclaw-knowledge';
 
-export function onRegister(api: PluginApi) {
+export function onRegister(api: OpenClawPluginApi) {
   registerKnowledgeHooks(api, 'channels.{channel}.knowledge');
-  api.registerTool(createKnowledgeAddTool);
-  api.registerTool(createKnowledgeQueryTool);
-  api.registerTool(createKnowledgeUpdateTool);
-  api.registerTool(createKnowledgeDeleteTool);
+  api.registerTool((ctx) => createKnowledgeAddTool(ctx), { name: "knowledge_add" });
+  api.registerTool((ctx) => createKnowledgeQueryTool(ctx), { name: "knowledge_query" });
+  api.registerTool((ctx) => createKnowledgeUpdateTool(ctx), { name: "knowledge_update" });
+  api.registerTool((ctx) => createKnowledgeDeleteTool(ctx), { name: "knowledge_delete" });
 }
 ```
 
@@ -106,7 +92,16 @@ export function onRegister(api: PluginApi) {
 
 ## 3. 安装
 
-### 3.1 添加 npm 依赖
+### 3.1 独立插件安装（推荐）
+
+```bash
+openclaw plugins install @partme.ai/openclaw-knowledge
+openclaw gateway restart
+```
+
+当前要求：OpenClaw >= 2026.7.1、Node.js >= 22。
+
+### 3.2 添加 npm 依赖（高级库模式）
 
 在渠道插件项目中安装：
 
@@ -118,29 +113,29 @@ pnpm add @partme.ai/openclaw-knowledge
 yarn add @partme.ai/openclaw-knowledge
 ```
 
-### 3.2 验证安装
+### 3.3 验证库模式依赖
 
 ```bash
 # 确认依赖已添加
 npm ls @partme.ai/openclaw-knowledge
 
 # 输出示例
-# openclaw-wecom@2026.3.24-beta /path/to/openclaw-wecom
-# └── @partme.ai/openclaw-knowledge@0.1.0
+# @partme.ai/wecom@2026.6.1 /path/to/openclaw-plugins/extensions/wecom
+# └── @partme.ai/openclaw-knowledge@2026.5.25-2
 ```
 
 ---
 
-## 4. 集成方式
+## 4. 高级库模式集成方式
 
 ### 4.1 package.json 依赖声明
 
-```json
+```jsonc
 {
-  "name": "openclaw-wecom",
-  "version": "2026.3.24-beta",
+  "name": "@partme.ai/wecom",
+  "version": "2026.6.1",
   "dependencies": {
-    "@partme.ai/openclaw-knowledge": "^0.1.0",
+    "@partme.ai/openclaw-knowledge": "^2026.5.25-2",
     "zod": "^4.3.6"
     // ... 其他已有依赖
   }
@@ -152,7 +147,7 @@ npm ls @partme.ai/openclaw-knowledge
 在插件的入口文件（如 `index.ts` 或 `src/register.ts`）中的 `onRegister` 函数内完成集成。以下以企业微信（wecom）为例：
 
 ```typescript
-import type { PluginApi } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 import {
   registerKnowledgeHooks,
   createKnowledgeAddTool,
@@ -161,16 +156,16 @@ import {
   createKnowledgeDeleteTool,
 } from '@partme.ai/openclaw-knowledge';
 
-export function onRegister(api: PluginApi) {
+export function onRegister(api: OpenClawPluginApi) {
   // ── 1. 注册知识库 hooks（自动检索注入） ──
   // 第二个参数 "channels.wecom.knowledge" 指定配置读取路径
   registerKnowledgeHooks(api, 'channels.wecom.knowledge');
 
   // ── 2. 注册 4 个知识库 CRUD Tool ──
-  api.registerTool(createKnowledgeAddTool);
-  api.registerTool(createKnowledgeQueryTool);
-  api.registerTool(createKnowledgeUpdateTool);
-  api.registerTool(createKnowledgeDeleteTool);
+  api.registerTool((ctx) => createKnowledgeAddTool(ctx), { name: "knowledge_add" });
+  api.registerTool((ctx) => createKnowledgeQueryTool(ctx), { name: "knowledge_query" });
+  api.registerTool((ctx) => createKnowledgeUpdateTool(ctx), { name: "knowledge_update" });
+  api.registerTool((ctx) => createKnowledgeDeleteTool(ctx), { name: "knowledge_delete" });
 
   // ── 3.（可选）在 knowledge.enabled 时注入使用指引 ──
   const knowledgeEnabled = !!(api.config as any)?.channels?.wecom?.knowledge?.enabled;
@@ -197,17 +192,17 @@ export function onRegister(api: PluginApi) {
 #### 飞书（Lark）——基础集成（add + query）
 
 ```typescript
-import type { PluginApi } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 import {
   registerKnowledgeHooks,
   createKnowledgeAddTool,
   createKnowledgeQueryTool,
 } from '@partme.ai/openclaw-knowledge';
 
-export function onRegister(api: PluginApi) {
+export function onRegister(api: OpenClawPluginApi) {
   registerKnowledgeHooks(api, 'channels.lark.knowledge');
-  api.registerTool(createKnowledgeAddTool);
-  api.registerTool(createKnowledgeQueryTool);
+  api.registerTool((ctx) => createKnowledgeAddTool(ctx), { name: "knowledge_add" });
+  api.registerTool((ctx) => createKnowledgeQueryTool(ctx), { name: "knowledge_query" });
 
   const knowledgeEnabled = !!(api.config as any)?.channels?.lark?.knowledge?.enabled;
   if (knowledgeEnabled) {
@@ -229,16 +224,16 @@ export function onRegister(api: PluginApi) {
 #### 微信公众号（Weixin）——仅检索
 
 ```typescript
-import type { PluginApi } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 import {
   registerKnowledgeHooks,
   createKnowledgeQueryTool,
 } from '@partme.ai/openclaw-knowledge';
 
-export function onRegister(api: PluginApi) {
+export function onRegister(api: OpenClawPluginApi) {
   // 公众号被动回复模式，仅注册检索工具
   registerKnowledgeHooks(api, 'channels.weixin.knowledge');
-  api.registerTool(createKnowledgeQueryTool);
+  api.registerTool((ctx) => createKnowledgeQueryTool(ctx), { name: "knowledge_query" });
 }
 ```
 
@@ -672,7 +667,7 @@ openclaw logs | grep "registerTool"
 
 | 资源 | 链接 |
 |------|------|
-| `@partme.ai/openclaw-knowledge` 源码 | [GitHub](https://github.com/partme-ai/openclaw-knowledge) |
+| `@partme.ai/openclaw-knowledge` 源码 | [openclaw-plugins/extensions/knowledge](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/knowledge) |
 | OpenClaw 插件 SDK | [文档](https://docs.openclaw.ai) |
 | 知识库 RAG 架构设计 | [架构文档](OpenClaw-Knowledge-RAG-Architecture_CN.md) |
 | 安装与配置指南 | [使用指南](OpenClaw-Knowledge-RAG-Guide_CN.md) |

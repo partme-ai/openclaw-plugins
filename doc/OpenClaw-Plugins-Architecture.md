@@ -7,22 +7,12 @@ openclaw-plugins is an enterprise OpenClaw plugin collection developed and furth
 ### 1.1 What We Have
 
 ```
-                     OpenClaw Gateway
-                           │
-    ┌───────────────────────┼───────────────────────┐
-    │                       │                       │
-    ▼                       ▼                       ▼
-┌──────────┐         ┌──────────┐           ┌──────────┐
-│ IM 渠道   │         │ 消息队列  │           │ 能力增强 │
-│ wecom     │         │ mqtt     │           │ knowledge│
-│ wechat    │         │ rabbitmq │           │ memory   │
-│ dingtalk  │         │ redis    │           │ router   │
-│ qqbot     │         │ rocketmq │           │          │
-│ lark      │         │ stomp    │           │          │
-│ wecom-kf  │         │ web-mqtt │           │          │
-│ wechat-   │         │ web-stomp│           │          │
-│   ipad    │         │ cluster  │           │          │
-└──────────┘         └──────────┘           └──────────┘
+                       OpenClaw Gateway
+                              │
+       ┌──────────────┬───────┴────────┬──────────────┐
+       ▼              ▼                ▼              ▼
+ Business / IM     Messaging and     Capabilities    Infrastructure / SDK
+ channels          transports        RAG / Memory   Nacos / tracing / ...
 ```
 
 ### 1.2 What We Need
@@ -30,7 +20,7 @@ openclaw-plugins is an enterprise OpenClaw plugin collection developed and furth
 | Gap | Problem | Solution |
 |-----|---------|----------|
 | **Cross-channel routing** | WeCom messages cannot auto-forward to MQ; MQ messages cannot reply to IM | openclaw-router |
-| **Knowledge out-of-box** | knowledge plugin exists but requires Agent to actively call tools | Router auto-injects RAG context |
+| **Knowledge out-of-box** | Agents need relevant knowledge without an explicit tool call | knowledge auto-injects RAG through `before_prompt_build` |
 | **Long-term memory** | Each conversation starts from zero | openclaw-memory (L0→L3) |
 | **Message audit** | No unified message record | Router audit logging |
 | **Agent mapping** | Customer service agents map to different AI agents | wecom-kf multi-agent binding |
@@ -52,7 +42,7 @@ openclaw-plugins is an enterprise OpenClaw plugin collection developed and furth
 │  Layer 4 — Message Router (openclaw-router)                 │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐  │
 │  │ Rule     │ │ Forward  │ │ Audit    │ │ Knowledge/   │  │
-│  │ Engine   │ │ Engine   │ │ Logger   │ │ Memory Inj.  │  │
+│  │ Engine   │ │ Engine   │ │ Logger   │ │ Deduplication│  │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────────┘  │
 └────────────────────────────┬────────────────────────────────┘
                              │
@@ -75,10 +65,10 @@ openclaw-plugins is an enterprise OpenClaw plugin collection developed and furth
 ┌────────────────────────────▼────────────────────────────────┐
 │  Layer 1 — Channel Layer (NO modification needed)           │
 │  ┌─────────────────────┐  ┌──────────────────────────────┐  │
-│  │ IM Channels (7)     │  │ MQ Channels (7)              │  │
-│  │ wecom wechat        │  │ mqtt web-mqtt stomp          │  │
-│  │ dingtalk qqbot lark │  │ web-stomp rabbitmq redis     │  │
-│  │ wecom-kf wechat-ipad│  │ rocketmq cluster             │  │
+│  │ Business / IM       │  │ Messaging and transports     │  │
+│  │ wecom wechat        │  │ mqtt rabbitmq redis-stream   │  │
+│  │ wecom-kf wechat-ipad│  │ stomp web-stomp rocketmq     │  │
+│  │ amap douyin bridge… │  │ web-mqtt web-socket gotify  │  │
 │  └─────────────────────┘  └──────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -87,19 +77,17 @@ openclaw-plugins is an enterprise OpenClaw plugin collection developed and furth
 
 The key insight is simple:
 
-> **OpenClaw's `api.on("agent_end", ctx)` fires for ALL channels. A non-channel plugin can listen to every channel's message flow.**
+> **OpenClaw 2026.7.1 exposes cross-channel `message_received`, `message_sent`, and `reply_dispatch` hooks.**
 
 This means we never modify wecom, dingtalk, or any channel plugin code. The router sits outside, watching all events.
 
 ```
 wecom plugin:                      openclaw-router:
   register(api) {                    register(api) {
-    api.registerChannel({...});        api.on("agent_end", (event, ctx) => {
-    // only handles message              // ctx.channelId tells which channel
-    // format conversion                 // now decide: forward? reply-via?
-  }                                    });
-                                      }
-                                    }
+    api.registerChannel({...});        api.on("message_received", inboundHandler);
+    // channel protocol adapter only    api.on("message_sent", outboundHandler);
+  }                                    api.on("reply_dispatch", replyHandler);
+                                     }
 ```
 
 ### 2.3 Three Message Flows
@@ -112,21 +100,16 @@ Customer @WeCom bot: "我的订单在哪"
     ▼
 [wecom plugin] → format conversion → OpenClaw message
     │
-    ▼
-[Agent "sales"] → processes → generates reply
+    ├──→ [router] message_received
+    │       └→ [mqtt] publish to "openclaw/audit/wecom/inbound"
     │
-    ├──→ [wecom plugin] → send reply to WeCom ← normal path
-    │
-    └──→ [router] agent_end event
-            │
-            ├─ matches rule: channel=wecom → forward-copy:inbound
-            │   └→ [mqtt] publish to "openclaw/audit/wecom/inbound"
-            │
-            └─ matches rule: channel=wecom → forward-copy:outbound
-                └→ [mqtt] publish to "openclaw/audit/wecom/outbound"
-                    │
-                    ▼
-                [Business system subscribes] → SCRM dashboard sees full conversation
+    └──→ [Agent "sales"] → processes → generates reply
+            ├──→ [wecom plugin] → send reply to WeCom ← normal path
+            └──→ [router] message_sent
+                    └→ [mqtt] publish to "openclaw/audit/wecom/outbound"
+                            │
+                            ▼
+                        [Business system subscribes] → SCRM dashboard sees full conversation
 ```
 
 **Flow 2: MQ Inbound (Business system → Agent → IM reply)**
@@ -146,7 +129,7 @@ Publish to MQTT: "openclaw/agent/ops/inbound"
     │
     ├──→ [mqtt plugin] → reply on same topic ← normal path
     │
-    └──→ [router] agent_end event
+    └──→ [router] reply_dispatch event
             │
             └─ matches rule: channel=mqtt + topic=openclaw/agent/ops/inbound → reply-via:wecom
                 └→ [wecom plugin] → send to user:admin_ops
@@ -161,12 +144,12 @@ Publish to MQTT: "openclaw/agent/ops/inbound"
 Any message arrives at Agent
     │
     ▼
-[router] before_prompt_build event
+[OpenClaw Prompt / Memory Host]
     │
-    ├─ [knowledge] auto-search → "订单API文档: GET /api/orders/{id}…"
+    ├─ [knowledge] `before_prompt_build` auto-search → "订单API文档: GET /api/orders/{id}…"
     │   └→ inject into system context
     │
-    └─ [memory] auto-recall → "用户上次问过退换货政策，对配送时效不满"
+    └─ [memory] Memory Host auto-recall → "用户上次问过退换货政策，对配送时效不满"
         └→ inject into system context
     │
     ▼
@@ -182,8 +165,10 @@ Any message arrives at Agent
 **Type**: Non-channel plugin (like nacos, prometheus)
 
 **Events monitored**:
-- `api.on("agent_end")` — fires after every agent reply, for ALL channels
-- `api.on("before_prompt_build")` — fires before every prompt is sent to LLM
+- `api.on("message_received")` — forwards inbound message copies
+- `api.on("message_sent")` — forwards successfully delivered outbound copies
+- `api.on("reply_dispatch")` — performs configured cross-channel `reply-via` actions
+- `api.on("gateway_stop")` — clears the process-local deduplication cache
 
 **Rule matching**:
 
@@ -217,7 +202,7 @@ Any message arrives at Agent
           {
             "type": "reply-via",
             "target": "wecom-kf",
-            "to": "{{metadata.originalUserId}}"
+            "to": "external-user-id"
           }
         ]
       },
@@ -238,15 +223,6 @@ Any message arrives at Agent
         ]
       }
     ],
-    "knowledge": {
-      "autoInject": true,
-      "maxResults": 5,
-      "scoreThreshold": 0.3
-    },
-    "memory": {
-      "autoInject": true,
-      "maxResults": 5
-    },
     "audit": {
       "enabled": true,
       "logToConsole": false
@@ -260,32 +236,24 @@ Any message arrives at Agent
 |-------|------------|
 | `match.channels` | Which channels to match (empty = all) |
 | `match.direction` | `inbound` (user→agent), `outbound` (agent→reply), `both` |
-| `match.topic` | MQ topic pattern to match (for MQ channels) |
+| `match.topic` | Exact MQ topic match (for MQ channels) |
 | `match.accountId` | Specific account to match |
 | `action.type` | `forward` (copy to MQ) or `reply-via` (send to IM channel) |
 | `action.target` | Target channel ID |
-| `action.topic` | MQ topic (supports `{{variable}}` templates) |
+| `action.topic` | MQ topic (supports `{{channel}}`, `{{direction}}`, and `{{account}}`) |
 
-**Core code flow** (165 lines):
+**Core code flow**:
 ```typescript
-api.on("agent_end", (event, ctx) => {
+api.on("message_received", (event, ctx) => {
   for (const rule of cfg.rules) {
     if (matchRule(rule, ctx.channelId, "inbound")) {
-      for (const action of rule.actions) {
-        if (action.type === "forward") {
-          api.publishInbound({ channel: action.target, content: userMsg, topic: action.topic });
-        }
-      }
-    }
-    if (matchRule(rule, ctx.channelId, "outbound")) {
-      for (const action of rule.actions) {
-        if (action.type === "reply-via") {
-          api.publishInbound({ channel: action.target, content: agentReply, to: action.to });
-        }
-      }
+      executeForward(api, cfg, { rule, direction: "inbound", content: event.content });
     }
   }
 });
+
+api.on("message_sent", outboundForwardHandler);
+api.on("reply_dispatch", replyViaHandler);
 ```
 
 ### 3.2 openclaw-memory — Long-Term Memory (L0→L3)
@@ -293,7 +261,8 @@ api.on("agent_end", (event, ctx) => {
 **Architecture**:
 ```
 Conversation start
-  → before_prompt_build: keyword search memories → inject context
+  → Memory Host obtains MemorySearchManager
+  → framework searches relevant records and injects context
 
 Conversation end
   → agent_end: capture messages → L0 JSONL recording
@@ -306,10 +275,10 @@ Conversation end
 **Key differences from memory-tdai reference**:
 | memory-tdai | openclaw-memory |
 |-------------|-----------------|
-| node-llama-cpp for embedding | Remote API (optional) or keyword-only |
-| sqlite-vec hard dependency | JSONL primary, SQLite optional |
+| node-llama-cpp for embedding | Keyword-only retrieval with no external dependency |
+| sqlite-vec hard dependency | JSONL primary storage; vector backend disabled |
 | L2/L3 scene + persona | L1 keyword first, L2/L3 planned |
-| Built-in embedded agent | Reuses OpenClaw's configured LLM |
+| Built-in embedded agent | Deterministic keyword extraction; no additional LLM call |
 
 **Data format** (records JSONL, one line per record):
 ```json
@@ -338,11 +307,11 @@ Customer Service Agent #1 (售前-热情型)
 
 ### 3.4 knowledge — RAG Auto-Injection
 
-The knowledge plugin (already exists) provides RAG capabilities. The router bridges the gap by auto-injecting search results before the agent processes the message:
+The knowledge plugin registers its own `before_prompt_build` hook for automatic RAG injection. It also registers `knowledge_add`, `knowledge_query`, `knowledge_update`, and `knowledge_delete` tools:
 
 ```
 User message → before_prompt_build
-  → router calls knowledge_search tool
+  → knowledge retrieves relevant chunks
   → appends results to system context
   → Agent sees relevant docs without explicitly calling any tool
 ```
@@ -354,12 +323,13 @@ User message → before_prompt_build
 ### Phase 1: Foundation (current) ✅
 | Item | Status |
 |------|--------|
-| openclaw-router core (165 lines) | ✅ |
-| openclaw-memory core (303 lines) | ✅ |
+| openclaw-router core | ✅ |
+| openclaw-memory core | ✅ |
 | Enterprise architecture doc | ✅ |
-| 29 plugins migrated & standardized | ✅ |
+| 29 plugins governed in the monorepo and Profiles | ✅ |
+| Existing plugin structure convergence | In progress |
 
-### Phase 2: Deep Integration (2-3 weeks)
+### Phase 2: Deep Integration (in progress)
 | Item | Priority |
 |------|----------|
 | Channel-to-MQ forwarding in production | P0 |
@@ -386,7 +356,7 @@ User message → before_prompt_build
 **Decision**: External router plugin. Never modify channel code.
 
 **Rationale**:
-- OpenClaw's `agent_end` event fires for all channels — router can observe everything
+- OpenClaw's `message_received`, `message_sent`, and `reply_dispatch` hooks expose the cross-channel message lifecycle used by router
 - Changing channel code creates fork maintenance burden
 - External router allows rule changes without redeploying channels
 - New IM channels added later automatically get routing capability
@@ -424,7 +394,24 @@ User message → before_prompt_build
 **Wire envelope (v1)**:
 
 ```json
-{ "version": "1", "message": { }, "headers": { "correlationId", "idempotencyKey", "replyRoute" } }
+{
+  "version": "1",
+  "message": {
+    "messageId": "mqtt-123",
+    "traceId": "trace-123",
+    "timestamp": 1784116800000,
+    "source": { "channel": "mqtt", "accountId": "default", "userId": "device-1", "chatType": "direct" },
+    "contentType": "text",
+    "text": "hello",
+    "media": [],
+    "direction": "inbound"
+  },
+  "headers": {
+    "correlationId": "corr-123",
+    "idempotencyKey": "idem-123",
+    "replyRoute": { "topic": "openclaw/replies/device-1" }
+  }
+}
 ```
 
 Backward compatible with `{ "text": "..." }` and plain text via `parseTransportPayload`.
@@ -438,6 +425,7 @@ Backward compatible with `{ "text": "..." }` and plain text via `parseTransportP
 ## 6. Verification
 
 ```bash
+# Prerequisite: OpenClaw >= 2026.7.1
 # Start OpenClaw with router + memory + IM + MQ
 openclaw gateway --port 18789
 
@@ -446,6 +434,7 @@ openclaw plugins install @partme.ai/wecom
 openclaw plugins install @partme.ai/openclaw-mqtt
 openclaw plugins install @partme.ai/openclaw-router
 openclaw plugins install @partme.ai/openclaw-memory
+openclaw plugins install @partme.ai/openclaw-knowledge
 
 # Configure cross-channel routing in openclaw.json
 # ... router.rules as shown above ...
@@ -453,7 +442,7 @@ openclaw plugins install @partme.ai/openclaw-memory
 # Test flow:
 # 1. Send message in WeCom → check MQTT topic receives copy
 # 2. Publish to MQTT → check WeCom receives reply
-# 3. Check before_prompt_build injects knowledge + memory context
+# 3. Check knowledge before_prompt_build and Memory Host injection
 ```
 
 ## About openclaw-plugins

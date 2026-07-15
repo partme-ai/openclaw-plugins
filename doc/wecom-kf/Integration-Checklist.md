@@ -16,7 +16,7 @@
 - [ ] 依赖版本对齐（monorepo 当前）：
   - `@partme.ai/wecom-kf`：与 workspace 同步
   - `@partme.ai/openclaw-message-sdk`：workspace 版本
-  - `openclaw` peer：`>=2026.4.12`
+  - `openclaw` peer：`>=2026.7.1`
 - [ ] 本地自检：
 
 ```bash

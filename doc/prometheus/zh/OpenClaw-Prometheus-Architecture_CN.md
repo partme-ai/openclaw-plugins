@@ -6,7 +6,7 @@
 > 它遵循 OpenClaw 插件规范与 `definePluginEntry` 入口模型，将 OpenClaw Gateway 的运行时状态、会话活动、模型消耗、渠道健康等核心指标以 Prometheus 标准格式导出，实现**全链路可观测性**。
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg)](#)
-[![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-Plugin_2026.4.0-green.svg)](#)
+[![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-Plugin_2026.7.1-green.svg)](#)
 [![Prometheus](https://img.shields.io/badge/Prometheus-Exposition_Format-orange.svg)](#)
 
 ---

@@ -37,7 +37,7 @@
 - 安装插件：`openclaw plugins install @partme.ai/wecom`
 - 在企业微信后台进入 **安全与管理 -> 管理工具 -> 智能机器人**，创建 **API 模式**机器人，并复制 Bot ID 与 Secret。API 模式表示 OpenClaw 使用官方 Bot API 连接，而不是普通群机器人 Webhook。
 - 复制 Bot ID 和 Secret。
-- 使用 Node.js 22+ 与 OpenClaw 2026.4.12+。
+- 使用 Node.js 22+ 与 OpenClaw 2026.7.1+。
 
 ### 完整 JSON
 

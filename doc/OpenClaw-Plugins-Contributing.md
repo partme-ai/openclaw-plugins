@@ -3,37 +3,43 @@
 ## Creating a New Plugin
 
 ```bash
-pnpm new-plugin <name> --label "Display Name" --desc "Description"
+pnpm new-plugin PLUGIN_NAME --label "Display Name" --desc "Description"
 ```
 
 This generates a complete scaffold from `extensions/_template`:
 
 ```
 extensions/<name>/
-├── index.ts              # Plugin entry point
 ├── openclaw.plugin.json  # OpenClaw manifest
 ├── package.json          # npm metadata
 ├── tsconfig.json         # TypeScript config
 ├── tsup.config.ts        # Build config
 ├── vitest.config.ts      # Test config
-└── src/
-    ├── channel.ts        # ChannelPlugin implementation
-    ├── config.ts         # Zod schema + JSON Schema
-    ├── media.ts          # Media handling
-    ├── monitor.ts        # Message dedup + webhook
-    ├── runtime.ts        # Runtime singleton
-    └── types.ts          # Type definitions
+├── src/
+│   ├── index.ts          # Runtime entry: defineChannelPluginEntry
+│   ├── setup-entry.ts    # Setup cold-path entry
+│   ├── channel.ts        # ChannelPlugin implementation
+│   ├── channel-setup-factory.ts # Setup adapter and wizard
+│   ├── onboarding.ts     # Setup flow exports
+│   ├── inbound.ts        # Inbound message handling
+│   ├── outbound.ts       # Outbound message adapter
+│   ├── config.ts         # Configuration parsing and validation
+│   ├── runtime.ts        # Runtime state
+│   ├── types.ts          # Type definitions
+│   └── transport/
+│       └── server.ts     # Webhook, HTTP, or broker I/O
+└── test/
+    └── *.test.ts         # Plugin unit tests
 ```
 
 ## Development Workflow
 
 ```bash
-cd extensions/<name>
-pnpm install
-pnpm dev               # Watch mode (tsup --watch)
-pnpm typecheck         # Type check (tsc --noEmit)
-pnpm test              # Run tests (vitest)
-pnpm build             # Production build
+pnpm install                                      # Install once at the repository root
+pnpm --filter './extensions/<name>' dev           # Watch mode (tsup --watch)
+pnpm --filter './extensions/<name>' typecheck     # Type check (tsc --noEmit)
+pnpm --filter './extensions/<name>' test          # Run tests (vitest)
+pnpm --filter './extensions/<name>' build         # Production build
 ```
 
 ## Specification
@@ -46,23 +52,23 @@ All plugins MUST comply with [spec/PLUGIN_SPEC.md](../spec/PLUGIN_SPEC.md):
 | Zod + JSON Schema | Export schema from `src/config.ts` |
 | Typed errors | Custom Error subclasses with structured fields |
 | Status reporting | `setStatus` throughout lifecycle |
-| Co-located tests | `src/foo.test.ts` alongside `src/foo.ts` |
+| Test directory | Put new plugin tests in `test/*.test.ts`; existing `src/**/*.test.ts` may remain during migration |
 | 80%+ coverage | `vitest run --coverage` |
 
 ## Test Conventions
 
 ```bash
-pnpm test                    # All tests
-npx vitest run src/media     # Single module
+pnpm --filter './extensions/<name>' test
+pnpm --filter './extensions/<name>' exec vitest run test/media.test.ts
 ```
 
-Naming: `<module>.<feature>.test.ts`
+Put new tests under `test/`, named `<module>.<feature>.test.ts`:
 
 ```
-src/media.test.ts
-src/media.errors.test.ts
-src/monitor.test.ts
-src/monitor.webhook.test.ts
+test/media.test.ts
+test/media.errors.test.ts
+test/monitor.test.ts
+test/monitor.webhook.test.ts
 ```
 
 ## Publishing

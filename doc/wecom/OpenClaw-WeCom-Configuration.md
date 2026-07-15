@@ -37,7 +37,7 @@ Use this when you want the shortest path to a WeCom smart robot DM conversation.
 - Install the plugin: `openclaw plugins install @partme.ai/wecom`
 - In WeCom admin, go to **Security and Management -> Management Tools -> Smart Robot**, create a robot in **API mode**, then copy the generated Bot ID and Secret. API mode means OpenClaw connects with the official Bot API instead of a group webhook URL.
 - Copy the Bot ID and Secret from WeCom admin.
-- Use Node.js 22+ and OpenClaw 2026.4.12+.
+- Use Node.js 22+ and OpenClaw 2026.7.1+.
 
 ### Complete JSON
 

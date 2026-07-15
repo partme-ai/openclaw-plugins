@@ -407,8 +407,8 @@ sequenceDiagram
 | 组件 | 关系 |
 |------|------|
 | `@partme.ai/openclaw-message-sdk` | 公共 util、transcript 流式、routing、config merge、keyed queue |
-| `openclaw-router` | 通过 `agent_end` 监听 wecom，**无需修改本插件** |
-| `openclaw-knowledge` | 可配置 `channels.wecom.knowledge` 或 router 自动注入 |
+| `openclaw-router` | 通过 `message_received`、`message_sent`、`reply_dispatch` 观察消息生命周期，**无需修改本插件** |
+| `openclaw-knowledge` | 独立注册 `before_prompt_build` 自动注入；高级库模式可读取 `channels.wecom.knowledge` |
 | `message-sdk` | MQ 桥接场景可选；WeCom 主路径走 OpenClaw ChannelPlugin |
 
 ---
@@ -420,7 +420,6 @@ sequenceDiagram
 | [Configuration](./OpenClaw-WeCom-Configuration.md) | 安装、双模配置、多账号、访问控制 |
 | [Streaming Architecture](./OpenClaw-WeCom-Streaming-Architecture.md) | 流式协议细节、状态机、演进路线 |
 | [Testing](./OpenClaw-WeCom-Testing.md) | 联调、`user:` 前缀、93006 |
-| [Feishu SDK Inventory](./OpenClaw-WeCom-Feishu-SDK-Inventory.md) | plugin-sdk 映射 |
 | [extensions/wecom/README.md](../../extensions/wecom/README.md) | npm 包说明、Cron、构建 |
 
 ---

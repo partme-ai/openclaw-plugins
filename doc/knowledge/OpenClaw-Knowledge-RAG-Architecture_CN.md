@@ -1,11 +1,13 @@
 # OpenClaw Knowledge RAG 引擎 — 架构设计文档
 >
-> **OpenClaw Knowledge RAG = 面向 OpenClaw 渠道插件的知识库增强引擎。**
+> **当前基线：OpenClaw 2026.7.1。** 推荐以独立插件方式运行：配置来自 `plugins.entries.knowledge.config`，插件自行注册 `before_prompt_build` 与四个 `knowledge_*` 工具。文中 `channels.<channel>.knowledge` 仅表示高级库模式兼容路径。
+>
+> **OpenClaw Knowledge RAG = 面向 OpenClaw Gateway 的独立知识库增强插件。**
 >
 > 它基于 OpenClaw 的 `before_prompt_build` hook 机制，为企微、飞书、钉钉、QQ 机器人、微信等多渠道 AI 对话注入向量检索增强生成（RAG）上下文，实现**文件自动入库、语义检索、多租户隔离**的一站式知识管理。
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](#)
-[![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-Plugin_2026.3.24--beta.2-green.svg)](#)
+[![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-Plugin_2026.7.1-green.svg)](#)
 [![Multi-Channel](https://img.shields.io/badge/Channel-wecom|lark|dingtalk|qqbot|weixin-green.svg)](#)
 
 ---
@@ -135,17 +137,14 @@ graph TB
 
 ## 3. 多渠道集成架构
 
-`openclaw-knowledge` 设计为独立于渠道插件的 RAG 引擎，各渠道通过 ~10 行胶水代码集成。集成方式完全一致，仅 [配置路径](config-path-diff) 和 [可用的文档获取 skill](skill-diff) 不同。
+`openclaw-knowledge` 是独立于渠道插件的 RAG 引擎。标准部署由 OpenClaw 直接加载，不需要在各渠道中添加胶水代码；只有定制渠道配置路径时才使用库模式 API。
 
-| 渠道 | 插件包名 | 配置路径 | 集成代码 | 特有文档 Skill |
-|------|---------|---------|---------|--------------|
-| **企微** | `@mocrane/wecom` | `channels.wecom.knowledge` | ~10 行 `onRegister` | `wecom-doc` |
-| **飞书** | `@partme.ai/openclaw-lark` | `channels.lark.knowledge` | ~10 行 | `feishu-fetch-doc` |
-| **钉钉** | `@partme.ai/openclaw-dingtalk` | `channels.dingtalk.knowledge` | ~10 行 | 待实现 |
-| **QQ 机器人** | `@partme.ai/openclaw-qqbot` | `channels.qqbot.knowledge` | ~10 行 | 待实现 |
-| **微信** | `@partme.ai/openclaw-weixin` | `channels.weixin.knowledge` | ~10 行 | 待实现 |
+| 模式 | 配置来源 | 是否修改渠道插件 | 适用场景 |
+|------|----------|------------------|----------|
+| **独立插件（推荐）** | `plugins.entries.knowledge.config` / `api.pluginConfig` | 否 | 所有标准 OpenClaw 渠道 |
+| **高级库模式** | 显式传给 `registerKnowledgeHooks(api, configPath)` 的路径 | 是 | 自定义渠道配置继承或二次开发 |
 
-> **集成代码示例（通用）**：
+> **高级库模式集成示例**：
 > ```typescript
 > import { registerKnowledgeHooks, createKnowledgeAddTool,
 >   createKnowledgeQueryTool, createKnowledgeUpdateTool,

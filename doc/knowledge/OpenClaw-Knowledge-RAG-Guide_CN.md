@@ -1,6 +1,8 @@
 # OpenClaw Knowledge 知识库 RAG 安装与配置指南
 
-> 本指南面向希望为 AI 机器人开启知识库 RAG 能力的使用者，覆盖从安装、配置、快速验证到生产部署的完整路径。知识库 RAG 功能由独立插件 `@partme.ai/openclaw-knowledge` 提供，可集成至任意渠道插件中。
+> 本指南面向希望为 AI 机器人开启知识库 RAG 能力的使用者，覆盖从安装、配置、快速验证到生产部署的完整路径。OpenClaw 2026.7.1 推荐直接安装独立插件 `@partme.ai/openclaw-knowledge`；无需修改渠道插件。
+
+> 文中保留的 `channels.<channel>.knowledge` 示例仅适用于显式调用 `registerKnowledgeHooks(api, configPath)` 的高级库模式；标准部署统一使用 `plugins.entries.knowledge.config`。
 
 ---
 
@@ -19,10 +21,10 @@
 
 | 条件 | 说明 | 默认值 |
 |------|------|--------|
-| OpenClaw 版本 | ≥ 2026.3.24-beta.2 | - |
-| LLM 可用 | API Key 已配置，用于 Embedding 调用 | 复用 LLM 配置 |
-| 存储后端 | ZVec 零依赖 / SQLite-Vec 需 `better-sqlite3` | ZVec |
-| 渠道插件 | 已完成基础安装（如 `openclaw-wecom`、`openclaw-lark` 等） | - |
+| OpenClaw 版本 | ≥ 2026.7.1 | - |
+| Embedding 可用 | 配置 `embedding.apiKey`，或提供 `OPENAI_API_KEY` / 对应 Provider 凭据 | OpenAI-compatible |
+| 存储后端 | SQLite-Vec、ZVec 或 ZVec Native | SQLite-Vec |
+| OpenClaw Gateway | 已安装并可以加载插件 | - |
 
 > 建议先完成渠道插件的基础配置（Bot 或 Agent 模式均可），再开启知识库。参考各渠道插件的基础安装指南。
 
@@ -33,27 +35,30 @@
 ### 1.1 安装知识库插件
 
 ```bash
-# 在渠道插件项目中安装独立知识库引擎
-npm install @partme.ai/openclaw-knowledge
-# 或
-pnpm add @partme.ai/openclaw-knowledge
+openclaw plugins install @partme.ai/openclaw-knowledge
+openclaw gateway restart
 ```
 
 ### 1.2 最小配置
 
-以企业微信（wecom）渠道为例：
+独立插件配置位于 `plugins.entries.knowledge.config`：
 
 ```json
 {
-  "channels": {
-    "wecom": {
+  "plugins": {
+    "entries": {
       "knowledge": {
         "enabled": true,
-        "embedding": {
-          "model": "text-embedding-3-small"
-        },
-        "store": {
-          "provider": "zvec"
+        "config": {
+          "enabled": true,
+          "embedding": {
+            "provider": "openai",
+            "model": "text-embedding-3-small"
+          },
+          "store": {
+            "provider": "sqlite-vec",
+            "dbPath": "./data/knowledge.db"
+          }
         }
       }
     }
@@ -61,7 +66,7 @@ pnpm add @partme.ai/openclaw-knowledge
 }
 ```
 
-> **说明**：`embedding.baseUrl` 和 `apiKey` 未填写时自动复用 LLM 侧的 OpenAI 兼容配置。
+> **说明**：`embedding.baseUrl` 和 `apiKey` 未填写时，OpenAI-compatible Provider 读取 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 和 `OPENAI_EMBEDDING_MODEL` 环境变量。
 
 ### 1.3 验证知识库是否运行
 
@@ -69,7 +74,7 @@ pnpm add @partme.ai/openclaw-knowledge
 # 查看插件状态（确认 knowledge 模块已加载）
 openclaw plugins list
 
-# 输出应包含对应渠道插件的 knowledge 子模块
+# 输出应包含已启用的 knowledge 独立插件
 ```
 
 ### 1.4 上传一个测试文档

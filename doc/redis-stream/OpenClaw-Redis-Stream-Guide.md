@@ -16,7 +16,7 @@ For architecture details and module design, see:
 
 - Node.js >= 22
 - Redis >= 7.0 (with Pub/Sub support; Streams require Redis >= 5.0, but 7.0+ recommended)
-- OpenClaw Gateway >= 2026.4.0
+- OpenClaw Gateway >= 2026.7.1
 
 ---
 

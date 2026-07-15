@@ -5,7 +5,7 @@
 > 实现**实时消息收发、持久化消费组、多 Topic 路由与会话隔离**。
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](#)
-[![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-Plugin_2026.5.18-green.svg)](#)
+[![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-Plugin_2026.7.1-green.svg)](#)
 [![Redis](https://img.shields.io/badge/Redis-%3E%3D7.0-red.svg)](#)
 [![Node](https://img.shields.io/badge/Node-%3E%3D22-brightgreen.svg)](#)
 

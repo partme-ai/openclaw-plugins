@@ -7,15 +7,12 @@ openclaw-plugins 由 **PartMe.AI 团队** 研发与二次开发，包含 29 个�
 ### 1.1 已有能力
 
 ```
-                     OpenClaw Gateway
-                           │
-    ┌───────────────────────┼───────────────────────┐
-    │                       │                       │
-    ▼                       ▼                       ▼
-┌──────────┐         ┌──────────┐           ┌──────────┐
-│ IM 渠道   │         │ 消息队列  │           │ 能力增强 │
-│ 7 个插件  │         │ 7 个插件  │           │ 3 个插件 │
-└──────────┘         └──────────┘           └──────────┘
+                       OpenClaw Gateway
+                              │
+       ┌──────────────┬───────┴────────┬──────────────┐
+       ▼              ▼                ▼              ▼
+  业务/IM 渠道     消息与传输协议      能力增强       基础设施/SDK
+  wecom/wechat     mqtt/stomp/...      RAG/Memory     nacos/tracing/...
 ```
 
 ### 1.2 缺失与方案
@@ -23,7 +20,7 @@ openclaw-plugins 由 **PartMe.AI 团队** 研发与二次开发，包含 29 个�
 | 缺失 | 问题 | 方案 |
 |------|------|------|
 | 跨渠道路由 | 企微消息无法转发到MQ，MQ消息无法回复到IM | openclaw-router |
-| 知识库开箱即用 | knowledge 插件需要 Agent 主动调用工具 | router 自动注入RAG |
+| 知识库开箱即用 | Agent 需要自动获得相关知识上下文 | knowledge 通过 `before_prompt_build` 自动注入 RAG |
 | 长期记忆 | 每次对话从零开始 | openclaw-memory (L0→L3) |
 | 消息审计 | 无统一记录 | router 审计日志 |
 | 客服映射 | 不同客服映射到不同智能体 | wecom-kf 多Agent绑定 |
@@ -42,7 +39,7 @@ openclaw-plugins 由 **PartMe.AI 团队** 研发与二次开发，包含 29 个�
 ┌────────────────────────────▼────────────────────────────────┐
 │  Layer 4 — 消息路由层 (openclaw-router)                     │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐  │
-│  │ 规则引擎  │ │ 转发引擎  │ │ 审计日志  │ │ 知识/记忆注入 │  │
+│  │ 规则引擎  │ │ 转发引擎  │ │ 审计日志  │ │ 幂等去重      │  │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────────┘  │
 └────────────────────────────┬────────────────────────────────┘
                              │
@@ -64,29 +61,27 @@ openclaw-plugins 由 **PartMe.AI 团队** 研发与二次开发，包含 29 个�
 ┌────────────────────────────▼────────────────────────────────┐
 │  Layer 1 — 通道层（零代码修改）                              │
 │  ┌─────────────────────┐  ┌──────────────────────────────┐  │
-│  │ IM渠道 (7)          │  │ MQ渠道 (7)                   │  │
-│  │ wecom wechat qqbot  │  │ mqtt rabbitmq redis-stream   │  │
-│  │ dingtalk lark       │  │ stomp web-stomp rocketmq     │  │
-│  │ wecom-kf wechat-ipad│  │ web-mqtt cluster             │  │
+│  │ 业务/IM 渠道         │  │ 消息与传输协议                │  │
+│  │ wecom wechat        │  │ mqtt rabbitmq redis-stream   │  │
+│  │ wecom-kf wechat-ipad│  │ stomp web-stomp rocketmq     │  │
+│  │ amap douyin bridge… │  │ web-mqtt web-socket gotify  │  │
 │  └─────────────────────┘  └──────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## 3. 核心设计原则：不修改任何渠道插件
 
-OpenClaw SDK 提供了关键能力：`api.on("agent_end", ctx)` 对**所有渠道**触发。
+OpenClaw 2026.7.1 SDK 提供跨渠道消息钩子：`message_received`、`message_sent` 与 `reply_dispatch`。
 
 这意味着 **openclaw-router 作为独立插件，监听所有渠道的消息事件，不需要渠道插件配合**。
 
 ```
 wecom 插件:                         openclaw-router 插件:
   register(api) {                     register(api) {
-    api.registerChannel({...})          api.on("agent_end", (event, ctx) => {
-    // 只负责格式转换                       // ctx.channelId 告诉你来自哪个渠道
-  }                                      // 现在: 转发、回复、记录
-                                       });
+    api.registerChannel({...})          api.on("message_received", handler)
+    // 只负责渠道协议适配                   api.on("message_sent", handler)
+  }                                     api.on("reply_dispatch", replyHandler)
                                      }
-                                   }
 ```
 
 ---
@@ -101,21 +96,16 @@ wecom 插件:                         openclaw-router 插件:
     ▼
 [wecom] → OpenClaw 消息
     │
-    ▼
-[Agent "sales"] → 回复
+    ├──→ [router] message_received
+    │       └→ [mqtt] publish "openclaw/audit/wecom/inbound"
     │
-    ├──→ [wecom] 回复给用户 ← 正常路径
-    │
-    └──→ [router] agent_end 事件
-            │
-            ├─ 匹配规则: channel=wecom → forward-copy:inbound
-            │   └→ [mqtt] publish "openclaw/audit/wecom/inbound"
-            │
-            └─ 匹配规则: channel=wecom → forward-copy:outbound
-                └→ [mqtt] publish "openclaw/audit/wecom/outbound"
-                    │
-                    ▼
-                [业务系统订阅] → SCRM 看板看到完整对话记录
+    └──→ [Agent "sales"] → 回复
+            ├──→ [wecom] 回复给用户 ← 正常路径
+            └──→ [router] message_sent
+                    └→ [mqtt] publish "openclaw/audit/wecom/outbound"
+                            │
+                            ▼
+                        [业务系统订阅] → SCRM 看板看到完整对话记录
 ```
 
 ### 4.2 MQ 入站流（业务系统 → Agent → IM 回复）
@@ -135,7 +125,7 @@ MQTT: "openclaw/agent/ops/inbound"
     │
     ├──→ [mqtt] 原路径回复 ← 正常路径
     │
-    └──→ [router] agent_end 事件
+    └──→ [router] reply_dispatch 事件
             │
             └─ 匹配: channel=mqtt + topic=openclaw/agent/ops/inbound
                 → reply-via:wecom → user:admin_ops
@@ -150,12 +140,12 @@ MQTT: "openclaw/agent/ops/inbound"
 任何消息到达 Agent
     │
     ▼
-[router] before_prompt_build 事件
+[OpenClaw Prompt / Memory Host]
     │
-    ├─ [knowledge] 自动搜索 → "订单API: GET /api/orders/{id}…"
+    ├─ [knowledge] `before_prompt_build` 自动搜索 → "订单API: GET /api/orders/{id}…"
     │   └→ 注入系统上下文
     │
-    └─ [memory] 自动召回 → "用户上次问过退换货政策，对配送不满"
+    └─ [memory] Memory Host 自动召回 → "用户上次问过退换货政策，对配送不满"
         └→ 注入系统上下文
     │
     ▼
@@ -166,9 +156,16 @@ MQTT: "openclaw/agent/ops/inbound"
 
 ## 5. 插件设计
 
-### 5.1 openclaw-router — 消息路由引擎（165 行核心代码）
+### 5.1 openclaw-router — 消息路由引擎
 
 **类型**：非通道插件（非 `api.registerChannel`，而是 `api.on` 监听事件）
+
+**监听事件**：
+
+- `message_received`：转发入站消息副本
+- `message_sent`：转发成功投递的出站消息副本
+- `reply_dispatch`：执行跨渠道 `reply-via`
+- `gateway_stop`：清理进程内幂等缓存
 
 **路由规则配置**：
 
@@ -188,7 +185,7 @@ MQTT: "openclaw/agent/ops/inbound"
         "id": "scrm-customer-reply",
         "match": { "channels": ["rabbitmq"], "topic": "openclaw/scrm/reply" },
         "actions": [
-          { "type": "reply-via", "target": "wecom-kf", "to": "{{metadata.originalUserId}}" }
+          { "type": "reply-via", "target": "wecom-kf", "to": "external-user-id" }
         ]
       },
       {
@@ -199,9 +196,7 @@ MQTT: "openclaw/agent/ops/inbound"
         ]
       }
     ],
-    "knowledge": { "autoInject": true, "maxResults": 5 },
-    "memory": { "autoInject": true, "maxResults": 5 },
-    "audit": { "enabled": true }
+    "audit": { "enabled": true, "logToConsole": false }
   }
 }
 ```
@@ -212,18 +207,19 @@ MQTT: "openclaw/agent/ops/inbound"
 |------|------|
 | `match.channels` | 匹配的渠道列表（空=全部） |
 | `match.direction` | `inbound`（用户→Agent）/ `outbound`（Agent回复）/ `both` |
-| `match.topic` | MQ 话题匹配（用于 MQ 渠道） |
+| `match.topic` | MQ topic 精确匹配（用于 MQ 渠道） |
 | `match.accountId` | 特定账号匹配 |
 | `action.type` | `forward`（转发副本到MQ）/ `reply-via`（回复到另一个IM渠道） |
 | `action.target` | 目标渠道 ID |
-| `action.topic` | MQ 主题（支持 `{{variable}}` 模板变量） |
+| `action.topic` | MQ 主题（支持 `{{channel}}`、`{{direction}}`、`{{account}}`） |
 
-### 5.2 openclaw-memory — 多级长期记忆（303 行核心代码）
+### 5.2 openclaw-memory — 多级长期记忆
 
 **架构**：
 ```
 对话开始
-  → before_prompt_build: 关键词搜索相关记忆 → 注入上下文
+  → Memory Host 获取 MemorySearchManager
+  → 框架搜索相关记忆并注入上下文
 
 对话结束
   → agent_end: 捕获对话 → L0 JSONL 录制
@@ -237,10 +233,10 @@ MQTT: "openclaw/agent/ops/inbound"
 
 | memory-tdai | openclaw-memory |
 |-------------|-----------------|
-| node-llama-cpp 做 embedding | 远程 API（可选）或纯关键词 |
-| sqlite-vec 硬依赖 | JSONL 主存储 |
+| node-llama-cpp 做 embedding | 纯关键词检索，零外部依赖 |
+| sqlite-vec 硬依赖 | JSONL 主存储，不启用向量后端 |
 | L2/L3 场景+画像 | 先做 L1 关键词，L2/L3 后续 |
-| 内置 embedded agent | 复用 OpenClaw 已配置的 LLM |
+| 内置 embedded agent | 当前使用确定性关键词提取，不额外调用 LLM |
 
 ### 5.3 wecom-kf — 多客服映射
 
@@ -260,9 +256,9 @@ MQTT: "openclaw/agent/ops/inbound"
 
 ### 5.4 knowledge — RAG 自动注入
 
-knowledge 插件已存在，提供 RAG 检索能力。router 在其上增加自动注入层：
+knowledge 插件自行注册 `before_prompt_build`，提供 RAG 自动检索注入；同时注册 `knowledge_add`、`knowledge_query`、`knowledge_update`、`knowledge_delete` 四个工具：
 
-用户消息 → `before_prompt_build` → router 调用 `knowledge_search` 工具 → 将结果注入系统上下文。Agent 不需要主动调用搜索工具。
+用户消息 → knowledge 的 `before_prompt_build` → 检索相关片段 → 将结果注入系统上下文。该流程不依赖 router，也不要求 Agent 主动调用检索工具。
 
 ---
 
@@ -272,12 +268,13 @@ knowledge 插件已存在，提供 RAG 检索能力。router 在其上增加自�
 
 | 项目 | 状态 |
 |------|------|
-| openclaw-router 核心（165行） | ✅ |
-| openclaw-memory 核心（303行） | ✅ |
+| openclaw-router 核心 | ✅ |
+| openclaw-memory 核心 | ✅ |
 | 企业级架构文档 | ✅ |
-| 29 个插件迁移+标准化 | ✅ |
+| 29 个插件纳入 monorepo 与 Profile 治理 | ✅ |
+| 存量插件结构规范收敛 | 进行中 |
 
-### Phase 2: 深度集成（2-3周）
+### Phase 2: 深度集成（进行中）
 
 | 项目 | 优先级 |
 |------|--------|
@@ -303,7 +300,7 @@ knowledge 插件已存在，提供 RAG 检索能力。router 在其上增加自�
 
 ### 7.1 为什么不做"修改渠道插件"而是"外部监听"
 
-OpenClaw 的 `agent_end` 事件对所有渠道触发。外部 router 可以观察一切。
+OpenClaw 的 `message_received`、`message_sent` 和 `reply_dispatch` 提供跨渠道消息观察面，外部 router 据此完成入站转发、出站审计与跨渠道回复。
 
 - 不修改渠道代码 → 零维护负担
 - 新 IM 渠道未来添加后自动获得路由能力
@@ -327,19 +324,22 @@ OpenClaw 的 `agent_end` 事件对所有渠道触发。外部 router 可以观�
 
 ### 7.4 统一消息格式
 
-轻量 SDK（`@partme.ai/message-sdk`），插件可选使用：
+统一消息 SDK（`@partme.ai/openclaw-message-sdk`）负责 MQ/STOMP/MQTT 类渠道的消息模型、线协议与 OpenClaw 分发：
 
 ```typescript
 interface UnifiedMessage {
-  sessionId: string;
+  messageId: string;
   traceId: string;
-  source: { channel: string; accountId: string; userId: string; chatType: "direct" | "group" };
-  target?: { channels: string[]; routingRule?: string };
-  contentType: "text" | "image" | "file" | "voice" | "video" | "mixed";
-  text?: string;
-  media: Array<{ url: string; type: string; name?: string }>;
-  metadata?: Record<string, unknown>;
   timestamp: number;
+  source: UnifiedMessageSource;
+  target?: UnifiedMessageTarget;
+  contentType: "text" | "markdown" | "mixed";
+  text: string;
+  markdown?: string;
+  media: MediaReference[];
+  replyToMessageId?: string;
+  metadata?: Record<string, unknown>;
+  direction: "inbound" | "outbound";
 }
 ```
 
@@ -348,14 +348,17 @@ interface UnifiedMessage {
 ## 8. 验证
 
 ```bash
+# 前置：OpenClaw >= 2026.7.1
 openclaw gateway --port 18789
 openclaw plugins install @partme.ai/wecom
 openclaw plugins install @partme.ai/openclaw-mqtt
 openclaw plugins install @partme.ai/openclaw-router
 openclaw plugins install @partme.ai/openclaw-memory
+openclaw plugins install @partme.ai/openclaw-knowledge
 
 # 配置跨渠道路由规则（如上所示）
 # 测试: 企微发消息 → MQTT 收到副本 → 业务系统处理 → MQTT 回复 → 企微收到
+# 验证 knowledge before_prompt_build 与 Memory Host 注入
 ```
 
 ## 关于 openclaw-plugins

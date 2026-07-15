@@ -2,7 +2,7 @@
 
 ## 前置条件
 
-- **OpenClaw** ≥ 2026.4.6
+- **OpenClaw** ≥ 2026.7.1
 - **Node.js** ≥ 22
 - **Nacos Server** ≥ 2.0.3（推荐）
 
@@ -20,7 +20,7 @@ openclaw plugins install @partme.ai/openclaw-nacos
 cd openclaw-nacos
 pnpm build
 npm pack
-openclaw plugins install ./partme.ai-openclaw-nacos-2026.5.12.tgz
+openclaw plugins install ./partme.ai-openclaw-nacos-2026.5.24.tgz
 ```
 
 ### 从源码安装（开发模式）

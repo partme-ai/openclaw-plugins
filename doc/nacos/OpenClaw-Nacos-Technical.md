@@ -11,7 +11,7 @@
 | Test | Vitest | 4.x |
 | Nacos SDK | nacos (npm) | 2.6.1 |
 | YAML Parser | yaml | 2.7.0 |
-| OpenClaw SDK | openclaw (peer) | ≥ 2026.4.6 |
+| OpenClaw SDK | openclaw (peer) | ≥ 2026.7.1 |
 
 ## Nacos SDK Integration
 

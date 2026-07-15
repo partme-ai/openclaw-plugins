@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Node.js** >= 22
-- **OpenClaw** >= 2026.4.0
+- **OpenClaw** >= 2026.7.1
 - **RocketMQ** >= 5.1.0 (Namesrv + Proxy on port 8081)
 - **npm** (or pnpm/yarn)
 

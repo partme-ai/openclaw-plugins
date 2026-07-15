@@ -25,9 +25,12 @@
 
 ## 0. 多渠道集成说明
 
-`@partme.ai/openclaw-knowledge` 是独立于渠道插件的 RAG 引擎。各渠道通过 import + `onRegister` 方式集成，核心集成代码完全一致：
+`@partme.ai/openclaw-knowledge` 是独立于渠道插件的 RAG 引擎。OpenClaw 2026.7.1 默认直接加载该插件，由插件自行注册 `before_prompt_build` 与四个 `knowledge_*` 工具，不需要修改渠道代码。
+
+只有定制渠道配置路径时才使用高级库模式：
 
 ```typescript
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 import {
   registerKnowledgeHooks,
   createKnowledgeAddTool,
@@ -36,26 +39,16 @@ import {
   createKnowledgeDeleteTool,
 } from '@partme.ai/openclaw-knowledge';
 
-export function onRegister(api: PluginApi) {
+export function onRegister(api: OpenClawPluginApi) {
   registerKnowledgeHooks(api, 'channels.{channel}.knowledge');
-  api.registerTool(createKnowledgeAddTool);
-  api.registerTool(createKnowledgeQueryTool);
-  api.registerTool(createKnowledgeUpdateTool);
-  api.registerTool(createKnowledgeDeleteTool);
+  api.registerTool((ctx) => createKnowledgeAddTool(ctx), { name: "knowledge_add" });
+  api.registerTool((ctx) => createKnowledgeQueryTool(ctx), { name: "knowledge_query" });
+  api.registerTool((ctx) => createKnowledgeUpdateTool(ctx), { name: "knowledge_update" });
+  api.registerTool((ctx) => createKnowledgeDeleteTool(ctx), { name: "knowledge_delete" });
 }
 ```
 
-各渠道差异仅在于：
-
-| 渠道 | 插件包名 | 配置路径 | 建议注册的工具 | 特有文档 Skill |
-|------|---------|---------|--------------|--------------|
-| **企微** | `@mocrane/wecom` | `channels.wecom.knowledge` | 全部 4 个 | `wecom-doc` |
-| **飞书** | `@partme.ai/openclaw-lark` | `channels.lark.knowledge` | add + query + update | `feishu-fetch-doc` |
-| **钉钉** | `@partme.ai/openclaw-dingtalk` | `channels.dingtalk.knowledge` | add + query | 待实现 |
-| **QQ 机器人** | `@partme.ai/openclaw-qqbot` | `channels.qqbot.knowledge` | add + query | 待实现 |
-| **微信** | `@partme.ai/openclaw-weixin` | `channels.weixin.knowledge` | add + query | 待实现 |
-
-开发者在扩展功能时无需关注具体渠道，所有知识库操作均通过 `@partme.ai/openclaw-knowledge` 的统一 API 完成。
+标准模式配置来自 `plugins.entries.knowledge.config`；高级库模式才通过 `registerKnowledgeHooks(api, configPath)` 指定 `channels.<channel>.knowledge` 等自定义路径。开发者扩展知识库能力时无需关注具体渠道。
 
 ---
 
@@ -64,14 +57,18 @@ export function onRegister(api: PluginApi) {
 ### 1.1 克隆与安装
 
 ```bash
-git clone https://github.com/partme-ai/openclaw-knowledge
-cd openclaw-knowledge
+git clone https://github.com/partme-ai/openclaw-plugins.git
+cd openclaw-plugins
 
 # 确认 Node.js 版本 ≥ 22
 node -v
 
 # 安装依赖
 pnpm install
+
+# 仅操作 knowledge workspace
+pnpm --filter @partme.ai/openclaw-knowledge typecheck
+pnpm --filter @partme.ai/openclaw-knowledge test
 
 # 可选：SQLite-Vec 依赖（需要原生模块编译）
 npm install better-sqlite3
@@ -1051,10 +1048,10 @@ import {
   createKnowledgeDeleteTool,
 } from "./src/knowledge/tools/index.js";
 
-api.registerTool(createKnowledgeAddTool,    { name: "knowledge_add" });
-api.registerTool(createKnowledgeQueryTool,  { name: "knowledge_query" });
-api.registerTool(createKnowledgeUpdateTool, { name: "knowledge_update" });
-api.registerTool(createKnowledgeDeleteTool, { name: "knowledge_delete" });
+api.registerTool((ctx) => createKnowledgeAddTool(ctx), { name: "knowledge_add" });
+api.registerTool((ctx) => createKnowledgeQueryTool(ctx), { name: "knowledge_query" });
+api.registerTool((ctx) => createKnowledgeUpdateTool(ctx), { name: "knowledge_update" });
+api.registerTool((ctx) => createKnowledgeDeleteTool(ctx), { name: "knowledge_delete" });
 ```
 
 > OpenClaw 在每次 Agent 会话构建时，依次调用已注册的 Tool 工厂函数。因此每次工厂函数被调用时，`ctx` 都绑定到当前会话上下文。
