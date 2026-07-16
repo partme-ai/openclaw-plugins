@@ -35,7 +35,7 @@ const idempotencyCache = getMqttIdempotencyCache();
  * 处理 MQTT 入站消息（设备 → Agent）：Topic 过滤、路由、ACL、message-sdk dispatch。
  *
  * @param message - Aedes 解析后的入站 MQTT 消息（含 clientId、topic、payload、qos 等）
- * @returns 完成 dispatch 或 policy 丢弃后 resolve；错误仅记录日志不抛出
+ * @returns 完成 dispatch 或 policy 丢弃后 resolve；运行时 dispatch 失败时向上抛出
  */
 export async function handleInboundMessage(message: MqttInboundMessage): Promise<void> {
   const config = getMqttChannelConfig() ?? DEFAULT_BROKER_CONFIG;
@@ -123,6 +123,9 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
     await dispatchToRuntime(sessionKey, peerId, agentId, text, message, route, replyTopic, parsed.unified);
   } catch (error) {
     console.error(`[openclaw-mqtt] Runtime dispatch failed for client=${message.clientId}:`, error);
+    // 必须继续抛出：上层 authorizePublish 只有感知失败，才能拒绝 PUBACK，
+    // 避免客户端认为消息已经被 Agent 成功处理。
+    throw error;
   }
 }
 

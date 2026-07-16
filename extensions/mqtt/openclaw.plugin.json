@@ -152,8 +152,21 @@
         "properties": {
           "maxPayloadBytes": {
             "type": "number",
+            "minimum": 1,
             "default": 1048576,
             "description": "Maximum payload size in bytes (default 1MB)"
+          },
+          "maxPendingMessagesPerClient": {
+            "type": "number",
+            "minimum": 1,
+            "default": 32,
+            "description": "Maximum queued or active Agent turns per MQTT client"
+          },
+          "inboundTaskTimeoutMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 120000,
+            "description": "Hard timeout for one MQTT-to-Agent inbound task"
           }
         }
       },
@@ -235,7 +248,7 @@
           "enabled": {
             "type": "boolean",
             "default": false,
-            "description": "Enable multi-backend persistence for horizontal scaling"
+            "description": "Enable broker state persistence; Redis is required for horizontal scaling"
           },
           "backend": {
             "type": "string",
@@ -252,7 +265,6 @@
               "db": { "type": "number", "default": 0 },
               "password": { "type": "string" },
               "keyPrefix": { "type": "string", "default": "mqtt" },
-              "subscriptionTTL": { "type": "number", "default": 3600 },
               "packetTTL": {
                 "type": "number",
                 "minimum": 0,
@@ -265,6 +277,20 @@
                 "default": 0,
                 "description": "兼容旧配置；未设置 packetTTL 时作为离线消息 TTL"
               }
+            }
+          },
+          "mongodb": {
+            "type": "object",
+            "properties": {
+              "url": { "type": "string", "default": "mongodb://localhost:27017" },
+              "dbName": { "type": "string" },
+              "collectionPrefix": { "type": "string" }
+            }
+          },
+          "level": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "default": "./data/aedes-leveldb" }
             }
           }
         }

@@ -32,7 +32,11 @@ function config(port: number, overrides: Partial<MqttBrokerConfig> = {}): MqttBr
     maxConnections: 10,
     auth: { enabled: false, allowAnonymous: false, users: [] },
     tls: { enabled: false, port: 8883 },
-    limits: { maxPayloadBytes: 1024 },
+    limits: {
+      maxPayloadBytes: 1024,
+      maxPendingMessagesPerClient: 8,
+      inboundTaskTimeoutMs: 5_000,
+    },
     session: { maxExpirySeconds: 60, persistentAcrossReconnect: true },
     qos0: { mailboxSoftLimit: 10 },
     retain: { allowInboundRetain: true, outboundRetain: false },
@@ -133,7 +137,11 @@ describe.sequential("MQTT broker production hardening", () => {
     const inbound: string[] = [];
     const delivered: string[] = [];
     await startBroker(config(port, {
-      limits: { maxPayloadBytes: 4 },
+      limits: {
+        maxPayloadBytes: 4,
+        maxPendingMessagesPerClient: 8,
+        inboundTaskTimeoutMs: 5_000,
+      },
       retain: { allowInboundRetain: false, outboundRetain: false },
     }), (message) => { inbound.push(message.topic); });
     const subscriber = await connect(port, { clientId: "policy-sub", clean: true });
@@ -172,6 +180,47 @@ describe.sequential("MQTT broker production hardening", () => {
     } finally {
       process.off("unhandledRejection", listener);
     }
+  });
+
+  it("serializes one client while allowing different clients to run in parallel", async () => {
+    const port = await freePort();
+    const events: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let markFirstStarted: (() => void) | undefined;
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+
+    await startBroker(config(port), async (message) => {
+      const marker = message.payload;
+      events.push(`${marker}:start`);
+      if (marker === "a1") {
+        markFirstStarted?.();
+        await firstGate;
+      }
+      events.push(`${marker}:end`);
+    });
+
+    const clientA = await connect(port, { clientId: "ordered-a", clean: true });
+    const clientB = await connect(port, { clientId: "parallel-b", clean: true });
+    const publishA1 = clientA.publishAsync("queue/a", "a1", { qos: 1 });
+    await firstStarted;
+    const publishA2 = clientA.publishAsync("queue/a", "a2", { qos: 1 });
+    await clientB.publishAsync("queue/b", "b1", { qos: 1 });
+
+    expect(events).toEqual(["a1:start", "b1:start", "b1:end"]);
+    expect(getBrokerStats()).toMatchObject({ inboundActive: 1, inboundQueued: 1 });
+
+    releaseFirst?.();
+    await Promise.all([publishA1, publishA2]);
+    expect(events).toEqual([
+      "a1:start",
+      "b1:start",
+      "b1:end",
+      "a1:end",
+      "a2:start",
+      "a2:end",
+    ]);
+    await Promise.all([clientA.endAsync(), clientB.endAsync()]);
   });
 
   it("accepts a real MQTT-over-TLS connection and a QoS 2 publish", async () => {

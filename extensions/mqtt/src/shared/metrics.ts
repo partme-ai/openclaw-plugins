@@ -76,7 +76,9 @@ export function updateMessageMetrics(
 /**
  * 更新丢弃消息指标。
  */
-export function updateDroppedMetrics(reason: "oversized" | "qos0_soft_limit" | "auth"): void {
+export function updateDroppedMetrics(
+  reason: "oversized" | "qos0_soft_limit" | "auth" | "inbound_queue_full",
+): void {
   getMetricsInstance()?.incMessagesDropped({ reason });
 }
 

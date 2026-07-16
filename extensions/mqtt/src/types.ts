@@ -141,6 +141,10 @@ export interface MqttTlsConfig {
 export interface MqttLimitsConfig {
   /** 单条消息最大字节数（超出后拒绝） */
   maxPayloadBytes: number;
+  /** 单个 clientId 等待或正在执行的 Agent 入站任务上限。 */
+  maxPendingMessagesPerClient: number;
+  /** 单次 Agent 入站任务硬超时（毫秒）。 */
+  inboundTaskTimeoutMs: number;
 }
 
 /**
@@ -216,7 +220,6 @@ export interface MqttPersistenceConfig {
     db?: number;
     password?: string;
     keyPrefix?: string;
-    subscriptionTTL?: number;
     /** 离线 QoS 消息 TTL（秒，0 表示不限制） */
     packetTTL?: number;
     retainedTTL?: number;

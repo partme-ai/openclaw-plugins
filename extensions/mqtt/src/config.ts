@@ -45,13 +45,14 @@ export const DEFAULT_BROKER_CONFIG: MqttChannelConfig = {
       port: 6379,
       db: 0,
       keyPrefix: "mqtt",
-      subscriptionTTL: 3600,
       packetTTL: 0,
       retainedTTL: 0,
     },
   },
   limits: {
     maxPayloadBytes: 1024 * 1024,
+    maxPendingMessagesPerClient: 32,
+    inboundTaskTimeoutMs: 120_000,
   },
   session: {
     maxExpirySeconds: 86400,
@@ -171,6 +172,15 @@ export function validateBrokerConfig(config: MqttBrokerConfig): void {
   if (!Number.isSafeInteger(config.limits.maxPayloadBytes) || config.limits.maxPayloadBytes < 1) {
     throw new Error("[openclaw-mqtt] limits.maxPayloadBytes must be a positive safe integer");
   }
+  if (
+    !Number.isSafeInteger(config.limits.maxPendingMessagesPerClient) ||
+    config.limits.maxPendingMessagesPerClient < 1
+  ) {
+    throw new Error("[openclaw-mqtt] limits.maxPendingMessagesPerClient must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(config.limits.inboundTaskTimeoutMs) || config.limits.inboundTaskTimeoutMs < 1) {
+    throw new Error("[openclaw-mqtt] limits.inboundTaskTimeoutMs must be a positive safe integer");
+  }
   if (!Number.isSafeInteger(config.qos0.mailboxSoftLimit) || config.qos0.mailboxSoftLimit < 1) {
     throw new Error("[openclaw-mqtt] qos0.mailboxSoftLimit must be a positive safe integer");
   }
@@ -194,7 +204,6 @@ export function validateBrokerConfig(config: MqttBrokerConfig): void {
         throw new Error("[openclaw-mqtt] persistence.redis.keyPrefix must not be blank");
       }
       for (const [name, value] of [
-        ["subscriptionTTL", redis?.subscriptionTTL],
         ["packetTTL", redis?.packetTTL],
         ["retainedTTL", redis?.retainedTTL],
       ] as const) {
@@ -299,6 +308,12 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
     limits: {
       maxPayloadBytes:
         mqttConfig?.limits?.maxPayloadBytes ?? DEFAULT_BROKER_CONFIG.limits.maxPayloadBytes,
+      maxPendingMessagesPerClient:
+        mqttConfig?.limits?.maxPendingMessagesPerClient ??
+        DEFAULT_BROKER_CONFIG.limits.maxPendingMessagesPerClient,
+      inboundTaskTimeoutMs:
+        mqttConfig?.limits?.inboundTaskTimeoutMs ??
+        DEFAULT_BROKER_CONFIG.limits.inboundTaskTimeoutMs,
     },
     session: {
       maxExpirySeconds:
@@ -336,7 +351,6 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
         db: mqttConfig?.persistence?.redis?.db ?? DEFAULT_BROKER_CONFIG.persistence.redis?.db,
         password: mqttConfig?.persistence?.redis?.password,
         keyPrefix: mqttConfig?.persistence?.redis?.keyPrefix ?? DEFAULT_BROKER_CONFIG.persistence.redis?.keyPrefix,
-        subscriptionTTL: mqttConfig?.persistence?.redis?.subscriptionTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.subscriptionTTL,
         packetTTL: mqttConfig?.persistence?.redis?.packetTTL ?? mqttConfig?.persistence?.redis?.retainedTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.packetTTL,
         retainedTTL: mqttConfig?.persistence?.redis?.retainedTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.retainedTTL,
       },

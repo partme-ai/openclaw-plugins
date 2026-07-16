@@ -61,7 +61,11 @@ describe("openclaw-mqtt E2E 功能验证", () => {
         ],
       },
       tls: { enabled: false, port: 0 },
-      limits: { maxPayloadBytes: 64 * 1024 }, // 64KB
+      limits: {
+        maxPayloadBytes: 64 * 1024, // 64KB
+        maxPendingMessagesPerClient: 32,
+        inboundTaskTimeoutMs: 120_000,
+      },
       session: { maxExpirySeconds: 3600, persistentAcrossReconnect: true },
       qos0: { mailboxSoftLimit: 500 },
       retain: { allowInboundRetain: true, outboundRetain: false },

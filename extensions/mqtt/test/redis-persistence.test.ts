@@ -35,7 +35,11 @@ suite("MQTT Redis persistence", () => {
         users: [{ username: "redis-user", password: "redis-pass", publishAllow: ["test/#"], subscribeAllow: ["test/#"] }],
       },
       tls: { enabled: false, port: 0 },
-      limits: { maxPayloadBytes: 1024 },
+      limits: {
+        maxPayloadBytes: 1024,
+        maxPendingMessagesPerClient: 8,
+        inboundTaskTimeoutMs: 5_000,
+      },
       session: { maxExpirySeconds: 60, persistentAcrossReconnect: true },
       qos0: { mailboxSoftLimit: 20 },
       retain: { allowInboundRetain: true, outboundRetain: false },

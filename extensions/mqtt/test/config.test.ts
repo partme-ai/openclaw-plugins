@@ -46,6 +46,8 @@ describe("resolveBrokerConfig", () => {
           },
           limits: {
             maxPayloadBytes: 4096,
+            maxPendingMessagesPerClient: 16,
+            inboundTaskTimeoutMs: 30_000,
           },
           session: {
             maxExpirySeconds: 3600,
@@ -79,6 +81,8 @@ describe("resolveBrokerConfig", () => {
     expect(r.tls.enabled).toBe(true);
     expect(r.tls.port).toBe(8883);
     expect(r.limits.maxPayloadBytes).toBe(4096);
+    expect(r.limits.maxPendingMessagesPerClient).toBe(16);
+    expect(r.limits.inboundTaskTimeoutMs).toBe(30_000);
     expect(r.session.maxExpirySeconds).toBe(3600);
     expect(r.session.persistentAcrossReconnect).toBe(false);
     expect(r.qos0.mailboxSoftLimit).toBe(128);
@@ -115,6 +119,8 @@ describe("resolveBrokerConfig", () => {
     expect(r.tls.enabled).toBe(false);
     expect(r.auth.allowAnonymous).toBe(false);
     expect(r.limits.maxPayloadBytes).toBe(1024 * 1024);
+    expect(r.limits.maxPendingMessagesPerClient).toBe(32);
+    expect(r.limits.inboundTaskTimeoutMs).toBe(120_000);
     expect(r.session.maxExpirySeconds).toBe(86400);
     expect(r.session.persistentAcrossReconnect).toBe(true);
     expect(r.qos0.mailboxSoftLimit).toBe(200);
@@ -141,7 +147,10 @@ describe("resolveBrokerConfig", () => {
   it("rejects invalid listener, runtime limit, credential, and duplicate-user settings", () => {
     const base = resolveBrokerConfig({});
     expect(() => validateBrokerConfig({ ...base, port: 65_536 })).toThrow(/port/i);
-    expect(() => validateBrokerConfig({ ...base, limits: { maxPayloadBytes: 0 } })).toThrow(/maxPayloadBytes/i);
+    expect(() => validateBrokerConfig({
+      ...base,
+      limits: { ...base.limits, maxPayloadBytes: 0 },
+    })).toThrow(/maxPayloadBytes/i);
     expect(() => validateBrokerConfig({ ...base, qos0: { mailboxSoftLimit: 0 } })).toThrow(/mailboxSoftLimit/i);
 
     const authBase = resolveBrokerConfig({ channels: { mqtt: { auth: {
@@ -195,7 +204,7 @@ describe("resolveBrokerConfig", () => {
               port: 6380,
               db: 1,
               keyPrefix: "mqtt:prod",
-              subscriptionTTL: 7200,
+              packetTTL: 7200,
               retainedTTL: 86400,
             },
           },
@@ -210,7 +219,7 @@ describe("resolveBrokerConfig", () => {
     expect(r.persistence.redis?.port).toBe(6380);
     expect(r.persistence.redis?.db).toBe(1);
     expect(r.persistence.redis?.keyPrefix).toBe("mqtt:prod");
-    expect(r.persistence.redis?.subscriptionTTL).toBe(7200);
+    expect(r.persistence.redis?.packetTTL).toBe(7200);
     expect(r.persistence.redis?.retainedTTL).toBe(86400);
   });
 
@@ -284,7 +293,7 @@ describe("resolveBrokerConfig", () => {
     expect(r.persistence.redis?.port).toBe(6379);
     expect(r.persistence.redis?.db).toBe(0);
     expect(r.persistence.redis?.keyPrefix).toBe("mqtt");
-    expect(r.persistence.redis?.subscriptionTTL).toBe(3600);
+    expect(r.persistence.redis?.packetTTL).toBe(0);
     expect(r.persistence.redis?.retainedTTL).toBe(0);
   });
 });

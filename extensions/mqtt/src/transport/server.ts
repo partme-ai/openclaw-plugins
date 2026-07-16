@@ -31,6 +31,10 @@ import type {
 } from "../types.js";
 import { logAuditEvent } from "./audit.js";
 import { verifyPassword, matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
+import {
+  createKeyedRunQueue,
+  type KeyedRunQueue,
+} from "@partme.ai/openclaw-message-sdk/queue";
 import { isUserActionAllowed, aclTopicMatches } from "./acl.js";
 import { validateBrokerConfig } from "../config.js";
 import {
@@ -66,6 +70,8 @@ let qos0DropCount = 0;
 /** Redis clients */
 let redisClient: Redis | null = null;
 let mqEmitter: unknown = null;
+/** 同一 clientId 串行、不同客户端并行的 Agent 入站任务队列。 */
+let inboundQueue: KeyedRunQueue | null = null;
 
 /** 已连接的客户端映射表 */
 const connectedClients = new Map<string, { client: Client; info: MqttClientInfo }>();
@@ -91,6 +97,16 @@ export async function startBroker(
   validateBrokerConfig(config);
   activeBrokerConfig = config;
   try {
+
+    inboundQueue = createKeyedRunQueue({
+      taskTimeoutMs: config.limits.inboundTaskTimeoutMs,
+      onError: (error, clientId) => {
+        logAuditEvent(config.audit, "error", "inbound_handler_failed", {
+          clientId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    });
 
     // 创建持久化和集群配置（支持多种后端）
     let persistence: unknown = undefined;
@@ -176,7 +192,7 @@ export async function startBroker(
     };
 
     // 配置认证、ACL 与发布前策略校验。
-    setupAuthentication(aedesInstance, config.auth);
+    setupAuthentication(aedesInstance, config.auth, onMessage);
 
     // 监听客户端连接事件
     aedesInstance.on("client", (client: Client) => {
@@ -220,78 +236,6 @@ export async function startBroker(
 
     aedesInstance.on("connectionError", (client: Client) => {
       pendingClients.delete(client);
-    });
-
-    // 监听收到的消息（publish 事件）
-    aedesInstance.on("publish", (packet: PublishPacket, client: Client | null) => {
-      // 过滤系统 topic（$SYS）和无客户端的消息（如 retain）
-      if (!client || packet.topic.startsWith("$SYS")) return;
-
-      const clientId = client.id;
-
-      // 更新客户端最后活跃时间
-      const current = connectedClients.get(clientId);
-      if (current?.client === client) {
-        current.info.lastActiveAt = new Date().toISOString();
-      }
-
-      // 传递 MQTT 特定属性给上层处理
-      if (packet.payload.length > config.limits.maxPayloadBytes) {
-        console.warn(
-          `[openclaw-mqtt] Dropped oversized payload from ${clientId}: ${packet.payload.length} bytes > ${config.limits.maxPayloadBytes}`,
-        );
-        logAuditEvent(config.audit, "warn", "inbound_payload_dropped_oversized", {
-          clientId,
-          topic: packet.topic,
-          bytes: packet.payload.length,
-          maxPayloadBytes: config.limits.maxPayloadBytes,
-        });
-        updateDroppedMetrics("oversized");
-        return;
-      }
-      if (packet.qos === 0) {
-        const inflight = incrementQos0Inflight(client);
-        if (inflight > config.qos0.mailboxSoftLimit) {
-          qos0DropCount += 1;
-          decrementQos0Inflight(client);
-          console.warn(
-            `[openclaw-mqtt] QoS0 dropped for ${clientId}: inflight=${inflight}, softLimit=${config.qos0.mailboxSoftLimit}`,
-          );
-          logAuditEvent(config.audit, "warn", "inbound_qos0_dropped_soft_limit", {
-            clientId,
-            topic: packet.topic,
-            inflight,
-            softLimit: config.qos0.mailboxSoftLimit,
-          });
-          updateQos0Dropped();
-          return;
-        }
-      }
-
-      // Track incoming message
-      updateMessageMetrics(packet.topic, packet.qos, "inbound");
-
-      void Promise.resolve().then(() => onMessage({
-          topic: packet.topic,
-          payload: packet.payload.toString("utf-8"),
-          clientId,
-          qos: packet.qos,
-          retain: packet.retain,
-          dup: packet.dup,
-          messageId: packet.messageId,
-          properties: packet.properties as Record<string, unknown> | undefined,
-        }))
-        .catch((error: unknown) => {
-          console.error(`[openclaw-mqtt] Inbound handler failed for ${clientId}:`, error);
-          logAuditEvent(config.audit, "error", "inbound_handler_failed", {
-            clientId,
-            topic: packet.topic,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        })
-        .finally(() => {
-          if (packet.qos === 0) decrementQos0Inflight(client);
-        });
     });
 
     const startTasks: Array<Promise<void>> = [];
@@ -358,11 +302,17 @@ export async function stopBroker(): Promise<void> {
   const tls = tlsServer;
   const redis = redisClient;
   const aedes = aedesInstance;
+  const queue = inboundQueue;
   tcpServer = null;
   tlsServer = null;
   redisClient = null;
   aedesInstance = null;
   mqEmitter = null;
+  inboundQueue = null;
+
+  // 先停用队列，避免关闭 Broker 的窗口期继续接收新的 Agent 任务。
+  // 已经开始执行的任务仍由其自身超时策略收口，不在这里强制中断业务逻辑。
+  queue?.deactivate();
 
   const closeNetServer = (server: TcpServer | TlsServer | null): Promise<void> =>
     new Promise((resolve, reject) => {
@@ -480,20 +430,32 @@ export function getBrokerStats(): {
   running: boolean;
   qos0Dropped: number;
   qos0InflightClients: number;
+  inboundQueued: number;
+  inboundActive: number;
 } {
+  const queueSnapshot = inboundQueue?.snapshot();
   return {
     connectedClients: connectedClients.size,
     running: aedesInstance !== null,
     qos0Dropped: qos0DropCount,
     qos0InflightClients: qos0InflightByClient.size,
+    inboundQueued: queueSnapshot?.queuedCount ?? 0,
+    inboundActive: queueSnapshot?.activeCount ?? 0,
   };
 }
 
 /**
- * 配置 MQTT 认证
- * 验证客户端 username/password
+ * 配置 MQTT 认证、Topic ACL 与入站背压。
+ *
+ * Aedes 会在 `authorizePublish` 回调成功后才确认客户端发布。这里把 Agent
+ * 入站处理也纳入该回调，因此可以保证：同一 clientId 严格有序、队列满时
+ * 明确拒绝、处理失败或超时时不会向上游伪装成成功。
  */
-function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): void {
+function setupAuthentication(
+  aedes: AedesBroker,
+  authConfig: MqttAuthConfig,
+  onMessage: (message: MqttInboundMessage) => void | Promise<void>,
+): void {
   const usersByName = new Map(
     authConfig.users.map((user) => [user.username, user] as const),
   );
@@ -622,7 +584,7 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       return;
     }
     if (!authConfig.enabled) {
-      cb(null);
+      enqueueInboundMessage(client, packet, onMessage, cb);
       return;
     }
     const username = clientUsers.get(client);
@@ -645,7 +607,11 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       });
       updateAclDenials("publish", packet.topic);
     }
-    cb(allowed ? null : new Error("publish not allowed"));
+    if (!allowed) {
+      cb(new Error("publish not allowed"));
+      return;
+    }
+    enqueueInboundMessage(client, packet, onMessage, cb);
   };
 
   aedes.authorizeSubscribe = (client, sub: Subscription, cb) => {
@@ -679,6 +645,72 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
     }
     cb(null, allowed ? sub : null);
   };
+}
+
+/**
+ * 将一次客户端 Publish 纳入有界的按客户端串行队列。
+ *
+ * 队列 key 使用 clientId：同一设备的消息严格 FIFO，多个设备可并行处理。
+ * QoS 0 没有协议级重投保证，因此额外应用较保守的 mailboxSoftLimit；QoS 1/2
+ * 使用统一的 maxPendingMessagesPerClient。只有 Agent 入站回调完成后才通知
+ * Aedes 接受本次发布，从而把失败和超时准确反馈给发布端。
+ */
+function enqueueInboundMessage(
+  client: Client,
+  packet: PublishPacket,
+  onMessage: (message: MqttInboundMessage) => void | Promise<void>,
+  callback: (error?: Error | null) => void,
+): void {
+  const config = activeBrokerConfig;
+  const queue = inboundQueue;
+  if (!config || !queue) {
+    callback(new Error("inbound queue is not ready"));
+    return;
+  }
+
+  const currentDepth = queue.snapshot().keys[client.id]?.depth ?? 0;
+  const queueLimit = packet.qos === 0
+    ? Math.min(config.limits.maxPendingMessagesPerClient, config.qos0.mailboxSoftLimit)
+    : config.limits.maxPendingMessagesPerClient;
+  if (currentDepth >= queueLimit) {
+    qos0DropCount += packet.qos === 0 ? 1 : 0;
+    if (packet.qos === 0) updateQos0Dropped();
+    else updateDroppedMetrics("inbound_queue_full");
+    logAuditEvent(config.audit, "warn", "inbound_queue_full", {
+      clientId: client.id,
+      topic: packet.topic,
+      qos: packet.qos,
+      depth: currentDepth,
+      limit: queueLimit,
+    });
+    callback(new Error("inbound queue is full"));
+    return;
+  }
+
+  const startedAt = Date.now();
+  if (packet.qos === 0) incrementQos0Inflight(client);
+  const connected = connectedClients.get(client.id);
+  if (connected?.client === client) connected.info.lastActiveAt = new Date().toISOString();
+  updateMessageMetrics(packet.topic, packet.qos, "inbound");
+
+  const message: MqttInboundMessage = {
+    topic: packet.topic,
+    payload: packet.payload.toString("utf-8"),
+    clientId: client.id,
+    qos: packet.qos,
+    retain: packet.retain,
+    dup: packet.dup,
+    messageId: packet.messageId,
+    properties: packet.properties as Record<string, unknown> | undefined,
+  };
+
+  void queue.enqueue(client.id, async () => onMessage(message)).then(
+    () => callback(null),
+    (error) => callback(error instanceof Error ? error : new Error(String(error))),
+  ).finally(() => {
+    if (packet.qos === 0) decrementQos0Inflight(client);
+    updateMessageLatency(Date.now() - startedAt);
+  });
 }
 
 function isWillAllowed(topic: string, allow: boolean, patterns: string[]): boolean {
