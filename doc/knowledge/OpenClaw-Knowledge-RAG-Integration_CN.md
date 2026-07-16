@@ -1,5 +1,20 @@
 # OpenClaw Knowledge 集成说明（2026.7.1）
 
+```mermaid
+flowchart LR
+    subgraph RECOMMENDED["推荐：独立插件"]
+        ENTRY["OpenClaw Plugin Entry"] --> HOOK["before_prompt_build"]
+        ENTRY --> TOOLS["knowledge_* tools"]
+        ENTRY --> LIFE["gateway_stop cleanup"]
+    end
+    subgraph LIBRARY["高级：库式集成"]
+        CALLER["调用插件"] --> CONFIG["自行解析最终配置"]
+        CONFIG --> FACTORY["Tool / Hook / Index API"]
+        CALLER --> ACL["自行承担业务 ACL"]
+        CALLER --> CLOSE["自行释放 Store Cache"]
+    end
+```
+
 ## 推荐方式：独立插件
 
 通过 OpenClaw 插件安装命令安装后，在 `plugins.entries.knowledge` 启用。独立插件会自行注册 hook、四个工具和 Gateway 停止清理，不需要修改 WeCom、Nacos、Router 或其他 channel 插件。
@@ -22,3 +37,8 @@ OpenClaw tool 调用路径已执行 owner、realpath、根目录和大小检查�
 ## 运行期变更
 
 配置指纹变化会重建对应 namespace 的 embedding/store 组合。部署或测试结束时调用 `invalidateStoreCache()`；独立插件已在 `gateway_stop` 自动处理。
+
+## 选择原则
+
+除非调用方需要把 Knowledge 能力嵌入自有插件并能承担配置、ACL、生命周期和升级兼容责任，
+否则应使用独立插件。库式 API 是组合能力，不是绕过 OpenClaw 安全上下文的捷径。

@@ -29,6 +29,23 @@ openclaw-plugins 由 **PartMe.AI 团队** 研发与二次开发，包含 28 个�
 
 ## 2. 五层架构
 
+```mermaid
+flowchart TB
+    BUSINESS["业务应用<br/>SCRM / 客服台 / 数据分析"]
+    ROUTER["可靠消息路由<br/>规则 / 去重 / 重试 / DLQ / 审计"]
+    AGENTS["OpenClaw Agent<br/>路由 / 工具 / 回复管道"]
+    CAP["能力增强<br/>Knowledge RAG / Memory / Tracing"]
+    CHANNELS["渠道与传输<br/>IM / MQ / Web 协议"]
+    INFRA["基础设施<br/>Nacos / OAuth2 / mTLS / Prometheus"]
+
+    BUSINESS <--> ROUTER
+    ROUTER <--> AGENTS
+    CHANNELS <--> AGENTS
+    CAP --> AGENTS
+    INFRA -. "配置、认证、指标" .-> AGENTS
+    INFRA -. "运行治理" .-> CHANNELS
+```
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Layer 5 — 业务应用层                                       │

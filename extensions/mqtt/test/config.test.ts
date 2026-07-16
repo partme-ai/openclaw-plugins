@@ -214,6 +214,67 @@ describe("resolveBrokerConfig", () => {
     expect(r.persistence.redis?.retainedTTL).toBe(86400);
   });
 
+  it("preserves MongoDB and LevelDB backend options", () => {
+    const mongodb = resolveBrokerConfig({
+      channels: {
+        mqtt: {
+          persistence: {
+            enabled: true,
+            backend: "mongodb",
+            mongodb: {
+              url: "mongodb://mongo.example.com:27017",
+              dbName: "openclaw",
+              collectionPrefix: "mqtt_",
+            },
+          },
+        },
+      },
+    });
+    expect(mongodb.persistence.mongodb).toEqual({
+      url: "mongodb://mongo.example.com:27017",
+      dbName: "openclaw",
+      collectionPrefix: "mqtt_",
+      collectionName: undefined,
+    });
+
+    const local = resolveBrokerConfig({
+      channels: {
+        mqtt: {
+          persistence: {
+            enabled: true,
+            backend: "level",
+            level: { path: "/var/lib/openclaw/mqtt-level" },
+          },
+        },
+      },
+    });
+    expect(local.persistence.level?.path).toBe("/var/lib/openclaw/mqtt-level");
+  });
+
+  it("rejects invalid persistence backends and backend-specific options", () => {
+    const base = resolveBrokerConfig({});
+    expect(() => validateBrokerConfig({
+      ...base,
+      persistence: { enabled: true, backend: "unknown" as never },
+    })).toThrow(/unsupported persistence backend/i);
+    expect(() => validateBrokerConfig({
+      ...base,
+      persistence: { enabled: true, backend: "redis", redis: { port: 70_000 } },
+    })).toThrow(/redis\.port/i);
+    expect(() => validateBrokerConfig({
+      ...base,
+      persistence: { enabled: true, backend: "mongodb", mongodb: { url: "https://mongo.example.com" } },
+    })).toThrow(/mongodb\.url/i);
+    expect(() => validateBrokerConfig({
+      ...base,
+      persistence: { enabled: true, backend: "level", level: { path: "   " } },
+    })).toThrow(/level\.path/i);
+    expect(() => validateBrokerConfig({
+      ...base,
+      persistence: { enabled: true, backend: "nedb" as never },
+    })).toThrow(/unsupported persistence backend/i);
+  });
+
   it("applies persistence defaults when not configured", () => {
     const r = resolveBrokerConfig({});
     expect(r.persistence.enabled).toBe(false);

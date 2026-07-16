@@ -239,7 +239,7 @@
           },
           "backend": {
             "type": "string",
-            "enum": ["memory", "redis", "mongodb", "level", "nedb"],
+            "enum": ["memory", "redis", "mongodb", "level"],
             "default": "memory",
             "description": "Persistence backend type"
           },

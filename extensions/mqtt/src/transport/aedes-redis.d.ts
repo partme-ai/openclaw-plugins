@@ -19,7 +19,8 @@ declare module "aedes-persistence-redis" {
 declare module "aedes-persistence-mongodb" {
   interface MongoDbPersistenceOptions {
     url?: string;
-    collection?: string;
+    database?: string;
+    collectionPrefix?: string;
   }
 
   function MongoDbPersistence(options?: MongoDbPersistenceOptions): unknown;
@@ -28,20 +29,6 @@ declare module "aedes-persistence-mongodb" {
 
 // LevelDB
 declare module "aedes-persistence-level" {
-  interface LevelPersistenceOptions {
-    path?: string;
-  }
-
-  function LevelPersistence(options?: LevelPersistenceOptions): unknown;
+  function LevelPersistence(database: unknown): unknown;
   export = LevelPersistence;
-}
-
-// NeDB
-declare module "aedes-persistence-nedb" {
-  interface NedbPersistenceOptions {
-    folder?: string;
-  }
-
-  function NedbPersistence(options?: NedbPersistenceOptions): unknown;
-  export = NedbPersistence;
 }

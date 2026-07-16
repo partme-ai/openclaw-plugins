@@ -1,9 +1,12 @@
 /**
- * Weixin protocol types (mirrors proto: GetUpdatesReq/Resp, WeixinMessage, SendMessageReq).
- * API uses JSON over HTTP; bytes fields are base64 strings in JSON.
+ * @fileoverview 微信 iLink CGI/Protobuf 消息在 JSON API 中的类型映射。
+ *
+ * 结构与 GetUpdatesReq/Resp、WeixinMessage、SendMessageReq 等协议对象保持一致；HTTP JSON
+ * 无法直接表达 bytes，因此相关字段统一使用 Base64 字符串。这里仅描述线上契约，不承担
+ * 输入可信性保证，调用方仍需校验可选字段和媒体大小。
  */
 
-/** Common request metadata attached to every CGI request. */
+/** 每个 CGI 请求都会携带的公共客户端元数据。 */
 export interface BaseInfo {
   channel_version?: string;
 }

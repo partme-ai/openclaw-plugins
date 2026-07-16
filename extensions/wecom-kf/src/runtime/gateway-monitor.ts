@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 企业微信客服账号在 OpenClaw Gateway 中的长运行生命周期监视器。
+ *
+ * 启动时先检查账号与其它企微 Channel 的路由冲突，再发布 KF Webhook 路径和运行状态；
+ * 监视器一直等待账户 AbortSignal，停止时回写 lastStopAt。遗留 Bot/Agent 配置只告警，不会
+ * 重新启用已移除的 wecom-cs 路径。
+ */
 import type {
   ChannelGatewayContext,
   OpenClawConfig,

@@ -1,16 +1,10 @@
 /**
- * Streaming markdown filter — character-level state machine that strips
- * unsupported markdown syntax on-the-fly.
+ * @fileoverview 面向微信文本能力的流式 Markdown 字符级过滤状态机。
  *
- * Outputs as much filtered text as possible on each `feed()` call, only
- * holding back the minimum characters needed for pattern disambiguation
- * (e.g. a trailing `*` that might become `***`).
- *
- * States:
- * - **sol** (start-of-line): checks for line-start patterns (```, >, #####, indent)
- * - **body**: scans for inline patterns (`, ![, ~~, ***) and outputs safe chars
- * - **fence**: inside a fenced code block, passes through until closing ```
- * - **inline**: accumulating content inside an inline marker pair
+ * `feed()` 每次尽可能输出已经确定的安全文本，只保留判定跨 chunk 标记所需的最少字符，
+ * 例如结尾 `*` 可能在下一块组成 `***`。状态分为行首 `sol`、正文 `body`、代码围栏 `fence`
+ * 和行内标记 `inline`，用于移除微信不支持的标题、引用、图片、删除线与表格结构，同时保留
+ * 代码正文和用户可读内容；`flush()` 在流结束时处理未闭合标记。
  */
 export class StreamingMarkdownFilter {
   private buf = "";

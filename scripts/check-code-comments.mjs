@@ -130,7 +130,11 @@ for (const file of sourceFiles) {
 
 console.log(`中文注释审计：${sourceFiles.length} 个生产源码文件，${coreFileCount} 个核心文件。`);
 if (findings.length === 0) {
-  console.log("通过：未发现缺少中文解释性注释的目标文件或公共 API。");
+  console.log(
+    CHECK_PUBLIC_API
+      ? "通过：未发现缺少中文解释性注释的目标文件或公共 API。"
+      : "通过：所有核心文件均包含中文职责说明。",
+  );
   process.exit(0);
 }
 

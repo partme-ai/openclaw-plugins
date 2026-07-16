@@ -8,6 +8,21 @@ openclaw-nacos integrates OpenClaw Gateway with Nacos, providing three core capa
 2. **Service Registration** — Register the Gateway instance as an ephemeral Nacos service with webhook/Hooks metadata.
 3. **Cluster Discovery** — Subscribe to Nacos naming to discover peer Gateway nodes in real time.
 
+```mermaid
+flowchart LR
+    NACOS["Nacos Server<br/>Config + Naming"]
+    CONFIG["NacosConfigSyncService<br/>fetch / merge / backup / subscribe"]
+    REGISTRY["GatewayNacosRegistry<br/>ephemeral registration"]
+    CLUSTER["WebhookClusterService<br/>peer discovery"]
+    GATEWAY["OpenClaw Gateway<br/>runtime config + hooks"]
+    ROUTES["/nacos/health<br/>/nacos/cluster"]
+
+    NACOS --> CONFIG --> GATEWAY
+    GATEWAY --> REGISTRY --> NACOS
+    NACOS --> CLUSTER --> ROUTES
+    CLUSTER --> GATEWAY
+```
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    OpenClaw Gateway                               │

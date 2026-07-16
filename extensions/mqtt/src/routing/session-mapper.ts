@@ -138,7 +138,24 @@ export function handleClientDisconnected(clientId: string): void {
     clientExpiryTimers.delete(clientId);
     removeClientSessions(clientId);
   }, maxSessionExpirySeconds * 1000);
+  // 会话清理属于维护任务，不能单独阻止 Gateway/Node.js 正常退出。
+  timer.unref?.();
   clientExpiryTimers.set(clientId, timer);
+}
+
+/**
+ * 清空 MQTT 生命周期内的全部会话映射和过期计时器。
+ *
+ * Gateway stop/reload 时必须调用，避免旧 clientId、replyTopic 或长周期 timer 泄漏到下一次启动。
+ */
+export function resetSessionMappings(): void {
+  for (const timer of clientExpiryTimers.values()) clearTimeout(timer);
+  clientExpiryTimers.clear();
+  sessionClientMap.clear();
+  sessionContextMap.clear();
+  delayedExpiryCount = 0;
+  maxSessionExpirySeconds = 0;
+  persistentAcrossReconnect = true;
 }
 
 /**

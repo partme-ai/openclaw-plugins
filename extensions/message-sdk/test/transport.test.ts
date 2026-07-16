@@ -147,4 +147,41 @@ describe("isUserActionAllowed", () => {
     expect(isUserActionAllowed({ user: legacyUser, action: "publish", topic: "topic/a" })).toBe(true);
     expect(isUserActionAllowed({ user: legacyUser, action: "publish", topic: "topic/b" })).toBe(false);
   });
+
+  it("requires an exact accountId for account-scoped rules", () => {
+    const scopedUser: AclUser = {
+      aclRules: [
+        {
+          action: "inbound",
+          topicPattern: "devices/+/in",
+          effect: "allow",
+          accountId: "tenant-a",
+        },
+      ],
+    };
+
+    expect(
+      isUserActionAllowed({
+        user: scopedUser,
+        action: "inbound",
+        topic: "devices/sensor-1/in",
+      }),
+    ).toBe(false);
+    expect(
+      isUserActionAllowed({
+        user: scopedUser,
+        action: "inbound",
+        topic: "devices/sensor-1/in",
+        accountId: "tenant-b",
+      }),
+    ).toBe(false);
+    expect(
+      isUserActionAllowed({
+        user: scopedUser,
+        action: "inbound",
+        topic: "devices/sensor-1/in",
+        accountId: "tenant-a",
+      }),
+    ).toBe(true);
+  });
 });

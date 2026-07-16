@@ -22,7 +22,7 @@ import MQEmitterRedis from "mqemitter-redis";
 import RedisPersistence from "aedes-persistence-redis";
 import MongoDbPersistence from "aedes-persistence-mongodb";
 import LevelPersistence from "aedes-persistence-level";
-import NedbPersistence from "aedes-persistence-nedb";
+import { Level } from "level";
 import type {
   MqttBrokerConfig,
   MqttClientInfo,
@@ -143,7 +143,9 @@ export async function startBroker(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           persistence = MongoDbPersistence({
             url: mongoConfig?.url || "mongodb://localhost:27017",
-            collection: mongoConfig?.collectionName || "aedes",
+            database: mongoConfig?.dbName,
+            collectionPrefix:
+              mongoConfig?.collectionPrefix ?? mongoConfig?.collectionName,
           } as any);
           console.log(`[openclaw-mqtt] MongoDB persistence enabled`);
           break;
@@ -151,26 +153,13 @@ export async function startBroker(
 
         case "level": {
           const levelConfig = config.persistence?.level;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          persistence = LevelPersistence({
-            path: levelConfig?.path || "./data/aedes-leveldb",
-          } as any);
+          const database = new Level(levelConfig?.path || "./data/aedes-leveldb");
+          persistence = LevelPersistence(database);
           console.log(`[openclaw-mqtt] LevelDB persistence enabled`);
           break;
         }
 
-        case "nedb": {
-          const nedbConfig = config.persistence?.nedb;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          persistence = NedbPersistence({
-            folder: nedbConfig?.path || "./data/aedes-nedb",
-          } as any);
-          console.log(`[openclaw-mqtt] NeDB persistence enabled`);
-          break;
-        }
-
         case "memory":
-        default:
           // 使用默认的内存持久化，不需要额外配置
           console.log(`[openclaw-mqtt] In-memory persistence enabled`);
           break;

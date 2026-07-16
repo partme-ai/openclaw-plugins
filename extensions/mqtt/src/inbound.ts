@@ -89,17 +89,18 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
   const username = getClientUsername(message.clientId);
   const user = config.auth.users.find((entry) => entry.username === username);
   if (
-    user &&
-    !isUserActionAllowed({
-      user,
-      action: "inbound",
-      topic: message.topic,
-      accountId: route.accountId,
-    })
+    config.auth.enabled &&
+    (!user ||
+      !isUserActionAllowed({
+        user,
+        action: "inbound",
+        topic: message.topic,
+        accountId: route.accountId,
+      }))
   ) {
-    logAuditEvent(config.audit, "warn", "acl_inbound_denied", {
+    logAuditEvent(config.audit, "warn", user ? "acl_inbound_denied" : "acl_inbound_identity_missing", {
       clientId: message.clientId,
-      username,
+      username: username ?? null,
       topic: message.topic,
       accountId: route.accountId,
     });

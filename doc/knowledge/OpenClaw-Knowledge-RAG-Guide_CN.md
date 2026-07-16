@@ -1,5 +1,14 @@
 # OpenClaw Knowledge RAG 使用指南（2026.7.1）
 
+```mermaid
+flowchart LR
+    CONFIG["配置 Embedding 与 Store"] --> INSTALL["安装并启用插件"]
+    INSTALL --> INDEX["knowledge_add / 文件摄取"]
+    INDEX --> QUERY["knowledge_query 或自动召回"]
+    QUERY --> VERIFY["检查引用、ACL 与召回质量"]
+    VERIFY --> OPERATE["监控、备份、模型变更重建"]
+```
+
 ## 最小配置
 
 ```json
@@ -50,3 +59,45 @@
 - `zvec`：纯 JavaScript 全量相似度扫描，适合小数据量或开发；配置 `dbPath` 才持久化。
 
 模型或 dimensions 变更后必须重新索引。早期 namespace 表不会自动迁移，详见插件 README 的升级说明。
+
+## 工具调用示例
+
+写入一份可信知识：
+
+```json
+{
+  "sourceId": "product-refund-policy-v3",
+  "content": "退款申请应在订单完成后 7 天内提交……"
+}
+```
+
+查询时应给出完整问题，而不是只传关键词：
+
+```json
+{
+  "query": "已经签收 5 天的订单还能否申请退款？",
+  "topK": 5
+}
+```
+
+更新同一个 `sourceId` 会原子替换全部旧块；删除按 `sourceId` 进行，不接受任意磁盘路径。
+
+## 自动注入检查
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant K as Knowledge Hook
+    participant A as Agent
+    U->>K: 提问
+    K->>K: Intent Gate + namespace 检索
+    alt 命中且在预算内
+        K->>A: 原 Prompt + Knowledge Context
+    else 跳过或无结果
+        K->>A: 原 Prompt
+    end
+    A-->>U: 回复
+```
+
+验收时至少检查：普通闲聊不会无意义调用 Embedding；不同账号不能互相召回；注入上下文不
+超过配置预算；无结果和 Provider 暂时失败时 Agent 仍能使用原 Prompt 工作。

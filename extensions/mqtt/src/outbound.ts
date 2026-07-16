@@ -55,36 +55,37 @@ export const mqttOutbound: ChannelOutboundAdapter = {
     const sessionKey = ctx.to;
     const clientId = getClientIdBySession(sessionKey);
     if (!clientId) {
-      console.warn(`[openclaw-mqtt] Cannot send — no client for session: ${sessionKey}`);
-      return { channel: "mqtt", messageId: "no-client" };
+      throw new Error(`[openclaw-mqtt] Cannot send — no client for session: ${sessionKey}`);
     }
 
     const sessionContext = getSessionContext(sessionKey);
     const agentId = sessionContext?.agentId;
     if (!agentId) {
-      console.error(`[openclaw-mqtt] Cannot send — missing session context agentId: ${sessionKey}`);
-      return { channel: "mqtt", messageId: "no-session-context" };
+      throw new Error(`[openclaw-mqtt] Cannot send — missing session context agentId: ${sessionKey}`);
     }
     const outTopic = sessionContext.replyTopic ?? buildOutboundTopic(agentId);
     const cfg = getMqttChannelConfig() ?? DEFAULT_BROKER_CONFIG;
     const username = getClientUsername(clientId);
     const user = cfg.auth.users.find((entry) => entry.username === username);
     if (
-      user &&
-      !isUserActionAllowed({
-        user,
-        action: "outbound",
-        topic: outTopic,
-        accountId: sessionContext?.accountId ?? "default",
-      })
+      cfg.auth.enabled &&
+      (!user ||
+        !isUserActionAllowed({
+          user,
+          action: "outbound",
+          topic: outTopic,
+          accountId: sessionContext?.accountId ?? "default",
+        }))
     ) {
-      logAuditEvent(cfg.audit, "warn", "acl_outbound_denied", {
+      logAuditEvent(cfg.audit, "warn", user ? "acl_outbound_denied" : "acl_outbound_identity_missing", {
         clientId,
-        username,
+        username: username ?? null,
         topic: outTopic,
         accountId: sessionContext?.accountId ?? "default",
       });
-      return { channel: "mqtt", messageId: "acl-denied" };
+      throw new Error(
+        `[openclaw-mqtt] Cannot send — ${user ? "outbound ACL denied" : "authenticated identity missing"} for topic: ${outTopic}`,
+      );
     }
 
     await publishMessage(outTopic, ctx.text, 0, cfg.retain.outboundRetain);

@@ -8,6 +8,21 @@ openclaw-nacos 将 OpenClaw Gateway 与 Nacos 集成，提供三大核心能力�
 2. **服务注册** — 将 Gateway 实例注册为 Nacos 临时实例，附带 webhook/Hooks 元数据。
 3. **集群发现** — 订阅 Nacos 命名服务，实时发现其他 Gateway 节点。
 
+```mermaid
+flowchart LR
+    NACOS["Nacos Server<br/>Config + Naming"]
+    CONFIG["NacosConfigSyncService<br/>拉取、合并、备份、订阅"]
+    REGISTRY["GatewayNacosRegistry<br/>临时实例注册/注销"]
+    CLUSTER["WebhookClusterService<br/>节点发现与状态"]
+    GATEWAY["OpenClaw Gateway<br/>Runtime Config + Hooks"]
+    ROUTES["/nacos/health<br/>/nacos/cluster"]
+
+    NACOS --> CONFIG --> GATEWAY
+    GATEWAY --> REGISTRY --> NACOS
+    NACOS --> CLUSTER --> ROUTES
+    CLUSTER --> GATEWAY
+```
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    OpenClaw Gateway                               │

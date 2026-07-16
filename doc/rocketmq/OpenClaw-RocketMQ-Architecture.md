@@ -6,6 +6,25 @@
 
 ## System Context
 
+```mermaid
+flowchart LR
+    PRODUCER["External Producer<br/>IoT / Business App"] --> BROKER["RocketMQ<br/>NameServer + Proxy + Broker"]
+    BROKER --> CONSUMER["PushConsumer<br/>bounded inbound processing"]
+    CONSUMER --> ROUTER["Topic Router<br/>Agent / session mapping"]
+    ROUTER --> AGENT["OpenClaw Agent"]
+    AGENT --> OUTBOUND["Channel Outbound"]
+    OUTBOUND --> SDK["Producer<br/>message-sdk envelope"]
+    SDK --> BROKER
+    BROKER --> EXTERNAL["External Consumer"]
+
+    classDef external fill:#fff3e0,stroke:#ef6c00,color:#4e2600
+    classDef plugin fill:#e8f5e9,stroke:#2e7d32,color:#123d17
+    classDef runtime fill:#e3f2fd,stroke:#1565c0,color:#0d315c
+    class PRODUCER,BROKER,EXTERNAL external
+    class CONSUMER,ROUTER,OUTBOUND,SDK plugin
+    class AGENT runtime
+```
+
 ```
 ┌──────────────┐     ┌────────────────────┐     ┌──────────────────┐
 │  External     │     │  RocketMQ Broker   │     │  OpenClaw        │

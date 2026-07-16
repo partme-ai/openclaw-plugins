@@ -96,7 +96,9 @@ function evaluateAclRules(
 
   for (const rule of rules) {
     if (rule.action !== action) continue;
-    if (rule.accountId && accountId && rule.accountId !== accountId) continue;
+    // 账号限定规则只能在调用方明确提供同一 accountId 时命中。
+    // 缺少账号上下文不能被当作“任意账号”，否则会绕过多租户隔离边界。
+    if (rule.accountId !== undefined && rule.accountId !== accountId) continue;
     if (!matchTopic(topic, rule.topicPattern)) continue;
     if (rule.effect === "deny") return false;
     hasAllowMatch = true;

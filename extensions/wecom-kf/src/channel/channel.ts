@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 企业微信客服（KF）多账号 Channel 契约与 Gateway 生命周期。
+ *
+ * 负责账号解析、配置 Schema、Webhook 路径、目标规范、真实 API 探针和运行状态；消息收发
+ * 分别委托 inbound/outbound 层。当前运行模式仅支持 KF，加工时会检测与其它企微插件的账号
+ * 路由冲突，并对遗留 Bot/Agent 配置给出明确迁移告警。
+ */
 import type {
   ChannelAccountSnapshot,
   ChannelPlugin,

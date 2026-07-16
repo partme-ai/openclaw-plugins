@@ -198,7 +198,7 @@ export interface MqttWillPolicyConfig {
 /**
  * 持久化后端类型
  */
-export type MqttPersistenceBackend = "memory" | "redis" | "mongodb" | "level" | "nedb";
+export type MqttPersistenceBackend = "memory" | "redis" | "mongodb" | "level";
 
 /**
  * 持久化配置（支持多种后端）
@@ -225,14 +225,13 @@ export interface MqttPersistenceConfig {
   mongodb?: {
     url?: string;
     dbName?: string;
+    /** MongoDB collection 名称前缀，例如 `openclaw_mqtt_`。 */
+    collectionPrefix?: string;
+    /** @deprecated 使用 collectionPrefix；保留用于旧配置迁移。 */
     collectionName?: string;
   };
   /** LevelDB 配置 */
   level?: {
-    path?: string;
-  };
-  /** NeDB 配置 */
-  nedb?: {
     path?: string;
   };
 }

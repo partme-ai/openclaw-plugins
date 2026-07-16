@@ -12,11 +12,13 @@ import {
   configureSessionExpiry,
   handleClientDisconnected,
   markClientConnected,
+  resetSessionMappings,
 } from "../routing/session-mapper.js";
 import { loadTopicMappings } from "../routing/topic-router.js";
 import {
   hasLegacyMqttDmScope,
   resolveBrokerConfig,
+  resolveOpenClawDmScope,
   type ResolvedMqttAccount,
 } from "../config.js";
 import { setMqttChannelConfig } from "../state/mqtt-state.js";
@@ -50,7 +52,7 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
       );
     }
     const config = resolveBrokerConfig(globalConfig);
-    const dmScope = (globalConfig.session as any)?.dmScope ?? 'per-peer';
+    const dmScope = resolveOpenClawDmScope(globalConfig);
     setMqttChannelConfig(config, dmScope);
     configureSessionExpiry(
       config.session.maxExpirySeconds,
@@ -95,12 +97,16 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
     } as ChannelAccountSnapshot);
     throw err;
   } finally {
-    await stopBroker();
-    setMqttChannelConfig(null);
-    ctx.setStatus({
-      accountId: ctx.account.accountId,
-      running: false,
-      lastStopAt: Date.now(),
-    } as ChannelAccountSnapshot);
+    try {
+      await stopBroker();
+    } finally {
+      resetSessionMappings();
+      setMqttChannelConfig(null);
+      ctx.setStatus({
+        accountId: ctx.account.accountId,
+        running: false,
+        lastStopAt: Date.now(),
+      } as ChannelAccountSnapshot);
+    }
   }
 }

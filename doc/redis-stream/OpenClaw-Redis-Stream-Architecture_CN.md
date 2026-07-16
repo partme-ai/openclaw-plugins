@@ -20,6 +20,23 @@
 - 必须实现 `ChannelPlugin` 完整接口，覆盖出站发送、入站监听、配置校验与生命周期钩子；
 - 全部使用 node-redis v5 高级 API，零裸 `sendCommand` 调用。
 
+```mermaid
+flowchart LR
+    PRODUCER["业务生产者"] --> REDIS["Redis 7+"]
+    subgraph MODES["双传输模式"]
+        PUBSUB["Pub/Sub<br/>低延迟、非持久"]
+        STREAM["Streams + Consumer Group<br/>持久、ACK、重试"]
+    end
+    REDIS --> PUBSUB
+    REDIS --> STREAM
+    PUBSUB --> ROUTER["Topic Router + Session Mapper"]
+    STREAM --> ROUTER
+    ROUTER --> SDK["Message SDK<br/>校验 / 去重 / 有界队列"]
+    SDK --> AGENT["OpenClaw Agent"]
+    AGENT --> OUT["Channel Outbound"]
+    OUT --> REDIS
+```
+
 ---
 
 ## 目录

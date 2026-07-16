@@ -13,6 +13,8 @@ export type { MqttChannelConfig } from "./types.js";
 /** 默认账号 id（单账号阶段固定为 default） */
 export const DEFAULT_MQTT_ACCOUNT_ID = "default";
 
+const PERSISTENCE_BACKENDS = new Set(["memory", "redis", "mongodb", "level"]);
+
 /**
  * 解析后的 MQTT 账号视图（供 ChannelPlugin 使用）。
  */
@@ -175,6 +177,50 @@ export function validateBrokerConfig(config: MqttBrokerConfig): void {
   if (!Number.isSafeInteger(config.session.maxExpirySeconds) || config.session.maxExpirySeconds < 0) {
     throw new Error("[openclaw-mqtt] session.maxExpirySeconds must be a non-negative safe integer");
   }
+  if (config.persistence.enabled) {
+    const backend = config.persistence.backend ?? "memory";
+    if (!PERSISTENCE_BACKENDS.has(backend)) {
+      throw new Error(`[openclaw-mqtt] unsupported persistence backend: ${String(backend)}`);
+    }
+    if (backend === "redis") {
+      const redis = config.persistence.redis;
+      const host = redis?.host?.trim() || "localhost";
+      if (!host) throw new Error("[openclaw-mqtt] persistence.redis.host must not be blank");
+      assertPort(redis?.port ?? 6379, "persistence.redis.port", false);
+      if (!Number.isSafeInteger(redis?.db ?? 0) || (redis?.db ?? 0) < 0) {
+        throw new Error("[openclaw-mqtt] persistence.redis.db must be a non-negative safe integer");
+      }
+      if (!(redis?.keyPrefix ?? "mqtt").trim()) {
+        throw new Error("[openclaw-mqtt] persistence.redis.keyPrefix must not be blank");
+      }
+      for (const [name, value] of [
+        ["subscriptionTTL", redis?.subscriptionTTL],
+        ["packetTTL", redis?.packetTTL],
+        ["retainedTTL", redis?.retainedTTL],
+      ] as const) {
+        if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+          throw new Error(`[openclaw-mqtt] persistence.redis.${name} must be a non-negative safe integer`);
+        }
+      }
+    }
+    if (backend === "mongodb") {
+      const mongodb = config.persistence.mongodb;
+      const url = mongodb?.url?.trim() || "mongodb://localhost:27017";
+      if (!/^mongodb(?:\+srv)?:\/\//u.test(url)) {
+        throw new Error("[openclaw-mqtt] persistence.mongodb.url must use mongodb:// or mongodb+srv://");
+      }
+      if (mongodb?.dbName !== undefined && !mongodb.dbName.trim()) {
+        throw new Error("[openclaw-mqtt] persistence.mongodb.dbName must not be blank");
+      }
+      const prefix = mongodb?.collectionPrefix ?? mongodb?.collectionName;
+      if (prefix !== undefined && !prefix.trim()) {
+        throw new Error("[openclaw-mqtt] persistence.mongodb.collectionPrefix must not be blank");
+      }
+    }
+    if (backend === "level" && config.persistence.level?.path !== undefined && !config.persistence.level.path.trim()) {
+      throw new Error("[openclaw-mqtt] persistence.level.path must not be blank");
+    }
+  }
   const usernames = new Set<string>();
   for (const user of config.auth.users) {
     const username = user.username.trim();
@@ -294,6 +340,19 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
         packetTTL: mqttConfig?.persistence?.redis?.packetTTL ?? mqttConfig?.persistence?.redis?.retainedTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.packetTTL,
         retainedTTL: mqttConfig?.persistence?.redis?.retainedTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.retainedTTL,
       },
+      mongodb: mqttConfig?.persistence?.mongodb
+        ? {
+            url: mqttConfig.persistence.mongodb.url,
+            dbName: mqttConfig.persistence.mongodb.dbName,
+            collectionPrefix:
+              mqttConfig.persistence.mongodb.collectionPrefix ??
+              mqttConfig.persistence.mongodb.collectionName,
+            collectionName: mqttConfig.persistence.mongodb.collectionName,
+          }
+        : undefined,
+      level: mqttConfig?.persistence?.level
+        ? { path: mqttConfig.persistence.level.path }
+        : undefined,
     },
   };
 }

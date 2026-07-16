@@ -16,10 +16,17 @@
 
 ## 运行结构
 
-```text
-OpenClaw diagnostics ──> bounded diagnostic metric store ─┐
-Gateway RPC ───────────> 13 collectors + TTL cache ──────┼─> formatter ─> Gateway HTTP routes
-public hooks/events ───> bounded runtime registry ───────┘
+```mermaid
+flowchart LR
+    DIAG["OpenClaw diagnostics"] --> DS["Bounded diagnostic store"]
+    RPC["Gateway operator RPC"] --> COL["13 collectors<br/>timeout + isolation"]
+    HOOK["Public hooks / events"] --> REG["Bounded runtime registry"]
+    DS --> COL
+    REG --> COL
+    COL --> CACHE["Single-flight TTL cache"]
+    CACHE --> LIMIT["Series guardrails"]
+    LIMIT --> FORMAT["Prometheus / JSON formatter"]
+    FORMAT --> ROUTES["Gateway HTTP routes"]
 ```
 
 - diagnostics store 最多 2048 个 series；超限计入 `openclaw_prometheus_series_dropped_total`。

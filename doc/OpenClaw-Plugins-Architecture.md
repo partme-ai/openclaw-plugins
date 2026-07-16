@@ -29,6 +29,23 @@ openclaw-plugins is an enterprise OpenClaw plugin collection developed and furth
 
 ## 2. Architecture Design
 
+```mermaid
+flowchart TB
+    BUSINESS["Business Applications<br/>SCRM / Console / Analytics"]
+    ROUTER["Durable Message Router<br/>rules / dedupe / retry / DLQ / audit"]
+    AGENTS["OpenClaw Agents<br/>routing / tools / reply pipeline"]
+    CAP["Capabilities<br/>Knowledge RAG / Memory / Tracing"]
+    CHANNELS["Channels & Transports<br/>IM / MQ / Web protocols"]
+    INFRA["Infrastructure<br/>Nacos / OAuth2 / mTLS / Prometheus"]
+
+    BUSINESS <--> ROUTER
+    ROUTER <--> AGENTS
+    CHANNELS <--> AGENTS
+    CAP --> AGENTS
+    INFRA -. "configuration, auth, metrics" .-> AGENTS
+    INFRA -. "operations" .-> CHANNELS
+```
+
 ### 2.1 Five-Layer Model
 
 ```

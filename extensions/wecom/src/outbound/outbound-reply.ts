@@ -1,8 +1,9 @@
 /**
- * Outbound Reply — unified response_url tracking, temp media serving, and public base URL resolution.
+ * @fileoverview 企业微信出站回复 URL、临时媒体和公网基址的统一运行期管理。
  *
- * Merges the former response-url-tracker.ts and temp-media-server.ts into a single cohesive
- * module, following the openclaw-china/wecom outbound-reply.ts pattern.
+ * `response_url` 按账号和目标短期保存且单次消费；本地媒体使用随机 ID + Token 暂存 15 分钟，
+ * 通过临时 HTTP 路由提供给企业微信拉取；公网基址可由可信反向代理 Header 推断或显式配置。
+ * 这些状态只存在于当前进程，Gateway 重启后不会恢复，调用方不能把它当作持久消息队列。
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";

@@ -210,4 +210,37 @@ describe.sequential("MQTT broker production hardening", () => {
       await rm(directory, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it.each(["level"] as const)(
+    "starts and delivers messages with the %s persistence adapter",
+    async (backend) => {
+      const directory = await mkdtemp(join(tmpdir(), `openclaw-mqtt-${backend}-`));
+      try {
+        const port = await freePort();
+        const received: string[] = [];
+        await startBroker(
+          config(port, {
+            persistence: {
+              enabled: true,
+              backend,
+              level: { path: join(directory, "level") },
+            },
+          }),
+          (message) => received.push(message.payload.toString("utf8")),
+        );
+        const client = await connect(port, {
+          clientId: `${backend}-persistence`,
+          clean: false,
+        });
+        await client.publishAsync("persistence/test", backend, { qos: 1 });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(received).toContain(backend);
+        await client.endAsync();
+      } finally {
+        await stopBroker().catch(() => undefined);
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
 });
