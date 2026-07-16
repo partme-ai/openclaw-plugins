@@ -3,7 +3,8 @@
  * 负责账户状态、gateway 生命周期与 outbound 回包逻辑。
  */
 
-import { publishOutboundText } from "./outbound.js";
+import { parseDirectTarget, publishDirectText, publishOutboundText } from "./outbound.js";
+import type { ChannelOutboundContext } from "openclaw/plugin-sdk/channel-contract";
 import {
   getStats,
   startWebMqttServer,
@@ -106,9 +107,16 @@ export const mqttWsChannel = {
   },
   outbound: {
     deliveryMode: "direct" as const,
-    sendText: async (sessionKey: string, text: string): Promise<void> => {
+    sendText: async (ctx: ChannelOutboundContext) => {
       const config = getWebMqttChannelConfig() ?? resolveWebMqttConfig({});
-      await publishOutboundText(sessionKey, text, config.topicPrefix);
+      const directTarget = parseDirectTarget(ctx.to);
+      if (directTarget) {
+        if (!ctx.deliveryQueueId) throw new Error("[openclaw-web-mqtt] Explicit direct delivery requires deliveryQueueId");
+        await publishDirectText(directTarget, ctx.text);
+        return { channel: "mqtt-ws", messageId: ctx.deliveryQueueId };
+      }
+      await publishOutboundText(ctx.to, ctx.text, config.topicPrefix);
+      return { channel: "mqtt-ws", messageId: ctx.to };
     },
   },
 };

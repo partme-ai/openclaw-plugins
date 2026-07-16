@@ -4,8 +4,10 @@
 import { createTestContext } from "./_context.mjs";
 import { testMqtt } from "./mqtt.mjs";
 import { testRabbitmq } from "./rabbitmq.mjs";
+import { testRedisStream } from "./redis-stream.mjs";
 import { testRocketmq } from "./rocketmq.mjs";
 import { testGotify } from "./gotify.mjs";
+import { testRouter } from "./router.mjs";
 import { testStomp } from "./stomp.mjs";
 import { testWebMqtt } from "./web-mqtt.mjs";
 import { testWebStomp } from "./web-stomp.mjs";
@@ -15,8 +17,10 @@ import { resolvePlugins } from "../lib/registry.mjs";
 const ADAPTERS = {
   mqtt: testMqtt,
   rabbitmq: testRabbitmq,
+  "redis-stream": testRedisStream,
   rocketmq: testRocketmq,
   gotify: testGotify,
+  router: testRouter,
   stomp: testStomp,
   "web-mqtt": testWebMqtt,
   "web-stomp": testWebStomp,

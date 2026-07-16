@@ -1,271 +1,112 @@
 # OpenClaw Tracing
 
-**OpenClaw plugin — Distributed tracing for message flows and agent interactions**
+Production-oriented message and tool tracing for OpenClaw 2026.7.1.
 
-![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--tracing-blue)
-![Node](https://img.shields.io/badge/Node.js-20+-green)
-![License](https://img.shields.io/badge/License-MIT-green)
+[简体中文](./README.zh-CN.md) | [English](./README.md)
 
-[English](./README.md) | [简体中文](./README.zh-CN.md)
+## Scope
 
----
+`@partme.ai/openclaw-tracing` observes the official `message_received`,
+`before_tool_call`, `after_tool_call`, `reply_payload_sending`, and `session_end` hooks. It
+creates an OpenTelemetry-compatible root span for each sampled message and a
+child span for each tool call.
 
-## 📖 Introduction
+The plugin supports three real export paths:
 
-`@partme.ai/openclaw-tracing` is a **distributed tracing plugin** for [OpenClaw](https://github.com/openclaw/openclaw) that captures message flows, agent interactions, and tool calls as a complete trace chain. Inspired by rabbitmq_tracing, it uses an OpenTelemetry-compatible data model and supports multiple backends for trace storage.
+- `log`: one compact JSON object per completed span through the OpenClaw logger.
+- `file`: bounded JSONL buffering, serialized flush, daily files, and retention cleanup.
+- `otlp`: OTLP/HTTP JSON with bounded buffering, serialized batches, request timeout, and retry.
 
----
+SkyWalking is not advertised as a native backend. Send OTLP to an OpenTelemetry
+Collector and route it to SkyWalking when that integration is required.
 
-## 🎯 Core Capabilities
-
-- **Complete trace chain**: Captures the full lifecycle from message arrival → agent processing → tool calls → response
-- **Multiple backends**: Supports Log / File (JSONL + daily rotation) / OTLP HTTP backends
-- **Sampling control**: Deterministic sampling based on traceId hash
-- **Privacy protection**: Optional message body capture
-- **HTTP API**: Query recent traces via REST endpoints
-- **Hook integration**: Automatically traces `command:new`, `tool_result_persist`, and `agent:bootstrap` events
-- **Session isolation**: Follows OpenClaw global `session.dmScope` for consistent session tracking
-
----
-
-## 🏗️ How It Works
-
-### Tracing Data Model
-
-The project uses the [OpenTelemetry Span model](src/types.ts):
-
-```
-Trace
-  └── Span
-        ├── traceId      # Global trace ID linking all related Spans
-        ├── spanId       # Current operation ID
-        ├── parentSpanId  # Parent Span ID (builds call chain)
-        ├── name         # Operation name
-        ├── kind         # Span type (server/internal/client)
-        ├── startTimeMs  # Start time
-        ├── endTimeMs    # End time
-        ├── attributes    # Key-value attributes
-        └── events       # Time point events
-```
-
-### Trace Flow
-
-```
-Message Arrives → command:new → agent:bootstrap → tool:xxx → Response
-        ↓               ↓              ↓              ↓
-   [Root Span]   [Agent Span]   [Tool Span]   [Export Complete]
-```
-
-Reference the three core event hooks in [hooks.ts](src/hooks.ts):
-
-| Event | Created Span | Type |
-|-------|-------------|------|
-| `command:new` | Message arrival root Span | server |
-| `agent:bootstrap` | Agent processing Span | internal |
-| `tool_result_persist` | Tool call Span | client |
-
-### Session Isolation Strategy
-
-The plugin uses OpenClaw's global `session.dmScope` configuration for session isolation, reference [dm-scope.ts](src/dm-scope.ts):
-
-| dmScope | Session Key Format | Description |
-|---------|-------------------|-------------|
-| `main` | `agent:agentId:main` | All interactions share one session |
-| `per-peer` | `agent:agentId:direct:peerId` | Separate session per peer |
-| `per-channel-peer` | `agent:agentId:channel:direct:peerId` | Channel + peer session isolation |
-| `per-account-channel-peer` | `agent:agentId:channel:accountId:direct:peerId` | Account + channel + peer isolation |
-
-This aligns with `openclaw-mqtt`, `openclaw-web-mqtt`, `openclaw-stomp`, `openclaw-web-stomp`.
-
-### Tracing Backends
-
-The project supports three backend storage types, reference the [backends/](src/backends/) directory:
-
-| Backend | Config Value | Description |
-|---------|--------------|-------------|
-| **Log** | `backend: "log"` | Output to console as JSON |
-| **File** | `backend: "file"` | JSONL files with daily rotation |
-| **OTLP** | `backend: "otlp"` | Push to OTLP-compatible backend |
-
-### Sampling Mechanism
-
-Reference [sampler.ts](src/sampler.ts):
-
-- **Deterministic sampling**: Same `traceId` always produces the same sampling result
-- Based on comparing `traceId` hash with `sampleRate`
-- Config range: `0.0` (reject all) ~ `1.0` (accept all)
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- OpenClaw `>= 2026.7.1`
-- Node.js `20+`
-
-### Install
+## Install and configure
 
 ```bash
 openclaw plugins install @partme.ai/openclaw-tracing
 ```
 
-### Minimal Config (`openclaw.json`)
+The manifest ID is `tracing`. Canonical configuration belongs under
+`plugins.entries.tracing.config`:
 
 ```json
 {
-  "tracing": {
-    "enabled": true,
-    "backend": "log",
-    "sampleRate": 1.0,
-    "captureMessageBody": false
-  },
-  "session": {
-    "dmScope": "per-channel-peer"
+  "plugins": {
+    "entries": {
+      "tracing": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "backend": "otlp",
+          "otlpEndpoint": "http://otel-collector:4318/v1/traces",
+          "sampleRate": 0.25,
+          "maxSpansPerTrace": 100,
+          "maxBufferedSpans": 10000,
+          "flushIntervalMs": 5000,
+          "exportTimeoutMs": 10000,
+          "exportRetryAttempts": 3,
+          "captureMessageBody": false
+        }
+      }
+    }
   }
 }
 ```
 
-### Full Config Options
+`otlpEndpoint` accepts either the Collector base URL or a full `/v1/traces`
+URL. Configuration is validated again at runtime; invalid values fail startup.
 
-```json
-{
-  "tracing": {
-    "enabled": true,
-    "backend": "file",
-    "otlpEndpoint": "http://localhost:4318",
-    "sampleRate": 0.5,
-    "traceDir": "./traces",
-    "maxSpansPerTrace": 100,
-    "captureMessageBody": true
-  }
-}
-```
+| Field | Default | Notes |
+|---|---:|---|
+| `enabled` | `false` | Enables trace capture; the plugin entry must also be enabled |
+| `backend` | `log` | `log`, `file`, or `otlp` |
+| `sampleRate` | `1` | Deterministic value from `0` through `1` |
+| `maxSpansPerTrace` | `100` | Includes the root span |
+| `maxBufferedSpans` | `10000` | Oldest spans are dropped on overflow and health becomes degraded |
+| `flushIntervalMs` | `5000` | File and OTLP flush interval |
+| `traceDir` | `./traces` | File backend directory |
+| `traceRetentionDays` | `7` | File backend retention |
+| `otlpEndpoint` | `http://localhost:4318/v1/traces` | OTLP/HTTP trace endpoint |
+| `exportTimeoutMs` | `10000` | Per OTLP request timeout |
+| `exportRetryAttempts` | `3` | Attempts per OTLP flush |
+| `captureMessageBody` | `false` | Opt-in; stores at most 500 characters and may contain sensitive data |
 
-| Config | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | boolean | false | Enable tracing |
-| `backend` | string | "log" | Backend type: log/file/otlp |
-| `otlpEndpoint` | string | "http://localhost:4318" | OTLP HTTP endpoint |
-| `sampleRate` | number | 1.0 | Sampling rate 0.0~1.0 |
-| `traceDir` | string | "./traces" | File backend storage directory |
-| `maxSpansPerTrace` | number | 100 | Max spans per trace |
-| `captureMessageBody` | boolean | false | Capture message body |
+## Operations API
 
----
+All routes use OpenClaw plugin authentication, reject non-GET methods, and send
+`Cache-Control: no-store`:
 
-## 📍 HTTP Endpoints
+- `GET /tracing/status`
+- `GET /tracing/traces?limit=50` (`1..200`)
+- `GET /tracing/trace?traceId=<32-hex-character-id>`
 
-| Endpoint | Method | Description |
-| -------- | ------ | ----------- |
-| `/tracing/status` | GET | Tracing status and configuration |
-| `/tracing/traces` | GET | Recent trace list (supports `?limit=N`) |
-| `/tracing/trace` | GET | Detailed trace info (requires `?traceId=xxx`) |
+`/tracing/status` returns HTTP 503 when the selected backend reports a current
+export or capacity failure. Its `backendStatus` includes buffered, dropped,
+last-export, and last-error diagnostics.
 
----
+## Reliability and privacy boundaries
 
-## 📁 Project Structure
+- Active traces and recent query data are bounded in process memory.
+- Missing tool completion, early session end, superseding messages, and a
+  30-minute active-trace TTL close orphan spans instead of leaking them.
+- The root span closes on the public final-reply hook, so the plugin does not
+  require OpenClaw's privileged `allowConversationAccess` policy.
+- File and OTLP buffers are process-local. They do not provide a durable outbox
+  or exactly-once export. A process crash can lose buffered spans; OTLP timeout
+  outcomes can be ambiguous.
+- `captureMessageBody` is disabled by default. Enabling it requires a data
+  classification, access-control, and retention review.
+- The HTTP query cache contains only the 200 most recently completed traces and
+  is cleared on gateway shutdown.
 
-```
-openclaw-tracing/
-├── src/
-│   ├── index.ts              # Plugin entry point
-│   ├── hooks.ts              # Gateway event hooks
-│   ├── sampler.ts            # Trace sampler
-│   ├── dm-scope.ts           # Session isolation based on dmScope
-│   ├── types.ts              # Type definitions
-│   ├── backends/
-│   │   ├── log-backend.ts    # Log backend
-│   │   ├── file-backend.ts   # File backend (JSONL)
-│   │   └── otlp-backend.ts   # OTLP HTTP backend
-├── .github/workflows/
-│   ├── ci.yml               # CI workflow
-│   └── release.yml           # Release workflow
-├── openclaw.plugin.json       # Plugin manifest
-├── package.json
-└── README.md / README.zh-CN.md
-```
-
----
-
-## 🧪 Testing
-
-### Unit Tests
+## Verification
 
 ```bash
-npm test
+pnpm test
+pnpm typecheck
+pnpm build
+npm pack --dry-run
 ```
 
-### Test Coverage
-
-```bash
-npm run test:coverage
-```
-
----
-
-## 🤖 GitHub Actions
-
-| Workflow | Trigger | Purpose |
-| --- | --- | --- |
-| `.github/workflows/ci.yml` | Push / PR to `main` or `master` | Install, typecheck, build, test, upload `dist/` |
-| `.github/workflows/release.yml` | Tag `v*` / manual dispatch | Build, test, publish npm package |
-
----
-
-## 📦 Publishing
-
-- Package: `@partme.ai/openclaw-tracing`
-- Required secret: `NPM_TOKEN`
-
-Tag release example:
-
-```bash
-npm version patch
-git push origin main --follow-tags
-```
-
----
-
-## OpenClaw Documentation
-
-Official docs for plugins, the SDK, and related topics:
-
-### Plugins
-
-- [Tools — Plugins](https://docs.openclaw.ai/tools/plugin)
-- [Community plugins](https://docs.openclaw.ai/plugins/community)
-- [Bundles](https://docs.openclaw.ai/plugins/bundles)
-
-### Building Plugins
-
-- [Building plugins](https://docs.openclaw.ai/plugins/building-plugins)
-- [SDK overview](https://docs.openclaw.ai/plugins/sdk-overview)
-- [SDK entry points](https://docs.openclaw.ai/plugins/sdk-entrypoints)
-- [SDK runtime](https://docs.openclaw.ai/plugins/sdk-runtime)
-
----
-
-## ❓ FAQ
-
-### How does session isolation work?
-
-The plugin uses OpenClaw's global `session.dmScope` configuration to generate consistent session keys, ensuring traces are properly isolated according to your desired scope.
-
-### Can I use this with external observability systems?
-
-Yes, the OTLP backend allows you to export traces to systems like Jaeger, Zipkin, or Prometheus.
-
-### How do I control trace sampling?
-
-Set `sampleRate` between 0.0 and 1.0 in the configuration to control the fraction of traces captured.
-
-### How is message body privacy protected?
-
-Set `captureMessageBody: false` (default) to avoid capturing message content, logging only metadata.
-
----
-
-## 📄 License
-
-MIT
+The package and manifest version are `2026.7.1`; OpenClaw `>=2026.7.1` is a
+required peer dependency.

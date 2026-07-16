@@ -31,6 +31,7 @@
 - **标准格式回退**：未匹配的 channel 使用 `openclaw:agent:<agentId>:in` 格式进行自动路由
 - **dmScope 会话隔离**：会话键完全基于 OpenClaw 全局 `session.dmScope` 配置生成（`main` / `per-peer` / `per-channel-peer` / `per-account-channel-peer`）
 - **JSON + 纯文本负载**：支持原始文本或 `{"text": "..."}` JSON 格式的消息
+- **可靠 Stream 消费**：成功派发后 ACK、回收超时 PEL、有界重试并原子转入死信 Stream
 - **HTTP 健康/状态端点**：提供 `/redis-stream/health` 和 `/redis-stream/status` 监控接口
 
 ## 生命周期
@@ -43,14 +44,14 @@
 
 ## 消息处理流程
 
-1. 接收 Redis channel 消息（Pub/Sub `SUBSCRIBE`/`PSUBSCRIBE` 回调）
+1. 通过 Pub/Sub 或 `XREADGROUP` 接收 Redis 消息
 2. 白名单检查：如果 `subscribeChannels` 非空，仅处理匹配的 channel
 3. 路由解析：先查 `channelBindings`（显式匹配），回退到标准 `openclaw:agent:<agentId>:in` 格式
 4. 从 OpenClaw 全局配置读取 dmScope（`session.dmScope`）
 5. 构建会话键：`agent:<agentId>:<dmScope后缀>`
 6. 更新会话上下文（channel、replyChannel、peerId）
 7. Agent 分发 → `rt.channel.reply.dispatchReplyFromConfig`
-8. 通过 Redis `PUBLISH` 将回复发送到 `replyChannel`
+8. Pub/Sub 模式使用 `PUBLISH` 回复，Stream 模式使用持久化 `XADD` 回复
 
 ## 快速开始
 
@@ -70,7 +71,7 @@ openclaw plugins install clawhub:@partme.ai/openclaw-redis-stream
 openclaw plugins install npm:@partme.ai/openclaw-redis-stream
 ```
 
-最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.6.1`。
 
 ### message-sdk 复用
 
@@ -87,16 +88,13 @@ openclaw plugins install npm:@partme.ai/openclaw-redis-stream
   "channels": {
     "redis-stream": {
       "url": "redis://localhost:6379",
-      "channelMode": "pubsub",
-      "subscribeChannels": ["openclaw:agent:*:in"],
-      "channelBindings": [
-        {
-          "channelPattern": "sensor:temperature",
-          "agentId": "iot-agent",
-          "accountId": "default",
-          "replyChannel": "sensor:temperature:response"
-        }
-      ]
+      "channelMode": "stream",
+      "defaultAgentId": "main",
+      "stream": {
+        "inboundKey": "openclaw:{agent}:inbound",
+        "outboundKey": "openclaw:{agent}:outbound",
+        "deadLetterKey": "openclaw:{agent}:inbound:dlq"
+      }
     }
   }
 }
@@ -164,11 +162,14 @@ Channel 模式支持 `*` 通配符（glob 风格，以冒号分隔）。独立�
 | `stream.inboundKey` | `string` | `"openclaw:inbound"` | 消费组读取的 stream 键 |
 | `stream.outboundKey` | `string` | `"openclaw:outbound"` | 回复写入的 stream 键 |
 | `stream.consumerGroup` | `string` | `"openclaw-group"` | 消费者组名称 |
-| `stream.consumerName` | `string` | `"openclaw-consumer-1"` | 此实例的消费者名称 |
+| `stream.consumerName` | `string` | `""` | 唯一消费者名；空值按主机名 + 进程 ID 自动生成 |
 | `stream.blockMs` | `number` | `5000` | `XREADGROUP` 阻塞超时 |
 | `stream.count` | `number` | `10` | 每批次最大消息数 |
 | `stream.createGroup` | `boolean` | `true` | 自动创建消费者组 |
 | `stream.pendingClaimIdleMs` | `number` | `120000` | XAUTOCLAIM 回收 idle PEL 条目（0=禁用） |
+| `stream.maxAttempts` | `number` | `5` | 转入死信前的最大投递次数 |
+| `stream.deadLetterKey` | `string` | `"openclaw:inbound:dlq"` | 死信 Stream 键 |
+| `stream.maxLen` | `number` | `100000` | 出站与死信 Stream 近似长度上限；0 表示不限制 |
 
 ### 负载解析
 
@@ -181,7 +182,26 @@ Channel 模式支持 `*` 通配符（glob 风格，以冒号分隔）。独立�
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `connection.reconnectMs` | `number` | `3000` | 重连延迟（毫秒） |
-| `connection.maxRetries` | `number` | `10` | 最大重连次数 |
+| `connection.maxRetries` | `number` | `0` | 最大重连次数；0 表示持续重连 |
+| `connection.startupTimeoutMs` | `number` | `30000` | 启动连接超时 |
+
+### 幂等设置
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `idempotency.enabled` | `boolean` | `true` | 派发前 claim Stream entry ID |
+| `idempotency.ttlMs` | `number` | `600000` | 已完成 entry 的保留窗口 |
+| `idempotency.maxEntries` | `number` | `10000` | 进程内缓存上限 |
+
+## 可靠性与部署边界
+
+- Stream 消息仅在 Agent 派发与回复发送均成功后 ACK；失败条目留在 PEL，并在 `pendingClaimIdleMs` 后被回收。
+- 达到 `maxAttempts` 后，原始消息与失败元数据在同一个 Redis 事务中写入 `deadLetterKey` 并 ACK。
+- 每个 Gateway 副本必须使用不同的 `consumerName`；留空会按主机名和进程 ID 自动生成。
+- Redis Cluster 环境中，`inboundKey` 与 `deadLetterKey` 必须使用相同 hash tag，例如 `openclaw:{agent}:inbound` 和 `openclaw:{agent}:inbound:dlq`，否则原子死信事务会跨槽失败。
+- 插件当前使用单端点 node-redis 客户端，不支持原生 Redis Cluster 拓扑发现；应连接 standalone/HA 单入口或兼容代理。
+- Pub/Sub 是明确的 at-most-once 模式，不具备 ACK、回放、死信或过载恢复。不能丢消息的生产流程应使用 Stream 模式。
+- 幂等状态仅在当前插件进程内生效，不能宣称跨节点 exactly-once。
 
 ### 环境变量
 
@@ -208,8 +228,10 @@ openclaw-redis-stream/
     ├── topic-router.ts    # Channel → Agent 路由解析
     ├── inbound.ts         # 入站消息分发
     ├── runtime.ts         # PluginRuntime 单例存储
-    ├── redis-stream-config.ts  # 配置解析 + 默认值
-    ├── redis-stream-server.ts  # Redis 传输层：Pub/Sub + Stream
+    ├── config.ts          # 配置校验、解析与默认值
+    ├── transport/         # Redis 发布器与 Pub/Sub/Stream 生命周期
+    ├── routing/           # Topic 路由与会话映射
+    ├── shared/            # 错误、日志、dmScope 与幂等辅助
     ├── setup-entry.ts     # 轻量级 setup 入口
     ├── dm-scope.test.ts
     ├── config.test.ts

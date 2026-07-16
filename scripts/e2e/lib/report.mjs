@@ -5,13 +5,30 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { E2E_DIR, GATEWAY_HTTP, STATE_DIR } from "./utils.mjs";
 
+const SECRET_KEY = /(token|secret|password|api[-_]?key|authorization)$/i;
+
+/** Return a JSON-safe report copy with credential-bearing fields removed. */
+export function sanitizeReport(value, key = "") {
+  if (SECRET_KEY.test(key)) return "[REDACTED]";
+  if (Array.isArray(value)) return value.map((item) => sanitizeReport(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([childKey, childValue]) => [
+        childKey,
+        sanitizeReport(childValue, childKey),
+      ]),
+    );
+  }
+  return value;
+}
+
 /**
  * @param {Record<string, unknown>} report
  */
 export function writeReport(report) {
   report.finishedAt = new Date().toISOString();
   const reportPath = join(E2E_DIR, "e2e-report.json");
-  writeFileSync(reportPath, JSON.stringify(report, null, 2));
+  writeFileSync(reportPath, JSON.stringify(sanitizeReport(report), null, 2));
   return reportPath;
 }
 

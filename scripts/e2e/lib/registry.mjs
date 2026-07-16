@@ -24,7 +24,7 @@ export const EXTENSION_INVENTORY = [
   { id: "rabbitmq", filter: "@partme.ai/openclaw-rabbitmq", dir: "extensions/rabbitmq", type: "channel", category: "external-broker", e2eAdapter: true, dockerRequired: true, dockerServices: ["rabbitmq"] },
   { id: "rocketmq", filter: "@partme.ai/openclaw-rocketmq", dir: "extensions/rocketmq", type: "channel", category: "external-broker", e2eAdapter: true, dockerRequired: true, dockerServices: ["rocketmq-namesrv", "rocketmq-broker", "rocketmq-proxy"] },
   { id: "gotify", filter: "@partme.ai/openclaw-gotify", dir: "extensions/gotify", type: "channel", category: "external-broker", e2eAdapter: true, dockerRequired: true, dockerServices: ["gotify"] },
-  { id: "redis-stream", filter: "@partme.ai/openclaw-redis-stream", dir: "extensions/redis-stream", type: "channel", category: "external-broker", e2eAdapter: false, dockerRequired: true, dockerServices: ["redis"] },
+  { id: "redis-stream", filter: "@partme.ai/openclaw-redis-stream", dir: "extensions/redis-stream", type: "channel", category: "external-broker", e2eAdapter: true, dockerRequired: true, dockerServices: ["redis"] },
   { id: "wecom", filter: "@partme.ai/wecom", dir: "extensions/wecom", type: "channel", category: "webhook-platform", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "wecom-kf", filter: "@partme.ai/wecom-kf", dir: "extensions/wecom-kf", type: "channel", category: "webhook-platform", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "wechat", filter: "@partme.ai/weixin", dir: "extensions/wechat", type: "channel", category: "webhook-platform", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
@@ -34,7 +34,7 @@ export const EXTENSION_INVENTORY = [
   { id: "amap", filter: "@partme.ai/openclaw-amap", dir: "extensions/amap", type: "channel", category: "webhook-platform", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "meituan", filter: "@partme.ai/openclaw-meituan", dir: "extensions/meituan", type: "channel", category: "webhook-platform", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "bridge", filter: "@partme.ai/openclaw-bridge", dir: "extensions/bridge", type: "capability", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
-  { id: "router", filter: "@partme.ai/openclaw-router", dir: "extensions/router", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
+  { id: "router", filter: "@partme.ai/openclaw-router", dir: "extensions/router", type: "infra", category: "infra", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
   { id: "nacos", filter: "@partme.ai/openclaw-nacos", dir: "extensions/nacos", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "mtls", filter: "@partme.ai/openclaw-mtls", dir: "extensions/mtls", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "oauth2", filter: "@partme.ai/openclaw-oauth2", dir: "extensions/oauth2", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
@@ -49,6 +49,17 @@ export const EXTENSION_INVENTORY = [
 /** E2E-capable queue/channel plugins (subset of EXTENSION_INVENTORY). */
 /** @type {import('./registry.mjs').PluginDefinition[]} */
 export const PLUGIN_REGISTRY = [
+  {
+    id: "router",
+    category: "infra",
+    filter: "@partme.ai/openclaw-router",
+    dir: "extensions/router",
+    extDir: "openclaw-router",
+    channels: [],
+    dockerServices: [],
+    needsGotify: true,
+    browserTest: false,
+  },
   {
     id: "mqtt",
     category: "embedded-service",
@@ -79,6 +90,17 @@ export const PLUGIN_REGISTRY = [
     extDir: "openclaw-rocketmq",
     channels: ["rocketmq"],
     dockerServices: ["rocketmq-namesrv", "rocketmq-broker", "rocketmq-proxy"],
+    needsGotify: false,
+    browserTest: false,
+  },
+  {
+    id: "redis-stream",
+    category: "external-broker",
+    filter: "@partme.ai/openclaw-redis-stream",
+    dir: "extensions/redis-stream",
+    extDir: "openclaw-redis-stream",
+    channels: ["redis-stream"],
+    dockerServices: ["redis"],
     needsGotify: false,
     browserTest: false,
   },

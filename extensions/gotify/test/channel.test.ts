@@ -281,7 +281,7 @@ describe('dispatchInboundMessage', () => {
       message: 'question',
     });
 
-    expect(order).toEqual(['dispatch:start', 'delete:999', 'dispatch:end', 'delete:401']);
+    expect(order).toEqual(['dispatch:start', 'dispatch:end', 'delete:401']);
   });
 
   it('uses delivery retry helper for outbound send', async () => {
@@ -476,7 +476,7 @@ describe('dispatchInboundMessage', () => {
     expect(deleteMessage).not.toHaveBeenCalled();
   });
 
-  it('deletes outbound reply from Gotify after successful send', async () => {
+  it('keeps outbound reply in Gotify for offline clients', async () => {
     vi.mocked(deleteMessage).mockClear();
     const dispatch = vi.fn().mockImplementation(async ({ dispatcherOptions }) => {
       await dispatcherOptions.deliver({ text: 'agent reply' });
@@ -492,7 +492,35 @@ describe('dispatchInboundMessage', () => {
 
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(deleteMessage).toHaveBeenCalledWith(account, 400);
-    expect(deleteMessage).toHaveBeenCalledWith(account, 999);
+    expect(deleteMessage).not.toHaveBeenCalledWith(account, 999);
+  });
+
+  it('fails instead of acknowledging backlog when channel runtime is unavailable', async () => {
+    const ctx = makeCtx();
+    ctx.channelRuntime = {} as typeof ctx.channelRuntime;
+
+    await expect(
+      dispatchInboundMessage(ctx as never, makeAccount(), {
+        id: 410,
+        appid: 5,
+        message: 'do not acknowledge',
+      })
+    ).rejects.toThrow('does not expose reply/routing');
+  });
+
+  it('continues dispatch when optional application-name lookup fails', async () => {
+    vi.mocked(resolveApplicationName).mockRejectedValueOnce(new Error('metadata API unavailable'));
+    const dispatch = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCtx({ dispatchReplyWithBufferedBlockDispatcher: dispatch });
+
+    await dispatchInboundMessage(ctx as never, makeAccount(), {
+      id: 411,
+      appid: 5,
+      title: 'fallback-name',
+      message: 'still deliver',
+    });
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('does not delete message when dispatch is skipped', async () => {

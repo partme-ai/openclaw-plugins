@@ -3,21 +3,25 @@
  */
 import { mqttConfig } from "./mqtt.mjs";
 import { rabbitmqConfig } from "./rabbitmq.mjs";
+import { redisStreamConfig } from "./redis-stream.mjs";
 import { rocketmqConfig } from "./rocketmq.mjs";
 import { gotifyConfig } from "./gotify.mjs";
 import { stompConfig } from "./stomp.mjs";
 import { webMqttConfig } from "./web-mqtt.mjs";
 import { webStompConfig } from "./web-stomp.mjs";
+import { routerConfig } from "./router.mjs";
 
 /** @type {Record<string, (ctx: import('./mqtt.mjs').ConfigContext) => { pluginEntry: Record<string, unknown>; channelEntry: Record<string, unknown> }>} */
 const BUILDERS = {
   mqtt: mqttConfig,
   rabbitmq: rabbitmqConfig,
+  "redis-stream": redisStreamConfig,
   rocketmq: rocketmqConfig,
   gotify: gotifyConfig,
   stomp: stompConfig,
   "web-mqtt": webMqttConfig,
   "web-stomp": webStompConfig,
+  router: routerConfig,
 };
 
 /**

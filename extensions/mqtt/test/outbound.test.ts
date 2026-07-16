@@ -41,6 +41,7 @@ describe("mqttOutbound.sendText", () => {
     const result = await mqttOutbound.sendText!({
       to: sessionKey,
       text: "agent reply",
+      deliveryQueueId: "core-durable-id",
     } as Parameters<NonNullable<typeof mqttOutbound.sendText>>[0]);
 
     expect(publishMessage).toHaveBeenCalledWith("custom/reply", "agent reply", 0, false);
@@ -64,5 +65,16 @@ describe("mqttOutbound.sendText", () => {
         text: "fail",
       } as Parameters<NonNullable<typeof mqttOutbound.sendText>>[0]),
     ).rejects.toThrow("publish failed");
+  });
+
+  it("publishes Router deliveries directly to the configured topic", async () => {
+    const result = await mqttOutbound.sendText!({
+      to: "openclaw-direct-topic:v1:audit%2Fevents",
+      text: "routed",
+      deliveryQueueId: "router-id",
+    } as Parameters<NonNullable<typeof mqttOutbound.sendText>>[0]);
+
+    expect(publishMessage).toHaveBeenCalledWith("audit/events", "routed", 1, false);
+    expect(result).toMatchObject({ channel: "mqtt", messageId: "router-id" });
   });
 });

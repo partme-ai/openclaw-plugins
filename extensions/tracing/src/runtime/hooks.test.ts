@@ -18,6 +18,7 @@ function createMockBackend(): TracingBackend {
     name: "mock",
     init: vi.fn(async () => {}),
     exportSpans: vi.fn(async () => {}),
+    getStatus: vi.fn(() => ({ healthy: true, bufferedSpans: 0, droppedSpans: 0 })),
     shutdown: vi.fn(async () => {}),
   };
 }
@@ -32,10 +33,8 @@ function createMockApi() {
       list.push(handler);
       handlers.set(name, list);
     }),
-    emit(name: string, event: Record<string, unknown>, ctx: Record<string, unknown>) {
-      for (const handler of handlers.get(name) ?? []) {
-        void handler(event, ctx);
-      }
+    async emit(name: string, event: Record<string, unknown>, ctx: Record<string, unknown>) {
+      await Promise.all((handlers.get(name) ?? []).map((handler) => handler(event, ctx)));
     },
   };
 }
@@ -46,7 +45,12 @@ const baseConfig: TracingConfig = {
   otlpEndpoint: "http://localhost:4318",
   sampleRate: 1,
   traceDir: "./traces",
+  traceRetentionDays: 7,
   maxSpansPerTrace: 10,
+  maxBufferedSpans: 100,
+  flushIntervalMs: 5000,
+  exportTimeoutMs: 1000,
+  exportRetryAttempts: 1,
   captureMessageBody: false,
 };
 
@@ -55,17 +59,17 @@ describe("registerTracingPluginHooks", () => {
     resetTraceStore();
   });
 
-  it("message_received 创建 root span，agent_end 结束并导出", async () => {
+  it("message_received 创建 root span，final reply 结束并导出", async () => {
     const backend = createMockBackend();
     const api = createMockApi();
 
-    registerTracingPluginHooks(api as never, {
+    registerTracingPluginHooks(api as never, () => ({
       backend,
       sampler: new TracingSampler(1),
       config: baseConfig,
-    });
+    }));
 
-    api.emit(
+    await api.emit(
       "message_received",
       { content: "hello" },
       { sessionKey: "agent:main:direct:user1", runId: "run-1", channelId: "wecom" },
@@ -73,30 +77,51 @@ describe("registerTracingPluginHooks", () => {
 
     expect(getActiveSpanCount()).toBe(1);
 
-    await api.emit("agent_end", { success: true }, { sessionKey: "agent:main:direct:user1", runId: "run-1" });
+    await api.emit(
+      "reply_payload_sending",
+      { kind: "final", sessionKey: "agent:main:direct:user1", runId: "run-1", payload: { text: "done" } },
+      { sessionKey: "agent:main:direct:user1", runId: "run-1" },
+    );
 
     expect(getActiveSpanCount()).toBe(0);
     expect(getRecentTraceCount()).toBe(1);
     expect(backend.exportSpans).toHaveBeenCalled();
   });
 
+  it("非 final 回复分片不会提前关闭 root span", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: baseConfig,
+    }));
+    await api.emit("message_received", {}, { sessionKey: "sk-chunk", runId: "run-chunk" });
+    await api.emit(
+      "reply_payload_sending",
+      { kind: "block", sessionKey: "sk-chunk", runId: "run-chunk", payload: { text: "part" } },
+      { sessionKey: "sk-chunk", runId: "run-chunk" },
+    );
+    expect(getActiveSpanCount()).toBe(1);
+  });
+
   it("before_tool_call / after_tool_call 创建并结束 tool span", async () => {
     const backend = createMockBackend();
     const api = createMockApi();
 
-    registerTracingPluginHooks(api as never, {
+    registerTracingPluginHooks(api as never, () => ({
       backend,
       sampler: new TracingSampler(1),
       config: baseConfig,
-    });
+    }));
 
-    api.emit(
+    await api.emit(
       "message_received",
       {},
       { sessionKey: "sk-1", runId: "run-2", channelId: "mqtt" },
     );
 
-    api.emit(
+    await api.emit(
       "before_tool_call",
       { toolName: "web_search", toolCallId: "tc-1" },
       { sessionKey: "sk-1", runId: "run-2" },
@@ -111,6 +136,72 @@ describe("registerTracingPluginHooks", () => {
     );
 
     expect(getActiveSpanCount()).toBe(1);
+    const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
+    const toolSpan = exported.find((span) => span.name === "tool:web_search");
+    expect(toolSpan?.endTimeMs! - toolSpan?.startTimeMs!).toBe(50);
+  });
+
+  it("缺少 toolCallId 时不创建无法回收的 span", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: baseConfig,
+    }));
+    await api.emit("message_received", {}, { sessionKey: "sk-missing", runId: "run-missing" });
+    await api.emit("before_tool_call", { toolName: "broken" }, { sessionKey: "sk-missing", runId: "run-missing" });
+    expect(getActiveSpanCount()).toBe(1);
+  });
+
+  it("session_end 会关闭 root 和未完成的 tool span", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: baseConfig,
+    }));
+    await api.emit("message_received", {}, { sessionKey: "sk-orphan", runId: "run-orphan" });
+    await api.emit(
+      "before_tool_call",
+      { toolName: "slow", toolCallId: "tc-orphan" },
+      { sessionKey: "sk-orphan", runId: "run-orphan" },
+    );
+    expect(getActiveSpanCount()).toBe(2);
+    await api.emit("session_end", {}, { sessionKey: "sk-orphan", runId: "run-orphan" });
+    expect(getActiveSpanCount()).toBe(0);
+    const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
+    expect(exported).toHaveLength(2);
+    expect(exported.every((span) => span.status === "error")).toBe(true);
+  });
+
+  it("后端导出失败时仍回收同一 trace 的所有 span", async () => {
+    const backend = createMockBackend();
+    vi.mocked(backend.exportSpans).mockRejectedValue(new Error("collector down"));
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: baseConfig,
+    }));
+    await api.emit("message_received", {}, { sessionKey: "sk-fail", runId: "run-fail" });
+    await api.emit(
+      "before_tool_call",
+      { toolName: "slow", toolCallId: "tc-fail" },
+      { sessionKey: "sk-fail", runId: "run-fail" },
+    );
+    await api.emit("session_end", {}, { sessionKey: "sk-fail", runId: "run-fail" });
+    expect(getActiveSpanCount()).toBe(0);
+    expect(backend.exportSpans).toHaveBeenCalledTimes(2);
+    expect(api.logger.error).toHaveBeenCalledWith(expect.stringContaining("collector down"));
+  });
+
+  it("provider 返回 null 时 hooks 保持静默", async () => {
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => null);
+    await api.emit("message_received", {}, { sessionKey: "disabled" });
+    expect(getActiveSpanCount()).toBe(0);
   });
 });
 
@@ -123,17 +214,23 @@ describe("trace-store getTraceSpans", () => {
     const backend = createMockBackend();
     const api = createMockApi();
 
-    registerTracingPluginHooks(api as never, {
+    registerTracingPluginHooks(api as never, () => ({
       backend,
       sampler: new TracingSampler(1),
       config: baseConfig,
-    });
+    }));
 
-    api.emit("message_received", {}, { sessionKey: "sk-3", runId: "run-4", channelId: "mqtt", traceId: "abc123" });
-    await api.emit("agent_end", { success: true }, { sessionKey: "sk-3", runId: "run-4" });
+    await api.emit("message_received", {}, { sessionKey: "sk-3", runId: "run-4", channelId: "mqtt", traceId: "abc123abc123abc1abc123abc123abc1" });
+    await api.emit(
+      "reply_payload_sending",
+      { kind: "final", sessionKey: "sk-3", runId: "run-4", payload: { text: "done" } },
+      { sessionKey: "sk-3", runId: "run-4" },
+    );
 
-    const traces = getTraceSpans("abc123");
+    const traces = getTraceSpans("abc123abc123abc1abc123abc123abc1");
     expect(traces?.length).toBe(1);
     expect(traces?.[0]?.name).toBe("message.received");
+    traces![0]!.name = "mutated";
+    expect(getTraceSpans("abc123abc123abc1abc123abc123abc1")?.[0]?.name).toBe("message.received");
   });
 });

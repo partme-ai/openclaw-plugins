@@ -10,6 +10,17 @@
 #   OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: openclaw-e2e-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
   rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: openclaw-e2e-rabbitmq
@@ -24,7 +35,7 @@ services:
       start_period: 15s
 
   gotify:
-    image: gotify/server:latest
+    image: gotify/server:2.9.1
     container_name: openclaw-e2e-gotify
     ports:
       - "18080:80"
@@ -35,27 +46,56 @@ services:
   rocketmq-namesrv:
     image: apache/rocketmq:5.3.2
     container_name: openclaw-e2e-rmq-namesrv
-    command: sh mqnamesrv
+    command: sh mqnamesrv -c /etc/rocketmq/namesrv.conf
     ports:
       - "9876:9876"
+    volumes:
+      - ./docker/rocketmq-namesrv.conf:/etc/rocketmq/namesrv.conf:ro
 
   rocketmq-broker:
     image: apache/rocketmq:5.3.2
     container_name: openclaw-e2e-rmq-broker
     depends_on:
       - rocketmq-namesrv
-    command: sh mqbroker -n rocketmq-namesrv:9876
+    command: sh mqbroker -n rocketmq-namesrv:9876 -c /etc/rocketmq/broker.conf
     ports:
       - "10911:10911"
       - "10912:10912"
     environment:
       NAMESRV_ADDR: rocketmq-namesrv:9876
+    volumes:
+      - ./docker/rocketmq-broker.conf:/etc/rocketmq/broker.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin clusterList -n rocketmq-namesrv:9876 2>/dev/null | grep -q DefaultCluster"]
+      interval: 3s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  rocketmq-init:
+    image: apache/rocketmq:5.3.2
+    container_name: openclaw-e2e-rmq-init
+    depends_on:
+      rocketmq-broker:
+        condition: service_healthy
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        sh mqadmin updatetopic -n rocketmq-namesrv:9876 -t openclaw-rocketmq-live-test -c DefaultCluster
+        sh mqadmin updateSubGroup -n rocketmq-namesrv:9876 -c DefaultCluster -g openclaw-rocketmq-live-dlq-consumer -r 1 -p '{"type":"EXPONENTIAL","exponentialRetryPolicy":{"initial":1000,"max":1000,"multiplier":1}}'
 
   rocketmq-proxy:
     image: apache/rocketmq:5.3.2
     container_name: openclaw-e2e-rmq-proxy
     depends_on:
-      - rocketmq-broker
+      rocketmq-broker:
+        condition: service_healthy
+      rocketmq-init:
+        condition: service_completed_successfully
     command: sh mqproxy -n rocketmq-namesrv:9876
     ports:
       - "8081:8080"

@@ -1,15 +1,11 @@
-/**
- * OpenClaw Plugin Hooks 集成 — 使用 api.on 注册 typed hooks。
- */
-
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { TracingBackend, TracingConfig } from "../shared/types.js";
 import { TracingSampler } from "./sampler.js";
 import {
   bindToolSpan,
-  clearActiveTrace,
   createSpan,
   endSpan,
+  finishActiveTrace,
   incrementSpanCount,
   randomHexId,
   registerActiveTrace,
@@ -17,65 +13,64 @@ import {
   takeToolSpanId,
 } from "./trace-store.js";
 
-/** Hook 注册上下文 */
 export interface TracingHookContext {
   backend: TracingBackend;
   sampler: TracingSampler;
   config: TracingConfig;
 }
 
-/**
- * 从 hook context 读取字符串字段。
- */
+export type TracingHookContextProvider = () => TracingHookContext | null;
+
 function readString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
+  if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-/**
- * 从 event / ctx 提取消息正文（可选捕获）。
- */
-function readMessageContent(
-  event: Record<string, unknown>,
-  captureBody: boolean,
-): string | undefined {
-  if (!captureBody) {
-    return undefined;
-  }
-  const content = event.content;
-  if (typeof content === "string") {
-    return content.slice(0, 500);
-  }
-  return undefined;
+function readMessageContent(event: Record<string, unknown>, captureBody: boolean): string | undefined {
+  if (!captureBody || typeof event.content !== "string") return undefined;
+  return event.content.slice(0, 500);
 }
 
-/**
- * 注册 Plugin Hooks（priority 100，优先于 router/prometheus 观测 hook）。
- *
- * @param api - OpenClaw 插件 API（用于 `api.on` 注册）
- * @param hookCtx - 含 backend、sampler、config 的 hook 上下文
- * @returns void
- */
-export function registerTracingPluginHooks(api: OpenClawPluginApi, hookCtx: TracingHookContext): void {
-  const { backend, sampler, config } = hookCtx;
+function readTraceId(value: unknown): string | undefined {
+  const traceId = readString(value);
+  return traceId && /^[a-fA-F0-9]{32}$/.test(traceId) ? traceId.toLowerCase() : undefined;
+}
+
+function logHookError(api: OpenClawPluginApi, operation: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  api.logger.error(`[tracing] ${operation} failed: ${message}`);
+}
+
+/** hooks 只注册一次，通过 provider 获取当前 gateway 生命周期的后端。 */
+export function registerTracingPluginHooks(
+  api: OpenClawPluginApi,
+  getContext: TracingHookContextProvider,
+): void {
   const hookOpts = { priority: 100 };
 
-  // message_received：创建 root span 并注册 session/run 级 active trace
   api.on(
     "message_received",
-    (event, ctx) => {
+    async (event, ctx) => {
+      const hookContext = getContext();
+      if (!hookContext) return;
+      const { backend, sampler, config } = hookContext;
       const sessionKey = readString(ctx.sessionKey);
       const runId = readString(ctx.runId);
       const channelId = readString(ctx.channelId) ?? "unknown";
-      const traceId = readString(ctx.traceId) ?? randomHexId(16);
+      const traceId = readTraceId(ctx.traceId) ?? randomHexId(16);
+      if (!sampler.shouldSample(traceId)) return;
 
-      if (!sampler.shouldSample(traceId)) {
-        return;
+      const previous = resolveActiveTrace(sessionKey, runId);
+      if (previous) {
+        try {
+          await finishActiveTrace(sessionKey, runId, "error", backend, "superseded_by_new_message");
+        } catch (error) {
+          logHookError(api, "closing superseded trace", error);
+        }
       }
-
+      const messageText = readMessageContent(event as Record<string, unknown>, config.captureMessageBody);
+      const messageId = readString(ctx.messageId);
       const rootSpan = createSpan("message.received", {
         traceId,
         kind: "server",
@@ -83,18 +78,10 @@ export function registerTracingPluginHooks(api: OpenClawPluginApi, hookCtx: Trac
           "openclaw.channel": channelId,
           ...(sessionKey ? { "openclaw.session_key": sessionKey } : {}),
           ...(runId ? { "openclaw.run_id": runId } : {}),
-          ...(readString(ctx.messageId) ? { "openclaw.message_id": readString(ctx.messageId)! } : {}),
-          ...(readMessageContent(event as Record<string, unknown>, config.captureMessageBody)
-            ? {
-                "openclaw.message_text": readMessageContent(
-                  event as Record<string, unknown>,
-                  config.captureMessageBody,
-                )!,
-              }
-            : {}),
+          ...(messageId ? { "openclaw.message_id": messageId } : {}),
+          ...(messageText ? { "openclaw.message_text": messageText } : {}),
         },
       });
-
       registerActiveTrace({
         traceId,
         rootSpanId: rootSpan.spanId,
@@ -106,19 +93,15 @@ export function registerTracingPluginHooks(api: OpenClawPluginApi, hookCtx: Trac
     hookOpts,
   );
 
-  // before_tool_call：为每次 tool 调用创建 client span 并绑定 toolCallId
   api.on(
     "before_tool_call",
     (event, ctx) => {
-      const sessionKey = readString(ctx.sessionKey);
-      const runId = readString(ctx.runId);
-      const active = resolveActiveTrace(sessionKey, runId);
-      if (!active) {
-        return;
-      }
-      if (!incrementSpanCount(active, config.maxSpansPerTrace)) {
-        return;
-      }
+      const hookContext = getContext();
+      if (!hookContext) return;
+      const toolCallId = readString(event.toolCallId);
+      if (!toolCallId) return;
+      const active = resolveActiveTrace(readString(ctx.sessionKey), readString(ctx.runId));
+      if (!active || !incrementSpanCount(active, hookContext.config.maxSpansPerTrace)) return;
 
       const toolName = readString(event.toolName) ?? "unknown";
       const span = createSpan(`tool:${toolName}`, {
@@ -127,63 +110,73 @@ export function registerTracingPluginHooks(api: OpenClawPluginApi, hookCtx: Trac
         kind: "client",
         attributes: {
           "openclaw.tool_name": toolName,
-          ...(readString(event.toolCallId) ? { "openclaw.tool_call_id": readString(event.toolCallId)! } : {}),
+          "openclaw.tool_call_id": toolCallId,
         },
       });
-
-      const toolCallId = readString(event.toolCallId);
-      if (toolCallId) {
-        bindToolSpan(toolCallId, span.spanId);
-      }
+      bindToolSpan(toolCallId, span.spanId, active.traceId);
     },
     hookOpts,
   );
 
-  // after_tool_call：结束 tool span 并导出到 backend
   api.on(
     "after_tool_call",
-    async (event, ctx) => {
+    async (event) => {
+      const hookContext = getContext();
+      if (!hookContext) return;
       const toolCallId = readString(event.toolCallId);
       const spanId = toolCallId ? takeToolSpanId(toolCallId) : undefined;
-      if (!spanId) {
-        return;
-      }
-
-      const status = event.error ? "error" : "ok";
-      const span = await endSpan(spanId, status, backend);
-      if (span && typeof event.durationMs === "number") {
-        span.startTimeMs = Date.now() - event.durationMs;
+      if (!spanId) return;
+      try {
+        await endSpan(spanId, event.error ? "error" : "ok", hookContext.backend, {
+          durationMs: typeof event.durationMs === "number" ? event.durationMs : undefined,
+          attributes: event.error ? { "openclaw.tool_error": String(event.error).slice(0, 500) } : undefined,
+        });
+      } catch (error) {
+        logHookError(api, "exporting tool span", error);
       }
     },
     hookOpts,
   );
 
-  // agent_end：结束 root span 并清理 active trace
   api.on(
-    "agent_end",
-    async (_event, ctx) => {
-      const sessionKey = readString(ctx.sessionKey);
-      const runId = readString(ctx.runId);
-      const active = resolveActiveTrace(sessionKey, runId);
-      if (!active) {
-        return;
+    "reply_payload_sending",
+    async (event, ctx) => {
+      const hookContext = getContext();
+      if (!hookContext || event.kind !== "final") return;
+      try {
+        await finishActiveTrace(
+          readString(event.sessionKey) ?? readString(ctx.sessionKey),
+          readString(event.runId) ?? readString(ctx.runId),
+          "ok",
+          hookContext.backend,
+          "reply_payload_final",
+        );
+      } catch (error) {
+        logHookError(api, "ending reply trace", error);
       }
-
-      const success = (_event as { success?: boolean }).success !== false;
-      await endSpan(active.rootSpanId, success ? "ok" : "error", backend);
-      clearActiveTrace(sessionKey, runId);
     },
     hookOpts,
   );
 
-  // session_end：会话结束时清理 trace 映射
   api.on(
     "session_end",
-    (_event, ctx) => {
-      clearActiveTrace(readString(ctx.sessionKey));
+    async (_event, ctx) => {
+      const hookContext = getContext();
+      if (!hookContext) return;
+      try {
+        await finishActiveTrace(
+          readString(ctx.sessionKey),
+          readString((ctx as { runId?: unknown }).runId),
+          "error",
+          hookContext.backend,
+          "session_end_before_final_reply",
+        );
+      } catch (error) {
+        logHookError(api, "ending session trace", error);
+      }
     },
     hookOpts,
   );
 
-  api.logger.info("[openclaw-tracing] Plugin hooks registered (message_received, tool, agent_end, session_end)");
+  api.logger.info("[tracing] Hooks registered (message_received, tool, reply_payload_sending, session_end)");
 }

@@ -1,12 +1,12 @@
 # OpenClaw RocketMQ
 
-**OpenClaw 插件 — 阿里云 RocketMQ 消息队列通道，支持 Producer + PushConsumer、Topic+Tag 绑定、3 种分发模式、健康检查和 mq.publish 工具**
+**OpenClaw 插件 — RocketMQ 消息队列通道，支持 Producer + PushConsumer、Topic+Tag 绑定、3 种分发模式和认证健康检查**
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--rocketmq-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-rocketmq)
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-[简体中文](./README.md) | [English](./README.en.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ---
 
@@ -23,9 +23,8 @@
 - **回退主题** — 标准模式：`openclaw.agent.<agentId>.in[.<peerId>]`
 - **回复主题路由** — Agent 回复发布到配置的 `replyTopic` / `replyTag`
 - **健康端点** — `/rocketmq/health`、`/rocketmq/stats`、`/rocketmq/status`
-- **`mq.publish` 工具** — 调试用消息发布工具
 - **会话映射** — 追踪 producer-consumer-conversation 会话映射关系
-- **幂等性** — 可选的去重机制，支持配置 TTL
+- **可回滚幂等** — 仅在 Agent 派发与回复发布成功后提交 message ID
 - **设置向导** — 通过 OpenClaw setup wizard 进行交互式配置
 
 ## 快速开始
@@ -36,7 +35,7 @@
 openclaw plugins install @partme.ai/openclaw-rocketmq
 ```
 
-最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.6.1`、OpenClaw >= 2026.7.1。
 
 ### message-sdk 复用
 
@@ -100,8 +99,9 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
         "securityToken": ""
       },
       "producer": {
-        "groupId": "openclaw-rocketmq-producer", // Producer 组 ID
-        "requestTimeout": 5000                   // 请求超时（毫秒）
+        "groupId": "openclaw-rocketmq-producer", // 兼容保留字段（Node Producer 不使用）
+        "requestTimeout": 5000,                  // 请求超时（毫秒）
+        "maxAttempts": 3                         // SDK Producer 发送尝试次数
       },
       "consumer": {
         "groupId": "openclaw-rocketmq-consumer", // Consumer 组 ID
@@ -112,7 +112,13 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
         "maxCacheMessageSizeInBytes": 67108864,
         "longPollingTimeout": 30000,
         "requestTimeout": 3000,
-        "reconsumeOnError": true                 // 分发失败时重新消费
+        "reconsumeOnError": true,                // 分发失败时重新消费
+        "retry": {
+          "maxAttempts": 17,
+          "initialDelayMs": 1000,
+          "maxDelayMs": 60000,
+          "multiplier": 2
+        }
       },
       "topicBindings": [                         // Topic 到 Agent 的路由规则
         {
@@ -133,10 +139,14 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
         "timeoutMs": 120000,                      // Agent 处理超时
         "reply": { "enabled": true }              // 启用回复消息发布
       },
-      "idempotency": {                           // 可选：消息去重
-        "enabled": false,
+      "idempotency": {                           // claim/commit/release 幂等
+        "enabled": true,
         "ttlMs": 600000,
         "maxEntries": 10000
+      },
+      "connection": {
+        "startupAttempts": 6,
+        "retryDelayMs": 5000
       }
     }
   }
@@ -150,13 +160,18 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 | `endpoints` | string | `"127.0.0.1:8081"` | RocketMQ proxy/namesrv 端点 |
 | `namespace` | string | `""` | RocketMQ 命名空间 |
 | `topicPrefix` | string | `"openclaw"` | 回退消息路由的主题前缀 |
-| `producer.groupId` | string | `"openclaw-rocketmq-producer"` | Producer 组 ID |
+| `producer.groupId` | string | `"openclaw-rocketmq-producer"` | 兼容保留字段；RocketMQ 5 Node Producer 不使用 Producer Group |
 | `producer.requestTimeout` | number | `5000` | Producer 请求超时（毫秒） |
+| `producer.maxAttempts` | number | `3` | SDK Producer 发送尝试次数 |
 | `consumer.groupId` | string | `"openclaw-rocketmq-consumer"` | Consumer 组 ID |
 | `consumer.reconsumeOnError` | boolean | `true` | 分发错误时重新消费消息 |
+| `consumer.retry` | object | 指数退避，17 次 | 客户端重投延迟和耗尽阈值；非 FIFO 消息耗尽后通过 Broker DLQ API 转发 |
 | `payload.mode` | string | `"jsonTextOrPlain"` | 载荷解析模式 |
 | `dispatch.mode` | string | `"embedded-agent"` | Agent 分发模式 |
 | `dispatch.timeoutMs` | number | `120000` | Agent 处理超时（毫秒） |
+| `idempotency.enabled` | boolean | `true` | 派发前 claim，成功后才 commit message ID |
+| `connection.startupAttempts` | number | `6` | Producer/Consumer 启动尝试次数 |
+| `connection.retryDelayMs` | number | `5000` | 启动尝试间隔 |
 
 ### 分发模式
 
@@ -198,27 +213,13 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 | `GET /rocketmq/stats` | 连接统计和会话统计 |
 | `GET /rocketmq/status` | 完整状态，包括配置快照和会话映射 |
 
-## mq.publish 工具
-
-用于直接发布消息到 RocketMQ 的调试工具：
-
-```json
-{
-  "name": "mq.publish",
-  "description": "发布消息到 RocketMQ",
-  "parameters": {
-    "topic": "string（必填）",
-    "tag": "string（可选）",
-    "payload": "any（必填）",
-    "keys": "string[]（可选）"
-  }
-}
-```
-
 ## 传输层说明
 
 - 使用 `PushConsumer` — 消息确认通过 `ConsumeResult.SUCCESS` / `FAILURE` 完成
 - 重试由 RocketMQ broker/consumer group 机制接管，无需手动维护重试队列
+- Agent 派发或回复发布失败返回 `ConsumeResult.FAILURE`；配置化客户端退避规避 Node SDK 不支持 Broker customized-backoff 的缺口，耗尽后通过 Broker DLQ API 转发
+- 无法路由属于永久丢弃并确认；Runtime 未就绪或派发失败会请求 Broker 重投
+- 幂等状态仅在当前进程内有效，不等于跨节点 exactly-once
 - Request/reply RPC 需要显式配置 `replyTopic` + `replyTag` 绑定（RocketMQ 不像 RabbitMQ 那样原生支持 direct-reply-to）
 
 ## 开发

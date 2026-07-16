@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-redis-stream",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
   "type": "module",
   "main": "dist/index.js",
@@ -30,7 +30,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md"
+    "README.zh-CN.md"
   ],
   "dependencies": {
     "redis": "^5.12.1",

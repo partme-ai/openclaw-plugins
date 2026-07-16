@@ -71,7 +71,7 @@ openclaw-plugins 由 **PartMe.AI 团队** 研发与二次开发，包含 28 个�
 
 ## 3. 核心设计原则：不修改任何渠道插件
 
-OpenClaw 2026.7.1 SDK 提供跨渠道消息钩子：`message_received`、`message_sent` 与 `reply_dispatch`。
+OpenClaw 2026.7.1 SDK 提供跨渠道消息钩子：`message_received`、`message_sent` 与带回复正文的 `reply_payload_sending`。
 
 这意味着 **openclaw-router 作为独立插件，监听所有渠道的消息事件，不需要渠道插件配合**。
 
@@ -80,7 +80,7 @@ wecom 插件:                         openclaw-router 插件:
   register(api) {                     register(api) {
     api.registerChannel({...})          api.on("message_received", handler)
     // 只负责渠道协议适配                   api.on("message_sent", handler)
-  }                                     api.on("reply_dispatch", replyHandler)
+  }                                     api.on("reply_payload_sending", replyHandler)
                                      }
 ```
 
@@ -125,7 +125,7 @@ MQTT: "openclaw/agent/ops/inbound"
     │
     ├──→ [mqtt] 原路径回复 ← 正常路径
     │
-    └──→ [router] reply_dispatch 事件
+    └──→ [router] reply_payload_sending 事件
             │
             └─ 匹配: channel=mqtt + topic=openclaw/agent/ops/inbound
                 → reply-via:wecom → user:admin_ops
@@ -164,7 +164,7 @@ MQTT: "openclaw/agent/ops/inbound"
 
 - `message_received`：转发入站消息副本
 - `message_sent`：转发成功投递的出站消息副本
-- `reply_dispatch`：执行跨渠道 `reply-via`
+- `reply_payload_sending`：从 `event.payload` 执行跨渠道 `reply-via`
 - `gateway_stop`：清理进程内幂等缓存
 
 **路由规则配置**：
@@ -300,7 +300,7 @@ knowledge 插件自行注册 `before_prompt_build`，提供 RAG 自动检索注�
 
 ### 7.1 为什么不做"修改渠道插件"而是"外部监听"
 
-OpenClaw 的 `message_received`、`message_sent` 和 `reply_dispatch` 提供跨渠道消息观察面，外部 router 据此完成入站转发、出站审计与跨渠道回复。
+OpenClaw 的 `message_received`、`message_sent` 和 `reply_payload_sending` 提供跨渠道消息观察面，外部 router 据此完成入站转发、出站审计与跨渠道回复。
 
 - 不修改渠道代码 → 零维护负担
 - 新 IM 渠道未来添加后自动获得路由能力

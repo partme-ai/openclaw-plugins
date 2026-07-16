@@ -148,13 +148,17 @@ This enables: subscribing to all `openclaw:agent:*:in` channels, auto-routing to
       "channelMode": "stream",
       "defaultAgentId": "main",
       "stream": {
-        "inboundKey": "openclaw:inbound",
-        "outboundKey": "openclaw:outbound",
+        "inboundKey": "openclaw:{agent}:inbound",
+        "outboundKey": "openclaw:{agent}:outbound",
         "consumerGroup": "openclaw-group",
-        "consumerName": "openclaw-consumer-1",
+        "consumerName": "",
         "blockMs": 5000,
         "count": 10,
-        "createGroup": true
+        "createGroup": true,
+        "pendingClaimIdleMs": 120000,
+        "maxAttempts": 5,
+        "deadLetterKey": "openclaw:{agent}:inbound:dlq",
+        "maxLen": 100000
       },
       "fieldMapping": {
         "textField": "text",
@@ -410,12 +414,20 @@ The plugin automatically filters channels ending with `:out` and the `openclaw:a
 | `stream.inboundKey` | `string` | `"openclaw:inbound"` | Consumer group read stream |
 | `stream.outboundKey` | `string` | `"openclaw:outbound"` | Reply write stream |
 | `stream.consumerGroup` | `string` | `"openclaw-group"` | Consumer group name |
-| `stream.consumerName` | `string` | `"openclaw-consumer-1"` | Instance consumer name |
+| `stream.consumerName` | `string` | `""` | Empty derives a unique hostname + pid consumer name |
 | `stream.blockMs` | `number` | `5000` | XREADGROUP block timeout |
 | `stream.count` | `number` | `10` | Max messages per batch |
 | `stream.createGroup` | `boolean` | `true` | Auto-create consumer group |
+| `stream.pendingClaimIdleMs` | `number` | `120000` | Reclaim stale PEL entries; 0 disables reclaim |
+| `stream.maxAttempts` | `number` | `5` | Delivery attempts before dead-lettering |
+| `stream.deadLetterKey` | `string` | `"openclaw:inbound:dlq"` | DLQ Stream; must share the inbound hash slot on Cluster |
+| `stream.maxLen` | `number` | `100000` | Approximate outbound/DLQ length bound; 0 is unlimited |
 | `connection.reconnectMs` | `number` | `3000` | Reconnect delay in ms |
-| `connection.maxRetries` | `number` | `10` | Max reconnect attempts |
+| `connection.maxRetries` | `number` | `0` | Max reconnect attempts; 0 retries indefinitely |
+| `connection.startupTimeoutMs` | `number` | `30000` | Startup connection timeout |
+| `idempotency.enabled` | `boolean` | `true` | Enable Stream entry claim/commit/release |
+| `idempotency.ttlMs` | `number` | `600000` | Completed entry retention window |
+| `idempotency.maxEntries` | `number` | `10000` | In-process cache bound |
 
 ### Environment Variables
 
@@ -426,5 +438,5 @@ The plugin automatically filters channels ending with `:out` and the `openclaw:a
 ---
 
 **Document Version**: 1.0.0
-**Last Updated**: 2026-05-19
+**Last Updated**: 2026-07-16
 **Maintainer**: PartMe.AI

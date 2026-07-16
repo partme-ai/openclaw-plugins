@@ -51,7 +51,7 @@
 openclaw plugins install @partme.ai/openclaw-gotify
 ```
 
-最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.6.1`、OpenClaw `>= 2026.7.1`。
 
 然后在 `channels.gotify` 中填写配置（见下文）。
 
@@ -181,7 +181,7 @@ npm install @partme.ai/openclaw-gotify
 | `reconnectDelayMs` | number | `2000` | 初始重连延迟（毫秒） |
 | `maxReconnectDelayMs` | number | `30000` | 最大重连延迟（指数退避上限） |
 | `maxReconnectAttempts` | number | `10` | 最大重连尝试次数 |
-| `deleteAfterConsume` | boolean | `true` | 消费即删：入站派发成功后删除原消息，Agent 回复发送成功后删除回复消息 |
+| `deleteAfterConsume` | boolean | `true` | Agent 派发与回复投递成功后删除入站原消息；Agent 回复保留给在线/离线客户端读取 |
 
 #### 消费即删策略
 
@@ -248,7 +248,7 @@ npm install @partme.ai/openclaw-gotify
 
 | 层面 | 行为 |
 |------|------|
-| **Gotify App** | 推送通知渠道；默认消费即删（入站用户消息在 Agent **回复发送成功后**删除，出站回复在 POST **成功后**删除） |
+| **Gotify App** | 推送通知渠道；入站用户消息在 Agent **回复发送成功后**删除，出站回复保留供在线/离线客户端读取 |
 | **OpenClaw Control UI** | **完整对话历史** 保存在 Session Store；多轮共用同一 `sessionKey`（同一 `peerId` / appid） |
 | **幂等** | SDK `@partme.ai/openclaw-message-sdk` → `createIdempotencyCache`；仅按 `messageId` 去重，同一对端连续多条新消息不会互相屏蔽 |
 | **出站** | `sendGotifyMessageWithDeliveryRetry`：失败时自动再试 1 次 |

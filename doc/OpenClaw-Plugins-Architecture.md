@@ -77,7 +77,7 @@ openclaw-plugins is an enterprise OpenClaw plugin collection developed and furth
 
 The key insight is simple:
 
-> **OpenClaw 2026.7.1 exposes cross-channel `message_received`, `message_sent`, and `reply_dispatch` hooks.**
+> **OpenClaw 2026.7.1 exposes cross-channel `message_received`, `message_sent`, and payload-bearing `reply_payload_sending` hooks.**
 
 This means we never modify wecom, dingtalk, or any channel plugin code. The router sits outside, watching all events.
 
@@ -86,7 +86,7 @@ wecom plugin:                      openclaw-router:
   register(api) {                    register(api) {
     api.registerChannel({...});        api.on("message_received", inboundHandler);
     // channel protocol adapter only    api.on("message_sent", outboundHandler);
-  }                                    api.on("reply_dispatch", replyHandler);
+  }                                    api.on("reply_payload_sending", replyHandler);
                                      }
 ```
 
@@ -129,7 +129,7 @@ Publish to MQTT: "openclaw/agent/ops/inbound"
     │
     ├──→ [mqtt plugin] → reply on same topic ← normal path
     │
-    └──→ [router] reply_dispatch event
+    └──→ [router] reply_payload_sending event
             │
             └─ matches rule: channel=mqtt + topic=openclaw/agent/ops/inbound → reply-via:wecom
                 └→ [wecom plugin] → send to user:admin_ops
@@ -167,7 +167,7 @@ Any message arrives at Agent
 **Events monitored**:
 - `api.on("message_received")` — forwards inbound message copies
 - `api.on("message_sent")` — forwards successfully delivered outbound copies
-- `api.on("reply_dispatch")` — performs configured cross-channel `reply-via` actions
+- `api.on("reply_payload_sending")` — performs configured cross-channel `reply-via` actions from `event.payload`
 - `api.on("gateway_stop")` — clears the process-local deduplication cache
 
 **Rule matching**:
@@ -253,7 +253,7 @@ api.on("message_received", (event, ctx) => {
 });
 
 api.on("message_sent", outboundForwardHandler);
-api.on("reply_dispatch", replyViaHandler);
+api.on("reply_payload_sending", replyViaHandler);
 ```
 
 ### 3.2 openclaw-memory — Long-Term Memory (L0→L3)
@@ -356,7 +356,7 @@ User message → before_prompt_build
 **Decision**: External router plugin. Never modify channel code.
 
 **Rationale**:
-- OpenClaw's `message_received`, `message_sent`, and `reply_dispatch` hooks expose the cross-channel message lifecycle used by router
+- OpenClaw's `message_received`, `message_sent`, and `reply_payload_sending` hooks expose the cross-channel message lifecycle used by router
 - Changing channel code creates fork maintenance burden
 - External router allows rule changes without redeploying channels
 - New IM channels added later automatically get routing capability

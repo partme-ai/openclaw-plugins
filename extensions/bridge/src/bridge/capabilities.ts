@@ -94,8 +94,8 @@ export const ALL_CAPABILITIES: Record<string, ChannelCapabilities> = {
     escaping: { markdownDialect: "basic" },
     quirks: ["AI Card streaming supported", "MEDIA: directive for media", "amr/mp3/wav audio only"],
   },
-  "openclaw-lark": {
-    channelId: "openclaw-lark",
+  feishu: {
+    channelId: "feishu",
     supportedFormats: ["text", "markdown", "rich-text", "card"],
     media: { inbound: MEDIA_FULL, outbound: MEDIA_FULL, maxFileSizeBytes: 30 * 1024 * 1024 },
     textLimits: { maxPerMessage: 30000, overflowStrategy: "split" },

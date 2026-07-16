@@ -397,7 +397,7 @@ describe("Config Resolution", () => {
     expect(config.stream.inboundKey).toBe("openclaw:inbound");
     expect(config.payload.mode).toBe("jsonTextOrPlain");
     expect(config.connection.reconnectMs).toBe(3000);
-    expect(config.connection.maxRetries).toBe(10);
+    expect(config.connection.maxRetries).toBe(0);
   });
 
   it("reads channel-specific overrides", () => {
@@ -850,7 +850,7 @@ function buildSessionKeyFromDmScope(params: {
   return `agent:${agent}:direct:${peerId}`;
 }
 
-// 从 redis-stream-config.ts 复制
+// 配置解析契约的独立测试夹具
 function resolveRedisChannelConfig(cfg: Record<string, unknown>) {
   const DEFAULT = {
     url: "redis://127.0.0.1:6379",
@@ -860,7 +860,7 @@ function resolveRedisChannelConfig(cfg: Record<string, unknown>) {
       inboundKey: "openclaw:inbound",
       outboundKey: "openclaw:outbound",
       consumerGroup: "openclaw-group",
-      consumerName: "openclaw-consumer-1",
+      consumerName: "",
       blockMs: 5000,
       count: 10,
       createGroup: true,
@@ -880,7 +880,7 @@ function resolveRedisChannelConfig(cfg: Record<string, unknown>) {
       accountIdField: "accountId",
       replyStreamField: "replyStream",
     },
-    connection: { reconnectMs: 3000, maxRetries: 10 },
+    connection: { reconnectMs: 3000, maxRetries: 0 },
   };
 
   const channels = (cfg.channels as Record<string, unknown> | undefined) ?? {};
@@ -939,14 +939,14 @@ function resolveRedisChannelConfig(cfg: Record<string, unknown>) {
           ? connection.reconnectMs
           : DEFAULT.connection.reconnectMs,
       maxRetries:
-        typeof connection.maxRetries === "number" && connection.maxRetries > 0
+        typeof connection.maxRetries === "number" && connection.maxRetries >= 0
           ? connection.maxRetries
           : DEFAULT.connection.maxRetries,
     },
   };
 }
 
-// 从 redis-stream-server.ts 复制 getStats shape（mock）
+// 状态响应契约夹具
 function getStats() {
   return {
     connected: false,

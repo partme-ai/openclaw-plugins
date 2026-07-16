@@ -3,7 +3,7 @@
   "kind": "channel",
   "name": "Gotify",
   "description": "OpenClaw Gotify channel plugin — REST delivery, WebSocket stream inbound, multi-account session isolation, and full application/client lifecycle management.",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "channels": ["gotify"],
   "channelEnvVars": {
     "gotify": [
@@ -82,6 +82,11 @@
             "additionalProperties": false,
             "properties": {
               "enabled": { "type": "boolean", "description": "Enable WebSocket stream listener for real-time message receiving" },
+              "allowedAppId": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Required when inbound is enabled; only consume this Gotify Application ID"
+              },
               "reconnectDelayMs": { "type": "integer", "minimum": 500, "default": 2000 },
               "maxReconnectDelayMs": { "type": "integer", "minimum": 1000, "default": 30000 },
               "maxReconnectAttempts": { "type": "integer", "minimum": 0, "default": 10 },
@@ -126,6 +131,10 @@
         "inbound.enabled": {
           "label": "Enable WebSocket Stream",
           "help": "Connect to Gotify /stream endpoint for real-time message receiving. Requires clientToken."
+        },
+        "inbound.allowedAppId": {
+          "label": "Allowed Application ID",
+          "help": "Required for inbound mode. Only messages from this Gotify Application are consumed and replayed."
         },
         "inbound.deleteAfterConsume": {
           "label": "Delete After Consume",

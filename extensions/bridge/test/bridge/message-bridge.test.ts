@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 // Import the exported functions — buildMessage is now public.
-import { deriveTraceId, generateMessageId, buildMessage } from "../../src/bridge/message-bridge.js";
+import { deriveTraceId, generateMessageId, buildMessage, registerMessageBridge } from "../../src/bridge/message-bridge.js";
 
 describe("deriveTraceId — 确定性追踪 ID", () => {
   it("same inputs always produce the same traceId", () => {
@@ -244,5 +244,69 @@ describe("inbound/outbound traceId stability (全链路追踪)", () => {
     expect(inboundMsg.messageId).not.toBe(outboundMsg.messageId);
     // traceIds must be the same
     expect(inboundMsg.traceId).toBe(outboundMsg.traceId);
+  });
+});
+
+function createBridgeHarness(overrides: Record<string, unknown> = {}) {
+  const hooks = new Map<string, (event: any, ctx: any) => Promise<void>>();
+  const sendText = vi.fn().mockResolvedValue({ channel: "mqtt", messageId: "ok" });
+  const api = {
+    pluginConfig: {
+      channels: { discord: { mqChannel: "mqtt" } },
+      delivery: { maxAttempts: 2, retryDelayMs: 1, publishTimeoutMs: 100, maxPayloadBytes: 10_000 },
+      ...overrides,
+    },
+    runtime: {
+      config: { current: vi.fn(() => ({})) },
+      channel: { outbound: { loadAdapter: vi.fn().mockResolvedValue({ sendText }) } },
+    },
+    logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    on: vi.fn((name: string, handler: (event: any, ctx: any) => Promise<void>) => hooks.set(name, handler)),
+  };
+  registerMessageBridge(api as never);
+  return { api, hooks, sendText };
+}
+
+describe("registerMessageBridge — OpenClaw 2026.7.1 public outbound contract", () => {
+  it("publishes message_received through loadAdapter with an explicit direct topic target", async () => {
+    const { hooks, sendText } = createBridgeHarness();
+    await hooks.get("message_received")?.(
+      { content: "hello", messageId: "source-1", from: "user-1", timestamp: 123 },
+      { channelId: "discord", accountId: "main", sessionKey: "session-1", conversationId: "room-1" },
+    );
+    expect(sendText).toHaveBeenCalledTimes(1);
+    const context = sendText.mock.calls[0]?.[0];
+    expect(context.to).toBe("openclaw-direct-topic:v1:openclaw%2Fbridge%2Fdiscord%2Finbound");
+    expect(context.deliveryQueueId).toMatch(/^bridge\/in\/discord\//);
+    const message = JSON.parse(context.text);
+    expect(message).toMatchObject({ text: "hello", timestamp: 123, direction: "inbound" });
+  });
+
+  it("publishes every reply payload with a distinct stable delivery id", async () => {
+    const { hooks, sendText } = createBridgeHarness();
+    const handler = hooks.get("reply_payload_sending");
+    const ctx = { channelId: "discord", accountId: "main", sessionKey: "session-1", conversationId: "room-1" };
+    await handler?.({ payload: { text: "same" }, kind: "block", runId: "run-1" }, ctx);
+    await handler?.({ payload: { text: "same" }, kind: "block", runId: "run-1" }, ctx);
+    await handler?.({ payload: { text: "final" }, kind: "final", runId: "run-1" }, ctx);
+    expect(sendText).toHaveBeenCalledTimes(3);
+    expect(new Set(sendText.mock.calls.map((call) => call[0].deliveryQueueId)).size).toBe(3);
+    expect(sendText.mock.calls.map((call) => JSON.parse(call[0].text).text)).toEqual(["same", "same", "final"]);
+  });
+
+  it("awaits and retries broker failures instead of silently dropping", async () => {
+    const { hooks, sendText } = createBridgeHarness();
+    sendText.mockRejectedValueOnce(new Error("temporary")).mockResolvedValueOnce({ channel: "mqtt", messageId: "ok" });
+    await hooks.get("message_received")?.(
+      { content: "retry", messageId: "source-retry", from: "user-1" },
+      { channelId: "discord", sessionKey: "session-1" },
+    );
+    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(sendText.mock.calls[0]?.[0].deliveryQueueId).toBe(sendText.mock.calls[1]?.[0].deliveryQueueId);
+  });
+
+  it("fails fast for unsupported source or MQ channels", () => {
+    expect(() => createBridgeHarness({ channels: { unknown: { mqChannel: "mqtt" } } })).toThrow("unsupported source channel");
+    expect(() => createBridgeHarness({ channels: { discord: { mqChannel: "not-a-broker" } } })).toThrow("unsupported mqChannel");
   });
 });

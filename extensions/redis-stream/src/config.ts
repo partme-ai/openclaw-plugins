@@ -106,7 +106,7 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
   type: "object",
   description:
     "Redis channel configuration for openclaw.json -> channels.redis-stream",
-  additionalProperties: true,
+  additionalProperties: false,
   properties: {
     url: {
       type: "string",
@@ -167,7 +167,11 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
         inboundKey: { type: "string", default: "openclaw:inbound" },
         outboundKey: { type: "string", default: "openclaw:outbound" },
         consumerGroup: { type: "string", default: "openclaw-group" },
-        consumerName: { type: "string", default: "openclaw-consumer-1" },
+        consumerName: {
+          type: "string",
+          default: "",
+          description: "Unique consumer name; empty derives host + process id",
+        },
         blockMs: { type: "number", default: 5000 },
         count: { type: "number", default: 10 },
         createGroup: { type: "boolean", default: true },

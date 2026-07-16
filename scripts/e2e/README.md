@@ -74,9 +74,9 @@ Report: `scripts/e2e/e2e-report.json` (gitignored)
 
 See `scripts/e2e/lib/registry.mjs` → `EXTENSION_INVENTORY` for the full matrix:
 
-- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (7 plugins today)
+- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (8 plugins today)
 - **e2eAdapter: false** — unit tests (+ optional `testing/` standard suite); no Docker e2e yet
-- **dockerRequired: true** — rabbitmq, rocketmq, gotify (redis-stream planned)
+- **dockerRequired: true** — rabbitmq, redis-stream, rocketmq, gotify
 
 ### Plugins with e2e adapters (Docker optional per category)
 
@@ -84,12 +84,13 @@ See `scripts/e2e/lib/registry.mjs` → `EXTENSION_INVENTORY` for the full matrix
 |--------|-----------------|
 | mqtt, stomp, web-mqtt, web-stomp | None (embedded / browser) |
 | rabbitmq | rabbitmq |
-| rocketmq | rocketmq-namesrv, broker, proxy |
+| redis-stream | redis |
+| rocketmq | rocketmq-namesrv, broker, init（Topic/测试 Consumer Group）, proxy |
 | gotify | gotify |
 
 ### Unit-only extensions (representative)
 
-wecom, wechat, douyin, redis-stream, nacos, bridge, knowledge, memory, message-sdk, …
+wecom, wechat, douyin, nacos, bridge, knowledge, memory, message-sdk, …
 
 ## Shared test utilities
 
@@ -106,7 +107,7 @@ wecom, wechat, douyin, redis-stream, nacos, bridge, knowledge, memory, message-s
 | Category | Plugins | Backing service |
 |----------|---------|-----------------|
 | Embedded service | mqtt, stomp, web-mqtt, web-stomp | OpenClaw gateway only |
-| External broker | rabbitmq, rocketmq, gotify | Docker Compose |
+| External broker | rabbitmq, redis-stream, rocketmq, gotify | Docker Compose |
 
 Future categories (extensible via `lib/registry.mjs` + adapter registration):
 

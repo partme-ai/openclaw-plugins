@@ -92,9 +92,17 @@ export function installPlugins(pluginIds) {
     run(`pnpm --filter ${def.filter} build`);
 
     const pkgDir = join(REPO_ROOT, def.dir);
+    for (const name of readdirSync(pkgDir)) {
+      if (name.endsWith(".tgz")) {
+        rmSync(join(pkgDir, name), { force: true });
+      }
+    }
     run(`pnpm pack`, { cwd: pkgDir });
-    const tgzName = readdirSync(pkgDir).find((n) => n.endsWith(".tgz"));
-    if (!tgzName) throw new Error(`pack failed for ${def.filter} in ${pkgDir}`);
+    const archives = readdirSync(pkgDir).filter((name) => name.endsWith(".tgz"));
+    if (archives.length !== 1) {
+      throw new Error(`pack produced ${archives.length} archives for ${def.filter} in ${pkgDir}`);
+    }
+    const [tgzName] = archives;
     const tgzPath = join(pkgDir, tgzName);
 
     const extPath = join(STATE_DIR, "extensions", def.extDir ?? def.id);

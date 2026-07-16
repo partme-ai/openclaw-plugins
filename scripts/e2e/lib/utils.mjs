@@ -58,8 +58,9 @@ export function tcpReachable(port, host = "127.0.0.1", timeoutMs = 1500) {
  */
 export async function waitFor(predicate, opts = {}) {
   const { timeoutMs = 60_000, intervalMs = 500, label = "condition" } = opts;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  // Use the monotonic clock so NTP/desktop wall-clock jumps cannot cause false timeouts.
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
     if (await predicate()) return true;
     await sleep(intervalMs);
   }

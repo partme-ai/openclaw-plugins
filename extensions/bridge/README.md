@@ -1,97 +1,47 @@
 # OpenClaw Bridge
 
-**OpenClaw plugin -- Unified access layer covering 21 IM channels for the PartMe.AI ecosystem**
+`@partme.ai/openclaw-bridge` 是面向 OpenClaw 2026.7.1 的 IM 上下文与消息观测桥。它不替代任何 IM 或 MQ Channel 插件，主要提供两项能力：
 
-![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--bridge-blue)
-![Node](https://img.shields.io/badge/Node.js-22+-green)
-![License](https://img.shields.io/badge/License-MIT-green)
+- 通过官方 `before_prompt_build` Hook，为已配置的 IM 渠道追加平台交互约束。
+- 通过官方 `message_received`、`reply_payload_sending` Hook 观察真实收发载荷，再经公共 channel outbound adapter 将 `UnifiedMessage` 镜像到 MQ。
 
-[English](./README.en.md) | [简体中文](./README.md)
-
----
-
-## Features
-
-| Module | Description |
-|--------|-------------|
-| **Context Injection** | Automatically injects platform-specific system context per channel (message format, tool usage, group chat rules) |
-| **Message Bridge** | `agent_end` -> UnifiedMessage -> MQ, config-driven, supports multiple MQ channels |
-
-## Covered Channels (21)
-
-### External Official Plugins (need separate installation)
-
-| Platform | Channel ID | Official Repository | npm Package |
-|----------|------------|--------------------|-------------|
-| DingTalk | `dingtalk-connector` | [DingTalk-Real-AI/dingtalk-openclaw-connector](https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector) | `@dingtalk-real-ai/dingtalk-connector` |
-| Lark/Feishu | `openclaw-lark` | [larksuite/openclaw-lark](https://github.com/larksuite/openclaw-lark) | `@larksuite/openclaw-lark` |
-| QQ Bot | `qqbot` | [tencent-connect/openclaw-qqbot](https://github.com/tencent-connect/openclaw-qqbot) | `@tencent-connect/openclaw-qqbot` |
-
-> Lark docs: https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh
->
-> DingTalk CLI tool dws: https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli
-
-### Bundled Channels (built into OpenClaw, no extra installation)
-
-`discord` `slack` `telegram` `whatsapp` `signal` `line` `matrix` `irc` `msteams` `googlechat` `imessage` `mattermost` `nextcloud-talk` `nostr` `zalo` `twitch` `tlon` `synology-chat`
-
-## Quick Start
-
-### Installation
+## 安装
 
 ```bash
-# Install the bridge layer (only this one)
 openclaw plugins install @partme.ai/openclaw-bridge
-
-# If using external official channels, install separately:
-openclaw plugins install @dingtalk-real-ai/dingtalk-connector   # DingTalk
-openclaw plugins install @larksuite/openclaw-lark               # Lark
-openclaw plugins install @tencent-connect/openclaw-qqbot        # QQ
 ```
 
-### Start
+Bridge 的清单 ID 是 `bridge`，配置应写入 `plugins.entries.bridge.config`。
 
-```bash
-openclaw gateway restart
-```
-
-## Configuration Reference
+## 配置示例
 
 ```json
 {
   "plugins": {
     "entries": {
-      "openclaw-bridge": {
+      "bridge": {
         "enabled": true,
         "config": {
           "channels": {
-            "dingtalk-connector": {
-              "enabled": true,
-              "forwardToMq": true,
-              "mqChannel": "mqtt"
-            },
-            "openclaw-lark": {
-              "enabled": true,
-              "forwardToMq": true,
-              "mqChannel": "mqtt"
-            },
-            "qqbot": {
-              "enabled": true,
-              "forwardToMq": true,
-              "mqChannel": "mqtt"
-            },
             "discord": {
               "enabled": true,
-              "forwardToMq": true
+              "contextInjection": true,
+              "forwardToMq": true,
+              "mqChannel": "rabbitmq",
+              "mqAccountId": "default",
+              "topicPrefix": "openclaw/bridge/discord"
             },
-            "slack": {
-              "enabled": true
-            },
-            "telegram": {
+            "wecom": {
               "enabled": true,
               "forwardToMq": true,
-              "mqChannel": "rabbitmq"
+              "mqChannel": "mqtt"
             }
+          },
+          "delivery": {
+            "maxAttempts": 3,
+            "retryDelayMs": 250,
+            "publishTimeoutMs": 5000,
+            "maxPayloadBytes": 1048576
           }
         }
       }
@@ -100,33 +50,51 @@ openclaw gateway restart
 }
 ```
 
-### Per-Channel Config Fields
+只有 `channels` 中显式声明的来源渠道会被处理。未知来源渠道或 MQ 渠道会在启动时失败，避免静默回退后误投递。
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | boolean | `true` | Whether to activate bridge for this channel |
-| `forwardToMq` | boolean | `true` | Whether to forward messages to MQ |
-| `mqChannel` | string | `"mqtt"` | Target MQ channel identifier |
-| `contextInjection` | boolean | `true` | Whether to inject system context |
+## MQ 渠道
 
-### Available MQ Channels
+支持以下 outbound adapter ID：
 
-`mqtt` `rabbitmq` `redis-stream` `rocketmq` `stomp` `web-mqtt` `web-stomp`
+- `mqtt`
+- `mqtt-ws`（兼容旧别名 `web-mqtt`）
+- `rabbitmq`
+- `redis-stream`
+- `rocketmq`
+- `stomp`（兼容旧别名 `web-stomp`）
+- `stomp-tcp`
 
-## Architecture
+MQ 插件必须独立安装并配置。MQTT、RabbitMQ、Redis Stream、RocketMQ 使用 `openclaw-direct-topic:v1:` 显式直达契约，不会把 OpenClaw 普通 durable reply 的 `deliveryQueueId` 误判成 Topic。STOMP 使用 `/topic/` destination。
 
-This plugin serves as the Layer 3-4 adapter in OpenClaw's five-layer model:
+默认 Topic：
 
-- **Layer 5** -- Business Apps (SCRM, dashboards, analytics)
-- **Layer 4** -- Router + Bridge (rule engine, forwarding, audit, cross-channel context injection)
-- **Layer 3** -- OpenClaw Agents
-- **Layer 2** -- Capabilities (knowledge base, memory, tracing, OAuth2)
-- **Layer 1** -- Channels (IM, MQ)
+- `openclaw/bridge/{sourceChannel}/inbound`
+- `openclaw/bridge/{sourceChannel}/outbound`
 
-Core responsibilities of the Bridge plugin:
+可用 `topicPrefix` 覆盖前缀。
 
-1. **Context Injection**: In the `before_prompt_build` hook, injects channel-specific system prompts including message format instructions, tool usage rules, and group chat behavior constraints
-2. **Message Bridging**: On the `agent_end` event, converts Agent replies to a unified message format (UnifiedMessage) and forwards to the configured MQ channel for cross-channel message distribution
+## 渠道范围
+
+静态能力表包含 22 个渠道：20 个 OpenClaw 2026.7.1 stock 渠道、当前仓库的 `wecom`，以及外部 `dingtalk-connector`。其中飞书与 QQ 的当前 stock ID 分别是 `feishu`、`qqbot`；旧文档中的 `openclaw-lark` 已不再使用。
+
+Bridge 只对实际安装、运行且在配置中启用的渠道生效，静态能力表不代表这些渠道已被安装或完成环境验收。
+
+## 投递语义与边界
+
+- Hook 会等待 outbound adapter 返回，并进行有界重试；每次重试复用同一个 `deliveryQueueId`。
+- 单条 JSON 载荷受 `maxPayloadBytes` 限制。
+- 进程退出会丢失尚未完成的内存重试，因此 Bridge 本身是 best-effort/at-least-once 观测镜像，不提供持久 Outbox。
+- 需要跨重启恢复、DLQ、审计和运维回放时，应使用 `@partme.ai/openclaw-router` 的持久投递链路。
+- Broker 超时后的实际结果可能未知，下游应按 `messageId`/`deliveryQueueId` 实现幂等。
+
+## 开发验证
+
+```bash
+pnpm test
+pnpm typecheck
+pnpm build
+npm pack --dry-run
+```
 
 ## License
 

@@ -106,4 +106,40 @@ describe("backlog replay", () => {
 
     await expect(readBacklogCursor("e2e", 42)).resolves.toBe(0);
   });
+
+  it("fails closed when pagination does not advance", async () => {
+    const fetchPage = vi.fn().mockResolvedValue({
+      messages: [{ id: 5, appid: 42, message: "m5" }],
+      paging: { size: 1, limit: 1, next: null, since: 5 },
+    });
+
+    await expect(
+      replayBacklogForAccount({
+        account: makeAccount(),
+        fetchPage,
+        pageLimit: 1,
+        dispatch: vi.fn(),
+      }),
+    ).rejects.toThrow("pagination cursor did not advance");
+  });
+
+  it("bounds the in-memory replay backlog", async () => {
+    const fetchPage = vi.fn().mockResolvedValue({
+      messages: [
+        { id: 3, appid: 42, message: "m3" },
+        { id: 2, appid: 42, message: "m2" },
+      ],
+      paging: { size: 2, limit: 2, next: null, since: 0 },
+    });
+
+    await expect(
+      replayBacklogForAccount({
+        account: makeAccount(),
+        fetchPage,
+        pageLimit: 2,
+        maxMessages: 1,
+        dispatch: vi.fn(),
+      }),
+    ).rejects.toThrow("safety limit of 1 messages");
+  });
 });

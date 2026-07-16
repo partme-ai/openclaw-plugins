@@ -17,7 +17,7 @@
  * OpenClaw Bridge — 21 渠道上下文预设
  *
  * 每个渠道注入 before_prompt_build 的平台特定系统上下文。
- * 全部 21 个渠道均有独立预设，不再使用 generic-chat/generic-social 兜底。
+ * 全部 22 个渠道均有独立预设，不再使用 generic-chat/generic-social 兜底。
  */
 
 import type { ChannelContextPreset } from "./channels.js";

@@ -12,8 +12,8 @@ async function waitGatewayHttpReady() {
   await waitFor(async () => {
     if (!(await tcpReachable(GATEWAY_PORT))) return false;
     try {
-      const res = await gatewayFetch("/mqtt/status");
-      return res.status > 0;
+      const res = await gatewayFetch("/readyz");
+      return res.ok && res.json?.ready === true;
     } catch {
       return false;
     }

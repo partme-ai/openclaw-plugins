@@ -407,7 +407,7 @@ sequenceDiagram
 | 组件 | 关系 |
 |------|------|
 | `@partme.ai/openclaw-message-sdk` | 公共 util、transcript 流式、routing、config merge、keyed queue |
-| `openclaw-router` | 通过 `message_received`、`message_sent`、`reply_dispatch` 观察消息生命周期，**无需修改本插件** |
+| `openclaw-router` | 通过 `message_received`、`message_sent`、`reply_payload_sending` 观察消息生命周期，**无需修改本插件** |
 | `openclaw-knowledge` | 独立注册 `before_prompt_build` 自动注入；高级库模式可读取 `channels.wecom.knowledge` |
 | `message-sdk` | MQ 桥接场景可选；WeCom 主路径走 OpenClaw ChannelPlugin |
 

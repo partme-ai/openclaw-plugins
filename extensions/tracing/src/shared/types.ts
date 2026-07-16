@@ -25,18 +25,33 @@ export interface GatewayRuntime {
 /** 追踪配置 */
 export interface TracingConfig {
   enabled: boolean;
-  backend: "log" | "file" | "otlp" | "skywalking";
+  backend: "log" | "file" | "otlp";
   otlpEndpoint: string;
   sampleRate: number;
   traceDir: string;
+  traceRetentionDays: number;
   maxSpansPerTrace: number;
+  maxBufferedSpans: number;
+  flushIntervalMs: number;
+  exportTimeoutMs: number;
+  exportRetryAttempts: number;
   captureMessageBody: boolean;
-  /** SkyWalking 服务名称 */
-  skywalkingServiceName?: string;
-  /** SkyWalking 服务实例名称 */
-  skywalkingServiceInstance?: string;
-  /** SkyWalking collector 地址 */
-  skywalkingCollectorAddress?: string;
+}
+
+/** 后端运行状态，用于健康检查和容量告警。 */
+export interface TracingBackendStatus {
+  healthy: boolean;
+  bufferedSpans: number;
+  droppedSpans: number;
+  lastExportAt?: number;
+  lastError?: string;
+}
+
+/** OpenClaw 日志器所需的最小接口。 */
+export interface TracingLogger {
+  info(message: string): void;
+  warn(message: string): void;
+  error(message: string): void;
 }
 
 /**
@@ -104,6 +119,8 @@ export interface TracingBackend {
   init(config: TracingConfig): Promise<void>;
   /** 导出一批 Span */
   exportSpans(spans: Span[]): Promise<void>;
+  /** 返回可序列化的运行状态。 */
+  getStatus(): TracingBackendStatus;
   /** 关闭后端，刷新缓冲 */
   shutdown(): Promise<void>;
 }

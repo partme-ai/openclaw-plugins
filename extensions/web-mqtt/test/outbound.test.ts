@@ -6,6 +6,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../src/transport/server.js", () => ({
   publishToTopic: vi.fn(),
   getClientUsername: vi.fn(() => "alice"),
+  getStats: vi.fn(() => ({})),
+  startWebMqttServer: vi.fn(),
+  stopWebMqttServer: vi.fn(),
+  trackInboundAccepted: vi.fn(),
+  trackInboundDropped: vi.fn(),
+  trackRoute: vi.fn(),
 }));
 
 vi.mock("../src/transport/acl.js", () => ({
@@ -21,7 +27,8 @@ vi.mock("../src/state/mqtt-state.js", () => ({
 import { publishToTopic } from "../src/transport/server.js";
 import { isUserActionAllowed } from "../src/transport/acl.js";
 import { upsertSessionContext } from "../src/routing/session-mapper.js";
-import { publishOutboundText } from "../src/outbound.js";
+import { publishDirectText, publishOutboundText } from "../src/outbound.js";
+import { mqttWsChannel } from "../src/channel.js";
 
 describe("publishOutboundText", () => {
   beforeEach(() => {
@@ -73,5 +80,25 @@ describe("publishOutboundText", () => {
 
     await publishOutboundText(sessionKey, "blocked", "openclaw/");
     expect(publishToTopic).not.toHaveBeenCalled();
+  });
+
+  it("publishes Router deliveries directly to their configured topic", async () => {
+    await publishDirectText("audit/events", "routed");
+    expect(publishToTopic).toHaveBeenCalledWith("audit/events", "routed");
+  });
+
+  it("uses the explicit Router target contract and leaves core durable replies on session routing", async () => {
+    const sendText = mqttWsChannel.outbound.sendText;
+    await sendText({
+      cfg: {}, to: "openclaw-direct-topic:v1:audit%2Fevents", text: "routed", deliveryQueueId: "router-id",
+    } as never);
+    expect(publishToTopic).toHaveBeenCalledWith("audit/events", "routed");
+
+    const sessionKey = "agent:demo:mqtt-ws:direct:core-peer";
+    upsertSessionContext(sessionKey, {
+      clientId: "core-peer", agentId: "demo", accountId: "default", lastInboundTopic: "in", replyTopic: "safe/reply",
+    });
+    await sendText({ cfg: {}, to: sessionKey, text: "core reply", deliveryQueueId: "core-durable-id" } as never);
+    expect(publishToTopic).toHaveBeenLastCalledWith("safe/reply", "core reply");
   });
 });

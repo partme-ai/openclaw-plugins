@@ -1,6 +1,6 @@
 {
   "id": "rocketmq",
-  "version": "2026.5.19",
+  "version": "2026.7.1",
   "description": "RocketMQ channel plugin for OpenClaw.",
   "channels": ["rocketmq"],
   "configSchema": {
@@ -9,7 +9,7 @@
     "properties": {}
   },
   "contracts": {
-    "tools": ["mq.publish"]
+    "tools": []
   },
   "channelConfigs": {
     "rocketmq": {
@@ -45,10 +45,11 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "groupId": { "type": "string", "default": "openclaw-rocketmq-producer" },
-              "requestTimeout": { "type": "number", "default": 5000 }
+              "groupId": { "type": "string", "default": "openclaw-rocketmq-producer", "description": "Deprecated compatibility label; rocketmq-client-nodejs Producer does not use a producer group." },
+              "requestTimeout": { "type": "number", "minimum": 1, "default": 5000 },
+              "maxAttempts": { "type": "number", "minimum": 1, "default": 3 }
             },
-            "default": { "groupId": "openclaw-rocketmq-producer", "requestTimeout": 5000 }
+            "default": { "groupId": "openclaw-rocketmq-producer", "requestTimeout": 5000, "maxAttempts": 3 }
           },
           "consumer": {
             "type": "object",
@@ -72,7 +73,18 @@
               "maxCacheMessageSizeInBytes": { "type": "number", "default": 67108864 },
               "longPollingTimeout": { "type": "number", "default": 30000 },
               "requestTimeout": { "type": "number", "default": 3000 },
-              "reconsumeOnError": { "type": "boolean", "default": true }
+              "reconsumeOnError": { "type": "boolean", "default": true },
+              "retry": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "maxAttempts": { "type": "number", "minimum": 1, "default": 17 },
+                  "initialDelayMs": { "type": "number", "minimum": 1, "default": 1000 },
+                  "maxDelayMs": { "type": "number", "minimum": 1, "default": 60000 },
+                  "multiplier": { "type": "number", "minimum": 1, "default": 2 }
+                },
+                "default": { "maxAttempts": 17, "initialDelayMs": 1000, "maxDelayMs": 60000, "multiplier": 2 }
+              }
             },
             "default": {
               "groupId": "openclaw-rocketmq-consumer",
@@ -81,7 +93,8 @@
               "maxCacheMessageSizeInBytes": 67108864,
               "longPollingTimeout": 30000,
               "requestTimeout": 3000,
-              "reconsumeOnError": true
+              "reconsumeOnError": true,
+              "retry": { "maxAttempts": 17, "initialDelayMs": 1000, "maxDelayMs": 60000, "multiplier": 2 }
             }
           },
           "topicBindings": {
@@ -136,11 +149,20 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "enabled": { "type": "boolean", "default": false },
+              "enabled": { "type": "boolean", "default": true },
               "ttlMs": { "type": "number", "default": 600000 },
               "maxEntries": { "type": "number", "default": 10000 }
             },
-            "default": { "enabled": false, "ttlMs": 600000, "maxEntries": 10000 }
+            "default": { "enabled": true, "ttlMs": 600000, "maxEntries": 10000 }
+          },
+          "connection": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "startupAttempts": { "type": "number", "minimum": 1, "default": 6 },
+              "retryDelayMs": { "type": "number", "minimum": 0, "default": 5000 }
+            },
+            "default": { "startupAttempts": 6, "retryDelayMs": 5000 }
           }
         },
         "required": ["endpoints"]

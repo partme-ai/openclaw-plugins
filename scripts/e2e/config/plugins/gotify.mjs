@@ -11,7 +11,7 @@ export function gotifyConfig(ctx) {
             name: "e2e",
             enabled: true,
             serverUrl: g.serverUrl,
-            appToken: g.appToken,
+            appToken: g.outboundAppToken ?? g.appToken,
             clientToken: g.clientToken,
             dmPolicy: "open",
             allowFrom: ["*"],

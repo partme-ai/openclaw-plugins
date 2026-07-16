@@ -1,6 +1,6 @@
 # Technical Details — openclaw-rocketmq
 
-## Transport Layer (`rocketmq-server.ts`)
+## Transport Layer (`transport/server.ts`)
 
 ### Producer Management
 
@@ -104,7 +104,7 @@ rt.subagent.run({ sessionKey, message, deliver: false })
 → publishMessage(reply)
 ```
 
-## Config Resolution (`rocketmq-config.ts`)
+## Config Resolution (`config.ts`)
 
 ### Resolution Path
 
@@ -120,26 +120,27 @@ resolveRockermqConfig(cfg)
 
 `validateRockermqConfig()` checks:
 1. `endpoints` must be non-empty
-2. `producer.groupId` must be non-empty
-3. `consumer.groupId` must be non-empty
+2. `consumer.groupId` must be non-empty
+3. `producer.maxAttempts` and connection retry settings must be positive
 
-Warnings are emitted via `console.warn` but do not block startup.
+Invalid configuration fails channel startup with a combined validation error.
 
 ### Credential Masking
 
 `buildRockermqConfigSnapshot()` deeply copies the config and replaces:
+- `sessionCredentials.accessKey` → `"***"`
 - `sessionCredentials.accessSecret` → `"***"`
 - `sessionCredentials.securityToken` → `"***"`
 
 ## Idempotency
 
-When enabled (`idempotency.enabled: true`):
+Enabled by default (`idempotency.enabled: true`):
 - Uses `correlationId` from message payload or `messageId` as the key
-- In-memory `Map<string, number>` stores key → expiry timestamp
-- `pruneIdempotency()` runs on each inbound message:
-  - Removes expired entries (`expiry <= now`)
-  - Evicts oldest entries when `maxEntries` is exceeded
-  - Clears all entries if `ttlMs <= 0`
+- Uses a bounded process-local claim/commit cache
+- Claims before Agent dispatch, commits only after dispatch and reply publication succeed
+- Releases the claim on transient failure so RocketMQ redelivery can retry
+- Treats in-flight and committed duplicates as acknowledged duplicates
+- Does not provide distributed exactly-once delivery across plugin processes
 
 ## Session Mapping (`session-mapper.ts`)
 

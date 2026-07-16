@@ -1,9 +1,9 @@
 /**
- * @fileoverview `agent_end` 事件 → MQ 的 UnifiedMessage 桥接层。
+ * @fileoverview OpenClaw 消息生命周期 Hook → MQ 的 UnifiedMessage 桥接层。
  *
  * @description
- * **架构角色**：监听宿主 `agent_end`，在用户消息与助手回复可用时分别构造
- * `UnifiedMessage` JSON 并通过 `api.publishInbound` 投递到配置的消息中间件。
+ * **架构角色**：监听 `message_received` 与 `reply_payload_sending`，分别构造
+ * `UnifiedMessage` JSON 并通过 OpenClaw 公共 channel outbound adapter 投递到消息中间件。
  *
  * **配置驱动**：仅当 `pluginConfig.channels.<channelId>` 存在且 `enabled !== false`、
  * `forwardToMq !== false` 时才转发；`mqChannel` 白名单校验后回退 `mqtt`。
@@ -31,15 +31,28 @@
  *   每条消息唯一，编码方向/渠道/账号/智能体/时间戳，便于日志排查。
  */
 
+import { createHash, randomUUID } from "node:crypto";
+
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { getChannelMeta } from "./channels.js";
 
 // ── 已知的合法 MQ 渠道 ──
 
 /** @description Bridge 允许配置的 MQ 传输别名；未知值会 warn 并回退 `mqtt`。 */
-const VALID_MQ_CHANNELS = new Set([
-  "mqtt", "rabbitmq", "redis-stream", "rocketmq", "stomp", "web-mqtt", "web-stomp",
-]);
+const MQ_CHANNEL_ALIASES: Record<string, string> = {
+  mqtt: "mqtt",
+  "mqtt-ws": "mqtt-ws",
+  "web-mqtt": "mqtt-ws",
+  rabbitmq: "rabbitmq",
+  "redis-stream": "redis-stream",
+  rocketmq: "rocketmq",
+  stomp: "stomp",
+  "web-stomp": "stomp",
+  "stomp-tcp": "stomp-tcp",
+};
+const DIRECT_TOPIC_CHANNELS = new Set(["mqtt", "mqtt-ws", "rabbitmq", "redis-stream", "rocketmq"]);
+const DIRECT_TARGET_PREFIX = "openclaw-direct-topic:v1:";
+const DEFAULT_DELIVERY = { maxAttempts: 3, retryDelayMs: 250, publishTimeoutMs: 5_000, maxPayloadBytes: 1_048_576 };
 
 // ── 消息类型 ──
 
@@ -73,7 +86,7 @@ export interface UnifiedMessage {
   target?: { channels: string[] };
   /** @description 正文格式标签。 */
   contentType: MessageContentType;
-  /** @description 纯文本正文（桥接时由 `agent_end` 消息 content 字符串化）。 */
+  /** @description 从消息 Hook 载荷提取的纯文本正文。 */
   text: string;
   /** @description （可选）Markdown 变体正文，当前 build 路径未单独填充。 */
   markdown?: string;
@@ -189,12 +202,15 @@ export function buildMessage(params: {
   text?: string;
   direction?: "inbound" | "outbound";
   metadata?: Record<string, unknown>;
+  messageId?: string;
+  traceId?: string;
+  timestamp?: number;
 }): UnifiedMessage {
   const direction = params.direction ?? "inbound";
   return {
-    messageId: generateMessageId(params.channel, params.accountId, params.agentId, direction),
-    traceId: deriveTraceId(params.channel, params.accountId, params.agentId, params.sessionKey),
-    timestamp: Date.now(),
+    messageId: params.messageId ?? generateMessageId(params.channel, params.accountId, params.agentId, direction),
+    traceId: params.traceId ?? deriveTraceId(params.channel, params.accountId, params.agentId, params.sessionKey),
+    timestamp: params.timestamp ?? Date.now(),
     source: {
       channel: params.channel,
       accountId: params.accountId,
@@ -213,18 +229,21 @@ export function buildMessage(params: {
 // ── 桥接逻辑 ──
 
 /** @description 单渠道 MQ 转发开关（映射自 `pluginConfig.channels` 条目）。 */
-interface ChannelCfg {
+export interface BridgeChannelConfig {
   /** @description 为 `false` 时该渠道完全不桥接。 */
   enabled?: boolean;
-  /** @description 为 `false` 时跳过 `agent_end` → MQ。 */
+  /** @description 为 `false` 时跳过消息 Hook → MQ。 */
   forwardToMq?: boolean;
   /** @description MQ 传输别名，须落在 `VALID_MQ_CHANNELS` 内才原样使用。 */
   mqChannel?: string;
+  mqAccountId?: string;
+  topicPrefix?: string;
 }
 
 /** @description Bridge 插件配置根：`channels` 键为 channelId。 */
-interface BridgeConfig {
-  channels?: Record<string, ChannelCfg>;
+export interface BridgeConfig {
+  channels?: Record<string, BridgeChannelConfig>;
+  delivery?: Partial<typeof DEFAULT_DELIVERY>;
 }
 
 /**
@@ -237,103 +256,194 @@ function getConfig(api: OpenClawPluginApi): BridgeConfig {
   return (api.pluginConfig ?? {}) as BridgeConfig;
 }
 
+function readString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function extractText(content: unknown): string | undefined {
+  if (typeof content === "string") return readString(content);
+  if (!Array.isArray(content)) return undefined;
+  const parts = content.flatMap((part) => {
+    if (!part || typeof part !== "object") return [];
+    const value = part as Record<string, unknown>;
+    const text = readString(value.text) ?? readString(value.content);
+    return text ? [text] : [];
+  });
+  return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
+function resolveMqChannel(value: string | undefined): string {
+  const requested = value ?? "mqtt";
+  const resolved = MQ_CHANNEL_ALIASES[requested];
+  if (!resolved) {
+    throw new Error(`[openclaw-bridge] unsupported mqChannel "${requested}"; expected one of ${Object.keys(MQ_CHANNEL_ALIASES).join(", ")}`);
+  }
+  return resolved;
+}
+
+function resolveDelivery(config: BridgeConfig): typeof DEFAULT_DELIVERY {
+  const delivery = { ...DEFAULT_DELIVERY, ...config.delivery };
+  for (const [name, value] of Object.entries(delivery)) {
+    if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) {
+      throw new Error(`[openclaw-bridge] delivery.${name} must be a positive integer`);
+    }
+  }
+  return delivery;
+}
+
+export function validateBridgeConfig(config: BridgeConfig): void {
+  resolveDelivery(config);
+  for (const [channelId, channel] of Object.entries(config.channels ?? {})) {
+    if (!getChannelMeta(channelId)) throw new Error(`[openclaw-bridge] unsupported source channel "${channelId}"`);
+    resolveMqChannel(channel.mqChannel);
+    if (channel.topicPrefix !== undefined && !readString(channel.topicPrefix)) {
+      throw new Error(`[openclaw-bridge] channels.${channelId}.topicPrefix must be non-empty`);
+    }
+  }
+}
+
+function encodeTarget(channel: string, topic: string): string {
+  if (DIRECT_TOPIC_CHANNELS.has(channel)) return `${DIRECT_TARGET_PREFIX}${encodeURIComponent(topic)}`;
+  if (channel === "stomp" || channel === "stomp-tcp") {
+    return topic.startsWith("/topic/") ? topic : `/topic/${topic.replaceAll("/", ".")}`;
+  }
+  return topic;
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`publish timed out after ${timeoutMs}ms; outcome is unknown`)), timeoutMs);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function publishToMq(params: {
+  api: OpenClawPluginApi;
+  config: BridgeConfig;
+  channelConfig: BridgeChannelConfig;
+  sourceChannel: string;
+  direction: "inbound" | "outbound";
+  message: UnifiedMessage;
+}): Promise<void> {
+  const mqChannel = resolveMqChannel(params.channelConfig.mqChannel);
+  const topicPrefix = readString(params.channelConfig.topicPrefix) ?? `openclaw/bridge/${params.sourceChannel}`;
+  const topic = `${topicPrefix.replace(/\/$/, "")}/${params.direction}`;
+  const content = JSON.stringify(params.message);
+  const delivery = resolveDelivery(params.config);
+  if (Buffer.byteLength(content, "utf8") > delivery.maxPayloadBytes) {
+    throw new Error(`[openclaw-bridge] payload exceeds delivery.maxPayloadBytes=${delivery.maxPayloadBytes}`);
+  }
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= delivery.maxAttempts; attempt += 1) {
+    try {
+      const adapter = await params.api.runtime.channel.outbound.loadAdapter(mqChannel);
+      if (!adapter?.sendText) throw new Error(`[openclaw-bridge] outbound adapter unavailable or lacks sendText: ${mqChannel}`);
+      await withTimeout(adapter.sendText({
+        cfg: params.api.runtime.config.current() as never,
+        to: encodeTarget(mqChannel, topic),
+        text: content,
+        accountId: params.channelConfig.mqAccountId ?? null,
+        deliveryQueueId: params.message.messageId,
+      }), delivery.publishTimeoutMs);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < delivery.maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, delivery.retryDelayMs * attempt));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function stableMessageId(direction: "inbound" | "outbound", channel: string, identity: string): string {
+  const digest = createHash("sha256").update(`${direction}:${channel}:${identity}`).digest("hex");
+  return `bridge/${direction === "inbound" ? "in" : "out"}/${safeSegment(channel)}/${digest}`;
+}
+
+class ReplyOrdinalTracker {
+  private readonly ordinals = new Map<string, number>();
+
+  next(runIdentity: string): number {
+    const value = this.ordinals.get(runIdentity) ?? 0;
+    this.ordinals.set(runIdentity, value + 1);
+    if (this.ordinals.size > 10_000) this.ordinals.delete(this.ordinals.keys().next().value as string);
+    return value;
+  }
+}
+
 /**
- * @description 注册 `agent_end` 监听：按配置将用户/助手消息序列化为 UnifiedMessage 并 publish 到 MQ。
+ * @description 注册 `message_received` 与 `reply_payload_sending`：按配置将真实收发载荷转发到 MQ。
  *
  * **处理流程**：
  * 1. 校验 `channelId`、渠道配置、`getChannelMeta` 闸门
- * 2. 解析 `agent_end.messages`，反向扫描最近 user/assistant 各一条
- * 3. 分别 publish inbound/outbound topic（`openclaw/bridge/{channelId}/inbound|outbound`）
+ * 2. 从真实入站或回复 payload 提取正文并生成稳定投递 ID
+ * 3. 通过公共 outbound adapter 发布 inbound/outbound topic
  *
  * @param api - OpenClaw 插件 API（`on`、`publishInbound`、`logger`）。
  * @returns void
  * @throws 不抛出同步异常；publish 失败仅记录 error 日志。
  */
 export function registerMessageBridge(api: OpenClawPluginApi): void {
-  api.on("agent_end", (event, ctx) => {
+  const config = getConfig(api);
+  validateBridgeConfig(config);
+  const replyOrdinals = new ReplyOrdinalTracker();
+
+  api.on("message_received", async (event, ctx) => {
     const channelId = ctx.channelId;
-    // 非 Channel 会话或无 channel 上下文 → 不桥接
-    if (!channelId) return;
+    const channelConfig = config.channels?.[channelId];
+    if (!channelConfig || channelConfig.enabled === false || channelConfig.forwardToMq === false) return;
+    const text = extractText(event.content);
+    if (!text) return;
+    const sessionKey = ctx.sessionKey ?? event.sessionKey ?? ctx.conversationId ?? "";
+    const identity = ctx.messageId ?? event.messageId ?? ctx.runId ?? event.runId ?? randomUUID();
+    const message = buildMessage({
+      channel: channelId,
+      accountId: ctx.accountId ?? "default",
+      agentId: "default",
+      sessionKey,
+      userId: ctx.senderId ?? event.senderId ?? event.from ?? "unknown",
+      text,
+      messageId: stableMessageId("inbound", channelId, identity),
+      traceId: readString(event.traceId) ?? deriveTraceId(channelId, ctx.accountId ?? "default", "default", sessionKey),
+      timestamp: event.timestamp,
+      metadata: { sessionKey, runId: ctx.runId ?? event.runId, sourceChannel: channelId, bridge: "openclaw-bridge", direction: "inbound" },
+    });
+    await publishToMq({ api, config, channelConfig, sourceChannel: channelId, direction: "inbound", message });
+  });
 
-    const cfg = getConfig(api);
-    const channelCfg = cfg.channels?.[channelId];
-
-    // 配置闸门：未声明该渠道或显式 disabled → 短路
-    if (!channelCfg || channelCfg.enabled === false) return;
-    // 细分开关：保留 enabled 但关闭 MQ 转发
-    if (channelCfg.forwardToMq === false) return;
-
-    // 注册表闸门：只对 Bridge 已知渠道桥接，避免污染未知 connector
-    const meta = getChannelMeta(channelId);
-    if (!meta) return;
-
-    const e = event as Record<string, unknown>;
-    const msgs = (Array.isArray(e.messages) ? e.messages : []) as Array<Record<string, unknown>>;
-    if (msgs.length === 0) return;
-
-    // agentAccountId 在运行时存在（wecom、router 等插件均使用），
-    // 但 SDK 类型定义可能未包含此字段。
-    const accountId = (ctx as Record<string, unknown>).agentAccountId as string ?? "default";
-    const agentId = (ctx as Record<string, unknown>).agentId as string ?? "default";
-    const sessionKey = (ctx as Record<string, unknown>).sessionKey as string ?? "";
-
-    // MQ 渠道白名单校验：非法值 warn 并回退 mqtt，避免 publish 到未注册 transport
-    const mqChannel = channelCfg.mqChannel ?? "mqtt";
-    if (!VALID_MQ_CHANNELS.has(mqChannel)) {
-      api.logger.warn(
-        `[openclaw-bridge] Unknown mqChannel "${mqChannel}" for channel "${channelId}". ` +
-        `Valid options: ${[...VALID_MQ_CHANNELS].join(", ")}. Falling back to "mqtt".`,
-      );
-    }
-    const resolvedMqChannel = VALID_MQ_CHANNELS.has(mqChannel) ? mqChannel : "mqtt";
-    const topicPrefix = `openclaw/bridge/${channelId}`;
-
-    // 单次反转，缓存结果——避免双重反转；取时间上「最后一条」user/assistant
-    const reversed = [...msgs].reverse();
-    const userMsg = reversed.find((m) => m.role === "user");
-    const agentReply = reversed.find((m) => m.role === "assistant");
-
-    // senderId/chatType 来自运行时事件中的额外属性；
-    // SDK 类型定义可能不包含这些字段，但运行时通常会填充它们。
-    const userId = (e.senderId as string) ?? "unknown";
-    const chatType = (e.chatType as "direct" | "group") ?? "direct";
-
-    // ── 入站：最近一条 user 消息 ──
-    if (userMsg?.content) {
-      const unified = buildMessage({
-        channel: channelId,
-        accountId,
-        agentId,
-        sessionKey,
-        userId,
-        chatType,
-        text: String(userMsg.content),
-        metadata: { sessionKey, sourceChannel: channelId, bridge: "openclaw-bridge", direction: "inbound" },
-      });
-      // publishInbound 在运行时存在（wecom、router 等插件均使用），
-      // 但 SDK 类型定义可能未包含此方法；失败时 catch 打 error 不阻断 agent 生命周期
-      (api as any).publishInbound?.({ channel: resolvedMqChannel, content: JSON.stringify(unified), topic: `${topicPrefix}/inbound` })
-        .then(() => api.logger.debug?.(`[openclaw-bridge] → inbound: ${resolvedMqChannel}/${topicPrefix}/inbound`))
-        .catch((err: unknown) => api.logger.error(`[openclaw-bridge] Forward inbound failed [${channelId}]: ${String(err)}`));
-    }
-
-    // ── 出站：最近一条 assistant 回复 ──
-    if (agentReply?.content) {
-      const unified = buildMessage({
-        channel: channelId,
-        accountId,
-        agentId,
-        sessionKey,
-        userId,
-        chatType,
-        text: String(agentReply.content),
-        direction: "outbound",
-        metadata: { sessionKey, sourceChannel: channelId, bridge: "openclaw-bridge", direction: "outbound" },
-      });
-      (api as any).publishInbound?.({ channel: resolvedMqChannel, content: JSON.stringify(unified), topic: `${topicPrefix}/outbound` })
-        .then(() => api.logger.debug?.(`[openclaw-bridge] → outbound: ${resolvedMqChannel}/${topicPrefix}/outbound`))
-        .catch((err: unknown) => api.logger.error(`[openclaw-bridge] Forward outbound failed [${channelId}]: ${String(err)}`));
-    }
+  api.on("reply_payload_sending", async (event, ctx) => {
+    const channelId = ctx.channelId;
+    const channelConfig = config.channels?.[channelId];
+    if (!channelConfig || channelConfig.enabled === false || channelConfig.forwardToMq === false) return;
+    const text = extractText(event.payload.text);
+    if (!text) return;
+    const sessionKey = ctx.sessionKey ?? event.sessionKey ?? ctx.conversationId ?? "";
+    const runIdentity = event.runId ?? ctx.runId ?? randomUUID();
+    const ordinal = replyOrdinals.next(`${channelId}:${sessionKey}:${runIdentity}`);
+    const message = buildMessage({
+      channel: channelId,
+      accountId: ctx.accountId ?? "default",
+      agentId: event.usageState?.agentId ?? "default",
+      sessionKey,
+      userId: ctx.senderId ?? ctx.conversationId ?? "unknown",
+      text,
+      direction: "outbound",
+      messageId: stableMessageId("outbound", channelId, `${runIdentity}:${event.kind}:${ordinal}`),
+      traceId: readString(ctx.traceId) ?? deriveTraceId(channelId, ctx.accountId ?? "default", "default", sessionKey),
+      metadata: { sessionKey, runId: event.runId ?? ctx.runId, kind: event.kind, ordinal, sourceChannel: channelId, bridge: "openclaw-bridge", direction: "outbound" },
+    });
+    await publishToMq({ api, config, channelConfig, sourceChannel: channelId, direction: "outbound", message });
   });
 
   api.logger.info("[openclaw-bridge] Message bridge registered");

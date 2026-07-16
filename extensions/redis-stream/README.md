@@ -31,6 +31,7 @@ It uses the official [node-redis](https://github.com/redis/node-redis) client an
 - **Standard format fallback**: Unmatched channels use `openclaw:agent:<agentId>:in` format for automatic routing
 - **dmScope session isolation**: Session keys derived from OpenClaw's global `session.dmScope` config (`main` / `per-peer` / `per-channel-peer` / `per-account-channel-peer`)
 - **JSON + plain text payloads**: Accept raw text or `{"text": "..."}` JSON payloads
+- **Reliable Stream processing**: ACK after successful dispatch, stale PEL reclaim, bounded retries, and atomic dead-letter transfer
 - **HTTP health/status endpoints**: `/redis-stream/health` and `/redis-stream/status` for monitoring
 
 ## Lifecycle
@@ -43,14 +44,14 @@ It uses the official [node-redis](https://github.com/redis/node-redis) client an
 
 ## Message Processing Flow
 
-1. Redis channel message received (Pub/Sub `SUBSCRIBE`/`PSUBSCRIBE` callback)
+1. Redis message received through Pub/Sub or `XREADGROUP`
 2. Whitelist check: if `subscribeChannels` is non-empty, only matched channels are processed
 3. Route resolution: `channelBindings` checked first (explicit match), then standard `openclaw:agent:<agentId>:in` format
 4. dmScope read from OpenClaw global config (`session.dmScope`)
 5. Session key built: `agent:<agentId>:<dmScope_suffix>`
 6. Session context updated (channel, replyChannel, peerId)
 7. Agent dispatch → `rt.channel.reply.dispatchReplyFromConfig`
-8. Reply published to `replyChannel` via Redis `PUBLISH`
+8. Reply sent with `PUBLISH` in Pub/Sub mode or durable `XADD` in Stream mode
 
 ## Quick Start
 
@@ -70,7 +71,7 @@ openclaw plugins install clawhub:@partme.ai/openclaw-redis-stream
 openclaw plugins install npm:@partme.ai/openclaw-redis-stream
 ```
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1`.
 
 ### Minimal Configuration
 
@@ -79,16 +80,13 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
   "channels": {
     "redis-stream": {
       "url": "redis://localhost:6379",
-      "channelMode": "pubsub",
-      "subscribeChannels": ["openclaw:agent:*:in"],
-      "channelBindings": [
-        {
-          "channelPattern": "sensor:temperature",
-          "agentId": "iot-agent",
-          "accountId": "default",
-          "replyChannel": "sensor:temperature:response"
-        }
-      ]
+      "channelMode": "stream",
+      "defaultAgentId": "main",
+      "stream": {
+        "inboundKey": "openclaw:{agent}:inbound",
+        "outboundKey": "openclaw:{agent}:outbound",
+        "deadLetterKey": "openclaw:{agent}:inbound:dlq"
+      }
     }
   }
 }
@@ -156,10 +154,14 @@ When `channelMode` is `stream`, the stream entry values are mapped to internal f
 | `stream.inboundKey` | `string` | `"openclaw:inbound"` | Consumer group read stream |
 | `stream.outboundKey` | `string` | `"openclaw:outbound"` | Reply write stream |
 | `stream.consumerGroup` | `string` | `"openclaw-group"` | Consumer group name |
-| `stream.consumerName` | `string` | `"openclaw-consumer-1"` | This instance's consumer name |
+| `stream.consumerName` | `string` | `""` | Unique consumer name; empty derives hostname + process ID |
 | `stream.blockMs` | `number` | `5000` | `XREADGROUP` block timeout |
 | `stream.count` | `number` | `10` | Max messages per batch |
 | `stream.createGroup` | `boolean` | `true` | Auto-create consumer group |
+| `stream.pendingClaimIdleMs` | `number` | `120000` | Reclaim stale PEL entries with `XAUTOCLAIM`; `0` disables reclaim |
+| `stream.maxAttempts` | `number` | `5` | Delivery attempts before dead-lettering |
+| `stream.deadLetterKey` | `string` | `"openclaw:inbound:dlq"` | Dead-letter Stream key |
+| `stream.maxLen` | `number` | `100000` | Approximate max length for outbound and DLQ streams; `0` is unlimited |
 
 ### Payload
 
@@ -172,7 +174,26 @@ When `channelMode` is `stream`, the stream entry values are mapped to internal f
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `connection.reconnectMs` | `number` | `3000` | Reconnect delay (ms) |
-| `connection.maxRetries` | `number` | `10` | Max reconnect attempts |
+| `connection.maxRetries` | `number` | `0` | Max reconnect attempts; `0` retries indefinitely |
+| `connection.startupTimeoutMs` | `number` | `30000` | Connection startup timeout |
+
+### Idempotency
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `idempotency.enabled` | `boolean` | `true` | Claim Stream entry IDs before dispatch |
+| `idempotency.ttlMs` | `number` | `600000` | Completed-entry retention window |
+| `idempotency.maxEntries` | `number` | `10000` | In-process cache bound |
+
+## Reliability and Deployment Notes
+
+- Stream entries are ACKed only after Agent dispatch and reply delivery complete. Failed entries remain in the PEL and are reclaimed after `pendingClaimIdleMs`.
+- At `maxAttempts`, the original entry and failure metadata are appended to `deadLetterKey`, then ACKed in the same Redis transaction.
+- Every Gateway replica needs a unique `consumerName`; leaving it empty generates one from hostname and process ID.
+- `inboundKey` and `deadLetterKey` must share a Redis Cluster hash tag for atomic dead-letter transfer, for example `openclaw:{agent}:inbound` and `openclaw:{agent}:inbound:dlq`.
+- The plugin uses a single-endpoint node-redis client; native Redis Cluster topology discovery is not supported. Use a standalone/HA endpoint or a compatible proxy.
+- Pub/Sub mode is intentionally at-most-once: it has no ACK, replay, dead letter, or overload recovery. Use Stream mode for production workflows that cannot lose messages.
+- Idempotency is process-local and prevents duplicate work within one plugin process; it does not provide cross-node exactly-once semantics.
 
 ### Environment Variables
 
@@ -199,8 +220,10 @@ openclaw-redis-stream/
     ├── topic-router.ts    # Channel → agent route resolution
     ├── inbound.ts         # Inbound message dispatch
     ├── runtime.ts         # PluginRuntime singleton store
-    ├── redis-stream-config.ts  # Config resolution + defaults
-    ├── redis-stream-server.ts  # Redis transport: Pub/Sub + Stream
+    ├── config.ts          # Config validation, resolution + defaults
+    ├── transport/         # Redis publisher and Pub/Sub/Stream lifecycle
+    ├── routing/           # Topic routing and session mapping
+    ├── shared/            # Errors, logging, dmScope and idempotency helpers
     ├── setup-entry.ts     # Lightweight setup-only entry
     ├── dm-scope.test.ts
     ├── config.test.ts

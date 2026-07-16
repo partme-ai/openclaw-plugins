@@ -12,7 +12,13 @@
  * RocketMQ MQ 传输层 — 消息收发与统计入口。
  */
 
-import { ConsumeResult, Producer, PushConsumer, type MessageView } from "rocketmq-client-nodejs";
+import {
+  ConsumeResult,
+  ExponentialBackoffRetryPolicy,
+  Producer,
+  PushConsumer,
+  type MessageView,
+} from "rocketmq-client-nodejs";
 import type { RockermqConfig } from "../config.js";
 
 /** @description PushConsumer 回调的入站消息事件。 */
@@ -43,13 +49,12 @@ export type RockermqStats = {
   messagesAcked: number;
   messagesNacked: number;
   messagesRequeued: number;
+  messagesDropped: number;
+  messagesDeadLettered: number;
+  lastDropReason: string | null;
   errors: number;
   inFlight: number;
 };
-
-/** RocketMQ 启动重连默认参数（与 RabbitMQ connection 默认值对齐）。 */
-const DEFAULT_RECONNECT_ATTEMPTS = 5;
-const DEFAULT_RECONNECT_DELAY_MS = 5000;
 
 let producer: Producer | null = null;
 let consumer: PushConsumer | null = null;
@@ -58,6 +63,33 @@ let inboundHandler: InboundHandler | null = null;
 let stopping = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let startupPromise: Promise<void> | null = null;
+const ROCKETMQ_STATUS_OK = 20_000;
+
+/**
+ * The Node SDK currently ignores Broker `CUSTOMIZED_BACKOFF` settings, leaving
+ * non-FIFO nack invisible duration at zero. Pin a configured policy so FAILURE
+ * always results in a valid delayed redelivery and exposes a deterministic
+ * max-attempt value to DLQ forwarding.
+ */
+class CompatiblePushConsumer extends PushConsumer {
+  constructor(
+    options: ConstructorParameters<typeof PushConsumer>[0],
+    private readonly configuredRetryPolicy: SafeExponentialBackoffRetryPolicy,
+  ) {
+    super(options);
+  }
+
+  override getRetryPolicy(): SafeExponentialBackoffRetryPolicy {
+    return this.configuredRetryPolicy;
+  }
+}
+
+/** RocketMQ 5 may report the first non-FIFO delivery as attempt 0. */
+class SafeExponentialBackoffRetryPolicy extends ExponentialBackoffRetryPolicy {
+  override getNextAttemptDelay(attempt: number): number {
+    return super.getNextAttemptDelay(Math.max(1, attempt));
+  }
+}
 
 const stats: RockermqStats = {
   connected: false,
@@ -70,6 +102,9 @@ const stats: RockermqStats = {
   messagesAcked: 0,
   messagesNacked: 0,
   messagesRequeued: 0,
+  messagesDropped: 0,
+  messagesDeadLettered: 0,
+  lastDropReason: null,
   errors: 0,
   inFlight: 0,
 };
@@ -84,12 +119,29 @@ const stats: RockermqStats = {
 export async function startRockermqServer(
   cfg: RockermqConfig,
   handler: InboundHandler,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
+  if (startupPromise || producer || consumer) {
+    throw new Error("RocketMQ transport is already started or starting");
+  }
   config = cfg;
   inboundHandler = handler;
   stopping = false;
-  startupPromise = connectWithRetry();
-  await startupPromise;
+  startupPromise = connectWithRetry(abortSignal);
+  try {
+    await startupPromise;
+    if (abortSignal?.aborted) {
+      config = null;
+      inboundHandler = null;
+    }
+  } catch (error) {
+    await teardownTransport();
+    config = null;
+    inboundHandler = null;
+    throw error;
+  } finally {
+    startupPromise = null;
+  }
 }
 
 /**
@@ -104,6 +156,9 @@ export async function stopRockermqServer(): Promise<void> {
     reconnectTimer = null;
   }
   await teardownTransport();
+  config = null;
+  inboundHandler = null;
+  startupPromise = null;
 }
 
 /**
@@ -142,6 +197,7 @@ export async function publishMessage(params: {
     endpoints,
     namespace: params.namespace ?? config?.namespace ?? "",
     requestTimeout: params.requestTimeout ?? config?.producer?.requestTimeout ?? 5000,
+    maxAttempts: config?.producer.maxAttempts ?? 3,
     sessionCredentials: params.sessionCredentials ?? config?.sessionCredentials,
   });
   try {
@@ -178,14 +234,14 @@ export function trackInboundAccepted(): void {
 }
 
 /**
- * @description 记录入站丢弃原因并递增 errors。
+ * @description 记录永久入站丢弃原因，不污染连接健康状态。
  * @param reason - 丢弃原因码。
  * @returns void
  * @throws 不抛出。
  */
 export function trackInboundDropped(reason: string): void {
-  stats.errors++;
-  stats.lastError = `inbound_dropped:${reason}`;
+  stats.messagesDropped++;
+  stats.lastDropReason = reason;
 }
 
 /**
@@ -201,33 +257,44 @@ export function trackRoute(_source: string): void {
 // ─────────────── 内部实现 ───────────────
 
 /**
- * @description 带固定间隔的重试连接（最多 5 次）。
+ * @description 按 connection 配置进行启动重试。
  * @returns 连接成功后的 Promise。
  * @throws 重试耗尽后抛出最后一次错误。
  */
-async function connectWithRetry(): Promise<void> {
+async function connectWithRetry(abortSignal?: AbortSignal): Promise<void> {
   const cfg = config;
   if (!cfg) {
     throw new Error("RocketMQ config not set");
   }
-  const maxAttempts = DEFAULT_RECONNECT_ATTEMPTS + 1;
+  const maxAttempts = cfg.connection.startupAttempts;
   let attempt = 0;
   let lastErr: unknown = null;
 
-  while (!stopping && attempt < maxAttempts) {
+  while (!stopping && !abortSignal?.aborted && attempt < maxAttempts) {
     attempt++;
     try {
       await connectOnce(cfg);
+      if (stopping || abortSignal?.aborted) {
+        await teardownTransport();
+      }
       return;
     } catch (err) {
+      if (stopping || abortSignal?.aborted) {
+        await teardownTransport();
+        return;
+      }
       lastErr = err;
       stats.errors++;
       stats.lastError = err instanceof Error ? err.message : String(err);
       if (attempt >= maxAttempts) {
         break;
       }
-      await sleep(DEFAULT_RECONNECT_DELAY_MS);
+      await sleep(cfg.connection.retryDelayMs, abortSignal);
     }
+  }
+  if (stopping || abortSignal?.aborted) {
+    await teardownTransport();
+    return;
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
@@ -245,11 +312,13 @@ async function connectOnce(cfg: RockermqConfig): Promise<void> {
     endpoints: cfg.endpoints,
     namespace: cfg.namespace,
     requestTimeout: cfg.producer.requestTimeout,
+    maxAttempts: cfg.producer.maxAttempts,
     sessionCredentials: cfg.sessionCredentials,
   });
   await producer.startup();
 
-  consumer = new PushConsumer({
+  const retry = cfg.consumer.retry;
+  consumer = new CompatiblePushConsumer({
     endpoints: cfg.endpoints,
     namespace: cfg.namespace,
     consumerGroup: cfg.consumer.groupId,
@@ -301,6 +370,20 @@ async function connectOnce(cfg: RockermqConfig): Promise<void> {
         }
         if (disposition.reconsume ?? activeConfig.consumer.reconsumeOnError) {
           stats.messagesNacked++;
+          const deliveryAttempt = Math.max(
+            1,
+            typeof messageView.deliveryAttempt === "number" ? messageView.deliveryAttempt : 1,
+          );
+          if (deliveryAttempt >= activeConfig.consumer.retry.maxAttempts) {
+            try {
+              await forwardToDeadLetterQueue(messageView);
+              stats.messagesDeadLettered++;
+              return ConsumeResult.SUCCESS;
+            } catch (error) {
+              stats.errors++;
+              stats.lastError = error instanceof Error ? error.message : String(error);
+            }
+          }
           stats.messagesRequeued++;
           return ConsumeResult.FAILURE;
         }
@@ -308,7 +391,12 @@ async function connectOnce(cfg: RockermqConfig): Promise<void> {
         return ConsumeResult.SUCCESS;
       },
     },
-  });
+  }, new SafeExponentialBackoffRetryPolicy(
+    retry.maxAttempts,
+    retry.initialDelayMs,
+    retry.maxDelayMs,
+    retry.multiplier,
+  ));
 
   await consumer.startup();
   stats.connected = true;
@@ -344,11 +432,22 @@ function buildSubscriptions(cfg: RockermqConfig): Map<string, string> {
  * @returns 延迟 resolve 的 Promise。
  * @throws 不抛出。
  */
-function sleep(ms: number): Promise<void> {
-  if (ms <= 0) {
+function sleep(ms: number, abortSignal?: AbortSignal): Promise<void> {
+  if (ms <= 0 || abortSignal?.aborted) {
     return Promise.resolve();
   }
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      abortSignal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    reconnectTimer = setTimeout(finish, ms);
+    abortSignal?.addEventListener("abort", finish, { once: true });
+  });
 }
 
 /**
@@ -365,6 +464,23 @@ function toMessageBuffer(body: unknown): Buffer {
     return Buffer.from(body);
   }
   return Buffer.from(String(body ?? ""));
+}
+
+/** Forward a message explicitly because the Node SDK only performs this check for FIFO queues. */
+async function forwardToDeadLetterQueue(messageView: MessageView): Promise<void> {
+  const activeConsumer = consumer;
+  if (!activeConsumer) {
+    throw new Error("RocketMQ consumer is not initialized for DLQ forwarding");
+  }
+  const response = await activeConsumer.forwardMessageToDeadLetterQueueViaRpc(
+    messageView.endpoints,
+    activeConsumer.wrapForwardMessageToDeadLetterQueueRequest(messageView),
+    activeConsumer.requestTimeoutValue,
+  );
+  const status = response.getStatus()?.toObject();
+  if (status?.code !== ROCKETMQ_STATUS_OK) {
+    throw new Error(`RocketMQ DLQ forwarding failed: ${status?.message ?? "unknown status"}`);
+  }
 }
 
 /**

@@ -1,8 +1,8 @@
 {
   "name": "@partme.ai/openclaw-router",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "type": "module",
-  "description": "企业级消息路由引擎 — 跨渠道消息转发、知识库/记忆自动注入",
+  "description": "OpenClaw 跨渠道消息路由 — 持久 Outbox、重试、去重与 DLQ",
   "license": "MIT",
   "main": "dist/index.js",
   "files": [
@@ -44,6 +44,13 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "build": {
+      "openclawVersion": "2026.7.1"
+    },
+    "compat": {
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
+    }
   }
 }

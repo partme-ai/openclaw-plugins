@@ -1,30 +1,34 @@
 # OpenClaw Router
 
-**OpenClaw 插件 — 企业级跨渠道消息路由，纯配置驱动，支持审计日志**
+**OpenClaw 插件 — 持久 Outbox、可靠重试/DLQ、持久幂等、审计与循环保护**
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--router-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-router)
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-[简体中文](./README.md) | [English](./README.en.md)
+[简体中文](./README.zh-CN.md) | [English](./README.md)
 
 ---
 
 ## 概述
 
-`@partme.ai/openclaw-router` 是 OpenClaw 的企业级消息路由引擎。它通过 Plugin Hooks（`message_received`、`message_sent`、`reply_dispatch`）按规则将消息多路分发。支持 IM→MQ（转发到消息队列）和 MQ→IM（回复到 IM 渠道）。
+`@partme.ai/openclaw-router` 通过 `message_received`、`message_sent`、`reply_payload_sending` Hooks 按规则多路分发消息。同一事件的全部动作先原子写入持久 Outbox，再由后台通过 OpenClaw 对第三方插件公开的 channel outbound adapter API 投递；失败按指数退避重试，耗尽后进入持久 DLQ。
 
 **纯配置驱动** — 无需修改任何渠道插件代码。所有路由规则通过 JSON 配置定义。
 
 ## 特性
 
-- **Plugin Hooks** — `message_received`（入站）、`message_sent`（出站转发）、`reply_dispatch`（跨渠道 reply-via）
-- **幂等去重** — 基于 `runId` / `messageId` + `ruleId` 防止重复转发
-- **规则引擎** — 多条件匹配：`channels`、`direction`、`topic`、`accountId`
+- **Plugin Hooks** — `message_received`（入站）、`message_sent`（出站转发）、`reply_payload_sending`（跨渠道 reply-via）
+- **持久 Outbox** — Gateway 重启后继续处理未完成投递
+- **可靠投递** — 等待实际发布结果、指数退避与抖动、有界重试和持久 DLQ
+- **成功后提交幂等** — 幂等键跨重启保留；没有消息身份的事件不会错误合并
+- **循环保护** — 路由 hop trace 与可配置最大跳数
+- **规则引擎** — `channels`、`topic`、`accountId` 支持 `*` / `?` 通配符
 - **模板主题** — 支持 `{{channel}}`、`{{direction}}`、`{{account}}` 动态变量
 - **IM 到 MQ 转发** — 将用户消息和 Agent 回复转发到 MQ 渠道
 - **MQ 到 IM 回复** — 将 Agent 回复路由回指定 IM 渠道和账号
-- **审计日志** — 可选的控制台审计追踪
+- **审计日志** — 有界持久审计记录与可选控制台日志
+- **运维 API** — 认证的状态、DLQ 查询和 DLQ 重放接口
 - **纯配置驱动** — 无需修改渠道插件代码
 - **轻量级** — 零外部依赖，基于 typed plugin hooks
 
@@ -104,7 +108,21 @@ openclaw plugins install @partme.ai/openclaw-router
           ],
           "audit": {
             "enabled": true,
-            "logToConsole": true                 // 将路由动作记录到控制台
+            "logToConsole": true,
+            "maxEntries": 5000
+          },
+          "delivery": {
+            "maxAttempts": 5,
+            "initialDelayMs": 500,
+            "maxDelayMs": 30000,
+            "backoffMultiplier": 2,
+            "jitter": 0.2,
+            "dedupeTtlMs": 86400000,
+            "maxDeliveredKeys": 50000,
+            "maxDeadLetters": 10000,
+            "maxPendingTasks": 10000,
+            "maxPayloadBytes": 1048576,
+            "maxHops": 8
           }
         }
       }
@@ -117,10 +135,10 @@ openclaw plugins install @partme.ai/openclaw-router
 
 | 字段 | 类型 | 描述 |
 |-------|------|-------------|
-| `channels` | string[] | 按来源渠道 ID 过滤（如 `["wecom", "dingtalk"]`）。为空/缺失表示匹配所有渠道。 |
+| `channels` | string[] | 按来源渠道 ID 过滤，支持 `*` / `?`；为空/缺失表示匹配所有渠道。 |
 | `direction` | "inbound" \| "outbound" \| "both" | 消息方向。`inbound` = 用户消息，`outbound` = Agent 回复。 |
-| `topic` | string | 按事件主题过滤。精确匹配。 |
-| `accountId` | string | 按 Agent 账号 ID 过滤。 |
+| `topic` | string | 按事件主题过滤，支持 `*` / `?`。 |
+| `accountId` | string | 按账号 ID 过滤，支持 `*` / `?`。 |
 
 ### 动作类型
 
@@ -145,8 +163,38 @@ openclaw plugins install @partme.ai/openclaw-router
 
 | 字段 | 类型 | 默认值 | 描述 |
 |-------|------|---------|-------------|
-| `audit.enabled` | boolean | `false` | 启用审计日志 |
+| `audit.enabled` | boolean | `true` | 启用有界持久审计记录 |
 | `audit.logToConsole` | boolean | `false` | 将路由动作记录到控制台 |
+| `audit.maxEntries` | integer | `5000` | 最大持久审计条目数 |
+
+### 可靠投递配置
+
+| 字段 | 默认值 | 描述 |
+|------|--------|------|
+| `delivery.maxAttempts` | `5` | 进入 DLQ 前的总投递次数 |
+| `delivery.initialDelayMs` | `500` | 初始重试延迟 |
+| `delivery.maxDelayMs` | `30000` | 最大重试延迟 |
+| `delivery.backoffMultiplier` | `2` | 指数退避倍数 |
+| `delivery.jitter` | `0.2` | `0` 到 `1` 的随机抖动比例 |
+| `delivery.dedupeTtlMs` | `86400000` | 成功投递幂等键保留时间 |
+| `delivery.maxDeliveredKeys` | `50000` | 成功幂等键容量上限 |
+| `delivery.maxDeadLetters` | `10000` | DLQ 容量上限 |
+| `delivery.maxPendingTasks` | `10000` | Pending 容量；达到上限时拒绝新批次，避免磁盘耗尽 |
+| `delivery.maxPayloadBytes` | `1048576` | 单个投递负载序列化后的最大字节数 |
+| `delivery.maxHops` | `8` | 路由循环最大跳数 |
+| `delivery.publishTimeoutMs` | `15000` | 单次 Gateway 投递超时 |
+| `delivery.concurrency` | `4` | 有界投递并发数 |
+| `delivery.lockHeartbeatMs` | `5000` | 活跃写实例租约心跳间隔 |
+| `delivery.lockTimeoutMs` | `30000` | 远端失效写租约超时 |
+| `delivery.stateDir` | `<OpenClaw state>/router` | 可选状态目录 |
+
+运维接口均使用 OpenClaw 插件鉴权并精确匹配：
+
+- `GET /router/status`
+- `GET /router/health`
+- `GET /router/audit?limit=100`
+- `GET /router/dlq?limit=100`
+- `POST /router/dlq/replay?limit=100`
 
 ## 架构
 
@@ -154,7 +202,7 @@ openclaw plugins install @partme.ai/openclaw-router
                     ┌─────────────────────────────────────┐
                     │          OpenClaw 运行时             │
                     │                                      │
-  用户 ──► IM 渠道 ──► Agent ──► agent_end 事件           │
+  用户 ──► IM 渠道 ──► Agent ──► 消息/回复 Hooks           │
                     │         │                            │
                     │         ▼                            │
                     │    ┌──────────┐                      │
@@ -181,6 +229,9 @@ openclaw plugins install @partme.ai/openclaw-router
 - 知识库（RAG）和长期记忆的自动注入由 OpenClaw 核心框架和 `openclaw-memory` 插件分别处理，router 不参与。
 - Router 需要目标 MQ 渠道（mqtt、rabbitmq、redis-stream 等）已安装并配置。
 - 主题模板变量在运行时根据实际事件上下文替换。
+- 文件状态目录通过跨进程租约强制单写；第二个 Router 使用相同目录时会启动失败。全局应只运行一个 active Router；多 Gateway 主动-主动必须严格分区，或使用外部事务存储/Leader，单纯分开状态目录不能阻止重复路由。
+- 不会自动抢占其他 hostname 创建的锁。确认远端 Router 已停止后，运维人员才可手动删除真正遗留的 `.writer.lock`。
+- 投递语义是 at-least-once：目标已接收、成功标记尚未落盘，或投递超时但目标稍后成功时，恢复/重试可能再次投递。超时取消是 best-effort，并非所有 adapter 都遵循 `AbortSignal`；`/router/status` 会计入 `unknownOutcomes`。Router 会把稳定投递 ID 传入 outbound adapter 的 `deliveryQueueId`，下游渠道或 Broker 支持时也应保持等价幂等语义。Broker 直达 Topic 使用显式的 `openclaw-direct-topic:v1:` target 契约，因此普通 OpenClaw durable reply 即使也携带 `deliveryQueueId`，仍会走 session mapper、replyTopic 和 ACL。若状态 rename 已成功但目录 fsync 失败，Router 保持该任务已投递、不生成重复重试，并设置 `durabilityUncertain=true`、保持 health 失败直至重启。
 
 ## 开发
 

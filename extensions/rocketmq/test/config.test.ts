@@ -100,6 +100,49 @@ describe("rocketmq-config", () => {
       expect(result.idempotency.maxEntries).toBe(100);
     });
 
+    it("should enable claimable idempotency and bounded startup retries by default", () => {
+      const result = resolveRockermqConfig({});
+      expect(result.idempotency.enabled).toBe(true);
+      expect(result.producer.maxAttempts).toBe(3);
+      expect(result.connection).toEqual({ startupAttempts: 6, retryDelayMs: 5000 });
+    });
+
+    it("should parse producer and connection retry settings", () => {
+      const result = resolveRockermqConfig({
+        channels: {
+          rocketmq: {
+            producer: { maxAttempts: 5 },
+            connection: { startupAttempts: 9, retryDelayMs: 250 },
+          },
+        },
+      });
+      expect(result.producer.maxAttempts).toBe(5);
+      expect(result.connection).toEqual({ startupAttempts: 9, retryDelayMs: 250 });
+    });
+
+    it("should parse the consumer retry and DLQ threshold", () => {
+      const result = resolveRockermqConfig({
+        channels: {
+          rocketmq: {
+            consumer: {
+              retry: {
+                maxAttempts: 5,
+                initialDelayMs: 2000,
+                maxDelayMs: 30000,
+                multiplier: 1.5,
+              },
+            },
+          },
+        },
+      });
+      expect(result.consumer.retry).toEqual({
+        maxAttempts: 5,
+        initialDelayMs: 2000,
+        maxDelayMs: 30000,
+        multiplier: 1.5,
+      });
+    });
+
     it("should filter out bindings with empty topic or agentId", () => {
       const result = resolveRockermqConfig({
         channels: {
@@ -141,15 +184,6 @@ describe("rocketmq-config", () => {
       expect(issues).toContain("RocketMQ endpoints is required");
     });
 
-    it("should report missing producer groupId", () => {
-      const config = {
-        ...DEFAULT_ROCKERMQ_CONFIG,
-        producer: { ...DEFAULT_ROCKERMQ_CONFIG.producer, groupId: "" },
-      };
-      const issues = validateRockermqConfig(config);
-      expect(issues).toContain("RocketMQ producer.groupId is required");
-    });
-
     it("should report missing consumer groupId", () => {
       const config = {
         ...DEFAULT_ROCKERMQ_CONFIG,
@@ -172,6 +206,7 @@ describe("rocketmq-config", () => {
         },
       };
       const snapshot = buildRockermqConfigSnapshot(config);
+      expect((snapshot.sessionCredentials as any).accessKey).toBe("***");
       expect((snapshot.sessionCredentials as any).accessSecret).toBe("***");
       expect((snapshot.sessionCredentials as any).securityToken).toBe("***");
     });

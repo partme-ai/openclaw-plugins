@@ -1,0 +1,4 @@
+# Keep npm/pnpm from inheriting the repository-level **/dist ignore rule.
+# The package.json files allowlist remains the authoritative publish surface.
+!dist/
+!dist/**

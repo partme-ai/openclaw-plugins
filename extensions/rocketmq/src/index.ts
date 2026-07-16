@@ -32,7 +32,7 @@ export { rockermqChannel } from "./channel.js";
 
 /** @description RocketMQ Channel 插件注册入口。 */
 export default defineChannelPluginEntry({
-  id: "openclaw-rocketmq",
+  id: "rocketmq",
   name: "OpenClaw RocketMQ",
   description: "OpenClaw RocketMQ channel plugin with producer and push-consumer support.",
   plugin: rockermqChannel,
@@ -42,15 +42,15 @@ export default defineChannelPluginEntry({
     api.registerHttpRoute({
       path: "/rocketmq/health",
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
       async handler(_req: IncomingMessage, res: ServerResponse) {
         const s = getStats();
         const response = {
           ok: true,
-          healthy: s.connected && s.lastError === null,
+          healthy: s.connected,
           data: s,
         };
-        res.writeHead(response.healthy ? 200 : 503, { "Content-Type": "application/json" });
+        res.writeHead(response.healthy ? 200 : 503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify(response));
       },
     });
@@ -58,7 +58,7 @@ export default defineChannelPluginEntry({
     api.registerHttpRoute({
       path: "/rocketmq/stats",
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
       async handler(_req: IncomingMessage, res: ServerResponse) {
         const response = {
           ok: true,
@@ -67,7 +67,7 @@ export default defineChannelPluginEntry({
             sessions: getSessionStats(),
           },
         };
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify(response));
       },
     });
@@ -75,7 +75,7 @@ export default defineChannelPluginEntry({
     api.registerHttpRoute({
       path: "/rocketmq/status",
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
       async handler(_req: IncomingMessage, res: ServerResponse) {
         const runtimeConfig = resolveRockermqConfig(
           ((api.runtime as { config?: Record<string, unknown> })?.config ?? {}) as Record<
@@ -93,7 +93,7 @@ export default defineChannelPluginEntry({
             config: buildRockermqConfigSnapshot(activeConfig),
           },
         };
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify(response));
       },
     });

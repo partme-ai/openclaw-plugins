@@ -37,8 +37,8 @@
 
 ### Part III：核心技术实现
 - 8. 模块划分与目录结构
-- 9. 配置解析与校验（redis-stream-config.ts）
-- 10. Redis 传输层（redis-stream-server.ts）
+- 9. 配置解析与校验（config.ts）
+- 10. Redis 传输层（transport/server.ts）
 - 11. 入站消息处理（inbound.ts）
 - 12. Channel → Agent 路由（topic-router.ts）
 - 13. 会话隔离（dm-scope.ts + session-mapper.ts）
@@ -296,8 +296,8 @@ openclaw-redis-stream/
 │   ├── topic-router.ts           # Channel → Agent 路由解析
 │   ├── inbound.ts                # 入站消息处理管线
 │   ├── runtime.ts                # PluginRuntime 单例存储
-│   ├── redis-stream-config.ts    # 配置解析 + 默认值补齐
-│   ├── redis-stream-server.ts    # Redis 传输层（Pub/Sub + Stream）
+│   ├── config.ts                 # 配置解析 + 默认值补齐
+│   ├── transport/server.ts       # Redis 传输层（Pub/Sub + Stream）
 │   ├── publisher.ts              # 共享 Redis publish 操作（打破循环依赖）
 │   ├── logger.ts                 # 集中式日志模块
 │   ├── setup-entry.ts            # 轻量 setup 入口
@@ -323,8 +323,8 @@ openclaw-redis-stream/
 |------|---------|------|
 | `index.ts` | `defineChannelPluginEntry` 默认导出 | 插件注册 + HTTP 路由 |
 | `channel.ts` | `redisStreamChannel` (ChannelPlugin) | 完整 ChannelPlugin 实现 |
-| `redis-stream-server.ts` | `startRedisServer`, `stopRedisServer`, `getStats` | Redis 连接、Pub/Sub 订阅、Stream 消费循环 |
-| `redis-stream-config.ts` | `resolveRedisChannelConfig`, `redactUrl` | 配置解析、校验、默认值补齐 |
+| `transport/server.ts` | `startRedisServer`, `stopRedisServer`, `getStats` | Redis 连接、Pub/Sub 订阅、Stream 消费循环 |
+| `config.ts` | `resolveRedisChannelConfig`, `redactUrl` | 配置解析、校验、默认值补齐 |
 | `inbound.ts` | `handleInboundMessage` | 入站消息过滤、路由、分发 |
 | `topic-router.ts` | `resolveInboundRoute`, `matchChannel` | Channel → Agent 路由匹配 |
 | `dm-scope.ts` | `resolveDmScopeFromRuntimeConfig`, `buildSessionKeyFromDmScope` | 会话隔离策略（测试用，运行时 sessionKey 由 OpenClaw 核心返回） |
@@ -333,7 +333,7 @@ openclaw-redis-stream/
 | `logger.ts` | `logger.info/warn/error` | 带前缀的集中式日志 |
 | `runtime.ts` | `setRedisStreamRuntime`, `getRedisStreamRuntime` | PluginRuntime 单例 |
 
-## 9. 配置解析与校验（redis-stream-config.ts）
+## 9. 配置解析与校验（config.ts）
 
 ### 9.1 配置来源优先级
 
@@ -351,13 +351,14 @@ process.env.REDIS_URL > channels.redis-stream.url > 默认值
 - `stream.blockMs`: 必须 ≥ 0
 - `stream.count`: 必须 > 0
 - `connection.reconnectMs`: 必须 > 0
-- `connection.maxRetries`: 必须 > 0
+- `connection.maxRetries`: 必须 ≥ 0；0 表示持续重连
 
 ### 9.3 安全：URL 密码脱敏
 
 ```typescript
 export function redactUrl(url: string): string {
   const u = new URL(url);
+  if (u.username) u.username = "***";
   if (u.password) u.password = "***";
   return u.toString();
 }
@@ -366,7 +367,7 @@ export function redactUrl(url: string): string {
 用于 `/redis-stream/health` 和 `/redis-stream/status` HTTP 响应中展示配置，
 确保密码不会泄露到日志或 HTTP 输出。
 
-## 10. Redis 传输层（redis-stream-server.ts）
+## 10. Redis 传输层（transport/server.ts）
 
 ### 10.1 连接管理
 
@@ -374,16 +375,18 @@ export function redactUrl(url: string): string {
 startRedisServer(config)
   ├── loadChannelBindings(config.channelBindings)
   ├── createClient({ url, socket.reconnectStrategy })
-  ├── client.connect()
-  ├── setPublisherClient(client)          → 注入到 publisher.ts
+  ├── client.connect()                    → 发布、ACK、控制命令
+  ├── [stream] client.duplicate().connect() → 独立阻塞消费连接
+  ├── setPublisherClient(client, maxLen)  → 注入到 publisher.ts
   ├── [stream] ensureConsumerGroup()
   ├── [pubsub] startPubSub()
   └── [stream] consumeLoop()              → 后台消费循环
 
 stopRedisServer()
+  ├── clearPublisherClient()
+  ├── consumerClient.destroy()            → 中断阻塞读取并等待消费循环结束
   ├── subscriberClient.unsubscribe().pUnsubscribe().quit()
   ├── client.quit()
-  ├── clearPublisherClient()
   └── stats.connected = false
 ```
 
@@ -393,10 +396,10 @@ stopRedisServer()
 
 ```typescript
 reconnectStrategy: (retries: number) => {
-  if (retries >= config.connection.maxRetries) {
-    return new Error(`max reconnection attempts exceeded`);
+  if (config.connection.maxRetries > 0 && retries >= config.connection.maxRetries) {
+    return false;
   }
-  return config.connection.reconnectMs;  // 默认 3000ms，最多 10 次
+  return config.connection.reconnectMs;  // 默认 3000ms，0 表示持续重连
 }
 ```
 
@@ -423,7 +426,7 @@ ensureConsumerGroup(config):
 
 consumeLoop(config):
   while running:
-    result = client.xReadGroup(consumerGroup, consumerName,
+    result = consumerClient.xReadGroup(consumerGroup, consumerName,
       { key: inboundKey, id: ">" },          → 仅新消息
       { COUNT: count, BLOCK: blockMs })
 
@@ -431,14 +434,16 @@ consumeLoop(config):
       fieldMap = toFieldMap(fields)           → 兼容数组和对象格式
       inbound = { channel, message, fieldAgentId, fieldPeerId, ... }
       accepted = handleInboundMessage(inbound, config)
-      if accepted: client.xAck(stream, group, id)    → 成功才 ACK
+      if accepted: client.xAck(stream, group, id)    → 派发与回复成功才 ACK
+      else: 保留 PEL；XAUTOCLAIM 回收，超 maxAttempts 后 MULTI(XADD DLQ + XACK)
 
     错误: 指数退避 min(1000 * 2^n, 30000)ms
 ```
 
 **关键设计**：
-- `id: ">"` 确保只读取新消息（不重复投递）
-- 仅在 `handleInboundMessage` 返回非 `false` 时 ACK（保留 pending 供重试）
+- `id: ">"` 读取新消息，`XAUTOCLAIM` 单独回收超时 pending
+- 仅在 `handleInboundMessage` 成功时 ACK；失败释放幂等 claim，避免重投被误判为已完成
+- DLQ 写入与原消息 ACK 在同一个 Redis 事务中完成；Cluster 环境两个 key 必须共享 hash tag
 - `toFieldMap()` 兼容 node-redis v5 的纯对象格式和 RESP2 平铺数组格式
 
 ### 10.5 统计指标
@@ -447,11 +452,15 @@ consumeLoop(config):
 interface RedisStats {
   connected: boolean;
   lastConnectAt: number | null;
+  lastDisconnectAt: number | null;
   lastReadAt: number | null;
   lastError: string | null;
   messagesRead: number;
   messagesWritten: number;       // local + publisher 计数合并
   messagesAcked: number;
+  messagesFailed: number;
+  messagesDeadLettered: number;
+  reconnecting: boolean;
   subscribedChannels: string[];
 }
 ```
@@ -476,7 +485,7 @@ handleInboundMessage(message, config)
         ├── resolveAgentRoute
         ├── finalizeInboundContext
         ├── createReplyDispatcherWithTyping
-        │     └── deliver: publishMessage(replyChannel, text)
+        │     └── deliver: Pub/Sub 使用 PUBLISH；Stream 使用 XADD
         └── dispatchReplyFromConfig
 ```
 
@@ -587,14 +596,14 @@ buildSessionKeyFromDmScope({ cfg, agentId, channel, accountId, peerId }):
 
 ### 14.1 publisher.ts — 打破循环依赖
 
-`redis-stream-server.ts` ↔ `inbound.ts` 之间存在天然循环依赖：
-- `redis-stream-server.ts` 调用 `inbound.ts` 的 `handleInboundMessage`
+`transport/server.ts` ↔ `inbound.ts` 之间存在天然循环依赖：
+- `transport/server.ts` 调用 `inbound.ts` 的 `handleInboundMessage`
 - `inbound.ts` 的回复分发器需要调用 `publishMessage`
 
 **解决**：提取 `publishMessage` 和 `publishEntry` 到独立的 `publisher.ts`：
 
 ```
-redis-stream-server.ts ──→ publisher.ts (setPublisherClient)
+transport/server.ts ──→ transport/publisher.ts (setPublisherClient)
          ↓                        ↓
     inbound.ts  ─────────→ publisher.ts (publishMessage)
 ```
@@ -806,13 +815,17 @@ grep "\[openclaw-redis-stream\]" openclaw.log
       "channelMode": "stream",
       "defaultAgentId": "main",
       "stream": {
-        "inboundKey": "openclaw:inbound",
-        "outboundKey": "openclaw:outbound",
+        "inboundKey": "openclaw:{agent}:inbound",
+        "outboundKey": "openclaw:{agent}:outbound",
         "consumerGroup": "openclaw-group",
-        "consumerName": "openclaw-consumer-1",
+        "consumerName": "",
         "blockMs": 5000,
         "count": 10,
-        "createGroup": true
+        "createGroup": true,
+        "pendingClaimIdleMs": 120000,
+        "maxAttempts": 5,
+        "deadLetterKey": "openclaw:{agent}:inbound:dlq",
+        "maxLen": 100000
       },
       "fieldMapping": {
         "textField": "text",
@@ -824,7 +837,8 @@ grep "\[openclaw-redis-stream\]" openclaw.log
       "payload": { "mode": "jsonTextOrPlain" },
       "connection": {
         "reconnectMs": 3000,
-        "maxRetries": 10
+        "maxRetries": 0,
+        "startupTimeoutMs": 30000
       }
     }
   }

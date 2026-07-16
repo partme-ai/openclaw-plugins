@@ -78,6 +78,20 @@ describe('ws-listener', () => {
     listener.stop();
   });
 
+  it('handles socket errors when the Node runtime has no browser ErrorEvent global', async () => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal('ErrorEvent', undefined);
+    const listener = createGotifyWsListener(makeAccount(), {
+      WebSocketImpl: FakeWebSocket as never,
+      onMessage: vi.fn(),
+    });
+    const startPromise = listener.start();
+    expect(() => FakeWebSocket.instances[0].onerror?.({ message: 'refused' })).not.toThrow();
+    await expect(startPromise).rejects.toBeInstanceOf(GotifyWebSocketError);
+    listener.stop();
+    vi.unstubAllGlobals();
+  });
+
   it('does not throw uncaught when reconnect attempts are exhausted', async () => {
     vi.useFakeTimers();
     FakeWebSocket.instances = [];
@@ -107,6 +121,42 @@ describe('ws-listener', () => {
       })
     );
 
+    listener.stop();
+    vi.useRealTimers();
+  });
+
+  it('coalesces concurrent start calls into one socket', async () => {
+    FakeWebSocket.instances = [];
+    const listener = createGotifyWsListener(makeAccount(), {
+      WebSocketImpl: FakeWebSocket as never,
+      onMessage: vi.fn(),
+    });
+
+    const firstStart = listener.start();
+    const secondStart = listener.start();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    FakeWebSocket.instances[0].onopen?.();
+    await Promise.all([firstStart, secondStart]);
+    await listener.start();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    listener.stop();
+  });
+
+  it('does not leave a ghost reconnect loop when the initial connection fails', async () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances = [];
+    const listener = createGotifyWsListener(makeAccount(), {
+      WebSocketImpl: FakeWebSocket as never,
+      onMessage: vi.fn(),
+    });
+
+    const startPromise = listener.start();
+    FakeWebSocket.instances[0].onclose?.({ wasClean: false, reason: 'refused' });
+    await expect(startPromise).rejects.toBeInstanceOf(GotifyWebSocketError);
+    await vi.runAllTimersAsync();
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
     listener.stop();
     vi.useRealTimers();
   });

@@ -96,3 +96,10 @@ logs/
 
 /.omx/
 /.codegraph/
+
+# Local E2E runtime artifacts (may contain ephemeral credentials and host paths)
+/scripts/e2e/.e2e-config-meta.json
+/scripts/e2e/.e2e-secrets.json
+/scripts/e2e/.gateway.pid
+/scripts/e2e/e2e-report.json
+/scripts/e2e/gateway.log

@@ -21,6 +21,21 @@ import { getRabbitmqChannelConfig } from "./state/state.js";
 import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { buildOutboundTopic } from "./routing/topic-router.js";
 
+const DIRECT_TARGET_PREFIX = "openclaw-direct-topic:v1:";
+
+function parseDirectTarget(value: string): string | null {
+  if (!value.startsWith(DIRECT_TARGET_PREFIX)) return null;
+  const encoded = value.slice(DIRECT_TARGET_PREFIX.length);
+  if (!encoded) throw new Error("[openclaw-rabbitmq] Explicit direct target is empty");
+  try {
+    const target = decodeURIComponent(encoded);
+    if (!target) throw new Error("empty target");
+    return target;
+  } catch (error) {
+    throw new Error(`[openclaw-rabbitmq] Invalid explicit direct target: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /** @description OpenClaw ChannelOutboundAdapter：直连文本发布到 RabbitMQ Exchange。 */
 export const rabbitmqOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
@@ -29,6 +44,12 @@ export const rabbitmqOutbound: ChannelOutboundAdapter = {
   textChunkLimit: 4000,
   sanitizeText: ({ text }: { text: string }) => sanitizeForPlainText(text),
   sendText: async (ctx: ChannelOutboundContext) => {
+    const directTarget = parseDirectTarget(ctx.to);
+    if (directTarget) {
+      if (!ctx.deliveryQueueId) throw new Error("[openclaw-rabbitmq] Explicit direct delivery requires deliveryQueueId");
+      await publishMessage(directTarget, ctx.text, { persistent: true, correlationId: ctx.deliveryQueueId });
+      return { channel: "rabbitmq", messageId: ctx.deliveryQueueId };
+    }
     const sessionKey = ctx.to;
     const peerId = getPeerIdBySession(sessionKey);
     if (!peerId) {

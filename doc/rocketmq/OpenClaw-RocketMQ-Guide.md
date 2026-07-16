@@ -86,7 +86,8 @@ Add a `channels.rocketmq` section to your `openclaw.json`:
 
       "producer": {
         "groupId": "openclaw-rocketmq-producer",
-        "requestTimeout": 5000
+        "requestTimeout": 5000,
+        "maxAttempts": 3
       },
 
       "consumer": {
@@ -99,7 +100,13 @@ Add a `channels.rocketmq` section to your `openclaw.json`:
         "maxCacheMessageSizeInBytes": 67108864,
         "longPollingTimeout": 30000,
         "requestTimeout": 3000,
-        "reconsumeOnError": true
+        "reconsumeOnError": true,
+        "retry": {
+          "maxAttempts": 17,
+          "initialDelayMs": 1000,
+          "maxDelayMs": 60000,
+          "multiplier": 2
+        }
       },
 
       "topicBindings": [
@@ -123,9 +130,14 @@ Add a `channels.rocketmq` section to your `openclaw.json`:
       },
 
       "idempotency": {
-        "enabled": false,
+        "enabled": true,
         "ttlMs": 600000,
         "maxEntries": 10000
+      },
+
+      "connection": {
+        "startupAttempts": 6,
+        "retryDelayMs": 5000
       }
     }
   }
@@ -160,11 +172,9 @@ Use `topicBindings` for custom topic names:
 }
 ```
 
-### Wildcard Matching
+### Subscription Filters
 
-Consumer subscriptions support wildcards:
-- `*` — matches exactly one segment (e.g., `device.*` matches `device.temp`)
-- `#` — matches zero or more segments (e.g., `device.#` matches `device`, `device.temp`, `device.temp.humidity`)
+Subscription topic names are exact RocketMQ topic names. `filterExpression` filters message tags; use `"*"` for all tags or a Broker-supported tag expression such as `"iot || alert"`.
 
 ## Message Format
 
@@ -177,7 +187,7 @@ Messages sent to subscribed topics are parsed based on `payload.mode`:
 {
   "agentId": "main",
   "peerId": "device-001",
-  "content": "Temperature alert: 42°C",
+  "text": "Temperature alert: 42°C",
   "timestamp": "2026-05-19T08:00:00Z",
   "correlationId": "optional-idempotency-key"
 }
@@ -225,14 +235,12 @@ After installation, the following endpoints are available at `http://127.0.0.1:1
 
 All endpoints require the Gateway auth token (`Authorization: Bearer <token>`).
 
-## Debug Tool
+## Delivery Semantics
 
-The `mq.publish` tool allows publishing messages directly via the agent:
-
-```
-Tool: mq.publish
-Params: { topic, tag?, payload, keys? }
-```
+- A message is acknowledged only after Agent dispatch and optional reply publication succeed.
+- Transient failures return `ConsumeResult.FAILURE`. The plugin supplies a configurable exponential delay because the Node SDK does not implement Broker customized-backoff settings; at the configured attempt threshold it calls the Broker DLQ forwarding API explicitly.
+- Unroutable or permanently invalid messages are dropped and counted in `messagesDropped` without making connection health unhealthy.
+- The claim/commit deduplication cache is process-local. It prevents concurrent and immediate duplicate dispatch in one process, but is not distributed exactly-once delivery.
 
 ## Troubleshooting
 
@@ -251,7 +259,7 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:18790/rocketmq/health
 ### Messages not being consumed
 1. Verify `consumer.subscriptions` includes the topic
 2. Check that the topic exists in RocketMQ
-3. Ensure consumer `groupId` is unique per plugin instance
+3. Ensure the consumer `groupId` and Broker retry/DLQ policy match the deployment topology
 
 ### Messages not routing to agent
 1. Check `topicBindings` for matching topic + tag

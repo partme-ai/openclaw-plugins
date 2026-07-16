@@ -12,7 +12,7 @@
  * ## 关键设计
  * - 自我回显防护：出站消息自动注入 extras.openclaw.outbound 标记，入站时过滤
  * - 幂等去重：60s 窗口，按 accountId:messageId 去重
- * - 消费后删除：入站派发成功 + 出站回复成功 后从 Gotify 服务端删除消息
+ * - 消费后删除：入站派发与回复投递成功后删除原入站消息；保留 Agent 回复供离线客户端读取
  * - 账号级并发锁：同一账号的 API 请求串行执行
  *
  * **模块角色**：Channel Plugin · Core lifecycle & dispatch orchestrator。
@@ -519,7 +519,7 @@ export async function dispatchInboundMessage(
     patchAccountSnapshot(account.accountId, {
       lastError: "channelRuntime does not expose reply/routing.",
     });
-    return;
+    throw new Error("Gotify channelRuntime does not expose reply/routing");
   }
 
   // ── 跳过 OpenClaw 出站回显，避免 Agent 反馈环 ─────────────────────────────
@@ -631,7 +631,12 @@ export async function dispatchInboundMessage(
        * Gotify stream 只有 appid，没有应用名称。为让 Control UI 显示可读会话名，
        * 在有 clientToken 时按 appid 查询 Application API，并由 gotify-api 缓存结果。
        */
-      resolvedAppName = await resolveApplicationName(account, appId);
+      try {
+        resolvedAppName = await resolveApplicationName(account, appId);
+      } catch {
+        // Application name is presentation metadata; an API lookup failure must not block delivery.
+        resolvedAppName = undefined;
+      }
     }
   }
 
@@ -710,8 +715,6 @@ export async function dispatchInboundMessage(
         accountId: account.accountId,
         lastOutboundAt: Date.now(),
       });
-      // 出站：先完成 POST，再删除，保证手机端能收到完整一轮回复后再清理
-      await deleteConsumedGotifyMessage(account, { id: response.id });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       patchAccountSnapshot(account.accountId, { lastError: errorMsg });
@@ -793,7 +796,7 @@ export async function dispatchInboundMessage(
 }
 
 /**
- * 是否应在消息消费后从 Gotify 服务端删除（入站派发成功后、出站回复发送成功后）。
+ * 是否应在消息消费后从 Gotify 服务端删除入站原消息。
  * 仅当 inbound.deleteAfterConsume=false 时保留消息。
  *
  * @param account - 当前 Gotify 账号配置。
@@ -804,7 +807,7 @@ function shouldDeleteAfterConsume(account: ResolvedGotifyAccount): boolean {
 }
 
 /**
- * 消费成功后从 Gotify 服务端删除消息（入站原消息或出站 Agent 回复）。
+ * 消费成功后从 Gotify 服务端删除入站原消息。
  * 删除失败仅记录 lastError，不影响已完成的派发/发送。
  *
  * @param account - 当前 Gotify 账号配置，必须具备 clientToken 才能删除。

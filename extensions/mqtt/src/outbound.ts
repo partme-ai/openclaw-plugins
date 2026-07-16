@@ -20,6 +20,21 @@ import { getClientUsername } from "./transport/server.js";
 import { isUserActionAllowed } from "./transport/acl.js";
 import { logAuditEvent } from "./transport/audit.js";
 
+const DIRECT_TARGET_PREFIX = "openclaw-direct-topic:v1:";
+
+function parseDirectTarget(value: string): string | null {
+  if (!value.startsWith(DIRECT_TARGET_PREFIX)) return null;
+  const encoded = value.slice(DIRECT_TARGET_PREFIX.length);
+  if (!encoded) throw new Error("[openclaw-mqtt] Explicit direct target is empty");
+  try {
+    const target = decodeURIComponent(encoded);
+    if (!target) throw new Error("empty target");
+    return target;
+  } catch (error) {
+    throw new Error(`[openclaw-mqtt] Invalid explicit direct target: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /**
  * OpenClaw ChannelOutboundAdapter：直连文本发布到 Aedes。
  */
@@ -30,6 +45,13 @@ export const mqttOutbound: ChannelOutboundAdapter = {
   textChunkLimit: 4000,
   sanitizeText: ({ text }) => sanitizeForPlainText(text),
   sendText: async (ctx: ChannelOutboundContext) => {
+    const directTarget = parseDirectTarget(ctx.to);
+    if (directTarget) {
+      if (!ctx.deliveryQueueId) throw new Error("[openclaw-mqtt] Explicit direct delivery requires deliveryQueueId");
+      const cfg = getMqttChannelConfig() ?? DEFAULT_BROKER_CONFIG;
+      await publishMessage(directTarget, ctx.text, 1, cfg.retain.outboundRetain);
+      return { channel: "mqtt", messageId: ctx.deliveryQueueId };
+    }
     const sessionKey = ctx.to;
     const clientId = getClientIdBySession(sessionKey);
     if (!clientId) {

@@ -30,13 +30,14 @@ import type { ChannelLimitsOpenClawConfig } from "@partme.ai/openclaw-message-sd
 
 import { resolveRocketmqAgentReplyTimeoutMs } from "./config/resolvers.js";
 import {
-  getRocketmqIdempotencyCache,
+  getRocketmqClaimableDedupe,
   mapRocketmqWirePayloadMode,
 } from "./shared/wire-helpers.js";
 import type { InboundEvent } from "./transport/server.js";
 
 type InboundResult = {
   accepted: boolean;
+  reconsume?: boolean;
   routeSource?: string;
   reason?: string;
 };
@@ -65,23 +66,27 @@ export async function processInbound(
     return { accepted: false, reason: "no_route_matched" };
   }
 
-  const idempotencyKey = event.messageId ?? event.keys?.[0];
+  const rt = getRockermqRuntime();
+  if (!rt) {
+    return { accepted: false, reconsume: true, reason: "runtime_not_initialized" };
+  }
 
   const parsed = normalizeWireIngress({
     rawPayload: event.body.toString("utf-8"),
     mode: mapRocketmqWirePayloadMode(config.payload.mode),
     channel: "rocketmq",
-    idempotencyKey,
-    idempotency: getRocketmqIdempotencyCache(config.idempotency),
   });
-  if (!parsed.accepted) {
-    return { accepted: true, routeSource: "idempotency" };
-  }
   const text = parsed.text;
+  if (!text.trim()) {
+    return { accepted: false, reason: "empty_payload" };
+  }
+  const idempotencyKey =
+    event.messageId ?? event.keys?.[0] ?? parsed.idempotencyKey ?? parsed.correlationId;
 
-  const rt = getRockermqRuntime();
-  if (!rt) {
-    return { accepted: false, reason: "runtime_not_initialized" };
+  const dedupe = getRocketmqClaimableDedupe(config.idempotency);
+  const claim = dedupe && idempotencyKey ? await dedupe.claim(idempotencyKey) : undefined;
+  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
+    return { accepted: true, routeSource: "idempotency" };
   }
   const peerId = route.peerId || event.topic;
 
@@ -126,13 +131,19 @@ export async function processInbound(
       config,
       parsed,
     });
+    if (dedupe && idempotencyKey) {
+      await dedupe.commit(idempotencyKey);
+    }
     return { accepted: true, routeSource: route.source };
   } catch (error) {
+    if (dedupe && idempotencyKey) {
+      dedupe.release(idempotencyKey);
+    }
     console.error(
       `[openclaw-rocketmq] Runtime dispatch failed for peer=${route.peerId || event.topic}:`,
       error,
     );
-    return { accepted: false, reason: `dispatch_error:${String(error)}` };
+    return { accepted: false, reconsume: true, reason: `dispatch_error:${String(error)}` };
   }
 }
 
@@ -155,8 +166,7 @@ async function dispatchToRuntime(params: {
 }): Promise<void> {
   const rt = getRockermqRuntime();
   if (!rt) {
-    console.warn("[openclaw-rocketmq] Runtime not initialized, cannot dispatch message");
-    return;
+    throw new Error("RocketMQ runtime is not initialized");
   }
 
   const mode = params.config.dispatch.mode as ChannelDispatchMode;

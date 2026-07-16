@@ -8,6 +8,21 @@ import { publishToTopic, getClientUsername } from "./transport/server.js";
 import { isUserActionAllowed } from "./transport/acl.js";
 import { getWebMqttChannelConfig } from "./state/mqtt-state.js";
 
+const DIRECT_TARGET_PREFIX = "openclaw-direct-topic:v1:";
+
+export function parseDirectTarget(value: string): string | null {
+  if (!value.startsWith(DIRECT_TARGET_PREFIX)) return null;
+  const encoded = value.slice(DIRECT_TARGET_PREFIX.length);
+  if (!encoded) throw new Error("[openclaw-web-mqtt] Explicit direct target is empty");
+  try {
+    const target = decodeURIComponent(encoded);
+    if (!target) throw new Error("empty target");
+    return target;
+  } catch (error) {
+    throw new Error(`[openclaw-web-mqtt] Invalid explicit direct target: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /**
  * 发布回复文本到 MQTT topic。
  *
@@ -38,5 +53,9 @@ export async function publishOutboundText(sessionKey: string, text: string, topi
     }
   }
 
+  await publishToTopic(topic, text);
+}
+
+export async function publishDirectText(topic: string, text: string): Promise<void> {
   await publishToTopic(topic, text);
 }

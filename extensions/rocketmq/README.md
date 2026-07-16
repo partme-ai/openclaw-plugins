@@ -1,12 +1,12 @@
 # OpenClaw RocketMQ
 
-> RocketMQ Channel Plugin for OpenClaw — producer and push-consumer integration with topic+tag bindings, 3 dispatch modes, health endpoints, and mq.publish tool.
+> RocketMQ Channel Plugin for OpenClaw — producer and push-consumer integration with topic+tag bindings, 3 dispatch modes, and authenticated health endpoints.
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--rocketmq-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-rocketmq)
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-[简体中文](./README.md) | [English](./README.en.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ---
 
@@ -23,9 +23,8 @@
 - **Fallback Topics** — Standard pattern: `openclaw.agent.<agentId>.in[.<peerId>]`
 - **Reply Topic Routing** — Agent replies published to configured `replyTopic` / `replyTag`
 - **Health Endpoints** — `/rocketmq/health`, `/rocketmq/stats`, `/rocketmq/status`
-- **`mq.publish` Tool** — Debug tool for publishing messages to RocketMQ
 - **Session Mapping** — Tracks producer-consumer-conversation session mappings
-- **Idempotency** — Optional deduplication with configurable TTL
+- **Claimable idempotency** — Message IDs are committed only after successful Agent dispatch and reply publication
 - **Setup Wizard** — Interactive setup via OpenClaw setup wizard
 
 ## Quick Start
@@ -36,7 +35,7 @@
 openclaw plugins install @partme.ai/openclaw-rocketmq
 ```
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1` and OpenClaw >= 2026.7.1.
 
 ### Minimal Configuration
 
@@ -91,8 +90,9 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
         "securityToken": ""
       },
       "producer": {
-        "groupId": "openclaw-rocketmq-producer", // Producer group ID
-        "requestTimeout": 5000                   // Request timeout in ms
+        "groupId": "openclaw-rocketmq-producer", // Deprecated compatibility label
+        "requestTimeout": 5000,                  // Request timeout in ms
+        "maxAttempts": 3                         // SDK producer send attempts
       },
       "consumer": {
         "groupId": "openclaw-rocketmq-consumer", // Consumer group ID
@@ -103,7 +103,13 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
         "maxCacheMessageSizeInBytes": 67108864,
         "longPollingTimeout": 30000,
         "requestTimeout": 3000,
-        "reconsumeOnError": true                 // Re-consume on dispatch error
+        "reconsumeOnError": true,                // Re-consume on dispatch error
+        "retry": {
+          "maxAttempts": 17,
+          "initialDelayMs": 1000,
+          "maxDelayMs": 60000,
+          "multiplier": 2
+        }
       },
       "topicBindings": [                         // Topic-to-agent routing rules
         {
@@ -124,10 +130,14 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
         "timeoutMs": 120000,                      // Agent processing timeout
         "reply": { "enabled": true }              // Enable reply publishing
       },
-      "idempotency": {                           // Optional: message dedup
-        "enabled": false,
+      "idempotency": {                           // Claim/commit/release dedup
+        "enabled": true,
         "ttlMs": 600000,
         "maxEntries": 10000
+      },
+      "connection": {
+        "startupAttempts": 6,
+        "retryDelayMs": 5000
       }
     }
   }
@@ -141,13 +151,18 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
 | `endpoints` | string | `"127.0.0.1:8081"` | RocketMQ proxy/namesrv endpoint |
 | `namespace` | string | `""` | RocketMQ namespace |
 | `topicPrefix` | string | `"openclaw"` | Topic prefix for fallback message routing |
-| `producer.groupId` | string | `"openclaw-rocketmq-producer"` | Producer group ID |
+| `producer.groupId` | string | `"openclaw-rocketmq-producer"` | Deprecated compatibility label; the RocketMQ 5 Node Producer does not use a producer group |
 | `producer.requestTimeout` | number | `5000` | Producer request timeout (ms) |
+| `producer.maxAttempts` | number | `3` | Producer send attempts handled by the SDK |
 | `consumer.groupId` | string | `"openclaw-rocketmq-consumer"` | Consumer group ID |
 | `consumer.reconsumeOnError` | boolean | `true` | Re-consume message on dispatch error |
+| `consumer.retry` | object | exponential, 17 attempts | Client-side retry delay and exhaustion threshold; exhausted non-FIFO messages are forwarded through the Broker DLQ API |
 | `payload.mode` | string | `"jsonTextOrPlain"` | Payload parsing mode |
 | `dispatch.mode` | string | `"embedded-agent"` | Agent dispatch mode |
 | `dispatch.timeoutMs` | number | `120000` | Agent processing timeout (ms) |
+| `idempotency.enabled` | boolean | `true` | Claim message ID before dispatch and commit only after success |
+| `connection.startupAttempts` | number | `6` | Producer/consumer startup attempts |
+| `connection.retryDelayMs` | number | `5000` | Delay between startup attempts |
 
 ### Dispatch Modes
 
@@ -189,27 +204,13 @@ Available when the plugin registers in "full" mode:
 | `GET /rocketmq/stats` | Connection stats and session statistics |
 | `GET /rocketmq/status` | Full status including config snapshot and session mappings |
 
-## mq.publish Tool
-
-Debug tool for publishing messages directly to RocketMQ:
-
-```json
-{
-  "name": "mq.publish",
-  "description": "Publish a message to RocketMQ",
-  "parameters": {
-    "topic": "string (required)",
-    "tag": "string (optional)",
-    "payload": "any (required)",
-    "keys": "string[] (optional)"
-  }
-}
-```
-
 ## Transport Layer Notes
 
 - Uses `PushConsumer` — message acknowledgment via `ConsumeResult.SUCCESS` / `FAILURE`
 - Retries are handled by RocketMQ broker/consumer group mechanism
+- Dispatch or reply publication failures return `ConsumeResult.FAILURE`; the configured client retry delay avoids the Node SDK's unsupported Broker customized-backoff gap, and exhausted messages are forwarded through the Broker DLQ API
+- Unroutable messages are acknowledged as permanent drops; runtime and dispatch failures request redelivery
+- Idempotency is process-local and does not provide cross-node exactly-once semantics
 - No manual retry queue management needed (unlike RabbitMQ)
 - Request/reply RPC requires an explicit `replyTopic` + `replyTag` binding (RocketMQ does not natively support direct-reply-to like RabbitMQ)
 

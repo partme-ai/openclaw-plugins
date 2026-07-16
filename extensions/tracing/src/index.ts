@@ -1,23 +1,18 @@
-/**
- * openclaw-tracing 插件入口
- *
- * 分布式追踪 — 基于 OpenClaw Plugin Hooks（api.on）捕获消息流与工具调用。
- */
-
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   definePluginEntry,
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-
-import { LogBackend } from "./backends/log-backend.js";
 import { FileBackend } from "./backends/file-backend.js";
+import { LogBackend } from "./backends/log-backend.js";
 import { OtlpBackend } from "./backends/otlp-backend.js";
-import { SkyWalkingBackend } from "./backends/skywalking-backend.js";
-import { registerTracingPluginHooks } from "./runtime/hooks.js";
+import { normalizeTracingConfig } from "./config.js";
+import {
+  registerTracingPluginHooks,
+  type TracingHookContext,
+} from "./runtime/hooks.js";
 import { TracingSampler } from "./runtime/sampler.js";
-import type { TracingBackend, TracingConfig } from "./shared/types.js";
 import {
   cleanupSessionTraces,
   getActiveSpanCount,
@@ -26,199 +21,181 @@ import {
   listRecentTraces,
   resetTraceStore,
 } from "./runtime/trace-store.js";
+import type {
+  TracingBackend,
+  TracingConfig,
+  TracingLogger,
+} from "./shared/types.js";
 
-const PLUGIN_ID = "openclaw-tracing";
-
-/** 当前活跃的追踪后端 */
-let activeBackend: TracingBackend | null = null;
-
-/** 采样器实例 */
-let sampler: TracingSampler | null = null;
-
-/** 内存清理定时器 */
+const PLUGIN_ID = "tracing";
+const SUPPORTED_BACKENDS: TracingConfig["backend"][] = ["log", "file", "otlp"];
+let activeContext: TracingHookContext | null = null;
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+let initialized = false;
 
-/** 是否已完成 tracing 初始化 */
-let tracingInitialized = false;
-
-/**
- * 合并全局 config.tracing 与 pluginConfig（后者优先）。
- */
-function resolveTracingConfig(api: OpenClawPluginApi): Partial<TracingConfig> {
-  const globalCfg = api.config as Record<string, unknown>;
-  const legacy = globalCfg?.tracing as Partial<TracingConfig> | undefined;
-  const plugin = (api.pluginConfig ?? {}) as Partial<TracingConfig>;
-  return { ...legacy, ...plugin };
+function createBackend(type: TracingConfig["backend"], logger: TracingLogger): TracingBackend {
+  if (type === "file") return new FileBackend(logger);
+  if (type === "otlp") return new OtlpBackend(logger);
+  return new LogBackend(logger);
 }
 
-/**
- * 根据配置创建追踪后端。
- */
-function createBackend(backendType: string): TracingBackend {
-  switch (backendType) {
-    case "file":
-      return new FileBackend();
-    case "otlp":
-      return new OtlpBackend();
-    case "skywalking":
-      return new SkyWalkingBackend();
-    case "log":
-    default:
-      return new LogBackend();
+function resolveTracingConfig(api: OpenClawPluginApi): TracingConfig {
+  const globalConfig = api.config as Record<string, unknown>;
+  const legacy = isRecord(globalConfig.tracing) ? globalConfig.tracing : undefined;
+  const plugin = isRecord(api.pluginConfig) ? api.pluginConfig : undefined;
+  return normalizeTracingConfig(legacy, plugin);
+}
+
+async function initTracing(api: OpenClawPluginApi): Promise<void> {
+  if (initialized) return;
+  const config = resolveTracingConfig(api);
+  initialized = true;
+  if (!config.enabled) {
+    api.logger.info("[tracing] Disabled by configuration");
+    return;
+  }
+
+  const backend = createBackend(config.backend, api.logger);
+  try {
+    await backend.init(config);
+    activeContext = {
+      backend,
+      sampler: new TracingSampler(config.sampleRate),
+      config,
+    };
+    cleanupTimer = setInterval(() => {
+      void cleanupSessionTraces(backend).then((count) => {
+        if (count > 0) api.logger.warn(`[tracing] Closed ${count} expired active traces`);
+      }).catch((error: unknown) => {
+        api.logger.error(`[tracing] Active trace cleanup failed: ${toErrorMessage(error)}`);
+      });
+    }, 60_000);
+    cleanupTimer.unref?.();
+    api.logger.info(
+      `[tracing] Enabled | backend=${config.backend} | sampleRate=${config.sampleRate} | captureBody=${config.captureMessageBody}`,
+    );
+  } catch (error) {
+    initialized = false;
+    try {
+      await backend.shutdown();
+    } catch {
+      // Initialization failure is the primary error.
+    }
+    throw error;
   }
 }
 
-/**
- * 停止 tracing 并释放资源。
- */
 async function shutdownTracing(): Promise<void> {
   if (cleanupTimer) {
     clearInterval(cleanupTimer);
     cleanupTimer = null;
   }
-  if (activeBackend) {
-    await activeBackend.shutdown();
-    activeBackend = null;
+  const backend = activeContext?.backend ?? null;
+  activeContext = null;
+  initialized = false;
+  try {
+    if (backend) await backend.shutdown();
+  } finally {
+    resetTraceStore();
   }
-  sampler = null;
-  tracingInitialized = false;
-  resetTraceStore();
 }
 
-/**
- * 初始化 tracing 后端、采样器与 plugin hooks。
- */
-async function initTracing(api: OpenClawPluginApi): Promise<void> {
-  if (tracingInitialized) {
-    return;
-  }
-
-  const tracingConfig = resolveTracingConfig(api);
-  const enabled = tracingConfig?.enabled ?? false;
-  const backendType = tracingConfig?.backend ?? "log";
-  const sampleRate = tracingConfig?.sampleRate ?? 1.0;
-  const captureBody = tracingConfig?.captureMessageBody ?? false;
-
-  api.logger.info(
-    `[openclaw-tracing] Tracing ${enabled ? "ENABLED" : "DISABLED"} | Backend: ${backendType} | Sample rate: ${sampleRate}`,
-  );
-
-  if (!enabled) {
-    return;
-  }
-
-  const fullConfig: TracingConfig = {
-    enabled: true,
-    backend: backendType as TracingConfig["backend"],
-    otlpEndpoint: tracingConfig?.otlpEndpoint ?? "http://localhost:4318",
-    sampleRate,
-    traceDir: tracingConfig?.traceDir ?? "./traces",
-    maxSpansPerTrace: tracingConfig?.maxSpansPerTrace ?? 100,
-    captureMessageBody: captureBody,
-    skywalkingServiceName: tracingConfig?.skywalkingServiceName,
-    skywalkingServiceInstance: tracingConfig?.skywalkingServiceInstance,
-    skywalkingCollectorAddress: tracingConfig?.skywalkingCollectorAddress,
-  };
-
-  activeBackend = createBackend(backendType);
-  await activeBackend.init(fullConfig);
-  sampler = new TracingSampler(sampleRate);
-
-  registerTracingPluginHooks(api, {
-    backend: activeBackend,
-    sampler,
-    config: fullConfig,
+function statusHandler(req: IncomingMessage, res: ServerResponse): void {
+  if (!requireGet(req, res)) return;
+  const backendStatus = activeContext?.backend.getStatus();
+  const healthy = backendStatus?.healthy ?? true;
+  writeJson(res, healthy ? 200 : 503, {
+    ok: healthy,
+    data: {
+      plugin: PLUGIN_ID,
+      status: activeContext ? (healthy ? "active" : "degraded") : "disabled",
+      backend: activeContext?.backend.name ?? "none",
+      backendStatus: backendStatus ?? null,
+      sampleRate: activeContext?.sampler.getSampleRate() ?? 0,
+      activeSpans: getActiveSpanCount(),
+      recentTraces: getRecentTraceCount(),
+      features: { pluginHooks: true, backends: SUPPORTED_BACKENDS },
+    },
   });
-
-  cleanupTimer = setInterval(() => {
-    cleanupSessionTraces();
-  }, 60_000);
-
-  tracingInitialized = true;
-  api.logger.info("[openclaw-tracing] Tracing fully initialized");
 }
 
-/**
- * GET /tracing/status — 返回 tracing 后端、采样率与内存 span 统计。
- */
-function statusHandler(_req: IncomingMessage, res: ServerResponse): void {
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(
-    JSON.stringify({
-      ok: true,
-      data: {
-        plugin: PLUGIN_ID,
-        status: activeBackend ? "active" : "disabled",
-        backend: activeBackend?.name ?? "none",
-        sampleRate: sampler?.getSampleRate() ?? 0,
-        activeSpans: getActiveSpanCount(),
-        recentTraces: getRecentTraceCount(),
-        features: {
-          pluginHooks: true,
-          backends: ["log", "file", "otlp", "skywalking"],
-        },
-      },
-    }),
-  );
-}
-
-/**
- * GET /tracing/traces?limit=N — 列出最近 trace 摘要（默认 50，最大 200）。
- */
 function tracesHandler(req: IncomingMessage, res: ServerResponse): void {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50", 10), 200);
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ ok: true, data: listRecentTraces(limit) }));
-}
-
-/**
- * GET /tracing/trace?traceId=... — 返回指定 trace 的全部 span。
- */
-function traceDetailHandler(req: IncomingMessage, res: ServerResponse): void {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  const traceId = url.searchParams.get("traceId");
-
-  if (!traceId) {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: false, error: "traceId query parameter required" }));
+  if (!requireGet(req, res)) return;
+  const url = requestUrl(req);
+  const rawLimit = url.searchParams.get("limit");
+  const parsed = rawLimit === null ? 50 : Number(rawLimit);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 200) {
+    writeJson(res, 400, { ok: false, error: "limit must be an integer between 1 and 200" });
     return;
   }
+  writeJson(res, 200, { ok: true, data: listRecentTraces(parsed) });
+}
 
+function traceDetailHandler(req: IncomingMessage, res: ServerResponse): void {
+  if (!requireGet(req, res)) return;
+  const traceId = requestUrl(req).searchParams.get("traceId")?.trim();
+  if (!traceId) {
+    writeJson(res, 400, { ok: false, error: "traceId query parameter required" });
+    return;
+  }
+  if (!/^[a-fA-F0-9]{32}$/.test(traceId)) {
+    writeJson(res, 400, { ok: false, error: "traceId must be a 32 character hexadecimal ID" });
+    return;
+  }
   const spans = getTraceSpans(traceId);
   if (!spans) {
-    res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: false, error: `Trace ${traceId} not found` }));
+    writeJson(res, 404, { ok: false, error: `Trace ${traceId} not found` });
     return;
   }
+  writeJson(res, 200, { ok: true, data: { traceId, spans } });
+}
 
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ ok: true, data: { traceId, spans } }));
+function requireGet(req: IncomingMessage, res: ServerResponse): boolean {
+  if ((req.method ?? "GET").toUpperCase() === "GET") return true;
+  res.setHeader("Allow", "GET");
+  writeJson(res, 405, { ok: false, error: "Method not allowed" });
+  return false;
+}
+
+function requestUrl(req: IncomingMessage): URL {
+  return new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+}
+
+function writeJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  res.end(JSON.stringify(body));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: PLUGIN_ID,
   name: "openclaw-tracing",
-  description: "Distributed tracing for OpenClaw — Plugin Hooks based message and tool span capture",
+  description: "Bounded OpenTelemetry-compatible tracing for OpenClaw message and tool lifecycles",
   register(api: OpenClawPluginApi) {
-    const routeOpts = { auth: "plugin" as const };
-    api.registerHttpRoute({ ...routeOpts, path: "/tracing/status", handler: statusHandler });
-    api.registerHttpRoute({ ...routeOpts, path: "/tracing/traces", handler: tracesHandler });
-    api.registerHttpRoute({ ...routeOpts, path: "/tracing/trace", handler: traceDetailHandler });
-
-    api.on("gateway_start", async () => {
-      await initTracing(api);
-    });
-
+    const routeOptions = { auth: "plugin" as const, match: "exact" as const };
+    api.registerHttpRoute({ ...routeOptions, path: "/tracing/status", handler: statusHandler });
+    api.registerHttpRoute({ ...routeOptions, path: "/tracing/traces", handler: tracesHandler });
+    api.registerHttpRoute({ ...routeOptions, path: "/tracing/trace", handler: traceDetailHandler });
+    registerTracingPluginHooks(api, () => activeContext);
+    api.on("gateway_start", async () => initTracing(api));
     api.on("gateway_stop", async () => {
       await shutdownTracing();
-      api.logger.info("[openclaw-tracing] Tracing shut down on gateway_stop");
+      api.logger.info("[tracing] Shut down on gateway_stop");
     });
-
-    api.logger.info("[openclaw-tracing] Plugin registered — awaiting gateway_start");
+    api.logger.info("[tracing] Plugin registered; awaiting gateway_start");
   },
 });
 
 export default plugin;
-
+export { normalizeOtlpEndpoint, normalizeTracingConfig } from "./config.js";
 export type { Span, SpanKind, SpanStatus, TracingConfig } from "./shared/types.js";

@@ -43,6 +43,7 @@ export type RockermqConfig = {
   producer: {
     groupId: string;
     requestTimeout: number;
+    maxAttempts: number;
   };
   consumer: {
     groupId: string;
@@ -55,6 +56,12 @@ export type RockermqConfig = {
     longPollingTimeout: number;
     requestTimeout: number;
     reconsumeOnError: boolean;
+    retry: {
+      maxAttempts: number;
+      initialDelayMs: number;
+      maxDelayMs: number;
+      multiplier: number;
+    };
   };
   topicBindings: TopicBinding[];
   payload: {
@@ -72,6 +79,10 @@ export type RockermqConfig = {
     ttlMs: number;
     maxEntries: number;
   };
+  connection: {
+    startupAttempts: number;
+    retryDelayMs: number;
+  };
 };
 
 /**
@@ -86,6 +97,7 @@ export const DEFAULT_ROCKERMQ_CONFIG: RockermqConfig = {
   producer: {
     groupId: "openclaw-rocketmq-producer",
     requestTimeout: 5000,
+    maxAttempts: 3,
   },
   consumer: {
     groupId: "openclaw-rocketmq-consumer",
@@ -95,6 +107,12 @@ export const DEFAULT_ROCKERMQ_CONFIG: RockermqConfig = {
     longPollingTimeout: 30000,
     requestTimeout: 3000,
     reconsumeOnError: true,
+    retry: {
+      maxAttempts: 17,
+      initialDelayMs: 1000,
+      maxDelayMs: 60_000,
+      multiplier: 2,
+    },
   },
   topicBindings: [],
   payload: {
@@ -108,9 +126,13 @@ export const DEFAULT_ROCKERMQ_CONFIG: RockermqConfig = {
     },
   },
   idempotency: {
-    enabled: false,
+    enabled: true,
     ttlMs: 10 * 60_000,
     maxEntries: 10_000,
+  },
+  connection: {
+    startupAttempts: 6,
+    retryDelayMs: 5000,
   },
 };
 
@@ -130,10 +152,12 @@ export function resolveRockermqConfig(
     {};
   const producer = (rocketmq.producer as Record<string, unknown> | undefined) ?? {};
   const consumer = (rocketmq.consumer as Record<string, unknown> | undefined) ?? {};
+  const consumerRetry = (consumer.retry as Record<string, unknown> | undefined) ?? {};
   const payload = (rocketmq.payload as Record<string, unknown> | undefined) ?? {};
   const dispatch = (rocketmq.dispatch as Record<string, unknown> | undefined) ?? {};
   const dispatchReply = (dispatch.reply as Record<string, unknown> | undefined) ?? {};
   const idempotency = (rocketmq.idempotency as Record<string, unknown> | undefined) ?? {};
+  const connection = (rocketmq.connection as Record<string, unknown> | undefined) ?? {};
   const sessionCredentials =
     (rocketmq.sessionCredentials as Record<string, unknown> | undefined) ?? {};
 
@@ -159,6 +183,10 @@ export function resolveRockermqConfig(
         typeof producer.requestTimeout === "number" && producer.requestTimeout > 0
           ? producer.requestTimeout
           : DEFAULT_ROCKERMQ_CONFIG.producer.requestTimeout,
+      maxAttempts:
+        typeof producer.maxAttempts === "number" && producer.maxAttempts > 0
+          ? Math.floor(producer.maxAttempts)
+          : DEFAULT_ROCKERMQ_CONFIG.producer.maxAttempts,
     },
     consumer: {
       groupId: String(consumer.groupId ?? DEFAULT_ROCKERMQ_CONFIG.consumer.groupId),
@@ -191,6 +219,24 @@ export function resolveRockermqConfig(
           ? consumer.requestTimeout
           : DEFAULT_ROCKERMQ_CONFIG.consumer.requestTimeout,
       reconsumeOnError: consumer.reconsumeOnError !== false,
+      retry: {
+        maxAttempts:
+          typeof consumerRetry.maxAttempts === "number" && consumerRetry.maxAttempts > 0
+            ? Math.floor(consumerRetry.maxAttempts)
+            : DEFAULT_ROCKERMQ_CONFIG.consumer.retry.maxAttempts,
+        initialDelayMs:
+          typeof consumerRetry.initialDelayMs === "number" && consumerRetry.initialDelayMs > 0
+            ? Math.floor(consumerRetry.initialDelayMs)
+            : DEFAULT_ROCKERMQ_CONFIG.consumer.retry.initialDelayMs,
+        maxDelayMs:
+          typeof consumerRetry.maxDelayMs === "number" && consumerRetry.maxDelayMs > 0
+            ? Math.floor(consumerRetry.maxDelayMs)
+            : DEFAULT_ROCKERMQ_CONFIG.consumer.retry.maxDelayMs,
+        multiplier:
+          typeof consumerRetry.multiplier === "number" && consumerRetry.multiplier >= 1
+            ? consumerRetry.multiplier
+            : DEFAULT_ROCKERMQ_CONFIG.consumer.retry.multiplier,
+      },
     },
     topicBindings: Array.isArray(rocketmq.topicBindings)
       ? rocketmq.topicBindings
@@ -232,7 +278,7 @@ export function resolveRockermqConfig(
       },
     },
     idempotency: {
-      enabled: idempotency.enabled === true,
+      enabled: idempotency.enabled !== false,
       ttlMs:
         typeof idempotency.ttlMs === "number" && idempotency.ttlMs > 0
           ? idempotency.ttlMs
@@ -242,11 +288,21 @@ export function resolveRockermqConfig(
           ? idempotency.maxEntries
           : DEFAULT_ROCKERMQ_CONFIG.idempotency.maxEntries,
     },
+    connection: {
+      startupAttempts:
+        typeof connection.startupAttempts === "number" && connection.startupAttempts > 0
+          ? Math.floor(connection.startupAttempts)
+          : DEFAULT_ROCKERMQ_CONFIG.connection.startupAttempts,
+      retryDelayMs:
+        typeof connection.retryDelayMs === "number" && connection.retryDelayMs >= 0
+          ? Math.floor(connection.retryDelayMs)
+          : DEFAULT_ROCKERMQ_CONFIG.connection.retryDelayMs,
+    },
   };
 }
 
 /**
- * @description 校验 RocketMQ 必填项（endpoints、producer/consumer groupId 等）。
+ * @description 校验 RocketMQ 必填项与重试参数（endpoints、consumer groupId 等）。
  * @param config - 已解析配置。
  * @returns 人类可读问题描述列表；空数组表示通过。
  * @throws 不抛出。
@@ -256,11 +312,11 @@ export function validateRockermqConfig(config: RockermqConfig): string[] {
   if (!config.endpoints) {
     issues.push("RocketMQ endpoints is required");
   }
-  if (!config.producer.groupId) {
-    issues.push("RocketMQ producer.groupId is required");
-  }
   if (!config.consumer.groupId) {
     issues.push("RocketMQ consumer.groupId is required");
+  }
+  if (config.producer.maxAttempts < 1) {
+    issues.push("RocketMQ producer.maxAttempts must be at least 1");
   }
   return issues;
 }
@@ -277,6 +333,7 @@ export function buildRockermqConfigSnapshot(config: RockermqConfig): Record<stri
     sessionCredentials: config.sessionCredentials
       ? {
           ...config.sessionCredentials,
+          accessKey: "***",
           accessSecret: "***",
           securityToken: config.sessionCredentials.securityToken ? "***" : undefined,
         }

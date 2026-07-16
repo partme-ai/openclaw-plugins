@@ -6,7 +6,7 @@ const plugin = pluginModule.default;
 describe("openclaw-bridge plugin", () => {
   it("exports a valid plugin definition", () => {
     expect(plugin).toBeDefined();
-    expect(plugin.id).toBe("openclaw-bridge");
+    expect(plugin.id).toBe("bridge");
     expect(plugin.name).toBe("OpenClaw Bridge");
     expect(plugin.description).toContain("22");
   });
@@ -20,6 +20,8 @@ describe("openclaw-bridge plugin", () => {
   it("register function calls api.on for hooks", () => {
     const mockOn = vi.fn();
     const mockApi = {
+      registrationMode: "full",
+      pluginConfig: {},
       logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
       on: mockOn,
     } as any;
@@ -27,11 +29,14 @@ describe("openclaw-bridge plugin", () => {
     plugin.register(mockApi);
 
     expect(mockOn).toHaveBeenCalledWith("before_prompt_build", expect.any(Function));
-    expect(mockOn).toHaveBeenCalledWith("agent_end", expect.any(Function));
+    expect(mockOn).toHaveBeenCalledWith("message_received", expect.any(Function));
+    expect(mockOn).toHaveBeenCalledWith("reply_payload_sending", expect.any(Function));
   });
 
   it("logs initialization message on register", () => {
     const mockApi = {
+      registrationMode: "full",
+      pluginConfig: {},
       logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
       on: vi.fn(),
     } as any;
