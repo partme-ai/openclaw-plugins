@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-mqtt",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "MQTT protocol bridge for OpenClaw — IoT device integration via embedded Aedes MQTT broker",
   "type": "module",
   "main": "dist/index.js",
@@ -50,12 +50,10 @@
     "aedes-persistence-redis": "^9.0.2",
     "ioredis": "^5.10.1",
     "mqemitter-redis": "^5.1.0",
-    "ws": "^8.20.0",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.18.1",
     "mqtt": "^5.13.2",
     "prom-client": "^15.1.3",
     "tsup": "^8.0.0",

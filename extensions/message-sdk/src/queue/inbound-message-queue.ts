@@ -89,9 +89,13 @@ export class InboundMessageQueue {
    * @param options - 幂等缓存和入队处理器配置
    */
   constructor(options: InboundMessageQueueOptions = {}) {
+    const maxSize = options.maxSize ?? DEFAULT_MAX_QUEUE_SIZE;
+    if (!Number.isSafeInteger(maxSize) || maxSize < 1) {
+      throw new Error("InboundMessageQueue maxSize must be a positive safe integer");
+    }
     this.idempotency = options.idempotency;
     this.onPush = options.onPush;
-    this.maxSize = options.maxSize ?? DEFAULT_MAX_QUEUE_SIZE;
+    this.maxSize = maxSize;
   }
 
   /**
@@ -103,12 +107,14 @@ export class InboundMessageQueue {
    * @returns `true` 表示消息被接受；`false` 表示被幂等缓存判定为重复
    */
   async push(params: InboundPushParams): Promise<boolean> {
-    const key = params.idempotencyKey ?? params.message.messageId;
-    if (this.idempotency?.remember(key)) {
+    // Capacity must be checked before reserving the idempotency key. Otherwise
+    // a full queue poisons the key and a later retry is incorrectly rejected.
+    if (this.queue.length >= this.maxSize) {
       return false;
     }
 
-    if (this.queue.length >= this.maxSize) {
+    const key = params.idempotencyKey ?? params.message.messageId;
+    if (this.idempotency?.remember(key)) {
       return false;
     }
 
@@ -120,7 +126,16 @@ export class InboundMessageQueue {
     this.queue.push(item);
 
     if (this.onPush) {
-      await this.onPush(item);
+      try {
+        await this.onPush(item);
+      } catch (error) {
+        // `push` is atomic from the caller's perspective: a failed immediate
+        // handler neither leaves a phantom queue item nor suppresses retries.
+        const index = this.queue.indexOf(item);
+        if (index >= 0) this.queue.splice(index, 1);
+        this.idempotency?.forget(key);
+        throw error;
+      }
     }
     return true;
   }

@@ -94,9 +94,44 @@ const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const DEFAULT_API_TIMEOUT_MS = 15_000;
 /** Default timeout for lightweight API requests (getConfig, sendTyping). */
 const DEFAULT_CONFIG_TIMEOUT_MS = 10_000;
+const DEFAULT_GET_TIMEOUT_MS = 15_000;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 function ensureTrailingSlash(url: string): string {
   return url.endsWith("/") ? url : `${url}/`;
+}
+
+async function readBoundedText(response: Response, label: string): Promise<string> {
+  const contentLength = Number(response.headers?.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`${label}: response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+  }
+  if (!response.body) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, "utf-8") > MAX_RESPONSE_BYTES) {
+      throw new Error(`${label}: response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+    }
+    return text;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error(`${label}: response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf-8");
 }
 
 /** X-WECHAT-UIN header: random uint32 -> decimal string -> base64. */
@@ -152,28 +187,24 @@ export async function apiGetFetch(params: {
   const hdrs = buildCommonHeaders();
   logger.debug(`GET ${redactUrl(url.toString())}`);
 
-  const timeoutMs = params.timeoutMs;
-  const controller =
-    timeoutMs != null && timeoutMs > 0 ? new AbortController() : undefined;
-  const t =
-    controller != null && timeoutMs != null
-      ? setTimeout(() => controller.abort(), timeoutMs)
-      : undefined;
+  const timeoutMs = params.timeoutMs ?? DEFAULT_GET_TIMEOUT_MS;
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  t.unref?.();
   try {
     const res = await fetch(url.toString(), {
       method: "GET",
       headers: hdrs,
-      ...(controller ? { signal: controller.signal } : {}),
+      signal: controller.signal,
     });
-    if (t !== undefined) clearTimeout(t);
-    const rawText = await res.text();
-    logger.debug(`${params.label} status=${res.status} raw=${redactBody(rawText)}`);
+    const rawText = await readBoundedText(res, params.label);
+    logger.debug(`${params.label} status=${res.status} responseBytes=${Buffer.byteLength(rawText)}`);
     if (!res.ok) {
-      throw new Error(`${params.label} ${res.status}: ${rawText}`);
+      throw new Error(`${params.label} ${res.status}`);
     }
     return rawText;
   } catch (err) {
-    if (t !== undefined) clearTimeout(t);
+    clearTimeout(t);
     throw err;
   }
 }
@@ -197,6 +228,7 @@ async function apiPostFetch(params: {
 
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), params.timeoutMs);
+  t.unref?.();
   try {
     const res = await fetch(url.toString(), {
       method: "POST",
@@ -204,11 +236,10 @@ async function apiPostFetch(params: {
       body: params.body,
       signal: controller.signal,
     });
-    clearTimeout(t);
-    const rawText = await res.text();
-    logger.debug(`${params.label} status=${res.status} raw=${redactBody(rawText)}`);
+    const rawText = await readBoundedText(res, params.label);
+    logger.debug(`${params.label} status=${res.status} responseBytes=${Buffer.byteLength(rawText)}`);
     if (!res.ok) {
-      throw new Error(`${params.label} ${res.status}: ${rawText}`);
+      throw new Error(`${params.label} ${res.status}`);
     }
     return rawText;
   } catch (err) {

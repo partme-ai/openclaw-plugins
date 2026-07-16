@@ -15,6 +15,7 @@ import type {
   ChannelsStatusSnapshot,
 } from "../types.js";
 import { rpcCall } from "../runtime/ws-bridge.js";
+import { sanitizeLabel } from "../shared/label-sanitize.js";
 
 const PREFIX = "openclaw_channel";
 const CHANNELS_STATUS_PARAMS = {
@@ -35,7 +36,7 @@ export class ChannelCollector implements MetricCollector {
     { name: `${PREFIX}_unlinked_total`, help: "Channels in unlinked state", type: "gauge" },
 
     // 按渠道
-    { name: `${PREFIX}_linked`, help: "Channel link status (1=linked, 0=unlinked)", type: "gauge", labels: ["channel_id", "channel_type", "channel_label"] },
+    { name: `${PREFIX}_linked`, help: "Channel link status (1=linked, 0=unlinked)", type: "gauge", labels: ["channel_id", "channel_type"] },
     { name: `${PREFIX}_accounts`, help: "Number of accounts per channel", type: "gauge", labels: ["channel_id"] },
   ];
 
@@ -48,7 +49,6 @@ export class ChannelCollector implements MetricCollector {
     const snapshot = await rpcCall<ChannelsStatusSnapshot>("channels.status", CHANNELS_STATUS_PARAMS);
 
     const channels = snapshot.channels ?? {};
-    const labels = snapshot.channelLabels ?? {};
     const accounts = snapshot.channelAccounts ?? {};
 
     const channelIds = Object.keys(channels);
@@ -64,9 +64,8 @@ export class ChannelCollector implements MetricCollector {
       samples.push({
         name: `${PREFIX}_linked`,
         labels: {
-          channel_id: id,
-          channel_type: ch.type ?? "unknown",
-          channel_label: labels[id] ?? id,
+          channel_id: sanitizeLabel(id),
+          channel_type: sanitizeLabel(ch.type ?? "unknown"),
         },
         value: linked,
       });
@@ -75,7 +74,7 @@ export class ChannelCollector implements MetricCollector {
       const accts = accounts[id];
       samples.push({
         name: `${PREFIX}_accounts`,
-        labels: { channel_id: id },
+        labels: { channel_id: sanitizeLabel(id) },
         value: Array.isArray(accts) ? accts.length : 0,
       });
     }

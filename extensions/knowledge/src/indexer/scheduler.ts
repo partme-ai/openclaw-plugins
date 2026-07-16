@@ -5,7 +5,7 @@
  * 负责将原始文档转为可检索向量块并写入 `VectorStore`：
  * 1. 从本地路径（后续可扩展企微文档/URL）加载文本；
  * 2. 可选 `DocParser` 将 PDF/图像等非纯文本转为 Markdown；
- * 3. `chunkText` 切分 → `embedBatch` 向量化 → `upsert` 持久化。
+ * 3. `chunkText` 切分 → `embedBatch` 向量化 → 原子替换持久化。
  *
  * **模块角色**：Knowledge Plugin · Indexing orchestrator。
  * **关键依赖**：`chunker`、`embedding/factory`、`parser/factory`、`store`（由调用方注入实例）。
@@ -38,6 +38,38 @@ export type IndexResult = {
 
 /** 无需 Parser 即可直接读取的纯文本扩展名。 */
 const PLAIN_TEXT_EXTS = ['.md', '.txt', '.csv', '.json'];
+
+const sourceWriteQueues = new WeakMap<VectorStore, Map<string, Promise<void>>>();
+
+/** Serialize writes for the same store/source while allowing unrelated sources to proceed. */
+export async function withSourceWriteLock<T>(
+  store: VectorStore,
+  sourceId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let queue = sourceWriteQueues.get(store);
+  if (!queue) {
+    queue = new Map<string, Promise<void>>();
+    sourceWriteQueues.set(store, queue);
+  }
+
+  const previous = queue.get(sourceId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  queue.set(sourceId, tail);
+
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (queue.get(sourceId) === tail) queue.delete(sourceId);
+    if (queue.size === 0) sourceWriteQueues.delete(store);
+  }
+}
 
 /**
  * @description 仅在配置了 `parser.provider` 时惰性构造 `DocParserService`。
@@ -94,7 +126,7 @@ export async function loadDocument(
 }
 
 /**
- * @description 索引单个文档：**deleteBySource → chunk → embed → upsert** 幂等覆盖语义。
+ * @description 索引单个文档：同 sourceId 串行执行 load → chunk → embed → 原子替换。
  *
  * @param filePath - 源文件路径。
  * @param sourceId - 稳定文档键，重复索引会替换同 source 的全部块。
@@ -112,45 +144,41 @@ export async function indexDocument(
   chunkerConfig?: Partial<ChunkerConfig>,
   parserConfig?: KnowledgeParserConfig,
 ): Promise<IndexResult> {
-  try {
-    const text = await loadDocument(filePath, parserConfig);
-    const chunks = chunkText(text, sourceId, chunkerConfig);
+  return withSourceWriteLock(store, sourceId, async () => {
+    try {
+      const text = await loadDocument(filePath, parserConfig);
+      const chunks = chunkText(text, sourceId, chunkerConfig);
 
-    if (chunks.length === 0) {
-      return { chunksAdded: 0, sourceId, success: true };
+      const texts = chunks.map((c) => c.text);
+      const vectors = texts.length > 0 ? await embedding.embedBatch(texts) : [];
+
+      const vectorChunks = chunks.map((chunk, i) => ({
+        id: `doc:${sourceId}:${chunk.index}`,
+        vector: vectors[i],
+        metadata: {
+          sourceId: chunk.sourceId,
+          chunkIndex: chunk.index,
+          text: chunk.text,
+          filePath,
+        },
+      }));
+
+      await store.replaceBySource(sourceId, vectorChunks);
+
+      return {
+        chunksAdded: vectorChunks.length,
+        sourceId,
+        success: true,
+      };
+    } catch (error) {
+      return {
+        chunksAdded: 0,
+        sourceId,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
-
-    const texts = chunks.map((c) => c.text);
-    const vectors = await embedding.embedBatch(texts);
-
-    const vectorChunks = chunks.map((chunk, i) => ({
-      id: `doc:${sourceId}:${chunk.index}`,
-      vector: vectors[i],
-      metadata: {
-        sourceId: chunk.sourceId,
-        chunkIndex: chunk.index,
-        text: chunk.text,
-        filePath,
-      },
-    }));
-
-    // 先删后写，保证同 sourceId 重索引不产生孤儿块
-    await store.deleteBySource(sourceId);
-    await store.upsert(vectorChunks);
-
-    return {
-      chunksAdded: vectorChunks.length,
-      sourceId,
-      success: true,
-    };
-  } catch (error) {
-    return {
-      chunksAdded: 0,
-      sourceId,
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  });
 }
 
 /**

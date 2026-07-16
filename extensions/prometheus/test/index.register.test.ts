@@ -124,7 +124,7 @@ describe("prometheusPlugin register", () => {
 
     const body = Buffer.concat(buffers).toString("utf-8");
     expect(body).toContain("# HELP openclaw_exporter_build_info");
-    expect(body).toContain('version="0.3.1"');
+    expect(body).toContain('version="2026.7.1"');
     expect(body).toContain("openclaw_up");
     expect(body).toContain("openclaw_model_auth_provider_status{provider=\"openai\",status=\"ok\"} 1");
     expect(body).toContain("openclaw_sli_message_success_ratio");
@@ -137,7 +137,7 @@ function createFakeApi() {
   const routes = new Map<string, { path: string; handler: unknown; auth?: string }>();
   return {
     _routes: routes,
-    id: "openclaw-prometheus",
+    id: "prometheus",
     config: { gateway: { port: 18789 } },
     logger: { info() {}, warn() {}, error() {} },
     registerService() {},

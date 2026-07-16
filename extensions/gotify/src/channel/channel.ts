@@ -136,7 +136,9 @@ export function cleanupGotifyChannel(): void {
  */
 function parsePositiveMessageId(id: number | string | undefined): number {
   const normalized =
-    typeof id === "number" ? Math.trunc(id) : Number.parseInt(String(id ?? ""), 10);
+    typeof id === "number"
+      ? Math.trunc(id)
+      : Number.parseInt(String(id ?? ""), 10);
   return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
 }
 
@@ -147,11 +149,12 @@ function parsePositiveMessageId(id: number | string | undefined): number {
  * @param task - 单条消息的异步派发任务。
  * @returns 排队后的 Promise，在前序任务完成后执行。
  */
-function enqueueInbound(accountId: string, task: () => Promise<void>): Promise<void> {
+function enqueueInbound(
+  accountId: string,
+  task: () => Promise<void>,
+): Promise<void> {
   const previous = inboundQueues.get(accountId) ?? Promise.resolve();
-  const next = previous
-    .catch(() => undefined)
-    .then(task);
+  const next = previous.catch(() => undefined).then(task);
   const tracked = next.finally(() => {
     if (inboundQueues.get(accountId) === tracked) {
       inboundQueues.delete(accountId);
@@ -444,8 +447,7 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
               : null,
         });
       } catch (error) {
-        const errorMsg =
-          error instanceof Error ? error.message : String(error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
         patchAccountSnapshot(account.accountId, {
           running: false,
           lastError: `backlog replay failed: ${errorMsg}`,
@@ -566,7 +568,10 @@ export async function dispatchInboundMessage(
       typeof message.appid === "number"
         ? message.appid
         : Number.parseInt(String(message.appid ?? ""), 10);
-    if (!Number.isFinite(incomingAppId) || incomingAppId !== configuredAllowedAppId) {
+    if (
+      !Number.isFinite(incomingAppId) ||
+      incomingAppId !== configuredAllowedAppId
+    ) {
       return;
     }
   }

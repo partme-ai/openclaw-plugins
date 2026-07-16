@@ -12,6 +12,12 @@ import type { WecomAccountConfig } from "../types/index.js";
 const dispatchKfMessageMock = vi.hoisted(() => vi.fn(async () => undefined));
 const syncKfMessagesMock = vi.hoisted(() => vi.fn());
 const getWecomRuntimeMock = vi.hoisted(() => vi.fn());
+const claimInboundMock = vi.hoisted(() => vi.fn(async (_openKfId: string, msgid: string) => ({
+  kind: msgid === "msg-1-dup" ? "duplicate" : "claimed",
+  key: msgid,
+})));
+const commitInboundMock = vi.hoisted(() => vi.fn(async () => undefined));
+const releaseInboundMock = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("../dispatch/inbound-dispatcher.js", () => ({
   dispatchKfMessage: dispatchKfMessageMock,
@@ -31,7 +37,9 @@ vi.mock("../runtime/index.js", () => ({
 }));
 
 vi.mock("../dedup/kf-inbound-dedup.js", () => ({
-  claimWecomKfInboundMsgid: vi.fn(async (_openKfId: string, msgid: string) => msgid !== "msg-1-dup"),
+  claimWecomKfInboundMsgid: claimInboundMock,
+  commitWecomKfInboundMsgid: commitInboundMock,
+  releaseWecomKfInboundMsgid: releaseInboundMock,
   resolveKfInboundDedupeNamespace: vi.fn((openKfId: string) => `wecom-kf-inbound:${openKfId}`),
 }));
 
@@ -160,6 +168,7 @@ describe("parseWecomCallback", () => {
 });
 
 describe("createKfCallbackHandler", () => {
+  const handlerOptions = { nowSeconds: () => 1710000004 };
   const accountConfig: WecomAccountConfig = {
     corpId: CORP_ID,
     corpSecret: "secret",
@@ -176,22 +185,24 @@ describe("createKfCallbackHandler", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     getWecomRuntimeMock.mockReturnValue({
       config: {
-        channels: {
-          "wecom-kf": {
-            enabled: true,
-            defaultAccount: "default",
-            accounts: {
-              default: {
-                openKfId: "kf_001",
-                agentId: "agent-1",
-                corpId: CORP_ID,
-                corpSecret: "secret",
-                token: TOKEN,
-                encodingAESKey: ENCODING_AES_KEY,
+        current: () => ({
+          channels: {
+            "wecom-kf": {
+              enabled: true,
+              defaultAccount: "default",
+              accounts: {
+                default: {
+                  openKfId: "kf_001",
+                  agentId: "agent-1",
+                  corpId: CORP_ID,
+                  corpSecret: "secret",
+                  token: TOKEN,
+                  encodingAESKey: ENCODING_AES_KEY,
+                },
               },
             },
           },
-        },
+        }),
       },
     });
   });
@@ -201,6 +212,9 @@ describe("createKfCallbackHandler", () => {
     getWecomRuntimeMock.mockReset();
     syncKfMessagesMock.mockReset();
     dispatchKfMessageMock.mockReset();
+    claimInboundMock.mockClear();
+    commitInboundMock.mockClear();
+    releaseInboundMock.mockClear();
   });
 
   it("GET 返回解密后的 echostr 明文", async () => {
@@ -219,7 +233,7 @@ describe("createKfCallbackHandler", () => {
       encrypt: encryptedEchostr,
     });
 
-    const handler = createKfCallbackHandler(getAccountConfig);
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
     const res = mockResponse();
     await handler(
       makeGetReq({
@@ -254,7 +268,7 @@ describe("createKfCallbackHandler", () => {
       encrypt,
     });
 
-    const handler = createKfCallbackHandler(getAccountConfig);
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
     const res = mockResponse();
     await handler(
       makePostReq({ msg_signature: msgSignature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
@@ -263,8 +277,8 @@ describe("createKfCallbackHandler", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe("success");
-    expect(console.log).toHaveBeenCalledWith("[wecom_kf] KF account authorized: kf_new");
-    expect(console.log).toHaveBeenCalledWith("[wecom_kf] KF account deauthorized: kf_old");
+    expect(console.log).toHaveBeenCalledWith("[wecom_kf] KF account authorized");
+    expect(console.log).toHaveBeenCalledWith("[wecom_kf] KF account deauthorized");
   });
 
   it("无账号配置时返回 500", async () => {
@@ -273,6 +287,22 @@ describe("createKfCallbackHandler", () => {
     await handler(makeGetReq({ echostr: "x" }), res);
     expect(res.statusCode).toBe(500);
     expect(res.body).toBe("No account config");
+  });
+
+  it("拒绝签名正确但时间戳过期的重放请求", async () => {
+    const encryptedEchostr = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: "stale",
+    });
+    const timestamp = "1709999000";
+    const nonce = "nonce-stale";
+    const msgSignature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt: encryptedEchostr });
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
+    const res = mockResponse();
+    await handler(makeGetReq({ msg_signature: msgSignature, timestamp, nonce, echostr: encryptedEchostr }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toBe("invalid callback");
   });
 
   it("POST kf_msg_or_event 快速 200 后触发 sync_msg 分页", async () => {
@@ -339,7 +369,7 @@ describe("createKfCallbackHandler", () => {
       encrypt,
     });
 
-    const handler = createKfCallbackHandler(getAccountConfig);
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
     const res = mockResponse();
     await handler(
       makePostReq({ msg_signature: msgSignature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
@@ -353,5 +383,40 @@ describe("createKfCallbackHandler", () => {
       expect(syncCallCount).toBe(2);
     });
     expect(dispatchKfMessageMock).toHaveBeenCalledTimes(1);
+    expect(commitInboundMock).toHaveBeenCalledWith("kf_001", "msg-1");
+  });
+
+  it("派发失败时释放 msgid，且不推进当前页游标", async () => {
+    dispatchKfMessageMock.mockRejectedValueOnce(new Error("dispatch failed"));
+    syncKfMessagesMock.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "cursor-failed",
+      has_more: 0,
+      msg_list: [{
+        msgid: "msg-failed",
+        msgtype: "text",
+        origin: 3,
+        open_kfid: "kf_001",
+        external_userid: "wx-user-1",
+        text: { content: "retry me" },
+      }],
+    });
+
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({ encodingAESKey: ENCODING_AES_KEY, receiveId: CORP_ID, plaintext: xml });
+    const timestamp = "1710000005";
+    const nonce = "nonce-failed";
+    const msgSignature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
+    const res = mockResponse();
+    await handler(makePostReq({ msg_signature: msgSignature, timestamp, nonce }, wrapEncryptedXml(encrypt)), res);
+
+    expect(res.statusCode).toBe(200);
+    await vi.waitFor(() => expect(releaseInboundMock).toHaveBeenCalledWith("kf_001", "msg-failed", expect.any(Error)));
+    expect(commitInboundMock).not.toHaveBeenCalledWith("kf_001", "msg-failed");
   });
 });

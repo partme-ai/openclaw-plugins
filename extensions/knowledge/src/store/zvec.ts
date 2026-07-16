@@ -9,10 +9,11 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { VectorStore, VectorChunk, VectorChunkMetadata, SearchOptions, ScoredChunk, StoreStats } from '../types.js';
 import { cosineSimilarity } from './math.js';
+import { assertVector } from './vector-validation.js';
 
 /** ZVec 配置 */
 export type ZVecConfig = {
@@ -38,6 +39,8 @@ export class ZVecStore implements VectorStore {
   private config: ZVecConfig;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
+  private mutationVersion = 0;
+  private flushPromise: Promise<void> | null = null;
 
   constructor(config: ZVecConfig) {
     this.config = {
@@ -53,7 +56,13 @@ export class ZVecStore implements VectorStore {
         const parsed = JSON.parse(raw) as ZVecRecord[];
         // 验证数据结构
         if (Array.isArray(parsed)) {
-          this.records = parsed;
+          this.records = parsed.filter((record) =>
+            typeof record?.id === 'string' &&
+            Array.isArray(record.vector) &&
+            record.vector.length === this.config.dimensions &&
+            record.metadata !== null &&
+            typeof record.metadata === 'object'
+          );
         }
       } catch {
         // 文件不存在或格式错误，初始化为空
@@ -63,6 +72,7 @@ export class ZVecStore implements VectorStore {
   }
 
   async upsert(chunks: VectorChunk[]): Promise<void> {
+    for (const chunk of chunks) assertVector(chunk.vector, this.config.dimensions, `chunk ${chunk.id}`);
     for (const chunk of chunks) {
       const existing = this.records.findIndex((r) => r.id === chunk.id);
       const record: ZVecRecord = {
@@ -77,10 +87,34 @@ export class ZVecStore implements VectorStore {
       }
     }
     this.dirty = true;
+    this.mutationVersion += 1;
+    this.scheduleSave();
+  }
+
+  async replaceBySource(sourceId: string, chunks: VectorChunk[]): Promise<void> {
+    for (const chunk of chunks) {
+      assertVector(chunk.vector, this.config.dimensions, `chunk ${chunk.id}`);
+      if ((chunk.metadata.sourceId ?? '') !== sourceId) {
+        throw new Error(`chunk ${chunk.id} sourceId does not match replacement source ${sourceId}`);
+      }
+    }
+
+    const replacements = chunks.map((chunk) => ({
+      id: chunk.id,
+      vector: chunk.vector,
+      metadata: chunk.metadata,
+    }));
+    this.records = [
+      ...this.records.filter((record) => record.metadata.sourceId !== sourceId),
+      ...replacements,
+    ];
+    this.dirty = true;
+    this.mutationVersion += 1;
     this.scheduleSave();
   }
 
   async upsertBatch(chunks: VectorChunk[], batchSize = 100): Promise<void> {
+    for (const chunk of chunks) assertVector(chunk.vector, this.config.dimensions, `chunk ${chunk.id}`);
     for (let i = 0; i < chunks.length; i += batchSize) {
       const batch = chunks.slice(i, i + batchSize);
       // 批量处理（sync 但避免大数组一次性写入的 stack 问题）
@@ -103,10 +137,12 @@ export class ZVecStore implements VectorStore {
       }
     }
     this.dirty = true;
+    this.mutationVersion += 1;
     this.scheduleSave();
   }
 
   async search(vector: number[], options?: SearchOptions): Promise<ScoredChunk[]> {
+    assertVector(vector, this.config.dimensions, 'query vector');
     const topK = options?.topK ?? 5;
     const minScore = options?.minScore ?? 0.0;
 
@@ -139,12 +175,14 @@ export class ZVecStore implements VectorStore {
   async deleteBySource(sourceId: string): Promise<void> {
     this.records = this.records.filter((r) => r.metadata.sourceId !== sourceId);
     this.dirty = true;
+    this.mutationVersion += 1;
     this.scheduleSave();
   }
 
   async clear(): Promise<void> {
     this.records = [];
     this.dirty = true;
+    this.mutationVersion += 1;
     this.scheduleSave();
   }
 
@@ -161,10 +199,31 @@ export class ZVecStore implements VectorStore {
   /** 立即持久化 */
   async flush(): Promise<void> {
     if (!this.config.dbPath || !this.dirty) return;
+    if (this.flushPromise) {
+      await this.flushPromise;
+      if (this.dirty) await this.flush();
+      return;
+    }
 
-    await mkdir(dirname(this.config.dbPath), { recursive: true });
-    await writeFile(this.config.dbPath, JSON.stringify(this.records, null, 2), 'utf-8');
-    this.dirty = false;
+    const dbPath = this.config.dbPath;
+    const version = this.mutationVersion;
+    const payload = JSON.stringify(this.records, null, 2);
+    const tempPath = `${dbPath}.${process.pid}.${randomUUID()}.tmp`;
+    this.flushPromise = (async () => {
+      await mkdir(dirname(dbPath), { recursive: true });
+      try {
+        await writeFile(tempPath, payload, { encoding: 'utf-8', mode: 0o600 });
+        await rename(tempPath, dbPath);
+        if (this.mutationVersion === version) this.dirty = false;
+      } finally {
+        await rm(tempPath, { force: true }).catch(() => undefined);
+      }
+    })();
+    try {
+      await this.flushPromise;
+    } finally {
+      this.flushPromise = null;
+    }
   }
 
   /** 获取命名空间 */
@@ -187,13 +246,15 @@ export class ZVecStore implements VectorStore {
         console.error('[ZVec] Auto-save failed:', err);
       });
     }, this.config.autoSaveIntervalMs);
+    this.saveTimer.unref?.();
   }
 
   /** 释放资源 */
-  dispose(): void {
+  async dispose(): Promise<void> {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
+    await this.flush();
   }
 }

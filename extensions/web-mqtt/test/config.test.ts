@@ -95,6 +95,29 @@ describe("validateWebMqttConfig", () => {
       "limits.maxPayloadBytes 不能大于 ws.maxFrameSize，否则 WebSocket 会先行断开。",
     );
   });
+
+  it("should reject invalid limits, duplicate users, ambiguous credentials and unsafe remote auth", () => {
+    const config = resolveWebMqttConfig({});
+    const issues = validateWebMqttConfig({
+      ...config,
+      host: "0.0.0.0",
+      tls: { ...config.tls, enabled: true, keyFile: "/tmp/key", certFile: "/tmp/cert" },
+      auth: {
+        required: false,
+        allowAnonymous: false,
+        users: [
+          { username: "same", password: "one", passwordHash: "two" },
+          { username: "same", password: "three" },
+        ],
+      },
+      limits: { maxPayloadBytes: 0, maxSubscriptionsPerClient: 0 },
+    });
+    expect(issues).toContain("监听非 loopback 地址时必须启用客户端认证。");
+    expect(issues.some((issue) => issue.includes("重复用户名"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("必须且只能配置"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("maxPayloadBytes"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("maxSubscriptionsPerClient"))).toBe(true);
+  });
 });
 
 describe("buildWebMqttConfigSnapshot", () => {
@@ -113,8 +136,17 @@ describe("buildWebMqttConfigSnapshot", () => {
       },
     });
     const snapshot = buildWebMqttConfigSnapshot(config);
-    const users = ((snapshot.auth as { users: Array<Record<string, unknown>> }).users ?? []);
-    expect(users[0]?.hasPassword).toBe(true);
-    expect(users[0]?.password).toBeUndefined();
+    expect((snapshot.auth as { userCount: number }).userCount).toBe(1);
+    expect(JSON.stringify(snapshot)).not.toContain("secret");
+  });
+
+  it("should not expose TLS file paths or configured usernames", () => {
+    const config = resolveWebMqttConfig({ channels: { "mqtt-ws": {
+      auth: { required: true, users: [{ username: "private-user", password: "secret" }] },
+      tls: { enabled: true, keyFile: "/private/server.key", certFile: "/private/server.crt" },
+    } } });
+    const serialized = JSON.stringify(buildWebMqttConfigSnapshot(config));
+    expect(serialized).not.toContain("private-user");
+    expect(serialized).not.toContain("/private/");
   });
 });

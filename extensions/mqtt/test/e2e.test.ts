@@ -23,7 +23,6 @@ describe("openclaw-mqtt E2E 功能验证", () => {
   beforeAll(async () => {
     const config = {
       port: BROKER_PORT,
-      wsPort: 0,
       maxConnections: 100,
       auth: {
         enabled: true,
@@ -364,7 +363,7 @@ describe("openclaw-mqtt E2E 功能验证", () => {
       data: {
         broker: stats,
         sessions: { activeSessions: 0, uniqueClients: 0, contextBoundSessions: 0, pendingExpiryClients: 0, delayedExpiryCount: 0 },
-        qos: { pendingCount: 0, oldestPendingMs: null },
+        qos: { handledBy: "aedes", levels: [0, 1, 2] },
         clients,
         config: null,
         policy: {
@@ -390,6 +389,6 @@ describe("openclaw-mqtt E2E 功能验证", () => {
     console.log(`  broker.qos0InflightClients: ${statusResponse.data.broker.qos0InflightClients}`);
     console.log(`  clients: ${statusResponse.data.clients.length} 个`);
     console.log(`  sessions.activeSessions: ${statusResponse.data.sessions.activeSessions}`);
-    console.log(`  qos.pendingCount: ${statusResponse.data.qos.pendingCount}`);
+    console.log(`  qos.handledBy: ${statusResponse.data.qos.handledBy}`);
   });
 });

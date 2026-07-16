@@ -4,7 +4,7 @@
 
 ## 能力边界
 
-- Webhook：校验 `X-Douyin-Signature = SHA1(app_secret + rawBody)`，校验 `client_key`，按 `Msg-Id` 去重。
+- Webhook：校验 `X-Douyin-Signature = SHA1(app_secret + rawBody)`，校验 `client_key`，按账号持久化 `Msg-Id` 去重；仅在处理成功后提交，失败会释放以允许重试。
 - 回调验证：对签名有效的 `verify_webhook` 返回 `{"challenge": ...}` JSON。
 - 事件处理：兼容 object 和 JSON 字符串两种 `content`，先在官方 2.5 秒窗口内确认接收，再异步进入 Agent Transcript 管线。
 - OpenAPI：缓存 `client_token`，合并并发刷新；Token 失效时刷新一次；查询类请求支持有限重试。
@@ -56,6 +56,8 @@
 }
 ```
 
+命名账号未显式配置 `webhook_path` 时，会从顶层路径派生独立地址，例如 `shop-a` 对应 `/channels/douyin/webhook/shop-a`。不同账号不能共用同一回调路径；重复路由会直接启动失败，不会静默覆盖其他账号。
+
 ## OpenAPI 工具
 
 ### `douyin_query_orders`
@@ -97,4 +99,4 @@ pnpm --dir extensions/douyin build
 - [WebHooks 接入](https://partner.open-douyin.com/docs/resource/zh-CN/local-life/develop/preparation/webhooks)
 - [生成 client_token](https://partner.open-douyin.com/docs/resource/zh-CN/dop/develop/openapi/account-permission/client-token)
 - [订单查询](https://partner.open-douyin.com/docs/resource/zh-CN/local-life/develop/OpenAPI/general-capabilities/order.query/query)
-- [回复评价](https://developer.open-douyin.com/docs/resource/zh-CN/local-life/develop/OpenAPI/catering/dining-group-solution/food-review/reply_comment)
+- [回复评价](https://partner.open-douyin.com/docs/resource/zh-CN/local-life/develop/OpenAPI/catering/dining-group-solution/food-review/reply_comment)

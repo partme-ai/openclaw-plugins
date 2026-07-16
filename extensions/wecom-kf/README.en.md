@@ -162,6 +162,15 @@ Customer message
 
 Human handoff usually calls `wecom_kf_list_servicers` first, then `wecom_kf_transfer_session`.
 
+For multiple accounts, use a distinct callback URL per account. Without an explicit
+`accounts.<accountId>.webhookPath`, the URL is `/wecom-kf/<accountId>`. The route selects that
+account's callback token and AES key before XML decryption, so callback paths cannot be shared.
+
+Inbound `msgid` values are committed to persistent deduplication only after dispatch succeeds.
+Failures release the claim and retain the current page cursor for retry. Sync work is serialized per
+KF account, and cursors are atomically persisted with `0600` permissions. Startup does not silently
+skip message history within WeCom's available `sync_msg` window.
+
 ## API Coverage and Limits
 
 | Capability | WeCom API | Notes |

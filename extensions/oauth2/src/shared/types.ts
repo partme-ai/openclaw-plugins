@@ -35,8 +35,6 @@ export interface AuthOAuth2Config {
   clientId: string;
   /** OAuth2 Client Secret */
   clientSecret?: string;
-  /** Scope → OpenClaw Role 映射 */
-  scopeMapping: Record<string, string>;
   /** Resource Server 反向代理配置 */
   proxy: OAuth2ProxyConfig;
   /** OAuth2 Authorization Code Client 配置 */
@@ -51,12 +49,14 @@ export interface OAuth2ProxyConfig {
   requestTimeoutMs: number;
   userHeader: string;
   tenantHeader?: string;
+  forwardedProto: "http" | "https";
 }
 
 export interface OAuth2ClientConfig {
   discovery: boolean;
   redirectUri: string;
   scopes: string[];
+  requiredScopes: string[];
   authorizationEndpoint?: string;
   tokenEndpoint?: string;
   revokeEndpoint?: string;
@@ -82,6 +82,7 @@ export interface OAuth2SessionStoreConfig {
   type: "memory" | "redis";
   redisUrl?: string;
   keyPrefix: string;
+  maxEntries: number;
 }
 
 export interface OAuth2TokenSet {
@@ -103,17 +104,9 @@ export interface OAuth2UserInfo {
 
 // ─────────────────── Auth Context ───────────────────
 
-/** 用户角色 */
-export type Role = "viewer" | "operator" | "admin";
-
-/** 权限类型 */
-export type Permission = "read" | "write" | "admin";
-
 /** 认证上下文（注入到请求对象） */
 export interface AuthContext {
   authenticated: boolean;
-  role: Role;
-  permissions: Permission[];
   /** OAuth2/OIDC 用户标识 */
   loginId?: string;
   /** 租户标识 */

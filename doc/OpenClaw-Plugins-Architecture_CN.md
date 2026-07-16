@@ -64,7 +64,7 @@ openclaw-plugins 由 **PartMe.AI 团队** 研发与二次开发，包含 28 个�
 │  │ 业务/IM 渠道         │  │ 消息与传输协议                │  │
 │  │ wecom wechat        │  │ mqtt rabbitmq redis-stream   │  │
 │  │ wecom-kf wechat-ipad│  │ stomp web-stomp rocketmq     │  │
-│  │ amap douyin bridge… │  │ web-mqtt web-socket gotify  │  │
+│  │ douyin bridge…      │  │ web-mqtt web-socket gotify  │  │
 │  └─────────────────────┘  └──────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```

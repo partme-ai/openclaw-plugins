@@ -4,6 +4,8 @@ import type { DouyinAccountConfig } from "../types.js";
 import { getClientToken, invalidateClientToken } from "../config/auth.js";
 
 const OPENAPI_BASE = "https://open.douyin.com";
+const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
+const RETRY_BASE_DELAY_MS = 200;
 const RETRYABLE_CODES = new Set([2100001, 2100004, 2119002, 2119003]);
 const TOKEN_CODES = new Set([2190002, 2190008]);
 
@@ -75,10 +77,16 @@ async function requestOnce(params: {
     headers: {
       "access-token": token,
       "content-type": "application/json",
+      ...(params.context.account.account_id || params.context.account.shop_id
+        ? {
+            "Rpc-Transit-Life-Account":
+              params.context.account.account_id ?? params.context.account.shop_id ?? "",
+          }
+        : {}),
     },
     body: params.body ? JSON.stringify(params.body) : undefined,
   }, { timeoutMs: params.context.account.request_timeout_ms ?? 10_000 });
-  const raw = (await readResponseBodyAsBuffer(response)).toString("utf8");
+  const raw = (await readResponseBodyAsBuffer(response, MAX_JSON_RESPONSE_BYTES)).toString("utf8");
   const envelope = parseEnvelope(response, raw);
   assertSuccess(response, envelope);
   return envelope;
@@ -110,6 +118,8 @@ export async function requestDouyinOpenApi(params: {
       } else if (!params.retrySafe) {
         throw error;
       }
+      const delayMs = Math.min(2_000, RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     }
   }
   throw new Error("[douyin] OpenAPI request exhausted retries");

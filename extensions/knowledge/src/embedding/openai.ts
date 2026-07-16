@@ -10,6 +10,7 @@
  */
 
 import type { EmbeddingService, KnowledgeEmbeddingConfig } from '../types.js';
+import { inEmbeddingBatches, postEmbeddingJson, validateEmbeddingData } from './http.js';
 
 /** 默认模型 */
 const DEFAULT_MODEL = 'text-embedding-ada-002';
@@ -22,11 +23,13 @@ export class OpenAIEmbeddingService implements EmbeddingService {
   readonly modelName: string;
   private baseUrl: string;
   private apiKey: string;
+  private config?: KnowledgeEmbeddingConfig;
 
   /**
    * @param config - 可选 baseUrl/apiKey/model/dimensions 覆盖。
    */
   constructor(config?: KnowledgeEmbeddingConfig) {
+    this.config = config;
     this.baseUrl = config?.baseUrl ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
     this.apiKey = config?.apiKey ?? process.env.OPENAI_API_KEY ?? '';
     this.modelName = config?.model ?? process.env.OPENAI_EMBEDDING_MODEL ?? DEFAULT_MODEL;
@@ -41,8 +44,10 @@ export class OpenAIEmbeddingService implements EmbeddingService {
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
 
+    return inEmbeddingBatches(texts, this.config, async (batch) => {
+
     const body: Record<string, unknown> = {
-      input: texts,
+      input: batch,
       model: this.modelName,
     };
 
@@ -52,29 +57,16 @@ export class OpenAIEmbeddingService implements EmbeddingService {
     }
 
     const url = `${this.baseUrl.replace(/\/+$/, '')}/embeddings`;
-    const response = await fetch(url, {
+    const data = await postEmbeddingJson<{ data?: unknown }>(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
       },
       body: JSON.stringify(body),
+    }, this.config, 'OpenAI');
+    return validateEmbeddingData(data.data, batch.length, this.dimensions, 'OpenAI');
     });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'unknown');
-      throw new Error(`Embedding API error: ${response.status} ${response.statusText} — ${errorText}`);
-    }
-
-    const data = (await response.json()) as {
-      data: { embedding: number[]; index: number }[];
-      model?: string;
-      usage?: { prompt_tokens: number; total_tokens: number };
-    };
-
-    // 确保返回顺序与输入一致
-    const sorted = data.data.sort((a, b) => a.index - b.index);
-    return sorted.map((item) => item.embedding);
   }
 
   async health(): Promise<boolean> {

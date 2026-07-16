@@ -1,6 +1,6 @@
 /** OpenClaw STOMP over WebSocket plugin entry. */
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { stompChannel } from "./channel.js";

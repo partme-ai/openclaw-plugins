@@ -13,6 +13,12 @@ import {
   startRedisServer,
   stopRedisServer,
 } from "./transport/server.js";
+import type {
+  ChannelAccountSnapshot,
+  ChannelGatewayContext,
+  ChannelPlugin,
+  OpenClawConfig,
+} from "openclaw/plugin-sdk";
 import { resolveRedisChannelConfig, redactUrl, validateRedisStreamConfig } from "./config.js";
 import { redisStreamOutbound } from "./outbound.js";
 import {
@@ -23,10 +29,34 @@ import {
 /** @description 默认单账户 ID。 */
 export const DEFAULT_ACCOUNT_ID = "default";
 
+type ResolvedRedisStreamAccount = {
+  accountId: typeof DEFAULT_ACCOUNT_ID;
+  name: string;
+  enabled: boolean;
+  configured: boolean;
+  config: ReturnType<typeof resolveRedisChannelConfig>;
+};
+
+function getRedisChannelSection(cfg: OpenClawConfig): Record<string, unknown> | undefined {
+  return (cfg.channels as Record<string, unknown> | undefined)?.["redis-stream"] as
+    | Record<string, unknown>
+    | undefined;
+}
+
+function resolveRedisStreamAccount(cfg: OpenClawConfig): ResolvedRedisStreamAccount {
+  const rawChannel = getRedisChannelSection(cfg);
+  return {
+    accountId: DEFAULT_ACCOUNT_ID,
+    name: "Redis Stream",
+    enabled: rawChannel?.enabled !== false,
+    configured: typeof rawChannel?.url === "string" && rawChannel.url.trim().length > 0,
+    config: resolveRedisChannelConfig(cfg as unknown as Record<string, unknown>),
+  };
+}
+
 /** @description Redis Stream ChannelPlugin 实例。 */
-export const redisStreamChannel = {
+export const redisStreamChannel: ChannelPlugin<ResolvedRedisStreamAccount> = {
   id: "redis-stream",
-  name: "Redis Stream",
 
   meta: {
     id: "redis-stream",
@@ -52,63 +82,32 @@ export const redisStreamChannel = {
 
   // ── 账户管理 ──────────────────────────────────────────────
   config: {
-    listAccountIds: () => {
-      return [DEFAULT_ACCOUNT_ID];
-    },
+    listAccountIds: () => [DEFAULT_ACCOUNT_ID],
 
-    resolveAccount: (cfg: Record<string, unknown>) => {
-      const rawChannel = ((cfg.channels as
-        | Record<string, unknown>
-        | undefined) ?? {})["redis-stream"] as
-        | Record<string, unknown>
-        | undefined;
-      return {
-        accountId: DEFAULT_ACCOUNT_ID,
-        name: "Redis Stream",
-        enabled: true,
-        configured: Boolean(rawChannel?.url),
-      };
-    },
+    resolveAccount: (cfg: OpenClawConfig) => resolveRedisStreamAccount(cfg),
 
     defaultAccountId: () => DEFAULT_ACCOUNT_ID,
 
-    isConfigured: (cfg: Record<string, unknown>) => {
-      const rawChannel = ((cfg.channels as
-        | Record<string, unknown>
-        | undefined) ?? {})["redis-stream"] as
-        | Record<string, unknown>
-        | undefined;
-      return Boolean(rawChannel?.url);
-    },
+    isConfigured: (account: ResolvedRedisStreamAccount) => account.configured,
 
-    unconfiguredReason: (cfg: Record<string, unknown>) => {
-      const rawChannel = ((cfg.channels as
-        | Record<string, unknown>
-        | undefined) ?? {})["redis-stream"] as
-        | Record<string, unknown>
-        | undefined;
-      if (!rawChannel?.url)
-        return "Missing Redis connection URL (channels.redis-stream.url)";
-      return null;
-    },
+    unconfiguredReason: () =>
+      "Missing Redis connection URL (channels.redis-stream.url)",
   },
 
   // ── 生命周期 ──────────────────────────────────────────────
   gateway: {
     startAccount: async ({
-      runtime,
+      account,
+      accountId,
       abortSignal,
       setStatus,
-    }: {
-      runtime: { config: Record<string, unknown> };
-      abortSignal: AbortSignal;
-      setStatus: (status: Record<string, unknown>) => void;
-    }) => {
+    }: ChannelGatewayContext<ResolvedRedisStreamAccount>) => {
       try {
-        const config = resolveRedisChannelConfig(runtime.config);
+        const config = account.config;
         validateRedisStreamConfig(config);
         await startRedisServer(config);
         setStatus?.({
+          accountId,
           running: true,
           configured: true,
           lastStartAt: Date.now(),
@@ -126,6 +125,7 @@ export const redisStreamChannel = {
         }
       } catch (error) {
         setStatus?.({
+          accountId,
           running: false,
           configured: true,
           lastError: error instanceof Error ? error.message : String(error),
@@ -135,13 +135,13 @@ export const redisStreamChannel = {
     },
 
     stopAccount: async ({
+      accountId,
       setStatus,
-    }: {
-      setStatus: (status: Record<string, unknown>) => void;
-    }) => {
+    }: ChannelGatewayContext<ResolvedRedisStreamAccount>) => {
       try {
         await stopRedisServer();
         setStatus?.({
+          accountId,
           running: false,
           configured: true,
           lastStopAt: Date.now(),
@@ -149,6 +149,7 @@ export const redisStreamChannel = {
         });
       } catch (error) {
         setStatus?.({
+          accountId,
           running: false,
           configured: true,
           lastError: error instanceof Error ? error.message : String(error),
@@ -172,37 +173,34 @@ export const redisStreamChannel = {
 
   // ── 状态快照 ──────────────────────────────────────────────
   status: {
-    buildAccountSnapshot: (cfg: Record<string, unknown>) => {
-      const config = resolveRedisChannelConfig(cfg);
-      const rawChannel = ((cfg.channels as
-        | Record<string, unknown>
-        | undefined) ?? {})["redis-stream"] as
-        | Record<string, unknown>
-        | undefined;
+    buildAccountSnapshot: ({
+      account,
+      runtime,
+    }: {
+      account: ResolvedRedisStreamAccount;
+      cfg: OpenClawConfig;
+      runtime?: ChannelAccountSnapshot;
+    }) => {
       return {
-        accountId: DEFAULT_ACCOUNT_ID,
-        name: "Redis Stream",
-        enabled: true,
-        configured: Boolean(rawChannel?.url),
+        ...runtime,
+        accountId: account.accountId,
+        name: account.name,
+        enabled: account.enabled,
+        configured: account.configured,
         extra: {
           stats: getStats(),
           config: {
-            url: redactUrl(config.url),
-            channelMode: config.channelMode,
-            subscribeChannels: config.subscribeChannels,
-            channelBindings: config.channelBindings,
+            url: redactUrl(account.config.url),
+            channelMode: account.config.channelMode,
+            subscribeChannels: account.config.subscribeChannels,
+            channelBindings: account.config.channelBindings,
           },
         },
       };
     },
 
-    probeAccount: async (cfg: Record<string, unknown>) => {
-      const rawChannel = ((cfg.channels as
-        | Record<string, unknown>
-        | undefined) ?? {})["redis-stream"] as
-        | Record<string, unknown>
-        | undefined;
-      if (!rawChannel?.url) {
+    probeAccount: async ({ account }: { account: ResolvedRedisStreamAccount }) => {
+      if (!account.configured) {
         return { reachable: false, reason: "No Redis URL configured" };
       }
       try {

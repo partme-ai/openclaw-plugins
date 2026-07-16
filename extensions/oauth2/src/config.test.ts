@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveOAuth2Config } from "./config.js";
+import { resolveOAuth2Config, validateOAuth2GatewayIntegration } from "./config.js";
 
 const baseConfig = {
   enabled: true,
@@ -51,5 +51,53 @@ describe("resolveOAuth2Config", () => {
         tokenParameters: { code_verifier: "attacker-controlled" },
       },
     })).toThrow(/tokenParameters\.code_verifier.*cannot be overridden/);
+  });
+
+  it("rejects unsafe identity headers and invalid memory capacity", () => {
+    expect(() => resolveOAuth2Config({
+      proxy: { userHeader: "authorization" },
+    })).toThrow(/reserved header/);
+    expect(() => resolveOAuth2Config({
+      client: { sessionStore: { maxEntries: 0 } },
+    })).toThrow(/positive safe integer/);
+  });
+
+  it("only proxies to a loopback OpenClaw Gateway", () => {
+    expect(() => resolveOAuth2Config({
+      ...baseConfig,
+      clientSecret: "client-secret",
+      proxy: { upstreamHost: "gateway.internal" },
+    })).toThrow(/proxy\.upstreamHost must be 127\.0\.0\.1 or ::1/);
+  });
+
+  it("fails closed when OpenClaw trusted-proxy integration does not match", () => {
+    const config = resolveOAuth2Config({ ...baseConfig, clientSecret: "client-secret" });
+    const validGateway = {
+      gateway: {
+        port: 18789,
+        trustedProxies: ["127.0.0.1"],
+        auth: {
+          mode: "trusted-proxy",
+          trustedProxy: { userHeader: "x-forwarded-user", allowLoopback: true },
+        },
+      },
+    };
+
+    expect(() => validateOAuth2GatewayIntegration(config, validGateway)).not.toThrow();
+    expect(() => validateOAuth2GatewayIntegration(config, {
+      gateway: { ...validGateway.gateway, auth: { mode: "none" } },
+    })).toThrow(/auth\.mode must be trusted-proxy/);
+    expect(() => validateOAuth2GatewayIntegration(config, {
+      gateway: {
+        ...validGateway.gateway,
+        auth: { mode: "trusted-proxy", trustedProxy: { userHeader: "x-user", allowLoopback: true } },
+      },
+    })).toThrow(/userHeader must equal x-forwarded-user/);
+    expect(() => validateOAuth2GatewayIntegration(config, {
+      gateway: { ...validGateway.gateway, trustedProxies: [] },
+    })).toThrow(/trustedProxies must include 127\.0\.0\.1/);
+    expect(() => validateOAuth2GatewayIntegration(config, {
+      gateway: { ...validGateway.gateway, port: 19789 },
+    })).toThrow(/must match gateway\.port/);
   });
 });

@@ -21,6 +21,7 @@ export const EXTENSION_INVENTORY = [
   { id: "stomp", filter: "@partme.ai/openclaw-stomp", dir: "extensions/stomp", type: "channel", category: "embedded-service", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
   { id: "web-mqtt", filter: "@partme.ai/openclaw-web-mqtt", dir: "extensions/web-mqtt", type: "channel", category: "web-browser", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
   { id: "web-stomp", filter: "@partme.ai/openclaw-web-stomp", dir: "extensions/web-stomp", type: "channel", category: "web-browser", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
+  { id: "web-socket", filter: "@partme.ai/openclaw-web-socket", dir: "extensions/web-socket", type: "channel", category: "web-browser", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
   { id: "rabbitmq", filter: "@partme.ai/openclaw-rabbitmq", dir: "extensions/rabbitmq", type: "channel", category: "external-broker", e2eAdapter: true, dockerRequired: true, dockerServices: ["rabbitmq"] },
   { id: "rocketmq", filter: "@partme.ai/openclaw-rocketmq", dir: "extensions/rocketmq", type: "channel", category: "external-broker", e2eAdapter: true, dockerRequired: true, dockerServices: ["rocketmq-namesrv", "rocketmq-broker", "rocketmq-proxy"] },
   { id: "gotify", filter: "@partme.ai/openclaw-gotify", dir: "extensions/gotify", type: "channel", category: "external-broker", e2eAdapter: true, dockerRequired: true, dockerServices: ["gotify"] },
@@ -36,9 +37,9 @@ export const EXTENSION_INVENTORY = [
   { id: "bridge", filter: "@partme.ai/openclaw-bridge", dir: "extensions/bridge", type: "capability", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "router", filter: "@partme.ai/openclaw-router", dir: "extensions/router", type: "infra", category: "infra", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
   { id: "nacos", filter: "@partme.ai/openclaw-nacos", dir: "extensions/nacos", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
-  { id: "mtls", filter: "@partme.ai/openclaw-mtls", dir: "extensions/mtls", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
-  { id: "oauth2", filter: "@partme.ai/openclaw-oauth2", dir: "extensions/oauth2", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
-  { id: "tracing", filter: "@partme.ai/openclaw-tracing", dir: "extensions/tracing", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
+  { id: "mtls", filter: "@partme.ai/openclaw-mtls", dir: "extensions/mtls", type: "infra", category: "infra", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
+  { id: "oauth2", filter: "@partme.ai/openclaw-oauth2", dir: "extensions/oauth2", type: "infra", category: "infra", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
+  { id: "tracing", filter: "@partme.ai/openclaw-tracing", dir: "extensions/tracing", type: "infra", category: "infra", e2eAdapter: true, dockerRequired: true, dockerServices: ["otel-collector"] },
   { id: "prometheus", filter: "@partme.ai/openclaw-prometheus", dir: "extensions/prometheus", type: "infra", category: "infra", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "knowledge", filter: "@partme.ai/openclaw-knowledge", dir: "extensions/knowledge", type: "capability", category: "capability", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
   { id: "memory", filter: "@partme.ai/openclaw-memory", dir: "extensions/memory", type: "memory", category: "memory", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
@@ -49,6 +50,54 @@ export const EXTENSION_INVENTORY = [
 /** E2E-capable queue/channel plugins (subset of EXTENSION_INVENTORY). */
 /** @type {import('./registry.mjs').PluginDefinition[]} */
 export const PLUGIN_REGISTRY = [
+  {
+    id: "tracing",
+    category: "infra",
+    filter: "@partme.ai/openclaw-tracing",
+    dir: "extensions/tracing",
+    extDir: "openclaw-tracing",
+    channels: [],
+    dockerServices: ["otel-collector"],
+    needsGotify: false,
+    browserTest: false,
+    isolated: true,
+  },
+  {
+    id: "web-socket",
+    category: "web-browser",
+    filter: "@partme.ai/openclaw-web-socket",
+    dir: "extensions/web-socket",
+    extDir: "openclaw-web-socket",
+    channels: ["web-socket"],
+    dockerServices: [],
+    needsGotify: false,
+    browserTest: false,
+    isolated: true,
+  },
+  {
+    id: "oauth2",
+    category: "infra",
+    filter: "@partme.ai/openclaw-oauth2",
+    dir: "extensions/oauth2",
+    extDir: "openclaw-oauth2",
+    channels: [],
+    dockerServices: [],
+    needsGotify: false,
+    browserTest: false,
+    isolated: true,
+  },
+  {
+    id: "mtls",
+    category: "infra",
+    filter: "@partme.ai/openclaw-mtls",
+    dir: "extensions/mtls",
+    extDir: "openclaw-mtls",
+    channels: [],
+    dockerServices: [],
+    needsGotify: false,
+    browserTest: false,
+    isolated: true,
+  },
   {
     id: "router",
     category: "infra",
@@ -178,10 +227,14 @@ export function resolveExtensionIds(requested) {
  */
 export function resolvePlugins(requested) {
   const all = PLUGIN_REGISTRY.map((p) => p.id);
-  if (!requested?.length) return all;
+  if (!requested?.length) return PLUGIN_REGISTRY.filter((plugin) => !plugin.isolated).map((plugin) => plugin.id);
   const unknown = requested.filter((id) => !all.includes(id));
   if (unknown.length) {
     throw new Error(`Unknown plugin id(s): ${unknown.join(", ")}. Known e2e: ${all.join(", ")}`);
+  }
+  const isolated = requested.filter((id) => findPlugin(id).isolated);
+  if (isolated.length > 0 && requested.length > 1) {
+    throw new Error(`Isolated E2E plugin ${isolated.join(", ")} must run alone`);
   }
   return requested;
 }

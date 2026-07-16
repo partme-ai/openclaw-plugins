@@ -1,26 +1,45 @@
-# Meituan
+# @partme.ai/openclaw-meituan
 
-OpenClaw 美团开放平台渠道与运营工具插件，公域 Agent-First 智能运营。符合《公域平台 Agent-First 智能运营设计文档》与《美团开放平台对接规格》。
-| 运行时 | 项目路径 | 说明 |
-|--------|----------|------|
+Meituan MTOp OpenAPI capability for OpenClaw 2026.7.1. This package is not a chat channel. It invokes only operations explicitly allowlisted from your Meituan application documentation.
 
-## 能力
+## What it implements
 
-- **渠道** `meituan`：配置 `channels.meituan`（app_key、app_secret、callback_url、shop_id 等）
-- **Webhook**：`POST /channels/meituan/webhook` 接收美团开放平台事件
-- **工具**（若运行时提供 `registerTool`）：meituan_query_orders、meituan_reply_review、meituan_query_shop_metrics、meituan_verify_writeoff、meituan_shop_qrcode
+- The form-encoded request contract used by the official `MtOpJavaSDK`.
+- SHA-1 signing over `signKey + sorted(key + value)`.
+- Configured API path and `businessId` allowlists.
+- Owner-only access by default, request rate limiting, timeout, and body limits.
+- No automatic POST retry, which prevents accidental duplicate write operations.
 
-## 安装与配置
+## Configuration
 
-安装后于 `openclaw.json` 的 `channels.meituan` 中配置凭证与回调 URL。在美团开放平台将回调地址设为 `https://<域名>/channels/meituan/webhook`。
-
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
-
-## 构建
-
-```bash
-pnpm install
-pnpm build
+```json
+{
+  "plugins": {
+    "entries": {
+      "meituan": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "developerId": "123456",
+          "signKey": "secret",
+          "appAuthToken": "authorized-shop-token",
+          "operations": [
+            {
+              "name": "receipt_query",
+              "apiPath": "/path-copied-from-meituan-docs",
+              "businessId": 1,
+              "requiresAuth": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}
 ```
 
-## E2E 验证
+Credentials may instead be provided through `MEITUAN_DEVELOPER_ID`, `MEITUAN_SIGN_KEY`, and `MEITUAN_APP_AUTH_TOKEN`. The default endpoint is `https://api-open-cater.meituan.com`.
+
+The plugin registers `meituan_openapi_invoke` with `{ operation, biz }`. Both the operation definition and its `biz` fields must come from the documentation available for your approved Meituan business integration.
+
+See [README.zh-CN.md](./README.zh-CN.md) for the complete production checklist. Public platform entry: <https://openapi.meituan.com/>.

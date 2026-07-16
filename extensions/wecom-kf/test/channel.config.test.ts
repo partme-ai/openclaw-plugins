@@ -1,5 +1,5 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { wecomPlugin } from "../src/channel/channel.js";
 
@@ -143,5 +143,28 @@ describe("wecomPlugin account conflict guards", () => {
     expect(wecomPlugin.config.unconfiguredReason?.(accountB, cfg)).toContain(
       "Duplicate WeCom agent identity",
     );
+  });
+});
+
+describe("wecomPlugin account probe", () => {
+  it("reads KF credentials from the resolved account.config shape", async () => {
+    const apiClient = await import("../src/agent/api-client.js");
+    const tokenSpy = vi.spyOn(apiClient, "getAccessToken").mockResolvedValue("token");
+    const result = await wecomPlugin.status?.probeAccount?.({
+      account: {
+        accountId: "desk",
+        enabled: true,
+        configured: true,
+        config: {
+          corpId: "ww-corp",
+          corpSecret: "secret",
+          token: "callback-token",
+          encodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        },
+      },
+    } as never);
+    expect(result).toEqual({ ok: true });
+    expect(tokenSpy).toHaveBeenCalledWith(expect.objectContaining({ corpId: "ww-corp" }));
+    tokenSpy.mockRestore();
   });
 });

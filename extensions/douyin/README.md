@@ -25,7 +25,7 @@ The Life Service Webhook is not a symmetric direct-message protocol. Generic cha
 }
 ```
 
-`shop_id` remains a compatibility alias for `account_id`; new configurations should use `account_id` and `poi_id` explicitly. `accounts.<id>` may override all account-specific settings.
+`shop_id` remains a compatibility alias for `account_id`; new configurations should use `account_id` and `poi_id` explicitly. `accounts.<id>` may override all account-specific settings. A named account without an explicit `webhook_path` receives a path derived from the top-level path, such as `/channels/douyin/webhook/shop-a`; duplicate routes fail startup instead of replacing another account handler.
 
 ## Tools
 

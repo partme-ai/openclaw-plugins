@@ -14,7 +14,6 @@ import {
   markClientConnected,
 } from "../routing/session-mapper.js";
 import { loadTopicMappings } from "../routing/topic-router.js";
-import { initQosHandler, stopQosHandler } from "./qos-handler.js";
 import {
   hasLegacyMqttDmScope,
   resolveBrokerConfig,
@@ -65,15 +64,9 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
       loadTopicMappings(config.topicBindings);
     }
 
-    initQosHandler((_topic, _payload, _messageId) => {
-      ctx.log?.info?.("[openclaw-mqtt] QoS retry not yet implemented");
-    });
-
     await startBroker(
       config,
-      (message) => {
-        void handleInboundMessage(message);
-      },
+      (message) => handleInboundMessage(message),
       (clientId) => {
         markClientConnected(clientId);
       },
@@ -91,7 +84,7 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
       port: config.port,
     } as ChannelAccountSnapshot);
 
-    ctx.log?.info?.(`[${ctx.account.accountId}] MQTT broker listening on tcp://0.0.0.0:${config.port}`);
+    ctx.log?.info?.(`[${ctx.account.accountId}] MQTT broker listening on tcp://${config.host}:${config.port}`);
 
     await waitForAbortSignal(ctx.abortSignal);
   } catch (err) {
@@ -102,7 +95,6 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
     } as ChannelAccountSnapshot);
     throw err;
   } finally {
-    stopQosHandler();
     await stopBroker();
     setMqttChannelConfig(null);
     ctx.setStatus({

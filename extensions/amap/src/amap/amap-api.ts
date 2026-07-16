@@ -1,49 +1,103 @@
-/**
- * 高德 Web 服务 API 客户端（Infrastructure）
- *
- * **架构角色**：封装高德 REST API 的 GET 调用与 key 鉴权，
- * 供 Agent 工具层（`tools/tools.ts`）统一调用。
- *
- * 与《高德开放平台对接规格》§5 一致；Base URL 以官方文档为准。
- *
- * **关键依赖**：`../types` — `AmapAccountConfig`
- */
+import type { AmapApiResponse, AmapPluginConfig } from "../types.js";
 
-import type { AmapAccountConfig } from "../types.js";
+const ALLOWED_PATHS = new Set(["/v5/place/text", "/v5/place/around", "/v5/place/detail"]);
 
-/**
- * 高德 API Base URL。
- * 可通过环境变量 `AMAP_API_BASE` 覆盖（测试 / 代理场景）。
- */
-const AMAP_API_BASE = process.env.AMAP_API_BASE ?? "https://restapi.amap.com";
-
-/**
- * 调用高德 Web 服务 API（GET，key 作为 query 参数）。
- *
- * @param config - 账号配置，须含 `key`；未配置时返回 `{ error: "amap channel not configured" }`
- * @param path - API 路径，如 `/v3/place/text`
- * @param params - 业务 query 参数（`undefined` / `null` 值会被忽略）
- * @returns 成功时为 JSON 解析结果；HTTP 非 2xx 返回 `{ error }`；非 JSON 响应返回 `{ data: text }`
- */
-export async function amapApiCall(
-  config: AmapAccountConfig | undefined,
-  path: string,
-  params: Record<string, string | number | undefined>
-): Promise<unknown> {
-  if (!config?.key) {
-    return { error: "amap channel not configured" };
+export class AmapApiError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message);
+    this.name = "AmapApiError";
   }
-  const flat: Record<string, string> = { key: config.key };
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null) flat[k] = String(v);
+}
+
+export class AmapClient {
+  private readonly requestTimestamps: number[] = [];
+
+  constructor(private readonly config: AmapPluginConfig) {}
+
+  async get(path: string, params: Record<string, string | number | undefined>): Promise<AmapApiResponse> {
+    if (!ALLOWED_PATHS.has(path)) throw new AmapApiError("Unsupported AMap API path");
+    this.consumeRateLimit();
+    const url = new URL(path, `${this.config.apiBaseUrl}/`);
+    url.searchParams.set("key", this.config.key);
+    url.searchParams.set("output", "JSON");
+    for (const [name, value] of Object.entries(params)) {
+      if (value !== undefined) url.searchParams.set(name, String(value));
+    }
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= this.config.retryAttempts; attempt += 1) {
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          headers: { Accept: "application/json", "User-Agent": "openclaw-amap/2026.7.1" },
+          signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+        });
+        const body = await readBoundedBody(response, this.config.maxResponseBytes);
+        if ((response.status === 429 || response.status >= 500) && attempt < this.config.retryAttempts) {
+          await delay(Math.min(250 * 2 ** attempt, 1_000));
+          continue;
+        }
+        if (!response.ok) throw new AmapApiError(`AMap API HTTP ${response.status}`);
+        let parsed: AmapApiResponse;
+        try {
+          parsed = JSON.parse(body) as AmapApiResponse;
+        } catch {
+          throw new AmapApiError("AMap API returned invalid JSON");
+        }
+        if (String(parsed.status ?? "1") !== "1") {
+          throw new AmapApiError(`AMap API rejected the request: ${String(parsed.info ?? "unknown error")}`, String(parsed.infocode ?? ""));
+        }
+        return parsed;
+      } catch (error) {
+        lastError = error;
+        const retryable = error instanceof TypeError || (error instanceof DOMException && error.name === "TimeoutError");
+        if (!retryable || attempt >= this.config.retryAttempts) break;
+        await delay(Math.min(250 * 2 ** attempt, 1_000));
+      }
+    }
+    if (lastError instanceof AmapApiError) throw lastError;
+    if (lastError instanceof DOMException && lastError.name === "TimeoutError") throw new AmapApiError("AMap API request timed out");
+    throw new AmapApiError(`AMap API request failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
   }
-  const url = `${AMAP_API_BASE}${path}?${new URLSearchParams(flat).toString()}`;
-  const res = await fetch(url, { method: "GET" });
-  const text = await res.text();
-  if (!res.ok) return { error: text || res.statusText };
+
+  private consumeRateLimit(now = Date.now()): void {
+    const cutoff = now - 60_000;
+    while (this.requestTimestamps[0] !== undefined && this.requestTimestamps[0] <= cutoff) this.requestTimestamps.shift();
+    if (this.requestTimestamps.length >= this.config.maxRequestsPerMinute) throw new AmapApiError("AMap local request rate limit exceeded");
+    this.requestTimestamps.push(now);
+  }
+}
+
+async function readBoundedBody(response: Response, maxBytes: number): Promise<string> {
+  const length = Number(response.headers.get("content-length"));
+  if (Number.isFinite(length) && length > maxBytes) throw new AmapApiError("AMap API response exceeded maxResponseBytes");
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
   try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return { data: text };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) throw new AmapApiError("AMap API response exceeded maxResponseBytes");
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
   }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(joined);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }

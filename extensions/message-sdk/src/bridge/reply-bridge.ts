@@ -24,7 +24,7 @@ export function createReplyHandler(params: ReplyBridgeParams): ReplyBridgeResult
   const { runtime, channel, accountId, peerId, deliver, outboundFormat, replyRoute, agentId } =
     params;
 
-  const dispatcher = runtime.channel.reply.createReplyDispatcherWithTyping({
+  const created = runtime.channel.reply.createReplyDispatcherWithTyping({
     deliver: async (payload: { text: string }) => {
       const wire = serializeForTransport({
         channel,
@@ -39,8 +39,16 @@ export function createReplyHandler(params: ReplyBridgeParams): ReplyBridgeResult
     },
   });
 
+  // OpenClaw 2026.7.1 returns a bundle. Older compatible runtimes returned the
+  // dispatcher directly, so retain a narrow fallback for already deployed hosts.
+  const bundle = created as {
+    dispatcher?: unknown;
+    replyOptions?: Record<string, unknown>;
+  };
+  const dispatcher = bundle?.dispatcher ?? created;
+
   return {
     dispatcher,
-    replyOptions: {},
+    replyOptions: bundle?.dispatcher ? (bundle.replyOptions ?? {}) : {},
   };
 }

@@ -23,10 +23,10 @@ const configSchema = {
   properties: {
     enabled: { type: "boolean" as const, default: true },
     dataDir: { type: "string" as const, default: "~/.openclaw/state/memory" },
-    maxSearchResults: { type: "number" as const, minimum: 1, maximum: 100, default: 10 },
-    retentionDays: { type: "number" as const, minimum: 1, maximum: 3650, default: 90 },
-    extractionInterval: { type: "number" as const, minimum: 1, maximum: 100, default: 5 },
-    maxRecordBytes: { type: "number" as const, minimum: 1024, maximum: 1048576, default: 65536 },
+    maxSearchResults: { type: "integer" as const, minimum: 1, maximum: 100, default: 10 },
+    retentionDays: { type: "integer" as const, minimum: 1, maximum: 3650, default: 90 },
+    extractionInterval: { type: "integer" as const, minimum: 1, maximum: 100, default: 5 },
+    maxRecordBytes: { type: "integer" as const, minimum: 1024, maximum: 1048576, default: 65536 },
     profileScope: { type: "string" as const, enum: ["session", "agent"], default: "session" },
     encryptionKeyEnv: { type: "string" as const },
   },
@@ -81,6 +81,13 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     if (!config.enabled) {
       api.logger.info("[memory] disabled");
       return;
+    }
+    const conversationAccessAllowed =
+      api.config?.plugins?.entries?.memory?.hooks?.allowConversationAccess === true;
+    if (!conversationAccessAllowed) {
+      api.logger.warn(
+        "[memory] conversation capture requires plugins.entries.memory.hooks.allowConversationAccess=true; the Memory Host can load, but agent_end persistence will be blocked until this trust policy is enabled",
+      );
     }
 
     const store = new MemoryStore(config);

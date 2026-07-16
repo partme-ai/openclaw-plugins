@@ -5,6 +5,20 @@ export type MtlsConfigInput = Partial<Omit<MtlsConfig, "tls" | "proxy">> & {
   proxy?: Partial<MtlsConfig["proxy"]>;
 };
 
+export type OpenClawGatewayConfigSlice = {
+  gateway?: {
+    port?: number;
+    trustedProxies?: string[];
+    auth?: {
+      mode?: string;
+      trustedProxy?: {
+        userHeader?: string;
+        allowLoopback?: boolean;
+      };
+    };
+  };
+};
+
 const DEFAULT_CONFIG: MtlsConfig = {
   enabled: false,
   tls: {
@@ -25,7 +39,7 @@ const DEFAULT_CONFIG: MtlsConfig = {
   },
   protectedPaths: [{ path: "/", match: "prefix", allowUnauthenticated: false }],
   allowedClients: [],
-  skipPaths: ["/health", "/auth/status", "/mtls/status"],
+  skipPaths: ["/health", "/auth/status"],
   passthrough: false,
   headerName: "x-client-cert",
   headerCertField: "subject",
@@ -37,6 +51,39 @@ function requireNonEmpty(value: string, field: string): void {
   }
 }
 
+const HTTP_HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const FORBIDDEN_IDENTITY_HEADERS = new Set([
+  "authorization",
+  "connection",
+  "cookie",
+  "forwarded",
+  "host",
+  "proxy-authorization",
+  "transfer-encoding",
+  "upgrade",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "x-real-ip",
+]);
+
+function requireHeaderName(value: string, field: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!HTTP_HEADER_NAME.test(normalized)) {
+    throw new Error(`[openclaw-mtls] ${field} must be a valid HTTP header name`);
+  }
+  if (FORBIDDEN_IDENTITY_HEADERS.has(normalized)) {
+    throw new Error(`[openclaw-mtls] ${field} cannot use reserved header ${normalized}`);
+  }
+  return normalized;
+}
+
+function validatePath(path: string, field: string): void {
+  if (!path.startsWith("/") || path.includes("?") || path.includes("#")) {
+    throw new Error(`[openclaw-mtls] ${field} must be an absolute URL pathname`);
+  }
+}
+
 function requirePort(value: number, field: string, allowEphemeral = false): void {
   const minimum = allowEphemeral ? 0 : 1;
   if (!Number.isInteger(value) || value < minimum || value > 65535) {
@@ -44,6 +91,14 @@ function requirePort(value: number, field: string, allowEphemeral = false): void
       `[openclaw-mtls] ${field} must be an integer between ${minimum} and 65535`,
     );
   }
+}
+
+function requireLoopbackUpstream(host: string): "127.0.0.1" | "::1" {
+  const normalized = host.trim().toLowerCase();
+  if (normalized === "127.0.0.1" || normalized === "::1") return normalized;
+  throw new Error(
+    "[openclaw-mtls] proxy.upstreamHost must be 127.0.0.1 or ::1; the plugin may only proxy to its local OpenClaw Gateway",
+  );
 }
 
 export function resolveMtlsConfig(input: MtlsConfigInput | undefined): MtlsConfig {
@@ -62,7 +117,28 @@ export function resolveMtlsConfig(input: MtlsConfigInput | undefined): MtlsConfi
   if (!Number.isInteger(config.proxy.requestTimeoutMs) || config.proxy.requestTimeoutMs < 1_000) {
     throw new Error("[openclaw-mtls] proxy.requestTimeoutMs must be at least 1000ms");
   }
-  requireNonEmpty(config.proxy.userHeader, "proxy.userHeader");
+  const userHeader = requireHeaderName(config.proxy.userHeader, "proxy.userHeader");
+  const certificateHeader = requireHeaderName(config.headerName, "headerName");
+  if (userHeader === certificateHeader) {
+    throw new Error("[openclaw-mtls] proxy.userHeader and headerName must be different");
+  }
+  config.proxy.userHeader = userHeader;
+  config.headerName = certificateHeader;
+
+  config.protectedPaths.forEach((rule, index) => {
+    validatePath(rule.path, `protectedPaths[${index}].path`);
+    if (rule.match !== "exact" && rule.match !== "prefix") {
+      throw new Error(`[openclaw-mtls] protectedPaths[${index}].match must be exact or prefix`);
+    }
+  });
+  config.skipPaths.forEach((path, index) => validatePath(path, `skipPaths[${index}]`));
+  config.allowedClients.forEach((client, index) => {
+    if (![client.cn, client.issuer, client.fingerprint].some((value) => value?.trim())) {
+      throw new Error(
+        `[openclaw-mtls] allowedClients[${index}] must define cn, issuer, or fingerprint`,
+      );
+    }
+  });
 
   if (config.enabled) {
     if (!config.tls.enabled) {
@@ -71,10 +147,68 @@ export function resolveMtlsConfig(input: MtlsConfigInput | undefined): MtlsConfi
     requireNonEmpty(config.tls.certFile, "tls.certFile");
     requireNonEmpty(config.tls.keyFile, "tls.keyFile");
     requireNonEmpty(config.tls.caFile, "tls.caFile");
-    if (!config.tls.requestCert && config.protectedPaths.some((rule) => !rule.allowUnauthenticated)) {
-      throw new Error("[openclaw-mtls] tls.requestCert must be true when protected paths are configured");
+    if (!config.tls.requestCert) {
+      throw new Error("[openclaw-mtls] tls.requestCert must be true when the mTLS proxy is enabled");
     }
+    if (!config.tls.rejectUnauthorized) {
+      throw new Error(
+        "[openclaw-mtls] tls.rejectUnauthorized must be true when the mTLS proxy is enabled",
+      );
+    }
+    if (config.passthrough) {
+      throw new Error(
+        "[openclaw-mtls] passthrough cannot be enabled; use protectedPaths.allowUnauthenticated or skipPaths for explicit public routes",
+      );
+    }
+    config.proxy.upstreamHost = requireLoopbackUpstream(config.proxy.upstreamHost);
   }
 
   return config;
+}
+
+
+/**
+ * Validate the proxy against OpenClaw's official trusted-proxy contract before
+ * opening the listener. This prevents a seemingly healthy proxy whose identity
+ * headers are rejected by the Gateway, and prevents accidental remote proxying.
+ */
+export function validateMtlsGatewayIntegration(
+  config: MtlsConfig,
+  openClawConfig: OpenClawGatewayConfigSlice,
+): void {
+  if (!config.enabled) return;
+
+  const gateway = openClawConfig.gateway;
+  const auth = gateway?.auth;
+  if (auth?.mode !== "trusted-proxy") {
+    throw new Error(
+      "[openclaw-mtls] gateway.auth.mode must be trusted-proxy when the mTLS proxy is enabled",
+    );
+  }
+
+  const configuredHeader = auth.trustedProxy?.userHeader?.trim().toLowerCase();
+  if (configuredHeader !== config.proxy.userHeader) {
+    throw new Error(
+      `[openclaw-mtls] gateway.auth.trustedProxy.userHeader must equal ${config.proxy.userHeader}`,
+    );
+  }
+  if (auth.trustedProxy?.allowLoopback !== true) {
+    throw new Error(
+      "[openclaw-mtls] gateway.auth.trustedProxy.allowLoopback must be true for the local mTLS proxy",
+    );
+  }
+
+  const trustedProxies = gateway?.trustedProxies?.map((value) => value.trim()) ?? [];
+  if (!trustedProxies.includes(config.proxy.upstreamHost)) {
+    throw new Error(
+      `[openclaw-mtls] gateway.trustedProxies must include ${config.proxy.upstreamHost}`,
+    );
+  }
+
+  const gatewayPort = gateway?.port ?? 18789;
+  if (gatewayPort !== config.proxy.upstreamPort) {
+    throw new Error(
+      `[openclaw-mtls] proxy.upstreamPort (${config.proxy.upstreamPort}) must match gateway.port (${gatewayPort})`,
+    );
+  }
 }

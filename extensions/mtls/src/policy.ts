@@ -38,7 +38,10 @@ function isClientAllowed(config: MtlsConfig, certificate: ClientCertInfo): boole
   return config.allowedClients.some((allowed) => {
     if (allowed.cn && certificate.subject !== allowed.cn) return false;
     if (allowed.issuer && certificate.issuer !== allowed.issuer) return false;
-    if (allowed.fingerprint && certificate.fingerprint !== allowed.fingerprint) return false;
+    if (
+      allowed.fingerprint &&
+      certificate.fingerprint?.toLowerCase() !== allowed.fingerprint.toLowerCase()
+    ) return false;
     return true;
   });
 }
@@ -49,10 +52,17 @@ export function authorizeMtlsRequest(
   certificate: ClientCertInfo | undefined,
 ): MtlsAuthorization {
   if (!isPathProtected(config, pathname)) {
-    return { allowed: true, authenticated: Boolean(certificate?.verified) };
+    if (certificate?.verified && isClientAllowed(config, certificate)) {
+      return {
+        allowed: true,
+        authenticated: true,
+        principal: certificate.subject,
+        certificate,
+      };
+    }
+    return { allowed: true, authenticated: false };
   }
   if (!certificate?.subject) {
-    if (config.passthrough) return { allowed: true, authenticated: false };
     return {
       allowed: false,
       authenticated: false,
@@ -60,7 +70,7 @@ export function authorizeMtlsRequest(
       message: "Client certificate required",
     };
   }
-  if (config.tls.rejectUnauthorized && !certificate.verified) {
+  if (!certificate.verified) {
     return {
       allowed: false,
       authenticated: false,
@@ -88,11 +98,31 @@ function normalizeHeaderName(value: string): string {
   return value.trim().toLowerCase();
 }
 
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+function connectionHeaderTokens(value: string | string[] | undefined): string[] {
+  const source = Array.isArray(value) ? value.join(",") : value ?? "";
+  return source
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 export function buildForwardHeaders(
   config: MtlsConfig,
   source: IncomingHttpHeaders,
   certificate: ClientCertInfo | undefined,
   remoteAddress: string | undefined,
+  transport: "http" | "upgrade" = "http",
 ): OutgoingHttpHeaders {
   const headers: OutgoingHttpHeaders = { ...source };
   const identityHeader = normalizeHeaderName(config.proxy.userHeader);
@@ -100,14 +130,23 @@ export function buildForwardHeaders(
 
   delete headers[identityHeader];
   delete headers[certificateHeader];
-  delete headers["x-forwarded-for"];
-  delete headers["x-forwarded-proto"];
-  delete headers["x-openclaw-scopes"];
+  delete headers.forwarded;
+  delete headers["x-real-ip"];
+  for (const header of connectionHeaderTokens(source.connection)) delete headers[header];
+  for (const header of HOP_BY_HOP_HEADERS) delete headers[header];
+  for (const header of Object.keys(headers)) {
+    if (header.toLowerCase().startsWith("x-forwarded-")) delete headers[header];
+  }
+
+  if (transport === "upgrade") {
+    headers.connection = "Upgrade";
+    if (source.upgrade) headers.upgrade = source.upgrade;
+  }
 
   headers["x-forwarded-proto"] = "https";
   if (remoteAddress) headers["x-forwarded-for"] = remoteAddress;
+  if (source.host) headers["x-forwarded-host"] = source.host;
   if (certificate?.subject) headers[identityHeader] = certificate.subject;
-  if (config.proxy.scopesHeader) headers["x-openclaw-scopes"] = config.proxy.scopesHeader;
 
   if (certificate && config.headerCertField) {
     const value = certificate[config.headerCertField as keyof ClientCertInfo];

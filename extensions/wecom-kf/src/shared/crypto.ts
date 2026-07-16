@@ -34,7 +34,10 @@ export function computeWecomMsgSignature(params: {
 export function verifyWecomSignature(params: {
   token: string; timestamp: string; nonce: string; encrypt: string; signature: string;
 }): boolean {
-  return computeWecomMsgSignature({ token: params.token, timestamp: params.timestamp, nonce: params.nonce, encrypt: params.encrypt }) === params.signature;
+  const expected = computeWecomMsgSignature({ token: params.token, timestamp: params.timestamp, nonce: params.nonce, encrypt: params.encrypt });
+  const signature = params.signature.trim().toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(signature)) return false;
+  return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"));
 }
 
 export function decryptWecomEncrypted(params: {

@@ -15,7 +15,11 @@ function resolveToolAccount(
 ): DouyinAccountConfig | undefined {
   if (!section) return undefined;
   const name = typeof accountName === "string" && accountName.trim() ? accountName.trim() : undefined;
-  if (name) return { ...section, ...(section.accounts?.[name] ?? {}) };
+  if (name) {
+    const selected = section.accounts?.[name];
+    if (!selected) throw new Error(`[douyin] configured account not found: ${name}`);
+    return { ...section, ...selected };
+  }
   if (section.app_key && section.app_secret) return section;
   const first = Object.values(section.accounts ?? {})[0];
   return first ? { ...section, ...first } : section;

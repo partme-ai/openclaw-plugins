@@ -70,4 +70,15 @@ describe("Douyin OpenAPI tools", () => {
     await expect(tools[0].execute({ page_num: 101, page_size: 100 }))
       .rejects.toThrow(/pagination limits/);
   });
+
+  it("rejects an unknown explicitly selected account", async () => {
+    const tools = createDouyinTools(() => ({
+      rootConfig: { channels: {} },
+      section: {
+        accounts: { known: { app_key: "key", app_secret: "secret", account_id: "merchant-1" } },
+      },
+    }));
+    await expect(tools[0].execute({ account: "missing" }))
+      .rejects.toThrow(/configured account not found: missing/);
+  });
 });

@@ -7,95 +7,12 @@
  * - 会话映射与插件配置
  */
 
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
 
-// ─────────────────── OpenClaw Plugin API 类型 ───────────────────
+export type PluginApi = OpenClawPluginApi;
+export type GatewayRuntime = PluginRuntime;
 
-/**
- * OpenClaw 插件 API 接口
- * 由 Gateway 在插件加载时注入
- */
-export interface PluginApi {
-  /** Gateway 运行时实例 */
-  runtime: GatewayRuntime;
-  /** 注册渠道 */
-  registerChannel(channel: ChannelRegistration): void;
-  /** 注册 HTTP 路由端点 */
-  registerHttpRoute(route: HttpRouteDefinition): void;
-}
-
-/** 渠道注册包装 */
-export interface ChannelRegistration {
-  plugin: ChannelDefinition;
-}
-
-/** 渠道元数据（UI 展示与排序） */
-export interface ChannelMeta {
-  id: string;
-  label: string;
-  selectionLabel: string;
-  docsPath: string;
-  blurb: string;
-  aliases?: string[];
-  order?: number;
-}
-
-/** 渠道定义（OpenClaw Channel 契约） */
-export interface ChannelDefinition {
-  id: string;
-  name: string;
-  meta: ChannelMeta;
-  capabilities: { chatTypes: ("direct" | "group" | "channel" | "thread")[] };
-  config: {
-    listAccountIds: (cfg: Record<string, unknown>) => string[];
-    resolveAccount: (cfg: Record<string, unknown>, accountId?: string | null) => Record<string, unknown>;
-  };
-  outbound: {
-    sendText: (sessionKey: string, text: string) => Promise<void>;
-  };
-  setupWizard?: unknown;
-  setup?: unknown;
-}
-
-/** HTTP 路由定义 */
-export interface HttpRouteDefinition {
-  path: string;
-  handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void;
-}
-
-/** Gateway 运行时（消息管道入口） */
-export interface GatewayRuntime {
-  config: Record<string, unknown>;
-  channel: {
-    routing: {
-      resolveAgentRoute(params: {
-        cfg: Record<string, unknown>;
-        channel: string;
-        accountId: string;
-        peer: { kind: string; id: string };
-      }): Promise<{ agentId: string; [key: string]: unknown }>;
-    };
-    reply: {
-      finalizeInboundContext(params: {
-        channel: string;
-        accountId: string;
-        from: string;
-        text: string;
-        chatType: string;
-        extra?: Record<string, unknown>;
-      }): Promise<Record<string, unknown>>;
-      createReplyDispatcherWithTyping(params: {
-        deliver: (payload: { text: string }) => Promise<void>;
-      }): Record<string, unknown>;
-      dispatchReplyFromConfig(params: {
-        ctx: Record<string, unknown>;
-        cfg: Record<string, unknown>;
-        dispatcher: Record<string, unknown>;
-        replyOptions: { agentId: string; [key: string]: unknown };
-      }): Promise<void>;
-    };
-  };
-}
+export type PluginLogger = Pick<OpenClawPluginApi["logger"], "debug" | "info" | "warn" | "error">;
 
 // ─────────────────── iPad 协议服务类型 ───────────────────
 
@@ -287,6 +204,12 @@ export interface IpadApiResponse<T = unknown> {
  * 插件配置（从 openclaw.plugin.json configSchema 映射）
  */
 export interface WechatIpadConfig {
+  /** 默认关闭，避免未经授权自动连接外部协议服务。 */
+  enabled: boolean;
+  /** 必须显式确认使用非官方协议的账号与合规风险。 */
+  acknowledgeUnofficialProtocolRisk: boolean;
+  /** 初次连接失败时是否阻止 Gateway 启动。 */
+  required: boolean;
   /** iPad 协议服务 WebSocket 地址 */
   serviceUrl: string;
   /** iPad 协议服务 HTTP API 地址 */
@@ -294,34 +217,61 @@ export interface WechatIpadConfig {
   /** 重连配置 */
   reconnect: {
     enabled: boolean;
-    intervalMs: number;
+    initialDelayMs: number;
+    maxDelayMs: number;
     maxRetries: number;
+    jitterRatio: number;
   };
   /** 认证配置 */
   auth: {
     token?: string;
   };
+  network: {
+    connectTimeoutMs: number;
+    requestTimeoutMs: number;
+    maxResponseBytes: number;
+    maxEventBytes: number;
+    heartbeatIntervalMs: number;
+    pongTimeoutMs: number;
+  };
   /** 消息处理配置 */
   message: {
     handleGroup: boolean;
     groupWhitelist: string[];
-    ignoreself: boolean;
+    allowAllGroups: boolean;
+    ignoreSelf: boolean;
+    maxTextChars: number;
   };
 }
 
 /** 默认插件配置 */
 export const DEFAULT_CONFIG: WechatIpadConfig = {
+  enabled: false,
+  acknowledgeUnofficialProtocolRisk: false,
+  required: true,
   serviceUrl: "ws://127.0.0.1:5555",
   apiUrl: "http://127.0.0.1:5556",
   reconnect: {
     enabled: true,
-    intervalMs: 5000,
+    initialDelayMs: 1000,
+    maxDelayMs: 30_000,
     maxRetries: 30,
+    jitterRatio: 0.2,
   },
   auth: {},
+  network: {
+    connectTimeoutMs: 10_000,
+    requestTimeoutMs: 10_000,
+    maxResponseBytes: 1024 * 1024,
+    maxEventBytes: 1024 * 1024,
+    heartbeatIntervalMs: 30_000,
+    pongTimeoutMs: 10_000,
+  },
   message: {
     handleGroup: false,
     groupWhitelist: [],
-    ignoreself: true,
+    allowAllGroups: false,
+    ignoreSelf: true,
+    maxTextChars: 20_000,
   },
 };

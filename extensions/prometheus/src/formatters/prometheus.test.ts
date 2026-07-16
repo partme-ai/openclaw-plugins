@@ -91,4 +91,21 @@ describe("formatPrometheus", () => {
     const helpCount = lines.filter((l) => l.includes("# HELP http_requests")).length;
     expect(helpCount).toBe(1); // 只应有一个 HELP 行
   });
+
+  it("应在 histogram 定义下输出 bucket/sum/count 且不重复自动发现", () => {
+    const output = formatPrometheus(
+      [{ name: "request_duration_seconds", help: "Request duration", type: "histogram" }],
+      [
+        { name: "request_duration_seconds_bucket", labels: { le: "1" }, value: 2 },
+        { name: "request_duration_seconds_bucket", labels: { le: "+Inf" }, value: 3 },
+        { name: "request_duration_seconds_sum", value: 1.5 },
+        { name: "request_duration_seconds_count", value: 3 },
+      ],
+    );
+
+    expect(output.match(/# HELP request_duration_seconds /g)).toHaveLength(1);
+    expect(output).toContain("# TYPE request_duration_seconds histogram");
+    expect(output).toContain('request_duration_seconds_bucket{le="1"} 2');
+    expect(output).not.toContain("# HELP request_duration_seconds_bucket (auto-discovered)");
+  });
 });

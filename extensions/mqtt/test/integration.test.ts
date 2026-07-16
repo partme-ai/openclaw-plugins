@@ -27,7 +27,6 @@ describe("openclaw-mqtt 功能集成测试", () => {
   beforeAll(async () => {
     const config = {
       port: BROKER_PORT,
-      wsPort: 0,
       maxConnections: 100,
       auth: {
         enabled: true,

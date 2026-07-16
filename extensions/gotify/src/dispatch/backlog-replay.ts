@@ -8,7 +8,11 @@
  * 仅复用与 `/stream` 相同的派发钩子以保持语义对齐 Channel Plugin。
  */
 
-import type { GotifyPagedMessages, GotifyStreamEnvelope, ResolvedGotifyAccount } from "../types.js";
+import type {
+  GotifyPagedMessages,
+  GotifyStreamEnvelope,
+  ResolvedGotifyAccount,
+} from "../types.js";
 import { GotifyConfigError } from "../shared/errors.js";
 import { getApplicationMessages } from "../transport/gotify-api.js";
 import { readBacklogCursor, writeBacklogCursor } from "./backlog-cursor.js";
@@ -45,7 +49,9 @@ type ReplayParams = {
  */
 function parsePositiveMessageId(id: number | string | undefined): number {
   const normalized =
-    typeof id === "number" ? Math.trunc(id) : Number.parseInt(String(id ?? ""), 10);
+    typeof id === "number"
+      ? Math.trunc(id)
+      : Number.parseInt(String(id ?? ""), 10);
   return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
 }
 
@@ -83,7 +89,10 @@ export async function replayBacklogForAccount(
   const pageLimit = params.pageLimit ?? 100;
   const maxMessages = params.maxMessages ?? 10_000;
   if (!Number.isInteger(pageLimit) || pageLimit < 1 || pageLimit > 200) {
-    throw new GotifyConfigError("pageLimit", "must be an integer between 1 and 200");
+    throw new GotifyConfigError(
+      "pageLimit",
+      "must be an integer between 1 and 200",
+    );
   }
   if (!Number.isInteger(maxMessages) || maxMessages < 1) {
     throw new GotifyConfigError("maxMessages", "must be a positive integer");
@@ -124,7 +133,9 @@ export async function replayBacklogForAccount(
       }
     }
 
-    const oldestInPage = parsePositiveMessageId(messages[messages.length - 1]?.id);
+    const oldestInPage = parsePositiveMessageId(
+      messages[messages.length - 1]?.id,
+    );
     if (!oldestInPage || oldestInPage <= cursor) {
       break;
     }

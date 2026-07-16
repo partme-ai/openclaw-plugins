@@ -68,13 +68,13 @@ Report: `scripts/e2e/e2e-report.json` (gitignored)
 | **Standard channel** | `cd extensions/gotify && pnpm test:standard` | Optional | Agent send/wait/reply via `testing/` runner |
 | **E2E smoke** | `pnpm test:e2e` | Yes* | Install + gateway + protocol adapters |
 
-\* Embedded channels (mqtt, stomp, web-*) need gateway only; external brokers need compose services.
+\* Embedded channels (mqtt, stomp, web-*) and isolated WebSocket/mTLS/OAuth2 scenarios need the Gateway only; external brokers need compose services.
 
 ## Extension inventory
 
 See `scripts/e2e/lib/registry.mjs` → `EXTENSION_INVENTORY` for the full matrix:
 
-- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (8 plugins today)
+- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (12 plugins today; WebSocket, mTLS and OAuth2 are explicit/isolated)
 - **e2eAdapter: false** — unit tests (+ optional `testing/` standard suite); no Docker e2e yet
 - **dockerRequired: true** — rabbitmq, redis-stream, rocketmq, gotify
 
@@ -83,6 +83,9 @@ See `scripts/e2e/lib/registry.mjs` → `EXTENSION_INVENTORY` for the full matrix
 | Plugin | Docker services |
 |--------|-----------------|
 | mqtt, stomp, web-mqtt, web-stomp | None (embedded / browser) |
+| web-socket | None; run explicitly with `--plugins web-socket`; the runner selects the host Gateway for the embedded listener |
+| mtls | None; run explicitly with `--plugins mtls` because it switches Gateway auth to trusted-proxy |
+| oauth2 | None; run explicitly with `--plugins oauth2`; the runner selects the host Gateway for its local provider fixture |
 | rabbitmq | rabbitmq |
 | redis-stream | redis |
 | rocketmq | rocketmq-namesrv, broker, init（Topic/测试 Consumer Group）, proxy |
@@ -106,8 +109,9 @@ wecom, wechat, douyin, nacos, bridge, knowledge, memory, message-sdk, …
 
 | Category | Plugins | Backing service |
 |----------|---------|-----------------|
-| Embedded service | mqtt, stomp, web-mqtt, web-stomp | OpenClaw gateway only |
+| Embedded service | mqtt, stomp, web-mqtt, web-stomp, web-socket | OpenClaw gateway only |
 | External broker | rabbitmq, redis-stream, rocketmq, gotify | Docker Compose |
+| Security infrastructure | mtls, oauth2 | Isolated certificate or OAuth2 lifecycle + OpenClaw trusted-proxy |
 
 Future categories (extensible via `lib/registry.mjs` + adapter registration):
 

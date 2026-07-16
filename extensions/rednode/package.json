@@ -1,7 +1,7 @@
 {
   "name": "@partme.ai/openclaw-rednode",
-  "version": "2026.5.20",
-  "description": "OpenClaw 小红书开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
+  "version": "2026.7.1",
+  "description": "OpenClaw 小红书 Ark Open API capability",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,15 +21,12 @@
     "xhs",
     "xiaohongshu",
     "小红书",
-    "channel",
-    "公域",
-    "智能运营"
+    "ark",
+    "openapi"
   ],
   "author": "PartMe",
   "license": "MIT",
-  "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
-  },
+  "dependencies": {},
   "files": [
     "dist",
     "openclaw.plugin.json",
@@ -71,11 +68,6 @@
     "extensions": [
       "./dist/index.js"
     ],
-    "setupEntry": "./dist/setup-entry.js",
-    "channel": {
-      "id": "xhs",
-      "label": "小红书",
-      "blurb": "小红书开放平台渠道与运营工具"
-    }
+    "capabilities": ["tools"]
   }
 }

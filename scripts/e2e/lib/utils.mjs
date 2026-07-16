@@ -2,7 +2,7 @@
  * Shared helpers for OpenClaw queue/channel installed-plugin E2E runs.
  */
 import net from "node:net";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 export const REPO_ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
@@ -27,12 +27,37 @@ export const STATE_DIR = process.env.OPENCLAW_E2E_STATE_DIR ?? `${process.env.HO
 export const GATEWAY_PORT = Number(process.env.E2E_GATEWAY_PORT ?? 19789);
 export const GATEWAY_HTTP = `http://127.0.0.1:${GATEWAY_PORT}`;
 
+/**
+ * Remove state from the dedicated E2E profile before a fresh install.
+ * Refuse paths that do not visibly identify themselves as E2E state unless the
+ * caller explicitly opts in; this prevents a typo from deleting a real profile.
+ */
+export function resetE2EProfile() {
+  if (process.env.OPENCLAW_E2E_PRESERVE_STATE === "1") return false;
+  const normalized = STATE_DIR.toLowerCase();
+  const explicitlyAllowed = process.env.OPENCLAW_E2E_ALLOW_STATE_RESET === "1";
+  if (!normalized.includes("e2e") && !explicitlyAllowed) {
+    throw new Error(
+      `Refusing to reset non-E2E state path: ${STATE_DIR}. ` +
+        "Set OPENCLAW_E2E_ALLOW_STATE_RESET=1 only for a disposable profile.",
+    );
+  }
+  rmSync(STATE_DIR, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  return true;
+}
+
 /** Installed-plugin E2E ports (defaults match registerService when runtime config loads late). */
 export const E2E_PORTS = {
   mqtt: 11883,
   stompTcp: Number(process.env.E2E_STOMP_TCP_PORT ?? 61613),
   webMqttWs: Number(process.env.E2E_WEB_MQTT_PORT ?? 25675),
   webStompWs: Number(process.env.E2E_WEB_STOMP_PORT ?? 15674),
+  mtlsHttps: Number(process.env.E2E_MTLS_PORT ?? 18443),
+  oauth2Proxy: Number(process.env.E2E_OAUTH2_PROXY_PORT ?? 18081),
+  oauth2Provider: Number(process.env.E2E_OAUTH2_PROVIDER_PORT ?? 19090),
+  webSocket: Number(process.env.E2E_WEB_SOCKET_PORT ?? 28789),
+  modelFixture: Number(process.env.E2E_MODEL_FIXTURE_PORT ?? 19091),
+  otlpHttp: Number(process.env.E2E_OTLP_HTTP_PORT ?? 14318),
 };
 
 /** @param {number} port */

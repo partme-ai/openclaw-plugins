@@ -1,7 +1,7 @@
 {
   "name": "@partme.ai/openclaw-meituan",
-  "version": "2026.5.20",
-  "description": "OpenClaw 美团开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
+  "version": "2026.7.1",
+  "description": "OpenClaw 美团技术服务合作中心 MTOp OpenAPI capability",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -18,15 +18,12 @@
     "openclaw",
     "plugin",
     "meituan",
-    "channel",
-    "公域",
-    "智能运营"
+    "mtop",
+    "openapi"
   ],
   "author": "PartMe",
   "license": "MIT",
-  "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
-  },
+  "dependencies": {},
   "files": [
     "dist",
     "openclaw.plugin.json",
@@ -68,11 +65,6 @@
     "extensions": [
       "./dist/index.js"
     ],
-    "setupEntry": "./dist/setup-entry.js",
-    "channel": {
-      "id": "meituan",
-      "label": "美团",
-      "blurb": "美团开放平台渠道与运营工具"
-    }
+    "capabilities": ["tools"]
   }
 }

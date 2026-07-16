@@ -1,83 +1,143 @@
-/**
- * 高德运营工具（Agent Tools）
- *
- * **架构角色**：向 OpenClaw 注册 Agent 可调用工具，封装高德 Web 服务 API，
- * 与《高德开放平台对接规格》EP-3 能力清单一致。
- *
- * **关键依赖**：
- * - `../types` — `ToolDefinition`、`AmapAccountConfig`
- * - `../amap/amap-api` — 统一 HTTP 调用层
- */
+import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk/plugin-entry";
+import type { AmapPluginConfig } from "../types.js";
+import { AmapClient } from "../amap/amap-api.js";
 
-import type { ToolDefinition } from "../types.js";
-import type { AmapAccountConfig } from "../types.js";
-import { amapApiCall } from "../amap/amap-api.js";
+type ToolResult = { content: Array<{ type: "text"; text: string }>; details: undefined };
+type ToolDefinition = {
+  name: string;
+  label: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  execute: (toolCallId: string, params: unknown) => Promise<ToolResult>;
+};
 
-/**
- * 创建高德 LBS 运营工具列表。
- *
- * 包含 POI 关键字查询、周边搜索、POI 详情三类工具；
- * 执行时通过 `getConfig()` 读取当前 API Key。
- *
- * @param getConfig - 读取 channels.amap 配置的 getter
- * @returns 可传给 `api.registerTool` 的工具定义数组
- */
+export const AMAP_TOOL_NAMES = ["amap_search_places", "amap_search_nearby", "amap_place_detail"] as const;
+
 export function createAmapTools(
-  getConfig: () => AmapAccountConfig | undefined
+  ctx: OpenClawPluginToolContext,
+  config: AmapPluginConfig,
+  client = new AmapClient(config),
 ): ToolDefinition[] {
+  const execute = (handler: (params: Record<string, unknown>) => Promise<Record<string, unknown>>) =>
+    async (_toolCallId: string, params: unknown): Promise<ToolResult> => {
+      if (config.ownerOnly && ctx.senderIsOwner !== true) return result({ success: false, error: "AMap tools are restricted to the command owner" });
+      try {
+        return result({ success: true, data: await handler(asObject(params)) });
+      } catch (error) {
+        return result({ success: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    };
+
   return [
     {
-      name: "amap_query_poi",
-      description: "高德 POI 查询：关键字、区域、城市或 ID 查询地点",
+      name: AMAP_TOOL_NAMES[0],
+      label: "高德地点搜索",
+      description: "使用高德地点搜索 2.0 按关键词、类型和区域查询 POI。",
       parameters: {
-        type: "object",
+        type: "object", additionalProperties: false,
         properties: {
-          keywords: { type: "string", description: "关键字" },
-          region: { type: "string", description: "区域" },
-          city: { type: "string", description: "城市" },
-          id: { type: "string", description: "POI ID" },
-          page: { type: "integer", description: "页码" },
-          offset: { type: "integer", description: "每页条数" },
-          types: { type: "string", description: "POI 类型编码" },
+          keywords: { type: "string", minLength: 1, maxLength: 80 },
+          types: { type: "string", minLength: 1, maxLength: 128 },
+          region: { type: "string", maxLength: 64 },
+          city_limit: { type: "boolean" },
+          page_size: { type: "integer", minimum: 1, maximum: 25 },
+          page_num: { type: "integer", minimum: 1, maximum: 100 },
         },
       },
-      execute: async (params) => {
-        const p = params as Record<string, string | number | undefined>;
-        // 有 id 时走详情接口，否则走关键字搜索
-        const path = p?.id ? "/v3/place/detail" : "/v3/place/text";
-        return amapApiCall(getConfig(), path, p ?? {});
-      },
+      execute: execute(async (p) => {
+        const keywords = optionalString(p.keywords, "keywords", 80);
+        const types = optionalString(p.types, "types", 128);
+        if (!keywords && !types) throw new Error("keywords or types is required");
+        return client.get("/v5/place/text", {
+          keywords, types,
+          region: optionalString(p.region, "region", 64),
+          city_limit: optionalBoolean(p.city_limit, "city_limit") === true ? "true" : undefined,
+          page_size: optionalInteger(p.page_size, "page_size", 1, 25),
+          page_num: optionalInteger(p.page_num, "page_num", 1, 100),
+        });
+      }),
     },
     {
-      name: "amap_query_around",
-      description: "高德周边 POI 搜索：按经纬度与半径、关键字查询周边地点",
+      name: AMAP_TOOL_NAMES[1],
+      label: "高德周边搜索",
+      description: "使用高德地点搜索 2.0 查询指定经纬度附近的 POI。",
       parameters: {
-        type: "object",
+        type: "object", additionalProperties: false, required: ["location"],
         properties: {
-          location: { type: "string", description: "中心点经纬度" },
-          keywords: { type: "string", description: "关键字" },
-          radius: { type: "string", description: "半径（米）" },
-          sortrule: { type: "string", description: "排序规则" },
-          page: { type: "integer" },
-          offset: { type: "integer" },
+          location: { type: "string", pattern: "^-?\\d+(?:\\.\\d{1,6})?,-?\\d+(?:\\.\\d{1,6})?$" },
+          keywords: { type: "string", maxLength: 80 },
+          types: { type: "string", maxLength: 128 },
+          radius: { type: "integer", minimum: 0, maximum: 50000 },
+          sortrule: { type: "string", enum: ["distance", "weight"] },
+          page_size: { type: "integer", minimum: 1, maximum: 25 },
+          page_num: { type: "integer", minimum: 1, maximum: 100 },
         },
       },
-      execute: async (params) => {
-        return amapApiCall(getConfig(), "/v3/place/around", (params ?? {}) as Record<string, string | number | undefined>);
-      },
+      execute: execute(async (p) => client.get("/v5/place/around", {
+        location: coordinates(p.location),
+        keywords: optionalString(p.keywords, "keywords", 80),
+        types: optionalString(p.types, "types", 128),
+        radius: optionalInteger(p.radius, "radius", 0, 50_000),
+        sortrule: optionalEnum(p.sortrule, "sortrule", ["distance", "weight"]),
+        page_size: optionalInteger(p.page_size, "page_size", 1, 25),
+        page_num: optionalInteger(p.page_num, "page_num", 1, 100),
+      })),
     },
     {
-      name: "amap_place_detail",
-      description: "高德 POI 详情：根据 ID 查询地点详情",
+      name: AMAP_TOOL_NAMES[2],
+      label: "高德地点详情",
+      description: "使用高德地点搜索 2.0 按 POI ID 查询详情。",
       parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "POI ID" },
-        },
+        type: "object", additionalProperties: false, required: ["id"],
+        properties: { id: { type: "string", minLength: 1, maxLength: 128 } },
       },
-      execute: async (params) => {
-        return amapApiCall(getConfig(), "/v3/place/detail", (params ?? {}) as Record<string, string | number | undefined>);
-      },
+      execute: execute(async (p) => client.get("/v5/place/detail", { id: requiredString(p.id, "id", 128) })),
     },
   ];
+}
+
+function result(payload: Record<string, unknown>): ToolResult {
+  return { content: [{ type: "text", text: JSON.stringify(payload) }], details: undefined };
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("parameters must be an object");
+  return value as Record<string, unknown>;
+}
+
+function requiredString(value: unknown, name: string, max: number): string {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > max) throw new Error(`${name} must be a non-empty string up to ${max} characters`);
+  return value.trim();
+}
+
+function optionalString(value: unknown, name: string, max: number): string | undefined {
+  return value === undefined ? undefined : requiredString(value, name, max);
+}
+
+function optionalInteger(value: unknown, name: string, min: number, max: number): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || (value as number) < min || (value as number) > max) throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  return value as number;
+}
+
+function optionalBoolean(value: unknown, name: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") throw new Error(`${name} must be a boolean`);
+  return value;
+}
+
+function optionalEnum<T extends string>(value: unknown, name: string, allowed: readonly T[]): T | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !allowed.includes(value as T)) throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+  return value as T;
+}
+
+function coordinates(value: unknown): string {
+  const raw = requiredString(value, "location", 64);
+  const match = raw.match(/^(-?\d+(?:\.\d{1,6})?),(-?\d+(?:\.\d{1,6})?)$/);
+  if (!match) throw new Error("location must be longitude,latitude with at most 6 decimal places");
+  const longitude = Number(match[1]);
+  const latitude = Number(match[2]);
+  if (longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90) throw new Error("location coordinates are out of range");
+  return raw;
 }

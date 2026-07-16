@@ -6,7 +6,7 @@
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-[简体中文](./README.md) | [English](./README.en.md)
+[简体中文](./README.zh-CN.md) | English
 
 ---
 
@@ -20,7 +20,7 @@
 - **File Utilities** — MIME/extension mapping, file categorization
 - **AI Capability Modules** — ASR speech recognition, OCR text recognition, TTS speech synthesis (optional imports)
 
-**Zero mandatory runtime dependencies**. ASR/OCR/TTS modules are imported on demand — unused modules do not increase bundle size.
+The SDK has one mandatory runtime dependency, `undici`. `prom-client` and OpenClaw integration are optional peers and are loaded only by the relevant capabilities. TypeScript consumers receive compiled declarations and a required Node type peer.
 
 ### Core Design Principles
 
@@ -29,6 +29,14 @@
 - Content type supports `text` / `markdown` / `mixed`
 - `traceId` for end-to-end tracing throughout message generation, transmission, and delivery
 - All types can be imported from the main entry, or via subpath imports for tree-shaking
+- All 21 public runtime entrypoints resolve to compiled `dist/*.js`; published packages never execute `src/*.ts`
+
+### Queue reliability
+
+- `InboundMessageQueue` is bounded and does not reserve an idempotency key when full.
+- If its immediate `onPush` handler fails, both the queue item and idempotency reservation are rolled back so delivery can be retried.
+- `OutboundMessageQueue` is bounded across all sessions, reports overflow through `onOverflow`, and exposes the total `size`.
+- Both queues are process-local buffers, not durable broker replacements.
 
 ## Installation
 

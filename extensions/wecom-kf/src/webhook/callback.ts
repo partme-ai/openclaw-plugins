@@ -19,14 +19,20 @@ import { getCursorStore } from "../state/cursor-store.js";
 import { dispatchKfMessage } from "../dispatch/inbound-dispatcher.js";
 import { handleSystemEvent } from "../agent/system-event.js";
 import { resolveKfAccountByOpenKfId } from "../config/accounts.js";
-import { claimWecomKfInboundMsgid } from "../dedup/kf-inbound-dedup.js";
+import {
+  claimWecomKfInboundMsgid,
+  commitWecomKfInboundMsgid,
+  releaseWecomKfInboundMsgid,
+} from "../dedup/kf-inbound-dedup.js";
 import { resolveKfAgentAccount } from "../tools/call-context.js";
 import { getWecomRuntime } from "../runtime/index.js";
-import { handleKfSystemEvent } from "./event-handler.js";
 import type { KfMessage } from "../types/index.js";
 
 /** Account state tracking — updates via channel setStatus */
 const accountStatePatches = new Map<string, Record<string, unknown>>();
+const accountSyncQueues = new Map<string, Promise<void>>();
+const MAX_SYNC_PAGES = 100;
+const DEFAULT_CALLBACK_MAX_TIMESTAMP_SKEW_SECONDS = 300;
 
 export function trackAccountStatePatch(accountId: string, patch: Record<string, unknown>): void {
   const existing = accountStatePatches.get(accountId) ?? {};
@@ -47,56 +53,32 @@ function buildCursorKey(accountKey: string, openKfId: string): string {
   return `${accountKey}:${openKfId}`;
 }
 
-/**
- * **primeWecomKfCursor (冷启动游标预热)**
- *
- * 在通道启动时遍历历史消息将游标推进到最新位置，防止重放历史消息。
- */
-export async function primeWecomKfCursor(params: {
-  accountConfig: WecomAccountConfig;
-}): Promise<void> {
-  const { accountConfig } = params;
-  const openKfId = accountConfig.openKfId?.trim();
-  if (!openKfId) return;
-
-  const cursorStore = getCursorStore();
-  const cursorKey = buildCursorKey("default", openKfId);
-  if (await cursorStore.getCursor(cursorKey)) {
-    return;
+function assertCursorProgress(params: {
+  current?: string;
+  next?: string;
+  hasMore: boolean;
+  page: number;
+}): void {
+  if (!params.hasMore) return;
+  if (!params.next?.trim()) {
+    throw new Error(`sync_msg page ${params.page} has_more=1 without next_cursor`);
   }
-
-  const runtime = getWecomRuntime();
-  const cfg = runtime.config as OpenClawConfig;
-  const agent = resolveKfAgentAccount(cfg, openKfId);
-  if (!agent) {
-    console.warn(`[wecom_kf] Skip cursor prime: corpSecret not configured openKfId=${openKfId}`);
-    return;
+  if (params.next === params.current) {
+    throw new Error(`sync_msg page ${params.page} did not advance next_cursor`);
   }
+}
 
-  console.log(`[wecom_kf] Priming cursor for openKfId=${openKfId}`);
-
-  try {
-    let cursor = "";
-    let hasMore = true;
-    while (hasMore) {
-      const result = await syncKfMessages(agent, {
-        cursor,
-        open_kfid: openKfId,
-        limit: 1000,
-      });
-      if (result.next_cursor) {
-        cursor = result.next_cursor;
-        await cursorStore.saveCursor(cursorKey, cursor);
-      }
-      hasMore = result.has_more === 1;
-    }
-    console.log(`[wecom_kf] Cursor primed for openKfId=${openKfId}`);
-  } catch (error) {
-    console.warn(
-      `[wecom_kf] Cursor prime failed for openKfId=${openKfId}:`,
-      error instanceof Error ? error.message : String(error),
-    );
-  }
+function enqueueAccountSync(key: string, task: () => Promise<void>): void {
+  const previous = accountSyncQueues.get(key) ?? Promise.resolve();
+  const next = previous.then(task, task);
+  accountSyncQueues.set(key, next);
+  void next
+    .catch((error: unknown) => {
+      console.error(`[wecom_kf] background sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    })
+    .finally(() => {
+      if (accountSyncQueues.get(key) === next) accountSyncQueues.delete(key);
+    });
 }
 
 /**
@@ -104,6 +86,10 @@ export async function primeWecomKfCursor(params: {
  */
 export function createKfCallbackHandler(
   getAccountConfig: (openKfId?: string) => WecomAccountConfig | undefined,
+  options: {
+    nowSeconds?: () => number;
+    maxTimestampSkewSeconds?: number;
+  } = {},
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
     try {
@@ -125,6 +111,11 @@ export function createKfCallbackHandler(
         res.end("No account config");
         return;
       }
+      assertFreshCallbackTimestamp(
+        query.timestamp,
+        options.nowSeconds?.() ?? Math.floor(Date.now() / 1000),
+        options.maxTimestampSkewSeconds ?? DEFAULT_CALLBACK_MAX_TIMESTAMP_SKEW_SECONDS,
+      );
 
       const parsed = parseWecomCallback(
         query,
@@ -143,26 +134,45 @@ export function createKfCallbackHandler(
       const eventData = parsed.data as Record<string, unknown> | undefined;
 
       if (eventData?.Event === "kf_msg_or_event") {
-        void processKfEvent(eventData, getAccountConfig).catch((error) => {
-          console.error("[wecom_kf] Error processing KF event:", error);
-        });
+        const queueKey = (eventData.OpenKfId as string | undefined)?.trim() || "default";
+        enqueueAccountSync(queueKey, () => processKfEvent(eventData, getAccountConfig));
       }
 
       if (eventData?.Event === "kf_account_auth_change") {
         const authAdd = (eventData.AuthAddOpenKfId as string)?.trim();
         const authDel = (eventData.AuthDelOpenKfId as string)?.trim();
-        if (authAdd) console.log(`[wecom_kf] KF account authorized: ${authAdd}`);
-        if (authDel) console.log(`[wecom_kf] KF account deauthorized: ${authDel}`);
+        if (authAdd) console.log("[wecom_kf] KF account authorized");
+        if (authDel) console.log("[wecom_kf] KF account deauthorized");
       }
 
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("success");
     } catch (error) {
-      console.error("[wecom_kf] Callback error:", error);
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("success");
+      console.warn(`[wecom_kf] rejected callback: ${error instanceof Error ? error.message : String(error)}`);
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("invalid callback");
     }
   };
+}
+
+function assertFreshCallbackTimestamp(
+  timestamp: string | undefined,
+  nowSeconds: number,
+  maxSkewSeconds: number,
+): void {
+  if (!timestamp || !/^\d{1,16}$/.test(timestamp)) {
+    throw new Error("invalid callback timestamp");
+  }
+  const parsed = Number(timestamp);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error("invalid callback timestamp");
+  }
+  if (!Number.isFinite(maxSkewSeconds) || maxSkewSeconds < 0) {
+    throw new Error("invalid callback timestamp skew configuration");
+  }
+  if (Math.abs(nowSeconds - parsed) > maxSkewSeconds) {
+    throw new Error("stale callback timestamp");
+  }
 }
 
 /**
@@ -177,7 +187,7 @@ async function processKfEvent(
 
   const accountConfig = getAccountConfig(openKfId) ?? getAccountConfig();
   if (!accountConfig) {
-    console.error(`[wecom_kf] No config found for account: ${openKfId ?? "default"}`);
+    console.error(`[wecom_kf] No config found for ${openKfId ? "callback account" : "default account"}`);
     return;
   }
 
@@ -191,7 +201,7 @@ async function processKfEvent(
   let cfg: OpenClawConfig;
   try {
     runtime = getWecomRuntime();
-    cfg = runtime.config as OpenClawConfig;
+    cfg = runtime.config.current() as OpenClawConfig;
   } catch {
     console.error("[wecom_kf] Runtime not available for sync_msg");
     return;
@@ -211,8 +221,10 @@ async function processKfEvent(
   const cursorKey = buildCursorKey(accountKey, effectiveOpenKfId);
   let cursor = (await cursorStore.getCursor(cursorKey)) || undefined;
   let hasMore = true;
+  let page = 0;
 
-  while (hasMore) {
+  while (hasMore && page < MAX_SYNC_PAGES) {
+    page += 1;
     const syncResult = await syncKfMessages(agent, {
       cursor,
       token: !cursor ? callbackToken : undefined,
@@ -233,13 +245,15 @@ async function processKfEvent(
 
     trackAccountEvent(effectiveOpenKfId, { lastSyncAt: Date.now() });
 
-    if (syncResult.next_cursor) {
-      cursor = syncResult.next_cursor;
+    const nextCursor = syncResult.next_cursor?.trim();
+    hasMore = syncResult.has_more === 1;
+    assertCursorProgress({ current: cursor, next: nextCursor, hasMore, page });
+    if (nextCursor) {
+      cursor = nextCursor;
       await cursorStore.saveCursor(cursorKey, cursor);
     }
-
-    hasMore = syncResult.has_more === 1;
   }
+  if (hasMore) throw new Error(`sync_msg exceeded ${MAX_SYNC_PAGES} pages`);
 }
 
 function resolveMessageAccountConfig(
@@ -271,9 +285,9 @@ async function processSyncedMessage(
   const openKfId = msg.open_kfid?.trim() ?? accountConfig.openKfId?.trim() ?? "default";
 
   if (msgId) {
-    const claimed = await claimWecomKfInboundMsgid(openKfId, msgId);
-    if (!claimed) {
-      console.log(`[wecom_kf] duplicate msgid=${msgId} open_kfid=${openKfId}; skipped`);
+    const claim = await claimWecomKfInboundMsgid(openKfId, msgId);
+    if (claim.kind !== "claimed") {
+      console.log(`[wecom_kf] inbound message skipped by dedupe (${claim.kind})`);
       return;
     }
   }
@@ -282,7 +296,8 @@ async function processSyncedMessage(
   const origin = msg.origin;
   const msgtype = msg.msgtype;
 
-  switch (origin) {
+  try {
+    switch (origin) {
     case 3:
       trackAccountEvent(openKfId, { lastInboundAt: Date.now() });
       await dispatchKfMessage({
@@ -296,15 +311,12 @@ async function processSyncedMessage(
     case 4:
       if (msgtype === "event") {
         await handleSystemEvent(msg as KfMessage, effectiveAccountConfig);
-        await handleKfSystemEvent(msg as KfMessage, effectiveAccountConfig);
       }
       break;
 
     case 5:
       // Phase 4 (P4-01)：接待人员消息不触发 Bot/Agent 抢答，仅记录审计
-      console.log(
-        `[wecom_kf] origin=5 servicer message skipped open_kfid=${openKfId} msgid=${msg.msgid ?? "unknown"}`,
-      );
+      console.log("[wecom_kf] origin=5 servicer message skipped");
       break;
 
     default:
@@ -313,5 +325,10 @@ async function processSyncedMessage(
       } else {
         console.log(`[wecom_kf] Unknown origin: ${origin ?? "undefined"}`);
       }
+    }
+    if (msgId) await commitWecomKfInboundMsgid(openKfId, msgId);
+  } catch (error) {
+    if (msgId) await releaseWecomKfInboundMsgid(openKfId, msgId, error);
+    throw error;
   }
 }

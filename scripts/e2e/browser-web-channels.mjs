@@ -71,47 +71,61 @@ export async function runBrowserTests() {
   }
 
   const server = await startTestWebServer();
-  await waitFor(() => tcpReachable(TEST_WEB_PORT), { label: "test-web server", timeoutMs: 10_000 });
+  let browser;
+  try {
+    await waitFor(() => tcpReachable(TEST_WEB_PORT), { label: "test-web server", timeoutMs: 10_000 });
 
-  const browser = await playwright.chromium.launch({ headless: true });
-  const page = await browser.newPage();
+    browser = await playwright.chromium.launch({ headless: true });
+    const page = await browser.newPage();
 
-  // Patch default URLs to E2E ports
-  await page.goto(TEST_WEB_URL);
-  await page.evaluate(
-    ({ stompPort, mqttPort }) => {
-      document.getElementById("stomp-url").value = `ws://127.0.0.1:${stompPort}/ws`;
-      document.getElementById("mqtt-url").value = `ws://127.0.0.1:${mqttPort}/ws`;
-    },
-    { stompPort: E2E_PORTS.webStompWs, mqttPort: E2E_PORTS.webMqttWs },
-  );
-
-  await runBrowser("web-stomp", async () => {
-    await page.click("#stomp-connect");
-    await page.waitForFunction(
-      () => document.getElementById("stomp-status")?.classList.contains("ok"),
-      { timeout: 15_000 },
+    // Patch default URLs to E2E ports
+    await page.goto(TEST_WEB_URL);
+    await page.evaluate(
+      ({ stompPort, mqttPort }) => {
+        document.getElementById("stomp-url").value = `ws://127.0.0.1:${stompPort}/ws`;
+        document.getElementById("mqtt-url").value = `ws://127.0.0.1:${mqttPort}/ws`;
+      },
+      { stompPort: E2E_PORTS.webStompWs, mqttPort: E2E_PORTS.webMqttWs },
     );
-    await page.click("#stomp-subscribe");
-    await page.click("#stomp-send");
-    const log = await page.locator("#stomp-log").innerText();
-    writeFileSync(join(E2E_DIR, ".browser-stomp.log"), log);
-    return "stomp-status ok; log saved to .browser-stomp.log";
-  });
 
-  await runBrowser("web-mqtt", async () => {
-    await page.click("#mqtt-connect");
-    await page.waitForFunction(
-      () => document.getElementById("mqtt-status")?.classList.contains("ok"),
-      { timeout: 15_000 },
-    );
-    await page.click("#mqtt-subscribe");
-    await page.click("#mqtt-publish");
-    const log = await page.locator("#mqtt-log").innerText();
-    writeFileSync(join(E2E_DIR, ".browser-mqtt.log"), log);
-    return "mqtt-status ok; log saved to .browser-mqtt.log";
-  });
+    await runBrowser("web-stomp", async () => {
+      await page.click("#stomp-connect");
+      await page.waitForFunction(
+        () => document.getElementById("stomp-status")?.classList.contains("ok"),
+        undefined,
+        { timeout: 15_000 },
+      );
+      await page.click("#stomp-subscribe");
+      await page.click("#stomp-send");
+      const log = await page.locator("#stomp-log").innerText();
+      writeFileSync(join(E2E_DIR, ".browser-stomp.log"), log);
+      return "stomp-status ok; log saved to .browser-stomp.log";
+    });
 
-  await browser.close();
-  server.kill("SIGTERM");
+    await runBrowser("web-mqtt", async () => {
+      await page.click("#mqtt-connect");
+      try {
+        await page.waitForFunction(
+          () => document.getElementById("mqtt-status")?.classList.contains("ok"),
+          undefined,
+          { timeout: 15_000 },
+        );
+      } catch (error) {
+        const status = await page.locator("#mqtt-status").innerText();
+        const log = await page.locator("#mqtt-log").innerText();
+        writeFileSync(join(E2E_DIR, ".browser-mqtt.log"), log);
+        throw new Error(
+          `MQTT browser connect failed (status=${JSON.stringify(status)}, log=${JSON.stringify(log)}): ${error instanceof Error ? error.message : error}`,
+        );
+      }
+      await page.click("#mqtt-subscribe");
+      await page.click("#mqtt-publish");
+      const log = await page.locator("#mqtt-log").innerText();
+      writeFileSync(join(E2E_DIR, ".browser-mqtt.log"), log);
+      return "mqtt-status ok; log saved to .browser-mqtt.log";
+    });
+  } finally {
+    await browser?.close().catch(() => undefined);
+    if (server.exitCode === null) server.kill("SIGTERM");
+  }
 }

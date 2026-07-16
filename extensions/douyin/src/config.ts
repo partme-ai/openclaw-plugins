@@ -52,6 +52,20 @@ function getRawAccountConfig(
   return { ...channelCfg, ...(channelCfg.accounts?.[accountId] ?? {}) };
 }
 
+function normalizeWebhookPath(value: string): string {
+  const normalized = value.trim();
+  if (
+    !normalized.startsWith("/") ||
+    normalized.startsWith("//") ||
+    /[\\\s?#]/.test(normalized)
+  ) {
+    throw new Error(
+      "[douyin] webhook_path must be an absolute path without whitespace, query, fragment, or backslash",
+    );
+  }
+  return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
+}
+
 /**
  * 解析单个抖音账号（合并 channel 顶层 + accounts.<id> 覆盖）。
  *
@@ -73,10 +87,19 @@ export function resolveDouyinAccount(
 
   const app_key = merged.app_key ?? "";
   const app_secret = merged.app_secret ?? "";
-  const webhook_path =
-    (typeof merged.webhook_path === "string" && merged.webhook_path.trim()
-      ? merged.webhook_path.trim()
-      : undefined) ?? "/channels/douyin/webhook";
+  const baseWebhookPath = normalizeWebhookPath(
+    typeof channelCfg.webhook_path === "string" && channelCfg.webhook_path.trim()
+      ? channelCfg.webhook_path
+      : "/channels/douyin/webhook",
+  );
+  const accountWebhookPath = channelCfg.accounts?.[id]?.webhook_path;
+  const webhook_path = normalizeWebhookPath(
+    typeof accountWebhookPath === "string" && accountWebhookPath.trim()
+      ? accountWebhookPath
+      : id === DEFAULT_ACCOUNT_ID
+        ? baseWebhookPath
+        : `${baseWebhookPath}/${encodeURIComponent(id)}`,
+  );
 
   return {
     accountId: id,

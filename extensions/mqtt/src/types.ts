@@ -41,8 +41,6 @@ export interface MqttChannelConfig {
   host?: string;
   /** TCP 监听端口 */
   port: number;
-  /** WebSocket 监听端口（兼容字段，当前不启用） */
-  wsPort: number;
   /** 最大连接数 */
   maxConnections: number;
   /** 认证配置 */
@@ -79,8 +77,6 @@ export interface MqttBrokerConfig {
   host?: string;
   /** TCP 端口，默认 1883 */
   port: number;
-  /** WebSocket 端口，默认 8883 */
-  wsPort: number;
   /** 最大连接数，默认 1000 */
   maxConnections: number;
   /** 认证配置 */

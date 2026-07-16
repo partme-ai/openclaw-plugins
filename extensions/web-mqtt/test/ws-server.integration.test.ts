@@ -10,7 +10,13 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { publishToTopic, startWebMqttServer, stopWebMqttServer } from "../src/transport/server.js";
+import {
+  getClientUsername,
+  getStats,
+  publishToTopic,
+  startWebMqttServer,
+  stopWebMqttServer,
+} from "../src/transport/server.js";
 import type { WebMqttConfig } from "../src/types.js";
 
 const baseConfig: WebMqttConfig = {
@@ -205,5 +211,83 @@ describe("web-mqtt ws-server integration", () => {
     } finally {
       rmSync(certDir, { recursive: true, force: true });
     }
+  });
+
+  it("should reject oversized publishes before subscribers and OpenClaw receive them", async () => {
+    const inboundSpy = vi.fn();
+    await startWebMqttServer({
+      ...baseConfig,
+      limits: { ...baseConfig.limits, maxPayloadBytes: 4 },
+    }, inboundSpy);
+    const url = `ws://127.0.0.1:${baseConfig.port}${baseConfig.path}`;
+    const subscriber = mqtt.connect(url, { clientId: "size-sub", reconnectPeriod: 0 });
+    const publisher = mqtt.connect(url, { clientId: "size-pub", reconnectPeriod: 0 });
+    publisher.on("error", () => undefined);
+    await Promise.all([
+      new Promise<void>((resolve, reject) => { subscriber.once("connect", resolve); subscriber.once("error", reject); }),
+      new Promise<void>((resolve, reject) => { publisher.once("connect", resolve); publisher.once("error", reject); }),
+    ]);
+    const delivered: string[] = [];
+    subscriber.on("message", (topic) => delivered.push(topic));
+    await subscriber.subscribeAsync("policy/#");
+    publisher.publish("policy/oversized", "12345", { qos: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(inboundSpy).not.toHaveBeenCalled();
+    expect(delivered).toEqual([]);
+    expect(getStats().droppedMessages).toBeGreaterThanOrEqual(1);
+    await subscriber.endAsync();
+    publisher.end(true);
+  });
+
+  it("should preserve the replacement identity when a duplicate clientId takes over", async () => {
+    const inboundSpy = vi.fn();
+    await startWebMqttServer({
+      ...baseConfig,
+      maxConnections: 2,
+      auth: {
+        required: true,
+        allowAnonymous: false,
+        users: [
+          { username: "alice", password: "alice-pass", publishAllow: ["alice/#"] },
+          { username: "bob", password: "bob-pass", publishAllow: ["bob/#"] },
+        ],
+      },
+    }, inboundSpy);
+    const url = `ws://127.0.0.1:${baseConfig.port}${baseConfig.path}`;
+    const first = mqtt.connect(url, {
+      clientId: "shared-web-id", username: "alice", password: "alice-pass", reconnectPeriod: 0,
+    });
+    first.on("error", () => undefined);
+    await new Promise<void>((resolve, reject) => { first.once("connect", resolve); first.once("error", reject); });
+    const replacement = mqtt.connect(url, {
+      clientId: "shared-web-id", username: "bob", password: "bob-pass", reconnectPeriod: 0,
+    });
+    await new Promise<void>((resolve, reject) => { replacement.once("connect", resolve); replacement.once("error", reject); });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(getClientUsername("shared-web-id")).toBe("bob");
+    expect(getStats().connectedClients).toBe(1);
+    await replacement.publishAsync("bob/allowed", "ok", { qos: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(inboundSpy).toHaveBeenCalledWith(expect.objectContaining({ topic: "bob/allowed" }));
+    await replacement.endAsync();
+    first.end(true);
+  });
+
+  it("should clean up after a TLS startup failure and allow a later start", async () => {
+    await expect(startWebMqttServer({
+      ...baseConfig,
+      tls: {
+        ...baseConfig.tls,
+        enabled: true,
+        keyFile: "/definitely/missing/server.key",
+        certFile: "/definitely/missing/server.crt",
+      },
+    }, vi.fn())).rejects.toThrow();
+    expect(getStats().brokerReady).toBe(false);
+
+    await startWebMqttServer(baseConfig, vi.fn());
+    expect(getStats().brokerReady).toBe(true);
   });
 });

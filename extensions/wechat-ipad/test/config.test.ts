@@ -1,61 +1,50 @@
-/**
- * WeChat iPad config resolution tests.
- */
 import { describe, expect, it } from "vitest";
-
 import { resolveWechatIpadConfig } from "../src/config.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
 describe("resolveWechatIpadConfig", () => {
-  it("returns defaults when channels.wechat-ipad missing", () => {
+  it("is disabled and fail-closed by default", () => {
     expect(resolveWechatIpadConfig({})).toEqual(DEFAULT_CONFIG);
   });
 
-  it("merges partial channel config with defaults", () => {
-    const cfg = resolveWechatIpadConfig({
-      channels: {
-        "wechat-ipad": {
-          serviceUrl: "ws://custom:6000",
-          message: { handleGroup: true },
-        },
-      },
-    });
-
-    expect(cfg.serviceUrl).toBe("ws://custom:6000");
-    expect(cfg.apiUrl).toBe(DEFAULT_CONFIG.apiUrl);
-    expect(cfg.message.handleGroup).toBe(true);
-    expect(cfg.message.groupWhitelist).toEqual([]);
+  it("requires explicit unofficial protocol acknowledgement", () => {
+    expect(() => resolveWechatIpadConfig({ enabled: true })).toThrow(
+      "acknowledgeUnofficialProtocolRisk",
+    );
   });
 
-  it("merges nested reconnect and auth settings", () => {
-    const cfg = resolveWechatIpadConfig({
-      channels: {
-        "wechat-ipad": {
-          reconnect: { maxRetries: 5 },
-          auth: { token: "secret" },
-        },
-      },
-    });
-
-    expect(cfg.reconnect.maxRetries).toBe(5);
-    expect(cfg.reconnect.enabled).toBe(DEFAULT_CONFIG.reconnect.enabled);
-    expect(cfg.auth.token).toBe("secret");
+  it("rejects unknown fields at runtime", () => {
+    expect(() => resolveWechatIpadConfig({ typoEnabled: true })).toThrow("unknown config field");
+    expect(() => resolveWechatIpadConfig({ network: { timeout: 1 } })).toThrow("unknown network field");
   });
 
-  it("preserves group whitelist array", () => {
-    const cfg = resolveWechatIpadConfig({
-      channels: {
-        "wechat-ipad": {
-          message: {
-            handleGroup: true,
-            groupWhitelist: ["wxid_group_a"],
-            ignoreself: false,
-          },
-        },
-      },
-    });
+  it("rejects plaintext remote endpoints and URL credentials", () => {
+    expect(() => resolveWechatIpadConfig({ serviceUrl: "ws://bridge.example.com" })).toThrow("wss");
+    expect(() => resolveWechatIpadConfig({ apiUrl: "https://user:pass@example.com" })).toThrow("credentials");
+  });
 
-    expect(cfg.message.groupWhitelist).toEqual(["wxid_group_a"]);
-    expect(cfg.message.ignoreself).toBe(false);
+  it("accepts loopback plaintext endpoints and environment token", () => {
+    const config = resolveWechatIpadConfig(
+      {
+        enabled: true,
+        acknowledgeUnofficialProtocolRisk: true,
+        serviceUrl: "ws://127.0.0.1:6000",
+        apiUrl: "http://localhost:6001",
+      },
+      { WECHAT_IPAD_BRIDGE_TOKEN: " env-secret " },
+    );
+    expect(config.auth.token).toBe("env-secret");
+    expect(config.serviceUrl).toBe("ws://127.0.0.1:6000");
+  });
+
+  it("fails closed for groups unless explicitly scoped", () => {
+    const base = { enabled: true, acknowledgeUnofficialProtocolRisk: true };
+    expect(() => resolveWechatIpadConfig({ ...base, message: { handleGroup: true } })).toThrow(
+      "groupWhitelist",
+    );
+    expect(resolveWechatIpadConfig({
+      ...base,
+      message: { handleGroup: true, groupWhitelist: [" group-a ", "group-a"] },
+    }).message.groupWhitelist).toEqual(["group-a"]);
   });
 });

@@ -120,8 +120,8 @@ export function resolveKfTranscriptRoute(params: {
   });
 
   params.log?.(
-    `dispatch route open_kfid=${params.openKfId} accountKey=${kfResolved?.accountKey ?? "unknown"} ` +
-      `agentId=${route.agentId ?? kfResolved?.agentId ?? "unknown"} sessionKey=${route.sessionKey}`,
+    `dispatch route resolved=${String(Boolean(route.sessionKey))} ` +
+      `accountMapped=${String(Boolean(kfResolved))} agentMapped=${String(Boolean(route.agentId ?? kfResolved?.agentId))}`,
   );
 
   const storePath = channel.session?.resolveStorePath?.(params.cfg.session?.store, {
@@ -341,7 +341,7 @@ export async function dispatchKfTranscriptTurn(
 
   const agent = resolveKfAgentAccount(cfg, openKfId);
   if (!agent) {
-    logger.warn(`skip outbound: missing corp credentials open_kfid=${openKfId}`);
+    logger.warn("skip outbound: missing corp credentials");
     return { route, delivered: false };
   }
 

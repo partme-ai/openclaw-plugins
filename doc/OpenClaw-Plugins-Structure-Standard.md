@@ -24,7 +24,7 @@
 
 | Profile | 代表插件 | Channel 平铺 MUST | 入口要求 | 说明 |
 |---------|----------|:-----------------:|----------|------|
-| **channel-base** | `_template`、`amap`、`mqtt`、`wechat`… | MUST | `index.ts` + `setup-entry.ts` 双入口 | Base 平铺骨架；Tier A 严格集 |
+| **channel-base** | `_template`、`mqtt`、`wechat`… | MUST | `index.ts` + `setup-entry.ts` 双入口 | Base 平铺骨架；Tier A 严格集 |
 | **channel-extended** | `wecom`、`wecom-kf` | MUST | 同 channel-base | Base + 语义目录；`--strict-new` 启用 Extended 阈值 |
 | **channel-legacy** | `bridge` | MUST（Phase 2 迁移） | 待对齐 | 暂标记为 Channel；Phase 2 MUST 迁移至 channel-base |
 | **capability-memory** | `memory`、`openmem` | MUST NOT | 根或 `src/` 入口 + manifest | `kind: memory`；无 `channel.ts` / `inbound.ts` |
@@ -45,7 +45,7 @@
 | 维度 | 规则 |
 |------|------|
 | 新 Channel 插件 | MUST channel-base；超阈值 SHOULD channel-extended |
-| Tier A Channel（`amap`、`mqtt` 等 12 个） | default 模式下 Base MUST 缺失为 **error** |
+| Tier A Channel（`mqtt` 等） | default 模式下 Base MUST 缺失为 **error** |
 | Capability / Infra / SDK | MUST NOT 要求 `channel.ts`、`inbound.ts`、`setup-entry.ts` 等 Channel 平铺文件 |
 | 构建产物 | `dist/`、`node_modules/` MUST NOT 作为结构依据或提交 |
 
@@ -145,7 +145,7 @@ extensions/<plugin-id>/
 | `package.json#openclaw.extensions[]` | MUST | 指向 `./dist/index.js`（或等价编译产物） |
 | `package.json#openclaw.setupEntry` | MUST | 指向 `./dist/setup-entry.js`；MUST NOT 复用运行时入口 |
 | `package.json#openclaw.channel` | SHOULD | Channel 元数据（id、label、install） |
-| Manifest `id` | MUST | 与目录名 `<plugin-id>` 一致，kebab-case |
+| Manifest `id` | MUST | 与目录名 `<plugin-id>` 一致，kebab-case；历史目录 `wechat` 显式映射到 OpenClaw 外部规范 ID `openclaw-weixin` |
 | 插件根目录 `*.ts`（运行时） | MUST NOT | 除 `tsup.config.ts`、`vitest.config.ts` 外，运行时代码 MUST 在 `src/` |
 | `dist/`、`node_modules/` | MUST NOT | 提交仓库或作为架构文档依据 |
 | `*.tgz` | MUST NOT | 提交插件包 |
@@ -260,7 +260,7 @@ Base Profile 必须先成立。Extended Profile 在 Base 之上叠加语义子�
 
 | 对象 | 规则 | 示例 |
 |------|------|------|
-| 插件目录 / Manifest `id` | kebab-case，二者 MUST 一致 | `wecom-kf` |
+| 插件目录 / Manifest `id` | kebab-case，二者 MUST 一致；仅 `wechat` → `openclaw-weixin` 为登记的兼容例外 | `wecom-kf` |
 | `src/` 子目录 | kebab-case | `dispatch/` |
 | 源文件 | kebab-case | `inbound-media.ts` |
 | Channel id | kebab-case | `wecom-kf` |
@@ -310,14 +310,14 @@ Base Profile 必须先成立。Extended Profile 在 Base 之上叠加语义子�
 | 插件 id | Profile |
 |---------|---------|
 | `memory`、`openmem` | capability-memory |
-| `mtls`、`oauth2` | capability |
+| `mtls`、`oauth2`、`amap`、`meituan`、`rednode` | capability |
 | `nacos`、`tracing`、`prometheus` | infra |
 | `knowledge` | sdk-rag |
 | `message-sdk` | sdk |
 | `router` | utility-minimal |
 | `bridge` | channel-legacy |
 | `wecom`、`wecom-kf` | channel-extended |
-| Tier A（`amap`、`mqtt` 等 12 个） | channel-base |
+| Tier A（`mqtt` 等） | channel-base |
 
 ### 10.2 规则级别
 

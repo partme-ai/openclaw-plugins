@@ -2,8 +2,7 @@ import * as http from "node:http";
 import type { Duplex } from "node:stream";
 
 import { OAuth2Client } from "./auth/oauth2-client.js";
-import { extractBearerToken, toOpenClawScopes } from "./auth/request-auth.js";
-import { mapScopesToPermissions, mapScopesToRole, parseScopeString } from "./auth/scope-mapper.js";
+import { extractBearerToken } from "./auth/request-auth.js";
 import { OAuth2SessionStore } from "./auth/session-store.js";
 import type { AuthContext, AuthOAuth2Config, OAuth2ProxyConfig } from "./shared/types.js";
 
@@ -23,6 +22,36 @@ const STRIPPED_HEADERS = new Set([
   "x-openclaw-scopes",
   "x-openclaw-tenant",
 ]);
+
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+function connectionHeaderTokens(value: string | string[] | undefined): string[] {
+  const source = Array.isArray(value) ? value.join(",") : value ?? "";
+  return source
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function proxyResponseHeaders(source: http.IncomingHttpHeaders): http.OutgoingHttpHeaders {
+  const headers: http.OutgoingHttpHeaders = { ...source };
+  for (const header of connectionHeaderTokens(source.connection)) delete headers[header];
+  for (const header of HOP_BY_HOP_HEADERS) delete headers[header];
+  return headers;
+}
+
+function parseScopeString(scope: string | undefined): string[] {
+  return scope?.split(/\s+/).filter(Boolean) ?? [];
+}
 
 function pathnameOf(url: string | undefined): string {
   try {
@@ -66,6 +95,7 @@ export function buildOAuth2ForwardHeaders(
   context: AuthContext,
   remoteAddress: string | undefined,
   proxy: OAuth2ProxyConfig,
+  transport: "http" | "upgrade" = "http",
 ): http.OutgoingHttpHeaders {
   const headers: http.OutgoingHttpHeaders = {};
   const configuredIdentityHeaders = new Set([
@@ -74,13 +104,23 @@ export function buildOAuth2ForwardHeaders(
   ]);
   for (const [name, value] of Object.entries(source)) {
     const lower = name.toLowerCase();
-    if (lower === "authorization" || STRIPPED_HEADERS.has(lower) || configuredIdentityHeaders.has(lower)) continue;
+    if (
+      lower === "authorization" ||
+      STRIPPED_HEADERS.has(lower) ||
+      configuredIdentityHeaders.has(lower) ||
+      HOP_BY_HOP_HEADERS.has(lower)
+    ) continue;
     headers[lower] = value;
   }
+  for (const header of connectionHeaderTokens(source.connection)) delete headers[header];
+  if (transport === "upgrade") {
+    headers.connection = "Upgrade";
+    if (source.upgrade) headers.upgrade = source.upgrade;
+  }
   headers[proxy.userHeader.toLowerCase()] = context.loginId;
-  headers["x-openclaw-scopes"] = toOpenClawScopes(context).join(" ");
   headers["x-forwarded-for"] = remoteAddress ?? "unknown";
-  headers["x-forwarded-proto"] = "http";
+  headers["x-forwarded-proto"] = proxy.forwardedProto;
+  if (source.host) headers["x-forwarded-host"] = source.host;
   if (proxy.tenantHeader && context.tenantId) headers[proxy.tenantHeader.toLowerCase()] = context.tenantId;
   return headers;
 }
@@ -88,8 +128,10 @@ export function buildOAuth2ForwardHeaders(
 export class OAuth2ProxyServer {
   private server: http.Server | null = null;
   private readonly upgradedSockets = new Set<Duplex>();
+  private readonly pendingRequests = new Set<Promise<void>>();
   private readonly oauthClient: OAuth2Client;
   private readonly sessions: OAuth2SessionStore;
+  private readonly refreshes = new Map<string, Promise<AuthContext>>();
 
   constructor(
     private readonly config: AuthOAuth2Config,
@@ -105,10 +147,19 @@ export class OAuth2ProxyServer {
     await this.oauthClient.start();
     await this.sessions.start();
     const server = http.createServer((request, response) => {
-      void this.handleHttp(request, response);
+      const pending = this.handleHttp(request, response).catch((error) => {
+        this.logger.error(`[openclaw-oauth2] request failed: ${error instanceof Error ? error.message : String(error)}`);
+        if (!response.headersSent) response.writeHead(503, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        if (!response.writableEnded) response.end(JSON.stringify({ error: "oauth2_service_unavailable" }));
+      }).finally(() => this.pendingRequests.delete(pending));
+      this.pendingRequests.add(pending);
     });
     server.on("upgrade", (request, socket, head) => {
-      void this.handleUpgrade(request, socket, head);
+      const pending = this.handleUpgrade(request, socket, head).catch((error) => {
+        this.logger.warn(`[openclaw-oauth2] upgrade authentication failed: ${error instanceof Error ? error.message : String(error)}`);
+        if (!socket.destroyed) rejectUpgrade(socket, "OAuth2 service unavailable");
+      }).finally(() => this.pendingRequests.delete(pending));
+      this.pendingRequests.add(pending);
     });
     server.on("clientError", (error, socket) => {
       this.logger.warn(`[openclaw-oauth2] client error: ${error.message}`);
@@ -144,6 +195,7 @@ export class OAuth2ProxyServer {
       server.close((error) => (error ? reject(error) : resolve()));
       server.closeAllConnections();
     });
+    await Promise.allSettled([...this.pendingRequests]);
     await this.sessions.stop();
   }
 
@@ -162,14 +214,7 @@ export class OAuth2ProxyServer {
       const user = await this.oauthClient.authenticateAccessToken(token);
       if (!user) return null;
       const scopes = parseScopeString(user.scope);
-      return {
-        authenticated: true,
-        loginId: user.userId,
-        tenantId: user.tenantId,
-        scopes,
-        role: mapScopesToRole(scopes, this.config),
-        permissions: mapScopesToPermissions(scopes, this.config),
-      };
+      return this.createContext(user.userId, user.tenantId, scopes);
     }
 
     const session = await this.sessions.getSession(request.headers);
@@ -178,25 +223,46 @@ export class OAuth2ProxyServer {
       if (!session.tokens.refreshToken || (session.tokens.refreshExpiresAt ?? Number.POSITIVE_INFINITY) <= Date.now()) {
         return null;
       }
-      const refreshed = await this.oauthClient.refresh(session.tokens.refreshToken);
-      session.tokens = {
-        ...refreshed,
-        refreshToken: refreshed.refreshToken ?? session.tokens.refreshToken,
-        refreshExpiresAt: refreshed.refreshExpiresAt ?? session.tokens.refreshExpiresAt,
-      };
-      await this.sessions.saveSession(session);
+      let refresh = this.refreshes.get(session.id);
+      if (!refresh) {
+        refresh = (async () => {
+          const refreshed = await this.oauthClient.refresh(session.tokens.refreshToken as string);
+          const user = await this.oauthClient.resolveIdentity(refreshed);
+          if (!user) throw new Error("refreshed OAuth2 access token is inactive");
+          const effectiveScope = refreshed.scope ?? user.scope ?? session.tokens.scope;
+          const context = this.createContext(
+            user.userId,
+            user.tenantId,
+            parseScopeString(effectiveScope),
+          );
+          if (!context) throw new Error("refreshed OAuth2 token is missing required scopes");
+          session.tokens = {
+            ...refreshed,
+            refreshToken: refreshed.refreshToken ?? session.tokens.refreshToken,
+            refreshExpiresAt: refreshed.refreshExpiresAt ?? session.tokens.refreshExpiresAt,
+            scope: effectiveScope,
+          };
+          session.context = context;
+          await this.sessions.saveSession(session);
+          return context;
+        })().finally(() => this.refreshes.delete(session.id));
+        this.refreshes.set(session.id, refresh);
+      }
+      return refresh;
     }
     return session.context;
   }
 
   private async serveLocalEndpoint(request: http.IncomingMessage, response: http.ServerResponse): Promise<boolean> {
     const path = pathnameOf(request.url);
-    if (path === "/health" || path === "/auth/oauth2/status") {
+    if (path === "/health") {
+      if (request.method !== "GET" && request.method !== "HEAD") return this.methodNotAllowed(response, "GET, HEAD");
       response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      response.end(JSON.stringify({ ok: true, plugin: "openclaw-oauth2", ready: this.oauthClient.isReady() }));
+      response.end(request.method === "HEAD" ? undefined : JSON.stringify({ ok: true, plugin: "openclaw-oauth2", ready: this.oauthClient.isReady() }));
       return true;
     }
     if (path === "/auth/oauth2/login") {
+      if (request.method !== "GET") return this.methodNotAllowed(response, "GET");
       const url = new URL(request.url ?? path, "http://openclaw-oauth2.local");
       const codeVerifier = this.oauthClient.createCodeVerifier();
       const { state, cookie } = await this.sessions.createAuthorizationState(
@@ -209,6 +275,7 @@ export class OAuth2ProxyServer {
       return true;
     }
     if (path === "/auth/oauth2/callback") {
+      if (request.method !== "GET") return this.methodNotAllowed(response, "GET");
       const url = new URL(request.url ?? path, "http://openclaw-oauth2.local");
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
@@ -232,14 +299,8 @@ export class OAuth2ProxyServer {
         const user = await this.oauthClient.resolveIdentity(tokens);
         if (!user) throw new Error("OAuth2 access token is inactive");
         const scopes = parseScopeString(tokens.scope ?? user.scope);
-        const context: AuthContext = {
-          authenticated: true,
-          loginId: user.userId,
-          tenantId: user.tenantId,
-          scopes,
-          role: mapScopesToRole(scopes, this.config),
-          permissions: mapScopesToPermissions(scopes, this.config),
-        };
+        const context = this.createContext(user.userId, user.tenantId, scopes);
+        if (!context) throw new Error("OAuth2 token is missing required scopes");
         const { cookie } = await this.sessions.createSession(context, tokens);
         response.writeHead(302, {
           location: transaction.returnTo,
@@ -255,6 +316,7 @@ export class OAuth2ProxyServer {
       return true;
     }
     if (path === "/auth/oauth2/logout") {
+      if (request.method !== "POST") return this.methodNotAllowed(response, "POST");
       const session = await this.sessions.deleteSession(request.headers);
       if (session) await this.oauthClient.revoke(session.tokens.accessToken).catch(() => undefined);
       response.writeHead(302, { location: "/", "set-cookie": this.sessions.clearCookie(), "cache-control": "no-store" });
@@ -262,6 +324,22 @@ export class OAuth2ProxyServer {
       return true;
     }
     return false;
+  }
+
+  private methodNotAllowed(response: http.ServerResponse, allow: string): true {
+    response.writeHead(405, { allow, "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    response.end(JSON.stringify({ error: "method_not_allowed" }));
+    return true;
+  }
+
+  private createContext(
+    loginId: string,
+    tenantId: string | undefined,
+    scopes: string[],
+  ): AuthContext | null {
+    const granted = new Set(scopes);
+    if (this.config.client.requiredScopes.some((scope) => !granted.has(scope))) return null;
+    return { authenticated: true, loginId, tenantId, scopes };
   }
 
   private async handleHttp(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -290,7 +368,7 @@ export class OAuth2ProxyServer {
       path: request.url,
       headers: buildOAuth2ForwardHeaders(request.headers, context, request.socket.remoteAddress, proxy),
     }, (upstreamResponse) => {
-      response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+      response.writeHead(upstreamResponse.statusCode ?? 502, proxyResponseHeaders(upstreamResponse.headers));
       upstreamResponse.pipe(response);
     });
     upstream.setTimeout(proxy.requestTimeoutMs, () => upstream.destroy(new Error("upstream request timed out")));
@@ -311,7 +389,7 @@ export class OAuth2ProxyServer {
       port: proxy.upstreamPort,
       method: request.method,
       path: request.url,
-      headers: buildOAuth2ForwardHeaders(request.headers, context, request.socket.remoteAddress, proxy),
+      headers: buildOAuth2ForwardHeaders(request.headers, context, request.socket.remoteAddress, proxy, "upgrade"),
     });
     upstream.setTimeout(proxy.requestTimeoutMs, () => upstream.destroy(new Error("upstream upgrade timed out")));
     upstream.on("upgrade", (upstreamResponse, upstreamSocket, upstreamHead) => {

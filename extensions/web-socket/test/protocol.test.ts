@@ -4,7 +4,7 @@ import {
   parseClientFrame,
   serializeConnectedFrame,
   serializeReplyFrame,
-} from "../src/protocol.js";
+} from "../src/transport/protocol.js";
 
 describe("parseClientFrame", () => {
   it("parses message JSON frame with peerId", () => {

@@ -10,6 +10,15 @@
 #   OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs
 
 services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.128.0
+    container_name: openclaw-e2e-otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "${E2E_OTLP_HTTP_PORT:-14318}:4318"
+    volumes:
+      - ./docker/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+
   redis:
     image: redis:7-alpine
     container_name: openclaw-e2e-redis
@@ -112,6 +121,7 @@ services:
     working_dir: /workspace
     ports:
       - "${E2E_GATEWAY_PORT:-19789}:${E2E_GATEWAY_PORT:-19789}"
+      - "${E2E_MTLS_PORT:-18443}:${E2E_MTLS_PORT:-18443}"
     environment:
       OPENCLAW_PROFILE: queue-e2e
       E2E_GATEWAY_PORT: ${E2E_GATEWAY_PORT:-19789}

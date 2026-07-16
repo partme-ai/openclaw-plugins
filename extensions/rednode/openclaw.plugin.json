@@ -1,58 +1,38 @@
 {
   "id": "rednode",
   "name": "@partme.ai/openclaw-rednode",
-  "version": "0.1.0",
-  "description": "小红书开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
+  "version": "2026.7.1",
+  "description": "小红书 Ark Open API capability",
   "main": "dist/index.js",
-  "channels": [
-    "xhs"
-  ],
+  "activation": { "onStartup": true },
+  "contracts": { "tools": ["rednode_ark_invoke"] },
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "app_id": {
-        "type": "string",
-        "description": "小红书开放平台应用 ID（或底座侧租户 appId）"
+      "enabled": { "type": "boolean", "default": false },
+      "appKey": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "appSecret": { "type": "string", "minLength": 1, "maxLength": 512, "sensitive": true },
+      "environment": { "type": "string", "enum": ["production", "sandbox"], "default": "production" },
+      "apiBaseUrl": { "type": "string", "format": "uri" },
+      "operations": {
+        "type": "array", "minItems": 1, "maxItems": 100,
+        "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "method", "apiPath"],
+          "properties": {
+            "name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+            "description": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "method": { "type": "string", "enum": ["GET", "POST", "PUT"] },
+            "apiPath": { "type": "string", "pattern": "^/ark/open_api/", "maxLength": 256 }
+          }
+        }
       },
-      "app_secret": {
-        "type": "string",
-        "description": "直连模式：小红书 AppSecret；多租户底座模式可不填"
-      },
-      "ddd4j_api_base": {
-        "type": "string",
-        "description": "多租户底座模式：底座服务根地址，如 https://xxx/ddd4j-rednote"
-      },
-      "ddd4j_api_key": {
-        "type": "string",
-        "description": "多租户底座模式：平台颁发的 API Key（与 appId 绑定）"
-      },
-      "callback_url": {
-        "type": "string",
-        "description": "应用推送回调 URL"
-      },
-      "shop_id": {
-        "type": "string",
-        "description": "店铺 ID（单店铺）"
-      },
-      "seller_id": {
-        "type": "string",
-        "description": "卖家 ID（单店铺）"
-      },
-      "webhook_secret": {
-        "type": "string",
-        "description": "Webhook 验签密钥（若平台要求）"
-      }
-    }
-  },
-  "channelConfigs": {
-    "xhs": {
-      "label": "@partme.ai/openclaw-rednode",
-      "description": "小红书开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
-      "schema": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {}
-      }
+      "requestTimeoutMs": { "type": "integer", "minimum": 500, "maximum": 60000, "default": 30000 },
+      "maxRequestBytes": { "type": "integer", "minimum": 256, "maximum": 1048576, "default": 65536 },
+      "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 10485760, "default": 2097152 },
+      "maxRequestsPerMinute": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 60 },
+      "ownerOnly": { "type": "boolean", "default": true }
     }
   }
 }

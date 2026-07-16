@@ -1,6 +1,6 @@
 # OpenClaw Grafana Dashboards — Cluster Edition
 
-Ready-to-import Grafana dashboards for metrics from **`@partme.ai/openclaw-prometheus`** v0.3.1+ (diagnostics-prometheus parity).  
+Grafana multi-instance dashboard templates for **`@partme.ai/openclaw-prometheus`** 2026.7.1. This is not the removed OpenClaw `cluster` plugin; it only aggregates labels from multiple Gateway instances.
 **Multi-instance support** with `$instance` variable.
 
 Design reference: [RabbitMQ-Overview](https://grafana.com/grafana/dashboards/10991) enterprise patterns — stats top row + partitioned timeseries sections.

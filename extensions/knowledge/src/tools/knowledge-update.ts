@@ -1,7 +1,7 @@
 /**
  * @fileoverview `knowledge_update` — 按 sourceId **覆盖式更新** 知识条目 Tool。
  *
- * @description Update = `deleteBySource` + 重新 ingest（text/file/summary 三路径）。
+ * @description Update = 同 sourceId 串行重新 ingest + 存储层原子替换（text/file/summary 三路径）。
  * **模块角色**：Knowledge Plugin · Agent tool (write/update path)。
  *
  * @module knowledge/tools/knowledge-update
@@ -9,16 +9,17 @@
 
 import { stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type OpenClawPluginToolContext = any;
+import type { OpenClawPluginToolContext } from 'openclaw/plugin-sdk/plugin-entry';
+import type { KnowledgeConfig } from '../types.js';
 type AgentToolResult<T = unknown> = {
   content: { type: 'text'; text: string }[];
   details: T | undefined;
 };
 
 import { getOrCreateStore } from '../runtime/hooks.js';
-import { indexDocument } from '../indexer/scheduler.js';
+import { indexDocument, withSourceWriteLock } from '../indexer/scheduler.js';
 import { chunkText } from '../indexer/chunker.js';
+import { authorizeFilePath, authorizeNamespace, defaultNamespace, validateSourceId, validateTextSize } from './policy.js';
 
 // ===================================================================
 // 类型定义
@@ -43,12 +44,6 @@ interface KnowledgeUpdateParams {
 // 命名空间校验
 // ===================================================================
 
-const SESSION_NS_PATTERN = /^[^:]+:(bot|agent)$/;
-
-function isSessionNamespace(namespace: string): boolean {
-  return SESSION_NS_PATTERN.test(namespace);
-}
-
 // ===================================================================
 // 响应构造
 // ===================================================================
@@ -71,14 +66,6 @@ function failedResult(message: string): AgentToolResult<unknown> {
 // 获取共享配置
 // ===================================================================
 
-function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').KnowledgeConfig {
-  const knowledgeConfig = (ctx.pluginConfig ?? {}) as import('../types.js').KnowledgeConfig;
-  if (knowledgeConfig.enabled ?? true) {
-    return knowledgeConfig;
-  }
-  return { enabled: true };
-}
-
 // ===================================================================
 // 工具定义
 // ===================================================================
@@ -92,13 +79,13 @@ function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').
  * @param ctx - OpenClaw Tool 上下文。
  * @returns Agent Tool 描述对象。
  */
-export function createKnowledgeUpdateTool(ctx: OpenClawPluginToolContext) {
+export function createKnowledgeUpdateTool(ctx: OpenClawPluginToolContext, config: KnowledgeConfig) {
   return {
     name: 'knowledge_update',
     label: '知识库更新',
     description: [
       '按 sourceId 更新知识库中已有的条目。',
-      '流程：删除该 sourceId 的所有旧 chunks → 重新切分、嵌入、写入新内容。',
+      '流程：重新切分、嵌入，并原子替换该 sourceId 的全部 chunks；失败时保留旧内容。',
       '',
       '参数说明：',
       '  sourceId（必填）：要更新的来源标识，用于定位旧数据',
@@ -151,72 +138,63 @@ export function createKnowledgeUpdateTool(ctx: OpenClawPluginToolContext) {
         return failedResult('缺少必填参数 sourceId');
       }
 
-      const sourceId = p.sourceId.trim();
-
-      let namespace = p.namespace;
-      if (!namespace) {
-        const accountId = ctx.agentAccountId ?? 'default';
-        const mode = ctx.agentId ? 'agent' : 'bot';
-        namespace = `${accountId}:${mode}`;
-      }
-
-      // 权限校验
-      if (!isSessionNamespace(namespace) && !ctx.senderIsOwner) {
-        return failedResult('只有 owner 才能更新非对话级 namespace 的知识库');
-      }
-
-      const config = buildBaseConfig(ctx);
+      const source = validateSourceId(p.sourceId, '');
+      if (!source.ok) return failedResult(source.error);
+      const sourceId = source.sourceId;
+      const access = authorizeNamespace(ctx, p.namespace, config);
+      if (!access.ok) return failedResult(access.error);
 
       try {
-        // 第一步：删除旧数据
-        const { store, embedding } = await getOrCreateStore(config, namespace);
-        await store.deleteBySource(sourceId);
+        const { store, embedding } = await getOrCreateStore(config, access.namespace);
 
-        // 第二步：根据 updateType 写入新数据
         switch (p.updateType) {
           case 'text': {
             if (!p.content || typeof p.content !== 'string' || p.content.trim().length === 0) {
               return failedResult('updateType=text 时必须提供非空的 content 参数');
             }
             const text = p.content.trim();
-            const chunks = chunkText(text, sourceId);
-            if (chunks.length === 0) {
-              return successResult({ sourceId, chunksUpdated: 0 });
-            }
-            const texts = chunks.map((c) => c.text);
-            const vectors = await embedding.embedBatch(texts);
-            const vectorChunks = chunks.map((chunk, i) => ({
-              id: `doc:${sourceId}:${chunk.index}`,
-              vector: vectors[i],
-              metadata: {
-                sourceId: chunk.sourceId,
-                chunkIndex: chunk.index,
-                text: chunk.text,
-                source: 'knowledge_update',
-              },
-            }));
-            await store.upsert(vectorChunks);
-            return successResult({ sourceId, chunksUpdated: vectorChunks.length });
+            const sizeError = validateTextSize(text, config, 'content');
+            if (sizeError) return failedResult(sizeError);
+            return withSourceWriteLock(store, sourceId, async () => {
+              const chunks = chunkText(text, sourceId);
+              const vectors = await embedding.embedBatch(chunks.map((chunk) => chunk.text));
+              const vectorChunks = chunks.map((chunk, i) => ({
+                id: `doc:${sourceId}:${chunk.index}`,
+                vector: vectors[i],
+                metadata: {
+                  sourceId: chunk.sourceId,
+                  chunkIndex: chunk.index,
+                  text: chunk.text,
+                  source: 'knowledge_update',
+                },
+              }));
+              await store.replaceBySource(sourceId, vectorChunks);
+              return successResult({ sourceId, chunksUpdated: vectorChunks.length });
+            });
           }
 
           case 'file': {
             if (!p.filePath || typeof p.filePath !== 'string') {
               return failedResult('updateType=file 时必须提供 filePath 参数');
             }
+            const fileAccess = await authorizeFilePath(ctx, p.filePath, config);
+            if (!fileAccess.ok) return failedResult(fileAccess.error);
             try {
-              const fileStat = await stat(p.filePath);
+              const fileStat = await stat(fileAccess.filePath);
               if (!fileStat.isFile()) {
-                return failedResult(`路径不是文件: ${p.filePath}`);
+                return failedResult(`路径不是文件: ${fileAccess.filePath}`);
               }
+              if (fileStat.size === 0) return failedResult(`文件为空: ${fileAccess.filePath}`);
+              if (fileStat.size > fileAccess.maxFileBytes) return failedResult(`文件超过最大大小 ${fileAccess.maxFileBytes} bytes`);
             } catch (err) {
-              return failedResult(`无法读取文件: ${p.filePath}（${err instanceof Error ? err.message : String(err)}）`);
+              return failedResult(`无法读取文件: ${fileAccess.filePath}（${err instanceof Error ? err.message : String(err)}）`);
             }
-            const ext = extname(p.filePath).toLowerCase();
+            const ext = extname(fileAccess.filePath).toLowerCase();
             const supportedExts = new Set(['.md', '.txt', '.csv', '.json']);
             if (!supportedExts.has(ext)) {
               return failedResult(`不支持的文件类型: ${ext}（支持: ${[...supportedExts].join(', ')}）`);
             }
-            const result = await indexDocument(p.filePath, sourceId, embedding, store);
+            const result = await indexDocument(fileAccess.filePath, sourceId, embedding, store);
             if (!result.success) {
               return failedResult(result.error ?? '索引文件失败');
             }
@@ -230,31 +208,32 @@ export function createKnowledgeUpdateTool(ctx: OpenClawPluginToolContext) {
             if (!p.content || typeof p.content !== 'string' || p.content.trim().length === 0) {
               return failedResult('updateType=summary 时必须提供非空的 content 参数');
             }
-            if (!isSessionNamespace(namespace)) {
+            if (access.namespace !== defaultNamespace(ctx)) {
               return failedResult('summary 更新只支持对话级 namespace（{accountId}:{mode}）');
             }
             const topic = p.topic.trim();
-            const summaryContent = `对话主题：${topic}\n\n总结内容：${p.content.trim()}`;
-            const chunks = chunkText(summaryContent, sourceId);
-            if (chunks.length === 0) {
-              return successResult({ sourceId, chunksUpdated: 0 });
-            }
-            const texts = chunks.map((c) => c.text);
-            const vectors = await embedding.embedBatch(texts);
-            const vectorChunks = chunks.map((chunk, i) => ({
-              id: `summary:${sourceId}:${chunk.index}`,
-              vector: vectors[i],
-              metadata: {
-                sourceId: chunk.sourceId,
-                chunkIndex: chunk.index,
-                text: chunk.text,
-                source: 'knowledge_update',
-                type: 'summary',
-                topic,
-              },
-            }));
-            await store.upsert(vectorChunks);
-            return successResult({ sourceId, chunksUpdated: vectorChunks.length });
+            const content = p.content.trim();
+            const sizeError = validateTextSize(`${topic}\n${content}`, config, 'summary');
+            if (sizeError) return failedResult(sizeError);
+            const summaryContent = `对话主题：${topic}\n\n总结内容：${content}`;
+            return withSourceWriteLock(store, sourceId, async () => {
+              const chunks = chunkText(summaryContent, sourceId);
+              const vectors = await embedding.embedBatch(chunks.map((chunk) => chunk.text));
+              const vectorChunks = chunks.map((chunk, i) => ({
+                id: `summary:${sourceId}:${chunk.index}`,
+                vector: vectors[i],
+                metadata: {
+                  sourceId: chunk.sourceId,
+                  chunkIndex: chunk.index,
+                  text: chunk.text,
+                  source: 'knowledge_update',
+                  type: 'summary',
+                  topic,
+                },
+              }));
+              await store.replaceBySource(sourceId, vectorChunks);
+              return successResult({ sourceId, chunksUpdated: vectorChunks.length });
+            });
           }
 
           default:

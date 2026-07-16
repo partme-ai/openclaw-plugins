@@ -3,23 +3,24 @@
  *
  * @description
  * RAG 管道的 **写入（Ingest）** 分支：文本直写 / 结构化文件 ingest / 对话摘要固化。
- * 每条路径均复用 `chunkText`→`embedBatch`→`upsert` 范式，并在进入前完成 **命名空间 ACL** 判定。
+ * 每条路径均复用 `chunkText`→`embedBatch`→原子替换范式，并在进入前完成 **命名空间 ACL** 判定。
  *
  * @module knowledge/tools/knowledge-add
  */
 
 import { basename, extname } from 'node:path';
 import { stat } from 'node:fs/promises';
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type OpenClawPluginToolContext = any;
+import type { OpenClawPluginToolContext } from 'openclaw/plugin-sdk/plugin-entry';
+import type { KnowledgeConfig } from '../types.js';
 type AgentToolResult<T = unknown> = {
   content: { type: 'text'; text: string }[];
   details: T | undefined;
 };
 
 import { getOrCreateStore } from '../runtime/hooks.js';
-import { indexDocument } from '../indexer/scheduler.js';
+import { indexDocument, withSourceWriteLock } from '../indexer/scheduler.js';
 import { chunkText } from '../indexer/chunker.js';
+import { authorizeFilePath, authorizeNamespace, defaultNamespace, validateSourceId, validateTextSize } from './policy.js';
 
 // ===================================================================
 // 类型定义
@@ -41,17 +42,6 @@ interface KnowledgeAddParams {
 // ===================================================================
 
 /** 对话级 namespace 格式：{accountId}:{mode} */
-const SESSION_NS_PATTERN = /^[^:]+:(bot|agent)$/;
-
-/**
- * @description 判断 `namespace` 是否符合 `{account}:(bot|agent)` 会话私有格式。
- *
- * @param namespace - 目标库隔离键
- */
-function isSessionNamespace(namespace: string): boolean {
-  return SESSION_NS_PATTERN.test(namespace);
-}
-
 // ===================================================================
 // 响应构造
 // ===================================================================
@@ -83,20 +73,12 @@ function failedResult(message: string): AgentToolResult {
  *
  * @param ctx - OpenClaw Tool 上下文
  */
-function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').KnowledgeConfig {
-  const knowledgeConfig = (ctx.pluginConfig ?? {}) as import('../types.js').KnowledgeConfig;
-  if (knowledgeConfig.enabled ?? true) {
-    return knowledgeConfig;
-  }
-  return { enabled: true };
-}
-
 // ===================================================================
 // 执行逻辑
 // ===================================================================
 
 /**
- * @description `store_text` 分支：幂等语义 — 先 `deleteBySource` 再批量写入向量。
+ * @description `store_text` 分支：同 sourceId 串行并原子替换全部向量块。
  *
  * @param content - 纯文本正文
  * @param namespace - 向量隔离空间
@@ -108,33 +90,27 @@ async function handleStoreText(
   namespace: string,
   sourceId: string,
   ctx: OpenClawPluginToolContext,
+  config: KnowledgeConfig,
 ) {
-  const config = buildBaseConfig(ctx);
   const { store, embedding } = await getOrCreateStore(config, namespace);
 
-  const chunks = chunkText(content, sourceId);
-  if (chunks.length === 0) {
-    return successResult({ chunksAdded: 0, sourceId });
-  }
-
-  const texts = chunks.map((c) => c.text);
-  const vectors = await embedding.embedBatch(texts);
-
-  const vectorChunks = chunks.map((chunk, i) => ({
-    id: `doc:${sourceId}:${chunk.index}`,
-    vector: vectors[i],
-    metadata: {
-      sourceId: chunk.sourceId,
-      chunkIndex: chunk.index,
-      text: chunk.text,
-      source: 'knowledge_add',
-    },
-  }));
-
-  await store.deleteBySource(sourceId);
-  await store.upsert(vectorChunks);
-
-  return successResult({ chunksAdded: vectorChunks.length, sourceId });
+  return withSourceWriteLock(store, sourceId, async () => {
+    const chunks = chunkText(content, sourceId);
+    const texts = chunks.map((c) => c.text);
+    const vectors = texts.length > 0 ? await embedding.embedBatch(texts) : [];
+    const vectorChunks = chunks.map((chunk, i) => ({
+      id: `doc:${sourceId}:${chunk.index}`,
+      vector: vectors[i],
+      metadata: {
+        sourceId: chunk.sourceId,
+        chunkIndex: chunk.index,
+        text: chunk.text,
+        source: 'knowledge_add',
+      },
+    }));
+    await store.replaceBySource(sourceId, vectorChunks);
+    return successResult({ chunksAdded: vectorChunks.length, sourceId });
+  });
 }
 
 /**
@@ -150,6 +126,7 @@ async function handleStoreFile(
   namespace: string,
   sourceId: string,
   ctx: OpenClawPluginToolContext,
+  config: KnowledgeConfig,
 ) {
   try {
     const fileStat = await stat(filePath);
@@ -159,6 +136,8 @@ async function handleStoreFile(
     if (fileStat.size === 0) {
       return failedResult(`文件为空: ${filePath}`);
     }
+    const maxFileBytes = config.tools?.maxFileBytes ?? 10 * 1024 * 1024;
+    if (fileStat.size > maxFileBytes) return failedResult(`文件超过最大大小 ${maxFileBytes} bytes`);
   } catch (err) {
     return failedResult(`无法读取文件: ${filePath}（${err instanceof Error ? err.message : String(err)}）`);
   }
@@ -169,7 +148,6 @@ async function handleStoreFile(
     return failedResult(`不支持的文件类型: ${ext}（支持: ${[...supportedExts].join(', ')}）`);
   }
 
-  const config = buildBaseConfig(ctx);
   const { store, embedding } = await getOrCreateStore(config, namespace);
 
   const result = await indexDocument(filePath, sourceId, embedding, store);
@@ -195,37 +173,31 @@ async function handleStoreSummary(
   namespace: string,
   sourceId: string,
   ctx: OpenClawPluginToolContext,
+  config: KnowledgeConfig,
 ) {
   const summaryContent = `对话主题：${topic}\n\n总结内容：${text}`;
 
-  const config = buildBaseConfig(ctx);
   const { store, embedding } = await getOrCreateStore(config, namespace);
 
-  const chunks = chunkText(summaryContent, sourceId);
-  if (chunks.length === 0) {
-    return successResult({ chunksAdded: 0, sourceId });
-  }
-
-  const texts = chunks.map((c) => c.text);
-  const vectors = await embedding.embedBatch(texts);
-
-  const vectorChunks = chunks.map((chunk, i) => ({
-    id: `summary:${sourceId}:${chunk.index}`,
-    vector: vectors[i],
-    metadata: {
-      sourceId: chunk.sourceId,
-      chunkIndex: chunk.index,
-      text: chunk.text,
-      source: 'knowledge_add',
-      type: 'summary',
-      topic,
-    },
-  }));
-
-  await store.deleteBySource(sourceId);
-  await store.upsert(vectorChunks);
-
-  return successResult({ chunksAdded: vectorChunks.length, sourceId });
+  return withSourceWriteLock(store, sourceId, async () => {
+    const chunks = chunkText(summaryContent, sourceId);
+    const texts = chunks.map((c) => c.text);
+    const vectors = texts.length > 0 ? await embedding.embedBatch(texts) : [];
+    const vectorChunks = chunks.map((chunk, i) => ({
+      id: `summary:${sourceId}:${chunk.index}`,
+      vector: vectors[i],
+      metadata: {
+        sourceId: chunk.sourceId,
+        chunkIndex: chunk.index,
+        text: chunk.text,
+        source: 'knowledge_add',
+        type: 'summary',
+        topic,
+      },
+    }));
+    await store.replaceBySource(sourceId, vectorChunks);
+    return successResult({ chunksAdded: vectorChunks.length, sourceId });
+  });
 }
 
 // ===================================================================
@@ -238,7 +210,7 @@ async function handleStoreSummary(
  * @param ctx - 绑定账号/agent/bot 模式及插件配置的调用上下文
  * @returns Agent Tool 描述对象（含 JSON Schema parameters）
  */
-export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext) {
+export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext, config: KnowledgeConfig) {
   return {
     name: 'knowledge_add',
     label: '知识库写入',
@@ -264,8 +236,9 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext) {
       '   - sourceId（可选）：来源标识，默认取 topic',
       '',
       '权限规则：',
-      '- 任何用户都可以写入自己的对话级 namespace（{accountId}:{mode}）',
-      '- 只有 owner 才能写入非对话级 namespace（如 enterprise, global）',
+      '- 任何用户只能写入自己的精确 namespace（{accountId}:{mode}）',
+      '- owner 可否写入其他 namespace 由 allowOwnerGlobalNamespaces 控制',
+      '- store_file 默认关闭；仅 owner 且 realpath 位于 allowedFileRoots 时可用',
       '- store_summary 强制限制只能写入对话级 namespace',
     ].join('\n'),
     parameters: {
@@ -318,21 +291,15 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext) {
           return failedResult('action=store_text 时必须提供非空的 content 参数');
         }
         const content = p.content.trim();
-        const sourceId = p.sourceId || content.slice(0, 30);
-        let namespace = p.namespace;
-
-        if (!namespace) {
-          const accountId = ctx.agentAccountId ?? 'default';
-          const mode = ctx.agentId ? 'agent' : 'bot';
-          namespace = `${accountId}:${mode}`;
-        }
-
-        if (!isSessionNamespace(namespace) && !ctx.senderIsOwner) {
-          return failedResult('只有 owner 才能写入非对话级 namespace');
-        }
+        const sizeError = validateTextSize(content, config, 'content');
+        if (sizeError) return failedResult(sizeError);
+        const source = validateSourceId(p.sourceId, content.slice(0, 30));
+        if (!source.ok) return failedResult(source.error);
+        const access = authorizeNamespace(ctx, p.namespace, config);
+        if (!access.ok) return failedResult(access.error);
 
         try {
-          return await handleStoreText(content, namespace, sourceId, ctx);
+          return await handleStoreText(content, access.namespace, source.sourceId, ctx, config);
         } catch (err) {
           return failedResult(`存储失败: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -343,21 +310,15 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext) {
         if (!p.filePath || typeof p.filePath !== 'string') {
           return failedResult('action=store_file 时必须提供 filePath 参数');
         }
-        const sourceId = p.sourceId || basename(p.filePath);
-        let namespace = p.namespace;
-
-        if (!namespace) {
-          const accountId = ctx.agentAccountId ?? 'default';
-          const mode = ctx.agentId ? 'agent' : 'bot';
-          namespace = `${accountId}:${mode}`;
-        }
-
-        if (!isSessionNamespace(namespace) && !ctx.senderIsOwner) {
-          return failedResult('只有 owner 才能写入非对话级 namespace');
-        }
+        const fileAccess = await authorizeFilePath(ctx, p.filePath, config);
+        if (!fileAccess.ok) return failedResult(fileAccess.error);
+        const source = validateSourceId(p.sourceId, basename(fileAccess.filePath));
+        if (!source.ok) return failedResult(source.error);
+        const access = authorizeNamespace(ctx, p.namespace, config);
+        if (!access.ok) return failedResult(access.error);
 
         try {
-          return await handleStoreFile(p.filePath, namespace, sourceId, ctx);
+          return await handleStoreFile(fileAccess.filePath, access.namespace, source.sourceId, ctx, config);
         } catch (err) {
           return failedResult(`存储失败: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -372,21 +333,20 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext) {
           return failedResult('action=store_summary 时必须提供非空的 text 参数');
         }
 
-        let namespace = p.namespace;
-        if (!namespace) {
-          const accountId = ctx.agentAccountId ?? 'default';
-          const mode = ctx.agentId ? 'agent' : 'bot';
-          namespace = `${accountId}:${mode}`;
-        }
-
-        if (!isSessionNamespace(namespace)) {
+        const access = authorizeNamespace(ctx, p.namespace, config);
+        if (!access.ok) return failedResult(access.error);
+        if (access.namespace !== defaultNamespace(ctx)) {
           return failedResult('store_summary 只支持写入对话级 namespace（{accountId}:{mode}），不允许写入全局 namespace');
         }
-
-        const sourceId = p.sourceId || p.topic.trim();
+        const topic = p.topic.trim();
+        const text = p.text.trim();
+        const sizeError = validateTextSize(`${topic}\n${text}`, config, 'summary');
+        if (sizeError) return failedResult(sizeError);
+        const source = validateSourceId(p.sourceId, topic);
+        if (!source.ok) return failedResult(source.error);
 
         try {
-          return await handleStoreSummary(p.topic.trim(), p.text.trim(), namespace, sourceId, ctx);
+          return await handleStoreSummary(topic, text, access.namespace, source.sourceId, ctx, config);
         } catch (err) {
           return failedResult(`存储失败: ${err instanceof Error ? err.message : String(err)}`);
         }

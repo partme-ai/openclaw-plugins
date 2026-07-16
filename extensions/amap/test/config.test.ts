@@ -1,28 +1,17 @@
-/**
- * Amap config getter tests.
- */
 import { describe, expect, it } from "vitest";
+import { resolveAmapConfig } from "../src/config.js";
 
-import { createMockPluginApi } from "../../../test-utils/mock-plugin-api.js";
-import { createAmapConfigGetter } from "../src/config.js";
-
-describe("createAmapConfigGetter", () => {
-  it("returns undefined when channels.amap missing", () => {
-    const api = createMockPluginApi({ config: { channels: {} } });
-    expect(createAmapConfigGetter(api as never)()).toBeUndefined();
+describe("resolveAmapConfig", () => {
+  it("is disabled unless explicitly enabled", () => {
+    expect(resolveAmapConfig({}, {})).toBeNull();
   });
 
-  it("reads channels.amap from runtime config", () => {
-    const api = createMockPluginApi({
-      config: {
-        channels: {
-          amap: { key: "amap-key", poi_id: "poi-1" },
-        },
-      },
-    });
-    expect(createAmapConfigGetter(api as never)()).toEqual({
-      key: "amap-key",
-      poi_id: "poi-1",
-    });
+  it("reads the key from the canonical environment variable", () => {
+    expect(resolveAmapConfig({ enabled: true }, { AMAP_WEB_SERVICE_KEY: "env-key" })?.key).toBe("env-key");
+  });
+
+  it("rejects unsafe base URLs and invalid bounds", () => {
+    expect(() => resolveAmapConfig({ enabled: true, key: "k", apiBaseUrl: "http://example.com" }, {})).toThrow("HTTPS");
+    expect(() => resolveAmapConfig({ enabled: true, key: "k", retryAttempts: 4 }, {})).toThrow("retryAttempts");
   });
 });

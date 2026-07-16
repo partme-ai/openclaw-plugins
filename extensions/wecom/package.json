@@ -51,7 +51,7 @@
     }
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1",
     "@wecom/aibot-node-sdk": "^1.0.6",
     "fast-xml-parser": "5.3.4",
     "file-type": "^18.7.0",

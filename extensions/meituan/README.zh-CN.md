@@ -1,28 +1,14 @@
-# 美团开放平台
+# @partme.ai/openclaw-meituan
 
-> **OpenClaw 插件 -- 美团开放平台渠道与运营工具，公域 Agent-First 智能运营**
+OpenClaw 2026.7.1 的美团技术服务合作中心 MTOp OpenAPI capability。它不是聊天渠道，也不虚构订单、评价或核销接口；实际 API 路径和 `businessId` 必须来自你的美团应用后台与对应业务文档，并通过配置白名单开放给 Agent。
 
-[![npm](https://img.shields.io/npm/v/@partme.ai/openclaw-meituan)](https://www.npmjs.com/package/@partme.ai/openclaw-meituan)
-[![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![OpenClaw](https://img.shields.io/badge/OpenClaw-%3E=2026.7.1-blueviolet)](https://github.com/partme-ai/openclaw)
+## 能力边界
 
-[简体中文](./README.md)
-
-## 简介
-
-`@partme.ai/openclaw-meituan` 是 OpenClaw 的渠道插件，集成美团开放平台，提供 Webhook 事件回调接收、HMAC-SHA256 签名验签以及店铺运营工具，实现公域 Agent-First 智能运营。
-
-插件将美团开放平台的订单、评价、经营数据等事件通过 Webhook 入站，驱动 Agent 自动化处理，并提供运营工具供 Agent 主动调用美团 Open API。
-
-### 核心能力
-
-- **渠道通道** `meituan` -- 完整渠道生命周期，配置 `channels.meituan`
-- **Webhook 回调** -- 注册 `POST /channels/meituan/webhook` 路由，接收美团事件推送
-- **HMAC-SHA256 验签** -- 使用 `timingSafeEqual` 常量时间比较，防止时序攻击
-- **签名鉴权调用** -- 调用美团 Open API 时使用 HMAC-SHA256 对请求参数排序签名
-- **PluginConfig 覆盖** -- 支持宿主注入 `pluginConfig` 与 `channels.meituan` 浅合并覆盖
-- **5 个运营工具** -- 覆盖订单查询、评价回复、经营指标、团购核销、店铺二维码
+- 按官方 `MtOpJavaSDK` 通用请求协议发送 `application/x-www-form-urlencoded` POST。
+- 自动构造 `biz`、`businessId`、`developerId`、`timestamp`、`charset`、`version`、`appAuthToken` 和 SHA-1 `sign`。
+- 只允许调用 `operations` 中显式配置的路径，不接受 Agent 自由输入 URL。
+- 默认只允许消息 owner 调用，带本地每分钟限流、请求超时、请求/响应体上限。
+- 不自动重试 POST，避免核销、退款等非幂等操作被重复执行。
 
 ## 安装
 
@@ -30,42 +16,28 @@
 openclaw plugins install @partme.ai/openclaw-meituan
 ```
 
-最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
-
 ## 配置
 
-安装后在 `openclaw.json` 的 `channels.meituan` 中配置凭据与回调 URL。
-
-### 单店铺配置
-
-```jsonc
+```json
 {
-  "channels": {
-    "meituan": {
-      "enabled": true,
-      "app_key": "your_app_key",
-      "app_secret": "your_app_secret",
-      "shop_id": "your_shop_id",
-      "webhook_secret": "your_webhook_secret"
-    }
-  }
-}
-```
-
-### 多店铺配置
-
-```jsonc
-{
-  "channels": {
-    "meituan": {
-      "enabled": true,
-      "app_key": "default_app_key",
-      "app_secret": "default_app_secret",
-      "accounts": {
-        "shop2": {
-          "app_key": "shop2_app_key",
-          "app_secret": "shop2_app_secret",
-          "shop_id": "shop2_id"
+  "plugins": {
+    "entries": {
+      "meituan": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "developerId": "你的开发者ID",
+          "signKey": "你的签名密钥",
+          "appAuthToken": "门店授权令牌",
+          "operations": [
+            {
+              "name": "receipt_query",
+              "description": "按日期查询验券记录",
+              "apiPath": "/从美团开发者中心复制的真实路径",
+              "businessId": 真实业务ID,
+              "requiresAuth": true
+            }
+          ]
         }
       }
     }
@@ -73,87 +45,32 @@ openclaw plugins install @partme.ai/openclaw-meituan
 }
 ```
 
-### 环境变量
+凭据也可通过 `MEITUAN_DEVELOPER_ID`、`MEITUAN_SIGN_KEY`、`MEITUAN_APP_AUTH_TOKEN` 注入。配置中的值优先。
 
-| 变量名 | 说明 |
-|--------|------|
-| `MEITUAN_APP_KEY` | 美团开放平台 AppKey |
-| `MEITUAN_APP_SECRET` | 美团开放平台 AppSecret |
-| `MEITUAN_API_BASE` | 美团 API 地址（默认 `https://api.meituan.com`） |
+默认网关是 `https://api-open-cater.meituan.com`，网关版本为 `2`。除本机回环测试外，`apiBaseUrl` 必须使用 HTTPS。
 
-## 配置参考
+## Agent 工具
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `app_key` | `string` | -- | 美团开放平台应用的 AppKey |
-| `app_secret` | `string` | -- | 美团开放平台应用的 AppSecret |
-| `shop_id` | `string` | -- | 店铺 ID（单店铺场景） |
-| `callback_url` | `string` | -- | 在美团开放平台配置的回调地址 |
-| `webhook_secret` | `string` | -- | Webhook 验签密钥（默认使用 `app_secret`） |
+插件注册一个工具 `meituan_openapi_invoke`：
 
-## 工具列表
-
-| 工具名称 | 说明 | 主要参数 |
-|----------|------|---------|
-| `meituan_query_orders` | 查询美团订单列表，支持按日期、状态筛选 | `date_from`, `date_to`, `status`, `page`, `page_size` |
-| `meituan_reply_review` | 回复美团店铺评价 | `review_id`, `content` |
-| `meituan_query_shop_metrics` | 查询店铺经营指标 | `date_from`, `date_to` |
-| `meituan_verify_writeoff` | 团购核销：核销订单 / 核销码 | `order_id`, `verify_code` |
-| `meituan_shop_qrcode` | 获取店铺二维码 | `shop_id`, `scene` |
-
-所有工具调用美团 Open API 时自动完成参数排序、HMAC-SHA256 签名、timestamp 注入。
-
-## 架构说明
-
-### Webhook 入站流程
-
-```
-美团开放平台事件推送
-  --> POST /channels/meituan/webhook
-    --> HMAC-SHA256 验签 (X-Meituan-Signature / X-Signature)
-      --> 解析事件 body（event_type、shop_id）
-        --> publishInbound → Agent 管线处理
+```json
+{
+  "operation": "receipt_query",
+  "biz": {
+    "date": "2026-07-16",
+    "offset": 0
+  }
+}
 ```
 
-### 验签规则
+`biz` 的字段必须以该 API 的官方文档为准。工具返回美团原始 JSON 响应，但不会返回 `signKey` 或 `appAuthToken`。
 
-- 签名头名称：`X-Meituan-Signature` 或 `X-Signature`
-- 算法：`HMAC-SHA256(body, secret)`
-- Secret 优先级：`webhook_secret` > `app_secret`
-- 使用 `crypto.timingSafeEqual` 进行常量时间比较
+## 上线前验证
 
-### API 调用签名
+1. 在美团合作中心确认应用已开通目标业务和接口权限。
+2. 从后台/官方文档复制每个 API 的路径、`businessId` 和业务参数，不要猜测。
+3. 完成门店授权并配置有效 `appAuthToken`；需要鉴权的接口缺少令牌会直接拒绝。
+4. 先用只读接口验证 `OP_SUCCESS`、traceId、限流和超时，再开放核销/退款等写操作。
+5. 多 Gateway 部署时在上游网关增加集中限流；插件内限流仅约束单进程。
 
-```text
-1. 收集参数（含 app_key、timestamp）
-2. 按 key 字母排序
-3. 拼接为 key1=value1&key2=value2
-4. HMAC-SHA256(拼接字符串, app_secret) → sign
-5. 将 sign 加入请求参数
-```
-
-## 开发
-
-```bash
-# 安装依赖
-pnpm install
-
-# 构建
-pnpm build
-
-# 类型检查
-pnpm typecheck
-
-# 运行测试
-pnpm test
-```
-
-## 许可
-
-MIT License
-
----
-
-**PartMe.AI** -- 专注于 AI 智能客服与企业级 AI Agent 基础设施
-
-[联系我们](mailto:partmeai@gmail.com) | [GitHub](https://github.com/partme-ai/openclaw-plugins)
+公开的美团生态开放平台入口：<https://openapi.meituan.com/>。

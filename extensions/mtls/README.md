@@ -22,7 +22,7 @@ mTLS (Mutual TLS) is a security mechanism where both the client and server authe
 - **Client Certificate Validation**: Extract and verify client certificate CN, issuer, fingerprint
 - **Whitelist Control**: Fine-grained access control via `allowedClients` (CN/issuer/fingerprint)
 - **Path-Based Protection**: Configure which paths require mTLS authentication via `protectedPaths`
-- **Passthrough Mode**: Optional `passthrough` mode allows unauthenticated requests when no certificate is provided
+- **Fail-Closed Policy**: Protected routes never accept missing or unverified client certificates; public routes must be declared explicitly
 - **Certificate Info Propagation**: Pass client certificate information to downstream services via HTTP headers
 - **OpenClaw Integration**: Follows OpenClaw's security plugin architecture
 
@@ -44,7 +44,7 @@ Client (with client cert)
 - Certificate is validated against `allowedClients` whitelist (if configured)
 - Spoofable identity headers are removed and replaced with the verified certificate CN
 - OpenClaw performs final authorization through `gateway.auth.mode: "trusted-proxy"`
-- Proxy status is available at `GET https://<host>:18443/mtls/status`
+- `GET https://<host>:18443/mtls/status` is forwarded to OpenClaw's `auth: "gateway"` route; proxy-local runtime details are not exposed anonymously
 
 ## 🚀 Quick Start
 
@@ -113,7 +113,7 @@ openclaw plugins install @partme.ai/openclaw-mtls
 | `protectedPaths` | `[{path:"/",match:"prefix"}]` | Paths requiring mTLS authentication |
 | `allowedClients` | `[]` | Whitelist of allowed client certificates |
 | `skipPaths` | See below | Paths to skip authentication |
-| `passthrough` | `false` | Allow unauthenticated requests when no cert |
+| `passthrough` | `false` (fixed) | Legacy field; protected routes cannot be put into passthrough mode |
 | `headerName` | `X-Client-Cert` | Header to pass cert info downstream |
 | `headerCertField` | `subject` | Which cert field to use for header |
 
@@ -125,8 +125,8 @@ openclaw plugins install @partme.ai/openclaw-mtls
 | `tls.certFile` | — | Server certificate file path |
 | `tls.keyFile` | — | Server private key file path |
 | `tls.caFile` | — | CA certificate for client cert validation |
-| `tls.requestCert` | `true` | Request client certificate |
-| `tls.rejectUnauthorized` | `true` | Reject clients without valid certificate |
+| `tls.requestCert` | `true` (required) | Request client certificates at the TLS listener |
+| `tls.rejectUnauthorized` | `true` (required) | Require CA verification before a certificate can become an identity |
 
 ### Path Rules
 
@@ -216,7 +216,7 @@ Use `allowedClients` with CN, issuer, or fingerprint. Multiple match criteria ar
 
 **What happens when a client doesn't provide a certificate?**
 
-By default (`passthrough: false`), the request is rejected with 401. If `passthrough: true`, the request is allowed through but no `mtlsAuth` context is attached.
+Protected paths reject the request with 401. To expose a public endpoint, add an explicit `allowUnauthenticated` path rule or `skipPaths` entry; the global proxy never downgrades protected paths into passthrough mode.
 
 ## 📄 License
 

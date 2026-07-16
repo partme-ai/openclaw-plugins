@@ -9,7 +9,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 import type { OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
 import { redisStreamChannel } from "./channel.js";
 import { getStats } from "./transport/server.js";

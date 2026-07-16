@@ -29,27 +29,80 @@ export type UploadedFileInfo = {
   fileSizeCiphertext: number;
 };
 
+const REMOTE_MEDIA_TIMEOUT_MS = 30_000;
+const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
+
+function assertSafeRemoteMediaUrl(rawUrl: string): URL {
+  const url = new URL(rawUrl);
+  if (url.protocol !== "https:") throw new Error("remote media URL must use HTTPS");
+  const host = url.hostname.toLowerCase();
+  if (
+    host === "localhost" || host === "::1" || /^127\./.test(host) || /^10\./.test(host) ||
+    /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  ) {
+    throw new Error("remote media URL must not target a local or private address");
+  }
+  return url;
+}
+
 /**
  * Download a remote media URL (image, video, file) to a local temp file in destDir.
  * Returns the local file path; extension is inferred from Content-Type / URL.
  */
 export async function downloadRemoteImageToTemp(url: string, destDir: string): Promise<string> {
-  logger.debug(`downloadRemoteImageToTemp: fetching url=${url}`);
-  const res = await fetch(url);
-  if (!res.ok) {
-    const msg = `remote media download failed: ${res.status} ${res.statusText} url=${url}`;
-    logger.error(`downloadRemoteImageToTemp: ${msg}`);
-    throw new Error(msg);
+  const safeUrl = assertSafeRemoteMediaUrl(url);
+  logger.debug(`downloadRemoteImageToTemp: fetching host=${safeUrl.host}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REMOTE_MEDIA_TIMEOUT_MS);
+  timeout.unref?.();
+  try {
+    const res = await fetch(safeUrl, { signal: controller.signal });
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
+      const msg = `remote media download failed: ${res.status} ${res.statusText}`;
+      logger.error(`downloadRemoteImageToTemp: ${msg}`);
+      throw new Error(msg);
+    }
+    const declaredSize = Number(res.headers.get("content-length") ?? "0");
+    if (Number.isFinite(declaredSize) && declaredSize > MAX_MEDIA_BYTES) {
+      await res.body?.cancel().catch(() => {});
+      throw new Error(`remote media exceeds ${MAX_MEDIA_BYTES} bytes`);
+    }
+    let buf: Buffer;
+    if (!res.body) {
+      buf = Buffer.from(await res.arrayBuffer());
+    } else {
+      const reader = res.body.getReader();
+      const chunks: Buffer[] = [];
+      let total = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > MAX_MEDIA_BYTES) {
+            await reader.cancel();
+            throw new Error(`remote media exceeds ${MAX_MEDIA_BYTES} bytes`);
+          }
+          chunks.push(Buffer.from(value));
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      buf = Buffer.concat(chunks);
+    }
+    if (buf.length > MAX_MEDIA_BYTES) throw new Error(`remote media exceeds ${MAX_MEDIA_BYTES} bytes`);
+    logger.debug(`downloadRemoteImageToTemp: downloaded ${buf.length} bytes`);
+    await fs.mkdir(destDir, { recursive: true });
+    const ext = getExtensionFromContentTypeOrUrl(res.headers.get("content-type"), url);
+    const name = tempFileName("weixin-remote", ext);
+    const filePath = path.join(destDir, name);
+    await fs.writeFile(filePath, buf);
+    logger.debug(`downloadRemoteImageToTemp: saved remote media ext=${ext}`);
+    return filePath;
+  } finally {
+    clearTimeout(timeout);
   }
-  const buf = Buffer.from(await res.arrayBuffer());
-  logger.debug(`downloadRemoteImageToTemp: downloaded ${buf.length} bytes`);
-  await fs.mkdir(destDir, { recursive: true });
-  const ext = getExtensionFromContentTypeOrUrl(res.headers.get("content-type"), url);
-  const name = tempFileName("weixin-remote", ext);
-  const filePath = path.join(destDir, name);
-  await fs.writeFile(filePath, buf);
-  logger.debug(`downloadRemoteImageToTemp: saved to ${filePath} ext=${ext}`);
-  return filePath;
 }
 
 /**
@@ -65,6 +118,9 @@ async function uploadMediaToCdn(params: {
 }): Promise<UploadedFileInfo> {
   const { filePath, toUserId, opts, cdnBaseUrl, mediaType, label } = params;
 
+  const stat = await fs.stat(filePath);
+  if (!stat.isFile()) throw new Error(`${label}: media path is not a regular file`);
+  if (stat.size > MAX_MEDIA_BYTES) throw new Error(`${label}: media exceeds ${MAX_MEDIA_BYTES} bytes`);
   const plaintext = await fs.readFile(filePath);
   const rawsize = plaintext.length;
   const rawfilemd5 = crypto.createHash("md5").update(plaintext).digest("hex");
@@ -73,7 +129,7 @@ async function uploadMediaToCdn(params: {
   const aeskey = crypto.randomBytes(16);
 
   logger.debug(
-    `${label}: file=${filePath} rawsize=${rawsize} filesize=${filesize} md5=${rawfilemd5} filekey=${filekey}`,
+    `${label}: rawsize=${rawsize} filesize=${filesize}`,
   );
 
   const uploadUrlResp = await getUploadUrl({
@@ -91,9 +147,7 @@ async function uploadMediaToCdn(params: {
   const uploadFullUrl = uploadUrlResp.upload_full_url?.trim();
   const uploadParam = uploadUrlResp.upload_param;
   if (!uploadFullUrl && !uploadParam) {
-    logger.error(
-      `${label}: getUploadUrl returned no upload URL (need upload_full_url or upload_param), resp=${JSON.stringify(uploadUrlResp)}`,
-    );
+    logger.error(`${label}: getUploadUrl returned no upload URL (need upload_full_url or upload_param)`);
     throw new Error(`${label}: getUploadUrl returned no upload URL`);
   }
 
@@ -104,7 +158,7 @@ async function uploadMediaToCdn(params: {
     filekey,
     cdnBaseUrl,
     aeskey,
-    label: `${label}[orig filekey=${filekey}]`,
+    label,
   });
 
   return {

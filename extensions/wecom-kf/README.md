@@ -168,6 +168,7 @@ openclaw channels status --probe
       },
       "accounts": {
         "kf_presale_001": {
+          "openKfId": "kf_presale_001",
           "agentId": "presale-agent",
           "eventMessages": {
             "welcome": {
@@ -185,6 +186,9 @@ openclaw channels status --probe
 }
 ```
 
+多账号必须使用账号独立回调 URL。未设置 `accounts.<accountId>.webhookPath` 时，默认 URL 为
+`/wecom-kf/<accountId>`；每个 URL 会在解密前选择该账号的 `token` 与 `encodingAESKey`。两个账号不能复用同一路径。
+
 所有密钥均使用占位符，不要提交真实 `corpSecret`、`token` 或 `encodingAESKey`。
 
 ## 消息与转人工流程
@@ -199,6 +203,10 @@ openclaw channels status --probe
   → Agent 回复
   → kf/send_msg 下发给客户
 ```
+
+`msgid` 只有在 Agent/事件处理成功后才提交去重；失败会释放占用并保留当前页游标，后续回调可重试。
+同一客服账号的回调按顺序拉取，游标采用原子文件替换并以 `0600` 权限保存。首次启动不会自动跳过历史消息；
+企业微信 `sync_msg` 仍只覆盖平台允许拉取的时间窗口。
 
 转人工流程：
 

@@ -15,7 +15,7 @@ import type {
   OpenClawPluginToolContext,
 } from "openclaw/plugin-sdk/core";
 import { emptyChannelConfigSchema } from "openclaw/plugin-sdk/core";
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { wecomPlugin } from "./channel.js";
 import { createWeComMcpTool } from "./mcp/index.js";

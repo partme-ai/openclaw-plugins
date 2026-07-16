@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-prometheus",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "Prometheus metrics exporter for OpenClaw Gateway - built on official plugin runtime, hooks, events, and plugin-owned routes",
   "type": "module",
   "main": "dist/index.js",
@@ -26,14 +26,17 @@
   ],
   "author": "PartMe",
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "files": [
     "dist",
     "openclaw.plugin.json",
     "README.md",
     "README.zh-CN.md",
-    "grafana",
-    "clawdbot.plugin.json",
-    "moltbot.plugin.json"
+    "alerts",
+    "config",
+    "deploy"
   ],
   "publishConfig": {
     "access": "public"
@@ -42,11 +45,6 @@
     "type": "git",
     "url": "https://github.com/partme-ai/openclaw-plugins.git",
     "directory": "extensions/prometheus"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -58,16 +56,10 @@
   "peerDependencies": {
     "openclaw": ">=2026.7.1"
   },
-  "peerDependenciesMeta": {
-    "openclaw": {
-      "optional": true
-    }
-  },
   "openclaw": {
     "extensions": [
       "./dist/index.js"
     ],
-    "setupEntry": "./dist/setup-entry.js",
     "compat": {
       "pluginApi": ">=2026.7.1",
       "minGatewayVersion": "2026.7.1"

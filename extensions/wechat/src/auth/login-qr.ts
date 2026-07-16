@@ -83,7 +83,7 @@ async function pollQRStatus(apiBaseUrl: string, qrcode: string): Promise<StatusR
       timeoutMs: QR_LONG_POLL_TIMEOUT_MS,
       label: "pollQRStatus",
     });
-    logger.debug(`pollQRStatus: body=${rawText.substring(0, 200)}`);
+    logger.debug(`pollQRStatus: responseBytes=${Buffer.byteLength(rawText)}`);
     return JSON.parse(rawText) as StatusResponse;
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {

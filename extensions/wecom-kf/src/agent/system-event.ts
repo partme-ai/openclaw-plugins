@@ -129,7 +129,7 @@ async function handleEnterSession(params: {
 
   let cfg: OpenClawConfig;
   try {
-    cfg = getWecomRuntime().config as OpenClawConfig;
+    cfg = getWecomRuntime().config.current() as OpenClawConfig;
   } catch {
     console.error("[wecom_kf] Cannot send welcome: runtime unavailable");
     return;
@@ -184,8 +184,8 @@ async function handleSessionStatusChange(params: {
       changeType: params.changeType,
     });
     console.log(
-      `[wecom_kf] session_status_change open_kfid=${params.openKfId} user=${externalUserId} ` +
-        `service_state=${inferredState} change_type=${params.changeType ?? "unknown"}`,
+      `[wecom_kf] session_status_change service_state=${inferredState} ` +
+        `change_type=${params.changeType ?? "unknown"}`,
     );
   }
 
@@ -194,7 +194,7 @@ async function handleSessionStatusChange(params: {
 
   let cfg: OpenClawConfig;
   try {
-    cfg = getWecomRuntime().config as OpenClawConfig;
+    cfg = getWecomRuntime().config.current() as OpenClawConfig;
   } catch {
     return;
   }

@@ -27,7 +27,6 @@ export type ResolvedMqttAccount = {
 export const DEFAULT_BROKER_CONFIG: MqttChannelConfig = {
   host: "127.0.0.1",
   port: 1883,
-  wsPort: 8883,
   maxConnections: 1000,
   tls: {
     enabled: false,
@@ -125,6 +124,25 @@ export function resolveMqttAccount(cfg: OpenClawConfig, accountId?: string | nul
 
 /** 在监听端口前验证会改变安全边界的 Broker 配置。 */
 export function validateBrokerConfig(config: MqttBrokerConfig): void {
+  const assertPort = (value: number, name: string, allowDisabled: boolean): void => {
+    const minimum = allowDisabled ? 0 : 1;
+    if (!Number.isInteger(value) || value < minimum || value > 65_535) {
+      throw new Error(`[openclaw-mqtt] ${name} must be an integer between ${minimum} and 65535`);
+    }
+  };
+  assertPort(config.port, "port", true);
+  if (config.tls.enabled) {
+    assertPort(config.tls.port, "tls.port", false);
+    if (!config.tls.certFile?.trim() || !config.tls.keyFile?.trim()) {
+      throw new Error("[openclaw-mqtt] TLS requires certFile and keyFile");
+    }
+    if (config.tls.rejectUnauthorized && !config.tls.requestCert) {
+      throw new Error("[openclaw-mqtt] TLS rejectUnauthorized requires requestCert=true");
+    }
+  }
+  if (config.port === 0 && !config.tls.enabled) {
+    throw new Error("[openclaw-mqtt] at least one TCP or TLS listener must be enabled");
+  }
   const host = config.host?.trim() || "127.0.0.1";
   const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
   if (!loopbackHosts.has(host) && !config.auth.enabled) {
@@ -147,6 +165,37 @@ export function validateBrokerConfig(config: MqttBrokerConfig): void {
   }
   if (!Number.isInteger(config.maxConnections) || config.maxConnections < 1) {
     throw new Error("[openclaw-mqtt] maxConnections must be a positive integer");
+  }
+  if (!Number.isSafeInteger(config.limits.maxPayloadBytes) || config.limits.maxPayloadBytes < 1) {
+    throw new Error("[openclaw-mqtt] limits.maxPayloadBytes must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(config.qos0.mailboxSoftLimit) || config.qos0.mailboxSoftLimit < 1) {
+    throw new Error("[openclaw-mqtt] qos0.mailboxSoftLimit must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(config.session.maxExpirySeconds) || config.session.maxExpirySeconds < 0) {
+    throw new Error("[openclaw-mqtt] session.maxExpirySeconds must be a non-negative safe integer");
+  }
+  const usernames = new Set<string>();
+  for (const user of config.auth.users) {
+    const username = user.username.trim();
+    if (!username) throw new Error("[openclaw-mqtt] auth user username must not be blank");
+    if (usernames.has(username)) throw new Error(`[openclaw-mqtt] duplicate auth username: ${username}`);
+    usernames.add(username);
+    if (config.auth.enabled && username !== "anonymous") {
+      const hasPassword = Boolean(user.password);
+      const hasPasswordHash = Boolean(user.passwordHash);
+      if (hasPassword === hasPasswordHash) {
+        throw new Error(`[openclaw-mqtt] auth user ${username} requires exactly one of password or passwordHash`);
+      }
+    }
+    const topicPatterns = [
+      ...(user.publishAllow ?? []),
+      ...(user.subscribeAllow ?? []),
+      ...(user.aclRules ?? []).map((rule) => rule.topicPattern),
+    ];
+    if (topicPatterns.some((pattern) => !pattern.trim())) {
+      throw new Error(`[openclaw-mqtt] auth user ${username} contains a blank ACL topic pattern`);
+    }
   }
 }
 
@@ -174,7 +223,6 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
   return {
     host: mqttConfig?.host?.trim() || DEFAULT_BROKER_CONFIG.host,
     port: mqttConfig?.port ?? DEFAULT_BROKER_CONFIG.port,
-    wsPort: mqttConfig?.wsPort ?? DEFAULT_BROKER_CONFIG.wsPort,
     maxConnections: mqttConfig?.maxConnections ?? DEFAULT_BROKER_CONFIG.maxConnections,
     subscribeTopics,
     topicBindings,

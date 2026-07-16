@@ -1,12 +1,12 @@
 /**
  * runtime 存储。
- * 使用 SDK runtime-store 提供统一 get/set 语义，避免手工全局变量引发时序问题。
+ * 使用模块私有引用提供同步 get/set 语义，避免 Node 24 并行加载插件时
+ * `runtime-store` ESM 子路径发生 require/import 竞态。
  */
 
-import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
-import type { PluginRuntime } from "openclaw/plugin-sdk/runtime-store";
+import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
-const runtimeStore = createPluginRuntimeStore<PluginRuntime>("openclaw-web-mqtt runtime not initialized");
+let currentRuntime: PluginRuntime | null = null;
 
 /**
  * 注入 OpenClaw PluginRuntime 到 web-mqtt 模块级 store。
@@ -15,7 +15,7 @@ const runtimeStore = createPluginRuntimeStore<PluginRuntime>("openclaw-web-mqtt 
  * @returns void
  */
 export function setWebMqttRuntime(runtime: PluginRuntime): void {
-  runtimeStore.setRuntime(runtime);
+  currentRuntime = runtime;
 }
 
 /**
@@ -24,7 +24,7 @@ export function setWebMqttRuntime(runtime: PluginRuntime): void {
  * @returns PluginRuntime 或 null
  */
 export function tryGetWebMqttRuntime(): PluginRuntime | null {
-  return runtimeStore.tryGetRuntime();
+  return currentRuntime;
 }
 
 /**
@@ -34,5 +34,8 @@ export function tryGetWebMqttRuntime(): PluginRuntime | null {
  * @throws 当 runtime 尚未 set 时
  */
 export function getWebMqttRuntime(): PluginRuntime {
-  return runtimeStore.getRuntime();
+  if (!currentRuntime) {
+    throw new Error("openclaw-web-mqtt runtime not initialized");
+  }
+  return currentRuntime;
 }

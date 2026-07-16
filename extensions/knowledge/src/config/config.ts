@@ -27,6 +27,9 @@ const DEFAULT_EMBEDDING: KnowledgeEmbeddingConfig = {
   provider: 'openai',
   model: 'text-embedding-ada-002',
   dimensions: 1536,
+  requestTimeoutMs: 30_000,
+  maxRetries: 2,
+  maxBatchSize: 64,
 };
 
 /** 默认向量存储配置 */
@@ -79,13 +82,15 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
     const emb = config.embedding;
     if (emb.provider !== undefined && typeof emb.provider !== 'string') {
       errors.push('embedding.provider 必须是字符串');
+    } else if (emb.provider && !['openai', 'dashscope', 'zhipu', 'qianfan', 'ollama'].includes(emb.provider.toLowerCase())) {
+      errors.push('embedding.provider 不受支持');
     }
     if (emb.model !== undefined && typeof emb.model !== 'string') {
       errors.push('embedding.model 必须是字符串');
     }
     if (emb.dimensions !== undefined) {
-      if (!Number.isInteger(emb.dimensions) || emb.dimensions <= 0) {
-        errors.push('embedding.dimensions 必须是正整数');
+      if (!Number.isInteger(emb.dimensions) || emb.dimensions <= 0 || emb.dimensions > 65536) {
+        errors.push('embedding.dimensions 必须是 1-65536 的整数');
       }
     }
     if (emb.baseUrl !== undefined && typeof emb.baseUrl !== 'string') {
@@ -94,6 +99,15 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
     if (emb.apiKey !== undefined && typeof emb.apiKey !== 'string') {
       errors.push('embedding.apiKey 必须是字符串');
     }
+    if (emb.requestTimeoutMs !== undefined && (!Number.isInteger(emb.requestTimeoutMs) || emb.requestTimeoutMs < 100 || emb.requestTimeoutMs > 300_000)) {
+      errors.push('embedding.requestTimeoutMs 必须是 100-300000 的整数');
+    }
+    if (emb.maxRetries !== undefined && (!Number.isInteger(emb.maxRetries) || emb.maxRetries < 0 || emb.maxRetries > 5)) {
+      errors.push('embedding.maxRetries 必须是 0-5 的整数');
+    }
+    if (emb.maxBatchSize !== undefined && (!Number.isInteger(emb.maxBatchSize) || emb.maxBatchSize < 1 || emb.maxBatchSize > 2048)) {
+      errors.push('embedding.maxBatchSize 必须是 1-2048 的整数');
+    }
   }
 
   // --- store ---
@@ -101,6 +115,8 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
     const st = config.store;
     if (st.provider !== undefined && typeof st.provider !== 'string') {
       errors.push('store.provider 必须是字符串');
+    } else if (st.provider && !['sqlite-vec', 'zvec'].includes(st.provider)) {
+      errors.push('store.provider 不受支持');
     }
     if (st.dbPath !== undefined && typeof st.dbPath !== 'string') {
       errors.push('store.dbPath 必须是字符串');
@@ -114,12 +130,12 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
   if (config.retrieval) {
     const ret = config.retrieval;
     if (ret.topK !== undefined) {
-      if (!Number.isInteger(ret.topK) || ret.topK < 1) {
-        errors.push('retrieval.topK 必须是不小于 1 的整数');
+      if (!Number.isInteger(ret.topK) || ret.topK < 1 || ret.topK > 100) {
+        errors.push('retrieval.topK 必须是 1-100 的整数');
       }
     }
     if (ret.minScore !== undefined) {
-      if (typeof ret.minScore !== 'number' || ret.minScore < 0 || ret.minScore > 1) {
+      if (typeof ret.minScore !== 'number' || !Number.isFinite(ret.minScore) || ret.minScore < 0 || ret.minScore > 1) {
         errors.push('retrieval.minScore 必须是 0-1 之间的数字');
       }
     }
@@ -129,9 +145,12 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
         errors.push(`retrieval.strategy 必须是 ${validStrategies.join(' | ')}`);
       }
     }
-    if (ret.keywordBoost !== undefined && typeof ret.keywordBoost !== 'boolean') {
-      errors.push('retrieval.keywordBoost 必须是布尔值');
+    for (const field of ['vectorWeight', 'keywordWeight'] as const) {
+      if (ret[field] !== undefined && (typeof ret[field] !== 'number' || !Number.isFinite(ret[field]) || ret[field]! < 0 || ret[field]! > 1)) {
+        errors.push(`retrieval.${field} 必须是 0-1 之间的有限数字`);
+      }
     }
+    if ((ret.vectorWeight ?? 0.7) + (ret.keywordWeight ?? 0.3) <= 0) errors.push('retrieval.vectorWeight 与 retrieval.keywordWeight 不能同时为 0');
   }
 
   // --- injection ---
@@ -145,15 +164,17 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
     }
     if (inj.template !== undefined && typeof inj.template !== 'string') {
       errors.push('injection.template 必须是字符串');
+    } else if (inj.template && !inj.template.includes('{context}')) {
+      errors.push('injection.template 必须包含 {context}');
     }
     if (inj.maxChunks !== undefined) {
-      if (!Number.isInteger(inj.maxChunks) || inj.maxChunks < 1) {
-        errors.push('injection.maxChunks 必须是不小于 1 的整数');
+      if (!Number.isInteger(inj.maxChunks) || inj.maxChunks < 1 || inj.maxChunks > 100) {
+        errors.push('injection.maxChunks 必须是 1-100 的整数');
       }
     }
     if (inj.maxTokens !== undefined) {
-      if (!Number.isInteger(inj.maxTokens) || inj.maxTokens < 1) {
-        errors.push('injection.maxTokens 必须是不小于 1 的整数');
+      if (!Number.isInteger(inj.maxTokens) || inj.maxTokens < 1 || inj.maxTokens > 131072) {
+        errors.push('injection.maxTokens 必须是 1-131072 的整数');
       }
     }
   }
@@ -168,6 +189,19 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
       errors.push('moderation.rejectionMessage 必须是字符串');
     }
   }
+
+  if (config.tools) {
+    const tools = config.tools;
+    if (tools.allowFileIngest !== undefined && typeof tools.allowFileIngest !== 'boolean') errors.push('tools.allowFileIngest 必须是布尔值');
+    if (tools.allowOwnerGlobalNamespaces !== undefined && typeof tools.allowOwnerGlobalNamespaces !== 'boolean') errors.push('tools.allowOwnerGlobalNamespaces 必须是布尔值');
+    if (tools.maxInputChars !== undefined && (!Number.isInteger(tools.maxInputChars) || tools.maxInputChars < 1 || tools.maxInputChars > 1_000_000)) errors.push('tools.maxInputChars 必须是 1-1000000 的整数');
+    if (tools.maxFileBytes !== undefined && (!Number.isInteger(tools.maxFileBytes) || tools.maxFileBytes < 1 || tools.maxFileBytes > 1_073_741_824)) errors.push('tools.maxFileBytes 必须是 1-1073741824 的整数');
+    if (tools.allowedFileRoots !== undefined && (!Array.isArray(tools.allowedFileRoots) || tools.allowedFileRoots.length > 32 || tools.allowedFileRoots.some((root) => typeof root !== 'string' || !root.trim()))) errors.push('tools.allowedFileRoots 必须是最多 32 个非空路径的数组');
+  }
+
+  if (config.tokenizer?.provider && !['tiktoken', 'zhipu'].includes(config.tokenizer.provider.toLowerCase())) errors.push('tokenizer.provider 不受支持');
+  if (config.reranker?.provider && !['jina', 'zhipu', 'ollama'].includes(config.reranker.provider.toLowerCase())) errors.push('reranker.provider 不受支持');
+  if (config.parser?.provider && !['zhipu', 'ollama'].includes(config.parser.provider.toLowerCase())) errors.push('parser.provider 不受支持');
 
   return errors;
 }
@@ -199,6 +233,12 @@ export function createKnowledgeConfig(raw: any): KnowledgeConfig | null {
     retrieval: mergeRetrievalConfig(raw.retrieval),
     injection: mergeInjectionConfig(raw.injection),
   };
+
+  for (const field of ['intentGate', 'tokenizer', 'reranker', 'parser', 'tools'] as const) {
+    if (raw[field] && typeof raw[field] === 'object' && !Array.isArray(raw[field])) {
+      (config as any)[field] = { ...raw[field] };
+    }
+  }
 
   // moderation: 可选，只有显式配置才设置
   if (raw.moderation && typeof raw.moderation === 'object') {
@@ -232,7 +272,7 @@ export function mergeKnowledgeConfig(
   if (!accountOverride) return merged;
 
   // 深度合并子配置（浅层合并）
-  const mergeFields = ['embedding', 'retrieval', 'injection', 'moderation'] as const;
+  const mergeFields = ['embedding', 'retrieval', 'injection', 'moderation', 'intentGate', 'tokenizer', 'reranker', 'parser', 'tools'] as const;
   for (const field of mergeFields) {
     const globalField = global[field];
     const overrideField = (accountOverride as any)[field];

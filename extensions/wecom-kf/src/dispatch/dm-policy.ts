@@ -86,7 +86,7 @@ export async function checkKfDmPolicy(params: {
     sendPairingReply: async ({ senderId: id, code }) => {
       const agent = resolveKfAgentAccount(cfg, openKfId);
       if (!agent) {
-        params.error?.(`[wecom-kf] Cannot send pairing reply: missing corp credentials open_kfid=${openKfId}`);
+        params.error?.("[wecom-kf] Cannot send pairing reply: missing corp credentials");
         return;
       }
       const text = core.channel.pairing.buildPairingReply({

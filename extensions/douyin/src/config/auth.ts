@@ -15,6 +15,7 @@ import type { DouyinAccountConfig } from "../types.js";
 import { douyinFetch, readResponseBodyAsBuffer } from "../shared/http.js";
 
 const CLIENT_TOKEN_URL = "https://open.douyin.com/oauth/client_token/";
+const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 /** 开放平台 client_token 接口响应体（节选） */
 interface ClientTokenResponse {
@@ -64,7 +65,17 @@ export async function getClientToken(
         client_secret: config.app_secret,
       }),
     }, { timeoutMs: config.request_timeout_ms ?? 10_000 });
-    const json = JSON.parse((await readResponseBodyAsBuffer(res)).toString("utf8")) as ClientTokenResponse;
+    let json: ClientTokenResponse;
+    try {
+      json = JSON.parse(
+        (await readResponseBodyAsBuffer(res, MAX_JSON_RESPONSE_BYTES)).toString("utf8"),
+      ) as ClientTokenResponse;
+    } catch (error) {
+      throw new Error(
+        `[douyin] client_token returned invalid or oversized JSON (HTTP ${res.status})`,
+        { cause: error },
+      );
+    }
     const token = json.data?.access_token;
     if (!res.ok || !token || json.data?.error_code !== 0) {
       throw new Error(

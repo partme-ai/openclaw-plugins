@@ -1,9 +1,21 @@
-[13:08:13.831] >> SEND /queue/agent.demo
-[13:08:13.719] >> SUBSCRIBE /topic/session.demo
-[13:08:13.415] << CONNECTED
+[12:47:32.370] << ERROR
+message:Agent is not allowed\c demo
+content-type:text/plain
+content-length:26
+
+Agent is not allowed: demo\0
+[12:47:32.369] >> SEND /queue/agent.demo
+[12:47:32.339] << ERROR
+message:Subscription is outside this connection's session scope
+content-type:text/plain
+content-length:55
+
+Subscription is outside this connection's session scope\0
+[12:47:32.338] >> SUBSCRIBE /topic/session.demo
+[12:47:32.288] << CONNECTED
 version:1.2
 heart-beat:10000,10000
-server:openclaw-web-stomp/0.1.0
-session:2432b388-cac2-4291-93db-9640f550a10e
+server:openclaw-web-stomp/2026.5.25-2
+session:e296cf71-eae1-49f0-ae3d-a803aa907f25
 
 \0

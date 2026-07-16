@@ -24,7 +24,14 @@ vi.mock("node:crypto", () => ({
   },
 }));
 
-import { getUpdates, getUploadUrl, sendMessage, getConfig, sendTyping } from "../../src/api/api.js";
+import {
+  apiGetFetch,
+  getUpdates,
+  getUploadUrl,
+  sendMessage,
+  getConfig,
+  sendTyping,
+} from "../../src/api/api.js";
 
 function mockResponse(body: object | string, status = 200, ok = true): Response {
   const text = typeof body === "string" ? body : JSON.stringify(body);
@@ -85,6 +92,27 @@ describe("getUpdates", () => {
     await getUpdates({ baseUrl: "https://api.example.com" });
     const [url] = mockFetch.mock.calls[0];
     expect(url).toContain("https://api.example.com/ilink/bot/getupdates");
+  });
+});
+
+describe("HTTP response safety", () => {
+  it("does not expose an error response body", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse("token=top-secret", 500, false));
+    await expect(
+      apiGetFetch({ baseUrl: "https://api.example.com", endpoint: "failed", label: "safeGet" }),
+    ).rejects.toThrow(/^safeGet 500$/);
+  });
+
+  it("rejects a response declared above the size limit", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-length": String(2 * 1024 * 1024 + 1) }),
+      body: { cancel: vi.fn().mockResolvedValue(undefined) },
+    } as unknown as Response);
+    await expect(
+      apiGetFetch({ baseUrl: "https://api.example.com", endpoint: "large", label: "safeGet" }),
+    ).rejects.toThrow("response exceeds");
   });
 });
 

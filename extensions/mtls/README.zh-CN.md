@@ -22,7 +22,7 @@ mTLS（Mutual TLS）是一种安全机制，在这种机制下，客户端和服
 - **客户端证书验证**：提取并验证客户端证书的 CN、issuer、fingerprint
 - **白名单控制**：通过 `allowedClients`（CN/issuer/fingerprint）细粒度控制访问权限
 - **基于路径的保护**：通过 `protectedPaths` 配置哪些路径需要 mTLS 认证
-- **透传模式**：可选的 `passthrough` 模式允许在未提供证书时放行请求
+- **失败关闭**：受保护路径绝不接受缺失或未通过 CA 验证的客户端证书；公开路径必须显式声明
 - **证书信息传递**：通过 HTTP Header 将客户端证书信息传递给下游服务
 - **OpenClaw 集成**：遵循 OpenClaw 安全插件架构
 
@@ -44,7 +44,7 @@ mTLS（Mutual TLS）是一种安全机制，在这种机制下，客户端和服
 - 根据 `allowedClients` 白名单验证证书（如已配置）
 - 删除客户端伪造的身份 Header，再写入证书 CN
 - OpenClaw 使用官方 `gateway.auth.mode: "trusted-proxy"` 完成最终鉴权
-- 代理状态端点：`GET https://<host>:18443/mtls/status`
+- 状态端点：`GET https://<host>:18443/mtls/status` 会转发到 OpenClaw 的 `auth: "gateway"` 路由，不在代理层匿名暴露运行信息
 
 ## 🚀 快速开始
 
@@ -117,8 +117,8 @@ openclaw plugins install @partme.ai/openclaw-mtls
 | `proxy` | `:18443 → 127.0.0.1:18789` | mTLS 监听地址与 Gateway 上游 |
 | `protectedPaths` | `[{path:"/",match:"prefix"}]` | 需要 mTLS 认证的路径 |
 | `allowedClients` | `[]` | 允许的客户端证书白名单 |
-| `skipPaths` | 见下方 | 跳过认证的路径 |
-| `passthrough` | `false` | 未提供证书时是否放行 |
+| `skipPaths` | `/health`、`/auth/status` | 跳过 mTLS 身份要求的公开路径；`/mtls/status` 默认受保护 |
+| `passthrough` | 固定为 `false` | 兼容字段；不能把受保护路径整体降级为透传 |
 | `headerName` | `X-Client-Cert` | 向下游传递证书信息的 Header |
 | `headerCertField` | `subject` | 用于 Header 值的证书字段 |
 
@@ -130,8 +130,8 @@ openclaw plugins install @partme.ai/openclaw-mtls
 | `tls.certFile` | — | 服务器证书文件路径 |
 | `tls.keyFile` | — | 服务器私钥文件路径 |
 | `tls.caFile` | — | CA 证书文件路径（用于验证客户端证书） |
-| `tls.requestCert` | `true` | 请求客户端证书 |
-| `tls.rejectUnauthorized` | `true` | 拒绝未提供有效证书的客户端 |
+| `tls.requestCert` | 固定为 `true` | TLS 监听器必须请求客户端证书 |
+| `tls.rejectUnauthorized` | 固定为 `true` | 证书只有通过 CA 校验后才能成为可信身份 |
 
 ### 路径规则
 
@@ -221,7 +221,7 @@ openclaw-mtls/
 
 **当客户端未提供证书时会发生什么？**
 
-默认情况下（`passthrough: false`），请求会被拒绝并返回 401。如果 `passthrough: true`，请求会被放行，但不会附加 `mtlsAuth` 上下文。
+受保护路径会拒绝请求并返回 401。需要公开端点时，必须通过 `protectedPaths.allowUnauthenticated` 或 `skipPaths` 显式声明；插件不会把所有受保护路径整体降级为透传模式。
 
 ## 📄 许可证
 

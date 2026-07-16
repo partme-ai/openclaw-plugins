@@ -2,21 +2,16 @@
  * MQTT over WebSocket 渠道 setupWizard — 监听端口与路径配置。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { createSimpleChannelSetup, getChannelSection } from "./channel-setup-factory.js";
+import { isWebMqttConfigured } from "./state/configured.js";
 
 const CHANNEL_ID = "mqtt-ws";
-
-function isConfigured(cfg: OpenClawConfig): boolean {
-  const section = getChannelSection(cfg, CHANNEL_ID);
-  return Boolean(section.port && section.path);
-}
 
 const { setupAdapter, setupWizard } = createSimpleChannelSetup({
   channel: CHANNEL_ID,
   label: "MQTT over WebSocket",
   docsPath: "/channels/mqtt-ws",
-  resolveConfigured: isConfigured,
+  resolveConfigured: isWebMqttConfigured,
   introLines: [
     "Web MQTT 在 Gateway 上暴露 WebSocket MQTT 端点，供浏览器与 Web 客户端接入。",
     "需配置监听端口与 WebSocket 路径（默认 15675 /ws）。",

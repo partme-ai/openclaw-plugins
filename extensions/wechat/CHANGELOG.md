@@ -4,6 +4,16 @@
 
 This project follows the [Keep a Changelog](https://keepachangelog.com/) format.
 
+## [2026.7.1] - 2026-07-16
+
+### Changed
+
+- Align package, manifest, plugin ID, dependency and install metadata with OpenClaw 2026.7.1.
+- Commit the iLink update cursor only after a complete message batch succeeds, providing at-least-once recovery instead of skipping unprocessed messages.
+- Persist a bounded seven-day message-ID completion set to suppress completed-message replay across batch retries and restarts.
+- Bound API and media responses, enforce HTTPS for configured/download endpoints, clamp long-poll timeouts, and remove sensitive payloads and identifiers from logs.
+- Make the channel configuration schema strict and add section/account endpoint configuration.
+
 ## [2.1.7] - 2026-04-07
 
 ### Fixed

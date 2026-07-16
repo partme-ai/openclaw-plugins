@@ -18,10 +18,9 @@
 
 ## 兼容性
 
-| 插件版本 | OpenClaw 版本 | npm dist-tag | 状态 |
-|---------|---------------|--------------|------|
-| 2.0.x | `>=2026.3.22` | `latest` | 活跃 |
-| 1.0.x | `>=2026.1.0 <2026.3.22` | `legacy` | 维护中 |
+| 插件版本 | OpenClaw 版本 | 状态 |
+|---------|---------------|------|
+| 2026.7.1 | `>=2026.7.1` | 当前基线 |
 
 插件启动时会检查宿主版本。如果运行的 OpenClaw 版本不满足要求，插件会拒绝加载。
 
@@ -35,16 +34,10 @@
 
 ## 安装与更新
 
-推荐使用安装脚本：
+安装：
 
 ```bash
-npx -y @tencent-weixin/openclaw-weixin-cli install
-```
-
-手动安装：
-
-```bash
-openclaw plugins install "@tencent-weixin/openclaw-weixin"
+openclaw plugins install "@partme.ai/weixin"
 openclaw config set plugins.entries.openclaw-weixin.enabled true
 openclaw gateway restart
 ```
@@ -52,7 +45,7 @@ openclaw gateway restart
 更新：
 
 ```bash
-openclaw plugins update @tencent-weixin/openclaw-weixin
+openclaw plugins update @partme.ai/weixin
 ```
 
 ## 快速开始
@@ -66,7 +59,7 @@ openclaw --version
 2. 安装并启用插件：
 
 ```bash
-openclaw plugins install "@tencent-weixin/openclaw-weixin"
+openclaw plugins install "@partme.ai/weixin"
 openclaw config set plugins.entries.openclaw-weixin.enabled true
 ```
 
@@ -77,6 +70,8 @@ openclaw channels login --channel openclaw-weixin
 ```
 
 终端会显示二维码。用手机微信扫码并确认授权，成功后登录凭据会自动保存到本地。
+
+> 插件 ID 与 Channel ID 均为 `openclaw-weixin`；仓库目录 `extensions/wechat` 仅保留历史命名。
 
 4. 重启并检查：
 
@@ -175,7 +170,7 @@ pnpm test
 
 ## 常见问题
 
-### 报错 `requires OpenClaw >=2026.3.22`
+### 报错 `requires OpenClaw >=2026.7.1`
 
 当前 OpenClaw 版本过旧。先检查版本：
 
@@ -183,11 +178,7 @@ pnpm test
 openclaw --version
 ```
 
-如果暂时不能升级宿主，可安装 legacy 版本：
-
-```bash
-openclaw plugins install @tencent-weixin/openclaw-weixin@legacy
-```
+本版本只验证 OpenClaw 2026.7.1 及以上；请先升级宿主再启用插件。
 
 ### 通道显示 OK 但没有连接
 
@@ -220,7 +211,7 @@ openclaw gateway restart
 ## 卸载
 
 ```bash
-openclaw plugins uninstall @tencent-weixin/openclaw-weixin
+openclaw plugins uninstall @partme.ai/weixin
 ```
 
 ## 许可证

@@ -1,36 +1,35 @@
 {
   "id": "amap",
-  "channels": ["amap"],
+  "name": "AMap Web Service",
+  "version": "2026.7.1",
+  "description": "Bounded AMap Web Service POI tools for OpenClaw",
+  "main": "dist/index.js",
+  "channels": [],
+  "commands": [],
+  "skills": [],
+  "contracts": {
+    "tools": ["amap_search_places", "amap_search_nearby", "amap_place_detail"]
+  },
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
+    "required": ["enabled"],
     "properties": {
-      "key": {
-        "type": "string",
-        "description": "高德开放平台 Key（Web 服务 API）"
-      },
-      "secret": {
-        "type": "string",
-        "description": "安全密钥（若使用）"
-      },
-      "callback_url": {
-        "type": "string",
-        "description": "Webhook 回调 URL（若平台提供）"
-      },
-      "poi_id": {
-        "type": "string",
-        "description": "当前门店/POI 标识"
-      }
+      "enabled": { "type": "boolean", "default": false },
+      "key": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "apiBaseUrl": { "type": "string", "format": "uri", "maxLength": 2048, "default": "https://restapi.amap.com" },
+      "requestTimeoutMs": { "type": "integer", "minimum": 500, "maximum": 30000, "default": 8000 },
+      "retryAttempts": { "type": "integer", "minimum": 0, "maximum": 3, "default": 1 },
+      "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 5242880, "default": 1048576 },
+      "maxRequestsPerMinute": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 120 },
+      "ownerOnly": { "type": "boolean", "default": false }
     }
   },
-  "channelConfigs": {
-    "amap": {
-      "label": "高德地图（Amap）",
-      "description": "高德开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
-      "schema": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {}
-      }
-    }
-  }
+  "uiHints": {
+    "enabled": { "label": "Enable AMap tools", "type": "toggle" },
+    "key": { "label": "Web Service API Key", "sensitive": true },
+    "ownerOnly": { "label": "Owner only", "type": "toggle" }
+  },
+  "capabilities": { "amapWebService": true },
+  "channelConfigs": {}
 }

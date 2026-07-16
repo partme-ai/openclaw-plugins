@@ -58,7 +58,7 @@ It provides a hardened embedded MQTT-over-WebSocket broker for browser and web a
 openclaw plugins install @partme.ai/openclaw-web-mqtt
 ```
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1`.
 
 ### Minimal config (`openclaw.json`)
 
@@ -114,13 +114,15 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
 
 ## Enterprise hardening checklist
 
-- Bind plain WS to loopback only; non-loopback startup requires `tls.enabled=true`
+- Bind plain WS to loopback only; non-loopback startup requires both `tls.enabled=true` and `auth.required=true`
 - Use dedicated users and preferably `passwordHash` instead of plaintext passwords
 - Set `ws.allowedOrigins` for every browser application; an unlisted browser Origin is rejected
 - Set strict `publishAllow` / `subscribeAllow`
 - Anonymous access requires an explicit `anonymous` user with a fail-closed ACL
 - Tune `maxPayloadBytes`, `maxFrameSize`, `idleTimeoutMs` by traffic profile
 - Use reverse proxy policy and network ACL for perimeter controls
+
+Local protocol and installation gates do not replace browser/device acceptance in the target environment. Before production approval, verify the real certificate chain, reverse proxy upgrade forwarding, Origin policy, reconnect behavior, and expected concurrent browser load.
 
 ## Status and observability
 

@@ -22,7 +22,7 @@ import {
   useHostGateway,
 } from "./lib/compose.mjs";
 import { generateOpenClawConfig } from "./lib/config.mjs";
-import { ensureGatewayRunning, gatewayLogTail } from "./lib/gateway.mjs";
+import { ensureGatewayRunning, gatewayLogTail, stopHostGateway } from "./lib/gateway.mjs";
 import { installPlugins } from "./lib/install.mjs";
 import { dockerServicesForPlugins, resolvePlugins } from "./lib/registry.mjs";
 import { baseReport, printSummary, writeReport } from "./lib/report.mjs";
@@ -32,6 +32,7 @@ import {
   OPENCLAW_BIN,
   PROFILE,
   REPO_ROOT,
+  resetE2EProfile,
   tcpReachable,
   waitFor,
 } from "./lib/utils.mjs";
@@ -98,6 +99,12 @@ async function waitDockerHealthy(pluginIds) {
       { label: "gotify healthy", timeoutMs: 120_000 },
     );
   }
+  if (services.includes("otel-collector")) {
+    await waitFor(() => tcpReachable(14318), {
+      label: "OpenTelemetry Collector OTLP/HTTP 14318",
+      timeoutMs: 120_000,
+    });
+  }
   if (services.some((s) => s.startsWith("rocketmq"))) {
     try {
       await waitFor(() => tcpReachable(8081), { label: "rocketmq proxy 8081", timeoutMs: 180_000 });
@@ -114,7 +121,7 @@ Usage:
   node scripts/e2e/run-e2e.mjs [options]
 
 Options:
-  --plugins mqtt,rabbitmq   Subset of queue/channel plugins (default: all 7)
+  --plugins mqtt,rabbitmq   Subset of registered E2E adapters (default: all)
   --keep-services           Do not docker compose down after run
   --skip-browser            Skip Playwright browser tests
   --skip-install            Skip build/pack/install (reuse prior install)
@@ -128,6 +135,7 @@ Environment:
   OPENCLAW_E2E_HOST_GATEWAY=1   Run gateway on host instead of Docker openclaw service
   OPENCLAW_BIN                  Path to openclaw CLI (host mode)
   E2E_GATEWAY_PORT              Gateway port (default 19789)
+  OPENCLAW_E2E_PRESERVE_STATE=1 Reuse the dedicated E2E profile instead of resetting it
 `);
 }
 
@@ -139,6 +147,10 @@ async function main() {
   }
 
   const pluginIds = resolvePlugins(opts.plugins);
+  if (pluginIds.some((id) => id === "oauth2" || id === "web-socket" || id === "tracing") && !useHostGateway()) {
+    process.env.OPENCLAW_E2E_HOST_GATEWAY = "1";
+    console.log(`[${pluginIds[0]}] using host Gateway for a host-reachable local fixture`);
+  }
   const backingServices = dockerServicesForPlugins(pluginIds);
   const needsBackingDocker = backingServices.length > 0;
   const needsOpenClawContainer = !useHostGateway();
@@ -156,6 +168,11 @@ async function main() {
   console.log("=== OpenClaw Plugin E2E ===");
   console.log("plugins:", pluginIds.join(", "));
   console.log("gateway mode:", report.gatewayMode);
+
+  if (!opts.skipInstall) {
+    stopHostGateway();
+    resetE2EProfile();
+  }
 
   if (needsDocker) {
     const services = backingServices;
@@ -177,7 +194,7 @@ async function main() {
     report.installed = installPlugins(pluginIds);
   }
 
-  if (report.docker?.ok || pluginIds.some((id) => ["mqtt", "stomp", "web-mqtt", "web-stomp"].includes(id))) {
+  if (report.docker?.ok || pluginIds.some((id) => ["mqtt", "stomp", "web-mqtt", "web-stomp", "web-socket", "mtls", "oauth2", "tracing"].includes(id))) {
     if (pluginIds.includes("gotify") && !report.gotify) {
       const secretsPath = join(E2E_DIR, ".e2e-secrets.json");
       if (existsSync(secretsPath)) {
@@ -220,14 +237,23 @@ async function main() {
   printSummary(report);
 
   if (!opts.keepServices) {
+    stopHostGateway();
     composeDown(false);
   }
 
-  const failed = report.e2e.filter((r) => r.result === "FAIL").length;
+  const failed = [...report.e2e, ...report.browser].filter((r) => r.result === "FAIL").length;
   if (failed > 0) process.exitCode = 1;
 }
 
 main().catch((err) => {
   console.error(err);
+  if (!process.argv.includes("--keep-services")) {
+    try {
+      stopHostGateway();
+      composeDown(false);
+    } catch (cleanupError) {
+      console.error("[cleanup] docker compose down failed:", cleanupError);
+    }
+  }
   process.exit(1);
 });

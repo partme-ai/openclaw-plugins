@@ -46,18 +46,18 @@ groups:
 
       # ─────────── 基数告警 ───────────
       - alert: OpenClawHighCardinality
-        expr: openclaw_metrics_series_total > 100000
+        expr: (openclaw_metrics_scrape_series_dropped > 0) or (increase(openclaw_prometheus_series_dropped_total[5m]) > 0) or (increase(openclaw_runtime_metric_series_dropped_total[5m]) > 0)
         for: 5m
         labels:
           severity: warning
           category: cardinality
         annotations:
           summary: "High cardinality ({{ $value }}) on {{ $labels.instance }}"
-          description: "Series count > 100K. Consider dropping high-cardinality labels."
+          description: "One of the exporter cardinality guards dropped metric series. Reduce dynamic labels or raise a reviewed limit."
 
       # ─────────── Agent 性能告警 ───────────
       - alert: OpenClawAgentP95Slow
-        expr: histogram_quantile(0.95, rate(openclaw_agent_run_duration_seconds_bucket[5m])) > 300
+        expr: histogram_quantile(0.95, sum by (le) (rate(openclaw_run_duration_seconds_bucket[5m]))) > 300
         for: 10m
         labels:
           severity: warning
@@ -67,7 +67,7 @@ groups:
           description: "Agent P95 duration > 5 minutes for more than 10 minutes."
 
       - alert: OpenClawAgentP99Slow
-        expr: histogram_quantile(0.99, rate(openclaw_agent_run_duration_seconds_bucket[5m])) > 600
+        expr: histogram_quantile(0.99, sum by (le) (rate(openclaw_run_duration_seconds_bucket[5m]))) > 600
         for: 5m
         labels:
           severity: critical

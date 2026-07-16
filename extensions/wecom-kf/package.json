@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/wecom-kf",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "description": "OpenClaw WeCom KF (WeChat Work Customer Service) — multi-agent mapping + KF Control Tools",
   "type": "module",
   "main": "dist/index.js",
@@ -30,7 +30,7 @@
     "undici": "^6.0.0",
     "fast-xml-parser": "^4.3.0",
     "@wecom/aibot-node-sdk": "^1.0.0",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "files": [
     "dist",
@@ -66,15 +66,10 @@
       "order": 86
     },
     "install": {
-      "npmSpec": "@partme.ai/wecom_kf",
+      "npmSpec": "@partme.ai/wecom-kf",
       "localPath": "extensions/wecom-kf",
       "defaultChoice": "npm"
     }
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -84,11 +79,6 @@
   },
   "peerDependencies": {
     "openclaw": ">=2026.7.1"
-  },
-  "peerDependenciesMeta": {
-    "openclaw": {
-      "optional": true
-    }
   },
   "repository": {
     "type": "git",

@@ -2,16 +2,14 @@
   "id": "wecom-kf",
   "name": "@partme.ai/wecom-kf",
   "description": "企业微信微信客服插件 — KF 消息收发 + Control Tools（wecom_kf_*）；ICS / agents / skills 为可选运营资产",
+  "version": "2026.7.1",
   "main": "dist/index.js",
   "channels": [
     "wecom-kf"
   ],
-  "commands": [
-    "kf-status"
-  ],
   "skills": [],
   "contracts": {
-    "tools": ["wecom_kf_mcp", "wecom_kf_list_servicers", "wecom_kf_list_accounts", "wecom_kf_get_account_link", "wecom_kf_transfer_session"]
+    "tools": ["wecom_kf_list_servicers", "wecom_kf_list_accounts", "wecom_kf_get_account_link", "wecom_kf_transfer_session"]
   },
   "capabilities": {
     "humanTransfer": true,
@@ -20,152 +18,14 @@
   },
   "configSchema": {
     "type": "object",
-    "properties": {
-      "corpId": {
-        "type": "string",
-        "description": "企业微信 Corp ID"
-      },
-      "corpSecret": {
-        "type": "string",
-        "description": "企业微信客服应用 Secret"
-      },
-      "token": {
-        "type": "string",
-        "description": "回调 Token（用于消息签名验证）"
-      },
-      "encodingAESKey": {
-        "type": "string",
-        "description": "回调 EncodingAESKey（用于消息加解密）"
-      },
-      "session": {
-        "type": "object",
-        "properties": {
-          "dmScope": {
-            "type": "string",
-            "enum": [
-              "per-peer",
-              "per-channel-peer",
-              "per-account-channel-peer"
-            ],
-            "default": "per-account-channel-peer",
-            "description": "Session isolation scope (recommended: per-account-channel-peer)"
-          },
-          "idleResetMinutes": {
-            "type": "number",
-            "default": 2880,
-            "description": "Idle session reset time in minutes (default: 48h)"
-          }
-        }
-      },
-      "eventMessages": {
-        "type": "object",
-        "properties": {
-          "welcome": {
-            "type": "string",
-            "default": "您好，我是 AI 智能客服，请问有什么可以帮您？",
-            "description": "Session welcome message"
-          },
-          "ending": {
-            "type": "string",
-            "default": "感谢您的咨询，祝您生活愉快！",
-            "description": "Session ending message"
-          },
-          "satisfaction": {
-            "type": "object",
-            "properties": {
-              "enabled": {
-                "type": "boolean",
-                "default": true,
-                "description": "Enable satisfaction survey"
-              },
-              "prompt": {
-                "type": "string",
-                "default": "请对本次服务进行评价",
-                "description": "Satisfaction survey prompt"
-              }
-            }
-          }
-        }
-      },
-      "humanTransfer": {
-        "type": "object",
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "default": true,
-            "description": "Enable human agent transfer capability"
-          },
-          "keywords": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "default": [
-              "转人工",
-              "人工客服",
-              "人工"
-            ],
-            "description": "Keywords that trigger human transfer"
-          }
-        }
-      }
-    }
-  },
-  "uiHints": {
-    "corpId": {
-      "label": "Corp ID",
-      "placeholder": "ww..."
-    },
-    "corpSecret": {
-      "label": "Corp Secret",
-      "type": "password"
-    },
-    "token": {
-      "label": "Callback Token",
-      "type": "password"
-    },
-    "encodingAESKey": {
-      "label": "Encoding AES Key",
-      "type": "password"
-    },
-    "session.dmScope": {
-      "label": "Session Scope",
-      "type": "select"
-    },
-    "session.idleResetMinutes": {
-      "label": "Idle Reset (minutes)",
-      "placeholder": "2880"
-    },
-    "eventMessages.welcome": {
-      "label": "Welcome Message",
-      "type": "textarea"
-    },
-    "eventMessages.ending": {
-      "label": "Ending Message",
-      "type": "textarea"
-    },
-    "eventMessages.satisfaction.enabled": {
-      "label": "Enable Satisfaction Survey",
-      "type": "toggle"
-    },
-    "eventMessages.satisfaction.prompt": {
-      "label": "Survey Prompt"
-    },
-    "humanTransfer.enabled": {
-      "label": "Enable Human Transfer",
-      "type": "toggle"
-    },
-    "humanTransfer.keywords": {
-      "label": "Transfer Keywords",
-      "placeholder": "转人工,人工客服"
-    }
+    "additionalProperties": false,
+    "properties": {}
   },
   "toolMetadata": {
     "wecom_kf_list_servicers": { "optional": true, "description": "获取接待人员列表（控制面，不进 LLM 上下文）" },
     "wecom_kf_list_accounts": { "optional": true, "description": "获取客服账号列表（控制面，不进 LLM 上下文）" },
     "wecom_kf_get_account_link": { "optional": true, "description": "获取客服账号链接（控制面，不进 LLM 上下文）" },
-    "wecom_kf_transfer_session": { "optional": true, "description": "转接客服会话（控制面，不进 LLM 上下文）" },
-    "wecom_kf_mcp": { "optional": true, "description": "企业微信客服 MCP 工具" }
+    "wecom_kf_transfer_session": { "optional": true, "description": "转接客服会话（控制面，不进 LLM 上下文）" }
   },
   "channelConfigs": {
     "wecom-kf": {
@@ -173,8 +33,29 @@
       "description": "企业微信微信客服 — KF 回调 + Control Tools；ICS/agents/skills 可选",
       "schema": {
         "type": "object",
-        "additionalProperties": true,
-        "properties": {}
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "defaultAccount": { "type": "string" },
+          "webhookPath": { "type": "string", "pattern": "^/" },
+          "apiBaseUrl": { "type": "string", "format": "uri" },
+          "corpId": { "type": "string" },
+          "corpSecret": { "type": "string" },
+          "token": { "type": "string" },
+          "encodingAESKey": { "type": "string", "minLength": 43, "maxLength": 43 },
+          "openKfId": { "type": "string" },
+          "agentId": { "type": "string" },
+          "accounts": { "type": "object", "additionalProperties": true },
+          "session": { "type": "object", "additionalProperties": true },
+          "eventMessages": { "type": "object", "additionalProperties": true },
+          "humanTransfer": { "type": "object", "additionalProperties": true },
+          "media": { "type": "object", "additionalProperties": true },
+          "network": { "type": "object", "additionalProperties": true },
+          "routing": { "type": "object", "additionalProperties": true },
+          "agentMapping": { "type": "object", "additionalProperties": { "type": "string" } },
+          "servicerUserId": { "type": "string" },
+          "welcomeText": { "type": "string" }
+        }
       }
     }
   }

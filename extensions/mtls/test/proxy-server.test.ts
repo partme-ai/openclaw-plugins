@@ -105,6 +105,23 @@ describe("mTLS reverse proxy", () => {
     expect(headers["x-forwarded-proto"]).toBe("https");
   });
 
+  it("forwards the status route to OpenClaw instead of exposing proxy-local stats", async () => {
+    const response = await request({
+      host: "127.0.0.1",
+      port: proxyPort,
+      path: "/mtls/status",
+      ca: readFileSync(file("ca.crt")),
+      cert: readFileSync(file("client.crt")),
+      key: readFileSync(file("client.key")),
+    });
+
+    expect(response.status).toBe(200);
+    const headers = JSON.parse(response.body) as Record<string, string>;
+    expect(headers["x-forwarded-user"]).toBe("service-a");
+    expect(headers.ok).toBeUndefined();
+    expect(headers.stats).toBeUndefined();
+  });
+
   it("proxies authenticated WebSocket upgrades", async () => {
     const echoed = await new Promise<string>((resolve, reject) => {
       const socket = tls.connect({

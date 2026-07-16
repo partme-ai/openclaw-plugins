@@ -75,7 +75,7 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 
 两路径共享 `UnifiedMessage`、去重与回复辅助。详见 [message-sdk 架构](./extensions/message-sdk/docs/ARCHITECTURE.md)。
 
-#### 平台集成渠道 SDK 复用（douyin · meituan · rednode）
+#### 平台 Webhook 渠道 SDK 复用（douyin）
 
 公域 Webhook 渠道采用 **Transcript 路径**（与 wecom-kf / gotify 对齐），复用 message-sdk 能力如下：
 
@@ -106,7 +106,7 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 | L1 | **消息队列** | 8 | mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq | topicBindings · Wire 分发 · 幂等 · 多协议接入 |
 | L2 | **AI 能力** | 5 | knowledge、memory、router、openmem、message-sdk | RAG · L0–L3 记忆 · 路由规则 · OpenMem HTTP 桥 · 统一线格式 |
 | L2–L4 | **基础设施** | 5 | nacos、prometheus、tracing、oauth2、mtls | 配置中心 · 指标 · OTel · 认证 · mTLS |
-| — | **平台集成** | 3 | amap、meituan、rednode | POI/店铺 Webhook · 小红书双模式 |
+| — | **平台集成** | 3 | amap、meituan、rednode | 高德地点工具 · 美团 MTOp 白名单工具 · 小红书 Ark 白名单工具 |
 
 **完整插件矩阵**（28 个包、npm 名、功能说明）：[架构设计 — 插件总览](./doc/OpenClaw-Plugins-Architecture_CN.md)。
 
@@ -236,7 +236,7 @@ openclaw-plugins/
 | **IM（自建）** | 6 | 企业微信双模式 · 微信公众号 · 企业微信客服 · 微信 iPad · 抖音 · Gotify 推送 |
 | **IM（桥接）** | 1 | 22 个上游渠道能力记录 — 见 [bridge README](./extensions/bridge/README.zh-CN.md) |
 | **AI 与路由** | 5 | knowledge · memory · router · openmem · message-sdk |
-| **消息队列** | 9 | MQTT/WebSocket/STOMP/RabbitMQ/Redis/RocketMQ + Web 变体 + 集群发现 |
+| **消息队列** | 8 | MQTT/WebSocket/STOMP/RabbitMQ/Redis/RocketMQ + Web 变体 |
 | **基础设施** | 5 | nacos · prometheus · tracing · oauth2 · mtls |
 | **平台集成** | 3 | amap · meituan · rednode（小红书）|
 
@@ -371,9 +371,9 @@ pnpm install
 
 - 5 种 embedding 提供商（OpenAI、DashScope、智谱、千帆、Ollama）
 - 3 种重排序提供商（Ollama、Jina、智谱）
-- 3 种向量存储（sqlite-vec、zvec、zvec-native）
-- 混合检索（向量相似度 + 关键词搜索）、重排序、意图门控
-- 与 router 配合时通过 `before_prompt_build` 自动注入
+- 2 种本地向量存储（sqlite-vec、纯 JS zvec），按账号与 bot/agent namespace 隔离
+- 混合检索（向量相似度 + FTS5 关键词搜索）、可选重排序、意图门控和有界 Prompt 注入
+- 独立注册 `before_prompt_build`；文件摄取默认关闭且仅允许 owner 访问白名单根目录
 
 #### 3. 长期记忆（memory + openmem）
 
@@ -395,7 +395,7 @@ pnpm install
 
 #### 6. 可观测性
 
-- **prometheus**：端口 9090、scrape 认证、模型用量直方图、Grafana 仪表盘
+- **prometheus**：Gateway `/metrics` 精确路由、scrape Bearer 认证、模型用量直方图、健康/诊断端点与 Grafana 仪表盘
 - **tracing**：OpenTelemetry 兼容模型 — log / file / OTLP 后端、确定性采样、有界缓冲与跨度限制
 
 ---
@@ -438,7 +438,8 @@ export { default } from "./src/index.js";
 | 模式 | 插件类型 | 示例 |
 |------|----------|------|
 | 完整 channel + channelConfigs schema | 渠道插件 | wecom、mqtt、gotify、rabbitmq |
-| 简单 channel 配置 | 轻量渠道 | amap、meituan、wechat-ipad |
+| 严格外部桥接 channel | 默认关闭、显式风险确认 | wechat-ipad |
+| 纯 Web API 工具 | 能力插件 | amap、meituan、rednode |
 | 纯能力（无 channels） | 基础设施 / AI | knowledge、prometheus、nacos、tracing |
 | 严格配置（`additionalProperties: false`） | Router、bridge、tracing | router、bridge、tracing |
 

@@ -2,7 +2,23 @@ import type { AuthOAuth2Config, OAuth2ClientConfig, OAuth2ProxyConfig } from "./
 
 export type OAuth2ConfigInput = Partial<Omit<AuthOAuth2Config, "proxy" | "client">> & {
   proxy?: Partial<OAuth2ProxyConfig>;
-  client?: Partial<OAuth2ClientConfig>;
+  client?: Partial<Omit<OAuth2ClientConfig, "sessionStore">> & {
+    sessionStore?: Partial<OAuth2ClientConfig["sessionStore"]>;
+  };
+};
+
+export type OpenClawGatewayConfigSlice = {
+  gateway?: {
+    port?: number;
+    trustedProxies?: string[];
+    auth?: {
+      mode?: string;
+      trustedProxy?: {
+        userHeader?: string;
+        allowLoopback?: boolean;
+      };
+    };
+  };
 };
 
 const DEFAULT_PROXY: OAuth2ProxyConfig = {
@@ -13,12 +29,14 @@ const DEFAULT_PROXY: OAuth2ProxyConfig = {
   requestTimeoutMs: 30_000,
   userHeader: "x-forwarded-user",
   tenantHeader: "x-openclaw-tenant",
+  forwardedProto: "https",
 };
 
 const DEFAULT_CLIENT: OAuth2ClientConfig = {
   discovery: true,
   redirectUri: "",
   scopes: ["openid", "profile"],
+  requiredScopes: [],
   successRedirect: "/",
   sessionSecret: "",
   sessionCookieName: "openclaw_oauth2_session",
@@ -32,18 +50,13 @@ const DEFAULT_CLIENT: OAuth2ClientConfig = {
   authorizationParameters: {},
   tokenParameters: {},
   requestTimeoutMs: 5_000,
-  sessionStore: { type: "memory", keyPrefix: "openclaw:oauth2" },
+  sessionStore: { type: "memory", keyPrefix: "openclaw:oauth2", maxEntries: 10_000 },
 };
 
 const DEFAULT_CONFIG: AuthOAuth2Config = {
   enabled: false,
   issuerUrl: "",
   clientId: "openclaw-gateway",
-  scopeMapping: {
-    "openclaw:admin": "admin",
-    "openclaw:operator": "operator",
-    "openclaw:viewer": "viewer",
-  },
   proxy: DEFAULT_PROXY,
   client: DEFAULT_CLIENT,
 };
@@ -55,16 +68,51 @@ function requirePort(value: number, field: string, allowEphemeral = false): void
   }
 }
 
+function requireLoopbackUpstream(host: string): "127.0.0.1" | "::1" {
+  const normalized = host.trim().toLowerCase();
+  if (normalized === "127.0.0.1" || normalized === "::1") return normalized;
+  throw new Error(
+    "[openclaw-oauth2] proxy.upstreamHost must be 127.0.0.1 or ::1; the plugin may only proxy to its local OpenClaw Gateway",
+  );
+}
+
+const HTTP_HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const RESERVED_IDENTITY_HEADERS = new Set([
+  "authorization",
+  "connection",
+  "cookie",
+  "forwarded",
+  "host",
+  "proxy-authorization",
+  "transfer-encoding",
+  "upgrade",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "x-real-ip",
+]);
+
+function requireIdentityHeader(value: string, field: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!HTTP_HEADER_NAME.test(normalized)) {
+    throw new Error(`[openclaw-oauth2] ${field} must be a valid HTTP header name`);
+  }
+  if (RESERVED_IDENTITY_HEADERS.has(normalized)) {
+    throw new Error(`[openclaw-oauth2] ${field} cannot use reserved header ${normalized}`);
+  }
+  return normalized;
+}
+
 export function resolveOAuth2Config(input: OAuth2ConfigInput | undefined): AuthOAuth2Config {
   const config: AuthOAuth2Config = {
     ...DEFAULT_CONFIG,
     ...input,
-    scopeMapping: { ...DEFAULT_CONFIG.scopeMapping, ...input?.scopeMapping },
     proxy: { ...DEFAULT_PROXY, ...input?.proxy },
     client: {
       ...DEFAULT_CLIENT,
       ...input?.client,
       scopes: input?.client?.scopes ?? DEFAULT_CLIENT.scopes,
+      requiredScopes: input?.client?.requiredScopes ?? DEFAULT_CLIENT.requiredScopes,
       authorizationParameters: {
         ...DEFAULT_CLIENT.authorizationParameters,
         ...input?.client?.authorizationParameters,
@@ -83,11 +131,25 @@ export function resolveOAuth2Config(input: OAuth2ConfigInput | undefined): AuthO
   if (proxy.requestTimeoutMs < 1_000) {
     throw new Error("[openclaw-oauth2] proxy.requestTimeoutMs must be at least 1000ms");
   }
-  if (!proxy.userHeader.trim()) {
-    throw new Error("[openclaw-oauth2] proxy.userHeader is required");
+  proxy.userHeader = requireIdentityHeader(proxy.userHeader, "proxy.userHeader");
+  if (proxy.tenantHeader) {
+    proxy.tenantHeader = requireIdentityHeader(proxy.tenantHeader, "proxy.tenantHeader");
+    if (proxy.tenantHeader === proxy.userHeader) {
+      throw new Error("[openclaw-oauth2] proxy.tenantHeader and proxy.userHeader must be different");
+    }
+  }
+  if (proxy.forwardedProto !== "http" && proxy.forwardedProto !== "https") {
+    throw new Error("[openclaw-oauth2] proxy.forwardedProto must be http or https");
+  }
+  if (!Number.isSafeInteger(config.client.sessionStore.maxEntries) || config.client.sessionStore.maxEntries < 1) {
+    throw new Error("[openclaw-oauth2] client.sessionStore.maxEntries must be a positive safe integer");
+  }
+  if (config.client.requiredScopes.some((scope) => !scope.trim() || /\s/.test(scope))) {
+    throw new Error("[openclaw-oauth2] client.requiredScopes entries must be non-empty scope tokens");
   }
 
   if (config.enabled) {
+    proxy.upstreamHost = requireLoopbackUpstream(proxy.upstreamHost);
     if (!config.issuerUrl.trim()) throw new Error("[openclaw-oauth2] issuerUrl is required when enabled");
     const issuer = new URL(config.issuerUrl);
     const loopback = issuer.hostname === "localhost" || issuer.hostname === "127.0.0.1" || issuer.hostname === "::1";
@@ -139,6 +201,51 @@ export function resolveOAuth2Config(input: OAuth2ConfigInput | undefined): AuthO
   }
 
   return config;
+}
+
+/**
+ * Fail closed unless the local OpenClaw Gateway is configured to trust exactly
+ * the identity header emitted by this OAuth2 proxy.
+ */
+export function validateOAuth2GatewayIntegration(
+  config: AuthOAuth2Config,
+  openClawConfig: OpenClawGatewayConfigSlice,
+): void {
+  if (!config.enabled) return;
+
+  const gateway = openClawConfig.gateway;
+  const auth = gateway?.auth;
+  if (auth?.mode !== "trusted-proxy") {
+    throw new Error(
+      "[openclaw-oauth2] gateway.auth.mode must be trusted-proxy when the OAuth2 proxy is enabled",
+    );
+  }
+
+  const configuredHeader = auth.trustedProxy?.userHeader?.trim().toLowerCase();
+  if (configuredHeader !== config.proxy.userHeader) {
+    throw new Error(
+      `[openclaw-oauth2] gateway.auth.trustedProxy.userHeader must equal ${config.proxy.userHeader}`,
+    );
+  }
+  if (auth.trustedProxy?.allowLoopback !== true) {
+    throw new Error(
+      "[openclaw-oauth2] gateway.auth.trustedProxy.allowLoopback must be true for the local OAuth2 proxy",
+    );
+  }
+
+  const trustedProxies = gateway?.trustedProxies?.map((value) => value.trim()) ?? [];
+  if (!trustedProxies.includes(config.proxy.upstreamHost)) {
+    throw new Error(
+      `[openclaw-oauth2] gateway.trustedProxies must include ${config.proxy.upstreamHost}`,
+    );
+  }
+
+  const gatewayPort = gateway?.port ?? 18789;
+  if (gatewayPort !== config.proxy.upstreamPort) {
+    throw new Error(
+      `[openclaw-oauth2] proxy.upstreamPort (${config.proxy.upstreamPort}) must match gateway.port (${gatewayPort})`,
+    );
+  }
 }
 
 function assertNoReservedParameters(

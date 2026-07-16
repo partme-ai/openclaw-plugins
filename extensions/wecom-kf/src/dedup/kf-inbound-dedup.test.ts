@@ -8,6 +8,8 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import {
   claimWecomKfInboundMsgid,
+  commitWecomKfInboundMsgid,
+  releaseWecomKfInboundMsgid,
   resetWecomKfInboundDedupeForTests,
   resolveKfInboundDedupeNamespace,
 } from "../dedup/kf-inbound-dedup.js";
@@ -42,18 +44,26 @@ describe("claimWecomKfInboundMsgid", () => {
     resetWecomKfInboundDedupeForTests();
   });
 
-  it("首次 claim 应成功，重复 msgid 应拒绝", async () => {
-    expect(await claimWecomKfInboundMsgid("wk_001", "msg-100")).toBe(true);
-    expect(await claimWecomKfInboundMsgid("wk_001", "msg-100")).toBe(false);
+  it("只有 commit 后才把重复 msgid 标记为已处理", async () => {
+    expect((await claimWecomKfInboundMsgid("wk_001", "msg-100")).kind).toBe("claimed");
+    expect((await claimWecomKfInboundMsgid("wk_001", "msg-100")).kind).toBe("inflight");
+    await commitWecomKfInboundMsgid("wk_001", "msg-100");
+    expect((await claimWecomKfInboundMsgid("wk_001", "msg-100")).kind).toBe("duplicate");
   });
 
   it("不同 open_kfid 的相同 msgid 应独立去重", async () => {
-    expect(await claimWecomKfInboundMsgid("wk_a", "msg-dup")).toBe(true);
-    expect(await claimWecomKfInboundMsgid("wk_b", "msg-dup")).toBe(true);
+    expect((await claimWecomKfInboundMsgid("wk_a", "msg-dup")).kind).toBe("claimed");
+    expect((await claimWecomKfInboundMsgid("wk_b", "msg-dup")).kind).toBe("claimed");
   });
 
-  it("空 msgid 应视为可处理", async () => {
-    expect(await claimWecomKfInboundMsgid("wk_001", "")).toBe(true);
-    expect(await claimWecomKfInboundMsgid("wk_001", "   ")).toBe(true);
+  it("空 msgid 返回 invalid，由调用方按无去重键处理", async () => {
+    expect((await claimWecomKfInboundMsgid("wk_001", "")).kind).toBe("invalid");
+    expect((await claimWecomKfInboundMsgid("wk_001", "   ")).kind).toBe("invalid");
+  });
+
+  it("处理失败 release 后允许同一 msgid 重试", async () => {
+    expect((await claimWecomKfInboundMsgid("wk_001", "msg-retry")).kind).toBe("claimed");
+    await releaseWecomKfInboundMsgid("wk_001", "msg-retry", new Error("dispatch failed"));
+    expect((await claimWecomKfInboundMsgid("wk_001", "msg-retry")).kind).toBe("claimed");
   });
 });

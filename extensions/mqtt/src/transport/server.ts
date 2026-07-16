@@ -5,7 +5,7 @@
  * 基于 aedes 实现轻量级内嵌 MQTT Broker
  *
  * 职责：
- * - 启动/停止 MQTT TCP 和 WebSocket 服务
+ * - 启动/停止 MQTT TCP 和 TLS 服务
  * - 管理客户端连接生命周期
  * - 处理认证逻辑
  * - 发布出站消息到指定 Topic
@@ -60,7 +60,7 @@ let aedesInstance: AedesBroker | null = null;
 let tcpServer: TcpServer | null = null;
 let tlsServer: TlsServer | null = null;
 let activeBrokerConfig: MqttBrokerConfig | null = null;
-const qos0InflightByClient = new Map<string, number>();
+const qos0InflightByClient = new Map<Client, number>();
 let qos0DropCount = 0;
 
 /** Redis clients */
@@ -68,9 +68,9 @@ let redisClient: Redis | null = null;
 let mqEmitter: unknown = null;
 
 /** 已连接的客户端映射表 */
-const connectedClients = new Map<string, MqttClientInfo>();
-const clientUsers = new Map<string, string>();
-const pendingClients = new Set<string>();
+const connectedClients = new Map<string, { client: Client; info: MqttClientInfo }>();
+let clientUsers = new WeakMap<Client, string>();
+const pendingClients = new Set<Client>();
 
 /**
  * 启动 MQTT Broker
@@ -81,12 +81,16 @@ const pendingClients = new Set<string>();
  */
 export async function startBroker(
   config: MqttBrokerConfig,
-  onMessage: (message: MqttInboundMessage) => void,
+  onMessage: (message: MqttInboundMessage) => void | Promise<void>,
   onClientConnect?: (clientId: string) => void,
   onClientDisconnect?: (clientId: string) => void
 ): Promise<void> {
+  if (aedesInstance || tcpServer || tlsServer || activeBrokerConfig) {
+    throw new Error("MQTT broker is already running");
+  }
   validateBrokerConfig(config);
   activeBrokerConfig = config;
+  try {
 
     // 创建持久化和集群配置（支持多种后端）
     let persistence: unknown = undefined;
@@ -174,33 +178,22 @@ export async function startBroker(
     }
 
     aedesInstance = createBroker({
-      concurrency: config.maxConnections,
       persistence,
       mq: emitter,
     });
 
     aedesInstance.preConnect = (client, _packet, callback) => {
-      if (connectedClients.size + pendingClients.size >= config.maxConnections) {
-        logAuditEvent(config.audit, "warn", "connection_rejected_limit", {
-          clientId: client.id,
-          maxConnections: config.maxConnections,
-        });
-        callback(new Error("maximum MQTT connections reached"), false);
-        return;
-      }
-      pendingClients.add(client.id);
       callback(null, true);
     };
 
-    // 配置认证
-    if (config.auth.enabled) {
-      setupAuthentication(aedesInstance, config.auth);
-    }
+    // 配置认证、ACL 与发布前策略校验。
+    setupAuthentication(aedesInstance, config.auth);
 
     // 监听客户端连接事件
     aedesInstance.on("client", (client: Client) => {
       const clientId = client.id;
-      pendingClients.delete(clientId);
+      pendingClients.delete(client);
+      const isReplacement = connectedClients.has(clientId);
       const remoteAddress = (client.conn as { remoteAddress?: string } | undefined)?.remoteAddress;
       console.log(`[openclaw-mqtt] Client connected: ${clientId}`);
       onClientConnect?.(clientId);
@@ -208,32 +201,36 @@ export async function startBroker(
         clientId,
         remoteAddress,
       });
-      updateConnectionMetrics(connectedClients.size + 1, 1, 0);
+      updateConnectionMetrics(connectedClients.size + (isReplacement ? 0 : 1), isReplacement ? 0 : 1, 0);
 
       connectedClients.set(clientId, {
-        clientId,
-        username: clientUsers.get(clientId),
-        connectedAt: new Date().toISOString(),
-        lastActiveAt: new Date().toISOString(),
-        remoteAddress,
+        client,
+        info: {
+          clientId,
+          username: clientUsers.get(client),
+          connectedAt: new Date().toISOString(),
+          lastActiveAt: new Date().toISOString(),
+          remoteAddress,
+        },
       });
     });
 
     // 监听客户端断开事件
     aedesInstance.on("clientDisconnect", (client: Client) => {
       const clientId = client.id;
-      pendingClients.delete(clientId);
+      pendingClients.delete(client);
       console.log(`[openclaw-mqtt] Client disconnected: ${clientId}`);
+      const current = connectedClients.get(clientId);
+      qos0InflightByClient.delete(client);
+      if (current?.client !== client) return;
       connectedClients.delete(clientId);
-      clientUsers.delete(clientId);
-      qos0InflightByClient.delete(clientId);
       logAuditEvent(config.audit, "info", "client_disconnected", { clientId });
       updateConnectionMetrics(connectedClients.size, 0, 1);
       onClientDisconnect?.(clientId);
     });
 
     aedesInstance.on("connectionError", (client: Client) => {
-      pendingClients.delete(client.id);
+      pendingClients.delete(client);
     });
 
     // 监听收到的消息（publish 事件）
@@ -244,9 +241,9 @@ export async function startBroker(
       const clientId = client.id;
 
       // 更新客户端最后活跃时间
-      const info = connectedClients.get(clientId);
-      if (info) {
-        info.lastActiveAt = new Date().toISOString();
+      const current = connectedClients.get(clientId);
+      if (current?.client === client) {
+        current.info.lastActiveAt = new Date().toISOString();
       }
 
       // 传递 MQTT 特定属性给上层处理
@@ -264,10 +261,10 @@ export async function startBroker(
         return;
       }
       if (packet.qos === 0) {
-        const inflight = incrementQos0Inflight(clientId);
+        const inflight = incrementQos0Inflight(client);
         if (inflight > config.qos0.mailboxSoftLimit) {
           qos0DropCount += 1;
-          decrementQos0Inflight(clientId);
+          decrementQos0Inflight(client);
           console.warn(
             `[openclaw-mqtt] QoS0 dropped for ${clientId}: inflight=${inflight}, softLimit=${config.qos0.mailboxSoftLimit}`,
           );
@@ -285,21 +282,27 @@ export async function startBroker(
       // Track incoming message
       updateMessageMetrics(packet.topic, packet.qos, "inbound");
 
-      const maybePromise = onMessage({
-        topic: packet.topic,
-        payload: packet.payload.toString("utf-8"),
-        clientId,
-        qos: packet.qos,
-        retain: packet.retain,
-        dup: packet.dup,
-        messageId: packet.messageId,
-        properties: packet.properties as Record<string, unknown> | undefined,
-      });
-      if (packet.qos === 0) {
-        void Promise.resolve(maybePromise).finally(() => {
-          decrementQos0Inflight(clientId);
+      void Promise.resolve().then(() => onMessage({
+          topic: packet.topic,
+          payload: packet.payload.toString("utf-8"),
+          clientId,
+          qos: packet.qos,
+          retain: packet.retain,
+          dup: packet.dup,
+          messageId: packet.messageId,
+          properties: packet.properties as Record<string, unknown> | undefined,
+        }))
+        .catch((error: unknown) => {
+          console.error(`[openclaw-mqtt] Inbound handler failed for ${clientId}:`, error);
+          logAuditEvent(config.audit, "error", "inbound_handler_failed", {
+            clientId,
+            topic: packet.topic,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        })
+        .finally(() => {
+          if (packet.qos === 0) decrementQos0Inflight(client);
         });
-      }
     });
 
     const startTasks: Array<Promise<void>> = [];
@@ -349,7 +352,6 @@ export async function startBroker(
       );
     }
 
-  try {
     await Promise.all(startTasks);
   } catch (error) {
     await stopBroker().catch(() => undefined);
@@ -387,7 +389,7 @@ export async function stopBroker(): Promise<void> {
   const closeRedis = redis && !aedes ? redis.quit().then(() => undefined) : Promise.resolve();
 
   connectedClients.clear();
-  clientUsers.clear();
+  clientUsers = new WeakMap<Client, string>();
   activeBrokerConfig = null;
   qos0InflightByClient.clear();
   qos0DropCount = 0;
@@ -466,7 +468,7 @@ export async function publishMessage(
  * @returns 当前在线客户端列表
  */
 export function getConnectedClients(): MqttClientInfo[] {
-  return Array.from(connectedClients.values());
+  return Array.from(connectedClients.values(), ({ info }) => ({ ...info }));
 }
 
 /**
@@ -476,7 +478,7 @@ export function getConnectedClients(): MqttClientInfo[] {
  * @returns 用户名；未映射时为 undefined
  */
 export function getClientUsername(clientId: string): string | undefined {
-  return clientUsers.get(clientId);
+  return connectedClients.get(clientId)?.info.username;
 }
 
 /**
@@ -512,7 +514,10 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
     const passwordStr = password?.toString() ?? "";
     const willTopic = (client as { will?: { topic?: string } }).will?.topic;
 
-    if (connectedClients.size >= (activeBrokerConfig?.maxConnections ?? 1_000)) {
+    if (
+      !connectedClients.has(client.id) &&
+      connectedClients.size + pendingClients.size >= (activeBrokerConfig?.maxConnections ?? 1_000)
+    ) {
       logAuditEvent(activeBrokerConfig?.audit, "warn", "auth_failed_connection_limit", {
         clientId: client.id,
       });
@@ -529,6 +534,12 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       return;
     }
 
+    if (!authConfig.enabled) {
+      pendingClients.add(client);
+      callback(null, true);
+      return;
+    }
+
     if (!usernameStr) {
       if (authConfig.allowAnonymous) {
         const anonymousUser = usersByName.get("anonymous");
@@ -536,10 +547,11 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
           callback(null, false);
           return;
         }
-        clientUsers.set(client.id, "anonymous");
+        clientUsers.set(client, "anonymous");
         logAuditEvent(activeBrokerConfig?.audit, "info", "auth_success_anonymous", {
           clientId: client.id,
         });
+        pendingClients.add(client);
         callback(null, true);
         return;
       }
@@ -582,11 +594,12 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       return;
     }
 
-    clientUsers.set(client.id, usernameStr);
+    clientUsers.set(client, usernameStr);
     logAuditEvent(activeBrokerConfig?.audit, "info", "auth_success", {
       clientId: client.id,
       username: usernameStr,
     });
+    pendingClients.add(client);
     callback(null, true);
   };
 
@@ -600,7 +613,31 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       cb(null);
       return;
     }
-    const user = usersByName.get(clientUsers.get(client.id) ?? "");
+    if (packet.payload.length > (activeBrokerConfig?.limits.maxPayloadBytes ?? Number.MAX_SAFE_INTEGER)) {
+      logAuditEvent(activeBrokerConfig?.audit, "warn", "inbound_payload_rejected_oversized", {
+        clientId: client.id,
+        topic: packet.topic,
+        bytes: packet.payload.length,
+        maxPayloadBytes: activeBrokerConfig?.limits.maxPayloadBytes,
+      });
+      updateDroppedMetrics("oversized");
+      cb(new Error("payload exceeds maxPayloadBytes"));
+      return;
+    }
+    if (packet.retain && activeBrokerConfig?.retain.allowInboundRetain === false) {
+      logAuditEvent(activeBrokerConfig.audit, "warn", "inbound_retain_rejected", {
+        clientId: client.id,
+        topic: packet.topic,
+      });
+      cb(new Error("retained publish is disabled"));
+      return;
+    }
+    if (!authConfig.enabled) {
+      cb(null);
+      return;
+    }
+    const username = clientUsers.get(client);
+    const user = usersByName.get(username ?? "");
     if (!user) {
       updateAclDenials("publish", packet.topic);
       cb(new Error("publish not allowed for unknown identity"));
@@ -614,7 +651,7 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
     if (!allowed) {
       logAuditEvent(activeBrokerConfig?.audit, "warn", "acl_publish_denied", {
         clientId: client.id,
-        username: clientUsers.get(client.id),
+        username,
         topic: packet.topic,
       });
       updateAclDenials("publish", packet.topic);
@@ -627,7 +664,12 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
       cb(null, sub);
       return;
     }
-    const user = usersByName.get(clientUsers.get(client.id) ?? "");
+    if (!authConfig.enabled) {
+      cb(null, sub);
+      return;
+    }
+    const username = clientUsers.get(client);
+    const user = usersByName.get(username ?? "");
     if (!user) {
       updateAclDenials("subscribe", sub.topic);
       cb(new Error("subscribe not allowed for unknown identity"), null);
@@ -641,7 +683,7 @@ function setupAuthentication(aedes: AedesBroker, authConfig: MqttAuthConfig): vo
     if (!allowed) {
       logAuditEvent(activeBrokerConfig?.audit, "warn", "acl_subscribe_denied", {
         clientId: client.id,
-        username: clientUsers.get(client.id),
+        username,
         topic: sub.topic,
       });
       updateAclDenials("subscribe", sub.topic);
@@ -656,17 +698,17 @@ function isWillAllowed(topic: string, allow: boolean, patterns: string[]): boole
   return patterns.some((pattern) => aclTopicMatches(topic, pattern));
 }
 
-function incrementQos0Inflight(clientId: string): number {
-  const next = (qos0InflightByClient.get(clientId) ?? 0) + 1;
-  qos0InflightByClient.set(clientId, next);
+function incrementQos0Inflight(client: Client): number {
+  const next = (qos0InflightByClient.get(client) ?? 0) + 1;
+  qos0InflightByClient.set(client, next);
   return next;
 }
 
-function decrementQos0Inflight(clientId: string): void {
-  const current = qos0InflightByClient.get(clientId) ?? 0;
+function decrementQos0Inflight(client: Client): void {
+  const current = qos0InflightByClient.get(client) ?? 0;
   if (current <= 1) {
-    qos0InflightByClient.delete(clientId);
+    qos0InflightByClient.delete(client);
     return;
   }
-  qos0InflightByClient.set(clientId, current - 1);
+  qos0InflightByClient.set(client, current - 1);
 }

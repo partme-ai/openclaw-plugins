@@ -36,27 +36,42 @@ describe("redisStreamChannel", () => {
     });
 
     it("isConfigured returns true when url present", () => {
+      const cfg = {
+        channels: { "redis-stream": { url: "redis://localhost:6379" } },
+      };
+      const account = redisStreamChannel.config.resolveAccount(cfg);
       expect(
-        redisStreamChannel.config.isConfigured({
-          channels: { "redis-stream": { url: "redis://localhost:6379" } },
-        }),
+        redisStreamChannel.config.isConfigured?.(account, cfg),
       ).toBe(true);
     });
 
+    it("passes the resolved account to the OpenClaw configuration contract", () => {
+      const cfg = {
+          channels: { "redis-stream": { url: "redis://localhost:6379" } },
+      };
+      const account = redisStreamChannel.config.resolveAccount(cfg);
+
+      expect(account.config.url).toBe("redis://localhost:6379");
+      expect(redisStreamChannel.config.isConfigured?.(account, cfg)).toBe(true);
+    });
+
     it("isConfigured returns false without url", () => {
-      expect(redisStreamChannel.config.isConfigured({})).toBe(false);
+      const account = redisStreamChannel.config.resolveAccount({});
+      expect(redisStreamChannel.config.isConfigured?.(account, {})).toBe(false);
     });
 
     it("unconfiguredReason returns message without url", () => {
-      const reason = redisStreamChannel.config.unconfiguredReason({});
+      const account = redisStreamChannel.config.resolveAccount({});
+      const reason = redisStreamChannel.config.unconfiguredReason?.(account, {});
       expect(reason).toContain("url");
     });
 
-    it("unconfiguredReason returns null with url", () => {
-      const reason = redisStreamChannel.config.unconfiguredReason({
+    it("does not use unconfiguredReason for configured accounts", () => {
+      const cfg = {
         channels: { "redis-stream": { url: "redis://localhost:6379" } },
-      });
-      expect(reason).toBeNull();
+      };
+      const account = redisStreamChannel.config.resolveAccount(cfg);
+      expect(redisStreamChannel.config.isConfigured?.(account, cfg)).toBe(true);
     });
   });
 
@@ -75,10 +90,16 @@ describe("redisStreamChannel", () => {
   });
 
   describe("status", () => {
-    it("builds account snapshot", () => {
-      const snapshot = redisStreamChannel.status.buildAccountSnapshot({
+    it("builds account snapshot", async () => {
+      const cfg = {
         channels: { "redis-stream": { url: "redis://localhost:6379" } },
+      };
+      const account = redisStreamChannel.config.resolveAccount(cfg);
+      const snapshot = await redisStreamChannel.status?.buildAccountSnapshot?.({
+        account,
+        cfg,
       });
+      expect(snapshot).toBeDefined();
       expect(snapshot.accountId).toBe("default");
       expect(snapshot.configured).toBe(true);
       expect(snapshot.extra).toBeDefined();

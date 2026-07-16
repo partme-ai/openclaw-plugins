@@ -5,7 +5,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadPluginConfigs } from "../config/plugins/index.mjs";
 import { PLUGIN_REGISTRY, resolvePlugins } from "./registry.mjs";
-import { E2E_DIR, GATEWAY_PORT, STATE_DIR } from "./utils.mjs";
+import { E2E_DIR, E2E_PORTS, GATEWAY_PORT, STATE_DIR } from "./utils.mjs";
 
 /**
  * Installed plugin ids from prior install step (may include plugins outside this run).
@@ -54,11 +54,24 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
       mode: "local",
       port: GATEWAY_PORT,
       bind: "loopback",
-      auth: { mode: "none" },
+      ...(ids.includes("mtls") || ids.includes("oauth2") ? {
+        trustedProxies: ["127.0.0.1"],
+        auth: {
+          mode: "trusted-proxy",
+          trustedProxy: {
+            allowLoopback: true,
+            userHeader: "x-forwarded-user",
+            allowUsers: [ids.includes("oauth2") ? "oauth-e2e-user" : "e2e-client"],
+          },
+        },
+      } : { auth: { mode: "none" } }),
     },
     session: { dmScope: "main" },
     plugins: {
       allow: ids,
+      // OpenClaw profiles can inherit managed npm projects from the host. Keep
+      // this run's freshly packed paths explicit so an older published package
+      // cannot win schema validation or runtime loading.
       load: {
         paths: installed
           .filter((plugin) => ids.includes(plugin.id))
@@ -67,6 +80,38 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
       entries: fragments.pluginEntries,
     },
     channels: fragments.channelEntries,
+    ...(ids.includes("tracing") ? {
+      models: {
+        mode: "replace",
+        providers: {
+          "e2e-fixture": {
+            baseUrl: `http://127.0.0.1:${E2E_PORTS.modelFixture}/v1`,
+            apiKey: "openclaw-e2e-model-key",
+            api: "openai-completions",
+            models: [{
+              id: "fixture-model",
+              name: "OpenClaw E2E Fixture Model",
+              reasoning: false,
+              input: ["text"],
+              // OpenClaw injects its production system prompt even for this
+              // controlled fixture. Keep the declared window realistic enough
+              // to exercise the provider call instead of tripping the local
+              // preflight context guard.
+              contextWindow: 131072,
+              maxTokens: 1024,
+              compat: { supportsTools: false, requiresStringContent: true },
+            }],
+          },
+        },
+      },
+      agents: {
+        defaults: {
+          model: { primary: "e2e-fixture/fixture-model" },
+          models: { "e2e-fixture/fixture-model": {} },
+          timeoutSeconds: 60,
+        },
+      },
+    } : {}),
   };
 
   mkdirSync(STATE_DIR, { recursive: true });

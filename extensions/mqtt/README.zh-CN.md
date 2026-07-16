@@ -7,7 +7,7 @@
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--mqtt-blue)
 ![Node](https://img.shields.io/badge/Node.js-20+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![MQTT](https://img.shields.io/badge/MQTT-3.1.1%2F5.0-orange)
+![MQTT](https://img.shields.io/badge/MQTT-3.1%2F3.1.1-orange)
 
 </div>
 
@@ -29,7 +29,7 @@
 ### 生命周期
 
 - 内嵌 Broker 在 Gateway 对 MQTT 渠道执行 `startAccount` 时启动（当前版本为单账号 `default`）
-- HTTP `GET /mqtt/status` 在入口的 `registerFull` 中注册，可查看 broker 统计、配置快照及策略热更新元数据
+- HTTP `GET /mqtt/status` 在入口的 `registerFull` 中注册，可查看 broker 统计、脱敏配置摘要及策略元数据
 - 会话键粒度遵循 OpenClaw 全局 `session.dmScope` 配置
 - **`package.json` → `openclaw.setupEntry`** 指向 `dist/setup-entry.js`，通过 `defineSetupPluginEntry` 导出轻量入口
 
@@ -51,7 +51,7 @@ Aedes MQTT broker 随进程启动，支持 MQTT 3.1 和 MQTT 3.1.1。当前 Aede
 |------|------|
 | 认证 | 用户名/密码、每用户 ACL、匿名访问开关 |
 | 传输 | TCP（1883）+ TLS（8883），可配置 cert/key/CA |
-| QoS | 0（至多一次）+ mailbox 软限制，1（至少一次）+ ACK 重试 |
+| QoS | Aedes 原生处理 MQTT QoS 0/1/2；QoS 0 的 OpenClaw 分发链路带 mailbox 软限制 |
 | 持久化 | 多后端：memory、redis（含 mqemitter）、mongodb、level、nedb |
 | 限制 | 可配置最大 payload 字节数、最大连接数 |
 | 会话 | 基于过期时间的清理，支持跨重连保留 |
@@ -107,7 +107,7 @@ Aedes MQTT broker 随进程启动，支持 MQTT 3.1 和 MQTT 3.1.1。当前 Aede
 openclaw plugins install @partme.ai/openclaw-mqtt
 ```
 
-最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.6.1`。
 
 ### message-sdk 复用
 
@@ -290,7 +290,7 @@ openclaw-mqtt/
 
 | 项目 | 版本 |
 |------|------|
-| @partme.ai/openclaw-mqtt | 2026.5.25-2 |
+| @partme.ai/openclaw-mqtt | 2026.7.1 |
 | 推荐 Node | 20+ |
 
 ## 安全
@@ -324,7 +324,7 @@ openclaw-mqtt/
 | **入站 ACK** | MQTT 协议无 consumer ACK；dispatch 失败仅日志 |
 | **出站 reply** | `publishMessage` await Aedes 回调 |
 | **自消费** | broker 侧 publish（`client==null`）不触发入站 |
-| **背压** | QoS0 mailbox 软限制；QoS1 出站 ACK 重试 |
+| **背压** | QoS0 OpenClaw 分发 mailbox 软限制；QoS 1/2 的协议确认与重投由 Aedes/MQTT 客户端负责 |
 | **幂等** | messageId 60s 内存 dedup |
 | **生产** | 开启 `auth`、TLS；多实例用 redis persistence |
 

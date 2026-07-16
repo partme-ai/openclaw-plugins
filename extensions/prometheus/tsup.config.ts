@@ -1,12 +1,12 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/setup-entry.ts"],
+  entry: ["src/index.ts"],
   format: ["esm"],
   dts: true,
   clean: true,
   sourcemap: true,
-  target: "node20",
+  target: "node22",
   outDir: "dist",
   external: [/^openclaw(\/.*)?$/],
 });

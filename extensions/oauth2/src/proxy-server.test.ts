@@ -24,9 +24,14 @@ async function listen(server: http.Server): Promise<number> {
   return address.port;
 }
 
-async function request(port: number, path: string, headers: http.OutgoingHttpHeaders = {}) {
+async function request(
+  port: number,
+  path: string,
+  headers: http.OutgoingHttpHeaders = {},
+  method = "GET",
+) {
   return new Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
-    const req = http.request({ host: "127.0.0.1", port, path, headers }, (res) => {
+    const req = http.request({ host: "127.0.0.1", port, path, headers, method }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
       res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString(), headers: res.headers }));
@@ -60,9 +65,12 @@ describe("OAuth2ProxyServer", () => {
     const oauth = http.createServer(async (req, res) => {
       const form = await readForm(req);
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify(form.get("token") === "valid-token"
+      const token = form.get("token");
+      res.end(JSON.stringify(token === "valid-token"
         ? { active: true, sub: "user@example.com", tenantId: "tenant-1", scope: "openclaw:operator" }
-        : { active: false }));
+        : token === "viewer-token"
+          ? { active: true, sub: "viewer@example.com", scope: "openid profile" }
+          : { active: false }));
     });
     const oauthPort = await listen(oauth);
     servers.push({ close: () => new Promise((resolve) => oauth.close(() => resolve())) });
@@ -74,7 +82,7 @@ describe("OAuth2ProxyServer", () => {
       enabled: true,
       issuerUrl: `http://127.0.0.1:${oauthPort}`,
       clientSecret: "secret",
-      client: explicitClient(oauthPort),
+      client: { ...explicitClient(oauthPort), requiredScopes: ["openclaw:operator"] },
       proxy: { listenHost: "127.0.0.1", listenPort: 0, upstreamPort },
     });
     const proxy = new OAuth2ProxyServer(config, logger);
@@ -85,18 +93,23 @@ describe("OAuth2ProxyServer", () => {
 
     expect((await request(address.port, "/api")).status).toBe(401);
     expect((await request(address.port, "/api?token=valid-token")).status).toBe(401);
+    expect((await request(address.port, "/api", { authorization: "Bearer viewer-token" })).status).toBe(401);
     const response = await request(address.port, "/api", {
       authorization: "Bearer valid-token",
       "x-forwarded-user": "attacker@example.com",
       "x-openclaw-scopes": "operator.admin",
       "x-openclaw-tenant": "attacker-tenant",
+      connection: "x-remove-me",
+      "x-remove-me": "must-not-reach-upstream",
     });
     expect(response.status).toBe(200);
     const headers = JSON.parse(response.body) as Record<string, string>;
     expect(headers.authorization).toBeUndefined();
     expect(headers["x-forwarded-user"]).toBe("user@example.com");
-    expect(headers["x-openclaw-scopes"]).toBe("operator.read operator.write");
+    expect(headers["x-openclaw-scopes"]).toBeUndefined();
     expect(headers["x-openclaw-tenant"]).toBe("tenant-1");
+    expect(headers["x-forwarded-proto"]).toBe("https");
+    expect(headers["x-remove-me"]).toBeUndefined();
   });
 
   it("authenticates and proxies WebSocket upgrades", async () => {
@@ -156,7 +169,19 @@ describe("OAuth2ProxyServer", () => {
     const oauthServer = http.createServer(async (req, res) => {
       const path = new URL(req.url ?? "/", "http://oauth.local").pathname;
       res.setHeader("content-type", "application/json");
-      if (path === "/token") {
+      if (path === "/.well-known/openid-configuration") {
+        const address = oauthServer.address();
+        if (!address || typeof address === "string") return res.writeHead(500).end();
+        const issuer = `http://127.0.0.1:${address.port}`;
+        res.end(JSON.stringify({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          userinfo_endpoint: `${issuer}/userinfo`,
+          revocation_endpoint: `${issuer}/revoke`,
+          code_challenge_methods_supported: ["S256"],
+        }));
+      } else if (path === "/token") {
         const form = await readForm(req);
         if (form.get("grant_type") === "refresh_token") refreshCalls += 1;
         else exchangedCodeVerifier = form.get("code_verifier") ?? "";
@@ -171,7 +196,7 @@ describe("OAuth2ProxyServer", () => {
         revokeCalls += 1;
         res.end("{}");
       } else if (path === "/userinfo") {
-        expect(req.headers.authorization).toBe("Bearer access-1");
+        expect(["Bearer access-1", "Bearer access-2"]).toContain(req.headers.authorization);
         res.end(JSON.stringify({ sub: "browser-user", tenantId: "tenant-browser" }));
       } else {
         res.writeHead(404).end();
@@ -187,10 +212,11 @@ describe("OAuth2ProxyServer", () => {
       issuerUrl: `http://127.0.0.1:${oauthPort}`,
       clientSecret: "client-secret",
       client: {
-        ...explicitClient(oauthPort),
-        introspectionEndpoint: undefined,
-        userInfoEndpoint: `http://127.0.0.1:${oauthPort}/userinfo`,
-        revokeEndpoint: `http://127.0.0.1:${oauthPort}/revoke`,
+        discovery: true,
+        redirectUri: "http://openclaw.example/auth/oauth2/callback",
+        sessionSecret: "test-session-secret-that-is-at-least-32-characters",
+        secureCookies: false,
+        requiredScopes: ["openclaw:operator"],
         authorizationParameters: { audience: "openclaw-api" },
       },
       proxy: { listenHost: "127.0.0.1", listenPort: 0, upstreamPort },
@@ -222,11 +248,16 @@ describe("OAuth2ProxyServer", () => {
     expect(callback.headers.location).toBe("/dashboard");
     expect(exchangedCodeVerifier.length).toBeGreaterThan(40);
     const sessionCookie = callback.headers["set-cookie"]?.[0]?.split(";", 1)[0];
-    const authenticated = await request(address.port, "/dashboard", { cookie: sessionCookie });
-    expect(authenticated.status).toBe(200);
-    expect(authenticated.body).toBe("browser-user");
+    expect((await request(address.port, "/auth/oauth2/status")).status).toBe(401);
+    const authenticated = await Promise.all([
+      request(address.port, "/dashboard", { cookie: sessionCookie }),
+      request(address.port, "/auth/oauth2/status", { cookie: sessionCookie }),
+    ]);
+    expect(authenticated.map((result) => result.status)).toEqual([200, 200]);
+    expect(authenticated.map((result) => result.body)).toEqual(["browser-user", "browser-user"]);
     expect(refreshCalls).toBe(1);
-    const logout = await request(address.port, "/auth/oauth2/logout", { cookie: sessionCookie });
+    expect((await request(address.port, "/auth/oauth2/logout", { cookie: sessionCookie })).status).toBe(405);
+    const logout = await request(address.port, "/auth/oauth2/logout", { cookie: sessionCookie }, "POST");
     expect(logout.status).toBe(302);
     expect(revokeCalls).toBe(1);
   });

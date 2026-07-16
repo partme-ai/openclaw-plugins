@@ -7,7 +7,7 @@
  * **模块角色**：Channel Plugin · Lightweight discovery surface。
  */
 
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { gotifyChannel } from "./channel.js";
 

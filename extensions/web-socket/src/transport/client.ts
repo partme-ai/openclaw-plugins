@@ -1,7 +1,7 @@
 /** Resilient WebSocket client transport with bounded reconnect and queues. */
 import WebSocket from "ws";
 
-import { parseClientFrame, serializeErrorFrame, serializePongFrame } from "../protocol.js";
+import { parseClientFrame, serializeErrorFrame, serializePongFrame } from "./protocol.js";
 import type { WebsocketChannelConfig, WebsocketConnectionInfo } from "../types.js";
 import { registerConnection, sendToConnection, touchConnection, unregisterConnection } from "./connection-hub.js";
 import type { WebsocketInboundCallback } from "./server.js";

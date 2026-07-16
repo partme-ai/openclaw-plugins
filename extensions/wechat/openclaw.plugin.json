@@ -1,6 +1,6 @@
 {
-  "id": "wechat",
-  "version": "2.1.7",
+  "id": "openclaw-weixin",
+  "version": "2026.7.1",
   "channels": [
     "openclaw-weixin"
   ],
@@ -12,11 +12,32 @@
   "channelConfigs": {
     "openclaw-weixin": {
       "label": "openclaw-weixin",
-      "description": "",
+      "description": "Weixin iLink Bot channel configuration",
       "schema": {
         "type": "object",
-        "additionalProperties": true,
-        "properties": {}
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "enabled": { "type": "boolean" },
+          "baseUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "cdnBaseUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "routeTag": { "type": "number" },
+          "channelConfigUpdatedAt": { "type": "string", "format": "date-time" },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+                "enabled": { "type": "boolean" },
+                "baseUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
+                "cdnBaseUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
+                "routeTag": { "type": "number" }
+              }
+            }
+          }
+        }
       }
     }
   }

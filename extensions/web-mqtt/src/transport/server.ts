@@ -24,9 +24,10 @@ let server: HttpServer | HttpsServer | null = null;
 let wss: InstanceType<typeof WebSocketServer> | null = null;
 let currentConfig: WebMqttConfig | null = null;
 let inboundQueue: KeyedRunQueue | null = null;
-const clientUsernameMap = new Map<string, string>();
-const pendingClients = new Set<string>();
-const clientSubscriptions = new Map<string, Set<string>>();
+const connectedClients = new Map<string, Client>();
+let clientUsernameMap = new WeakMap<Client, string>();
+const pendingClients = new Set<Client>();
+let clientSubscriptions = new WeakMap<Client, Set<string>>();
 
 const stats: WebMqttServiceStats = {
   connectedClients: 0,
@@ -47,22 +48,15 @@ export async function startWebMqttServer(config: WebMqttConfig, onInbound: Inbou
   if (issues.length > 0) throw new Error(`[openclaw-web-mqtt] invalid configuration: ${issues.join(" ")}`);
   resetStats();
   currentConfig = config;
+  try {
   inboundQueue = createKeyedRunQueue({
     onError: (error, clientId) => {
       trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
       stats.lastError = `[${clientId}] ${String(error)}`;
     },
   });
-  broker = createBroker({
-    concurrency: config.maxConnections,
-    heartbeatInterval: 30000,
-  });
+  broker = createBroker({ heartbeatInterval: 30000 });
   broker.preConnect = (client, _packet, done) => {
-    if (stats.connectedClients + pendingClients.size >= config.maxConnections) {
-      done(new Error("maximum_connections_reached"), false);
-      return;
-    }
-    pendingClients.add(client.id);
     done(null, true);
   };
   bindBrokerEventHandlers(config, onInbound);
@@ -94,7 +88,6 @@ export async function startWebMqttServer(config: WebMqttConfig, onInbound: Inbou
     broker!.handle(stream as unknown as Socket);
   });
 
-  try {
     await new Promise<void>((resolve, reject) => {
       server!.once("error", reject);
       server!.listen(config.port, config.host, () => {
@@ -140,8 +133,9 @@ export async function stopWebMqttServer(): Promise<void> {
   const results = await Promise.allSettled([closeWss, closeServer, closeBroker]);
   stats.connectedClients = 0;
   stats.brokerReady = false;
-  clientUsernameMap.clear();
-  clientSubscriptions.clear();
+  connectedClients.clear();
+  clientUsernameMap = new WeakMap<Client, string>();
+  clientSubscriptions = new WeakMap<Client, Set<string>>();
   pendingClients.clear();
   const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (failure) throw failure.reason;
@@ -220,24 +214,26 @@ export function trackInboundDropped(reason: string): void {
  * 根据 clientId 获取认证用户名。
  */
 export function getClientUsername(clientId: string): string | null {
-  return clientUsernameMap.get(clientId) ?? null;
+  const client = connectedClients.get(clientId);
+  return client ? clientUsernameMap.get(client) ?? null : null;
 }
 
 function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandler): void {
   // 连接计数：client 事件增、clientDisconnect 减并清理 username 映射
   broker!.on("client", (client: Client) => {
-    pendingClients.delete(client.id);
-    stats.connectedClients += 1;
+    pendingClients.delete(client);
+    connectedClients.set(client.id, client);
+    stats.connectedClients = connectedClients.size;
   });
   broker!.on("clientDisconnect", (client: Client) => {
-    stats.connectedClients = Math.max(0, stats.connectedClients - 1);
-    clientUsernameMap.delete(client.id);
-    clientSubscriptions.delete(client.id);
-    pendingClients.delete(client.id);
+    pendingClients.delete(client);
+    if (connectedClients.get(client.id) !== client) return;
+    connectedClients.delete(client.id);
+    stats.connectedClients = connectedClients.size;
   });
-  broker!.on("connectionError", (client: Client) => pendingClients.delete(client.id));
+  broker!.on("connectionError", (client: Client) => pendingClients.delete(client));
   broker!.on("unsubscribe", (topics: string[], client: Client) => {
-    const subscriptions = clientSubscriptions.get(client.id);
+    const subscriptions = clientSubscriptions.get(client);
     topics.forEach((topic) => subscriptions?.delete(topic));
   });
 
@@ -274,12 +270,18 @@ function bindBrokerEventHandlers(config: WebMqttConfig, onInbound: InboundHandle
 function configureAuthGuards(config: WebMqttConfig): void {
   (broker as any).authenticate = (client: Client, username: Buffer | undefined, password: Buffer | undefined, done: (err: Error | null, success: boolean) => void) => {
     const usernameText = username?.toString("utf-8");
+    if (
+      !connectedClients.has(client.id) &&
+      connectedClients.size + pendingClients.size >= config.maxConnections
+    ) return done(new Error("maximum_connections_reached"), false);
     if (!config.auth.required) {
-      clientUsernameMap.set(client.id, "anonymous");
+      clientUsernameMap.set(client, "anonymous");
+      pendingClients.add(client);
       return done(null, true);
     }
     if (config.auth.allowAnonymous && !usernameText) {
-      clientUsernameMap.set(client.id, "anonymous");
+      clientUsernameMap.set(client, "anonymous");
+      pendingClients.add(client);
       return done(null, true);
     }
     if (!usernameText || !password) return done(new Error("missing_credentials"), false);
@@ -289,7 +291,8 @@ function configureAuthGuards(config: WebMqttConfig): void {
 
     const ok = verifyPasswordAdapted(user.password, user.passwordHash, user.hashAlgorithm, password);
     if (!ok) return done(new Error("invalid_credentials"), false);
-    clientUsernameMap.set(client.id, usernameText);
+    clientUsernameMap.set(client, usernameText);
+    pendingClients.add(client);
     return done(null, true);
   };
 
@@ -298,20 +301,24 @@ function configureAuthGuards(config: WebMqttConfig): void {
     sub: Subscription,
     done: (error: Error | null, subscription?: Subscription) => void,
   ) => {
-    const subscriptions = clientSubscriptions.get(client.id) ?? new Set<string>();
+    const subscriptions = clientSubscriptions.get(client) ?? new Set<string>();
     const overLimit = !subscriptions.has(sub.topic) && subscriptions.size >= config.limits.maxSubscriptionsPerClient;
     const allowed = !overLimit && allowTopicByUser(config, client, sub.topic, "subscribe");
     if (allowed) {
       subscriptions.add(sub.topic);
-      clientSubscriptions.set(client.id, subscriptions);
+      clientSubscriptions.set(client, subscriptions);
     }
     // Aedes requires a null subscription (not an Error) to emit SUBACK QoS 128.
     // Returning an Error leaves MQTT.js waiting for a SUBACK and only emits clientError.
     done(null, allowed ? sub : undefined);
   };
 
-  (broker as any).authorizePublish = (client: Client | null, packet: { topic: string }, done: (error?: Error | null) => void) => {
+  (broker as any).authorizePublish = (client: Client | null, packet: PublishPacket, done: (error?: Error | null) => void) => {
     if (!client) return done(null);
+    if (packet.payload.length > config.limits.maxPayloadBytes) {
+      trackInboundDropped("payload_too_large");
+      return done(new Error("payload_too_large"));
+    }
     const allowed = allowTopicByUser(config, client, packet.topic, "publish");
     done(allowed ? null : new Error("topic_forbidden"));
   };
@@ -383,7 +390,7 @@ function allowTopicByUser(
   mode: "publish" | "subscribe",
 ): boolean {
   if (!config.auth.required) return true;
-  const username = client ? clientUsernameMap.get(client.id) : undefined;
+  const username = client ? clientUsernameMap.get(client) : undefined;
   if (!username) return config.auth.allowAnonymous;
   const user = config.auth.users.find((item) => item.username === username);
   if (!user) return false;

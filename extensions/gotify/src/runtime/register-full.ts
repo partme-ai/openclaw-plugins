@@ -28,7 +28,11 @@ import { healthCheck } from "../transport/gotify-api.js";
  * @returns `void`
  */
 export function registerGotifyFull(api: OpenClawPluginApi): void {
-  const writeJson = (res: ServerResponse, status: number, body: unknown): void => {
+  const writeJson = (
+    res: ServerResponse,
+    status: number,
+    body: unknown,
+  ): void => {
     res.writeHead(status, {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
@@ -48,12 +52,13 @@ export function registerGotifyFull(api: OpenClawPluginApi): void {
     match: "exact",
     handler: async (req: IncomingMessage, res: ServerResponse) => {
       if (!allowGet(req, res)) return;
-      const cfg = (api.runtime as Record<string, unknown> | undefined)?.config as
-        | { current?: () => Record<string, unknown> }
-        | undefined;
+      const cfg = (api.runtime as Record<string, unknown> | undefined)
+        ?.config as { current?: () => Record<string, unknown> } | undefined;
       const config = cfg?.current?.() ?? {};
       const accounts = listGotifyAccountIds(config).map((accountId) => ({
-        ...describeGotifyAccountSnapshot(resolveGotifyAccount(config, accountId)),
+        ...describeGotifyAccountSnapshot(
+          resolveGotifyAccount(config, accountId),
+        ),
         runtime: getAccountSnapshot(accountId),
       }));
       writeJson(res, 200, { ok: true, data: { accounts } });
@@ -66,9 +71,8 @@ export function registerGotifyFull(api: OpenClawPluginApi): void {
     match: "exact",
     handler: async (req: IncomingMessage, res: ServerResponse) => {
       if (!allowGet(req, res)) return;
-      const cfg = (api.runtime as Record<string, unknown> | undefined)?.config as
-        | { current?: () => Record<string, unknown> }
-        | undefined;
+      const cfg = (api.runtime as Record<string, unknown> | undefined)
+        ?.config as { current?: () => Record<string, unknown> } | undefined;
       const config = cfg?.current?.() ?? {};
       const accounts = listGotifyAccountIds(config);
       const results = await Promise.all(
@@ -81,7 +85,10 @@ export function registerGotifyFull(api: OpenClawPluginApi): void {
         }),
       );
       const allOk = results.every((r) => r.ok);
-      writeJson(res, allOk ? 200 : 503, { ok: allOk, data: { accounts: results } });
+      writeJson(res, allOk ? 200 : 503, {
+        ok: allOk,
+        data: { accounts: results },
+      });
     },
   });
 
@@ -91,9 +98,8 @@ export function registerGotifyFull(api: OpenClawPluginApi): void {
     match: "exact",
     handler: async (req: IncomingMessage, res: ServerResponse) => {
       if (!allowGet(req, res)) return;
-      const cfg = (api.runtime as Record<string, unknown> | undefined)?.config as
-        | { current?: () => Record<string, unknown> }
-        | undefined;
+      const cfg = (api.runtime as Record<string, unknown> | undefined)
+        ?.config as { current?: () => Record<string, unknown> } | undefined;
       const config = cfg?.current?.() ?? {};
       const reports = await Promise.all(
         listGotifyAccountIds(config).map(async (accountId) =>

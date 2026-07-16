@@ -1,129 +1,123 @@
 {
   "id": "wechat-ipad",
   "name": "wechat-ipad",
-  "version": "0.1.0",
-  "description": "WeChat iPad protocol bridge for OpenClaw — personal WeChat account integration via iPad protocol service",
+  "version": "2026.7.1",
+  "description": "Opt-in channel for a separately operated, unofficial WeChat iPad protocol bridge",
   "main": "dist/index.js",
-  "channels": [
-    "wechat-ipad"
-  ],
-  "commands": [
-    "wechat-ipad-status"
-  ],
+  "channels": ["wechat-ipad"],
   "skills": [],
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "serviceUrl": {
-        "type": "string",
-        "default": "ws://127.0.0.1:5555",
-        "description": "iPad protocol service WebSocket endpoint"
-      },
-      "apiUrl": {
-        "type": "string",
-        "default": "http://127.0.0.1:5556",
-        "description": "iPad protocol service HTTP API endpoint"
-      },
+      "enabled": { "type": "boolean", "default": false },
+      "acknowledgeUnofficialProtocolRisk": { "type": "boolean", "default": false },
+      "required": { "type": "boolean", "default": true },
+      "serviceUrl": { "type": "string", "format": "uri", "default": "ws://127.0.0.1:5555" },
+      "apiUrl": { "type": "string", "format": "uri", "default": "http://127.0.0.1:5556" },
       "reconnect": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "enabled": {
-            "type": "boolean",
-            "default": true,
-            "description": "Auto-reconnect on disconnect"
-          },
-          "intervalMs": {
-            "type": "number",
-            "default": 5000,
-            "description": "Reconnect interval in milliseconds"
-          },
-          "maxRetries": {
-            "type": "number",
-            "default": 30,
-            "description": "Maximum reconnect attempts (0 = infinite)"
-          }
+          "enabled": { "type": "boolean", "default": true },
+          "initialDelayMs": { "type": "integer", "minimum": 100, "maximum": 60000, "default": 1000 },
+          "maxDelayMs": { "type": "integer", "minimum": 1000, "maximum": 300000, "default": 30000 },
+          "maxRetries": { "type": "integer", "minimum": 0, "maximum": 10000, "default": 30 },
+          "jitterRatio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.2 }
         }
       },
       "auth": {
         "type": "object",
+        "additionalProperties": false,
+        "properties": { "token": { "type": "string", "minLength": 1 } }
+      },
+      "network": {
+        "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "token": {
-            "type": "string",
-            "description": "Authentication token for iPad protocol service"
-          }
+          "connectTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000, "default": 10000 },
+          "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000, "default": 10000 },
+          "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 10485760, "default": 1048576 },
+          "maxEventBytes": { "type": "integer", "minimum": 1024, "maximum": 10485760, "default": 1048576 },
+          "heartbeatIntervalMs": { "type": "integer", "minimum": 1000, "maximum": 300000, "default": 30000 },
+          "pongTimeoutMs": { "type": "integer", "minimum": 500, "maximum": 120000, "default": 10000 }
         }
       },
       "message": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "handleGroup": {
-            "type": "boolean",
-            "default": false,
-            "description": "Handle group messages (may cause high load)"
-          },
-          "groupWhitelist": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "default": [],
-            "description": "Group wxid whitelist (empty = all groups when handleGroup is true)"
-          },
-          "ignoreself": {
-            "type": "boolean",
-            "default": true,
-            "description": "Ignore messages sent by the logged-in account"
-          }
+          "handleGroup": { "type": "boolean", "default": false },
+          "groupWhitelist": { "type": "array", "items": { "type": "string", "minLength": 1 }, "default": [] },
+          "allowAllGroups": { "type": "boolean", "default": false },
+          "ignoreSelf": { "type": "boolean", "default": true },
+          "maxTextChars": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 20000 }
         }
       }
-    },
-    "required": [
-      "serviceUrl"
-    ]
-  },
-  "uiHints": {
-    "serviceUrl": {
-      "label": "iPad 协议服务地址 (WebSocket)",
-      "placeholder": "ws://127.0.0.1:5555"
-    },
-    "apiUrl": {
-      "label": "iPad 协议服务地址 (HTTP API)",
-      "placeholder": "http://127.0.0.1:5556"
-    },
-    "auth.token": {
-      "label": "认证 Token",
-      "type": "password"
-    },
-    "reconnect.enabled": {
-      "label": "自动重连",
-      "type": "toggle"
-    },
-    "reconnect.intervalMs": {
-      "label": "重连间隔 (ms)",
-      "placeholder": "5000"
-    },
-    "message.handleGroup": {
-      "label": "处理群消息",
-      "type": "toggle"
-    },
-    "message.ignoreself": {
-      "label": "忽略自身消息",
-      "type": "toggle"
     }
   },
-  "capabilities": {
-    "protocolBridge": true,
-    "wechat": true,
-    "ipadProtocol": true
+  "uiHints": {
+    "enabled": { "label": "Enable external bridge" },
+    "acknowledgeUnofficialProtocolRisk": { "label": "I accept the unofficial-protocol risk" },
+    "serviceUrl": { "label": "Bridge WebSocket URL", "placeholder": "wss://bridge.example.com/events" },
+    "apiUrl": { "label": "Bridge HTTP API URL", "placeholder": "https://bridge.example.com" },
+    "auth.token": { "label": "Bridge token", "secret": true },
+    "message.groupWhitelist": { "label": "Allowed group wxids" },
+    "message.allowAllGroups": { "label": "Allow every group (high risk)" }
   },
   "channelConfigs": {
     "wechat-ipad": {
-      "label": "openclaw_wechat_ipad",
-      "description": "WeChat iPad protocol bridge for OpenClaw — personal WeChat account integration via iPad protocol service",
+      "label": "WeChat iPad external bridge",
+      "description": "Disabled-by-default external protocol bridge",
       "schema": {
         "type": "object",
-        "additionalProperties": true,
-        "properties": {}
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "acknowledgeUnofficialProtocolRisk": { "type": "boolean", "default": false },
+          "required": { "type": "boolean", "default": true },
+          "serviceUrl": { "type": "string", "format": "uri", "default": "ws://127.0.0.1:5555" },
+          "apiUrl": { "type": "string", "format": "uri", "default": "http://127.0.0.1:5556" },
+          "reconnect": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean", "default": true },
+              "initialDelayMs": { "type": "integer", "minimum": 100, "maximum": 60000, "default": 1000 },
+              "maxDelayMs": { "type": "integer", "minimum": 1000, "maximum": 300000, "default": 30000 },
+              "maxRetries": { "type": "integer", "minimum": 0, "maximum": 10000, "default": 30 },
+              "jitterRatio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.2 }
+            }
+          },
+          "auth": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "token": { "type": "string", "minLength": 1 } }
+          },
+          "network": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "connectTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000, "default": 10000 },
+              "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000, "default": 10000 },
+              "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 10485760, "default": 1048576 },
+              "maxEventBytes": { "type": "integer", "minimum": 1024, "maximum": 10485760, "default": 1048576 },
+              "heartbeatIntervalMs": { "type": "integer", "minimum": 1000, "maximum": 300000, "default": 30000 },
+              "pongTimeoutMs": { "type": "integer", "minimum": 500, "maximum": 120000, "default": 10000 }
+            }
+          },
+          "message": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "handleGroup": { "type": "boolean", "default": false },
+              "groupWhitelist": { "type": "array", "items": { "type": "string", "minLength": 1 }, "default": [] },
+              "allowAllGroups": { "type": "boolean", "default": false },
+              "ignoreSelf": { "type": "boolean", "default": true },
+              "maxTextChars": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 20000 }
+            }
+          }
+        }
       }
     }
   }

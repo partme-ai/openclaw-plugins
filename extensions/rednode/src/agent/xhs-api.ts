@@ -1,84 +1,136 @@
-/**
- * 小红书 Open API 调用：鉴权与签名，与《小红书开放平台对接规格》§5、xiaohongshu.apifox.cn 一致。
- * 支持直连（app_id+app_secret）与多租户底座模式（ddd4j_api_base+ddd4j_api_key）；底座模式不持密钥。
- */
+import { createHash } from "node:crypto";
+import type { RednodeApiResponse, RednodeOperation, RednodePluginConfig } from "../types.js";
 
-import crypto from "node:crypto";
-import type { XhsAccountConfig } from "../types.js";
-import { rednoteExecute } from "./rednote-api-client.js";
-import { xhsFetch, readResponseBodyAsBuffer } from "../shared/http.js";
-
-const XHS_API_BASE = process.env.XHS_API_BASE ?? "https://open.xiaohongshu.com";
-
-/**
- * 对请求参数按 key 排序后拼接为 key1=value1&key2=value2，再使用 app_secret 做 HMAC-SHA256 签名。
- * 具体算法以小红书开放平台接口文档（xiaohongshu.apifox.cn）为准。
- */
-function signParams(params: Record<string, string>, appSecret: string): string {
-  const sorted = Object.keys(params).sort();
-  const str = sorted.map((k) => `${k}=${encodeURIComponent(params[k] ?? "")}`).join("&");
-  return crypto.createHmac("sha256", appSecret).update(str, "utf8").digest("hex");
+export class RednodeApiError extends Error {
+  constructor(message: string, readonly code?: string | number) {
+    super(message);
+    this.name = "RednodeApiError";
+  }
 }
 
-/**
- * 调用小红书 Open API：优先多租户底座模式（配置了 ddd4j_api_base + ddd4j_api_key 时走底座代理），否则直连。
- * 返回 JSON 解析结果；失败返回 { error }。
- */
-export async function xhsApiCallOrProxy(
-  config: XhsAccountConfig | undefined,
-  path: string,
-  method: "GET" | "POST",
-  params: Record<string, string | number | undefined>
-): Promise<unknown> {
-  if (!config?.app_id) {
-    return { error: "xhs channel not configured" };
+export class RednodeClient {
+  private readonly operations = new Map<string, RednodeOperation>();
+  private readonly requestTimestamps: number[] = [];
+
+  constructor(private readonly config: RednodePluginConfig) {
+    for (const operation of config.operations) this.operations.set(operation.name, operation);
   }
-  if (config.ddd4j_api_base && config.ddd4j_api_key) {
-    return rednoteExecute(
-      {
-        baseUrl: config.ddd4j_api_base,
-        apiKey: config.ddd4j_api_key,
-        appId: config.app_id,
-      },
-      method,
-      path,
-      params
-    );
+
+  getOperation(name: string): RednodeOperation | undefined {
+    return this.operations.get(name);
   }
-  return xhsApiCall(config, path, method, params);
+
+  async invoke(params: {
+    operation: string;
+    pathParams?: Record<string, unknown>;
+    query?: Record<string, unknown>;
+    body?: Record<string, unknown>;
+  }): Promise<RednodeApiResponse> {
+    const operation = this.operations.get(params.operation);
+    if (!operation) throw new RednodeApiError(`Unknown or disallowed Rednode operation: ${params.operation}`);
+    const path = resolvePath(operation.apiPath, params.pathParams ?? {});
+    const query = normalizeQuery(params.query ?? {});
+    const bodyJson = operation.method === "GET" ? undefined : JSON.stringify(params.body ?? {});
+    if (bodyJson && Buffer.byteLength(bodyJson) > this.config.maxRequestBytes) throw new RednodeApiError("Rednode request body exceeded maxRequestBytes");
+    this.consumeRateLimit();
+
+    const timestamp = String(Math.floor(Date.now() / 1_000));
+    const signatureParams = { ...query, "app-key": this.config.appKey, timestamp };
+    const sign = signRednodeRequest(path, signatureParams, this.config.appSecret);
+    const url = new URL(path, `${this.config.apiBaseUrl}/`);
+    for (const [key, value] of Object.entries(query).sort(([a], [b]) => a.localeCompare(b))) url.searchParams.set(key, value);
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: operation.method,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json;charset=utf-8",
+          "app-key": this.config.appKey,
+          timestamp,
+          sign,
+          "User-Agent": "openclaw-rednode/2026.7.1",
+        },
+        body: bodyJson,
+        signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "TimeoutError") throw new RednodeApiError("Rednode API request timed out");
+      throw new RednodeApiError(`Rednode API request failed: ${error instanceof Error ? error.message.slice(0, 300) : "unknown network error"}`);
+    }
+    const text = await readBoundedBody(response, this.config.maxResponseBytes);
+    if (!response.ok) throw new RednodeApiError(`Rednode API HTTP ${response.status}`);
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch { throw new RednodeApiError("Rednode API returned invalid JSON"); }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new RednodeApiError("Rednode API returned an invalid response object");
+    const result = parsed as RednodeApiResponse;
+    if (result.success === false) {
+      throw new RednodeApiError(`Rednode API rejected the request: ${String(result.error_msg ?? "unknown error")}`, result.error_code as string | number | undefined);
+    }
+    return result;
+  }
+
+  private consumeRateLimit(now = Date.now()): void {
+    const cutoff = now - 60_000;
+    while (this.requestTimestamps[0] !== undefined && this.requestTimestamps[0] <= cutoff) this.requestTimestamps.shift();
+    if (this.requestTimestamps.length >= this.config.maxRequestsPerMinute) throw new RednodeApiError("Rednode local request rate limit exceeded");
+    this.requestTimestamps.push(now);
+  }
 }
 
-/**
- * 直连小红书 Open API：GET/POST，带 app_id 与 sign（仅当未配置底座时使用）。
- */
-export async function xhsApiCall(
-  config: XhsAccountConfig | undefined,
-  path: string,
-  method: "GET" | "POST",
-  params: Record<string, string | number | undefined>
-): Promise<unknown> {
-  if (!config?.app_id || !config?.app_secret) {
-    return { error: "xhs channel not configured" };
-  }
-  const flat: Record<string, string> = {};
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null) flat[k] = String(v);
-  }
-  flat.app_id = config.app_id;
-  flat.timestamp = String(Math.floor(Date.now() / 1000));
-  flat.sign = signParams(flat, config.app_secret);
+export function signRednodeRequest(path: string, params: Record<string, string>, appSecret: string): string {
+  const pairs = Object.entries(params)
+    .filter(([, value]) => value !== "")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join("&");
+  return createHash("md5").update(`${path}?${pairs}${appSecret}`, "utf8").digest("hex");
+}
 
-  const url = `${XHS_API_BASE}${path}?${new URLSearchParams(flat).toString()}`;
-  const res = await xhsFetch(undefined, method === "POST" ? XHS_API_BASE + path : url, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: method === "POST" ? JSON.stringify(flat) : undefined,
+function resolvePath(template: string, values: Record<string, unknown>): string {
+  const expected = new Set(Array.from(template.matchAll(/\{([^}]+)\}/g), (match) => match[1]!));
+  for (const key of Object.keys(values)) if (!expected.has(key)) throw new RednodeApiError(`Unexpected path parameter: ${key}`);
+  return template.replaceAll(/\{([^}]+)\}/g, (_match, key: string) => {
+    const value = values[key];
+    if ((typeof value !== "string" && typeof value !== "number") || !String(value).trim() || String(value).length > 256) {
+      throw new RednodeApiError(`Missing or invalid path parameter: ${key}`);
+    }
+    return encodeURIComponent(String(value).trim());
   });
-  const text = (await readResponseBodyAsBuffer(res)).toString("utf8");
-  if (!res.ok) return { error: text || res.statusText };
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return { data: text };
+}
+
+function normalizeQuery(values: Record<string, unknown>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(key)) throw new RednodeApiError(`Invalid query parameter name: ${key}`);
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") throw new RednodeApiError(`Invalid query parameter value: ${key}`);
+    const normalized = String(value);
+    if (normalized.length > 2048) throw new RednodeApiError(`Query parameter is too long: ${key}`);
+    result[key] = normalized;
   }
+  return result;
+}
+
+async function readBoundedBody(response: Response, maxBytes: number): Promise<string> {
+  const length = Number(response.headers.get("content-length"));
+  if (Number.isFinite(length) && length > maxBytes) throw new RednodeApiError("Rednode API response exceeded maxResponseBytes");
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) throw new RednodeApiError("Rednode API response exceeded maxResponseBytes");
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(joined);
 }

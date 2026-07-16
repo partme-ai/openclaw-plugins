@@ -32,7 +32,6 @@ import { readFrameworkAllowFromList } from "../auth/pairing.js";
 import { downloadRemoteImageToTemp } from "../cdn/upload.js";
 import { downloadMediaFromItem } from "../media/media-download.js";
 import { logger } from "../util/logger.js";
-import { redactBody, redactToken } from "../util/redact.js";
 
 import { isDebugMode } from "./debug-mode.js";
 import { sendWeixinErrorNotice } from "./error-notice.js";
@@ -84,7 +83,7 @@ export async function processOneMessage(
 ): Promise<void> {
   if (!deps?.channelRuntime) {
     logger.error(
-      `processOneMessage: channelRuntime is undefined, skipping message from=${full.from_user_id}`,
+      "processOneMessage: channelRuntime is undefined, skipping inbound message",
     );
     deps.errLog("processOneMessage: channelRuntime is undefined, skip");
     return;
@@ -211,14 +210,14 @@ export async function processOneMessage(
 
   if (directDmOutcome === "disabled" || directDmOutcome === "unauthorized") {
     logger.info(
-      `authorization: dropping message from=${senderId} outcome=${directDmOutcome}`,
+      `authorization: dropping message outcome=${directDmOutcome}`,
     );
     return;
   }
 
   ctx.CommandAuthorized = commandAuthorized;
   logger.debug(
-    `authorization: senderId=${senderId} commandAuthorized=${String(commandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`,
+    `authorization: commandAuthorized=${String(commandAuthorized)} senderAllowed=${String(senderAllowedForCommands)}`,
   );
 
   if (debug) {
@@ -261,9 +260,8 @@ export async function processOneMessage(
   );
 
   logger.info(
-    `inbound: from=${finalized.From} to=${finalized.To} bodyLen=${(finalized.Body ?? "").length} hasMedia=${Boolean(finalized.MediaPath ?? finalized.MediaUrl)}`,
+    `inbound: bodyLen=${(finalized.Body ?? "").length} hasMedia=${Boolean(finalized.MediaPath ?? finalized.MediaUrl)}`,
   );
-  logger.debug(`inbound context: ${redactBody(JSON.stringify(finalized))}`);
 
   await deps.channelRuntime.session.recordInboundSession({
     storePath,
@@ -332,9 +330,8 @@ export async function processOneMessage(
           return f.feed(rawText) + f.flush();
         })();
         const mediaUrl = payload.mediaUrl ?? payload.mediaUrls?.[0];
-        logger.debug(`outbound payload: ${redactBody(JSON.stringify(payload))}`);
         logger.info(
-          `outbound: to=${ctx.To} contextToken=${redactToken(contextToken)} textLen=${text.length} mediaUrl=${mediaUrl ? "present" : "none"}`,
+          `outbound: contextToken=${contextToken ? "present" : "none"} textLen=${text.length} mediaUrl=${mediaUrl ? "present" : "none"}`,
         );
 
         if (debug) {
@@ -395,7 +392,7 @@ export async function processOneMessage(
           }
         } catch (err) {
           logger.error(
-            `outbound: FAILED to=${ctx.To} mediaUrl=${mediaUrl ?? "none"} err=${String(err)} stack=${(err as Error).stack ?? ""}`,
+            `outbound: FAILED hasMedia=${Boolean(mediaUrl)} err=${err instanceof Error ? err.message : String(err)}`,
           );
           throw err;
         }

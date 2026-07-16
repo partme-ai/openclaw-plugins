@@ -36,6 +36,9 @@ const PLUGIN_PROFILE_OVERRIDE = Object.freeze({
   openmem: "capability-memory",
   mtls: "capability",
   oauth2: "capability",
+  amap: "capability",
+  meituan: "capability",
+  rednode: "capability",
   nacos: "infra",
   tracing: "infra",
   prometheus: "infra",
@@ -49,15 +52,12 @@ const EXTENDED_STRICT_PLUGINS = new Set(["wecom-kf", "wecom"]);
 
 /** channel-base plugins enforced at error level in default mode (Tier A) */
 const BASE_STRICT_PLUGINS = new Set([
-  "amap",
   "bridge",
   "douyin",
   "gotify",
-  "meituan",
   "mqtt",
   "rabbitmq",
   "redis-stream",
-  "rednode",
   "rocketmq",
   "stomp",
   "web-mqtt",
@@ -519,14 +519,14 @@ Profiles (doc §1.2):
   channel-base      Tier A channels + _template — full Base flat src/
   channel-extended  wecom, wecom-kf — Base + Extended semantic dirs
   channel-legacy    bridge — Phase 2 migration target
-  capability-*      memory, mtls, oauth2 — no channel.ts/inbound.ts
+  capability-*      memory, mtls, oauth2, amap, meituan, rednode — no channel.ts/inbound.ts
   infra             nacos, tracing, prometheus
   sdk / sdk-rag     message-sdk, knowledge
   utility-minimal   router
 
 Tier A (channel-base, default error on MUST gaps):
-  amap, douyin, gotify, meituan, mqtt, rabbitmq, redis-stream,
-  rednode, rocketmq, stomp, web-mqtt, web-stomp
+  douyin, gotify, mqtt, rabbitmq, redis-stream,
+  rocketmq, stomp, web-mqtt, web-stomp
 
 Reference: doc/OpenClaw-Plugin-Structure-Standard.md
 `);
@@ -650,7 +650,12 @@ function gitTrackedUnder(pluginDir) {
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
-      .map((line) => join(ROOT, line));
+      .map((line) => join(ROOT, line))
+      // `git ls-files` also returns paths staged/marked for deletion until the
+      // next commit. Structure checks evaluate the current working tree, so a
+      // deleted artifact must not keep the gate red merely because it is still
+      // present in the index metadata.
+      .filter((filePath) => existsSync(filePath));
   } catch {
     return [];
   }
@@ -938,16 +943,19 @@ function checkManifestAndPackage(pluginDir, pluginId, profile, issues, flags) {
 
   const manifest = readJson(manifestPath);
   // _template keeps TEMPLATE_NAME placeholders until new-plugin.mjs materializes a real id
+  // `wechat` keeps the historical workspace directory while using the canonical
+  // OpenClaw external plugin/channel id required by channel setup-entry.
+  const expectedManifestId = pluginId === "wechat" ? "openclaw-weixin" : pluginId;
   if (
     isChannelProfile(profile) &&
     pluginId !== BASE_TEMPLATE_ID &&
     manifest?.id &&
-    manifest.id !== pluginId
+    manifest.id !== expectedManifestId
   ) {
     addIssue(issues, {
       rule: "manifest-id-match",
       path: manifestPath,
-      message: `Manifest id "${manifest.id}" MUST match plugin directory "${pluginId}"`,
+      message: `Manifest id "${manifest.id}" MUST match expected id "${expectedManifestId}" for directory "${pluginId}"`,
       pluginId,
       profile,
       category: "manifest-must",

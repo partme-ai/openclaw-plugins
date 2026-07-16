@@ -1,14 +1,18 @@
 {
   "id": "mtls",
   "name": "openclaw-mtls",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "description": "mTLS reverse proxy for OpenClaw trusted-proxy authentication",
   "main": "dist/index.js",
+  "activation": {
+    "onStartup": true
+  },
   "security": [
     "mtls"
   ],
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
       "enabled": {
         "type": "boolean",
@@ -17,9 +21,11 @@
       },
       "tls": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "enabled": {
             "type": "boolean",
+            "const": true,
             "default": true,
             "description": "Enable TLS"
           },
@@ -37,11 +43,13 @@
           },
           "requestCert": {
             "type": "boolean",
+            "const": true,
             "default": true,
             "description": "Request client certificate"
           },
           "rejectUnauthorized": {
             "type": "boolean",
+            "const": true,
             "default": true,
             "description": "Reject unauthorized clients without valid certificate"
           }
@@ -49,20 +57,22 @@
       },
       "proxy": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "listenHost": { "type": "string", "default": "0.0.0.0" },
           "listenPort": { "type": "integer", "minimum": 0, "maximum": 65535, "default": 18443 },
-          "upstreamHost": { "type": "string", "default": "127.0.0.1" },
+          "upstreamHost": { "type": "string", "enum": ["127.0.0.1", "::1"], "default": "127.0.0.1" },
           "upstreamPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 18789 },
           "requestTimeoutMs": { "type": "integer", "minimum": 1000, "default": 30000 },
-          "userHeader": { "type": "string", "default": "x-forwarded-user" },
-          "scopesHeader": { "type": "string" }
+          "userHeader": { "type": "string", "default": "x-forwarded-user" }
         }
       },
       "protectedPaths": {
         "type": "array",
         "items": {
           "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "match", "allowUnauthenticated"],
           "properties": {
             "path": {
               "type": "string"
@@ -84,6 +94,12 @@
         "type": "array",
         "items": {
           "type": "object",
+          "additionalProperties": false,
+          "anyOf": [
+            { "required": ["cn"] },
+            { "required": ["issuer"] },
+            { "required": ["fingerprint"] }
+          ],
           "properties": {
             "cn": {
               "type": "string",
@@ -106,12 +122,13 @@
         "items": {
           "type": "string"
         },
-        "default": ["/health", "/auth/status", "/mtls/status"]
+        "default": ["/health", "/auth/status"]
       },
       "passthrough": {
         "type": "boolean",
+        "const": false,
         "default": false,
-        "description": "Allow unauthenticated requests when no certificate provided (instead of rejecting)"
+        "description": "Legacy field fixed to false; configure explicit public routes with protectedPaths or skipPaths"
       },
       "headerName": {
         "type": "string",
@@ -169,8 +186,8 @@
       "label": "Skip Authentication Paths"
     },
     "passthrough": {
-      "label": "Passthrough Mode",
-      "description": "Allow requests without certificate instead of rejecting"
+      "label": "Passthrough (disabled)",
+      "description": "Fail-closed invariant; use explicit public path rules instead"
     },
     "headerName": {
       "label": "Cert Info Header"

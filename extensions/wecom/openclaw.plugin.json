@@ -1,5 +1,6 @@
 {
   "id": "wecom",
+  "version": "2026.6.1",
   "channels": ["wecom"],
   "skills": ["./skills"],
   "configSchema": {

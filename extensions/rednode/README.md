@@ -1,21 +1,9 @@
-# RedNote (Xiaohongshu)
+# @partme.ai/openclaw-rednode
 
-OpenClaw 小红书开放平台渠道与运营工具，公域 Agent-First 智能运营。（品牌名 rednode，渠道 id 保持 xhs。）
+Allowlisted RED Ark Open API capability for OpenClaw 2026.7.1. It is not a messaging, content-publishing, or browser-automation channel.
 
-- **渠道 ID**：`xhs`
-- **配置**：`channels.xhs`（app_id、app_secret、callback_url、shop_id/seller_id）
-- **Webhook**：`POST /channels/xhs/webhook`，验签后 EP-1 入站映射
-- **工具**：xhs_query_orders、xhs_query_order_detail、xhs_query_refunds、xhs_query_items、xhs_item_on_off_shelf
+The client follows the official Ark contract: JSON requests, `timestamp` / `app-key` / `sign` headers, and MD5 of the API path plus sorted query/header parameters plus app-secret. Production uses `https://ark.xiaohongshu.com`; the explicitly selected sandbox uses `http://flssandbox.xiaohongshu.com`.
 
-| 端 | 项目路径 | 说明 |
-|----|----------|------|
-| **OpenClaw** | 本仓库 `openclaw_rednode/` | 本插件 |
+Configure `appKey`, `appSecret`, and one or more `{ name, method, apiPath }` operations under `plugins.entries.rednode.config`. Credentials can instead use `XHS_APP_KEY` and `XHS_APP_SECRET`. The plugin registers only `rednode_ark_invoke`; POST and PUT calls require `confirm: true`.
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
-
-## 构建
-
-```bash
-pnpm install
-pnpm build
-```
+See [README.zh-CN.md](./README.zh-CN.md) and the official [request signing example](https://school.xiaohongshu.com/en/open/quick-start/sign.html).

@@ -1,2 +1,3 @@
-[13:08:16.496] >> PUB openclaw/agent/demo/in
-[13:08:16.347] mqtt connect ok
+[12:47:32.503] >> PUB openclaw/agent/demo/in
+[12:47:32.471] >> SUB openclaw/agent/demo/out
+[12:47:32.421] mqtt connect ok

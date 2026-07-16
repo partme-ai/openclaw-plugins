@@ -9,35 +9,7 @@ import {
   resolveWecomAccountConflict,
   resolveKfAccountWebhookPath,
 } from "../config/index.js";
-import { primeWecomKfCursor } from "../webhook/callback.js";
-import { listKfAccountConfigs } from "../config/kf-callback.js";
 import type { ResolvedWecomAccount } from "../types/index.js";
-
-/** 避免多账号并行启动时重复预热 KF 游标 */
-let kfCursorPrimeStarted = false;
-
-async function primeKfCursorsOnStartup(
-  cfg: OpenClawConfig,
-  log?: (message: string) => void,
-): Promise<void> {
-  if (kfCursorPrimeStarted) return;
-  kfCursorPrimeStarted = true;
-
-  const kfAccounts = listKfAccountConfigs(cfg);
-  if (kfAccounts.length === 0) return;
-
-  for (const accountConfig of kfAccounts) {
-    try {
-      await primeWecomKfCursor({ accountConfig });
-    } catch (error) {
-      log?.(
-        `[wecom_kf] Cursor prime failed for openKfId=${accountConfig.openKfId ?? "default"}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-}
 
 function waitForAbortSignal(abortSignal: AbortSignal): Promise<void> {
   if (abortSignal.aborted) {
@@ -82,8 +54,6 @@ export async function monitorWecomProvider(
         `仅 KF 回调与 KF 出站生效。请迁移至 KF 凭证或移除过时的 bot/agent 配置块。`,
     );
   }
-
-  void primeKfCursorsOnStartup(cfg, (message) => ctx.log?.info(message));
 
   const webhookPath = resolveKfAccountWebhookPath({
     accountId: account.accountId,

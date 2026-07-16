@@ -11,6 +11,7 @@ import {
   keywordScore,
   MemoryStore,
   normalizeTurnMessages,
+  resolveConfig,
   sessionCounters,
   shouldExtract,
 } from "../src/index.js";
@@ -94,6 +95,22 @@ describe("分层提取", () => {
   });
 });
 
+describe("配置校验", () => {
+  it("拒绝会被静默截断或夹逼的错误数值", () => {
+    expect(() => resolveConfig({ pluginConfig: { retentionDays: 1.5 } } as never)).toThrow("retentionDays");
+    expect(() => resolveConfig({ pluginConfig: { maxSearchResults: 101 } } as never)).toThrow("maxSearchResults");
+    expect(() => resolveConfig({ pluginConfig: { enabled: "false" } } as never)).toThrow("enabled");
+  });
+
+  it("加密密钥至少要求 32 字节", () => {
+    process.env.OPENCLAW_MEMORY_TEST_KEY = "too-short";
+    expect(() => resolveConfig({
+      pluginConfig: { encryptionKeyEnv: "OPENCLAW_MEMORY_TEST_KEY" },
+    } as never)).toThrow("at least 32 bytes");
+    delete process.env.OPENCLAW_MEMORY_TEST_KEY;
+  });
+});
+
 describe("MemoryStore", () => {
   let dataDir: string;
   let store: MemoryStore;
@@ -124,7 +141,7 @@ describe("MemoryStore", () => {
     await append("agent-a", "s1", "r1", "用户正在使用 Python 开发服务");
     const results = await store.createSearchManager("agent-a").search("Python 开发", { sessionKey: "s1" });
     expect(results[0]?.snippet).toContain("Python");
-    expect(results[0]?.citation).toMatch(/memories\/.*#L1/);
+    expect(results[0]?.citation).toMatch(/sessions\/[a-f0-9]{32}\/memories\/.*#L1/);
   });
 
   it("不同 Agent 物理隔离", async () => {
@@ -135,6 +152,11 @@ describe("MemoryStore", () => {
   it("L1/L2 默认按 session 隔离", async () => {
     await append("agent-a", "s1", "r1", "session-one-topic");
     expect(await store.createSearchManager("agent-a").search("session-one-topic", { sessionKey: "s2" })).toEqual([]);
+  });
+
+  it("缺少 sessionKey 时 fail-closed，不扫描会话记忆", async () => {
+    await append("agent-a", "s1", "r1", "session-private-topic");
+    expect(await store.createSearchManager("agent-a").search("session-private-topic")).toEqual([]);
   });
 
   it("L3 用户画像默认也按 session 隔离", async () => {
@@ -166,7 +188,8 @@ describe("MemoryStore", () => {
     await Promise.all(Array.from({ length: 30 }, (_, index) => append("agent-a", "s1", `r-${index}`, `并发消息 ${index}`)));
     const manager = store.createSearchManager("agent-a");
     const root = manager.status().workspaceDir as string;
-    const file = path.join(root, "memories", `${new Date().toISOString().slice(0, 10)}.jsonl`);
+    const [result] = await manager.search("并发消息", { sessionKey: "s1", maxResults: 100 });
+    const file = path.join(root, result!.path);
     const lines = fs.readFileSync(file, "utf8").trim().split("\n");
     expect(lines).toHaveLength(30);
     expect(lines.every((line) => Boolean(JSON.parse(line)))).toBe(true);
@@ -175,15 +198,16 @@ describe("MemoryStore", () => {
   it("拒绝目录穿越和 L0 原始对话读取", async () => {
     const manager = store.createSearchManager("agent-a");
     await expect(manager.readFile({ relPath: "../../outside" })).rejects.toThrow("outside");
-    await expect(manager.readFile({ relPath: "conversations/2026-01-01.jsonl" })).rejects.toThrow("searchable");
+    await expect(manager.readFile({ relPath: "conversations/2026-01-01.jsonl" })).rejects.toThrow("session-capability");
   });
 
   it("readFile 支持分页并返回解码后的记录", async () => {
     await append("agent-a", "s1", "r1", "第一页内容");
     await append("agent-a", "s1", "r2", "第二页内容");
     const manager = store.createSearchManager("agent-a");
+    const [searchResult] = await manager.search("内容", { sessionKey: "s1" });
     const result = await manager.readFile({
-      relPath: `memories/${new Date().toISOString().slice(0, 10)}.jsonl`, from: 1, lines: 1,
+      relPath: searchResult!.path, from: 1, lines: 1,
     });
     expect(result.text).toContain("第二页内容");
     expect(result.lines).toBe(1);
@@ -191,8 +215,9 @@ describe("MemoryStore", () => {
 
   it("retentionDays 自动清理过期文件", async () => {
     const manager = store.createSearchManager("agent-a");
-    const root = manager.status().workspaceDir as string;
-    const expired = path.join(root, "memories", "2020-01-01.jsonl");
+    await append("agent-a", "s1", "r1", "用于定位会话目录");
+    const [result] = await manager.search("定位会话", { sessionKey: "s1" });
+    const expired = path.join(path.dirname(path.join(manager.status().workspaceDir as string, result!.path)), "2020-01-01.jsonl");
     fs.mkdirSync(path.dirname(expired), { recursive: true });
     fs.writeFileSync(expired, "{}\n");
     expect(await store.cleanup()).toBe(1);
@@ -207,16 +232,78 @@ describe("MemoryStore", () => {
     await append("agent-a", "s1", "r1", "高度敏感的客户偏好");
     const manager = store.createSearchManager("agent-a");
     const root = manager.status().workspaceDir as string;
-    const raw = fs.readFileSync(path.join(root, "memories", `${new Date().toISOString().slice(0, 10)}.jsonl`), "utf8");
+    const [result] = await manager.search("客户偏好", { sessionKey: "s1" });
+    const raw = fs.readFileSync(path.join(root, result!.path), "utf8");
     expect(raw).not.toContain("高度敏感");
     expect((await manager.search("客户偏好", { sessionKey: "s1" })).length).toBeGreaterThan(0);
+  });
+
+  it("加密密钥错误时启动失败而不是静默返回空记忆", async () => {
+    await store.close();
+    process.env.OPENCLAW_MEMORY_TEST_KEY = "first-production-secret";
+    store = new MemoryStore(config(dataDir, { encryptionKeyEnv: "OPENCLAW_MEMORY_TEST_KEY" }));
+    await store.initialize();
+    await append("agent-a", "s1", "r1", "不可静默丢失的记忆");
+    await store.close();
+
+    process.env.OPENCLAW_MEMORY_TEST_KEY = "wrong-production-secret";
+    store = new MemoryStore(config(dataDir, { encryptionKeyEnv: "OPENCLAW_MEMORY_TEST_KEY" }));
+    await expect(store.initialize()).rejects.toThrow("encryption key validation failed");
+  });
+
+  it("批量提取记录同样执行 maxRecordBytes 限制", async () => {
+    await store.close();
+    store = new MemoryStore(config(dataDir, { maxRecordBytes: 1024 }));
+    await store.initialize();
+    const records = buildMemoryRecords({
+      agentId: "agent-a",
+      sessionKey: "s1",
+      messages: [{ role: "user", content: "x".repeat(2000) }],
+      createScenario: false,
+    });
+    await expect(store.appendRecords(records)).rejects.toThrow("maxRecordBytes");
+  });
+
+  it("重启后 status 仍统计磁盘中的活动文件", async () => {
+    await append("agent-a", "s1", "r1", "重启状态统计");
+    const before = store.createSearchManager("agent-a").status().files;
+    await store.close();
+    store = new MemoryStore(config(dataDir));
+    await store.initialize();
+    expect(store.createSearchManager("agent-a").status().files).toBe(before);
+  });
+
+  it("启动时把旧版混合目录迁移到不可枚举的会话目录", async () => {
+    const root = store.createSearchManager("agent-a").status().workspaceDir as string;
+    await store.close();
+    const legacyFile = path.join(root, "memories", "2026-07-01.jsonl");
+    fs.mkdirSync(path.dirname(legacyFile), { recursive: true });
+    fs.writeFileSync(legacyFile, `${JSON.stringify({
+      id: "legacy-1",
+      level: "L1",
+      type: "episodic",
+      content: "旧版迁移记忆",
+      keywords: ["旧版迁移"],
+      agentId: "agent-a",
+      sessionKey: "legacy-session",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    })}\n`);
+
+    store = new MemoryStore(config(dataDir));
+    await store.initialize();
+    const [result] = await store.createSearchManager("agent-a").search("旧版迁移", {
+      sessionKey: "legacy-session",
+    });
+    expect(result?.path).toMatch(/^sessions\/[a-f0-9]{32}\/memories\//);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+    expect(fs.existsSync(path.join(root, ".legacy-backup", "memories", "2026-07-01.jsonl"))).toBe(true);
   });
 
   it("状态准确声明本地词法检索和安全能力", () => {
     const status = store.createSearchManager("agent-a").status();
     expect(status.provider).toBe("local-lexical");
     expect(status.vector?.enabled).toBe(false);
-    expect(status.custom?.isolation).toBe("agent+session");
+    expect(status.custom?.isolation).toBe("agent+physical-session");
   });
 });
 
@@ -230,6 +317,11 @@ describe("OpenClaw 2026.7.1 插件契约", () => {
     const logger = { info() {}, warn() {}, error() {}, debug() {} };
     const api = {
       registrationMode: "full",
+      config: {
+        plugins: {
+          entries: { memory: { hooks: { allowConversationAccess: true } } },
+        },
+      },
       pluginConfig: { dataDir, extractionInterval: 1 },
       logger,
       registerService(value: typeof service) { service = value; },

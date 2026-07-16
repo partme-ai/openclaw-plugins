@@ -5,7 +5,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { resolveWebsocketConfig } from "./config.js";
@@ -34,7 +34,16 @@ export default defineChannelPluginEntry({
   registerFull(api: OpenClawPluginApi) {
     api.registerHttpRoute({
       path: "/web-socket/status",
-      handler: async (_req: IncomingMessage, res: ServerResponse) => {
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if ((req.method ?? "GET").toUpperCase() !== "GET") {
+          res.writeHead(405, {
+            Allow: "GET",
+            "Content-Type": "application/json; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+          res.end(JSON.stringify({ ok: false, error: "Method not allowed" }));
+          return;
+        }
         const serverStats = getServerStats();
         const clientStats = getClientStats();
         const sessionStats = getSessionStats();
@@ -43,7 +52,10 @@ export default defineChannelPluginEntry({
         const policyMeta = getWebsocketPolicyMeta();
         const config = getWebsocketChannelConfig();
 
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
         res.end(
           JSON.stringify({
             ok: true,
@@ -67,7 +79,7 @@ export default defineChannelPluginEntry({
         );
       },
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
     });
 
     console.log("[openclaw-web-socket] Plugin registered — WebSocket channel ready");

@@ -1,390 +1,343 @@
-/**
- * iPad 协议桥接层
- *
- * 负责与外部 iPad 协议服务建立 WebSocket 长连接：
- * - 接收微信事件推送（消息、登录状态、好友请求等）
- * - 通过 HTTP API 发送消息、获取状态
- * - 自动重连与心跳管理
- *
- * 架构说明：
- *   iPad 协议服务（独立进程，处理 MMTLS/Protobuf）
- *        ↑ WebSocket 推送事件
- *        ↓ HTTP API 发送消息
- *   openclaw_wechat_ipad（本插件，桥接 OpenClaw）
- *        ↑↓ OpenClaw Runtime 4 步消息管道
- *   OpenClaw Gateway → Agent
- */
-
 import WebSocket from "ws";
 import type {
-  WechatIpadConfig,
   BridgeState,
+  IpadApiResponse,
   IpadEvent,
   IpadEventType,
-  WxMessagePayload,
-  WxLoginPayload,
-  WxFriendRequestPayload,
+  PluginLogger,
   SendMessageRequest,
-  IpadApiResponse,
+  WechatIpadConfig,
+  WxLoginPayload,
 } from "../types.js";
+import { IpadEventType as EventType } from "../types.js";
 
-/** 事件监听器类型 */
-type EventListener<T = unknown> = (data: T) => void;
+type EventListener<T = unknown> = (data: T) => void | Promise<void>;
+type Timer = ReturnType<typeof setTimeout>;
 
-/** 事件监听器映射 */
-type EventListeners = {
-  [K in IpadEventType]?: EventListener[];
-};
+const EVENT_TYPES = new Set<string>(Object.values(EventType));
 
-/** WebSocket 实例（延迟初始化） */
-let _ws: WebSocket | null = null;
-
-/** 当前配置 */
-let _config: WechatIpadConfig | null = null;
-
-/** 当前连接状态 */
-let _state: BridgeState = "disconnected";
-
-/** 重连计数器 */
-let _reconnectCount = 0;
-
-/** 重连定时器 */
-let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** 心跳定时器 */
-let _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-
-/** 事件监听器集合 */
-const _listeners: EventListeners = {};
-
-/** 最后心跳时间 */
-let _lastHeartbeat = 0;
-
-/** 登录的微信号信息 */
-let _loginInfo: WxLoginPayload | null = null;
-
-// ─────────────────── 公共 API ───────────────────
-
-/**
- * 启动桥接连接
- * 初始化 WebSocket 连接到 iPad 协议服务
- *
- * @param config - 插件配置
- */
-export function startBridge(config: WechatIpadConfig): void {
-  _config = config;
-  _reconnectCount = 0;
-  connect();
+function unref(timer: Timer): Timer {
+  timer.unref?.();
+  return timer;
 }
 
-/**
- * 停止桥接连接
- * 关闭 WebSocket 连接并清理资源
- */
-export function stopBridge(): void {
-  clearReconnectTimer();
-  clearHeartbeatTimer();
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
-  if (_ws) {
-    _ws.removeAllListeners();
-    if (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING) {
-      _ws.close(1000, "Plugin shutdown");
+async function readJsonLimited(response: Response, maxBytes: number): Promise<unknown> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const result = await reader.read();
+    if (result.done) break;
+    size += result.value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw new Error(`bridge response exceeds ${maxBytes} bytes`);
     }
-    _ws = null;
+    chunks.push(result.value);
   }
-
-  _state = "disconnected";
-  _loginInfo = null;
-  console.log("[wechat-ipad] Bridge stopped");
-}
-
-/**
- * 获取当前桥接状态
- */
-export function getBridgeState(): BridgeState {
-  return _state;
-}
-
-/**
- * 获取登录的微信号信息
- */
-export function getLoginInfo(): WxLoginPayload | null {
-  return _loginInfo;
-}
-
-/**
- * 注册事件监听器
- *
- * @param event - 事件类型
- * @param listener - 事件处理函数
- */
-export function on<T = unknown>(event: IpadEventType, listener: EventListener<T>): void {
-  if (!_listeners[event]) {
-    _listeners[event] = [];
+  const merged = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
   }
-  _listeners[event]!.push(listener as EventListener);
-}
-
-/**
- * 通过 HTTP API 发送消息到微信
- *
- * @param request - 发送消息请求
- * @returns API 响应
- */
-export async function sendMessage(
-  request: SendMessageRequest
-): Promise<IpadApiResponse> {
-  if (!_config) {
-    return { ok: false, error: "Bridge not initialized" };
-  }
-
+  if (merged.byteLength === 0) return null;
   try {
-    const response = await fetch(`${_config.apiUrl}/api/send`, {
-      method: "POST",
-      headers: buildApiHeaders(),
-      body: JSON.stringify(request),
-    });
-
-    return (await response.json()) as IpadApiResponse;
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    console.error("[wechat-ipad] Send message failed:", errMsg);
-    return { ok: false, error: errMsg };
+    return JSON.parse(new TextDecoder().decode(merged));
+  } catch {
+    throw new Error("bridge returned invalid JSON");
   }
 }
 
-/**
- * 获取 iPad 协议服务状态
- *
- * @returns 服务状态信息
- */
-export async function getServiceStatus(): Promise<IpadApiResponse> {
-  if (!_config) {
-    return { ok: false, error: "Bridge not initialized" };
+function normalizeApiResponse(value: unknown): IpadApiResponse {
+  if (!value || typeof value !== "object" || typeof (value as { ok?: unknown }).ok !== "boolean") {
+    throw new Error("bridge returned an invalid response envelope");
   }
-
-  try {
-    const response = await fetch(`${_config.apiUrl}/api/status`, {
-      method: "GET",
-      headers: buildApiHeaders(),
-    });
-
-    return (await response.json()) as IpadApiResponse;
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    return { ok: false, error: errMsg };
+  const response = value as IpadApiResponse;
+  if (response.error !== undefined && typeof response.error !== "string") {
+    throw new Error("bridge returned an invalid error field");
   }
+  return response;
 }
 
-/**
- * 获取桥接状态摘要（供 HTTP 状态端点使用）
- */
-export function getBridgeStatusSummary(): Record<string, unknown> {
-  return {
-    state: _state,
-    reconnectCount: _reconnectCount,
-    lastHeartbeat: _lastHeartbeat ? new Date(_lastHeartbeat).toISOString() : null,
-    loginInfo: _loginInfo
-      ? {
-          wxid: _loginInfo.wxid,
-          nickname: _loginInfo.nickname,
-          status: _loginInfo.status,
+function parseEvent(raw: WebSocket.RawData): IpadEvent {
+  const parsed = JSON.parse(raw.toString("utf8")) as unknown;
+  if (!parsed || typeof parsed !== "object") throw new Error("event must be an object");
+  const event = parsed as Partial<IpadEvent>;
+  if (typeof event.type !== "string" || !EVENT_TYPES.has(event.type)) {
+    throw new Error("event type is not supported");
+  }
+  if (!("data" in event)) throw new Error("event data is required");
+  return event as IpadEvent;
+}
+
+export class WechatIpadBridge {
+  private ws: WebSocket | null = null;
+  private state: BridgeState = "disconnected";
+  private reconnectCount = 0;
+  private reconnectTimer: Timer | null = null;
+  private heartbeatTimer: Timer | null = null;
+  private pongTimer: Timer | null = null;
+  private stopping = false;
+  private lastHeartbeat = 0;
+  private loginStatus: WxLoginPayload["status"] | null = null;
+  private readonly listeners = new Map<IpadEventType, Set<EventListener>>();
+
+  constructor(
+    readonly config: WechatIpadConfig,
+    private readonly logger: PluginLogger,
+    private readonly random: () => number = Math.random,
+  ) {}
+
+  async start(): Promise<void> {
+    if (!this.config.enabled) return;
+    this.stopping = false;
+    this.reconnectCount = 0;
+    await this.connect(true);
+  }
+
+  async stop(): Promise<void> {
+    this.stopping = true;
+    this.clearTimers();
+    const socket = this.ws;
+    this.ws = null;
+    if (socket) {
+      socket.removeAllListeners();
+      if (socket.readyState === WebSocket.OPEN) socket.close(1000, "plugin shutdown");
+      else if (socket.readyState === WebSocket.CONNECTING) socket.terminate();
+    }
+    this.listeners.clear();
+    this.state = "disconnected";
+    this.loginStatus = null;
+  }
+
+  on<T>(event: IpadEventType, listener: EventListener<T>): () => void {
+    const set = this.listeners.get(event) ?? new Set<EventListener>();
+    set.add(listener as EventListener);
+    this.listeners.set(event, set);
+    return () => set.delete(listener as EventListener);
+  }
+
+  getState(): BridgeState {
+    return this.state;
+  }
+
+  getStatusSummary(): Record<string, unknown> {
+    return {
+      enabled: this.config.enabled,
+      state: this.state,
+      reconnectCount: this.reconnectCount,
+      lastHeartbeat: this.lastHeartbeat ? new Date(this.lastHeartbeat).toISOString() : null,
+      loginStatus: this.loginStatus,
+    };
+  }
+
+  async sendMessage(request: SendMessageRequest): Promise<IpadApiResponse> {
+    return this.request("/api/send", "POST", request);
+  }
+
+  async getServiceStatus(): Promise<IpadApiResponse> {
+    return this.request("/api/status", "GET");
+  }
+
+  private async request(path: string, method: "GET" | "POST", body?: unknown): Promise<IpadApiResponse> {
+    if (!this.config.enabled) return { ok: false, error: "bridge is disabled" };
+    const controller = new AbortController();
+    const timeout = unref(setTimeout(() => controller.abort(), this.config.network.requestTimeoutMs));
+    try {
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (body !== undefined) headers["Content-Type"] = "application/json";
+      if (this.config.auth.token) headers.Authorization = `Bearer ${this.config.auth.token}`;
+      const response = await fetch(`${this.config.apiUrl}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const payload = await readJsonLimited(response, this.config.network.maxResponseBytes);
+      if (!response.ok) throw new Error(`bridge HTTP ${response.status}`);
+      return normalizeApiResponse(payload);
+    } catch (error) {
+      const message = controller.signal.aborted ? "bridge request timed out" : errorMessage(error);
+      return { ok: false, error: message };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async connect(initial: boolean): Promise<void> {
+    if (this.stopping) return;
+    this.clearSocket();
+    this.state = "connecting";
+    const headers = this.config.auth.token
+      ? { Authorization: `Bearer ${this.config.auth.token}` }
+      : undefined;
+    const socket = new WebSocket(this.config.serviceUrl, {
+      headers,
+      handshakeTimeout: this.config.network.connectTimeoutMs,
+      maxPayload: this.config.network.maxEventBytes,
+    });
+    this.ws = socket;
+
+    let settled = false;
+    const opened = new Promise<void>((resolve, reject) => {
+      socket.once("open", () => {
+        settled = true;
+        this.state = "connected";
+        this.reconnectCount = 0;
+        this.startHeartbeat(socket);
+        this.logger.info("[wechat-ipad] connected to external bridge");
+        resolve();
+      });
+      socket.once("error", (error) => {
+        if (!settled) {
+          settled = true;
+          reject(new Error(`bridge connection failed: ${errorMessage(error)}`));
         }
-      : null,
-    serviceUrl: _config?.serviceUrl ?? null,
-    apiUrl: _config?.apiUrl ?? null,
-  };
-}
+      });
+      socket.once("close", (code) => {
+        if (!settled) {
+          settled = true;
+          reject(new Error(`bridge closed before ready (code=${code})`));
+        }
+      });
+    });
 
-// ─────────────────── 连接管理 ───────────────────
+    socket.on("message", (raw) => this.handleMessage(raw));
+    socket.on("pong", () => this.handlePong());
+    socket.on("error", (error) => this.logger.warn(`[wechat-ipad] bridge socket error: ${errorMessage(error)}`));
+    socket.on("close", (code) => this.handleClose(socket, code));
 
-/**
- * 建立 WebSocket 连接到 iPad 协议服务
- */
-function connect(): void {
-  if (!_config) return;
+    try {
+      await opened;
+    } catch (error) {
+      this.state = "disconnected";
+      if (!this.stopping) this.scheduleReconnect();
+      if (initial) throw error;
+    }
+  }
 
-  _state = "connecting";
-  console.log(`[wechat-ipad] Connecting to ${_config.serviceUrl} ...`);
+  private handleMessage(raw: WebSocket.RawData): void {
+    try {
+      const event = parseEvent(raw);
+      if (event.type === EventType.Heartbeat) {
+        this.lastHeartbeat = Date.now();
+        return;
+      }
+      if (event.type === EventType.LoginStatus) {
+        const payload = event.data as Partial<WxLoginPayload>;
+        if (typeof payload.status !== "string") throw new Error("login_status payload is invalid");
+        this.loginStatus = payload.status as WxLoginPayload["status"];
+        this.state = payload.status === "logged_in" ? "logged_in" :
+          payload.status === "logged_out" || payload.status === "token_expired" ? "logged_out" : this.state;
+      }
+      void this.emit(event.type, event.data);
+    } catch (error) {
+      this.logger.warn(`[wechat-ipad] rejected invalid bridge event: ${errorMessage(error)}`);
+    }
+  }
 
-  const wsUrl = _config.auth.token
-    ? `${_config.serviceUrl}?token=${_config.auth.token}`
-    : _config.serviceUrl;
+  private async emit(type: IpadEventType, data: unknown): Promise<void> {
+    for (const listener of this.listeners.get(type) ?? []) {
+      try {
+        await listener(data);
+      } catch (error) {
+        this.logger.error(`[wechat-ipad] event handler failed (${type}): ${errorMessage(error)}`);
+      }
+    }
+  }
 
-  _ws = new WebSocket(wsUrl);
+  private handleClose(socket: WebSocket, code: number): void {
+    if (this.ws !== socket) return;
+    this.ws = null;
+    this.clearHeartbeat();
+    this.state = "disconnected";
+    if (!this.stopping) {
+      this.logger.warn(`[wechat-ipad] bridge disconnected (code=${code})`);
+      this.scheduleReconnect();
+    }
+  }
 
-  _ws.on("open", handleOpen);
-  _ws.on("message", handleMessage);
-  _ws.on("close", handleClose);
-  _ws.on("error", handleError);
-}
-
-/**
- * WebSocket 连接成功
- */
-function handleOpen(): void {
-  _state = "connected";
-  _reconnectCount = 0;
-  console.log("[wechat-ipad] Connected to iPad protocol service");
-
-  startHeartbeat();
-}
-
-/**
- * 处理 WebSocket 收到的消息
- * 解析事件并分发给注册的监听器
- *
- * @param raw - 原始消息数据
- */
-function handleMessage(raw: WebSocket.RawData): void {
-  try {
-    const text = raw.toString("utf-8");
-    const event = JSON.parse(text) as IpadEvent;
-
-    // 更新心跳时间
-    if (event.type === ("heartbeat" as IpadEventType)) {
-      _lastHeartbeat = Date.now();
+  private scheduleReconnect(): void {
+    if (this.stopping || !this.config.reconnect.enabled || this.reconnectTimer) return;
+    const { maxRetries, initialDelayMs, maxDelayMs, jitterRatio } = this.config.reconnect;
+    if (maxRetries > 0 && this.reconnectCount >= maxRetries) {
+      this.logger.error("[wechat-ipad] reconnect limit reached");
       return;
     }
+    const exponential = Math.min(initialDelayMs * 2 ** this.reconnectCount, maxDelayMs);
+    const jitter = exponential * jitterRatio * (this.random() * 2 - 1);
+    const delay = Math.max(100, Math.round(exponential + jitter));
+    this.reconnectCount += 1;
+    this.reconnectTimer = unref(setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect(false);
+    }, delay));
+  }
 
-    // 处理登录状态变更
-    if (event.type === ("login_status" as IpadEventType)) {
-      const payload = event.data as WxLoginPayload;
-      _loginInfo = payload;
-      _state = payload.status === "logged_in" ? "logged_in" : _state;
-      if (payload.status === "logged_out" || payload.status === "token_expired") {
-        _state = "logged_out";
-      }
-      console.log(`[wechat-ipad] Login status: ${payload.status}${payload.wxid ? ` (${payload.wxid})` : ""}`);
-    }
+  private startHeartbeat(socket: WebSocket): void {
+    this.clearHeartbeat();
+    const tick = () => {
+      if (this.ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+      socket.ping();
+      this.pongTimer = unref(setTimeout(() => {
+        if (this.ws === socket) socket.terminate();
+      }, this.config.network.pongTimeoutMs));
+    };
+    this.heartbeatTimer = unref(setInterval(tick, this.config.network.heartbeatIntervalMs));
+  }
 
-    // 分发给注册的监听器
-    emitEvent(event.type, event.data);
-  } catch (error) {
-    console.error("[wechat-ipad] Failed to parse event:", error);
+  private handlePong(): void {
+    this.lastHeartbeat = Date.now();
+    if (this.pongTimer) clearTimeout(this.pongTimer);
+    this.pongTimer = null;
+  }
+
+  private clearSocket(): void {
+    const socket = this.ws;
+    this.ws = null;
+    if (!socket) return;
+    socket.removeAllListeners();
+    socket.terminate();
+  }
+
+  private clearHeartbeat(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.pongTimer) clearTimeout(this.pongTimer);
+    this.heartbeatTimer = null;
+    this.pongTimer = null;
+  }
+
+  private clearTimers(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.clearHeartbeat();
   }
 }
 
-/**
- * WebSocket 连接关闭
- * 根据配置决定是否重连
- *
- * @param code - 关闭状态码
- * @param reason - 关闭原因
- */
-function handleClose(code: number, reason: Buffer): void {
-  console.log(`[wechat-ipad] Disconnected: code=${code}, reason=${reason.toString()}`);
+let activeBridge: WechatIpadBridge | null = null;
 
-  _state = "disconnected";
-  clearHeartbeatTimer();
-
-  scheduleReconnect();
+export function setActiveBridge(bridge: WechatIpadBridge | null): void {
+  activeBridge = bridge;
 }
 
-/**
- * WebSocket 连接错误
- *
- * @param error - 错误对象
- */
-function handleError(error: Error): void {
-  console.error("[wechat-ipad] WebSocket error:", error.message);
+export function getActiveBridge(): WechatIpadBridge | null {
+  return activeBridge;
 }
 
-// ─────────────────── 重连机制 ───────────────────
-
-/**
- * 调度重连
- * 指数退避 + 最大重试次数限制
- */
-function scheduleReconnect(): void {
-  if (!_config?.reconnect.enabled) return;
-
-  const maxRetries = _config.reconnect.maxRetries;
-  if (maxRetries > 0 && _reconnectCount >= maxRetries) {
-    console.error(
-      `[wechat-ipad] Max reconnect attempts (${maxRetries}) reached, giving up`
-    );
-    return;
-  }
-
-  clearReconnectTimer();
-
-  // 指数退避：base * 2^count，上限 60 秒
-  const baseInterval = _config.reconnect.intervalMs;
-  const delay = Math.min(baseInterval * Math.pow(2, _reconnectCount), 60_000);
-  _reconnectCount++;
-
-  console.log(
-    `[wechat-ipad] Reconnecting in ${delay}ms (attempt ${_reconnectCount})`
-  );
-
-  _reconnectTimer = setTimeout(() => {
-    connect();
-  }, delay);
+export async function sendMessage(request: SendMessageRequest): Promise<IpadApiResponse> {
+  return activeBridge?.sendMessage(request) ?? { ok: false, error: "bridge is not running" };
 }
 
-/** 清除重连定时器 */
-function clearReconnectTimer(): void {
-  if (_reconnectTimer) {
-    clearTimeout(_reconnectTimer);
-    _reconnectTimer = null;
-  }
+export async function getServiceStatus(): Promise<IpadApiResponse> {
+  return activeBridge?.getServiceStatus() ?? { ok: false, error: "bridge is not running" };
 }
 
-// ─────────────────── 心跳管理 ───────────────────
-
-/** 启动心跳 ping */
-function startHeartbeat(): void {
-  clearHeartbeatTimer();
-  _heartbeatTimer = setInterval(() => {
-    if (_ws?.readyState === WebSocket.OPEN) {
-      _ws.ping();
-    }
-  }, 30_000);
-}
-
-/** 清除心跳定时器 */
-function clearHeartbeatTimer(): void {
-  if (_heartbeatTimer) {
-    clearInterval(_heartbeatTimer);
-    _heartbeatTimer = null;
-  }
-}
-
-// ─────────────────── 事件分发 ───────────────────
-
-/**
- * 触发事件，通知所有注册的监听器
- *
- * @param type - 事件类型
- * @param data - 事件数据
- */
-function emitEvent(type: IpadEventType, data: unknown): void {
-  const listeners = _listeners[type];
-  if (!listeners?.length) return;
-
-  for (const listener of listeners) {
-    try {
-      listener(data);
-    } catch (error) {
-      console.error(`[wechat-ipad] Event listener error (${type}):`, error);
-    }
-  }
-}
-
-// ─────────────────── 工具函数 ───────────────────
-
-/**
- * 构建 HTTP API 请求头
- *
- * @returns 请求头对象
- */
-function buildApiHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (_config?.auth.token) {
-    headers["Authorization"] = `Bearer ${_config.auth.token}`;
-  }
-  return headers;
+export function getBridgeStatusSummary(): Record<string, unknown> {
+  return activeBridge?.getStatusSummary() ?? { enabled: false, state: "disconnected" };
 }

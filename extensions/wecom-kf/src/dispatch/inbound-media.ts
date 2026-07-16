@@ -55,7 +55,7 @@ export async function buildKfInboundMediaContext(params: {
   const agent = resolveKfAgentAccount(params.cfg, openKfId);
   if (!agent) {
     return {
-      finalContent: `${baseContent}\n\n媒体处理失败：缺少 corp 凭证 open_kfid=${openKfId}`,
+      finalContent: `${baseContent}\n\n媒体处理失败：缺少企业凭证`,
       attachments: [],
     };
   }

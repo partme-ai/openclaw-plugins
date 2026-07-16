@@ -58,13 +58,13 @@ export async function dispatchKfMessage(params: {
   const previewText = extractInboundTextContent(params.msg);
 
   if (!previewText) {
-    logger.info(`skip unsupported inbound msgtype=${params.msg.msgtype} msgid=${params.msg.msgid ?? "unknown"}`);
+    logger.info(`skip unsupported inbound msgtype=${params.msg.msgtype}`);
     return;
   }
 
   const externalUserId = (params.msg.external_userid ?? "").trim();
   if (!externalUserId) {
-    logger.warn(`skip inbound msgid=${params.msg.msgid ?? "unknown"} without external_userid`);
+    logger.warn("skip inbound without external_userid");
     return;
   }
 
@@ -73,7 +73,7 @@ export async function dispatchKfMessage(params: {
     params.accountConfig.openKfId?.trim() ??
     "";
   if (!openKfId) {
-    logger.warn(`skip inbound msgid=${params.msg.msgid ?? "unknown"} without open_kfid`);
+    logger.warn("skip inbound without open_kfid");
     return;
   }
 

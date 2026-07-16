@@ -5,7 +5,7 @@ import type { Duplex } from "node:stream";
 import type { TLSSocket } from "node:tls";
 
 import { authorizeMtlsRequest, buildForwardHeaders } from "./policy.js";
-import { getMtlsStats, recordMtlsRequest, trackMtlsSession } from "./runtime/stats.js";
+import { recordMtlsRequest, trackMtlsSession } from "./runtime/stats.js";
 import type { ClientCertInfo, MtlsConfig } from "./shared/types.js";
 
 export type MtlsProxyLogger = {
@@ -81,6 +81,7 @@ function serializeUpgradeResponse(response: http.IncomingMessage): string {
 
 export class MtlsProxyServer {
   private server: https.Server | null = null;
+  private readonly tunnelSockets = new Set<Duplex>();
 
   constructor(
     private readonly config: MtlsConfig,
@@ -130,6 +131,8 @@ export class MtlsProxyServer {
     const server = this.server;
     this.server = null;
     if (!server) return;
+    for (const socket of this.tunnelSockets) socket.destroy();
+    this.tunnelSockets.clear();
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
       server.closeAllConnections();
@@ -154,13 +157,6 @@ export class MtlsProxyServer {
   }
 
   private handleHttp(request: http.IncomingMessage, response: http.ServerResponse): void {
-    if (pathnameOf(request.url) === "/mtls/status") {
-      recordMtlsRequest("passthrough");
-      response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      response.end(JSON.stringify({ ok: true, proxy: this.address(), stats: getMtlsStats() }));
-      return;
-    }
-
     const { authorization, certificate } = this.authorize(request);
     if (!authorization.allowed) {
       writeRejectedResponse(response, authorization.statusCode, authorization.message);
@@ -178,6 +174,7 @@ export class MtlsProxyServer {
           request.headers,
           authorization.authenticated ? certificate : undefined,
           request.socket.remoteAddress,
+          "http",
         ),
       },
       (upstreamResponse) => {
@@ -215,6 +212,7 @@ export class MtlsProxyServer {
         request.headers,
         authorization.authenticated ? certificate : undefined,
         request.socket.remoteAddress,
+        "upgrade",
       ),
     });
     upstream.setTimeout(this.config.proxy.requestTimeoutMs, () => {
@@ -225,10 +223,14 @@ export class MtlsProxyServer {
       if (upstreamHead.length > 0) socket.write(upstreamHead);
       if (head.length > 0) upstreamSocket.write(head);
       trackMtlsSession(1);
+      this.tunnelSockets.add(socket);
+      this.tunnelSockets.add(upstreamSocket);
       let closed = false;
       const close = () => {
         if (closed) return;
         closed = true;
+        this.tunnelSockets.delete(socket);
+        this.tunnelSockets.delete(upstreamSocket);
         trackMtlsSession(-1);
       };
       socket.once("close", close);

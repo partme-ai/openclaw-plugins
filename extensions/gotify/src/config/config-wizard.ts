@@ -6,7 +6,10 @@
  * **模块角色**：Channel Plugin · Interactive provisioning（非 Host shell UI 本身）。
  */
 
-import { createApplication, listApplications } from "../transport/gotify-api.js";
+import {
+  createApplication,
+  listApplications,
+} from "../transport/gotify-api.js";
 import { GotifyConfigError, GotifyApiError } from "../shared/errors.js";
 import type { ResolvedGotifyAccount } from "../types.js";
 

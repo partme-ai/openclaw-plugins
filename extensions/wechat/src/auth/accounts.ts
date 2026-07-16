@@ -229,6 +229,7 @@ export function clearWeixinAccount(accountId: string): void {
   const accountFiles = [
     `${accountId}.json`,
     `${accountId}.sync.json`,
+    `${accountId}.sync.json.processed.json`,
     `${accountId}.context-tokens.json`,
   ];
   for (const file of accountFiles) {
@@ -341,6 +342,7 @@ export type ResolvedWeixinAccount = {
 type WeixinAccountConfig = {
   name?: string;
   enabled?: boolean;
+  baseUrl?: string;
   cdnBaseUrl?: string;
   /** Optional SKRouteTag source; read from openclaw.json when `accountId` is passed to `loadConfigRouteTag`. */
   routeTag?: number | string;
@@ -373,10 +375,11 @@ export function resolveWeixinAccount(
   const accountData = loadWeixinAccount(id);
   const token = accountData?.token?.trim() || undefined;
   const stateBaseUrl = accountData?.baseUrl?.trim() || "";
+  const configuredBaseUrl = accountCfg.baseUrl?.trim() || "";
 
   return {
     accountId: id,
-    baseUrl: stateBaseUrl || DEFAULT_BASE_URL,
+    baseUrl: stateBaseUrl || configuredBaseUrl || DEFAULT_BASE_URL,
     cdnBaseUrl: accountCfg.cdnBaseUrl?.trim() || CDN_BASE_URL,
     token,
     enabled: accountCfg.enabled !== false,

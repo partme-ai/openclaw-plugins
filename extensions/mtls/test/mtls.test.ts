@@ -6,6 +6,7 @@ import {
   isPathProtected,
 } from "../src/policy.js";
 import { resolveMtlsConfig } from "../src/config.js";
+import { validateMtlsGatewayIntegration } from "../src/config.js";
 import type { ClientCertInfo, MtlsConfig } from "../src/shared/types.js";
 
 const config: MtlsConfig = resolveMtlsConfig({
@@ -25,10 +26,10 @@ const verifiedCert: ClientCertInfo = {
 };
 
 describe("mTLS request policy", () => {
-  it("protects root by default but skips health and status", () => {
+  it("protects root and authenticated status by default but skips health", () => {
     expect(isPathProtected(config, "/v1/chat")).toBe(true);
     expect(isPathProtected(config, "/health")).toBe(false);
-    expect(isPathProtected(config, "/mtls/status")).toBe(false);
+    expect(isPathProtected(config, "/mtls/status")).toBe(true);
   });
 
   it("honors allowUnauthenticated on a matching rule", () => {
@@ -82,6 +83,30 @@ describe("mTLS request policy", () => {
     });
   });
 
+  it("does not promote a disallowed certificate to an identity on a public path", () => {
+    const next = resolveMtlsConfig({
+      ...config,
+      allowedClients: [{ cn: "service-b" }],
+    });
+
+    expect(authorizeMtlsRequest(next, "/health", verifiedCert)).toEqual({
+      allowed: true,
+      authenticated: false,
+    });
+  });
+
+  it("matches certificate fingerprints case-insensitively", () => {
+    const next = resolveMtlsConfig({
+      ...config,
+      allowedClients: [{ fingerprint: "aa:bb:cc" }],
+    });
+
+    expect(authorizeMtlsRequest(next, "/v1/chat", verifiedCert)).toMatchObject({
+      allowed: true,
+      authenticated: true,
+    });
+  });
+
   it("overwrites spoofable identity and forwarding headers", () => {
     const headers = buildForwardHeaders(
       config,
@@ -90,6 +115,13 @@ describe("mTLS request policy", () => {
         "x-forwarded-user": "attacker",
         "x-client-cert": "forged",
         "x-forwarded-for": "203.0.113.10",
+        "x-forwarded-proto": "http",
+        "x-forwarded-host": "attacker.example",
+        forwarded: "for=203.0.113.10",
+        "x-real-ip": "203.0.113.10",
+        connection: "keep-alive, x-smuggled-header",
+        "x-smuggled-header": "must-not-reach-upstream",
+        "proxy-authorization": "Basic forged",
       },
       verifiedCert,
       "192.0.2.25",
@@ -99,6 +131,12 @@ describe("mTLS request policy", () => {
     expect(headers["x-client-cert"]).toBe("service-a");
     expect(headers["x-forwarded-for"]).toBe("192.0.2.25");
     expect(headers["x-forwarded-proto"]).toBe("https");
+    expect(headers["x-forwarded-host"]).toBe("gateway.example.com");
+    expect(headers.forwarded).toBeUndefined();
+    expect(headers["x-real-ip"]).toBeUndefined();
+    expect(headers.connection).toBeUndefined();
+    expect(headers["x-smuggled-header"]).toBeUndefined();
+    expect(headers["proxy-authorization"]).toBeUndefined();
   });
 });
 
@@ -113,5 +151,70 @@ describe("mTLS configuration", () => {
 
   it("rejects incomplete enabled TLS configuration", () => {
     expect(() => resolveMtlsConfig({ enabled: true })).toThrow(/certFile/);
+  });
+
+  it("rejects unsafe identity headers and empty allowlist entries", () => {
+    expect(() => resolveMtlsConfig({ proxy: { userHeader: "authorization" } })).toThrow(
+      /reserved header/,
+    );
+    expect(() => resolveMtlsConfig({ allowedClients: [{}] })).toThrow(/allowedClients\[0\]/);
+  });
+
+  it("rejects malformed path rules", () => {
+    expect(() => resolveMtlsConfig({ skipPaths: ["health"] })).toThrow(/absolute URL pathname/);
+  });
+
+  it("rejects unsafe enabled-mode escape hatches and remote upstreams", () => {
+    expect(() => resolveMtlsConfig({ ...config, passthrough: true })).toThrow(/passthrough/);
+    expect(() =>
+      resolveMtlsConfig({ ...config, tls: { ...config.tls, rejectUnauthorized: false } }),
+    ).toThrow(/rejectUnauthorized/);
+    expect(() =>
+      resolveMtlsConfig({ ...config, proxy: { ...config.proxy, upstreamHost: "gateway.internal" } }),
+    ).toThrow(/local OpenClaw Gateway/);
+  });
+
+  it("validates the OpenClaw trusted-proxy integration contract", () => {
+    const gatewayConfig = {
+      gateway: {
+        port: 18789,
+        trustedProxies: ["127.0.0.1"],
+        auth: {
+          mode: "trusted-proxy",
+          trustedProxy: { userHeader: "x-forwarded-user", allowLoopback: true },
+        },
+      },
+    };
+    expect(() => validateMtlsGatewayIntegration(config, gatewayConfig)).not.toThrow();
+    expect(() =>
+      validateMtlsGatewayIntegration(config, {
+        ...gatewayConfig,
+        gateway: { ...gatewayConfig.gateway, trustedProxies: [] },
+      }),
+    ).toThrow(/trustedProxies/);
+    expect(() =>
+      validateMtlsGatewayIntegration(config, {
+        ...gatewayConfig,
+        gateway: { ...gatewayConfig.gateway, auth: { mode: "token" } },
+      }),
+    ).toThrow(/trusted-proxy/);
+    expect(() =>
+      validateMtlsGatewayIntegration(config, {
+        ...gatewayConfig,
+        gateway: {
+          ...gatewayConfig.gateway,
+          auth: {
+            mode: "trusted-proxy",
+            trustedProxy: { userHeader: "x-other-user", allowLoopback: true },
+          },
+        },
+      }),
+    ).toThrow(/userHeader/);
+    expect(() =>
+      validateMtlsGatewayIntegration(config, {
+        ...gatewayConfig,
+        gateway: { ...gatewayConfig.gateway, port: 18790 },
+      }),
+    ).toThrow(/upstreamPort/);
   });
 });

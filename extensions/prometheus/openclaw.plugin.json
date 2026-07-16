@@ -1,37 +1,43 @@
 {
   "id": "prometheus",
   "name": "prometheus",
-  "version": "0.3.1",
+  "version": "2026.7.1",
   "description": "Prometheus metrics exporter for OpenClaw Gateway. Supersedes bundled diagnostics-prometheus (model.usage tokens, run/tool/message histograms via internal diagnostics) and adds RPC usage, hooks, and SLI metrics. Disable the bundled diagnostics-prometheus plugin when using this exporter.",
   "main": "dist/index.js",
+  "activation": {
+    "onStartup": true
+  },
   "channels": [],
   "commands": [],
   "skills": [],
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "port": {
-        "type": "number",
-        "default": 9090,
-        "description": "Dedicated metrics HTTP port (0 to use Gateway port)"
-      },
       "path": {
         "type": "string",
+        "pattern": "^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$",
         "default": "/metrics",
-        "description": "Metrics endpoint path"
+        "description": "Exact metrics endpoint path on the OpenClaw Gateway"
       },
       "collectIntervalMs": {
-        "type": "number",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 3600000,
         "default": 15000,
         "description": "Metrics collection interval"
       },
       "snapshotIntervalMs": {
-        "type": "number",
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 3600000,
         "default": 30000,
         "description": "Runtime snapshot refresh interval for model auth and channel activity probes"
       },
       "workloadWindowMs": {
-        "type": "number",
+        "type": "integer",
+        "minimum": 60000,
+        "maximum": 86400000,
         "default": 300000,
         "description": "Rolling workload observation window in milliseconds"
       },
@@ -44,18 +50,38 @@
         "type": "array",
         "description": "Provider ids to check via api.runtime.modelAuth.resolveApiKeyForProvider",
         "items": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
         },
+        "maxItems": 64,
+        "uniqueItems": true,
         "default": []
       },
       "instance": {
         "type": "string",
+        "maxLength": 128,
         "default": "",
         "description": "Instance label for multi-deployment (e.g., pod name, hostname)"
       },
+      "collectorTimeoutMs": {
+        "type": "integer",
+        "minimum": 100,
+        "maximum": 60000,
+        "default": 10000,
+        "description": "Maximum time one scrape waits for each collector"
+      },
+      "maxScrapeSeries": {
+        "type": "integer",
+        "minimum": 100,
+        "maximum": 50000,
+        "default": 10000,
+        "description": "Maximum metric series emitted by one scrape"
+      },
       "scrapeAuth": {
         "type": "object",
-        "description": "Optional Bearer token check on /metrics routes (token via openclaw-prometheus_BEARER_TOKEN recommended)",
+        "additionalProperties": false,
+        "description": "Optional Bearer token check on metrics routes (token via OPENCLAW_PROMETHEUS_BEARER_TOKEN recommended)",
         "properties": {
           "enabled": {
             "type": "boolean",
@@ -64,17 +90,15 @@
           },
           "bearerToken": {
             "type": "string",
-            "description": "Dev-only token; production should use env openclaw-prometheus_BEARER_TOKEN"
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Development-only token; production should use env OPENCLAW_PROMETHEUS_BEARER_TOKEN"
           }
         }
       }
     }
   },
   "uiHints": {
-    "port": {
-      "label": "Metrics Port",
-      "placeholder": "9090"
-    },
     "path": {
       "label": "Metrics Path",
       "placeholder": "/metrics"
@@ -97,6 +121,14 @@
     },
     "monitoredProviders": {
       "label": "Monitored Providers"
+    },
+    "collectorTimeoutMs": {
+      "label": "Collector Timeout (ms)",
+      "placeholder": "10000"
+    },
+    "maxScrapeSeries": {
+      "label": "Max Scrape Series",
+      "placeholder": "10000"
     },
     "scrapeAuth.enabled": {
       "label": "Scrape auth (Bearer)",

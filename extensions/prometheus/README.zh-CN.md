@@ -6,7 +6,7 @@
 **OpenClaw 插件：基于官方插件 SDK 的 Prometheus 指标与 JSON 诊断端点**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw__prometheus-blue)
-![Node](https://img.shields.io/badge/Node.js-20+-green)
+![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 </div>
@@ -29,18 +29,20 @@
 - **diagnostics-prometheus 平替**：`src/diagnostics/metric-store.ts` 与官方实现同构（series cap、低基数 label、histogram bucket）。
 - **纯插件架构**：只使用官方 SDK 暴露的稳定能力，不需要修改 OpenClaw 核心。
 - **多层指标面**：diagnostics 事件、RPC 快照、hooks/events workload、exporter 自身指标。
-- **端点**：`{path}`（默认 `/metrics`）暴露 Prometheus；`{path}/per-object`、`{path}/detailed?family=`、`{path}/health` 提供 JSON。
+- **端点**：`{path}`（默认 `/metrics`）暴露 Prometheus；`{path}/per-object`、`{path}/detailed?family=`、`{path}/health`、`{path}/debug` 提供 JSON。所有路由均为精确匹配且仅接受 GET。
 - **快照刷新**：`snapshotIntervalMs` 控制 model auth 与 channel activity 的探测周期。
 - **采集缓存**：`collectIntervalMs` 在多次抓取间复用上一次成功结果，减轻抓取成本；设为 `0` 则每次抓取全量采集。
+- **抓取保护**：并发缓存 miss 合并为一次采集；`collectorTimeoutMs` 限制单采集器等待时间，`maxScrapeSeries` 限制单次响应系列数。
+- **基数与隐私**：diagnostics/runtime 分别实施系列上限；不导出自由文本渠道显示名，JSON 端点返回错误前统一脱敏并截断。
 - **元指标**：`openclaw_exporter_build_info`、`openclaw_metrics_last_scrape_duration_seconds`。
-- **可选抓取鉴权**：推荐使用环境变量 `openclaw-prometheus_BEARER_TOKEN`；仅本地调试可在配置中写 `scrapeAuth.bearerToken`。
+- **可选抓取鉴权**：推荐使用环境变量 `OPENCLAW_PROMETHEUS_BEARER_TOKEN`；仅本地调试可在配置中写 `scrapeAuth.bearerToken`。
 - **企业级运维取向**（命名与分层方式参考 [RabbitMQ Prometheus 文档](https://www.rabbitmq.com/docs/prometheus) 中的实践：专用路径、聚合与按实体 JSON、TLS 由 Gateway/反向代理终止、控制高基数标签使用等）。
 
 ### 生命周期
 
 - 通过 `package.json` / `openclaw.plugin.json` 随 Gateway discovery 加载。
 - `register()` 注入 `api.runtime` 与 `api.config`，注册 hooks / events 监听和 exporter 路由。
-- manifest 中的 `port` 主要供运维参考；实际监听端口以 Gateway 为准（或由前置代理暴露）。
+- 路由直接挂载到 Gateway；插件不另行监听端口。TLS 与网络访问策略由 Gateway 或前置代理负责。
 
 ## 端点说明
 
@@ -48,8 +50,9 @@
 | --- | --- | --- |
 | `GET {path}` | Prometheus text | 标准抓取 |
 | `GET {path}/per-object` | JSON | 按对象分组 |
-| `GET {path}/detailed?family=` | JSON | 按名称子串过滤 |
+| `GET {path}/detailed?family=` | JSON | 按指标名称前缀过滤 |
 | `GET {path}/health` | JSON | exporter 健康与最近 snapshot 状态 |
+| `GET {path}/debug?component=` | JSON | exporter 诊断（`all/collectors/registry/config`） |
 
 默认 `{path}` 为 `/metrics`。
 
@@ -62,7 +65,7 @@
 | `openclaw_metrics_*` | exporter 自己的 route / scrape 指标 |
 | `openclaw_model_auth_*` | `api.runtime.modelAuth` |
 | `openclaw_channel_*` | message hooks + `api.runtime.channel.activity.get(...)` |
-| `openclaw_agent_*` | `agent_turn_prepare` / `agent_end` + runtime agent events |
+| `openclaw_agent_*` | trusted internal diagnostics + runtime agent events |
 | `openclaw_tool_*` | `before_tool_call` / `after_tool_call` |
 | `openclaw_messages_*` | `message_received` / `message_sent` |
 | `openclaw_session_transcript_*` | `api.runtime.events.onSessionTranscriptUpdate(...)` |
@@ -76,7 +79,7 @@
 ### 前置条件
 
 - OpenClaw `>= 2026.7.1`
-- Node.js `20+`
+- Node.js `22+`
 
 ### 安装
 
@@ -86,22 +89,21 @@ openclaw plugins install @partme.ai/openclaw-prometheus
 
 ### 最小配置（`openclaw.json`）
 
-使用 `llm_input` 等对话 hook 观测图片附件等扩展指标时，需显式开启 `allowConversationAccess`（**token 主路径来自 internal diagnostics，不依赖该开关**）：
+插件不读取对话内容，也不需要 `hooks.allowConversationAccess`。模型 token、运行耗时与结果均来自 trusted internal diagnostics：
 
 ```json
 {
   "plugins": {
     "entries": {
-      "openclaw-prometheus": {
+      "prometheus": {
         "enabled": true,
-        "hooks": {
-          "allowConversationAccess": true
-        },
         "config": {
           "path": "/metrics",
           "collectIntervalMs": 15000,
           "snapshotIntervalMs": 30000,
           "workloadWindowMs": 300000,
+          "collectorTimeoutMs": 10000,
+          "maxScrapeSeries": 10000,
           "includeRuntime": true,
           "monitoredProviders": ["openai", "anthropic", "gemini"],
           "scrapeAuth": {
@@ -116,18 +118,18 @@ openclaw plugins install @partme.ai/openclaw-prometheus
 
 ### Prometheus 抓取（Bearer）
 
-在 Gateway 环境设置 `openclaw-prometheus_BEARER_TOKEN`，配置中 `scrapeAuth.enabled: true`，Prometheus 使用 `bearer_token_file` 指向同一密钥文件。
+在 Gateway 环境设置 `OPENCLAW_PROMETHEUS_BEARER_TOKEN`，配置中 `scrapeAuth.enabled: true`，Prometheus 使用 `bearer_token_file` 指向同一密钥文件。
 
 ### 命令行探测
 
 ```bash
 pnpm run test:client -- http://127.0.0.1:18789/metrics
-openclaw-prometheus_BEARER_TOKEN=secret pnpm run test:client -- http://127.0.0.1:18789/metrics
+OPENCLAW_PROMETHEUS_BEARER_TOKEN=secret pnpm run test:client -- http://127.0.0.1:18789/metrics
 ```
 
 ## Grafana 看板
 
-从 [`grafana/`](./grafana/) 导入单节点与集群两套 JSON。Prometheus 负责指标，Loki 负责日志历史，接入说明见 [`grafana/README.md`](./grafana/README.md)。
+从 [`doc/prometheus/grafana`](../../doc/prometheus/grafana/) 导入仪表盘。Prometheus 负责指标，Loki 负责日志历史，接入说明见 [Grafana 指南](../../doc/prometheus/grafana/OpenClaw-Prometheus-Grafana-README.md)。
 
 ## 开发与测试
 
@@ -139,7 +141,7 @@ pnpm test
 
 ## 发版注意
 
-同步更新 **`package.json` 的 `version`** 与 [`src/version.ts`](src/version.ts) 中的 **`PLUGIN_VERSION`**。
+同步更新 **`package.json` / `openclaw.plugin.json` 的 `version`** 与 [`src/shared/version.ts`](src/shared/version.ts) 中的 **`PLUGIN_VERSION`**。
 
 ## 相关插件
 

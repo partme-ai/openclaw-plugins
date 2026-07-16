@@ -107,6 +107,8 @@ export interface VectorStore {
   initialize(): Promise<void>;
   /** 写入/更新向量块 */
   upsert(chunks: VectorChunk[]): Promise<void>;
+  /** 原子替换同一 sourceId 的全部块，失败时必须保留旧数据 */
+  replaceBySource(sourceId: string, chunks: VectorChunk[]): Promise<void>;
   /** 批量写入（含自动分片） */
   upsertBatch(chunks: VectorChunk[], batchSize?: number): Promise<void>;
   /** 向量检索 */
@@ -119,6 +121,9 @@ export interface VectorStore {
   keywordSearch?(query: string, topK?: number, sourceId?: string): Promise<ScoredChunk[]>;
   /** 统计信息 */
   stats(): Promise<StoreStats>;
+  /** Optional resource cleanup for local/native backends. */
+  close?(): void | Promise<void>;
+  dispose?(): void | Promise<void>;
 }
 
 /** Embedding 引擎接口
@@ -166,6 +171,12 @@ export type KnowledgeEmbeddingConfig = {
   model?: string;
   /** 嵌入维度（仅某些 provider 需要） */
   dimensions?: number;
+  /** 单次远程请求超时，默认 30000ms */
+  requestTimeoutMs?: number;
+  /** 408/429/5xx 与网络错误的最大重试次数，默认 2 */
+  maxRetries?: number;
+  /** 单次请求最大文本数，默认 64 */
+  maxBatchSize?: number;
 };
 
 /** @description Tokenizer 后端枚举 — `zhipu`（远程精确）、`tiktoken`（本地估算）。 */
@@ -304,7 +315,7 @@ export interface DocParserService {
 /** 向量存储配置 */
 export type KnowledgeStoreConfig = {
   /** 存储提供者 */
-  provider: 'zvec' | 'sqlite-vec' | 'native-zvec' | 'redis' | 'pinecone' | 'chroma' | 'weaviate' | 'qdrant' | 'milvus' | 'pgvector' | 'elasticsearch' | 'opensearch' | string;
+  provider: 'zvec' | 'sqlite-vec' | string;
   /** 命名空间隔离前缀（自动生成，一般不需要手写） */
   namespace?: string;
 
@@ -375,8 +386,10 @@ export type KnowledgeRetrievalConfig = {
   topK?: number;
   /** 相似度阈值 */
   minScore?: number;
-  /** 是否启用关键词增强 */
-  keywordBoost?: boolean;
+  /** hybrid 模式下的向量分支权重 */
+  vectorWeight?: number;
+  /** hybrid 模式下的关键词分支权重 */
+  keywordWeight?: number;
 };
 
 /** 注入配置 */
@@ -431,6 +444,14 @@ export type KnowledgeConfig = {
   injection?: KnowledgeInjectionConfig;
   /** 过滤配置 */
   moderation?: KnowledgeModerationConfig;
+  /** Agent tool security and resource limits. */
+  tools?: {
+    allowFileIngest?: boolean;
+    allowedFileRoots?: string[];
+    maxFileBytes?: number;
+    maxInputChars?: number;
+    allowOwnerGlobalNamespaces?: boolean;
+  };
 };
 
 /** DeepPartial — 递归可选，用于 account 级覆盖（排除 enabled 字段） */
@@ -444,6 +465,7 @@ export type DeepPartialKnowledgeConfig = {
   retrieval?: DeepPartial<KnowledgeRetrievalConfig>;
   injection?: DeepPartial<KnowledgeInjectionConfig>;
   moderation?: DeepPartial<KnowledgeModerationConfig>;
+  tools?: DeepPartial<NonNullable<KnowledgeConfig['tools']>>;
 };
 
 // ===================================================================

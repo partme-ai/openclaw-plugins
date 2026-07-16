@@ -21,7 +21,7 @@ import { getWebsocketRuntime } from "./runtime.js";
 import { getWebsocketIdempotencyCache } from "./shared/wire-helpers.js";
 import { getWebsocketChannelConfig } from "./state/web-socket-state.js";
 import type { WebsocketInboundMessage } from "./types.js";
-import { serializeReplyFrame } from "./protocol.js";
+import { serializeReplyFrame } from "./transport/protocol.js";
 import { WS_CLIENT_CONNECTION_PREFIX } from "./transport/client.js";
 import { sendToConnection } from "./transport/connection-hub.js";
 

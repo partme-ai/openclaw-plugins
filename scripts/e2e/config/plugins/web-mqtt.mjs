@@ -2,6 +2,7 @@ import { E2E_PORTS } from "../../lib/utils.mjs";
 
 /** @param {import('./mqtt.mjs').ConfigContext} _ctx */
 export function webMqttConfig(_ctx) {
+  const testWebPort = Number(process.env.E2E_TEST_WEB_PORT ?? 8765);
   return {
     pluginEntry: { "web-mqtt": { enabled: true } },
     channelEntry: {
@@ -9,6 +10,7 @@ export function webMqttConfig(_ctx) {
         port: E2E_PORTS.webMqttWs,
         path: "/ws",
         auth: { required: false, allowAnonymous: true },
+        ws: { allowedOrigins: [`http://127.0.0.1:${testWebPort}`] },
         topicPrefix: "openclaw",
         subscribeTopics: ["openclaw/#"],
       },

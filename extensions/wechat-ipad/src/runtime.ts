@@ -20,6 +20,11 @@ export function setWechatIpadRuntime(runtime: GatewayRuntime): void {
   _runtime = runtime;
 }
 
+export function clearWechatIpadRuntime(): void {
+  _runtime = null;
+  _resolvedConfig = null;
+}
+
 /**
  * 获取已注入的 Gateway Runtime。
  *

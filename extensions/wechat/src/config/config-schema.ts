@@ -12,11 +12,15 @@ import { CDN_BASE_URL, DEFAULT_BASE_URL } from "../auth/accounts.js";
 // Zod config schema
 // ---------------------------------------------------------------------------
 
+const httpsUrl = z.url().refine((value) => new URL(value).protocol === "https:", {
+  message: "must use HTTPS",
+});
+
 const weixinAccountSchema = z.object({
-  name: z.string().optional(),
+  name: z.string().trim().min(1).max(100).optional(),
   enabled: z.boolean().optional(),
-  baseUrl: z.string().default(DEFAULT_BASE_URL),
-  cdnBaseUrl: z.string().default(CDN_BASE_URL),
+  baseUrl: httpsUrl.default(DEFAULT_BASE_URL),
+  cdnBaseUrl: httpsUrl.default(CDN_BASE_URL),
   routeTag: z.number().optional(),
 });
 

@@ -13,14 +13,34 @@ import { SESSION_EXPIRED_ERRCODE, pauseSession, getRemainingPauseMs } from "../a
 import { processOneMessage } from "../messaging/process-message.js";
 import { getWeixinRuntime, waitForWeixinRuntime } from "../runtime.js";
 import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../storage/sync-buf.js";
+import { ProcessedMessageStore } from "../storage/processed-messages.js";
 import { logger } from "../util/logger.js";
 import type { Logger } from "../util/logger.js";
-import { redactBody } from "../util/redact.js";
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const BACKOFF_DELAY_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
+const MIN_LONG_POLL_TIMEOUT_MS = 1_000;
+const MAX_LONG_POLL_TIMEOUT_MS = 60_000;
+
+export function clampLongPollTimeout(timeoutMs: number): number {
+  return Math.min(MAX_LONG_POLL_TIMEOUT_MS, Math.max(MIN_LONG_POLL_TIMEOUT_MS, timeoutMs));
+}
+
+export async function processUpdateBatch<T>(params: {
+  messages: T[];
+  nextSyncBuf?: string;
+  processMessage: (message: T) => Promise<void>;
+  commitSyncBuf: (syncBuf: string) => void;
+}): Promise<void> {
+  for (const message of params.messages) {
+    await params.processMessage(message);
+  }
+  if (params.nextSyncBuf) {
+    params.commitSyncBuf(params.nextSyncBuf);
+  }
+}
 
 export type MonitorWeixinOpts = {
   baseUrl: string;
@@ -67,12 +87,13 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     throw err;
   }
 
-  log(`weixin monitor started (${baseUrl}, account=${accountId})`);
+  log(`weixin monitor started (account=${accountId})`);
   aLog.info(
-    `Monitor started: baseUrl=${baseUrl} timeoutMs=${longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS}`,
+    `Monitor started: timeoutMs=${longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS}`,
   );
 
   const syncFilePath = getSyncBufFilePath(accountId);
+  const processedMessages = new ProcessedMessageStore(`${syncFilePath}.processed.json`);
   aLog.debug(`syncFilePath: ${syncFilePath}`);
 
   const previousGetUpdatesBuf = loadGetUpdatesBuf(syncFilePath);
@@ -93,9 +114,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
 
   while (!abortSignal?.aborted) {
     try {
-      aLog.debug(
-        `getUpdates: get_updates_buf=${getUpdatesBuf.substring(0, 50)}..., timeoutMs=${nextTimeoutMs}`,
-      );
+      aLog.debug(`getUpdates: syncBufBytes=${getUpdatesBuf.length}, timeoutMs=${nextTimeoutMs}`);
       const resp = await getUpdates({
         baseUrl,
         token,
@@ -107,7 +126,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       );
 
       if (resp.longpolling_timeout_ms != null && resp.longpolling_timeout_ms > 0) {
-        nextTimeoutMs = resp.longpolling_timeout_ms;
+        nextTimeoutMs = clampLongPollTimeout(resp.longpolling_timeout_ms);
         aLog.debug(`Updated next poll timeout: ${nextTimeoutMs}ms`);
       }
       const isApiError =
@@ -136,7 +155,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
           `weixin getUpdates failed: ret=${resp.ret} errcode=${resp.errcode} errmsg=${resp.errmsg ?? ""} (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`,
         );
         aLog.error(
-          `getUpdates failed: ret=${resp.ret} errcode=${resp.errcode} errmsg=${resp.errmsg} response=${redactBody(JSON.stringify(resp))}`,
+          `getUpdates failed: ret=${resp.ret} errcode=${resp.errcode} errmsg=${resp.errmsg ?? ""}`,
         );
         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
           errLog(
@@ -154,16 +173,17 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       }
       consecutiveFailures = 0;
       setStatus?.({ accountId, lastEventAt: Date.now() });
-      if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
-        saveGetUpdatesBuf(syncFilePath, resp.get_updates_buf);
-        getUpdatesBuf = resp.get_updates_buf;
-        aLog.debug(`Saved new get_updates_buf (${getUpdatesBuf.length} bytes)`);
-      }
       const list = resp.msgs ?? [];
-      for (const full of list) {
-        aLog.info(
-          `inbound message: from=${full.from_user_id} types=${full.item_list?.map((i) => i.type).join(",") ?? "none"}`,
-        );
+      await processUpdateBatch({
+        messages: list,
+        nextSyncBuf: resp.get_updates_buf,
+        processMessage: async (full) => {
+        const messageId = full.message_id == null ? undefined : String(full.message_id);
+        if (messageId && processedMessages.has(messageId)) {
+          aLog.info("inbound duplicate skipped");
+          return;
+        }
+        aLog.info(`inbound message: types=${full.item_list?.map((i) => i.type).join(",") ?? "none"}`);
 
         const now = Date.now();
         setStatus?.({ accountId, lastEventAt: now, lastInboundAt: now });
@@ -185,7 +205,16 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
           log: opts.runtime?.log ?? (() => {}),
           errLog,
         });
-      }
+        if (messageId) processedMessages.mark(messageId);
+        },
+        // Commit only after the entire batch succeeds. A crash can replay already-
+        // dispatched messages (at-least-once), but cannot skip the remainder.
+        commitSyncBuf: (nextSyncBuf) => {
+          saveGetUpdatesBuf(syncFilePath, nextSyncBuf);
+          getUpdatesBuf = nextSyncBuf;
+          aLog.debug(`Saved new get_updates_buf (${getUpdatesBuf.length} bytes)`);
+        },
+      });
     } catch (err) {
       if (abortSignal?.aborted) {
         aLog.info(`Monitor stopped (aborted)`);
@@ -195,7 +224,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       errLog(
         `weixin getUpdates error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${String(err)}`,
       );
-      aLog.error(`getUpdates error: ${String(err)}, stack=${(err as Error).stack}`);
+      aLog.error(`getUpdates error: ${err instanceof Error ? err.message : String(err)}`);
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         errLog(
           `weixin getUpdates: ${MAX_CONSECUTIVE_FAILURES} consecutive failures, backing off 30s`,

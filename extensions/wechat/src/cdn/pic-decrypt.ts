@@ -8,29 +8,87 @@ import { decryptAesEcb } from "./aes-ecb.js";
 import { buildCdnDownloadUrl, ENABLE_CDN_URL_FALLBACK } from "./cdn-url.js";
 import { logger } from "../util/logger.js";
 
+const CDN_DOWNLOAD_TIMEOUT_MS = 30_000;
+const CDN_DOWNLOAD_MAX_BYTES = 100 * 1024 * 1024;
+
+function assertSafeCdnUrl(rawUrl: string): URL {
+  const url = new URL(rawUrl);
+  if (url.protocol !== "https:") {
+    throw new Error("CDN download URL must use HTTPS");
+  }
+  const host = url.hostname.toLowerCase();
+  if (
+    host === "localhost" ||
+    host === "::1" ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  ) {
+    throw new Error("CDN download URL must not target a local or private address");
+  }
+  return url;
+}
+
 /**
  * Download raw bytes from the CDN (no decryption).
  */
 async function fetchCdnBytes(url: string, label: string): Promise<Buffer> {
+  const safeUrl = assertSafeCdnUrl(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CDN_DOWNLOAD_TIMEOUT_MS);
+  timeout.unref?.();
   let res: Response;
   try {
-    res = await fetch(url);
+    res = await fetch(safeUrl, { signal: controller.signal });
   } catch (err) {
     const cause =
       (err as NodeJS.ErrnoException).cause ?? (err as NodeJS.ErrnoException).code ?? "(no cause)";
     logger.error(
-      `${label}: fetch network error url=${url} err=${String(err)} cause=${String(cause)}`,
+      `${label}: fetch network error host=${safeUrl.host} err=${String(err)} cause=${String(cause)}`,
     );
     throw err;
+  } finally {
+    clearTimeout(timeout);
   }
   logger.debug(`${label}: response status=${res.status} ok=${res.ok}`);
   if (!res.ok) {
-    const body = await res.text().catch(() => "(unreadable)");
-    const msg = `${label}: CDN download ${res.status} ${res.statusText} body=${body}`;
+    await res.body?.cancel().catch(() => {});
+    const msg = `${label}: CDN download ${res.status} ${res.statusText}`;
     logger.error(msg);
     throw new Error(msg);
   }
-  return Buffer.from(await res.arrayBuffer());
+  const contentLength = Number(res.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > CDN_DOWNLOAD_MAX_BYTES) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(`${label}: CDN response exceeds ${CDN_DOWNLOAD_MAX_BYTES} bytes`);
+  }
+  if (!res.body) {
+    const result = Buffer.from(await res.arrayBuffer());
+    if (result.length > CDN_DOWNLOAD_MAX_BYTES) {
+      throw new Error(`${label}: CDN response exceeds ${CDN_DOWNLOAD_MAX_BYTES} bytes`);
+    }
+    return result;
+  }
+  const reader = res.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > CDN_DOWNLOAD_MAX_BYTES) {
+        await reader.cancel();
+        throw new Error(`${label}: CDN response exceeds ${CDN_DOWNLOAD_MAX_BYTES} bytes`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks);
 }
 
 /**
@@ -77,7 +135,7 @@ export async function downloadAndDecryptBuffer(
   } else {
     throw new Error(`${label}: fullUrl is required (CDN URL fallback is disabled)`);
   }
-  logger.debug(`${label}: fetching url=${url}`);
+  logger.debug(`${label}: fetching CDN media`);
   const encrypted = await fetchCdnBytes(url, label);
   logger.debug(`${label}: downloaded ${encrypted.byteLength} bytes, decrypting`);
   const decrypted = decryptAesEcb(encrypted, key);
@@ -102,6 +160,6 @@ export async function downloadPlainCdnBuffer(
   } else {
     throw new Error(`${label}: fullUrl is required (CDN URL fallback is disabled)`);
   }
-  logger.debug(`${label}: fetching url=${url}`);
+  logger.debug(`${label}: fetching CDN media`);
   return fetchCdnBytes(url, label);
 }

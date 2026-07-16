@@ -3,13 +3,9 @@
  */
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { join } from "node:path";
 import { E2E_DIR } from "../lib/utils.mjs";
 import { DOCKER, dockerEnv } from "../lib/compose.mjs";
-
-const req = createRequire(new URL("../../../extensions/rocketmq/package.json", import.meta.url));
-const { Producer } = req("rocketmq-client-nodejs");
 
 /**
  * @description Create topic on broker via mqadmin when auto-create is unavailable through proxy.
@@ -37,18 +33,8 @@ export async function bootstrapRocketmqTopic(topicOverride) {
   const endpoints = process.env.ROCKETMQ_ENDPOINTS ?? "127.0.0.1:8081";
 
   ensureTopicViaDocker(topic);
-  try {
-    const producer = new Producer({ endpoints, namespace: "", requestTimeout: 15_000 });
-    await producer.startup();
-    await producer.send({
-      topic,
-      tag: "*",
-      body: Buffer.from(JSON.stringify({ text: "bootstrap topic create" })),
-    });
-    await producer.shutdown();
-    console.log(`[rocketmq-bootstrap] producer ping ok: ${topic}`);
-  } catch (err) {
-    console.warn(`[rocketmq-bootstrap] producer ping skipped: ${err instanceof Error ? err.message : err}`);
-  }
+  // The adapter E2E performs the real producer publish. Keeping a second SDK
+  // producer here caused rocketmq-client-nodejs/egg-logger to write after its
+  // log stream had closed during shutdown under Node 24.
   console.log(`[rocketmq-bootstrap] topic ready: ${topic} @ ${endpoints}`);
 }

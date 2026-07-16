@@ -1,47 +1,90 @@
-/**
- * WeChat iPad Channel 定义模块
- *
- * 将 wechat-ipad 注册为 OpenClaw 的 Channel：
- * - meta: UI 展示与排序信息
- * - capabilities: 支持私聊和群聊
- * - outbound.sendText: Agent 回复时通过 iPad 协议服务发送到微信
- */
+import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
+import {
+  getWechatIpadSection,
+  resolveWechatIpadConfig,
+  WECHAT_IPAD_CONFIG_JSON_SCHEMA,
+} from "./config.js";
+import { wechatIpadOutbound } from "./outbound.js";
+import { getBridgeStatusSummary } from "./transport/ipad-bridge.js";
+import type { WechatIpadConfig } from "./types.js";
 
-import type { ChannelDefinition } from "./types.js";
-import { wechatIpadSetupAdapter, wechatIpadSetupWizard } from "./onboarding.js";
-import { wechatIpadSendText } from "./outbound.js";
+type ResolvedWechatIpadAccount = {
+  accountId: "default";
+  name: string;
+  enabled: boolean;
+  configured: boolean;
+  config: WechatIpadConfig;
+};
 
-/**
- * WeChat iPad 渠道定义
- * Agent 的回复将通过此 channel 发送给微信用户
- */
-export const wechatIpadChannel: ChannelDefinition = {
+function resolveAccount(cfg: OpenClawConfig): ResolvedWechatIpadAccount {
+  const config = resolveWechatIpadConfig(
+    getWechatIpadSection(cfg as unknown as Record<string, unknown>),
+  );
+  return {
+    accountId: "default",
+    name: "External WeChat iPad bridge",
+    enabled: config.enabled,
+    configured: config.enabled && config.acknowledgeUnofficialProtocolRisk,
+    config,
+  };
+}
+
+export const wechatIpadChannel: ChannelPlugin<ResolvedWechatIpadAccount> = {
   id: "wechat-ipad",
-  name: "WeChat iPad Protocol Bridge",
-
   meta: {
     id: "wechat-ipad",
-    label: "微信 (iPad 协议)",
-    selectionLabel: "WeChat via iPad Protocol",
+    label: "微信 iPad 外部桥接",
+    selectionLabel: "WeChat iPad (unofficial external bridge)",
     docsPath: "/channels/wechat-ipad",
-    blurb: "Personal WeChat account integration via iPad protocol bridge.",
-    aliases: ["wechat", "wechat-ipad", "wx-ipad"],
-    order: 50,
+    docsLabel: "wechat-ipad",
+    blurb: "Opt-in bridge to a separately operated, unofficial WeChat iPad protocol service.",
+    aliases: ["wechat-ipad", "wx-ipad"],
+    order: 150,
   },
-
+  reload: { configPrefixes: ["channels.wechat-ipad", "plugins.entries.wechat-ipad"] },
   capabilities: {
     chatTypes: ["direct", "group"],
+    media: false,
+    reactions: false,
+    threads: false,
+    polls: false,
+    nativeCommands: false,
+    blockStreaming: true,
   },
-
-  setupWizard: wechatIpadSetupWizard,
-  setup: wechatIpadSetupAdapter,
-
+  configSchema: {
+    schema: WECHAT_IPAD_CONFIG_JSON_SCHEMA,
+  },
   config: {
     listAccountIds: () => ["default"],
-    resolveAccount: () => ({}),
+    defaultAccountId: () => "default",
+    resolveAccount: (cfg) => resolveAccount(cfg),
+    isConfigured: (account) => account.configured,
+    unconfiguredReason: () =>
+      "Set enabled=true and acknowledgeUnofficialProtocolRisk=true after reviewing the bridge risk.",
+    describeAccount: (account) => ({
+      accountId: account.accountId,
+      name: account.name,
+      enabled: account.enabled,
+      configured: account.configured,
+    }),
   },
-
-  outbound: {
-    sendText: wechatIpadSendText,
+  messaging: {
+    normalizeTarget: (raw) => raw.replace(/^wechat-ipad:/i, "").trim() || undefined,
+    targetResolver: { looksLikeId: (raw) => Boolean(raw.trim()), hint: "<wxid>" },
+  },
+  groups: { resolveRequireMention: () => false },
+  threading: { resolveReplyToMode: () => "off" },
+  outbound: wechatIpadOutbound,
+  status: {
+    defaultRuntime: { accountId: "default", running: false, lastError: null },
+    buildChannelSummary: () => getBridgeStatusSummary(),
+    buildAccountSnapshot: ({ account, runtime }) => ({
+      ...runtime,
+      accountId: account.accountId,
+      name: account.name,
+      enabled: account.enabled,
+      configured: account.configured,
+      ...getBridgeStatusSummary(),
+    }),
   },
 };

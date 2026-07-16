@@ -3,7 +3,7 @@
  *
  * 用法：
  *   pnpm run test:client -- http://127.0.0.1:18789/metrics
- *   openclaw-prometheus_BEARER_TOKEN=secret pnpm run test:client -- http://127.0.0.1:18789/metrics
+ *   OPENCLAW_PROMETHEUS_BEARER_TOKEN=secret pnpm run test:client -- http://127.0.0.1:18789/metrics
  */
 
 import { get } from "node:http";
@@ -38,14 +38,14 @@ function fetchText(target: string, headers: Record<string, string>): Promise<{ s
 async function main(): Promise<void> {
   const target = process.argv[2] ?? "http://127.0.0.1:18789/metrics";
   const headers: Record<string, string> = {};
-  const token = process.env.openclaw-prometheus_BEARER_TOKEN;
+  const token = process.env.OPENCLAW_PROMETHEUS_BEARER_TOKEN;
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
 
   console.log(`GET ${target}`);
   if (token) {
-    console.log("(Authorization: Bearer from openclaw-prometheus_BEARER_TOKEN)");
+    console.log("(Authorization: Bearer from OPENCLAW_PROMETHEUS_BEARER_TOKEN)");
   }
 
   const { status, body } = await fetchText(target, headers);

@@ -4,7 +4,4 @@
 export {
   createKfCallbackHandler,
   consumeAccountStatePatch,
-  primeWecomKfCursor,
 } from "../webhook/callback.js";
-
-export { processKfEvent, trackAccountEvent } from "../webhook/handler.js";

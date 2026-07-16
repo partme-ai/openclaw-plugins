@@ -1,7 +1,7 @@
 {
   "id": "douyin",
   "name": "@partme.ai/openclaw-douyin",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "description": "抖音开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
   "main": "dist/index.js",
   "channels": [

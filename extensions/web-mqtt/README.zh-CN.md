@@ -58,7 +58,7 @@
 openclaw plugins install @partme.ai/openclaw-web-mqtt
 ```
 
-最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.5.22`。
+最低依赖：`@partme.ai/openclaw-message-sdk >= 2026.6.1`。
 
 ### message-sdk 复用
 
@@ -131,18 +131,20 @@ MQTT over WebSocket 传输与 ACL 留在本插件；下列能力通过 **薄封�
 
 | 项 | 行为 |
 |----|------|
-| **分级** | 协议限制需文档约束（QoS0 即时 PUBACK） |
+| **分级** | 协议限制需文档约束（QoS0 无协议确认） |
 | **入站** | per-`clientId` 串行 dispatch；`processInbound` await |
 | **出站** | `publishToTopic` await |
 | **隔离** | server publish 不触发入站；ACL + topic 白名单 |
 
-- 明文 WS 只能绑定 loopback；监听非 loopback 地址必须启用 `tls.enabled=true`
+- 明文 WS 只能绑定 loopback；监听非 loopback 地址必须同时启用 `tls.enabled=true` 与 `auth.required=true`
 - 使用独立 MQTT 用户，生产配置优先使用 `passwordHash`，避免明文密码
 - 浏览器应用必须加入 `ws.allowedOrigins` 精确白名单，未列出的 Origin 会被拒绝
 - 严格配置 `publishAllow` / `subscribeAllow`
 - 匿名访问必须显式配置 `anonymous` 用户及 fail-closed ACL
 - 按流量调优 `maxPayloadBytes`、`maxFrameSize`、`idleTimeoutMs`
 - 配合反向代理与网络 ACL 做边界隔离
+
+本地协议测试与安装门禁不能替代目标环境验收。生产签字前仍需验证真实证书链、反向代理 Upgrade 转发、Origin 策略、断线重连以及预期浏览器并发负载。
 
 ## 状态与可观测性
 

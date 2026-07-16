@@ -26,6 +26,7 @@ interface SessionBackend {
 
 class MemoryBackend implements SessionBackend {
   private readonly values = new Map<string, StoredValue>();
+  constructor(private readonly maxEntries: number) {}
   async start(): Promise<void> {}
   async stop(): Promise<void> { this.values.clear(); }
   async get<T extends StoredValue>(key: string): Promise<T | null> {
@@ -41,7 +42,16 @@ class MemoryBackend implements SessionBackend {
     this.values.delete(key);
     return value;
   }
-  async set(key: string, value: StoredValue): Promise<void> { this.values.set(key, value); }
+  async set(key: string, value: StoredValue): Promise<void> {
+    const now = Date.now();
+    for (const [candidate, stored] of this.values) {
+      if (stored.expiresAt <= now) this.values.delete(candidate);
+    }
+    if (!this.values.has(key) && this.values.size >= this.maxEntries) {
+      throw new Error(`[openclaw-oauth2] in-memory session store capacity ${this.maxEntries} reached`);
+    }
+    this.values.set(key, value);
+  }
   async delete(key: string): Promise<void> { this.values.delete(key); }
 }
 
@@ -96,7 +106,7 @@ export class OAuth2SessionStore {
     this.prefix = config.sessionStore.keyPrefix.replace(/:+$/, "");
     this.backend = config.sessionStore.type === "redis"
       ? new RedisBackend(config.sessionStore.redisUrl as string)
-      : new MemoryBackend();
+      : new MemoryBackend(config.sessionStore.maxEntries);
   }
 
   async start(): Promise<void> { await this.backend.start(); }
@@ -114,11 +124,11 @@ export class OAuth2SessionStore {
   }
 
   async consumeAuthorizationState(state: string, headers: IncomingHttpHeaders): Promise<PendingState | null> {
+    const signedState = parseCookies(headers).get(this.stateCookieName(state));
+    if (!signedState || this.verify(signedState) !== state) return null;
     const key = this.key("state", state);
     const pending = await this.backend.take<PendingState>(key);
     if (!pending || pending.expiresAt <= Date.now()) return null;
-    const signedState = parseCookies(headers).get(this.stateCookieName(state));
-    if (!signedState || this.verify(signedState) !== state) return null;
     return pending;
   }
 

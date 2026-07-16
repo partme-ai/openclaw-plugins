@@ -11,6 +11,7 @@ suite("OAuth2SessionStore Redis", () => {
     redirectUri: "https://openclaw.example/auth/oauth2/callback",
     discovery: true,
     scopes: ["userinfo"],
+    requiredScopes: [],
     successRedirect: "/",
     sessionSecret: "redis-test-session-secret-at-least-32-characters",
     sessionCookieName: "openclaw_oauth2_session",
@@ -23,7 +24,7 @@ suite("OAuth2SessionStore Redis", () => {
     authorizationParameters: {},
     tokenParameters: {},
     requestTimeoutMs: 5_000,
-    sessionStore: { type: "redis", redisUrl, keyPrefix: `test:openclaw:oauth2:${Date.now()}` },
+    sessionStore: { type: "redis", redisUrl, keyPrefix: `test:openclaw:oauth2:${Date.now()}`, maxEntries: 100 },
   };
   const first = new OAuth2SessionStore(config);
   const second = new OAuth2SessionStore(config);
@@ -40,7 +41,7 @@ suite("OAuth2SessionStore Redis", () => {
     });
 
     const created = await first.createSession(
-      { authenticated: true, role: "viewer", permissions: ["read"], loginId: "redis-user" },
+      { authenticated: true, loginId: "redis-user" },
       { accessToken: "access", tokenType: "bearer", expiresAt: Date.now() + 60_000 },
     );
     const sessionCookie = created.cookie.split(";", 1)[0];

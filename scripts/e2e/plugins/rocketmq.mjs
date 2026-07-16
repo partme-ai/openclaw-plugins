@@ -1,11 +1,11 @@
 /**
  * RocketMQ external broker E2E adapter.
  */
-import { createRequire } from "node:module";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { runAdapterTest } from "./_context.mjs";
 
-const req = createRequire(new URL("../../../extensions/rocketmq/package.json", import.meta.url));
-const { Producer } = req("rocketmq-client-nodejs");
+const PRODUCER_HELPER = fileURLToPath(new URL("../helpers/rocketmq-producer.mjs", import.meta.url));
 
 /** @param {ReturnType<import('./_context.mjs').createTestContext>} ctx */
 /** @param {import('../lib/utils.mjs').resultRow extends (...args: never) => infer R ? R[] : never} results */
@@ -14,22 +14,27 @@ export async function testRocketmq(ctx, results) {
     ctx,
     "rocketmq",
     async () => {
-      const health = await ctx.gatewayFetch("/rocketmq/health");
-      if (health.json?.data?.connected !== true) {
-        throw new Error(`/rocketmq/health → ${health.status}: ${health.text}`);
-      }
       if (!(await ctx.tcpReachable(8081))) throw new Error("RocketMQ proxy 8081 not reachable");
-      const producer = new Producer({ endpoints: "127.0.0.1:8081", namespace: "", requestTimeout: 10_000 });
-      try {
-        await producer.startup();
-        await producer.send({
-          topic: ctx.meta.rocketmqTopic,
-          tag: "*",
-          body: Buffer.from(JSON.stringify({ ...ctx.pingPayload, text: "e2e rocketmq ping" })),
-        });
-      } finally {
-        producer.shutdown().catch(() => {});
-      }
+      let health = await ctx.gatewayFetch("/rocketmq/health");
+      await ctx.waitFor(
+        async () => {
+          health = await ctx.gatewayFetch("/rocketmq/health");
+          return health.json?.data?.connected === true;
+        },
+        { label: "RocketMQ channel connected", timeoutMs: 60_000, intervalMs: 1_000 },
+      ).catch(() => {
+        throw new Error(`/rocketmq/health → ${health.status}: ${health.text}`);
+      });
+      execFileSync(
+        process.execPath,
+        [
+          PRODUCER_HELPER,
+          "127.0.0.1:8081",
+          ctx.meta.rocketmqTopic,
+          JSON.stringify({ ...ctx.pingPayload, text: "e2e rocketmq ping" }),
+        ],
+        { stdio: "pipe", timeout: 30_000 },
+      );
     },
     { service: "docker:8081", method: "Producer.send + /rocketmq/health" },
     results,

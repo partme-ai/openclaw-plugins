@@ -28,7 +28,6 @@ suite("MQTT Redis persistence", () => {
     await startBroker({
       host: "127.0.0.1",
       port,
-      wsPort: 0,
       maxConnections: 10,
       auth: {
         enabled: true,

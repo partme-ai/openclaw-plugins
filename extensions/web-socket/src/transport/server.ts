@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 
-import { parseClientFrame, serializeConnectedFrame, serializeErrorFrame, serializePongFrame } from "../protocol.js";
+import { parseClientFrame, serializeConnectedFrame, serializeErrorFrame, serializePongFrame } from "./protocol.js";
 import type { WebsocketChannelConfig, WebsocketConnectionInfo } from "../types.js";
 import {
   getAllConnectionInfo,

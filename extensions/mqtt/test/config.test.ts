@@ -138,6 +138,26 @@ describe("resolveBrokerConfig", () => {
     expect(() => validateBrokerConfig(config)).toThrow(/anonymous/i);
   });
 
+  it("rejects invalid listener, runtime limit, credential, and duplicate-user settings", () => {
+    const base = resolveBrokerConfig({});
+    expect(() => validateBrokerConfig({ ...base, port: 65_536 })).toThrow(/port/i);
+    expect(() => validateBrokerConfig({ ...base, limits: { maxPayloadBytes: 0 } })).toThrow(/maxPayloadBytes/i);
+    expect(() => validateBrokerConfig({ ...base, qos0: { mailboxSoftLimit: 0 } })).toThrow(/mailboxSoftLimit/i);
+
+    const authBase = resolveBrokerConfig({ channels: { mqtt: { auth: {
+      enabled: true,
+      users: [{ username: "iot", password: "secret", publishAllow: ["devices/#"] }],
+    } } } });
+    expect(() => validateBrokerConfig({
+      ...authBase,
+      auth: { ...authBase.auth, users: [{ username: "iot", publishAllow: ["devices/#"] }] },
+    })).toThrow(/exactly one/i);
+    expect(() => validateBrokerConfig({
+      ...authBase,
+      auth: { ...authBase.auth, users: [...authBase.auth.users, { ...authBase.auth.users[0]! }] },
+    })).toThrow(/duplicate/i);
+  });
+
   it("reads OpenClaw global session.dmScope", () => {
     expect(resolveOpenClawDmScope({ session: { dmScope: "per-channel-peer" } })).toBe(
       "per-channel-peer",

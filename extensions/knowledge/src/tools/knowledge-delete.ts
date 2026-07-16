@@ -7,14 +7,15 @@
  * @module knowledge/tools/knowledge-delete
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type OpenClawPluginToolContext = any;
+import type { OpenClawPluginToolContext } from 'openclaw/plugin-sdk/plugin-entry';
+import type { KnowledgeConfig } from '../types.js';
 type AgentToolResult<T = unknown> = {
   content: { type: 'text'; text: string }[];
   details: T | undefined;
 };
 
 import { getOrCreateStore, invalidateStoreCache } from '../runtime/hooks.js';
+import { authorizeNamespace, validateSourceId } from './policy.js';
 
 // ===================================================================
 // 类型定义
@@ -32,12 +33,6 @@ interface KnowledgeDeleteParams {
 // ===================================================================
 // 命名空间校验
 // ===================================================================
-
-const SESSION_NS_PATTERN = /^[^:]+:(bot|agent)$/;
-
-function isSessionNamespace(namespace: string): boolean {
-  return SESSION_NS_PATTERN.test(namespace);
-}
 
 // ===================================================================
 // 响应构造
@@ -61,14 +56,6 @@ function failedResult(message: string): AgentToolResult<unknown> {
 // 获取共享配置
 // ===================================================================
 
-function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').KnowledgeConfig {
-  const knowledgeConfig = (ctx.pluginConfig ?? {}) as import('../types.js').KnowledgeConfig;
-  if (knowledgeConfig.enabled ?? true) {
-    return knowledgeConfig;
-  }
-  return { enabled: true };
-}
-
 // ===================================================================
 // 工具定义
 // ===================================================================
@@ -82,7 +69,7 @@ function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').
  * @param ctx - OpenClaw Tool 上下文。
  * @returns Agent Tool 描述对象。
  */
-export function createKnowledgeDeleteTool(ctx: OpenClawPluginToolContext) {
+export function createKnowledgeDeleteTool(ctx: OpenClawPluginToolContext, config: KnowledgeConfig) {
   return {
     name: 'knowledge_delete',
     label: '知识库删除',
@@ -130,38 +117,29 @@ export function createKnowledgeDeleteTool(ctx: OpenClawPluginToolContext) {
         return failedResult('缺少必填参数 action');
       }
 
-      let namespace = p.namespace;
-      if (!namespace) {
-        const accountId = ctx.agentAccountId ?? 'default';
-        const mode = ctx.agentId ? 'agent' : 'bot';
-        namespace = `${accountId}:${mode}`;
-      }
-
-      // 权限校验
-      if (!isSessionNamespace(namespace) && !ctx.senderIsOwner) {
-        return failedResult('只有 owner 才能操作非对话级 namespace 的知识库');
-      }
-
-      const config = buildBaseConfig(ctx);
+      const access = authorizeNamespace(ctx, p.namespace, config);
+      if (!access.ok) return failedResult(access.error);
 
       try {
-        const { store } = await getOrCreateStore(config, namespace);
+        const { store } = await getOrCreateStore(config, access.namespace);
 
         if (p.action === 'delete_by_source') {
           if (!p.sourceId || typeof p.sourceId !== 'string' || p.sourceId.trim().length === 0) {
             return failedResult('action=delete_by_source 时必须提供非空的 sourceId 参数');
           }
-          const sourceId = p.sourceId.trim();
+          const source = validateSourceId(p.sourceId, '');
+          if (!source.ok) return failedResult(source.error);
+          const sourceId = source.sourceId;
           await store.deleteBySource(sourceId);
-          return successResult({ action: 'delete_by_source', sourceId, namespace });
+          return successResult({ action: 'delete_by_source', sourceId, namespace: access.namespace });
         }
 
         if (p.action === 'clear') {
           // clear 只在对话级 namespace 或 owner 执行过（前面已校验）
           await store.clear();
           // 清除缓存，确保后续操作重新初始化
-          invalidateStoreCache(namespace);
-          return successResult({ action: 'clear', namespace });
+          await invalidateStoreCache(access.namespace);
+          return successResult({ action: 'clear', namespace: access.namespace });
         }
 
         return failedResult(`未知操作类型: ${String(p.action)}，支持 delete_by_source、clear`);

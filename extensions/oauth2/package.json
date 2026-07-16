@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-oauth2",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "description": "Standard OAuth2/OIDC client reverse proxy for OpenClaw, powered by openid-client",
   "type": "module",
   "main": "dist/index.js",

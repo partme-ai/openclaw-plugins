@@ -10,6 +10,10 @@ import { stompConfig } from "./stomp.mjs";
 import { webMqttConfig } from "./web-mqtt.mjs";
 import { webStompConfig } from "./web-stomp.mjs";
 import { routerConfig } from "./router.mjs";
+import { mtlsConfig } from "./mtls.mjs";
+import { oauth2Config } from "./oauth2.mjs";
+import { webSocketConfig } from "./web-socket.mjs";
+import { tracingConfig } from "./tracing.mjs";
 
 /** @type {Record<string, (ctx: import('./mqtt.mjs').ConfigContext) => { pluginEntry: Record<string, unknown>; channelEntry: Record<string, unknown> }>} */
 const BUILDERS = {
@@ -22,6 +26,10 @@ const BUILDERS = {
   "web-mqtt": webMqttConfig,
   "web-stomp": webStompConfig,
   router: routerConfig,
+  mtls: mtlsConfig,
+  oauth2: oauth2Config,
+  "web-socket": webSocketConfig,
+  tracing: tracingConfig,
 };
 
 /**

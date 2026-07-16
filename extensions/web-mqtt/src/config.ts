@@ -108,19 +108,27 @@ export function resolveWebMqttConfig(globalConfig: Record<string, unknown>): Web
  */
 export function buildWebMqttConfigSnapshot(config: WebMqttConfig): Record<string, unknown> {
   return {
-    ...config,
+    host: config.host,
+    port: config.port,
+    path: config.path,
+    maxConnections: config.maxConnections,
+    topicPrefix: config.topicPrefix,
+    subscribeTopicCount: config.subscribeTopics.length,
+    topicBindingCount: config.topicBindings.length,
+    payload: { ...config.payload },
     auth: {
       required: config.auth.required,
       allowAnonymous: config.auth.allowAnonymous,
-      users: config.auth.users.map((user) => ({
-        username: user.username,
-        hasPassword: Boolean(user.password || user.passwordHash),
-        hashAlgorithm: user.hashAlgorithm ?? null,
-        publishAllowCount: user.publishAllow?.length ?? 0,
-        subscribeAllowCount: user.subscribeAllow?.length ?? 0,
-        aclRuleCount: user.aclRules?.length ?? 0,
-      })),
+      userCount: config.auth.users.length,
     },
+    tls: {
+      enabled: config.tls.enabled,
+      minVersion: config.tls.minVersion,
+      requestCert: config.tls.requestCert,
+      rejectUnauthorized: config.tls.rejectUnauthorized,
+    },
+    ws: { ...config.ws },
+    limits: { ...config.limits },
   };
 }
 
@@ -132,6 +140,15 @@ export function buildWebMqttConfigSnapshot(config: WebMqttConfig): Record<string
  */
 export function validateWebMqttConfig(config: WebMqttConfig): string[] {
   const issues: string[] = [];
+  if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65_535) {
+    issues.push("port 必须是 1 到 65535 之间的整数。");
+  }
+  if (!Number.isSafeInteger(config.maxConnections) || config.maxConnections < 1) {
+    issues.push("maxConnections 必须是正安全整数。");
+  }
+  if (!config.path.startsWith("/") || config.path.includes("?") || config.path.includes("#")) {
+    issues.push("path 必须是以 / 开头且不包含 query/fragment 的 WebSocket 路径。");
+  }
   if (config.auth.required && !config.auth.allowAnonymous && config.auth.users.length === 0) {
     issues.push("auth.required=true 且未配置 auth.users，客户端将无法通过认证。");
   }
@@ -144,8 +161,14 @@ export function validateWebMqttConfig(config: WebMqttConfig): string[] {
   if (!config.tls.enabled && !isLoopbackHost(config.host)) {
     issues.push("未启用 TLS 时仅允许监听 loopback 地址。");
   }
+  if (!isLoopbackHost(config.host) && !config.auth.required) {
+    issues.push("监听非 loopback 地址时必须启用客户端认证。");
+  }
   if (config.tls.enabled && (!config.tls.keyFile || !config.tls.certFile)) {
     issues.push("tls.enabled=true 但未同时提供 tls.keyFile 与 tls.certFile。");
+  }
+  if (config.tls.rejectUnauthorized && !config.tls.requestCert) {
+    issues.push("tls.rejectUnauthorized=true 时必须同时设置 tls.requestCert=true。");
   }
   if (config.topicBindings.length > 0 && config.subscribeTopics.length === 0) {
     issues.push("配置了 topicBindings 但 subscribeTopics 为空，建议设置订阅白名单。");
@@ -155,6 +178,36 @@ export function validateWebMqttConfig(config: WebMqttConfig): string[] {
   }
   if (config.proxyProtocol) {
     issues.push("proxyProtocol 尚未实现，禁止启用以避免错误信任来源地址。");
+  }
+  if (!Number.isSafeInteger(config.ws.idleTimeoutMs) || config.ws.idleTimeoutMs < 1) {
+    issues.push("ws.idleTimeoutMs 必须是正安全整数。");
+  }
+  if (!Number.isSafeInteger(config.ws.maxFrameSize) || config.ws.maxFrameSize < 1) {
+    issues.push("ws.maxFrameSize 必须是正安全整数。");
+  }
+  if (!Number.isSafeInteger(config.limits.maxPayloadBytes) || config.limits.maxPayloadBytes < 1) {
+    issues.push("limits.maxPayloadBytes 必须是正安全整数。");
+  }
+  if (!Number.isSafeInteger(config.limits.maxSubscriptionsPerClient) || config.limits.maxSubscriptionsPerClient < 1) {
+    issues.push("limits.maxSubscriptionsPerClient 必须是正安全整数。");
+  }
+  const usernames = new Set<string>();
+  for (const user of config.auth.users) {
+    const username = user.username.trim();
+    if (!username) issues.push("auth.users[].username 不能为空。");
+    else if (usernames.has(username)) issues.push(`auth.users 存在重复用户名：${username}。`);
+    usernames.add(username);
+    if (username !== "anonymous") {
+      if (Boolean(user.password) === Boolean(user.passwordHash)) {
+        issues.push(`用户 ${username} 必须且只能配置 password 或 passwordHash 其中一个。`);
+      }
+    }
+    const patterns = [
+      ...(user.publishAllow ?? []),
+      ...(user.subscribeAllow ?? []),
+      ...(user.aclRules ?? []).map((rule) => rule.topicPattern),
+    ];
+    if (patterns.some((pattern) => !pattern.trim())) issues.push(`用户 ${username} 包含空 ACL topicPattern。`);
   }
   return issues;
 }

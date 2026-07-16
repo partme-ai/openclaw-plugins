@@ -84,7 +84,9 @@ export const GotifyAccountSchema = z
           .int()
           .positive()
           .optional()
-          .describe("Only accept inbound messages from this Gotify Application ID"),
+          .describe(
+            "Only accept inbound messages from this Gotify Application ID",
+          ),
         reconnectDelayMs: z.number().int().min(500).optional().default(2000),
         maxReconnectDelayMs: z
           .number()

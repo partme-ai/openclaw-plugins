@@ -4,7 +4,6 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { mqttWsChannel } from "./channel.js";
 import { setWebMqttRuntime } from "./runtime.js";
@@ -18,17 +17,29 @@ export { mqttWsChannel } from "./channel.js";
 /**
  * channel plugin entry。
  */
-export default defineChannelPluginEntry({
-  id: "openclaw-web-mqtt",
+const pluginEntry = {
+  id: "web-mqtt",
   name: "OpenClaw Web MQTT",
   description: "OpenClaw Web MQTT channel plugin with enterprise-grade controls.",
-  plugin: mqttWsChannel,
-  setRuntime: setWebMqttRuntime,
-  registerFull(api: OpenClawPluginApi) {
+  configSchema: {
+    schema: { type: "object", additionalProperties: false, properties: {} },
+    runtime: {
+      safeParse(value: unknown) {
+        return { success: true as const, data: value };
+      },
+    },
+  },
+  register(api: OpenClawPluginApi) {
+    if (api.registrationMode === "cli-metadata") return;
+    if (api.registrationMode !== "tool-discovery") {
+      api.registerChannel({ plugin: mqttWsChannel });
+      setWebMqttRuntime(api.runtime);
+      if (api.registrationMode !== "full") return;
+    }
     api.registerHttpRoute({
       path: "/mqtt-ws/status",
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
       handler: async (_req: IncomingMessage, res: ServerResponse) => {
         const runtimeConfig = resolveWebMqttConfig(((api.runtime as { config?: Record<string, unknown> })?.config ?? {}) as Record<string, unknown>);
         const activeConfig = getWebMqttChannelConfig() ?? runtimeConfig;
@@ -45,4 +56,8 @@ export default defineChannelPluginEntry({
       },
     });
   },
-});
+  channelPlugin: mqttWsChannel,
+  setChannelRuntime: setWebMqttRuntime,
+};
+
+export default pluginEntry;

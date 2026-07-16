@@ -35,7 +35,7 @@
   "dependencies": {
     "redis": "^5.12.1",
     "zod": "^3.24.1",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -4,7 +4,11 @@ const douyinFetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/shared/http.js", () => ({
   douyinFetch: douyinFetchMock,
-  readResponseBodyAsBuffer: async (response: Response) => Buffer.from(await response.arrayBuffer()),
+  readResponseBodyAsBuffer: async (response: Response, maxBytes?: number) => {
+    const body = Buffer.from(await response.arrayBuffer());
+    if (maxBytes != null && body.length > maxBytes) throw new Error("response too large");
+    return body;
+  },
 }));
 
 import { clearClientTokenCache, getClientToken } from "../src/config/auth.js";
@@ -37,5 +41,11 @@ describe("getClientToken", () => {
 
     await expect(getClientToken({ app_key: "bad", app_secret: "bad" }))
       .rejects.toThrow(/10013.*invalid client/);
+  });
+
+  it("rejects invalid token response JSON with a bounded error", async () => {
+    douyinFetchMock.mockResolvedValue(new Response("not-json", { status: 502 }));
+    await expect(getClientToken({ app_key: "key", app_secret: "secret" }))
+      .rejects.toThrow(/invalid or oversized JSON.*502/);
   });
 });

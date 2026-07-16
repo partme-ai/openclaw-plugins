@@ -34,7 +34,9 @@ import { hybridSearch } from '../retriever/hybrid.js';
 // ===================================================================
 
 /** Store 实例缓存（按 namespace） */
-const storeCache = new Map<string, { store: VectorStore; embedding: EmbeddingService; config: KnowledgeConfig }>();
+type StoreCacheEntry = { store: VectorStore; embedding: EmbeddingService; configFingerprint: string };
+const storeCache = new Map<string, StoreCacheEntry>();
+const storeInitPromises = new Map<string, Promise<StoreCacheEntry>>();
 
 // ===================================================================
 // 配置合并
@@ -101,20 +103,33 @@ export async function getOrCreateStore(
   config: KnowledgeConfig,
   namespace: string,
 ): Promise<{ store: VectorStore; embedding: EmbeddingService }> {
+  const configFingerprint = JSON.stringify(config);
   const cached = storeCache.get(namespace);
-  if (cached) return { store: cached.store, embedding: cached.embedding };
+  if (cached?.configFingerprint === configFingerprint) return { store: cached.store, embedding: cached.embedding };
+  const pending = storeInitPromises.get(namespace);
+  if (pending) {
+    const entry = await pending;
+    if (entry.configFingerprint === configFingerprint) return { store: entry.store, embedding: entry.embedding };
+  }
 
-  // 创建 EmbeddingService
-  const embedding = createEmbeddingService(config.embedding);
-
-  // 创建 VectorStore
-  const storeConfig = { ...getDefaultStoreConfig(namespace), ...(config.store ?? {}), namespace };
-  const dimensions = config.embedding?.dimensions ?? embedding.dimensions;
-  const store = await createVectorStore(storeConfig, dimensions);
-
-  // 缓存
-  storeCache.set(namespace, { store, embedding, config });
-  return { store, embedding };
+  const initialization = (async (): Promise<StoreCacheEntry> => {
+    const previous = storeCache.get(namespace);
+    if (previous) await disposeStore(previous.store);
+    const embedding = createEmbeddingService(config.embedding);
+    const storeConfig = { ...getDefaultStoreConfig(namespace), ...(config.store ?? {}), namespace };
+    const dimensions = config.embedding?.dimensions ?? embedding.dimensions;
+    const store = await createVectorStore(storeConfig, dimensions);
+    const entry = { store, embedding, configFingerprint };
+    storeCache.set(namespace, entry);
+    return entry;
+  })();
+  storeInitPromises.set(namespace, initialization);
+  try {
+    const entry = await initialization;
+    return { store: entry.store, embedding: entry.embedding };
+  } finally {
+    if (storeInitPromises.get(namespace) === initialization) storeInitPromises.delete(namespace);
+  }
 }
 
 /**
@@ -122,12 +137,23 @@ export async function getOrCreateStore(
  *
  * @param namespace - 若传入则删除单个条目；省略则清空整张缓存 Map
  */
-export function invalidateStoreCache(namespace?: string): void {
+export async function invalidateStoreCache(namespace?: string): Promise<void> {
   if (namespace) {
+    await Promise.allSettled([storeInitPromises.get(namespace)].filter((value): value is Promise<StoreCacheEntry> => Boolean(value)));
+    const entry = storeCache.get(namespace);
     storeCache.delete(namespace);
+    if (entry) await disposeStore(entry.store);
   } else {
+    await Promise.allSettled([...storeInitPromises.values()]);
+    const entries = [...storeCache.values()];
     storeCache.clear();
+    await Promise.allSettled(entries.map((entry) => disposeStore(entry.store)));
   }
+}
+
+async function disposeStore(store: VectorStore): Promise<void> {
+  if (typeof store.close === 'function') await store.close();
+  else if (typeof store.dispose === 'function') await store.dispose();
 }
 
 // ===================================================================
@@ -216,16 +242,20 @@ function createTokenizerIfConfigured(config: KnowledgeConfig): TokenizerService 
  * @param api - OpenClaw 插件宿主对象
  * @param configPath - 可选的点分路径覆盖层
  */
-export function registerKnowledgeHooks(api: OpenClawPluginApi, configPath?: string): void {
+export function registerKnowledgeHooks(
+  api: OpenClawPluginApi,
+  configPath?: string,
+  configOverride?: KnowledgeConfig,
+): void {
   // 优先从 pluginConfig 读取（独立插件模式），fallback 到 configPath（库模式）
-  const pluginConfig = (api.pluginConfig ?? {}) as Record<string, unknown>;
+  const pluginConfig = (configOverride ?? api.pluginConfig ?? {}) as Record<string, unknown>;
 
   const knowledgeConfig = configPath
     ? configPath.split('.').reduce((obj: any, key: string) => obj?.[key], (api.config as any))
     : pluginConfig;
 
   api.on('before_prompt_build', (_event, ctx) => {
-    return handleBeforePromptBuild(ctx as unknown as BeforePromptBuildContext, knowledgeConfig ?? pluginConfig);
+    return handleBeforePromptBuild(ctx as unknown as BeforePromptBuildContext, knowledgeConfig ?? pluginConfig, api.logger);
   });
 }
 
@@ -239,6 +269,7 @@ export function registerKnowledgeHooks(api: OpenClawPluginApi, configPath?: stri
 async function handleBeforePromptBuild(
   ctx: BeforePromptBuildContext,
   knowledgeConfig: any,
+  logger: OpenClawPluginApi['logger'],
 ): Promise<BeforePromptBuildResult | undefined> {
   if (!ctx.message) return;
 
@@ -250,6 +281,11 @@ async function handleBeforePromptBuild(
   // 通过闭包捕获的 knowledgeConfig 读取知识库配置
   const config = resolveKnowledgeConfig(knowledgeConfig, accountId);
   if (!config?.enabled) return;
+  const maxInputChars = config.tools?.maxInputChars ?? 100_000;
+  if (ctx.message.length > maxInputChars) {
+    logger.warn(`[knowledge] skipped retrieval because message exceeds ${maxInputChars} characters`);
+    return;
+  }
 
   try {
     // ================================================================
@@ -263,14 +299,18 @@ async function handleBeforePromptBuild(
 
     const { store, embedding } = await getOrCreateStore(config, namespace);
     const retrieval = config.retrieval ?? {};
-    const topK = retrieval.topK ?? 5;
-    const minScore = retrieval.minScore ?? 0.0;
     const injection = config.injection ?? {};
+    const topK = Math.min(retrieval.topK ?? 5, injection.maxChunks ?? 5);
+    const minScore = retrieval.minScore ?? 0.0;
 
     // ================================================================
     // 节点 1：混合检索（必需）
     // ================================================================
-    const hybridConfig = { strategy: retrieval.strategy ?? 'hybrid' as const };
+    const hybridConfig = {
+      strategy: retrieval.strategy ?? 'hybrid' as const,
+      vectorWeight: retrieval.vectorWeight ?? 0.7,
+      keywordWeight: retrieval.keywordWeight ?? 0.3,
+    };
     let chunks = await hybridSearch(ctx.message, embedding, store, {
       topK: topK * 2, // 多召回一些，给 reranker 裁剪空间
       minScore,
@@ -293,7 +333,7 @@ async function handleBeforePromptBuild(
           .map((rd) => chunkMap.get(rd.text))
           .filter((c): c is NonNullable<typeof c> => c !== undefined);
       } catch (err) {
-        console.error('[Knowledge] Reranker failed, using original order:', err);
+        logger.warn(`[knowledge] reranker failed; using original order: ${err instanceof Error ? err.message : String(err)}`);
         // reranker 失败不阻断，使用原始排序
         chunks = chunks.slice(0, topK);
       }
@@ -318,9 +358,12 @@ async function handleBeforePromptBuild(
         const maxTokens = injection.maxTokens ?? 2048;
         contextText = await tokenizer.truncate(contextText, maxTokens);
       } catch (err) {
-        console.error('[Knowledge] Tokenizer truncation failed, using original context:', err);
+        logger.warn(`[knowledge] tokenizer truncation failed; using original context: ${err instanceof Error ? err.message : String(err)}`);
         // 截断失败不阻断
       }
+    } else {
+      const maxCharacters = (injection.maxTokens ?? 2048) * 4;
+      if (contextText.length > maxCharacters) contextText = contextText.slice(0, maxCharacters);
     }
 
     // ================================================================
@@ -337,7 +380,7 @@ async function handleBeforePromptBuild(
 
     return { systemPrompt: injectedContext };
   } catch (error) {
-    console.error('[Knowledge] Error in before_prompt_build:', error);
+    logger.error(`[knowledge] before_prompt_build failed: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
   }
 }

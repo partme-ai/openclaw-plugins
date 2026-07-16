@@ -22,7 +22,6 @@ export interface MtlsProxyConfig {
   upstreamPort: number;
   requestTimeoutMs: number;
   userHeader: string;
-  scopesHeader?: string;
 }
 
 /** 单条受保护路径规则（exact 或 prefix 匹配）。 */

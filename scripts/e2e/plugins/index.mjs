@@ -11,6 +11,10 @@ import { testRouter } from "./router.mjs";
 import { testStomp } from "./stomp.mjs";
 import { testWebMqtt } from "./web-mqtt.mjs";
 import { testWebStomp } from "./web-stomp.mjs";
+import { testMtls } from "./mtls.mjs";
+import { testOAuth2 } from "./oauth2.mjs";
+import { testWebSocket } from "./web-socket.mjs";
+import { testTracing } from "./tracing.mjs";
 import { resolvePlugins } from "../lib/registry.mjs";
 
 /** @type {Record<string, (ctx: ReturnType<typeof createTestContext>, results: import('../lib/utils.mjs').resultRow[]) => Promise<void>>} */
@@ -24,6 +28,10 @@ const ADAPTERS = {
   stomp: testStomp,
   "web-mqtt": testWebMqtt,
   "web-stomp": testWebStomp,
+  mtls: testMtls,
+  oauth2: testOAuth2,
+  "web-socket": testWebSocket,
+  tracing: testTracing,
 };
 
 /**

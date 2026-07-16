@@ -31,7 +31,12 @@ export interface BridgePluginRuntime {
       finalizeInboundContext: (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
       createReplyDispatcherWithTyping: (params: {
         deliver: (payload: { text: string; mediaUrl?: string }) => void | Promise<void>;
-      }) => unknown;
+      }) =>
+        | unknown
+        | {
+            dispatcher: unknown;
+            replyOptions?: Record<string, unknown>;
+          };
       dispatchReplyFromConfig: (params: {
         ctx: Record<string, unknown>;
         cfg: Record<string, unknown>;

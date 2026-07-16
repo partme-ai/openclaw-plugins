@@ -42,6 +42,19 @@ type TokenCache = {
 };
 
 const tokenCaches = new Map<string, TokenCache>();
+const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+    const body = await readResponseBodyAsBuffer(response, MAX_JSON_RESPONSE_BYTES);
+    if (!response.ok) {
+        throw new Error(`WeCom API HTTP ${response.status}`);
+    }
+    try {
+        return JSON.parse(body.toString("utf8")) as T;
+    } catch {
+        throw new Error("WeCom API returned invalid JSON");
+    }
+}
 
 function normalizeUploadFilename(filename: string): string {
     const trimmed = filename.trim();
@@ -120,7 +133,7 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
                 `${API_ENDPOINTS.GET_TOKEN}?corpid=${encodeURIComponent(agent.corpId)}&corpsecret=${encodeURIComponent(agent.corpSecret)}`,
             );
             const res = await wecomFetch(url, undefined, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-            const json = await res.json() as { access_token?: string; expires_in?: number; errcode?: number; errmsg?: string };
+            const json = await readJsonResponse<{ access_token?: string; expires_in?: number; errcode?: number; errmsg?: string }>(res);
 
             if (!json?.access_token) {
                 throw new Error(`gettoken failed: ${json?.errcode} ${json?.errmsg}`);
@@ -161,9 +174,9 @@ export async function sendText(params: {
     const token = await getAccessToken(agent);
 
     const useChat = Boolean(chatId);
-    const url = useChat
+    const url = buildAgentApiUrl(agent, useChat
         ? `${API_ENDPOINTS.SEND_APPCHAT}?access_token=${encodeURIComponent(token)}`
-        : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`;
+        : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`);
 
     const body = useChat
         ? { chatid: chatId, msgtype: "text", text: { content: text } }
@@ -181,13 +194,13 @@ export async function sendText(params: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     }, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    const json = await res.json() as {
+    const json = await readJsonResponse<{
         errcode?: number;
         errmsg?: string;
         invaliduser?: string;
         invalidparty?: string;
         invalidtag?: string;
-    };
+    }>(res);
 
     if (json?.errcode !== 0) {
         throw new Error(`send failed: ${json?.errcode} ${json?.errmsg}`);
@@ -225,10 +238,7 @@ export async function uploadMedia(params: {
     const token = await getAccessToken(agent);
     const proxyUrl = resolveWecomEgressProxyUrlFromNetwork(agent.network);
     // 添加 debug=1 参数获取更多错误信息
-    const url = `${API_ENDPOINTS.UPLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}&debug=1`;
-
-    // DEBUG: 输出上传信息
-    console.log(`[wecom-upload] Uploading media: type=${type}, filename=${safeFilename}, size=${buffer.length} bytes`);
+    const url = buildAgentApiUrl(agent, `${API_ENDPOINTS.UPLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}`);
 
     const uploadOnce = async (fileContentType: string) => {
         // 手动构造 multipart/form-data 请求体
@@ -243,8 +253,6 @@ export async function uploadMedia(params: {
         const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
         const body = Buffer.concat([header, buffer, footer]);
 
-        console.log(`[wecom-upload] Multipart body size=${body.length}, boundary=${boundary}, fileContentType=${fileContentType}`);
-
         const res = await wecomFetch(url, {
             method: "POST",
             headers: {
@@ -253,8 +261,7 @@ export async function uploadMedia(params: {
             },
             body: body,
         }, { proxyUrl, timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-        const json = await res.json() as { media_id?: string; errcode?: number; errmsg?: string };
-        console.log(`[wecom-upload] Response:`, JSON.stringify(json));
+        const json = await readJsonResponse<{ media_id?: string; errcode?: number; errmsg?: string }>(res);
         return json;
     };
 
@@ -305,9 +312,9 @@ export async function sendMedia(params: {
     const token = await getAccessToken(agent);
 
     const useChat = Boolean(chatId);
-    const url = useChat
+    const url = buildAgentApiUrl(agent, useChat
         ? `${API_ENDPOINTS.SEND_APPCHAT}?access_token=${encodeURIComponent(token)}`
-        : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`;
+        : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`);
 
     const mediaPayload = mediaType === "video"
         ? { media_id: mediaId, title: title ?? "Video", description: description ?? "" }
@@ -329,13 +336,13 @@ export async function sendMedia(params: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     }, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    const json = await res.json() as {
+    const json = await readJsonResponse<{
         errcode?: number;
         errmsg?: string;
         invaliduser?: string;
         invalidparty?: string;
         invalidtag?: string;
-    };
+    }>(res);
 
     if (json?.errcode !== 0) {
         throw new Error(`send ${mediaType} failed: ${json?.errcode} ${json?.errmsg}`);
@@ -365,7 +372,7 @@ export async function downloadMedia(params: {
 }): Promise<{ buffer: Buffer; contentType: string; filename?: string }> {
     const { agent, mediaId } = params;
     const token = await getAccessToken(agent);
-    const url = `${API_ENDPOINTS.DOWNLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&media_id=${encodeURIComponent(mediaId)}`;
+    const url = buildAgentApiUrl(agent, `${API_ENDPOINTS.DOWNLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&media_id=${encodeURIComponent(mediaId)}`);
 
     const res = await wecomFetch(url, undefined, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
 
@@ -395,7 +402,7 @@ export async function downloadMedia(params: {
 
     // 检查是否返回了错误 JSON
     if (contentType.includes("application/json")) {
-        const json = await res.json() as { errcode?: number; errmsg?: string };
+        const json = await readJsonResponse<{ errcode?: number; errmsg?: string }>(res);
         throw new Error(`download failed: ${json?.errcode} ${json?.errmsg}`);
     }
 
@@ -427,7 +434,7 @@ async function callAuthenticatedJson<T extends { errcode?: number; errmsg?: stri
         ...(init.headers ?? {}),
       },
     }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS, proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network) });
-    const data = await res.json() as T;
+    const data = await readJsonResponse<T>(res);
 
     if (
       attempt === 0 &&
@@ -543,7 +550,7 @@ export async function syncMessages(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    const json = await res.json() as KfSyncMsgResponse & { has_more?: number; msg_list?: KfSyncMsgItem[] };
+    const json = await readJsonResponse<KfSyncMsgResponse & { has_more?: number; msg_list?: KfSyncMsgItem[] }>(res);
     void agent;
     return {
         errcode: json.errcode ?? 0,
@@ -572,9 +579,7 @@ export async function sendKfMessage(
     const externalUserId = String(params.touser ?? "").trim();
     const guard = await checkKfSendAllowed({ openKfId, externalUserId });
     if (!guard.allowed) {
-        console.warn(
-            `[wecom-kf] send_msg blocked open_kfid=${openKfId} user=${externalUserId} code=${guard.code}: ${guard.reason}`,
-        );
+        console.warn(`[wecom-kf] send_msg blocked code=${guard.code}: ${guard.reason}`);
         return { errcode: 95001, errmsg: guard.reason };
     }
 
@@ -659,7 +664,7 @@ export async function sendEventMessage(params: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    return res.json() as Promise<KfSendMsgResult>;
+    return readJsonResponse<KfSendMsgResult>(res);
 }
 
 /** @deprecated 使用 sendKfMessage(agent, params) */
@@ -687,7 +692,7 @@ export async function sendKfMsg(params: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
     }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    return res.json() as Promise<KfSendMsgResult>;
+    return readJsonResponse<KfSendMsgResult>(res);
 }
 
 /** KF 接待人员条目 */
@@ -822,10 +827,10 @@ export async function listServicers(params: {
         body: JSON.stringify(body),
     }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
 
-    const json = await res.json() as {
+    const json = await readJsonResponse<{
         errcode: number;
         servicer_list?: Array<{ userid: string; status: number }>;
-    };
+    }>(res);
     if (json.errcode !== 0) return [];
     return json.servicer_list ?? [];
 }

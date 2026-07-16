@@ -2,6 +2,8 @@
  * WeCom 双模式配置类型定义
  */
 
+import type { EventMessagesConfig } from "./message.js";
+
 /** DM 策略配置 - 与其他渠道保持一致，仅用 allowFrom */
 export type WecomDmConfig = {
     /** DM 策略: 'open' 允许所有人, 'pairing' 需要配对, 'allowlist' 仅允许列表, 'disabled' 禁用 */
@@ -167,6 +169,8 @@ export type WecomKfAccountConfig = {
     encodingAESKey?: string;
     servicerUserId?: string;
     welcomeText?: string;
+    /** 微信客服事件消息模板 */
+    eventMessages?: EventMessagesConfig;
 };
 
 /**
@@ -193,6 +197,8 @@ export type WecomKfConfig = {
     token?: string;
     encodingAESKey?: string;
     welcomeText?: string;
+    /** 微信客服事件消息模板 */
+    eventMessages?: EventMessagesConfig;
     media?: WecomMediaConfig;
     network?: WecomNetworkConfig;
     routing?: WecomRoutingConfig;
@@ -219,6 +225,7 @@ export type WecomAccountConfig = {
         welcomeText?: string;
         agentId?: string;
         agentMapping?: Record<string, string>;
+        eventMessages?: EventMessagesConfig;
     };
     /** KF 快捷字段 (兼容 callback.ts 直接读取) */
     corpId?: string;
@@ -228,6 +235,8 @@ export type WecomAccountConfig = {
     agentId?: string;
     agentMapping?: Record<string, string>;
     welcomeText?: string;
+    /** 微信客服事件消息模板 */
+    eventMessages?: EventMessagesConfig;
     token?: string;
     encodingAESKey?: string;
 };

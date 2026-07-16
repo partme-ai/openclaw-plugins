@@ -1,12 +1,9 @@
 {
   "name": "@partme.ai/openclaw-amap",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "type": "module",
-  "description": "高德开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
+  "description": "高德 Web 服务 API 地点搜索工具 — OpenClaw 2026.7.1",
   "license": "MIT",
-  "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
-  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -20,11 +17,7 @@
     "openclaw.plugin.json",
     "README.md",
     "README.zh-CN.md",
-    "LICENSE",
-    "tsconfig.json",
-    "tsup.config.ts",
-    "vitest.config.ts",
-    ".gitignore"
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -51,11 +44,6 @@
   "peerDependencies": {
     "openclaw": ">=2026.7.1"
   },
-  "peerDependenciesMeta": {
-    "openclaw": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "openclaw": "2026.7.1",
@@ -67,11 +55,13 @@
     "extensions": [
       "./dist/index.js"
     ],
-    "setupEntry": "./dist/setup-entry.js",
-    "channel": {
-      "id": "amap",
-      "label": "高德地图（Amap）",
-      "blurb": "高德开放平台渠道与运营工具"
+    "compat": {
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
+    },
+    "build": {
+      "openclawVersion": "2026.7.1",
+      "pluginSdkVersion": "2026.7.1"
     }
   }
 }

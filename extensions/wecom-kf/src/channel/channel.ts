@@ -34,6 +34,54 @@ const meta = {
   quickstartAllowFrom: true,
 };
 
+const kfAccountSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    enabled: { type: "boolean" },
+    name: { type: "string" },
+    webhookPath: { type: "string", pattern: "^/" },
+    apiBaseUrl: { type: "string", format: "uri" },
+    openKfId: { type: "string", minLength: 1 },
+    agentId: { type: "string", minLength: 1 },
+    agentMapping: { type: "object", additionalProperties: { type: "string" } },
+    corpId: { type: "string", minLength: 1 },
+    corpSecret: { type: "string", minLength: 1 },
+    token: { type: "string", minLength: 1 },
+    encodingAESKey: { type: "string", minLength: 43, maxLength: 43 },
+    servicerUserId: { type: "string" },
+    welcomeText: { type: "string" },
+    eventMessages: { type: "object", additionalProperties: true },
+    humanTransfer: { type: "object", additionalProperties: true },
+    media: { type: "object", additionalProperties: true },
+    network: { type: "object", additionalProperties: true },
+    routing: { type: "object", additionalProperties: true },
+    bot: { type: "object", additionalProperties: true },
+    agent: { type: "object", additionalProperties: true },
+  },
+} as const;
+
+const wecomKfConfigSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ...kfAccountSchema.properties,
+    defaultAccount: { type: "string", minLength: 1 },
+    accounts: { type: "object", additionalProperties: kfAccountSchema },
+    session: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        dmScope: {
+          type: "string",
+          enum: ["per-peer", "per-channel-peer", "per-account-channel-peer"],
+        },
+        idleResetMinutes: { type: "number", minimum: 1 },
+      },
+    },
+  },
+} as const;
+
 function normalizeWecomMessagingTarget(raw: string): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
@@ -81,15 +129,12 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
     blockStreaming: true,
   },
   reload: { configPrefixes: ["channels.wecom-kf"] },
-  // NOTE: We intentionally avoid Zod -> JSON Schema conversion at plugin-load time.
-  // Some OpenClaw runtime environments load plugin modules via jiti in a way that can
-  // surface zod `toJSONSchema()` binding issues (e.g. `this` undefined leading to `_zod` errors).
-  // A permissive schema keeps config UX working while preventing startup failures.
   configSchema: {
-    schema: {
-      type: "object",
-      additionalProperties: true,
-      properties: {},
+    schema: wecomKfConfigSchema,
+    uiHints: {
+      corpSecret: { label: "Corp Secret", sensitive: true },
+      token: { label: "Callback Token", sensitive: true },
+      encodingAESKey: { label: "Encoding AES Key", sensitive: true },
     },
   },
   config: {
@@ -196,13 +241,12 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
       // Backported from research/openclaw-china probeWecomKfAccount
       try {
         const resolved = account as Record<string, unknown>;
-        const agentCfg = resolved.agent as Record<string, unknown> | undefined;
-        const kfCfg = resolved.kf as Record<string, unknown> | undefined;
+        const accountConfig = resolved.config as Record<string, unknown> | undefined;
 
-        const corpId = (kfCfg?.corpId ?? resolved.corpId ?? "") as string;
-        const corpSecret = (kfCfg?.corpSecret ?? resolved.corpSecret ?? "") as string;
-        const token = (kfCfg?.token ?? resolved.token ?? "") as string;
-        const encodingAESKey = (kfCfg?.encodingAESKey ?? resolved.encodingAESKey ?? "") as string;
+        const corpId = (accountConfig?.corpId ?? resolved.corpId ?? "") as string;
+        const corpSecret = (accountConfig?.corpSecret ?? resolved.corpSecret ?? "") as string;
+        const token = (accountConfig?.token ?? resolved.token ?? "") as string;
+        const encodingAESKey = (accountConfig?.encodingAESKey ?? resolved.encodingAESKey ?? "") as string;
 
         // Check if KF is configured
         if (!corpId || !token || !encodingAESKey) {

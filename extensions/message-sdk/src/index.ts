@@ -227,6 +227,7 @@ export {
 export {
   OutboundMessageQueue,
   type OutboundQueueItem,
+  type OutboundMessageQueueOptions,
 } from "./queue/outbound-message-queue.js";
 
 export {

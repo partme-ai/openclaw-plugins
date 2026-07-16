@@ -143,7 +143,7 @@ export function createDouyinChannelPlugin(): ChannelPlugin<ResolvedDouyinAccount
             auth: "plugin",
             pluginId: CHANNEL_ID,
             accountId: account.accountId,
-            replaceExisting: true,
+            replaceExisting: false,
             log: (m: string) => log?.info?.(m),
             handler,
           });

@@ -134,7 +134,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{"color":"green"}] }, "unit": "short" }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
-      "targets": [{ "expr": "openclaw_agent_runs_started_total{instance=~\"$instance\"}", "refId": "A" }] },
+      "targets": [{ "expr": "sum(openclaw_run_duration_seconds_count{instance=~\"$instance\"})", "refId": "A" }] },
     { "id": 41, "type": "stat", "title": "Tool Calls Total", "gridPos": { "h": 5, "w": 6, "x": 6, "y": 43 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{"color":"green"}] }, "unit": "short" }, "overrides": [] },

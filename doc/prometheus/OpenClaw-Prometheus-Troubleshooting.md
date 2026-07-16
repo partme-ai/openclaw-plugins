@@ -1,173 +1,50 @@
-# 故障排查
+# OpenClaw Prometheus 故障排查
 
-## 常见问题
+> 适用版本：2026.7.1
 
-### 1. /metrics 返回 403
+## 插件未加载
 
-**原因**：scrapeAuth enabled 但未提供 token
-
-**解决**：
 ```bash
-export OPENCLAW_PROMETHEUS_BEARER_TOKEN="your-secret-token"
-openclaw plugins install
+openclaw plugins inspect prometheus
+openclaw doctor
 ```
 
-或在配置中设置：
-```json
-{
-  "scrapeAuth": {
-    "enabled": false
-  }
-}
-```
+确认 `plugins.allow` 包含 `prometheus`，`plugins.entries.prometheus.enabled=true`，安装记录版本为 2026.7.1。manifest 的 `activation.onStartup` 会在 Gateway 启动时激活插件。
 
-### 2. SLI 比率指标为空
+## `/metrics` 返回 401 或 503
 
-**原因**：样本量不足（< 1）或 RPC 返回空数据
+- 401：请求 Bearer 与 `OPENCLAW_PROMETHEUS_BEARER_TOKEN` 不一致；
+- 503 且提示缺少 token：已启用 `scrapeAuth`，但 Gateway 进程没有收到环境变量；
+- health 503：查看 JSON 中 `rpc.lastError`、`collectors.failed`、`snapshot.ageMs`。
 
-**解决**：
-- 等待更多数据（至少 1-2 个采集周期）
-- 检查 RPC 端点是否返回数据
-- 查看 `openclaw_metrics_last_scrape_duration_seconds` 是否正常
+## collector 失败
 
-### 3. Grafana Dashboard 无数据
-
-**原因**：Grafana 数据源配置错误
-
-**解决**：
-- 检查 `DS_PROMETHEUS` URL 是否正确（通常是 `http://localhost:9090`）
-- 检查 Prometheus 中是否有数据：访问 `http://localhost:9090/metrics`
-- 检查 Prometheus scrape interval：建议 15s
-
-### 4. 高 cardinality 警告
-
-**原因**：label 值过多（如 `agent_id`、`channel`、`account`）
-
-**解决**：
-- 使用 `drop` relabel_config 过滤高基数标签：
-  ```yaml
-  scrape_configs:
-    - job_name: 'openclaw'
-      relabel_configs:
-        - source_labels: [__address__]
-          target_label: instance
-          regex: '([^:]+)(:[0-9]+)?'
-          replacement: '${1}'
-        - regex: 'agent_id'
-          action: drop
-  ```
-- 降低 label 基数：使用 `channel` 而不是 `account`
-- 增加时间序列限制：在 Prometheus 中配置 `--storage.tsdb.retention.time=200d`
-
-### 5. Histogram Quantile 查询返回 NaN
-
-**原因**：数据量不足或 bucket 配置不合理
-
-**解决**：
-- 检查 `_bucket` 指标是否有数据
-- 调整 bucket 配置（在 `config/prometheus.yaml` 中）
-- 增加查询时间窗口：从 `[5m]` 改为 `[10m]`
-
-### 6. /healthz 返回 unhealthy
-
-**原因**：Snapshot age > 60s 或 RPC 失败
-
-**解决**：
-- 检查 `openclaw_runtime_snapshot_age_seconds` 指标
-- 查看 `/metrics/debug` 中的 collector 状态
-- 检查 RPC 端点是否可访问
-
-### 7. 缓存命中率低
-
-**原因**：collectIntervalMs 设置过小或数据变化频繁
-
-**解决**：
-- 增加采集间隔：从 15s 改为 30s
-- 检查 `openclaw_cache_hits_total` / `cache_misses_total` 比率
-- 调整 TTL：在 `collect-cache.ts` 中调整
-
-### 8. 性能：/metrics 耗时过长
-
-**原因**：指标数量过多或 RPC 延迟高
-
-**解决**：
-- 检查 `openclaw_metrics_series_total` 指标（建议 < 100K）
-- 优化 RPC 调用：使用 TTL 缓存
-- 调整 snapshotIntervalMs：从 30s 改为 60s
-
-### 9. 旧版 Summary 类型与 Histogram 不兼容
-
-**原因**：使用旧版本 dashboard 查询 `_sum` 和 `_count`
-
-**解决**：
-- 使用新版 `dashboard-advanced.json`（支持 `histogram_quantile()`）
-- 更新 Grafana 变量：使用 `openclaw_agent_run_duration_seconds_bucket` 而不是 `_sum`
-- 查看 [OpenClaw-Prometheus-Grafana-README.md](./grafana/OpenClaw-Prometheus-Grafana-README.md) 中的 dashboard 说明
-
-### 10. 集群场景下 Instance Label 不唯一
-
-**原因**：多个实例使用相同的 `instance` 值
-
-**解决**：
-- 在 Kubernetes 中使用 Pod name 作为 instance：
-  ```yaml
-  env:
-    - name: INSTANCE
-      valueFrom:
-        fieldRef:
-          fieldPath: metadata.name
-  ```
-- 在 Docker 中使用容器 ID：
-  ```yaml
-  env:
-    - name: INSTANCE
-      value: $(hostname)
-  ```
-- 或使用 Pod IP：
-  ```bash
-  export INSTANCE=$(hostname -i)
-  ```
-
-## 高级排查
-
-### 1. 启用调试日志
-
-在配置中添加：
-```json
-{
-  "debug": true
-}
-```
-
-或在环境变量中：
-```bash
-export DEBUG=openclaw-prometheus:*
-```
-
-### 2. 查看 Prometheus 查询性能
-
-访问 `http://localhost:9090/consoles/focus` 并运行：
 ```promql
-topk(10, rate(openclaw_agent_runs_started_total[5m]))
+openclaw_metrics_collector_success == 0
+increase(openclaw_metrics_collect_errors_total[15m])
 ```
 
-### 3. 检查 Node.js 性能
+RPC collector 需要连接当前 Gateway，并使用 operator read scope。检查 Gateway URL、token/password、防火墙和 WebSocket 代理配置。累计错误只用于趋势，恢复后 `collector_success` 会重新变成 1。
 
-访问 `/metrics` 并查看：
-- `openclaw_nodejs_heap_used_bytes`（内存使用）
-- `openclaw_nodejs_event_loop_lag_ms`（事件循环延迟）
-- `rate(openclaw_nodejs_process_cpu_user_seconds_total[2m])`（CPU 使用率）
+## diagnostics 指标没有出现
 
-### 4. 分析慢查询
+diagnostics 指标按事件创建。先产生一次模型、工具或消息流量。确认 bundled `diagnostics-prometheus` 已禁用，避免重复订阅。插件不需要 `hooks.allowConversationAccess`。
 
-在 Prometheus 中查看 `topk(10, openclaw_metrics_last_scrape_duration_seconds)` 并优化：
-- 减少采集的 RPC 数量
-- 增加缓存 TTL
-- 优化 `snapshotSamples()` 调用
+## series 被丢弃
 
-## 支持资源
+观察：
 
-- **文档**：[OpenClaw 文档](https://docs.openclaw.ai)
-- **Prometheus**：[Prometheus 文档](https://prometheus.io/docs)
-- **Grafana**：[Grafana 文档](https://grafana.com/docs)
-- **GitHub Issues**：[报告问题](https://github.com/partme-ai/openclaw-plugins/issues)
+```promql
+increase(openclaw_prometheus_series_dropped_total[15m])
+increase(openclaw_runtime_metric_series_dropped_total[15m])
+```
+
+持续增长说明业务 label 基数过高。优先减少 tool/channel/provider 等动态值的种类，而不是盲目提高内存上限。
+
+## CLI 安装或检查不退出
+
+2026.7.1 已让 RuntimeCollector 定时器 `unref()`，并在停止时清理 RPC、重连和订阅。若仍发生，确认实际安装版本，并采集 `openclaw plugins inspect prometheus` 与进程堆栈。
+
+## Grafana 无数据
+
+先在 Prometheus UI 直接查询真实 metric name，再核对 dashboard 变量与 instance label。Dashboard 是模板；以 `/metrics` 输出和 [指标目录](./OpenClaw-Prometheus-Metrics.md) 为准。

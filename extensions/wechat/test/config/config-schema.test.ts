@@ -2,6 +2,10 @@ import { describe, it, expect } from "vitest";
 import { WeixinConfigSchema } from "../../src/config/config-schema.js";
 
 describe("WeixinConfigSchema", () => {
+  it("rejects non-HTTPS API and CDN endpoints", () => {
+    expect(() => WeixinConfigSchema.parse({ baseUrl: "http://example.com" })).toThrow("HTTPS");
+    expect(() => WeixinConfigSchema.parse({ cdnBaseUrl: "http://example.com" })).toThrow("HTTPS");
+  });
   it("parses minimal config with defaults", () => {
     const result = WeixinConfigSchema.parse({});
     expect(result.baseUrl).toBe("https://ilinkai.weixin.qq.com");

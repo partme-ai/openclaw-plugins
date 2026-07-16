@@ -1,6 +1,8 @@
 import type { MetricDefinition, MetricSample, MetricType } from "../types.js";
 
 type LabelValues = Record<string, string>;
+export const MAX_RUNTIME_METRIC_SERIES = 4096;
+const DROPPED_SERIES_NAME = "openclaw_runtime_metric_series_dropped_total";
 
 // ─────────── hot-path 优化：NUL 分隔 sample key，避免 JSON.stringify ───────────
 
@@ -32,6 +34,7 @@ function sortedLabels(labels: LabelValues | undefined): LabelValues | undefined 
 export class MetricsRegistry {
   private readonly definitions = new Map<string, MetricDefinition>();
   private readonly samples = new Map<string, MetricSample>();
+  private droppedSeries = 0;
 
   // 快照缓存：mutation 时失效，读取时 lazy 重建
   private _defCache: MetricDefinition[] | null = null;
@@ -70,13 +73,18 @@ export class MetricsRegistry {
       timestamp?: number;
     },
   ): void {
+    const key = sampleKey(name, options.labels);
+    if (!this.samples.has(key) && this.samples.size >= MAX_RUNTIME_METRIC_SERIES) {
+      this.droppedSeries += 1;
+      this.invalidateCache();
+      return;
+    }
     this.define({
       name,
       help: options.help,
       type: options.type ?? "gauge",
       labels: options.labels ? Object.keys(options.labels).sort() : undefined,
     });
-    const key = sampleKey(name, options.labels);
     const sl = sortedLabels(options.labels);
     this.samples.set(key, {
       name,
@@ -216,7 +224,15 @@ export class MetricsRegistry {
 
   snapshotDefinitions(): MetricDefinition[] {
     if (this._defCache) return this._defCache;
-    this._defCache = [...this.definitions.values()].sort((a, b) =>
+    const definitions = [...this.definitions.values()];
+    if (this.droppedSeries > 0) {
+      definitions.push({
+        name: DROPPED_SERIES_NAME,
+        help: "Runtime metric series dropped because the exporter series cap was reached",
+        type: "counter",
+      });
+    }
+    this._defCache = definitions.sort((a, b) =>
       a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
     );
     return this._defCache;
@@ -224,7 +240,11 @@ export class MetricsRegistry {
 
   snapshotSamples(): MetricSample[] {
     if (this._sampleCache) return this._sampleCache;
-    this._sampleCache = [...this.samples.values()].sort((a, b) => {
+    const samples = [...this.samples.values()];
+    if (this.droppedSeries > 0) {
+      samples.push({ name: DROPPED_SERIES_NAME, value: this.droppedSeries });
+    }
+    this._sampleCache = samples.sort((a, b) => {
       const an = a.name;
       const bn = b.name;
       if (an < bn) return -1;

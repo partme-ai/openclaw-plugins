@@ -6,7 +6,11 @@ const invalidateClientTokenMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/shared/http.js", () => ({
   douyinFetch: douyinFetchMock,
-  readResponseBodyAsBuffer: async (response: Response) => Buffer.from(await response.arrayBuffer()),
+  readResponseBodyAsBuffer: async (response: Response, maxBytes?: number) => {
+    const body = Buffer.from(await response.arrayBuffer());
+    if (maxBytes != null && body.length > maxBytes) throw new Error("response too large");
+    return body;
+  },
 }));
 vi.mock("../src/config/auth.js", () => ({
   getClientToken: getClientTokenMock,
@@ -39,6 +43,23 @@ describe("requestDouyinOpenApi", () => {
     expect(url.origin).toBe("https://open.douyin.com");
     expect(url.searchParams.get("account_id")).toBe("merchant-1");
     expect(init.headers).toMatchObject({ "access-token": "clt-token" });
+  });
+
+  it("forwards the life-service account header when configured", async () => {
+    douyinFetchMock.mockResolvedValue(new Response(JSON.stringify({
+      data: { error_code: 0, orders: [] },
+    }), { status: 200 }));
+
+    await requestDouyinOpenApi({
+      context: {
+        account: { app_key: "key", app_secret: "secret", account_id: "merchant-1" },
+      },
+      path: "/goodlife/v1/trade/order/query/",
+      method: "GET",
+    });
+
+    const init = douyinFetchMock.mock.calls[0]?.[2] as RequestInit;
+    expect(init.headers).toMatchObject({ "Rpc-Transit-Life-Account": "merchant-1" });
   });
 
   it("refreshes a rejected token once", async () => {

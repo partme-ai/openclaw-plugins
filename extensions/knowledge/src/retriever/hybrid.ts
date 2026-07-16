@@ -63,14 +63,15 @@ export async function hybridSearch(
     }
 
     case 'keyword': {
-      return keywordSearch(query, store, topK, options?.sourceId);
+      const results = await keywordSearch(query, store, topK, options?.sourceId);
+      return results.filter((item) => item.score >= (options?.minScore ?? 0));
     }
 
     case 'hybrid': {
       // 双路并行召回，各自扩大 topK 供融合阶段裁剪
       const vector = await embedding.embed(query);
       const [vectorResults, keywordResults] = await Promise.all([
-        store.search(vector, { ...options, topK: topK * 2 }),
+        store.search(vector, { ...options, topK: topK * 2, minScore: 0 }),
         keywordSearch(query, store, topK * 2, options?.sourceId),
       ]);
 
@@ -80,7 +81,7 @@ export async function hybridSearch(
         config.vectorWeight,
         config.keywordWeight,
         topK,
-      );
+      ).filter((item) => item.score >= (options?.minScore ?? 0));
     }
 
     default:
@@ -195,7 +196,8 @@ function fuseResults(
  * @remarks 生产环境应替换为专用分页 API；当前为第一版 pragmatic 方案。
  */
 async function getAllChunks(store: VectorStore, sourceId?: string): Promise<ScoredChunk['chunk'][]> {
-  const dummyVector = new Array(384).fill(0);
+  const dimensions = (await store.stats()).dimensions;
+  const dummyVector = new Array(dimensions).fill(0);
   const results = await store.search(dummyVector, {
     topK: 10000,
     minScore: 0,

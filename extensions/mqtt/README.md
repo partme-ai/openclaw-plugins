@@ -7,7 +7,7 @@
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--mqtt-blue)
 ![Node](https://img.shields.io/badge/Node.js-20+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![MQTT](https://img.shields.io/badge/MQTT-3.1.1%2F5.0-orange)
+![MQTT](https://img.shields.io/badge/MQTT-3.1%2F3.1.1-orange)
 
 </div>
 
@@ -29,7 +29,7 @@
 ### Lifecycle
 
 - Embedded broker starts when Gateway runs `startAccount` for MQTT channel (single account `default` in current release)
-- HTTP `GET /mqtt/status` is registered in `registerFull`, exposing broker stats, config snapshot, and policy hot-reload metadata
+- HTTP `GET /mqtt/status` is registered in `registerFull`, exposing broker stats, a secret-free config summary, and policy metadata
 - Session key granularity follows OpenClaw global `session.dmScope` configuration
 - **`package.json` → `openclaw.setupEntry`** points to `dist/setup-entry.js`, exporting a lightweight entry via `defineSetupPluginEntry`
 
@@ -51,7 +51,7 @@ Aedes starts in-process and supports MQTT 3.1 and MQTT 3.1.1. The current Aedes 
 |------|---------|
 | Authentication | Username/password, per-user ACL, anonymous access toggle |
 | Transport | TCP (1883) + TLS (8883) with configurable cert/key/CA |
-| QoS | 0 (at most once) with mailbox soft limit, 1 (at least once) with ACK retry |
+| QoS | Native Aedes MQTT QoS 0/1/2; QoS 0 OpenClaw-dispatch mailbox soft limit |
 | Persistence | Multi-backend: memory, redis (with mqemitter), mongodb, level, nedb |
 | Limits | Configurable max payload bytes, max connections |
 | Sessions | Expiry-based cleanup, persistent across reconnect |
@@ -107,7 +107,7 @@ The default is a single-process in-memory deployment. Multi-Gateway horizontal s
 openclaw plugins install @partme.ai/openclaw-mqtt
 ```
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1`.
 
 ### Minimal Config
 
@@ -268,7 +268,7 @@ openclaw-mqtt/
 
 | Item | Version |
 |------|---------|
-| @partme.ai/openclaw-mqtt | 2026.5.25-2 |
+| @partme.ai/openclaw-mqtt | 2026.7.1 |
 | Recommended Node | 20+ |
 
 ## Security

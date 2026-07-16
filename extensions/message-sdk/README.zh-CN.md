@@ -2,7 +2,7 @@
 
 **统一消息格式 SDK — openclaw-plugins 全渠道互通的消息标准与公共工具库**
 
-[简体中文](./README.md) | [English](./README.en.md)
+简体中文 | [English](./README.md)
 
 ## 简介
 
@@ -14,7 +14,7 @@
 - **文件工具** — MIME/扩展名映射、文件分类
 - **AI 能力模块** — ASR 语音识别、OCR 文字识别、TTS 语音合成（按需引入）
 
-**零运行时必选依赖**。ASR/OCR/TTS 模块按需引入，不用的模块不会增加包体积。
+SDK 的必选运行时依赖只有 `undici`；`prom-client` 与 OpenClaw 集成属于按能力加载的可选 peer。TypeScript 消费者使用编译后的声明文件，并显式获取 Node 类型 peer。
 
 ### 核心设计原则
 
@@ -23,6 +23,14 @@
 - 内容类型支持 `text` / `markdown` / `mixed` 三种
 - `traceId` 全链路追踪，贯穿消息生成 → 传输 → 投递
 - 所有类型从主入口统一导入，也可按子路径按需导入
+- 21 个公开运行时入口全部指向编译后的 `dist/*.js`，发布包不会直接执行 `src/*.ts`
+
+### 队列可靠性边界
+
+- `InboundMessageQueue` 有界；队列已满时不会提前占用幂等键。
+- 即时 `onPush` 处理失败时会同时回滚队列项和幂等预占，使相同消息可以重试。
+- `OutboundMessageQueue` 按全部会话合计限制容量，通过 `onOverflow` 暴露溢出，并提供总 `size`。
+- 两种队列都是进程内缓冲，不替代持久化 Broker。
 
 ## 安装
 

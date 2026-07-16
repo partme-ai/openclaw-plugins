@@ -52,6 +52,7 @@ export function formatPrometheus(
 
   // ─── 2. 按 definition 顺序输出 ───
   let pi = 0; // parts index
+  const emittedSampleNames = new Set<string>();
 
   for (let di = 0; di < definitions.length; di++) {
     const def = definitions[di];
@@ -61,11 +62,17 @@ export function formatPrometheus(
     parts[pi++] = `# TYPE ${def.name} ${def.type}`;
 
     // samples for this definition
-    const indices = bucketStart.get(def.name);
-    if (indices) {
-      for (let j = 0; j < indices.length; j++) {
-        const sample = samples[indices[j]];
-        parts[pi++] = formatSampleLine(sample);
+    const sampleNames = def.type === "histogram"
+      ? [def.name, `${def.name}_bucket`, `${def.name}_sum`, `${def.name}_count`]
+      : [def.name];
+    for (const sampleName of sampleNames) {
+      const indices = bucketStart.get(sampleName);
+      if (indices) {
+        emittedSampleNames.add(sampleName);
+        for (let j = 0; j < indices.length; j++) {
+          const sample = samples[indices[j]];
+          parts[pi++] = formatSampleLine(sample);
+        }
       }
     }
 
@@ -79,7 +86,7 @@ export function formatPrometheus(
   }
 
   for (const [name, indices] of bucketStart) {
-    if (defNameSet.has(name)) continue;
+    if (defNameSet.has(name) || emittedSampleNames.has(name)) continue;
     parts[pi++] = `# HELP ${name} (auto-discovered)`;
     parts[pi++] = `# TYPE ${name} gauge`;
     for (let j = 0; j < indices.length; j++) {

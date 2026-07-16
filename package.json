@@ -18,6 +18,8 @@
     "check-plugin-structure:strict-base": "node scripts/check-plugin-structure.mjs --strict-base",
     "check-plugin-structure:strict-new": "node scripts/check-plugin-structure.mjs --strict-new",
     "check-plugin-structure:strict": "node scripts/check-plugin-structure.mjs --strict-base",
+    "check-release-readiness": "node scripts/check-release-readiness.mjs",
+    "check-package-archives": "node scripts/check-package-archives.mjs",
     "publish-changed": "node scripts/publish-changed.mjs",
     "sync-message-sdk-deps": "node scripts/sync-message-sdk-deps.mjs",
     "e2e": "node scripts/e2e/run-e2e.mjs",
@@ -32,7 +34,8 @@
   "packageManager": "pnpm@9.0.0",
   "devDependencies": {
     "openclaw": "2026.7.1",
-    "playwright": "1.52.0"
+    "playwright": "1.52.0",
+    "ws": "^8.18.0"
   },
   "workspaces": [
     "extensions/*",

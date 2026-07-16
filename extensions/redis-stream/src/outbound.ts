@@ -22,7 +22,10 @@ function parseDirectTarget(value: string | undefined): string | null {
     if (!target) throw new Error("empty target");
     return target;
   } catch (error) {
-    throw new Error(`[openclaw-redis-stream] Invalid explicit direct target: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `[openclaw-redis-stream] Invalid explicit direct target: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 

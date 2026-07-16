@@ -12,7 +12,7 @@ import { chunkText } from "openclaw/plugin-sdk/reply-runtime";
 import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 
 import { DEFAULT_WEBSOCKET_CONFIG } from "./config.js";
-import { serializeReplyFrame } from "./protocol.js";
+import { serializeReplyFrame } from "./transport/protocol.js";
 import { getConnectionIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { getWebsocketChannelConfig } from "./state/web-socket-state.js";
 import { sendToConnection } from "./transport/connection-hub.js";

@@ -22,6 +22,18 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - uses: pnpm/action-setup@v4
 
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Release gates
+        run: |
+          pnpm check-release-readiness
+          node scripts/check-plugin-structure.mjs --strict-base --strict-new
+          pnpm typecheck
+          pnpm test:unit
+          pnpm build
+          pnpm check-package-archives
+
       - name: Publish
         run: |
           ARGS=""

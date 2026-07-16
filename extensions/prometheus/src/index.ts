@@ -24,8 +24,8 @@ import {
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { DiagnosticsCollector } from "./diagnostics/collector.js";
+import { safeDiagnosticHandlerError } from "./diagnostics/metric-store.js";
 import {
-  renderDiagnosticsMetricsBlock,
   resetDiagnosticsMetricStore,
   startDiagnosticsSubscription,
   stopDiagnosticsSubscription,
@@ -47,6 +47,8 @@ import { formatJson } from "./formatters/json.js";
 import { resolvePrometheusConfig } from "./config.js";
 import { assertScrapeAuthorized } from "./transport/server.js";
 import { CollectCache } from "./collectors/collect-cache.js";
+import { CollectorRunner } from "./collectors/collector-runner.js";
+import { limitScrapeSamples } from "./collectors/sample-limit.js";
 import { PLUGIN_VERSION } from "./shared/version.js";
 import {
   initializeRuntimeStore,
@@ -58,15 +60,19 @@ import {
   refreshRuntimeSnapshots,
   registerPluginObservers,
   recordHttpLatency,
+  stopPluginObservers,
 } from "./runtime/observer.js";
-import { setRuntime } from "./runtime/ws-bridge.js";
+import { resetRuntime, setRuntime } from "./runtime/ws-bridge.js";
 
-const PLUGIN_ID = "openclaw-prometheus";
+const PLUGIN_ID = "prometheus";
 
 /** 内部采集状态（每个 register 调用一组） */
 let collectors: MetricCollector[] = [];
 let cache: CollectCache = new CollectCache(0);
+const collectorRunner = new CollectorRunner();
 const collectorErrorCounts = new Map<string, number>();
+const lastCollectorDiagnostics = new Map<string, CollectorDiagnostic>();
+let lastCollectAt: number | undefined;
 
 /**
  * @description 组装启用的 MetricCollector 列表。
@@ -95,6 +101,14 @@ function buildCollectors(includeRuntime: boolean): MetricCollector[] {
   return list;
 }
 
+function disposeCollectors(): void {
+  for (const collector of collectors) {
+    const disposable = collector as MetricCollector & { dispose?: () => void };
+    disposable.dispose?.();
+  }
+  collectors = [];
+}
+
 /**
  * @description 并行执行所有 collector.collect() 并汇总定义、样本与诊断。
  *
@@ -114,7 +128,7 @@ const COLLECTOR_ERRORS_TOTAL_DEF: MetricDefinition = {
   labels: ["collector"],
 };
 
-async function collectAll(): Promise<{
+async function collectAll(collectorTimeoutMs: number): Promise<{
   definitions: MetricDefinition[];
   samples: MetricSample[];
   diagnostics: CollectorDiagnostic[];
@@ -124,7 +138,9 @@ async function collectAll(): Promise<{
   const diagnostics: CollectorDiagnostic[] = [];
   const rpcSamples: MetricSample[] = [];
 
-  const results = await Promise.allSettled(collectors.map((c) => c.collect()));
+  const results = await Promise.allSettled(
+    collectors.map((collector) => collectorRunner.run(collector, collectorTimeoutMs)),
+  );
   allDefinitions.push(COLLECTOR_SUCCESS_DEF, COLLECTOR_ERRORS_TOTAL_DEF);
 
   for (let i = 0; i < collectors.length; i++) {
@@ -147,6 +163,7 @@ async function collectAll(): Promise<{
         value: collectorErrorCounts.get(collector) ?? 0,
       });
       diagnostics.push({ collector, ok: true });
+      lastCollectorDiagnostics.set(collector, { collector, ok: true });
       continue;
     }
     const nextCount = (collectorErrorCounts.get(collector) ?? 0) + 1;
@@ -161,13 +178,16 @@ async function collectAll(): Promise<{
       labels: { collector },
       value: nextCount,
     });
-    diagnostics.push({
+    const diagnostic = {
       collector,
       ok: false,
-      error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-    });
+      error: safeDiagnosticHandlerError(result.reason),
+    } satisfies CollectorDiagnostic;
+    diagnostics.push(diagnostic);
+    lastCollectorDiagnostics.set(collector, diagnostic);
   }
 
+  lastCollectAt = Date.now();
   updateRpcSamples(rpcSamples);
   return { definitions: dedupeDefinitions(allDefinitions), samples: allSamples, diagnostics };
 }
@@ -233,6 +253,10 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
   });
   refreshHousekeepingMetrics();
   registerPluginObservers(api);
+  disposeCollectors();
+  collectorErrorCounts.clear();
+  lastCollectorDiagnostics.clear();
+  lastCollectAt = undefined;
 
   api.registerService({
     id: "openclaw-prometheus-diagnostics",
@@ -246,6 +270,13 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
     stop: () => {
       stopDiagnosticsSubscription();
       resetDiagnosticsMetricStore();
+      stopPluginObservers();
+      disposeCollectors();
+      collectorRunner.clear();
+      resetRuntime();
+      collectorErrorCounts.clear();
+      lastCollectorDiagnostics.clear();
+      lastCollectAt = undefined;
     },
   });
 
@@ -269,7 +300,7 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
 
     const bundle = await cache.getOrCollect(async () => {
       const collectStartedAt = performance.now();
-      const collected = await collectAll();
+      const collected = await collectAll(cfg.collectorTimeoutMs);
       return {
         ...collected,
         collectDurationSeconds: (performance.now() - collectStartedAt) / 1000,
@@ -277,9 +308,10 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
     });
     const scrapeSeconds = bundle.collectDurationSeconds ?? 0;
 
-    const definitions = [...bundle.definitions];
-    const samples = [...bundle.samples];
+    let definitions = [...bundle.definitions];
+    let samples = [...bundle.samples];
     appendMetaSamples(definitions, samples, scrapeSeconds);
+    ({ definitions, samples } = limitScrapeSamples(definitions, samples, cfg.maxScrapeSeries));
     return { definitions, samples, diagnostics: bundle.diagnostics };
   }
 
@@ -289,11 +321,7 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
       if (!data) {
         return;
       }
-      const coreOutput = formatPrometheus(data.definitions, data.samples);
-      const diagnosticsOutput = renderDiagnosticsMetricsBlock();
-      const output = diagnosticsOutput
-        ? `${coreOutput.trimEnd()}\n${diagnosticsOutput}`
-        : coreOutput;
+      const output = formatPrometheus(data.definitions, data.samples);
       res.writeHead(200, {
         "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
         "Cache-Control": "no-store",
@@ -314,33 +342,28 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
         data.diagnostics,
         buildJsonMeta(),
       );
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(output, null, 2));
+      writeJson(res, 200, output);
     });
   }
 
   async function detailedHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     await withRouteMetrics(metricsChildPath(base, "/detailed"), req, res, async () => {
-      if (!assertScrapeAuthorized(req, res, cfg)) {
-        return;
-      }
-
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const familyFilter = url.searchParams.get("family");
-
-      const t0 = performance.now();
-      const bundle = await cache.getOrCollect(() => collectAll());
-      const scrapeSeconds = (performance.now() - t0) / 1000;
+      if (familyFilter && !/^[A-Za-z_:][A-Za-z0-9_:]{0,127}$/.test(familyFilter)) {
+        writeJson(res, 400, { ok: false, error: "family must be a valid Prometheus metric name prefix" });
+        return;
+      }
+      const bundle = await runCollect(req, res);
+      if (!bundle) return;
 
       let filteredDefs = [...bundle.definitions];
       let filteredSamples = [...bundle.samples];
 
       if (familyFilter) {
-        filteredDefs = filteredDefs.filter((d) => d.name.includes(familyFilter));
-        filteredSamples = filteredSamples.filter((s) => s.name.includes(familyFilter));
+        filteredDefs = filteredDefs.filter((d) => d.name.startsWith(familyFilter));
+        filteredSamples = filteredSamples.filter((s) => s.name.startsWith(familyFilter));
       }
-
-      appendMetaSamples(filteredDefs, filteredSamples, scrapeSeconds);
 
       const output = formatJson(
         filteredDefs,
@@ -348,8 +371,7 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
         bundle.diagnostics,
         buildJsonMeta(),
       );
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(output, null, 2));
+      writeJson(res, 200, output);
     });
   }
 
@@ -364,15 +386,15 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
 
       // 检查 lastSnapshotRefreshAt 是否正常（< 60s ago）
       const snapshotAge = Date.now() - (store.lastSnapshotRefreshAt ?? 0);
-      const snapshotHealthy = snapshotAge < 60000;
+      const snapshotHealthy = snapshotAge <= Math.max(60_000, cfg.snapshotIntervalMs * 2);
       const collectorFailures = diagnosticsFromCollectorMap();
       const healthy =
         snapshotHealthy &&
         collectorFailures.failed === 0 &&
-        (store.rpcClientInitialized || !hasRpcCollectorsConfigured());
+        (!lastCollectAt || store.rpcClientInitialized || !hasRpcCollectorsConfigured());
 
       const payload = {
-        ok: true,
+        ok: healthy,
         healthy,
         plugin: PLUGIN_ID,
         version: PLUGIN_VERSION,
@@ -387,7 +409,7 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
             ? new Date(store.lastRpcSuccessAt).toISOString()
             : null,
           lastMethod: store.lastRpcMethod ?? null,
-          lastError: store.lastRpcError ?? null,
+          lastError: store.lastRpcError ? safeDiagnosticHandlerError(store.lastRpcError) : null,
         },
         collectors: collectorFailures,
         snapshot: {
@@ -401,8 +423,7 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
         labels: { overall: "yes" },
       });
 
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(payload, null, 2));
+      writeJson(res, healthy ? 200 : 503, payload);
     });
   }
 
@@ -416,6 +437,10 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
       
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const component = url.searchParams.get("component") || "all";
+      if (!new Set(["all", "collectors", "registry", "config"]).has(component)) {
+        writeJson(res, 400, { ok: false, error: "component must be one of all, collectors, registry, config" });
+        return;
+      }
       
       // 返回每个 collector 的最后采集时间
       const info = {
@@ -444,16 +469,17 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
           snapshotIntervalMs: cfg.snapshotIntervalMs,
           includeRuntime: cfg.includeRuntime,
           monitoredProviders: cfg.monitoredProviders,
+          collectorTimeoutMs: cfg.collectorTimeoutMs,
+          maxScrapeSeries: cfg.maxScrapeSeries,
         },
       };
 
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(info, null, 2));
+      writeJson(res, 200, component === "all" ? info : { [component]: info[component as keyof typeof info] });
     });
   }
 
   // OpenClaw 要求显式声明 auth；未声明时路由会被静默丢弃。指标端点由插件内 scrapeAuth 可选保护，故使用 plugin。
-  const routeOpts = { auth: "plugin" as const };
+  const routeOpts = { auth: "plugin" as const, match: "exact" as const };
   api.registerHttpRoute({ ...routeOpts, path: base, handler: metricsHandler });
   api.registerHttpRoute({ ...routeOpts, path: metricsChildPath(base, "/per-object"), handler: perObjectHandler });
   api.registerHttpRoute({ ...routeOpts, path: metricsChildPath(base, "/detailed"), handler: detailedHandler });
@@ -480,57 +506,13 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
       },
       { scope: "operator.read" },
     );
-
-  // Alertmanager 集成：配置告警规则
-  api.registerGatewayMethod(
-    "openclaw.alertmanager.configure",
-    async ({ respond }) => {
-      const { registry } = getRuntimeStore();
-
-      const alertRules = [
-        {
-          name: "agent_run_p95",
-          expr: "agent_run_p95 > 300",
-          for: "5m",
-          severity: "warning",
-        },
-        {
-          name: "agent_run_p99",
-          expr: "agent_run_p99 > 600",
-          for: "10m",
-          severity: "critical",
-        },
-        {
-          name: "channel_health",
-          expr: "channel_health < 0.95",
-          for: "5m",
-          severity: "warning",
-        },
-      ];
-
-      registry.inc("openclaw_alertmanager_rules_total", alertRules.length, {
-        help: "Alertmanager alert rules configured",
-      });
-
-      respond(true, {
-        configured: alertRules.length,
-        active: alertRules.length,
-        rules: alertRules,
-      });
-    },
-    { scope: "operator.read" },
-  );
   }
 
   const names = collectors.map((c) => c.name).join(", ");
-  console.log(`[openclaw-prometheus] Plugin registered — ${collectors.length} collectors: ${names}`);
-  console.log(
-    `[openclaw-prometheus] metrics path: ${base} (cache ${cfg.collectIntervalMs}ms, snapshot ${cfg.snapshotIntervalMs}ms, runtime ${cfg.includeRuntime ? "on" : "off"}, scrapeAuth ${cfg.scrapeAuthEnabled ? "on" : "off"})`,
+  api.logger.info(`[prometheus] registered ${collectors.length} collectors: ${names}`);
+  api.logger.info(
+    `[prometheus] metrics path ${base} (cache ${cfg.collectIntervalMs}ms, snapshot ${cfg.snapshotIntervalMs}ms, runtime ${cfg.includeRuntime ? "on" : "off"}, scrapeAuth ${cfg.scrapeAuthEnabled ? "on" : "off"})`,
   );
-  console.log(`  GET ${base}             — Prometheus text`);
-  console.log(`  GET ${metricsChildPath(base, "/per-object")}  — JSON`);
-  console.log(`  GET ${metricsChildPath(base, "/detailed")}    — JSON (?family=)`);
-  console.log(`  GET ${metricsChildPath(base, "/health")}      — plugin health`);
 }
 
 /** @description 从 collector 错误计数汇总 failed/total 诊断。 */
@@ -538,11 +520,7 @@ function diagnosticsFromCollectorMap(): { total: number; failed: number } {
   const total = collectors.length;
   let failed = 0;
   for (const collector of collectors) {
-    const count = collectorErrorCounts.get(collector.name) ?? 0;
-    const success =
-      collector.name === "plugin-runtime" || collector.name === "diagnostics"
-        ? true
-        : count === 0;
+    const success = lastCollectorDiagnostics.get(collector.name)?.ok !== false;
     if (!success) {
       failed += 1;
     }
@@ -593,7 +571,7 @@ function buildJsonMeta(): {
       initialized: store.rpcClientInitialized,
       lastSuccessAt: store.lastRpcSuccessAt ? new Date(store.lastRpcSuccessAt).toISOString() : null,
       lastMethod: store.lastRpcMethod ?? null,
-      lastError: store.lastRpcError ?? null,
+      lastError: store.lastRpcError ? safeDiagnosticHandlerError(store.lastRpcError) : null,
     },
     collectors: diagnosticsFromCollectorMap(),
   };
@@ -615,6 +593,15 @@ async function withRouteMetrics(
 ): Promise<void> {
   const startedAt = performance.now();
   try {
+    if (req.method !== "GET") {
+      res.writeHead(405, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        Allow: "GET",
+      });
+      res.end("Method Not Allowed\n");
+      return;
+    }
     await fn();
   } finally {
     const statusCode =
@@ -644,9 +631,17 @@ async function withRouteMetrics(
   }
 }
 
+function writeJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  res.end(JSON.stringify(payload, null, 2));
+}
+
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: PLUGIN_ID,
-  name: "openclaw-prometheus",
+  name: "Prometheus",
   description:
     "Prometheus metrics exporter for OpenClaw Gateway — supersedes bundled diagnostics-prometheus (internal diagnostic events) plus RPC/hook/SLI extensions",
   register(api: OpenClawPluginApi) {

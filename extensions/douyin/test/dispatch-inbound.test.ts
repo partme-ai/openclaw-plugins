@@ -11,6 +11,7 @@ vi.mock("../src/dispatch/transcript-dispatch.js", () => ({
 }));
 
 import { dispatchDouyinWebhookInbound } from "../src/dispatch/dispatch-inbound.js";
+import { resetDouyinWebhookDedupeForTests } from "../src/dispatch/inbound-dedupe.js";
 import type { ResolvedDouyinAccount } from "../src/types.js";
 
 const baseAccount: ResolvedDouyinAccount = {
@@ -23,6 +24,10 @@ const baseAccount: ResolvedDouyinAccount = {
   webhook_path: "/channels/douyin/webhook",
   config: { app_key: "k", app_secret: "s" },
 };
+
+function uniqueMessageId(prefix: string): string {
+  return `${prefix}-${process.pid}-${Date.now()}-${Math.random()}`;
+}
 
 function transcriptRuntime(): PluginRuntime {
   return {
@@ -41,6 +46,7 @@ function transcriptRuntime(): PluginRuntime {
 describe("dispatchDouyinWebhookInbound", () => {
   beforeEach(() => {
     dispatchDouyinTranscriptTurnMock.mockReset();
+    resetDouyinWebhookDedupeForTests();
   });
 
   it("returns duplicate when the same messageId is seen twice", async () => {
@@ -57,7 +63,7 @@ describe("dispatchDouyinWebhookInbound", () => {
       rawBody: '{"text":"hello"}',
       text: '{"text":"hello"}',
       peerId: "user-1",
-      messageId: "msg-dup-1",
+      messageId: uniqueMessageId("msg-dup"),
     };
 
     expect(await dispatchDouyinWebhookInbound(params)).toBe("dispatched");
@@ -83,6 +89,7 @@ describe("dispatchDouyinWebhookInbound", () => {
       route: { sessionKey: "agent:main:douyin:direct:user-3" },
       delivered: true,
     });
+    const messageId = uniqueMessageId("msg-ok");
 
     const result = await dispatchDouyinWebhookInbound({
       runtime: transcriptRuntime(),
@@ -91,7 +98,7 @@ describe("dispatchDouyinWebhookInbound", () => {
       rawBody: '{"content":{"text":"hi"}}',
       text: '{"content":{"text":"hi"}}',
       peerId: "user-3",
-      messageId: "msg-ok-1",
+      messageId,
     });
 
     expect(result).toBe("dispatched");
@@ -100,7 +107,7 @@ describe("dispatchDouyinWebhookInbound", () => {
         accountId: "default",
         peerId: "user-3",
         shopId: "shop-1",
-        messageSid: "msg-ok-1",
+        messageSid: messageId,
       }),
     );
   });
@@ -144,6 +151,25 @@ describe("dispatchDouyinWebhookInbound", () => {
     });
 
     expect(result).toBe("skipped");
+  });
+
+  it("releases the message claim when dispatch is skipped so a retry can succeed", async () => {
+    dispatchDouyinTranscriptTurnMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ route: { sessionKey: "sk" }, delivered: false });
+    const params = {
+      runtime: transcriptRuntime(),
+      cfg: {},
+      account: baseAccount,
+      rawBody: "retryable",
+      text: "retryable",
+      peerId: "user-retry",
+      messageId: uniqueMessageId("msg-retry"),
+    };
+
+    expect(await dispatchDouyinWebhookInbound(params)).toBe("skipped");
+    expect(await dispatchDouyinWebhookInbound(params)).toBe("dispatched");
+    expect(dispatchDouyinTranscriptTurnMock).toHaveBeenCalledTimes(2);
   });
 
   it("accepts messages without messageId (no idempotency key)", async () => {
