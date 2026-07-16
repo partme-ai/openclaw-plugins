@@ -1,4 +1,10 @@
-/** channels.stomp configuration parsing and fail-closed validation. */
+/**
+ * @fileoverview `channels.stomp` 的 Web STOMP 配置解析与封闭式生产校验。
+ *
+ * 配置覆盖 WS/WSS 监听、Origin、登录用户、心跳、连接/帧/ACK 上限和 Agent 白名单。非回环
+ * 监听必须启用 TLS，公开 TLS 监听还必须具备登录认证或受信客户端证书；状态快照不会输出
+ * 明文密码或散列内容。
+ */
 import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk";
 
 import type { ResolvedWebStompAccount, StompAuthUser, StompServerConfig } from "./types.js";

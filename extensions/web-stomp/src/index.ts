@@ -1,4 +1,9 @@
-/** OpenClaw STOMP over WebSocket plugin entry. */
+/**
+ * @fileoverview STOMP over WebSocket 插件的 OpenClaw 注册入口。
+ *
+ * 组合 Channel、Runtime 和协议 Server，并暴露受插件认证保护的连接、订阅、ACK 与脱敏配置
+ * 状态端点；具体协议处理和消息路由分别留在 transport 与 inbound 模块。
+ */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";

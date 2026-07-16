@@ -1,4 +1,10 @@
-/** Resilient WebSocket client transport with bounded reconnect and queues. */
+/**
+ * @fileoverview WebSocket 主动连接模式的可靠客户端传输层。
+ *
+ * 负责 Bearer Header、握手超时、指数退避重连、Ping/Pong 存活探测和连接中心注册。入站帧按
+ * 单连接顺序串行处理，并受 payload、pending queue 和 bufferedAmount 限制；停止时取消重连、
+ * 关闭 Socket 并清理活动连接，防止插件重载后继续后台连接。
+ */
 import WebSocket from "ws";
 
 import { parseClientFrame, serializeErrorFrame, serializePongFrame } from "./protocol.js";
@@ -150,6 +156,7 @@ function connectOnce(
   });
 }
 
+/** 启动主动 WebSocket 连接，并在配置允许时由后台重连接管首次失败。 */
 export async function startWebSocketClient(
   config: WebsocketChannelConfig,
   messageHandler: WebsocketInboundCallback,
@@ -173,6 +180,7 @@ export async function startWebSocketClient(
   }
 }
 
+/** 幂等停止客户端、取消维护定时器并等待 Socket 关闭。 */
 export async function stopWebSocketClient(): Promise<void> {
   abortConnect = true;
   clientRunning = false;

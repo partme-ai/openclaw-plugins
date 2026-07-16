@@ -1,4 +1,10 @@
-/** Embedded, authenticated WebSocket server with bounded resource usage. */
+/**
+ * @fileoverview 带认证和有界资源控制的内嵌 WebSocket Server。
+ *
+ * Upgrade 阶段校验路径、Origin 和 Bearer Token，连接建立后注册到共享 Hub，并以 Ping/Pong
+ * 检测失活客户端。每条连接的入站消息串行处理，同时限制连接数、Payload、待处理消息、
+ * 分钟速率和发送缓冲；关闭 Server 时释放所有连接、心跳和全局回调。
+ */
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
