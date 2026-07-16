@@ -1,3 +1,11 @@
+/**
+ * @fileoverview OAuth2/OIDC 授权拦截与 OpenClaw trusted-proxy 转发服务器。
+ *
+ * 服务器同时支持浏览器 Authorization Code + PKCE 会话和 API Bearer Token，对普通 HTTP 与
+ * WebSocket Upgrade 使用同一认证边界。转发前会剥离客户端伪造的身份/Forwarded 头，再注入
+ * 已验证用户、租户和来源信息；临近过期的会话使用按 session 单飞刷新，停止时排空在途请求
+ * 并关闭全部升级连接。
+ */
 import * as http from "node:http";
 import type { Duplex } from "node:stream";
 
@@ -90,6 +98,7 @@ function rejectUpgrade(socket: Duplex, message: string): void {
   );
 }
 
+/** 清除不可信身份头，并构建 Gateway trusted-proxy 可消费的转发 Header。 */
 export function buildOAuth2ForwardHeaders(
   source: http.IncomingHttpHeaders,
   context: AuthContext,
@@ -125,6 +134,7 @@ export function buildOAuth2ForwardHeaders(
   return headers;
 }
 
+/** 管理 OAuth2 本地端点、请求认证、会话刷新及 Gateway 反向代理生命周期。 */
 export class OAuth2ProxyServer {
   private server: http.Server | null = null;
   private readonly upgradedSockets = new Set<Duplex>();

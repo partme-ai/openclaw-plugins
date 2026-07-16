@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OpenClaw 生命周期事件到 Trace/Span 状态机的适配层。
+ *
+ * message_received 创建根 Span，before/after_tool_call 管理工具子 Span，最终回复或 agent_end
+ * 幂等结束 Trace，session_end 则关闭异常中断链路。默认不采集消息正文；显式开启时也只保留
+ * 有界片段。Hook 错误会记录但不应阻断 Agent 主业务流程。
+ */
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { TracingBackend, TracingConfig } from "../shared/types.js";
 import { TracingSampler } from "./sampler.js";
@@ -19,7 +26,10 @@ export interface TracingHookContext {
   config: TracingConfig;
 }
 
-export type TracingHookContextProvider = () => TracingHookContext | null;
+export type TracingHookContextProvider = () =>
+  | TracingHookContext
+  | null
+  | Promise<TracingHookContext | null>;
 
 function readString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -52,7 +62,7 @@ export function registerTracingPluginHooks(
   api.on(
     "message_received",
     async (event, ctx) => {
-      const hookContext = getContext();
+      const hookContext = await getContext();
       if (!hookContext) return;
       const { backend, sampler, config } = hookContext;
       const sessionKey = readString(ctx.sessionKey);
@@ -95,8 +105,8 @@ export function registerTracingPluginHooks(
 
   api.on(
     "before_tool_call",
-    (event, ctx) => {
-      const hookContext = getContext();
+    async (event, ctx) => {
+      const hookContext = await getContext();
       if (!hookContext) return;
       const toolCallId = readString(event.toolCallId);
       if (!toolCallId) return;
@@ -121,7 +131,7 @@ export function registerTracingPluginHooks(
   api.on(
     "after_tool_call",
     async (event) => {
-      const hookContext = getContext();
+      const hookContext = await getContext();
       if (!hookContext) return;
       const toolCallId = readString(event.toolCallId);
       const spanId = toolCallId ? takeToolSpanId(toolCallId) : undefined;
@@ -141,7 +151,7 @@ export function registerTracingPluginHooks(
   api.on(
     "reply_payload_sending",
     async (event, ctx) => {
-      const hookContext = getContext();
+      const hookContext = await getContext();
       if (!hookContext || event.kind !== "final") return;
       try {
         await finishActiveTrace(
@@ -158,10 +168,36 @@ export function registerTracingPluginHooks(
     hookOpts,
   );
 
+  // Custom channel dispatchers (including the Message SDK wire bridges) can
+  // deliver replies without traversing OpenClaw's standard outbound hook path.
+  // agent_end is the host-wide terminal signal for the Agent run, so use it as
+  // an idempotent fallback. Standard channels normally close the trace from
+  // reply_payload_sending first; finishActiveTrace then makes this a no-op.
+  api.on(
+    "agent_end",
+    async (event, ctx) => {
+      const hookContext = await getContext();
+      if (!hookContext) return;
+      const runId = readString(event.runId) ?? readString(ctx.runId);
+      try {
+        await finishActiveTrace(
+          readString(ctx.sessionKey),
+          runId,
+          event.success ? "ok" : "error",
+          hookContext.backend,
+          event.success ? "agent_end_success" : "agent_end_error",
+        );
+      } catch (error) {
+        logHookError(api, "ending agent trace", error);
+      }
+    },
+    hookOpts,
+  );
+
   api.on(
     "session_end",
     async (_event, ctx) => {
-      const hookContext = getContext();
+      const hookContext = await getContext();
       if (!hookContext) return;
       try {
         await finishActiveTrace(
@@ -178,5 +214,5 @@ export function registerTracingPluginHooks(
     hookOpts,
   );
 
-  api.logger.info("[tracing] Hooks registered (message_received, tool, reply_payload_sending, session_end)");
+  api.logger.info("[tracing] Hooks registered (message_received, tool, reply_payload_sending, agent_end, session_end)");
 }

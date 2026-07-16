@@ -18,7 +18,7 @@ import {
 import { WEB_MQTT_CHANNEL_ID } from "./config/resolvers.js";
 import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 import {
-  getWebMqttIdempotencyCache,
+  getWebMqttClaimableDedupe,
   resolveWebMqttInboundIdempotencyKey,
 } from "./shared/wire-helpers.js";
 
@@ -53,36 +53,11 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
     rawPayload: payloadText,
     mode: resolvePayloadMode(config.payload.mode),
     channel: WEB_MQTT_CHANNEL_ID,
-    idempotencyKey,
-    idempotency: getWebMqttIdempotencyCache(),
   });
-  if (!parsed.accepted) {
-    return { accepted: false, reason: "duplicate" };
-  }
   const text = parsed.text;
   if (typeof text !== "string" || !text.trim()) {
     return { accepted: false, reason: "empty_payload" };
   }
-
-  const runtime = tryGetWebMqttRuntime();
-  if (!runtime) {
-    return { accepted: false, reason: "runtime_not_initialized" };
-  }
-
-  const { agentId, sessionKey } = await resolveChannelDispatchIdentity(runtime as unknown as BridgePluginRuntime, {
-    channel: WEB_MQTT_CHANNEL_ID,
-    accountId: route.accountId,
-    peerId: event.clientId,
-    agentId: route.agentId,
-  });
-
-  upsertSessionContext(sessionKey, {
-    clientId: event.clientId,
-    agentId,
-    accountId: route.accountId,
-    lastInboundTopic: event.topic,
-    replyTopic: route.replyTopic,
-  });
 
   const username = getClientUsername(event.clientId);
   const user = config.auth.users.find((entry) => entry.username === username);
@@ -98,37 +73,68 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
     return { accepted: false, reason: "acl_inbound_denied" };
   }
 
-  const outboundFormat =
-    (config.payload.outboundFormat as "envelope" | "legacyJsonText" | "plainText" | undefined) ??
-    "envelope";
+  const runtime = tryGetWebMqttRuntime();
+  if (!runtime) {
+    return { accepted: false, reason: "runtime_not_initialized" };
+  }
 
-  await dispatchChannelMessage({
-    mode: "reply-pipeline",
-    runtime: runtime as unknown as BridgePluginRuntime,
-    channel: WEB_MQTT_CHANNEL_ID,
-    accountId: route.accountId,
-    peerId: event.clientId,
-    text,
-    agentId,
-    sessionKey,
-    unified: parsed.unified,
-    extra: {
-      mqttTopic: event.topic,
-      mqttClientId: event.clientId,
-      sessionKey,
-    },
-    reply: {
-      deliver: async ({ wire }: { wire: string }) => {
-        const { publishOutboundText } = await import("./outbound.js");
-        await publishOutboundText(sessionKey, wire, config.topicPrefix);
-      },
-      outboundFormat,
-      replyRoute: {
-        topic: route.replyTopic ?? `${config.topicPrefix}agent/${agentId}/out`,
-      },
+  const dedupe = getWebMqttClaimableDedupe();
+  const claim = idempotencyKey ? await dedupe.claim(idempotencyKey) : undefined;
+  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
+    return { accepted: false, reason: "duplicate" };
+  }
+
+  try {
+    const { agentId, sessionKey } = await resolveChannelDispatchIdentity(runtime as unknown as BridgePluginRuntime, {
+      channel: WEB_MQTT_CHANNEL_ID,
+      accountId: route.accountId,
+      peerId: event.clientId,
+      agentId: route.agentId,
+    });
+
+    upsertSessionContext(sessionKey, {
+      clientId: event.clientId,
       agentId,
-    },
-  });
+      accountId: route.accountId,
+      lastInboundTopic: event.topic,
+      replyTopic: route.replyTopic,
+    });
 
-  return { accepted: true, routeSource: route.source };
+    const outboundFormat =
+      (config.payload.outboundFormat as "envelope" | "legacyJsonText" | "plainText" | undefined) ??
+      "envelope";
+
+    await dispatchChannelMessage({
+      mode: "reply-pipeline",
+      runtime: runtime as unknown as BridgePluginRuntime,
+      channel: WEB_MQTT_CHANNEL_ID,
+      accountId: route.accountId,
+      peerId: event.clientId,
+      text,
+      agentId,
+      sessionKey,
+      unified: parsed.unified,
+      extra: {
+        mqttTopic: event.topic,
+        mqttClientId: event.clientId,
+        sessionKey,
+      },
+      reply: {
+        deliver: async ({ wire }: { wire: string }) => {
+          const { publishOutboundText } = await import("./outbound.js");
+          await publishOutboundText(sessionKey, wire, config.topicPrefix);
+        },
+        outboundFormat,
+        replyRoute: {
+          topic: route.replyTopic ?? `${config.topicPrefix}agent/${agentId}/out`,
+        },
+        agentId,
+      },
+    });
+    if (idempotencyKey) await dedupe.commit(idempotencyKey);
+    return { accepted: true, routeSource: route.source };
+  } catch (error) {
+    if (idempotencyKey) dedupe.release(idempotencyKey);
+    throw error;
+  }
 }

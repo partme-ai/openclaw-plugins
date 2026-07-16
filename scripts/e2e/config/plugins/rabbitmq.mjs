@@ -6,7 +6,9 @@ export function rabbitmqConfig(_ctx) {
       rabbitmq: {
         url: "amqp://127.0.0.1:5672",
         exchange: "openclaw-e2e",
-        subscribeTopics: ["openclaw.#"],
+        // Do not bind the consumer queue to outbound replies; otherwise the
+        // plugin consumes its own `.out` messages as unmatched inbound work.
+        subscribeTopics: ["openclaw.agent.*.in"],
         topicBindings: [
           {
             topicPattern: "openclaw.agent.main.in",

@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OpenClaw 消息与工具全链路追踪插件的注册和生命周期入口。
+ *
+ * 根据配置选择 log/file/OTLP 后端，注册消息与 Tool hooks，并维护有界近期 Trace 查询接口。
+ * Hook Runtime 可能与 Gateway Runtime 隔离，因此上下文既在 gateway_start 初始化，也允许
+ * Hook 首次调用时惰性初始化；停止时关闭 orphan Trace、排空后端并清理定时器。
+ */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   definePluginEntry,
@@ -186,7 +193,14 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/status", handler: statusHandler });
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/traces", handler: tracesHandler });
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/trace", handler: traceDetailHandler });
-    registerTracingPluginHooks(api, () => activeContext);
+    // OpenClaw 2026.7.1 loads hook registries in scoped plugin-runtime
+    // instances that do not receive the Gateway instance's gateway_start
+    // state. Initialize lazily inside each hook runtime so message/tool hooks
+    // never observe a permanently empty module-local context.
+    registerTracingPluginHooks(api, async () => {
+      await initTracing(api);
+      return activeContext;
+    });
     api.on("gateway_start", async () => initTracing(api));
     api.on("gateway_stop", async () => {
       await shutdownTracing();

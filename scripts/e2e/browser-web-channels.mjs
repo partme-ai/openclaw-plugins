@@ -56,7 +56,8 @@ function startTestWebServer() {
   });
 }
 
-export async function runBrowserTests() {
+/** @param {string[]} selectedPlugins */
+export async function runBrowserTests(selectedPlugins = ["web-mqtt", "web-stomp"]) {
   let playwright;
   try {
     playwright = await import("playwright");
@@ -88,7 +89,7 @@ export async function runBrowserTests() {
       { stompPort: E2E_PORTS.webStompWs, mqttPort: E2E_PORTS.webMqttWs },
     );
 
-    await runBrowser("web-stomp", async () => {
+    if (selectedPlugins.includes("web-stomp")) await runBrowser("web-stomp", async () => {
       await page.click("#stomp-connect");
       await page.waitForFunction(
         () => document.getElementById("stomp-status")?.classList.contains("ok"),
@@ -102,7 +103,13 @@ export async function runBrowserTests() {
       return "stomp-status ok; log saved to .browser-stomp.log";
     });
 
-    await runBrowser("web-mqtt", async () => {
+    if (selectedPlugins.includes("web-mqtt")) await runBrowser("web-mqtt", async () => {
+      await page.fill("#mqtt-sub-topic", "openclaw/agent/main/out");
+      await page.fill("#mqtt-pub-topic", "openclaw/agent/main/in");
+      await page.fill("#mqtt-body", JSON.stringify({
+        text: "Return the Web-MQTT browser E2E fixture response.",
+        idempotencyKey: `web-mqtt-browser-${Date.now()}`,
+      }));
       await page.click("#mqtt-connect");
       try {
         await page.waitForFunction(
@@ -119,10 +126,20 @@ export async function runBrowserTests() {
         );
       }
       await page.click("#mqtt-subscribe");
+      await page.waitForFunction(
+        () => document.getElementById("mqtt-log")?.textContent?.includes(">> SUB openclaw/agent/main/out"),
+        undefined,
+        { timeout: 10_000 },
+      );
       await page.click("#mqtt-publish");
+      await page.waitForFunction(
+        () => document.getElementById("mqtt-log")?.textContent?.includes("openclaw e2e fixture reply"),
+        undefined,
+        { timeout: 45_000 },
+      );
       const log = await page.locator("#mqtt-log").innerText();
       writeFileSync(join(E2E_DIR, ".browser-mqtt.log"), log);
-      return "mqtt-status ok; log saved to .browser-mqtt.log";
+      return "Chromium MQTT connect/subscribe/publish/Agent reply passed; log saved to .browser-mqtt.log";
     });
   } finally {
     await browser?.close().catch(() => undefined);

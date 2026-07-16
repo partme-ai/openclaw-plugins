@@ -33,8 +33,9 @@ export async function bootstrapRocketmqTopic(topicOverride) {
   const endpoints = process.env.ROCKETMQ_ENDPOINTS ?? "127.0.0.1:8081";
 
   ensureTopicViaDocker(topic);
+  ensureTopicViaDocker(`${topic}-out`);
   // The adapter E2E performs the real producer publish. Keeping a second SDK
   // producer here caused rocketmq-client-nodejs/egg-logger to write after its
   // log stream had closed during shutdown under Node 24.
-  console.log(`[rocketmq-bootstrap] topic ready: ${topic} @ ${endpoints}`);
+  console.log(`[rocketmq-bootstrap] topics ready: ${topic}, ${topic}-out @ ${endpoints}`);
 }

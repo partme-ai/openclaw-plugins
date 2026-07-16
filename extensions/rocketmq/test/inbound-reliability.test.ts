@@ -32,7 +32,7 @@ describe("rocketmq inbound reliability", () => {
   it("releases the idempotency claim when dispatch fails, then commits after redelivery", async () => {
     const messageId = `retry-${Date.now()}-${Math.random()}`;
     const event = {
-      topic: "openclaw.agent.main.in.peer",
+      topic: "openclaw--agent--main--in--peer",
       body: Buffer.from("hello"),
       messageId,
     };
@@ -54,7 +54,7 @@ describe("rocketmq inbound reliability", () => {
     setRockermqRuntime(null);
     const result = await processInbound(
       {
-        topic: "openclaw.agent.main.in.peer",
+        topic: "openclaw--agent--main--in--peer",
         body: Buffer.from("hello"),
         messageId: `runtime-${Date.now()}`,
       },
@@ -77,7 +77,7 @@ describe("rocketmq inbound reliability", () => {
     });
     dispatchChannelMessage.mockResolvedValue(undefined);
     const event = {
-      topic: "openclaw.agent.main.in.peer",
+      topic: "openclaw--agent--main--in--peer",
       body: Buffer.from("hello"),
     };
 
@@ -96,7 +96,7 @@ describe("rocketmq inbound reliability", () => {
     normalizeWireIngress.mockReturnValue({ accepted: true, text: "  ", unified: null });
 
     await expect(processInbound({
-      topic: "openclaw.agent.main.in.peer",
+      topic: "openclaw--agent--main--in--peer",
       body: Buffer.from("{}"),
     }, DEFAULT_ROCKERMQ_CONFIG)).resolves.toEqual({
       accepted: false,

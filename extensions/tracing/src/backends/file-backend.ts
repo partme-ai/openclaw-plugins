@@ -1,3 +1,10 @@
+/**
+ * @fileoverview Trace Span 的有界 JSONL 文件导出后端。
+ *
+ * Span 先进入内存缓冲，达到批量阈值或定时周期后串行追加到每日文件；刷盘失败会把批次放回
+ * 队首，缓冲超限则丢弃最旧 Span 并降低健康状态。后端每天清理过期文件，关闭时必须完成
+ * 最后一轮 flush，否则明确报告未持久化数据。
+ */
 import { appendFile, mkdir, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type {

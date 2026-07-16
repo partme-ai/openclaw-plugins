@@ -72,7 +72,14 @@ describe("processInbound", () => {
         topic: "openclaw/agent/demo/in",
         payload: Buffer.alloc(2 * 1024 * 1024),
       },
-      baseConfig({ limits: { maxPayloadBytes: 1024, maxSubscriptionsPerClient: 50 } }),
+      baseConfig({
+        limits: {
+          maxPayloadBytes: 1024,
+          maxSubscriptionsPerClient: 50,
+          maxPendingMessagesPerClient: 8,
+          inboundTaskTimeoutMs: 5_000,
+        },
+      }),
     );
     expect(result).toEqual({ accepted: false, reason: "payload_too_large" });
   });
@@ -134,13 +141,13 @@ describe("processInbound", () => {
     );
   });
 
-  it("drops duplicate messageId via idempotency cache", async () => {
+  it("drops duplicate application idempotency keys only after success", async () => {
     const messageId = `mqtt-dedup-${Date.now()}`;
     const event = {
       clientId: "client-dedup",
       topic: "openclaw/agent/demo/in",
-      payload: Buffer.from("once"),
-      messageId,
+      payload: Buffer.from(JSON.stringify({ text: "once", idempotencyKey: messageId })),
+      messageId: "mqtt-packet-1",
     };
     const config = baseConfig();
 
@@ -148,5 +155,33 @@ describe("processInbound", () => {
     expect((await processInbound(event, config)).accepted).toBe(false);
     expect((await processInbound(event, config)).reason).toBe("duplicate");
     expect(dispatchChannelMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not dedupe legitimate repeated plain-text publishes", async () => {
+    const event = {
+      clientId: "client-repeat",
+      topic: "openclaw/agent/demo/in",
+      payload: Buffer.from("same command"),
+      messageId: "reusable-packet-id",
+    };
+    const config = baseConfig();
+
+    expect((await processInbound(event, config)).accepted).toBe(true);
+    expect((await processInbound(event, config)).accepted).toBe(true);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases the application idempotency claim after Agent failure", async () => {
+    const key = `mqtt-retry-${Date.now()}`;
+    const event = {
+      clientId: "client-retry",
+      topic: "openclaw/agent/demo/in",
+      payload: Buffer.from(JSON.stringify({ text: "retry", idempotencyKey: key })),
+    };
+    dispatchChannelMessage.mockRejectedValueOnce(new Error("temporary Agent failure"));
+
+    await expect(processInbound(event, baseConfig())).rejects.toThrow("temporary Agent failure");
+    expect((await processInbound(event, baseConfig())).accepted).toBe(true);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
   });
 });

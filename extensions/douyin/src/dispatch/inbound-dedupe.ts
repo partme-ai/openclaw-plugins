@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 抖音 Webhook 入站消息的可认领持久化去重器。
+ *
+ * 每个账号拥有独立命名空间，消息先 `claim`，处理成功后 `commit`，失败则 `release` 以允许
+ * 安全重试。内存索引用于快速判断，JSON 持久层用于 Gateway 重启后的 24 小时防重放；磁盘
+ * 异常只降级并告警，不应让整个消息入口崩溃。
+ */
 import * as path from "node:path";
 import {
   createClaimableDedupe,

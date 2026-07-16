@@ -1,3 +1,9 @@
+/**
+ * @fileoverview 微信 iPad 桥接事件到 OpenClaw Agent 的入站适配管道。
+ *
+ * 处理顺序固定为：结构校验 → 自发消息过滤 → 短期去重 → 群聊授权 → 文本转换与大小限制
+ * → Agent 路由 → Reply Dispatcher。任何外部事件都不能绕过这些边界直接进入 Agent。
+ */
 import { inboundToText } from "./dispatch/message-converter.js";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { getWechatIpadRuntime } from "./runtime.js";
@@ -12,8 +18,12 @@ import {
 
 const RECENT_TTL_MS = 10 * 60_000;
 const RECENT_MAX = 10_000;
+/**
+ * 进程内短期消息去重表。它防止桥接服务重连重放造成重复回复，但不承担跨进程持久化语义。
+ */
 const recentMessages = new Map<string, number>();
 
+/** 记录消息 ID；返回 `false` 表示 TTL 内已经处理过。 */
 function rememberMessage(messageId: string): boolean {
   const now = Date.now();
   const seenAt = recentMessages.get(messageId);
@@ -30,6 +40,7 @@ function rememberMessage(messageId: string): boolean {
   return true;
 }
 
+/** 校验入站路由所需的最小消息字段，载荷仍按不可信输入处理。 */
 function isValidMessage(message: WxMessagePayload): boolean {
   return Boolean(
     message &&
@@ -44,7 +55,9 @@ function isValidMessage(message: WxMessagePayload): boolean {
   );
 }
 
-/** Attach bridge handlers and return one lifecycle disposer. */
+/**
+ * 将桥接事件处理器绑定到当前连接，并返回一个统一的生命周期清理函数。
+ */
 export function registerWechatIpadEventHandlers(
   bridge: WechatIpadBridge,
   config: WechatIpadConfig,
@@ -66,7 +79,10 @@ export function registerWechatIpadEventHandlers(
   };
 }
 
-/** Validate, authorize, deduplicate, and dispatch one inbound bridge message. */
+/**
+ * 校验、授权、去重并分发一条外部桥接消息。
+ * 群聊只有在显式启用且命中白名单（或再次明确允许全部群）时才会进入 Agent。
+ */
 export async function handleWxMessage(
   message: WxMessagePayload,
   config: WechatIpadConfig,
@@ -104,6 +120,10 @@ export async function handleWxMessage(
   });
 }
 
+/**
+ * 将已通过安全边界的消息构造成 OpenClaw 2026.7.1 入站上下文并触发 Agent 回复。
+ * Reply Dispatcher 的 `deliver` 回调会复用活动桥接器，将 Agent 文本响应发回原会话。
+ */
 export async function dispatchToRuntime(params: {
   conversation: string;
   sender: string;
@@ -168,6 +188,7 @@ export async function dispatchToRuntime(params: {
   });
 }
 
+/** Gateway 停止或插件重载时清空进程内去重状态。 */
 export function clearRecentWechatIpadMessages(): void {
   recentMessages.clear();
 }

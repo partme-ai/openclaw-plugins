@@ -132,7 +132,9 @@
             "additionalProperties": false,
             "properties": {
               "maxPayloadBytes": { "type": "integer", "minimum": 1, "default": 262144 },
-              "maxSubscriptionsPerClient": { "type": "integer", "minimum": 1, "default": 200 }
+              "maxSubscriptionsPerClient": { "type": "integer", "minimum": 1, "default": 200 },
+              "maxPendingMessagesPerClient": { "type": "integer", "minimum": 1, "default": 32 },
+              "inboundTaskTimeoutMs": { "type": "integer", "minimum": 1, "default": 120000 }
             }
           },
           "proxyProtocol": { "type": "boolean", "const": false, "default": false }

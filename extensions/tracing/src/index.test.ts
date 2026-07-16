@@ -42,7 +42,7 @@ describe("tracing plugin", () => {
     expect([...routes.values()].every((route) => route.match === "exact")).toBe(true);
     expect(hooks.get("message_received")).toHaveLength(1);
     expect(hooks.get("reply_payload_sending")).toHaveLength(1);
-    expect(hooks.has("agent_end")).toBe(false);
+    expect(hooks.get("agent_end")).toHaveLength(1);
 
     await hooks.get("gateway_start")?.[0]?.({}, {});
     const statusResponse = response();

@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OpenMem Sidecar 的可靠 HTTP 客户端。
+ *
+ * 统一处理 API Key Header、请求超时、调用方取消、响应体上限和可重试状态码；只有显式标记
+ * retrySafe 的操作才执行指数退避，避免非幂等写入被自动重复。`close` 会中止所有在途请求，
+ * 保证 OpenClaw 插件停止后不再有后台网络活动。
+ */
 import type { OpenMemConfig } from "./config.js";
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
@@ -9,6 +16,7 @@ export class OpenMemHttpError extends Error {
   }
 }
 
+/** 封装 OpenMem REST 调用、有限重试和生命周期取消的客户端。 */
 export class OpenMemClient {
   private readonly controllers = new Set<AbortController>();
   private closed = false;
@@ -116,4 +124,3 @@ export class OpenMemClient {
     });
   }
 }
-

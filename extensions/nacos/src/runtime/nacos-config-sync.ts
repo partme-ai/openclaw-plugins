@@ -1,4 +1,10 @@
 /**
+ * @fileoverview Nacos Config Center 到 OpenClaw 运行配置的拉取、合并与订阅服务。
+ *
+ * 合并顺序为主配置 → shared configs → application config → 各插件 config，随后展开环境变量、
+ * 校验可序列化性、备份当前 openclaw.json，再通过 Runtime `replaceConfig` 原子替换。订阅
+ * 回调采用单飞调度，避免配置连续变更导致并发覆盖；停止时注销全部监听并关闭 SDK 客户端。
+ *
  * @module nacos/runtime/nacos-config-sync
  */
 
@@ -83,9 +89,7 @@ function validateMergedConfig(
   }
 }
 
-/**
- * Pulls shared configs, application dataId, and per-plugin configs from Nacos; deep-merges into current config; backs up; writes.
- */
+/** 拉取远程配置，按确定性顺序深度合并，备份当前文件后应用到 OpenClaw Runtime。 */
 export class NacosConfigSyncService {
   private client: NacosConfigClient | null = null;
   private unsubscribeFns: Array<() => void> = [];

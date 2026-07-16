@@ -110,13 +110,21 @@ describe("validateWebMqttConfig", () => {
           { username: "same", password: "three" },
         ],
       },
-      limits: { maxPayloadBytes: 0, maxSubscriptionsPerClient: 0 },
+      limits: {
+        ...config.limits,
+        maxPayloadBytes: 0,
+        maxSubscriptionsPerClient: 0,
+        maxPendingMessagesPerClient: 0,
+        inboundTaskTimeoutMs: 0,
+      },
     });
     expect(issues).toContain("监听非 loopback 地址时必须启用客户端认证。");
     expect(issues.some((issue) => issue.includes("重复用户名"))).toBe(true);
     expect(issues.some((issue) => issue.includes("必须且只能配置"))).toBe(true);
     expect(issues.some((issue) => issue.includes("maxPayloadBytes"))).toBe(true);
     expect(issues.some((issue) => issue.includes("maxSubscriptionsPerClient"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("maxPendingMessagesPerClient"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("inboundTaskTimeoutMs"))).toBe(true);
   });
 });
 

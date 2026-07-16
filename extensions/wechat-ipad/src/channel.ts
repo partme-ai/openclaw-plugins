@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 微信 iPad 外部桥接的 OpenClaw Channel 契约。
+ *
+ * 本文件声明渠道元数据、配置解析、能力矩阵、目标地址规范和运行状态快照。它不建立网络
+ * 连接，也不处理消息正文；实际连接由 `WechatIpadBridge` 管理，收发分别由 inbound/outbound
+ * 模块完成。
+ */
 import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
 import {
   getWechatIpadSection,
@@ -16,6 +23,10 @@ type ResolvedWechatIpadAccount = {
   config: WechatIpadConfig;
 };
 
+/**
+ * 将单实例插件配置转换为 OpenClaw 的账户模型。
+ * 只有同时启用插件并确认非官方协议风险，账户才会被标记为已配置。
+ */
 function resolveAccount(cfg: OpenClawConfig): ResolvedWechatIpadAccount {
   const config = resolveWechatIpadConfig(
     getWechatIpadSection(cfg as unknown as Record<string, unknown>),
@@ -29,6 +40,7 @@ function resolveAccount(cfg: OpenClawConfig): ResolvedWechatIpadAccount {
   };
 }
 
+/** OpenClaw 2026.7.1 使用的微信 iPad Channel 描述和适配器集合。 */
 export const wechatIpadChannel: ChannelPlugin<ResolvedWechatIpadAccount> = {
   id: "wechat-ipad",
   meta: {

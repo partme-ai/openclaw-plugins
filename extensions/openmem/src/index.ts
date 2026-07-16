@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OpenMem 外部化记忆插件的 OpenClaw 注册入口。
+ *
+ * 插件把 Sidecar 搜索适配为 Memory Host 和 `openmem_search` 工具，并按 session_start、
+ * agent_end、session_end 生命周期创建会话、摄取成功对话和提交归档。所有能力限定到配置的
+ * Agent；`required=false` 时 Sidecar 启动不可用只降级告警，不阻断 Gateway。
+ */
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
   buildJsonPluginConfigSchema,
@@ -160,6 +167,7 @@ export { normalizeTurn, OpenMemCoordinator } from "./coordinator.js";
 export { OpenMemSearchManager } from "./manager.js";
 export type * from "./config.js";
 
+/** 为兼容调用方创建允许共享检索的独立 OpenMem Search Manager。 */
 export function createOpenMemSearchManager(baseUrl: string): OpenMemSearchManager {
   const config = resolveConfig({ pluginConfig: { baseUrl, allowSharedRecall: true } } as never);
   const client = new OpenMemClient(config);

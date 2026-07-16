@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OpenClaw Token、费用、消息、工具和延迟用量的 Prometheus 采集器。
+ *
+ * 并行读取 `usage.cost` 与 `sessions.usage` RPC，在固定时间窗内生成总量及 provider/model/
+ * agent/channel/date 维度指标。所有动态标签先清洗，缺失或非数值字段归零，避免上游响应的
+ * 可选字段破坏一次完整抓取。
+ */
 import type { MetricCollector, MetricDefinition, MetricSample } from "../types.js";
 import { rpcCall } from "../runtime/ws-bridge.js";
 import { sanitizeLabel } from "../shared/label-sanitize.js";

@@ -13,6 +13,7 @@ Authenticated STOMP 1.2 over native TCP/TLS for OpenClaw 2026.7.1. This embedded
 - Connection, subscription, inbound queue, prefetch, ACK, durable-state, and per-subscription queue bounds
 - Correct cumulative `client` ACK and individual `client-individual` ACK behavior
 - Optional process-memory durable subscriptions and NACK requeue
+- Claim/commit/release inbound idempotency; a `message-id` is committed only after the Agent turn and reply delivery succeed
 - Agent allowlists, explicit topic bindings, and connection-scoped reply subscriptions by default
 - OpenClaw Gateway lifecycle integration and a credential-redacted `/stomp-tcp/status` endpoint
 
@@ -137,7 +138,7 @@ content-type:application/json
 {"text":"Hello"}\0
 ```
 
-`RECEIPT` for `SEND` is emitted only after OpenClaw accepts the asynchronous inbound dispatch. For `ack:client`, ACK is cumulative through the referenced delivery. For `ack:client-individual`, only that delivery is acknowledged. `NACK` requeues by default; set `requeue:false` to discard it.
+`RECEIPT` for `SEND` is emitted only after the OpenClaw Agent turn completes and at least one active or in-process durable subscription accepts the reply. A missing reply subscriber produces `ERROR` instead of a false success receipt. For `ack:client`, ACK is cumulative through the referenced delivery. For `ack:client-individual`, only that delivery is acknowledged. `NACK` requeues by default; set `requeue:false` to discard it.
 
 Durable subscriptions require both `allowDurableSubscriptions: true` and `durable:true` (or `persistent:true`) on `SUBSCRIBE`. They survive a TCP reconnect only inside the same Gateway process and authenticated login; they do not survive a process restart.
 

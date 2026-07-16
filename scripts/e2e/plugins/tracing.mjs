@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { dockerEnv, DOCKER } from "../lib/compose.mjs";
-import { startOpenAiModelFixture } from "../helpers/openai-model-fixture.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -56,7 +55,7 @@ function runInboundTurn(ctx) {
     });
     client.on("message", (_topic, payload) => {
       const text = payload.toString("utf8");
-      if (text.includes("tracing e2e reply")) finish(undefined, text);
+      if (text.includes("openclaw e2e fixture reply")) finish(undefined, text);
     });
   });
 }
@@ -71,31 +70,32 @@ export async function testTracing(ctx, results) {
       if (!ctx.pluginIds.includes("mqtt")) {
         throw new Error("tracing E2E requires the mqtt plugin to exercise a real inbound channel turn");
       }
-      const model = await startOpenAiModelFixture(ctx.ports.modelFixture);
-      try {
-        await ctx.waitFor(() => ctx.tcpReachable(11883), {
-          label: "MQTT inbound fixture",
-          timeoutMs: 30_000,
-        });
-        await runInboundTurn(ctx);
-        if (model.metrics.completions !== 1) {
-          throw new Error(`fixture completion count=${model.metrics.completions}, expected 1`);
-        }
+      const model = ctx.modelFixture;
+      if (!model) throw new Error("tracing E2E model fixture was not started by the orchestrator");
+      const initialCompletions = model.metrics.completions;
+      await ctx.waitFor(() => ctx.tcpReachable(11883), {
+        label: "MQTT inbound fixture",
+        timeoutMs: 30_000,
+      });
+      await runInboundTurn(ctx);
+      if (model.metrics.completions !== initialCompletions + 1) {
+        throw new Error(`fixture completion delta=${model.metrics.completions - initialCompletions}, expected 1`);
+      }
 
-        await ctx.waitFor(async () => {
-          const logs = await collectorLogs();
-          return logs.includes("message.received") && logs.includes("openclaw.channel");
-        }, { label: "tracing spans in OpenTelemetry Collector", timeoutMs: 30_000, intervalMs: 500 });
+      await ctx.waitFor(async () => {
+        const logs = await collectorLogs();
+        return logs.includes("message.received") && logs.includes("openclaw.channel");
+      }, { label: "tracing spans in OpenTelemetry Collector", timeoutMs: 30_000, intervalMs: 500 });
 
-        const status = await ctx.gatewayFetch("/tracing/status");
-        if (!status.ok || status.json?.data?.backend !== "otlp") {
-          throw new Error(`tracing status failed: ${status.status} ${status.text}`);
-        }
-        if (status.json?.data?.backendStatus?.healthy !== true || status.json?.data?.backendStatus?.bufferedSpans !== 0) {
-          throw new Error(`tracing backend not drained and healthy: ${status.text}`);
-        }
-      } finally {
-        await model.close();
+      const status = await ctx.gatewayFetch("/tracing/status");
+      if (!status.ok || status.json?.data?.backend !== "otlp") {
+        throw new Error(`tracing status failed: ${status.status} ${status.text}`);
+      }
+      if (status.json?.data?.activeSpans !== 0 || status.json?.data?.recentTraces < 1) {
+        throw new Error(`tracing lifecycle did not close and retain the completed trace: ${status.text}`);
+      }
+      if (status.json?.data?.backendStatus?.healthy !== true || status.json?.data?.backendStatus?.bufferedSpans !== 0) {
+        throw new Error(`tracing backend not drained and healthy: ${status.text}`);
       }
     },
     {

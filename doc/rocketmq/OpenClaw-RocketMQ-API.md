@@ -92,8 +92,8 @@ Returns full plugin status including config snapshot and session mappings.
           "peerId": "device-001",
           "agentId": "main",
           "accountId": "default",
-          "lastInboundTopic": "openclaw-agent-main-in",
-          "replyTopic": "openclaw-agent-main-out",
+          "lastInboundTopic": "openclaw--agent--main--in",
+          "replyTopic": "openclaw--agent--main--out",
           "updatedAt": 1779123456789
         }
       }

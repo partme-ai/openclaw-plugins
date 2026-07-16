@@ -12,7 +12,7 @@ import { WEB_STOMP_CHANNEL_ID } from "./config/resolvers.js";
 import { getWebStompRuntime } from "./runtime.js";
 import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 import {
-  getWebStompIdempotencyCache,
+  getWebStompClaimableDedupe,
 } from "./shared/wire-helpers.js";
 
 const DEFAULT_PAYLOAD_MODE = "jsonTextOrPlain" as const;
@@ -30,13 +30,13 @@ export type WebStompInboundContext = {
  * 将入站 STOMP SEND 分发到 OpenClaw（normalizeWireIngress → dispatchChannelMessage）。
  *
  * @param ctx - 含 peerId、destination、rawPayload 的入站上下文
- * @returns Promise；runtime 未初始化或重复消息时静默返回
+ * @returns Promise；重复或正在处理的消息静默返回
+ * @throws runtime 未初始化、载荷为空、Agent 派发或回复投递失败时抛出
  */
 export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise<void> {
   const runtime = getWebStompRuntime();
   if (!runtime) {
-    console.warn("[openclaw-web-stomp] Runtime not initialized, cannot dispatch message");
-    return;
+    throw new Error("Web STOMP runtime is not initialized");
   }
 
   const agentIdHint = ctx.agentId ?? "main";
@@ -49,20 +49,23 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
 
   const replyDestination = `/topic/session.${ctx.peerId}`;
 
-  const idempotencyCache = getWebStompIdempotencyCache();
   const parsed = normalizeWireIngress({
     rawPayload: ctx.rawPayload,
     mode: resolvePayloadMode(DEFAULT_PAYLOAD_MODE),
     channel: WEB_STOMP_CHANNEL_ID,
-    idempotencyKey: ctx.idempotencyKey,
-    idempotency: ctx.idempotencyKey ? idempotencyCache : undefined,
   });
-  if (!parsed.accepted) {
-    console.log(`[openclaw-web-stomp] Duplicate inbound dropped: ${ctx.idempotencyKey}`);
-    return;
+  if (!parsed.text.trim()) {
+    throw new Error("Web STOMP inbound payload is empty");
   }
 
-  await dispatchChannelMessage({
+  const dedupe = getWebStompClaimableDedupe();
+  const claim = ctx.idempotencyKey
+    ? await dedupe.claim(ctx.idempotencyKey)
+    : undefined;
+  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) return;
+
+  try {
+    await dispatchChannelMessage({
     mode: "reply-pipeline",
     runtime: runtime as unknown as BridgePluginRuntime,
     channel: WEB_STOMP_CHANNEL_ID,
@@ -80,11 +83,19 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
     reply: {
       deliver: async ({ wire }: { wire: string }) => {
         const { publishToDestination } = await import("./transport/server.js");
-        publishToDestination(replyDestination, wire);
+        const delivered = publishToDestination(replyDestination, wire);
+        if (delivered < 1) {
+          throw new Error(`No Web STOMP subscriber accepted reply destination: ${replyDestination}`);
+        }
       },
       outboundFormat: "envelope",
       replyRoute: { destination: replyDestination },
       agentId,
     },
-  });
+    });
+    if (ctx.idempotencyKey) await dedupe.commit(ctx.idempotencyKey);
+  } catch (error) {
+    if (ctx.idempotencyKey) dedupe.release(ctx.idempotencyKey);
+    throw error;
+  }
 }

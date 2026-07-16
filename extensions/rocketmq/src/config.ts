@@ -309,14 +309,33 @@ export function resolveRockermqConfig(
  */
 export function validateRockermqConfig(config: RockermqConfig): string[] {
   const issues: string[] = [];
+  const validResourceName = /^[a-zA-Z0-9_-]+$/;
   if (!config.endpoints) {
     issues.push("RocketMQ endpoints is required");
   }
   if (!config.consumer.groupId) {
     issues.push("RocketMQ consumer.groupId is required");
+  } else if (!validResourceName.test(config.consumer.groupId)) {
+    issues.push("RocketMQ consumer.groupId must use [a-zA-Z0-9_-]");
   }
   if (config.producer.maxAttempts < 1) {
     issues.push("RocketMQ producer.maxAttempts must be at least 1");
+  }
+  if (!validResourceName.test(config.topicPrefix) || config.topicPrefix.includes("--")) {
+    issues.push("RocketMQ topicPrefix must use [a-zA-Z0-9_-] and must not contain '--'");
+  }
+  for (const subscription of config.consumer.subscriptions) {
+    if (!validResourceName.test(subscription.topic)) {
+      issues.push(`RocketMQ consumer subscription topic is invalid: ${subscription.topic}`);
+    }
+  }
+  for (const binding of config.topicBindings) {
+    if (!validResourceName.test(binding.topic)) {
+      issues.push(`RocketMQ topic binding is invalid: ${binding.topic}`);
+    }
+    if (binding.replyTopic && !validResourceName.test(binding.replyTopic)) {
+      issues.push(`RocketMQ reply topic is invalid: ${binding.replyTopic}`);
+    }
   }
   return issues;
 }

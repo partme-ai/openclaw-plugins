@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 活动 Trace、Span 与 Tool Call 关联的有界进程内状态机。
+ *
+ * 同时按 sessionKey 和 runId 定位活动 Trace，按 toolCallId 关联子 Span；结束时先固化并导出
+ * 悬挂子 Span，再结束根 Span并清除全部索引。近期 Trace 使用 200 条 LRU 风格上限，TTL 清理
+ * 会把 orphan Span 以 error 状态真正关闭，而不是只删除映射。
+ */
 import type { Span, SpanKind, SpanStatus, TracingBackend } from "../shared/types.js";
 
 export interface ActiveTraceContext {

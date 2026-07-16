@@ -1,4 +1,10 @@
-/** Hardened STOMP 1.2 over WebSocket server. */
+/**
+ * @fileoverview 加固的 STOMP 1.2 over WebSocket/WSS 协议服务器。
+ *
+ * 实现 CONNECT、SEND、SUBSCRIBE、ACK/NACK 与心跳协商，Upgrade 阶段校验路径、Origin 和
+ * 连接容量。每个连接的帧串行处理，并受帧大小、待处理队列、订阅数、pending ACK、速率和
+ * WebSocket backpressure 限制；默认订阅仅允许当前 session Topic，跨会话共享必须显式启用。
+ */
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server as HttpServer } from "node:http";
@@ -12,6 +18,7 @@ import type { StompConnectionInfo, StompFrame, StompServerConfig } from "../type
 import {
   cleanupConnection,
   clearAckState,
+  discardPendingMessage,
   getPendingAckCount,
   handleAck,
   handleNack,
@@ -199,7 +206,8 @@ async function handleSend(connectionId: string, frame: StompFrame, config: Stomp
     state.info.agentId = agentId;
     state.info.peerId = peerId;
   }
-  await onInboundMessage?.({
+  if (!onInboundMessage) throw new Error("Web STOMP inbound handler is not initialized");
+  await onInboundMessage({
     agentId,
     peerId,
     destination,
@@ -480,6 +488,7 @@ export function publishToDestination(destination: string, body: string): number 
       subscription.ack === "auto" ? undefined : messageId,
     ));
     if (sent) delivered += 1;
+    else discardPendingMessage(messageId);
   }
   return delivered;
 }

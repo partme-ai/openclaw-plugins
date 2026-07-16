@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { getStompTcpIdempotencyCache } from "../src/shared/wire-helpers.js";
+import { getStompTcpClaimableDedupe } from "../src/shared/wire-helpers.js";
 import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 
 describe("resolvePayloadMode (shared)", () => {
@@ -13,22 +13,27 @@ describe("resolvePayloadMode (shared)", () => {
   });
 });
 
-describe("getStompTcpIdempotencyCache", () => {
+describe("getStompTcpClaimableDedupe", () => {
   it("returns a singleton cache instance", () => {
-    const a = getStompTcpIdempotencyCache();
-    const b = getStompTcpIdempotencyCache();
+    const a = getStompTcpClaimableDedupe();
+    const b = getStompTcpClaimableDedupe();
     expect(a).toBe(b);
   });
 
-  it("dedupes repeated keys", () => {
-    const cache = getStompTcpIdempotencyCache();
-    expect(cache.remember("stomp-unit-key-1")).toBe(false);
-    expect(cache.remember("stomp-unit-key-1")).toBe(true);
+  it("dedupes only after a claim is committed", async () => {
+    const cache = getStompTcpClaimableDedupe();
+    const key = `stomp-unit-key-${Date.now()}`;
+    await expect(cache.claim(key)).resolves.toMatchObject({ kind: "claimed" });
+    await cache.commit(key);
+    await expect(cache.claim(key)).resolves.toMatchObject({ kind: "duplicate" });
   });
 
-  it("accepts distinct keys independently", () => {
-    const cache = getStompTcpIdempotencyCache();
-    expect(cache.remember("stomp-unit-key-a")).toBe(false);
-    expect(cache.remember("stomp-unit-key-b")).toBe(false);
+  it("allows a failed claim to be retried after release", async () => {
+    const cache = getStompTcpClaimableDedupe();
+    const key = `stomp-unit-release-${Date.now()}`;
+    await expect(cache.claim(key)).resolves.toMatchObject({ kind: "claimed" });
+    cache.release(key);
+    await expect(cache.claim(key)).resolves.toMatchObject({ kind: "claimed" });
+    cache.release(key);
   });
 });

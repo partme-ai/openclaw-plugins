@@ -6,6 +6,9 @@ export function tracingConfig(_ctx) {
     pluginEntry: {
       tracing: {
         enabled: true,
+        hooks: {
+          allowConversationAccess: true,
+        },
         config: {
           enabled: true,
           backend: "otlp",

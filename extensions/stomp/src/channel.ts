@@ -1,4 +1,10 @@
-/** OpenClaw 2026.7.1 ChannelPlugin lifecycle for native STOMP TCP/TLS. */
+/**
+ * @fileoverview 原生 STOMP 1.2 TCP/TLS 服务到 OpenClaw Channel 的生命周期适配层。
+ *
+ * Channel 启动时创建内嵌 Server 并把 SEND 帧路由到 Agent，停止时随 AbortSignal 关闭全部
+ * 连接；Agent 出站文本按 session/topic 目标发布，若没有订阅者接收则明确失败，不伪造成功。
+ * 账户状态和探针只读取 transport 快照，不直接管理协议帧。
+ */
 import type { ChannelAccountSnapshot, ChannelGatewayContext, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
 import { deleteAccountFromConfigSection, setAccountEnabledInConfigSection } from "openclaw/plugin-sdk/core";
 import type { ChannelOutboundContext } from "openclaw/plugin-sdk/channel-contract";
@@ -48,6 +54,7 @@ async function monitor(ctx: ChannelGatewayContext<ResolvedStompTcpAccount>): Pro
   }
 }
 
+/** OpenClaw 2026.7.1 使用的 STOMP TCP/TLS Channel 契约。 */
 export const stompTcpChannel: ChannelPlugin<ResolvedStompTcpAccount> = {
   id: "stomp-tcp",
   meta: {
@@ -107,6 +114,9 @@ export const stompTcpChannel: ChannelPlugin<ResolvedStompTcpAccount> = {
     sendText: async (ctx: ChannelOutboundContext) => {
       const destination = ctx.to.startsWith("/topic/") ? ctx.to : `/topic/session.${ctx.to}`;
       const delivered = publishToDestination(destination, ctx.text);
+      if (delivered < 1) {
+        throw new Error(`No STOMP subscriber accepted outbound destination: ${destination}`);
+      }
       return { channel: "stomp-tcp", messageId: `${destination}:${delivered}` };
     },
   },

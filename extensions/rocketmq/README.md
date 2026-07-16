@@ -20,7 +20,7 @@
 - **Topic+Tag Bindings** — Explicit `topic + tag -> agentId` routing rules
 - **3 Dispatch Modes** — `embedded-agent` (default) / `subagent` / `reply-pipeline`
 - **Payload Strategies** — `jsonTextOrPlain` (default) / `jsonOnly` / `plainText`
-- **Fallback Topics** — Standard pattern: `openclaw.agent.<agentId>.in[.<peerId>]`
+- **Fallback Topics** — Broker-safe standard pattern: `openclaw--agent--<agentId>--in[--<peerId>]`
 - **Reply Topic Routing** — Agent replies published to configured `replyTopic` / `replyTag`
 - **Health Endpoints** — `/rocketmq/health`, `/rocketmq/stats`, `/rocketmq/status`
 - **Session Mapping** — Tracks producer-consumer-conversation session mappings
@@ -52,16 +52,16 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1` and OpenClaw >= 2026.7.1.
       "consumer": {
         "groupId": "openclaw-rocketmq-consumer",
         "subscriptions": [
-          { "topic": "device.status", "filterExpression": "*" }
+          { "topic": "device-status", "filterExpression": "*" }
         ]
       },
       "topicBindings": [
         {
-          "topic": "device.status",
+          "topic": "device-status",
           "tag": "iot",
           "agentId": "iot-agent",
           "accountId": "default",
-          "replyTopic": "device.command",
+          "replyTopic": "device-command",
           "replyTag": "command"
         }
       ],
@@ -97,7 +97,7 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1` and OpenClaw >= 2026.7.1.
       "consumer": {
         "groupId": "openclaw-rocketmq-consumer", // Consumer group ID
         "subscriptions": [                       // Topics to subscribe
-          { "topic": "my.topic", "filterExpression": "*" }
+          { "topic": "my-topic", "filterExpression": "*" }
         ],
         "maxCacheMessageCount": 1024,
         "maxCacheMessageSizeInBytes": 67108864,
@@ -113,12 +113,12 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1` and OpenClaw >= 2026.7.1.
       },
       "topicBindings": [                         // Topic-to-agent routing rules
         {
-          "topic": "device.status",
+          "topic": "device-status",
           "tag": "iot",
           "agentId": "iot-agent",
           "accountId": "default",
           "peerId": "device-1",                  // Optional: peer identifier
-          "replyTopic": "device.command",        // Optional: reply topic
+          "replyTopic": "device-command",        // Optional: reply topic
           "replyTag": "command"                   // Optional: reply tag
         }
       ],
@@ -185,13 +185,13 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1` and OpenClaw >= 2026.7.1.
 ### Inbound (RocketMQ -> Agent)
 
 - **Explicit binding first**: Matched against `topicBindings[].topic + topicBindings[].tag`
-- **Standard fallback**: `{topicPrefix}.agent.<agentId>.in[.<peerId>]`
+- **Standard fallback**: `{topicPrefix}--agent--<agentId>--in[--<peerId>]`
 - **Payload parsing**: `jsonTextOrPlain` — reads `text` field from JSON, or uses raw text
 
 ### Outbound (Agent -> RocketMQ)
 
 - **Session binding**: Uses `replyTopic` / `replyTag` from active session
-- **Standard fallback**: `{topicPrefix}.agent.<agentId>.out[.<peerId>]`
+- **Standard fallback**: `{topicPrefix}--agent--<agentId>--out[--<peerId>]`
 - **Consumption**: PushConsumer with `ConsumeResult.SUCCESS` / `FAILURE` acknowledgment
 
 ## Health Endpoints
@@ -207,6 +207,7 @@ Available when the plugin registers in "full" mode:
 ## Transport Layer Notes
 
 - Uses `PushConsumer` — message acknowledgment via `ConsumeResult.SUCCESS` / `FAILURE`
+- Topic and consumer-group resources use RocketMQ-safe names (`[a-zA-Z0-9_-]`); dots and `/` are rejected before startup. The standard route reserves `--` as its segment delimiter.
 - Retries are handled by RocketMQ broker/consumer group mechanism
 - Dispatch or reply publication failures return `ConsumeResult.FAILURE`; the configured client retry delay avoids the Node SDK's unsupported Broker customized-backoff gap, and exhausted messages are forwarded through the Broker DLQ API
 - Unroutable messages are acknowledged as permanent drops; runtime and dispatch failures request redelivery

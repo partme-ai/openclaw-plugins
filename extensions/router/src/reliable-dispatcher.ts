@@ -1,3 +1,10 @@
+/**
+ * @fileoverview Router 的持久化队列消费、有限并发、超时重试和死信调度器。
+ *
+ * 消息先写入 `DurableRouteStore` 再发送，成功后提交 delivered 去重键；失败采用指数退避与
+ * 抖动，达到上限进入 DLQ。发布超时被标记为“结果未知”，目录 fsync 失败被标记为“持久性
+ * 不确定”，两类情况都会降低健康状态，避免把无法证明的投递结果误报为完全成功。
+ */
 import { createHash, randomUUID } from "node:crypto";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
@@ -35,10 +42,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** 根据事件、规则和动作组成稳定 SHA-256 投递幂等键。 */
 export function stableDeliveryKey(parts: Record<string, unknown>): string {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 
+/** 驱动持久队列出队、并发发布、重试、DLQ 和运行状态统计。 */
 export class ReliableRouteDispatcher {
   private running = false;
   private drainPromise: Promise<void> | null = null;

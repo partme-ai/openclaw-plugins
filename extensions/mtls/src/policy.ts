@@ -1,3 +1,10 @@
+/**
+ * @fileoverview mTLS 请求授权策略与可信转发 Header 构造。
+ *
+ * 授权先按路径判断是否强制证书，再校验证书链结果及 CN/颁发者/指纹白名单。转发前会删除
+ * 客户端伪造的身份头、Forwarded/X-Forwarded-* 和 hop-by-hop 头，只由代理重新注入已经
+ * 验证的主体身份，防止 trusted-proxy 身份欺骗。
+ */
 import type { IncomingHttpHeaders, OutgoingHttpHeaders } from "node:http";
 
 import type { ClientCertInfo, MtlsConfig } from "./shared/types.js";
@@ -22,6 +29,7 @@ function pathMatches(pathname: string, path: string, match: "exact" | "prefix"):
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
+/** 判断请求路径是否必须通过客户端证书认证。 */
 export function isPathProtected(config: MtlsConfig, pathname: string): boolean {
   if (config.skipPaths.some((path) => pathMatches(pathname, path, "prefix"))) {
     return false;
@@ -46,6 +54,7 @@ function isClientAllowed(config: MtlsConfig, certificate: ClientCertInfo): boole
   });
 }
 
+/** 根据路径策略和证书信息返回可审计的授权结果。 */
 export function authorizeMtlsRequest(
   config: MtlsConfig,
   pathname: string,
@@ -117,6 +126,7 @@ function connectionHeaderTokens(value: string | string[] | undefined): string[] 
     .filter(Boolean);
 }
 
+/** 清除不可信转发头，并根据已验证证书重建 Gateway 可信任的身份 Header。 */
 export function buildForwardHeaders(
   config: MtlsConfig,
   source: IncomingHttpHeaders,

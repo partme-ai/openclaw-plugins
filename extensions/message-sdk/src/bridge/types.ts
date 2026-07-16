@@ -17,7 +17,9 @@ import type { ReplyRoute, UnifiedMessage } from "../core/types.js";
  */
 export interface BridgePluginRuntime {
   /** OpenClaw 配置对象 / OpenClaw config */
-  config: Record<string, unknown>;
+  config: Record<string, unknown> & {
+    current?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
+  };
   channel: {
     routing: {
       resolveAgentRoute: (params: {

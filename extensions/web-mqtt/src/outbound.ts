@@ -33,7 +33,7 @@ export function parseDirectTarget(value: string): string | null {
  */
 export async function publishOutboundText(sessionKey: string, text: string, topicPrefix: string): Promise<void> {
   const context = getSessionContext(sessionKey);
-  if (!context) return;
+  if (!context) throw new Error(`[openclaw-web-mqtt] Missing session context: ${sessionKey}`);
   const topic = context.replyTopic ?? `${topicPrefix}agent/${context.agentId}/out`;
 
   const config = getWebMqttChannelConfig();
@@ -49,13 +49,15 @@ export async function publishOutboundText(sessionKey: string, text: string, topi
         accountId: context.accountId,
       })
     ) {
-      return;
+      throw new Error(`[openclaw-web-mqtt] Outbound ACL denied topic: ${topic}`);
     }
   }
 
-  await publishToTopic(topic, text);
+  const delivered = await publishToTopic(topic, text);
+  if (delivered < 1) throw new Error(`[openclaw-web-mqtt] No active subscriber accepted topic: ${topic}`);
 }
 
 export async function publishDirectText(topic: string, text: string): Promise<void> {
-  await publishToTopic(topic, text);
+  const delivered = await publishToTopic(topic, text);
+  if (delivered < 1) throw new Error(`[openclaw-web-mqtt] No active subscriber accepted topic: ${topic}`);
 }

@@ -55,6 +55,11 @@ export function registerMessage(
   return messageId;
 }
 
+/** 撤销尚未写入 WebSocket 的待确认消息，避免发送失败后占用 ACK 窗口。 */
+export function discardPendingMessage(messageId: string): void {
+  pendingMessages.delete(messageId);
+}
+
 /**
  * 处理客户端 ACK
  * 根据 ACK 模式确认一条或多条消息

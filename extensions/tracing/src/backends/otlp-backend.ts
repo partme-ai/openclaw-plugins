@@ -1,3 +1,10 @@
+/**
+ * @fileoverview Trace Span 的 OTLP/HTTP JSON 导出后端。
+ *
+ * 将内部 Span 转换为 OpenTelemetry ResourceSpans，按批次串行发送，并设置请求超时、有限
+ * 指数退避和有界缓冲。失败批次会重新入队；缓冲溢出丢弃最旧数据并暴露 droppedSpans，
+ * 关闭时必须排空队列，避免静默丢失最后一批追踪数据。
+ */
 import type {
   Span,
   TracingBackend,

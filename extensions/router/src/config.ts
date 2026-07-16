@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 跨渠道消息 Router 的规则、投递策略和状态目录配置解析。
+ *
+ * 解析器校验规则 ID 唯一性、forward/reply-via 动作结构、重试与容量边界，并约束 writer
+ * lease 超时至少为心跳周期两倍。所有缺省值集中在这里，状态目录默认落在 OpenClaw state
+ * 下，显式相对路径也以该目录为基准解析。
+ */
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
@@ -92,6 +99,7 @@ function resolveRule(value: unknown, index: number): RouterRule {
   };
 }
 
+/** 将不可信插件配置解析为边界完整的 RouterConfig。 */
 export function resolveRouterConfig(api: OpenClawPluginApi): RouterConfig {
   const raw = (api.pluginConfig ?? {}) as Record<string, unknown>;
   const audit = raw.audit && typeof raw.audit === "object" ? raw.audit as Record<string, unknown> : {};
@@ -131,6 +139,7 @@ export function resolveRouterConfig(api: OpenClawPluginApi): RouterConfig {
   };
 }
 
+/** 解析持久化投递状态的绝对目录。 */
 export function resolveRouterStateDir(config: RouterConfig): string {
   const base = process.env.OPENCLAW_STATE_DIR?.trim() || join(homedir(), ".openclaw");
   const configured = config.delivery.stateDir;

@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OpenMem 检索结果到 OpenClaw MemorySearchManager 契约的适配器。
+ *
+ * 搜索默认按会话连续性隔离，只有 `allowSharedRecall=true` 才允许混合共享知识；外部 source
+ * 会转换成受控虚拟路径并进入有界内容缓存，`readFile` 只能读取允许的 archive/memory 来源。
+ * 状态与探针明确标识当前使用 FTS/字符重排而非向量嵌入。
+ */
 import type {
   MemoryEmbeddingProbeResult,
   MemoryProviderStatus,
@@ -12,6 +19,7 @@ import { OpenMemCoordinator } from "./coordinator.js";
 type SearchChunk = { text: string; score: number; source: string; recall_type: "continuity" | "knowledge" };
 type SearchResponse = { chunks: SearchChunk[]; sources: string[] };
 
+/** 实现 OpenClaw 记忆搜索、来源读取、健康状态和能力探针。 */
 export class OpenMemSearchManager implements MemorySearchManager {
   private readonly contentCache = new Map<string, string>();
   private lastHealth: { ok: boolean; checkedAt: number; error?: string } | undefined;
@@ -160,4 +168,3 @@ export class OpenMemSearchManager implements MemorySearchManager {
     while (this.contentCache.size > 1_000) this.contentCache.delete(this.contentCache.keys().next().value as string);
   }
 }
-

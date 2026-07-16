@@ -74,22 +74,30 @@ Report: `scripts/e2e/e2e-report.json` (gitignored)
 
 See `scripts/e2e/lib/registry.mjs` → `EXTENSION_INVENTORY` for the full matrix:
 
-- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (12 plugins today; WebSocket, mTLS and OAuth2 are explicit/isolated)
+- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (13 plugins today; Tracing, WebSocket, mTLS and OAuth2 are explicit/isolated)
 - **e2eAdapter: false** — unit tests (+ optional `testing/` standard suite); no Docker e2e yet
-- **dockerRequired: true** — rabbitmq, redis-stream, rocketmq, gotify
+- **dockerRequired: true** — rabbitmq, redis-stream, rocketmq, gotify, tracing (OpenTelemetry Collector)
+
+RabbitMQ adapter 使用本地 OpenAI-compatible fixture 跑完整链路：等待 Channel 连接，
+confirm 发布入站消息，执行真实 OpenClaw Agent Turn，从 reply queue 校验信封与 routing key，
+最后确认 publisher confirm 与 deferred ACK 统计。该场景自动使用 host Gateway，以保证模型 fixture 可达。
+
+Redis Stream adapter 同样执行真实 Agent Turn：向 consumer-group 入站 Stream `XADD`，
+从指定 reply Stream 校验 wire envelope 与 reply route，并确认模型调用恰好一次、`XACK` 后 PEL 为空。
 
 ### Plugins with e2e adapters (Docker optional per category)
 
 | Plugin | Docker services |
 |--------|-----------------|
-| mqtt, stomp, web-mqtt, web-stomp | None (embedded / browser) |
+| mqtt, stomp, web-mqtt, web-stomp | None (embedded / browser)；STOMP 两种传输验证 Agent 回复与 ACK/RECEIPT；Web-MQTT 验证 QoS 1 deferred PUBACK、Agent 回复及 Chromium 闭环 |
 | web-socket | None; run explicitly with `--plugins web-socket`; the runner selects the host Gateway for the embedded listener |
 | mtls | None; run explicitly with `--plugins mtls` because it switches Gateway auth to trusted-proxy |
 | oauth2 | None; run explicitly with `--plugins oauth2`; the runner selects the host Gateway for its local provider fixture |
+| tracing | otel-collector; run with `--plugins tracing,mqtt`; the runner uses MQTT for a real Agent Turn and exports OTLP/HTTP spans |
 | rabbitmq | rabbitmq |
 | redis-stream | redis |
-| rocketmq | rocketmq-namesrv, broker, init（Topic/测试 Consumer Group）, proxy |
-| gotify | gotify |
+| rocketmq | rocketmq-namesrv, broker, init（合法入站/回复 Topic）, proxy；正式 tarball 完成 Producer → Agent → reply Topic → ACK，模型仅调用一次 |
+| gotify | gotify；正式 tarball 完成 REST → WebSocket → Agent → retained reply，并验证成功后删除入站与模型单次调用 |
 
 ### Unit-only extensions (representative)
 

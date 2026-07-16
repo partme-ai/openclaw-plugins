@@ -36,7 +36,12 @@ const baseConfig: WebMqttConfig = {
     rejectUnauthorized: false,
   },
   ws: { compress: false, idleTimeoutMs: 60_000, maxFrameSize: 256 * 1024, allowedOrigins: [] },
-  limits: { maxPayloadBytes: 256 * 1024, maxSubscriptionsPerClient: 50 },
+  limits: {
+    maxPayloadBytes: 256 * 1024,
+    maxSubscriptionsPerClient: 50,
+    maxPendingMessagesPerClient: 8,
+    inboundTaskTimeoutMs: 5_000,
+  },
   proxyProtocol: false,
 };
 
@@ -78,6 +83,37 @@ describe("web-mqtt ws-server integration", () => {
     expect(inboundSpy.mock.calls[0][0].payload.toString("utf-8")).toBe(payload);
   });
 
+  it("should defer QoS 1 PUBACK until the Agent handler completes", async () => {
+    let releaseHandler: (() => void) | undefined;
+    const handler = vi.fn(() => new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    }));
+    await startWebMqttServer(baseConfig, handler);
+    const client = mqtt.connect(`ws://127.0.0.1:${baseConfig.port}${baseConfig.path}`, {
+      clientId: `vitest-qos-${Date.now()}`,
+      reconnectPeriod: 0,
+    });
+    await new Promise<void>((resolve, reject) => {
+      client.once("connect", resolve);
+      client.once("error", reject);
+    });
+
+    let acknowledged = false;
+    const published = client.publishAsync(
+      "openclaw/agent/test-bot/in",
+      JSON.stringify({ text: "wait for Agent" }),
+      { qos: 1 },
+    ).then(() => { acknowledged = true; });
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(acknowledged).toBe(false);
+
+    releaseHandler?.();
+    await published;
+    expect(acknowledged).toBe(true);
+    await client.endAsync();
+  });
+
   it("publishToTopic should deliver to subscribed client", async () => {
     await startWebMqttServer(baseConfig, vi.fn());
 
@@ -101,11 +137,16 @@ describe("web-mqtt ws-server integration", () => {
       received.push(payload.toString("utf-8"));
     });
 
-    await publishToTopic(replyTopic, "outbound-from-server");
+    expect(await publishToTopic(replyTopic, "outbound-from-server")).toBe(1);
     await new Promise((resolve) => setTimeout(resolve, 150));
     client.end(true);
 
     expect(received).toContain("outbound-from-server");
+  });
+
+  it("publishToTopic should report zero when no active subscriber matches", async () => {
+    await startWebMqttServer(baseConfig, vi.fn());
+    expect(await publishToTopic("openclaw/agent/nobody/out", "lost")).toBe(0);
   });
 
   it("should enforce authenticated user ACLs", async () => {

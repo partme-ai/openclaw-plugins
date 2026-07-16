@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 美团 MTOp OpenAPI 的签名客户端与网络安全边界。
+ *
+ * 客户端只允许调用配置声明的 operation，按美团规则生成 SHA-1 签名，并在发出请求前执行
+ * 认证检查、请求体大小限制和进程内分钟限流；响应读取设置硬上限，错误信息会脱敏签名密钥
+ * 与授权 Token，防止外部异常将凭据带入日志。
+ */
 import { createHash } from "node:crypto";
 import type { MeituanApiResponse, MeituanOperation, MeituanPluginConfig } from "../types.js";
 

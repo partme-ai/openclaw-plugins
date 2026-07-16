@@ -1,3 +1,9 @@
+/**
+ * @fileoverview Tracing 插件配置的兼容合并、数值边界和 OTLP 地址规范化。
+ *
+ * 插件配置覆盖旧版全局配置，统一校验采样率、Span/缓冲上限、刷出周期、保留天数及重试参数；
+ * OTLP 地址只接受 HTTP(S)，并规范为无 query/hash 的 `/v1/traces` 端点。
+ */
 import type { TracingConfig } from "./shared/types.js";
 
 const DEFAULT_CONFIG: TracingConfig = {

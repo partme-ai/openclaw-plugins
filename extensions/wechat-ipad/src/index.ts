@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 微信 iPad 外部桥接插件的 OpenClaw 注册入口。
+ *
+ * 这里负责把 Channel、运行时、桥接服务和受 Gateway 保护的状态路由组装到同一个插件
+ * 生命周期中。底层协议连接由 `WechatIpadBridge` 管理，入站处理器只在服务启动成功或进入
+ * 后台重连后保持注册，停止时则按“监听器 → Socket → 缓存 → Runtime”的顺序彻底释放。
+ */
 import {
   defineChannelPluginEntry,
   type OpenClawPluginApi,
@@ -24,6 +31,7 @@ function resolveApiConfig(api: OpenClawPluginApi) {
   return resolveWechatIpadConfig(raw);
 }
 
+/** 注册需要完整 Gateway 能力的服务和 HTTP 状态端点。 */
 function registerFull(api: OpenClawPluginApi): void {
   let bridge: WechatIpadBridge | null = null;
   let disposeHandlers: (() => void) | null = null;
@@ -45,6 +53,7 @@ function registerFull(api: OpenClawPluginApi): void {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (config.required) {
+          // required 模式必须回滚已注册资源，避免启动失败后留下半活动桥接器。
           disposeHandlers();
           disposeHandlers = null;
           await bridge.stop();
@@ -56,6 +65,7 @@ function registerFull(api: OpenClawPluginApi): void {
       }
     },
     async stop() {
+      // 先阻止新事件进入，再关闭连接；最后清理跨生命周期的缓存和 Runtime 引用。
       disposeHandlers?.();
       disposeHandlers = null;
       await bridge?.stop();

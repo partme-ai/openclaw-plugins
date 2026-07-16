@@ -13,6 +13,7 @@
 - 连接数、订阅数、入站队列、prefetch、ACK、持久订阅状态和单订阅队列均有上限
 - 正确实现 `client` 累计确认与 `client-individual` 单条确认
 - 可选的进程内持久订阅和 NACK 重入队
+- 入站幂等采用 claim/commit/release，仅在 Agent 与回复投递成功后提交；失败允许同一 `message-id` 重试
 - 默认启用 Agent 白名单、显式 Topic 绑定和连接级回复主题隔离
 - 接入 OpenClaw Gateway 生命周期，提供凭证脱敏的 `/stomp-tcp/status`
 
@@ -137,7 +138,7 @@ content-type:application/json
 {"text":"你好"}\0
 ```
 
-`SEND` 的 `RECEIPT` 只会在 OpenClaw 成功接收入站派发后返回。`ack:client` 会累计确认到指定消息，`ack:client-individual` 只确认指定消息。`NACK` 默认重入队；设置 `requeue:false` 可丢弃。
+`SEND` 的 `RECEIPT` 只会在 OpenClaw Agent 处理完成且回复被至少一个活动或进程内持久订阅接受后返回。没有订阅者时返回 `ERROR`，不会伪造成功 `RECEIPT`。`ack:client` 会累计确认到指定消息，`ack:client-individual` 只确认指定消息。`NACK` 默认重入队；设置 `requeue:false` 可丢弃。
 
 持久订阅需要同时配置 `allowDurableSubscriptions: true`，并在 `SUBSCRIBE` 帧中携带 `durable:true` 或 `persistent:true`。它只在同一 Gateway 进程和认证 login 下跨 TCP 重连保留，不能跨进程重启。
 

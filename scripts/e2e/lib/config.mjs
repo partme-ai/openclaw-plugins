@@ -1,7 +1,7 @@
 /**
  * Merge per-plugin config fragments into ~/.openclaw-queue-e2e/openclaw.json.
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { loadPluginConfigs } from "../config/plugins/index.mjs";
 import { PLUGIN_REGISTRY, resolvePlugins } from "./registry.mjs";
@@ -80,7 +80,9 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
       entries: fragments.pluginEntries,
     },
     channels: fragments.channelEntries,
-    ...(ids.includes("tracing") ? {
+    ...(ids.some((id) =>
+      id === "tracing" || id === "rabbitmq" || id === "redis-stream" || id === "rocketmq" || id === "gotify" || id === "stomp" || id === "web-stomp" || id === "web-mqtt"
+    ) ? {
       models: {
         mode: "replace",
         providers: {
@@ -121,7 +123,17 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
 
   mkdirSync(STATE_DIR, { recursive: true });
   mkdirSync(join(STATE_DIR, "workspace-main"), { recursive: true });
-  writeFileSync(join(STATE_DIR, "openclaw.json"), JSON.stringify(config, null, 2));
+  const configPath = join(STATE_DIR, "openclaw.json");
+  writeFileSync(configPath, JSON.stringify(config, null, 2));
+  // The dedicated E2E profile is regenerated from scratch. `plugins install`
+  // creates recovery snapshots for the pre-install seed config; keeping those
+  // snapshots after the final raw write makes OpenClaw correctly (but
+  // undesirably for this harness) restore the older config as suspicious.
+  for (const file of readdirSync(STATE_DIR)) {
+    if (file === "openclaw.json.bak" || file === "openclaw.json.last-good" || file.startsWith("openclaw.json.clobbered.")) {
+      rmSync(join(STATE_DIR, file), { force: true });
+    }
+  }
   if (ids.includes("router")) {
     if (!ids.includes("gotify")) throw new Error("router E2E requires --plugins router,gotify");
     const routerDir = join(STATE_DIR, "router");
@@ -153,6 +165,6 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
     }, null, 2));
   }
   writeFileSync(join(E2E_DIR, ".e2e-config-meta.json"), JSON.stringify({ rocketmqTopic: e2eTopic, plugins: ids }, null, 2));
-  console.log("[config] wrote %s (gateway:%s, plugins:%s)", join(STATE_DIR, "openclaw.json"), GATEWAY_PORT, ids.join(","));
+  console.log("[config] wrote %s (gateway:%s, plugins:%s)", configPath, GATEWAY_PORT, ids.join(","));
   return { config, meta: { rocketmqTopic: e2eTopic } };
 }

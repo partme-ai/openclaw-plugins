@@ -1,7 +1,16 @@
+/**
+ * @fileoverview 微信 iPad 外部桥接的配置模式、默认值合并和安全校验。
+ *
+ * 配置解析采用 fail-closed 策略：拒绝未知字段、越界数值和携带凭据的 URL；远程服务只允许
+ * WSS/HTTPS，明文 WS/HTTP 仅可用于本机回环开发。启用插件还必须显式确认非官方协议风险，
+ * 启用群聊则必须配置白名单或再次明确允许全部群。
+ */
 import { DEFAULT_CONFIG, type WechatIpadConfig } from "./types.js";
 
+/** 允许使用明文协议进行本地开发的回环主机集合。 */
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
+/** 供 OpenClaw 配置系统展示和预校验的 JSON Schema。 */
 export const WECHAT_IPAD_CONFIG_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -113,12 +122,16 @@ function stringArray(value: unknown): string[] {
   return [...new Set(value.map((entry) => entry.trim()))];
 }
 
+/** 从 OpenClaw 全局配置中读取 `channels.wechat-ipad` 段。 */
 export function getWechatIpadSection(globalConfig: Record<string, unknown>): Record<string, unknown> {
   const channels = objectValue(globalConfig.channels);
   return objectValue(channels["wechat-ipad"]);
 }
 
-/** Resolve and validate fail-closed bridge configuration. */
+/**
+ * 合并默认值、环境变量和用户配置，并执行封闭式安全校验。
+ * Token 优先取显式 `auth.token`，为空时才读取 `WECHAT_IPAD_BRIDGE_TOKEN`。
+ */
 export function resolveWechatIpadConfig(
   input: Record<string, unknown> | undefined,
   env: NodeJS.ProcessEnv = process.env,

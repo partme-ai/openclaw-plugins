@@ -105,7 +105,9 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1`.
       },
       "limits": {
         "maxPayloadBytes": 262144,
-        "maxSubscriptionsPerClient": 200
+        "maxSubscriptionsPerClient": 200,
+        "maxPendingMessagesPerClient": 32,
+        "inboundTaskTimeoutMs": 120000
       }
     }
   }
@@ -114,12 +116,21 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1`.
 
 ## Enterprise hardening checklist
 
+| Area | Behavior |
+|---|---|
+| **Delivery** | QoS 0 has no protocol acknowledgement; QoS 1 PUBACK waits for the Agent turn and reply delivery |
+| **Inbound** | Per-`clientId` serialized dispatch with hard pending-depth and task-time limits |
+| **Outbound** | Awaited broker publish; missing session, ACL denial, or no active subscriber fails the delivery |
+| **Isolation** | Server-originated publishes do not re-enter inbound processing; ACL plus topic allowlists apply |
+
+Application-level deduplication requires an explicit `idempotencyKey` or `messageId` in the JSON payload. MQTT packet identifiers are legally reusable and are not treated as cross-turn idempotency keys; repeated plain-text payloads remain separate valid messages.
+
 - Bind plain WS to loopback only; non-loopback startup requires both `tls.enabled=true` and `auth.required=true`
 - Use dedicated users and preferably `passwordHash` instead of plaintext passwords
 - Set `ws.allowedOrigins` for every browser application; an unlisted browser Origin is rejected
 - Set strict `publishAllow` / `subscribeAllow`
 - Anonymous access requires an explicit `anonymous` user with a fail-closed ACL
-- Tune `maxPayloadBytes`, `maxFrameSize`, `idleTimeoutMs` by traffic profile
+- Tune `maxPayloadBytes`, `maxFrameSize`, `idleTimeoutMs`, `maxPendingMessagesPerClient`, and `inboundTaskTimeoutMs` by traffic profile
 - Use reverse proxy policy and network ACL for perimeter controls
 
 Local protocol and installation gates do not replace browser/device acceptance in the target environment. Before production approval, verify the real certificate chain, reverse proxy upgrade forwarding, Origin policy, reconnect behavior, and expected concurrent browser load.

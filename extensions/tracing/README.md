@@ -7,7 +7,7 @@ Production-oriented message and tool tracing for OpenClaw 2026.7.1.
 ## Scope
 
 `@partme.ai/openclaw-tracing` observes the official `message_received`,
-`before_tool_call`, `after_tool_call`, `reply_payload_sending`, and `session_end` hooks. It
+`before_tool_call`, `after_tool_call`, `reply_payload_sending`, `agent_end`, and `session_end` hooks. It
 creates an OpenTelemetry-compatible root span for each sampled message and a
 child span for each tool call.
 
@@ -26,8 +26,10 @@ Collector and route it to SkyWalking when that integration is required.
 openclaw plugins install @partme.ai/openclaw-tracing
 ```
 
-The manifest ID is `tracing`. Canonical configuration belongs under
-`plugins.entries.tracing.config`:
+The manifest ID is `tracing`. Canonical plugin configuration belongs under
+`plugins.entries.tracing.config`. OpenClaw 2026.7.1 also requires
+`plugins.entries.tracing.hooks.allowConversationAccess=true` so the protected
+`agent_end` fallback can close traces for custom channel dispatchers:
 
 ```json
 {
@@ -35,6 +37,9 @@ The manifest ID is `tracing`. Canonical configuration belongs under
     "entries": {
       "tracing": {
         "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
         "config": {
           "enabled": true,
           "backend": "otlp",
@@ -89,8 +94,11 @@ last-export, and last-error diagnostics.
 - Active traces and recent query data are bounded in process memory.
 - Missing tool completion, early session end, superseding messages, and a
   30-minute active-trace TTL close orphan spans instead of leaking them.
-- The root span closes on the public final-reply hook, so the plugin does not
-  require OpenClaw's privileged `allowConversationAccess` policy.
+- Standard OpenClaw outbound channels close the root span on the final-reply
+  hook. Custom channel dispatchers that bypass that hook close it on
+  `agent_end`; OpenClaw therefore requires the explicit
+  `allowConversationAccess` trust setting shown above. The plugin uses only
+  run/session outcome metadata from that hook and does not persist its message history.
 - File and OTLP buffers are process-local. They do not provide a durable outbox
   or exactly-once export. A process crash can lose buffered spans; OTLP timeout
   outcomes can be ambiguous.

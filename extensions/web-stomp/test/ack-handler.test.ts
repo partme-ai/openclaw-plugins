@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   cleanupConnection,
+  discardPendingMessage,
   getAckStats,
   handleAck,
   handleNack,
@@ -33,6 +34,12 @@ describe("registerMessage", () => {
   it("tracks pending messages for client-individual mode", () => {
     registerMessage("sub-1", "conn-1", "/topic/a", "client-individual");
     expect(getAckStats().pendingCount).toBe(1);
+  });
+
+  it("discards a pending entry when WebSocket delivery fails", () => {
+    const id = registerMessage("sub-1", "conn-1", "/topic/a", "client-individual");
+    discardPendingMessage(id);
+    expect(getAckStats().pendingCount).toBe(0);
   });
 });
 

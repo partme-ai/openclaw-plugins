@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 插件运行期指标的有界内存注册表和高性能快照实现。
+ *
+ * 指标定义与样本按稳定键存储，支持 Gauge/Counter、Summary 和 Histogram 组合操作；动态
+ * series 硬限制为 4096，超限时记录丢弃计数以防标签基数耗尽内存。快照按需缓存，写入时
+ * 失效，热路径查询避免全量排序和 JSON 序列化。
+ */
 import type { MetricDefinition, MetricSample, MetricType } from "../types.js";
 
 type LabelValues = Record<string, string>;
@@ -31,6 +38,7 @@ function sortedLabels(labels: LabelValues | undefined): LabelValues | undefined 
 
 // ─────────── Registry ───────────
 
+/** 保存运行期指标定义与样本，并为 Prometheus 导出提供稳定快照。 */
 export class MetricsRegistry {
   private readonly definitions = new Map<string, MetricDefinition>();
   private readonly samples = new Map<string, MetricSample>();

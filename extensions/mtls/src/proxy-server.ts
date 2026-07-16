@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 终止客户端 mTLS 并转发到本机 OpenClaw Gateway 的 HTTPS 代理服务器。
+ *
+ * 同时覆盖普通 HTTP 与 WebSocket Upgrade：每次请求都提取对端证书、执行路径授权、重建
+ * 可信转发头并记录统计。服务器只连接配置允许的本机上游，设置上游超时，停止时主动关闭
+ * 所有隧道 Socket，避免插件重载后遗留连接。
+ */
 import { readFile } from "node:fs/promises";
 import * as http from "node:http";
 import * as https from "node:https";
@@ -22,6 +29,7 @@ function getCommonName(value: unknown): string | undefined {
   return undefined;
 }
 
+/** 从 TLS Socket 提取策略层所需的最小证书信息，不暴露完整证书对象。 */
 export function extractClientCertificate(socket: TLSSocket): ClientCertInfo | undefined {
   const certificate = socket.getPeerCertificate();
   if (!certificate || Object.keys(certificate).length === 0) return undefined;
@@ -79,6 +87,7 @@ function serializeUpgradeResponse(response: http.IncomingMessage): string {
   return `HTTP/1.1 ${statusCode} ${statusMessage}\r\n${headers.join("\r\n")}\r\n\r\n`;
 }
 
+/** 管理 mTLS HTTPS 监听器、HTTP 转发和 WebSocket 双向隧道的生命周期。 */
 export class MtlsProxyServer {
   private server: https.Server | null = null;
   private readonly tunnelSockets = new Set<Duplex>();

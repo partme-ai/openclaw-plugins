@@ -1,4 +1,10 @@
 /**
+ * @fileoverview MQTT 插件使用的声明式 Channel 配置向导工厂。
+ *
+ * 将凭据和文本字段描述映射为 OpenClaw 2026.7.1 的 setup adapter/wizard，并提供 URL、
+ * 双凭据和内嵌 Broker 三种常用模板。工厂只负责安全写入 `channels.mqtt` 配置，不建立
+ * MQTT 网络连接。
+ *
  * @module mqtt/channel-setup-factory
  */
 

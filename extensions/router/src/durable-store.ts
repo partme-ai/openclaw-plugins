@@ -1,3 +1,10 @@
+/**
+ * @fileoverview Router 待投递、去重键、死信和审计记录的单写者持久化存储。
+ *
+ * 状态变更在内存副本上完成，经临时文件写入、文件 fsync、原子 rename 和目录 fsync 后才
+ * 提交；进程/主机 lease 与心跳阻止多个 Gateway 同时写同一目录。存储同时执行载荷大小、
+ * pending/DLQ 容量和去重 TTL 约束，并能识别“rename 已提交但目录持久性不确定”的结果。
+ */
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -82,6 +89,7 @@ function parseState(raw: string): RouterState {
   return value as RouterState;
 }
 
+/** 为可靠投递器提供串行、原子、单写者的磁盘状态机。 */
 export class DurableRouteStore {
   private readonly filePath: string;
   private readonly stateDir: string;

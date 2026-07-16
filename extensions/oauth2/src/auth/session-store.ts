@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OAuth2 授权事务和登录会话的安全存储。
+ *
+ * 支持有容量上限的进程内后端和带 TTL 的 Redis 后端；授权 state 采用一次性 `take` 防重放，
+ * Cookie 仅保存经 HMAC-SHA256 签名的随机标识，并启用 HttpOnly/SameSite。`returnTo` 被限制为
+ * 本站绝对路径以阻止开放重定向，签名比较使用常量时间算法。
+ */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 
@@ -98,6 +105,7 @@ function safeReturnTo(value: string | undefined, fallback: string): string {
   return value;
 }
 
+/** 统一管理 PKCE 授权事务、会话 Cookie 及其内存/Redis 生命周期。 */
 export class OAuth2SessionStore {
   private readonly backend: SessionBackend;
   private readonly prefix: string;

@@ -118,7 +118,9 @@ MQTT over WebSocket 传输与 ACL 留在本插件；下列能力通过 **薄封�
       },
       "limits": {
         "maxPayloadBytes": 262144,
-        "maxSubscriptionsPerClient": 200
+        "maxSubscriptionsPerClient": 200,
+        "maxPendingMessagesPerClient": 32,
+        "inboundTaskTimeoutMs": 120000
       }
     }
   }
@@ -131,17 +133,19 @@ MQTT over WebSocket 传输与 ACL 留在本插件；下列能力通过 **薄封�
 
 | 项 | 行为 |
 |----|------|
-| **分级** | 协议限制需文档约束（QoS0 无协议确认） |
-| **入站** | per-`clientId` 串行 dispatch；`processInbound` await |
-| **出站** | `publishToTopic` await |
+| **分级** | QoS0 无协议确认；QoS1 PUBACK 等待 Agent 与回复投递完成 |
+| **入站** | per-`clientId` 串行 dispatch；pending 数量与任务时长均有硬上限 |
+| **出站** | `publishToTopic` await；无活跃订阅者、ACL 拒绝或缺会话均失败 |
 | **隔离** | server publish 不触发入站；ACL + topic 白名单 |
+
+应用级幂等需在 JSON payload 中提供 `idempotencyKey` 或 `messageId`。MQTT packet id 会被客户端合法复用，插件不会把它当作跨 Agent Turn 的幂等键；纯文本相同内容也会按两条合法消息处理。
 
 - 明文 WS 只能绑定 loopback；监听非 loopback 地址必须同时启用 `tls.enabled=true` 与 `auth.required=true`
 - 使用独立 MQTT 用户，生产配置优先使用 `passwordHash`，避免明文密码
 - 浏览器应用必须加入 `ws.allowedOrigins` 精确白名单，未列出的 Origin 会被拒绝
 - 严格配置 `publishAllow` / `subscribeAllow`
 - 匿名访问必须显式配置 `anonymous` 用户及 fail-closed ACL
-- 按流量调优 `maxPayloadBytes`、`maxFrameSize`、`idleTimeoutMs`
+- 按流量调优 `maxPayloadBytes`、`maxFrameSize`、`idleTimeoutMs`、`maxPendingMessagesPerClient` 与 `inboundTaskTimeoutMs`
 - 配合反向代理与网络 ACL 做边界隔离
 
 本地协议测试与安装门禁不能替代目标环境验收。生产签字前仍需验证真实证书链、反向代理 Upgrade 转发、Origin 策略、断线重连以及预期浏览器并发负载。

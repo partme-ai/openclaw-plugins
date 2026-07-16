@@ -37,6 +37,8 @@ export const DEFAULT_WEB_MQTT_CONFIG: WebMqttConfig = {
   limits: {
     maxPayloadBytes: 256 * 1024,
     maxSubscriptionsPerClient: 200,
+    maxPendingMessagesPerClient: 32,
+    inboundTaskTimeoutMs: 120_000,
   },
   proxyProtocol: false,
 };
@@ -94,6 +96,14 @@ export function resolveWebMqttConfig(globalConfig: Record<string, unknown>): Web
       maxSubscriptionsPerClient: asSafeInteger(
         raw.limits?.maxSubscriptionsPerClient,
         DEFAULT_WEB_MQTT_CONFIG.limits.maxSubscriptionsPerClient,
+      ),
+      maxPendingMessagesPerClient: asSafeInteger(
+        raw.limits?.maxPendingMessagesPerClient,
+        DEFAULT_WEB_MQTT_CONFIG.limits.maxPendingMessagesPerClient,
+      ),
+      inboundTaskTimeoutMs: asSafeInteger(
+        raw.limits?.inboundTaskTimeoutMs,
+        DEFAULT_WEB_MQTT_CONFIG.limits.inboundTaskTimeoutMs,
       ),
     },
     proxyProtocol: raw.proxyProtocol ?? DEFAULT_WEB_MQTT_CONFIG.proxyProtocol,
@@ -190,6 +200,12 @@ export function validateWebMqttConfig(config: WebMqttConfig): string[] {
   }
   if (!Number.isSafeInteger(config.limits.maxSubscriptionsPerClient) || config.limits.maxSubscriptionsPerClient < 1) {
     issues.push("limits.maxSubscriptionsPerClient 必须是正安全整数。");
+  }
+  if (!Number.isSafeInteger(config.limits.maxPendingMessagesPerClient) || config.limits.maxPendingMessagesPerClient < 1) {
+    issues.push("limits.maxPendingMessagesPerClient 必须是正安全整数。");
+  }
+  if (!Number.isSafeInteger(config.limits.inboundTaskTimeoutMs) || config.limits.inboundTaskTimeoutMs < 1) {
+    issues.push("limits.inboundTaskTimeoutMs 必须是正安全整数。");
   }
   const usernames = new Set<string>();
   for (const user of config.auth.users) {

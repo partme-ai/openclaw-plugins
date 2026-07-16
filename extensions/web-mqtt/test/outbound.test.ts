@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/transport/server.js", () => ({
-  publishToTopic: vi.fn(),
+  publishToTopic: vi.fn().mockResolvedValue(1),
   getClientUsername: vi.fn(() => "alice"),
   getStats: vi.fn(() => ({})),
   startWebMqttServer: vi.fn(),
@@ -33,6 +33,7 @@ import { mqttWsChannel } from "../src/channel.js";
 describe("publishOutboundText", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(publishToTopic).mockResolvedValue(1);
   });
 
   it("publishes to replyTopic from session context", async () => {
@@ -62,12 +63,12 @@ describe("publishOutboundText", () => {
     expect(publishToTopic).toHaveBeenCalledWith("openclaw/agent/sales/out", "fallback");
   });
 
-  it("silently returns when session context missing", async () => {
-    await publishOutboundText("missing-session", "noop", "openclaw/");
+  it("fails when session context is missing", async () => {
+    await expect(publishOutboundText("missing-session", "noop", "openclaw/")).rejects.toThrow(/Missing session context/);
     expect(publishToTopic).not.toHaveBeenCalled();
   });
 
-  it("skips publish when ACL denies outbound", async () => {
+  it("fails when ACL denies outbound", async () => {
     const sessionKey = "agent:demo:mqtt-ws:direct:client-z";
     upsertSessionContext(sessionKey, {
       clientId: "client-z",
@@ -78,8 +79,21 @@ describe("publishOutboundText", () => {
     });
     vi.mocked(isUserActionAllowed).mockReturnValueOnce(false);
 
-    await publishOutboundText(sessionKey, "blocked", "openclaw/");
+    await expect(publishOutboundText(sessionKey, "blocked", "openclaw/")).rejects.toThrow(/Outbound ACL denied/);
     expect(publishToTopic).not.toHaveBeenCalled();
+  });
+
+  it("fails when no active subscriber accepts the reply", async () => {
+    const sessionKey = "agent:demo:mqtt-ws:direct:no-subscriber";
+    upsertSessionContext(sessionKey, {
+      clientId: "no-subscriber",
+      agentId: "demo",
+      accountId: "default",
+      lastInboundTopic: "openclaw/agent/demo/in",
+      replyTopic: "missing/out",
+    });
+    vi.mocked(publishToTopic).mockResolvedValue(0);
+    await expect(publishOutboundText(sessionKey, "lost", "openclaw/")).rejects.toThrow(/No active subscriber/);
   });
 
   it("publishes Router deliveries directly to their configured topic", async () => {

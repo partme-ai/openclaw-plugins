@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OpenClaw OAuth2/OIDC 外部授权拦截插件的注册入口。
+ *
+ * 插件作为 OAuth2 Client 在 Gateway 前启动本地认证代理：浏览器通过授权码 + PKCE 建立会话，
+ * API 可直接携带 Bearer Token；认证成功后只向本机 trusted-proxy Gateway 注入已验证用户身份。
+ * 本入口负责配置模式、代理服务生命周期和受认证保护的状态端点。
+ */
 import {
   buildJsonPluginConfigSchema,
   definePluginEntry,

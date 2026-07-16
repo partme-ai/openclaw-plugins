@@ -103,7 +103,7 @@ describe("rocketmq transport reliability", () => {
       consume: (message: Record<string, unknown>) => Promise<string>;
     };
     const message = {
-      topic: "openclaw.agent.main.in.peer",
+      topic: "openclaw--agent--main--in--peer",
       body: Buffer.from("hello"),
       messageId: "message-1",
       deliveryAttempt: 1,
@@ -166,7 +166,7 @@ describe("rocketmq transport reliability", () => {
     };
 
     await expect(listener.consume({
-      topic: "openclaw.agent.main.in.peer",
+      topic: "openclaw--agent--main--in--peer",
       body: Buffer.from("poison"),
       messageId: "poison-1",
       deliveryAttempt: 1,

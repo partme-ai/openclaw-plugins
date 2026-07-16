@@ -60,6 +60,7 @@ function makeRuntime() {
 describe("dispatchInboundMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    publishToDestination.mockReturnValue(1);
     clearStompRuntime();
     setStompRuntime(makeRuntime());
   });
@@ -94,6 +95,18 @@ describe("dispatchInboundMessage", () => {
     expect(publishToDestination).toHaveBeenCalledWith("/topic/devices/reply", '{"text":"reply"}');
   });
 
+  it("fails the Agent turn when no subscriber accepts the reply", async () => {
+    publishToDestination.mockReturnValue(0);
+    await dispatchInboundMessage(makeMessage());
+
+    const reply = dispatchChannelMessage.mock.calls[0][0].reply as {
+      deliver: (p: { wire: string }) => Promise<void>;
+    };
+    await expect(reply.deliver({ wire: '{"text":"reply"}' })).rejects.toThrow(
+      "No STOMP subscriber accepted reply destination",
+    );
+  });
+
   it("falls back reply destination when omitted", async () => {
     await dispatchInboundMessage(makeMessage({ replyDestination: undefined }));
 
@@ -109,6 +122,19 @@ describe("dispatchInboundMessage", () => {
     await dispatchInboundMessage(makeMessage({ idempotencyKey: key, rawPayload: "once" }));
 
     expect(dispatchChannelMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the idempotency claim when dispatch fails", async () => {
+    const key = `stomp-retry-${Date.now()}`;
+    dispatchChannelMessage.mockRejectedValueOnce(new Error("temporary failure"));
+    await expect(
+      dispatchInboundMessage(makeMessage({ idempotencyKey: key })),
+    ).rejects.toThrow("temporary failure");
+
+    await expect(
+      dispatchInboundMessage(makeMessage({ idempotencyKey: key })),
+    ).resolves.toBeUndefined();
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
   });
 
   it("parses jsonTextOrPlain envelope payloads", async () => {

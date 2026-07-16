@@ -20,7 +20,7 @@
 - **Topic+Tag 绑定** — 显式的 `topic + tag -> agentId` 路由规则
 - **3 种分发模式** — `embedded-agent`（默认）/ `subagent` / `reply-pipeline`
 - **载荷解析策略** — `jsonTextOrPlain`（默认）/ `jsonOnly` / `plainText`
-- **回退主题** — 标准模式：`openclaw.agent.<agentId>.in[.<peerId>]`
+- **回退主题** — Broker 合法标准模式：`openclaw--agent--<agentId>--in[--<peerId>]`
 - **回复主题路由** — Agent 回复发布到配置的 `replyTopic` / `replyTag`
 - **健康端点** — `/rocketmq/health`、`/rocketmq/stats`、`/rocketmq/status`
 - **会话映射** — 追踪 producer-consumer-conversation 会话映射关系
@@ -61,16 +61,16 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
       "consumer": {
         "groupId": "openclaw-rocketmq-consumer",
         "subscriptions": [
-          { "topic": "device.status", "filterExpression": "*" }
+          { "topic": "device-status", "filterExpression": "*" }
         ]
       },
       "topicBindings": [
         {
-          "topic": "device.status",
+          "topic": "device-status",
           "tag": "iot",
           "agentId": "iot-agent",
           "accountId": "default",
-          "replyTopic": "device.command",
+          "replyTopic": "device-command",
           "replyTag": "command"
         }
       ],
@@ -106,7 +106,7 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
       "consumer": {
         "groupId": "openclaw-rocketmq-consumer", // Consumer 组 ID
         "subscriptions": [                       // 订阅的主题列表
-          { "topic": "my.topic", "filterExpression": "*" }
+          { "topic": "my-topic", "filterExpression": "*" }
         ],
         "maxCacheMessageCount": 1024,
         "maxCacheMessageSizeInBytes": 67108864,
@@ -122,12 +122,12 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
       },
       "topicBindings": [                         // Topic 到 Agent 的路由规则
         {
-          "topic": "device.status",
+          "topic": "device-status",
           "tag": "iot",
           "agentId": "iot-agent",
           "accountId": "default",
           "peerId": "device-1",                  // 可选：对端标识
-          "replyTopic": "device.command",        // 可选：回复主题
+          "replyTopic": "device-command",        // 可选：回复主题
           "replyTag": "command"                   // 可选：回复标签
         }
       ],
@@ -194,13 +194,13 @@ openclaw plugins install @partme.ai/openclaw-rocketmq
 ### 入站（RocketMQ -> Agent）
 
 - **显式绑定优先**：根据 `topicBindings[].topic + topicBindings[].tag` 匹配
-- **标准回退**：`{topicPrefix}.agent.<agentId>.in[.<peerId>]`
+- **标准回退**：`{topicPrefix}--agent--<agentId>--in[--<peerId>]`
 - **载荷解析**：`jsonTextOrPlain` — 优先读取 JSON 的 `text` 字段，否则使用原始文本
 
 ### 出站（Agent -> RocketMQ）
 
 - **会话绑定**：使用活跃会话中的 `replyTopic` / `replyTag`
-- **标准回退**：`{topicPrefix}.agent.<agentId>.out[.<peerId>]`
+- **标准回退**：`{topicPrefix}--agent--<agentId>--out[--<peerId>]`
 - **消费确认**：PushConsumer 通过 `ConsumeResult.SUCCESS` / `FAILURE` 确认
 
 ## 健康端点

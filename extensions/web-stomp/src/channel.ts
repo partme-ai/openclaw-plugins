@@ -1,4 +1,10 @@
-/** OpenClaw 2026.7.1 ChannelPlugin lifecycle for STOMP over WebSocket. */
+/**
+ * @fileoverview STOMP 1.2 over WebSocket 服务到 OpenClaw Channel 的生命周期适配层。
+ *
+ * Channel 启动时创建 WS/WSS STOMP Server 并把 SEND 帧路由到 Agent，停止时随 AbortSignal
+ * 清理连接；Agent 回复发布到该会话专属 Topic，没有订阅者接收时明确失败。账户配置、状态
+ * 和探针与协议帧处理分离，保持 OpenClaw 2026.7.1 Channel 契约清晰。
+ */
 import type {
   ChannelAccountSnapshot,
   ChannelGatewayContext,
@@ -115,6 +121,9 @@ export const stompChannel: ChannelPlugin<ResolvedWebStompAccount> = {
     sendText: async (ctx: ChannelOutboundContext) => {
       const destination = ctx.to.startsWith("/topic/") ? ctx.to : buildSessionDestination(ctx.to);
       const delivered = publishToDestination(destination, ctx.text);
+      if (delivered < 1) {
+        throw new Error(`No Web STOMP subscriber accepted destination: ${destination}`);
+      }
       return { channel: "stomp", messageId: `${destination}:${delivered}` };
     },
   },

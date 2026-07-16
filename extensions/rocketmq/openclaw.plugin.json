@@ -29,8 +29,9 @@
           },
           "topicPrefix": {
             "type": "string",
+            "pattern": "^(?!.*--)[a-zA-Z0-9_-]+$",
             "default": "openclaw",
-            "description": "Prefix used by the standard topic format"
+            "description": "Broker-safe prefix used by the standard -- delimited topic format"
           },
           "sessionCredentials": {
             "type": "object",
@@ -55,14 +56,14 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "groupId": { "type": "string", "default": "openclaw-rocketmq-consumer" },
+              "groupId": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$", "default": "openclaw-rocketmq-consumer" },
               "subscriptions": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
-                    "topic": { "type": "string" },
+                    "topic": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
                     "filterExpression": { "type": "string", "default": "*" }
                   },
                   "required": ["topic"]
@@ -105,12 +106,12 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "topic": { "type": "string" },
+                "topic": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
                 "tag": { "type": "string", "default": "*" },
                 "agentId": { "type": "string" },
                 "accountId": { "type": "string", "default": "default" },
                 "peerId": { "type": "string", "description": "Peer identifier for session routing" },
-                "replyTopic": { "type": "string" },
+                "replyTopic": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
                 "replyTag": { "type": "string" }
               },
               "required": ["topic", "agentId"]

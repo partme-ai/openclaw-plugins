@@ -168,7 +168,7 @@ describe("rocketmq-config", () => {
         endpoints: "127.0.0.1:8081",
         topicPrefix: "openclaw",
         topicBindings: [
-          { topic: "device.status", tag: "iot", agentId: "agent1", accountId: "default" },
+          { topic: "device-status", tag: "iot", agentId: "agent1", accountId: "default" },
         ],
       };
       const issues = validateRockermqConfig(config);
@@ -191,6 +191,25 @@ describe("rocketmq-config", () => {
       };
       const issues = validateRockermqConfig(config);
       expect(issues).toContain("RocketMQ consumer.groupId is required");
+    });
+
+    it("should reject broker resource names containing unsupported separators", () => {
+      const config = {
+        ...DEFAULT_ROCKERMQ_CONFIG,
+        topicBindings: [
+          {
+            topic: "device.status",
+            tag: "*",
+            agentId: "agent1",
+            accountId: "default",
+            replyTopic: "device.status.out",
+          },
+        ],
+      };
+      expect(validateRockermqConfig(config)).toEqual([
+        "RocketMQ topic binding is invalid: device.status",
+        "RocketMQ reply topic is invalid: device.status.out",
+      ]);
     });
   });
 

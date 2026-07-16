@@ -1,4 +1,10 @@
-/** channels.stomp-tcp parsing and fail-closed production validation. */
+/**
+ * @fileoverview `channels.stomp-tcp` 配置解析、默认值和生产安全校验。
+ *
+ * 配置涵盖 TCP/TLS 监听器、登录用户、心跳、订阅/队列/速率上限、ACK 模式与 Topic 路由。
+ * 明文监听只能绑定回环地址；非回环 TLS 必须具备登录认证或受信客户端证书；状态快照会移除
+ * 明文密码，只展示凭据是否已配置。
+ */
 import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk";
 
 import type {
@@ -96,6 +102,7 @@ function ackMode(value: unknown): StompAckMode {
   return value === "client" || value === "client-individual" ? value : "auto";
 }
 
+/** 将 OpenClaw 全局配置解析为边界完整的 STOMP Server 配置。 */
 export function resolveStompTcpConfig(globalConfig: Record<string, unknown>): StompTcpConfig {
   const raw = record(record(globalConfig.channels)["stomp-tcp"]);
   const tls = record(raw.tls);
@@ -147,6 +154,7 @@ function isLoopback(host: string): boolean {
   return value === "localhost" || value === "::1" || value.startsWith("127.");
 }
 
+/** 返回所有生产安全问题，便于 CLI/测试一次展示完整诊断。 */
 export function validateStompTcpConfig(config: StompTcpConfig): string[] {
   const issues: string[] = [];
   if (config.port > 0 && !isLoopback(config.host)) issues.push("plaintext STOMP may only bind a loopback address");

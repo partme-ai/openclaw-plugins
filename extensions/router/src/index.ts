@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OpenClaw 跨渠道消息 Router 的注册、规则匹配和运维入口。
+ *
+ * 监听 inbound、outbound 和 reply_payload 事件，按规则生成稳定幂等键与 hop trace，再交给
+ * `ReliableRouteDispatcher` 持久化投递。trace 限制和已拥有 identity 检查防止路由环路；
+ * 状态、健康、DLQ、审计及重放端点均要求插件认证，并只返回脱敏摘要。
+ */
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 

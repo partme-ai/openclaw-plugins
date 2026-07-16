@@ -18,7 +18,7 @@ export function gotifyConfig(ctx) {
             inbound: {
               enabled: true,
               allowedAppId: g.allowedAppId,
-              deleteAfterConsume: false,
+              deleteAfterConsume: true,
             },
           },
         },

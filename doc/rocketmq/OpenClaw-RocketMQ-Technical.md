@@ -57,15 +57,17 @@ for each binding in topicBindings:
 **Pass 2 — Standard Format** (fallback)
 ```
 parseStandardTopic(topic, topicPrefix):
-  prefix = topicPrefix ? topicPrefix + "-" : ""
+  prefix = topicPrefix ? topicPrefix + "--agent--" : "agent--"
   if topic starts with prefix:
-    parts = topic.slice(prefix.length).split("-")
-    if parts[0] === "agent" and parts.length >= 3:
-      direction = parts[2]  # "in" or "out"
-      agentId = parts[1]
-      peerId = parts.slice(3).join("-")
+    parts = topic.slice(prefix.length).split("--")
+    if 2 <= parts.length <= 3 and every part is non-empty:
+      agentId = parts[0]
+      direction = parts[1]  # "in" or "out"
+      peerId = parts[2] or ""
       → return { agentId, direction, peerId }
 ```
+
+RocketMQ broker resource names are validated against `^[a-zA-Z0-9_-]+$`; `--` is reserved as the standard-route delimiter and cannot appear inside `topicPrefix`, `agentId`, or `peerId` segments.
 
 ### Topic Wildcard Matching
 

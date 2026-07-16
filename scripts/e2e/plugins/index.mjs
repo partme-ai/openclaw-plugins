@@ -50,10 +50,10 @@ export const results = [];
  * Run installed-plugin smoke tests for selected plugins.
  * @param {string[]|undefined} pluginIds
  */
-export async function runPluginTests(pluginIds) {
+export async function runPluginTests(pluginIds, services = {}) {
   const ids = resolvePlugins(pluginIds);
   results.length = 0;
-  const ctx = createTestContext(ids);
+  const ctx = createTestContext(ids, services);
 
   for (const id of ids) {
     const adapter = ADAPTERS[id];

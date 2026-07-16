@@ -60,7 +60,7 @@ Add a `channels.rocketmq` section to your `openclaw.json`:
       "endpoints": "127.0.0.1:8081",
       "consumer": {
         "subscriptions": [
-          { "topic": "openclaw-agent-main-in", "filterExpression": "*" }
+          { "topic": "openclaw--agent--main--in", "filterExpression": "*" }
         ]
       }
     }
@@ -94,7 +94,7 @@ Add a `channels.rocketmq` section to your `openclaw.json`:
         "groupId": "openclaw-rocketmq-consumer",
         "subscriptions": [
           { "topic": "device-status", "filterExpression": "*" },
-          { "topic": "openclaw-agent-support-in-device1", "filterExpression": "iot" }
+          { "topic": "openclaw--agent--support--in--device1", "filterExpression": "iot" }
         ],
         "maxCacheMessageCount": 1024,
         "maxCacheMessageSizeInBytes": 67108864,
@@ -149,13 +149,13 @@ Add a `channels.rocketmq` section to your `openclaw.json`:
 ### Standard Format
 
 ```
-{topicPrefix}-agent-{agentId}-{direction}[-{peerId}]
+{topicPrefix}--agent--{agentId}--{direction}[--{peerId}]
 ```
 
 Examples:
-- `openclaw-agent-main-in` — inbound to the "main" agent
-- `openclaw-agent-main-out` — outbound from "main"
-- `openclaw-agent-support-in-device123` — inbound to "support" from device123
+- `openclaw--agent--main--in` — inbound to the "main" agent
+- `openclaw--agent--main--out` — outbound from "main"
+- `openclaw--agent--support--in--device123` — inbound to "support" from device123
 
 ### Explicit Bindings
 

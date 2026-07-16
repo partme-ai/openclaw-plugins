@@ -1,3 +1,9 @@
+/**
+ * @fileoverview 小红书 Rednode Ark Open API 工具插件的注册入口。
+ *
+ * 配置有效时创建共享 `RednodeClient` 并注册一个白名单调用工具；Agent 无法传入任意 API
+ * 路径，operation 选择、参数校验、签名和限流均由工具层及客户端层共同约束。
+ */
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { definePluginEntry, type OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import { RednodeApiError, RednodeClient, signRednodeRequest } from "./agent/xhs-api.js";

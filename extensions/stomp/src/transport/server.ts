@@ -1,4 +1,11 @@
-/** Hardened embedded STOMP 1.2 TCP/TLS transport. */
+/**
+ * @fileoverview 加固的内嵌 STOMP 1.2 TCP/TLS 协议服务器。
+ *
+ * 实现 CONNECT、SEND、SUBSCRIBE、ACK/NACK、UNSUBSCRIBE 和 DISCONNECT，覆盖登录认证、
+ * Topic/Agent 路由、心跳协商、prefetch、三种 ACK 模式及进程内 durable subscription。
+ * 每个连接均受帧大小、缓存、订阅数、队列深度、在途帧和分钟速率限制；相同连接的帧串行
+ * 处理，慢订阅者通过有界队列和 Socket backpressure 隔离，停止时释放全部连接与定时器。
+ */
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import * as net from "node:net";
@@ -554,6 +561,7 @@ async function closeServer(server: net.Server | tls.Server | null): Promise<void
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
+/** 校验配置并启动 TCP/TLS 监听器与全局心跳维护任务。 */
 export async function startStompTcpServer(config: StompTcpConfig, onInbound: InboundHandler): Promise<void> {
   if (stats.running) return;
   assertValidStompTcpConfig(config);
@@ -606,6 +614,7 @@ export async function startStompTcpServer(config: StompTcpConfig, onInbound: Inb
   heartbeatTimer.unref();
 }
 
+/** 幂等关闭所有连接、监听器、心跳和进程内 durable subscription。 */
 export async function stopStompTcpServer(): Promise<void> {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
@@ -634,6 +643,7 @@ export async function stopStompTcpServer(): Promise<void> {
   });
 }
 
+/** 将一条 Agent 出站消息投递到在线或进程内 durable 订阅队列，返回接收订阅数。 */
 export function publishToDestination(destination: string, body: string): number {
   const config = activeConfig;
   if (!config) return 0;

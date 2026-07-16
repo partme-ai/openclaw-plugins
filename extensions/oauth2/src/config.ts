@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OAuth2 Client 授权代理的配置合并与安全校验。
+ *
+ * 配置覆盖外部发行者/端点、客户端认证、PKCE 回调、Scope、会话存储和本地反向代理。启用
+ * 时强制上游为本机 OpenClaw Gateway，并核对 trusted-proxy 身份 Header；生产回调和发行者
+ * 默认要求 HTTPS，仅允许显式受控的本地开发例外。
+ */
 import type { AuthOAuth2Config, OAuth2ClientConfig, OAuth2ProxyConfig } from "./shared/types.js";
 
 export type OAuth2ConfigInput = Partial<Omit<AuthOAuth2Config, "proxy" | "client">> & {

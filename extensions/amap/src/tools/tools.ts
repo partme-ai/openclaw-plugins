@@ -1,3 +1,9 @@
+/**
+ * @fileoverview 高德地点能力到 OpenClaw Tool 契约的适配层。
+ *
+ * 本文件定义三个工具的 JSON Schema、调用权限和参数边界，并把高德响应统一封装为文本结果。
+ * 所有 Agent 参数都按不可信输入处理，经长度、类型、枚举及经纬度范围校验后才调用客户端。
+ */
 import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk/plugin-entry";
 import type { AmapPluginConfig } from "../types.js";
 import { AmapClient } from "../amap/amap-api.js";
@@ -13,6 +19,7 @@ type ToolDefinition = {
 
 export const AMAP_TOOL_NAMES = ["amap_search_places", "amap_search_nearby", "amap_place_detail"] as const;
 
+/** 为一次 Tool 上下文创建高德地点工具集合。 */
 export function createAmapTools(
   ctx: OpenClawPluginToolContext,
   config: AmapPluginConfig,

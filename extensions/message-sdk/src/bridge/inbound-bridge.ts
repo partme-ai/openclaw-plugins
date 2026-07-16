@@ -12,6 +12,7 @@
 import { buildMessage } from "../core/message.js";
 import type { InboundBridgeParams, ReplyBridgeParams, ReplyBridgeResult } from "./types.js";
 import { createReplyHandler } from "./reply-bridge.js";
+import { resolveBridgeRuntimeConfig } from "./runtime-config.js";
 
 /** dispatchInbound 入参（含 reply 配置）/ Dispatch inbound params with reply config */
 export interface DispatchInboundParams extends InboundBridgeParams {
@@ -35,7 +36,7 @@ export interface DispatchInboundResult extends ReplyBridgeResult {
 export async function dispatchInbound(params: DispatchInboundParams): Promise<DispatchInboundResult> {
   const { runtime, channel, accountId, peerId, text, chatType, agentId, unified, extra, reply } =
     params;
-  const cfg = runtime.config;
+  const cfg = await resolveBridgeRuntimeConfig(runtime);
 
   const replyOptions = await runtime.channel.routing.resolveAgentRoute({
     cfg,
@@ -85,6 +86,16 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
     dispatcher,
     replyOptions,
   });
+
+  // OpenClaw's reply dispatcher may still be draining an asynchronous
+  // transport delivery after dispatchReplyFromConfig resolves. Wire/MQ
+  // consumers must not treat the inbound message as complete until that
+  // delivery has settled, otherwise deferred ACK can race the publish confirm.
+  const waitForIdle = (dispatcher as { waitForIdle?: () => Promise<void> } | undefined)
+    ?.waitForIdle;
+  if (typeof waitForIdle === "function") {
+    await waitForIdle.call(dispatcher);
+  }
 
   return { ctx, dispatcher, replyOptions };
 }

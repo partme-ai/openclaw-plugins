@@ -4,6 +4,78 @@
 
 > 重要：这不是微信官方接口。插件默认关闭，只有同时设置 `enabled=true` 和 `acknowledgeUnofficialProtocolRisk=true` 才会连接。请自行评估账号限制、服务条款、隐私与运维风险；正式客服优先使用企业微信官方能力。当前仓库已完成本地协议回环和 OpenClaw 契约测试，但在你的外部桥接服务及隔离微信账号上完成验收前，不能视为生产就绪。
 
+## 架构与职责边界
+
+```mermaid
+flowchart LR
+    WX["微信网络"] <--> IPAD["外部 iPad 协议服务<br/>MMTLS / Protobuf / 登录态"]
+    IPAD -- "WebSocket<br/>入站事件" --> BRIDGE["WechatIpadBridge<br/>鉴权、校验、心跳、重连"]
+    BRIDGE -- "HTTP API<br/>发送消息 / 查询状态" --> IPAD
+    BRIDGE --> IN["OpenClaw 入站管道<br/>去重、会话、权限"]
+    IN --> AGENT["OpenClaw Agent"]
+    AGENT --> OUT["OpenClaw 出站管道"]
+    OUT --> BRIDGE
+    GW["Gateway 生命周期与认证"] -. "start / stop / status" .-> BRIDGE
+
+    classDef external fill:#fff3e0,stroke:#ef6c00,color:#4e2600
+    classDef plugin fill:#e8f5e9,stroke:#2e7d32,color:#123d17
+    classDef runtime fill:#e3f2fd,stroke:#1565c0,color:#0d315c
+    class WX,IPAD external
+    class BRIDGE plugin
+    class IN,AGENT,OUT,GW runtime
+```
+
+边界必须明确：外部服务负责微信底层协议、登录态与设备风险；本插件负责 OpenClaw 适配、输入校验、连接治理和消息路由；OpenClaw Runtime 负责 Agent 调度、会话和回复生成。插件不应该读取或实现外部服务内部的协议细节。
+
+### 入站消息时序
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as 外部 iPad 协议服务
+    participant B as WechatIpadBridge
+    participant I as Channel 入站管道
+    participant A as OpenClaw Agent
+    participant O as Channel 出站管道
+
+    S->>B: WebSocket message 事件
+    B->>B: 校验 JSON、事件类型和报文大小
+    alt 非法或未知事件
+        B-->>S: 丢弃并记录脱敏告警
+    else 合法消息
+        B->>I: emit(message, payload)
+        I->>I: 自发消息过滤、群白名单、文本限制
+        I->>A: 标准 OpenClaw 入站上下文
+        A-->>O: Agent 回复
+        O->>B: SendMessageRequest
+        B->>S: POST /api/send + Bearer Token
+        S-->>B: { ok, data?, error? }
+        B-->>O: 归一化发送结果
+    end
+```
+
+### 连接状态与自愈
+
+```mermaid
+stateDiagram-v2
+    [*] --> disconnected
+    disconnected --> connecting: start 或重连定时器到期
+    connecting --> connected: WebSocket open
+    connecting --> disconnected: 握手失败
+    connected --> logged_in: login_status=logged_in
+    logged_in --> logged_out: logged_out / token_expired
+    connected --> disconnected: close / Pong 超时
+    logged_in --> disconnected: close / Pong 超时
+    logged_out --> disconnected: close
+    disconnected --> connecting: 指数退避 + 抖动
+    disconnected --> [*]: Gateway stop
+    connected --> [*]: Gateway stop
+    logged_in --> [*]: Gateway stop
+    logged_out --> [*]: Gateway stop
+```
+
+首次连接失败是否中止 Gateway 启动由 `required` 决定；运行期间的意外断线不会阻塞进程，而是进入有上限的指数退避重连。主动停止会先设置停止标记并清理定时器，避免 `close` 回调再次拉起连接。
+
 ## 安全边界
 
 - 远程服务强制使用 `wss://` 和 `https://`；仅回环地址允许 `ws://`、`http://`。

@@ -105,6 +105,56 @@ describe("registerTracingPluginHooks", () => {
     expect(getActiveSpanCount()).toBe(1);
   });
 
+  it("agent_end 为不触发标准出站 hook 的自定义 channel 关闭 trace", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: baseConfig,
+    }));
+
+    await api.emit("message_received", {}, { sessionKey: "sk-wire", channelId: "mqtt" });
+    await api.emit(
+      "agent_end",
+      { runId: "run-wire", messages: [], success: true },
+      { sessionKey: "sk-wire", runId: "run-wire", channel: "mqtt" },
+    );
+
+    expect(getActiveSpanCount()).toBe(0);
+    const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
+    expect(exported).toHaveLength(1);
+    expect(exported[0]?.status).toBe("ok");
+    expect(exported[0]?.attributes["openclaw.end_reason"]).toBe("agent_end_success");
+  });
+
+  it("agent_end 失败会把 root 与悬挂 tool span 标记为错误", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: baseConfig,
+    }));
+
+    await api.emit("message_received", {}, { sessionKey: "sk-agent-error", runId: "run-agent-error" });
+    await api.emit(
+      "before_tool_call",
+      { toolName: "broken", toolCallId: "tc-agent-error" },
+      { sessionKey: "sk-agent-error", runId: "run-agent-error" },
+    );
+    await api.emit(
+      "agent_end",
+      { runId: "run-agent-error", messages: [], success: false, error: "failed" },
+      { sessionKey: "sk-agent-error", runId: "run-agent-error" },
+    );
+
+    expect(getActiveSpanCount()).toBe(0);
+    const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
+    expect(exported).toHaveLength(2);
+    expect(exported.every((span) => span.status === "error")).toBe(true);
+  });
+
   it("before_tool_call / after_tool_call 创建并结束 tool span", async () => {
     const backend = createMockBackend();
     const api = createMockApi();

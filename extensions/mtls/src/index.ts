@@ -1,3 +1,9 @@
+/**
+ * @fileoverview OpenClaw mTLS 身份认证反向代理插件的注册入口。
+ *
+ * 插件仅在 full registration 模式下注册服务；启动前验证证书配置和 Gateway trusted-proxy
+ * 契约，随后管理 `MtlsProxyServer` 生命周期，并暴露受 Gateway 认证保护的脱敏状态端点。
+ */
 import {
   buildJsonPluginConfigSchema,
   definePluginEntry,

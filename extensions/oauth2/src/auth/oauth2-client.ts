@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 基于 `openid-client` 的标准 OAuth2/OIDC Client 适配层。
+ *
+ * 支持发行者发现或显式端点、Authorization Code + PKCE、Token 刷新/吊销、UserInfo 和
+ * Introspection。该层只负责与外部标准授权服务通信并映射身份声明，不实现 OAuth2 Server，
+ * 也不依赖特定厂商私有协议。
+ */
 import * as oidc from "openid-client";
 
 import type {
@@ -46,7 +53,7 @@ function requiredIdentity(
   return String(value);
 }
 
-/** Framework-neutral standards client backed exclusively by openid-client. */
+/** 对代理层暴露的框架无关 OAuth2/OIDC 标准客户端。 */
 export class OAuth2Client {
   private configuration: oidc.Configuration | null = null;
 

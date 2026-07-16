@@ -39,7 +39,7 @@ export async function startOpenAiModelFixture(port) {
           model: "fixture-model",
           choices: [{
             index: 0,
-            message: { role: "assistant", content: "tracing e2e reply" },
+            message: { role: "assistant", content: "openclaw e2e fixture reply" },
             finish_reason: "stop",
           }],
           usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
@@ -56,7 +56,7 @@ export async function startOpenAiModelFixture(port) {
           object: "chat.completion.chunk",
           created,
           model: "fixture-model",
-          choices: [{ index: 0, delta: { role: "assistant", content: "tracing e2e reply" }, finish_reason: null }],
+          choices: [{ index: 0, delta: { role: "assistant", content: "openclaw e2e fixture reply" }, finish_reason: null }],
         },
         {
           id,

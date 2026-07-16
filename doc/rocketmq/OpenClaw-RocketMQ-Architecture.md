@@ -52,7 +52,7 @@ src/
 ### Inbound (External → Agent)
 
 ```
-1. External Producer → RocketMQ Topic (e.g. openclaw-agent-main-in)
+1. External Producer → RocketMQ Topic (e.g. openclaw--agent--main--in)
 2. PushConsumer.messageListener.consume()
 3. InboundEvent { topic, tag, body, keys, messageId }
 4. processInbound()
@@ -78,7 +78,7 @@ src/
    └── publishMessage()
        ├── Existing Producer (fast path)
        └── One-shot Producer (subagent/child-process fallback)
-3. Producer → RocketMQ Topic (e.g. openclaw-agent-main-out)
+3. Producer → RocketMQ Topic (e.g. openclaw--agent--main--out)
 4. External Consumer receives reply
 ```
 
@@ -95,7 +95,7 @@ In subagent or child-process contexts, the module-level Producer may not be avai
 ### Two-path Routing
 
 1. **Explicit bindings** (`topicBindings[]`): Exact topic + tag match → agentId. Checked first.
-2. **Standard format**: `{topicPrefix}-agent-{agentId}-in[-{peerId}]`. Fallback when no binding matches.
+2. **Standard format**: `{topicPrefix}--agent--{agentId}--in[--{peerId}]`. The `--` delimiter keeps every broker resource within RocketMQ's supported character set and is reserved inside standard-route segments.
 
 ### Session Key Strategy
 

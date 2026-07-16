@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 小红书 Rednode Ark Open API 的签名客户端与调用边界。
+ *
+ * 只允许调用配置白名单中的 operation，严格替换路径参数并规范查询参数，按 Ark 规则生成
+ * MD5 请求签名。客户端同时限制请求/响应大小、请求频率和网络超时，且不会把 appSecret
+ * 拼入 URL 或错误信息。
+ */
 import { createHash } from "node:crypto";
 import type { RednodeApiResponse, RednodeOperation, RednodePluginConfig } from "../types.js";
 
@@ -8,6 +15,7 @@ export class RednodeApiError extends Error {
   }
 }
 
+/** 执行白名单 Ark operation、签名请求并校验响应的共享客户端。 */
 export class RednodeClient {
   private readonly operations = new Map<string, RednodeOperation>();
   private readonly requestTimestamps: number[] = [];

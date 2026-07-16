@@ -421,7 +421,8 @@ function buildSubscriptions(cfg: RockermqConfig): Map<string, string> {
     }
   }
   if (subscriptions.size === 0) {
-    subscriptions.set(`${cfg.topicPrefix}.agent.default.in`, "*");
+    const prefix = cfg.topicPrefix ? `${cfg.topicPrefix}--agent--` : "agent--";
+    subscriptions.set(`${prefix}default--in`, "*");
   }
   return subscriptions;
 }

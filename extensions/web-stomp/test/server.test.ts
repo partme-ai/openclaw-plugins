@@ -107,6 +107,22 @@ describe("web-stomp server integration", () => {
     ws.close();
   });
 
+  it("returns ERROR instead of SEND receipt when Agent dispatch fails", async () => {
+    await startStompServer(baseConfig, vi.fn().mockRejectedValue(new Error("Agent unavailable")));
+    const ws = await connectWs();
+    ws.send(frame("CONNECT", { "accept-version": "1.2" }));
+    await readUntil(ws, "CONNECTED");
+
+    ws.send(frame("SEND", {
+      destination: "/queue/agent.demo",
+      receipt: "must-not-succeed",
+    }, "hello"));
+    const response = await readUntil(ws, "Agent unavailable");
+    expect(response).toContain("ERROR");
+    expect(response).not.toContain("RECEIPT\nreceipt-id:must-not-succeed");
+    ws.close();
+  });
+
   it("SUBSCRIBE + publishToDestination should deliver MESSAGE with ack header", async () => {
     await startStompServer(baseConfig, vi.fn());
     const ws = await connectWs();

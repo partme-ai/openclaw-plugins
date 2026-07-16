@@ -117,6 +117,7 @@ export const mqttWsChannel: ChannelPlugin<ResolvedWebMqttAccount> = {
         } else {
           trackInboundDropped(result.reason ?? "unknown_drop_reason");
         }
+        return result;
       });
       setWebMqttChannelConfig(config);
       try {

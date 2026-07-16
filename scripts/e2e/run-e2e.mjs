@@ -22,12 +22,14 @@ import {
   useHostGateway,
 } from "./lib/compose.mjs";
 import { generateOpenClawConfig } from "./lib/config.mjs";
+import { startOpenAiModelFixture } from "./helpers/openai-model-fixture.mjs";
 import { ensureGatewayRunning, gatewayLogTail, stopHostGateway } from "./lib/gateway.mjs";
 import { installPlugins } from "./lib/install.mjs";
 import { dockerServicesForPlugins, resolvePlugins } from "./lib/registry.mjs";
 import { baseReport, printSummary, writeReport } from "./lib/report.mjs";
 import {
   E2E_DIR,
+  E2E_PORTS,
   GATEWAY_HTTP,
   OPENCLAW_BIN,
   PROFILE,
@@ -147,7 +149,10 @@ async function main() {
   }
 
   const pluginIds = resolvePlugins(opts.plugins);
-  if (pluginIds.some((id) => id === "oauth2" || id === "web-socket" || id === "tracing") && !useHostGateway()) {
+  const needsModelFixture = pluginIds.some((id) =>
+    id === "tracing" || id === "rabbitmq" || id === "redis-stream" || id === "rocketmq" || id === "gotify" || id === "stomp" || id === "web-stomp" || id === "web-mqtt"
+  );
+  if ((needsModelFixture || pluginIds.some((id) => id === "oauth2" || id === "web-socket")) && !useHostGateway()) {
     process.env.OPENCLAW_E2E_HOST_GATEWAY = "1";
     console.log(`[${pluginIds[0]}] using host Gateway for a host-reachable local fixture`);
   }
@@ -191,6 +196,12 @@ async function main() {
   }
 
   if (!opts.skipInstall) {
+    // `plugins install --link` loads and validates the candidate manifest
+    // immediately. Seed the complete plugin/channel fragment first so plugins
+    // with required config fields (for example RabbitMQ `url`) can be linked
+    // into a freshly reset profile. The config is regenerated after install to
+    // add the newly packed paths to `plugins.load.paths`.
+    generateOpenClawConfig(pluginIds, { gotifySecrets: report.gotify });
     report.installed = installPlugins(pluginIds);
   }
 
@@ -207,15 +218,20 @@ async function main() {
     }
   }
 
+  const modelFixture = needsModelFixture
+    ? await startOpenAiModelFixture(E2E_PORTS.modelFixture)
+    : null;
+
   report.gateway = await ensureGatewayRunning();
 
-  report.e2e = await runPluginTests(pluginIds);
+  report.e2e = await runPluginTests(pluginIds, { modelFixture });
 
   if (!opts.skipBrowser && pluginIds.some((id) => id === "web-mqtt" || id === "web-stomp")) {
-    await runBrowserTests();
+    await runBrowserTests(pluginIds);
     const { browserResults } = await import("./browser-web-channels.mjs");
     report.browser = browserResults;
   }
+  await modelFixture?.close();
 
   try {
     report.pluginsList = execSync(`${OPENCLAW_BIN} --profile ${PROFILE} plugins list`, { encoding: "utf8" });

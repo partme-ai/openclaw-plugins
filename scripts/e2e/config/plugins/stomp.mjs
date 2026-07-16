@@ -13,7 +13,6 @@ export function stompConfig(_ctx) {
           {
             topicPattern: "/queue/agent.main.in",
             agentId: "main",
-            replyTopic: "/topic/session.main.out",
           },
         ],
       },

@@ -1,3 +1,10 @@
+/**
+ * @fileoverview OpenClaw mTLS 反向代理的配置合并与封闭式安全校验。
+ *
+ * 启用时强制双向证书校验、禁止透传模式、限制上游只能是本机 Gateway，并校验身份 Header
+ * 不与保留头冲突。启动前还会核对 OpenClaw 的 trusted-proxy 配置，避免代理看似可用但
+ * Gateway 实际不信任其身份声明。
+ */
 import type { MtlsConfig } from "./shared/types.js";
 
 export type MtlsConfigInput = Partial<Omit<MtlsConfig, "tls" | "proxy">> & {
@@ -101,6 +108,7 @@ function requireLoopbackUpstream(host: string): "127.0.0.1" | "::1" {
   );
 }
 
+/** 合并默认值并校验 mTLS、代理、路径规则和客户端白名单。 */
 export function resolveMtlsConfig(input: MtlsConfigInput | undefined): MtlsConfig {
   const config: MtlsConfig = {
     ...DEFAULT_CONFIG,
@@ -168,9 +176,8 @@ export function resolveMtlsConfig(input: MtlsConfigInput | undefined): MtlsConfi
 
 
 /**
- * Validate the proxy against OpenClaw's official trusted-proxy contract before
- * opening the listener. This prevents a seemingly healthy proxy whose identity
- * headers are rejected by the Gateway, and prevents accidental remote proxying.
+ * 在监听端口打开前校验 OpenClaw 官方 trusted-proxy 契约。
+ * 该检查同时防止身份 Header 被 Gateway 拒绝，以及错误地把流量代理到远程 Gateway。
  */
 export function validateMtlsGatewayIntegration(
   config: MtlsConfig,

@@ -56,6 +56,10 @@ export interface WebMqttAuthConfig {
 export interface WebMqttLimitsConfig {
   maxPayloadBytes: number;
   maxSubscriptionsPerClient: number;
+  /** 单客户端等待或正在执行的 Agent 入站任务上限。 */
+  maxPendingMessagesPerClient: number;
+  /** 单次 Agent 入站任务硬超时。 */
+  inboundTaskTimeoutMs: number;
 }
 
 /** 显式 topic 绑定 */
@@ -127,4 +131,5 @@ export interface WebMqttServiceStats {
 }
 
 /** 入站消息回调（可 async；transport 层通过 per-client 串行队列调度） */
-export type InboundHandler = (event: InboundEvent) => void | Promise<void>;
+export type InboundHandlerResult = { accepted: boolean; reason?: string } | void;
+export type InboundHandler = (event: InboundEvent) => InboundHandlerResult | Promise<InboundHandlerResult>;

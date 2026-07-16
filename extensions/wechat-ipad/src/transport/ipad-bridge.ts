@@ -1,3 +1,29 @@
+/**
+ * @fileoverview 微信 iPad 外部协议服务的双通道桥接层。
+ *
+ * 本文件不实现 MMTLS、Protobuf 或微信登录协议，而是把使用方自行部署的外部协议服务
+ * 适配为 OpenClaw 可以消费的稳定接口：
+ *
+ * - WebSocket 长连接负责接收消息、登录状态、好友请求等入站事件；
+ * - HTTP API 负责发送消息和查询外部服务状态；
+ * - 本类统一处理 Bearer Token、报文大小限制、心跳、超时和指数退避重连；
+ * - 上层通过事件监听器和模块级活动实例接入 OpenClaw Channel 生命周期。
+ *
+ * 架构关系：
+ *
+ * ```text
+ * 外部 iPad 协议服务（MMTLS / Protobuf / 登录态）
+ *        │ WebSocket 事件                 ▲ HTTP 请求
+ *        ▼                                │
+ * WechatIpadBridge（连接、校验、心跳、重连、限流边界）
+ *        │ 标准化 IpadEvent               ▲ SendMessageRequest
+ *        ▼                                │
+ * OpenClaw Channel 入站管道 ──────► Agent ──────► 出站管道
+ * ```
+ *
+ * 安全边界：远程地址必须由配置层校验为 WSS/HTTPS；任何来自外部服务的数据仍然是不可信
+ * 输入，必须先通过类型、事件名称和大小校验，才能交给上层事件处理器。
+ */
 import WebSocket from "ws";
 import type {
   BridgeState,
@@ -14,8 +40,12 @@ import { IpadEventType as EventType } from "../types.js";
 type EventListener<T = unknown> = (data: T) => void | Promise<void>;
 type Timer = ReturnType<typeof setTimeout>;
 
+/** 桥接层允许进入 OpenClaw 管道的事件白名单。 */
 const EVENT_TYPES = new Set<string>(Object.values(EventType));
 
+/**
+ * 让网络维护定时器不阻止 Node.js 进程正常退出。
+ */
 function unref(timer: Timer): Timer {
   timer.unref?.();
   return timer;
@@ -54,6 +84,7 @@ async function readJsonLimited(response: Response, maxBytes: number): Promise<un
   }
 }
 
+/** 校验外部 HTTP 服务统一响应信封，避免把任意 JSON 当作成功结果向上传递。 */
 function normalizeApiResponse(value: unknown): IpadApiResponse {
   if (!value || typeof value !== "object" || typeof (value as { ok?: unknown }).ok !== "boolean") {
     throw new Error("bridge returned an invalid response envelope");
@@ -65,6 +96,10 @@ function normalizeApiResponse(value: unknown): IpadApiResponse {
   return response;
 }
 
+/**
+ * 解析并校验 WebSocket 入站事件的最小公共结构。
+ * 事件载荷的细分校验由相应业务处理器负责，但未知事件类型会在桥接边界直接拒绝。
+ */
 function parseEvent(raw: WebSocket.RawData): IpadEvent {
   const parsed = JSON.parse(raw.toString("utf8")) as unknown;
   if (!parsed || typeof parsed !== "object") throw new Error("event must be an object");
@@ -76,16 +111,32 @@ function parseEvent(raw: WebSocket.RawData): IpadEvent {
   return event as IpadEvent;
 }
 
+/**
+ * 外部 iPad 协议服务的生命周期适配器。
+ *
+ * 一个插件运行实例只应维护一个本类实例。`start`/`stop` 由 OpenClaw Gateway 服务生命周期
+ * 驱动；连接意外关闭时由本类调度重连，主动停止时则保证取消全部定时器和监听器。
+ */
 export class WechatIpadBridge {
+  /** WebSocket 实例，首次启动或重连时延迟创建。 */
   private ws: WebSocket | null = null;
+  /** 面向状态端点和上层运行时暴露的桥接状态，不直接等同于 WebSocket readyState。 */
   private state: BridgeState = "disconnected";
+  /** 当前连续重连次数；连接成功后归零，用于计算指数退避。 */
   private reconnectCount = 0;
+  /** 等待下一次重连的单次定时器，非空时禁止重复调度。 */
   private reconnectTimer: Timer | null = null;
+  /** 周期性发送 WebSocket Ping 的定时器。 */
   private heartbeatTimer: Timer | null = null;
+  /** 单次 Ping 对应的 Pong 等待定时器；超时将强制断开并触发重连。 */
   private pongTimer: Timer | null = null;
+  /** 区分主动停机与意外断线，防止 Gateway 停止后再次拉起连接。 */
   private stopping = false;
+  /** 最近一次收到外部 heartbeat 事件或 WebSocket Pong 的时间戳。 */
   private lastHeartbeat = 0;
+  /** 最近一次由外部服务上报的微信登录态。 */
   private loginStatus: WxLoginPayload["status"] | null = null;
+  /** 按事件类型保存上层订阅者；Set 用于避免同一监听器重复注册。 */
   private readonly listeners = new Map<IpadEventType, Set<EventListener>>();
 
   constructor(
@@ -94,6 +145,7 @@ export class WechatIpadBridge {
     private readonly random: () => number = Math.random,
   ) {}
 
+  /** 启动首次连接；`required` 等启动策略由调用本方法的插件服务层决定。 */
   async start(): Promise<void> {
     if (!this.config.enabled) return;
     this.stopping = false;
@@ -101,6 +153,10 @@ export class WechatIpadBridge {
     await this.connect(true);
   }
 
+  /**
+   * 幂等停止桥接器并释放 Socket、定时器和事件订阅。
+   * 先设置 `stopping`，确保随后触发的 close 事件不会安排新的重连任务。
+   */
   async stop(): Promise<void> {
     this.stopping = true;
     this.clearTimers();
@@ -116,6 +172,7 @@ export class WechatIpadBridge {
     this.loginStatus = null;
   }
 
+  /** 注册某类桥接事件，返回可用于取消订阅的函数。 */
   on<T>(event: IpadEventType, listener: EventListener<T>): () => void {
     const set = this.listeners.get(event) ?? new Set<EventListener>();
     set.add(listener as EventListener);
@@ -123,10 +180,12 @@ export class WechatIpadBridge {
     return () => set.delete(listener as EventListener);
   }
 
+  /** 返回当前连接/登录状态快照。 */
   getState(): BridgeState {
     return this.state;
   }
 
+  /** 返回不包含 Token、wxid 等敏感信息的运维状态摘要。 */
   getStatusSummary(): Record<string, unknown> {
     return {
       enabled: this.config.enabled,
@@ -137,14 +196,20 @@ export class WechatIpadBridge {
     };
   }
 
+  /** 通过外部桥接服务发送消息。 */
   async sendMessage(request: SendMessageRequest): Promise<IpadApiResponse> {
     return this.request("/api/send", "POST", request);
   }
 
+  /** 查询外部桥接服务的健康状态和登录状态。 */
   async getServiceStatus(): Promise<IpadApiResponse> {
     return this.request("/api/status", "GET");
   }
 
+  /**
+   * 受控 HTTP 调用入口：统一注入认证、请求超时和响应体大小限制，并把网络异常归一化为
+   * `{ ok: false, error }`，避免插件出站管道因外部服务异常直接崩溃。
+   */
   private async request(path: string, method: "GET" | "POST", body?: unknown): Promise<IpadApiResponse> {
     if (!this.config.enabled) return { ok: false, error: "bridge is disabled" };
     const controller = new AbortController();
@@ -170,6 +235,12 @@ export class WechatIpadBridge {
     }
   }
 
+  /**
+   * 建立新的 WebSocket 连接并绑定事件。
+   *
+   * `initial=true` 表示 Gateway 启动阶段：首次握手失败需要向调用者抛出，以便上层执行
+   * `required` 策略；后台重连失败只继续调度下一次尝试，不产生未处理 Promise。
+   */
   private async connect(initial: boolean): Promise<void> {
     if (this.stopping) return;
     this.clearSocket();
@@ -222,6 +293,7 @@ export class WechatIpadBridge {
     }
   }
 
+  /** 在桥接边界解析事件、维护内部状态，并将合法业务事件异步分发给上层。 */
   private handleMessage(raw: WebSocket.RawData): void {
     try {
       const event = parseEvent(raw);
@@ -242,6 +314,7 @@ export class WechatIpadBridge {
     }
   }
 
+  /** 串行通知同类监听器；单个处理器失败只记录错误，不阻断其他监听器。 */
   private async emit(type: IpadEventType, data: unknown): Promise<void> {
     for (const listener of this.listeners.get(type) ?? []) {
       try {
@@ -252,6 +325,7 @@ export class WechatIpadBridge {
     }
   }
 
+  /** 只处理当前活动 Socket 的关闭事件，忽略已被新连接替代的旧 Socket 回调。 */
   private handleClose(socket: WebSocket, code: number): void {
     if (this.ws !== socket) return;
     this.ws = null;
@@ -263,6 +337,10 @@ export class WechatIpadBridge {
     }
   }
 
+  /**
+   * 使用“指数退避 + 双向抖动”安排下一次连接，降低外部服务恢复时的惊群风险。
+   * `maxRetries=0` 表示无限重试，但任意时刻最多只存在一个重连定时器。
+   */
   private scheduleReconnect(): void {
     if (this.stopping || !this.config.reconnect.enabled || this.reconnectTimer) return;
     const { maxRetries, initialDelayMs, maxDelayMs, jitterRatio } = this.config.reconnect;
@@ -280,6 +358,7 @@ export class WechatIpadBridge {
     }, delay));
   }
 
+  /** 启动 Ping/Pong 存活探测；Pong 超时会终止连接，由 close 路径统一负责重连。 */
   private startHeartbeat(socket: WebSocket): void {
     this.clearHeartbeat();
     const tick = () => {
@@ -292,12 +371,14 @@ export class WechatIpadBridge {
     this.heartbeatTimer = unref(setInterval(tick, this.config.network.heartbeatIntervalMs));
   }
 
+  /** 确认连接仍然存活并取消本轮 Pong 超时。 */
   private handlePong(): void {
     this.lastHeartbeat = Date.now();
     if (this.pongTimer) clearTimeout(this.pongTimer);
     this.pongTimer = null;
   }
 
+  /** 销毁旧 Socket，通常用于创建新连接前清理残留资源。 */
   private clearSocket(): void {
     const socket = this.ws;
     this.ws = null;
@@ -306,6 +387,7 @@ export class WechatIpadBridge {
     socket.terminate();
   }
 
+  /** 取消心跳周期和当前 Pong 等待任务。 */
   private clearHeartbeat(): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.pongTimer) clearTimeout(this.pongTimer);
@@ -313,6 +395,7 @@ export class WechatIpadBridge {
     this.pongTimer = null;
   }
 
+  /** 取消桥接器持有的全部网络维护定时器。 */
   private clearTimers(): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
@@ -320,24 +403,33 @@ export class WechatIpadBridge {
   }
 }
 
+/**
+ * 当前 OpenClaw 插件运行实例注册的桥接器。
+ * 模块级辅助 API 只做薄转发，便于 inbound、outbound 和状态路由共享同一条连接。
+ */
 let activeBridge: WechatIpadBridge | null = null;
 
+/** 由插件服务生命周期设置或清除当前活动桥接器。 */
 export function setActiveBridge(bridge: WechatIpadBridge | null): void {
   activeBridge = bridge;
 }
 
+/** 获取当前活动桥接器；插件尚未启动时返回 `null`。 */
 export function getActiveBridge(): WechatIpadBridge | null {
   return activeBridge;
 }
 
+/** 通过当前活动桥接器发送消息；未启动时返回可诊断失败而不是抛出。 */
 export async function sendMessage(request: SendMessageRequest): Promise<IpadApiResponse> {
   return activeBridge?.sendMessage(request) ?? { ok: false, error: "bridge is not running" };
 }
 
+/** 通过当前活动桥接器查询外部服务状态。 */
 export async function getServiceStatus(): Promise<IpadApiResponse> {
   return activeBridge?.getServiceStatus() ?? { ok: false, error: "bridge is not running" };
 }
 
+/** 返回可安全展示给 Gateway 运维端点的脱敏状态。 */
 export function getBridgeStatusSummary(): Record<string, unknown> {
   return activeBridge?.getStatusSummary() ?? { enabled: false, state: "disconnected" };
 }

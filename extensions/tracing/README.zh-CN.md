@@ -7,7 +7,7 @@
 ## 能力边界
 
 `@partme.ai/openclaw-tracing` 监听官方 `message_received`、
-`before_tool_call`、`after_tool_call`、`reply_payload_sending` 和 `session_end` Hook。每个被采样的
+`before_tool_call`、`after_tool_call`、`reply_payload_sending`、`agent_end` 和 `session_end` Hook。每个被采样的
 消息生成一个 root span，每次工具调用生成一个 child span。
 
 当前只声明三种真实可用后端：
@@ -25,7 +25,9 @@ OpenTelemetry Collector，再由 Collector 转发到 SkyWalking。
 openclaw plugins install @partme.ai/openclaw-tracing
 ```
 
-清单 ID 是 `tracing`，标准配置路径为 `plugins.entries.tracing.config`：
+清单 ID 是 `tracing`，插件参数路径为 `plugins.entries.tracing.config`。OpenClaw 2026.7.1
+还要求设置 `plugins.entries.tracing.hooks.allowConversationAccess=true`，使受保护的
+`agent_end` 兜底 Hook 能为自定义 Channel dispatcher 正确关闭 trace：
 
 ```json
 {
@@ -33,6 +35,9 @@ openclaw plugins install @partme.ai/openclaw-tracing
     "entries": {
       "tracing": {
         "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
         "config": {
           "enabled": true,
           "backend": "otlp",
@@ -85,8 +90,9 @@ openclaw plugins install @partme.ai/openclaw-tracing
 - 活跃 trace 与最近查询缓存均有容量边界。
 - 工具回调缺失、会话提前结束、新消息覆盖旧 trace，以及活跃 trace 超过 30 分钟时，
   都会关闭 orphan span，不再只删除映射造成内存泄漏。
-- root span 在公开的 final reply Hook 关闭，不需要授予宿主特权
-  `allowConversationAccess` 会话内容访问权限。
+- OpenClaw 标准出站渠道在 final reply Hook 关闭 root span；绕过该 Hook 的自定义 Channel
+  dispatcher 在 `agent_end` 关闭，因此必须显式授予上面的 `allowConversationAccess` 信任。
+  插件只使用该 Hook 的 run/session 结果元数据，不持久化其中的消息历史。
 - File/OTLP 缓冲位于进程内，不是持久 Outbox，也不提供 exactly-once。进程崩溃可能
   丢失尚未刷出的 span，OTLP 请求超时也可能产生结果未知窗口。
 - `captureMessageBody` 默认关闭；开启前必须完成数据分级、访问控制和保留期评审。
