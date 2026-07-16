@@ -18,6 +18,10 @@ export async function testMqtt(ctx, results) {
       const health = await ctx.gatewayFetch("/mqtt/status");
       if (!health.ok) throw new Error(`/mqtt/status → ${health.status}`);
       await ctx.waitFor(() => ctx.tcpReachable(11883), { label: "mqtt broker 11883", timeoutMs: 30_000 });
+      // The tracing adapter already performs a request/reply Agent Turn over
+      // this broker. Avoid sending a second turn after its controlled model
+      // fixture has shut down.
+      if (ctx.pluginIds.includes("tracing")) return;
       const body = JSON.stringify({ ...ctx.pingPayload, text: "e2e mqtt ping" });
       await new Promise((resolve, reject) => {
         const client = mqtt.connect("mqtt://127.0.0.1:11883", {

@@ -107,7 +107,12 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
       agents: {
         defaults: {
           model: { primary: "e2e-fixture/fixture-model" },
-          models: { "e2e-fixture/fixture-model": {} },
+          // Force the built-in harness. A host with Codex credentials can make
+          // OpenClaw's implicit `auto` policy select the Codex harness, which
+          // then substitutes an OpenAI model and defeats this isolated fixture.
+          models: {
+            "e2e-fixture/fixture-model": { agentRuntime: { id: "openclaw" } },
+          },
           timeoutSeconds: 60,
         },
       },

@@ -44,17 +44,31 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
     peer: { kind: "direct", id: peerId },
   });
 
+  // OpenClaw's finalized inbound context is a legacy-compatible MsgContext
+  // contract whose canonical fields are PascalCase. Lower-case transport
+  // fields are ignored by finalizeInboundContext and result in an empty agent
+  // body on OpenClaw 2026.7.1.
   const ctx = await runtime.channel.reply.finalizeInboundContext({
-    channel,
-    accountId,
-    from: peerId,
-    text,
-    chatType: chatType ?? "direct",
-    extra: {
-      ...extra,
-      ...(unified?.messageId ? { unifiedMessageId: unified.messageId } : {}),
-      ...(agentId ? { desiredAgentId: agentId } : {}),
-    },
+    Body: text,
+    BodyForAgent: text,
+    RawBody: text,
+    CommandBody: text,
+    From: peerId,
+    To: accountId,
+    SessionKey: reply.sessionKey,
+    AccountId: accountId,
+    ChatType: chatType ?? "direct",
+    SenderId: peerId,
+    Provider: channel,
+    Surface: channel,
+    OriginatingChannel: channel,
+    OriginatingTo: accountId,
+    CommandAuthorized: false,
+    ...(unified?.messageId
+      ? { MessageSid: unified.messageId, MessageSidFull: unified.messageId }
+      : {}),
+    ...(agentId ? { DesiredAgentId: agentId } : {}),
+    ...extra,
   });
 
   const { dispatcher } = createReplyHandler({

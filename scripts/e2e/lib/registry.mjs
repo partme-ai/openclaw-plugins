@@ -233,7 +233,9 @@ export function resolvePlugins(requested) {
     throw new Error(`Unknown plugin id(s): ${unknown.join(", ")}. Known e2e: ${all.join(", ")}`);
   }
   const isolated = requested.filter((id) => findPlugin(id).isolated);
-  if (isolated.length > 0 && requested.length > 1) {
+  const tracingWithMqtt =
+    requested.length === 2 && requested.includes("tracing") && requested.includes("mqtt");
+  if (isolated.length > 0 && requested.length > 1 && !tracingWithMqtt) {
     throw new Error(`Isolated E2E plugin ${isolated.join(", ")} must run alone`);
   }
   return requested;
