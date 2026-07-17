@@ -18,7 +18,8 @@
 export const WEBSOCKET_PROTOCOL_VERSION = "1" as const;
 
 function versionedFrame(fields: Record<string, unknown>): string {
-  return JSON.stringify({ version: WEBSOCKET_PROTOCOL_VERSION, ...fields });
+  // version 放在最后，防止 message-sdk envelope 中偶然出现同名字段时覆盖线上协议版本。
+  return JSON.stringify({ ...fields, version: WEBSOCKET_PROTOCOL_VERSION });
 }
 
 /** 客户端 message 帧解析结果 */

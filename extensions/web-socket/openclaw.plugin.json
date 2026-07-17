@@ -126,7 +126,9 @@
           "maxPendingMessages": { "type": "number", "default": 32 },
           "messagesPerMinute": { "type": "number", "default": 120 },
           "heartbeatIntervalMs": { "type": "number", "default": 30000 },
-          "heartbeatTimeoutMs": { "type": "number", "default": 10000 }
+          "heartbeatTimeoutMs": { "type": "number", "default": 10000 },
+          "sendTimeoutMs": { "type": "number", "default": 10000 },
+          "shutdownTimeoutMs": { "type": "number", "default": 10000 }
         }
       },
       "session": {

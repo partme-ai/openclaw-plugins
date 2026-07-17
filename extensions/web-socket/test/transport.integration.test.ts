@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_WEBSOCKET_CONFIG } from "../src/config.js";
 import { startWebSocketClient, stopWebSocketClient } from "../src/transport/client.js";
 import { startWebSocketServer, stopWebSocketServer } from "../src/transport/server.js";
+import { sendToConnectionConfirmed } from "../src/transport/connection-hub.js";
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -162,6 +163,38 @@ describe("embedded WebSocket transport", () => {
     expect(stopped).toBe(true);
   });
 
+  it("server 停机排空期间仍向原连接投递已接纳消息的回复和 accepted", async () => {
+    const port = await freePort();
+    let releaseTask!: () => void;
+    let signalStarted!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const taskGate = new Promise<void>((resolve) => { releaseTask = resolve; });
+    const cfg = config(port);
+    await startWebSocketServer(cfg, async ({ connectionId }) => {
+      signalStarted();
+      await taskGate;
+      expect(await sendToConnectionConfirmed(
+        connectionId,
+        JSON.stringify({ version: "1", type: "reply", text: "reply-during-drain" }),
+        cfg.limits.maxBufferedBytes,
+        cfg.limits.sendTimeoutMs,
+      )).toBe(true);
+    });
+    const ws = await open(`ws://127.0.0.1:${port}/openclaw/ws`, {
+      headers: { Authorization: "Bearer test-secret" },
+    });
+    const received: string[] = [];
+    ws.on("message", (data) => received.push(data.toString()));
+    ws.send(JSON.stringify({ version: "1", type: "message", text: "drain-reply", messageId: "drain-reply-1" }));
+    await started;
+
+    const stopping = stopWebSocketServer();
+    releaseTask();
+    await stopping;
+    expect(received.some((frame) => frame.includes("reply-during-drain"))).toBe(true);
+    expect(received.some((frame) => frame.includes('"type":"accepted"'))).toBe(true);
+  });
+
   it("accepts a real WSS connection", async () => {
     const port = await freePort();
     const certDir = mkdtempSync(join(tmpdir(), "openclaw-web-socket-"));
@@ -292,7 +325,13 @@ describe("embedded WebSocket transport", () => {
     const port = await freePort();
     const external = new WebSocketServer({ host: "127.0.0.1", port });
     await new Promise<void>((resolve) => external.once("listening", () => resolve()));
+    let resolveAccepted!: (frame: Record<string, unknown>) => void;
+    const accepted = new Promise<Record<string, unknown>>((resolve) => { resolveAccepted = resolve; });
     external.once("connection", (socket) => {
+      socket.on("message", (data) => {
+        const frame = JSON.parse(data.toString()) as Record<string, unknown>;
+        if (frame.type === "accepted") resolveAccepted(frame);
+      });
       socket.send(JSON.stringify({ version: "1", type: "message", text: "drain-me", messageId: "drain-client-1" }));
     });
     let signalStarted!: () => void;
@@ -319,6 +358,7 @@ describe("embedded WebSocket transport", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(stopped).toBe(false);
     releaseTask();
+    await expect(accepted).resolves.toMatchObject({ type: "accepted", messageId: "drain-client-1" });
     await stopping;
     expect(stopped).toBe(true);
     await new Promise<void>((resolve) => external.close(() => resolve()));

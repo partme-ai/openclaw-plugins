@@ -33,7 +33,7 @@ Production WebSocket channel for OpenClaw 2026.7.1+. It uses [`ws`](https://gith
 │                                                   │                    │
 │  Browser/App or external gateway ◀── reply + accepted ─────────────────┘│
 │                                                                         │
-│  stop: reject new frames → close sockets → drain accepted Agent tasks  │
+│  stop: reject new frames → drain Agent replies → close sockets         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -68,6 +68,7 @@ flowchart LR
 - Two-phase `messageId` dedupe: claim before dispatch, commit only after reply delivery, release on failure
 - Outbound adapter failures throw so a Router outbox can retry or dead-letter them instead of accepting a placeholder message ID
 - WebSocket ping/pong 心跳、连接超时、指数退避重连与可等待停机
+- Reply/accepted/outbound writes wait for the `ws.send` callback and fail within a configured timeout
 - HTTP status: `GET /web-socket/status`
 
 ## Client protocol
@@ -222,6 +223,44 @@ The server negotiates only `openclaw.v1`; the authentication protocol is never e
 | `limits.messagesPerMinute` | `120` | 每连接每分钟消息上限 |
 | `limits.heartbeatIntervalMs` | `30000` | ping 周期 |
 | `limits.heartbeatTimeoutMs` | `10000` | pong 超时 |
+| `limits.sendTimeoutMs` | `10000` | reply/accepted 写出回调超时；超时终止慢连接并报告失败 |
+| `limits.shutdownTimeoutMs` | `10000` | 停机排空已接纳 Agent 任务和回复的最长时间 |
+
+## Bounded shutdown drain
+
+```text
+Gateway stop
+    │
+    ▼
+reject new upgrades / frames → stop reconnect and heartbeat
+    │
+    ▼
+retain Socket + Connection Hub + Runtime references
+    │
+    ▼
+drain accepted Agent tasks → reply → accepted
+    │                         │
+    ├── completed ────────────┤
+    └── timeout → warn ───────┘
+                              ▼
+                    close sockets and clear mappings
+```
+
+```mermaid
+sequenceDiagram
+  participant G as Gateway
+  participant W as WebSocket transport
+  participant A as Agent Runtime
+  participant C as Connected client
+  G->>W: stop / AbortSignal
+  W->>W: reject new upgrades and frames
+  Note over W,C: retain Socket and Connection Hub during drain
+  W->>A: await already accepted tasks
+  A-->>W: reply completed
+  W-->>C: reply + accepted (ws.send confirmed)
+  W--xC: close after drain or shutdownTimeoutMs
+  W-->>G: stopped
+```
 
 ## 生产部署约束
 

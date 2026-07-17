@@ -107,6 +107,22 @@ describe("web-stomp server integration", () => {
     ws.close();
   });
 
+  it("不会把正文相同的合法 SEND 自动判重，只透传显式 message-id", async () => {
+    const inboundSpy = vi.fn();
+    await startStompServer(baseConfig, inboundSpy);
+    const ws = await connectWs();
+    ws.send(frame("CONNECT", { "accept-version": "1.2" }));
+    await readUntil(ws, "CONNECTED");
+
+    ws.send(frame("SEND", { destination: "/queue/agent.demo" }, "same-body"));
+    ws.send(frame("SEND", { destination: "/queue/agent.demo" }, "same-body"));
+    ws.send(frame("SEND", { destination: "/queue/agent.demo", "message-id": "request-3" }, "same-body"));
+    await vi.waitFor(() => expect(inboundSpy).toHaveBeenCalledTimes(3));
+
+    expect(inboundSpy.mock.calls.map(([ctx]) => ctx.idempotencyKey)).toEqual([undefined, undefined, "request-3"]);
+    ws.close();
+  });
+
   it("returns a stable ERROR without exposing internal Agent failure details", async () => {
     const logger = { error: vi.fn() };
     const secret = "runtime-production-secret";
@@ -176,6 +192,38 @@ describe("web-stomp server integration", () => {
     release();
     await stopping;
     expect(stopped).toBe(true);
+  });
+
+  it("停机排空期间保留会话，使已接受 SEND 的 Agent 回复仍可投递", async () => {
+    let release!: () => void;
+    let replyDestination = "";
+    const handler = vi.fn(async ({ peerId }: { peerId: string }) => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      replyDestination = `/topic/session.${peerId}`;
+      expect(await publishToDestination(replyDestination, "reply-before-stop")).toBe(1);
+    });
+    await startStompServer(baseConfig, handler);
+    const ws = await connectWs();
+    ws.send(frame("CONNECT", { "accept-version": "1.2" }));
+    const connected = await readUntil(ws, "CONNECTED");
+    const connectionId = /\nsession:([^\n]+)/.exec(connected)?.[1];
+    expect(connectionId).toBeTruthy();
+    replyDestination = `/topic/session.stomp:${connectionId}@demo`;
+    ws.send(frame("SUBSCRIBE", { id: "reply", destination: replyDestination, receipt: "sub-ready" }));
+    await readUntil(ws, "receipt-id:sub-ready");
+    const reply = readUntil(ws, "reply-before-stop");
+    ws.send(frame("SEND", { destination: "/queue/agent.demo" }, "drain-and-reply"));
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+
+    const stopping = stopStompServer();
+    release();
+    await expect(reply).resolves.toContain("MESSAGE");
+    await stopping;
+  });
+
+  it("重复启动时显式失败，避免调用方误以为新配置已生效", async () => {
+    await startStompServer(baseConfig, vi.fn());
+    await expect(startStompServer(baseConfig, vi.fn())).rejects.toThrow("already running");
   });
 
   it("should parse multiple STOMP frames in one WebSocket message", async () => {

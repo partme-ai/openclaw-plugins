@@ -76,6 +76,8 @@ export const DEFAULT_WEBSOCKET_CONFIG: WebsocketChannelConfig = {
     messagesPerMinute: 120,
     heartbeatIntervalMs: 30_000,
     heartbeatTimeoutMs: 10_000,
+    sendTimeoutMs: 10_000,
+    shutdownTimeoutMs: 10_000,
   },
   session: {
     maxExpirySeconds: 86400,
@@ -366,6 +368,8 @@ export function resolveWebsocketConfig(
       messagesPerMinute: numberOrDefault(limits.messagesPerMinute, DEFAULT_WEBSOCKET_CONFIG.limits.messagesPerMinute),
       heartbeatIntervalMs: numberOrDefault(limits.heartbeatIntervalMs, DEFAULT_WEBSOCKET_CONFIG.limits.heartbeatIntervalMs),
       heartbeatTimeoutMs: numberOrDefault(limits.heartbeatTimeoutMs, DEFAULT_WEBSOCKET_CONFIG.limits.heartbeatTimeoutMs),
+      sendTimeoutMs: numberOrDefault(limits.sendTimeoutMs, DEFAULT_WEBSOCKET_CONFIG.limits.sendTimeoutMs),
+      shutdownTimeoutMs: numberOrDefault(limits.shutdownTimeoutMs, DEFAULT_WEBSOCKET_CONFIG.limits.shutdownTimeoutMs),
     },
     session: {
       maxExpirySeconds: numberOrDefault(
@@ -420,6 +424,8 @@ export function validateWebsocketConfig(config: WebsocketChannelConfig): void {
   requireInteger("limits.messagesPerMinute", config.limits.messagesPerMinute, 1, 1_000_000);
   requireInteger("limits.heartbeatIntervalMs", config.limits.heartbeatIntervalMs, 100, 300_000);
   requireInteger("limits.heartbeatTimeoutMs", config.limits.heartbeatTimeoutMs, 100, 300_000);
+  requireInteger("limits.sendTimeoutMs", config.limits.sendTimeoutMs, 100, 120_000);
+  requireInteger("limits.shutdownTimeoutMs", config.limits.shutdownTimeoutMs, 100, 120_000);
   requireInteger("session.maxExpirySeconds", config.session.maxExpirySeconds, 0, 30 * 24 * 60 * 60);
   if (config.client.reconnect.initialDelayMs > config.client.reconnect.maxDelayMs) {
     throw new Error("client.reconnect.initialDelayMs must not exceed maxDelayMs");

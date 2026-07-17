@@ -18,6 +18,7 @@ import type { StompConnectionInfo, StompFrame, StompServerConfig } from "../type
 import { redactWebStompError } from "../shared/redact.js";
 import {
   cleanupConnection,
+  cleanupSubscription,
   clearAckState,
   discardPendingMessage,
   getPendingAckCount,
@@ -261,7 +262,8 @@ async function handleSend(connectionId: string, frame: StompFrame, config: Stomp
       peerId,
       destination,
       rawPayload: body,
-      idempotencyKey: frame.headers["message-id"] || frame.headers.receipt || createHash("sha256").update(`${connectionId}\0${destination}\0${body}`).digest("hex"),
+      // 只有调用方明确提供 message-id 才启用幂等。正文相同不代表重复请求，receipt 也只是协议回执关联键。
+      idempotencyKey: frame.headers["message-id"],
     });
   } catch (error) {
     // 内部 Runtime 错误只写脱敏日志；外部 STOMP 客户端不能获得堆栈、凭据或基础设施地址。
@@ -291,6 +293,7 @@ function handleUnsubscribe(connectionId: string, frame: StompFrame): void {
   const id = frame.headers.id;
   if (!id || !hasSubscription(connectionId, id)) throw new Error("Unknown subscription id");
   removeSubscription(connectionId, id);
+  cleanupSubscription(connectionId, id);
   const state = states.get(connectionId);
   if (state) state.info.subscriptionCount = Math.max(0, state.info.subscriptionCount - 1);
 }
@@ -463,7 +466,7 @@ export async function startStompServer(
   messageHandler: StompInboundCallback,
   logger: TransportLogger = NOOP_LOGGER,
 ): Promise<void> {
-  if (running) return;
+  if (running) throw new Error("Web STOMP server is already running");
   assertValidStompWsConfig(config);
   const nextListener = await createListener(config);
   const nextWss = new WebSocketServer({ noServer: true, maxPayload: config.maxFrameSize, perMessageDeflate: false });
@@ -476,6 +479,10 @@ export async function startStompServer(
   Object.keys(stats).forEach((key) => { stats[key as keyof typeof stats] = 0; });
 
   nextListener.on("upgrade", (req, socket, head) => {
+    if (!accepting) {
+      stats.rejectedConnections += 1;
+      return rejectUpgrade(socket, 503, "Service Unavailable");
+    }
     let path = "";
     try { path = new URL(req.url ?? "/", "http://localhost").pathname; } catch { /* rejected below */ }
     if (path !== config.path) {
@@ -538,12 +545,9 @@ export async function stopStompServer(): Promise<void> {
   heartbeatTimer = null;
   const config = activeConfig;
   const logger = transportLogger;
+  // 先保留连接、订阅和 Runtime 引用，让已经进入串行队列的 SEND 能完成 Agent 回包。
+  // 新 Upgrade 由 accepting=false 拒绝，已连接客户端的新帧也会在 enqueueFrame 中关闭。
   const pendingQueues = [...states.values()].map((state) => state.queue.catch(() => undefined));
-  for (const [connectionId, state] of states) {
-    sendFrame(connectionId, buildErrorFrame("Server shutting down"));
-    state.ws.terminate();
-    cleanup(connectionId);
-  }
   if (pendingQueues.length > 0) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const drained = await Promise.race([
@@ -560,6 +564,12 @@ export async function stopStompServer(): Promise<void> {
         `${pendingQueues.length} connection queue(s) may still be completing`,
       );
     }
+  }
+  // 排空完成（或达到有界超时）后再切断会话并清理 ACK/订阅状态。
+  for (const [connectionId, state] of states) {
+    sendFrame(connectionId, buildErrorFrame("Server shutting down"));
+    state.ws.terminate();
+    cleanup(connectionId);
   }
   states.clear();
   clearSubscriptions();

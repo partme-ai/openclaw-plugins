@@ -99,6 +99,10 @@ export type WebsocketChannelConfig = {
     messagesPerMinute: number;
     heartbeatIntervalMs: number;
     heartbeatTimeoutMs: number;
+    /** 单次 WebSocket 写出回调的最长等待时间。 */
+    sendTimeoutMs: number;
+    /** Gateway 停机时等待已接纳 Agent 任务和回复投递的最长时间。 */
+    shutdownTimeoutMs: number;
   };
   session: {
     maxExpirySeconds: number;

@@ -66,6 +66,50 @@ export function sendToConnection(
 }
 
 /**
+ * 等待 `ws.send` 回调后再报告投递结果。
+ *
+ * Agent 回复、accepted 和公共 Outbound Adapter 使用此路径，避免仅仅把数据放入 `ws` 用户态
+ * 缓冲就向上层宣称成功。超时会主动终止半开或长期阻塞的连接，使业务任务有界失败并可重试。
+ */
+export async function sendToConnectionConfirmed(
+  connectionId: string,
+  payload: string,
+  maxBufferedBytes = 1024 * 1024,
+  timeoutMs = 10_000,
+): Promise<boolean> {
+  const ws = connections.get(connectionId);
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  if (ws.bufferedAmount + Buffer.byteLength(payload, "utf8") > maxBufferedBytes) {
+    ws.close(1013, "Outbound backpressure limit exceeded");
+    return false;
+  }
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (delivered: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (delivered) touchConnection(connectionId);
+      resolve(delivered);
+    };
+    const timer = setTimeout(() => {
+      ws.terminate();
+      finish(false);
+    }, timeoutMs);
+    timer.unref();
+    try {
+      ws.send(payload, (error) => {
+        if (error) ws.terminate();
+        finish(!error);
+      });
+    } catch {
+      finish(false);
+    }
+  });
+}
+
+/**
  * 当前活跃连接数。
  */
 export function getConnectionCount(): number {

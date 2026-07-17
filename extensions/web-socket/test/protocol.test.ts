@@ -69,4 +69,12 @@ describe("serialize frames", () => {
       message: { text: "hi" },
     });
   });
+
+  it("不允许 envelope 覆盖固定协议版本和 reply 类型", () => {
+    expect(JSON.parse(serializeEnvelopeReplyFrame(JSON.stringify({ version: "999", type: "error", message: { text: "hi" } })))).toMatchObject({
+      version: WEBSOCKET_PROTOCOL_VERSION,
+      type: "reply",
+      message: { text: "hi" },
+    });
+  });
 });

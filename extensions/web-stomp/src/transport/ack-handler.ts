@@ -120,13 +120,35 @@ export function handleNack(
   if (!msg) return null;
   if (connectionId && msg.connectionId !== connectionId) return null;
 
-  pendingMessages.delete(messageId);
+  if (msg.ackMode === "client-individual") {
+    pendingMessages.delete(messageId);
+  } else {
+    // STOMP 1.2 的 client 模式是累计确认：NACK 与 ACK 一样，覆盖同一订阅中目标消息及之前消息。
+    for (const [id, pending] of pendingMessages.entries()) {
+      if (
+        pending.connectionId === msg.connectionId &&
+        pending.subscriptionId === msg.subscriptionId &&
+        pending.sequence <= msg.sequence
+      ) {
+        pendingMessages.delete(id);
+      }
+    }
+  }
 
   return {
     subscriptionId: msg.subscriptionId,
     connectionId: msg.connectionId,
     destination: msg.destination,
   };
+}
+
+/** 取消订阅时释放该订阅占用的 ACK 窗口，避免同一连接后续订阅被历史消息阻塞。 */
+export function cleanupSubscription(connectionId: string, subscriptionId: string): void {
+  for (const [id, msg] of pendingMessages.entries()) {
+    if (msg.connectionId === connectionId && msg.subscriptionId === subscriptionId) {
+      pendingMessages.delete(id);
+    }
+  }
 }
 
 /**

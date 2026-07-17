@@ -206,6 +206,16 @@ const socket = new WebSocket(
         "keyFile": "/etc/openclaw/tls/server.key",
         "certFile": "/etc/openclaw/tls/server.crt",
         "minVersion": "TLSv1.2"
+      },
+      "limits": {
+        "maxPayloadBytes": 1048576,
+        "maxBufferedBytes": 1048576,
+        "maxPendingMessages": 32,
+        "messagesPerMinute": 120,
+        "heartbeatIntervalMs": 30000,
+        "heartbeatTimeoutMs": 10000,
+        "sendTimeoutMs": 10000,
+        "shutdownTimeoutMs": 10000
       }
     }
   }
@@ -277,15 +287,52 @@ flowchart TD
 - `maxPendingMessages`：每条连接独立的有界串行队列，保证消息顺序并避免无限堆积。
 - `messagesPerMinute`：server/client 两种方向都执行连接级时间窗限流。
 - `maxBufferedBytes`：慢消费者超过发送缓存上限时关闭连接，避免拖垮 Gateway。
+- `sendTimeoutMs`：Agent reply、`accepted` 和公共 Outbound 都必须等到 `ws.send` 回调；超过上限终止连接并向业务层报告失败。
 - `heartbeatIntervalMs / heartbeatTimeoutMs`：标准 WS Ping/Pong 检测半开连接。
 - `messageId`：对入站消息做幂等去重。
-- 停机时先拒绝新帧、关闭 Server/Client，再等待已接纳的 Agent 任务排空，最后清理连接与会话映射。
+- 停机时先拒绝新 Upgrade/新帧并停止重连和心跳，但暂时保留 Socket、Connection Hub 与 Runtime 引用；已接纳 Agent 任务完成 reply/accepted 后才关闭连接。达到 `shutdownTimeoutMs` 会告警并有界退出。
 - 日志与 Gateway `lastError` 在落盘或暴露前统一遮蔽 URL 凭据、Bearer Token 和认证 Header。
 - 状态与日志中的 Client URL 只保留 scheme、host、port 和 path，移除 userinfo、query 与 fragment。
 - 帧内 `agentId`、`messageId`、`peerId` 最长 256 字符，并在进入路由、Session 和幂等状态前拒绝控制字符。
 - `server` 与 `client` 两种模式都只在 Agent 和回复投递完成后发送 `accepted`，外部网关可使用同一提交语义。
 - client 握手完成前对端关闭也会明确失败，不会让 Gateway 启动或停机 Promise 悬空。
 - 公共 Outbound Adapter 遇到离线连接、上下文缺失或背压失败时抛错，使 Router Outbox 能重试/DLQ；不会用占位 `messageId` 冒充成功。
+
+## 有界停机排空
+
+```text
+Gateway AbortSignal
+       │
+       ▼
+拒绝新 Upgrade / 新帧 ──▶ 停止重连与心跳
+       │
+       ▼
+保留 Socket + Connection Hub + Runtime 引用
+       │
+       ▼
+等待已接纳 Agent Turn ──▶ reply ──▶ accepted
+       │                              │
+       ├── 全部完成 ──────────────────┤
+       └── shutdownTimeoutMs → 告警 ──┘
+                                      ▼
+                             关闭连接并清理会话映射
+```
+
+```mermaid
+sequenceDiagram
+  participant G as OpenClaw Gateway
+  participant W as WebSocket 传输层
+  participant A as Agent Runtime
+  participant C as 已连接客户端
+  G->>W: AbortSignal / stopAccount
+  W->>W: 拒绝新 Upgrade / 新帧，停止重连与心跳
+  Note over W,C: 排空期间保留 Socket 和 Connection Hub
+  W->>A: 等待已接纳 Agent Turn
+  A-->>W: reply pipeline 完成
+  W-->>C: reply + accepted（等待 ws.send 回调）
+  W--xC: 排空完成或达到 shutdownTimeoutMs 后关闭
+  W-->>G: 清理完成
+```
 
 ## 验证
 
@@ -296,6 +343,6 @@ pnpm test
 pnpm build
 ```
 
-2026-07-17 本地门禁：6 个测试文件、31 个测试通过，typecheck/build 通过。新增门禁覆盖处理失败后同一 `messageId` 可重试、client 模式入站限流，以及离线出站必须向上层报告失败。
+2026-07-17 本地门禁：9 个测试文件、44 个测试通过，typecheck/build 通过。门禁覆盖处理失败后同一 `messageId` 可重试、client 模式入站限流、写出回调失败/超时、协议版本不可覆盖、停机期间 reply/accepted 可交付，以及离线出站必须向上层报告失败。
 
 英文及完整字段索引见 [README.md](./README.md)。

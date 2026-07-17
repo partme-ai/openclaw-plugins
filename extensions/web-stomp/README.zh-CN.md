@@ -202,6 +202,8 @@ client.activate();
 
 `SEND` 的 `RECEIPT` 只会在 OpenClaw 成功接收入站派发后返回。使用 `client` 或 `client-individual` 确认模式时，应确认 `MESSAGE` 帧中的 `ack` 头。
 
+只有客户端显式提供 `message-id` 时，插件才把它作为入站幂等键。`receipt` 仅用于关联协议回执；相同正文也可能是用户连续发送的合法请求，因此二者都不会被自动推导为幂等键。
+
 ## 失败与背压语义
 
 字符图强调“Agent 已生成回复”并不等于“客户端已收到”：插件必须等到 `ws.send` 回调成功，才把本次 reply 计为已投递。
@@ -268,16 +270,19 @@ stateDiagram-v2
 Gateway AbortSignal
        │
        ▼
-停止接受新帧 ──▶ 停止心跳 ──▶ 关闭所有 WebSocket
-                                      │
-                                      ▼
-                         等待已入队 Agent Turn 完成
-                                      │
-                     ┌────────────────┴───────────────┐
-                     ▼                                ▼
-              全部完成                         shutdownTimeoutMs
-                     │                                │
-                     └──────────▶ 清理订阅 / ACK / Listener
+拒绝新 Upgrade / 新帧 ──▶ 停止心跳
+        │
+        ▼
+保留 WebSocket、Subscription、Runtime 引用
+        │
+        ▼
+等待已入队 Agent Turn 与回复投递完成
+        │
+        ├── 全部完成 ───────────────────────┐
+        │                                   │
+        └── 达到 shutdownTimeoutMs ──▶ 告警 │
+                                            ▼
+                          关闭 WebSocket → 清理订阅 / ACK / Listener
 ```
 
 ```mermaid
@@ -288,11 +293,14 @@ sequenceDiagram
     participant A as Agent Runtime
     G->>S: AbortSignal / stopAccount
     S->>S: accepting=false，停止心跳
-    S--xS: 关闭 WS，阻止新帧
+    S--xS: 拒绝新 Upgrade / 新帧
+    Note over S,A: 暂时保留 WS、Subscription 与 Runtime 引用
     S->>Q: 等待快照中的队列
     Q->>A: 完成已接收 Agent Turn
+    A-->>S: 通过原会话投递 Agent Reply
     A-->>Q: success / failure
     Q-->>S: drained
+    S--xS: 关闭 WS，清理订阅 / ACK / Listener
     S-->>G: 清理完成
     Note over S,Q: 超过 shutdownTimeoutMs 时告警并有界退出
 ```
@@ -315,6 +323,6 @@ pnpm --filter @partme.ai/openclaw-web-stomp test
 pnpm --filter @partme.ai/openclaw-web-stomp build
 ```
 
-2026-07-17 本地门禁：13 个测试文件、77 个测试通过，typecheck 通过；覆盖同一毫秒多条投递的累计 ACK 顺序、官方 ESM 脱敏、WebSocket 写出确认和停机排空回归。最终 build、覆盖率、tarball 与 OpenClaw 2026.7.1 E2E 结果见生产优化计划。
+2026-07-17 本地门禁覆盖同一毫秒多条投递的累计 ACK 顺序、累计 NACK、取消订阅后的 ACK 清理、显式 `message-id` 幂等、官方 ESM 脱敏、WebSocket 写出确认和可交付回复的停机排空回归。最终测试数量、build、覆盖率、tarball 与 OpenClaw 2026.7.1 E2E 结果见生产优化计划。
 
 许可证：MIT。

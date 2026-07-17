@@ -18,12 +18,13 @@ import {
   getAllConnectionInfo,
   registerConnection,
   sendToConnection,
+  sendToConnectionConfirmed,
   touchConnection,
   unregisterConnection,
 } from "./connection-hub.js";
 import { redactWebSocketError } from "../shared/redact.js";
 
-type WebSocketErrorLog = { error: (message: string) => void };
+type WebSocketErrorLog = { error: (message: string) => void; warn?: (message: string) => void };
 
 export type WebsocketInboundCallback = (ctx: {
   connectionId: string;
@@ -40,6 +41,9 @@ let httpServer: HttpServer | HttpsServer | null = null;
 let wss: WebSocketServer | null = null;
 let activeConfig: WebsocketChannelConfig | null = null;
 let serverRunning = false;
+let serverStarting = false;
+let accepting = false;
+let serverLog: WebSocketErrorLog | undefined;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 const serverConnections = new Map<string, WebSocket>();
 const awaitingPong = new Map<string, number>();
@@ -144,15 +148,19 @@ export async function startWebSocketServer(
   onDisconnect?: (connectionId: string) => void,
   log?: WebSocketErrorLog,
 ): Promise<void> {
-  if (serverRunning) return;
+  if (serverRunning || serverStarting) throw new Error("WebSocket server is already running or starting");
+  serverStarting = true;
   let nextHttpServer: HttpServer | HttpsServer;
   try {
     nextHttpServer = await createListener(config);
   } catch (error) {
+    serverStarting = false;
     throw new Error(redactWebSocketError(error, config));
   }
   return new Promise((resolve, reject) => {
     activeConfig = config;
+    serverLog = log;
+    accepting = true;
     const serverCfg = config.server;
     const nextWss = new WebSocketServer({
       noServer: true,
@@ -164,6 +172,7 @@ export async function startWebSocketServer(
     wss = nextWss;
 
     nextHttpServer.on("upgrade", (req, socket, head) => {
+      if (!accepting) return rejectUpgrade(socket, 503, "Service Unavailable");
       let pathname = "";
       try { pathname = new URL(req.url ?? "/", "http://localhost").pathname; } catch { /* rejected below */ }
       if (pathname !== serverCfg.path) return rejectUpgrade(socket, 404, "Not Found");
@@ -203,6 +212,10 @@ export async function startWebSocketServer(
         touchConnection(connectionId);
       });
       ws.on("message", (data, isBinary) => {
+        if (!accepting) {
+          ws.close(1012, "Server restarting");
+          return;
+        }
         touchConnection(connectionId);
         const now = Date.now();
         if (now - windowStart >= 60_000) {
@@ -234,8 +247,14 @@ export async function startWebSocketServer(
         pending += 1;
         queue = trackInboundTask(queue
           .then(() => messageHandler({ connectionId, rawPayload: raw, frameAgentId: parsed.agentId, messageId: parsed.messageId, peerId: parsed.peerId }))
-          .then(() => {
-            sendToConnection(connectionId, serializeAcceptedFrame(parsed.messageId), config.limits.maxBufferedBytes);
+          .then(async () => {
+            const delivered = await sendToConnectionConfirmed(
+              connectionId,
+              serializeAcceptedFrame(parsed.messageId),
+              config.limits.maxBufferedBytes,
+              config.limits.sendTimeoutMs,
+            );
+            if (!delivered) throw new Error("WebSocket accepted acknowledgement delivery failed");
           })
           .catch((error: unknown) => {
             log?.error(`[openclaw-web-socket] Inbound handler failed ${connectionId}: ${redactWebSocketError(error, config)}`);
@@ -252,6 +271,9 @@ export async function startWebSocketServer(
 
     const onStartupError = (error: Error) => {
       activeConfig = null;
+      serverLog = undefined;
+      accepting = false;
+      serverStarting = false;
       httpServer = null;
       wss = null;
       nextWss.close();
@@ -262,6 +284,7 @@ export async function startWebSocketServer(
       nextHttpServer.off("error", onStartupError);
       nextHttpServer.on("error", (error) => log?.error(`[openclaw-web-socket] HTTP server error: ${redactWebSocketError(error, config)}`));
       serverRunning = true;
+      serverStarting = false;
       heartbeatTimer = setInterval(() => {
         const now = Date.now();
         for (const [connectionId, ws] of serverConnections) {
@@ -283,26 +306,69 @@ export async function startWebSocketServer(
 }
 
 export async function stopWebSocketServer(): Promise<void> {
+  accepting = false;
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
-  for (const [connectionId, ws] of serverConnections) {
-    sendToConnection(connectionId, serializeErrorFrame("Server shutting down"));
-    ws.terminate();
-    unregisterConnection(connectionId);
+  const config = activeConfig;
+  const tasks = [...inboundTasks];
+  if (tasks.length > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const drained = await Promise.race([
+      Promise.allSettled(tasks).then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), config?.limits.shutdownTimeoutMs ?? 10_000);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (!drained) {
+      serverLog?.warn?.(
+        `[openclaw-web-socket] shutdown drain timed out after ${config?.limits.shutdownTimeoutMs ?? 10_000}ms; ` +
+        `${tasks.length} Agent task(s) may have an unknown outcome`,
+      );
+    }
   }
+  // 排空期间保留 Hub 和 Socket，使已接纳消息仍能把 Agent reply/accepted 写回原连接。
+  // 排空后使用有界 close handshake 冲刷最后的文本帧；立即 terminate 仍可能截断已进入内核前的 reply。
+  const socketClosures = [...serverConnections.entries()].map(([connectionId, ws]) =>
+    new Promise<void>((resolve) => {
+      if (ws.readyState === WebSocket.CLOSED) {
+        unregisterConnection(connectionId);
+        resolve();
+        return;
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        unregisterConnection(connectionId);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        ws.terminate();
+        finish();
+      }, Math.min(config?.limits.sendTimeoutMs ?? 1_000, 1_000));
+      timer.unref();
+      ws.once("close", finish);
+      sendToConnection(connectionId, serializeErrorFrame("Server shutting down"));
+      ws.close(1001, "Server shutting down");
+    }),
+  );
+  await Promise.all(socketClosures);
   serverConnections.clear();
   awaitingPong.clear();
-  const drainingTasks = Promise.allSettled([...inboundTasks]);
   const closingWss = wss;
   const closingHttp = httpServer;
   wss = null;
   httpServer = null;
   activeConfig = null;
+  serverLog = undefined;
   serverRunning = false;
+  serverStarting = false;
   await Promise.all([
     new Promise<void>((resolve) => closingWss ? closingWss.close(() => resolve()) : resolve()),
     new Promise<void>((resolve) => closingHttp ? closingHttp.close(() => resolve()) : resolve()),
-    drainingTasks,
   ]);
 }
 

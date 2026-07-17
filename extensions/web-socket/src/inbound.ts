@@ -27,7 +27,7 @@ import { getWebsocketChannelConfig } from "./state/web-socket-state.js";
 import type { WebsocketInboundMessage } from "./types.js";
 import { serializeEnvelopeReplyFrame, serializeReplyFrame } from "./transport/protocol.js";
 import { WS_CLIENT_CONNECTION_PREFIX } from "./transport/client.js";
-import { sendToConnection } from "./transport/connection-hub.js";
+import { sendToConnectionConfirmed } from "./transport/connection-hub.js";
 
 const inboundDedupe = getWebsocketClaimableDedupe();
 
@@ -156,14 +156,20 @@ async function dispatchToRuntime(
         const payload =
           typeof wire === "string" ? wire : Buffer.from(wire).toString("utf8");
         if (config.payload.outboundFormat === "plain") {
-          const delivered = sendToConnection(inbound.connectionId, serializeReplyFrame(payload, { sessionKey }), config.limits.maxBufferedBytes);
+          const delivered = await sendToConnectionConfirmed(
+            inbound.connectionId,
+            serializeReplyFrame(payload, { sessionKey }),
+            config.limits.maxBufferedBytes,
+            config.limits.sendTimeoutMs,
+          );
           if (!delivered) throw new Error(`WebSocket reply delivery failed: ${inbound.connectionId}`);
           return;
         }
-        const delivered = sendToConnection(
+        const delivered = await sendToConnectionConfirmed(
           inbound.connectionId,
           serializeEnvelopeReplyFrame(payload, { sessionKey, messageId: inbound.messageId }),
           config.limits.maxBufferedBytes,
+          config.limits.sendTimeoutMs,
         );
         if (!delivered) throw new Error(`WebSocket reply delivery failed: ${inbound.connectionId}`);
       },

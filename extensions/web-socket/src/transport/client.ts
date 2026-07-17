@@ -9,11 +9,11 @@ import WebSocket from "ws";
 
 import { parseClientFrame, serializeAcceptedFrame, serializeErrorFrame, serializePongFrame } from "./protocol.js";
 import type { WebsocketChannelConfig, WebsocketConnectionInfo } from "../types.js";
-import { registerConnection, sendToConnection, touchConnection, unregisterConnection } from "./connection-hub.js";
+import { registerConnection, sendToConnection, sendToConnectionConfirmed, touchConnection, unregisterConnection } from "./connection-hub.js";
 import type { WebsocketInboundCallback } from "./server.js";
 import { redactWebSocketError, sanitizeWebSocketUrl } from "../shared/redact.js";
 
-type WebSocketErrorLog = { error: (message: string) => void };
+type WebSocketErrorLog = { error: (message: string) => void; warn?: (message: string) => void };
 
 export const WS_CLIENT_CONNECTION_PREFIX = "client:";
 
@@ -27,6 +27,8 @@ let reconnectAttempt = 0;
 let onInboundMessage: WebsocketInboundCallback | null = null;
 let activeClientConfig: WebsocketChannelConfig | null = null;
 let abortConnect = false;
+let accepting = false;
+let activeClientLog: WebSocketErrorLog | undefined;
 /** 已被传输层接纳、但尚未完成的 Agent 入站任务；停机时必须全部排空。 */
 const inboundTasks = new Set<Promise<void>>();
 
@@ -52,6 +54,7 @@ function scheduleReconnect(
   config: WebsocketChannelConfig,
   onConnect?: (connectionId: string) => void,
   onDisconnect?: (connectionId: string) => void,
+  log?: WebSocketErrorLog,
 ): void {
   if (abortConnect || !config.client.reconnect.enabled || reconnectTimer) return;
   const baseDelay = Math.min(config.client.reconnect.initialDelayMs * 2 ** reconnectAttempt, config.client.reconnect.maxDelayMs);
@@ -61,7 +64,8 @@ function scheduleReconnect(
   reconnectAttempt += 1;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    void connectOnce(config, onConnect, onDisconnect).catch(() => scheduleReconnect(config, onConnect, onDisconnect));
+    void connectOnce(config, onConnect, onDisconnect, log)
+      .catch(() => scheduleReconnect(config, onConnect, onDisconnect, log));
   }, delay);
   reconnectTimer.unref();
 }
@@ -103,7 +107,7 @@ function connectOnce(
         clientInfo = null;
       }
       if (opened) onDisconnect?.(connectionId);
-      if (clientRunning && !abortConnect) scheduleReconnect(config, onConnect, onDisconnect);
+      if (clientRunning && !abortConnect) scheduleReconnect(config, onConnect, onDisconnect, log);
     };
 
     ws.once("open", () => {
@@ -139,6 +143,10 @@ function connectOnce(
       if (clientInfo) clientInfo.lastActiveAt = new Date().toISOString();
     });
     ws.on("message", (data, isBinary) => {
+      if (!accepting) {
+        ws.close(1012, "Client restarting");
+        return;
+      }
       touchConnection(connectionId);
       if (clientInfo) clientInfo.lastActiveAt = new Date().toISOString();
       const now = Date.now();
@@ -175,10 +183,11 @@ function connectOnce(
         .then(async () => {
           if (!handler) throw new Error("WebSocket inbound handler is unavailable");
           await handler({ connectionId, rawPayload: raw, frameAgentId: parsed.agentId, messageId: parsed.messageId, peerId: parsed.peerId });
-          const delivered = sendToConnection(
+          const delivered = await sendToConnectionConfirmed(
             connectionId,
             serializeAcceptedFrame(parsed.messageId),
             config.limits.maxBufferedBytes,
+            config.limits.sendTimeoutMs,
           );
           if (!delivered) throw new Error("WebSocket accepted acknowledgement delivery failed");
         })
@@ -209,19 +218,23 @@ export async function startWebSocketClient(
   onDisconnect?: (connectionId: string) => void,
   log?: WebSocketErrorLog,
 ): Promise<void> {
-  if (clientRunning) return;
+  if (clientRunning) throw new Error("WebSocket client is already running");
   abortConnect = false;
+  accepting = true;
   clientRunning = true;
   onInboundMessage = messageHandler;
   activeClientConfig = config;
+  activeClientLog = log;
   try {
     await connectOnce(config, onConnect, onDisconnect, log);
   } catch (error) {
     if (config.client.reconnect.enabled && !abortConnect) {
-      scheduleReconnect(config, onConnect, onDisconnect);
+      scheduleReconnect(config, onConnect, onDisconnect, log);
       return;
     }
     clientRunning = false;
+    accepting = false;
+    activeClientLog = undefined;
     throw new Error(redactWebSocketError(error, config));
   }
 }
@@ -229,13 +242,35 @@ export async function startWebSocketClient(
 /** 幂等停止客户端、取消维护定时器并等待 Socket 关闭。 */
 export async function stopWebSocketClient(): Promise<void> {
   abortConnect = true;
+  accepting = false;
   clientRunning = false;
-  onInboundMessage = null;
-  activeClientConfig = null;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
+  const config = activeClientConfig;
+  const tasks = [...inboundTasks];
+  if (tasks.length > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const drained = await Promise.race([
+      Promise.allSettled(tasks).then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), config?.limits.shutdownTimeoutMs ?? 10_000);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (!drained) {
+      activeClientLog?.warn?.(
+        `[openclaw-web-socket] client shutdown drain timed out after ${config?.limits.shutdownTimeoutMs ?? 10_000}ms; ` +
+        `${tasks.length} Agent task(s) may have an unknown outcome`,
+      );
+    }
+  }
+  // 排空完成前保留 Socket、Hub 与 handler，确保已接纳消息仍可发送 reply/accepted。
+  onInboundMessage = null;
+  activeClientConfig = null;
+  activeClientLog = undefined;
   const socket = clientSocket;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
     await new Promise<void>((resolve) => {
@@ -250,8 +285,6 @@ export async function stopWebSocketClient(): Promise<void> {
   clientConnectionId = null;
   clientInfo = null;
   reconnectAttempt = 0;
-  // Socket 关闭只会停止接收新帧；已进入 Agent 管道的任务仍需自然完成，避免热重载期间丢消息。
-  await Promise.allSettled([...inboundTasks]);
 }
 
 export function getClientStats(): { running: boolean; connected: boolean; url: string | null; connectionId: string | null } {

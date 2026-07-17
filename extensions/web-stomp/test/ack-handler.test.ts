@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   cleanupConnection,
+  cleanupSubscription,
   discardPendingMessage,
   getAckStats,
   handleAck,
@@ -107,6 +108,15 @@ describe("handleNack", () => {
   it("returns null for unknown id", () => {
     expect(handleNack("unknown")).toBeNull();
   });
+
+  it("client 模式累计 NACK 目标消息及之前消息", () => {
+    registerMessage("sub-n", "conn-nack", "/topic/nack", "client");
+    const second = registerMessage("sub-n", "conn-nack", "/topic/nack", "client");
+    registerMessage("sub-n", "conn-nack", "/topic/nack", "client");
+
+    expect(handleNack(second, "conn-nack")).not.toBeNull();
+    expect(getAckStats().pendingCount).toBe(1);
+  });
 });
 
 describe("cleanupConnection", () => {
@@ -120,6 +130,14 @@ describe("cleanupConnection", () => {
     registerMessage("sub-z", "conn-other", "/topic/z", "client-individual");
 
     cleanupConnection("conn-clean");
+    expect(getAckStats().pendingCount).toBe(1);
+  });
+
+  it("取消订阅只释放该订阅的 pending ACK", () => {
+    registerMessage("sub-x", "conn-clean", "/topic/x", "client-individual");
+    registerMessage("sub-y", "conn-clean", "/topic/y", "client-individual");
+
+    cleanupSubscription("conn-clean", "sub-x");
     expect(getAckStats().pendingCount).toBe(1);
   });
 });
