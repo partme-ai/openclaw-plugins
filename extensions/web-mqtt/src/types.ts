@@ -104,6 +104,13 @@ export interface InboundEvent {
   topic: string;
   payload: Buffer;
   clientId: string;
+  /**
+   * CONNECT 认证成功时绑定到物理连接的用户名快照。
+   *
+   * 不能在异步 Agent 任务执行时仅凭 clientId 反查用户名：MQTT 允许同名 clientId
+   * 的新连接接管旧连接，届时反查会把旧消息错误归属给新用户。
+   */
+  authenticatedUsername?: string;
   /** MQTT packet messageId（QoS>0 时可用，用于幂等） */
   messageId?: string;
 }
@@ -112,6 +119,8 @@ export interface InboundEvent {
 export interface SessionContext {
   sessionKey: string;
   clientId: string;
+  /** 产生该会话消息的认证身份快照，供异步回复执行 outbound ACL。 */
+  authenticatedUsername?: string;
   agentId: string;
   accountId: string;
   lastInboundTopic: string;

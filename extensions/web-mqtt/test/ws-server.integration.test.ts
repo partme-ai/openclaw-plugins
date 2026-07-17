@@ -79,6 +79,7 @@ describe("web-mqtt ws-server integration", () => {
     expect(inboundSpy.mock.calls[0][0]).toMatchObject({
       topic,
       clientId: expect.any(String),
+      authenticatedUsername: "anonymous",
     });
     expect(inboundSpy.mock.calls[0][0].payload.toString("utf-8")).toBe(payload);
   });
@@ -412,7 +413,10 @@ describe("web-mqtt ws-server integration", () => {
     expect(getStats().connectedClients).toBe(1);
     await replacement.publishAsync("bob/allowed", "ok", { qos: 1 });
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(inboundSpy).toHaveBeenCalledWith(expect.objectContaining({ topic: "bob/allowed" }));
+    expect(inboundSpy).toHaveBeenCalledWith(expect.objectContaining({
+      topic: "bob/allowed",
+      authenticatedUsername: "bob",
+    }));
     await replacement.endAsync();
     first.end(true);
   });

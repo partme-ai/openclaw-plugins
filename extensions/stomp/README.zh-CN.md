@@ -273,6 +273,19 @@ sequenceDiagram
 
 ### ACK、NACK 与重连状态
 
+```text
+认证用户 A ── SUBSCRIBE(durable, id=orders) ──▶ 进程级 durable 队列
+    │                                                   │
+    │◀── MESSAGE（未 ACK）──────────────────────────────┤
+    │ 断线                                              │ pending 重入队
+    ▼                                                   ▼
+离线期间 publish ───────────────────────────────▶ 继续有界排队
+    │
+    └── 同一 login + id + destination 重连 ───────────▶ 先重投 pending，再投递离线消息
+```
+
+字符图展示 durable 重连时消息的实际存放位置；下面 Mermaid 状态图继续表达 ACK/NACK 的完整状态迁移。
+
 ```mermaid
 stateDiagram-v2
   [*] --> Queued: 回复被活动/进程内 durable 订阅接受
@@ -288,7 +301,7 @@ stateDiagram-v2
   end note
 ```
 
-`publishOutboundMessage` 和正式 Channel Adapter 都要求至少一个活动或进程内 durable 订阅接受消息；零订阅时抛错，让 Router/调用方决定重试或 DLQ，不会返回伪成功。这里的“接受”表示进入有界队列或写入 Socket，不代表远端业务已经消费；需要端到端消费确认应使用专业 Broker。
+`publishOutboundMessage` 和正式 Channel Adapter 都要求至少一个活动或进程内 durable 订阅接受消息；零订阅时抛错，让 Router/调用方决定重试或 DLQ，不会返回伪成功。非 durable 慢消费者若在同步写入时超过 Socket 缓冲上限并被断开，也不会计为接受；durable 消息仍在进程级有界队列中才可计为接受。这里的“接受”不代表远端业务已经消费；需要端到端消费确认应使用专业 Broker。
 
 ### Gateway 停机排空
 
@@ -296,15 +309,15 @@ stateDiagram-v2
 AbortSignal
     │
     ▼
-accepting=false ──▶ 停止心跳 ──▶ 关闭 TCP/TLS 连接
-                                      │
-                                      ▼
-                         等待已入队 processing Promise
-                                      │
-                      ┌───────────────┴────────────────┐
-                      ▼                                ▼
-                    drained                  shutdownTimeoutMs
-                      └────────▶ 清理 durable / Listener / Runtime
+accepting=false ──▶ 停止心跳 / Listener 接入
+                                │
+                                ▼
+                 保留存量连接和订阅，等待 processing
+                                │
+                ┌───────────────┴────────────────┐
+                ▼                                ▼
+     Agent 回复仍可投递                     shutdownTimeoutMs
+                └────────▶ 关闭连接并清理 durable / Runtime
 ```
 
 ```mermaid
@@ -314,17 +327,18 @@ sequenceDiagram
   participant Q as 每连接 processing 队列
   participant A as Agent Runtime
   G->>S: AbortSignal / stopAccount
-  S->>S: accepting=false，停止心跳
-  S--xS: 关闭 TCP/TLS 连接
+  S->>S: accepting=false，停止心跳和 Listener 接入
   S->>Q: 等待已接收帧
   Q->>A: 完成在途 Agent Turn
-  A-->>Q: success / failure
+  A-->>Q: success / failure + 回复
+  Q->>S: 通过存量订阅投递回复
   Q-->>S: drained
+  S--xS: 关闭 TCP/TLS 连接
   S-->>G: 清理完成
   Note over S,Q: 超过 shutdownTimeoutMs 时告警并有界退出
 ```
 
-排空只等待已经进入协议串行队列的工作；尚未 COMMIT 的事务动作会随连接关闭丢弃。强杀仍可能产生结果未知窗口，因此有副作用的客户端必须提供业务幂等键。
+排空只等待已经进入协议串行队列的工作，并在等待期间保留存量订阅，使正在完成的 Agent Turn 仍能交付回复；尚未 COMMIT 的事务动作会随连接关闭丢弃。强杀仍可能产生结果未知窗口，因此有副作用的客户端必须提供业务幂等键。
 
 ## 生产运维
 
@@ -342,6 +356,6 @@ pnpm --filter @partme.ai/openclaw-stomp test
 pnpm --filter @partme.ai/openclaw-stomp build
 ```
 
-2026-07-17 本地门禁：11 个测试文件、53 个测试通过，typecheck 通过；覆盖 TCP/TLS、累计 ACK、NACK 重投、事务动作总量、durable 身份隔离、官方 ESM 脱敏、停机排空和零订阅失败语义。最终 build、覆盖率、tarball 与 OpenClaw 2026.7.1 E2E 见生产优化计划。
+2026-07-17 本地门禁：11 个测试文件、58 个测试通过，typecheck 通过；覆盖 TCP/TLS、累计 ACK、NACK 重投、事务动作总量、durable 认证重连与离线排队、半开连接心跳超时、慢消费者失败语义、重复启动失败关闭、停机期间 Agent 回复投递和零订阅失败语义。最终 build、覆盖率、tarball 与 OpenClaw 2026.7.1 E2E 见生产优化计划。
 
 许可证：MIT。

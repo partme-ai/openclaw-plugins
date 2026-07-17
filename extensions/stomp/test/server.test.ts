@@ -2,7 +2,12 @@ import net from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_STOMP_TCP_CONFIG } from "../src/config.js";
-import { publishToDestination, startStompTcpServer, stopStompTcpServer } from "../src/transport/server.js";
+import {
+  getConnectionStats,
+  publishToDestination,
+  startStompTcpServer,
+  stopStompTcpServer,
+} from "../src/transport/server.js";
 import type { InboundMessage, StompTcpConfig } from "../src/types.js";
 
 async function freePort(): Promise<number> {
@@ -44,9 +49,9 @@ function connectClient(config: StompTcpConfig): Promise<net.Socket> {
   });
 }
 
-async function stompConnect(socket: net.Socket): Promise<string> {
+async function stompConnect(socket: net.Socket, headers: Record<string, string> = {}): Promise<string> {
   const connected = readUntil(socket, "CONNECTED");
-  socket.write(frame("CONNECT", { "accept-version": "1.2", "heart-beat": "0,0" }));
+  socket.write(frame("CONNECT", { "accept-version": "1.2", "heart-beat": "0,0", ...headers }));
   return connected;
 }
 
@@ -161,6 +166,69 @@ describe("stomp TCP server", () => {
     client.destroy();
   });
 
+  it("does not report false outbound success when a non-durable slow consumer exceeds the socket buffer", async () => {
+    config = { ...config, maxBufferedBytes: 256 };
+    await startStompTcpServer(config, vi.fn());
+    const client = await connectClient(config);
+    await stompConnect(client);
+    const subscribed = readUntil(client, "receipt-id:slow-ready");
+    client.write(frame("SUBSCRIBE", {
+      id: "slow",
+      destination: "/topic/slow",
+      receipt: "slow-ready",
+    }));
+    await subscribed;
+
+    const closed = new Promise<void>((resolve) => client.once("close", () => resolve()));
+    expect(publishToDestination("/topic/slow", "x".repeat(1_024))).toBe(0);
+    await closed;
+  });
+
+  it("retains durable pending and offline deliveries across an authenticated TCP reconnect", async () => {
+    config = {
+      ...config,
+      auth: { required: true, users: [{ login: "durable-user", password: "durable-secret" }] },
+      allowSharedTopics: true,
+      allowDurableSubscriptions: true,
+      prefetchCount: 1,
+    };
+    await startStompTcpServer(config, vi.fn());
+    const credentials = { login: "durable-user", passcode: "durable-secret" };
+    const firstClient = await connectClient(config);
+    await stompConnect(firstClient, credentials);
+    const firstReady = readUntil(firstClient, "receipt-id:durable-first-ready");
+    firstClient.write(frame("SUBSCRIBE", {
+      id: "orders",
+      destination: "/topic/orders",
+      ack: "client-individual",
+      durable: "true",
+      receipt: "durable-first-ready",
+    }));
+    await firstReady;
+    publishToDestination("/topic/orders", "pending-before-disconnect");
+    await readUntil(firstClient, "pending-before-disconnect");
+    firstClient.destroy();
+    await vi.waitFor(() => expect(getConnectionStats().total).toBe(0));
+
+    expect(publishToDestination("/topic/orders", "queued-while-offline")).toBe(1);
+    const secondClient = await connectClient(config);
+    await stompConnect(secondClient, credentials);
+    const firstRedelivery = readUntil(secondClient, "pending-before-disconnect");
+    secondClient.write(frame("SUBSCRIBE", {
+      id: "orders",
+      destination: "/topic/orders",
+      ack: "client-individual",
+      durable: "true",
+    }));
+    const redeliveredFrame = await firstRedelivery;
+    expect(redeliveredFrame).toContain("redelivered:true");
+    const firstAck = /\nack:([^\n]+)/.exec(redeliveredFrame)?.[1];
+    const offlineDelivery = readUntil(secondClient, "queued-while-offline");
+    secondClient.write(frame("ACK", { id: firstAck ?? "" }));
+    await expect(offlineDelivery).resolves.toContain("MESSAGE");
+    secondClient.destroy();
+  });
+
   it("implements cumulative ACK for ack=client", async () => {
     config = { ...config, prefetchCount: 2 };
     await startStompTcpServer(config, vi.fn());
@@ -249,6 +317,41 @@ describe("stomp TCP server", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(stopped).toBe(false);
     release();
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+
+  it("停机排空期间保留订阅，允许正在完成的 Agent Turn 投递回复", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const inbound = vi.fn(async () => {
+      await gate;
+      if (publishToDestination("/topic/drain-reply", "reply-before-shutdown") !== 1) {
+        throw new Error("shutdown removed the active reply subscription too early");
+      }
+    });
+    config.shutdownTimeoutMs = 1_000;
+    await startStompTcpServer(config, inbound);
+    const client = await connectClient(config);
+    await stompConnect(client);
+    const subscribed = readUntil(client, "receipt-id:drain-sub-ready");
+    client.write(frame("SUBSCRIBE", {
+      id: "drain-sub",
+      destination: "/topic/drain-reply",
+      receipt: "drain-sub-ready",
+    }));
+    await subscribed;
+    client.write(frame("SEND", { destination: "/queue/agent" }, "finish-with-reply"));
+    await vi.waitFor(() => expect(inbound).toHaveBeenCalledTimes(1));
+
+    const reply = readUntil(client, "reply-before-shutdown");
+    let stopped = false;
+    const stopping = stopStompTcpServer().then(() => { stopped = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+    release();
+
+    await expect(reply).resolves.toContain("MESSAGE");
     await stopping;
     expect(stopped).toBe(true);
   });

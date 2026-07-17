@@ -297,6 +297,81 @@ describe("registerMessageBridge — OpenClaw 2026.7.1 public outbound contract",
     expect(message).toMatchObject({ text: "hello", timestamp: 123, direction: "inbound" });
   });
 
+  it("媒体消息即使没有文本也会镜像，并默认隐藏远程 URL", async () => {
+    const { hooks, sendText } = createBridgeHarness();
+    hooks.get("message_received")?.(
+      {
+        content: "",
+        messageId: "media-only-1",
+        from: "user-1",
+        metadata: {
+          mediaUrls: ["https://objects.example.test/photo.png?signature=secret"],
+          mediaTypes: ["image/png"],
+          guildId: "guild-1",
+          channelName: "support",
+        },
+      },
+      { channelId: "discord", accountId: "main", sessionKey: "session-media" },
+    );
+    await vi.waitFor(() => expect(sendText).toHaveBeenCalledTimes(1));
+    const message = JSON.parse(sendText.mock.calls[0]?.[0].text);
+    expect(message).toMatchObject({
+      text: "",
+      source: { chatType: "group" },
+      media: [{ url: "", kind: "image", mimeType: "image/png" }],
+      metadata: { mediaCount: 1, mediaUrlsIncluded: false, mediaTruncated: false },
+    });
+    expect(sendText.mock.calls[0]?.[0].text).not.toContain("signature=secret");
+  });
+
+  it("显式开启后只镜像安全的 HTTP(S) 媒体 URL", async () => {
+    const { hooks, sendText } = createBridgeHarness({
+      channels: { discord: { mqChannel: "mqtt", includeMediaUrls: true } },
+    });
+    hooks.get("message_received")?.(
+      {
+        content: "attachments",
+        messageId: "media-url-1",
+        metadata: {
+          mediaUrls: [
+            "https://cdn.example.test/image.png",
+            "file:///private/tmp/secret.txt",
+            "https://user:password@example.test/private.mp3",
+          ],
+          mediaTypes: ["image/png", "text/plain", "audio/mpeg"],
+        },
+      },
+      { channelId: "discord", sessionKey: "session-media" },
+    );
+    await vi.waitFor(() => expect(sendText).toHaveBeenCalledTimes(1));
+    const message = JSON.parse(sendText.mock.calls[0]?.[0].text);
+    expect(message.media).toEqual([
+      { url: "https://cdn.example.test/image.png", kind: "image", mimeType: "image/png" },
+      { url: "", kind: "file", mimeType: "text/plain" },
+      { url: "", kind: "audio", mimeType: "audio/mpeg" },
+    ]);
+    expect(message.metadata).toMatchObject({ mediaCount: 3, mediaUrlsIncluded: true, mediaTruncated: false });
+  });
+
+  it("媒体条目有界保留但报告原始总数与截断状态", async () => {
+    const { hooks, sendText } = createBridgeHarness();
+    hooks.get("message_received")?.(
+      {
+        content: "many attachments",
+        messageId: "media-many",
+        metadata: {
+          mediaUrls: Array.from({ length: 20 }, (_, index) => `https://cdn.example.test/${index}.png`),
+          mediaTypes: Array.from({ length: 20 }, () => "image/png"),
+        },
+      },
+      { channelId: "discord", sessionKey: "session-media" },
+    );
+    await vi.waitFor(() => expect(sendText).toHaveBeenCalledTimes(1));
+    const message = JSON.parse(sendText.mock.calls[0]?.[0].text);
+    expect(message.media).toHaveLength(16);
+    expect(message.metadata).toMatchObject({ mediaCount: 20, mediaTruncated: true });
+  });
+
   it("publishes every successful message_sent payload with a distinct stable delivery id", async () => {
     const { hooks, sendText } = createBridgeHarness();
     const handler = hooks.get("message_sent");
@@ -465,5 +540,6 @@ describe("validateBridgeConfig — 运行时防御校验", () => {
     expect(() => validateBridgeConfig({ delivery: { maxAttempts: "3" } } as never)).toThrow("positive integer");
     expect(() => validateBridgeConfig({ channels: { discord: { enabled: "true" } } } as never)).toThrow("boolean");
     expect(() => validateBridgeConfig({ channels: { discord: { mystery: true } } } as never)).toThrow("unknown field");
+    expect(() => validateBridgeConfig({ channels: { discord: { includeMediaUrls: "yes" } } } as never)).toThrow("boolean");
   });
 });

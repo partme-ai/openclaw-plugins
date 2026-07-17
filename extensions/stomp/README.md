@@ -186,11 +186,23 @@ content-type:application/json
 
 For a non-transactional `SEND`, `RECEIPT` is emitted only after the OpenClaw Agent turn completes and at least one active or in-process durable subscription accepts the reply. A transactional SEND receipt confirms bounded buffering; the COMMIT receipt is the final success signal. A missing reply subscriber produces `ERROR` instead of a false COMMIT receipt. For `ack:client`, ACK is cumulative through the referenced delivery. For `ack:client-individual`, only that delivery is acknowledged.
 
-Both the public outbound helper and the Channel adapter throw when no active or in-process durable subscription accepts a delivery. “Accepted” means queued or written to the socket, not application-level consumption by the remote client.
+Both the public outbound helper and the Channel adapter throw when no active or in-process durable subscription accepts a delivery. A non-durable slow consumer disconnected by the socket-buffer ceiling is not reported as accepted; a durable delivery counts only because it remains in the bounded process queue. Acceptance is not application-level consumption by the remote client.
 
 Durable subscriptions require both `allowDurableSubscriptions: true` and `durable:true` (or `persistent:true`) on `SUBSCRIBE`. Enabling them also requires login authentication so unrelated anonymous clients cannot share the same owner. They survive a TCP reconnect only inside the same Gateway process and authenticated login; they do not survive a process restart.
 
 Transaction-scoped `SEND`, `ACK`, and `NACK` commands are buffered until `COMMIT`; `ABORT` discards them. `maxPendingMessages` is a hard total across every open transaction on the connection, rather than a separate allowance per transaction. A COMMIT receipt is returned only after all buffered actions complete. The boundary is connection-local and is not a distributed rollback mechanism for Agent side effects.
+
+```text
+Authenticated user ── SUBSCRIBE(durable, id=orders) ──▶ process durable queue
+       │                                                        │
+       │◀── MESSAGE (not ACKed) ─────────────────────────────────┤
+       │ disconnect                                             │ requeue pending
+       ▼                                                        ▼
+offline publish ───────────────────────────────────────▶ bounded queue
+       └── reconnect with same login + id + destination ───────▶ redelivery, then offline messages
+```
+
+The character view shows where reconnect-safe deliveries live; the ACK/NACK state diagram in the Chinese guide provides the corresponding state transitions.
 
 ## Shutdown drain
 
@@ -198,15 +210,15 @@ Transaction-scoped `SEND`, `ACK`, and `NACK` commands are buffered until `COMMIT
 Gateway AbortSignal
        │
        ▼
-accepting=false ──▶ stop heartbeat ──▶ close TCP/TLS sockets
-                                             │
-                                             ▼
-                                  await accepted frame queues
-                                             │
-                         ┌───────────────────┴──────────────┐
-                         ▼                                  ▼
-                      drained                      shutdownTimeoutMs
-                         └────────▶ clear durable state / listeners
+accepting=false ──▶ stop heartbeat / listener admission
+                              │
+                              ▼
+             retain connections/subscriptions; drain queues
+                              │
+                  ┌───────────┴────────────────┐
+                  ▼                            ▼
+       Agent reply remains deliverable   shutdownTimeoutMs
+                  └──────▶ close sockets / clear durable state
 ```
 
 ```mermaid
@@ -216,17 +228,18 @@ sequenceDiagram
   participant Q as Per-connection queue
   participant A as Agent Runtime
   G->>S: AbortSignal / stopAccount
-  S->>S: accepting=false; stop heartbeat
-  S--xS: close TCP/TLS sockets
+  S->>S: accepting=false; stop heartbeat and listener admission
   S->>Q: await accepted frames
   Q->>A: finish in-flight Agent turn
-  A-->>Q: success / failure
+  A-->>Q: success / failure + reply
+  Q->>S: deliver through retained subscription
   Q-->>S: drained
+  S--xS: close TCP/TLS sockets
   S-->>G: cleanup complete
   Note over S,Q: warn and exit within shutdownTimeoutMs on timeout
 ```
 
-Only work already accepted into the serial frame queue is drained. Uncommitted transaction actions are discarded with the connection. Hard termination can still leave an unknown outcome, so side-effecting callers must retain business idempotency keys.
+Only work already accepted into the serial frame queue is drained. Existing subscriptions remain available during that drain so an in-flight Agent turn can still deliver its reply. Uncommitted transaction actions are discarded with the connection. Hard termination can still leave an unknown outcome, so side-effecting callers must retain business idempotency keys.
 
 ## Operations
 

@@ -59,7 +59,8 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
     return { accepted: false, reason: "empty_payload" };
   }
 
-  const username = getClientUsername(event.clientId);
+  // transport 传入的是 CONNECT 时的身份快照；fallback 只兼容直接调用旧事件结构的测试/集成。
+  const username = event.authenticatedUsername ?? getClientUsername(event.clientId);
   const user = config.auth.users.find((entry) => entry.username === username);
   if (
     config.auth.required &&
@@ -98,6 +99,7 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
 
     upsertSessionContext(sessionKey, {
       clientId: event.clientId,
+      authenticatedUsername: username ?? undefined,
       agentId,
       accountId: route.accountId,
       lastInboundTopic: event.topic,
@@ -107,6 +109,8 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
     const outboundFormat =
       (config.payload.outboundFormat as "envelope" | "legacyJsonText" | "plainText" | undefined) ??
       "envelope";
+    // 回复闭包捕获本次消息的身份和路由；后续 clientId 接管即使覆盖 sessionContext 也不会串权或串 Topic。
+    const replyTopic = route.replyTopic ?? `${config.topicPrefix}agent/${agentId}/out`;
 
     await dispatchChannelMessage({
       mode: "reply-pipeline",
@@ -126,11 +130,15 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
       reply: {
         deliver: async ({ wire }: { wire: string }) => {
           const { publishOutboundText } = await import("./outbound.js");
-          await publishOutboundText(sessionKey, wire, config.topicPrefix);
+          await publishOutboundText(sessionKey, wire, config.topicPrefix, {
+            authenticatedUsername: username ?? undefined,
+            topic: replyTopic,
+            accountId: route.accountId,
+          });
         },
         outboundFormat,
         replyRoute: {
-          topic: route.replyTopic ?? `${config.topicPrefix}agent/${agentId}/out`,
+          topic: replyTopic,
         },
         agentId,
       },

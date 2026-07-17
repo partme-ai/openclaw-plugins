@@ -208,6 +208,41 @@ describe("processInbound", () => {
     expect(dispatchChannelMessage).not.toHaveBeenCalled();
   });
 
+  it("uses the connection identity snapshot when the same clientId now belongs to another user", async () => {
+    vi.mocked(getClientUsername).mockReturnValue("bob");
+    const result = await processInbound(
+      {
+        clientId: "reused-client-id",
+        authenticatedUsername: "alice",
+        topic: "devices/secure/in",
+        payload: Buffer.from("alice queued this message"),
+      },
+      baseConfig({
+        subscribeTopics: ["devices/#"],
+        topicBindings: [{ topicPattern: "devices/#", agentId: "secure", accountId: "account-a" }],
+        auth: {
+          required: true,
+          allowAnonymous: false,
+          users: [
+            {
+              username: "alice",
+              password: "alice-secret",
+              aclRules: [{ action: "inbound", topicPattern: "devices/#", effect: "allow", accountId: "account-a" }],
+            },
+            {
+              username: "bob",
+              password: "bob-secret",
+              aclRules: [{ action: "inbound", topicPattern: "devices/#", effect: "deny", accountId: "account-a" }],
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(result).toMatchObject({ accepted: true, routeSource: "binding" });
+    expect(getClientUsername).not.toHaveBeenCalled();
+  });
+
   it("enforces account-scoped inbound ACL rules", async () => {
     const result = await processInbound(
       {

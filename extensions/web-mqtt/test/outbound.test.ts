@@ -41,6 +41,7 @@ describe("publishOutboundText", () => {
     const sessionKey = "agent:demo:mqtt-ws:direct:client-x";
     upsertSessionContext(sessionKey, {
       clientId: "client-x",
+      authenticatedUsername: "alice",
       agentId: "demo",
       accountId: "default",
       lastInboundTopic: "openclaw/agent/demo/in",
@@ -55,6 +56,7 @@ describe("publishOutboundText", () => {
     const sessionKey = "agent:sales:mqtt-ws:direct:client-y";
     upsertSessionContext(sessionKey, {
       clientId: "client-y",
+      authenticatedUsername: "alice",
       agentId: "sales",
       accountId: "default",
       lastInboundTopic: "openclaw/agent/sales/in",
@@ -73,6 +75,7 @@ describe("publishOutboundText", () => {
     const sessionKey = "agent:demo:mqtt-ws:direct:client-z";
     upsertSessionContext(sessionKey, {
       clientId: "client-z",
+      authenticatedUsername: "alice",
       agentId: "demo",
       accountId: "default",
       lastInboundTopic: "openclaw/agent/demo/in",
@@ -100,10 +103,44 @@ describe("publishOutboundText", () => {
     expect(publishToTopic).not.toHaveBeenCalled();
   });
 
+  it("uses the immutable reply snapshot after a reused clientId overwrites session context", async () => {
+    const sessionKey = "agent:demo:mqtt-ws:direct:reused-client";
+    upsertSessionContext(sessionKey, {
+      clientId: "reused-client",
+      authenticatedUsername: "alice",
+      agentId: "demo",
+      accountId: "account-a",
+      lastInboundTopic: "alice/in",
+      replyTopic: "alice/out",
+    });
+    upsertSessionContext(sessionKey, {
+      clientId: "reused-client",
+      authenticatedUsername: "bob",
+      agentId: "demo",
+      accountId: "account-b",
+      lastInboundTopic: "bob/in",
+      replyTopic: "bob/out",
+    });
+
+    await publishOutboundText(sessionKey, "alice delayed reply", "openclaw/", {
+      authenticatedUsername: "alice",
+      topic: "alice/out",
+      accountId: "account-a",
+    });
+
+    expect(isUserActionAllowed).toHaveBeenCalledWith(expect.objectContaining({
+      user: expect.objectContaining({ username: "alice" }),
+      topic: "alice/out",
+      accountId: "account-a",
+    }));
+    expect(publishToTopic).toHaveBeenCalledWith("alice/out", "alice delayed reply");
+  });
+
   it("fails when no active subscriber accepts the reply", async () => {
     const sessionKey = "agent:demo:mqtt-ws:direct:no-subscriber";
     upsertSessionContext(sessionKey, {
       clientId: "no-subscriber",
+      authenticatedUsername: "alice",
       agentId: "demo",
       accountId: "default",
       lastInboundTopic: "openclaw/agent/demo/in",
@@ -127,7 +164,7 @@ describe("publishOutboundText", () => {
 
     const sessionKey = "agent:demo:mqtt-ws:direct:core-peer";
     upsertSessionContext(sessionKey, {
-      clientId: "core-peer", agentId: "demo", accountId: "default", lastInboundTopic: "in", replyTopic: "safe/reply",
+      clientId: "core-peer", authenticatedUsername: "alice", agentId: "demo", accountId: "default", lastInboundTopic: "in", replyTopic: "safe/reply",
     });
     await sendText({ cfg: {}, to: sessionKey, text: "core reply", deliveryQueueId: "core-durable-id" } as never);
     expect(publishToTopic).toHaveBeenLastCalledWith("safe/reply", "core reply");

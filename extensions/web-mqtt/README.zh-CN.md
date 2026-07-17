@@ -33,7 +33,7 @@
 │  Native Client ───────▶ WS / WSS ──▶ Aedes 1.x Broker                  │
 │                           │              │ 认证 / Topic ACL / 帧上限      │
 │                           │              ▼                              │
-│                           │     clientId 有界 FIFO 队列                  │
+│                           │     认证身份快照 + clientId 有界 FIFO        │
 │                           │              │                              │
 │                           │              ▼                              │
 │                           │     Topic 路由 + account ACL                 │
@@ -54,6 +54,7 @@ flowchart LR
     Origin["Origin 精确白名单"]
     WSS["WS/WSS + 帧大小与空闲超时"]
     Aedes["Aedes MQTT Broker\n认证 + Publish/Subscribe ACL"]
+    Identity["认证身份快照\n绑定物理连接，不随 clientId 接管漂移"]
     Queue["按 clientId 排队\n同客户端 FIFO / 跨客户端并行"]
     Route["Topic 白名单与路由\n显式 Binding 优先 / 标准路由回退"]
     SDK["message-sdk\n解析 / 幂等 / OpenClaw Dispatch"]
@@ -62,7 +63,7 @@ flowchart LR
 
     Browser --> Origin --> WSS
     Device --> WSS
-    WSS --> Aedes --> Queue --> Route --> SDK --> Agent
+    WSS --> Aedes --> Identity --> Queue --> Route --> SDK --> Agent
     Agent --> SDK --> Reply --> Aedes --> WSS
 ```
 
@@ -83,11 +84,11 @@ flowchart LR
 ## 消息处理流程
 
 ```text
-浏览器         WS/WSS+Aedes       clientId 队列       Topic 路由      Agent
+浏览器         WS/WSS+Aedes       身份快照+队列       Topic 路由      Agent
   │ CONNECT         │                   │                 │             │
   ├────────────────▶│ 认证 + ACL        │                 │             │
   │ PUBLISH QoS1    │                   │                 │             │
-  ├────────────────▶├── 有界 FIFO ────▶├── 路由 ───────▶├── Turn ────▶│
+  ├────────────────▶├── 固化身份/FIFO ▶├── 路由 ───────▶├── Turn ────▶│
   │                 │                   │                 │◀── 回复 ────┤
   │◀── 回复消息 ────┤◀──────────────────┴─────────────────┤             │
   │◀── PUBACK ──────┤  仅在 Agent Turn 与回复投递完成后确认             │
@@ -100,7 +101,7 @@ sequenceDiagram
     autonumber
     participant C as Web MQTT 客户端
     participant B as WS/WSS + Aedes
-    participant Q as clientId 串行队列
+    participant Q as 身份快照 + clientId 串行队列
     participant R as Topic 路由
     participant O as OpenClaw Agent
 
@@ -108,7 +109,7 @@ sequenceDiagram
     B-->>C: CONNACK（认证失败则拒绝）
     C->>B: PUBLISH QoS 1
     B->>B: Topic Name、大小、Publish ACL
-    B->>Q: 按 clientId 入队
+    B->>Q: 固化 CONNECT 用户名并按 clientId 入队
     Q->>R: subscribeTopics + Binding/标准路由
     R->>O: dispatchChannelMessage
     O-->>R: Agent 回复
@@ -212,6 +213,7 @@ MQTT over WebSocket 传输与 ACL 留在本插件；下列能力通过 **薄封�
 | **入站** | per-`clientId` 串行 dispatch；pending 数量与任务时长均有硬上限 |
 | **出站** | `publishToTopic` await；无活跃订阅者、ACL 拒绝或缺会话均失败 |
 | **隔离** | server publish 不触发入站；ACL + topic 白名单 |
+| **身份接管** | 认证用户名随物理连接和消息固化；同名 `clientId` 重连不会把旧队列消息或延迟回复归属给新用户 |
 
 ### 两层授权边界
 

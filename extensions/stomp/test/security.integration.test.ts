@@ -187,6 +187,17 @@ describe("STOMP TCP production security", () => {
     socket.destroy();
   });
 
+  it("closes a half-open client that negotiated incoming heartbeats but stops sending them", async () => {
+    config = { ...config, heartbeat: { serverMs: 0, clientMs: 20 } };
+    await startStompTcpServer(config, vi.fn());
+    const socket = await open(config);
+    await authenticate(socket, { "heart-beat": "10,0" });
+    const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
+
+    await expect(closed).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(getConnectionStats().total).toBe(0));
+  });
+
   it("enforces maxConnections before STOMP processing", async () => {
     config = { ...config, maxConnections: 1 };
     await startStompTcpServer(config, vi.fn());
@@ -240,5 +251,12 @@ describe("STOMP TCP production security", () => {
     await expect(stopStompTcpServer()).resolves.toBeUndefined();
     await expect(closed).resolves.toBeUndefined();
     expect(getStatusSnapshot().running).toBe(false);
+  });
+
+  it("rejects duplicate start instead of silently keeping stale config and handlers", async () => {
+    await startStompTcpServer(config, vi.fn());
+    await expect(startStompTcpServer({ ...config, port: await freePort() }, vi.fn()))
+      .rejects.toThrow("server is already running");
+    expect(getStatusSnapshot().running).toBe(true);
   });
 });

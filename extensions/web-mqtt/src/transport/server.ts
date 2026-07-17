@@ -379,6 +379,8 @@ function configureAuthGuards(config: WebMqttConfig, onInbound: InboundHandler): 
       topic: packet.topic,
       payload: packet.payload as Buffer,
       clientId: client.id,
+      // 身份必须随消息固化，避免相同 clientId 被新连接接管后发生跨用户身份漂移。
+      authenticatedUsername: clientUsernameMap.get(client),
       messageId: packet.messageId == null ? undefined : String(packet.messageId),
     };
     void queue.enqueue(client.id, async () => onInbound(event)).then(

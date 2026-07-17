@@ -386,17 +386,3 @@ export interface MqttSessionContext {
   /** 最近更新时间（毫秒时间戳） */
   updatedAt?: number;
 }
-
-/**
- * Last Will 配置（设备断线通知）
- */
-export interface MqttWillConfig {
-  /** Topic */
-  topic: string;
-  /** 内容 */
-  payload: string;
-  /** QoS */
-  qos: 0 | 1;
-  /** Retain */
-  retain: boolean;
-}

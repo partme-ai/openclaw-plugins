@@ -104,7 +104,6 @@ export interface UnifiedMessage {
   media: Array<{ url: string; kind: string; mimeType: string; fileName?: string }>;
   /** @description 扩展元数据（含 sessionKey、bridge 标识、direction 等）。 */
   metadata?: Record<string, unknown>;
-  media?: UnifiedMessage["media"];
   /** @description 相对 Agent 的方向：用户入站或助手出站。 */
   direction: "inbound" | "outbound";
 }
@@ -210,6 +209,7 @@ export function buildMessage(params: {
   text?: string;
   direction?: "inbound" | "outbound";
   metadata?: Record<string, unknown>;
+  media?: UnifiedMessage["media"];
   messageId?: string;
   traceId?: string;
   timestamp?: number;
@@ -320,10 +320,11 @@ function extractInboundMedia(
     : metadata.mediaType !== undefined
       ? [metadata.mediaType]
       : [];
-  const count = Math.min(16, Math.max(rawUrls.length, rawTypes.length));
+  const count = Math.max(rawUrls.length, rawTypes.length);
+  const retainedCount = Math.min(16, count);
   const media: UnifiedMessage["media"] = [];
 
-  for (let index = 0; index < count; index += 1) {
+  for (let index = 0; index < retainedCount; index += 1) {
     const mimeType = readString(rawTypes[index]) ?? "application/octet-stream";
     const kind = mimeType.startsWith("image/")
       ? "image"
@@ -769,6 +770,7 @@ export function registerMessageBridge(api: OpenClawPluginApi): void {
         ...(media.count > 0 ? {
           mediaCount: media.count,
           mediaUrlsIncluded: media.urlsIncluded,
+          mediaTruncated: media.count > media.media.length,
         } : {}),
       },
     });

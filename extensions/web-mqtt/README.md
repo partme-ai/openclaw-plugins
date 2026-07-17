@@ -34,7 +34,7 @@ It provides a hardened embedded MQTT-over-WebSocket broker for browser and web a
 │                                    │          auth / Topic ACL / limits │
 │                                    │                   │               │
 │                                    │                   ▼               │
-│                                    │       bounded clientId FIFO       │
+│                                    │    auth snapshot + clientId FIFO  │
 │                                    │                   │               │
 │                                    │                   ▼               │
 │                                    └── reply ◀ message-sdk ◀▶ Agent    │
@@ -52,6 +52,7 @@ flowchart LR
     Origin["Exact Origin allowlist"]
     WSS["WS/WSS + frame and idle limits"]
     Aedes["Aedes MQTT Broker\nauth + publish/subscribe ACL"]
+    Identity["Connection auth snapshot\nimmune to clientId takeover"]
     Queue["Per-clientId queue\nFIFO per client / parallel across clients"]
     Route["Topic allowlist and routing\nBinding first / standard fallback"]
     SDK["message-sdk\nparse / dedupe / OpenClaw dispatch"]
@@ -60,7 +61,7 @@ flowchart LR
 
     Browser --> Origin --> WSS
     Device --> WSS
-    WSS --> Aedes --> Queue --> Route --> SDK --> Agent
+    WSS --> Aedes --> Identity --> Queue --> Route --> SDK --> Agent
     Agent --> SDK --> Reply --> Aedes --> WSS
 ```
 
@@ -81,11 +82,11 @@ The embedded broker belongs to one OpenClaw Gateway process; it is not a persist
 ## Message flow
 
 ```text
-Browser       WS/WSS+Aedes       clientId queue       Router        Agent
+Browser       WS/WSS+Aedes       identity + queue     Router        Agent
    │ CONNECT       │                   │                 │             │
    ├──────────────▶│ auth + ACL        │                 │             │
    │ PUBLISH QoS1  │                   │                 │             │
-   ├──────────────▶├── bounded FIFO ──▶├── route ──────▶├── turn ────▶│
+   ├──────────────▶├── snapshot/FIFO ─▶├── route ──────▶├── turn ────▶│
    │               │                   │                 │◀── reply ───┤
    │◀── reply ─────┤◀──────────────────┴─────────────────┤             │
    │◀── PUBACK ────┤  only after Agent turn and reply delivery         │
@@ -96,14 +97,14 @@ sequenceDiagram
     autonumber
     participant C as Web MQTT client
     participant B as WS/WSS + Aedes
-    participant Q as clientId queue
+    participant Q as auth snapshot + clientId queue
     participant R as Topic router
     participant O as OpenClaw Agent
     C->>B: CONNECT(username, password, Origin)
     B-->>C: CONNACK or rejection
     C->>B: PUBLISH QoS 1
     B->>B: Topic, size and publish ACL checks
-    B->>Q: enqueue by clientId
+    B->>Q: snapshot CONNECT user, enqueue by clientId
     Q->>R: allowlist + binding/fallback route
     R->>O: dispatchChannelMessage
     O-->>R: Agent reply
@@ -189,6 +190,7 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.7.1`.
 | **Inbound** | Per-`clientId` serialized dispatch with hard pending-depth and task-time limits |
 | **Outbound** | Awaited broker publish; missing session, ACL denial, or no active subscriber fails the delivery |
 | **Isolation** | Server-originated publishes do not re-enter inbound processing; ACL plus topic allowlists apply |
+| **Takeover identity** | The authenticated user is snapshotted per physical connection and message, so a reused `clientId` cannot relabel old queued work or delayed replies |
 
 ### Two authorization boundaries
 

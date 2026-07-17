@@ -447,7 +447,7 @@ flowchart LR
 | **自消费** | broker 侧 publish（`client==null`）不触发入站 |
 | **背压** | QoS0 OpenClaw 分发 mailbox 软限制；QoS 1/2 的协议确认与重投由 Aedes/MQTT 客户端负责 |
 | **幂等** | messageId 60s 内存 dedup |
-| **生产** | 开启 `auth`、TLS；多实例用 redis persistence |
+| **生产** | 开启 `auth`、TLS；每个内嵌 Broker 使用独立 persistence 命名空间，多实例共享消息请改用外部 MQTT Broker |
 
 ## 相关链接
 

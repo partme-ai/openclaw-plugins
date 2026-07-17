@@ -14,11 +14,14 @@
         ├── before_prompt_build ──▶ 平台上下文约束 ──▶ Agent Prompt
         │
         ├── message_received ─────┐
+        │     ├── 文本             │
+        │     └── 媒体元数据        │
         │                         │
         └── 平台真实发送 ──▶ message_sent(success=true)
                                   │
                                   ▼
                          UnifiedMessage 归一化
+                      （正文 / 会话类型 / 媒体摘要）
                                   │
                                   ▼
                       有界内存队列（同会话保序）
@@ -48,6 +51,11 @@ flowchart LR
     A --> TX["来源 Channel 真实发送"]
     TX --> H3["message_sent<br/>成功 / 失败已确定"]
     H2 --> N["归一化 UnifiedMessage"]
+    H2 --> MEDIA{"包含媒体？"}
+    MEDIA -->|"默认"| SAFE["只保留数量 / 类型 / MIME"]
+    MEDIA -->|"显式 includeMediaUrls"| URL["仅 HTTP(S) 远程 URL"]
+    SAFE --> N
+    URL --> N
     H3 --> S{"success=true 且<br/>不是审计回环？"}
     S -->|"是"| N
     S -->|"否"| SKIP["跳过并记录原因"]
@@ -59,7 +67,7 @@ flowchart LR
     classDef bridge fill:#e8f5e9,stroke:#2e7d32,color:#123d17
     classDef external fill:#fff3e0,stroke:#ef6c00,color:#4e2600
     class H1,H2,H3,A hook
-    class C,N,R,AD,S bridge
+    class C,N,R,AD,S,MEDIA,SAFE,URL bridge
     class IM,TX,MQ external
 ```
 
@@ -72,6 +80,38 @@ Bridge 不再使用发送前的 `reply_payload_sending` 作为出站依据，因
 静态注册表包含 27 个渠道：20 个 OpenClaw stock 渠道、仓库内 6 个渠道（`wecom`、`openclaw-weixin`、`wechat-ipad`、`wecom-kf`、`douyin`、`mqtt`）以及外部 `dingtalk-connector`。这只表示 Bridge 能识别配置并提供上下文预设，不等于全部渠道已经生产验收。
 
 当前安装态 E2E 使用 MQTT 证明以下完整链路：真实 MQTT 入站 → Agent Turn → MQTT 回复 → `message_sent` → Bridge inbound/outbound 审计 Topic，并检查同源 MQ 审计不会递归。其他渠道仍要用真实账号、租户、权限和网络环境逐个验收。
+
+不要把“注册表里有名字”直接理解成“插件已生产就绪”。当前证据分层如下；字符图用于快速判断，下方 Mermaid 保留可渲染的验收漏斗：
+
+```text
+27 个静态渠道元数据
+        │  仅表示：配置可识别、存在上下文预设
+        ▼
+OpenClaw 2026.7.1 Hook 契约对齐
+        │  表示：Bridge 使用的字段与宿主源码一致
+        ▼
+MQTT 安装态 tarball E2E
+        │  已证明：真实入站 → Agent → 真实出站 → 双向审计、防回环
+        ▼
+具体 IM + 具体 MQ 的真实环境验收
+        │  仍需逐个账号、租户、权限、限流和故障恢复验证
+        ▼
+该组合可进入生产
+```
+
+```mermaid
+flowchart TD
+    M["静态元数据<br/>27 个渠道"] --> H["宿主源码契约<br/>OpenClaw 2026.7.1"]
+    H --> E["安装态自动 E2E<br/>当前：MQTT"]
+    E --> R["真实环境验收<br/>IM × MQ 组合"]
+    R --> P["生产准入"]
+    M -. "不能直接跳过" .-> P
+
+    classDef proven fill:#e8f5e9,stroke:#2e7d32,color:#123d17
+    classDef pending fill:#fff3e0,stroke:#ef6c00,color:#4e2600
+    class H,E proven
+    class M,R,P pending
+```
 
 ## 配置示例
 
@@ -87,6 +127,7 @@ Bridge 不再使用发送前的 `reply_payload_sending` 作为出站依据，因
               "enabled": true,
               "contextInjection": true,
               "forwardToMq": true,
+              "includeMediaUrls": false,
               "mqChannel": "mqtt",
               "topicPrefix": "openclaw/bridge/wecom"
             }
@@ -107,7 +148,9 @@ Bridge 不再使用发送前的 `reply_payload_sending` 作为出站依据，因
 }
 ```
 
-只有 `channels` 中显式声明的来源渠道会被处理。未知来源或 MQ adapter 会在启动时失败，避免静默回退后误投递。
+只有 `channels` 中显式声明的来源渠道会被处理。未知来源或不受支持的 MQ ID 会在启动注册时失败；受支持但未安装/未就绪的 adapter 会在后台投递时明确失败并执行有界重试，不会静默回退到其它 MQ。
+
+`includeMediaUrls` 默认是 `false`：媒体消息仍会进入 MQ，但只携带 `mediaCount`、媒体类型和 MIME，`media[].url` 为空。单个信封最多保留 16 个媒体条目，超出时 `mediaCount` 仍报告原始总数并设置 `mediaTruncated=true`。显式设为 `true` 后，Bridge 只复制不含 URL 用户名/密码的 HTTP(S) 地址；对象存储签名查询参数仍可能是敏感信息，启用前必须确认 MQ ACL、日志和消息留存策略。OpenClaw 2026.7.1 的出站 `message_sent` 不提供媒体元数据，因此当前只对入站媒体生成这一摘要。
 
 ## 投递语义
 

@@ -85,6 +85,7 @@ Bridge 的清单 ID 是 `bridge`，配置应写入 `plugins.entries.bridge.confi
               "enabled": true,
               "contextInjection": true,
               "forwardToMq": true,
+              "includeMediaUrls": false,
               "mqChannel": "rabbitmq",
               "mqAccountId": "default",
               "topicPrefix": "openclaw/bridge/discord"
@@ -111,7 +112,9 @@ Bridge 的清单 ID 是 `bridge`，配置应写入 `plugins.entries.bridge.confi
 }
 ```
 
-只有 `channels` 中显式声明的来源渠道会被处理。未知来源渠道或 MQ 渠道会在启动时失败，避免静默回退后误投递。
+只有 `channels` 中显式声明的来源渠道会被处理。未知来源渠道或不支持的 MQ ID 会在注册时失败；受支持但未安装或未就绪的 adapter 会在后台投递时明确失败并执行有界重试，不会静默回退后误投递。
+
+入站媒体消息即使没有正文也会生成 `UnifiedMessage`。`includeMediaUrls` 默认关闭，此时只保留媒体数量、类型和 MIME，避免把带签名的对象存储地址扩散到 MQ。单个信封最多保留 16 个媒体条目，超出时通过原始 `mediaCount` 与 `mediaTruncated=true` 明示截断。显式开启后仅接受不含 URL 用户名/密码的 HTTP(S) 地址；查询参数仍应按敏感数据管理。OpenClaw 2026.7.1 的出站 `message_sent` 不携带媒体元数据，因此该能力仅覆盖入站事件。
 
 ## MQ 渠道
 
@@ -139,6 +142,19 @@ MQ 插件必须独立安装并配置。MQTT、RabbitMQ、Redis Stream、RocketMQ
 静态能力表包含 27 个渠道：20 个 OpenClaw 2026.7.1 stock 渠道、当前仓库的 `wecom`、`openclaw-weixin`、`wechat-ipad`、`wecom-kf`、`douyin`、`mqtt`，以及外部 `dingtalk-connector`。其中飞书与 QQ 的当前 stock ID 分别是 `feishu`、`qqbot`；旧文档中的 `openclaw-lark` 已不再使用。
 
 Bridge 只对实际安装、运行、在配置中启用且正确发出官方消息 Hook 的渠道生效。静态能力表表示“有上下文预设和配置识别”，不代表 27 个渠道均已安装或完成环境验收。当前安装态 E2E 使用 MQTT 验证入站、Agent 回复、`message_sent`、双向审计 Topic 与防回环；其他渠道仍须逐个做真实账号/租户验收。
+
+```text
+静态渠道元数据 → 2026.7.1 Hook 契约 → MQTT tarball E2E → 真实 IM × MQ 验收 → 生产准入
+     已覆盖              已对齐               已自动验证            尚需逐组合执行
+```
+
+```mermaid
+flowchart LR
+    META["静态渠道元数据"] --> CONTRACT["OpenClaw 2026.7.1<br/>Hook 契约"]
+    CONTRACT --> E2E["MQTT tarball E2E"]
+    E2E --> ENV["真实 IM × MQ<br/>环境验收"]
+    ENV --> PROD["生产准入"]
+```
 
 ## 投递语义与边界
 

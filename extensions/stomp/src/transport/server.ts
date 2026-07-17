@@ -694,7 +694,8 @@ export async function startStompTcpServer(
   onInbound: InboundHandler,
   logger?: TransportLogger,
 ): Promise<void> {
-  if (stats.running) return;
+  // 重复 start 若静默返回，会让新配置和新 inbound handler 看似生效、实际仍使用旧实例，必须显式失败。
+  if (stats.running) throw new Error("[openclaw-stomp] server is already running");
   assertValidStompTcpConfig(config);
   activeConfig = config;
   inboundHandler = onInbound;
@@ -756,12 +757,11 @@ export async function stopStompTcpServer(): Promise<void> {
   heartbeatTimer = null;
   const config = activeConfig;
   const logger = transportLogger;
-  const pendingProcessing = [...connections.values()].map((state) => state.processing.catch(() => undefined));
-  for (const state of connections.values()) {
-    sendFrame(state, "ERROR", { message: "Server shutting down" }, "Server shutting down");
-    state.socket.destroy();
-    cleanup(state);
-  }
+  const drainingStates = [...connections.values()];
+  const pendingProcessing = drainingStates.map((state) => state.processing.catch(() => undefined));
+  // 先停止 Listener 接受新 TCP 连接，但暂不等待 close 回调：Node 只有在存量 Socket 关闭后才回调。
+  // 现有连接和订阅必须保留到协议队列排空，否则正在完成的 Agent Turn 会在发布回复时得到“无订阅者”。
+  const closingServers = Promise.all([closeServer(tlsServer), closeServer(tcpServer)]);
   if (pendingProcessing.length > 0) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const drained = await Promise.race([
@@ -779,8 +779,14 @@ export async function stopStompTcpServer(): Promise<void> {
       );
     }
   }
+  // 已接收的 SEND/COMMIT 完成后再关闭连接；超时路径也在这里强制收敛，不无限阻塞 Gateway 停机。
+  for (const state of drainingStates) {
+    sendFrame(state, "ERROR", { message: "Server shutting down" }, "Server shutting down");
+    state.socket.destroy();
+    cleanup(state);
+  }
   connections.clear();
-  await Promise.all([closeServer(tlsServer), closeServer(tcpServer)]);
+  await closingServers;
   tcpServer = null;
   tlsServer = null;
   activeConfig = null;
@@ -813,8 +819,10 @@ export function publishToDestination(destination: string, body: string): number 
       if (subscription.destination !== destination) continue;
       if (subscription.durableKey) activeDurable.add(subscription.durableKey);
       if (enqueue(subscription.queue, { destination, body }, config)) {
-        accepted += 1;
         flushSubscription(state, subscription);
+        // 非 durable 订阅在同步写入阶段触发缓冲上限时会立即断开，队列也随连接销毁；
+        // 此时不能向 Agent/Router 报告“已接受”。durable 队列则仍由进程级存储持有，可安全计为接受。
+        if (subscription.durableKey || !state.socket.destroyed) accepted += 1;
       }
     }
   }

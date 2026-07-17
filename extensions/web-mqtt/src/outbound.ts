@@ -4,11 +4,18 @@
  */
 
 import { getSessionContext } from "./routing/session-mapper.js";
-import { publishToTopic, getClientUsername } from "./transport/server.js";
+import { publishToTopic } from "./transport/server.js";
 import { isUserActionAllowed } from "./transport/acl.js";
 import { getWebMqttChannelConfig } from "./state/mqtt-state.js";
 
 const DIRECT_TARGET_PREFIX = "openclaw-direct-topic:v1:";
+
+/** 一次入站 Turn 固化的回复授权与路由，避免共享 sessionContext 被后续同名 clientId 覆盖。 */
+export interface WebMqttReplySnapshot {
+  authenticatedUsername?: string;
+  topic: string;
+  accountId: string;
+}
 
 /**
  * 解析 Router/Bridge 内部使用的显式 Topic 目标编码。
@@ -37,14 +44,20 @@ export function parseDirectTarget(value: string): string | null {
  * @param topicPrefix - 默认出站 topic 前缀（无 replyTopic 时使用）
  * @returns 发布成功时 resolve；缺会话、缺认证身份、ACL 拒绝或无订阅者时 reject
  */
-export async function publishOutboundText(sessionKey: string, text: string, topicPrefix: string): Promise<void> {
+export async function publishOutboundText(
+  sessionKey: string,
+  text: string,
+  topicPrefix: string,
+  replySnapshot?: WebMqttReplySnapshot,
+): Promise<void> {
   const context = getSessionContext(sessionKey);
   if (!context) throw new Error(`[openclaw-web-mqtt] Missing session context: ${sessionKey}`);
-  const topic = context.replyTopic ?? `${topicPrefix}agent/${context.agentId}/out`;
+  const topic = replySnapshot?.topic ?? context.replyTopic ?? `${topicPrefix}agent/${context.agentId}/out`;
 
   const config = getWebMqttChannelConfig();
   if (config?.auth.required) {
-    const username = getClientUsername(context.clientId);
+    // 优先使用本次 Turn 的不可变快照；sessionContext 仅为旧调用方和核心 sendText 提供兼容回退。
+    const username = replySnapshot?.authenticatedUsername ?? context.authenticatedUsername;
     const user = config.auth.users.find((entry) => entry.username === username);
     if (
       !user ||
@@ -52,7 +65,7 @@ export async function publishOutboundText(sessionKey: string, text: string, topi
           user,
           action: "outbound",
           topic,
-          accountId: context.accountId,
+          accountId: replySnapshot?.accountId ?? context.accountId,
         })
     ) {
       throw new Error(
