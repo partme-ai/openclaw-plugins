@@ -62,6 +62,22 @@ async function connect(port: number, options: mqtt.IClientOptions): Promise<mqtt
   return client;
 }
 
+/**
+ * 等待异步网络事件达到可观测状态，避免用固定 sleep 猜测 CI runner 调度速度。
+ */
+async function waitUntil(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${description}`);
+}
+
 describe.sequential("MQTT broker production hardening", () => {
   afterEach(async () => {
     await stopBroker().catch(() => undefined);
@@ -205,13 +221,24 @@ describe.sequential("MQTT broker production hardening", () => {
     const publishA1 = clientA.publishAsync("queue/a", "a1", { qos: 1 });
     await firstStarted;
     const publishA2 = clientA.publishAsync("queue/a", "a2", { qos: 1 });
-    await clientB.publishAsync("queue/b", "b1", { qos: 1 });
-
-    expect(events).toEqual(["a1:start", "b1:start", "b1:end"]);
-    expect(getBrokerStats()).toMatchObject({ inboundActive: 1, inboundQueued: 1 });
-
-    releaseFirst?.();
+    let preReleaseFailure: unknown;
+    try {
+      await clientB.publishAsync("queue/b", "b1", { qos: 1 });
+      // publishAsync 只保证 B 的 QoS 确认；A2 仍可能在 runner 的 socket 事件队列中。
+      await waitUntil(
+        () => getBrokerStats().inboundQueued === 1,
+        "the second same-client message to enter the keyed queue",
+      );
+      expect(events).toEqual(["a1:start", "b1:start", "b1:end"]);
+      expect(getBrokerStats()).toMatchObject({ inboundActive: 1, inboundQueued: 1 });
+    } catch (error) {
+      preReleaseFailure = error;
+    } finally {
+      // 断言失败也必须释放 handler，避免 afterEach 的 stopBroker() drain 卡到 hook 超时。
+      releaseFirst?.();
+    }
     await Promise.all([publishA1, publishA2]);
+    if (preReleaseFailure) throw preReleaseFailure;
     expect(events).toEqual([
       "a1:start",
       "b1:start",
