@@ -104,10 +104,60 @@
           "enabled": { "type": "boolean" },
           "app_key": { "type": "string" },
           "app_secret": { "type": "string" },
+          "callback_url": { "type": "string" },
+          "shop_id": { "type": "string" },
           "account_id": { "type": "string" },
           "poi_id": { "type": "string" },
           "webhook_path": { "type": "string" },
-          "request_timeout_ms": { "type": "integer", "minimum": 1000 }
+          "request_timeout_ms": { "type": "integer", "minimum": 1000 },
+          "network": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "egressProxyUrl": { "type": "string" },
+              "agentReplyTimeoutMs": { "type": "integer", "minimum": 1000 }
+            }
+          },
+          "media": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "maxBytes": { "type": "integer", "minimum": 1 } }
+          },
+          "dmPolicy": { "type": "string", "enum": ["open", "allowlist", "pairing", "disabled"] },
+          "allowFrom": { "type": "array", "items": { "type": ["string", "number"] } },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "app_key": { "type": "string" },
+                "app_secret": { "type": "string" },
+                "callback_url": { "type": "string" },
+                "shop_id": { "type": "string" },
+                "account_id": { "type": "string" },
+                "poi_id": { "type": "string" },
+                "webhook_path": { "type": "string" },
+                "request_timeout_ms": { "type": "integer", "minimum": 1000 },
+                "network": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "egressProxyUrl": { "type": "string" },
+                    "agentReplyTimeoutMs": { "type": "integer", "minimum": 1000 }
+                  }
+                },
+                "media": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": { "maxBytes": { "type": "integer", "minimum": 1 } }
+                },
+                "dmPolicy": { "type": "string", "enum": ["open", "allowlist", "pairing", "disabled"] },
+                "allowFrom": { "type": "array", "items": { "type": ["string", "number"] } }
+              }
+            }
+          }
         }
       }
     }

@@ -37,16 +37,107 @@ export type IndexResult = {
 // ===================================================================
 
 /** 无需 Parser 即可直接读取的纯文本扩展名。 */
-const PLAIN_TEXT_EXTS = ['.md', '.txt', '.csv', '.json'];
+const PLAIN_TEXT_EXTS = ['.md', '.txt', '.text', '.csv', '.json'];
 
 const sourceWriteQueues = new WeakMap<VectorStore, Map<string, Promise<void>>>();
+const storeMutationGates = new WeakMap<VectorStore, StoreMutationGate>();
 
-/** Serialize writes for the same store/source while allowing unrelated sources to proceed. */
+type MutationWaiter = {
+  kind: 'shared' | 'exclusive';
+  resolve: (release: () => void) => void;
+};
+
+/**
+ * Store 级公平读写门闩。
+ *
+ * 普通 source 更新取得 shared 租约，因此不同 source 仍可并行；namespace clear 取得
+ * exclusive 租约，等待所有已登记更新完成，并阻止清空之后到达的新更新越过屏障。
+ */
+class StoreMutationGate {
+  private activeShared = 0;
+  private exclusiveActive = false;
+  private readonly waiters: MutationWaiter[] = [];
+
+  acquireShared(): Promise<() => void> {
+    return new Promise((resolve) => {
+      const waiter: MutationWaiter = { kind: 'shared', resolve };
+      if (!this.exclusiveActive && this.waiters.length === 0) this.grantShared(waiter);
+      else this.waiters.push(waiter);
+    });
+  }
+
+  acquireExclusive(): Promise<() => void> {
+    return new Promise((resolve) => {
+      const waiter: MutationWaiter = { kind: 'exclusive', resolve };
+      if (!this.exclusiveActive && this.activeShared === 0 && this.waiters.length === 0) {
+        this.grantExclusive(waiter);
+      } else {
+        this.waiters.push(waiter);
+      }
+    });
+  }
+
+  private grantShared(waiter: MutationWaiter): void {
+    this.activeShared += 1;
+    let released = false;
+    waiter.resolve(() => {
+      if (released) return;
+      released = true;
+      this.activeShared -= 1;
+      this.drain();
+    });
+  }
+
+  private grantExclusive(waiter: MutationWaiter): void {
+    this.exclusiveActive = true;
+    let released = false;
+    waiter.resolve(() => {
+      if (released) return;
+      released = true;
+      this.exclusiveActive = false;
+      this.drain();
+    });
+  }
+
+  private drain(): void {
+    if (this.exclusiveActive) return;
+    const first = this.waiters[0];
+    if (!first) return;
+    if (first.kind === 'exclusive') {
+      if (this.activeShared > 0) return;
+      this.waiters.shift();
+      this.grantExclusive(first);
+      return;
+    }
+    while (this.waiters[0]?.kind === 'shared' && !this.exclusiveActive) {
+      this.grantShared(this.waiters.shift()!);
+    }
+  }
+}
+
+function mutationGate(store: VectorStore): StoreMutationGate {
+  let gate = storeMutationGates.get(store);
+  if (!gate) {
+    gate = new StoreMutationGate();
+    storeMutationGates.set(store, gate);
+  }
+  return gate;
+}
+
+/**
+ * 对同一 Store、同一 `sourceId` 的完整重建流程加串行写锁。
+ *
+ * 锁覆盖“读取→切块→向量化→替换”，防止较早请求后完成并覆盖较新的索引；不同
+ * sourceId 仍可并行。队尾完成后会清理 WeakMap，避免长期运行时积累锁条目。
+ */
 export async function withSourceWriteLock<T>(
   store: VectorStore,
   sourceId: string,
   operation: () => Promise<T>,
 ): Promise<T> {
+  // shared 租约在等待 source 队列前登记，使稍后到达的 clear 必须等待本次调用，
+  // 不会出现“旧更新排队中、clear 先执行、旧更新随后把数据写回来”的顺序反转。
+  const releaseShared = await mutationGate(store).acquireShared();
   let queue = sourceWriteQueues.get(store);
   if (!queue) {
     queue = new Map<string, Promise<void>>();
@@ -68,6 +159,23 @@ export async function withSourceWriteLock<T>(
     release();
     if (queue.get(sourceId) === tail) queue.delete(sourceId);
     if (queue.size === 0) sourceWriteQueues.delete(store);
+    releaseShared();
+  }
+}
+
+/**
+ * 在 namespace 级破坏性变更周围建立独占屏障；目前用于 clear。
+ * 屏障按调用顺序等待此前 source 更新，并让此后更新在清空完成后再开始。
+ */
+export async function withStoreExclusiveWriteLock<T>(
+  store: VectorStore,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const release = await mutationGate(store).acquireExclusive();
+  try {
+    return await operation();
+  } finally {
+    release();
   }
 }
 
@@ -110,7 +218,8 @@ export async function loadDocument(
   if (parser) {
     try {
       const result = await parser.parse(filePath);
-      console.log(`[Knowledge] Parser succeeded for ${filePath}: ${result.metadata.fileName}, ${result.text.length} chars`);
+      // 不在库层直接打印 owner 文件路径；宿主若需要审计，应在具备脱敏与访问控制的
+      // Tool/Hook 日志边界记录 sourceId。这里仅返回解析文本，避免路径泄露到 stdout。
       return result.text;
     } catch (err) {
       throw new Error(
@@ -147,6 +256,7 @@ export async function indexDocument(
   return withSourceWriteLock(store, sourceId, async () => {
     try {
       const text = await loadDocument(filePath, parserConfig);
+      if (!text.trim()) throw new Error(`Document ${sourceId} is empty; existing index was preserved`);
       const chunks = chunkText(text, sourceId, chunkerConfig);
 
       const texts = chunks.map((c) => c.text);

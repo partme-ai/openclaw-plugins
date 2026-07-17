@@ -12,8 +12,10 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import { getWeixinRuntime } from "../runtime.js";
 import { resolveStateDir } from "../storage/state-dir.js";
+import { writePrivateJsonAtomic } from "../storage/atomic-json.js";
 import { resolveFrameworkAllowFromPath } from "./pairing.js";
 import { logger } from "../util/logger.js";
+import { validateWeixinApiBaseUrl, validateWeixinCdnBaseUrl } from "../api/endpoint-policy.js";
 
 export const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 export const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
@@ -67,14 +69,11 @@ export function listIndexedWeixinAccountIds(): string[] {
 
 /** Add accountId to the persistent index (no-op if already present). */
 export function registerWeixinAccountId(accountId: string): void {
-  const dir = resolveWeixinStateDir();
-  fs.mkdirSync(dir, { recursive: true });
-
   const existing = listIndexedWeixinAccountIds();
   if (existing.includes(accountId)) return;
 
   const updated = [...existing, accountId];
-  fs.writeFileSync(resolveAccountIndexPath(), JSON.stringify(updated, null, 2), "utf-8");
+  writePrivateJsonAtomic(resolveAccountIndexPath(), updated);
 }
 
 /** Remove accountId from the persistent index. */
@@ -82,7 +81,7 @@ export function unregisterWeixinAccountId(accountId: string): void {
   const existing = listIndexedWeixinAccountIds();
   const updated = existing.filter((id) => id !== accountId);
   if (updated.length !== existing.length) {
-    fs.writeFileSync(resolveAccountIndexPath(), JSON.stringify(updated, null, 2), "utf-8");
+    writePrivateJsonAtomic(resolveAccountIndexPath(), updated);
   }
 }
 
@@ -190,9 +189,6 @@ export function saveWeixinAccount(
   accountId: string,
   update: { token?: string; baseUrl?: string; userId?: string },
 ): void {
-  const dir = resolveAccountsDir();
-  fs.mkdirSync(dir, { recursive: true });
-
   const existing = loadWeixinAccount(accountId) ?? {};
 
   const token = update.token?.trim() || existing.token;
@@ -209,12 +205,7 @@ export function saveWeixinAccount(
   };
 
   const filePath = resolveAccountPath(accountId);
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // best-effort
-  }
+  writePrivateJsonAtomic(filePath, data);
 }
 
 /**
@@ -337,13 +328,18 @@ export type ResolvedWeixinAccount = {
   /** true when a token has been obtained via QR login. */
   configured: boolean;
   name?: string;
+  /** 可选静态私聊白名单；会与扫码配对文件合并。 */
+  allowFrom: string[];
 };
 
 type WeixinAccountConfig = {
   name?: string;
+  allowFrom?: string[];
   enabled?: boolean;
   baseUrl?: string;
   cdnBaseUrl?: string;
+  allowCustomApiBaseUrl?: boolean;
+  allowCustomCdnBaseUrl?: boolean;
   /** Optional SKRouteTag source; read from openclaw.json when `accountId` is passed to `loadConfigRouteTag`. */
   routeTag?: number | string;
 };
@@ -376,14 +372,25 @@ export function resolveWeixinAccount(
   const token = accountData?.token?.trim() || undefined;
   const stateBaseUrl = accountData?.baseUrl?.trim() || "";
   const configuredBaseUrl = accountCfg.baseUrl?.trim() || "";
+  const baseUrl = stateBaseUrl
+    ? validateWeixinApiBaseUrl(stateBaseUrl, false)
+    : validateWeixinApiBaseUrl(
+        configuredBaseUrl || DEFAULT_BASE_URL,
+        accountCfg.allowCustomApiBaseUrl === true,
+      );
+  const cdnBaseUrl = validateWeixinCdnBaseUrl(
+    accountCfg.cdnBaseUrl?.trim() || CDN_BASE_URL,
+    accountCfg.allowCustomCdnBaseUrl === true,
+  );
 
   return {
     accountId: id,
-    baseUrl: stateBaseUrl || configuredBaseUrl || DEFAULT_BASE_URL,
-    cdnBaseUrl: accountCfg.cdnBaseUrl?.trim() || CDN_BASE_URL,
+    baseUrl,
+    cdnBaseUrl,
     token,
     enabled: accountCfg.enabled !== false,
     configured: Boolean(token),
     name: accountCfg.name?.trim() || undefined,
+    allowFrom: [...new Set((accountCfg.allowFrom ?? []).map((id) => id.trim()).filter(Boolean))],
   };
 }

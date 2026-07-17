@@ -102,6 +102,10 @@ export function clearClientTokenCache(): void {
   tokenRequests.clear();
 }
 
+/**
+ * 仅清除指定 app_key/app_secret 对应的 client_token。
+ * OpenAPI 返回 token 失效业务码时调用，使下一次尝试重新换取凭据而不影响其它账号。
+ */
 export function invalidateClientToken(config: DouyinAccountConfig): void {
   if (!config.app_key || !config.app_secret) return;
   const key = cacheKey(config);

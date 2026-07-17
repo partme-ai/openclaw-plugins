@@ -26,6 +26,17 @@ describe("processUpdateBatch", () => {
     })).rejects.toThrow("dispatch failed");
     expect(commitSyncBuf).not.toHaveBeenCalled();
   });
+
+  it("commits an explicit empty cursor reset returned by the server", async () => {
+    const commitSyncBuf = vi.fn();
+    await processUpdateBatch({
+      messages: [],
+      nextSyncBuf: "",
+      processMessage: vi.fn(),
+      commitSyncBuf,
+    });
+    expect(commitSyncBuf).toHaveBeenCalledWith("");
+  });
 });
 
 describe("clampLongPollTimeout", () => {

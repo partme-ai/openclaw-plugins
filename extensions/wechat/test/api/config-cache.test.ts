@@ -106,4 +106,29 @@ describe("WeixinConfigManager", () => {
 
     randomMock.mockRestore();
   });
+
+  it("rejects invalid user IDs without calling the remote API", async () => {
+    const mgr = new WeixinConfigManager({ baseUrl: "https://api.com" }, vi.fn());
+    await expect(mgr.getForUser("   ")).resolves.toEqual({ typingTicket: "" });
+    await expect(mgr.getForUser("x".repeat(257))).resolves.toEqual({ typingTicket: "" });
+    expect(mockGetConfig).not.toHaveBeenCalled();
+  });
+
+  it("evicts the least recently used entry when the cache reaches its bound", async () => {
+    mockGetConfig.mockResolvedValue({ ret: 0, typing_ticket: "ticket" });
+    const randomMock = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const mgr = new WeixinConfigManager({ baseUrl: "https://api.com" }, vi.fn(), 2);
+    await mgr.getForUser("user1");
+    await mgr.getForUser("user2");
+    await mgr.getForUser("user3");
+    await mgr.getForUser("user1");
+    expect(mockGetConfig).toHaveBeenCalledTimes(4);
+    randomMock.mockRestore();
+  });
+
+  it("does not trust a non-string typing ticket from an invalid runtime response", async () => {
+    mockGetConfig.mockResolvedValueOnce({ ret: 0, typing_ticket: 123 });
+    const mgr = new WeixinConfigManager({ baseUrl: "https://api.com" }, vi.fn());
+    await expect(mgr.getForUser("user1")).resolves.toEqual({ typingTicket: "" });
+  });
 });

@@ -5,7 +5,7 @@
 **OpenClaw 插件 — RabbitMQ 通道桥接，支持多智能体异步协作和主题订阅**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--rabbitmq-blue)
-![Node](https://img.shields.io/badge/Node.js-20+-green)
+![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 </div>
@@ -49,6 +49,76 @@
 
 ## 🏗️ 消息流程
 
+### 运行架构
+
+```mermaid
+flowchart LR
+    P["业务生产者 / IoT 设备"] -->|"publish routing key"| EX["RabbitMQ Topic Exchange"]
+    EX --> Q["主队列<br/>durable / quorum 可选"]
+    Q --> C["RabbitMQ 插件消费器<br/>prefetch + concurrency"]
+    C --> R["Topic 路由与会话映射"]
+    R --> A["OpenClaw Runtime / Agent"]
+    A --> PC["ConfirmChannel<br/>mandatory + persistent"]
+    PC -->|"Agent 回复"| EX
+
+    C -->|"处理失败"| RX["Retry Exchange"]
+    RX --> RQ["Retry Queue<br/>TTL 延迟"]
+    RQ -->|"TTL 到期，经 DLX 回流"| EX
+    C -->|"重试耗尽"| DX["Dead-letter Exchange"]
+    DX --> DQ["DLQ<br/>人工检查 / 补偿"]
+```
+
+这里的关键边界是：RabbitMQ 的“消费确认”和 OpenClaw 的“Agent 已处理”不是同一件事。
+插件只有在 Agent 分发成功，并且启用回复时回复也已被 Broker 确认路由后，才 ACK 原消息。
+Publisher Confirm 只证明 Broker 接收了发布，`mandatory` 进一步保证消息确实命中了队列；两者缺一
+都会产生“看似成功、实际丢回复”的假成功。
+
+### 单条消息的 ACK 时序
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as RabbitMQ Broker
+    participant P as RabbitMQ 插件
+    participant A as OpenClaw Agent
+    B->>P: basic.deliver（未 ACK）
+    P->>P: 白名单、路由、载荷与幂等检查
+    P->>A: dispatchChannelMessage
+    A-->>P: Agent 回复
+    P->>B: basic.publish（persistent + mandatory）
+    alt 回复可路由且 Broker confirm
+        B-->>P: basic.ack（publisher confirm）
+        P->>B: basic.ack（确认原入站消息）
+    else basic.return / publish nack / 超时 / Agent 失败
+        P->>B: confirm-publish 到 retry exchange
+        B-->>P: publisher confirm
+        P->>B: basic.ack（原消息由 retry 链路接管）
+    else 重试次数耗尽
+        P->>B: confirm-publish 到 dead-letter exchange
+        B-->>P: publisher confirm
+        P->>B: basic.ack（原消息由 DLQ 接管）
+    end
+```
+
+### 停机时未决投递
+
+```mermaid
+sequenceDiagram
+    participant G as Gateway stop
+    participant C as RabbitMQ Consumer
+    participant B as Broker
+    participant A as 运行中的 Agent Turn
+    G->>C: 标记 stopping
+    G->>B: basic.cancel(consumerTag)
+    Note over C,B: cancel 生效前到达的新 delivery 立即 NACK(requeue=true)
+    G->>C: 遍历 pending deliveries
+    C->>B: NACK(requeue=true, reason=server_stop)
+    G->>C: 关闭 consume/publish channel 与 connection
+    A-->>C: 若稍后结束，delivery 已 settled，不会重复 ACK
+```
+
+停机顺序先阻止新消费，再重新入队已跟踪投递；这避免“先清 pending、cancel 前又收到新消息”形成未跟踪的 Agent Turn。
+
 1. 设备向主题交换机发布 RabbitMQ 消息。
 2. 插件从订阅的队列接收消息。
 3. 插件解析路由：
@@ -63,7 +133,7 @@
 ### 先决条件
 
 - OpenClaw `>= 2026.7.1`
-- Node.js `20+`
+- Node.js `22+`
 - RabbitMQ 服务器 `>= 3.8`
 
 ### 安装
@@ -171,10 +241,13 @@ openclaw plugins install @partme.ai/openclaw-rabbitmq
         "deadLetterSuffix": ".dlq"
       },
       "connection": {
+        "allowInsecureRemote": false,
         "timeoutMs": 30000,
         "heartbeatSeconds": 30,
         "reconnectAttempts": 5,
         "reconnectDelayMs": 5000,
+        "reconnectMaxDelayMs": 60000,
+        "reconnectJitterRatio": 0.2,
         "publishConfirmTimeoutMs": 10000
       },
       "consume": {
@@ -248,9 +321,12 @@ RabbitMQ 主题交换机支持通配符：
 | `topicPrefix`                  | string | `openclaw` | 标准格式的主题前缀                    |
 | `connection.timeoutMs`         | number | 30000      | 连接超时（毫秒）                     |
 | `connection.heartbeatSeconds`  | number | 30         | 心跳间隔（秒）                      |
-| `connection.reconnectAttempts` | number | 5          | 重连尝试次数                       |
-| `connection.reconnectDelayMs`  | number | 5000       | 重连延迟（毫秒）                     |
-| `connection.reconnectDelay`    | number | 5000       | 重连延迟（毫秒）                     |
+| `connection.allowInsecureRemote` | boolean | false | 是否允许远程地址使用明文 `amqp://`；生产环境应保持 false |
+| `connection.reconnectAttempts` | number | 5          | 单轮连接重试次数；断线恢复会继续开启下一轮 |
+| `connection.reconnectDelayMs`  | number | 5000       | 指数退避基础延迟（毫秒）             |
+| `connection.reconnectMaxDelayMs` | number | 60000    | 指数退避最大延迟（毫秒）             |
+| `connection.reconnectJitterRatio` | number | 0.2     | 双向随机抖动比例，降低多实例惊群      |
+| `connection.publishConfirmTimeoutMs` | number | 10000 | Publisher Confirm 等待上限（毫秒） |
 
 ### 主题
 
@@ -521,6 +597,8 @@ openclaw-rabbitmq/
 | **隔离** | `subscribeTopics` 勿包含 `*.out` reply 模式 |
 
 默认队列名 `openclaw.rabbitmq` 让多个 Gateway 实例形成 competing consumers；如果每个实例都必须收到一份消息，应为实例配置不同队列名。当前幂等缓存是进程内缓存，无法提供跨实例 exactly-once；关键业务仍应在业务侧或共享存储中实现幂等键。
+
+公共 Channel 出站在缺少 peer/session 映射时会抛错，使 Router Outbox 可以重试或进入 DLQ；不会返回 `no-peer` 一类占位 messageId 冒充 Broker 已确认。
 
 ## ❓ 常见问题
 

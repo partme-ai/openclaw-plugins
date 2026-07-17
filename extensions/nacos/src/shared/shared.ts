@@ -27,13 +27,17 @@ export function createNacosSdkLogger(log: PluginLog): typeof console {
 }
 
 /**
- * 判断是否为 plain object（非 null、非数组）。
+ * 判断是否为 plain object（对象原型只能是 Object.prototype 或 null）。
  *
  * @param v - 待检测值
  * @returns 是否为 Record 对象
  */
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+  if (typeof v !== "object" || v === null || Array.isArray(v)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(v) as unknown;
+  return prototype === Object.prototype || prototype === null;
 }
 
 /**

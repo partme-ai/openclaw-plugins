@@ -15,6 +15,10 @@ type DouyinWebhookEnvelope = {
   content?: unknown;
 };
 
+/**
+ * 将原始回调解析为抖音事件信封。
+ * 解析失败返回 `null` 而不抛错，HTTP 层可据此稳定返回 4xx，且验签仍始终使用未修改的原文。
+ */
 export function parseDouyinWebhookEnvelope(body: string): DouyinWebhookEnvelope | null {
   try {
     const parsed = JSON.parse(body) as unknown;
@@ -24,6 +28,10 @@ export function parseDouyinWebhookEnvelope(body: string): DouyinWebhookEnvelope 
   }
 }
 
+/**
+ * 兼容 `content` 为对象或 JSON 字符串的两种平台回调形态。
+ * 只接受对象结果，数组、标量和损坏 JSON 都不会进入发送方/文本字段提取逻辑。
+ */
 export function parseDouyinWebhookContent(body: string): Record<string, unknown> | null {
   const content = parseDouyinWebhookEnvelope(body)?.content;
   if (content && typeof content === "object") return content as Record<string, unknown>;

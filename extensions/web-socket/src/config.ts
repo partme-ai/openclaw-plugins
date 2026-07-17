@@ -33,8 +33,15 @@ const DEFAULT_SERVER = {
     enabled: false,
     tokens: [] as string[],
     allowQueryToken: false,
+    allowProtocolToken: true,
   },
   allowedOrigins: [] as string[],
+  tls: {
+    enabled: false,
+    minVersion: "TLSv1.2" as const,
+    requestCert: false,
+    rejectUnauthorized: true,
+  },
   allowInsecureRemote: false,
 };
 
@@ -48,6 +55,7 @@ const DEFAULT_CLIENT = {
     enabled: true,
     initialDelayMs: 1_000,
     maxDelayMs: 30_000,
+    jitterRatio: 0.2,
   },
 };
 
@@ -203,19 +211,20 @@ function parseServerAuth(auth: Record<string, unknown>) {
     token: typeof auth.token === "string" ? auth.token : undefined,
     tokens,
     allowQueryToken: auth.allowQueryToken === true,
+    allowProtocolToken: auth.allowProtocolToken !== false,
   };
 }
 
-function positiveInteger(value: unknown, fallback: number, maximum: number): number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0
-    ? Math.min(value, maximum)
-    : fallback;
+/**
+ * 只在字段缺失时使用默认值；显式提供的非法值必须保留下来交给 validate 报错。
+ * 不能静默截断生产配置，否则运维人员看到的配置与真实运行参数会不一致。
+ */
+function numberOrDefault(value: unknown, fallback: number): number {
+  return typeof value === "number" ? value : fallback;
 }
 
-function nonNegativeInteger(value: unknown, fallback: number, maximum: number): number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0
-    ? Math.min(value, maximum)
-    : fallback;
+function ratioOrDefault(value: unknown, fallback: number): number {
+  return typeof value === "number" ? value : fallback;
 }
 
 function stringList(value: unknown): string[] {
@@ -247,6 +256,7 @@ export function resolveWebsocketConfig(
   const limits = asRecord(section.limits);
   const session = asRecord(section.session);
   const clientReconnect = asRecord(clientSection.reconnect);
+  const tls = asRecord(serverSection.tls ?? section.tls);
 
   const url =
     (typeof section.url === "string" ? section.url.trim() : "") ||
@@ -287,23 +297,31 @@ export function resolveWebsocketConfig(
   return {
     mode,
     server: {
-      wsPort: positiveInteger(wsPort, DEFAULT_SERVER.wsPort, 65_535),
+      wsPort: numberOrDefault(wsPort, DEFAULT_SERVER.wsPort),
       path: pathRaw.startsWith("/") ? pathRaw.trim() : `/${pathRaw.trim()}`,
       host:
         (typeof serverSection.host === "string" ? serverSection.host.trim() : "") ||
         (typeof section.host === "string" ? section.host.trim() : "") ||
         DEFAULT_SERVER.host,
-      maxConnections: positiveInteger(
+      maxConnections: numberOrDefault(
         typeof serverSection.maxConnections === "number"
           ? serverSection.maxConnections
           : typeof section.maxConnections === "number"
             ? section.maxConnections
             : DEFAULT_SERVER.maxConnections,
         DEFAULT_SERVER.maxConnections,
-        100_000,
       ),
       auth: parseServerAuth(auth),
       allowedOrigins: stringList(serverSection.allowedOrigins ?? section.allowedOrigins),
+      tls: {
+        enabled: tls.enabled === true,
+        keyFile: typeof tls.keyFile === "string" ? tls.keyFile.trim() || undefined : undefined,
+        certFile: typeof tls.certFile === "string" ? tls.certFile.trim() || undefined : undefined,
+        caFile: typeof tls.caFile === "string" ? tls.caFile.trim() || undefined : undefined,
+        minVersion: tls.minVersion === "TLSv1.3" ? "TLSv1.3" : "TLSv1.2",
+        requestCert: tls.requestCert === true,
+        rejectUnauthorized: tls.rejectUnauthorized !== false,
+      },
       allowInsecureRemote:
         serverSection.allowInsecureRemote === true || section.allowInsecureRemote === true,
     },
@@ -318,10 +336,9 @@ export function resolveWebsocketConfig(
         (typeof clientSection.clientId === "string" ? clientSection.clientId.trim() : "") ||
         (typeof section.clientId === "string" ? section.clientId.trim() : "") ||
         DEFAULT_CLIENT.clientId,
-      connectTimeoutMs: positiveInteger(
+      connectTimeoutMs: numberOrDefault(
         clientSection.connectTimeoutMs,
         DEFAULT_CLIENT.connectTimeoutMs,
-        120_000,
       ),
       allowInsecureRemote: clientSection.allowInsecureRemote === true,
       reconnect: {
@@ -329,8 +346,9 @@ export function resolveWebsocketConfig(
           typeof clientReconnect.enabled === "boolean"
             ? clientReconnect.enabled
             : section.clientReconnect !== false,
-        initialDelayMs: positiveInteger(clientReconnect.initialDelayMs, 1_000, 300_000),
-        maxDelayMs: positiveInteger(clientReconnect.maxDelayMs, 30_000, 3_600_000),
+        initialDelayMs: numberOrDefault(clientReconnect.initialDelayMs, 1_000),
+        maxDelayMs: numberOrDefault(clientReconnect.maxDelayMs, 30_000),
+        jitterRatio: ratioOrDefault(clientReconnect.jitterRatio, 0.2),
       },
     },
     defaultAgentId,
@@ -342,18 +360,17 @@ export function resolveWebsocketConfig(
         payload.outboundFormat === "plain" ? "plain" : "envelope",
     },
     limits: {
-      maxPayloadBytes: positiveInteger(limits.maxPayloadBytes, DEFAULT_WEBSOCKET_CONFIG.limits.maxPayloadBytes, 16 * 1024 * 1024),
-      maxBufferedBytes: positiveInteger(limits.maxBufferedBytes, DEFAULT_WEBSOCKET_CONFIG.limits.maxBufferedBytes, 64 * 1024 * 1024),
-      maxPendingMessages: positiveInteger(limits.maxPendingMessages, DEFAULT_WEBSOCKET_CONFIG.limits.maxPendingMessages, 10_000),
-      messagesPerMinute: positiveInteger(limits.messagesPerMinute, DEFAULT_WEBSOCKET_CONFIG.limits.messagesPerMinute, 1_000_000),
-      heartbeatIntervalMs: positiveInteger(limits.heartbeatIntervalMs, DEFAULT_WEBSOCKET_CONFIG.limits.heartbeatIntervalMs, 300_000),
-      heartbeatTimeoutMs: positiveInteger(limits.heartbeatTimeoutMs, DEFAULT_WEBSOCKET_CONFIG.limits.heartbeatTimeoutMs, 300_000),
+      maxPayloadBytes: numberOrDefault(limits.maxPayloadBytes, DEFAULT_WEBSOCKET_CONFIG.limits.maxPayloadBytes),
+      maxBufferedBytes: numberOrDefault(limits.maxBufferedBytes, DEFAULT_WEBSOCKET_CONFIG.limits.maxBufferedBytes),
+      maxPendingMessages: numberOrDefault(limits.maxPendingMessages, DEFAULT_WEBSOCKET_CONFIG.limits.maxPendingMessages),
+      messagesPerMinute: numberOrDefault(limits.messagesPerMinute, DEFAULT_WEBSOCKET_CONFIG.limits.messagesPerMinute),
+      heartbeatIntervalMs: numberOrDefault(limits.heartbeatIntervalMs, DEFAULT_WEBSOCKET_CONFIG.limits.heartbeatIntervalMs),
+      heartbeatTimeoutMs: numberOrDefault(limits.heartbeatTimeoutMs, DEFAULT_WEBSOCKET_CONFIG.limits.heartbeatTimeoutMs),
     },
     session: {
-      maxExpirySeconds: nonNegativeInteger(
+      maxExpirySeconds: numberOrDefault(
         session.maxExpirySeconds,
         DEFAULT_WEBSOCKET_CONFIG.session.maxExpirySeconds,
-        30 * 24 * 60 * 60,
       ),
       persistentAcrossReconnect:
         typeof session.persistentAcrossReconnect === "boolean"
@@ -367,13 +384,67 @@ function isLoopbackHost(host: string): boolean {
   return host === "127.0.0.1" || host === "::1" || host.toLowerCase() === "localhost";
 }
 
+function requireInteger(name: string, value: number, minimum: number, maximum: number): void {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+}
+
+function validateAllowedOrigins(origins: string[]): void {
+  for (const origin of origins) {
+    if (origin === "*") {
+      throw new Error("server.allowedOrigins must not contain '*'; configure exact origins");
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new Error(`invalid server.allowedOrigins entry: ${origin}`);
+    }
+    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.origin !== origin) {
+      throw new Error(`server.allowedOrigins must contain exact http(s) origins: ${origin}`);
+    }
+  }
+}
+
 /** 启动前拒绝容易意外暴露凭据或匿名端口的配置。 */
 export function validateWebsocketConfig(config: WebsocketChannelConfig): void {
+  requireInteger("server.wsPort", config.server.wsPort, 1, 65_535);
+  requireInteger("server.maxConnections", config.server.maxConnections, 1, 100_000);
+  requireInteger("client.connectTimeoutMs", config.client.connectTimeoutMs, 1, 120_000);
+  requireInteger("client.reconnect.initialDelayMs", config.client.reconnect.initialDelayMs, 1, 300_000);
+  requireInteger("client.reconnect.maxDelayMs", config.client.reconnect.maxDelayMs, 1, 3_600_000);
+  requireInteger("limits.maxPayloadBytes", config.limits.maxPayloadBytes, 1, 16 * 1024 * 1024);
+  requireInteger("limits.maxBufferedBytes", config.limits.maxBufferedBytes, 1, 64 * 1024 * 1024);
+  requireInteger("limits.maxPendingMessages", config.limits.maxPendingMessages, 1, 10_000);
+  requireInteger("limits.messagesPerMinute", config.limits.messagesPerMinute, 1, 1_000_000);
+  requireInteger("limits.heartbeatIntervalMs", config.limits.heartbeatIntervalMs, 100, 300_000);
+  requireInteger("limits.heartbeatTimeoutMs", config.limits.heartbeatTimeoutMs, 100, 300_000);
+  requireInteger("session.maxExpirySeconds", config.session.maxExpirySeconds, 0, 30 * 24 * 60 * 60);
+  if (config.client.reconnect.initialDelayMs > config.client.reconnect.maxDelayMs) {
+    throw new Error("client.reconnect.initialDelayMs must not exceed maxDelayMs");
+  }
+  if (!Number.isFinite(config.client.reconnect.jitterRatio) || config.client.reconnect.jitterRatio < 0 || config.client.reconnect.jitterRatio > 1) {
+    throw new Error("client.reconnect.jitterRatio must be between 0 and 1");
+  }
+  if (!config.server.path.startsWith("/") || config.server.path.includes("?") || config.server.path.includes("#")) {
+    throw new Error("server.path must be an absolute URL path without query or fragment");
+  }
+  validateAllowedOrigins(config.server.allowedOrigins);
+
+  if (isServerModeEnabled(config)) {
+    if (config.server.auth.enabled && config.server.auth.tokens.length === 0) {
+      throw new Error("server.auth.enabled requires at least one non-empty token");
+    }
+    if (config.server.tls.enabled && (!config.server.tls.keyFile || !config.server.tls.certFile)) {
+      throw new Error("server.tls.enabled requires keyFile and certFile");
+    }
+  }
   if (isServerModeEnabled(config) && !isLoopbackHost(config.server.host)) {
-    if (!config.server.auth.enabled || config.server.auth.tokens.length === 0) {
+    if (!config.server.auth.enabled) {
       throw new Error("remote WebSocket listener requires server.auth.enabled and at least one token");
     }
-    if (!config.server.allowInsecureRemote) {
+    if (!config.server.tls.enabled && !config.server.allowInsecureRemote) {
       throw new Error("remote plaintext listener requires server.allowInsecureRemote=true; prefer a TLS reverse proxy to loopback");
     }
   }

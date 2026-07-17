@@ -1,12 +1,24 @@
+/**
+ * @fileoverview Agent Turn 到 L1-L3 记忆记录的确定性抽取层。
+ *
+ * 输入来自 `agent_end`，先裁剪为当前轮，再按会话计数控制抽取频率。当前实现不调用外部模型：
+ * L1 保存用户事件，L2 汇总会话场景，L3 只提取用户明确表达的偏好或身份事实。生成的记录仍由
+ * `MemoryStore` 负责租户隔离、幂等、加密和保留期清理。
+ */
 import { randomBytes } from "node:crypto";
 
 import type { MemoryRecord, NormalizedMessage } from "./model.js";
 import { extractKeywords, normalizeMessageContent } from "./text.js";
 
+/** 生成带毫秒时间前缀和 48 位随机尾部的记录 ID，降低同进程同毫秒碰撞概率。 */
 export function generateId(): string {
   return `${Date.now()}_${randomBytes(6).toString("hex")}`;
 }
 
+/**
+ * 从 OpenClaw Agent Turn 中提取可持久化文本，并只保留最后一条 user 消息开始的当前轮。
+ * 这样不会在每次 `agent_end` 时重复保存宿主传入的完整历史上下文。
+ */
 export function normalizeTurnMessages(messages: unknown[]): NormalizedMessage[] {
   const normalized = messages.flatMap((message): NormalizedMessage[] => {
     if (!message || typeof message !== "object") return [];
@@ -25,8 +37,13 @@ export function normalizeTurnMessages(messages: unknown[]): NormalizedMessage[] 
   return lastUserIndex >= 0 ? normalized.slice(lastUserIndex) : normalized.slice(-1);
 }
 
+/** 每会话已完成轮次数；只用于决定 L1-L3 抽取节奏，不承载持久化业务状态。 */
 export const sessionCounters = new Map<string, number>();
 
+/**
+ * 推进会话轮次并判断本轮是否执行 L1-L3 抽取。
+ * Map 最多保留 10,000 个会话，避免长期运行 Gateway 因冷会话无限增长。
+ */
 export function shouldExtract(sessionKey: string, everyN = 5): boolean {
   const interval = Math.max(1, Math.floor(everyN));
   if (!sessionCounters.has(sessionKey) && sessionCounters.size >= 10_000) {
@@ -54,6 +71,10 @@ function extractProfileFacts(text: string): string[] {
   return [...new Set(facts)].slice(0, 8);
 }
 
+/**
+ * 从当前轮构造可检索的 L1 事件、L2 场景和 L3 用户画像记录。
+ * L3 只接受显式偏好/身份句式；这里不调用模型，避免把未经证实的推断写入长期画像。
+ */
 export function buildMemoryRecords(params: {
   agentId: string;
   sessionKey: string;

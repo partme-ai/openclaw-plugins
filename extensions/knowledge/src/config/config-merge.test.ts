@@ -56,4 +56,20 @@ describe('deepMergeKnowledgeConfig', () => {
     expect(result!.store!.sources!.docIds).toEqual(['doc2']);
     expect(result!.store!.sources!.docIds).not.toContain('doc1');
   });
+
+  it('merges tools and intent gate overrides used by account-level policies', () => {
+    const global: KnowledgeConfig = {
+      ...baseGlobal,
+      tools: { allowFileIngest: false, maxInputChars: 1000 },
+      intentGate: { enabled: true, mode: 'rule' },
+    };
+
+    const result = deepMergeKnowledgeConfig(global, {
+      tools: { maxInputChars: 2000 },
+      intentGate: { enabled: false },
+    });
+
+    expect(result?.tools).toEqual({ allowFileIngest: false, maxInputChars: 2000 });
+    expect(result?.intentGate).toEqual({ enabled: false, mode: 'rule' });
+  });
 });

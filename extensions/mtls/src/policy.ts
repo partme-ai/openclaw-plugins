@@ -9,6 +9,13 @@ import type { IncomingHttpHeaders, OutgoingHttpHeaders } from "node:http";
 
 import type { ClientCertInfo, MtlsConfig } from "./shared/types.js";
 
+/**
+ * 单次 HTTP 或 WebSocket Upgrade 请求的证书授权判定。
+ *
+ * `allowed` 表示请求能否继续转发；允许转发不等于已经认证，因为公开路径可以在没有证书时
+ * 匿名通过。只有 `authenticated` 为 true 时，`principal` 和证书信息才可作为可信身份注入。
+ * 拒绝结果携带可直接返回客户端的 401/403 状态，但不会暴露证书内部细节。
+ */
 export type MtlsAuthorization =
   | {
       allowed: true;

@@ -28,6 +28,8 @@ import { createRerankerService } from '../reranker/factory.js';
 import { createTokenizerService } from '../tokenizer/factory.js';
 import { retrieveContext } from '../indexer/scheduler.js';
 import { hybridSearch } from '../retriever/hybrid.js';
+import { mergeKnowledgeConfig, validateKnowledgeConfig } from '../config/config.js';
+import { resolveConversationNamespace } from './namespace.js';
 
 // ===================================================================
 // 运行时状态
@@ -55,36 +57,9 @@ export function deepMergeKnowledgeConfig(
   global?: KnowledgeConfig,
   accountOverride?: DeepPartialKnowledgeConfig,
 ): KnowledgeConfig | null {
-  if (!global?.enabled) return null;
-
-  const merged: KnowledgeConfig = {
-    ...global,
-    enabled: true,
-  };
-
-  if (!accountOverride) return merged;
-
-  // 深度合并子配置
-  const mergeFields = ['embedding', 'retrieval', 'injection', 'moderation', 'tokenizer', 'reranker', 'parser'] as const;
-  for (const field of mergeFields) {
-    const globalField = global[field];
-    const overrideField = (accountOverride as any)[field];
-    if (overrideField && globalField) {
-      (merged as any)[field] = { ...globalField, ...overrideField };
-    } else if (overrideField) {
-      (merged as any)[field] = overrideField;
-    }
-  }
-
-  // store 配置：深度合并，但 sources 完全替换
-  if (accountOverride.store || global.store) {
-    const baseStore = { ...getDefaultStoreConfig('default'), ...(global.store ?? {}) };
-    merged.store = accountOverride.store
-      ? { ...baseStore, ...accountOverride.store, sources: accountOverride.store.sources ?? baseStore.sources }
-      : baseStore;
-  }
-
-  return merged;
+  // 合并规则必须只有一个事实来源。运行时若复制一份字段清单，新增 tools、intentGate
+  // 等配置时极易出现“启动配置生效、账号覆盖失效”的隐蔽漂移。
+  return mergeKnowledgeConfig(global, accountOverride);
 }
 
 // ===================================================================
@@ -96,7 +71,7 @@ export function deepMergeKnowledgeConfig(
  *              命中内存缓存则直接返回引用。
  *
  * @param config - 已合并的最终配置（含维度/provider）
- * @param namespace - 隔离键（惯例：`accountId:bot|agent`）
+ * @param namespace - 隔离键（默认由 sessionKey 摘要与 bot/agent 模式派生）
  * @returns 可用于检索/写入的 Store 与其配套的 Embedding 服务
  */
 export async function getOrCreateStore(
@@ -104,31 +79,44 @@ export async function getOrCreateStore(
   namespace: string,
 ): Promise<{ store: VectorStore; embedding: EmbeddingService }> {
   const configFingerprint = JSON.stringify(config);
-  const cached = storeCache.get(namespace);
-  if (cached?.configFingerprint === configFingerprint) return { store: cached.store, embedding: cached.embedding };
-  const pending = storeInitPromises.get(namespace);
-  if (pending) {
-    const entry = await pending;
-    if (entry.configFingerprint === configFingerprint) return { store: entry.store, embedding: entry.embedding };
-  }
+  // 同 namespace 的配置切换也必须串行。旧实现等待到一个不同 fingerprint 的初始化后，
+  // 会在旧 Promise 尚占据 Map 时直接覆盖它；三个并发调用可各自发布 Store，并关闭另一个
+  // 调用仍在使用的句柄。循环只允许当前 Map owner 创建下一代实例。
+  for (;;) {
+    const cached = storeCache.get(namespace);
+    if (cached?.configFingerprint === configFingerprint) {
+      return { store: cached.store, embedding: cached.embedding };
+    }
+    const pending = storeInitPromises.get(namespace);
+    if (pending) {
+      await pending;
+      continue;
+    }
 
-  const initialization = (async (): Promise<StoreCacheEntry> => {
-    const previous = storeCache.get(namespace);
-    if (previous) await disposeStore(previous.store);
-    const embedding = createEmbeddingService(config.embedding);
-    const storeConfig = { ...getDefaultStoreConfig(namespace), ...(config.store ?? {}), namespace };
-    const dimensions = config.embedding?.dimensions ?? embedding.dimensions;
-    const store = await createVectorStore(storeConfig, dimensions);
-    const entry = { store, embedding, configFingerprint };
-    storeCache.set(namespace, entry);
-    return entry;
-  })();
-  storeInitPromises.set(namespace, initialization);
-  try {
-    const entry = await initialization;
-    return { store: entry.store, embedding: entry.embedding };
-  } finally {
-    if (storeInitPromises.get(namespace) === initialization) storeInitPromises.delete(namespace);
+    const initialization = (async (): Promise<StoreCacheEntry> => {
+      const previous = storeCache.get(namespace);
+      if (previous) {
+        // 先撤销缓存可见性，再关闭旧句柄。若 close 或新 Store 初始化失败，下一次调用会
+        // 重新构建，而不会命中一个已经关闭、但仍残留在 Map 中的“僵尸实例”。同一
+        // namespace 的初始化由 storeInitPromises 串行化，因此这里不存在并发发布窗口。
+        if (storeCache.get(namespace) === previous) storeCache.delete(namespace);
+        await disposeStore(previous.store);
+      }
+      const embedding = createEmbeddingService(config.embedding);
+      const storeConfig = { ...getDefaultStoreConfig(namespace), ...(config.store ?? {}), namespace };
+      const dimensions = config.embedding?.dimensions ?? embedding.dimensions;
+      const store = await createVectorStore(storeConfig, dimensions);
+      const entry = { store, embedding, configFingerprint };
+      storeCache.set(namespace, entry);
+      return entry;
+    })();
+    storeInitPromises.set(namespace, initialization);
+    try {
+      const entry = await initialization;
+      return { store: entry.store, embedding: entry.embedding };
+    } finally {
+      if (storeInitPromises.get(namespace) === initialization) storeInitPromises.delete(namespace);
+    }
   }
 }
 
@@ -254,15 +242,21 @@ export function registerKnowledgeHooks(
     ? configPath.split('.').reduce((obj: any, key: string) => obj?.[key], (api.config as any))
     : pluginConfig;
 
-  api.on('before_prompt_build', (_event, ctx) => {
-    return handleBeforePromptBuild(ctx as unknown as BeforePromptBuildContext, knowledgeConfig ?? pluginConfig, api.logger);
+  api.on('before_prompt_build', (event, ctx) => {
+    // OpenClaw 2026.7.1 将用户正文放在第一个参数 event.prompt，第二个参数只承载
+    // agent/account/session 路由上下文。显式合并可避免 Hook 被调用却因 message 缺失静默跳过。
+    const hookContext: BeforePromptBuildContext = {
+      ...(ctx as unknown as BeforePromptBuildContext),
+      message: event.prompt,
+    };
+    return handleBeforePromptBuild(hookContext, knowledgeConfig ?? pluginConfig, api.logger);
   });
 }
 
 /**
  * @description Hook 回调体：串联意图门控 → 向量/混合检索 → 精排 → token 裁剪 → Prompt 拼装。
  *
- * @param ctx - OpenClaw 传入的会话上下文（需含 `message` 与账号路由键）
+ * @param ctx - 已把 `event.prompt` 合并为 `message` 的会话上下文
  * @param knowledgeConfig - 通过闭包捕获的原始配置节点（含 `accounts` 子树时参与合并）
  * @returns 若需改写 system/user Prompt 则返回对应字段；跳过或失败时返回 `undefined`
  */
@@ -273,21 +267,21 @@ async function handleBeforePromptBuild(
 ): Promise<BeforePromptBuildResult | undefined> {
   if (!ctx.message) return;
 
-  // 从 ctx 中获取 accountId（OpenClaw 路由绑定传过来的）
-  const accountId = ctx.accountId ?? 'default';
-  const mode = ctx.agentId ? 'agent' : 'bot';
-  const namespace = `${accountId}:${mode}`;
-
-  // 通过闭包捕获的 knowledgeConfig 读取知识库配置
-  const config = resolveKnowledgeConfig(knowledgeConfig, accountId);
-  if (!config?.enabled) return;
-  const maxInputChars = config.tools?.maxInputChars ?? 100_000;
-  if (ctx.message.length > maxInputChars) {
-    logger.warn(`[knowledge] skipped retrieval because message exceeds ${maxInputChars} characters`);
-    return;
-  }
+  // OpenClaw 2026.7.1 的 before_prompt_build 不提供 accountId。Hook 与 Tool 必须
+  // 共同使用官方 sessionKey，否则多账号环境会出现“写入成功但自动检索永远查不到”。
+  const namespace = resolveConversationNamespace(ctx);
 
   try {
+    // 通过闭包捕获的 knowledgeConfig 读取知识库配置。账号覆盖也在此处校验；非法覆盖
+    // 只关闭本次 RAG 辅助路径，不应让 before_prompt_build 阻断 Agent 主流程。
+    const config = resolveKnowledgeConfig(knowledgeConfig, 'default');
+    if (!config?.enabled) return;
+    const maxInputChars = config.tools?.maxInputChars ?? 100_000;
+    if (ctx.message.length > maxInputChars) {
+      logger.warn(`[knowledge] skipped retrieval because message exceeds ${maxInputChars} characters`);
+      return;
+    }
+
     // ================================================================
     // 节点 0：Intent Gate（可选 — 默认只走 rule 模式）
     // ================================================================
@@ -375,10 +369,10 @@ async function handleBeforePromptBuild(
     const position = injection.position ?? 'system';
 
     if (position === 'user') {
-      return { userPrompt: injectedContext };
+      return { prependContext: injectedContext };
     }
 
-    return { systemPrompt: injectedContext };
+    return { prependSystemContext: injectedContext };
   } catch (error) {
     logger.error(`[knowledge] before_prompt_build failed: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
@@ -402,5 +396,14 @@ function resolveKnowledgeConfig(
 
   const accounts = knowledgeConfig.accounts as Record<string, any> | undefined;
   const accountOverride = accounts?.[accountId]?.knowledge as DeepPartialKnowledgeConfig | undefined;
-  return deepMergeKnowledgeConfig(global, accountOverride);
+  const merged = deepMergeKnowledgeConfig(global, accountOverride);
+  if (!merged) return null;
+
+  // 账号覆盖发生在插件启动之后，因此必须对最终合并结果再次校验；否则非法的
+  // timeout、provider 或文件边界配置会绕过启动校验，直到实际请求才产生副作用。
+  const errors = validateKnowledgeConfig(merged);
+  if (errors.length > 0) {
+    throw new Error(`账号 ${accountId} 的知识库配置无效: ${errors.join('; ')}`);
+  }
+  return merged;
 }

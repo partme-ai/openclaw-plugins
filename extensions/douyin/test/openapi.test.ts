@@ -80,4 +80,27 @@ describe("requestDouyinOpenApi", () => {
     expect(invalidateClientTokenMock).toHaveBeenCalledOnce();
     expect(douyinFetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("rejects a non-object JSON response instead of reporting success", async () => {
+    douyinFetchMock.mockResolvedValue(new Response("null", { status: 200 }));
+
+    await expect(requestDouyinOpenApi({
+      context: { account: { app_key: "key", app_secret: "secret" } },
+      path: "/goodlife/v1/trade/order/query/",
+      method: "GET",
+    })).rejects.toThrow("invalid JSON");
+  });
+
+  it("treats a non-zero extra error code as failure even when data says zero", async () => {
+    douyinFetchMock.mockResolvedValue(new Response(JSON.stringify({
+      data: { error_code: 0 },
+      extra: { error_code: 2100005, description: "bad request", logid: "log-bad" },
+    }), { status: 200 }));
+
+    await expect(requestDouyinOpenApi({
+      context: { account: { app_key: "key", app_secret: "secret" } },
+      path: "/goodlife/v1/trade/order/query/",
+      method: "GET",
+    })).rejects.toMatchObject({ code: 2100005, logId: "log-bad" });
+  });
 });

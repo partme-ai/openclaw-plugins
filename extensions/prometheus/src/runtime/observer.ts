@@ -18,6 +18,8 @@ const PROVIDER_STATUSES = ["ok", "missing", "error"] as const;
 const HTTP_LATENCY_SAMPLES: number[] = [];
 const HTTP_LATENCY_MAX_SAMPLES = 1000;
 let runtimeDisposers: Array<() => void> = [];
+let snapshotRefreshPromise: Promise<void> | null = null;
+let observerGeneration = 0;
 
 /**
  * @description 注册全部 Plugin SDK 观测 hooks 与 runtime 事件监听器。
@@ -33,8 +35,11 @@ export function registerPluginObservers(api: OpenClawPluginApi): void {
   registerSupplementaryPluginHooks(api);
 }
 
-/** Release runtime event subscriptions and process-local sampling state. */
+/** 释放全部运行时事件订阅并清空进程内延迟采样，防止插件热重载后重复计数。 */
 export function stopPluginObservers(): void {
+  // 代际递增使已经发出的 Provider 探测只能结束自身，不能写入热重载后的新 RuntimeStore。
+  observerGeneration += 1;
+  snapshotRefreshPromise = null;
   for (const dispose of runtimeDisposers.splice(0)) {
     try {
       dispose();
@@ -371,6 +376,19 @@ function registerSupplementaryPluginHooks(api: OpenClawPluginApi): void {
  * @param force - 为 true 时跳过间隔节流立即刷新
  */
 export async function refreshRuntimeSnapshots(force = false): Promise<void> {
+  if (snapshotRefreshPromise) return snapshotRefreshPromise;
+  const generation = observerGeneration;
+  const pending = refreshRuntimeSnapshotsInternal(force, generation);
+  snapshotRefreshPromise = pending;
+  try {
+    await pending;
+  } finally {
+    if (snapshotRefreshPromise === pending) snapshotRefreshPromise = null;
+  }
+}
+
+/** 单次真实快照刷新；调用方通过模块级 Promise 合并并发 health/snapshot 请求。 */
+async function refreshRuntimeSnapshotsInternal(force: boolean, generation: number): Promise<void> {
   const store = getRuntimeStore();
   const now = Date.now();
   if (
@@ -407,6 +425,9 @@ export async function refreshRuntimeSnapshots(force = false): Promise<void> {
       }
     }),
   );
+
+  // stop/reload 发生后旧探测结果作废，避免把旧凭据状态写进新插件代际。
+  if (generation !== observerGeneration) return;
 
   setSnapshotState({
     refreshedAt: now,

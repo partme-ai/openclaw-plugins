@@ -1,4 +1,4 @@
-// @ts-nocheck — large declarative wizard factory mirrors openclaw setup SDK surface; stubs vary by peer installs.
+// @ts-nocheck — 声明式向导工厂需要兼容不同 peer 安装下的 OpenClaw setup SDK 类型表面。
 /**
  * @fileoverview 共享 Channel setupWizard / setupAdapter 声明式工厂。
  *
@@ -46,6 +46,12 @@ export type SetupTextInputSpec = {
   required?: boolean;
 };
 
+/**
+ * 声明式渠道向导的完整描述参数。
+ *
+ * `resolveConfigured` 同时决定配置状态和完成步骤；字段描述只负责写入配置，不会在向导阶段
+ * 创建 RocketMQ Producer/Consumer 或探测 NameServer。
+ */
 export type SimpleChannelSetupParams = {
   channel: string;
   label: string;

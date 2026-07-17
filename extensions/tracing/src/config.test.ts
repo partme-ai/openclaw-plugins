@@ -11,6 +11,8 @@ describe("normalizeTracingConfig", () => {
     expect(config.sampleRate).toBe(0.5);
     expect(config.backend).toBe("otlp");
     expect(config.maxBufferedSpans).toBe(10_000);
+    expect(config.maxActiveTraces).toBe(10_000);
+    expect(config.shutdownTimeoutMs).toBe(15_000);
   });
 
   it.each([
@@ -19,8 +21,22 @@ describe("normalizeTracingConfig", () => {
     [{ maxBufferedSpans: 1.5 }, "maxBufferedSpans"],
     [{ backend: "skywalking" }, "backend"],
     [{ otlpEndpoint: "file:///tmp/traces" }, "http or https"],
+    [{ otlpEndpoint: "https://secret@example.com" }, "must not contain credentials"],
+    [{ unknown: true }, "unknown tracing config field"],
+    [{ maxActiveTraces: 0 }, "maxActiveTraces"],
+    [{ shutdownTimeoutMs: 10 }, "shutdownTimeoutMs"],
+    [{ otlpHeaders: { Authorization: "Bearer ok\r\nInjected: yes" } }, "single-line"],
+    [{ otlpHeaders: { Host: "collector.example" } }, "unsupported header name"],
   ])("拒绝非法配置 %j", (input, expected) => {
     expect(() => normalizeTracingConfig(undefined, input)).toThrow(expected as string);
+  });
+
+  it("接受 OTLP 鉴权头并返回独立副本", () => {
+    const input = { Authorization: "Bearer token" };
+    const config = normalizeTracingConfig(undefined, { otlpHeaders: input });
+    expect(config.otlpHeaders).toEqual(input);
+    input.Authorization = "changed";
+    expect(config.otlpHeaders.Authorization).toBe("Bearer token");
   });
 });
 

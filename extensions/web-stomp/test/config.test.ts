@@ -78,4 +78,38 @@ describe("web-stomp config", () => {
     expect(serialized).toContain("credentialConfigured");
     expect(serialized).toContain("sha512");
   });
+
+  it("保留非法数值并在启动校验中报告，而不是静默替换默认值", () => {
+    const config = resolveStompWsConfig({
+      channels: { stomp: { wsPort: 0, heartbeat: { serverMs: -1 }, limits: { maxConnections: 1.5 } } },
+    });
+    const issues = validateStompWsConfig(config);
+    expect(config.wsPort).toBe(0);
+    expect(config.heartbeatOutgoing).toBe(-1);
+    expect(config.maxConnections).toBe(1.5);
+    expect(issues.some((issue) => issue.includes("wsPort"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("heartbeatOutgoing"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("maxConnections"))).toBe(true);
+  });
+
+  it("规范化 Origin，并拒绝通配 Origin、非法 Agent id 与歧义凭证", () => {
+    const normalized = resolveStompWsConfig({
+      channels: { stomp: { ws: { allowedOrigins: [" https://console.example.com/ ", "https://console.example.com"] } } },
+    });
+    expect(normalized.allowedOrigins).toEqual(["https://console.example.com"]);
+
+    const config = resolveStompWsConfig({
+      channels: {
+        stomp: {
+          defaultAgentId: "bad agent",
+          ws: { allowedOrigins: ["*"] },
+          auth: { users: [{ login: "browser", password: "one", passwordHash: "two" }] },
+        },
+      },
+    });
+    const issues = validateStompWsConfig(config);
+    expect(issues.some((issue) => issue.includes("allowedOrigins"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("defaultAgentId"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("exactly one"))).toBe(true);
+  });
 });

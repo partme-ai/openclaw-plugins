@@ -32,6 +32,8 @@ function parseStompFrames(buffer) {
 // --- Web STOMP ---
 (() => {
   const urlEl = document.getElementById("stomp-url");
+  const loginEl = document.getElementById("stomp-login");
+  const passcodeEl = document.getElementById("stomp-passcode");
   const subDestEl = document.getElementById("stomp-sub-dest");
   const sendDestEl = document.getElementById("stomp-send-dest");
   const bodyEl = document.getElementById("stomp-body");
@@ -52,7 +54,12 @@ function parseStompFrames(buffer) {
     ws.binaryType = "arraybuffer";
     ws.onopen = () => {
       setStatus(statusEl, "ws open — sending CONNECT", null);
-      ws.send(stompFrame("CONNECT", { "accept-version": "1.2", host: "localhost" }));
+      ws.send(stompFrame("CONNECT", {
+        "accept-version": "1.2",
+        host: "localhost",
+        ...(loginEl.value ? { login: loginEl.value } : {}),
+        ...(passcodeEl.value ? { passcode: passcodeEl.value } : {}),
+      }));
       btnSub.disabled = false;
       btnSend.disabled = false;
       btnDisc.disabled = false;
@@ -62,8 +69,13 @@ function parseStompFrames(buffer) {
       const parsed = parseStompFrames(buffer);
       buffer = parsed.rest;
       for (const raw of parsed.frames) {
-        log(logEl, `<< ${raw.replace(/\0/g, "\\0").slice(0, 400)}`);
-        if (raw.startsWith("CONNECTED")) setStatus(statusEl, "STOMP connected", true);
+        // Agent envelope 通常超过 400 字符；保留足够正文供人工排障和浏览器 E2E 校验。
+        log(logEl, `<< ${raw.replace(/\0/g, "\\0").slice(0, 4_000)}`);
+        if (raw.startsWith("CONNECTED")) {
+          const sessionId = /\nsession:([^\n]+)/.exec(raw)?.[1];
+          if (sessionId) subDestEl.value = `/topic/session.stomp:${sessionId}@main`;
+          setStatus(statusEl, "STOMP connected", true);
+        }
         const ack = raw.match(/\back:([^\n]+)/);
         if (ack?.[1]) ws.send(stompFrame("ACK", { id: ack[1] }));
       }
@@ -102,6 +114,8 @@ function parseStompFrames(buffer) {
 // --- Web MQTT ---
 (() => {
   const urlEl = document.getElementById("mqtt-url");
+  const usernameEl = document.getElementById("mqtt-username");
+  const passwordEl = document.getElementById("mqtt-password");
   const subTopicEl = document.getElementById("mqtt-sub-topic");
   const pubTopicEl = document.getElementById("mqtt-pub-topic");
   const bodyEl = document.getElementById("mqtt-body");
@@ -118,6 +132,9 @@ function parseStompFrames(buffer) {
     if (client) client.end(true);
     client = mqtt.connect(urlEl.value, {
       clientId: `browser-${Date.now()}`,
+      // 空值保持 undefined，既能测试匿名部署，也能覆盖生产环境常用的账号认证。
+      username: usernameEl.value || undefined,
+      password: passwordEl.value || undefined,
       reconnectPeriod: 0,
       connectTimeout: 8000,
     });

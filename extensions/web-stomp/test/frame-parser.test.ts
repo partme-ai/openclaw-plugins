@@ -17,6 +17,7 @@ import {
   buildMessageFrame,
   buildReceiptFrame,
   buildErrorFrame,
+  extractCompleteFrames,
 } from "../src/transport/frame-parser.js";
 
 describe("parseFrame", () => {
@@ -66,6 +67,29 @@ describe("parseFrame", () => {
     expect(parseFrame("SEND\ndestination:/queue/agent\ncontent-length:6\n\n你好\0")?.body).toBe("你好");
     expect(parseFrame("SEND\ndestination:/queue/agent\ncontent-length:2\n\n你好\0")).toBeNull();
     expect(parseFrame("SEND\ndestination:/queue/agent\ncontent-length:nope\n\nhello\0")).toBeNull();
+  });
+
+  it("content-length 模式允许 body 内包含 NUL，并按字节边界提取下一帧", () => {
+    const first = "SEND\ndestination:/queue/agent\ncontent-length:3\n\na\0b\0";
+    const second = "SEND\ndestination:/queue/agent\n\nnext\0";
+    const extracted = extractCompleteFrames(first + second);
+    expect(extracted.frames).toHaveLength(2);
+    expect(extracted.rest).toBe("");
+    expect(parseFrame(extracted.frames[0])?.body).toBe("a\0b");
+    expect(parseFrame(extracted.frames[1])?.body).toBe("next");
+  });
+
+  it("保留跨 WebSocket 消息的半帧，并支持 CRLF header", () => {
+    const first = extractCompleteFrames("SEND\r\ndestination:/queue/agent\r\ncontent-length:6\r\n\r\n你");
+    expect(first.frames).toEqual([]);
+    const second = extractCompleteFrames(first.rest + "好\0");
+    expect(second.frames).toHaveLength(1);
+    expect(parseFrame(second.frames[0])?.body).toBe("你好");
+  });
+
+  it("拒绝非法 header 语法与未定义转义", () => {
+    expect(parseFrame("SEND\ndestination\n\nbody\0")).toBeNull();
+    expect(parseFrame("SEND\ndestination:/queue/agent\\x\n\nbody\0")).toBeNull();
   });
 });
 

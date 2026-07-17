@@ -63,7 +63,7 @@ pnpm build
    - Token：与 `channels.wecom-kf.token` 一致
    - EncodingAESKey：与 `channels.wecom-kf.encodingAESKey` 一致
 
-服务器需要在 5 秒内返回 HTTP 200，否则企业微信会重试。
+正常运行时服务器需要在 5 秒内返回 HTTP 200，否则企业微信会重试。Gateway 停机阶段会返回 503 拒绝新任务，并等待已确认的后台同步队列排空。
 
 ### 2. 写入最小配置
 
@@ -193,20 +193,51 @@ openclaw channels status --probe
 
 ## 消息与转人工流程
 
-```text
-客户发消息
-  → 企业微信回调 /wecom/kefu
-  → 插件验签解密
-  → sync_msg 拉取消息批次
-  → msgid 去重与 cursor 持久化
-  → 按 open_kfid / bindings 路由到 Agent
-  → Agent 回复
-  → kf/send_msg 下发给客户
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 微信客户
+    participant W as 企业微信客服
+    participant C as wecom-kf 回调层
+    participant S as 游标与去重存储
+    participant A as OpenClaw Agent
+
+    U->>W: 发送客户消息
+    W->>C: kf_msg_or_event 加密回调
+    alt Gateway 正常运行
+        C-->>W: 立即 HTTP 200 success
+    else Gateway 正在停止
+        C-->>W: HTTP 503 service stopping
+        Note over W,C: 保留平台重试语义，不接受后丢失
+    end
+    loop sync_msg 最多 100 页
+        C->>W: token 或持久 cursor 拉取
+        W-->>C: msg_list + next_cursor
+        C->>S: claim(msgid)
+        C->>A: 按 open_kfid 路由 Agent Turn
+        A-->>C: 回复文本或媒体
+        C->>W: kf/send_msg
+        W-->>U: 投递回复
+        C->>S: commit(msgid) 后原子保存 cursor
+    end
 ```
 
 `msgid` 只有在 Agent/事件处理成功后才提交去重；失败会释放占用并保留当前页游标，后续回调可重试。
-同一客服账号的回调按顺序拉取，游标采用原子文件替换并以 `0600` 权限保存。首次启动不会自动跳过历史消息；
+后台 `sync_msg` 失败会在同一账号串行队列中执行有界指数退避；全部尝试失败才记录错误，等待平台下一次回调继续。
+同一客服账号的回调按顺序拉取，状态目录为 `0700`，游标与去重文件采用原子替换并以 `0600` 权限保存。首次启动不会自动跳过历史消息；
 企业微信 `sync_msg` 仍只覆盖平台允许拉取的时间窗口。
+
+`send_msg` 在请求前按 `open_kfid + external_userid` 原子预占回复额度，API 失败或网络异常时回滚；这可防止多个并发 Agent 回复同时通过检查而突破 5 条限制。Token 缓存使用 `corpId + corpSecret + apiBaseUrl` 的 SHA-256 指纹隔离，凭据轮换和私有化网关切换不会继续命中旧缓存。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Claimed: claim(msgid)
+    Claimed --> Committed: Agent/事件处理与出站成功
+    Claimed --> Retryable: API、派发或出站失败
+    Retryable --> Claimed: 释放 claim + 后台/后续回调重试
+    Committed --> Duplicate: 重启后回放同一 msgid
+    Duplicate --> [*]: 跳过，不再次调用 Agent
+```
 
 转人工流程：
 
@@ -236,7 +267,7 @@ openclaw channels status --probe
 | 客户回复窗口 | 48 小时 |
 | 单条客户消息回复条数 | 最多 5 条 |
 | `sync_msg` 可拉取时间 | 3 天内 |
-| access token 有效期 | 约 10 分钟 |
+| access token 有效期 | 以接口 `expires_in` 为准（默认按 7200 秒处理并提前刷新） |
 | welcome_code 有效期 | 约 20 秒 |
 
 ## 常用命令
@@ -257,6 +288,9 @@ openclaw config set session.dmScope per-account-channel-peer
 cd extensions/wecom-kf
 pnpm test
 pnpm typecheck
+
+# OpenClaw 2026.7.1 安装态协议闭环（本机 AES/OpenAPI 夹具）
+OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins wecom-kf --skip-browser
 ```
 
 会话中可用命令：
@@ -284,6 +318,10 @@ pnpm typecheck
 pnpm test
 pnpm test:coverage
 ```
+
+当前自动化证据：34 个测试文件、160 个测试通过；安装态 E2E 已覆盖 tarball 安装、企业微信格式 AES 回调、
+`gettoken`、`sync_msg`、真实 Agent Turn、`send_msg`，以及 Gateway 重启后的 cursor 恢复和 `msgid` 持久防重。
+本地 OpenAPI 夹具允许 `http://localhost` / `127.0.0.1`；非 loopback 地址仍强制 HTTPS。
 
 真实联调建议：
 

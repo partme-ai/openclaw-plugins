@@ -32,6 +32,7 @@ vi.mock("../src/outbound.js", () => ({
 import { DEFAULT_WEB_MQTT_CONFIG } from "../src/config.js";
 import { processInbound } from "../src/inbound.js";
 import { setWebMqttRuntime } from "../src/runtime.js";
+import { getClientUsername } from "../src/transport/server.js";
 import type { WebMqttConfig } from "../src/types.js";
 
 const { dispatchChannelMessage, resolveChannelDispatchIdentity } = mocks;
@@ -49,6 +50,7 @@ function baseConfig(overrides: Partial<WebMqttConfig> = {}): WebMqttConfig {
 describe("processInbound", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getClientUsername).mockReturnValue("alice");
     setWebMqttRuntime({ config: {} } as never);
   });
 
@@ -183,5 +185,57 @@ describe("processInbound", () => {
     await expect(processInbound(event, baseConfig())).rejects.toThrow("temporary Agent failure");
     expect((await processInbound(event, baseConfig())).accepted).toBe(true);
     expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed when authenticated inbound identity is missing", async () => {
+    vi.mocked(getClientUsername).mockReturnValueOnce(null);
+    const result = await processInbound(
+      {
+        clientId: "missing-user",
+        topic: "openclaw/agent/demo/in",
+        payload: Buffer.from("secure message"),
+      },
+      baseConfig({
+        auth: {
+          required: true,
+          allowAnonymous: false,
+          users: [{ username: "alice", password: "secret", publishAllow: ["openclaw/#"] }],
+        },
+      }),
+    );
+
+    expect(result).toEqual({ accepted: false, reason: "acl_inbound_identity_missing" });
+    expect(dispatchChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it("enforces account-scoped inbound ACL rules", async () => {
+    const result = await processInbound(
+      {
+        clientId: "client-account",
+        topic: "devices/secure/in",
+        payload: Buffer.from("secure message"),
+      },
+      baseConfig({
+        subscribeTopics: ["devices/#"],
+        topicBindings: [{ topicPattern: "devices/#", agentId: "secure", accountId: "account-b" }],
+        auth: {
+          required: true,
+          allowAnonymous: false,
+          users: [{
+            username: "alice",
+            password: "secret",
+            aclRules: [{
+              action: "inbound",
+              topicPattern: "devices/#",
+              effect: "allow",
+              accountId: "account-a",
+            }],
+          }],
+        },
+      }),
+    );
+
+    expect(result).toEqual({ accepted: false, reason: "acl_inbound_denied" });
+    expect(dispatchChannelMessage).not.toHaveBeenCalled();
   });
 });

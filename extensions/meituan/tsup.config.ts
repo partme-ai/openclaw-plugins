@@ -1,5 +1,6 @@
 import { defineConfig } from "tsup";
 
+/** Meituan Tool 插件发布构建：生成 Node 22 ESM 入口与类型声明。 */
 export default defineConfig({
   entry: ["src/index.ts"],
   format: ["esm"],

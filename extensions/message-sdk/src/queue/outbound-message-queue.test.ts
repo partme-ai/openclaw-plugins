@@ -40,6 +40,17 @@ describe("OutboundMessageQueue", () => {
     expect(queue.size).toBe(0);
   });
 
+  it("round-robins sessions while preserving FIFO inside each session", () => {
+    const queue = new OutboundMessageQueue();
+    queue.push(item("a", "a-1"));
+    queue.push(item("a", "a-2"));
+    queue.push(item("b", "b-1"));
+
+    expect(queue.pop()?.text).toBe("a-1");
+    expect(queue.pop()?.text).toBe("b-1");
+    expect(queue.pop()?.text).toBe("a-2");
+  });
+
   it("rejects invalid capacity configuration", () => {
     expect(() => new OutboundMessageQueue({ maxSize: -1 })).toThrow(/positive safe integer/);
   });

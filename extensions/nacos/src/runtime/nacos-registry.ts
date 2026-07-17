@@ -8,7 +8,7 @@ import { NacosNamingClient } from "nacos";
 import { resolveNamingServerList } from "../config/spring-normalize.js";
 import type { OpenClawConfigSlice, NacosPluginConfig, PluginLog } from "../shared/types.js";
 import { resolveGatewayPort, resolveHooksInfo, resolveRegisterIp } from "../config/resolve-endpoint.js";
-import { createNacosSdkLogger, DEFAULT_GROUP, DEFAULT_NAMESPACE, DEFAULT_SERVICE } from "../shared/shared.js";
+import { createNacosSdkLogger, DEFAULT_GROUP, DEFAULT_NAMESPACE, DEFAULT_SERVICE, tryCloseNacosClient } from "../shared/shared.js";
 
 export type NamingRegistryState = {
   serviceName: string;
@@ -33,7 +33,8 @@ export function buildInstanceMetadata(params: {
     provider: "openclaw-nacos",
   };
   const extra = params.plugin.metadata ?? {};
-  return { ...base, ...extra };
+  // 用户 metadata 不能伪造插件保留字段，否则集群消费者会被错误端口/能力标记误导。
+  return { ...extra, ...base };
 }
 
 export class GatewayNacosRegistry {
@@ -76,18 +77,24 @@ export class GatewayNacosRegistry {
         : {}),
     });
 
-    await client.ready();
+    try {
+      await client.ready();
 
-    /** SDK runtime accepts plain objects; upstream `.d.ts` is incomplete for `metadata`. */
-    const instancePayload = {
-      ip,
-      port,
-      ephemeral,
-      weight,
-      ...(clusterName ? { clusterName } : {}),
-      metadata,
-    };
-    await client.registerInstance(serviceName, instancePayload as never, groupName);
+      /** SDK runtime accepts plain objects; upstream `.d.ts` is incomplete for `metadata`. */
+      const instancePayload = {
+        ip,
+        port,
+        ephemeral,
+        weight,
+        ...(clusterName ? { clusterName } : {}),
+        metadata,
+      };
+      await client.registerInstance(serviceName, instancePayload as never, groupName);
+    } catch (error) {
+      // ready 成功后 register 仍可能失败；未关闭会遗留心跳定时器和长连接。
+      await tryCloseNacosClient(client, logger, "naming startup");
+      throw error;
+    }
 
     this.client = client;
     this.state = { serviceName, groupName, ip, port };
@@ -112,6 +119,9 @@ export class GatewayNacosRegistry {
       logger.info(`[openclaw-nacos] Deregistered ${state.ip}:${state.port} from ${state.serviceName}`);
     } catch (err) {
       logger.warn(`[openclaw-nacos] Deregister failed: ${String(err)}`);
+    } finally {
+      // deregister 只移除实例，不会停止 SDK 自身的心跳与连接。
+      await tryCloseNacosClient(client, logger, "naming");
     }
   }
 }

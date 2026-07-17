@@ -3,6 +3,17 @@
   "name": "OpenClaw Bridge",
   "version": "2026.7.1",
   "description": "OpenClaw 2026.7.1 IM context and MQ observation bridge using official hooks and outbound adapters",
+  "main": "dist/index.js",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["hook"]
+  },
+  "channels": [],
+  "commands": [],
+  "skills": [],
+  "contracts": {
+    "hooks": ["before_prompt_build", "message_received", "message_sent"]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -33,7 +44,10 @@
           "maxAttempts": { "type": "integer", "minimum": 1, "default": 3 },
           "retryDelayMs": { "type": "integer", "minimum": 1, "default": 250 },
           "publishTimeoutMs": { "type": "integer", "minimum": 1, "default": 5000 },
-          "maxPayloadBytes": { "type": "integer", "minimum": 1, "default": 1048576 }
+          "maxPayloadBytes": { "type": "integer", "minimum": 1, "default": 1048576 },
+          "maxInFlight": { "type": "integer", "minimum": 1, "default": 4 },
+          "maxBufferedMessages": { "type": "integer", "minimum": 1, "default": 1024 },
+          "shutdownTimeoutMs": { "type": "integer", "minimum": 1, "default": 10000 }
         }
       }
     }

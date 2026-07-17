@@ -48,6 +48,12 @@ export type SetupTextInputSpec = {
   required?: boolean;
 };
 
+/**
+ * 声明式渠道向导的完整描述参数。
+ *
+ * `resolveConfigured` 是状态展示与最终启用判断的共同事实来源；凭据和文本字段只描述如何从
+ * CLI 输入安全写入 `channels.<id>`，工厂本身不会建立 Broker 连接或验证网络可达性。
+ */
 export type SimpleChannelSetupParams = {
   channel: string;
   label: string;

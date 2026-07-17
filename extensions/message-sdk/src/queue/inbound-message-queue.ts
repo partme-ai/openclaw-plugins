@@ -8,7 +8,7 @@
  * **适用场景**：插件进程内「先入队再派发」的顺序控制；跨进程去重应组合 `dedup/persistent-dedupe`
  * 或 `claimable-dedupe`。
  *
- * **关键导出**：`InboundMessageQueue`、`InboundPushParams`、`InboundQueueItem`
+ * **关键导出**：`InboundMessageQueue`、`InboundPushResult`、`InboundMessageQueueCapacityError`
  */
 
 import type { UnifiedMessage } from "../core/types.js";
@@ -37,6 +37,13 @@ export interface InboundPushParams {
 export type InboundQueueHandler = (item: InboundQueueItem) => void | Promise<void>;
 
 /**
+ * 精确的入队结果。
+ *
+ * `duplicate` 可以安全确认消费；`full` 必须告警、重试或反压，二者不能混为一谈。
+ */
+export type InboundPushResult = "accepted" | "duplicate" | "full";
+
+/**
  * 队列内部保存的入站消息条目。
  *
  * @property message - 入站统一消息
@@ -55,11 +62,23 @@ export interface InboundQueueItem {
  * @property idempotency - 可选内存幂等缓存，用于拒绝重复 messageId/key
  * @property onPush - 入队后立即触发的处理器
  * @property maxSize - 队列最大容量（默认 10_000）；超出时 push 返回 false
+ * @property onOverflow - 队列满时的观测回调；回调失败不会改变入队结果
  */
 export interface InboundMessageQueueOptions {
   idempotency?: IdempotencyCache;
   onPush?: InboundQueueHandler;
   maxSize?: number;
+  onOverflow?: (info: { params: InboundPushParams; size: number; maxSize: number }) =>
+    | void
+    | Promise<void>;
+}
+
+/** 入站队列已满；消费者应重试或触发上游反压，不能把它当作重复消息确认。 */
+export class InboundMessageQueueCapacityError extends Error {
+  constructor(public readonly maxSize: number) {
+    super(`InboundMessageQueue capacity exceeded (maxSize=${maxSize})`);
+    this.name = "InboundMessageQueueCapacityError";
+  }
 }
 
 /**
@@ -81,6 +100,7 @@ export class InboundMessageQueue {
   private readonly queue: InboundQueueItem[] = [];
   private readonly idempotency?: IdempotencyCache;
   private readonly onPush?: InboundQueueHandler;
+  private readonly onOverflow?: InboundMessageQueueOptions["onOverflow"];
   private readonly maxSize: number;
 
   /**
@@ -95,27 +115,44 @@ export class InboundMessageQueue {
     }
     this.idempotency = options.idempotency;
     this.onPush = options.onPush;
+    this.onOverflow = options.onOverflow;
     this.maxSize = maxSize;
   }
 
   /**
    * 将消息放入队列，并在需要时触发 onPush。
    *
-   * 若配置了幂等缓存且 key 在 TTL 内已见过，则不入队并返回 `false`。
+   * 兼容布尔返回值的便捷入口。需要区分「重复」和「队列已满」时应调用 `pushDetailed`。
    *
    * @param params - 入队消息、幂等 key 和传输元数据
-   * @returns `true` 表示消息被接受；`false` 表示被幂等缓存判定为重复
+   * @returns `true` 表示消息被接受；`false` 表示重复或队列已满
    */
   async push(params: InboundPushParams): Promise<boolean> {
-    // Capacity must be checked before reserving the idempotency key. Otherwise
-    // a full queue poisons the key and a later retry is incorrectly rejected.
+    return (await this.pushDetailed(params)) === "accepted";
+  }
+
+  /**
+   * 将消息原子地入队，并返回可用于消费确认决策的精确结果。
+   *
+   * 容量检查必须早于幂等 key 占位，否则队列满时会污染 key，后续合法重试也会被误判为重复。
+   */
+  async pushDetailed(params: InboundPushParams): Promise<InboundPushResult> {
     if (this.queue.length >= this.maxSize) {
-      return false;
+      if (this.onOverflow) {
+        try {
+          void Promise.resolve(
+            this.onOverflow({ params, size: this.queue.length, maxSize: this.maxSize }),
+          ).catch(() => undefined);
+        } catch {
+          // 指标或告警失败不能反向改变队列的容量语义。
+        }
+      }
+      return "full";
     }
 
     const key = params.idempotencyKey ?? params.message.messageId;
     if (this.idempotency?.remember(key)) {
-      return false;
+      return "duplicate";
     }
 
     const item: InboundQueueItem = {
@@ -129,15 +166,14 @@ export class InboundMessageQueue {
       try {
         await this.onPush(item);
       } catch (error) {
-        // `push` is atomic from the caller's perspective: a failed immediate
-        // handler neither leaves a phantom queue item nor suppresses retries.
+        // 对调用方保持原子性：即时处理失败时既不留下幽灵条目，也不阻断后续重试。
         const index = this.queue.indexOf(item);
         if (index >= 0) this.queue.splice(index, 1);
         this.idempotency?.forget(key);
         throw error;
       }
     }
-    return true;
+    return "accepted";
   }
 
   /**
@@ -163,6 +199,11 @@ export class InboundMessageQueue {
    */
   get size(): number {
     return this.queue.length;
+  }
+
+  /** 配置的容量上限，供派发层生成明确的反压错误与指标标签。 */
+  get maxCapacity(): number {
+    return this.maxSize;
   }
 
   /**

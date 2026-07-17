@@ -101,6 +101,21 @@ Text send example:
 
 Media messages use CDN parameters and AES-128-ECB encryption. See `src/api/types.ts` and `src/api/api.ts` for implementation details.
 
+## Inbound transaction boundary
+
+```mermaid
+flowchart LR
+    P["getUpdates batch"] --> A["DM and command authorization"]
+    A -->|unauthorized| D["Drop without slash, media, getConfig, or Agent work"]
+    A -->|authorized| W["Command or Agent processing"]
+    W --> M["Persist completed message_id"]
+    D --> M
+    M --> C["Commit next cursor only after the full batch"]
+    W -->|failure| R["Keep cursor and retry with at-least-once semantics"]
+```
+
+`allowFrom` is an optional static allowlist merged with the QR pairing store. Runtime caches and private context-token state are bounded, and log output redacts identifiers, sessions, content previews, paths, and URL details.
+
 ## Verification and Development
 
 ```bash

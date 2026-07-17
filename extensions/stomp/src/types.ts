@@ -1,4 +1,4 @@
-/** Shared production types for the embedded STOMP 1.2 TCP channel. */
+/** 内嵌 STOMP 1.2 TCP 渠道的生产配置、连接与状态类型。 */
 export type StompAckMode = "auto" | "client" | "client-individual";
 
 export interface TopicBinding {
@@ -69,6 +69,8 @@ export interface StompConnection {
   subscriptions: string[];
   inflightCount: number;
   queuedCount: number;
+  /** 当前连接内尚未 COMMIT/ABORT 的事务数。 */
+  transactionCount: number;
 }
 
 export interface InboundMessage {
@@ -93,6 +95,7 @@ export interface StompStatusSnapshot {
   droppedInbound: number;
   droppedOutbound: number;
   ackPending: number;
+  activeTransactions: number;
 }
 
 export interface ResolvedStompTcpAccount {

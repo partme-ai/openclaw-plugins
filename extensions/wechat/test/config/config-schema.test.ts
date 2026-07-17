@@ -12,10 +12,13 @@ describe("WeixinConfigSchema", () => {
     expect(result.cdnBaseUrl).toBe("https://novac2c.cdn.weixin.qq.com/c2c");
   });
 
-  it("accepts custom baseUrl and cdnBaseUrl", () => {
+  it("accepts custom baseUrl and cdnBaseUrl only with explicit trust flags", () => {
+    expect(() => WeixinConfigSchema.parse({ baseUrl: "https://custom.api.com" })).toThrow("allowCustomApiBaseUrl=true");
     const result = WeixinConfigSchema.parse({
       baseUrl: "https://custom.api.com",
       cdnBaseUrl: "https://custom.cdn.com",
+      allowCustomApiBaseUrl: true,
+      allowCustomCdnBaseUrl: true,
     });
     expect(result.baseUrl).toBe("https://custom.api.com");
     expect(result.cdnBaseUrl).toBe("https://custom.cdn.com");
@@ -28,6 +31,12 @@ describe("WeixinConfigSchema", () => {
     });
     expect(result.name).toBe("my-bot");
     expect(result.enabled).toBe(false);
+  });
+
+  it("parses and bounds the static allowFrom list", () => {
+    const result = WeixinConfigSchema.parse({ allowFrom: [" user-a ", "user-b"] });
+    expect(result.allowFrom).toEqual(["user-a", "user-b"]);
+    expect(() => WeixinConfigSchema.parse({ allowFrom: ["x".repeat(257)] })).toThrow();
   });
 
   it("accepts accounts map", () => {
@@ -43,5 +52,7 @@ describe("WeixinConfigSchema", () => {
 
   it("rejects invalid types", () => {
     expect(() => WeixinConfigSchema.parse({ enabled: "yes" })).toThrow();
+    expect(() => WeixinConfigSchema.parse({ unknownOption: true })).toThrow();
+    expect(() => WeixinConfigSchema.parse({ accounts: { acc1: { unknownOption: true } } })).toThrow();
   });
 });

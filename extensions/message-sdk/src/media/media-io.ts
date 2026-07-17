@@ -18,8 +18,10 @@ import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import { randomUUID } from "node:crypto";
 import { isHttpUrl, normalizeLocalPath, getExtension } from "./media-parser.js";
 import { resolveExtension } from "../file/file-utils.js";
+import { safeFetch } from "../http/safe-fetch.js";
 
 // ============================================================================
 // 类型
@@ -195,12 +197,77 @@ function resolveFileNameFromUrl(url: string): string | undefined {
   try { const base = path.basename(new URL(url).pathname); return base && base !== "/" ? base : undefined; } catch { return undefined; }
 }
 
-function normalizeForCompare(value: string): string { return path.resolve(value).replace(/\\/g, "/").toLowerCase(); }
+function normalizeForCompare(value: string): string {
+  const resolved = path.resolve(value).replace(/\\/g, "/");
+  // Windows 路径大小写不敏感；Unix/macOS 可能位于大小写敏感卷，不能擅自 lowerCase 后放宽边界。
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
 
 function isPathUnderDir(filePath: string, dirPath: string): boolean {
-  const f = normalizeForCompare(filePath);
-  const d = normalizeForCompare(dirPath).replace(/\/+$/, "");
-  return f === d || f.startsWith(`${d}/`);
+  const relative = path.relative(normalizeForCompare(dirPath), normalizeForCompare(filePath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * 有界读取 Web Response，避免 `arrayBuffer()` 在校验前把任意大响应完整装入内存。
+ * 每次累计后立即检查上限；超限时主动取消 reader，让连接尽快释放。
+ */
+async function readResponseBodyBounded(response: Response, maxSize: number): Promise<Buffer> {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxSize) {
+        await reader.cancel().catch(() => undefined);
+        throw new FileSizeLimitError(`Stream size ${totalBytes} > ${maxSize}`, totalBytes, maxSize);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, totalBytes);
+}
+
+/** HTTP 错误正文只取少量诊断片段，避免错误响应本身成为内存放大入口。 */
+async function readErrorBodySnippet(response: Response, maxBytes = 4096): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    while (totalBytes < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = maxBytes - totalBytes;
+      const chunk = Buffer.from(value).subarray(0, remaining);
+      chunks.push(chunk);
+      totalBytes += chunk.length;
+      if (value.byteLength > remaining || totalBytes >= maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, totalBytes).toString("utf8");
+}
+
+/** FileHandle.write 允许部分写入；循环直到当前网络分块完全落盘。 */
+async function writeAll(file: fsPromises.FileHandle, value: Uint8Array): Promise<void> {
+  const buffer = Buffer.from(value);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const { bytesWritten } = await file.write(buffer, offset, buffer.length - offset, null);
+    if (bytesWritten <= 0) throw new Error("media temp file write made no progress");
+    offset += bytesWritten;
+  }
 }
 
 function formatDateDir(date = new Date()): string {
@@ -232,10 +299,12 @@ export function getMimeType(filePath: string): string | undefined {
 export function validatePathSecurity(filePath: string, options: PathSecurityOptions = {}): void {
   const { allowedPrefixes, maxPathLength = DEFAULT_MAX_PATH_LENGTH, preventTraversal = true } = options;
   if (filePath.length > maxPathLength) throw new PathSecurityError(`Path length ${filePath.length} > ${maxPathLength}`, filePath, "path too long");
-  if (preventTraversal && path.normalize(filePath).includes("..")) throw new PathSecurityError("Path traversal detected", filePath, "traversal");
+  if (filePath.includes("\0")) throw new PathSecurityError("NUL byte detected", filePath, "nul byte");
+  if (preventTraversal && filePath.split(/[\\/]+/).includes("..")) throw new PathSecurityError("Path traversal detected", filePath, "traversal");
   if (allowedPrefixes?.length) {
-    const np = path.normalize(filePath);
-    if (!allowedPrefixes.some((p) => np.startsWith(path.normalize(p)))) throw new PathSecurityError("Path not in allowed prefixes", filePath, "not allowed");
+    if (!allowedPrefixes.some((prefix) => isPathUnderDir(filePath, prefix))) {
+      throw new PathSecurityError("Path not in allowed prefixes", filePath, "not allowed");
+    }
   }
 }
 
@@ -267,17 +336,16 @@ export function getDefaultAllowedPrefixes(): string[] {
  * ```
  */
 export async function fetchMediaFromUrl(url: string, options: MediaReadOptions = {}): Promise<MediaReadResult> {
-  const { timeout = DEFAULT_TIMEOUT, maxSize = DEFAULT_MAX_SIZE, fetch: customFetch = globalThis.fetch } = options;
+  const { timeout = DEFAULT_TIMEOUT, maxSize = DEFAULT_MAX_SIZE } = options;
+  const customFetch = options.fetch ?? safeFetch;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
   try {
     const response = await customFetch(url, { signal: controller.signal });
-    if (!response.ok) { const et = await response.text(); throw new Error(`HTTP ${response.status}: ${et}`); }
+    if (!response.ok) { const et = await readErrorBodySnippet(response); throw new Error(`HTTP ${response.status}: ${et}`); }
     const cl = response.headers.get("content-length");
     if (cl) { const size = parseInt(cl, 10); if (size > maxSize) throw new FileSizeLimitError(`Content-Length ${size} > ${maxSize}`, size, maxSize); }
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    if (buffer.length > maxSize) throw new FileSizeLimitError(`Size ${buffer.length} > ${maxSize}`, buffer.length, maxSize);
+    const buffer = await readResponseBodyBounded(response, maxSize);
     let fileName = "file";
     try { const urlPath = new URL(url).pathname; fileName = path.basename(urlPath) || "file"; } catch { /* ignore */ }
     const mimeType = response.headers.get("content-type")?.split(";")[0]?.trim() || getMimeType(fileName);
@@ -296,12 +364,15 @@ export async function fetchMediaFromUrl(url: string, options: MediaReadOptions =
  */
 export async function downloadToTempFile(url: string, options: DownloadToTempFileOptions = {}): Promise<DownloadToTempFileResult> {
   if (!isHttpUrl(url)) throw new Error(`downloadToTempFile expects HTTP URL, got: ${url}`);
-  const { timeout = DEFAULT_TIMEOUT, maxSize = DEFAULT_MAX_SIZE, fetch: customFetch = globalThis.fetch, tempDir = os.tmpdir(), tempPrefix = "media", sourceFileName } = options;
+  const { timeout = DEFAULT_TIMEOUT, maxSize = DEFAULT_MAX_SIZE, tempDir = os.tmpdir(), tempPrefix = "media", sourceFileName } = options;
+  const customFetch = options.fetch ?? safeFetch;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
+  let fullPath: string | undefined;
+  let file: fsPromises.FileHandle | undefined;
   try {
     const response = await customFetch(url, { signal: controller.signal });
-    if (!response.ok) { const body = await response.text().catch(() => ""); throw new Error(`HTTP ${response.status}: ${body}`); }
+    if (!response.ok) { const body = await readErrorBodySnippet(response).catch(() => ""); throw new Error(`HTTP ${response.status}: ${body}`); }
     const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() || "application/octet-stream";
     const cl = response.headers.get("content-length");
     if (cl) { const declared = parseInt(cl, 10); if (!Number.isNaN(declared) && declared > maxSize) throw new FileSizeLimitError(`Content-Length ${declared} > ${maxSize}`, declared, maxSize); }
@@ -310,27 +381,35 @@ export async function downloadToTempFile(url: string, options: DownloadToTempFil
     const sourceName = sourceFileName || parseContentDispositionFilename(response.headers.get("content-disposition")) || resolveFileNameFromUrl(url) || "file";
     const safePrefix = sanitizeFileName(tempPrefix) || "media";
     const ext = resolveExtension(contentType, sourceName);
-    const random = Math.random().toString(36).slice(2, 8);
-    const fileName = `${safePrefix}-${Date.now()}-${random}${ext}`;
-    const fullPath = path.join(tempDir, fileName);
+    const fileName = `${safePrefix}-${Date.now()}-${randomUUID()}${ext}`;
+    fullPath = path.join(tempDir, fileName);
     await fsPromises.mkdir(tempDir, { recursive: true });
+    // `wx` 防止极低概率的名称碰撞覆盖已有文件；0600 避免共享临时目录泄露媒体内容。
+    file = await fsPromises.open(fullPath, "wx", 0o600);
     let totalBytes = 0;
     const reader = body.getReader();
-    const writeStream = fs.createWriteStream(fullPath);
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         totalBytes += value.byteLength;
-        if (totalBytes > maxSize) { reader.cancel(); throw new FileSizeLimitError(`Stream size ${totalBytes} > ${maxSize}`, totalBytes, maxSize); }
-        if (!writeStream.write(Buffer.from(value))) {
-          await new Promise<void>((resolve) => writeStream.once("drain", resolve));
+        if (totalBytes > maxSize) {
+          await reader.cancel().catch(() => undefined);
+          throw new FileSizeLimitError(`Stream size ${totalBytes} > ${maxSize}`, totalBytes, maxSize);
         }
+        await writeAll(file, value);
       }
-    } finally { reader.releaseLock(); writeStream.destroy(); }
-    await new Promise<void>((resolve, reject) => writeStream.end(() => resolve()));
+    } finally { reader.releaseLock(); }
+    await file.sync();
+    await file.close();
+    file = undefined;
     return { path: fullPath, fileName, contentType, size: totalBytes, sourceFileName: sourceName };
-  } catch (err) { if (err instanceof Error && err.name === "AbortError") throw new MediaTimeoutError(`Timeout after ${timeout}ms`, timeout); throw err; }
+  } catch (err) {
+    await file?.close().catch(() => undefined);
+    if (fullPath) await fsPromises.unlink(fullPath).catch(() => undefined);
+    if (err instanceof Error && err.name === "AbortError") throw new MediaTimeoutError(`Timeout after ${timeout}ms`, timeout);
+    throw err;
+  }
   finally { clearTimeout(timeoutId); }
 }
 
@@ -347,11 +426,22 @@ export async function readMediaFromLocal(filePath: string, options: MediaReadOpt
   const localPath = normalizeLocalPath(filePath);
   validatePathSecurity(localPath, options);
   if (!fs.existsSync(localPath)) throw new Error(`File not found: ${localPath}`);
-  const stats = await fsPromises.stat(localPath);
+  const realPath = await fsPromises.realpath(localPath);
+  if (options.allowedPrefixes?.length) {
+    const realPrefixes = await Promise.all(
+      options.allowedPrefixes.map(async (prefix) => fsPromises.realpath(prefix).catch(() => path.resolve(prefix))),
+    );
+    if (!realPrefixes.some((prefix) => isPathUnderDir(realPath, prefix))) {
+      throw new PathSecurityError("Resolved path not in allowed prefixes", localPath, "symlink escape");
+    }
+  }
+  const stats = await fsPromises.stat(realPath);
+  if (!stats.isFile()) throw new PathSecurityError("Path is not a regular file", localPath, "not regular file");
   if (stats.size > maxSize) throw new FileSizeLimitError(`File size ${stats.size} > ${maxSize}`, stats.size, maxSize);
-  const buffer = await fsPromises.readFile(localPath);
-  const fileName = path.basename(localPath);
-  const mimeType = getMimeType(localPath);
+  const buffer = await fsPromises.readFile(realPath);
+  if (buffer.length > maxSize) throw new FileSizeLimitError(`File size changed to ${buffer.length} > ${maxSize}`, buffer.length, maxSize);
+  const fileName = path.basename(realPath);
+  const mimeType = getMimeType(realPath);
   return { buffer, fileName, size: buffer.length, mimeType };
 }
 

@@ -11,10 +11,10 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import type { VectorStore, VectorChunk, VectorChunkMetadata, SearchOptions, ScoredChunk, StoreStats } from '../types.js';
 import { cosineSimilarity } from './math.js';
+import { DatabaseSync, type DatabaseSyncInstance } from './sqlite-runtime.js';
 import { assertVector } from './vector-validation.js';
 
 /** SQLite-Vec 配置 */
@@ -46,9 +46,15 @@ type FtsRow = {
 /** SQLite 查询结果行（含 BLOB 向量） */
 type ChunkRowWithVector = ChunkRow & { vector: Uint8Array };
 
+/**
+ * Knowledge 默认的持久化向量 Store。
+ *
+ * 每个 namespace 使用独立向量表和 FTS5 表；`replaceBySource` 在一个 SQLite 事务
+ * 中同步替换两张表，失败时保留旧索引。WAL 与 busy timeout 用于提升单机并发稳定性。
+ */
 export class SqliteVecStore implements VectorStore {
   private config: SqliteVecConfig;
-  private db: DatabaseSync | null = null;
+  private db: DatabaseSyncInstance | null = null;
   private namespaceTable: string;
   private ftsTable: string;
 

@@ -6,11 +6,7 @@
   "version": "2026.7.1",
   "channels": ["gotify"],
   "channelEnvVars": {
-    "gotify": [
-      "GOTIFY_SERVER_URL",
-      "GOTIFY_APP_TOKEN",
-      "GOTIFY_CLIENT_TOKEN"
-    ]
+    "gotify": ["GOTIFY_SERVER_URL", "GOTIFY_APP_TOKEN", "GOTIFY_CLIENT_TOKEN"]
   },
   "activation": {
     "onStartup": false,
@@ -65,12 +61,18 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "enabled": { "type": "boolean", "description": "Enable bootstrap helpers on startup" },
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable bootstrap helpers on startup"
+              },
               "autoCreateApplication": {
                 "type": "boolean",
                 "description": "Auto-create Gotify Application when missing"
               },
-              "applicationName": { "type": "string", "description": "Application name for auto-create" },
+              "applicationName": {
+                "type": "string",
+                "description": "Application name for auto-create"
+              },
               "applicationDescription": {
                 "type": "string",
                 "description": "Application description for auto-create"
@@ -81,15 +83,56 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "enabled": { "type": "boolean", "description": "Enable WebSocket stream listener for real-time message receiving" },
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable WebSocket stream listener for real-time message receiving"
+              },
               "allowedAppId": {
                 "type": "integer",
                 "minimum": 1,
                 "description": "Required when inbound is enabled; only consume this Gotify Application ID"
               },
-              "reconnectDelayMs": { "type": "integer", "minimum": 500, "default": 2000 },
-              "maxReconnectDelayMs": { "type": "integer", "minimum": 1000, "default": 30000 },
-              "maxReconnectAttempts": { "type": "integer", "minimum": 0, "default": 10 },
+              "reconnectDelayMs": {
+                "type": "integer",
+                "minimum": 500,
+                "default": 2000
+              },
+              "maxReconnectDelayMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "default": 30000
+              },
+              "maxReconnectAttempts": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 10
+              },
+              "reconnectJitterRatio": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.2
+              },
+              "maxBufferedMessages": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 1000
+              },
+              "maxDispatchAttempts": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 5
+              },
+              "dispatchRetryDelayMs": {
+                "type": "integer",
+                "minimum": 10,
+                "default": 1000
+              },
+              "maxDispatchRetryDelayMs": {
+                "type": "integer",
+                "minimum": 10,
+                "default": 30000
+              },
               "deleteAfterConsume": {
                 "type": "boolean",
                 "default": true,

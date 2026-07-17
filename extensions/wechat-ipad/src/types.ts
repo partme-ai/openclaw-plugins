@@ -9,9 +9,12 @@
 
 import type { OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
 
+/** OpenClaw 注入插件注册阶段的 API 类型。 */
 export type PluginApi = OpenClawPluginApi;
+/** OpenClaw Channel 消息调度和回复投递所需的 Gateway Runtime。 */
 export type GatewayRuntime = PluginRuntime;
 
+/** 桥接层使用的最小日志接口，避免 transport 依赖完整插件 API。 */
 export type PluginLogger = Pick<OpenClawPluginApi["logger"], "debug" | "info" | "warn" | "error">;
 
 // ─────────────────── iPad 协议服务类型 ───────────────────
@@ -210,6 +213,8 @@ export interface WechatIpadConfig {
   acknowledgeUnofficialProtocolRisk: boolean;
   /** 初次连接失败时是否阻止 Gateway 启动。 */
   required: boolean;
+  /** 是否允许 WebSocket 与 HTTP API 指向不同远程主机；默认关闭以降低 Token 误发风险。 */
+  allowSplitBridgeHosts: boolean;
   /** iPad 协议服务 WebSocket 地址 */
   serviceUrl: string;
   /** iPad 协议服务 HTTP API 地址 */
@@ -236,11 +241,19 @@ export interface WechatIpadConfig {
   };
   /** 消息处理配置 */
   message: {
+    /** 私聊准入策略；外部桥接无法使用官方 pairing，因此默认采用白名单。 */
+    dmPolicy: "allowlist" | "open" | "disabled";
+    /** 允许进入 Agent 的私聊发送者 wxid；仅 `allowlist` 策略使用。 */
+    allowFrom: string[];
+    /** 允许执行 OpenClaw 命令的发送者 wxid；与普通对话准入分离。 */
+    commandAllowFrom: string[];
     handleGroup: boolean;
     groupWhitelist: string[];
     allowAllGroups: boolean;
     ignoreSelf: boolean;
     maxTextChars: number;
+    /** 串行 Agent 管道前允许等待的最大消息数，防止桥接事件洪泛耗尽内存。 */
+    maxPendingMessages: number;
   };
 }
 
@@ -249,6 +262,7 @@ export const DEFAULT_CONFIG: WechatIpadConfig = {
   enabled: false,
   acknowledgeUnofficialProtocolRisk: false,
   required: true,
+  allowSplitBridgeHosts: false,
   serviceUrl: "ws://127.0.0.1:5555",
   apiUrl: "http://127.0.0.1:5556",
   reconnect: {
@@ -268,10 +282,14 @@ export const DEFAULT_CONFIG: WechatIpadConfig = {
     pongTimeoutMs: 10_000,
   },
   message: {
+    dmPolicy: "allowlist",
+    allowFrom: [],
+    commandAllowFrom: [],
     handleGroup: false,
     groupWhitelist: [],
     allowAllGroups: false,
     ignoreSelf: true,
     maxTextChars: 20_000,
+    maxPendingMessages: 256,
   },
 };

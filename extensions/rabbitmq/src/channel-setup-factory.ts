@@ -1,4 +1,3 @@
-// @ts-nocheck — large declarative wizard factory mirrors openclaw setup SDK surface; stubs vary by peer installs.
 /**
  * @fileoverview 共享 Channel setupWizard / setupAdapter 工厂。
  *
@@ -8,6 +7,7 @@
  *
  * @module channel-setup-factory
  */
+// @ts-nocheck — 声明式向导镜像 OpenClaw setup SDK；不同 peer 安装的类型桩存在版本差异。
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type { ChannelSetupAdapter, ChannelSetupWizard } from "openclaw/plugin-sdk/setup";

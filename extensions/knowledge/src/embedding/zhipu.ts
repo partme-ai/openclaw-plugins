@@ -15,6 +15,12 @@ const DEFAULT_DIMENSIONS = 2048;
 /** 智谱 AI API 端点 */
 const DEFAULT_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4/embeddings';
 
+/**
+ * 智谱 Embedding API 适配器。
+ *
+ * `embedding-3` 可按配置传递维度，其他模型保持服务端固定维度；所有响应都会在
+ * 返回前核对条目数和向量维度，外部 API 的异常数据不会进入持久化 Store。
+ */
 export class ZhipuEmbeddingService implements EmbeddingService {
   readonly dimensions: number;
   readonly modelName: string;

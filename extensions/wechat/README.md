@@ -102,6 +102,55 @@ openclaw gateway restart
 
 本插件通过 HTTP JSON API 与后端网关通信。所有接口均为 `POST`，请求和响应均为 JSON。
 
+```mermaid
+flowchart LR
+    W["微信用户"] --> P["iLink getUpdates 长轮询"]
+    P --> G["持久游标 + message_id 防重"]
+    G --> A["OpenClaw Agent"]
+    A --> S["iLink sendMessage"]
+    S --> W
+```
+
+入站处理遵循“先鉴权、后副作用、整批提交”的事务边界。`allowFrom` 会与扫码配对文件合并；空白名单不会被解释为允许所有人。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant API as iLink API
+    participant M as Monitor
+    participant Auth as DM/命令鉴权
+    participant Agent as OpenClaw Agent
+    participant State as 私有状态文件
+
+    M->>API: getUpdates(当前 get_updates_buf)
+    API-->>M: 消息批次 + next get_updates_buf
+    loop 批内严格串行
+        M->>Auth: senderId + allowFrom + pairing store
+        alt 未授权
+            Auth-->>M: drop（不执行命令/媒体/getConfig）
+        else 已授权
+            Auth-->>M: commandAuthorized
+            M->>Agent: 标准入站上下文
+            Agent-->>M: 回复完成
+            M->>State: 持久化 message_id 完成记录
+        end
+    end
+    M->>State: 原子提交 next get_updates_buf
+    Note over M,State: 任一已授权消息失败则不提交游标，重启后至少一次重放
+```
+
+可选静态白名单配置如下；扫码登录用户仍会通过配对存储自动授权：
+
+```json
+{
+  "channels": {
+    "openclaw-weixin": {
+      "allowFrom": ["<WEIXIN_USER_ID>"]
+    }
+  }
+}
+```
+
 通用请求头：
 
 | Header | 说明 |
@@ -167,6 +216,16 @@ pnpm build
 pnpm typecheck
 pnpm test
 ```
+
+安装态协议回归：
+
+```bash
+node scripts/e2e/run-e2e.mjs --plugins wechat --skip-browser
+```
+
+API/CDN 凭据目标默认锁定官方地址；自定义可信 HTTPS 代理需要分别开启 `allowCustomApiBaseUrl` 或 `allowCustomCdnBaseUrl`。QR 返回的 IDC 跳转不接受自定义信任，只允许 `weixin.qq.com` 域名。Token、上下文 Token 与长轮询游标采用私有权限和原子写入。
+
+运行日志只保留账号的不可逆短指纹，并在最终写入出口再次清除用户 ID、会话键、正文预览、文件路径和 URL 细节。`context_token` 与 `getConfig` 缓存均为有界存储，避免长期运行时由变化的发送者标识造成内存或状态文件无限增长。
 
 ## 常见问题
 

@@ -87,6 +87,71 @@ describe("validateWebMqttConfig", () => {
     expect(config.ws.compress).toBe(false);
   });
 
+  it("should canonicalize and deduplicate valid browser origins", () => {
+    const config = resolveWebMqttConfig({
+      channels: {
+        "mqtt-ws": {
+          ws: {
+            allowedOrigins: [
+              " https://console.example.com/ ",
+              "https://console.example.com",
+            ],
+          },
+        },
+      },
+    });
+    expect(config.ws.allowedOrigins).toEqual(["https://console.example.com"]);
+  });
+
+  it("should preserve invalid numbers so startup validation rejects them", () => {
+    const config = resolveWebMqttConfig({
+      channels: {
+        "mqtt-ws": {
+          port: 0,
+          maxConnections: 1.5,
+          limits: { maxPendingMessagesPerClient: -1 },
+        },
+      },
+    });
+    const issues = validateWebMqttConfig(config);
+    expect(config.port).toBe(0);
+    expect(config.maxConnections).toBe(1.5);
+    expect(config.limits.maxPendingMessagesPerClient).toBe(-1);
+    expect(issues.some((issue) => issue.includes("port"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("maxConnections"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("maxPendingMessagesPerClient"))).toBe(true);
+  });
+
+  it("should reject malformed origins, topic filters, ACL filters and reply topics", () => {
+    const config = resolveWebMqttConfig({
+      channels: {
+        "mqtt-ws": {
+          ws: { allowedOrigins: ["javascript:alert(1)"] },
+          subscribeTopics: ["devices/#/admin"],
+          topicBindings: [{
+            topicPattern: "devices/sensor+/in",
+            agentId: "iot",
+            replyTopic: "devices/+/out",
+          }],
+          auth: {
+            required: true,
+            users: [{
+              username: "alice",
+              password: "secret",
+              publishAllow: ["devices/foo#"],
+            }],
+          },
+        },
+      },
+    });
+    const issues = validateWebMqttConfig(config);
+    expect(issues.some((issue) => issue.includes("allowedOrigins"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("subscribeTopics"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("topicPattern"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("replyTopic"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("ACL Topic Filter"))).toBe(true);
+  });
+
   it("should reject a payload limit larger than the WebSocket frame limit", () => {
     const config = resolveWebMqttConfig({
       channels: { "mqtt-ws": { ws: { maxFrameSize: 1024 }, limits: { maxPayloadBytes: 2048 } } },

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { EventEmitter } from "node:events";
 import { DEFAULT_RABBITMQ_CONFIG } from "../src/config.js";
 
 type ConsumeCb = (msg: any) => void;
@@ -20,24 +21,27 @@ const consumeCh = {
   close: vi.fn(),
 };
 
-const publishCh = {
+const publishCh = Object.assign(new EventEmitter(), {
   assertExchange: vi.fn(),
   publish: vi.fn((_exchange: string, _routingKey: string, _content: Buffer, _options: unknown, callback?: (error: Error | null) => void) => {
     callback?.(null);
     return true;
   }),
   close: vi.fn(),
-};
+});
 
-const requestCh = {
+const requestCh = Object.assign(new EventEmitter(), {
   consume: vi.fn(async (_q: string, _cb: any) => {
     requestCh._cb = _cb;
     return { consumerTag: "rtag" };
   }),
-  sendToQueue: vi.fn(),
+  publish: vi.fn((_exchange: string, _routingKey: string, _content: Buffer, _options: unknown, callback?: (error: Error | null) => void) => {
+    callback?.(null);
+    return true;
+  }),
   close: vi.fn(),
   _cb: null as any,
-};
+});
 
 const connection = {
   createChannel: vi.fn(),
@@ -72,7 +76,9 @@ describe("rabbitmq-server", () => {
     vi.clearAllMocks();
     connection.createChannel.mockImplementationOnce(async () => consumeCh as any);
     connection.createChannel.mockImplementation(async () => requestCh as any);
-    connection.createConfirmChannel.mockImplementation(async () => publishCh as any);
+    connection.createConfirmChannel
+      .mockImplementationOnce(async () => publishCh as any)
+      .mockImplementation(async () => requestCh as any);
   });
 
   afterEach(async () => {
@@ -164,9 +170,16 @@ describe("rabbitmq-server", () => {
     ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/transport/server.js"));
     await startRabbitmqServer(DEFAULT_RABBITMQ_CONFIG, async () => ({ ok: true as const }));
     const promise = requestMessage({ queue: "rpc_queue", payload: JSON.stringify({ a: 1 }), timeoutMs: 1000, correlationId: "cid" });
-    expect(requestCh.sendToQueue).toHaveBeenCalledTimes(0);
+    expect(requestCh.publish).toHaveBeenCalledTimes(0);
     await new Promise((r) => setTimeout(r, 0));
-    expect(requestCh.sendToQueue).toHaveBeenCalledTimes(1);
+    expect(requestCh.publish).toHaveBeenCalledTimes(1);
+    expect(requestCh.publish).toHaveBeenCalledWith(
+      "",
+      "rpc_queue",
+      expect.any(Buffer),
+      expect.objectContaining({ mandatory: true, persistent: true, replyTo: "amq.rabbitmq.reply-to" }),
+      expect.any(Function),
+    );
 
     requestCh._cb?.({
       content: Buffer.from(JSON.stringify({ ok: true })),
@@ -188,9 +201,41 @@ describe("rabbitmq-server", () => {
       DEFAULT_RABBITMQ_CONFIG.exchange,
       "openclaw.agent.main.out.device-1",
       expect.any(Buffer),
-      expect.objectContaining({ persistent: true }),
+      expect.objectContaining({ persistent: true, mandatory: true }),
       expect.any(Function),
     );
+  });
+
+  it("rejects an unroutable mandatory publish instead of reporting false success", async () => {
+    ({ startRabbitmqServer, stopRabbitmqServer, publishMessage } = await import("../src/transport/server.js"));
+    await startRabbitmqServer(DEFAULT_RABBITMQ_CONFIG, async () => ({ ok: true as const }));
+    publishCh.publish.mockImplementationOnce((_exchange, routingKey, _content, options: any, callback) => {
+      publishCh.emit("return", {
+        fields: { routingKey },
+        properties: { headers: options.headers },
+        content: Buffer.from("reply"),
+      });
+      callback?.(null);
+      return true;
+    });
+
+    await expect(publishMessage("missing.route", "reply")).rejects.toThrow("unroutable");
+  });
+
+  it("validates RPC queue and timeout before opening a channel", async () => {
+    ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/transport/server.js"));
+    await startRabbitmqServer(DEFAULT_RABBITMQ_CONFIG, async () => ({ ok: true as const }));
+
+    await expect(requestMessage({ queue: " ", payload: "{}", timeoutMs: 1000 })).rejects.toThrow("queue is required");
+    await expect(requestMessage({ queue: "rpc", payload: "{}", timeoutMs: 0 })).rejects.toThrow("positive integer");
+  });
+
+  it("computes bounded reconnect delay with deterministic jitter", async () => {
+    const { computeReconnectDelay } = await import("../src/transport/server.js");
+    expect(computeReconnectDelay(DEFAULT_RABBITMQ_CONFIG, 0, () => 0.5)).toBe(5000);
+    expect(computeReconnectDelay(DEFAULT_RABBITMQ_CONFIG, 10, () => 0.5)).toBe(60000);
+    expect(computeReconnectDelay(DEFAULT_RABBITMQ_CONFIG, 0, () => 0)).toBe(4000);
+    expect(computeReconnectDelay(DEFAULT_RABBITMQ_CONFIG, 0, () => 1)).toBe(6000);
   });
 
   it("confirm-publishes failures to retry exchange and exhausted messages to DLQ", async () => {

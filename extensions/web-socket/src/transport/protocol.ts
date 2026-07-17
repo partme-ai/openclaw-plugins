@@ -4,15 +4,22 @@
  * 客户端 ↔ Gateway JSON 文本帧协议。
  *
  * 客户端入站：
- * - `{ "type": "message", "text": "...", "agentId?": "...", "messageId?": "..." }`
- * - `{ "type": "ping" }`
+ * - `{ "version": "1", "type": "message", "text": "...", "messageId?": "..." }`
+ * - `{ "version": "1", "type": "ping" }`
  *
  * 服务端出站：
- * - `{ "type": "connected", "connectionId": "..." }`
+ * - `{ "version": "1", "type": "connected", "connectionId": "..." }`
  * - `{ "type": "reply", "text": "...", "sessionKey?": "...", "messageId?": "..." }`
  * - `{ "type": "pong" }`
  * - `{ "type": "error", "message": "..." }`
  */
+
+/** 当前线上帧协议版本；握手和所有结构化出站帧都会携带它。 */
+export const WEBSOCKET_PROTOCOL_VERSION = "1" as const;
+
+function versionedFrame(fields: Record<string, unknown>): string {
+  return JSON.stringify({ version: WEBSOCKET_PROTOCOL_VERSION, ...fields });
+}
 
 /** 客户端 message 帧解析结果 */
 export type ParsedClientMessageFrame = {
@@ -46,6 +53,11 @@ export function parseClientFrame(
     return null;
   }
   const obj = parsed as Record<string, unknown>;
+  // 为兼容 0.1.x 客户端，暂时接受未声明 version 的 JSON 帧；一旦声明就必须匹配。
+  // 客户端应从 connected 帧读取版本，后续主动发送 version="1"。
+  if (obj.version !== undefined && obj.version !== WEBSOCKET_PROTOCOL_VERSION) {
+    return null;
+  }
   const type = String(obj.type ?? "message");
   if (type === "ping") {
     return "ping";
@@ -83,7 +95,15 @@ export function parseClientFrame(
  * @param connectionId - 连接 UUID
  */
 export function serializeConnectedFrame(connectionId: string): string {
-  return JSON.stringify({ type: "connected", connectionId });
+  return versionedFrame({ type: "connected", connectionId });
+}
+
+/** 序列化服务端已接收消息的确认帧；messageId 用于客户端关联请求。 */
+export function serializeAcceptedFrame(messageId?: string): string {
+  return versionedFrame({
+    type: "accepted",
+    ...(messageId ? { messageId } : {}),
+  });
 }
 
 /**
@@ -96,7 +116,7 @@ export function serializeReplyFrame(
   text: string,
   opts?: { sessionKey?: string; messageId?: string },
 ): string {
-  return JSON.stringify({
+  return versionedFrame({
     type: "reply",
     text,
     ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
@@ -105,15 +125,41 @@ export function serializeReplyFrame(
 }
 
 /**
+ * 把 message-sdk 的 JSON envelope 纳入 WebSocket `reply` 帧。
+ *
+ * 不能直接透传 envelope：它本身没有 `type`，客户端会把一次成功的 Agent 回复误判为未知帧。
+ * 若上游意外返回非 JSON，则降级为普通文本 reply，仍保持协议可解析。
+ */
+export function serializeEnvelopeReplyFrame(
+  wire: string,
+  opts?: { sessionKey?: string; messageId?: string },
+): string {
+  try {
+    const envelope = JSON.parse(wire) as unknown;
+    if (envelope && typeof envelope === "object" && !Array.isArray(envelope)) {
+      return versionedFrame({
+        ...(envelope as Record<string, unknown>),
+        type: "reply",
+        ...(opts?.sessionKey ? { sessionKey: opts.sessionKey } : {}),
+        ...(opts?.messageId ? { messageId: opts.messageId } : {}),
+      });
+    }
+  } catch {
+    // 非 JSON wire 由下面的文本 reply 兜底；这是可恢复的上游格式差异。
+  }
+  return serializeReplyFrame(wire, opts);
+}
+
+/**
  * 序列化错误帧。
  *
  * @param message - 错误说明
  */
 export function serializeErrorFrame(message: string): string {
-  return JSON.stringify({ type: "error", message });
+  return versionedFrame({ type: "error", message });
 }
 
 /** 序列化 pong 帧 */
 export function serializePongFrame(): string {
-  return JSON.stringify({ type: "pong" });
+  return versionedFrame({ type: "pong" });
 }

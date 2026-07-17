@@ -1,7 +1,7 @@
 /**
  * @fileoverview 加固的内嵌 STOMP 1.2 TCP/TLS 协议服务器。
  *
- * 实现 CONNECT、SEND、SUBSCRIBE、ACK/NACK、UNSUBSCRIBE 和 DISCONNECT，覆盖登录认证、
+ * 实现 CONNECT、SEND、SUBSCRIBE、ACK/NACK、BEGIN/COMMIT/ABORT、UNSUBSCRIBE 和 DISCONNECT，覆盖登录认证、
  * Topic/Agent 路由、心跳协商、prefetch、三种 ACK 模式及进程内 durable subscription。
  * 每个连接均受帧大小、缓存、订阅数、队列深度、在途帧和分钟速率限制；相同连接的帧串行
  * 处理，慢订阅者通过有界队列和 Socket backpressure 隔离，停止时释放全部连接与定时器。
@@ -27,6 +27,7 @@ import type {
 
 type QueuedDelivery = { destination: string; body: string; redelivered?: boolean };
 type PendingDelivery = QueuedDelivery & { ackId: string; subscriptionId: string };
+type TransactionAction = { description: string; execute: () => Promise<void> | void };
 
 type ActiveSubscription = {
   id: string;
@@ -60,6 +61,8 @@ type ConnectionState = {
   user?: string;
   connectedAt: string;
   subscriptions: Map<string, ActiveSubscription>;
+  /** STOMP 本地事务缓冲；只保证本连接内命令有序提交，不承诺跨 Agent/外部系统原子回滚。 */
+  transactions: Map<string, TransactionAction[]>;
   buffer: Buffer;
   processing: Promise<void>;
   pendingFrames: number;
@@ -82,6 +85,7 @@ const stats: StompStatusSnapshot = {
   droppedInbound: 0,
   droppedOutbound: 0,
   ackPending: 0,
+  activeTransactions: 0,
 };
 
 let tcpServer: net.Server | null = null;
@@ -93,7 +97,8 @@ const connections = new Map<string, ConnectionState>();
 const durableSubscriptions = new Map<string, DurableSubscription>();
 
 const COMMANDS = new Set([
-  "CONNECT", "STOMP", "SEND", "SUBSCRIBE", "UNSUBSCRIBE", "ACK", "NACK", "DISCONNECT",
+  "CONNECT", "STOMP", "SEND", "SUBSCRIBE", "UNSUBSCRIBE", "ACK", "NACK",
+  "BEGIN", "COMMIT", "ABORT", "DISCONNECT",
 ]);
 
 function normalizeDestinationTopic(destination: string): string {
@@ -134,13 +139,17 @@ function parseFrame(raw: Buffer): StompFrame | null {
   const lines = headerText.split("\n");
   const command = lines.shift()?.trim().toUpperCase() ?? "";
   if (!COMMANDS.has(command)) return null;
+  // STOMP 1.2 规定 CONNECT/STOMP/CONNECTED 不进行 header 转义，其余帧才应用反斜杠转义。
+  const escapedHeaders = command !== "CONNECT" && command !== "STOMP";
   const headers: Record<string, string> = {};
   for (const line of lines) {
     const colon = line.indexOf(":");
     if (colon <= 0) return null;
-    const key = unescapeHeader(line.slice(0, colon));
-    const value = unescapeHeader(line.slice(colon + 1));
-    if (key === null || value === null || key in headers) return null;
+    const key = escapedHeaders ? unescapeHeader(line.slice(0, colon)) : line.slice(0, colon);
+    const value = escapedHeaders ? unescapeHeader(line.slice(colon + 1)) : line.slice(colon + 1);
+    if (key === null || value === null) return null;
+    // STOMP 1.2：重复 header 以第一个值为准，后续重复值不能覆盖认证或路由字段。
+    if (key in headers) continue;
     headers[key] = value;
   }
   if (headers["content-length"] !== undefined) {
@@ -155,7 +164,8 @@ function buildFrame(command: string, headers: Record<string, string | undefined>
   if (body && !entries.some(([key]) => key === "content-length")) {
     entries.push(["content-length", String(Buffer.byteLength(body, "utf8"))]);
   }
-  return `${command}\n${entries.map(([key, value]) => `${escapeHeader(key)}:${escapeHeader(value)}`).join("\n")}\n\n${body}\0`;
+  const encode = command === "CONNECTED" ? (value: string) => value : escapeHeader;
+  return `${command}\n${entries.map(([key, value]) => `${encode(key)}:${encode(value)}`).join("\n")}\n\n${body}\0`;
 }
 
 function locateFrameEnd(buffer: Buffer): number {
@@ -268,6 +278,7 @@ function flushSubscription(state: ConnectionState, subscription: ActiveSubscript
   const config = activeConfig;
   if (!config || state.socket.destroyed || state.socket.writableNeedDrain) return;
   while (subscription.queue.length > 0) {
+    if (state.socket.writableNeedDrain) return;
     if (subscription.ackMode !== "auto" && subscription.pending.size >= subscription.prefetchCount) return;
     const delivery = subscription.queue.shift();
     if (!delivery) return;
@@ -285,7 +296,14 @@ function flushSubscription(state: ConnectionState, subscription: ActiveSubscript
       ack: subscription.ackMode === "auto" ? undefined : ackId,
       redelivered: delivery.redelivered ? "true" : undefined,
     }, delivery.body);
-    if (!sent) return;
+    if (!sent) {
+      if (subscription.ackMode !== "auto" && subscription.pending.delete(ackId)) {
+        stats.ackPending = Math.max(0, stats.ackPending - 1);
+      }
+      // durable 队列已经从共享 queue shift，发送失败时必须放回，否则一次背压即可造成静默丢失。
+      if (subscription.durableKey) subscription.queue.unshift({ ...delivery, redelivered: true });
+      return;
+    }
     stats.routedOutbound += 1;
   }
 }
@@ -367,6 +385,44 @@ function handleAck(state: ConnectionState, frame: StompFrame, nack: boolean): vo
   throw new Error("Unknown ACK id");
 }
 
+/** 读取 STOMP 事务 id；BEGIN/COMMIT/ABORT 以及事务内命令都使用同一 header。 */
+function transactionId(frame: StompFrame): string {
+  const id = frame.headers.transaction?.trim();
+  if (!id) throw new Error(`${frame.command} requires transaction header`);
+  return id;
+}
+
+/** 将 SEND/ACK/NACK 暂存到连接级事务，限制动作数以防客户端无限占用内存。 */
+function enqueueTransactionAction(
+  state: ConnectionState,
+  id: string,
+  action: TransactionAction,
+  config: StompTcpConfig,
+): void {
+  const actions = state.transactions.get(id);
+  if (!actions) throw new Error(`Unknown transaction: ${id}`);
+  if (actions.length >= config.maxPendingMessages) throw new Error(`Transaction action limit exceeded: ${id}`);
+  actions.push(action);
+}
+
+/** 完成 SEND 的路由和 Agent dispatch；事务与非事务路径复用同一成功语义。 */
+async function dispatchSend(state: ConnectionState, frame: StompFrame, config: StompTcpConfig): Promise<void> {
+  const destination = frame.headers.destination;
+  if (!destination) throw new Error("SEND requires destination");
+  if (config.subscribeTopics.length > 0 && !config.subscribeTopics.some((pattern) => matchTopic(pattern, destination))) {
+    throw new Error("SEND destination is not allowlisted");
+  }
+  const route = resolveInboundRoute(destination, state, config);
+  if (!inboundHandler) throw new Error("STOMP inbound handler is not initialized");
+  await inboundHandler({
+    ...route,
+    rawPayload: frame.body,
+    // 只有调用方明确提供 message-id 才启用幂等；正文相同的两条合法消息不能被永久合并。
+    idempotencyKey: frame.headers["message-id"]?.trim() || undefined,
+  });
+  stats.routedInbound += 1;
+}
+
 async function handleFrame(state: ConnectionState, frame: StompFrame, config: StompTcpConfig): Promise<void> {
   const receiptId = frame.headers.receipt;
   if (!state.connected && frame.command !== "CONNECT" && frame.command !== "STOMP") {
@@ -390,25 +446,22 @@ async function handleFrame(state: ConnectionState, frame: StompFrame, config: St
         clearTimeout(state.connectTimer);
         sendFrame(state, "CONNECTED", {
           version: "1.2",
-          server: "openclaw-stomp/2026.5.25-2",
+          server: "openclaw-stomp/2026.7.1",
           session: state.id,
           "heart-beat": `${config.heartbeat.serverMs},${config.heartbeat.clientMs}`,
         });
         return;
       }
       case "SEND": {
-        const destination = frame.headers.destination;
-        if (!destination) throw new Error("SEND requires destination");
-        if (config.subscribeTopics.length > 0 && !config.subscribeTopics.some((pattern) => matchTopic(pattern, destination))) {
-          throw new Error("SEND destination is not allowlisted");
+        const transaction = frame.headers.transaction?.trim();
+        if (transaction) {
+          enqueueTransactionAction(state, transaction, {
+            description: `SEND ${frame.headers.destination ?? "<missing>"}`,
+            execute: () => dispatchSend(state, frame, config),
+          }, config);
+        } else {
+          await dispatchSend(state, frame, config);
         }
-        const route = resolveInboundRoute(destination, state, config);
-        await inboundHandler?.({
-          ...route,
-          rawPayload: frame.body,
-          idempotencyKey: frame.headers["message-id"] || receiptId || createHash("sha256").update(`${state.id}\0${destination}\0${frame.body}`).digest("hex"),
-        });
-        stats.routedInbound += 1;
         break;
       }
       case "SUBSCRIBE":
@@ -419,11 +472,42 @@ async function handleFrame(state: ConnectionState, frame: StompFrame, config: St
         removeSubscription(state, frame.headers.id, true);
         break;
       case "ACK":
-        handleAck(state, frame, false);
+        if (frame.headers.transaction) {
+          enqueueTransactionAction(state, transactionId(frame), {
+            description: "ACK",
+            execute: () => handleAck(state, frame, false),
+          }, config);
+        } else handleAck(state, frame, false);
         break;
       case "NACK":
-        handleAck(state, frame, true);
+        if (frame.headers.transaction) {
+          enqueueTransactionAction(state, transactionId(frame), {
+            description: "NACK",
+            execute: () => handleAck(state, frame, true),
+          }, config);
+        } else handleAck(state, frame, true);
         break;
+      case "BEGIN": {
+        const id = transactionId(frame);
+        if (state.transactions.has(id)) throw new Error(`Transaction already exists: ${id}`);
+        if (state.transactions.size >= config.maxPendingMessages) throw new Error("Transaction limit exceeded");
+        state.transactions.set(id, []);
+        break;
+      }
+      case "COMMIT": {
+        const id = transactionId(frame);
+        const actions = state.transactions.get(id);
+        if (!actions) throw new Error(`Unknown transaction: ${id}`);
+        // 提交前先移除，防止 action 抛错后重复 COMMIT 导致已完成的 Agent 副作用再次执行。
+        state.transactions.delete(id);
+        for (const action of actions) await action.execute();
+        break;
+      }
+      case "ABORT": {
+        const id = transactionId(frame);
+        if (!state.transactions.delete(id)) throw new Error(`Unknown transaction: ${id}`);
+        break;
+      }
       case "DISCONNECT":
         if (receiptId) sendFrame(state, "RECEIPT", { "receipt-id": receiptId });
         state.socket.end();
@@ -448,6 +532,7 @@ function cleanup(state: ConnectionState): void {
     if (subscription.durableKey) requeuePending(subscription, pending);
   }
   state.subscriptions.clear();
+  state.transactions.clear();
   connections.delete(state.id);
   stats.totalConnections = connections.size;
 }
@@ -489,6 +574,7 @@ function handleConnection(socket: net.Socket, secure: boolean, config: StompTcpC
     version: "pending",
     connectedAt: new Date(now).toISOString(),
     subscriptions: new Map(),
+    transactions: new Map(),
     buffer: Buffer.alloc(0),
     processing: Promise.resolve(),
     pendingFrames: 0,
@@ -640,6 +726,7 @@ export async function stopStompTcpServer(): Promise<void> {
     droppedInbound: 0,
     droppedOutbound: 0,
     ackPending: 0,
+    activeTransactions: 0,
   });
 }
 
@@ -680,6 +767,7 @@ export function getConnectionInfoList(): StompConnection[] {
     subscriptions: [...state.subscriptions.values()].map((item) => item.destination),
     inflightCount: [...state.subscriptions.values()].reduce((sum, item) => sum + item.pending.size, 0),
     queuedCount: [...state.subscriptions.values()].reduce((sum, item) => sum + item.queue.length, 0),
+    transactionCount: state.transactions.size,
   }));
 }
 
@@ -697,6 +785,7 @@ export function getStatusSnapshot(): StompStatusSnapshot {
   stats.totalConnections = connections.size;
   stats.totalSubscriptions = [...connections.values()].reduce((sum, state) => sum + state.subscriptions.size, 0);
   stats.durableSubscriptions = durableSubscriptions.size;
+  stats.activeTransactions = [...connections.values()].reduce((sum, state) => sum + state.transactions.size, 0);
   return { ...stats };
 }
 

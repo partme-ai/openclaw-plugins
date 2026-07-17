@@ -43,36 +43,89 @@ Metrics come from two layers:
 - `register()` wires `api.runtime`, installs hook/event observers, and registers plugin-owned routes with `api.registerHttpRoute`.
 - Routes are mounted directly on the Gateway. The plugin does not open a separate listener; terminate TLS and enforce network policy at the Gateway or reverse proxy.
 
+### Runtime architecture
+
+```mermaid
+flowchart LR
+    P["Prometheus / Grafana Agent"] -->|"GET /metrics + Bearer Token"| G["OpenClaw Gateway HTTP Registry"]
+    G --> A["Prometheus plugin route"]
+    A --> C["CollectCache\nsingle-flight"]
+    C --> R["CollectorRunner\nper-collector timeout and isolation"]
+    R --> RPC["GatewayClient RPC\nhealth / usage / sessions / channels"]
+    R --> DS["Trusted diagnostics\nbounded Metric Store"]
+    R --> HS["Hooks / Events\nbounded Runtime Store"]
+    R --> NS["Node.js Runtime"]
+    RPC --> F["Definition dedupe + hard series limit<br/>health-first / atomic histograms"]
+    DS --> F
+    HS --> F
+    NS --> F
+    F -->|"Prometheus text"| P
+```
+
+The plugin only registers Gateway routes; it does not open another listener. The Gateway or reverse proxy owns TLS, network ACLs, and token rotation. The plugin owns request authentication, collector isolation, low-cardinality output, and response limits.
+
+### Concurrent scrape and failure isolation
+
+```mermaid
+sequenceDiagram
+    participant P1 as Prometheus replica A
+    participant P2 as Prometheus replica B
+    participant Cache as CollectCache
+    participant Runner as CollectorRunner
+    participant RPC as OpenClaw RPC
+
+    P1->>Cache: scrape (cache miss)
+    P2->>Cache: concurrent scrape (cache miss)
+    Cache->>Runner: start one collectAll operation
+    Runner->>RPC: parallel collector RPCs
+    alt collector completes before timeout
+        RPC-->>Runner: samples
+    else collector times out or fails
+        Runner-->>Runner: collector_success=0
+        Note over Runner,RPC: Other collectors continue; do not duplicate the hung task
+    end
+    Runner-->>Cache: merged definitions and samples
+    Cache-->>P1: series-limited response
+    Cache-->>P2: shared result
+```
+
+`collectorTimeoutMs` bounds how long each scrape waits. The current OpenClaw GatewayClient does not expose a transferable `AbortSignal`, so the exporter cannot forcibly cancel an issued RPC. It reuses that pending operation to prevent subsequent scrapes from multiplying calls. `maxScrapeSeries` is the final guardrail across all sources, and `openclaw_metrics_scrape_series_dropped` reports truncation.
+
+During overload, exporter health and collector-failure signals are retained first. Histogram
+bucket/sum/count samples for one label set are retained or dropped atomically, so truncation does not
+publish a misleading partial distribution. Provider-auth snapshots are also single-flight: concurrent
+health requests share one real probe, and late results from an old plugin generation are discarded.
+
 ## Endpoints
 
-| Method & path | Format | Description |
-| --- | --- | --- |
-| `GET {path}` | Prometheus text | Scrape target (`Content-Type: text/plain; version=0.0.4`) |
-| `GET {path}/per-object` | JSON | Grouped metrics for tooling |
-| `GET {path}/detailed?family=` | JSON | Filter by metric-name prefix |
-| `GET {path}/health` | JSON | Exporter health and latest snapshot status |
-| `GET {path}/debug?component=` | JSON | Exporter diagnostics (`all/collectors/registry/config`) |
+| Method & path                 | Format          | Description                                               |
+| ----------------------------- | --------------- | --------------------------------------------------------- |
+| `GET {path}`                  | Prometheus text | Scrape target (`Content-Type: text/plain; version=0.0.4`) |
+| `GET {path}/per-object`       | JSON            | Grouped metrics for tooling                               |
+| `GET {path}/detailed?family=` | JSON            | Filter by metric-name prefix                              |
+| `GET {path}/health`           | JSON            | Exporter health and latest snapshot status                |
+| `GET {path}/debug?component=` | JSON            | Exporter diagnostics (`all/collectors/registry/config`)   |
 
 Default `{path}` is `/metrics`.
 
 ## Metric families (prefixes)
 
-| Prefix | Source |
-| --- | --- |
-| `openclaw_model_tokens_*`, `openclaw_gen_ai_client_token_usage`, `openclaw_run_*`, `openclaw_tool_execution_*`, `openclaw_message_*`, … | **Internal diagnostics** (same as bundled diagnostics-prometheus) |
-| `openclaw_usage_*` | Gateway RPC `usage.cost` / `sessions.usage` (window gauges) |
-| `openclaw_metrics_*` | Exporter-owned route/scrape metrics |
-| `openclaw_model_auth_*` | `api.runtime.modelAuth` |
-| `openclaw_channel_*` | message hooks + `api.runtime.channel.activity.get(...)` |
-| `openclaw_agent_*` | trusted internal diagnostics + runtime agent events |
-| `openclaw_tool_*` | `before_tool_call` / `after_tool_call` |
-| `openclaw_messages_*` | `message_received` / `message_sent` |
-| `openclaw_session_transcript_*` | `api.runtime.events.onSessionTranscriptUpdate(...)` |
-| `openclaw_runtime_*` | runtime namespace availability + state/snapshot age |
-| `openclaw_nodejs_*` | Local process (optional via `includeRuntime`) |
-| `openclaw_ready` | Set only on `gateway_start` / `gateway_stop` (Gateway lifecycle readiness) |
-| `openclaw_plugin_loaded` | Plugin module registered |
-| `openclaw_exporter_*`, `openclaw_metrics_*` | Plugin meta |
+| Prefix                                                                                                                                  | Source                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `openclaw_model_tokens_*`, `openclaw_gen_ai_client_token_usage`, `openclaw_run_*`, `openclaw_tool_execution_*`, `openclaw_message_*`, … | **Internal diagnostics** (same as bundled diagnostics-prometheus)          |
+| `openclaw_usage_*`                                                                                                                      | Gateway RPC `usage.cost` / `sessions.usage` (window gauges)                |
+| `openclaw_metrics_*`                                                                                                                    | Exporter-owned route/scrape metrics                                        |
+| `openclaw_model_auth_*`                                                                                                                 | `api.runtime.modelAuth`                                                    |
+| `openclaw_channel_*`                                                                                                                    | message hooks + `api.runtime.channel.activity.get(...)`                    |
+| `openclaw_agent_*`                                                                                                                      | trusted internal diagnostics + runtime agent events                        |
+| `openclaw_tool_*`                                                                                                                       | `before_tool_call` / `after_tool_call`                                     |
+| `openclaw_messages_*`                                                                                                                   | `message_received` / `message_sent`                                        |
+| `openclaw_session_transcript_*`                                                                                                         | `api.runtime.events.onSessionTranscriptUpdate(...)`                        |
+| `openclaw_runtime_*`                                                                                                                    | runtime namespace availability + state/snapshot age                        |
+| `openclaw_nodejs_*`                                                                                                                     | Local process (optional via `includeRuntime`)                              |
+| `openclaw_ready`                                                                                                                        | Set only on `gateway_start` / `gateway_stop` (Gateway lifecycle readiness) |
+| `openclaw_plugin_loaded`                                                                                                                | Plugin module registered                                                   |
+| `openclaw_exporter_*`, `openclaw_metrics_*`                                                                                             | Plugin meta                                                                |
 
 ## Quick start
 
@@ -129,6 +182,8 @@ scrape_configs:
 ```
 
 Set `scrapeAuth.enabled: true` and store the same secret in `OPENCLAW_PROMETHEUS_BEARER_TOKEN` on the Gateway host.
+Enabling authentication without a token rejects plugin startup. Runtime validation also rejects unknown
+fields and wrong types instead of silently applying defaults to misspelled configuration.
 
 Ready-to-use scrape, deployment, and alert examples are shipped in [`config/`](config/), [`deploy/`](deploy/), and [`alerts/prometheus.yml`](alerts/prometheus.yml). The cardinality alert fires when any exporter guard actually drops series rather than relying on an unreachable static threshold.
 
@@ -150,7 +205,14 @@ pnpm install
 pnpm run build
 pnpm dev
 pnpm test
+
+# Full build, pack, isolated install, and real OpenClaw 2026.7.1 HTTP route gate
+OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins prometheus --skip-browser
 ```
+
+The unified E2E uses a disposable profile and verifies Bearer rejection/acceptance,
+`openclaw_up`, the 2026.7.1 build label, health/RPC readiness, POST rejection,
+exact-route isolation, and 25 concurrent scrapes.
 
 ## Release version sync
 
@@ -158,16 +220,16 @@ Bump **`package.json` / `openclaw.plugin.json` `version`** and [`src/shared/vers
 
 ## Related plugins
 
-| Plugin | Description |
-| --- | --- |
-| [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 authentication |
-| [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT protocol adapter |
-| [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |
-| [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt) | WebSocket MQTT |
-| [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp) | WebSocket STOMP |
-| [openclaw-tracing](https://github.com/partme-ai/openclaw-tracing) | Distributed tracing |
-| [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus metrics |
-| [openclaw-nacos](https://github.com/partme-ai/openclaw-nacos) | Nacos naming / config |
+| Plugin                                                                  | Description           |
+| ----------------------------------------------------------------------- | --------------------- |
+| [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2)         | OAuth2 authentication |
+| [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt)             | MQTT protocol adapter |
+| [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp)           | STOMP server          |
+| [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt)     | WebSocket MQTT        |
+| [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp)   | WebSocket STOMP       |
+| [openclaw-tracing](https://github.com/partme-ai/openclaw-tracing)       | Distributed tracing   |
+| [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus metrics    |
+| [openclaw-nacos](https://github.com/partme-ai/openclaw-nacos)           | Nacos naming / config |
 
 ## License
 

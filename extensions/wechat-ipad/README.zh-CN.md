@@ -12,7 +12,8 @@
 flowchart LR
     WX["微信网络"] <--> S["外部 iPad 协议服务<br/>登录态 / MMTLS / Protobuf"]
     S -->|"WebSocket 事件"| B["WechatIpadBridge<br/>鉴权、校验、心跳、重连"]
-    B --> I["OpenClaw 入站管道<br/>去重、权限、会话"]
+    B --> Q["有界串行队列<br/>最多 maxPendingMessages"]
+    Q --> I["OpenClaw 入站管道<br/>私聊/群聊准入、命令授权、去重"]
     I --> A["Agent"]
     A --> O["OpenClaw 出站管道"]
     O --> B
@@ -22,7 +23,7 @@ flowchart LR
     classDef plugin fill:#e8f5e9,stroke:#2e7d32,color:#123d17
     classDef runtime fill:#e3f2fd,stroke:#1565c0,color:#0d315c
     class WX,S external
-    class B plugin
+    class B,Q plugin
     class I,A,O runtime
 ```
 
@@ -43,16 +44,45 @@ flowchart LR
       "apiUrl": "https://bridge.example.com",
       "auth": { "token": "<BRIDGE_TOKEN>" },
       "message": {
+        "dmPolicy": "allowlist",
+        "allowFrom": ["<OWNER_WXID>"],
+        "commandAllowFrom": ["<OWNER_WXID>"],
         "handleGroup": true,
         "groupWhitelist": ["<GROUP_WXID>"],
-        "ignoreSelf": true
+        "ignoreSelf": true,
+        "maxPendingMessages": 256
       }
     }
   }
 }
 ```
 
-生产地址强制使用 `wss://` 和 `https://`；本机回环测试才允许明文协议。Token 通过 Bearer Header 传输，不写入 URL、日志或状态响应。
+生产地址强制使用 `wss://` 和 `https://`，并且必须配置 Token；本机回环测试才允许明文协议和无 Token。WebSocket 与 HTTP API 默认必须属于同一主机，确需拆分时要显式设置 `allowSplitBridgeHosts=true`，避免把同一 Bearer Token 误发给错误主机。Token 不写入 URL、日志或状态响应。
+
+## 入站授权与背压
+
+```mermaid
+flowchart TD
+    E["WebSocket message"] --> Q{"有界队列有容量?"}
+    Q -->|否| DROP["丢弃并告警<br/>不创建 Agent Turn"]
+    Q -->|是| V{"载荷、大小、自发消息校验"}
+    V -->|失败| DROP
+    V -->|私聊| D{"dmPolicy"}
+    D -->|disabled| DROP
+    D -->|allowlist| A{"fromWxid 在 allowFrom?"}
+    A -->|否| DROP
+    A -->|是| C
+    D -->|open| C{"sender 在 commandAllowFrom?"}
+    V -->|群聊| G{"群功能开启且群 wxid 获准?"}
+    G -->|否| DROP
+    G -->|是| C
+    C -->|是| CMD["普通对话 + 命令授权"]
+    C -->|否| CHAT["仅普通对话<br/>CommandAuthorized=false"]
+    CMD --> AGENT["Agent Turn"]
+    CHAT --> AGENT
+```
+
+私聊默认使用 `allowlist`，启用插件时白名单不能为空；也可显式设为 `disabled` 或高风险的 `open`。`commandAllowFrom` 与普通对话白名单完全分离：能聊天不代表能执行 OpenClaw 管理命令。所有消息进入 Agent 前先经过单消费者有界队列，保持接收顺序，并把等待任务限制在 `maxPendingMessages` 内。
 
 ## 连接与失败语义
 
@@ -70,7 +100,28 @@ stateDiagram-v2
     disconnected --> [*]: Gateway stop
 ```
 
-`required=true` 时首次连接失败会中止插件启动；运行中断线进入有界重连。主动停止会先清理心跳和重连定时器，避免关闭回调再次拉起连接。
+`required=true` 时首次连接失败会中止插件启动；运行中断线进入有界重连。主动停止会先清理心跳和重连定时器，避免关闭回调再次拉起连接。连接由 OpenClaw 2026.7.1 标准 `gateway.startAccount` 生命周期托管；Socket `connected` 只表示传输可达，只有外部服务上报 `login_status=logged_in` 时 `probeAccount` 才通过并驱动 `/readyz` 业务就绪。
+
+成功完成 Agent 调度与回复投递后，消息 ID 才写入状态目录中的有界 JSONL 日志；目录权限为 0700、文件权限为 0600，压缩通过同目录临时文件原子替换。Agent 失败时不提交记录，允许桥接服务重试；Gateway 重启后重放相同 `msgId` 不会再次调用模型或发送回复。
+
+```mermaid
+sequenceDiagram
+    participant S as 外部桥接服务
+    participant C as Channel 生命周期
+    participant A as Agent
+    participant D as 私有去重日志
+    S->>C: WebSocket message(msgId)
+    C->>D: 查询已完成记录
+    alt 首次处理
+        C->>A: OpenClaw Agent Turn
+        A-->>C: 回复文本
+        C->>S: POST /api/send
+        C->>D: 成功后追加 msgId
+    else Gateway 重启后的重放
+        D-->>C: 已完成
+        C-->>S: 跳过重复 Agent Turn
+    end
+```
 
 ## 验证
 
@@ -80,6 +131,7 @@ openclaw channels status --probe
 pnpm --filter @partme.ai/wechat-ipad typecheck
 pnpm --filter @partme.ai/wechat-ipad test
 pnpm --filter @partme.ai/wechat-ipad build
+node scripts/e2e/run-e2e.mjs --plugins wechat-ipad
 ```
 
-环境验收至少覆盖：登录、掉线、Token 失效、私聊、白名单群、重复事件、超大报文、桥接服务重启和 Gateway 重启。
+本地安装态 E2E 已覆盖正式 tarball 安装、WS 入站、Agent Turn、Bearer HTTP 回复和 Gateway 重启去重。环境验收仍至少覆盖：真实登录、掉线、Token 失效、私聊、白名单群、超大报文、桥接服务重启和长时间运行。

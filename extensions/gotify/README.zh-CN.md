@@ -10,7 +10,7 @@
 
 </div>
 
-[简体中文](./README.md) | [English](./README.en.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 `@partme.ai/openclaw-gotify` 是为 [OpenClaw](https://github.com/openclaw/openclaw) 开发的 [Gotify](https://gotify.net/) 渠道插件：通过 REST API **发送消息**，通过 WebSocket `/stream` **实时接收消息**，并完整支持 Application 和 Client 的 **生命周期管理**。
 
@@ -84,12 +84,12 @@ npm install @partme.ai/openclaw-gotify
           "allowFrom": ["*"],
           "inbound": {
             "enabled": true,
-            "allowedAppId": 1
-          }
-        }
-      }
-    }
-  }
+            "allowedAppId": 1,
+          },
+        },
+      },
+    },
+  },
 }
 ```
 
@@ -111,8 +111,9 @@ npm install @partme.ai/openclaw-gotify
           "dmPolicy": "open",
           "allowFrom": ["*"],
           "inbound": {
-            "enabled": true
-          }
+            "enabled": true,
+            "allowedAppId": 1,
+          },
         },
         "e2e": {
           "name": "e2e",
@@ -126,12 +127,12 @@ npm install @partme.ai/openclaw-gotify
           "inbound": {
             "enabled": true,
             "allowedAppId": 2,
-            "deleteAfterConsume": false
-          }
-        }
-      }
-    }
-  }
+            "deleteAfterConsume": false,
+          },
+        },
+      },
+    },
+  },
 }
 ```
 
@@ -162,35 +163,41 @@ npm install @partme.ai/openclaw-gotify
 
 #### 顶级配置（单账号兼容模式）
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enabled` | boolean | `true` | 是否启用渠道 |
-| `name` | string | — | 账号显示名称 |
-| `serverUrl` | string | — | Gotify 服务器地址（如 `https://gotify.example.com`） |
-| `appToken` | string | — | 应用 Token，用于发送消息（前缀 `A`） |
-| `clientToken` | string | — | 客户端 Token，用于接收消息和管理 API（前缀 `C`） |
-| `defaultPriority` | number | `5` | 默认消息优先级（0–10） |
-| `defaultAccount` | string | — | 多账号模式下的默认账号 ID |
-| `accounts` | object | — | 多账号配置映射 |
+| 字段              | 类型    | 默认值 | 说明                                                 |
+| ----------------- | ------- | ------ | ---------------------------------------------------- |
+| `enabled`         | boolean | `true` | 是否启用渠道                                         |
+| `name`            | string  | —      | 账号显示名称                                         |
+| `serverUrl`       | string  | —      | Gotify 服务器地址（如 `https://gotify.example.com`） |
+| `appToken`        | string  | —      | 应用 Token，用于发送消息（前缀 `A`）                 |
+| `clientToken`     | string  | —      | 客户端 Token，用于接收消息和管理 API（前缀 `C`）     |
+| `defaultPriority` | number  | `5`    | 默认消息优先级（0–10）                               |
+| `defaultAccount`  | string  | —      | 多账号模式下的默认账号 ID                            |
+| `accounts`        | object  | —      | 多账号配置映射                                       |
 
 #### `inbound` — WebSocket 流配置
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enabled` | boolean | `false`（有 `clientToken` 时为 `true`） | 是否启用 WebSocket 流监听 |
-| `reconnectDelayMs` | number | `2000` | 初始重连延迟（毫秒） |
-| `maxReconnectDelayMs` | number | `30000` | 最大重连延迟（指数退避上限） |
-| `maxReconnectAttempts` | number | `10` | 最大重连尝试次数 |
-| `deleteAfterConsume` | boolean | `true` | Agent 派发与回复投递成功后删除入站原消息；Agent 回复保留给在线/离线客户端读取 |
+| 字段                      | 类型    | 默认值                                  | 说明                                                                          |
+| ------------------------- | ------- | --------------------------------------- | ----------------------------------------------------------------------------- |
+| `enabled`                 | boolean | `false`（有 `clientToken` 时为 `true`） | 是否启用 WebSocket 流监听                                                     |
+| `reconnectDelayMs`        | number  | `2000`                                  | 初始重连延迟（毫秒）                                                          |
+| `maxReconnectDelayMs`     | number  | `30000`                                 | 最大重连延迟（指数退避上限）                                                  |
+| `maxReconnectAttempts`    | number  | `10`                                    | 最大重连尝试次数                                                              |
+| `reconnectJitterRatio`    | number  | `0.2`                                   | 重连抖动比例（0～1），避免多实例同步冲击服务端                                |
+| `maxBufferedMessages`     | number  | `1000`                                  | 启动回放缓冲与正常实时派发队列共用的内存上限                                  |
+| `maxDispatchAttempts`     | number  | `5`                                     | 单条实时消息进入 Agent/回复链路的最大尝试次数                                 |
+| `dispatchRetryDelayMs`    | number  | `1000`                                  | Agent 派发首次重试等待时间（毫秒）                                            |
+| `maxDispatchRetryDelayMs` | number  | `30000`                                 | Agent 派发指数退避的最大等待时间（毫秒）                                      |
+| `deleteAfterConsume`      | boolean | `true`                                  | Agent 派发与回复投递成功后删除入站原消息；Agent 回复保留给在线/离线客户端读取 |
 
 #### 消费即删策略
 
-默认 **`deleteAfterConsume: true`**（严格策略）：只要消息被消费，就从 Gotify 服务端删除。
+默认 **`deleteAfterConsume: true`**：只删除已经由 Agent 完成处理并成功投递回复的**入站原消息**。
+Agent 回复不会被自动删除，在线或离线 Gotify Client 都可以继续读取。
 
-| 方向 | 触发时机 |
-|------|----------|
+| 方向 | 处理语义                                                              |
+| ---- | --------------------------------------------------------------------- |
 | 入站 | Agent **整轮回复投递完成**后，DELETE 用户发来的原消息（避免先删后答） |
-| 出站 | `POST /message` 成功后立即 DELETE 该回复（手机端先收到推送再清理） |
+| 出站 | Agent 回复保留在 Gotify，不自动 DELETE，保证离线客户端仍可读取        |
 
 关闭方式：配置 `channels.gotify.inbound.deleteAfterConsume: false`。  
 `OPENCLAW_TEST_VISIBLE=1` **不会**跳过插件侧删除，仅影响标准测试 runner 的额外 cleanup 行为。
@@ -199,41 +206,39 @@ npm install @partme.ai/openclaw-gotify
 
 以下环境变量在 `openclaw.plugin.json` 的 `channelEnvVars` 中声明，供 OpenClaw 的 setup 发现机制在插件加载前通告给用户。**插件代码不直接读取 `process.env`** — 所有配置均从 `channels.gotify` 配置节解析（参见上面的配置章节）。
 
-| 变量 | 用途 |
-|------|------|
-| `GOTIFY_SERVER_URL` | Gotify 服务器地址 — 等同于配置 `channels.gotify.serverUrl` |
-| `GOTIFY_APP_TOKEN` | 应用 Token — 等同于配置 `channels.gotify.appToken` |
-| `GOTIFY_CLIENT_TOKEN` | 客户端 Token — 等同于配置 `channels.gotify.clientToken` |
+| 变量                  | 用途                                                       |
+| --------------------- | ---------------------------------------------------------- |
+| `GOTIFY_SERVER_URL`   | Gotify 服务器地址 — 等同于配置 `channels.gotify.serverUrl` |
+| `GOTIFY_APP_TOKEN`    | 应用 Token — 等同于配置 `channels.gotify.appToken`         |
+| `GOTIFY_CLIENT_TOKEN` | 客户端 Token — 等同于配置 `channels.gotify.clientToken`    |
 
 ## 🏗️ 消息处理流程
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                   Gotify Server                           │
-│  ┌─────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│  │ Message API │  │ Stream API   │  │ App/Client API │  │
-│  │ POST /msg   │  │ WS /stream   │  │ CRUD           │  │
-│  └──────┬──────┘  └──────┬───────┘  └───────┬────────┘  │
-└─────────┼────────────────┼──────────────────┼───────────┘
-          │                │                  │
-          ▼                ▼                  ▼
-┌──────────────────────────────────────────────────────────┐
-│              openclaw-gotify Plugin                       │
-│                                                          │
-│  Outbound: mapOutbound → sendGotifyMessage → Message API │
-│  Inbound:  WebSocket → dedup → dmScope session → Agent  │
-│  Admin:    list/create/update/delete Apps & Clients      │
-│  Health:   GET /health → latency check                   │
-└──────────────────────────────────────────────────────────┘
-          │
-          ▼
-┌──────────────────────────────────────────────────────────┐
-│                OpenClaw Gateway                           │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐   │
-│  │ Agent    │  │ Session  │  │ Channel Reply        │   │
-│  │ Routing  │  │ Store    │  │ Pipeline             │   │
-│  └──────────┘  └──────────┘  └──────────────────────┘   │
-└──────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    EXT["业务系统 / 外部 Application"] -->|"POST /message"| GOTIFY["Gotify Server"]
+    GOTIFY -->|"WebSocket /stream"| WS["监听器<br/>Zod 校验 + 指数退避/抖动"]
+    GOTIFY -->|"REST backlog"| REPLAY["历史回放<br/>有界扫描 + 单调 cursor"]
+    WS --> BUFFER["启动期实时缓冲<br/>maxBufferedMessages"]
+    REPLAY --> ORDER["账号级有界顺序队列<br/>maxBufferedMessages"]
+    BUFFER --> ORDER
+    ORDER --> ACCESS["allowedAppId + DM Policy + 幂等"]
+    ACCESS --> AGENT["OpenClaw 2026.7.1<br/>Agent + Transcript + 回复"]
+    AGENT --> RETRY{"Agent 与回复均成功?"}
+    AGENT -->|"回复 POST /message"| GOTIFY
+    RETRY -->|"失败且未耗尽"| BACKOFF["指数退避<br/>保持消息顺序"]
+    BACKOFF --> AGENT
+    RETRY -->|"重试耗尽"| STOP["fail-closed 停止账号<br/>消息保留在 Gotify"]
+    RETRY -->|"成功"| CURSOR["先持久化单调 cursor"]
+    CURSOR -->|"随后可选删除入站原消息"| GOTIFY
+    STOP -->|"账号重启"| REPLAY
+
+    classDef external fill:#fff3e0,stroke:#ef6c00,color:#4e2600
+    classDef plugin fill:#e8f5e9,stroke:#2e7d32,color:#123d17
+    classDef runtime fill:#e3f2fd,stroke:#1565c0,color:#0d315c
+    class EXT,GOTIFY external
+    class WS,REPLAY,BUFFER,ORDER,ACCESS,RETRY,BACKOFF,CURSOR,STOP plugin
+    class AGENT runtime
 ```
 
 1. Gotify 应用或外部系统发送消息到 Gotify 服务器
@@ -244,14 +249,49 @@ npm install @partme.ai/openclaw-gotify
 6. 路由到对应 Agent 处理
 7. Agent 回复通过 `POST /message`（App Token）发送回 Gotify
 
+Gotify `/stream` 没有 Broker 式 ACK/NACK。实时派发失败时，插件会在账号级顺序队列中
+保留当前消息并进行有界指数退避，不能让后续消息越过失败消息。达到
+`maxDispatchAttempts` 后账号进入 fail-closed，消息仍留在 Gotify；下次启动由 backlog
+回放恢复。游标文件只有 `ENOENT` 会被视为首次启动，JSON 损坏、权限或 IO 错误都会停止
+回放，避免静默归零后把整段历史再次交给 Agent。
+
 ## 💬 一来一回对话（Gotify + Control UI）
 
-| 层面 | 行为 |
-|------|------|
-| **Gotify App** | 推送通知渠道；入站用户消息在 Agent **回复发送成功后**删除，出站回复保留供在线/离线客户端读取 |
-| **OpenClaw Control UI** | **完整对话历史** 保存在 Session Store；多轮共用同一 `sessionKey`（同一 `peerId` / appid） |
-| **幂等** | SDK `@partme.ai/openclaw-message-sdk` → `createIdempotencyCache`；仅按 `messageId` 去重，同一对端连续多条新消息不会互相屏蔽 |
-| **出站** | `sendGotifyMessageWithDeliveryRetry`：失败时自动再试 1 次 |
+| 层面                    | 行为                                                                                                                        |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Gotify App**          | 推送通知渠道；入站用户消息在 Agent **回复发送成功后**删除，出站回复保留供在线/离线客户端读取                                |
+| **OpenClaw Control UI** | **完整对话历史** 保存在 Session Store；多轮共用同一 `sessionKey`（同一 `peerId` / appid）                                   |
+| **幂等**                | SDK `@partme.ai/openclaw-message-sdk` → `createIdempotencyCache`；仅按 `messageId` 去重，同一对端连续多条新消息不会互相屏蔽 |
+| **出站**                | Gotify 不提供幂等写入键，因此 `POST /message` 默认只执行一次，避免超时/5xx 后盲重试产生重复通知                             |
+
+### 启动回放与实时流交接
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant G as Gotify Server
+    participant W as WebSocket Listener
+    participant R as Backlog Replay
+    participant Q as 账号顺序队列
+    participant A as OpenClaw Agent
+
+    W->>G: 建立 /stream
+    par 启动期实时消息
+        G-->>W: stream message
+        W->>W: 有界缓冲（超过上限则失败关闭）
+    and 停机消息回补
+        R->>G: GET application messages
+        G-->>R: 分页历史消息
+        loop 按 messageId 升序
+            R->>Q: 单条消息
+            Q->>A: Agent Turn + 回复投递
+            A-->>Q: success
+            Q->>R: 原子推进 cursor（禁止回退）
+        end
+    end
+    R->>Q: 顺序排空实时缓冲
+    W->>Q: 切换为实时直送
+```
 
 **在 Control UI 查看测试 / 真实对话：**
 
@@ -265,11 +305,11 @@ npm install @partme.ai/openclaw-gotify
 
 插件完全遵循 OpenClaw 全局 `session.dmScope` 配置，无需额外自定义隔离配置。
 
-| dmScope | 会话键格式 | 隔离粒度 |
-|---------|-----------|----------|
-| `main` | `agent:<agentId>:main` | 所有消息共享同一会话 |
-| `per-peer` | `agent:<agentId>:direct:<peerId>` | 按对端隔离 |
-| `per-channel-peer` | `agent:<agentId>:gotify:direct:<peerId>` | 按渠道+对端隔离 |
+| dmScope                    | 会话键格式                                           | 隔离粒度                           |
+| -------------------------- | ---------------------------------------------------- | ---------------------------------- |
+| `main`                     | `agent:<agentId>:main`                               | 所有消息共享同一会话               |
+| `per-peer`                 | `agent:<agentId>:direct:<peerId>`                    | 按对端隔离                         |
+| `per-channel-peer`         | `agent:<agentId>:gotify:direct:<peerId>`             | 按渠道+对端隔离                    |
 | `per-account-channel-peer` | `agent:<agentId>:gotify:<accountId>:direct:<peerId>` | 按账号+渠道+对端隔离（推荐多账号） |
 
 对端标识解析优先级：`extras.openclaw.peerId` → `appid` → `title` → `"gotify"`
@@ -278,11 +318,11 @@ npm install @partme.ai/openclaw-gotify
 
 ### 诚实评估：单元测试 ≠ Control UI 成功
 
-| 层级 | 命令 | 证明什么 | **不能**证明什么 |
-|------|------|----------|------------------|
-| L0 单元 | `pnpm test`（vitest，~91 条） | 配置解析、mock 派发、去重逻辑 | Gateway 运行、WS 入站、**Control UI 有消息** |
-| L1 标准 | `pnpm test:standard` | Gotify 往返 +（默认）chat.history 抽检 | 用户肉眼在 UI 点对了会话 |
-| **UI 验收门禁** | **`pnpm test:ui-gate`** | **`chat.history` 含 user 消息 = UI 同源 transcript** | Agent LLM 一定成功（user 消息必须先出现） |
+| 层级            | 命令                          | 证明什么                                             | **不能**证明什么                             |
+| --------------- | ----------------------------- | ---------------------------------------------------- | -------------------------------------------- |
+| L0 单元         | `pnpm test`（vitest，~91 条） | 配置解析、mock 派发、去重逻辑                        | Gateway 运行、WS 入站、**Control UI 有消息** |
+| L1 标准         | `pnpm test:standard`          | Gotify 往返 +（默认）chat.history 抽检               | 用户肉眼在 UI 点对了会话                     |
+| **UI 验收门禁** | **`pnpm test:ui-gate`**       | **`chat.history` 含 user 消息 = UI 同源 transcript** | Agent LLM 一定成功（user 消息必须先出现）    |
 
 **发布 / 验收必须 `pnpm test:ui-gate` 通过。** 仅 vitest 全绿不算成功。
 
@@ -307,7 +347,7 @@ GOTIFY_APP_TOKEN=... GOTIFY_CLIENT_TOKEN=... pnpm test:standard
 - 打开 `http://127.0.0.1:18789` → **Sessions** → 选 **`gotify: e2e-user`** 或 **`agent:main:gotify:default:direct:4`**
 - **勿用** `channels.gotify.appToken` 做入站测试（与出站同 appid 会被 echo 过滤）；用 **e2e-user App Token**（appid=4）
 - 勿选已废弃的 `agent:main:gotify:direct:4`（旧 dmScope 残留、transcript 文件缺失时 UI 会显示 0 条消息）
-- 默认消费即删（入站 + 出站回复），Gotify App 消息列表通常为空；需保留消息时设 `channels.gotify.inbound.deleteAfterConsume: false`
+- 默认只在整轮成功后删除入站原消息，Agent 回复会保留；如需同时保留入站原消息，设置 `channels.gotify.inbound.deleteAfterConsume: false`
 - `OPENCLAW_TEST_VISIBLE=1 pnpm test:standard`：仅跳过 runner cleanup，不关闭插件删除
 
 ```bash
@@ -323,10 +363,10 @@ npm run build
 
 ## 🤖 GitHub Actions
 
-| 工作流 | 触发方式 | 作用 |
-|--------|----------|------|
-| `ci.yml` | push / PR 到 `main` | 安装、类型检查、构建、测试 |
-| `release.yml` | `v*` 标签 | 构建、测试并发布 npm 包 |
+| 工作流        | 触发方式            | 作用                       |
+| ------------- | ------------------- | -------------------------- |
+| `ci.yml`      | push / PR 到 `main` | 安装、类型检查、构建、测试 |
+| `release.yml` | `v*` 标签           | 构建、测试并发布 npm 包    |
 
 ## 📦 发版
 
@@ -389,13 +429,13 @@ openclaw-gotify/
 
 > 完整说明：[队列可靠性指南](../../doc/OpenClaw-Queue-Reliability-Guide.md) · 专题：[Gotify 指南](../../doc/gotify/OpenClaw-Gotify-Guide_CN.md)
 
-| 项 | 行为 |
-|----|------|
-| **分级** | 协议限制需文档约束 |
-| **入站** | WebSocket 流；无 broker ACK |
-| **恢复** | backlog cursor + 重连 replay |
-| **幂等** | 60s 内存 dedup（多实例需业务幂等） |
-| **自消费** | `extras.openclaw.outbound` 过滤 |
+| 项         | 行为                               |
+| ---------- | ---------------------------------- |
+| **分级**   | 协议限制需文档约束                 |
+| **入站**   | WebSocket 流；无 broker ACK        |
+| **恢复**   | backlog cursor + 重连 replay       |
+| **幂等**   | 60s 内存 dedup（多实例需业务幂等） |
+| **自消费** | `extras.openclaw.outbound` 过滤    |
 
 ## ❓ 常见问题
 
@@ -405,7 +445,7 @@ openclaw-gotify/
 
 **WebSocket 连接断开后会自动重连吗？**
 
-是的。插件使用指数退避重连策略：初始延迟 `reconnectDelayMs`（默认 2000ms），每次失败翻倍，上限 `maxReconnectDelayMs`（默认 30000ms），最多重试 `maxReconnectAttempts`（默认 10）次。
+是的。插件使用带双向抖动的指数退避重连策略：初始延迟 `reconnectDelayMs`（默认 2000ms），每次失败翻倍，上限 `maxReconnectDelayMs`（默认 30000ms），并按 `reconnectJitterRatio`（默认 0.2）打散多实例重连时刻；最多重试 `maxReconnectAttempts`（默认 10）次。
 
 **如何实现多智能体隔离？**
 

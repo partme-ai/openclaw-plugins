@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 
 import { DEFAULT_STOMP_WS_CONFIG, validateStompWsConfig } from "../src/config.js";
-import { getStompServerStats, startStompServer, stopStompServer } from "../src/transport/server.js";
+import {
+  getStompServerStats,
+  publishToDestination,
+  startStompServer,
+  stopStompServer,
+} from "../src/transport/server.js";
 import type { StompServerConfig } from "../src/types.js";
 
 async function freePort(): Promise<number> {
@@ -90,6 +95,7 @@ describe("web-stomp production transport", () => {
     const deniedError = waitMessage(denied, "Authentication failed");
     denied.send(frame("CONNECT", { "accept-version": "1.2", login: "browser", passcode: "wrong" }));
     await expect(deniedError).resolves.toContain("ERROR");
+    expect(getStompServerStats().authFailures).toBe(1);
 
     const accepted = await open(config);
     const connected = waitMessage(accepted, "CONNECTED");
@@ -171,6 +177,11 @@ describe("web-stomp production transport", () => {
       rejectedOrigin.once("error", () => undefined);
     });
     expect(originStatus).toBe(403);
+    expect(getStompServerStats().rejectedConnections).toBe(1);
+
+    const allowed = await open(config, { origin: "https://console.example.com" });
+    allowed.close();
+    await new Promise<void>((resolve) => allowed.once("close", () => resolve()));
 
     const first = await open(config);
     const second = new WebSocket(`ws://127.0.0.1:${config.wsPort}${config.path}`);
@@ -180,7 +191,59 @@ describe("web-stomp production transport", () => {
       second.once("error", () => undefined);
     });
     expect(limitStatus).toBe(503);
+    expect(getStompServerStats().rejectedConnections).toBe(2);
     first.close();
+  });
+
+  it("closes a slow consumer before the WebSocket send buffer grows without bound", async () => {
+    await startStompServer(config, vi.fn());
+    const ws = await open(config);
+    const connectedPromise = waitMessage(ws, "CONNECTED");
+    ws.send(frame("CONNECT", { "accept-version": "1.2", login: "browser", passcode: "secret" }));
+    const connected = await connectedPromise;
+    const connectionId = /\nsession:([^\n]+)/.exec(connected)?.[1];
+    const destination = `/topic/session.stomp:${connectionId}@main`;
+    const subscribed = waitMessage(ws, "receipt-id:sub-ready");
+    ws.send(frame("SUBSCRIBE", { id: "slow", destination, receipt: "sub-ready" }));
+    await subscribed;
+
+    // 握手与订阅完成后再收紧，精确验证业务 MESSAGE 的背压分支。
+    config.maxBufferedBytes = 1;
+    const closed = new Promise<number>((resolve) => ws.once("close", resolve));
+    expect(publishToDestination(destination, "larger-than-one-byte")).toBe(0);
+    await closed;
+    expect(getStompServerStats().droppedOutbound).toBe(1);
+  });
+
+  it("removes stale subscriptions and accepts the same client flow after reconnect", async () => {
+    await startStompServer(config, vi.fn());
+    const first = await open(config);
+    const firstConnectedPromise = waitMessage(first, "CONNECTED");
+    first.send(frame("CONNECT", { "accept-version": "1.2", login: "browser", passcode: "secret" }));
+    const firstId = /\nsession:([^\n]+)/.exec(await firstConnectedPromise)?.[1];
+    const firstDestination = `/topic/session.stomp:${firstId}@main`;
+    first.send(frame("SUBSCRIBE", { id: "reply", destination: firstDestination }));
+    first.close();
+    await new Promise<void>((resolve) => first.once("close", () => resolve()));
+    // 客户端 close 事件与服务端 close 回调分属两端，等待服务端清理状态最终收敛。
+    await vi.waitFor(() => expect(getStompServerStats()).toMatchObject({
+      connectionCount: 0,
+      subscriptionCount: 0,
+    }));
+
+    const second = await open(config);
+    const secondConnectedPromise = waitMessage(second, "CONNECTED");
+    second.send(frame("CONNECT", { "accept-version": "1.2", login: "browser", passcode: "secret" }));
+    const secondId = /\nsession:([^\n]+)/.exec(await secondConnectedPromise)?.[1];
+    expect(secondId).not.toBe(firstId);
+    const secondDestination = `/topic/session.stomp:${secondId}@main`;
+    const subscribed = waitMessage(second, "receipt-id:sub-ready");
+    second.send(frame("SUBSCRIBE", { id: "reply", destination: secondDestination, receipt: "sub-ready" }));
+    await subscribed;
+    const message = waitMessage(second, "after-reconnect");
+    expect(publishToDestination(secondDestination, "after-reconnect")).toBe(1);
+    await expect(message).resolves.toContain("MESSAGE");
+    second.close();
   });
 
   it("accepts a real WSS STOMP 1.2 connection", async () => {

@@ -97,6 +97,8 @@ export class DurableJsonMapStore<T> {
       const temporaryPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
       const payload = Object.fromEntries(this.memory.entries());
       await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
+      // state 可能来自旧版本或管理员预建目录，不能假设现有权限等于 mkdir 的 mode。
+      await chmod(dirname(filePath), 0o700);
       try {
         await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, {
           encoding: "utf-8",

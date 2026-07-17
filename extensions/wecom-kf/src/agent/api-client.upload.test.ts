@@ -23,7 +23,7 @@ function createAgent(agentId: number): ResolvedAgentAccount {
     enabled: true,
     configured: true,
     corpId: "corp",
-    corpSecret: "secret",
+    corpSecret: `secret-${agentId}`,
     agentId,
     token: "token",
     encodingAESKey: "aes",

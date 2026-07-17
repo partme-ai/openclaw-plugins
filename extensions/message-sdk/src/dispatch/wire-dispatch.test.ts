@@ -5,6 +5,11 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+import { buildTextMessage } from "../core/index.js";
+import {
+  InboundMessageQueue,
+  InboundMessageQueueCapacityError,
+} from "../queue/inbound-message-queue.js";
 import { dispatchWireMessage } from "./wire-dispatch.js";
 import * as inboundBridge from "../bridge/inbound-bridge.js";
 
@@ -58,5 +63,26 @@ describe("dispatchWireMessage", () => {
 
     expect(dispatchInbound).toHaveBeenCalledTimes(1);
     dispatchInbound.mockRestore();
+  });
+
+  it("raises a retryable capacity error instead of marking a full queue as duplicate", async () => {
+    const queue = new InboundMessageQueue({ maxSize: 1 });
+    await queue.push({ message: buildTextMessage("mqtt", "default", "device", "queued") });
+    const unified = buildTextMessage("mqtt", "default", "device", "new");
+
+    await expect(
+      dispatchWireMessage(
+        {
+          runtime: {} as never,
+          channel: "mqtt",
+          accountId: "default",
+          peerId: "device",
+          text: "new",
+          unified,
+          reply: { deliver: vi.fn() },
+        },
+        { useInboundQueue: true, inboundQueue: queue },
+      ),
+    ).rejects.toBeInstanceOf(InboundMessageQueueCapacityError);
   });
 });

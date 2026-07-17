@@ -58,6 +58,8 @@ export interface GotifyWsListenerDeps {
   }) => void;
   /** 测试用：覆盖连接超时。 */
   connectionTimeoutMs?: number;
+  /** 测试用随机数源；生产默认使用 Math.random 计算重连抖动。 */
+  random?: () => number;
 }
 
 /**
@@ -85,6 +87,7 @@ export function createGotifyWsListener(
 ): GotifyWsListenerController {
   const WebSocketImpl = deps.WebSocketImpl ?? WebSocket;
   const connectionTimeoutMs = deps.connectionTimeoutMs ?? CONNECTION_TIMEOUT_MS;
+  const random = deps.random ?? Math.random;
   let socket: WebSocket | null = null;
   let stopped = false;
   let reconnectDelay = account.inbound.reconnectDelayMs;
@@ -228,6 +231,11 @@ export function createGotifyWsListener(
       deps.onStateChange?.({ running: false, lastError: error });
       return;
     }
+    const scheduledDelay = computeReconnectDelay(
+      reconnectDelay,
+      account.inbound.reconnectJitterRatio,
+      random,
+    );
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       reconnectAttempts += 1;
@@ -241,7 +249,8 @@ export function createGotifyWsListener(
         const errorMsg = error instanceof Error ? error.message : String(error);
         deps.onStateChange?.({ running: false, lastError: errorMsg });
       }
-    }, reconnectDelay);
+    }, scheduledDelay);
+    reconnectTimer.unref?.();
   };
 
   return {
@@ -269,6 +278,7 @@ export function createGotifyWsListener(
             socket?.close();
           }
         }, connectionTimeoutMs);
+        connectionTimeoutTimer.unref?.();
         try {
           connect();
         } catch (error) {
@@ -305,4 +315,16 @@ export function createGotifyWsListener(
       deps.onStateChange?.({ running: false, lastError: null });
     },
   };
+}
+
+/**
+ * 对基础重连延迟加入对称抖动；`random=0.5` 时保持原值，便于测试锁定行为。
+ */
+export function computeReconnectDelay(
+  baseDelayMs: number,
+  jitterRatio: number,
+  random: () => number = Math.random,
+): number {
+  const jitter = baseDelayMs * jitterRatio * (random() * 2 - 1);
+  return Math.max(0, Math.round(baseDelayMs + jitter));
 }

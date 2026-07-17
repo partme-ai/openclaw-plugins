@@ -46,45 +46,104 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "groupId": { "type": "string", "default": "openclaw-rocketmq-producer", "description": "Deprecated compatibility label; rocketmq-client-nodejs Producer does not use a producer group." },
-              "requestTimeout": { "type": "number", "minimum": 1, "default": 5000 },
-              "maxAttempts": { "type": "number", "minimum": 1, "default": 3 }
+              "groupId": {
+                "type": "string",
+                "default": "openclaw-rocketmq-producer",
+                "description": "Deprecated compatibility label; rocketmq-client-nodejs Producer does not use a producer group."
+              },
+              "requestTimeout": {
+                "type": "number",
+                "minimum": 1,
+                "default": 5000
+              },
+              "maxAttempts": { "type": "integer", "minimum": 1, "default": 3 },
+              "maxMessageSizeInBytes": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 4194304,
+                "description": "Maximum UTF-8 payload size for one outbound message"
+              }
             },
-            "default": { "groupId": "openclaw-rocketmq-producer", "requestTimeout": 5000, "maxAttempts": 3 }
+            "default": {
+              "groupId": "openclaw-rocketmq-producer",
+              "requestTimeout": 5000,
+              "maxAttempts": 3,
+              "maxMessageSizeInBytes": 4194304
+            }
           },
           "consumer": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "groupId": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$", "default": "openclaw-rocketmq-consumer" },
+              "groupId": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]+$",
+                "default": "openclaw-rocketmq-consumer"
+              },
               "subscriptions": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
-                    "topic": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
+                    "topic": {
+                      "type": "string",
+                      "pattern": "^[a-zA-Z0-9_-]+$"
+                    },
                     "filterExpression": { "type": "string", "default": "*" }
                   },
                   "required": ["topic"]
                 },
                 "default": []
               },
-              "maxCacheMessageCount": { "type": "number", "default": 1024 },
-              "maxCacheMessageSizeInBytes": { "type": "number", "default": 67108864 },
-              "longPollingTimeout": { "type": "number", "default": 30000 },
-              "requestTimeout": { "type": "number", "default": 3000 },
+              "maxCacheMessageCount": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 1024
+              },
+              "maxCacheMessageSizeInBytes": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 67108864
+              },
+              "longPollingTimeout": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "default": 30000
+              },
+              "requestTimeout": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "default": 3000
+              },
               "reconsumeOnError": { "type": "boolean", "default": true },
               "retry": {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "maxAttempts": { "type": "number", "minimum": 1, "default": 17 },
-                  "initialDelayMs": { "type": "number", "minimum": 1, "default": 1000 },
-                  "maxDelayMs": { "type": "number", "minimum": 1, "default": 60000 },
+                  "maxAttempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 17
+                  },
+                  "initialDelayMs": {
+                    "type": "number",
+                    "minimum": 1,
+                    "default": 1000
+                  },
+                  "maxDelayMs": {
+                    "type": "number",
+                    "minimum": 1,
+                    "default": 60000
+                  },
                   "multiplier": { "type": "number", "minimum": 1, "default": 2 }
                 },
-                "default": { "maxAttempts": 17, "initialDelayMs": 1000, "maxDelayMs": 60000, "multiplier": 2 }
+                "default": {
+                  "maxAttempts": 17,
+                  "initialDelayMs": 1000,
+                  "maxDelayMs": 60000,
+                  "multiplier": 2
+                }
               }
             },
             "default": {
@@ -95,7 +154,12 @@
               "longPollingTimeout": 30000,
               "requestTimeout": 3000,
               "reconsumeOnError": true,
-              "retry": { "maxAttempts": 17, "initialDelayMs": 1000, "maxDelayMs": 60000, "multiplier": 2 }
+              "retry": {
+                "maxAttempts": 17,
+                "initialDelayMs": 1000,
+                "maxDelayMs": 60000,
+                "multiplier": 2
+              }
             }
           },
           "topicBindings": {
@@ -110,8 +174,14 @@
                 "tag": { "type": "string", "default": "*" },
                 "agentId": { "type": "string" },
                 "accountId": { "type": "string", "default": "default" },
-                "peerId": { "type": "string", "description": "Peer identifier for session routing" },
-                "replyTopic": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
+                "peerId": {
+                  "type": "string",
+                  "description": "Peer identifier for session routing"
+                },
+                "replyTopic": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9_-]+$"
+                },
                 "replyTag": { "type": "string" }
               },
               "required": ["topic", "agentId"]
@@ -133,8 +203,16 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "mode": { "type": "string", "enum": ["reply-pipeline", "embedded-agent", "subagent"], "default": "embedded-agent" },
-              "timeoutMs": { "type": "number", "default": 120000 },
+              "mode": {
+                "type": "string",
+                "enum": ["reply-pipeline", "embedded-agent", "subagent"],
+                "default": "embedded-agent"
+              },
+              "timeoutMs": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "default": 120000
+              },
               "reply": {
                 "type": "object",
                 "additionalProperties": false,
@@ -144,15 +222,27 @@
                 "default": { "enabled": true }
               }
             },
-            "default": { "mode": "embedded-agent", "timeoutMs": 120000, "reply": { "enabled": true } }
+            "default": {
+              "mode": "embedded-agent",
+              "timeoutMs": 120000,
+              "reply": { "enabled": true }
+            }
           },
           "idempotency": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
               "enabled": { "type": "boolean", "default": true },
-              "ttlMs": { "type": "number", "default": 600000 },
-              "maxEntries": { "type": "number", "default": 10000 }
+              "ttlMs": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "default": 600000
+              },
+              "maxEntries": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 10000
+              }
             },
             "default": { "enabled": true, "ttlMs": 600000, "maxEntries": 10000 }
           },
@@ -160,10 +250,40 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "startupAttempts": { "type": "number", "minimum": 1, "default": 6 },
-              "retryDelayMs": { "type": "number", "minimum": 0, "default": 5000 }
+              "startupAttempts": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 6
+              },
+              "retryDelayMs": {
+                "type": "number",
+                "minimum": 0,
+                "default": 5000
+              },
+              "retryMaxDelayMs": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "default": 60000
+              },
+              "retryJitterRatio": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.2
+              },
+              "shutdownTimeoutMs": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "default": 10000
+              }
             },
-            "default": { "startupAttempts": 6, "retryDelayMs": 5000 }
+            "default": {
+              "startupAttempts": 6,
+              "retryDelayMs": 5000,
+              "retryMaxDelayMs": 60000,
+              "retryJitterRatio": 0.2,
+              "shutdownTimeoutMs": 10000
+            }
           }
         },
         "required": ["endpoints"]

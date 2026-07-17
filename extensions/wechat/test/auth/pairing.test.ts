@@ -76,6 +76,9 @@ describe("registerUserInFrameworkStore", () => {
     const filePath = resolveFrameworkAllowFromPath("acc1");
     const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(content).toEqual({ version: 1, allowFrom: ["user-abc"] });
+    if (process.platform !== "win32") {
+      expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("appends userId to existing allowFrom list", async () => {
@@ -172,5 +175,13 @@ describe("registerUserInFrameworkStore", () => {
 
     const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(content.allowFrom).toEqual(["user-recover"]);
+  });
+
+  it("rejects overlong user IDs before touching the allowFrom file", async () => {
+    const { registerUserInFrameworkStore } = await loadModule();
+    await expect(registerUserInFrameworkStore({
+      accountId: "acc8",
+      userId: "x".repeat(257),
+    })).rejects.toThrow("exceeds 256");
   });
 });

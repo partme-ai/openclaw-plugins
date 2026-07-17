@@ -2,7 +2,7 @@
  * @fileoverview OpenClaw 消息生命周期 Hook → MQ 的 UnifiedMessage 桥接层。
  *
  * @description
- * **架构角色**：监听 `message_received` 与 `reply_payload_sending`，分别构造
+ * **架构角色**：监听 `message_received` 与 `message_sent`，分别构造
  * `UnifiedMessage` JSON 并通过 OpenClaw 公共 channel outbound adapter 投递到消息中间件。
  *
  * **配置驱动**：仅当 `pluginConfig.channels.<channelId>` 存在且 `enabled !== false`、
@@ -34,11 +34,12 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { clearBridgeRuntime } from "../runtime.js";
 import { getChannelMeta } from "./channels.js";
 
 // ── 已知的合法 MQ 渠道 ──
 
-/** @description Bridge 允许配置的 MQ 传输别名；未知值会 warn 并回退 `mqtt`。 */
+/** @description Bridge 允许配置的 MQ 传输别名；未知值会在启动期直接拒绝。 */
 const MQ_CHANNEL_ALIASES: Record<string, string> = {
   mqtt: "mqtt",
   "mqtt-ws": "mqtt-ws",
@@ -52,7 +53,15 @@ const MQ_CHANNEL_ALIASES: Record<string, string> = {
 };
 const DIRECT_TOPIC_CHANNELS = new Set(["mqtt", "mqtt-ws", "rabbitmq", "redis-stream", "rocketmq"]);
 const DIRECT_TARGET_PREFIX = "openclaw-direct-topic:v1:";
-const DEFAULT_DELIVERY = { maxAttempts: 3, retryDelayMs: 250, publishTimeoutMs: 5_000, maxPayloadBytes: 1_048_576 };
+const DEFAULT_DELIVERY = {
+  maxAttempts: 3,
+  retryDelayMs: 250,
+  publishTimeoutMs: 5_000,
+  maxPayloadBytes: 1_048_576,
+  maxInFlight: 4,
+  maxBufferedMessages: 1_024,
+  shutdownTimeoutMs: 10_000,
+};
 
 // ── 消息类型 ──
 
@@ -101,19 +110,13 @@ export interface UnifiedMessage {
 // ── ID 生成 ──
 
 /**
- * @description 确定性字符串哈希：FNV-1a 32 位折叠为 base36，用于 trace 摘要段。
+ * @description 确定性字符串哈希：截取 SHA-256 的 128 位十六进制摘要，用于 trace 摘要段。
  * @param input - 待哈希的 UTF-16 字符串（通常为 channel:account:agent:sessionKey）。
- * @returns 固定长度的 base36 摘要；同输入恒同输出（非密码学安全）。
+ * @returns 固定 32 字符摘要；同输入恒同输出，并把实际 sessionKey 隐藏在摘要之后。
  * @throws 不抛出。
  */
 function stableHash(input: string): string {
-  let h = 0x811c9dc5; // FNV-1a offset basis
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 0x01000193); // FNV prime
-    h = h >>> 0; // keep uint32
-  }
-  return h.toString(36);
+  return createHash("sha256").update(input).digest("hex").slice(0, 32);
 }
 
 /**
@@ -134,7 +137,7 @@ function safeSegment(seg: string): string {
  * 加上 channel/accountId/agentId 使 traceId 在跨渠道路由时可辨识来源。
  *
  * 格式: `trace/{channelSafe}/{accountSafe}/{agentSafe}/{stableDigest}`
- * 示例: `trace/discord/main/assistant/c7h2k9`
+ * 示例: `trace/discord/main/assistant/97f08fbb70f78d0cda0d3e72de30b92e`
  *
  * @param channel - OpenClaw 逻辑渠道 ID。
  * @param accountId - 渠道账号/机器人实例 ID。
@@ -154,10 +157,13 @@ export function deriveTraceId(
 }
 
 /**
- * @description 生成单条消息唯一 messageId，含方向缩写与时间/random 后缀。
+ * @description 生成单条消息唯一 messageId，含方向缩写、时间与密码学随机 UUID 后缀。
  *
- * 格式: `bridge/{in|out}/{channel}/{accountId}/{agentId}/{ts36}-{rand}`
- * 示例: `bridge/in/discord/main/assistant/m1a2b3c-x4y5`
+ * 格式: `bridge/{in|out}/{channel}/{accountId}/{agentId}/{ts36}-{uuid}`
+ * 示例: `bridge/in/discord/main/assistant/m1a2b3c-550e8400e29b41d4a716446655440000`
+ *
+ * 不能使用截断的 `Math.random()`：四位 base36 只有约 168 万种组合，高吞吐同毫秒内会受
+ * 生日悖论影响发生碰撞，进而破坏去重、重试和审计身份。UUID v4 提供 122 位随机熵。
  *
  * @param channel - OpenClaw 逻辑渠道 ID。
  * @param accountId - 渠道账号 ID。
@@ -173,8 +179,8 @@ export function generateMessageId(
   direction: "inbound" | "outbound",
 ): string {
   const ts = Date.now().toString(36);
-  const rand = Math.random().toString(36).slice(2, 6);
-  return `bridge/${direction === "inbound" ? "in" : "out"}/${safeSegment(channel)}/${safeSegment(accountId)}/${safeSegment(agentId)}/${ts}-${rand}`;
+  const uniqueSuffix = randomUUID().replaceAll("-", "");
+  return `bridge/${direction === "inbound" ? "in" : "out"}/${safeSegment(channel)}/${safeSegment(accountId)}/${safeSegment(agentId)}/${ts}-${uniqueSuffix}`;
 }
 
 /**
@@ -238,6 +244,8 @@ export interface BridgeChannelConfig {
   mqChannel?: string;
   mqAccountId?: string;
   topicPrefix?: string;
+  /** @description 是否允许把 Bridge 上下文注入 Prompt；默认开启。 */
+  contextInjection?: boolean;
 }
 
 /** @description Bridge 插件配置根：`channels` 键为 channelId。 */
@@ -293,11 +301,47 @@ function resolveDelivery(config: BridgeConfig): typeof DEFAULT_DELIVERY {
   return delivery;
 }
 
+/**
+ * 对 manifest Schema 之外的运行时入口再次校验 Bridge 配置。
+ *
+ * 校验根字段、delivery 数值、源渠道白名单、MQ 目标别名及每个渠道字段类型，防止测试、
+ * 旧配置迁移或直接 API 注册绕过 JSON Schema 后把错误值带入消息 Hook。
+ */
 export function validateBridgeConfig(config: BridgeConfig): void {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw new Error("[openclaw-bridge] config must be an object");
+  }
+  const rootUnknown = Object.keys(config).filter((key) => key !== "channels" && key !== "delivery");
+  if (rootUnknown.length > 0) throw new Error(`[openclaw-bridge] unknown config field: ${rootUnknown.join(", ")}`);
+  if (config.delivery !== undefined && (!config.delivery || typeof config.delivery !== "object" || Array.isArray(config.delivery))) {
+    throw new Error("[openclaw-bridge] delivery must be an object");
+  }
+  const deliveryUnknown = Object.keys(config.delivery ?? {}).filter((key) => !(key in DEFAULT_DELIVERY));
+  if (deliveryUnknown.length > 0) throw new Error(`[openclaw-bridge] unknown delivery field: ${deliveryUnknown.join(", ")}`);
+  if (config.channels !== undefined && (!config.channels || typeof config.channels !== "object" || Array.isArray(config.channels))) {
+    throw new Error("[openclaw-bridge] channels must be an object");
+  }
   resolveDelivery(config);
   for (const [channelId, channel] of Object.entries(config.channels ?? {})) {
     if (!getChannelMeta(channelId)) throw new Error(`[openclaw-bridge] unsupported source channel "${channelId}"`);
+    if (!channel || typeof channel !== "object" || Array.isArray(channel)) {
+      throw new Error(`[openclaw-bridge] channels.${channelId} must be an object`);
+    }
+    const channelUnknown = Object.keys(channel).filter((key) =>
+      !["enabled", "forwardToMq", "mqChannel", "mqAccountId", "topicPrefix", "contextInjection"].includes(key));
+    if (channelUnknown.length > 0) throw new Error(`[openclaw-bridge] channels.${channelId} has unknown field: ${channelUnknown.join(", ")}`);
+    for (const name of ["enabled", "forwardToMq", "contextInjection"] as const) {
+      if (channel[name] !== undefined && typeof channel[name] !== "boolean") {
+        throw new Error(`[openclaw-bridge] channels.${channelId}.${name} must be a boolean`);
+      }
+    }
+    if (channel.mqChannel !== undefined && !readString(channel.mqChannel)) {
+      throw new Error(`[openclaw-bridge] channels.${channelId}.mqChannel must be non-empty`);
+    }
     resolveMqChannel(channel.mqChannel);
+    if (channel.mqAccountId !== undefined && !readString(channel.mqAccountId)) {
+      throw new Error(`[openclaw-bridge] channels.${channelId}.mqAccountId must be non-empty`);
+    }
     if (channel.topicPrefix !== undefined && !readString(channel.topicPrefix)) {
       throw new Error(`[openclaw-bridge] channels.${channelId}.topicPrefix must be non-empty`);
     }
@@ -312,8 +356,28 @@ function encodeTarget(channel: string, topic: string): string {
   return topic;
 }
 
-async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+/**
+ * 判断一次源渠道出站是否正是 Bridge 自己写入的审计 Topic。
+ * 当源和目标同为 MQTT 等 MQ 渠道时，若不做此闸门，`message_sent` 会再次镜像审计消息并形成递归。
+ */
+function isBridgeAuditTarget(
+  target: string,
+  sourceChannel: string,
+  channelConfig: BridgeChannelConfig,
+): boolean {
+  const mqChannel = resolveMqChannel(channelConfig.mqChannel);
+  if (mqChannel !== sourceChannel) return false;
+  const topicPrefix = readString(channelConfig.topicPrefix) ?? `openclaw/bridge/${sourceChannel}`;
+  for (const direction of ["inbound", "outbound"] as const) {
+    const topic = `${topicPrefix.replace(/\/$/, "")}/${direction}`;
+    if (target === topic || target === encodeTarget(mqChannel, topic)) return true;
+  }
+  return false;
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, signal: AbortSignal): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
+  let rejectOnAbort: (() => void) | undefined;
   try {
     return await Promise.race([
       operation,
@@ -321,10 +385,39 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise
         timer = setTimeout(() => reject(new Error(`publish timed out after ${timeoutMs}ms; outcome is unknown`)), timeoutMs);
         timer.unref();
       }),
+      new Promise<never>((_, reject) => {
+        rejectOnAbort = () => reject(new Error("bridge delivery stopped; outcome is unknown"));
+        if (signal.aborted) {
+          rejectOnAbort();
+          return;
+        }
+        signal.addEventListener("abort", rejectOnAbort, { once: true });
+      }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (rejectOnAbort) signal.removeEventListener("abort", rejectOnAbort);
   }
+}
+
+/** 创建可被停止生命周期打断的等待，避免关闭时仍睡满整个重试退避时间。 */
+async function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) throw new Error("bridge delivery stopped");
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(done, delayMs);
+    timer.unref();
+    signal.addEventListener("abort", aborted, { once: true });
+
+    function done(): void {
+      signal.removeEventListener("abort", aborted);
+      resolve();
+    }
+
+    function aborted(): void {
+      clearTimeout(timer);
+      reject(new Error("bridge delivery stopped"));
+    }
+  });
 }
 
 async function publishToMq(params: {
@@ -334,6 +427,7 @@ async function publishToMq(params: {
   sourceChannel: string;
   direction: "inbound" | "outbound";
   message: UnifiedMessage;
+  signal: AbortSignal;
 }): Promise<void> {
   const mqChannel = resolveMqChannel(params.channelConfig.mqChannel);
   const topicPrefix = readString(params.channelConfig.topicPrefix) ?? `openclaw/bridge/${params.sourceChannel}`;
@@ -345,6 +439,7 @@ async function publishToMq(params: {
   }
   let lastError: unknown;
   for (let attempt = 1; attempt <= delivery.maxAttempts; attempt += 1) {
+    if (params.signal.aborted) throw new Error("bridge delivery stopped");
     try {
       const adapter = await params.api.runtime.channel.outbound.loadAdapter(mqChannel);
       if (!adapter?.sendText) throw new Error(`[openclaw-bridge] outbound adapter unavailable or lacks sendText: ${mqChannel}`);
@@ -354,16 +449,171 @@ async function publishToMq(params: {
         text: content,
         accountId: params.channelConfig.mqAccountId ?? null,
         deliveryQueueId: params.message.messageId,
-      }), delivery.publishTimeoutMs);
+      }), delivery.publishTimeoutMs, params.signal);
       return;
     } catch (error) {
       lastError = error;
       if (attempt < delivery.maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, delivery.retryDelayMs * attempt));
+        await waitForRetry(delivery.retryDelayMs * attempt, params.signal);
       }
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/**
+ * 单条待镜像任务。这里保存已经归一化后的不可变消息，而不是原始 Hook 上下文，避免宿主在
+ * Hook 返回后复用或修改事件对象，导致后台投递读到漂移数据。
+ */
+interface BridgeDeliveryJob {
+  channelConfig: BridgeChannelConfig;
+  sourceChannel: string;
+  direction: "inbound" | "outbound";
+  message: UnifiedMessage;
+}
+
+/**
+ * Bridge 的进程内有界投递器。
+ *
+ * Hook 是 OpenClaw 主消息链的一部分，因此只能完成“校验、归一化、入队”，不能在 Hook 内等待
+ * Broker 重试。后台投递器限制并发和等待队列；停机时先排空，超时后中断退避并丢弃尚未开始的
+ * 观测镜像。它不是持久化 Outbox，进程崩溃时未完成任务仍可能丢失。
+ */
+class BridgeDeliveryDispatcher {
+  private readonly queue: BridgeDeliveryJob[] = [];
+  private readonly drainWaiters = new Set<() => void>();
+  private readonly activeTraceIds = new Set<string>();
+  private abortController = new AbortController();
+  private activeCount = 0;
+  private accepting = false;
+  private stopping = false;
+
+  constructor(
+    private readonly api: OpenClawPluginApi,
+    private readonly config: BridgeConfig,
+    private readonly delivery: typeof DEFAULT_DELIVERY,
+  ) {}
+
+  /**
+   * 显式 Service 生命周期和 Hook Runtime 的惰性启动共用此入口。
+   * OpenClaw 2026.7.1 会为消息 Hook 创建独立插件 Runtime，该 Runtime 不会启动 registerService；
+   * 因此 start 必须幂等，并允许首次 Hook 入队时启动当前实例的投递器。
+   */
+  start(): void {
+    if (this.accepting) return;
+    this.abortController = new AbortController();
+    this.stopping = false;
+    this.accepting = true;
+    this.pump();
+  }
+
+  /**
+   * 非阻塞入队。队列已满时明确记录丢弃，而不是继续占用内存拖垮 Gateway。
+   */
+  enqueue(job: BridgeDeliveryJob): boolean {
+    if (!this.accepting) {
+      if (!this.stopping) {
+        // 消息 Hook 的 scoped runtime 不执行 Gateway service.start；惰性启动才能保证该实例可投递。
+        this.start();
+      }
+    }
+    if (!this.accepting) {
+      this.api.logger.warn(`[openclaw-bridge] delivery service is not accepting messageId=${job.message.messageId}`);
+      return false;
+    }
+    if (this.queue.length >= this.delivery.maxBufferedMessages) {
+      this.api.logger.error(
+        `[openclaw-bridge] delivery queue full; dropped messageId=${job.message.messageId} ` +
+        `channel=${job.sourceChannel} direction=${job.direction}`,
+      );
+      return false;
+    }
+    this.queue.push(job);
+    this.pump();
+    return true;
+  }
+
+  /** 停止接收后等待在途和排队任务；达到上限则以可观测方式有界退出。 */
+  async stop(): Promise<void> {
+    this.stopping = true;
+    this.accepting = false;
+    if (this.isDrained()) return;
+
+    let timer: NodeJS.Timeout | undefined;
+    const drained = await Promise.race([
+      this.waitUntilDrained().then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), this.delivery.shutdownTimeoutMs);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (drained) return;
+
+    const dropped = this.queue.length;
+    this.queue.length = 0;
+    this.abortController.abort();
+    this.api.logger.error(
+      `[openclaw-bridge] shutdown timed out after ${this.delivery.shutdownTimeoutMs}ms; ` +
+      `dropped queued=${dropped}, inFlight=${this.activeCount}; in-flight outcomes may be unknown`,
+    );
+    this.notifyIfDrained();
+    await this.waitUntilDrained();
+  }
+
+  private pump(): void {
+    // accepting=false 只禁止新任务；停机排空阶段仍必须继续启动已经进入队列的任务。
+    while (!this.abortController.signal.aborted && this.activeCount < this.delivery.maxInFlight) {
+      // 同一 traceId 通常代表同一会话。只并发不同会话，避免后发回复越过正在重试的前一条消息。
+      const nextIndex = this.queue.findIndex((candidate) => !this.activeTraceIds.has(candidate.message.traceId));
+      if (nextIndex < 0) break;
+      const [job] = this.queue.splice(nextIndex, 1);
+      if (!job) break;
+      this.activeCount += 1;
+      this.activeTraceIds.add(job.message.traceId);
+      void this.deliver(job).finally(() => {
+        this.activeCount -= 1;
+        this.activeTraceIds.delete(job.message.traceId);
+        this.pump();
+        this.notifyIfDrained();
+      });
+    }
+  }
+
+  private async deliver(job: BridgeDeliveryJob): Promise<void> {
+    try {
+      await publishToMq({
+        api: this.api,
+        config: this.config,
+        channelConfig: job.channelConfig,
+        sourceChannel: job.sourceChannel,
+        direction: job.direction,
+        message: job.message,
+        signal: this.abortController.signal,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.api.logger.error(
+        `[openclaw-bridge] delivery failed messageId=${job.message.messageId} ` +
+        `channel=${job.sourceChannel} direction=${job.direction}: ${reason}`,
+      );
+    }
+  }
+
+  private isDrained(): boolean {
+    return this.queue.length === 0 && this.activeCount === 0;
+  }
+
+  private waitUntilDrained(): Promise<void> {
+    if (this.isDrained()) return Promise.resolve();
+    return new Promise((resolve) => this.drainWaiters.add(resolve));
+  }
+
+  private notifyIfDrained(): void {
+    if (!this.isDrained()) return;
+    for (const resolve of this.drainWaiters) resolve();
+    this.drainWaiters.clear();
+  }
 }
 
 function stableMessageId(direction: "inbound" | "outbound", channel: string, identity: string): string {
@@ -383,7 +633,7 @@ class ReplyOrdinalTracker {
 }
 
 /**
- * @description 注册 `message_received` 与 `reply_payload_sending`：按配置将真实收发载荷转发到 MQ。
+ * @description 注册 `message_received` 与 `message_sent`：按配置将真实收发载荷转发到 MQ。
  *
  * **处理流程**：
  * 1. 校验 `channelId`、渠道配置、`getChannelMeta` 闸门
@@ -397,54 +647,74 @@ class ReplyOrdinalTracker {
 export function registerMessageBridge(api: OpenClawPluginApi): void {
   const config = getConfig(api);
   validateBridgeConfig(config);
+  const dispatcher = new BridgeDeliveryDispatcher(api, config, resolveDelivery(config));
   const replyOrdinals = new ReplyOrdinalTracker();
 
-  api.on("message_received", async (event, ctx) => {
+  api.on("message_received", (event, ctx) => {
     const channelId = ctx.channelId;
     const channelConfig = config.channels?.[channelId];
     if (!channelConfig || channelConfig.enabled === false || channelConfig.forwardToMq === false) return;
     const text = extractText(event.content);
     if (!text) return;
     const sessionKey = ctx.sessionKey ?? event.sessionKey ?? ctx.conversationId ?? "";
+    const accountId = ctx.accountId ?? "default";
     const identity = ctx.messageId ?? event.messageId ?? ctx.runId ?? event.runId ?? randomUUID();
     const message = buildMessage({
       channel: channelId,
-      accountId: ctx.accountId ?? "default",
+      accountId,
       agentId: "default",
       sessionKey,
       userId: ctx.senderId ?? event.senderId ?? event.from ?? "unknown",
       text,
-      messageId: stableMessageId("inbound", channelId, identity),
-      traceId: readString(event.traceId) ?? deriveTraceId(channelId, ctx.accountId ?? "default", "default", sessionKey),
+      messageId: stableMessageId("inbound", channelId, `${accountId}:${sessionKey}:${identity}`),
+      traceId: readString(event.traceId) ?? deriveTraceId(channelId, accountId, "default", sessionKey),
       timestamp: event.timestamp,
       metadata: { sessionKey, runId: ctx.runId ?? event.runId, sourceChannel: channelId, bridge: "openclaw-bridge", direction: "inbound" },
     });
-    await publishToMq({ api, config, channelConfig, sourceChannel: channelId, direction: "inbound", message });
+    dispatcher.enqueue({ channelConfig, sourceChannel: channelId, direction: "inbound", message });
   });
 
-  api.on("reply_payload_sending", async (event, ctx) => {
+  api.on("message_sent", (event, ctx) => {
     const channelId = ctx.channelId;
     const channelConfig = config.channels?.[channelId];
     if (!channelConfig || channelConfig.enabled === false || channelConfig.forwardToMq === false) return;
-    const text = extractText(event.payload.text);
+    if (isBridgeAuditTarget(event.to, channelId, channelConfig)) return;
+    // `message_sent` 位于公共 outbound delivery 之后，只有 success=true 才代表平台已接受该消息。
+    if (!event.success) {
+      api.logger.warn(
+        `[openclaw-bridge] source delivery failed; skip outbound mirror channel=${channelId} error=${event.error ?? "unknown"}`,
+      );
+      return;
+    }
+    const text = extractText(event.content);
     if (!text) return;
-    const sessionKey = ctx.sessionKey ?? event.sessionKey ?? ctx.conversationId ?? "";
-    const runIdentity = event.runId ?? ctx.runId ?? randomUUID();
-    const ordinal = replyOrdinals.next(`${channelId}:${sessionKey}:${runIdentity}`);
+    const sessionKey = ctx.sessionKey ?? event.sessionKey ?? ctx.conversationId ?? event.to ?? "";
+    const accountId = ctx.accountId ?? "default";
+    const deliveryIdentity = event.messageId ?? ctx.messageId ?? event.runId ?? ctx.runId ?? randomUUID();
+    const ordinal = replyOrdinals.next(`${channelId}:${accountId}:${sessionKey}:${deliveryIdentity}`);
     const message = buildMessage({
       channel: channelId,
-      accountId: ctx.accountId ?? "default",
-      agentId: event.usageState?.agentId ?? "default",
+      accountId,
+      agentId: "default",
       sessionKey,
-      userId: ctx.senderId ?? ctx.conversationId ?? "unknown",
+      userId: event.to ?? ctx.conversationId ?? "unknown",
       text,
       direction: "outbound",
-      messageId: stableMessageId("outbound", channelId, `${runIdentity}:${event.kind}:${ordinal}`),
-      traceId: readString(ctx.traceId) ?? deriveTraceId(channelId, ctx.accountId ?? "default", "default", sessionKey),
-      metadata: { sessionKey, runId: event.runId ?? ctx.runId, kind: event.kind, ordinal, sourceChannel: channelId, bridge: "openclaw-bridge", direction: "outbound" },
+      messageId: stableMessageId("outbound", channelId, `${accountId}:${sessionKey}:${deliveryIdentity}:${ordinal}`),
+      traceId: readString(event.traceId) ?? readString(ctx.traceId) ?? deriveTraceId(channelId, accountId, "default", sessionKey),
+      metadata: { sessionKey, runId: event.runId ?? ctx.runId, platformMessageId: event.messageId, ordinal, sourceChannel: channelId, bridge: "openclaw-bridge", direction: "outbound", success: true },
     });
-    await publishToMq({ api, config, channelConfig, sourceChannel: channelId, direction: "outbound", message });
+    dispatcher.enqueue({ channelConfig, sourceChannel: channelId, direction: "outbound", message });
   });
 
-  api.logger.info("[openclaw-bridge] Message bridge registered");
+  api.registerService({
+    id: "openclaw-bridge-delivery",
+    start: () => dispatcher.start(),
+    stop: async () => {
+      await dispatcher.stop();
+      clearBridgeRuntime();
+    },
+  });
+
+  api.logger.info("[openclaw-bridge] Message bridge registered with bounded background delivery");
 }

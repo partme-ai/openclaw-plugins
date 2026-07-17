@@ -57,7 +57,15 @@ export const E2E_PORTS = {
   oauth2Provider: Number(process.env.E2E_OAUTH2_PROVIDER_PORT ?? 19090),
   webSocket: Number(process.env.E2E_WEB_SOCKET_PORT ?? 28789),
   modelFixture: Number(process.env.E2E_MODEL_FIXTURE_PORT ?? 19091),
+  amapProvider: Number(process.env.E2E_AMAP_PROVIDER_PORT ?? 19092),
+  meituanProvider: Number(process.env.E2E_MEITUAN_PROVIDER_PORT ?? 19093),
+  rednodeProvider: Number(process.env.E2E_REDNODE_PROVIDER_PORT ?? 19094),
+  wechatProvider: Number(process.env.E2E_WECHAT_PROVIDER_PORT ?? 19095),
+  wechatIpadProvider: Number(process.env.E2E_WECHAT_IPAD_PROVIDER_PORT ?? 19096),
+  wecomKfProvider: Number(process.env.E2E_WECOM_KF_PROVIDER_PORT ?? 19097),
+  openmem: Number(process.env.E2E_OPENMEM_PORT ?? 13317),
   otlpHttp: Number(process.env.E2E_OTLP_HTTP_PORT ?? 14318),
+  nacosHttp: Number(process.env.E2E_NACOS_HTTP_PORT ?? 18848),
 };
 
 /** @param {number} port */

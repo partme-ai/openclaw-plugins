@@ -11,7 +11,7 @@ import { splitUtf8TextByMaxBytes } from "@partme.ai/openclaw-message-sdk/util";
 import { readResponseBodyAsBuffer, wecomFetch } from "../shared/http.js";
 import { resolveWecomEgressProxyUrlFromNetwork } from "../config/index.js";
 import { resolveApiBaseUrl } from "../config/kf-routes.js";
-import { checkKfSendAllowed, recordKfOutboundSend } from "./kf-send-guard.js";
+import { reserveKfOutboundSend, rollbackKfSendReservation } from "./kf-send-guard.js";
 import { stripMarkdown } from "@partme.ai/openclaw-message-sdk/text";
 import { needsTranscoding, transcodeBufferToAmr } from "./voice-transcode.js";
 
@@ -43,6 +43,20 @@ type TokenCache = {
 
 const tokenCaches = new Map<string, TokenCache>();
 const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+/**
+ * 生成不暴露凭据明文的 token 缓存键。
+ *
+ * access_token 由企业 ID、Secret 和实际 API 服务共同决定。把 Secret 与 apiBaseUrl 纳入
+ * 指纹，才能在凭据轮换或切换私有化网关后立即获取新 token；相同凭据的多个 KF 账号
+ * 仍会共享缓存与并发刷新 Promise。
+ */
+function buildTokenCacheKey(agent: ResolvedAgentAccount): string {
+    return crypto
+        .createHash("sha256")
+        .update(`${agent.corpId}\0${agent.corpSecret}\0${resolveApiBaseUrl(agent.config)}`)
+        .digest("hex");
+}
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
     const body = await readResponseBodyAsBuffer(response, MAX_JSON_RESPONSE_BYTES);
@@ -93,11 +107,6 @@ function guessUploadContentType(filename: string): string {
     return contentTypeMap[ext] || "application/octet-stream";
 }
 
-function requireAgentId(agent: ResolvedAgentAccount): number {
-    if (typeof agent.agentId === "number" && Number.isFinite(agent.agentId)) return agent.agentId;
-    throw new Error(`wecom agent account=${agent.accountId} missing agentId; sending via cgi-bin/message/send requires agentId`);
-}
-
 /**
  * **getAccessToken (获取 AccessToken)**
  * 
@@ -108,7 +117,7 @@ function requireAgentId(agent: ResolvedAgentAccount): number {
  * @returns 有效的 AccessToken
  */
 export async function getAccessToken(agent: ResolvedAgentAccount): Promise<string> {
-    const cacheKey = `${agent.corpId}:${String(agent.agentId ?? "na")}`;
+    const cacheKey = buildTokenCacheKey(agent);
     let cache = tokenCaches.get(cacheKey);
 
     if (!cache) {
@@ -148,72 +157,6 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
     })();
 
     return cache.refreshPromise;
-}
-
-/**
- * **sendText (发送文本消息)**
- * 
- * 调用 `message/send` (Agent) 或 `appchat/send` (群聊) 发送文本。
- * 
- * @param params.agent 发送方 Agent
- * @param params.toUser 接收用户 ID (单聊可选，可与 toParty/toTag 同时使用)
- * @param params.toParty 接收部门 ID (单聊可选)
- * @param params.toTag 接收标签 ID (单聊可选)
- * @param params.chatId 接收群 ID (群聊模式必填，互斥)
- * @param params.text 消息内容
- */
-export async function sendText(params: {
-    agent: ResolvedAgentAccount;
-    toUser?: string;
-    toParty?: string;
-    toTag?: string;
-    chatId?: string;
-    text: string;
-}): Promise<void> {
-    const { agent, toUser, toParty, toTag, chatId, text } = params;
-    const token = await getAccessToken(agent);
-
-    const useChat = Boolean(chatId);
-    const url = buildAgentApiUrl(agent, useChat
-        ? `${API_ENDPOINTS.SEND_APPCHAT}?access_token=${encodeURIComponent(token)}`
-        : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`);
-
-    const body = useChat
-        ? { chatid: chatId, msgtype: "text", text: { content: text } }
-        : {
-            touser: toUser,
-            toparty: toParty,
-            totag: toTag,
-            msgtype: "text",
-            agentid: requireAgentId(agent),
-            text: { content: text }
-        };
-
-    const res = await wecomFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    }, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    const json = await readJsonResponse<{
-        errcode?: number;
-        errmsg?: string;
-        invaliduser?: string;
-        invalidparty?: string;
-        invalidtag?: string;
-    }>(res);
-
-    if (json?.errcode !== 0) {
-        throw new Error(`send failed: ${json?.errcode} ${json?.errmsg}`);
-    }
-
-    if (json?.invaliduser || json?.invalidparty || json?.invalidtag) {
-        const details = [
-            json.invaliduser ? `invaliduser=${json.invaliduser}` : "",
-            json.invalidparty ? `invalidparty=${json.invalidparty}` : "",
-            json.invalidtag ? `invalidtag=${json.invalidtag}` : ""
-        ].filter(Boolean).join(", ");
-        throw new Error(`send partial failure: ${details}`);
-    }
 }
 
 /**
@@ -280,82 +223,6 @@ export async function uploadMedia(params: {
         throw new Error(`upload failed: ${json?.errcode} ${json?.errmsg}`);
     }
     return json.media_id;
-}
-
-/**
- * **sendMedia (发送媒体消息)**
- * 
- * 发送图片、音频、视频或文件。需先通过 `uploadMedia` 获取 media_id。
- * 
- * @param params.agent 发送方 Agent
- * @param params.toUser 接收用户 ID (单聊可选)
- * @param params.toParty 接收部门 ID (单聊可选)
- * @param params.toTag 接收标签 ID (单聊可选)
- * @param params.chatId 接收群 ID (群聊模式必填)
- * @param params.mediaId 媒体 ID
- * @param params.mediaType 媒体类型
- * @param params.title 视频标题 (可选)
- * @param params.description 视频描述 (可选)
- */
-export async function sendMedia(params: {
-    agent: ResolvedAgentAccount;
-    toUser?: string;
-    toParty?: string;
-    toTag?: string;
-    chatId?: string;
-    mediaId: string;
-    mediaType: "image" | "voice" | "video" | "file";
-    title?: string;
-    description?: string;
-}): Promise<void> {
-    const { agent, toUser, toParty, toTag, chatId, mediaId, mediaType, title, description } = params;
-    const token = await getAccessToken(agent);
-
-    const useChat = Boolean(chatId);
-    const url = buildAgentApiUrl(agent, useChat
-        ? `${API_ENDPOINTS.SEND_APPCHAT}?access_token=${encodeURIComponent(token)}`
-        : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`);
-
-    const mediaPayload = mediaType === "video"
-        ? { media_id: mediaId, title: title ?? "Video", description: description ?? "" }
-        : { media_id: mediaId };
-
-    const body = useChat
-        ? { chatid: chatId, msgtype: mediaType, [mediaType]: mediaPayload }
-        : {
-            touser: toUser,
-            toparty: toParty,
-            totag: toTag,
-            msgtype: mediaType,
-            agentid: requireAgentId(agent),
-            [mediaType]: mediaPayload
-        };
-
-    const res = await wecomFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    }, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    const json = await readJsonResponse<{
-        errcode?: number;
-        errmsg?: string;
-        invaliduser?: string;
-        invalidparty?: string;
-        invalidtag?: string;
-    }>(res);
-
-    if (json?.errcode !== 0) {
-        throw new Error(`send ${mediaType} failed: ${json?.errcode} ${json?.errmsg}`);
-    }
-
-    if (json?.invaliduser || json?.invalidparty || json?.invalidtag) {
-        const details = [
-            json.invaliduser ? `invaliduser=${json.invaliduser}` : "",
-            json.invalidparty ? `invalidparty=${json.invalidparty}` : "",
-            json.invalidtag ? `invalidtag=${json.invalidtag}` : ""
-        ].filter(Boolean).join(", ");
-        throw new Error(`send ${mediaType} partial failure: ${details}`);
-    }
 }
 
 /**
@@ -441,7 +308,7 @@ async function callAuthenticatedJson<T extends { errcode?: number; errmsg?: stri
       data.errcode !== undefined &&
       INVALID_ACCESS_TOKEN_ERRCODES.has(data.errcode)
     ) {
-      tokenCaches.delete(`${agent.corpId}:${String(agent.agentId ?? "na")}`);
+      tokenCaches.delete(buildTokenCacheKey(agent));
       continue;
     }
 
@@ -471,6 +338,63 @@ export type KfSyncMsgResponse = {
     has_more: number;
     msg_list: KfSyncMsgItem[];
 };
+
+/**
+ * 校验并规范化企业微信 `sync_msg` 响应。
+ *
+ * 这里不能用 `?? 0` 把缺失的 `errcode` 当成成功：网关、代理或上游协议变化
+ * 都可能返回一个合法 JSON 对象，但它并不是企业微信响应。若误判为成功，调用方会
+ * 推进持久化游标，造成这一页客服消息永久跳过。
+ *
+ * 错误响应只要求 `errcode/errmsg`，因为企业微信在失败时通常不会返回分页字段；
+ * 成功响应则严格要求分页标记和消息数组，保证游标状态机只消费可信数据。
+ */
+export function parseKfSyncMsgResponse(data: unknown): KfSyncMsgResponse {
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error("WeCom sync_msg returned an invalid response object");
+    }
+    const record = data as Record<string, unknown>;
+    if (!Number.isInteger(record.errcode)) {
+        throw new Error("WeCom sync_msg response is missing integer errcode");
+    }
+    if (typeof record.errmsg !== "string") {
+        throw new Error("WeCom sync_msg response is missing string errmsg");
+    }
+    const errcode = record.errcode as number;
+    const errmsg = record.errmsg;
+    if (errcode !== 0) {
+        return { errcode, errmsg, has_more: 0, msg_list: [] };
+    }
+    if (record.has_more !== 0 && record.has_more !== 1) {
+        throw new Error("WeCom sync_msg success response has invalid has_more");
+    }
+    if (!Array.isArray(record.msg_list)) {
+        throw new Error("WeCom sync_msg success response is missing msg_list");
+    }
+    if (record.next_cursor !== undefined && typeof record.next_cursor !== "string") {
+        throw new Error("WeCom sync_msg success response has invalid next_cursor");
+    }
+    const msgList = record.msg_list.map((item, index) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+            throw new Error(`WeCom sync_msg msg_list[${index}] is not an object`);
+        }
+        const message = item as Record<string, unknown>;
+        if (typeof message.msgid !== "string" || !message.msgid.trim()) {
+            throw new Error(`WeCom sync_msg msg_list[${index}] is missing msgid`);
+        }
+        if (typeof message.msgtype !== "string" || !message.msgtype.trim()) {
+            throw new Error(`WeCom sync_msg msg_list[${index}] is missing msgtype`);
+        }
+        return message as KfSyncMsgItem;
+    });
+    return {
+        errcode,
+        errmsg,
+        next_cursor: record.next_cursor as string | undefined,
+        has_more: record.has_more,
+        msg_list: msgList,
+    };
+}
 
 /** KF send_msg / send_msg_on_event 结果 */
 export type KfSendMsgResult = {
@@ -507,13 +431,7 @@ export async function syncKfMessages(
         { method: "POST", body: JSON.stringify(body) },
     );
 
-    return {
-        errcode: data.errcode ?? 0,
-        errmsg: data.errmsg ?? "ok",
-        next_cursor: data.next_cursor,
-        has_more: data.has_more ?? 0,
-        msg_list: data.msg_list ?? [],
-    };
+    return parseKfSyncMsgResponse(data);
 }
 
 /**
@@ -552,13 +470,7 @@ export async function syncMessages(
     }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
     const json = await readJsonResponse<KfSyncMsgResponse & { has_more?: number; msg_list?: KfSyncMsgItem[] }>(res);
     void agent;
-    return {
-        errcode: json.errcode ?? 0,
-        errmsg: json.errmsg ?? "ok",
-        next_cursor: json.next_cursor,
-        has_more: json.has_more ?? 0,
-        msg_list: json.msg_list ?? [],
-    };
+    return parseKfSyncMsgResponse(json);
 }
 
 /**
@@ -577,7 +489,7 @@ export async function sendKfMessage(
 ): Promise<KfSendMsgResult> {
     const openKfId = String(params.open_kfid ?? "").trim();
     const externalUserId = String(params.touser ?? "").trim();
-    const guard = await checkKfSendAllowed({ openKfId, externalUserId });
+    const guard = await reserveKfOutboundSend({ openKfId, externalUserId });
     if (!guard.allowed) {
         console.warn(`[wecom-kf] send_msg blocked code=${guard.code}: ${guard.reason}`);
         return { errcode: 95001, errmsg: guard.reason };
@@ -594,17 +506,20 @@ export async function sendKfMessage(
         }
     }
 
-    const result = await callAuthenticatedJson<KfSendMsgResult>(
-        agent,
-        (accessToken) => `${API_ENDPOINTS.KF_SEND_MSG}?access_token=${encodeURIComponent(accessToken)}`,
-        { method: "POST", body: JSON.stringify(body) },
-    );
-
-    if (result.errcode === 0) {
-        await recordKfOutboundSend({ openKfId, externalUserId });
+    try {
+        const result = await callAuthenticatedJson<KfSendMsgResult>(
+            agent,
+            (accessToken) => `${API_ENDPOINTS.KF_SEND_MSG}?access_token=${encodeURIComponent(accessToken)}`,
+            { method: "POST", body: JSON.stringify(body) },
+        );
+        if (result.errcode !== 0) {
+            await rollbackKfSendReservation(guard.reservation);
+        }
+        return result;
+    } catch (error) {
+        await rollbackKfSendReservation(guard.reservation);
+        throw error;
     }
-
-    return result;
 }
 
 /**
@@ -637,62 +552,6 @@ export async function sendKfWelcomeMessage(
         (accessToken) => `${API_ENDPOINTS.KF_SEND_MSG_ON_EVENT}?access_token=${encodeURIComponent(accessToken)}`,
         { method: "POST", body: JSON.stringify(body) },
     );
-}
-
-/** @deprecated 使用 sendKfWelcomeMessage(agent, params) */
-export async function sendEventMessage(params: {
-    accessToken: string;
-    code?: string;
-    msgtype: string;
-    open_kfid?: string;
-    [key: string]: unknown;
-}): Promise<KfSendMsgResult> {
-    const body: Record<string, unknown> = {
-        code: params.code ?? "",
-        msgtype: params.msgtype,
-    };
-    if (params.open_kfid?.trim()) body.open_kfid = params.open_kfid.trim();
-    for (const [key, value] of Object.entries(params)) {
-        if (key !== "accessToken" && key !== "code" && key !== "msgtype" && key !== "open_kfid") {
-            body[key] = value;
-        }
-    }
-
-    const url = `${API_ENDPOINTS.KF_SEND_MSG_ON_EVENT}?access_token=${encodeURIComponent(params.accessToken)}`;
-    const res = await wecomFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    return readJsonResponse<KfSendMsgResult>(res);
-}
-
-/** @deprecated 使用 sendKfMessage(agent, params) */
-export async function sendKfMsg(params: {
-    accessToken: string;
-    touser: string;
-    open_kfid: string;
-    msgtype: string;
-    [key: string]: unknown;
-}): Promise<KfSendMsgResult> {
-    const body: Record<string, unknown> = {
-        touser: params.touser,
-        open_kfid: params.open_kfid,
-        msgtype: params.msgtype,
-    };
-    for (const [key, value] of Object.entries(params)) {
-        if (key !== "accessToken" && key !== "touser" && key !== "open_kfid" && key !== "msgtype") {
-            body[key] = value;
-        }
-    }
-
-    const url = `${API_ENDPOINTS.KF_SEND_MSG}?access_token=${encodeURIComponent(params.accessToken)}`;
-    const res = await wecomFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-    return readJsonResponse<KfSendMsgResult>(res);
 }
 
 /** KF 接待人员条目 */
@@ -797,48 +656,9 @@ export async function transferKfSession(params: {
 }
 
 /**
- * **KF listServicers (获取接待人员列表 — 兼容旧调用)**
- *
- * 仅返回 servicer_list 数组；失败时返回空数组。
- */
-export async function listServicers(params: {
-    accessToken: string;
-    openKfId?: string;
-}): Promise<Array<{ userid: string; status: number }>> {
-    const agent: ResolvedAgentAccount = {
-        accountId: "legacy-listServicers",
-        enabled: true,
-        configured: true,
-        corpId: "",
-        corpSecret: "",
-        token: "",
-        encodingAESKey: "",
-        config: { corpId: "", corpSecret: "", token: "", encodingAESKey: "" },
-    };
-
-    // 兼容路径：调用方已持有 accessToken，直接请求 API
-    const body: Record<string, unknown> = {};
-    if (params.openKfId?.trim()) body.open_kfid = params.openKfId.trim();
-
-    const url = `${API_ENDPOINTS.KF_SERVICER_LIST}?access_token=${encodeURIComponent(params.accessToken)}`;
-    const res = await wecomFetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
-
-    const json = await readJsonResponse<{
-        errcode: number;
-        servicer_list?: Array<{ userid: string; status: number }>;
-    }>(res);
-    if (json.errcode !== 0) return [];
-    return json.servicer_list ?? [];
-}
-
-/**
  * **sendKfTextMessage (发送 KF 文本消息，含 Markdown 剥离和自动拆分)**
  *
- * 自动处理 stripMarkdown + splitUtf8TextByMaxBytes + sendKfMsg 完整流程。
+ * 自动处理 stripMarkdown + splitUtf8TextByMaxBytes + sendKfMessage 完整流程。
  * 从 research/openclaw-china 回移植。
  */
 export async function sendKfTextMessage(params: {

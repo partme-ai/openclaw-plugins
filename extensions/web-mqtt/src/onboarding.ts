@@ -44,5 +44,7 @@ const { setupAdapter, setupWizard } = createSimpleChannelSetup({
   ],
 });
 
+/** 将端口和路径输入转换为 `channels.mqtt-ws` 配置补丁的声明式适配器。 */
 export const webMqttSetupAdapter = setupAdapter;
+/** 引导用户配置浏览器 MQTT over WebSocket 监听端点的 OpenClaw 向导。 */
 export const webMqttSetupWizard = setupWizard;

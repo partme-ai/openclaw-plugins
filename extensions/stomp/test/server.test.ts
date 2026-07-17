@@ -151,4 +151,72 @@ describe("stomp TCP server", () => {
     await expect(third).resolves.toContain("third");
     client.destroy();
   });
+
+  it("buffers transactional SEND until COMMIT and discards it on ABORT", async () => {
+    const inbound = vi.fn<(message: InboundMessage) => Promise<void>>().mockResolvedValue(undefined);
+    await startStompTcpServer(config, inbound);
+    const client = await connectClient(config);
+    await stompConnect(client);
+
+    const begun = readUntil(client, "receipt-id:begin-1");
+    client.write(frame("BEGIN", { transaction: "tx-1", receipt: "begin-1" }));
+    await begun;
+    const queued = readUntil(client, "receipt-id:queued-1");
+    client.write(frame("SEND", { destination: "/queue/agent", transaction: "tx-1", receipt: "queued-1" }, "committed"));
+    await queued;
+    expect(inbound).not.toHaveBeenCalled();
+
+    const committed = readUntil(client, "receipt-id:commit-1");
+    client.write(frame("COMMIT", { transaction: "tx-1", receipt: "commit-1" }));
+    await committed;
+    expect(inbound).toHaveBeenCalledTimes(1);
+    expect(inbound.mock.calls[0][0]).toMatchObject({ rawPayload: "committed", idempotencyKey: undefined });
+
+    const begunAbort = readUntil(client, "receipt-id:begin-2");
+    client.write(frame("BEGIN", { transaction: "tx-2", receipt: "begin-2" }));
+    await begunAbort;
+    client.write(frame("SEND", { destination: "/queue/agent", transaction: "tx-2" }, "aborted"));
+    const aborted = readUntil(client, "receipt-id:abort-2");
+    client.write(frame("ABORT", { transaction: "tx-2", receipt: "abort-2" }));
+    await aborted;
+    expect(inbound).toHaveBeenCalledTimes(1);
+    client.destroy();
+  });
+
+  it("defers transactional ACK until COMMIT releases prefetch", async () => {
+    config = { ...config, prefetchCount: 1 };
+    await startStompTcpServer(config, vi.fn());
+    const client = await connectClient(config);
+    await stompConnect(client);
+    const subscribed = readUntil(client, "receipt-id:tx-sub-ready");
+    client.write(frame("SUBSCRIBE", { id: "tx-sub", destination: "/topic/tx-ack", ack: "client-individual", receipt: "tx-sub-ready" }));
+    await subscribed;
+    publishToDestination("/topic/tx-ack", "first-tx");
+    publishToDestination("/topic/tx-ack", "second-tx");
+    const first = await readUntil(client, "first-tx");
+    const ackId = /\nack:([^\n]+)/.exec(first)?.[1];
+
+    client.write(frame("BEGIN", { transaction: "ack-tx" }));
+    const ackQueued = readUntil(client, "receipt-id:ack-queued");
+    client.write(frame("ACK", { id: ackId ?? "", transaction: "ack-tx", receipt: "ack-queued" }));
+    await ackQueued;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const second = readUntil(client, "second-tx");
+    client.write(frame("COMMIT", { transaction: "ack-tx" }));
+    await expect(second).resolves.toContain("MESSAGE");
+    client.destroy();
+  });
+
+  it("delivers identical unkeyed SEND frames independently and keeps the first duplicate header", async () => {
+    const inbound = vi.fn<(message: InboundMessage) => Promise<void>>().mockResolvedValue(undefined);
+    await startStompTcpServer(config, inbound);
+    const client = await connectClient(config);
+    await stompConnect(client);
+    client.write("SEND\ndestination:/queue/agent\ndestination:/queue/agent.forbidden\n\nsame-body\0");
+    client.write(frame("SEND", { destination: "/queue/agent" }, "same-body"));
+    await vi.waitFor(() => expect(inbound).toHaveBeenCalledTimes(2));
+    expect(inbound.mock.calls.map(([message]) => message.idempotencyKey)).toEqual([undefined, undefined]);
+    expect(inbound.mock.calls.every(([message]) => message.destination === "/queue/agent")).toBe(true);
+    client.destroy();
+  });
 });

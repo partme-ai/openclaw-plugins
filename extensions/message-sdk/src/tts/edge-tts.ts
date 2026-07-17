@@ -9,7 +9,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { readFile, unlink, mkdtemp } from "node:fs/promises";
+import { readFile, stat, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -51,12 +51,25 @@ export async function synthesizeEdgeTTS(
   text: string,
   config: TTSConfig = {},
 ): Promise<TTSResult> {
+  if (typeof text !== "string" || !text.trim()) {
+    throw new TTSRequestError(PROVIDER, "edge-tts text must be non-empty");
+  }
   const maxLen = config.maxTextLength ?? 4096;
+  if (!Number.isSafeInteger(maxLen) || maxLen <= 0) {
+    throw new RangeError("edge-tts maxTextLength must be a positive safe integer");
+  }
   if (text.length > maxLen) {
     throw new TTSRequestError(PROVIDER, `Text too long: ${text.length} > ${maxLen} chars`);
   }
 
   const timeoutMs = config.timeoutMs ?? 30000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("edge-tts timeoutMs must be a positive safe integer");
+  }
+  const maxAudioBytes = config.maxAudioBytes ?? 25 * 1024 * 1024;
+  if (!Number.isSafeInteger(maxAudioBytes) || maxAudioBytes <= 0) {
+    throw new RangeError("edge-tts maxAudioBytes must be a positive safe integer");
+  }
   const startMs = Date.now();
   const tmpDir = await mkdtemp(join(tmpdir(), "tts-edge-"));
   const outputFile = join(tmpDir, `tts-${randomBytes(4).toString("hex")}.mp3`);
@@ -75,7 +88,14 @@ export async function synthesizeEdgeTTS(
       child.stderr?.on("data", () => {});
     });
 
+    const outputStat = await stat(outputFile);
+    if (outputStat.size > maxAudioBytes) {
+      throw new TTSRequestError(PROVIDER, `edge-tts output exceeds maxAudioBytes=${maxAudioBytes}`);
+    }
     const audio = await readFile(outputFile);
+    if (audio.length > maxAudioBytes) {
+      throw new TTSRequestError(PROVIDER, `edge-tts output grew beyond maxAudioBytes=${maxAudioBytes}`);
+    }
     if (audio.length === 0) throw new TTSEmptyResultError(PROVIDER);
 
     return {
@@ -88,13 +108,14 @@ export async function synthesizeEdgeTTS(
   } catch (err: unknown) {
     if (err instanceof TTSError) throw err;
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("killed") || msg.includes("ETIMEDOUT")) {
+    const processError = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string };
+    if (processError.killed || processError.code === "ETIMEDOUT" || msg.includes("killed") || msg.includes("ETIMEDOUT")) {
       throw new TTSTimeoutError(PROVIDER, timeoutMs);
     }
     throw new TTSRequestError(PROVIDER, `edge-tts failed: ${msg}. Install with: pip install edge-tts`);
   } finally {
-    try { await unlink(outputFile); } catch { /* cleanup */ }
-    try { await (await import("node:fs/promises")).rmdir(tmpDir); } catch { /* cleanup */ }
+    // 整目录清理同时覆盖 CLI 产生的旁路文件；force 保证错误清理不覆盖原始 TTS 结果。
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 

@@ -414,6 +414,7 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         cdnBaseUrl: account.cdnBaseUrl,
         token: account.token,
         accountId: account.accountId,
+        allowFrom: account.allowFrom,
         config: ctx.cfg,
         runtime: ctx.runtime,
         abortSignal: ctx.abortSignal,

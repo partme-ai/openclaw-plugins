@@ -553,11 +553,12 @@ describe("openclaw-nacos Functional Tests", () => {
       expect(db.connectionTimeout).toBe("5000"); // default used
     });
 
-    it("replaces missing vars without default with empty string", () => {
+    it("rejects missing vars without a default and keeps the active config intact", () => {
       const env = {};
       const config = { url: "http://${MISSING}/api" };
-      const expanded = expandEnvPlaceholdersInValue(config, env) as Record<string, string>;
-      expect(expanded.url).toBe("http:///api");
+      expect(() => expandEnvPlaceholdersInValue(config, env)).toThrow(
+        "Missing environment variable: MISSING",
+      );
     });
   });
 

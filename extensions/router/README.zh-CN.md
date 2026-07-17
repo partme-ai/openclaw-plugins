@@ -16,6 +16,27 @@
 
 **纯配置驱动** — 无需修改任何渠道插件代码。所有路由规则通过 JSON 配置定义。
 
+## 运行架构
+
+```mermaid
+flowchart LR
+    Hooks["OpenClaw 官方 Hooks<br/>message_received / message_sent / reply_payload_sending"]
+    Match["规则匹配与模板展开<br/>稳定幂等键 + hop trace"]
+    Outbox[("持久 Outbox<br/>原子批量入队")]
+    Worker["可靠投递 Worker<br/>指数退避 + 抖动"]
+    Adapter["OpenClaw Channel<br/>Outbound Adapter"]
+    Target["目标 IM / MQ 插件"]
+    Dedupe[("成功幂等记录")]
+    DLQ[("持久 DLQ")]
+
+    Hooks --> Match --> Outbox --> Worker --> Adapter --> Target
+    Target -->|"确认成功"| Dedupe
+    Target -->|"可重试失败"| Worker
+    Worker -->|"重试耗尽"| DLQ
+```
+
+Outbox 是投递事实的唯一来源：只有目标 adapter 确认成功后才删除 pending 并提交幂等记录；因此 Gateway 崩溃重启不会把“已入队”误当成“已送达”。
+
 ## 特性
 
 - **Plugin Hooks** — `message_received`（入站）、`message_sent`（出站转发）、`reply_payload_sending`（跨渠道 reply-via）

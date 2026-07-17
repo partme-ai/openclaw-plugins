@@ -439,7 +439,10 @@ Error: connect ECONNREFUSED 127.0.0.1:6379
 | `stream.maxAttempts` | `number` | `5` | 转入死信前最大投递次数 |
 | `stream.deadLetterKey` | `string` | `"openclaw:inbound:dlq"` | 死信 Stream；Cluster 下须与 inboundKey 同槽 |
 | `stream.maxLen` | `number` | `100000` | 出站与死信 Stream 近似长度上限；0 不限制 |
-| `connection.reconnectMs` | `number` | `3000` | 重连延迟（毫秒） |
+| `connection.allowInsecureRemote` | `boolean` | `false` | 是否允许远程明文 `redis://`；生产应保持 false |
+| `connection.reconnectMs` | `number` | `3000` | 指数退避基础延迟（毫秒） |
+| `connection.reconnectMaxMs` | `number` | `30000` | 指数退避最大延迟（毫秒） |
+| `connection.reconnectJitterRatio` | `number` | `0.2` | 双向随机抖动比例 |
 | `connection.maxRetries` | `number` | `0` | 最大重连次数；0 表示持续重连 |
 | `connection.startupTimeoutMs` | `number` | `30000` | 启动连接超时 |
 | `idempotency.enabled` | `boolean` | `true` | 启用 Stream entry claim/commit/release |

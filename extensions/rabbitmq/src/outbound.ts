@@ -53,15 +53,14 @@ export const rabbitmqOutbound: ChannelOutboundAdapter = {
     const sessionKey = ctx.to;
     const peerId = getPeerIdBySession(sessionKey);
     if (!peerId) {
-      console.warn(`[openclaw-rabbitmq] Cannot send — no peer for session: ${sessionKey}`);
-      return { channel: "rabbitmq", messageId: "no-peer" };
+      // Channel Adapter 返回即代表投递成功；占位 messageId 会让 Router 从 Outbox 删除失败任务。
+      throw new Error(`[openclaw-rabbitmq] No peer mapping for session: ${sessionKey}`);
     }
 
     const sessionContext = getSessionContext(sessionKey);
     const agentId = sessionContext?.agentId;
     if (!agentId) {
-      console.error(`[openclaw-rabbitmq] Cannot send — missing session context agentId: ${sessionKey}`);
-      return { channel: "rabbitmq", messageId: "no-session-context" };
+      throw new Error(`[openclaw-rabbitmq] Missing session context agentId: ${sessionKey}`);
     }
 
     const cfg = getRabbitmqChannelConfig() ?? DEFAULT_RABBITMQ_CONFIG;

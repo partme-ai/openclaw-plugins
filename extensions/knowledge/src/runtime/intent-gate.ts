@@ -9,6 +9,7 @@
  */
 
 export type IntentGateMode = 'rule' | 'strict';
+/** 检索闸门结果：`pass` 继续 RAG，`skip` 在调用 Embedding 前结束。 */
 export type IntentGateResult = 'pass' | 'skip';
 
 /** Intent Gate 配置 */

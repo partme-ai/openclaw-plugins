@@ -65,7 +65,9 @@ describe("createDouyinPluginHttpHandler", () => {
   beforeEach(() => {
     dispatchDouyinWebhookInboundMock.mockReset();
     dispatchDouyinWebhookInboundMock.mockResolvedValue("dispatched");
-    getDouyinRuntimeMock.mockReturnValue({ config: { channels: {} } });
+    getDouyinRuntimeMock.mockReturnValue({
+      config: { loadConfig: vi.fn(() => ({ channels: { douyin: { enabled: true } } })) },
+    });
   });
 
   it("rejects unsupported HTTP methods with 405", async () => {
@@ -119,10 +121,26 @@ describe("createDouyinPluginHttpHandler", () => {
     expect(res.body).toBe("success");
     expect(dispatchDouyinWebhookInboundMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        cfg: { channels: { douyin: { enabled: true } } },
         peerId: "user-99",
         messageId: "msg-signed-1",
       }),
     );
+  });
+
+  it("acknowledges a valid webhook without waiting for Agent dispatch", async () => {
+    dispatchDouyinWebhookInboundMock.mockReturnValue(new Promise(() => undefined));
+    const handler = createDouyinPluginHttpHandler({ account });
+    const body = JSON.stringify({ content: { from_user_id: "user-slow", text: "hello" } });
+    const res = mockResponse();
+
+    await handler(makePostReq(body, {
+      "x-douyin-signature": signBody(account.app_secret, body),
+      "msg-id": "msg-slow-1",
+    }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe("success");
   });
 
   it("uses anonymous peer when sender id missing", async () => {

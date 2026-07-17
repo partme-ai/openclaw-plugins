@@ -2,7 +2,12 @@
  * 配置解析测试。
  */
 import { describe, it, expect } from "vitest";
-import { resolveRedisChannelConfig, DEFAULT_REDIS_CHANNEL_CONFIG, redactUrl, safeParseRedisStreamConfig } from "../src/config.js";
+import {
+  resolveRedisChannelConfig,
+  DEFAULT_REDIS_CHANNEL_CONFIG,
+  redactUrl,
+  safeParseRedisStreamConfig,
+} from "../src/config.js";
 
 describe("resolveRedisChannelConfig", () => {
   it("returns defaults when config is empty", () => {
@@ -11,6 +16,8 @@ describe("resolveRedisChannelConfig", () => {
     expect(config.channelMode).toBe("pubsub");
     expect(config.stream.inboundKey).toBe("openclaw:inbound");
     expect(config.payload.mode).toBe("jsonTextOrPlain");
+    expect(config.connection.maxPubSubInFlight).toBe(32);
+    expect(config.connection.shutdownTimeoutMs).toBe(10_000);
   });
 
   it("reads url from channels.redis-stream", () => {
@@ -61,6 +68,21 @@ describe("resolveRedisChannelConfig", () => {
     expect(config.stream.pendingClaimIdleMs).toBe(60_000);
   });
 
+  it("reads Pub/Sub concurrency and shutdown limits", () => {
+    const config = resolveRedisChannelConfig({
+      channels: {
+        "redis-stream": {
+          connection: {
+            maxPubSubInFlight: 8,
+            shutdownTimeoutMs: 2500,
+          },
+        },
+      },
+    });
+    expect(config.connection.maxPubSubInFlight).toBe(8);
+    expect(config.connection.shutdownTimeoutMs).toBe(2500);
+  });
+
   it("defaults pendingClaimIdleMs when omitted", () => {
     const config = resolveRedisChannelConfig({
       channels: {
@@ -95,7 +117,12 @@ describe("resolveRedisChannelConfig", () => {
           url: "redis://localhost:6379",
           channelBindings: [
             { channelPattern: "test:*", agentId: "agent1" },
-            { channelPattern: "sensor:temp", agentId: "agent2", accountId: "acct2", replyChannel: "resp" },
+            {
+              channelPattern: "sensor:temp",
+              agentId: "agent2",
+              accountId: "acct2",
+              replyChannel: "resp",
+            },
           ],
         },
       },
@@ -225,7 +252,9 @@ describe("resolveRedisChannelConfig", () => {
   });
 
   it("redacts both username and password", () => {
-    const value = redactUrl("rediss://secret-user:secret-pass@redis.example.com:6380");
+    const value = redactUrl(
+      "rediss://secret-user:secret-pass@redis.example.com:6380",
+    );
     expect(value).not.toContain("secret-user");
     expect(value).not.toContain("secret-pass");
     expect(value).toContain("redis.example.com");

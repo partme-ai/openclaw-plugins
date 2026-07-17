@@ -4,6 +4,10 @@
   "version": "2026.7.1",
   "description": "Knowledge RAG engine with bounded retrieval, namespace isolation, and owner-gated file ingestion",
   "main": "dist/index.js",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["tool", "hook"]
+  },
   "channels": [],
   "commands": [],
   "skills": [],
@@ -24,7 +28,8 @@
           "baseUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
           "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000, "default": 30000 },
           "maxRetries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
-          "maxBatchSize": { "type": "integer", "minimum": 1, "maximum": 2048, "default": 64 }
+          "maxBatchSize": { "type": "integer", "minimum": 1, "maximum": 2048, "default": 64 },
+          "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 67108864, "default": 8388608 }
         }
       },
       "store": {
@@ -67,18 +72,37 @@
           "provider": { "type": "string", "enum": ["tiktoken", "zhipu"] },
           "baseUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
           "apiKey": { "type": "string", "minLength": 1, "maxLength": 4096 },
-          "model": { "type": "string", "minLength": 1, "maxLength": 256 }
+          "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000, "default": 30000 },
+          "maxRetries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+          "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 8388608, "default": 1048576 }
         }
       },
       "reranker": {
         "type": "object", "additionalProperties": false,
         "properties": {
-          "provider": { "type": "string", "enum": ["jina", "zhipu", "ollama"] },
+          "provider": { "type": "string", "enum": ["jina", "zhipu"] },
           "baseUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
           "apiKey": { "type": "string", "minLength": 1, "maxLength": 4096 },
           "model": { "type": "string", "minLength": 1, "maxLength": 256 },
           "topN": { "type": "integer", "minimum": 0, "maximum": 100 },
-          "returnDocuments": { "type": "boolean" }
+          "returnDocuments": { "type": "boolean" },
+          "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000, "default": 30000 },
+          "maxRetries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+          "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 67108864, "default": 8388608 }
+        }
+      },
+      "parser": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "provider": { "type": "string", "enum": ["zhipu", "ollama"] },
+          "baseUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
+          "apiKey": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000, "default": 30000 },
+          "maxRetries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+          "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 67108864, "default": 16777216 },
+          "maxFileBytes": { "type": "integer", "minimum": 1024, "maximum": 1073741824, "default": 20971520 }
         }
       },
       "tools": {

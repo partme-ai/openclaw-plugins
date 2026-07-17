@@ -4,7 +4,7 @@ import type { AmapPluginConfig } from "../src/types.js";
 
 const config: AmapPluginConfig = {
   enabled: true, key: "secret-key", apiBaseUrl: "https://restapi.amap.com", requestTimeoutMs: 1000,
-  retryAttempts: 0, maxResponseBytes: 1024, maxRequestsPerMinute: 2, ownerOnly: false,
+  retryAttempts: 0, maxResponseBytes: 1024, maxToolResultBytes: 1024, maxRequestsPerMinute: 2, ownerOnly: false,
 };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -27,6 +27,52 @@ describe("AmapClient", () => {
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response("x".repeat(2048))));
     await expect(new AmapClient(config).get("/v5/place/detail", { id: "x" })).rejects.toThrow("maxResponseBytes");
+  });
+
+  it("rejects malformed envelopes instead of treating a missing status as success", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ pois: [] }))));
+    await expect(new AmapClient(config).get("/v5/place/text", { keywords: "咖啡" })).rejects.toThrow("rejected");
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([]))));
+    await expect(new AmapClient(config).get("/v5/place/text", { keywords: "咖啡" })).rejects.toThrow("envelope");
+  });
+
+  it("retries transient business errors but not daily quota failures", async () => {
+    const transientFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "0", info: "SERVER_IS_BUSY", infocode: "10016" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "1", pois: [] })));
+    vi.stubGlobal("fetch", transientFetch);
+    await expect(new AmapClient({ ...config, retryAttempts: 1, maxRequestsPerMinute: 2 })
+      .get("/v5/place/text", { keywords: "咖啡" })).resolves.toMatchObject({ status: "1" });
+    expect(transientFetch).toHaveBeenCalledTimes(2);
+
+    const quotaFetch = vi.fn(async () => new Response(JSON.stringify({ status: "0", info: "DAILY_QUERY_OVER_LIMIT", infocode: "10003" })));
+    vi.stubGlobal("fetch", quotaFetch);
+    await expect(new AmapClient({ ...config, retryAttempts: 1 }).get("/v5/place/text", { keywords: "咖啡" }))
+      .rejects.toThrow("DAILY_QUERY_OVER_LIMIT");
+    expect(quotaFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts every retry attempt against the local request quota", async () => {
+    const fetchMock = vi.fn(async () => new Response("temporary", { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new AmapClient({ ...config, retryAttempts: 1, maxRequestsPerMinute: 1 })
+      .get("/v5/place/text", { keywords: "咖啡" })).rejects.toThrow("rate limit");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("分块响应超过上限时立即取消 reader", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(800));
+        controller.enqueue(new Uint8Array(800));
+      },
+      cancel() { cancelled = true; },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
+    await expect(new AmapClient(config).get("/v5/place/detail", { id: "x" })).rejects.toThrow("maxResponseBytes");
+    expect(cancelled).toBe(true);
   });
 
   it("enforces the local quota and path allowlist", async () => {

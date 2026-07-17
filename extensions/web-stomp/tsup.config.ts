@@ -11,7 +11,7 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  target: "node20",
+  target: "node22",
   outDir: "dist",
   external: [/^openclaw(\/.*)?$/],
   noExternal: ["ws"],

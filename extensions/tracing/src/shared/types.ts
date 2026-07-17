@@ -27,14 +27,20 @@ export interface TracingConfig {
   enabled: boolean;
   backend: "log" | "file" | "otlp";
   otlpEndpoint: string;
+  /** OTLP/HTTP 附加请求头；用于 Collector 鉴权，日志和状态接口不得回显值。 */
+  otlpHeaders: Record<string, string>;
   sampleRate: number;
   traceDir: string;
   traceRetentionDays: number;
   maxSpansPerTrace: number;
+  /** 同时处于活动状态的 Trace 总上限，防止异常会话制造无界根 Span。 */
+  maxActiveTraces: number;
   maxBufferedSpans: number;
   flushIntervalMs: number;
   exportTimeoutMs: number;
   exportRetryAttempts: number;
+  /** Gateway 停止时关闭活动 Trace 和后端的总等待上限。 */
+  shutdownTimeoutMs: number;
   captureMessageBody: boolean;
 }
 

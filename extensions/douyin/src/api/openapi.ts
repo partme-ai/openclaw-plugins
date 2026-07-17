@@ -1,3 +1,9 @@
+/**
+ * 抖音生活服务 OpenAPI 客户端。
+ *
+ * 本层统一负责 client_token 注入、响应信封校验、响应体上限和有限重试。
+ * 只有查询类瞬时故障可重试；Token 失效仅刷新一次，避免并发请求形成刷新风暴。
+ */
 import type { ChannelLimitsOpenClawConfig } from "../runtime/runtime-api.js";
 import { douyinFetch, readResponseBodyAsBuffer } from "../shared/http.js";
 import type { DouyinAccountConfig } from "../types.js";
@@ -14,6 +20,10 @@ type OpenApiEnvelope = {
   extra?: { error_code?: number; description?: string; logid?: string };
 };
 
+/**
+ * 抖音 OpenAPI 的结构化失败。
+ * 同时保留 HTTP 状态、平台业务码和 logId，供上层判断 token 刷新、瞬时重试和问题追踪。
+ */
 export class DouyinOpenApiError extends Error {
   constructor(
     message: string,
@@ -26,6 +36,7 @@ export class DouyinOpenApiError extends Error {
   }
 }
 
+/** 单次 OpenAPI 调用所需的账号凭据与 OpenClaw 网络限制上下文。 */
 export type DouyinOpenApiContext = {
   account: DouyinAccountConfig;
   rootConfig?: ChannelLimitsOpenClawConfig;
@@ -40,7 +51,11 @@ function appendQuery(url: URL, query: Record<string, unknown>): void {
 
 function parseEnvelope(response: Response, raw: string): OpenApiEnvelope {
   try {
-    return JSON.parse(raw) as OpenApiEnvelope;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("response root is not an object");
+    }
+    return parsed as OpenApiEnvelope;
   } catch {
     throw new DouyinOpenApiError(
       `[douyin] OpenAPI returned invalid JSON (HTTP ${response.status})`,
@@ -50,8 +65,10 @@ function parseEnvelope(response: Response, raw: string): OpenApiEnvelope {
 }
 
 function assertSuccess(response: Response, envelope: OpenApiEnvelope): void {
-  const code = envelope.data?.error_code ?? envelope.extra?.error_code ?? 0;
-  if (response.ok && code === 0) return;
+  const dataCode = envelope.data?.error_code ?? 0;
+  const extraCode = envelope.extra?.error_code ?? 0;
+  const code = dataCode !== 0 ? dataCode : extraCode;
+  if (response.ok && dataCode === 0 && extraCode === 0) return;
   const description = envelope.data?.description ?? envelope.extra?.description ?? "unknown error";
   throw new DouyinOpenApiError(
     `[douyin] OpenAPI failed (${response.status}/${code}): ${description}`,
@@ -92,6 +109,12 @@ async function requestOnce(params: {
   return envelope;
 }
 
+/**
+ * 调用抖音生活服务 OpenAPI，并按接口副作用选择重试策略。
+ *
+ * Token 失效允许清缓存后重放一次；只有调用方明确标记 `retrySafe` 的查询接口，才会对
+ * 429、5xx、网络错误和平台瞬时错误做有限指数退避。写接口不会因不确定结果而盲目重放。
+ */
 export async function requestDouyinOpenApi(params: {
   context: DouyinOpenApiContext;
   path: string;

@@ -56,6 +56,18 @@ describe("resolvePrometheusConfig", () => {
     expect(() => resolvePrometheusConfig({ snapshotIntervalMs: 999 })).toThrow(/snapshotIntervalMs/);
     expect(() => resolvePrometheusConfig({ collectorTimeoutMs: 99 })).toThrow(/collectorTimeoutMs/);
     expect(() => resolvePrometheusConfig({ maxScrapeSeries: 99 })).toThrow(/maxScrapeSeries/);
+    expect(() => resolvePrometheusConfig({ includeRuntime: "false" as never })).toThrow(/includeRuntime/);
+    expect(() => resolvePrometheusConfig({ metricsPath: "/legacy" })).toThrow(/unknown field/);
+    expect(() => resolvePrometheusConfig({ scrapeAuth: { enabled: "true" } as never })).toThrow(/enabled/);
+    expect(() => resolvePrometheusConfig({ scrapeAuth: { extra: true } as never })).toThrow(/unknown field/);
+    expect(() => resolvePrometheusConfig(
+      { scrapeAuth: { enabled: true } },
+      {} as NodeJS.ProcessEnv,
+    )).toThrow(/requires OPENCLAW_PROMETHEUS_BEARER_TOKEN/);
+    expect(() => resolvePrometheusConfig(
+      { scrapeAuth: { enabled: true } },
+      { OPENCLAW_PROMETHEUS_BEARER_TOKEN: "bad\nvalue" } as NodeJS.ProcessEnv,
+    )).toThrow(/single-line/);
   });
 
   it("normalizes paths and de-duplicates providers", () => {

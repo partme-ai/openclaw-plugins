@@ -1,7 +1,7 @@
 {
   "id": "stomp",
   "name": "OpenClaw STOMP TCP",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "Authenticated STOMP 1.2 over TCP/TLS with bounded in-memory delivery controls",
   "channels": ["stomp-tcp"],
   "commands": [],
@@ -113,7 +113,7 @@
     "defaultAgentId": { "label": "Default Agent ID" },
     "allowedAgentIds": { "label": "Allowed Agent IDs" }
   },
-  "capabilities": { "protocolBridge": true, "tcp": true, "tls": true },
+  "capabilities": { "protocolBridge": true, "tcp": true, "tls": true, "transactions": true },
   "channelConfigs": {
     "stomp-tcp": {
       "label": "STOMP TCP",

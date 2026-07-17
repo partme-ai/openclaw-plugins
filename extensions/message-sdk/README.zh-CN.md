@@ -27,10 +27,55 @@ SDK 的必选运行时依赖只有 `undici`；`prom-client` 与 OpenClaw 集成�
 
 ### 队列可靠性边界
 
-- `InboundMessageQueue` 有界；队列已满时不会提前占用幂等键。
+- `InboundMessageQueue` 有界；`pushDetailed` 明确区分 `duplicate` 与 `full`，队列满不会提前占用幂等键。Wire 派发遇到满载会抛出容量错误，交给上游重试/反压，不会伪装成重复消息确认。
 - 即时 `onPush` 处理失败时会同时回滚队列项和幂等预占，使相同消息可以重试。
-- `OutboundMessageQueue` 按全部会话合计限制容量，通过 `onOverflow` 暴露溢出，并提供总 `size`。
+- `OutboundMessageQueue` 按全部会话合计限制容量，通过 `onOverflow` 暴露溢出；无指定会话的 `pop()` 采用跨会话轮询，同时保持会话内 FIFO。
+- `createKeyedRunQueue` 同 key 严格串行、跨 key 并行，并限制待处理任务总数和活跃 key 数。任务超时会触发取消信号，但只有底层任务真实结束后，同 key 下一项才会启动。
 - 两种队列都是进程内缓冲，不替代持久化 Broker。
+
+## 组件与消息流
+
+```mermaid
+flowchart LR
+    Source["渠道 / Broker 原始消息"]
+    Parse["解析与校验<br/>文本、媒体、Envelope"]
+    Unified["UnifiedMessage<br/>messageId + traceId + source"]
+    InQ["InboundMessageQueue<br/>有界 + duplicate/full 分流"]
+    KeyQ["KeyedRunQueue<br/>同会话串行 + 容量闸门"]
+    Wire["Wire Dispatch<br/>保留传输语义"]
+    Transcript["Transcript Dispatch<br/>进入 Agent 对话"]
+    Agent["OpenClaw Agent"]
+    OutQ["OutboundMessageQueue<br/>全局有界 + 会话轮询"]
+    Adapter["渠道 Outbound Adapter"]
+
+    Source --> Parse --> Unified --> InQ --> KeyQ
+    KeyQ --> Wire --> Agent
+    KeyQ --> Transcript --> Agent
+    Agent --> OutQ --> Adapter
+```
+
+SDK 统一消息结构和可复用的进程内机制，但不拥有 Broker ACK、持久化、跨进程幂等或渠道鉴权；这些可靠性边界仍由具体插件实现。
+
+### 同会话超时为什么不能立即放行下一项
+
+```mermaid
+sequenceDiagram
+    participant Caller as 调用方
+    participant Queue as KeyedRunQueue(chat-A)
+    participant Task1 as 任务 1
+    participant Task2 as 任务 2
+    Caller->>Queue: enqueue(任务 1)
+    Queue->>Task1: 执行 + lifecycleSignal
+    Caller->>Queue: enqueue(任务 2)
+    Note over Queue,Task2: 任务 2 排队，不启动
+    Queue-->>Caller: AsyncTimeoutError
+    Queue-->>Task1: AbortSignal
+    Note over Queue,Task1: 超时不等于任务已经停止
+    Task1-->>Queue: 真实 settle
+    Queue->>Task2: 现在才启动
+```
+
+如果任务忽略 `AbortSignal` 并永久悬挂，该 key 会保持阻塞，但不会破坏会话内串行；监控可通过 `snapshot()`、`onWaitWarn`、`onError` 和 `onOverflow` 识别积压。插件任务应始终响应取消信号。
 
 ## 安装
 
@@ -393,35 +438,35 @@ ASRError (基类)
 
 ### 7. OCR — 光学字符识别
 
-支持 4 个提供商，统一接口：
+支持两个有真实协议依据的提供商，统一接口：
 
 ```typescript
 import {
-  recognizeDeepSeek,     // DeepSeek Vision (deepseek-chat)
-  recognizeGLM,          // 智谱 AI GLM-4V
+  recognizeGLM,          // 智谱 AI GLM-4.5V
   recognizePaddleOCR,    // 百度 PP-OCRv4 (自部署)
-  recognizeQianfan,      // 百度千帆 ERNIE-4.0
   type OCRInput,
   type OCRConfig,
   type OCRResult,
 } from "@partme.ai/openclaw-message-sdk";
 
 const config: OCRConfig = {
-  baseUrl: "https://api.deepseek.com/v1",
-  apiKey: process.env.DEEPSEEK_API_KEY!,
-  model: "deepseek-chat",
+  baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+  apiKey: process.env.ZHIPU_API_KEY!,
+  model: "glm-4.5v",
 };
 
 const input: OCRInput = {
   url: "https://cdn.example.com/receipt.png",
 };
 
-const result: OCRResult = await recognizeDeepSeek(input, config);
+const result: OCRResult = await recognizeGLM(input, config);
 // result.text           → 完整识别文本
 // result.blocks[].lines[].words[].text  → 逐词识别结果
-// result.provider       → "deepseek"
+// result.provider       → "glm"
 // result.elapsedMs      → 1234
 ```
+
+这里有意不再导出 DeepSeek OCR：DeepSeek 官方 Chat Completion 的用户正文是文本字符串，不支持旧实现发送的 `image_url` 数组。旧千帆实现也只是把 API Key 直接当作 access token，并依赖未验证的 ERNIE 图像消息契约，因此一并删除。对没有真实协议依据的 provider，宁可明确不支持，也不能保留“类型和 mock 能通过、真实环境必失败”的伪能力。
 
 **OCR 类型**
 
@@ -440,12 +485,12 @@ interface OCRResult {
 
 ### 8. TTS — 文本转语音
 
-**远程方案**（纯 HTTP，零依赖）：
+提供两个可执行实现：OpenAI 走官方 HTTP API；Edge TTS 调用本机安装的 Python CLI。
 
 ```typescript
 import { synthesizeEdgeTTS, synthesizeOpenAI, EDGE_TTS_VOICES } from "@partme.ai/openclaw-message-sdk";
 
-// Microsoft Edge TTS（免费，300+ 神经语音）
+// Microsoft Edge TTS（需要先执行：pip install edge-tts）
 const result = await synthesizeEdgeTTS("你好，我是AI助手", {
   voice: "zh-CN-XiaoxiaoNeural",
   outputFormat: "mp3",
@@ -457,12 +502,14 @@ const result = await synthesizeEdgeTTS("你好，我是AI助手", {
 // OpenAI TTS
 const result2 = await synthesizeOpenAI("Welcome to OpenClaw", {
   apiKey: process.env.OPENAI_API_KEY!,
-  model: "tts-1",
-  voice: "alloy",
+  model: "gpt-4o-mini-tts",
+  voice: "coral",
+  outputFormat: "wav",
+  maxAudioBytes: 25 * 1024 * 1024,
 });
 ```
 
-**本地方案**（需要 Python 运行时，通过 child_process 调用）：
+以下导出只是 provider 元数据，不包含可执行的合成函数：
 
 | 提供商 | 特点 |
 |--------|------|
@@ -470,6 +517,8 @@ const result2 = await synthesizeOpenAI("Welcome to OpenClaw", {
 | `MARS5_TTS_PROVIDER` | CAMB.AI，语音克隆（5s 参考音频） |
 | `QWEN_TTS_PROVIDER` | 阿里 Qwen3-TTS，声音设计 |
 | `PYTTSX3_PROVIDER` | 完全离线，系统语音引擎 |
+
+OpenAI 输入受官方 4096 字符硬上限约束，音频响应以有界流读取；未知 voice/format 和非法 speed 会明确报错，不再静默回退。Edge TTS 使用 `execFile` 参数边界，读取前检查输出大小，并在所有结果下删除整个临时目录。
 
 ---
 

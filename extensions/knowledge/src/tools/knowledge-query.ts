@@ -96,7 +96,7 @@ export function createKnowledgeQueryTool(ctx: OpenClawPluginToolContext, config:
       '  minScore（可选）：最小相似度阈值（0-1），低于此值的不返回',
       '  strategy（可选）：检索策略，默认 hybrid',
       '  sourceId（可选）：按 sourceId 精确过滤',
-      '  namespace（可选）：知识库命名空间，默认对话级别（{accountId}:{mode}）',
+      '  namespace（可选）：默认使用当前 OpenClaw sessionKey 派生的私有 namespace',
       '',
       '返回结构化结果列表，每条包含 sourceId、chunkIndex、score、text、metadata。',
     ].join('\n'),
@@ -126,7 +126,7 @@ export function createKnowledgeQueryTool(ctx: OpenClawPluginToolContext, config:
         },
         namespace: {
           type: 'string',
-          description: '知识库命名空间，默认当前对话命名空间（{accountId}:{mode}）',
+          description: '知识库命名空间，默认由当前 OpenClaw sessionKey 派生',
         },
       },
       required: ['query'],

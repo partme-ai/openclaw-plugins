@@ -2,17 +2,26 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import type { OpenClawPluginToolContext } from 'openclaw/plugin-sdk/plugin-entry';
 import type { KnowledgeConfig } from '../types.js';
+import { resolveConversationNamespace } from '../runtime/namespace.js';
 
 const NAMESPACE_PATTERN = /^[A-Za-z0-9._-]{1,128}:(bot|agent)$/;
 const GLOBAL_NAMESPACE_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const SOURCE_ID_PATTERN = /^[^\u0000-\u001f\u007f]{1,256}$/u;
 
+/**
+ * 从 OpenClaw Tool 官方上下文生成调用者自己的知识库命名空间。
+ * Tool 与 before_prompt_build 都使用 sessionKey 摘要，避免两条路径因不存在的 Hook
+ * accountId 产生不同隔离键；原始会话标识不会进入路径、表名或响应。
+ */
 export function defaultNamespace(ctx: OpenClawPluginToolContext): string {
-  const rawAccount = ctx.agentAccountId?.trim() || 'default';
-  const account = /^[A-Za-z0-9._-]{1,128}$/.test(rawAccount) ? rawAccount : 'default';
-  return `${account}:${ctx.agentId ? 'agent' : 'bot'}`;
+  return resolveConversationNamespace(ctx);
 }
 
+/**
+ * 校验 Tool 请求是否有权访问目标 namespace。
+ * 普通发送者只能访问当前会话空间；owner 可跨空间，但仍受
+ * `allowOwnerGlobalNamespaces` 总开关约束，避免模型自行扩大读写范围。
+ */
 export function authorizeNamespace(
   ctx: OpenClawPluginToolContext,
   requested: unknown,
@@ -33,6 +42,7 @@ export function authorizeNamespace(
   return { ok: true, namespace };
 }
 
+/** 校验稳定来源标识，拒绝控制字符和超过 256 字符的持久化键。 */
 export function validateSourceId(value: unknown, fallback: string): { ok: true; sourceId: string } | { ok: false; error: string } {
   const sourceId = typeof value === 'string' && value.trim() ? value.trim() : fallback.trim();
   return SOURCE_ID_PATTERN.test(sourceId)
@@ -40,11 +50,17 @@ export function validateSourceId(value: unknown, fallback: string): { ok: true; 
     : { ok: false, error: 'sourceId 必须是 1-256 个非控制字符' };
 }
 
+/** 在切块和 Embedding 前限制文本字符数，避免单次 Tool 调用耗尽内存或远端额度。 */
 export function validateTextSize(value: string, config: KnowledgeConfig, field: string): string | undefined {
   const max = config.tools?.maxInputChars ?? 100_000;
   return value.length <= max ? undefined : `${field} 超过最大长度 ${max} 字符`;
 }
 
+/**
+ * 对文件摄取执行 owner、功能开关、绝对路径和真实路径白名单四层授权。
+ * `realpath` 会解析符号链接后再比较根目录，从而阻止通过软链接逃逸 allowedFileRoots；
+ * 返回的最大字节数由调用方在读取前强制执行。
+ */
 export async function authorizeFilePath(
   ctx: OpenClawPluginToolContext,
   filePath: string,

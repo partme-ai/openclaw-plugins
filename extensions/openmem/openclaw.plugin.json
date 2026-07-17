@@ -1,6 +1,6 @@
 {
   "id": "openmem",
-  "version": "2026.5.21",
+  "version": "2026.7.1",
   "kind": "memory",
   "configSchema": {
     "type": "object",
@@ -13,16 +13,17 @@
         "description": "OpenMem REST base URL",
         "default": "http://127.0.0.1:3317"
       },
-      "agentId": { "type": "string", "default": "main" },
-      "maxSearchResults": { "type": "number", "minimum": 1, "maximum": 100, "default": 10 },
-      "timeoutMs": { "type": "number", "minimum": 100, "maximum": 120000, "default": 5000 },
-      "maxAttempts": { "type": "number", "minimum": 1, "maximum": 5, "default": 3 },
-      "retryBaseDelayMs": { "type": "number", "minimum": 0, "maximum": 5000, "default": 100 },
-      "maxResponseBytes": { "type": "number", "minimum": 1024, "maximum": 16777216, "default": 2097152 },
+      "agentId": { "type": "string", "minLength": 1, "maxLength": 128, "default": "main" },
+      "maxSearchResults": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
+      "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000, "default": 5000 },
+      "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 5, "default": 3 },
+      "retryBaseDelayMs": { "type": "integer", "minimum": 0, "maximum": 5000, "default": 100 },
+      "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 16777216, "default": 2097152 },
+      "maxCacheBytes": { "type": "integer", "minimum": 1048576, "maximum": 67108864, "default": 8388608 },
       "allowSharedRecall": { "type": "boolean", "default": false },
-      "apiKeyEnv": { "type": "string" },
-      "authHeader": { "type": "string", "default": "Authorization" },
-      "authScheme": { "type": "string", "default": "Bearer" }
+      "apiKeyEnv": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+      "authHeader": { "type": "string", "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$", "default": "Authorization" },
+      "authScheme": { "type": "string", "maxLength": 64, "default": "Bearer" }
     }
   },
   "contracts": {

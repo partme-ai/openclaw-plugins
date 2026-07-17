@@ -62,6 +62,28 @@ describe("resolveOAuth2Config", () => {
     })).toThrow(/positive safe integer/);
   });
 
+  it("rejects unsafe redirect, cookie, scope and TTL configuration", () => {
+    expect(() => resolveOAuth2Config({
+      ...baseConfig,
+      clientSecret: "client-secret",
+      client: { ...baseConfig.client, successRedirect: "https://evil.example/steal" },
+    })).toThrow(/successRedirect must be a local absolute path/);
+    expect(() => resolveOAuth2Config({
+      ...baseConfig,
+      clientSecret: "client-secret",
+      client: { ...baseConfig.client, redirectUri: "http://openclaw.example.com/callback" },
+    })).toThrow(/redirectUri must use HTTPS/);
+    expect(() => resolveOAuth2Config({
+      client: { sessionCookieName: "invalid cookie" },
+    })).toThrow(/valid cookie name/);
+    expect(() => resolveOAuth2Config({
+      client: { scopes: ["openid profile"] },
+    })).toThrow(/scopes entries must be non-empty scope tokens/);
+    expect(() => resolveOAuth2Config({
+      client: { stateTtlSeconds: 1 },
+    })).toThrow(/stateTtlSeconds must be a safe integer/);
+  });
+
   it("only proxies to a loopback OpenClaw Gateway", () => {
     expect(() => resolveOAuth2Config({
       ...baseConfig,

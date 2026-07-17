@@ -25,7 +25,12 @@ pnpm test:plugins -- --unit-only --plugins gotify
 pnpm test:plugins -- --e2e-only --plugins mqtt,rabbitmq --skip-browser
 ```
 
-Report: `scripts/e2e/e2e-report.json` (gitignored)
+Reports:
+
+- `scripts/e2e/e2e-report.json`：最近一次运行，供 CI 和人工快速读取。
+- `scripts/e2e/reports/<timestamp>-<plugins>-<runId>.json`：逐次归档，连续执行隔离插件时不会覆盖前一份证据。
+
+两类报告都执行凭据字段脱敏并保持 gitignored；正式发布证据应由 CI 将 `reports/` 作为构建产物上传，而不是提交运行态文件。
 
 ## Architecture
 
@@ -74,7 +79,7 @@ Report: `scripts/e2e/e2e-report.json` (gitignored)
 
 See `scripts/e2e/lib/registry.mjs` → `EXTENSION_INVENTORY` for the full matrix:
 
-- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (13 plugins today; Tracing, WebSocket, mTLS and OAuth2 are explicit/isolated)
+- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (23 plugins today; 14 external/security/platform/capability scenarios are explicit and isolated)
 - **e2eAdapter: false** — unit tests (+ optional `testing/` standard suite); no Docker e2e yet
 - **dockerRequired: true** — rabbitmq, redis-stream, rocketmq, gotify, tracing (OpenTelemetry Collector)
 
@@ -93,6 +98,17 @@ Redis Stream adapter 同样执行真实 Agent Turn：向 consumer-group 入站 S
 | web-socket | None; run explicitly with `--plugins web-socket`; the runner selects the host Gateway for the embedded listener |
 | mtls | None; run explicitly with `--plugins mtls` because it switches Gateway auth to trusted-proxy |
 | oauth2 | None; run explicitly with `--plugins oauth2`; the runner selects the host Gateway for its local provider fixture |
+| douyin | None; isolated signed Webhook challenge/401, real Agent Turn, in-process dedupe, and post-restart persistent dedupe |
+| amap | None; isolated tarball Agent Tool call against a loopback AMap v5 fixture, including safe GET retry and result transcript |
+| meituan | None; isolated tarball Agent Tool call against a loopback MTOp fixture, including independent SHA-1 verification and no POST retry |
+| rednode | None; isolated tarball Agent Tool call against a loopback Ark fixture, including independent MD5 verification and one safe GET retry |
+| wechat | None; isolated tarball iLink long-poll → Agent → context-token reply, plus persistent dedupe across Gateway restart |
+| wechat-ipad | None; isolated external WS/HTTP bridge fixture → Agent → Bearer reply, plus persistent `msgId` dedupe across Gateway restart; no real WeChat protocol |
+| wecom-kf | None; isolated enterprise-WeChat AES callback → `sync_msg` → Agent → `send_msg`, plus cursor recovery and persistent `msgid` dedupe across Gateway restart |
+| bridge | None; run with `--plugins bridge,mqtt`; verifies installed tarballs, official inbound/outbound hooks, bounded delivery, two audit topics, and same-MQ loop protection |
+| knowledge | None; run explicitly with `--plugins knowledge`; validates tarball API indexing/search, OpenAI-compatible embeddings, real Agent injection, and SQLite recovery after Gateway restart |
+| memory, openmem | None; isolated Memory Host runs with a local model fixture; OpenMem additionally starts the workspace sidecar |
+| prometheus | None; isolated authenticated scrape, health/RPC, exact-route, and concurrent single-flight checks |
 | tracing | otel-collector; run with `--plugins tracing,mqtt`; the runner uses MQTT for a real Agent Turn and exports OTLP/HTTP spans |
 | rabbitmq | rabbitmq |
 | redis-stream | redis |
@@ -101,7 +117,7 @@ Redis Stream adapter 同样执行真实 Agent Turn：向 consumer-group 入站 S
 
 ### Unit-only extensions (representative)
 
-wecom, wechat, douyin, nacos, bridge, knowledge, memory, message-sdk, …
+wecom, nacos, bridge, message-sdk, …
 
 ## Shared test utilities
 
@@ -120,11 +136,14 @@ wecom, wechat, douyin, nacos, bridge, knowledge, memory, message-sdk, …
 | Embedded service | mqtt, stomp, web-mqtt, web-stomp, web-socket | OpenClaw gateway only |
 | External broker | rabbitmq, redis-stream, rocketmq, gotify | Docker Compose |
 | Security infrastructure | mtls, oauth2 | Isolated certificate or OAuth2 lifecycle + OpenClaw trusted-proxy |
+| Webhook/platform | douyin, wechat, wechat-ipad | Signed webhook, iLink long-poll, or external bridge fixture + real Agent Turn |
+| Capability | amap, meituan, rednode, knowledge | Local protocol fixture + real Tool/Hook Agent round trip |
+| Cross-channel observation | bridge + mqtt | MQTT real Agent Turn + inbound/outbound audit topics |
 
 Future categories (extensible via `lib/registry.mjs` + adapter registration):
 
 - **Web/browser** — Playwright against plugin UI or `test-web/`
-- **Webhook/platform** — wecom, wechat, douyin, …
+- **Webhook/platform** — douyin、wechat、wechat-ipad、wecom-kf 已有安装态 adapter；wecom 仍需真实/沙箱平台 adapter
 
 ## OpenClaw in Docker vs host
 
@@ -163,7 +182,7 @@ Do **not** fake success — if the gateway never listens on `E2E_GATEWAY_PORT`, 
 
 ## Secrets & artifacts (gitignored)
 
-See `.gitignore`: `.e2e-secrets.json`, `e2e-report.json`, gateway logs, browser logs.
+See `.gitignore`: `.e2e-secrets.json`, `e2e-report.json`, `reports/`, gateway logs, browser logs.
 
 ## Legacy scripts
 

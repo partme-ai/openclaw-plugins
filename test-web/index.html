@@ -96,10 +96,14 @@
       <h2>Web STOMP</h2>
       <label>WebSocket URL</label>
       <input id="stomp-url" value="ws://127.0.0.1:15674/ws" />
+      <label>Login</label>
+      <input id="stomp-login" value="" autocomplete="username" />
+      <label>Passcode</label>
+      <input id="stomp-passcode" type="password" value="" autocomplete="current-password" />
       <label>Subscribe destination</label>
-      <input id="stomp-sub-dest" value="/topic/session.demo" />
+      <input id="stomp-sub-dest" value="" placeholder="CONNECTED 后自动填入当前 session Topic" />
       <label>Send destination</label>
-      <input id="stomp-send-dest" value="/queue/agent.demo" />
+      <input id="stomp-send-dest" value="/queue/agent.main" />
       <label>Payload</label>
       <textarea id="stomp-body">{"text":"hello from browser stomp"}</textarea>
       <div class="row">
@@ -116,6 +120,10 @@
       <h2>Web MQTT</h2>
       <label>WebSocket URL</label>
       <input id="mqtt-url" value="ws://127.0.0.1:15675/ws" />
+      <label>Username</label>
+      <input id="mqtt-username" value="" autocomplete="username" />
+      <label>Password</label>
+      <input id="mqtt-password" type="password" value="" autocomplete="current-password" />
       <label>Subscribe topic</label>
       <input id="mqtt-sub-topic" value="openclaw/agent/main/out" />
       <label>Publish topic</label>

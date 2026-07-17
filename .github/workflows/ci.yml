@@ -3,10 +3,10 @@ name: CI
 on:
   push:
     branches: [main, feature/*]
-    paths: ["extensions/**", "scripts/**", "doc/OpenClaw-Plugin-Structure-Standard.md", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
+    paths: ["extensions/**", "scripts/**", "doc/**", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
   pull_request:
     branches: [main]
-    paths: ["extensions/**", "scripts/**", "doc/OpenClaw-Plugin-Structure-Standard.md", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
+    paths: ["extensions/**", "scripts/**", "doc/**", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
 
 jobs:
   detect:
@@ -39,6 +39,12 @@ jobs:
 
       - name: Release metadata gate
         run: node scripts/check-release-readiness.mjs
+
+      - name: Chinese comments and visual documentation gate
+        run: pnpm check-explanatory-assets
+
+      - name: E2E harness contract tests
+        run: pnpm test:e2e:harness
 
   build-and-test:
     needs: detect

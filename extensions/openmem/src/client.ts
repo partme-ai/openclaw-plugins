@@ -9,6 +9,12 @@ import type { OpenMemConfig } from "./config.js";
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
+/**
+ * OpenMem HTTP 边界的结构化错误。
+ *
+ * `retryable` 只表示当前操作在协议层可能重试，客户端仍会结合调用方传入的 `retrySafe`
+ * 决定是否真正重放请求，避免把非幂等写入意外执行两次。
+ */
 export class OpenMemHttpError extends Error {
   constructor(message: string, readonly status?: number, readonly retryable = false) {
     super(message);
@@ -68,7 +74,7 @@ export class OpenMemClient {
     const timer = setTimeout(() => controller.abort(new Error(`OpenMem request timed out after ${this.config.timeoutMs}ms`)), this.config.timeoutMs);
     timer.unref();
     try {
-      const url = new URL(pathName.replace(/^\/+/, ""), `${this.config.baseUrl}/`);
+      const url = this.resolveUrl(pathName);
       const headers: Record<string, string> = { Accept: "application/json" };
       if (options.body !== undefined) headers["Content-Type"] = "application/json";
       if (this.config.apiKeyEnv) {
@@ -85,14 +91,11 @@ export class OpenMemClient {
       if (Number.isFinite(declared) && declared > this.config.maxResponseBytes) {
         throw new OpenMemHttpError(`OpenMem response exceeds ${this.config.maxResponseBytes} bytes`, response.status);
       }
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.byteLength > this.config.maxResponseBytes) {
-        throw new OpenMemHttpError(`OpenMem response exceeds ${this.config.maxResponseBytes} bytes`, response.status);
-      }
+      const buffer = await this.readResponse(response);
       const text = buffer.toString("utf8");
       if (!response.ok) {
         throw new OpenMemHttpError(
-          `OpenMem ${response.status}: ${(text || response.statusText).slice(0, 500)}`,
+          `OpenMem ${response.status}: ${this.safeDetail(text || response.statusText)}`,
           response.status,
           RETRYABLE_STATUS.has(response.status),
         );
@@ -104,7 +107,9 @@ export class OpenMemClient {
       if (error instanceof OpenMemHttpError) throw error;
       const timedOut = controller.signal.aborted && !options.signal?.aborted;
       throw new OpenMemHttpError(
-        timedOut ? `OpenMem request timed out after ${this.config.timeoutMs}ms` : `OpenMem request failed: ${String(error)}`,
+        timedOut
+          ? `OpenMem request timed out after ${this.config.timeoutMs}ms`
+          : `OpenMem request failed: ${this.safeDetail(String(error))}`,
         undefined,
         timedOut || !options.signal?.aborted,
       );
@@ -118,9 +123,73 @@ export class OpenMemClient {
   private delay(ms: number, signal?: AbortSignal): Promise<void> {
     if (ms <= 0) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(resolve, ms);
+      const finish = () => {
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      };
+      const abort = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
+        reject(signal?.reason);
+      };
+      const timer = setTimeout(finish, ms);
       timer.unref();
-      signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
     });
+  }
+
+  /**
+   * 把插件内部的相对 API 路径限制在配置的 Sidecar origin 与路径前缀下。
+   * 这道检查可以防止未来新增调用点误把绝对 URL 传入客户端，绕过鉴权目标边界。
+   */
+  private resolveUrl(pathName: string): URL {
+    const relative = pathName.trim().replace(/^\/+/, "");
+    if (!relative || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(relative) || relative.includes("\\")) {
+      throw new OpenMemHttpError("OpenMem request path must be a relative API path");
+    }
+    const base = new URL(`${this.config.baseUrl}/`);
+    const url = new URL(relative, base);
+    if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname) || url.username || url.password || url.hash) {
+      throw new OpenMemHttpError("OpenMem request path escapes the configured endpoint");
+    }
+    return url;
+  }
+
+  /**
+   * 流式读取响应并在越过上限的第一时间取消 reader。
+   * 不能只依赖 Content-Length：分块响应通常没有该 Header，先 `arrayBuffer()` 再检查会让
+   * 恶意或异常 Sidecar 在校验发生前占满 Gateway 内存。
+   */
+  private async readResponse(response: Response): Promise<Buffer> {
+    if (!response.body) return Buffer.alloc(0);
+    const reader = response.body.getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > this.config.maxResponseBytes) {
+          await reader.cancel("OpenMem response too large");
+          throw new OpenMemHttpError(`OpenMem response exceeds ${this.config.maxResponseBytes} bytes`, response.status);
+        }
+        chunks.push(Buffer.from(value));
+      }
+      return Buffer.concat(chunks, total);
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  /** 清理控制字符并遮蔽当前 API Key，避免远端错误正文污染日志或泄露凭据。 */
+  private safeDetail(value: string): string {
+    let sanitized = value.replace(/[\u0000-\u001f\u007f]+/g, " ");
+    if (this.config.apiKeyEnv) {
+      const secret = process.env[this.config.apiKeyEnv];
+      if (secret) sanitized = sanitized.split(secret).join("[REDACTED]");
+    }
+    return sanitized.slice(0, 500);
   }
 }

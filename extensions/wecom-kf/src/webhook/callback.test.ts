@@ -57,7 +57,11 @@ vi.mock("../state/cursor-store.js", () => {
   };
 });
 
-const { createKfCallbackHandler } = await import("./callback.js");
+const {
+  createKfCallbackHandler,
+  startKfCallbackProcessing,
+  stopKfCallbackProcessing,
+} = await import("./callback.js");
 
 const TOKEN = "test-token";
 const ENCODING_AES_KEY = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
@@ -168,7 +172,13 @@ describe("parseWecomCallback", () => {
 });
 
 describe("createKfCallbackHandler", () => {
-  const handlerOptions = { nowSeconds: () => 1710000004 };
+  // 大多数用例只验证一次同步的业务语义，关闭重试可避免失败用例之间残留后台任务。
+  // 重试本身由独立用例显式开启并验证。
+  const handlerOptions = {
+    nowSeconds: () => 1710000004,
+    syncRetryAttempts: 1,
+    syncRetryDelayMs: 0,
+  };
   const accountConfig: WecomAccountConfig = {
     corpId: CORP_ID,
     corpSecret: "secret",
@@ -180,6 +190,7 @@ describe("createKfCallbackHandler", () => {
   const getAccountConfig = () => accountConfig;
 
   beforeEach(() => {
+    startKfCallbackProcessing();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -207,7 +218,8 @@ describe("createKfCallbackHandler", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await stopKfCallbackProcessing(1_000).catch(() => undefined);
     vi.restoreAllMocks();
     getWecomRuntimeMock.mockReset();
     syncKfMessagesMock.mockReset();
@@ -418,5 +430,125 @@ describe("createKfCallbackHandler", () => {
     expect(res.statusCode).toBe(200);
     await vi.waitFor(() => expect(releaseInboundMock).toHaveBeenCalledWith("kf_001", "msg-failed", expect.any(Error)));
     expect(commitInboundMock).not.toHaveBeenCalledWith("kf_001", "msg-failed");
+  });
+
+  it("sync_msg 返回临时错误时后台重试，成功后才结束同步任务", async () => {
+    syncKfMessagesMock
+      .mockResolvedValueOnce({
+        errcode: 50001,
+        errmsg: "temporary error",
+        has_more: 0,
+        msg_list: [],
+      })
+      .mockResolvedValueOnce({
+        errcode: 0,
+        errmsg: "ok",
+        next_cursor: "cursor-retry",
+        has_more: 0,
+        msg_list: [],
+      });
+
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: xml,
+    });
+    const timestamp = "1710000004";
+    const nonce = "nonce-retry";
+    const msgSignature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const handler = createKfCallbackHandler(getAccountConfig, {
+      ...handlerOptions,
+      syncRetryAttempts: 2,
+    });
+    const res = mockResponse();
+
+    await handler(
+      makePostReq({ msg_signature: msgSignature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
+      res,
+    );
+
+    // 企业微信回调不等待下游 API；防止平台因处理超时重复推送同一事件。
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe("success");
+    await vi.waitFor(() => expect(syncKfMessagesMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("拒绝失控的后台同步重试参数", () => {
+    expect(() => createKfCallbackHandler(getAccountConfig, {
+      ...handlerOptions,
+      syncRetryAttempts: 0,
+    })).toThrow("syncRetryAttempts");
+    expect(() => createKfCallbackHandler(getAccountConfig, {
+      ...handlerOptions,
+      syncRetryDelayMs: 30_001,
+    })).toThrow("syncRetryDelayMs");
+  });
+
+  it("停机期间不 ACK 新的同步通知，而是返回 503 让企微重投", async () => {
+    await stopKfCallbackProcessing();
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: xml,
+    });
+    const timestamp = "1710000004";
+    const nonce = "nonce-stopping";
+    const signature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const res = mockResponse();
+
+    await createKfCallbackHandler(getAccountConfig, handlerOptions)(
+      makePostReq({ msg_signature: signature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
+      res,
+    );
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toBe("service stopping");
+    expect(syncKfMessagesMock).not.toHaveBeenCalled();
+  });
+
+  it("Service stop 会等待已经快速 ACK 的后台同步完成", async () => {
+    let finishSync!: (value: unknown) => void;
+    syncKfMessagesMock.mockImplementationOnce(() => new Promise((resolve) => {
+      finishSync = resolve;
+    }));
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: xml,
+    });
+    const timestamp = "1710000004";
+    const nonce = "nonce-drain";
+    const signature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const res = mockResponse();
+    await createKfCallbackHandler(getAccountConfig, handlerOptions)(
+      makePostReq({ msg_signature: signature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
+      res,
+    );
+    expect(res.statusCode).toBe(200);
+    await vi.waitFor(() => expect(syncKfMessagesMock).toHaveBeenCalledOnce());
+
+    let drained = false;
+    const stopping = stopKfCallbackProcessing(1_000).then(() => { drained = true; });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    finishSync({ errcode: 0, errmsg: "ok", next_cursor: "cursor-drained", has_more: 0, msg_list: [] });
+    await stopping;
+    expect(drained).toBe(true);
+  });
+
+  it("拒绝非法的停机 drain 超时配置", async () => {
+    await expect(stopKfCallbackProcessing(0)).rejects.toThrow("drain timeout");
   });
 });

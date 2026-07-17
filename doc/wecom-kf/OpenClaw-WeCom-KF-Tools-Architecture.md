@@ -17,11 +17,11 @@
 | **行为控制 Tools** | 四个企微 API（94645/94661/94665/94669）封装为 Agent Tools，供智能体触发「查接待人员 / 查账号 / 拿链接 / 转会话」 |
 | **会话隔离（硬约束）** | Tool 返回的 **原始 API 数据不得进入** LLM prompt、session transcript（JSONL）、compaction 上下文 |
 | **message-sdk 职责** | 入站消息编排、回复管道、去重；**不**承担 KF 管理 API 的 Tool 封装 |
-| **与 wecom_kf_mcp 分工** | `wecom_kf_mcp` 为通用 MCP 代理（doc/contact 等）；本设计为 **KF 专用、可审计、可隔离** 的一等 Tools |
+| **与通用 MCP 分工** | `wecom_kf_mcp` 已删除；本设计只保留 **KF 专用、可审计、可隔离** 的一等 Tools |
 
 ### 0.1 现状快照（实现前）
 
-`index.ts` 已注册 5 个 KF Tools + `wecom_kf_mcp`：
+插件只注册 KF Control Tools；通用文档/联系人 MCP 必须通过独立插件按 Agent allowlist 显式启用：
 
 ```96:101:openclaw-plugins/extensions/wecom-kf/index.ts
     // ── KF Agent Tools (客服行为) ──
@@ -300,7 +300,7 @@ function textResult(text: string): { content: Array<{ type: "text"; text: string
 | **`before_message_write` hook** | OpenClaw Core | ✅ 兜底 | `block: true` 或替换 message |
 | **`after_tool_call` hook** | OpenClaw Core | ⚠️ 仅观测 | 不能阻止当轮 LLM 看到 result |
 | **`before_tool_call` hook** | OpenClaw Core | ⚠️ 参数审计 | 可阻止非法参数，不解决返回值 |
-| MCP interceptor | wecom_kf_mcp | ❌ 不适用 | 通用 MCP，无 KF 隔离语义 |
+| 独立 MCP 插件 | Agent 显式 allowlist | ❌ 不适用 | 不属于 KF 控制面，不能代替租户隔离 |
 | message-sdk | 共用库 | ❌ | 无 tool transcript 钩子 |
 
 `tool_result_persist` 契约（OpenClaw Core）：
@@ -378,7 +378,7 @@ api.on("tool_result_persist", (event) => {
 **Layer D — 副作用与 msg_code 旁路**
 
 - `transfer_session` 成功后，`msg_code` **仅** 写入进程内 `KfSessionSideEffectStore`（key = sessionKey）  
-- `ics-handlers/event-messages` 或 outbound 在 **同 run 后续阶段** 读取并调用 `send_msg_on_event`  
+- `state/event-message-dispatch.ts` 或 outbound 在 **同 run 后续阶段** 读取并调用 `send_msg_on_event`
 - **禁止** 将 `msg_code` 返回给 LLM
 
 ### 4.4 95159 客户基础信息：Ephemeral Tool 策略
@@ -393,10 +393,10 @@ api.on("tool_result_persist", (event) => {
 
 **推荐：A + B** — 会话内用 state flow；运营排查走 ICS REST，不走 LLM Tool。
 
-### 4.5 与 wecom_kf_mcp 的隔离
+### 4.5 与独立 MCP 插件的隔离
 
-- `wecom_kf_mcp` **call** 路径仍可能把 MCP JSON 全文返回模型  
-- 客服 Agent 的 **tool allowlist** 应 **仅启用** `wecom_kf_*` 控制类 Tools，禁用或从 profile 移除 `wecom_kf_mcp`（除非明确需要 doc 能力且接受 transcript 策略）  
+- 通用 MCP 的 **call** 路径可能把 MCP JSON 全文返回模型，不具备 KF 的租户绑定和结果脱敏语义。
+- 客服 Agent 的 **tool allowlist** 默认只启用 `wecom_kf_*` 控制类 Tools；确需文档能力时，应单独评审独立 MCP 插件的权限和 transcript 策略。
 - 文档化到各 `agents/*/TOOLS.md`
 
 ---
@@ -475,7 +475,7 @@ export type ResolvedKfAccount = {
 | # | 任务 | 产出 |
 |---|------|------|
 | 3.1 | `get_account_link` 链接触发 outbound 卡片（非 tool 文本） | outbound 扩展 |
-| 3.2 | ICS stats 汇总 Tool 调用次数 / 转人工成功率 | `ics-handlers/stats.ts` |
+| 3.2 | 审计日志汇总 Tool 调用次数 / 转人工成功率 | 可选接入 Prometheus 插件，不在 KF 核心增加 ICS HTTP 旁路 |
 | 3.3 | 95159 仅 ICS REST admin 端点（optional） | 新 handler |
 | 3.4 | `agents/*/TOOLS.md` 与 allowlist 文档 | 运维文档 |
 

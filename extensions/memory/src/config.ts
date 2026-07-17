@@ -1,8 +1,18 @@
+/**
+ * 本地 Memory 插件的严格配置解析层。
+ *
+ * 这里集中处理路径展开、数值硬边界与加密密钥环境变量；解析结果供存储和检索共享，
+ * 避免各层各自使用默认值导致保留期、记录大小或租户范围不一致。
+ */
 import { Buffer } from "node:buffer";
 import * as path from "node:path";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
+/**
+ * 本地 Memory 存储、抽取和召回的完整运行时配置。
+ * `profileScope=agent` 会允许同一 Agent 跨会话召回 L3，因此必须由管理员显式选择。
+ */
 export interface MemoryConfig {
   enabled: boolean;
   dataDir: string;
@@ -11,6 +21,10 @@ export interface MemoryConfig {
   extractionInterval: number;
   maxRecordBytes: number;
   profileScope: "session" | "agent";
+  autoRecall: boolean;
+  autoRecallMaxResults: number;
+  autoRecallMaxChars: number;
+  autoRecallTimeoutMs: number;
   encryptionKeyEnv?: string;
 }
 
@@ -22,6 +36,10 @@ const DEFAULTS: MemoryConfig = {
   extractionInterval: 5,
   maxRecordBytes: 64 * 1024,
   profileScope: "session",
+  autoRecall: true,
+  autoRecallMaxResults: 5,
+  autoRecallMaxChars: 4_000,
+  autoRecallTimeoutMs: 1_000,
 };
 
 function boundedInteger(
@@ -38,6 +56,10 @@ function boundedInteger(
   return value as number;
 }
 
+/**
+ * 解析并冻结各层共享的 Memory 配置语义。
+ * 路径会展开为绝对路径；数值均有硬上下限；启用加密时只保存环境变量名，不把密钥写入配置。
+ */
 export function resolveConfig(api: Pick<OpenClawPluginApi, "pluginConfig">): MemoryConfig {
   const raw = (api.pluginConfig ?? {}) as Partial<MemoryConfig>;
   if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") {
@@ -73,6 +95,9 @@ export function resolveConfig(api: Pick<OpenClawPluginApi, "pluginConfig">): Mem
   if (raw.profileScope !== undefined && raw.profileScope !== "session" && raw.profileScope !== "agent") {
     throw new Error("[memory] profileScope must be session or agent");
   }
+  if (raw.autoRecall !== undefined && typeof raw.autoRecall !== "boolean") {
+    throw new Error("[memory] autoRecall must be a boolean");
+  }
 
   return {
     enabled: raw.enabled !== false,
@@ -82,6 +107,28 @@ export function resolveConfig(api: Pick<OpenClawPluginApi, "pluginConfig">): Mem
     extractionInterval: boundedInteger(raw.extractionInterval, "extractionInterval", DEFAULTS.extractionInterval, 1, 100),
     maxRecordBytes: boundedInteger(raw.maxRecordBytes, "maxRecordBytes", DEFAULTS.maxRecordBytes, 1024, 1024 * 1024),
     profileScope: raw.profileScope ?? DEFAULTS.profileScope,
+    autoRecall: raw.autoRecall !== false,
+    autoRecallMaxResults: boundedInteger(
+      raw.autoRecallMaxResults,
+      "autoRecallMaxResults",
+      DEFAULTS.autoRecallMaxResults,
+      1,
+      10,
+    ),
+    autoRecallMaxChars: boundedInteger(
+      raw.autoRecallMaxChars,
+      "autoRecallMaxChars",
+      DEFAULTS.autoRecallMaxChars,
+      256,
+      16_000,
+    ),
+    autoRecallTimeoutMs: boundedInteger(
+      raw.autoRecallTimeoutMs,
+      "autoRecallTimeoutMs",
+      DEFAULTS.autoRecallTimeoutMs,
+      50,
+      5_000,
+    ),
     ...(encryptionKeyEnv ? { encryptionKeyEnv } : {}),
   };
 }

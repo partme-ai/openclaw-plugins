@@ -13,8 +13,9 @@
 /**
  * OpenClaw Bridge — 渠道注册表
  *
- * 所有支持的 IM 渠道及其元数据。
- * 分为外部官方插件（需单独安装）和 bundled 插件（随 OpenClaw 内置）。
+ * 所有可被 Bridge 识别的来源渠道及其元数据。
+ * 分为外部连接器、OpenClaw stock 渠道和当前仓库渠道；静态存在只代表配置与预设可识别，
+ * 不代表插件已经安装、运行或完成真实环境验收。
  */
 
 /**
@@ -62,17 +63,22 @@ export type ChannelContextPreset =
   | "zalo"
   | "twitch"
   | "tlon"
-  | "synology-chat";
+  | "synology-chat"
+  | "wechat"
+  | "wechat-ipad"
+  | "wecom-kf"
+  | "douyin"
+  | "mqtt";
 
 // ── 所有渠道静态清单 ──
 
 /**
- * @description 全渠道常量数组（顺序为人类阅读习惯分组：**外部官方**先于 **bundled**）。
+ * @description 全渠道常量数组（先列外部/重点入口，再列仓库扩展与 OpenClaw stock 渠道）。
  *
  * @remarks 条目数为宿主宣传的 Bridge 覆盖范围之数据来源。
  */
 export const ALL_CHANNELS: ChannelMeta[] = [
-  // ═══ 外部官方插件（需手动安装） ═══
+  // ═══ 外部连接器与 OpenClaw stock 的重点入口 ═══
   {
     channelId: "dingtalk-connector",
     label: "DingTalk",
@@ -97,8 +103,13 @@ export const ALL_CHANNELS: ChannelMeta[] = [
     contextPreset: "qqbot",
   },
 
-  // ═══ Bundled 渠道（随 OpenClaw 内置，无需额外安装） ═══
+  // ═══ 当前仓库渠道与其余 OpenClaw stock 渠道 ═══
   { channelId: "wecom", label: "WeCom", labelCN: "企业微信", source: "repository", npmPackage: "@partme.ai/wecom", repoUrl: "https://github.com/partme-ai/openclaw-plugins", contextPreset: "wecom" },
+  { channelId: "openclaw-weixin", label: "WeChat", labelCN: "微信", source: "repository", npmPackage: "@partme.ai/weixin", repoUrl: "https://github.com/partme-ai/openclaw-plugins", contextPreset: "wechat" },
+  { channelId: "wechat-ipad", label: "WeChat iPad Bridge", labelCN: "微信 iPad 外部桥接", source: "repository", npmPackage: "@partme.ai/wechat-ipad", repoUrl: "https://github.com/partme-ai/openclaw-plugins", contextPreset: "wechat-ipad" },
+  { channelId: "wecom-kf", label: "WeCom Customer Service", labelCN: "微信客服", source: "repository", npmPackage: "@partme.ai/wecom-kf", repoUrl: "https://github.com/partme-ai/openclaw-plugins", contextPreset: "wecom-kf" },
+  { channelId: "douyin", label: "Douyin", labelCN: "抖音", source: "repository", npmPackage: "@partme.ai/openclaw-douyin", repoUrl: "https://github.com/partme-ai/openclaw-plugins", contextPreset: "douyin" },
+  { channelId: "mqtt", label: "MQTT", labelCN: "MQTT 消息通道", source: "repository", npmPackage: "@partme.ai/openclaw-mqtt", repoUrl: "https://github.com/partme-ai/openclaw-plugins", contextPreset: "mqtt" },
   { channelId: "discord", label: "Discord", labelCN: "Discord", source: "openclaw-stock", contextPreset: "discord" },
   { channelId: "slack", label: "Slack", labelCN: "Slack", source: "openclaw-stock", contextPreset: "slack" },
   { channelId: "telegram", label: "Telegram", labelCN: "Telegram", source: "openclaw-stock", contextPreset: "telegram" },

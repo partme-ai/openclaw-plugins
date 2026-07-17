@@ -15,6 +15,12 @@ const DEFAULT_DIMENSIONS = 384;
 /** 千帆 OpenAI 兼容端点 */
 const DEFAULT_BASE_URL = 'https://qianfan.baidubce.com/v2';
 
+/**
+ * 百度千帆 OpenAI 兼容 Embedding 客户端。
+ *
+ * 使用 Bearer 凭据访问 `/v2/embeddings`，并复用统一的超时、有限重试、响应大小
+ * 和向量完整性校验。调用方只接收与输入顺序一致的可信向量数组。
+ */
 export class QianfanEmbeddingService implements EmbeddingService {
   readonly dimensions: number;
   readonly modelName: string;
@@ -62,7 +68,7 @@ export class QianfanEmbeddingService implements EmbeddingService {
       body: JSON.stringify(body),
     }, this.config, 'Qianfan');
     return validateEmbeddingData(data.data, batch.length, this.dimensions, 'Qianfan');
-    });
+    }, this.modelName === 'tao-8k' ? 1 : 16);
   }
 
   async health(): Promise<boolean> {

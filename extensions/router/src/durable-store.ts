@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 
 import type { RouteDeliveryTask, RouterConfig } from "./types.js";
 
+/** 已持久化投递状态变更的脱敏审计记录，不保存消息正文。 */
 export type RouteAuditEntry = {
   taskId: string;
   ruleId: string;
@@ -39,6 +40,12 @@ type LeaseOwner = {
   heartbeatAt: number;
 };
 
+/**
+ * 状态文件 rename 已提交、但目录 fsync 失败时的特殊错误。
+ *
+ * 调用方不得把任务重新入队，否则可能重复投递；应保留 delivered 状态并把健康度降级为
+ * “持久性不确定”，等待运维检查存储设备。
+ */
 export class CommittedPersistenceError extends Error {
   constructor(cause: unknown) {
     super(`[router] state rename committed but directory fsync failed: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -46,6 +53,7 @@ export class CommittedPersistenceError extends Error {
   }
 }
 
+/** 运维状态接口使用的持久队列容量与时间摘要。 */
 export type RouteStoreSnapshot = {
   pending: number;
   deliveredKeys: number;
@@ -54,6 +62,7 @@ export type RouteStoreSnapshot = {
   nextAttemptAt: number | null;
 };
 
+/** 原子批量入队结果；fan-out 要么整体持久提交，要么不启动任何投递。 */
 export type EnqueueBatchResult = { enqueued: number; duplicates: number };
 
 const EMPTY_STATE = (): RouterState => ({ version: 1, pending: {}, delivered: {}, deadLetters: [], audit: [] });
@@ -368,8 +377,7 @@ export class DurableRouteStore {
   private async isLeaseStale(): Promise<boolean> {
     try {
       const owner = JSON.parse(await readFile(this.leaseOwnerPath, "utf8")) as Partial<LeaseOwner>;
-      if (owner.hostname !== hostname()) return false;
-      if (typeof owner.pid === "number") {
+      if (owner.hostname === hostname() && typeof owner.pid === "number") {
         try { process.kill(owner.pid, 0); return false; } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "EPERM") return false;
           if ((error as NodeJS.ErrnoException).code === "ESRCH") return true;
@@ -378,7 +386,12 @@ export class DurableRouteStore {
       const heartbeatAt = typeof owner.heartbeatAt === "number" ? owner.heartbeatAt : (await stat(this.leaseOwnerPath)).mtimeMs;
       return Date.now() - heartbeatAt > this.config.delivery.lockTimeoutMs;
     } catch {
-      return false;
+      try {
+        const lockDirectory = await stat(this.leaseDir);
+        return Date.now() - lockDirectory.mtimeMs > this.config.delivery.lockTimeoutMs;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ENOENT";
+      }
     }
   }
 

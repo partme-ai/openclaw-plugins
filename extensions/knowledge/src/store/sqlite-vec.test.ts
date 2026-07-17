@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SqliteVecStore } from './sqlite-vec.js';
 
 // ---------------------------------------------------------------------------
-// 模拟 node:sqlite
+// 模拟 SQLite 运行时加载边界；真实 node:sqlite 由 integration test 覆盖
 // ---------------------------------------------------------------------------
 const mockStmtRun = vi.fn();
 const mockStmtAll = vi.fn();
@@ -28,7 +28,7 @@ function createMockDatabase(path: string) {
   };
 }
 
-vi.mock('node:sqlite', () => {
+vi.mock('./sqlite-runtime.js', () => {
   return {
     DatabaseSync: vi.fn(function (this: any, path: string) {
       mockDbInstance = createMockDatabase(path);

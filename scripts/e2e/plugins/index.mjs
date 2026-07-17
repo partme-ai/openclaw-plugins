@@ -15,6 +15,19 @@ import { testMtls } from "./mtls.mjs";
 import { testOAuth2 } from "./oauth2.mjs";
 import { testWebSocket } from "./web-socket.mjs";
 import { testTracing } from "./tracing.mjs";
+import { testPrometheus } from "./prometheus.mjs";
+import { testMemory } from "./memory.mjs";
+import { testOpenMem } from "./openmem.mjs";
+import { testKnowledge } from "./knowledge.mjs";
+import { testDouyin } from "./douyin.mjs";
+import { testAmap } from "./amap.mjs";
+import { testMeituan } from "./meituan.mjs";
+import { testRednode } from "./rednode.mjs";
+import { testWechat } from "./wechat.mjs";
+import { testWechatIpad } from "./wechat-ipad.mjs";
+import { testWecomKf } from "./wecom-kf.mjs";
+import { testBridge } from "./bridge.mjs";
+import { testNacos } from "./nacos.mjs";
 import { resolvePlugins } from "../lib/registry.mjs";
 
 /** @type {Record<string, (ctx: ReturnType<typeof createTestContext>, results: import('../lib/utils.mjs').resultRow[]) => Promise<void>>} */
@@ -32,6 +45,19 @@ const ADAPTERS = {
   oauth2: testOAuth2,
   "web-socket": testWebSocket,
   tracing: testTracing,
+  prometheus: testPrometheus,
+  memory: testMemory,
+  openmem: testOpenMem,
+  knowledge: testKnowledge,
+  douyin: testDouyin,
+  amap: testAmap,
+  meituan: testMeituan,
+  rednode: testRednode,
+  wechat: testWechat,
+  "wechat-ipad": testWechatIpad,
+  "wecom-kf": testWecomKf,
+  bridge: testBridge,
+  nacos: testNacos,
 };
 
 /**

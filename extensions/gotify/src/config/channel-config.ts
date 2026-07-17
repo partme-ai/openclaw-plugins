@@ -95,6 +95,16 @@ export const GotifyAccountSchema = z
           .optional()
           .default(30_000),
         maxReconnectAttempts: z.number().int().min(0).optional().default(10),
+        reconnectJitterRatio: z.number().min(0).max(1).optional().default(0.2),
+        maxBufferedMessages: z.number().int().min(1).optional().default(1000),
+        maxDispatchAttempts: z.number().int().min(1).optional().default(5),
+        dispatchRetryDelayMs: z.number().int().min(10).optional().default(1000),
+        maxDispatchRetryDelayMs: z
+          .number()
+          .int()
+          .min(10)
+          .optional()
+          .default(30_000),
         deleteAfterConsume: z
           .boolean()
           .optional()
@@ -178,6 +188,32 @@ export const gotifyConfigSchema: ChannelConfigSchema = {
           reconnectDelayMs: { type: "integer", minimum: 500 },
           maxReconnectDelayMs: { type: "integer", minimum: 1000 },
           maxReconnectAttempts: { type: "integer", minimum: 0 },
+          reconnectJitterRatio: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
+            default: 0.2,
+          },
+          maxBufferedMessages: {
+            type: "integer",
+            minimum: 1,
+            default: 1000,
+          },
+          maxDispatchAttempts: {
+            type: "integer",
+            minimum: 1,
+            default: 5,
+          },
+          dispatchRetryDelayMs: {
+            type: "integer",
+            minimum: 10,
+            default: 1000,
+          },
+          maxDispatchRetryDelayMs: {
+            type: "integer",
+            minimum: 10,
+            default: 30000,
+          },
           deleteAfterConsume: {
             type: "boolean",
             default: true,

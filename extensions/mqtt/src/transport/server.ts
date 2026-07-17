@@ -30,7 +30,7 @@ import type {
   MqttInboundMessage,
 } from "../types.js";
 import { logAuditEvent } from "./audit.js";
-import { verifyPassword, matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
+import { verifyPassword } from "@partme.ai/openclaw-message-sdk/transport";
 import {
   createKeyedRunQueue,
   type KeyedRunQueue,
@@ -45,7 +45,6 @@ import {
   updateMessageLatency,
   updateAuthMetrics,
   updateAclDenials,
-  updateSessionMetrics,
 } from "../shared/metrics.js";
 
 type AedesBroker = NonNullable<ReturnType<typeof createBroker>>;
@@ -464,6 +463,11 @@ function setupAuthentication(
     const usernameStr = username?.toString();
     const passwordStr = password?.toString() ?? "";
     const willTopic = (client as { will?: { topic?: string } }).will?.topic;
+    // 所有认证出口统一经过 finish，确保成功/失败指标不会因新增分支而漏记。
+    const finish = (success: boolean): void => {
+      updateAuthMetrics(success);
+      callback(null, success);
+    };
 
     if (
       !connectedClients.has(client.id) &&
@@ -472,7 +476,7 @@ function setupAuthentication(
       logAuditEvent(activeBrokerConfig?.audit, "warn", "auth_failed_connection_limit", {
         clientId: client.id,
       });
-      callback(null, false);
+      finish(false);
       return;
     }
 
@@ -481,13 +485,13 @@ function setupAuthentication(
         clientId: client.id,
         willTopic,
       });
-      callback(null, false);
+      finish(false);
       return;
     }
 
     if (!authConfig.enabled) {
       pendingClients.add(client);
-      callback(null, true);
+      finish(true);
       return;
     }
 
@@ -495,7 +499,7 @@ function setupAuthentication(
       if (authConfig.allowAnonymous) {
         const anonymousUser = usersByName.get("anonymous");
         if (!anonymousUser) {
-          callback(null, false);
+          finish(false);
           return;
         }
         clientUsers.set(client, "anonymous");
@@ -503,13 +507,13 @@ function setupAuthentication(
           clientId: client.id,
         });
         pendingClients.add(client);
-        callback(null, true);
+        finish(true);
         return;
       }
       logAuditEvent(activeBrokerConfig?.audit, "warn", "auth_failed_missing_username", {
         clientId: client.id,
       });
-      callback(null, false);
+      finish(false);
       return;
     }
 
@@ -519,7 +523,7 @@ function setupAuthentication(
         clientId: client.id,
         username: usernameStr,
       });
-      callback(null, false);
+      finish(false);
       return;
     }
 
@@ -531,7 +535,7 @@ function setupAuthentication(
         clientId: client.id,
         username: usernameStr,
       });
-      callback(null, false);
+      finish(false);
       return;
     }
 
@@ -541,7 +545,7 @@ function setupAuthentication(
         clientId: client.id,
         username: usernameStr,
       });
-      callback(null, false);
+      finish(false);
       return;
     }
 
@@ -551,7 +555,7 @@ function setupAuthentication(
       username: usernameStr,
     });
     pendingClients.add(client);
-    callback(null, true);
+    finish(true);
   };
 
   // 企业级最小 ACL：按用户配置限制 publish/subscribe topic 范围

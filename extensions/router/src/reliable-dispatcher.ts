@@ -12,6 +12,12 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { CommittedPersistenceError, DurableRouteStore, type RouteAuditEntry } from "./durable-store.js";
 import type { PublishInboundParams, RouteAction, RouteDeliveryTask, RouterConfig } from "./types.js";
 
+/**
+ * 可靠投递器的实时健康与积压快照。
+ *
+ * unknownOutcomes 表示超时后目标可能已收到消息，durabilityUncertain 表示 rename 后目录 fsync
+ * 失败；任一状态都不能被误报为健康。
+ */
 export type ReliableDispatcherStatus = {
   running: boolean;
   accepted: number;

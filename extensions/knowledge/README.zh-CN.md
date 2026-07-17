@@ -11,25 +11,33 @@
 ```mermaid
 flowchart LR
     DOC["可信文档 / Tool 输入"] --> ACL["Owner + Namespace + 大小校验"]
-    ACL --> CHUNK["语义切块"] --> EMB["Embedding"] --> STORE["SQLite/FTS5 或 ZVec"]
+    ACL --> TYPE{"纯文本?"}
+    TYPE -->|是| CHUNK["语义切块"]
+    TYPE -->|否且已配置| PARSER["智谱 / Ollama Parser"] --> CHUNK
+    CHUNK --> EMB["Embedding"] --> STORE["SQLite/FTS5 或 ZVec"]
     USER["用户问题"] --> GATE["Intent Gate"] --> RETRIEVE["Vector / Keyword / Hybrid"]
     STORE --> RETRIEVE --> BUDGET["Chunk + Token 预算"] --> PROMPT["Agent Prompt"]
 ```
 
-同一 `sourceId` 的更新使用存储层原子替换；Embedding 或写入失败时保留旧文档。默认
-namespace 为当前 `accountId:bot|agent`，非 owner 不能查询或修改其它 namespace。
+同一 `sourceId` 的更新使用存储层原子替换；Embedding 或写入失败时保留旧文档。OpenClaw
+2026.7.1 的 Prompt Hook 不提供 `accountId`，因此默认 namespace 由 Hook 与 Tool 都具备的
+稳定 `sessionKey` 做 SHA-256 摘要后派生；原始会话键不会写入路径或表名。非 owner 不能
+查询或修改其它 namespace。
 
 ## 能力范围
 
 - Embedding：OpenAI-compatible、DashScope、智谱、千帆、Ollama；
 - 存储：`sqlite-vec`（默认，Node.js SQLite + FTS5）和 `zvec`（纯 JavaScript）；
-- 检索：vector、keyword、hybrid，可选 reranker；
+- 检索：vector、keyword、hybrid，可选智谱或 Jina Reranker；
+- 文档解析：智谱支持 PDF/PNG/JPEG，owner 授权的本地文件会在出站前转换为受限 base64；
+  Ollama 仅接收图片，PDF 需先逐页渲染或改用智谱，且不会主动抓取远程 URL；
 - 注入：system/user 位置，受最大块数和 token/字符预算限制；
 - 文件摄取：默认关闭，仅 owner 可用，realpath 必须位于允许根目录；
 - 生命周期：Store 按 namespace + 配置指纹缓存，Gateway stop 时统一关闭或刷新。
+- 并发删除：同 source 的 add/update/delete 保序；namespace clear 使用独占屏障，不能越过在途写入。
 
-当前不承诺 PDF/Office 解析、远程 URL 抓取、外部向量数据库和多节点共享索引。源码中的
-parser 或实验接口不属于 2026.7.1 独立插件配置面。
+当前不承诺远程 URL 抓取、外部向量数据库和多节点共享索引。PDF/Office/图片等非纯文本
+必须显式配置 `parser.provider`，并在真实 Provider 环境完成格式兼容性验收。
 
 ## 安装
 
@@ -109,6 +117,8 @@ OpenAI-compatible 模式默认读取 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和
 - ZVec 配置 `dbPath` 后为每个 namespace 派生独立 JSON 文件，并在关闭时原子刷新；
 - 更换 Embedding 模型或 dimensions 后必须从可信源重新索引；
 - 早期仅清洗 namespace 的表不会自动迁移，避免把潜在碰撞数据复制到错误租户；
+- 2026.7.1 会话摘要 namespace 不会自动读取旧 `accountId:mode` 数据；应从可信源重新索引，
+  不做可能跨租户复制的自动迁移；
 - `requestTimeoutMs`、`maxRetries`、`maxBatchSize` 分别控制超时、瞬时错误重试和批量规模。
 
 ## 开发验证

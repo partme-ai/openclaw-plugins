@@ -1,5 +1,6 @@
 /** @param {import('./mqtt.mjs').ConfigContext} ctx */
 export function webSocketConfig(ctx) {
+  const testWebPort = Number(process.env.E2E_TEST_WEB_PORT ?? 8765);
   return {
     pluginEntry: { "web-socket": { enabled: true } },
     channelEntry: {
@@ -9,11 +10,13 @@ export function webSocketConfig(ctx) {
         host: "127.0.0.1",
         wsPort: Number(process.env.E2E_WEB_SOCKET_PORT ?? 28789),
         path: "/openclaw/ws",
-        allowedOrigins: ["https://e2e.openclaw.local"],
+        defaultAgentId: "main",
+        allowedOrigins: ["https://e2e.openclaw.local", `http://127.0.0.1:${testWebPort}`],
         auth: {
           enabled: true,
           token: "openclaw-web-socket-e2e-token",
           allowQueryToken: false,
+          allowProtocolToken: true,
         },
         limits: {
           heartbeatIntervalMs: 2_000,

@@ -5,6 +5,9 @@
  *
  * Loaded when the plugin is disabled or unconfigured, avoiding heavy Nacos client imports.
  * See https://docs.openclaw.ai/plugins/sdk-entrypoints (`defineSetupPluginEntry`).
+ *
+ * 中文说明：这是 OpenClaw 配置阶段使用的轻量入口，只做最小 Schema 与 serverList
+ * 校验；不要在这里导入 Nacos SDK，否则插件未启用时也会加载网络客户端及其副作用。
  */
 import type { NacosPluginConfig } from "./shared/types.js";
 

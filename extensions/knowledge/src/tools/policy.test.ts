@@ -15,11 +15,17 @@ afterEach(async () => {
 });
 
 describe('knowledge tool policy', () => {
-  it('only allows a non-owner to access the current account namespace', () => {
-    const ctx = { agentAccountId: 'acct-a', agentId: 'main', senderIsOwner: false } satisfies OpenClawPluginToolContext;
-    expect(defaultNamespace(ctx)).toBe('acct-a:agent');
-    expect(authorizeNamespace(ctx, undefined, config)).toEqual({ ok: true, namespace: 'acct-a:agent' });
-    expect(authorizeNamespace(ctx, 'acct-b:agent', config)).toEqual({ ok: false, error: '只能访问当前对话自己的 namespace' });
+  it('only allows a non-owner to access the current session namespace', () => {
+    const ctx = {
+      sessionKey: 'agent:main:wecom:tenant-a:user-1',
+      agentAccountId: 'acct-a',
+      agentId: 'main',
+      senderIsOwner: false,
+    } satisfies OpenClawPluginToolContext;
+    const own = defaultNamespace(ctx);
+    expect(own).toMatch(/^session-[a-f0-9]{24}:agent$/);
+    expect(authorizeNamespace(ctx, undefined, config)).toEqual({ ok: true, namespace: own });
+    expect(authorizeNamespace(ctx, 'session-000000000000000000000000:agent', config)).toEqual({ ok: false, error: '只能访问当前对话自己的 namespace' });
     expect(authorizeNamespace(ctx, 'global', config)).toEqual({ ok: false, error: '只能访问当前对话自己的 namespace' });
   });
 

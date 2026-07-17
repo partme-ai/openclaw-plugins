@@ -7,11 +7,23 @@
  */
 import type { MtlsConfig } from "./shared/types.js";
 
+/**
+ * 插件接收的原始配置形态。
+ *
+ * 这里允许只覆盖部分字段，随后由配置解析器补齐默认值并执行安全校验；业务代码不应直接把
+ * 该类型当作已经可运行的 {@link MtlsConfig} 使用。
+ */
 export type MtlsConfigInput = Partial<Omit<MtlsConfig, "tls" | "proxy">> & {
   tls?: Partial<MtlsConfig["tls"]>;
   proxy?: Partial<MtlsConfig["proxy"]>;
 };
 
+/**
+ * mTLS 插件检查反向代理集成所需的最小 Gateway 配置切片。
+ *
+ * 插件只读取监听端口、可信代理和 trusted-proxy 身份头，避免依赖 OpenClaw 完整配置模型；
+ * 这些字段用于阻止“代理已启动但 Gateway 不信任其身份头”的半配置状态。
+ */
 export type OpenClawGatewayConfigSlice = {
   gateway?: {
     port?: number;

@@ -34,6 +34,21 @@ sequenceDiagram
 
 企业微信回调只是“有新消息”的通知，真实消息通过 `sync_msg` 拉取。游标必须在成功处理后持久推进，否则可能丢消息或重复消费。
 
+```mermaid
+flowchart LR
+    A["加密回调<br/>运行中快速 200"] --> B["账号串行 sync_msg"]
+    A -. 停机中 .-> S["返回 503<br/>要求企微重试"]
+    B --> C{"响应和消息结构<br/>是否合法?"}
+    C -->|否| R["有界指数退避重试"] --> B
+    C -->|是| D["claim msgid"]
+    D --> E{"Agent / 事件 / 出站<br/>是否成功?"}
+    E -->|否| F["release claim<br/>不推进 cursor"] --> R
+    E -->|是| G["commit msgid<br/>原子保存 cursor"]
+    G --> H["重启回放时跳过重复消息"]
+```
+
+状态目录会主动收紧为 `0700`，游标和 JSON 状态文件为 `0600`。即使目录由旧版本创建，下一次写入也会修复过宽权限。
+
 ## 路由与会话模型
 
 ```mermaid
@@ -61,11 +76,14 @@ openclaw gateway restart
 openclaw channels status --probe
 ```
 
-回调地址为 `https://<GATEWAY_HOST>/wecom/kefu`，服务器需要在企业微信要求的时间内返回成功，耗时处理应在回调确认后异步完成。
+回调地址为 `https://<GATEWAY_HOST>/wecom/kefu`。正常运行时快速返回 200，耗时处理在确认后按账号异步执行；Gateway 停机时先拒绝新回调并返回 503，再等待已经确认的同步队列排空，避免“企微认为已送达、进程却尚未处理”的消息丢失。
 
 ## 生产边界
 
 - 回调必须验签、解密、限制请求体，并对消息 ID 和游标做幂等处理。
+- `send_msg` 在调用 API 前按会话原子预占 48 小时窗口内的 5 条回复额度；失败时回滚，避免并发请求突破上限。
+- access_token 缓存按 `corpId + corpSecret + apiBaseUrl` 的不可逆指纹隔离，凭据轮换或切换私有化网关后不会继续复用旧 token。
+- 本地媒体读取必须经过白名单、真实路径、符号链接逃逸与大小限制检查。
 - `corpSecret`、Token、EncodingAESKey 属于敏感配置，不应写入日志或状态接口。
 - 转人工是控制面动作，工具结果不应混入用户可见的 LLM transcript。
 - 必须验证游标恢复、企业微信重试、Gateway 重启和人工接管后的消息归属。
@@ -78,6 +96,9 @@ openclaw channels status --probe
 pnpm --filter @partme.ai/wecom-kf typecheck
 pnpm --filter @partme.ai/wecom-kf test
 pnpm --filter @partme.ai/wecom-kf build
+
+# 安装态协议闭环
+OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins wecom-kf --skip-browser
 ```
 
 环境验收至少覆盖：文本与媒体、重复回调、游标续拉、欢迎语、排队、结束会话、满意度事件、自动选席、转人工和 48 小时窗口。

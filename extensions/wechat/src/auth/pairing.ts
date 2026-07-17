@@ -10,7 +10,20 @@ import path from "node:path";
 import { withFileLock } from "openclaw/plugin-sdk/infra-runtime";
 
 import { resolveStateDir } from "../storage/state-dir.js";
+import { writePrivateJsonAtomic } from "../storage/atomic-json.js";
 import { logger } from "../util/logger.js";
+
+const MAX_ALLOW_FROM_ENTRIES = 10_000;
+const MAX_USER_ID_LENGTH = 256;
+
+function normalizeUserIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .filter((id): id is string => typeof id === "string")
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0 && id.length <= MAX_USER_ID_LENGTH))]
+    .slice(0, MAX_ALLOW_FROM_ENTRIES);
+}
 
 /**
  * Resolve the framework credentials directory (mirrors core resolveOAuthDir).
@@ -59,9 +72,7 @@ export function readFrameworkAllowFromList(accountId: string): string[] {
     if (!fs.existsSync(filePath)) return [];
     const raw = fs.readFileSync(filePath, "utf-8");
     const parsed = JSON.parse(raw) as AllowFromFileContent;
-    if (Array.isArray(parsed.allowFrom)) {
-      return parsed.allowFrom.filter((id): id is string => typeof id === "string" && id.trim() !== "");
-    }
+    return normalizeUserIds(parsed.allowFrom);
   } catch {
     // best-effort
   }
@@ -88,16 +99,19 @@ export async function registerUserInFrameworkStore(params: {
   const { accountId, userId } = params;
   const trimmedUserId = userId.trim();
   if (!trimmedUserId) return { changed: false };
+  if (trimmedUserId.length > MAX_USER_ID_LENGTH) {
+    throw new Error(`weixin userId exceeds ${MAX_USER_ID_LENGTH} characters`);
+  }
 
   const filePath = resolveFrameworkAllowFromPath(accountId);
 
   const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 
   // Ensure the file exists before locking
   if (!fs.existsSync(filePath)) {
     const initial: AllowFromFileContent = { version: 1, allowFrom: [] };
-    fs.writeFileSync(filePath, JSON.stringify(initial, null, 2), "utf-8");
+    writePrivateJsonAtomic(filePath, initial);
   }
 
   return await withFileLock(filePath, LOCK_OPTIONS, async () => {
@@ -105,9 +119,7 @@ export async function registerUserInFrameworkStore(params: {
     try {
       const raw = fs.readFileSync(filePath, "utf-8");
       const parsed = JSON.parse(raw) as AllowFromFileContent;
-      if (Array.isArray(parsed.allowFrom)) {
-        content = parsed;
-      }
+      content = { version: 1, allowFrom: normalizeUserIds(parsed.allowFrom) };
     } catch {
       // If read/parse fails, start fresh
     }
@@ -116,11 +128,13 @@ export async function registerUserInFrameworkStore(params: {
       return { changed: false };
     }
 
+    if (content.allowFrom.length >= MAX_ALLOW_FROM_ENTRIES) {
+      throw new Error(`weixin allowFrom store reached ${MAX_ALLOW_FROM_ENTRIES} entries`);
+    }
+
     content.allowFrom.push(trimmedUserId);
-    fs.writeFileSync(filePath, JSON.stringify(content, null, 2), "utf-8");
-    logger.info(
-      `registerUserInFrameworkStore: added userId=${trimmedUserId} accountId=${accountId} path=${filePath}`,
-    );
+    writePrivateJsonAtomic(filePath, content);
+    logger.info("registerUserInFrameworkStore: authorized user added");
     return { changed: true };
   });
 }

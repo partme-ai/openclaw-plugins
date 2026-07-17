@@ -33,6 +33,50 @@ const accountStatePatches = new Map<string, Record<string, unknown>>();
 const accountSyncQueues = new Map<string, Promise<void>>();
 const MAX_SYNC_PAGES = 100;
 const DEFAULT_CALLBACK_MAX_TIMESTAMP_SKEW_SECONDS = 300;
+const DEFAULT_SYNC_RETRY_ATTEMPTS = 3;
+const DEFAULT_SYNC_RETRY_DELAY_MS = 500;
+const MAX_SYNC_RETRY_DELAY_MS = 30_000;
+const DEFAULT_CALLBACK_DRAIN_TIMEOUT_MS = 30_000;
+let acceptingBackgroundSync = true;
+
+/**
+ * 打开回调后台同步入口。由插件 Service start 调用；独立使用 handler 的测试和兼容入口默认开启。
+ */
+export function startKfCallbackProcessing(): void {
+  acceptingBackgroundSync = true;
+}
+
+/**
+ * 停止接收新的快速 ACK 后台任务，并等待已经 ACK 的账号串行队列完成。
+ *
+ * 若 Gateway 在 ACK 后直接退出，企微不会再次投递该通知，而尚未完成的 sync_msg/Agent 回复会
+ * 丢失。因此 Service stop 必须 drain；超时则明确失败，不能伪装成优雅停机。
+ */
+export async function stopKfCallbackProcessing(
+  timeoutMs = DEFAULT_CALLBACK_DRAIN_TIMEOUT_MS,
+): Promise<void> {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
+    throw new Error("wecom-kf callback drain timeout must be an integer between 1 and 300000");
+  }
+  acceptingBackgroundSync = false;
+  const pending = [...accountSyncQueues.values()];
+  if (pending.length === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.allSettled(pending).then(() => undefined),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`wecom-kf callback drain timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export function trackAccountStatePatch(accountId: string, patch: Record<string, unknown>): void {
   const existing = accountStatePatches.get(accountId) ?? {};
@@ -68,7 +112,8 @@ function assertCursorProgress(params: {
   }
 }
 
-function enqueueAccountSync(key: string, task: () => Promise<void>): void {
+function enqueueAccountSync(key: string, task: () => Promise<void>): boolean {
+  if (!acceptingBackgroundSync) return false;
   const previous = accountSyncQueues.get(key) ?? Promise.resolve();
   const next = previous.then(task, task);
   accountSyncQueues.set(key, next);
@@ -79,6 +124,36 @@ function enqueueAccountSync(key: string, task: () => Promise<void>): void {
     .finally(() => {
       if (accountSyncQueues.get(key) === next) accountSyncQueues.delete(key);
     });
+  return true;
+}
+
+/**
+ * 回调已快速 ACK 后的有界重拉策略。
+ *
+ * 每次尝试都会重新读取磁盘 cursor：前一轮已完成的页不会倒退，页内已提交 msgid 也会被持久
+ * 去重跳过；只有最终仍失败时才交给队列记录一次脱敏错误，避免单次网络抖动造成消息滞留。
+ */
+async function retryAccountSync(
+  task: () => Promise<void>,
+  attempts: number,
+  initialDelayMs: number,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await task();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) break;
+      const delay = Math.min(initialDelayMs * 2 ** (attempt - 1), MAX_SYNC_RETRY_DELAY_MS);
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, delay);
+        timer.unref?.();
+      });
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -89,8 +164,20 @@ export function createKfCallbackHandler(
   options: {
     nowSeconds?: () => number;
     maxTimestampSkewSeconds?: number;
+    /** 快速 ACK 后后台 sync_msg 的总尝试次数（含首次）。 */
+    syncRetryAttempts?: number;
+    /** 首次重试等待时间；后续按 2 倍增长并限制在 30 秒。 */
+    syncRetryDelayMs?: number;
   } = {},
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  const syncRetryAttempts = options.syncRetryAttempts ?? DEFAULT_SYNC_RETRY_ATTEMPTS;
+  const syncRetryDelayMs = options.syncRetryDelayMs ?? DEFAULT_SYNC_RETRY_DELAY_MS;
+  if (!Number.isInteger(syncRetryAttempts) || syncRetryAttempts < 1 || syncRetryAttempts > 10) {
+    throw new Error("wecom-kf syncRetryAttempts must be an integer between 1 and 10");
+  }
+  if (!Number.isInteger(syncRetryDelayMs) || syncRetryDelayMs < 0 || syncRetryDelayMs > MAX_SYNC_RETRY_DELAY_MS) {
+    throw new Error("wecom-kf syncRetryDelayMs must be an integer between 0 and 30000");
+  }
   return async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -135,7 +222,17 @@ export function createKfCallbackHandler(
 
       if (eventData?.Event === "kf_msg_or_event") {
         const queueKey = (eventData.OpenKfId as string | undefined)?.trim() || "default";
-        enqueueAccountSync(queueKey, () => processKfEvent(eventData, getAccountConfig));
+        const accepted = enqueueAccountSync(queueKey, () => retryAccountSync(
+          () => processKfEvent(eventData, getAccountConfig),
+          syncRetryAttempts,
+          syncRetryDelayMs,
+        ));
+        if (!accepted) {
+          // 尚未 ACK，返回 503 让企微稍后重投；此时不能回 success，否则停机窗口会丢通知。
+          res.writeHead(503, { "Content-Type": "text/plain" });
+          res.end("service stopping");
+          return;
+        }
       }
 
       if (eventData?.Event === "kf_account_auth_change") {
@@ -233,10 +330,7 @@ async function processKfEvent(
     });
 
     if (syncResult.errcode !== 0) {
-      console.error(
-        `[wecom_kf] sync_msg failed: ${syncResult.errmsg} (errcode: ${syncResult.errcode})`,
-      );
-      break;
+      throw new Error(`sync_msg failed (errcode=${syncResult.errcode})`);
     }
 
     for (const msg of syncResult.msg_list) {

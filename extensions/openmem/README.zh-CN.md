@@ -8,12 +8,71 @@ OpenClaw 2026.7.1 的 OpenMem REST 记忆桥接插件。
 
 - `session_start`：在 OpenMem 创建或恢复 ACTIVE session。
 - `agent_end`：只上传当前轮消息；用 `runId + 消息序号` 生成稳定 `eventId`，可安全重试。
+- 崩溃恢复：把事件日志作为事实源，用确定性 `turnId` 标记补齐尚未投影到 working memory 的轮次。
 - `session_end`：提交 session，触发 OpenMem archive 和 externalized memory 生成。
 - 自动/主动召回：实现 `MemorySearchManager` 和 `openmem_search`。
-- 完整 HTTP 保护：请求超时、有限指数退避、响应体上限、JSON/Schema 校验、关闭时取消请求。
+- 完整 HTTP 保护：请求超时、有限指数退避、流式响应体上限、JSON/Schema 校验、关闭时取消请求。
+- 有界来源缓存：同时限制 1000 个条目和 `maxCacheBytes` 总字节数，按 LRU 淘汰。
 - 可选鉴权 Header：密钥只从环境变量读取，适合接入鉴权反向代理。
 
 当前 OpenMem 的 hybrid recall 是 FTS5 + 字符 n-gram 重排，不是 embedding/vector 检索。本插件的能力探测会如实返回 vector 不可用。
+
+## 运行架构与记忆生命周期
+
+```mermaid
+sequenceDiagram
+    participant Host as OpenClaw Memory Host
+    participant Plugin as OpenMem 插件
+    participant Sidecar as OpenMem REST Sidecar
+
+    Host->>Plugin: session_start(sessionKey)
+    Plugin->>Sidecar: 创建/恢复 ACTIVE session
+    Host->>Plugin: agent_end(runId, 当前轮消息)
+    Plugin->>Sidecar: events/ingest(eventId，幂等)
+    Plugin->>Sidecar: GET session（检查 turnId 标记）
+    alt 尚未投影
+        Plugin->>Sidecar: session/append(turnId + 当前轮摘要)
+    else 已投影
+        Plugin-->>Plugin: 跳过非幂等 append
+    end
+    Host->>Plugin: search(query, sessionKey)
+    Plugin->>Sidecar: continuity inspect 或受控 hybrid search
+    Sidecar-->>Plugin: 有界召回结果
+    Plugin-->>Host: MemorySearchResult
+    Host->>Plugin: session_end
+    Plugin->>Sidecar: commit → archive/externalize
+```
+
+插件只负责 Host 契约、租户边界和可靠 HTTP 调用；记忆生成与检索算法属于 OpenMem sidecar。默认 continuity 模式只读取当前 `sessionKey` 对应的上一条归档 session。不能优先选择当前 ACTIVE session，因为 OpenMem continuity 是按 `sessionId` 查找已经生成的 archive，ACTIVE session 通常还没有 archive。
+
+### 为什么写入分成事件与工作记忆两层
+
+OpenMem 的 `/events/ingest` 支持 `eventId` 去重，而 `/sessions/:id/append` 没有幂等键。插件不能把后者标成“可重试”，否则服务端已经写入但响应丢失时会重复追加。当前实现先持久化事件，再执行带标记的投影；恢复 ACTIVE session 和 commit 前都会进行对账。
+
+```mermaid
+flowchart TD
+    A["当前轮消息"] --> B["生成稳定 eventId / turnId"]
+    B --> C["events/ingest：持久事实日志"]
+    C --> D{"session.append_notes\n已有 turnId?"}
+    D -- "是" --> E["判定已投影，跳过 append"]
+    D -- "否" --> F["append：更新 working memory"]
+    C -. "进程在此退出" .-> G["下次 session 恢复或 commit"]
+    G --> H["读取最近 1000 条持久事件并按 turnId 重组"]
+    H --> D
+```
+
+同一个 `sessionKey` 的 start、ingest、commit 还会在插件内串行执行，避免 `agent_end` 与 `session_end` 交叉导致“先归档、后追加”；不同会话互不阻塞。
+
+```mermaid
+flowchart LR
+    A["当前 OpenClaw sessionKey"] --> B["SHA-256 派生 threadId"]
+    B --> C{"同 Agent + threadId\n是否有 ARCHIVED session?"}
+    C -- "有" --> D["选择最新 ARCHIVED sessionId"]
+    D --> E["continuity search"]
+    C -- "无" --> F{"是否允许共享召回?"}
+    F -- "否" --> G["Fail closed：返回空结果"]
+    F -- "是" --> H["hybrid 全局检索"]
+```
 
 ## 安全默认
 
@@ -42,6 +101,7 @@ OpenMem 当前 keyword/hybrid 搜索是 sidecar 全局范围，没有 tenant fil
           "maxAttempts": 3,
           "retryBaseDelayMs": 100,
           "maxResponseBytes": 2097152,
+          "maxCacheBytes": 8388608,
           "allowSharedRecall": false,
           "apiKeyEnv": "OPENMEM_API_KEY",
           "authHeader": "Authorization",
@@ -64,6 +124,7 @@ OpenMem 当前 keyword/hybrid 搜索是 sidecar 全局范围，没有 tenant fil
 | `maxAttempts` | `3` | 幂等请求最大尝试次数 |
 | `retryBaseDelayMs` | `100` | 指数退避基础延迟 |
 | `maxResponseBytes` | `2097152` | 单个响应体上限 |
+| `maxCacheBytes` | `8388608` | 搜索来源缓存总字节上限，最大 64 MiB |
 | `allowSharedRecall` | `false` | 是否允许 sidecar 全局 hybrid recall |
 | `apiKeyEnv` | 无 | API key 所在环境变量；插件不接受明文 key 配置 |
 | `authHeader` | `Authorization` | 鉴权 Header 名 |
@@ -85,6 +146,15 @@ OpenMem 当前 keyword/hybrid 搜索是 sidecar 全局范围，没有 tenant fil
 pnpm --filter @partme.ai/openclaw-openmem test
 pnpm --filter @partme.ai/openclaw-openmem typecheck
 pnpm --filter @partme.ai/openclaw-openmem build
+OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins openmem --skip-browser
 ```
 
-真实 E2E 应覆盖：`healthz → sessions/start → events/ingest → sessions/:id/append → sessions/:id/commit → inspect/search`。
+2026-07-17 本地门禁：3 个测试文件、32 个测试通过，typecheck/build 通过。统一 E2E 使用工作区真实 OpenMem Server，完成：
+
+```text
+tarball 安装 → Gateway Agent Turn → session/start → events/ingest → working-memory
+→ Gateway shutdown drain → session/commit → archive → Gateway 重启
+→ continuity search → 下一轮 Prompt 注入
+```
+
+写入仍不是 Sidecar 内部的单事务：插件通过持久事件、`turnId` 标记和恢复对账补偿最近 1000 条事件，已经覆盖 Gateway 在 ingest 与 append 之间退出的常见故障；极长 ACTIVE session 超出恢复窗口时，仍需要 OpenMem 提供事务批接口或原生幂等 append 才能给出严格原子性保证。完成鉴权隔离和 Sidecar 故障演练之前，不标记为完全生产就绪。

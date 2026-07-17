@@ -34,7 +34,7 @@ export function setRuntime(runtime: GatewayRuntime): void {
   _runtime = runtime;
 }
 
-/** Stop the RPC client and cancel pending reconnect work. */
+/** 停止 Gateway RPC Client、取消待执行重连并清除 Runtime 引用，供关闭和测试隔离使用。 */
 export function resetRuntime(): void {
   resetGatewayConnection();
   _runtime = null;

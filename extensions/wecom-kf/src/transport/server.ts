@@ -7,4 +7,6 @@
 export {
   createKfCallbackHandler,
   consumeAccountStatePatch,
+  startKfCallbackProcessing,
+  stopKfCallbackProcessing,
 } from "../webhook/callback.js";

@@ -45,6 +45,17 @@ function openSocket(url) {
   });
 }
 
+function openBrowserStyleSocket(url) {
+  const encoded = Buffer.from(TOKEN, "utf8").toString("base64url");
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url, ["openclaw.v1", `openclaw.auth.${encoded}`], {
+      headers: { Origin: ORIGIN },
+    });
+    socket.once("open", () => resolve(socket));
+    socket.once("error", reject);
+  });
+}
+
 function nextJson(socket, expectedType) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${expectedType} frame`)), 5_000);
@@ -90,6 +101,8 @@ export async function testWebSocket(ctx, results) {
 
       const { socket, connectedFrame: connected } = await openSocket(url);
       try {
+        if (!ctx.modelFixture) throw new Error("WebSocket Agent E2E requires the local model fixture");
+        if (connected.version !== "1") throw new Error(`unexpected protocol version: ${connected.version}`);
         if (typeof connected.connectionId !== "string" || connected.connectionId.length < 10) {
           throw new Error("connected frame did not include a valid connectionId");
         }
@@ -114,13 +127,42 @@ export async function testWebSocket(ctx, results) {
         }
         const postStatus = await ctx.gatewayFetch("/web-socket/status", { method: "POST" });
         if (postStatus.status !== 405) throw new Error(`POST status → ${postStatus.status}, expected 405`);
+
+        const beforeCompletions = ctx.modelFixture.metrics.completions;
+        const messageId = `web-socket-e2e-${Date.now()}`;
+        const replyPromise = nextJson(socket, "reply");
+        const acceptedPromise = nextJson(socket, "accepted");
+        socket.send(JSON.stringify({
+          version: "1",
+          type: "message",
+          messageId,
+          peerId: "web-socket-e2e-user",
+          text: "Return the WebSocket E2E fixture response.",
+        }));
+        const [reply, accepted] = await Promise.all([replyPromise, acceptedPromise]);
+        const replyText = reply?.message?.text ?? reply?.text;
+        if (replyText !== "openclaw e2e fixture reply") {
+          throw new Error(`unexpected Agent reply: ${JSON.stringify(reply)}`);
+        }
+        if (accepted.messageId !== messageId) {
+          throw new Error(`accepted frame did not correlate messageId: ${JSON.stringify(accepted)}`);
+        }
+        const completionDelta = ctx.modelFixture.metrics.completions - beforeCompletions;
+        if (completionDelta !== 1) throw new Error(`model completion count mismatch: expected 1, got ${completionDelta}`);
+
+        const browserStyle = await openBrowserStyleSocket(url);
+        if (browserStyle.protocol !== "openclaw.v1") {
+          browserStyle.close();
+          throw new Error(`browser subprotocol negotiation failed: ${browserStyle.protocol}`);
+        }
+        browserStyle.close();
       } finally {
         socket.close(1000, "E2E complete");
       }
     },
     {
       service: `ws://127.0.0.1:${ctx.ports.webSocket}/openclaw/ws`,
-      method: "Bearer auth + Origin allowlist + connected/ping/error frames + authenticated status",
+      method: "Bearer/browser auth → versioned message → real Agent Turn → reply → accepted",
     },
     results,
   );

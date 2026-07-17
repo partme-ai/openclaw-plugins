@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 
+/** Prometheus 单元与插件契约测试配置。 */
 export default defineConfig({
   test: {
     globals: true,

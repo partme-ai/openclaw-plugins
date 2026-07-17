@@ -6,18 +6,67 @@
 
 ## 能力边界
 
-- 支持 STOMP 1.2 的 `CONNECT`、`SEND`、`SUBSCRIBE`、`UNSUBSCRIBE`、`ACK`、`NACK`、`DISCONNECT`
+- 支持 STOMP 1.2 的 `CONNECT`、`SEND`、`SUBSCRIBE`、`UNSUBSCRIBE`、`ACK`、`NACK`、`BEGIN`、`COMMIT`、`ABORT`、`DISCONNECT`
 - 明文 TCP 仅允许回环地址；远程监听使用 TLS 1.2+
 - login/passcode 认证，凭证支持环境变量、SHA-256 或 SHA-512 哈希
 - 心跳协商、CONNECT 超时、消息限速、帧大小与 Socket 缓冲上限
 - 连接数、订阅数、入站队列、prefetch、ACK、持久订阅状态和单订阅队列均有上限
 - 正确实现 `client` 累计确认与 `client-individual` 单条确认
+- 支持连接级事务缓冲：事务内 SEND/ACK/NACK 只在 COMMIT 时按序执行，ABORT 直接丢弃
 - 可选的进程内持久订阅和 NACK 重入队
 - 入站幂等采用 claim/commit/release，仅在 Agent 与回复投递成功后提交；失败允许同一 `message-id` 重试
 - 默认启用 Agent 白名单、显式 Topic 绑定和连接级回复主题隔离
 - 接入 OpenClaw Gateway 生命周期，提供凭证脱敏的 `/stomp-tcp/status`
 
-本插件是内嵌 OpenClaw 渠道，不是持久化 Broker。“持久订阅”仅保存在当前进程内，Gateway 重启后丢失；不支持 STOMP 事务、磁盘持久化、死信队列、Broker 集群或 exactly-once。需要这些能力时应使用 RabbitMQ 等专业消息代理。
+本插件是内嵌 OpenClaw 渠道，不是持久化 Broker。“持久订阅”和事务缓冲仅保存在当前进程内，Gateway 重启后丢失；不提供磁盘持久化、死信队列、Broker 集群、跨 Agent 原子回滚或 exactly-once。需要这些能力时应使用 RabbitMQ 等专业消息代理。
+
+## 架构总览
+
+```mermaid
+flowchart LR
+  subgraph Clients["STOMP 1.2 调用方"]
+    Service["后端服务"]
+    Device["设备 / 边缘网关"]
+  end
+
+  subgraph Plugin["openclaw-stomp"]
+    Listener["TCP / TLS Listener"]
+    Guard["CONNECT 安全闸门<br/>认证 · 版本 · 容量 · 超时"]
+    Parser["增量帧解析<br/>content-length · 大小 · 速率"]
+    Tx["事务缓冲<br/>BEGIN · COMMIT · ABORT"]
+    Route["Destination 路由<br/>白名单 · Binding · Agent"]
+    Queue["订阅队列<br/>prefetch · ACK/NACK · 背压"]
+    Session["连接级 Session 隔离"]
+  end
+
+  SDK["message-sdk"]
+  Runtime["OpenClaw Runtime"]
+  Agent["Agent"]
+
+  Service --> Listener
+  Device --> Listener
+  Listener --> Guard --> Parser --> Tx --> Route --> SDK --> Runtime --> Agent
+  Agent --> Runtime --> SDK --> Session --> Queue --> Listener
+```
+
+### 有界资源与故障边界
+
+```mermaid
+flowchart TD
+  Frame["收到完整 STOMP 帧"] --> Connected{"已 CONNECT?"}
+  Connected -- 否 --> Reject["ERROR + 关闭"]
+  Connected -- 是 --> Limit{"帧、速率、队列容量通过?"}
+  Limit -- 否 --> Close["ERROR/断开，累计 dropped 指标"]
+  Limit -- 是 --> Transaction{"带 transaction?"}
+  Transaction -- 是 --> Buffer["有界事务动作队列"]
+  Transaction -- 否 --> Dispatch["立即执行"]
+  Buffer --> Commit{"COMMIT 或 ABORT"}
+  Commit -- COMMIT --> Dispatch
+  Commit -- ABORT --> Drop["丢弃未执行动作"]
+  Dispatch --> Reply{"Agent 回复被订阅接受?"}
+  Reply -- 否 --> Error["ERROR，不产生成功 RECEIPT"]
+  Reply -- 是 --> Receipt["RECEIPT / MESSAGE"]
+```
 
 ## 配置
 
@@ -138,9 +187,51 @@ content-type:application/json
 {"text":"你好"}\0
 ```
 
-`SEND` 的 `RECEIPT` 只会在 OpenClaw Agent 处理完成且回复被至少一个活动或进程内持久订阅接受后返回。没有订阅者时返回 `ERROR`，不会伪造成功 `RECEIPT`。`ack:client` 会累计确认到指定消息，`ack:client-individual` 只确认指定消息。`NACK` 默认重入队；设置 `requeue:false` 可丢弃。
+非事务 `SEND` 的 `RECEIPT` 只会在 OpenClaw Agent 处理完成且回复被至少一个活动或进程内持久订阅接受后返回。事务内 `SEND` 的 RECEIPT 表示动作已安全进入有界事务缓冲，最终成功以 COMMIT 的 RECEIPT 为准。没有订阅者时返回 `ERROR`，不会伪造成功 COMMIT。`ack:client` 会累计确认到指定消息，`ack:client-individual` 只确认指定消息。`NACK` 默认重入队；设置 `requeue:false` 可丢弃。
+
+### 事务时序
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as STOMP 客户端
+  participant S as STOMP 插件
+  participant A as OpenClaw Agent
+
+  C->>S: BEGIN(transaction=tx-1)
+  S-->>C: RECEIPT(begin)
+  C->>S: SEND(transaction=tx-1)
+  S-->>C: RECEIPT(已进入事务缓冲)
+  Note over S: 此时尚未触发 Agent Turn
+  C->>S: COMMIT(transaction=tx-1)
+  S->>A: 按序执行事务内 SEND
+  A-->>S: Agent 回复
+  S-->>C: MESSAGE
+  S-->>C: RECEIPT(commit)
+```
+
+事务范围只覆盖当前 TCP 连接内的动作排序和延迟执行。Agent 或外部系统已经产生的副作用无法做分布式回滚；COMMIT 中途失败时服务端返回 `ERROR`，并禁止重复 COMMIT 造成已执行动作再次运行。
 
 持久订阅需要同时配置 `allowDurableSubscriptions: true`，并在 `SUBSCRIBE` 帧中携带 `durable:true` 或 `persistent:true`。它只在同一 Gateway 进程和认证 login 下跨 TCP 重连保留，不能跨进程重启。
+
+### ACK、NACK 与重连状态
+
+```mermaid
+stateDiagram-v2
+  [*] --> Queued: 回复被活动/进程内 durable 订阅接受
+  Queued --> Sent: prefetch 有空位且 Socket 可写
+  Sent --> Done: auto 或 ACK
+  Sent --> Queued: NACK（默认 requeue）
+  Sent --> Dropped: NACK(requeue=false)
+  Sent --> Queued: durable 订阅断线
+  Queued --> Dropped: 队列达到 maxQueueDepthPerSubscription
+  note right of Sent
+    client 模式按 pending Map 的单调
+    插入顺序累计确认目标及之前消息
+  end note
+```
+
+`publishOutboundMessage` 和正式 Channel Adapter 都要求至少一个活动或进程内 durable 订阅接受消息；零订阅时抛错，让 Router/调用方决定重试或 DLQ，不会返回伪成功。这里的“接受”表示进入有界队列或写入 Socket，不代表远端业务已经消费；需要端到端消费确认应使用专业 Broker。
 
 ## 生产运维
 
@@ -157,5 +248,7 @@ pnpm --filter @partme.ai/openclaw-stomp typecheck
 pnpm --filter @partme.ai/openclaw-stomp test
 pnpm --filter @partme.ai/openclaw-stomp build
 ```
+
+2026-07-17 本地门禁：10 个测试文件、48 个测试通过，typecheck/build 通过；覆盖 TCP/TLS、累计 ACK、NACK 重投、事务、durable 订阅和零订阅失败语义。
 
 许可证：MIT。

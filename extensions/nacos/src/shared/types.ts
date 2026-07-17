@@ -101,6 +101,8 @@ export type ClusterDiscoveryConfig = {
 export type NacosPluginConfig = {
   /** When false, skip entire plugin. Default true. */
   enabled?: boolean;
+  /** 启动连接失败策略；默认 fail，degrade 仅记录健康降级并允许 Gateway 继续启动。 */
+  startupFailurePolicy?: "fail" | "degrade";
   /** Nacos server list, e.g. `127.0.0.1:8848`. */
   serverList: string;
   /**

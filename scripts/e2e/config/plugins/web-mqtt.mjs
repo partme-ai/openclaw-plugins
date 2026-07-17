@@ -9,7 +9,17 @@ export function webMqttConfig(_ctx) {
       "mqtt-ws": {
         port: E2E_PORTS.webMqttWs,
         path: "/ws",
-        auth: { required: false, allowAnonymous: true },
+        // E2E 必须覆盖生产推荐路径：浏览器 Origin 校验、账号认证和双向 Topic ACL 同时生效。
+        auth: {
+          required: true,
+          allowAnonymous: false,
+          users: [{
+            username: "web-mqtt-e2e",
+            password: "web-mqtt-e2e-secret",
+            publishAllow: ["openclaw/agent/+/in"],
+            subscribeAllow: ["openclaw/agent/+/out"],
+          }],
+        },
         ws: { allowedOrigins: [`http://127.0.0.1:${testWebPort}`] },
         topicPrefix: "openclaw",
         subscribeTopics: ["openclaw/#"],

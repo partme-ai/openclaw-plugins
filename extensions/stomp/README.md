@@ -6,18 +6,32 @@ Authenticated STOMP 1.2 over native TCP/TLS for OpenClaw 2026.7.1. This embedded
 
 ## Scope
 
-- STOMP 1.2 `CONNECT`, `SEND`, `SUBSCRIBE`, `UNSUBSCRIBE`, `ACK`, `NACK`, and `DISCONNECT`
+- STOMP 1.2 `CONNECT`, `SEND`, `SUBSCRIBE`, `UNSUBSCRIBE`, `ACK`, `NACK`, `BEGIN`, `COMMIT`, `ABORT`, and `DISCONNECT`
 - Plain TCP on loopback and TLS 1.2+ for remote listeners
 - Login/passcode authentication using environment-backed, SHA-256, or SHA-512 credentials
 - Negotiated heartbeats, CONNECT timeout, message rate limits, frame and socket-buffer limits
 - Connection, subscription, inbound queue, prefetch, ACK, durable-state, and per-subscription queue bounds
 - Correct cumulative `client` ACK and individual `client-individual` ACK behavior
+- Bounded connection-local transactions for ordered SEND/ACK/NACK commit and abort
 - Optional process-memory durable subscriptions and NACK requeue
 - Claim/commit/release inbound idempotency; a `message-id` is committed only after the Agent turn and reply delivery succeed
 - Agent allowlists, explicit topic bindings, and connection-scoped reply subscriptions by default
 - OpenClaw Gateway lifecycle integration and a credential-redacted `/stomp-tcp/status` endpoint
 
-This is an embedded OpenClaw channel, not a durable broker. Durable subscription state is process memory only and is lost on Gateway restart. It does not implement STOMP transactions, persistent storage, dead-letter queues, broker clustering, or exactly-once delivery. Use RabbitMQ or another dedicated broker when those properties are required.
+This is an embedded OpenClaw channel, not a durable broker. Durable subscriptions and transaction buffers are process memory only and are lost on Gateway restart. Transactions delay and order connection-local actions, but cannot roll back Agent or external-system side effects. The plugin does not provide persistent storage, dead-letter queues, broker clustering, distributed atomicity, or exactly-once delivery.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  Client["STOMP 1.2 Client"] --> Listener["TCP/TLS Listener"]
+  Listener --> Guard["Version · Auth · Limits"]
+  Guard --> Parser["Bounded Frame Parser"]
+  Parser --> Tx["Transaction Buffer"]
+  Tx --> Route["Destination / Agent Router"]
+  Route --> SDK["message-sdk"] --> Agent["OpenClaw Agent"]
+  Agent --> Queue["Subscription Queue<br/>Prefetch · ACK/NACK · Backpressure"] --> Client
+```
 
 ## Configuration
 
@@ -138,9 +152,13 @@ content-type:application/json
 {"text":"Hello"}\0
 ```
 
-`RECEIPT` for `SEND` is emitted only after the OpenClaw Agent turn completes and at least one active or in-process durable subscription accepts the reply. A missing reply subscriber produces `ERROR` instead of a false success receipt. For `ack:client`, ACK is cumulative through the referenced delivery. For `ack:client-individual`, only that delivery is acknowledged. `NACK` requeues by default; set `requeue:false` to discard it.
+For a non-transactional `SEND`, `RECEIPT` is emitted only after the OpenClaw Agent turn completes and at least one active or in-process durable subscription accepts the reply. A transactional SEND receipt confirms bounded buffering; the COMMIT receipt is the final success signal. A missing reply subscriber produces `ERROR` instead of a false COMMIT receipt. For `ack:client`, ACK is cumulative through the referenced delivery. For `ack:client-individual`, only that delivery is acknowledged.
+
+Both the public outbound helper and the Channel adapter throw when no active or in-process durable subscription accepts a delivery. “Accepted” means queued or written to the socket, not application-level consumption by the remote client.
 
 Durable subscriptions require both `allowDurableSubscriptions: true` and `durable:true` (or `persistent:true`) on `SUBSCRIBE`. They survive a TCP reconnect only inside the same Gateway process and authenticated login; they do not survive a process restart.
+
+Transaction-scoped `SEND`, `ACK`, and `NACK` commands are buffered until `COMMIT`; `ABORT` discards them. A COMMIT receipt is returned only after all buffered actions complete. The boundary is connection-local and is not a distributed rollback mechanism for Agent side effects.
 
 ## Operations
 

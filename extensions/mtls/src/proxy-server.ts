@@ -15,6 +15,12 @@ import { authorizeMtlsRequest, buildForwardHeaders } from "./policy.js";
 import { recordMtlsRequest, trackMtlsSession } from "./runtime/stats.js";
 import type { ClientCertInfo, MtlsConfig } from "./shared/types.js";
 
+/**
+ * mTLS 代理所需的最小日志接口。
+ *
+ * 保持为结构化窄接口，使代理服务既能接入 OpenClaw logger，也能在独立测试中使用轻量实现，
+ * 而不必把整个插件运行时 API 传入网络边界。
+ */
 export type MtlsProxyLogger = {
   info(message: string): void;
   warn(message: string): void;

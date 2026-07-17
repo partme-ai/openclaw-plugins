@@ -1,3 +1,9 @@
+/**
+ * 微信入站消息的持久去重日志。
+ *
+ * 内存 Map 提供热路径查询，JSONL 追加日志保证重启恢复；TTL/容量清理后通过原子压缩
+ * 控制文件增长。只有上层确认消息处理成功后才能调用 `mark`，失败投递仍可被平台重试。
+ */
 import fs from "node:fs";
 import path from "node:path";
 

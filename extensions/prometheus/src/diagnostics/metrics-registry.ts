@@ -8,6 +8,7 @@
 import type { MetricDefinition, MetricSample, MetricType } from "../types.js";
 
 type LabelValues = Record<string, string>;
+/** 插件运行期动态指标的 series 硬上限；超限样本会被计入专用丢弃计数。 */
 export const MAX_RUNTIME_METRIC_SERIES = 4096;
 const DROPPED_SERIES_NAME = "openclaw_runtime_metric_series_dropped_total";
 

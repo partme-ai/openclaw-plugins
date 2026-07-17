@@ -14,7 +14,8 @@ type AgentToolResult<T = unknown> = {
   details: T | undefined;
 };
 
-import { getOrCreateStore, invalidateStoreCache } from '../runtime/hooks.js';
+import { getOrCreateStore } from '../runtime/hooks.js';
+import { withSourceWriteLock, withStoreExclusiveWriteLock } from '../indexer/scheduler.js';
 import { authorizeNamespace, validateSourceId } from './policy.js';
 
 // ===================================================================
@@ -87,7 +88,7 @@ export function createKnowledgeDeleteTool(ctx: OpenClawPluginToolContext, config
       '   - 注意：clear 只能由 owner 执行，且不可恢复',
       '',
       '权限规则：',
-      '- 任何用户都可以删除自己对话级 namespace（{accountId}:{mode}）下的数据',
+      '- 任何用户都可以删除当前 sessionKey 派生的私有 namespace 下的数据',
       '- 只有 owner 才能操作非对话级 namespace（如 enterprise, global）',
       '- clear 操作只能在对话级 namespace 或 owner 执行',
     ].join('\n'),
@@ -105,7 +106,7 @@ export function createKnowledgeDeleteTool(ctx: OpenClawPluginToolContext, config
         },
         namespace: {
           type: 'string',
-          description: '知识库命名空间，默认当前对话命名空间（{accountId}:{mode}）',
+          description: '知识库命名空间，默认由当前 OpenClaw sessionKey 派生',
         },
       },
       required: ['action'],
@@ -130,15 +131,15 @@ export function createKnowledgeDeleteTool(ctx: OpenClawPluginToolContext, config
           const source = validateSourceId(p.sourceId, '');
           if (!source.ok) return failedResult(source.error);
           const sourceId = source.sourceId;
-          await store.deleteBySource(sourceId);
+          await withSourceWriteLock(store, sourceId, () => store.deleteBySource(sourceId));
           return successResult({ action: 'delete_by_source', sourceId, namespace: access.namespace });
         }
 
         if (p.action === 'clear') {
           // clear 只在对话级 namespace 或 owner 执行过（前面已校验）
-          await store.clear();
-          // 清除缓存，确保后续操作重新初始化
-          await invalidateStoreCache(access.namespace);
+          // clear 不销毁 Store 结构，无需关闭缓存句柄。若在屏障内 invalidate，已经排队的
+          // source 更新会拿着关闭后的 SQLite 句柄继续执行，反而制造确定性失败。
+          await withStoreExclusiveWriteLock(store, () => store.clear());
           return successResult({ action: 'clear', namespace: access.namespace });
         }
 

@@ -13,6 +13,12 @@ const VALID_DM_SCOPES = [
   "per-account-channel-peer",
 ] as const;
 
+/**
+ * OpenClaw 私聊会话的隔离粒度。
+ *
+ * 粒度从共享主会话到账号/渠道/对端完全隔离；RabbitMQ 默认使用 `per-peer`，避免不同消息
+ * 来源在同一 Agent 会话中相互污染上下文。
+ */
 export type DmScope = (typeof VALID_DM_SCOPES)[number];
 
 const DEFAULT_DM_SCOPE: DmScope = "per-peer";

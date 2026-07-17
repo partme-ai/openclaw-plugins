@@ -126,7 +126,7 @@ export function createKnowledgeUpdateTool(ctx: OpenClawPluginToolContext, config
         },
         namespace: {
           type: 'string',
-          description: '知识库命名空间，默认当前对话命名空间（{accountId}:{mode}）',
+          description: '知识库命名空间，默认由当前 OpenClaw sessionKey 派生',
         },
       },
       required: ['sourceId', 'updateType'],
@@ -209,7 +209,7 @@ export function createKnowledgeUpdateTool(ctx: OpenClawPluginToolContext, config
               return failedResult('updateType=summary 时必须提供非空的 content 参数');
             }
             if (access.namespace !== defaultNamespace(ctx)) {
-              return failedResult('summary 更新只支持对话级 namespace（{accountId}:{mode}）');
+              return failedResult('summary 更新只支持当前 sessionKey 派生的私有 namespace');
             }
             const topic = p.topic.trim();
             const content = p.content.trim();

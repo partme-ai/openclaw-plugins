@@ -12,6 +12,7 @@ import { Redis } from "ioredis";
 
 import type { AuthContext, OAuth2ClientConfig, OAuth2TokenSet } from "../shared/types.js";
 
+/** 服务端保存的登录会话；浏览器 Cookie 只持有其签名随机 ID，不包含 Token。 */
 export type OAuth2Session = {
   id: string;
   context: AuthContext;
@@ -19,6 +20,7 @@ export type OAuth2Session = {
   expiresAt: number;
 };
 
+/** 一次性授权事务，绑定回跳路径、PKCE verifier 和失效时间，用后即删以防重放。 */
 export type PendingState = { expiresAt: number; returnTo: string; codeVerifier: string };
 type StoredValue = PendingState | OAuth2Session;
 

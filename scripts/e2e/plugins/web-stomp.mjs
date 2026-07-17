@@ -110,7 +110,13 @@ export async function testWebStomp(ctx, results) {
       const client = await connectStompWebSocket(`ws://127.0.0.1:${port}/ws`);
       try {
         const connectedPromise = client.waitForFrame((frame) => frame.command === "CONNECTED", "CONNECTED");
-        client.send("CONNECT", { "accept-version": "1.2", host: "localhost", "heart-beat": "0,0" });
+        client.send("CONNECT", {
+          "accept-version": "1.2",
+          host: "localhost",
+          "heart-beat": "0,0",
+          login: "web-stomp-e2e",
+          passcode: "web-stomp-e2e-secret",
+        });
         const connected = await connectedPromise;
         const sessionId = connected.headers.session;
         if (!sessionId) throw new Error("Web-STOMP CONNECTED frame did not include a session id");

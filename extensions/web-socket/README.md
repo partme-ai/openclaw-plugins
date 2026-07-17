@@ -1,6 +1,8 @@
 # @partme.ai/openclaw-web-socket
 
-OpenClaw **WebSocket** channel plugin — uses [`ws`](https://github.com/websockets/ws) as **client** and/or **server**.
+Production WebSocket channel for OpenClaw 2026.7.1+. It uses [`ws`](https://github.com/websockets/ws) as **client** and/or **server** and includes routing, session mapping, authentication, WSS, heartbeat, bounded queues, and backpressure.
+
+> For the detailed architecture, message sequence, routing flowcharts, and Chinese operational guide, see [README.zh-CN.md](./README.zh-CN.md).
 
 ## 运行模式
 
@@ -40,7 +42,11 @@ flowchart LR
 - Inbound via `@partme.ai/openclaw-message-sdk`
 - Session ↔ connection mapping
 - HTTP upgrade 阶段的 Bearer token 鉴权（server 入站 / client 出站）
+- Browser-safe subprotocol token authentication without putting credentials in the URL
+- Native WSS listener with configurable certificate, CA and minimum TLS version
 - Origin 白名单、每连接速率限制、异步入站队列与出站背压保护
+- Two-phase `messageId` dedupe: claim before dispatch, commit only after reply delivery, release on failure
+- Outbound adapter failures throw so a Router outbox can retry or dead-letter them instead of accepting a placeholder message ID
 - WebSocket ping/pong 心跳、连接超时、指数退避重连与可等待停机
 - HTTP status: `GET /web-socket/status`
 
@@ -49,13 +55,14 @@ flowchart LR
 **Connect (server mode)** → server sends:
 
 ```json
-{ "type": "connected", "connectionId": "<uuid>" }
+{ "version": "1", "type": "connected", "connectionId": "<uuid>" }
 ```
 
 **Send message:**
 
 ```json
 {
+  "version": "1",
   "type": "message",
   "text": "Hello",
   "agentId": "optional",
@@ -67,6 +74,27 @@ flowchart LR
 `peerId` / `userId` / `from` 用于 **client 模式**下外部网关在同一连接上区分多个终端用户。
 
 Plain text (non-JSON) is also accepted as the message body.
+
+After the Agent pipeline and reply delivery complete, the server emits:
+
+```json
+{ "version": "1", "type": "accepted", "messageId": "optional" }
+```
+
+If dispatch or reply delivery fails, the `messageId` claim is released so the same message can be retried. Only a completed pipeline commits the dedupe record.
+
+All structured outbound frames carry `version: "1"`. Explicit unsupported versions are rejected; unversioned JSON and plain text remain compatible with 0.1.x clients.
+
+### Browser authentication
+
+Browsers cannot set an Authorization header on the native WebSocket API. Use the application protocol plus a Base64URL token protocol:
+
+```js
+const encoded = btoa(token).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+const socket = new WebSocket(url, ["openclaw.v1", `openclaw.auth.${encoded}`]);
+```
+
+The server negotiates only `openclaw.v1`; the authentication protocol is never echoed as the selected application protocol.
 
 ## Configuration (`channels.web-socket`)
 
@@ -98,7 +126,7 @@ Plain text (non-JSON) is also accepted as the message body.
       "clientId": "openclaw-bridge",
       "defaultAgentId": "your-agent-id",
       "client": {
-        "reconnect": { "enabled": true, "initialDelayMs": 1000, "maxDelayMs": 30000 }
+        "reconnect": { "enabled": true, "initialDelayMs": 1000, "maxDelayMs": 30000, "jitterRatio": 0.2 }
       }
     }
   }
@@ -133,6 +161,9 @@ Plain text (non-JSON) is also accepted as the message body.
 | `host` | `127.0.0.1` | 内置服务监听地址；默认不暴露到网络 |
 | `clientToken` | — | 连外部 WS 的 `Authorization: Bearer` token |
 | `auth.*` | — | 内置服务入站认证；`allowQueryToken` 默认关闭 |
+| `auth.allowProtocolToken` | `true` | 允许浏览器通过认证子协议传递 token |
+| `tls.enabled` | `false` | 直接启用 WSS；启用时必须提供 `keyFile` 和 `certFile` |
+| `tls.minVersion` | `TLSv1.2` | WSS 最低 TLS 版本 |
 | `allowedOrigins` | `[]` | 浏览器 Origin 精确白名单；不发送 Origin 的原生客户端不受影响 |
 | `allowInsecureRemote` | `false` | 显式允许远程明文监听；生产应优先使用 TLS 反向代理 |
 | `limits.maxBufferedBytes` | `1048576` | 慢客户端的最大待发送字节数 |
@@ -143,10 +174,10 @@ Plain text (non-JSON) is also accepted as the message body.
 
 ## 生产部署约束
 
-- 默认仅监听 `127.0.0.1`。推荐由 Nginx、Envoy 或云网关在同机终止 TLS，再转发到本插件，外部只暴露 `wss://`。
+- 默认仅监听 `127.0.0.1`。可以由插件直接终止 WSS，也可以由 Nginx、Envoy 或云网关终止 TLS。
 - 非 loopback 明文监听必须同时配置 token 并显式设置 `allowInsecureRemote: true`；这是风险确认开关，不会把明文连接变安全。
 - 远程客户端默认只接受 `wss://`。确需远程 `ws://` 时，在 `client.allowInsecureRemote` 中显式确认。
-- token 默认只从 `Authorization: Bearer` 读取。`auth.allowQueryToken` 仅用于无法设置 header 的旧客户端，因为 URL 可能进入代理和访问日志。
+- 原生客户端使用 `Authorization: Bearer`；浏览器使用认证子协议。`auth.allowQueryToken` 仅用于旧客户端，因为 URL 可能进入代理和访问日志。
 - `/web-socket/status` 由 OpenClaw 插件认证保护，并对 token 和自定义 client headers 脱敏。
 
 ## Build

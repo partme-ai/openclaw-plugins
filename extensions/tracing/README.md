@@ -20,6 +20,20 @@ The plugin supports three real export paths:
 SkyWalking is not advertised as a native backend. Send OTLP to an OpenTelemetry
 Collector and route it to SkyWalking when that integration is required.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    H["OpenClaw lifecycle hooks"] --> I["Shared initialization latch<br/>fail-open on observer failure"]
+    I --> T["Per-session serialized trace state"]
+    T --> G["Sampling + active trace/span limits"]
+    G --> B{"Backend"}
+    B --> L["OpenClaw logger"]
+    B --> F[("Bounded file buffer<br/>background batch flush")]
+    B --> O["Bounded OTLP buffer<br/>50-span HTTP batches"]
+    O --> C["OpenTelemetry Collector"]
+```
+
 ## Install and configure
 
 ```bash
@@ -44,12 +58,17 @@ The manifest ID is `tracing`. Canonical plugin configuration belongs under
           "enabled": true,
           "backend": "otlp",
           "otlpEndpoint": "http://otel-collector:4318/v1/traces",
+          "otlpHeaders": {
+            "Authorization": "Bearer <token>"
+          },
           "sampleRate": 0.25,
           "maxSpansPerTrace": 100,
+          "maxActiveTraces": 10000,
           "maxBufferedSpans": 10000,
           "flushIntervalMs": 5000,
           "exportTimeoutMs": 10000,
           "exportRetryAttempts": 3,
+          "shutdownTimeoutMs": 15000,
           "captureMessageBody": false
         }
       }
@@ -67,13 +86,16 @@ URL. Configuration is validated again at runtime; invalid values fail startup.
 | `backend` | `log` | `log`, `file`, or `otlp` |
 | `sampleRate` | `1` | Deterministic value from `0` through `1` |
 | `maxSpansPerTrace` | `100` | Includes the root span |
+| `maxActiveTraces` | `10000` | Concurrent active-trace limit; new traces are skipped and reported at capacity |
 | `maxBufferedSpans` | `10000` | Oldest spans are dropped on overflow and health becomes degraded |
 | `flushIntervalMs` | `5000` | File and OTLP flush interval |
 | `traceDir` | `./traces` | File backend directory |
 | `traceRetentionDays` | `7` | File backend retention |
 | `otlpEndpoint` | `http://localhost:4318/v1/traces` | OTLP/HTTP trace endpoint |
+| `otlpHeaders` | `{}` | Collector authentication headers; values are never exposed by logs or status APIs |
 | `exportTimeoutMs` | `10000` | Per OTLP request timeout |
 | `exportRetryAttempts` | `3` | Attempts per OTLP flush |
+| `shutdownTimeoutMs` | `15000` | Total deadline for closing traces and the selected backend |
 | `captureMessageBody` | `false` | Opt-in; stores at most 500 characters and may contain sensitive data |
 
 ## Operations API
@@ -92,6 +114,12 @@ last-export, and last-error diagnostics.
 ## Reliability and privacy boundaries
 
 - Active traces and recent query data are bounded in process memory.
+- Concurrent startup hooks share one initialization promise. Initialization failures are logged and
+  fail open, so the observer cannot reject the message or tool path.
+- File and OTLP hooks only append to bounded memory. Disk writes, 50-span HTTP batches, and retries
+  run in serialized background flushes instead of blocking threshold-crossing business requests.
+- State changes are serialized per session, and tool bindings use `traceId + toolCallId` to prevent
+  collisions between concurrent runs.
 - Missing tool completion, early session end, superseding messages, and a
   30-minute active-trace TTL close orphan spans instead of leaking them.
 - Standard OpenClaw outbound channels close the root span on the final-reply
@@ -104,6 +132,8 @@ last-export, and last-error diagnostics.
   outcomes can be ambiguous.
 - `captureMessageBody` is disabled by default. Enabling it requires a data
   classification, access-control, and retention review.
+- `otlpHeaders` may contain credentials. Values are not returned by the plugin, but the OpenClaw
+  configuration file still requires least-privilege filesystem protection.
 - The HTTP query cache contains only the 200 most recently completed traces and
   is cleared on gateway shutdown.
 

@@ -51,8 +51,13 @@ describe("wecom-kf plugin register", () => {
   it("registers durable state initialization as an awaited service", async () => {
     const { api, registerService } = createMockApi();
     plugin.register(api);
-    expect(registerService).toHaveBeenCalledWith(expect.objectContaining({ id: "wecom-kf-state", start: expect.any(Function) }));
+    expect(registerService).toHaveBeenCalledWith(expect.objectContaining({
+      id: "wecom-kf-state",
+      start: expect.any(Function),
+      stop: expect.any(Function),
+    }));
     await expect(registerService.mock.calls[0][0].start()).resolves.toBeUndefined();
+    await expect(registerService.mock.calls[0][0].stop()).resolves.toBeUndefined();
   });
 
   it("does not register the removed legacy MCP bridge", () => {

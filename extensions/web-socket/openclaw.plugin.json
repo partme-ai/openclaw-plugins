@@ -1,7 +1,7 @@
 {
   "id": "web-socket",
   "name": "web-socket",
-  "version": "0.1.0",
+  "version": "2026.7.1",
   "description": "WebSocket channel for OpenClaw — ws client and/or embedded server with JSON frames",
   "main": "dist/index.js",
   "channels": ["web-socket"],
@@ -84,7 +84,20 @@
             "items": { "type": "string" },
             "default": []
           },
-          "allowQueryToken": { "type": "boolean", "default": false }
+          "allowQueryToken": { "type": "boolean", "default": false },
+          "allowProtocolToken": { "type": "boolean", "default": true }
+        }
+      },
+      "tls": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "keyFile": { "type": "string" },
+          "certFile": { "type": "string" },
+          "caFile": { "type": "string" },
+          "minVersion": { "type": "string", "enum": ["TLSv1.2", "TLSv1.3"], "default": "TLSv1.2" },
+          "requestCert": { "type": "boolean", "default": false },
+          "rejectUnauthorized": { "type": "boolean", "default": true }
         }
       },
       "payload": {
@@ -151,7 +164,17 @@
               "enabled": { "type": "boolean", "default": false },
               "token": { "type": "string" },
               "tokens": { "type": "array", "items": { "type": "string" } },
-              "allowQueryToken": { "type": "boolean", "default": false }
+              "allowQueryToken": { "type": "boolean", "default": false },
+              "allowProtocolToken": { "type": "boolean", "default": true }
+            }
+          },
+          "tls": {
+            "type": "object",
+            "properties": {
+              "enabled": { "type": "boolean", "default": false },
+              "keyFile": { "type": "string" },
+              "certFile": { "type": "string" },
+              "caFile": { "type": "string" }
             }
           },
           "allowedOrigins": { "type": "array", "items": { "type": "string" } },

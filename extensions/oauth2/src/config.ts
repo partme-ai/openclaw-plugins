@@ -7,6 +7,12 @@
  */
 import type { AuthOAuth2Config, OAuth2ClientConfig, OAuth2ProxyConfig } from "./shared/types.js";
 
+/**
+ * 用户在 `plugins.entries.oauth2.config` 中提供的原始增量配置。
+ *
+ * 该类型允许省略默认字段；只有经过 {@link resolveOAuth2Config} 合并和安全校验后，才可交给
+ * OAuth2 Client 或代理服务器使用。
+ */
 export type OAuth2ConfigInput = Partial<Omit<AuthOAuth2Config, "proxy" | "client">> & {
   proxy?: Partial<OAuth2ProxyConfig>;
   client?: Partial<Omit<OAuth2ClientConfig, "sessionStore">> & {
@@ -14,6 +20,7 @@ export type OAuth2ConfigInput = Partial<Omit<AuthOAuth2Config, "proxy" | "client
   };
 };
 
+/** OAuth2 前置代理核对 trusted-proxy 集成所需的最小 OpenClaw Gateway 配置切片。 */
 export type OpenClawGatewayConfigSlice = {
   gateway?: {
     port?: number;
@@ -110,6 +117,45 @@ function requireIdentityHeader(value: string, field: string): string {
   return normalized;
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+}
+
+function requireHttpsUrl(value: string, field: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`[openclaw-oauth2] ${field} must be an absolute URL`);
+  }
+  if (url.username || url.password || url.hash) {
+    throw new Error(`[openclaw-oauth2] ${field} cannot contain credentials or a fragment`);
+  }
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHostname(url.hostname))) {
+    throw new Error(`[openclaw-oauth2] ${field} must use HTTPS outside loopback development`);
+  }
+  return url;
+}
+
+function requireLocalRedirect(value: string, field: string): string {
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\") || /[\r\n]/.test(value)) {
+    throw new Error(`[openclaw-oauth2] ${field} must be a local absolute path`);
+  }
+  return value;
+}
+
+function requireScopeTokens(values: string[], field: string): void {
+  if (values.some((scope) => !scope.trim() || /\s/.test(scope))) {
+    throw new Error(`[openclaw-oauth2] ${field} entries must be non-empty scope tokens`);
+  }
+}
+
+/**
+ * 合并 OAuth2 默认配置并执行启动前的安全校验。
+ *
+ * 校验在创建网络监听器前失败关闭，覆盖本机 Gateway 边界、HTTPS 端点、PKCE 保留参数、
+ * 本站跳转、Cookie/TTL 和会话容量，返回值才是可供运行时使用的完整配置。
+ */
 export function resolveOAuth2Config(input: OAuth2ConfigInput | undefined): AuthOAuth2Config {
   const config: AuthOAuth2Config = {
     ...DEFAULT_CONFIG,
@@ -151,24 +197,36 @@ export function resolveOAuth2Config(input: OAuth2ConfigInput | undefined): AuthO
   if (!Number.isSafeInteger(config.client.sessionStore.maxEntries) || config.client.sessionStore.maxEntries < 1) {
     throw new Error("[openclaw-oauth2] client.sessionStore.maxEntries must be a positive safe integer");
   }
-  if (config.client.requiredScopes.some((scope) => !scope.trim() || /\s/.test(scope))) {
-    throw new Error("[openclaw-oauth2] client.requiredScopes entries must be non-empty scope tokens");
+  requireScopeTokens(config.client.scopes, "client.scopes");
+  requireScopeTokens(config.client.requiredScopes, "client.requiredScopes");
+  if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(config.client.sessionCookieName)) {
+    throw new Error("[openclaw-oauth2] client.sessionCookieName must be a valid cookie name");
+  }
+  if (!config.client.sessionStore.keyPrefix.trim()) {
+    throw new Error("[openclaw-oauth2] client.sessionStore.keyPrefix must not be empty");
+  }
+  for (const [field, value] of Object.entries({
+    sessionTtlSeconds: config.client.sessionTtlSeconds,
+    stateTtlSeconds: config.client.stateTtlSeconds,
+  })) {
+    if (!Number.isSafeInteger(value) || value < 60) {
+      throw new Error(`[openclaw-oauth2] client.${field} must be a safe integer of at least 60 seconds`);
+    }
   }
 
   if (config.enabled) {
     proxy.upstreamHost = requireLoopbackUpstream(proxy.upstreamHost);
     if (!config.issuerUrl.trim()) throw new Error("[openclaw-oauth2] issuerUrl is required when enabled");
-    const issuer = new URL(config.issuerUrl);
-    const loopback = issuer.hostname === "localhost" || issuer.hostname === "127.0.0.1" || issuer.hostname === "::1";
-    if (issuer.protocol !== "https:" && !loopback) {
-      throw new Error("[openclaw-oauth2] issuerUrl must use HTTPS outside loopback development");
-    }
+    requireHttpsUrl(config.issuerUrl, "issuerUrl");
+    if (!config.clientId.trim()) throw new Error("[openclaw-oauth2] clientId is required when enabled");
     if (config.client?.clientAuthMethod !== "none" && !config.clientSecret) {
       throw new Error("[openclaw-oauth2] clientSecret is required for the OAuth2 client flow");
     }
     if (!config.client?.redirectUri.trim()) {
       throw new Error("[openclaw-oauth2] client.redirectUri is required when enabled");
     }
+    requireHttpsUrl(config.client.redirectUri, "client.redirectUri");
+    requireLocalRedirect(config.client.successRedirect, "client.successRedirect");
     if (!config.client.sessionSecret || config.client.sessionSecret.length < 32) {
       throw new Error("[openclaw-oauth2] client.sessionSecret must contain at least 32 characters");
     }
@@ -199,11 +257,7 @@ export function resolveOAuth2Config(input: OAuth2ConfigInput | undefined): AuthO
       revokeEndpoint: config.client.revokeEndpoint,
     })) {
       if (!value) continue;
-      const endpoint = new URL(value);
-      const endpointLoopback = endpoint.hostname === "localhost" || endpoint.hostname === "127.0.0.1" || endpoint.hostname === "::1";
-      if (endpoint.protocol !== "https:" && !endpointLoopback) {
-        throw new Error(`[openclaw-oauth2] client.${field} must use HTTPS outside loopback development`);
-      }
+      requireHttpsUrl(value, `client.${field}`);
     }
   }
 
@@ -211,8 +265,10 @@ export function resolveOAuth2Config(input: OAuth2ConfigInput | undefined): AuthO
 }
 
 /**
- * Fail closed unless the local OpenClaw Gateway is configured to trust exactly
- * the identity header emitted by this OAuth2 proxy.
+ * 校验本地 OpenClaw Gateway 是否只信任该 OAuth2 代理注入的身份 Header。
+ *
+ * 启用时必须同时匹配 trusted-proxy 模式、身份头、回环信任、代理地址和 Gateway 端口；任何
+ * 一项不一致都失败关闭，避免代理已认证但 Gateway 忽略身份，或客户端绕过代理伪造身份。
  */
 export function validateOAuth2GatewayIntegration(
   config: AuthOAuth2Config,

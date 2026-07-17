@@ -17,81 +17,126 @@ export type { RedisChannelBinding, RedisChannelConfig } from "./types.js";
 /**
  * Zod schema for Redis channel binding configuration.
  */
-const RedisChannelBindingSchema = z.object({
-  channelPattern: z.string().min(1),
-  agentId: z.string().min(1),
-  accountId: z.string().default("default"),
-  replyChannel: z.string().optional(),
-});
+const RedisChannelBindingSchema = z
+  .object({
+    channelPattern: z.string().min(1),
+    agentId: z.string().min(1),
+    accountId: z.string().default("default"),
+    replyChannel: z.string().optional(),
+  })
+  .strict();
 
 /**
  * Zod schema for Redis Stream configuration.
  */
-const StreamConfigSchema = z.object({
-  inboundKey: z.string().default("openclaw:inbound"),
-  outboundKey: z.string().default("openclaw:outbound"),
-  consumerGroup: z.string().default("openclaw-group"),
-  consumerName: z.string().default(""),
-  blockMs: z.number().int().positive().default(5000),
-  count: z.number().int().positive().default(10),
-  createGroup: z.boolean().default(true),
-  pendingClaimIdleMs: z.number().int().nonnegative().default(120_000),
-  maxAttempts: z.number().int().positive().default(5),
-  deadLetterKey: z.string().min(1).default("openclaw:inbound:dlq"),
-  maxLen: z.number().int().nonnegative().default(100_000),
-});
+const StreamConfigSchema = z
+  .object({
+    inboundKey: z.string().default("openclaw:inbound"),
+    outboundKey: z.string().default("openclaw:outbound"),
+    consumerGroup: z.string().default("openclaw-group"),
+    consumerName: z.string().default(""),
+    blockMs: z.number().int().positive().default(5000),
+    count: z.number().int().positive().default(10),
+    createGroup: z.boolean().default(true),
+    pendingClaimIdleMs: z.number().int().nonnegative().default(120_000),
+    maxAttempts: z.number().int().positive().default(5),
+    deadLetterKey: z.string().min(1).default("openclaw:inbound:dlq"),
+    maxLen: z.number().int().nonnegative().default(100_000),
+  })
+  .strict();
 
 /**
  * Zod schema for payload configuration.
  */
-const RedisPayloadConfigSchema = z.object({
-  mode: z.enum(["plain", "jsonTextOrPlain"]).default("jsonTextOrPlain"),
-});
+const RedisPayloadConfigSchema = z
+  .object({
+    mode: z.enum(["plain", "jsonTextOrPlain"]).default("jsonTextOrPlain"),
+  })
+  .strict();
 
 /**
  * Zod schema for field mapping configuration.
  */
-const RedisFieldMappingSchema = z.object({
-  textField: z.string().default("text"),
-  agentIdField: z.string().default("agentId"),
-  peerIdField: z.string().default("peerId"),
-  accountIdField: z.string().default("accountId"),
-  replyStreamField: z.string().default("replyStream"),
-});
+const RedisFieldMappingSchema = z
+  .object({
+    textField: z.string().default("text"),
+    agentIdField: z.string().default("agentId"),
+    peerIdField: z.string().default("peerId"),
+    accountIdField: z.string().default("accountId"),
+    replyStreamField: z.string().default("replyStream"),
+  })
+  .strict();
 
 /**
  * Zod schema for connection configuration.
  */
-const RedisConnectionConfigSchema = z.object({
-  reconnectMs: z.number().int().positive().default(3000),
-  maxRetries: z.number().int().nonnegative().default(0),
-  startupTimeoutMs: z.number().int().positive().default(30_000),
-});
+const RedisConnectionConfigSchema = z
+  .object({
+    allowInsecureRemote: z.boolean().default(false),
+    reconnectMs: z.number().int().positive().default(3000),
+    reconnectMaxMs: z.number().int().positive().default(30_000),
+    reconnectJitterRatio: z.number().min(0).max(1).default(0.2),
+    maxRetries: z.number().int().nonnegative().default(0),
+    maxPubSubInFlight: z.number().int().positive().default(32),
+    startupTimeoutMs: z.number().int().positive().default(30_000),
+    shutdownTimeoutMs: z.number().int().positive().default(10_000),
+  })
+  .strict()
+  .refine(
+    (value) => value.reconnectMaxMs >= value.reconnectMs,
+    "connection.reconnectMaxMs must be >= connection.reconnectMs",
+  );
 
-const RedisIdempotencyConfigSchema = z.object({
-  enabled: z.boolean().default(true),
-  ttlMs: z.number().int().positive().default(600_000),
-  maxEntries: z.number().int().positive().default(10_000),
-});
+const RedisIdempotencyConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    ttlMs: z.number().int().positive().default(600_000),
+    maxEntries: z.number().int().positive().default(10_000),
+  })
+  .strict();
 
 /**
  * Complete Zod schema for Redis Stream channel configuration.
  */
-export const RedisStreamConfigSchema = z.object({
-  url: z.string().url().refine((value) => {
-    const protocol = new URL(value).protocol;
-    return protocol === "redis:" || protocol === "rediss:";
-  }, "Redis URL protocol must be redis:// or rediss://").default("redis://localhost:6379"),
-  channelMode: z.enum(["pubsub", "stream"]).default("pubsub"),
-  defaultAgentId: z.string().default(""),
-  stream: StreamConfigSchema,
-  subscribeChannels: z.array(z.string()).default([]),
-  channelBindings: z.array(RedisChannelBindingSchema).default([]),
-  payload: RedisPayloadConfigSchema,
-  fieldMapping: RedisFieldMappingSchema,
-  connection: RedisConnectionConfigSchema,
-  idempotency: RedisIdempotencyConfigSchema,
-});
+export const RedisStreamConfigSchema = z
+  .object({
+    url: z
+      .string()
+      .url()
+      .refine((value) => {
+        const protocol = new URL(value).protocol;
+        return protocol === "redis:" || protocol === "rediss:";
+      }, "Redis URL protocol must be redis:// or rediss://")
+      .default("redis://localhost:6379"),
+    channelMode: z.enum(["pubsub", "stream"]).default("pubsub"),
+    defaultAgentId: z.string().default(""),
+    stream: StreamConfigSchema,
+    subscribeChannels: z.array(z.string()).default([]),
+    channelBindings: z.array(RedisChannelBindingSchema).default([]),
+    payload: RedisPayloadConfigSchema,
+    fieldMapping: RedisFieldMappingSchema,
+    connection: RedisConnectionConfigSchema,
+    idempotency: RedisIdempotencyConfigSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const url = new URL(value.url);
+    const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    const loopback =
+      host === "localhost" || host === "127.0.0.1" || host === "::1";
+    if (
+      url.protocol === "redis:" &&
+      !loopback &&
+      !value.connection.allowInsecureRemote
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["url"],
+        message:
+          "Remote Redis must use rediss:// unless connection.allowInsecureRemote=true",
+      });
+    }
+  });
 
 /** @description Zod 校验后的 Redis Stream 配置输入类型（parse 前）。 */
 export type RedisStreamConfigInput = z.input<typeof RedisStreamConfigSchema>;
@@ -234,14 +279,29 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
       type: "object",
       additionalProperties: false,
       properties: {
+        allowInsecureRemote: { type: "boolean", default: false },
         reconnectMs: { type: "number", default: 3000 },
+        reconnectMaxMs: { type: "number", minimum: 1, default: 30000 },
+        reconnectJitterRatio: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          default: 0.2,
+        },
         maxRetries: { type: "number", minimum: 0, default: 0 },
+        maxPubSubInFlight: { type: "number", minimum: 1, default: 32 },
         startupTimeoutMs: { type: "number", minimum: 1, default: 30000 },
+        shutdownTimeoutMs: { type: "number", minimum: 1, default: 10000 },
       },
       default: {
+        allowInsecureRemote: false,
         reconnectMs: 3000,
+        reconnectMaxMs: 30000,
+        reconnectJitterRatio: 0.2,
         maxRetries: 0,
+        maxPubSubInFlight: 32,
         startupTimeoutMs: 30000,
+        shutdownTimeoutMs: 10000,
       },
     },
     idempotency: {
@@ -330,9 +390,14 @@ export const DEFAULT_REDIS_CHANNEL_CONFIG: RedisChannelConfig = {
     replyStreamField: "replyStream",
   },
   connection: {
+    allowInsecureRemote: false,
     reconnectMs: 3000,
+    reconnectMaxMs: 30_000,
+    reconnectJitterRatio: 0.2,
     maxRetries: 0,
+    maxPubSubInFlight: 32,
     startupTimeoutMs: 30_000,
+    shutdownTimeoutMs: 10_000,
   },
   idempotency: {
     enabled: true,
@@ -432,7 +497,8 @@ export function resolveRedisChannelConfig(
           : DEFAULT_REDIS_CHANNEL_CONFIG.stream.count,
       createGroup: stream.createGroup !== false,
       pendingClaimIdleMs:
-        typeof stream.pendingClaimIdleMs === "number" && stream.pendingClaimIdleMs >= 0
+        typeof stream.pendingClaimIdleMs === "number" &&
+        stream.pendingClaimIdleMs >= 0
           ? stream.pendingClaimIdleMs
           : DEFAULT_REDIS_CHANNEL_CONFIG.stream.pendingClaimIdleMs,
       maxAttempts:
@@ -479,18 +545,39 @@ export function resolveRedisChannelConfig(
       ),
     },
     connection: {
+      allowInsecureRemote: connection.allowInsecureRemote === true,
       reconnectMs:
         typeof connection.reconnectMs === "number" && connection.reconnectMs > 0
           ? connection.reconnectMs
           : DEFAULT_REDIS_CHANNEL_CONFIG.connection.reconnectMs,
+      reconnectMaxMs:
+        typeof connection.reconnectMaxMs === "number" &&
+        connection.reconnectMaxMs > 0
+          ? connection.reconnectMaxMs
+          : DEFAULT_REDIS_CHANNEL_CONFIG.connection.reconnectMaxMs,
+      reconnectJitterRatio:
+        typeof connection.reconnectJitterRatio === "number"
+          ? connection.reconnectJitterRatio
+          : DEFAULT_REDIS_CHANNEL_CONFIG.connection.reconnectJitterRatio,
       maxRetries:
         typeof connection.maxRetries === "number" && connection.maxRetries >= 0
           ? Math.floor(connection.maxRetries)
           : DEFAULT_REDIS_CHANNEL_CONFIG.connection.maxRetries,
+      maxPubSubInFlight:
+        typeof connection.maxPubSubInFlight === "number" &&
+        connection.maxPubSubInFlight > 0
+          ? Math.floor(connection.maxPubSubInFlight)
+          : DEFAULT_REDIS_CHANNEL_CONFIG.connection.maxPubSubInFlight,
       startupTimeoutMs:
-        typeof connection.startupTimeoutMs === "number" && connection.startupTimeoutMs > 0
+        typeof connection.startupTimeoutMs === "number" &&
+        connection.startupTimeoutMs > 0
           ? Math.floor(connection.startupTimeoutMs)
           : DEFAULT_REDIS_CHANNEL_CONFIG.connection.startupTimeoutMs,
+      shutdownTimeoutMs:
+        typeof connection.shutdownTimeoutMs === "number" &&
+        connection.shutdownTimeoutMs > 0
+          ? Math.floor(connection.shutdownTimeoutMs)
+          : DEFAULT_REDIS_CHANNEL_CONFIG.connection.shutdownTimeoutMs,
     },
     idempotency: {
       enabled: idempotency.enabled !== false,

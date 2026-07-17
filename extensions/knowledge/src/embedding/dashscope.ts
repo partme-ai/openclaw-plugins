@@ -69,7 +69,7 @@ export class DashScopeEmbeddingService implements EmbeddingService {
       body: JSON.stringify(body),
     }, this.config, 'DashScope');
     return validateEmbeddingData(data.data, batch.length, this.dimensions, 'DashScope');
-    });
+    }, this.providerMaximumBatchSize());
   }
 
   async health(): Promise<boolean> {
@@ -79,5 +79,12 @@ export class DashScopeEmbeddingService implements EmbeddingService {
     } catch {
       return false;
     }
+  }
+
+  /** 百炼不同模型族的同步批次硬上限不同，不能统一使用 Knowledge 默认的 64。 */
+  private providerMaximumBatchSize(): number {
+    if (this.modelName === 'qwen3.7-text-embedding') return 20;
+    if (this.modelName === 'text-embedding-v1' || this.modelName === 'text-embedding-v2') return 25;
+    return 10;
   }
 }

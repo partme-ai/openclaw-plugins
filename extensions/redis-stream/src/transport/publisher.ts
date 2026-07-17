@@ -52,21 +52,22 @@ export function incrMessagesWritten(n?: number): void {
  * @description 发布消息到 Redis Pub/Sub channel。
  * @param channel - 目标 channel
  * @param message - 消息体
- * @returns 发布完成后 resolve
+ * @returns Redis 实际匹配到的订阅者数量；0 表示消息没有交付给任何在线订阅者
  * @throws RedisConnectionError 客户端未注入
  */
 export async function publishMessage(
   channel: string,
   message: string,
-): Promise<void> {
+): Promise<number> {
   if (!client) {
     throw new RedisConnectionError(
       "unknown",
       "Redis client is not initialized",
     );
   }
-  await client.publish(channel, message);
+  const subscriberCount = await client.publish(channel, message);
   _messagesWritten++;
+  return subscriberCount;
 }
 
 /**
@@ -86,11 +87,16 @@ export async function publishEntry(
       "Redis client is not initialized",
     );
   }
-  const id = streamMaxLen > 0
-    ? await client.xAdd(stream, "*", values, {
-        TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: streamMaxLen },
-      })
-    : await client.xAdd(stream, "*", values);
+  const id =
+    streamMaxLen > 0
+      ? await client.xAdd(stream, "*", values, {
+          TRIM: {
+            strategy: "MAXLEN",
+            strategyModifier: "~",
+            threshold: streamMaxLen,
+          },
+        })
+      : await client.xAdd(stream, "*", values);
   _messagesWritten++;
   return String(id);
 }

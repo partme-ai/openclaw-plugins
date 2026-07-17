@@ -16,14 +16,17 @@ const config: TracingConfig = {
   enabled: true,
   backend: "file",
   otlpEndpoint: "http://localhost:4318/v1/traces",
+  otlpHeaders: {},
   sampleRate: 1,
   traceDir: "./traces",
   traceRetentionDays: 7,
   maxSpansPerTrace: 100,
+  maxActiveTraces: 100,
   maxBufferedSpans: 100,
   flushIntervalMs: 60_000,
   exportTimeoutMs: 1_000,
   exportRetryAttempts: 1,
+  shutdownTimeoutMs: 1000,
   captureMessageBody: false,
 };
 
@@ -65,13 +68,21 @@ describe("OtlpBackend", () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const backend = new OtlpBackend(logger);
-    await backend.init({ ...config, backend: "otlp" });
+    await backend.init({
+      ...config,
+      backend: "otlp",
+      otlpHeaders: { Authorization: "Bearer test-token" },
+    });
     await backend.exportSpans([span("b")]);
     await backend.shutdown();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:4318/v1/traces");
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(String(request.body)).toContain('"doubleValue":0.5');
+    expect(request.headers).toMatchObject({
+      Authorization: "Bearer test-token",
+      "content-type": "application/json",
+    });
   });
 
   it("缓冲超过上限时丢弃最旧 span 并标记降级", async () => {
@@ -86,5 +97,61 @@ describe("OtlpBackend", () => {
       droppedSpans: 1,
     });
     await backend.shutdown();
+  });
+
+  it("达到批量阈值时后台导出，不把 Collector 等待传回 Hook", async () => {
+    let resolveFetch: ((value: Response) => void) | undefined;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const backend = new OtlpBackend(logger);
+    await backend.init({ ...config, backend: "otlp", maxBufferedSpans: 100 });
+
+    let enqueueCompleted = false;
+    const enqueue = backend.exportSpans(
+      Array.from({ length: 50 }, (_, index) => span(`batch-${index}`)),
+    ).then(() => {
+      enqueueCompleted = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(enqueueCompleted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(backend.getStatus().bufferedSpans).toBe(50);
+
+    resolveFetch?.(new Response(null, { status: 200 }));
+    await enqueue;
+    await backend.shutdown();
+  });
+
+  it("单次 flush 将快照拆成最多 50 个 Span 的有界请求", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const backend = new OtlpBackend(logger);
+    await backend.init({ ...config, backend: "otlp", maxBufferedSpans: 200 });
+    await backend.exportSpans(Array.from({ length: 120 }, (_, index) => span(`bounded-${index}`)));
+    await backend.shutdown();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const batchSizes = fetchMock.mock.calls.map((call) => {
+      const payload = JSON.parse(String((call[1] as RequestInit).body));
+      return payload.resourceSpans[0].scopeSpans[0].spans.length;
+    });
+    expect(batchSizes).toEqual([50, 50, 20]);
+  });
+
+  it("OTLP partialSuccess 拒绝 Span 时按失败批次重试", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        partialSuccess: { rejectedSpans: 1, errorMessage: "invalid attribute" },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const backend = new OtlpBackend(logger);
+    await backend.init({ ...config, backend: "otlp", exportRetryAttempts: 2 });
+    await backend.exportSpans([span("partial")]);
+    await backend.shutdown();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(backend.getStatus()).toMatchObject({ healthy: true, bufferedSpans: 0 });
   });
 });

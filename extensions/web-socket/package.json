@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-web-socket",
-  "version": "0.1.0",
+  "version": "2026.7.1",
   "description": "Native WebSocket channel for OpenClaw — JSON text protocol via embedded ws server",
   "type": "module",
   "main": "dist/index.js",
@@ -23,6 +23,9 @@
   ],
   "author": "PartMe",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "files": [
     "dist",
     "openclaw.plugin.json",

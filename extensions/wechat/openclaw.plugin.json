@@ -19,8 +19,11 @@
         "properties": {
           "name": { "type": "string", "minLength": 1, "maxLength": 100 },
           "enabled": { "type": "boolean" },
-          "baseUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
-          "cdnBaseUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "allowFrom": { "type": "array", "maxItems": 10000, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+          "baseUrl": { "type": "string", "format": "uri", "pattern": "^https?://" },
+          "cdnBaseUrl": { "type": "string", "format": "uri", "pattern": "^https?://" },
+          "allowCustomApiBaseUrl": { "type": "boolean", "default": false },
+          "allowCustomCdnBaseUrl": { "type": "boolean", "default": false },
           "routeTag": { "type": "number" },
           "channelConfigUpdatedAt": { "type": "string", "format": "date-time" },
           "accounts": {
@@ -31,8 +34,11 @@
               "properties": {
                 "name": { "type": "string", "minLength": 1, "maxLength": 100 },
                 "enabled": { "type": "boolean" },
-                "baseUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
-                "cdnBaseUrl": { "type": "string", "format": "uri", "pattern": "^https://" },
+                "allowFrom": { "type": "array", "maxItems": 10000, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+                "baseUrl": { "type": "string", "format": "uri", "pattern": "^https?://" },
+                "cdnBaseUrl": { "type": "string", "format": "uri", "pattern": "^https?://" },
+                "allowCustomApiBaseUrl": { "type": "boolean", "default": false },
+                "allowCustomCdnBaseUrl": { "type": "boolean", "default": false },
                 "routeTag": { "type": "number" }
               }
             }

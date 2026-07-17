@@ -25,6 +25,29 @@ describe("InboundMessageQueue", () => {
       .resolves.toBe(true);
   });
 
+  it("distinguishes duplicate messages from capacity overflow", async () => {
+    const onOverflow = vi.fn();
+    const queue = new InboundMessageQueue({
+      maxSize: 2,
+      onOverflow,
+      idempotency: createIdempotencyCache({ ttlMs: 60_000, maxEntries: 10 }),
+    });
+
+    await expect(
+      queue.pushDetailed({ message: message("first"), idempotencyKey: "same" }),
+    ).resolves.toBe("accepted");
+    await expect(
+      queue.pushDetailed({ message: message("duplicate"), idempotencyKey: "same" }),
+    ).resolves.toBe("duplicate");
+    await expect(
+      queue.pushDetailed({ message: message("second"), idempotencyKey: "second" }),
+    ).resolves.toBe("accepted");
+    await expect(
+      queue.pushDetailed({ message: message("overflow"), idempotencyKey: "third" }),
+    ).resolves.toBe("full");
+    expect(onOverflow).toHaveBeenCalledWith(expect.objectContaining({ size: 2, maxSize: 2 }));
+  });
+
   it("rolls back the queue item and idempotency reservation when onPush fails", async () => {
     const onPush = vi.fn()
       .mockRejectedValueOnce(new Error("dispatch failed"))

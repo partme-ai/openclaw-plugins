@@ -7,6 +7,12 @@ import type { ChannelPlugin } from "openclaw/plugin-sdk";
 import { DEFAULT_ACCOUNT_ID } from "./config.js";
 import { templateSetupAdapter, templateSetupWizard } from "./onboarding.js";
 
+/**
+ * 新渠道必须实现的最小 ChannelPlugin 样板。
+ *
+ * 生成插件时应替换占位符，并按真实协议修改 capabilities、账号配置和 Gateway 生命周期；
+ * 不应把此处的 `configured: false` 或仅等待 abort 的启动逻辑直接当作生产实现。
+ */
 export const plugin: ChannelPlugin = {
   id: "TEMPLATE_NAME",
   meta: {

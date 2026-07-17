@@ -47,12 +47,12 @@
 | `ws-adapter.ts` | Bot WebSocket 模式 | **删除** |
 | `index.ts` 中 csRoutes | `/plugins/wecom-cs/*`、`/wecom-cs/*` | **删除** 路由注册 |
 | `outbound.ts` Bot/Agent 双分支 | `sendText`/`sendMedia` 走 agent API 或 WS | **薄化** 为 KF-only `sendKfMsg` 适配器 |
-| `agent/handler.ts` Agent Webhook | XML 自建应用回调、`handleAgentWebhook` | **迁出** 至独立 `wecom` 或 `wecom-cs` 插件 |
+| `agent/handler.ts` Agent Webhook | 已从当前源码删除；能力由 `wecom` 承载 | **不得重新引入** 到 KF-only 插件 |
 | `types/config.ts` 中 `WecomBotConfig` / `WecomAgentConfig` | Bot/Agent 模式配置 | **从 wecom-kf 类型中移除**；若需兼容仅保留只读 deprecated 一层 |
 | `channel.ts` setup 中 websocket/botId | onboarding 引导 Bot 模式 | **替换** 为 research 版 KF onboarding |
 | `shared/xml-parser.ts` | Agent XML 解析 | **迁出**（KF sync_msg 为 JSON 结构） |
 | `dynamic-agent.ts` | 通用动态 Agent（Bot/群聊场景） | **可选保留** 仅 KF DM；默认关闭 |
-| `mcp/`、`wecom_kf_mcp` | 通用 MCP 代理 | **可选**；与 KF Control Tools 分工见 Tools 架构 |
+| `mcp/`、`wecom_kf_mcp` | 已从当前源码删除 | 文档/联系人 MCP 使用独立 MCP 插件，不能绕过 KF Control Tools 的租户隔离与审计 |
 
 ### 1.3 与 sibling 插件的分工
 
@@ -234,13 +234,16 @@ extensions/wecom-kf/
         └── message.ts            # SyncMsgItem / KfMessage / EventPayload
 ```
 
-**删除目录（迁移完成后）：**
+**已删除的旧目录（禁止重新引入）：**
 
 - `src/monitor.ts`、`src/monitor/`、`src/gateway-monitor.ts`
 - `src/ws-adapter.ts`
-- `src/agent/handler.ts`（Agent Webhook 部分；`handleCustomerMessage` 迁至 `dispatch/customer-message.ts`）
-- `src/shared/xml-parser.ts`（若无 XML 依赖）
-- `src/media/uploader.ts` 等与 Agent `media/upload` 强耦合且 KF 不用的部分
+- `src/agent/handler.ts`（自建应用 XML Webhook，不属于 KF；KF 入站由 `webhook/callback.ts` → `dispatch/inbound-dispatcher.ts` 处理）
+- `src/agent/agent-reply-delivery.ts`（仅服务旧 Agent Webhook）
+- `src/mcp/`（从未注册的通用 MCP 旁路；KF 管理操作统一走 Control Tools）
+- `src/media/uploader.ts` 等与 Bot WebSocket `media/upload` 强耦合且 KF 不用的部分（已删除）
+
+`src/shared/xml-parser.ts` **必须保留**：企微 KF 回调外层仍是加密 XML，`webhook/crypto.ts` 依赖它完成解析与验签。
 
 ---
 
@@ -310,7 +313,7 @@ bindings:
 
 **路由规则：**
 
-1. `handleCustomerMessage` / message-sdk bridge 调用 `resolveAgentRoute({ channel: "wecom-kf", accountId: openKfId, peer: { kind: "dm", id: external_userid } })`。  
+1. `dispatch/inbound-dispatcher.ts` 经 `dispatch/kf-transcript-dispatch.ts` 调用 OpenClaw Runtime，并以 `channel=wecom-kf`、`accountId=openKfId`、`peer=external_userid` 隔离路由与会话。
 2. `resolveKfAccountByOpenKfId` 提供 `accountKey`、`agentId` 配置层校验。  
 3. `routing.failClosedOnDefaultRoute: true` 时，`matchedBy=default` 拒绝处理（多账号安全）。  
 4. 可选 `agentMapping[servicer_userid]` 在 origin=5 或 trans 后人工接待阶段覆盖 Agent（Phase 3+）。
@@ -439,19 +442,17 @@ flowchart TB
 | `config/merge-account-config` | 账号级配置合并 | `config/accounts.ts` |
 | `dedup/claimable-dedupe` | KF msgid 去重 | `dedup/kf-inbound-dedup.ts` |
 | `ingress/command-auth` | dm.policy 命令授权 | `shared/command-auth.ts` |
-| `ingress/*`（types） | monitor 队列类型 re-export | `monitor/state.ts`（删除 monitor 后迁到 `dispatch/`） |
-| `queue/*` | 入站 debounce / stream（若保留） | 评估后 **仅 KF 不需要则删** |
+| `ingress/*` | 标准消息入站与命令授权 | `dispatch/kf-transcript-dispatch.ts`、`shared/command-auth.ts` |
 | `routing/dynamic-peer-agent` | 动态 Agent | `dynamic-agent.ts` |
-| `text/strip-markdown` | 出站 Markdown 降级 | `agent/markdown-strip.ts` |
-| `media/path-guard` | MEDIA: 本地路径 | `media-path-guard.ts` |
-| `util/async-timeout` | HTTP 超时 | `timeout.ts` |
-| `openclaw/state-dir` | cursor/dedup 持久化目录 | `state-dir-resolve.ts` |
+| `text/strip-markdown` | 出站 Markdown 降级 | `agent/api-client.ts`、`outbound/text-utils.ts` |
+| `media/path-guard` | MEDIA 本地路径读取边界 | `media/path-guard.ts` |
+| state 目录能力 | cursor/dedup/send guard 持久化 | `state/durable-json-map.ts` |
 
 ### 7.2 目标态应接入（替代手写 dispatch）
 
 | message-sdk 模块 | 用途 | 替换目标 |
 |------------------|------|----------|
-| **`bridge/inbound-bridge`** `dispatchInbound` | 标准入站 → Agent | `handleCustomerMessage` 内联 runtime 调用 |
+| **OpenClaw Runtime dispatch** | 标准入站 → Agent | 已由 `dispatch/kf-transcript-dispatch.ts` 封装 |
 | **`bridge/reply-bridge`** | 回复 deliver → KF send | outbound 与 dispatch 边界 |
 | **`ingress/wire-ingress`** | 统一 dm policy | 与 research `checkDmPolicy` 对齐 |
 | **`ingress/dm-policy`** | allowFrom / pairing | 账号 `dm` 字段 |
@@ -467,7 +468,7 @@ flowchart TB
 | 模块 | 原因 |
 |------|------|
 | `dispatch/subagent-dispatch` | KF 会话不需要 subagent 特殊路径 |
-| `asr/*`、`tts/*`、`ocr/*` | 经 Agent skills 或可选 Phase 插件调用，非 SDK 硬依赖 |
+| `tts/*`、`ocr/*` | 经 Agent skills 或可选插件调用；语音 ASR 已由 `agent/asr.ts` 按配置提供 |
 | KF 管理 API 封装 | 留在 `wecom-kf/api/admin.ts` + Control Tools |
 
 ---
@@ -515,7 +516,7 @@ flowchart TB
 
 | 交付 | 验收标准 |
 |------|----------|
-| `callback.ts` + `dispatch/customer-message` | origin=3 文本 round-trip |
+| `callback.ts` + `dispatch/inbound-dispatcher.ts` | origin=3 文本 round-trip |
 | cursor + msgid dedup | 重复回调不重复回复 |
 | onboarding + webhookPath | CLI 可配置并显示 cursor 状态 |
 | bindings `accountId=open_kfid` | 两 open_kfid 路由到两 Agent |
@@ -569,20 +570,22 @@ flowchart TB
 | `src/monitor/**` | 附属状态/测试 |
 | `src/gateway-monitor.ts` | cs provider |
 | `src/ws-adapter.ts` | Bot WS |
-| `src/agent/handler.ts` 中 `handleAgentWebhook`、XML 路径 | 非 KF |
+| `src/agent/handler.ts`、`agent-reply-delivery.ts` | 非 KF 自建应用路径，已删除并由 `wecom` 承载 |
+| `src/mcp/**` | 未注册且绕开 Control Tools 会话隔离，已删除 |
+| `src/media/uploader.ts` | Bot WebSocket 上传路径，已删除；KF 上传保留在 `agent/api-client.ts` |
 | `index.ts` csRoutes 块 | 路由污染 |
 
 ### 10.2 薄化 / 重构（Phase 1–2）
 
 | 现有 | 目标 | 动作 |
 |------|------|------|
-| `agent/handler.ts` `handleCustomerMessage` | `dispatch/customer-message.ts` | 搬迁；改用 `dispatchInbound` |
+| 旧 `agent/handler.ts` 客户消息分支 | `webhook/callback.ts` + `dispatch/inbound-dispatcher.ts` | 已完成迁移并删除旧入口 |
 | `agent/api-client.ts` | `api/*.ts` | 按 sync/send/session/admin 拆分 |
-| `outbound.ts` | `outbound/kf-outbound.ts` | 删除 Bot/Agent 分支，仅 KF |
+| 旧聚合出站入口 | `outbound/index.ts` + `outbound/kf-send.ts` | 已收敛为 KF-only |
 | `channel.ts` setup | KF onboarding | 删除 websocket 校验 |
 | `types/config.ts` | KF-only types | bot/agent 迁到 `@deprecated` 或删除 |
 | `types/constants.ts` WEBHOOK_PATHS | 仅 KF_* | 删除 BOT/AGENT 常量 |
-| `kf/tools.ts` 旧 Tool 名 | control-tools |  deprecate 别名后删除 |
+| 旧 Tool/MCP 旁路 | `tools/control-tools.ts` | 已统一，调用上下文按会话和账号隔离 |
 
 ### 10.3 保留（核心资产）
 
@@ -594,13 +597,12 @@ flowchart TB
 | `dedup/kf-inbound-dedup.ts` | 去重 |
 | `cursor-store.ts` | cursor |
 | `agent/system-event.ts` | 系统事件（可 rename） |
-| `kf/control-tools.ts` + `call-context.ts` | Control Tools |
-| `kf/dialogue-*` + `intent-classifier` | 智能化 |
-| `ics-handlers/**` | 可选 REST |
+| `tools/control-tools.ts` + `tools/call-context.ts` | Control Tools |
+| `intelligence/dialogue-*` + `intent-classifier.ts` | 智能化 |
 | `shared/command-auth.ts` | dm 授权 |
 | `onboarding.ts` | 用 research 版替换增强 |
 
-### 10.4 迁移顺序（降低风险）
+### 10.4 历史迁移顺序（已完成，不是当前调用链）
 
 ```mermaid
 flowchart LR
@@ -611,9 +613,7 @@ flowchart LR
   P0b --> P3[ICS + 状态机]
 ```
 
-1. **先** 在新文件实现 KF dispatch + outbound，测试通过。  
-2. **再** 删除 monitor 与 cs 路由（避免中间态全断）。  
-3. **最后** 清理类型与 deprecated Tool 别名。
+图中步骤记录当时的迁移策略。当前运行入口以第 2 节和下方生产保护流程为准，不应按该图重新创建旧目录。
 
 ### 10.5 与 wecom 插件的关系
 
@@ -622,6 +622,70 @@ flowchart LR
 - 将 `monitor.ts`、`ws-adapter.ts`、Agent XML handler **迁移** 到 `extensions/wecom` 或新建 `extensions/wecom-cs`。  
 - `wecom-kf` **不 re-export** 这些能力。  
 - 共享代码抽到 `message-sdk` 或 `@partme.ai/wecom-shared`（未来），避免双份 crypto。
+
+---
+
+## 11. 生产保护流程（当前实现）
+
+### 11.1 回调快速 ACK 与停机排空
+
+企微要求回调快速返回，耗时的 `sync_msg` 不能阻塞 HTTP 响应；但进程停止时如果仍先
+返回 200 再直接退出，就会丢失企微认为“已送达”的事件。因此插件在正常运行时先 ACK
+后按账号串行同步，在停机阶段先停止接收新任务并等待已 ACK 的任务排空。
+
+```mermaid
+sequenceDiagram
+  participant WW as 企业微信
+  participant HTTP as callback.ts
+  participant Q as 账号级同步队列
+  participant API as sync_msg
+  participant GW as OpenClaw Runtime
+
+  WW->>HTTP: 加密 kf_msg_or_event
+  HTTP->>HTTP: 验签、解密、识别账号
+  alt 服务正常运行
+    HTTP->>Q: enqueue(accountId)
+    HTTP-->>WW: 200 success（快速 ACK）
+    Q->>API: 按 cursor 拉取分页
+    API-->>Q: msg_list + next_cursor
+    Q->>GW: 去重后分发消息
+  else 正在停止
+    HTTP-->>WW: 503 service stopping
+    Note over WW,HTTP: 不 ACK，交由企微稍后重试
+  end
+  Note over HTTP,Q: stop 等待已 ACK 队列完成，超时才失败退出
+```
+
+### 11.2 发送额度原子预占与失败回滚
+
+`send_msg` 受“客户最后消息后 48 小时、每条客户消息最多 5 条回复”限制。检查与计数
+不能分成两个无锁步骤，否则并发回复会同时通过检查。当前实现按
+`openKfId:externalUserId` 串行修改持久化状态，在请求前预占额度；企微返回失败或网络
+异常时回滚。若回滚期间客户已产生新消息，则凭证代际不匹配，不会误减新一轮计数。
+
+```mermaid
+flowchart TD
+  A[准备发送 send_msg] --> B{会话内原子检查}
+  B -->|无入站、超 48h、已满 5 条| X[拒绝发送并返回明确原因]
+  B -->|允许| C[持久化 replyCount + 1<br/>生成预占凭证]
+  C --> D[调用企业微信 API]
+  D -->|errcode = 0| E[保留计数，发送完成]
+  D -->|errcode != 0 或网络异常| F{仍属于同一轮客户消息?}
+  F -->|是| G[replyCount - 1，归还额度]
+  F -->|否，客户已有新入站| H[不修改新一轮计数]
+```
+
+### 11.3 本地媒体读取边界
+
+出站本地媒体必须同时满足：真实路径位于非根目录白名单内、符号链接不能逃逸、目录名
+前缀不能混淆、文件不超过类型上限。读取最终委托 message-sdk Path Guard，安全测试使用
+真实临时目录和符号链接验证这条边界。
+
+### 11.4 Token 缓存隔离
+
+access_token 缓存键由 `corpId + corpSecret + apiBaseUrl` 计算 SHA-256 指纹，不保存或输出
+凭据明文。相同凭据的多个 KF 账号共享并发刷新 Promise；Secret 轮换、切换私有化 API
+基址或收到 token 失效业务码时，会进入新的缓存代际并重新获取 token。
 
 ---
 

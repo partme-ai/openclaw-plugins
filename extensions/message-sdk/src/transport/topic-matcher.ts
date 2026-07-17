@@ -26,8 +26,9 @@ export function matchTopic(topic: string, pattern: string): boolean {
     const p = pp[i];
     const t = tp[i];
 
-    // `#` 匹配剩余所有层级
-    if (p === "#") return true;
+    // `#` 只有作为最后一个完整层级时才合法；中间出现必须 fail-closed，
+    // 否则 `a/#/admin` 会意外放行 `a/任意内容`，扩大 ACL 授权范围。
+    if (p === "#") return i === pp.length - 1;
 
     // `+` (MQTT) 或 `*` (STOMP) — 匹配单个层级
     if (p === "+" || p === "*") {
@@ -52,4 +53,47 @@ export function matchTopic(topic: string, pattern: string): boolean {
 export function isTopicAllowed(topic: string, patterns: string[]): boolean {
   if (patterns.length === 0) return true;
   return patterns.some((pattern) => matchTopic(topic, pattern));
+}
+
+/** MQTT Topic Name/Filter 的协议最大 UTF-8 字节数。 */
+const MQTT_TOPIC_MAX_BYTES = 65_535;
+
+/**
+ * 校验可用于 PUBLISH 的 MQTT Topic Name。
+ *
+ * Topic Name 必须非空、不能包含 NUL，也不能包含订阅通配符 `+` / `#`。
+ */
+export function isValidMqttTopicName(topic: string): boolean {
+  return Boolean(
+    topic &&
+      !topic.includes("\0") &&
+      !topic.includes("+") &&
+      !topic.includes("#") &&
+      Buffer.byteLength(topic, "utf8") <= MQTT_TOPIC_MAX_BYTES,
+  );
+}
+
+/**
+ * 校验 MQTT Topic Filter。
+ *
+ * `+` 必须占据完整层级；`#` 必须占据最后一个完整层级。该校验用于在启动前
+ * 拒绝会扩大或破坏 ACL 语义的错误配置，而不是等到客户端请求时再猜测意图。
+ */
+export function isValidMqttTopicFilter(filter: string): boolean {
+  // 共享 matcher 还兼容 STOMP 的 `*` 通配符；MQTT 配置若接受字面量 `*`，
+  // 后续匹配时会被误解为通配授权，因此在 MQTT 边界明确拒绝它。
+  if (
+    !filter ||
+    filter.includes("\0") ||
+    filter.includes("*") ||
+    Buffer.byteLength(filter, "utf8") > MQTT_TOPIC_MAX_BYTES
+  ) {
+    return false;
+  }
+  const levels = filter.split("/");
+  return levels.every((level, index) => {
+    if (level.includes("#")) return level === "#" && index === levels.length - 1;
+    if (level.includes("+")) return level === "+";
+    return true;
+  });
 }

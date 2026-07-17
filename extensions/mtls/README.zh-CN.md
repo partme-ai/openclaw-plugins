@@ -28,12 +28,19 @@ mTLS（Mutual TLS）是一种安全机制，在这种机制下，客户端和服
 
 ### 架构
 
-```
-客户端 (携带客户端证书)
-    → HTTPS + mTLS
-    → mTLS HTTPS 反向代理（本插件，默认 :18443）
-    → 覆盖可信身份 Header
-    → OpenClaw Gateway（loopback :18789，trusted-proxy 模式）
+```mermaid
+flowchart LR
+    Client["客户端<br/>携带 X.509 客户端证书"]
+    Proxy["mTLS HTTPS 反向代理<br/>本插件，默认 :18443"]
+    Verify{"CA 链与 allowedClients<br/>是否通过？"}
+    Header["删除外部伪造身份 Header<br/>写入已验证证书 CN"]
+    Gateway["OpenClaw Gateway<br/>loopback :18789<br/>trusted-proxy"]
+    Reject["终止 TLS 或返回 403"]
+
+    Client -->|"HTTPS + 双向 TLS"| Proxy
+    Proxy --> Verify
+    Verify -->|"否"| Reject
+    Verify -->|"是"| Header --> Gateway
 ```
 
 ### 生命周期

@@ -7,8 +7,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
+import { sanitizeLogMessage } from "./redact.js";
 
 /**
  * Plugin logger — writes JSON lines to the main openclaw log file:
@@ -85,7 +87,12 @@ export type Logger = {
 };
 
 function buildLoggerName(accountId?: string): string {
-  return accountId ? `${SUBSYSTEM}/${accountId}` : SUBSYSTEM;
+  return accountId ? `${SUBSYSTEM}/account-${accountFingerprint(accountId)}` : SUBSYSTEM;
+}
+
+/** 稳定但不可逆的账号指纹，便于关联同账号日志而不暴露 iLink Bot ID。 */
+function accountFingerprint(accountId: string): string {
+  return createHash("sha256").update(accountId).digest("hex").slice(0, 12);
 }
 
 function writeLog(level: string, message: string, accountId?: string): void {
@@ -94,7 +101,10 @@ function writeLog(level: string, message: string, accountId?: string): void {
 
   const now = new Date();
   const loggerName = buildLoggerName(accountId);
-  const prefixedMessage = accountId ? `[${accountId}] ${message}` : message;
+  const safeMessage = sanitizeLogMessage(message);
+  const prefixedMessage = accountId
+    ? `[account-${accountFingerprint(accountId)}] ${safeMessage}`
+    : safeMessage;
   const entry = JSON.stringify({
     "0": loggerName,
     "1": prefixedMessage,

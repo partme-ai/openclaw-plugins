@@ -21,6 +21,7 @@
       "requestTimeoutMs": { "type": "integer", "minimum": 500, "maximum": 30000, "default": 8000 },
       "retryAttempts": { "type": "integer", "minimum": 0, "maximum": 3, "default": 1 },
       "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 5242880, "default": 1048576 },
+      "maxToolResultBytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 262144 },
       "maxRequestsPerMinute": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 120 },
       "ownerOnly": { "type": "boolean", "default": false }
     }

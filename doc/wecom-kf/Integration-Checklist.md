@@ -324,7 +324,7 @@ grep -E '\[wecom_kf:audit\]|transfer|enter_session|session_status|send_msg_on_ev
 | 收发消息 | ✅ callback + sync + send | — |
 | 欢迎语发送 | ✅ `system-event.ts` | 配置管理 REST |
 | Control Tools | ✅ `wecom_kf_*` | — |
-| 知识库 / 统计 | — | ✅ `ics-handlers/*` |
+| 知识库 / 统计 | — | 通过独立知识库、Prometheus 等插件组合，不在 KF 核心内注册 ICS 旁路 |
 | Agent 模板 | — | `agents/` 独立部署 |
 
 ---
@@ -333,7 +333,7 @@ grep -E '\[wecom_kf:audit\]|transfer|enter_session|session_status|send_msg_on_ev
 
 - [ ] `before_prompt_build` 对 `wecom-kf` 渠道注入状态标签
 - [ ] session extension namespace：`wecom-kf-dialogue`
-- [ ] 状态含 `handing_off`、`closed` 等（见 `kf/dialogue-state.ts`）
+- [ ] 状态含 `handing_off`、`closed` 等（见 `intelligence/dialogue-state.ts`）
 - [ ] 转人工意图 `human_request` 可触发 `handing_off` 转换
 
 ---

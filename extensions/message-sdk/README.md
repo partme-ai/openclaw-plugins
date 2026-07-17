@@ -33,10 +33,26 @@ The SDK has one mandatory runtime dependency, `undici`. `prom-client` and OpenCl
 
 ### Queue reliability
 
-- `InboundMessageQueue` is bounded and does not reserve an idempotency key when full.
+- `InboundMessageQueue` is bounded; `pushDetailed` distinguishes `duplicate` from `full`, and a full queue does not reserve an idempotency key. Wire dispatch raises a capacity error for upstream retry/backpressure instead of acknowledging it as a duplicate.
 - If its immediate `onPush` handler fails, both the queue item and idempotency reservation are rolled back so delivery can be retried.
-- `OutboundMessageQueue` is bounded across all sessions, reports overflow through `onOverflow`, and exposes the total `size`.
+- `OutboundMessageQueue` is bounded across all sessions and round-robins generic pops while preserving per-session FIFO.
+- `createKeyedRunQueue` bounds pending tasks and active keys. A timeout aborts the task cooperatively, but the next same-key task starts only after the timed-out task actually settles.
 - Both queues are process-local buffers, not durable broker replacements.
+
+### Media security
+
+- Remote media defaults to OpenClaw's SSRF-guarded fetch path and enforces `maxSize` while streaming; oversized responses are cancelled before full buffering.
+- Failed streaming downloads remove partial temp files. Successful files use UUID names, exclusive creation, and private `0600` permissions.
+- Local media allowlists use real directory boundaries and `realpath` checks, preventing prefix confusion and symlink escape.
+
+```mermaid
+flowchart LR
+    Source["Channel / Broker"] --> Inbound["Inbound queue<br/>duplicate vs full"]
+    Inbound --> Keyed["Keyed run queue<br/>same-key serial"]
+    Keyed --> Agent["OpenClaw Agent"]
+    Agent --> Outbound["Outbound queue<br/>bounded round-robin"]
+    Outbound --> Adapter["Channel adapter"]
+```
 
 ## Installation
 
@@ -340,35 +356,35 @@ ASRError (base)
 
 ### 7. OCR — Optical Character Recognition
 
-Supports 4 providers with a unified interface:
+Supports two protocol-backed providers with a unified interface:
 
 ```typescript
 import {
-  recognizeDeepSeek,     // DeepSeek Vision (deepseek-chat)
-  recognizeGLM,          // ZhipuAI GLM-4V
+  recognizeGLM,          // ZhipuAI GLM-4.5V
   recognizePaddleOCR,    // Baidu PP-OCRv4 (self-hosted)
-  recognizeQianfan,      // Baidu Qianfan ERNIE-4.0
   type OCRInput,
   type OCRConfig,
   type OCRResult,
 } from "@partme.ai/openclaw-message-sdk";
 
 const config: OCRConfig = {
-  baseUrl: "https://api.deepseek.com/v1",
-  apiKey: process.env.DEEPSEEK_API_KEY!,
-  model: "deepseek-chat",
+  baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+  apiKey: process.env.ZHIPU_API_KEY!,
+  model: "glm-4.5v",
 };
 
 const input: OCRInput = {
   url: "https://cdn.example.com/receipt.png",
 };
 
-const result: OCRResult = await recognizeDeepSeek(input, config);
+const result: OCRResult = await recognizeGLM(input, config);
 // result.text           → Full recognized text
 // result.blocks[].lines[].words[].text  → Per-word recognition
-// result.provider       → "deepseek"
+// result.provider       → "glm"
 // result.elapsedMs      → 1234
 ```
+
+DeepSeek Chat is intentionally not exposed as an OCR provider: its official Chat Completion schema accepts text user content, not the `image_url` array previously sent here. The former Qianfan adapter was also removed because it treated an API key as an access token and relied on an unverified ERNIE image contract. Unsupported providers fail by absence instead of pretending to work.
 
 **OCR Types**
 
@@ -387,12 +403,12 @@ interface OCRResult {
 
 ### 8. TTS — Text-to-Speech
 
-**Remote Solutions** (pure HTTP, zero additional dependencies):
+Two executable implementations are provided: OpenAI uses the official HTTP API; Edge TTS invokes the locally installed Python CLI.
 
 ```typescript
 import { synthesizeEdgeTTS, synthesizeOpenAI, EDGE_TTS_VOICES } from "@partme.ai/openclaw-message-sdk";
 
-// Microsoft Edge TTS (free, 300+ neural voices)
+// Microsoft Edge TTS (requires: pip install edge-tts)
 const result = await synthesizeEdgeTTS("Hello, I am an AI assistant", {
   voice: "en-US-JennyNeural",
   outputFormat: "mp3",
@@ -404,12 +420,14 @@ const result = await synthesizeEdgeTTS("Hello, I am an AI assistant", {
 // OpenAI TTS
 const result2 = await synthesizeOpenAI("Welcome to OpenClaw", {
   apiKey: process.env.OPENAI_API_KEY!,
-  model: "tts-1",
-  voice: "alloy",
+  model: "gpt-4o-mini-tts",
+  voice: "coral",
+  outputFormat: "wav",
+  maxAudioBytes: 25 * 1024 * 1024,
 });
 ```
 
-**Local Solutions** (require Python runtime, called via child_process):
+The following exports are provider metadata only; they do not contain executable synthesizers:
 
 | Provider | Description |
 |----------|-------------|
@@ -417,6 +435,8 @@ const result2 = await synthesizeOpenAI("Welcome to OpenClaw", {
 | `MARS5_TTS_PROVIDER` | CAMB.AI, voice cloning (5s reference audio) |
 | `QWEN_TTS_PROVIDER` | Alibaba Qwen3-TTS, voice design |
 | `PYTTSX3_PROVIDER` | Fully offline, system speech engine |
+
+OpenAI input is capped at the service's 4096-character limit. Audio is read as a bounded stream; unknown voices/formats and invalid speed are rejected instead of silently falling back. Edge TTS uses `execFile` argument boundaries, enforces output size before reading, and removes its whole temporary directory on every outcome.
 
 ---
 
@@ -524,7 +544,7 @@ Implement `synthesizeXxx(text: string, config: TTSConfig): Promise<TTSResult>`.
 | `@partme.ai/openclaw-message-sdk/http` | HTTP client with retry |
 | `@partme.ai/openclaw-message-sdk/file` | File category/extension utilities |
 | `@partme.ai/openclaw-message-sdk/asr` | Tencent Cloud Flash ASR |
-| `@partme.ai/openclaw-message-sdk/ocr` | OCR with 4 providers |
+| `@partme.ai/openclaw-message-sdk/ocr` | OCR via GLM-4.5V or self-hosted PaddleOCR |
 | `@partme.ai/openclaw-message-sdk/tts` | TTS with Edge/openai/local providers |
 | `@partme.ai/openclaw-message-sdk/util` | withTimeout, truncateUtf8Bytes, formatTemplate, globalSingleton |
 | `@partme.ai/openclaw-message-sdk/transcript` | IM streaming config, finish-stream, reply dispatcher factory |

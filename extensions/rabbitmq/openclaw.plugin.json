@@ -169,21 +169,41 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "allowInsecureRemote": {
+            "type": "boolean",
+            "default": false,
+            "description": "Allow plaintext amqp:// for non-loopback hosts. Keep false in production."
+          },
           "timeoutMs": {
             "type": "number",
+            "minimum": 1,
             "default": 30000
           },
           "heartbeatSeconds": {
             "type": "number",
+            "minimum": 0,
             "default": 30
           },
           "reconnectAttempts": {
             "type": "number",
+            "minimum": 0,
             "default": 5
           },
           "reconnectDelayMs": {
             "type": "number",
+            "minimum": 0,
             "default": 5000
+          },
+          "reconnectMaxDelayMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 60000
+          },
+          "reconnectJitterRatio": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.2
           },
           "publishConfirmTimeoutMs": {
             "type": "number",
@@ -192,10 +212,13 @@
           }
         },
         "default": {
+          "allowInsecureRemote": false,
           "timeoutMs": 30000,
           "heartbeatSeconds": 30,
           "reconnectAttempts": 5,
           "reconnectDelayMs": 5000,
+          "reconnectMaxDelayMs": 60000,
+          "reconnectJitterRatio": 0.2,
           "publishConfirmTimeoutMs": 10000
         }
       },

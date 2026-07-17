@@ -2,7 +2,7 @@
 
 ## Scope
 
-Primary target: **13 adapters** installed into OpenClaw profile `queue-e2e`. Nine protocol adapters form the default combined run; Tracing, WebSocket, mTLS and OAuth2 are explicit isolated scenarios:
+Primary target: **23 adapters** installed into OpenClaw profile `queue-e2e`. Nine protocol adapters form the default combined run; the remaining external/security/platform/capability scenarios run explicitly in isolation:
 
 | Plugin ID | Package | Category |
 |-----------|---------|----------|
@@ -19,6 +19,7 @@ Primary target: **13 adapters** installed into OpenClaw profile `queue-e2e`. Nin
 | mtls | `@partme.ai/openclaw-mtls` | infra/security (isolated) |
 | oauth2 | `@partme.ai/openclaw-oauth2` | infra/security (isolated) |
 | tracing | `@partme.ai/openclaw-tracing` | infra/observability (isolated with MQTT turn) |
+| bridge | `@partme.ai/openclaw-bridge` | infra/observation (isolated with MQTT turn) |
 
 Dependency: `@partme.ai/openclaw-message-sdk` (built + linked into channel extensions).
 
@@ -94,7 +95,19 @@ Each adapter in `plugins/<id>.mjs`:
 | router | persisted Outbox recovery + Gotify outbound delivery | durable delivery evidence |
 | mtls | missing, rogue, and trusted OpenSSL client certificates against `/mtls/status` | 401/401/200 and trusted-proxy identity acceptance |
 | oauth2 | Authorization Code + PKCE, refresh, introspection, revoke, spoofed identity header | complete lifecycle and trusted-proxy identity acceptance |
+| douyin | signed challenge + invalid signature + valid Webhook → Agent Turn → duplicate replay around Gateway restart | 200/401, model exactly once, persistent `Msg-Id` dedupe |
+| amap | model tool_call → installed `amap_search_places` → local v5 fixture 503/200 → Tool Result → final model reply | one Tool round trip, exactly one safe GET retry, bounded official path/params |
+| meituan | model tool_call → installed `meituan_openapi_invoke` → local MTOp signature verifier → Tool Result → final reply | independently valid SHA-1/form/header, allowlisted path, exactly one POST |
+| rednode | model tool_call → installed `rednode_ark_invoke` → local Ark signature verifier 502/200 → Tool Result → final reply | independently valid MD5/header/query, allowlisted path, exactly one safe GET retry |
+| wechat | local iLink `getUpdates` → pairing → Agent Turn → `sendMessage`, then replay same `message_id` after restart | Bearer/recipient/context-token/reply exact, model and outbound exactly once across restart |
+| wechat-ipad | local external bridge WS event → Agent Turn → HTTP `/api/send`, then replay same `msgId` after restart | Bearer/recipient/reply exact, `/readyz` healthy, model and outbound exactly once across restart |
+| wecom-kf | independent AES callback → `gettoken`/`sync_msg` → Agent Turn → `send_msg`, then replay same `msgid` after restart | quick 200, callback token then restored cursor, recipient/account/reply exact, model and outbound exactly once |
+| knowledge | installed tarball API indexes/searches a fixture document, then two real Agent Turns with the same stable session key around a Gateway restart | configured `/v1/embeddings` parameters, automatic `before_prompt_build` injection, SQLite persistence, and stable-session recovery |
+| memory | real Agent Turn → L0-L3 persistence → Gateway restart → CLI search → second session | L3 profile is stored with safe permissions and injected after restart |
+| openmem | real Agent Turn → sidecar ingest/drain/archive → Gateway restart → second turn | archived continuity is injected by the restarted Memory Host |
+| prometheus | Bearer scrape/health/RPC + exact-route guards + 25 concurrent scrapes | 401/200/405, build info, bounded series, and collection single-flight |
 | tracing | MQTT inbound + real Agent turn + MQTT reply + OTLP/HTTP export | Collector receives `message.received`; status has no active/buffered spans |
+| bridge | MQTT inbound + real Agent turn + MQTT reply + `message_received`/`message_sent` mirror | inbound/outbound audit Topic each receives exactly one message; no recursive self-audit |
 
 ### L7 — Browser tests (optional)
 
@@ -104,10 +117,11 @@ Each adapter in `plugins/<id>.mjs`:
 
 ### L8 — Report / artifacts
 
-`e2e-report.json` includes:
+`e2e-report.json` 保存最近一次运行；`reports/<timestamp>-<plugins>-<runId>.json` 保存每次独立归档，连续执行 isolated adapter 不得覆盖前一次证据。两者 includes:
 
 - `plugins`, `gatewayMode`, `docker`, `installed`, `e2e[]`, `browser[]`
-- `serviceUrls`, `dockerPs`, `gatewayLogTail`, `commits`
+- `serviceUrls`, `dockerPs`, `gatewayLogTail`, `commits`, `runId`, `finishedAt`
+- token/secret/password/API key/authorization 字段必须在 latest 与 archive 中同时脱敏
 
 ## Execution matrix
 
@@ -124,8 +138,29 @@ node scripts/e2e/run-e2e.mjs --plugins oauth2 --skip-browser
 # Isolated native WebSocket transport scenario (host Gateway is selected automatically)
 node scripts/e2e/run-e2e.mjs --plugins web-socket --skip-browser
 
+# Isolated Douyin signed Webhook and restart-dedupe scenario
+node scripts/e2e/run-e2e.mjs --plugins douyin --skip-browser
+
+# Isolated AMap Agent Tool and safe-retry scenario
+node scripts/e2e/run-e2e.mjs --plugins amap --skip-browser
+
+# Isolated Meituan signed MTOp Agent Tool scenario
+node scripts/e2e/run-e2e.mjs --plugins meituan --skip-browser
+
+# Isolated RedNode signed Ark Agent Tool scenario
+node scripts/e2e/run-e2e.mjs --plugins rednode --skip-browser
+
+# Isolated WeChat iLink long-poll/reply/restart-dedupe scenario
+node scripts/e2e/run-e2e.mjs --plugins wechat --skip-browser
+
+# Isolated WeCom KF encrypted callback/API/restart-dedupe scenario
+node scripts/e2e/run-e2e.mjs --plugins wecom-kf --skip-browser
+
 # Isolated Tracing scenario paired with MQTT for a real Agent turn
 node scripts/e2e/run-e2e.mjs --plugins tracing,mqtt --skip-browser
+
+# Isolated Bridge scenario paired with MQTT for official Hook and loop-guard verification
+node scripts/e2e/run-e2e.mjs --plugins bridge,mqtt --skip-browser
 
 # Container gateway (requires Docker + openclaw CLI resolvable in container)
 node scripts/e2e/run-e2e.mjs
@@ -156,6 +191,6 @@ OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins mqtt,rabbitmq
 ## Next steps
 
 - Add `--skip-install` CI path with prebuilt extension artifacts
-- Webhook/platform adapters (wecom, wechat) with mock HTTP server in compose
+- Add remaining Webhook/platform adapters (wecom, wecom-kf) with real sandbox or faithful local fixtures
 - Shared retry/backoff helper in `lib/http.mjs` for flaky broker readiness
 - Publish sample (sanitized) `e2e-report.sample.json` for documentation only

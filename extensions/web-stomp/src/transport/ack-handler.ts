@@ -16,6 +16,8 @@ const pendingMessages = new Map<
     connectionId: string;
     destination: string;
     sentAt: number;
+    /** 单调投递序号；`client` 累计 ACK 不能用可能相同的毫秒时间戳判断先后。 */
+    sequence: number;
     ackMode: "client" | "client-individual";
   }
 >();
@@ -49,6 +51,7 @@ export function registerMessage(
     connectionId,
     destination,
     sentAt: Date.now(),
+    sequence: messageIdCounter,
     ackMode,
   });
 
@@ -80,7 +83,7 @@ export function handleAck(messageId: string, connectionId?: string): number {
 
   // client 模式：确认该消息及之前同一订阅的所有消息
   let count = 0;
-  const targetSentAt = msg.sentAt;
+  const targetSequence = msg.sequence;
   const targetSubId = msg.subscriptionId;
   const targetConnId = msg.connectionId;
 
@@ -88,7 +91,7 @@ export function handleAck(messageId: string, connectionId?: string): number {
     if (
       pending.connectionId === targetConnId &&
       pending.subscriptionId === targetSubId &&
-      pending.sentAt <= targetSentAt
+      pending.sequence <= targetSequence
     ) {
       pendingMessages.delete(id);
       count++;

@@ -23,6 +23,11 @@ export function getMtlsStats(): MtlsStatusSnapshot {
   return { ...stats };
 }
 
+/**
+ * 记录一次已经完成授权判定的 HTTP 或 WebSocket Upgrade 请求。
+ *
+ * 每个请求只能按最终结果调用一次：证书认证成功、拒绝或公开路径匿名放行，避免重试过程重复计数。
+ */
 export function recordMtlsRequest(kind: "authenticated" | "rejected" | "passthrough"): void {
   stats.totalRequests++;
   if (kind === "authenticated") stats.authenticatedRequests++;
@@ -30,6 +35,12 @@ export function recordMtlsRequest(kind: "authenticated" | "rejected" | "passthro
   if (kind === "passthrough") stats.passthroughRequests++;
 }
 
+/**
+ * 在 WebSocket 隧道建立或关闭时调整活跃会话数。
+ *
+ * 建连成功后传入 `1`，任一关闭路径只应传入一次 `-1`；下限钳制为零可避免异常/重复关闭事件
+ * 让监控指标出现负数，但不能替代调用方的幂等清理。
+ */
 export function trackMtlsSession(delta: 1 | -1): void {
   stats.activeSessions = Math.max(0, stats.activeSessions + delta);
 }

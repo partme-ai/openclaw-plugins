@@ -29,6 +29,7 @@ import {
   buildErrorFrame,
   buildMessageFrame,
   buildReceiptFrame,
+  extractCompleteFrames,
   parseFrame,
   serializeFrame,
 } from "./frame-parser.js";
@@ -74,6 +75,13 @@ let onInboundMessage: StompInboundCallback | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let running = false;
 const states = new Map<string, ConnectionState>();
+const stats = {
+  rejectedConnections: 0,
+  authFailures: 0,
+  protocolErrors: 0,
+  droppedInbound: 0,
+  droppedOutbound: 0,
+};
 
 function rejectUpgrade(socket: Duplex, status: number, message: string): void {
   if (socket.destroyed) return;
@@ -84,7 +92,12 @@ function rejectUpgrade(socket: Duplex, status: number, message: string): void {
 function originAllowed(req: IncomingMessage, config: StompServerConfig): boolean {
   const origin = req.headers.origin;
   if (typeof origin !== "string" || config.allowedOrigins.length === 0) return true;
-  return config.allowedOrigins.includes("*") || config.allowedOrigins.includes(origin);
+  try {
+    const parsed = new URL(origin);
+    return parsed.origin === origin && config.allowedOrigins.includes(parsed.origin);
+  } catch {
+    return false;
+  }
 }
 
 function secureEqual(left: string, right: string): boolean {
@@ -131,6 +144,7 @@ function sendFrame(connectionId: string, frame: StompFrame): boolean {
 }
 
 function failProtocol(connectionId: string, message: string, receiptId?: string, close = false): void {
+  stats.protocolErrors += 1;
   sendFrame(connectionId, buildErrorFrame(message, receiptId));
   if (close) states.get(connectionId)?.ws.close(1002, message.slice(0, 120));
 }
@@ -168,6 +182,7 @@ async function handleConnect(connectionId: string, frame: StompFrame, config: St
   }
   const login = frame.headers.login;
   if (!authenticate(login, frame.headers.passcode, config)) {
+    stats.authFailures += 1;
     failProtocol(connectionId, "Authentication failed", frame.headers.receipt, true);
     return;
   }
@@ -296,10 +311,12 @@ function enqueueFrame(connectionId: string, frame: StompFrame, config: StompServ
     state.windowMessages = 0;
   }
   if (++state.windowMessages > config.messagesPerMinute) {
+    stats.droppedInbound += 1;
     state.ws.close(1008, "Message rate limit exceeded");
     return;
   }
   if (state.pending >= config.maxPendingMessages) {
+    stats.droppedInbound += 1;
     state.ws.close(1013, "Inbound queue full");
     return;
   }
@@ -349,19 +366,22 @@ function attachConnection(ws: WebSocket, req: IncomingMessage, config: StompServ
       return;
     }
     state.buffer += data.toString("utf8");
-    state.buffer = state.buffer.replace(/^[\r\n]+/, "");
+    const extracted = extractCompleteFrames(state.buffer);
+    state.buffer = extracted.rest;
+    for (const raw of extracted.frames) {
+      if (Buffer.byteLength(raw, "utf8") > config.maxFrameSize) {
+        ws.close(1009, "STOMP frame too large");
+        return;
+      }
+      const frame = parseFrame(raw);
+      if (!frame) {
+        failProtocol(connectionId, "Malformed STOMP frame", undefined, true);
+        return;
+      }
+      else enqueueFrame(connectionId, frame, config);
+    }
     if (Buffer.byteLength(state.buffer, "utf8") > config.maxFrameSize) {
       ws.close(1009, "STOMP frame too large");
-      return;
-    }
-    let end = state.buffer.indexOf("\0");
-    while (end >= 0) {
-      const raw = state.buffer.slice(0, end + 1);
-      state.buffer = state.buffer.slice(end + 1).replace(/^[\r\n]+/, "");
-      const frame = parseFrame(raw);
-      if (!frame) failProtocol(connectionId, "Malformed STOMP frame");
-      else enqueueFrame(connectionId, frame, config);
-      end = state.buffer.indexOf("\0");
     }
   });
   ws.on("close", () => cleanup(connectionId));
@@ -401,13 +421,23 @@ export async function startStompServer(config: StompServerConfig, messageHandler
   wss = nextWss;
   activeConfig = config;
   onInboundMessage = messageHandler;
+  Object.keys(stats).forEach((key) => { stats[key as keyof typeof stats] = 0; });
 
   nextListener.on("upgrade", (req, socket, head) => {
     let path = "";
     try { path = new URL(req.url ?? "/", "http://localhost").pathname; } catch { /* rejected below */ }
-    if (path !== config.path) return rejectUpgrade(socket, 404, "Not Found");
-    if (!originAllowed(req, config)) return rejectUpgrade(socket, 403, "Forbidden");
-    if (states.size >= config.maxConnections) return rejectUpgrade(socket, 503, "Service Unavailable");
+    if (path !== config.path) {
+      stats.rejectedConnections += 1;
+      return rejectUpgrade(socket, 404, "Not Found");
+    }
+    if (!originAllowed(req, config)) {
+      stats.rejectedConnections += 1;
+      return rejectUpgrade(socket, 403, "Forbidden");
+    }
+    if (states.size >= config.maxConnections) {
+      stats.rejectedConnections += 1;
+      return rejectUpgrade(socket, 503, "Service Unavailable");
+    }
     nextWss.handleUpgrade(req, socket, head, (ws) => nextWss.emit("connection", ws, req));
   });
   nextWss.on("connection", (ws, req) => attachConnection(ws, req, config));
@@ -476,6 +506,7 @@ export function publishToDestination(destination: string, body: string): number 
     const state = states.get(subscription.connectionId);
     if (!state || !state.connected || state.ws.readyState !== WebSocket.OPEN) continue;
     if (getPendingAckCount(subscription.connectionId) >= config.maxPendingAcks) {
+      stats.droppedOutbound += 1;
       state.ws.close(1013, "Pending ACK limit exceeded");
       continue;
     }
@@ -488,7 +519,10 @@ export function publishToDestination(destination: string, body: string): number 
       subscription.ack === "auto" ? undefined : messageId,
     ));
     if (sent) delivered += 1;
-    else discardPendingMessage(messageId);
+    else {
+      stats.droppedOutbound += 1;
+      discardPendingMessage(messageId);
+    }
   }
   return delivered;
 }
@@ -497,12 +531,30 @@ export function getConnectionInfoList(): StompConnectionInfo[] {
   return [...states.values()].map((state) => ({ ...state.info }));
 }
 
-export function getStompServerStats(): { running: boolean; connectionCount: number; wsPort: number | null; secure: boolean } {
+/** 返回 transport 运行状态；计数仅包含本次 start 生命周期。 */
+export function getStompServerStats(): {
+  running: boolean;
+  connectionCount: number;
+  subscriptionCount: number;
+  pendingFrames: number;
+  pendingAcks: number;
+  wsPort: number | null;
+  secure: boolean;
+  rejectedConnections: number;
+  authFailures: number;
+  protocolErrors: number;
+  droppedInbound: number;
+  droppedOutbound: number;
+} {
   return {
     running,
     connectionCount: states.size,
+    subscriptionCount: [...states.keys()].reduce((total, id) => total + getConnectionSubscriptions(id).length, 0),
+    pendingFrames: [...states.values()].reduce((total, state) => total + state.pending, 0),
+    pendingAcks: [...states.keys()].reduce((total, id) => total + getPendingAckCount(id), 0),
     wsPort: activeConfig?.wsPort ?? null,
     secure: activeConfig?.tls.enabled ?? false,
+    ...stats,
   };
 }
 

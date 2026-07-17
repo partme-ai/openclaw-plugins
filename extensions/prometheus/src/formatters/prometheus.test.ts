@@ -72,6 +72,19 @@ describe("formatPrometheus", () => {
     expect(output).toContain("ts_metric 10 1700000000000");
   });
 
+  it("按 Prometheus 语法输出特殊浮点值并保留零时间戳", () => {
+    const output = formatPrometheus([], [
+      { name: "positive_inf", value: Number.POSITIVE_INFINITY },
+      { name: "negative_inf", value: Number.NEGATIVE_INFINITY },
+      { name: "not_a_number", value: Number.NaN },
+      { name: "epoch_metric", value: 1, timestamp: 0 },
+    ]);
+    expect(output).toContain("positive_inf +Inf");
+    expect(output).toContain("negative_inf -Inf");
+    expect(output).toContain("not_a_number NaN");
+    expect(output).toContain("epoch_metric 1 0");
+  });
+
   it("空输入应返回空字符串", () => {
     const output = formatPrometheus([], []);
     expect(output.trim()).toBe("");

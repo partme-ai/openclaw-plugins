@@ -41,7 +41,7 @@ interface KnowledgeAddParams {
 // 命名空间校验
 // ===================================================================
 
-/** 对话级 namespace 格式：{accountId}:{mode} */
+/** 默认对话 namespace 由 OpenClaw sessionKey 摘要与 bot/agent 模式派生。 */
 // ===================================================================
 // 响应构造
 // ===================================================================
@@ -143,14 +143,14 @@ async function handleStoreFile(
   }
 
   const ext = extname(filePath).toLowerCase();
-  const supportedExts = new Set(['.md', '.txt', '.csv', '.json']);
-  if (!supportedExts.has(ext)) {
-    return failedResult(`不支持的文件类型: ${ext}（支持: ${[...supportedExts].join(', ')}）`);
+  const supportedExts = new Set(['.md', '.txt', '.text', '.csv', '.json']);
+  if (!supportedExts.has(ext) && !config.parser?.provider) {
+    return failedResult(`不支持的文件类型: ${ext}（纯文本支持: ${[...supportedExts].join(', ')}；其它格式需配置 parser）`);
   }
 
   const { store, embedding } = await getOrCreateStore(config, namespace);
 
-  const result = await indexDocument(filePath, sourceId, embedding, store);
+  const result = await indexDocument(filePath, sourceId, embedding, store, undefined, config.parser);
   if (!result.success) {
     return failedResult(result.error ?? '索引文件失败');
   }
@@ -221,7 +221,7 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext, config: K
       '',
       '1. store_text — 存入文字内容',
       '   - content（必填）：要存入知识库的文字内容',
-      '   - namespace（可选）：知识库命名空间，默认对话级别（accountId:mode）',
+      '   - namespace（可选）：默认使用当前 OpenClaw 会话的私有 namespace',
       '   - sourceId（可选）：来源标识，默认取 content 前 30 字符',
       '',
       '2. store_file — 存入文件',
@@ -236,7 +236,7 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext, config: K
       '   - sourceId（可选）：来源标识，默认取 topic',
       '',
       '权限规则：',
-      '- 任何用户只能写入自己的精确 namespace（{accountId}:{mode}）',
+      '- 任何用户只能写入由当前 sessionKey 派生的私有 namespace',
       '- owner 可否写入其他 namespace 由 allowOwnerGlobalNamespaces 控制',
       '- store_file 默认关闭；仅 owner 且 realpath 位于 allowedFileRoots 时可用',
       '- store_summary 强制限制只能写入对话级 namespace',
@@ -268,7 +268,7 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext, config: K
         namespace: {
           type: 'string',
           description:
-            '知识库命名空间。默认对话级别（{accountId}:{mode}）。只有 owner 可写入 enterprise 等全局 namespace',
+            '知识库命名空间。默认由当前 sessionKey 派生。只有 owner 可写入 enterprise 等显式全局 namespace',
         },
         sourceId: {
           type: 'string',
@@ -336,7 +336,7 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext, config: K
         const access = authorizeNamespace(ctx, p.namespace, config);
         if (!access.ok) return failedResult(access.error);
         if (access.namespace !== defaultNamespace(ctx)) {
-          return failedResult('store_summary 只支持写入对话级 namespace（{accountId}:{mode}），不允许写入全局 namespace');
+          return failedResult('store_summary 只支持写入当前 sessionKey 派生的私有 namespace，不允许写入全局 namespace');
         }
         const topic = p.topic.trim();
         const text = p.text.trim();

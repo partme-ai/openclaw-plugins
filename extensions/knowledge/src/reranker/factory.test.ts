@@ -39,36 +39,6 @@ vi.mock('./jina.js', () => {
   };
 });
 
-// Mock ollama SDK
-vi.mock('ollama', () => {
-  return {
-    default: {
-      chat: vi.fn().mockResolvedValue({
-        message: {
-          content: '{"results": [{"index": 0, "score": 0.98}, {"index": 1, "score": 0.75}]}',
-        },
-      }),
-    },
-  };
-});
-
-// Mock OllamaRerankerService (uses ollama SDK internally)
-vi.mock('./ollama.js', () => {
-  function MockOllamaRerankerService() {
-    return {
-      modelName: 'dengcao/Qwen3-Reranker-4B:Q4_K_M',
-      rerank: vi.fn().mockResolvedValue([
-        { text: 'doc A', index: 0, score: 0.98 },
-        { text: 'doc B', index: 1, score: 0.75 },
-      ]),
-      health: vi.fn().mockResolvedValue(true),
-    };
-  }
-  return {
-    OllamaRerankerService: vi.fn().mockImplementation(MockOllamaRerankerService),
-  };
-});
-
 const { createRerankerService } = await import('./factory.js');
 
 describe('createRerankerService', () => {
@@ -83,14 +53,8 @@ describe('createRerankerService', () => {
       expect(svc.modelName).toBe('jina-reranker-v2-base-multilingual');
     });
 
-    it('provider=ollama → OllamaRerankerService', () => {
-      const svc = createRerankerService({ provider: 'ollama' });
-      expect(svc.modelName).toBe('dengcao/Qwen3-Reranker-4B:Q4_K_M');
-    });
-
-    it('无 provider → 默认 OllamaRerankerService', () => {
-      const svc = createRerankerService();
-      expect(svc.modelName).toBe('dengcao/Qwen3-Reranker-4B:Q4_K_M');
+    it('无 provider → 拒绝猜测外部服务', () => {
+      expect(() => createRerankerService()).toThrow('provider is required');
     });
   });
 
@@ -105,10 +69,6 @@ describe('createRerankerService', () => {
       expect(svc.modelName).toBe('jina-reranker-v2-base-multilingual');
     });
 
-    it('provider=Ollama → 正确路由', () => {
-      const svc = createRerankerService({ provider: 'Ollama' });
-      expect(svc.modelName).toBe('dengcao/Qwen3-Reranker-4B:Q4_K_M');
-    });
   });
 
   describe('未知 provider', () => {
@@ -126,7 +86,7 @@ describe('createRerankerService', () => {
     });
 
     it('health 返回 true', async () => {
-      const svc = createRerankerService({ provider: 'ollama' });
+      const svc = createRerankerService({ provider: 'jina', apiKey: 'test-key' });
       const healthy = await svc.health();
       expect(healthy).toBe(true);
     });

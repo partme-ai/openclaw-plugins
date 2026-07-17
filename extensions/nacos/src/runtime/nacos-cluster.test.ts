@@ -7,6 +7,7 @@ const mockSubscribe = vi.fn();
 const mockUnSubscribe = vi.fn();
 const mockReady = vi.fn();
 const mockGetAllInstances = vi.fn();
+const mockClose = vi.fn();
 
 vi.mock("nacos", () => ({
   NacosNamingClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
@@ -14,7 +15,7 @@ vi.mock("nacos", () => ({
     this.subscribe = mockSubscribe;
     this.unSubscribe = mockUnSubscribe;
     this.getAllInstances = mockGetAllInstances;
-    this.close = vi.fn();
+    this.close = mockClose;
     return this;
   }),
 }));
@@ -98,6 +99,36 @@ describe("WebhookClusterService", () => {
       const state = service.getState();
       expect(state.peers).toEqual([]);
       expect(state.lastUpdated).toBe(0);
+    });
+
+    it("初始化拉取失败时取消订阅并关闭客户端", async () => {
+      mockGetAllInstances.mockRejectedValueOnce(new Error("initial fetch failed"));
+      const service = new WebhookClusterService();
+
+      await expect(service.start({
+        pluginConfig: makeConfig(),
+        selfPort: 18789,
+        logger: mockLogger,
+      })).rejects.toThrow("initial fetch failed");
+
+      expect(mockUnSubscribe).toHaveBeenCalled();
+      expect(mockClose).toHaveBeenCalled();
+    });
+
+    it("忽略非法订阅载荷并限制 peer 数量", async () => {
+      const service = new WebhookClusterService();
+      await service.start({ pluginConfig: makeConfig(), selfPort: 18789, logger: mockLogger });
+      const subscriberCb = mockSubscribe.mock.calls[0][1];
+
+      expect(() => subscriberCb({ invalid: true })).not.toThrow();
+      subscriberCb(Array.from({ length: 1_100 }, (_, index) => ({
+        ip: `10.0.${Math.floor(index / 250)}.${index % 250}`,
+        port: 8_000 + (index % 100),
+        healthy: true,
+        metadata: {},
+      })));
+      expect(service.getPeers()).toHaveLength(1_000);
+      await service.stop(mockLogger);
     });
 
     it("filters out unhealthy peers", async () => {

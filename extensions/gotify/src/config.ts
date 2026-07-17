@@ -20,6 +20,11 @@ const DEFAULT_PRIORITY = 5;
 const DEFAULT_RECONNECT_DELAY_MS = 2_000;
 const DEFAULT_MAX_RECONNECT_DELAY_MS = 30_000;
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
+const DEFAULT_RECONNECT_JITTER_RATIO = 0.2;
+const DEFAULT_MAX_BUFFERED_MESSAGES = 1_000;
+const DEFAULT_MAX_DISPATCH_ATTEMPTS = 5;
+const DEFAULT_DISPATCH_RETRY_DELAY_MS = 1_000;
+const DEFAULT_MAX_DISPATCH_RETRY_DELAY_MS = 30_000;
 
 /**
  * 从 OpenClaw 总配置中读取 `channels.gotify` 配置节。
@@ -118,18 +123,50 @@ export function resolveGotifyAccount(
     serverUrl,
     appToken,
     clientToken,
-    defaultPriority: normalizePriority(merged.defaultPriority),
-    dmPolicy: normalizeDmPolicy(merged.dmPolicy),
+    defaultPriority: resolveExplicitNumber(
+      merged.defaultPriority,
+      DEFAULT_PRIORITY,
+    ),
+    dmPolicy:
+      merged.dmPolicy === undefined
+        ? "open"
+        : (String(merged.dmPolicy) as GotifyDmPolicy),
     allowFrom: normalizeAllowFrom(merged.allowFrom),
     inbound: {
       enabled: merged.inbound?.enabled ?? Boolean(clientToken),
       allowedAppId: normalizePositiveInt(merged.inbound?.allowedAppId),
-      reconnectDelayMs:
-        merged.inbound?.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS,
-      maxReconnectDelayMs:
-        merged.inbound?.maxReconnectDelayMs ?? DEFAULT_MAX_RECONNECT_DELAY_MS,
-      maxReconnectAttempts:
-        merged.inbound?.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT_ATTEMPTS,
+      reconnectDelayMs: resolveExplicitNumber(
+        merged.inbound?.reconnectDelayMs,
+        DEFAULT_RECONNECT_DELAY_MS,
+      ),
+      maxReconnectDelayMs: resolveExplicitNumber(
+        merged.inbound?.maxReconnectDelayMs,
+        DEFAULT_MAX_RECONNECT_DELAY_MS,
+      ),
+      maxReconnectAttempts: resolveExplicitNumber(
+        merged.inbound?.maxReconnectAttempts,
+        DEFAULT_MAX_RECONNECT_ATTEMPTS,
+      ),
+      reconnectJitterRatio: resolveExplicitNumber(
+        merged.inbound?.reconnectJitterRatio,
+        DEFAULT_RECONNECT_JITTER_RATIO,
+      ),
+      maxBufferedMessages: resolveExplicitNumber(
+        merged.inbound?.maxBufferedMessages,
+        DEFAULT_MAX_BUFFERED_MESSAGES,
+      ),
+      maxDispatchAttempts: resolveExplicitNumber(
+        merged.inbound?.maxDispatchAttempts,
+        DEFAULT_MAX_DISPATCH_ATTEMPTS,
+      ),
+      dispatchRetryDelayMs: resolveExplicitNumber(
+        merged.inbound?.dispatchRetryDelayMs,
+        DEFAULT_DISPATCH_RETRY_DELAY_MS,
+      ),
+      maxDispatchRetryDelayMs: resolveExplicitNumber(
+        merged.inbound?.maxDispatchRetryDelayMs,
+        DEFAULT_MAX_DISPATCH_RETRY_DELAY_MS,
+      ),
       deleteAfterConsume: merged.inbound?.deleteAfterConsume ?? true,
     },
     bootstrap: {
@@ -142,6 +179,126 @@ export function resolveGotifyAccount(
         "Provisioned by openclaw-gotify",
     },
   };
+}
+
+/**
+ * 启动前校验已解析账号，避免非法值被 JavaScript 隐式转换后进入计时器、URL 或安全策略。
+ */
+export function validateGotifyAccount(
+  account: ResolvedGotifyAccount,
+): string[] {
+  const issues: string[] = [];
+  if (account.serverUrl) {
+    try {
+      const url = new URL(account.serverUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        issues.push("serverUrl must use http or https");
+      }
+      if (url.username || url.password) {
+        issues.push("serverUrl must not contain userinfo credentials");
+      }
+    } catch {
+      issues.push("serverUrl must be a valid URL");
+    }
+  }
+  if (account.inbound.enabled && !account.clientToken) {
+    issues.push("inbound.enabled requires clientToken");
+  }
+  if (account.inbound.enabled && !account.inbound.allowedAppId) {
+    issues.push("inbound.enabled requires inbound.allowedAppId");
+  }
+  if (
+    !Number.isSafeInteger(account.defaultPriority) ||
+    account.defaultPriority < 0 ||
+    account.defaultPriority > 10
+  ) {
+    issues.push("defaultPriority must be an integer between 0 and 10");
+  }
+  if (!VALID_DM_POLICIES.has(account.dmPolicy)) {
+    issues.push(`dmPolicy is invalid: ${String(account.dmPolicy)}`);
+  }
+  validateInteger(
+    issues,
+    "inbound.reconnectDelayMs",
+    account.inbound.reconnectDelayMs,
+    500,
+  );
+  validateInteger(
+    issues,
+    "inbound.maxReconnectDelayMs",
+    account.inbound.maxReconnectDelayMs,
+    1_000,
+  );
+  if (account.inbound.maxReconnectDelayMs < account.inbound.reconnectDelayMs) {
+    issues.push("inbound.maxReconnectDelayMs must be >= reconnectDelayMs");
+  }
+  validateInteger(
+    issues,
+    "inbound.maxReconnectAttempts",
+    account.inbound.maxReconnectAttempts,
+    0,
+  );
+  validateInteger(
+    issues,
+    "inbound.maxBufferedMessages",
+    account.inbound.maxBufferedMessages,
+    1,
+  );
+  validateInteger(
+    issues,
+    "inbound.maxDispatchAttempts",
+    account.inbound.maxDispatchAttempts,
+    1,
+  );
+  validateInteger(
+    issues,
+    "inbound.dispatchRetryDelayMs",
+    account.inbound.dispatchRetryDelayMs,
+    10,
+  );
+  validateInteger(
+    issues,
+    "inbound.maxDispatchRetryDelayMs",
+    account.inbound.maxDispatchRetryDelayMs,
+    10,
+  );
+  if (
+    account.inbound.maxDispatchRetryDelayMs <
+    account.inbound.dispatchRetryDelayMs
+  ) {
+    issues.push(
+      "inbound.maxDispatchRetryDelayMs must be >= dispatchRetryDelayMs",
+    );
+  }
+  if (
+    !Number.isFinite(account.inbound.reconnectJitterRatio) ||
+    account.inbound.reconnectJitterRatio < 0 ||
+    account.inbound.reconnectJitterRatio > 1
+  ) {
+    issues.push("inbound.reconnectJitterRatio must be between 0 and 1");
+  }
+  return issues;
+}
+
+/** 只对缺省数字应用默认值；显式类型错误保留为 NaN，交由启动校验统一报告。 */
+function resolveExplicitNumber(value: unknown, fallback: number): number {
+  return value === undefined
+    ? fallback
+    : typeof value === "number"
+      ? value
+      : Number.NaN;
+}
+
+/** 统一校验计数和毫秒配置的安全整数下界。 */
+function validateInteger(
+  issues: string[],
+  path: string,
+  value: number,
+  minimum: number,
+): void {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    issues.push(`${path} must be a safe integer >= ${minimum}`);
+  }
 }
 
 /**
@@ -233,22 +390,6 @@ function normalizeString(value: unknown): string | null {
 }
 
 /**
- * 规范化 Gotify 消息优先级。
- *
- * Gotify priority 是整数，本插件将无效值回退为默认值，并把有效数字限制在 0-10，
- * 与配置 schema 和 UI 文案保持一致。
- *
- * @param value - 配置中的 priority 原始值。
- * @returns 0 到 10 之间的整数优先级。
- */
-function normalizePriority(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.max(0, Math.min(10, Math.trunc(value)));
-  }
-  return DEFAULT_PRIORITY;
-}
-
-/**
  * 将配置值规范化为正整数 Application ID。
  *
  * @param value - `inbound.allowedAppId` 原始值。
@@ -272,22 +413,6 @@ const VALID_DM_POLICIES = new Set<GotifyDmPolicy>([
   "pairing",
   "disabled",
 ]);
-
-/**
- * 规范化入站 DM 策略。
- *
- * @param value - 配置中的 `dmPolicy` 原始值。
- * @returns 合法策略值；缺失或非法时返回 `open`，再由 ingress runtime 决定是否需要 wildcard。
- */
-function normalizeDmPolicy(value: unknown): GotifyDmPolicy {
-  if (
-    typeof value === "string" &&
-    VALID_DM_POLICIES.has(value as GotifyDmPolicy)
-  ) {
-    return value as GotifyDmPolicy;
-  }
-  return "open";
-}
 
 /**
  * 规范化 allowlist 条目。

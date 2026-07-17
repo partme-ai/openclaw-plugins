@@ -19,7 +19,11 @@ import {
   createWecomKfListServicersTool,
   createWecomKfTransferSessionTool,
 } from "../tools/control-tools.js";
-import { createKfCallbackHandler } from "../webhook/callback.js";
+import {
+  createKfCallbackHandler,
+  startKfCallbackProcessing,
+  stopKfCallbackProcessing,
+} from "../webhook/callback.js";
 
 /**
  * 为 wecom-kf 渠道会话注入 MEDIA: 发送说明。
@@ -63,7 +67,11 @@ export function registerWecomKfFull(api: OpenClawPluginApi): void {
   api.registerService({
     id: "wecom-kf-state",
     start: async () => {
+      startKfCallbackProcessing();
       await initKfSendGuardStore();
+    },
+    stop: async () => {
+      await stopKfCallbackProcessing();
     },
   });
 

@@ -12,13 +12,13 @@
 /**
  * OpenClaw Bridge — 统一 IM 渠道适配层
  *
- * 一个插件，覆盖所有 22 个 OpenClaw IM 渠道：
+ * 一个插件，覆盖 27 个 OpenClaw 消息渠道：
  * - 20 个 OpenClaw 2026.7.1 stock 渠道
- * - 当前仓库 WeCom 与外部钉钉连接器
+ * - 当前仓库 6 个渠道与外部钉钉连接器
  *
  * 功能：
  * 1. before_prompt_build — 按渠道注入平台特定的系统上下文
- * 2. message_received / reply_payload_sending — UnifiedMessage 消息镜像到 MQ
+ * 2. message_received / message_sent — UnifiedMessage 消息镜像到 MQ
  * 3. 导出 normalizeForChannel / getChannelCapabilities / deriveTraceId 等供下游使用
  */
 

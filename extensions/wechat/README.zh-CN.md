@@ -62,11 +62,59 @@ flowchart TD
 
 账号 ID、Channel ID 和对端 ID 共同参与会话键。不要为了复用上下文而去掉账号维度，否则不同微信号收到的私聊可能串线。
 
+## 入站事务与失败语义
+
+```mermaid
+stateDiagram-v2
+    [*] --> LongPolling: 使用持久 get_updates_buf
+    LongPolling --> Authorizing: 收到消息批次
+    Authorizing --> Dropped: DM 未授权
+    Authorizing --> Command: 已授权且为内置命令
+    Authorizing --> MediaAndAgent: 已授权普通消息
+    Command --> MessageDone: 命令回复成功
+    MediaAndAgent --> MessageDone: Agent 与出站完成
+    Dropped --> MessageDone: 无副作用丢弃
+    MessageDone --> Authorizing: 批内下一条
+    MessageDone --> CursorCommitted: 整批完成
+    Authorizing --> RetrySameCursor: 处理异常
+    MediaAndAgent --> RetrySameCursor: 下载/Agent/发送异常
+    RetrySameCursor --> LongPolling: 退避后至少一次重放
+    CursorCommitted --> LongPolling: 原子保存新游标
+```
+
+- 鉴权发生在 Slash 命令、媒体下载、`getConfig`、会话写入和 Agent 调用之前。
+- 服务端返回空字符串也代表合法的游标重置，必须原子落盘。
+- 运行时未就绪属于批次失败，不能静默跳过并推进游标。
+- `allowFrom` 可作为静态白名单，并与扫码配对文件、旧账号绑定用户合并；空数组不会放行所有发送者。
+
 ## 生产边界与验证
 
 - 后端 API、扫码登录和 CDN 上传均属于真实环境依赖，本地单元测试不能替代账号验收。
 - 媒体下载和上传必须限制大小、类型、超时和临时文件生命周期。
 - 长轮询需要验证断网恢复、凭据失效、重复消息和 Gateway 重启后的恢复行为。
+- 默认只允许官方 iLink API 与 CDN 地址。自定义 HTTPS 代理必须分别显式设置 `allowCustomApiBaseUrl=true` / `allowCustomCdnBaseUrl=true`；二维码响应中的 `redirect_host` 不读取这些开关，只接受腾讯控制的 `weixin.qq.com` 域名，防止远端响应把 Bot Token 引向任意主机。
+- Bot Token、`context_token` 和 `get_updates_buf` 使用 0700 目录、0600 文件和同目录原子替换；API 请求无论成功失败都会清除超时定时器。
+- `context_token` 和 typing 配置缓存有固定容量上限；账号日志使用不可逆指纹，日志出口统一清除用户 ID、会话键、正文、文件路径和 URL 细节。
+
+```mermaid
+flowchart TD
+    C["管理员配置"] --> P{"官方端点?"}
+    P -->|是| A["允许携带 Bot Token / CDN 参数"]
+    P -->|否| X{"显式信任自定义 HTTPS?"}
+    X -->|否| D["启动失败，拒绝发送凭据"]
+    X -->|是| A
+    Q["二维码 redirect_host"] --> T{"*.weixin.qq.com?"}
+    T -->|否| D
+    T -->|是| R["仅切换 QR 状态轮询"]
+```
+
+### 安装态 E2E
+
+```bash
+node scripts/e2e/run-e2e.mjs --plugins wechat --skip-browser
+```
+
+该测试从正式 tarball 安装开始，用 disposable iLink 夹具完成 `getUpdates → 配对鉴权 → Agent Turn → sendMessage`，核对 Bearer Token、收件人、`context_token` 与回复正文；随后重启 Gateway 并重放同一 `message_id`，确认持久去重会推进游标但不会再次调用模型或发送回复。
 
 ```bash
 openclaw plugins doctor

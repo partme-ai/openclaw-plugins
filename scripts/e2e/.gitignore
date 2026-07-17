@@ -93,3 +93,9 @@ logs/
 ## harness db
 **/*.db
 
+# E2E 运行态证据由 CI 上传，避免把可能包含环境拓扑的报告提交到源码仓库。
+.e2e-secrets.json
+e2e-report.json
+reports/
+gateway.log
+*.pid

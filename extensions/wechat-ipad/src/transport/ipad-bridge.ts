@@ -42,6 +42,15 @@ type Timer = ReturnType<typeof setTimeout>;
 
 /** 桥接层允许进入 OpenClaw 管道的事件白名单。 */
 const EVENT_TYPES = new Set<string>(Object.values(EventType));
+/** 外部服务允许上报的登录状态白名单，未知字符串不能污染运维状态机。 */
+const LOGIN_STATUSES = new Set<WxLoginPayload["status"]>([
+  "waiting_scan",
+  "scanned",
+  "confirmed",
+  "logged_in",
+  "logged_out",
+  "token_expired",
+]);
 
 /**
  * 让网络维护定时器不阻止 Node.js 进程正常退出。
@@ -57,6 +66,11 @@ function errorMessage(error: unknown): string {
 
 async function readJsonLimited(response: Response, maxBytes: number): Promise<unknown> {
   if (!response.body) return null;
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await response.body.cancel();
+    throw new Error(`bridge response exceeds ${maxBytes} bytes`);
+  }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -118,7 +132,7 @@ function parseEvent(raw: WebSocket.RawData): IpadEvent {
  * 驱动；连接意外关闭时由本类调度重连，主动停止时则保证取消全部定时器和监听器。
  */
 export class WechatIpadBridge {
-  /** WebSocket 实例，首次启动或重连时延迟创建。 */
+  /** WebSocket 实例（延迟初始化）；首次启动或重连时创建，停止后立即释放引用。 */
   private ws: WebSocket | null = null;
   /** 面向状态端点和上层运行时暴露的桥接状态，不直接等同于 WebSocket readyState。 */
   private state: BridgeState = "disconnected";
@@ -144,6 +158,14 @@ export class WechatIpadBridge {
     private readonly logger: PluginLogger,
     private readonly random: () => number = Math.random,
   ) {}
+
+  /** 删除异常文本中可能由底层网络库回显的真实 Bearer Token，并限制日志/错误体长度。 */
+  private sanitizeError(error: unknown): string {
+    let message = errorMessage(error);
+    const token = this.config.auth.token;
+    if (token) message = message.split(token).join("[REDACTED]");
+    return message.length > 1000 ? `${message.slice(0, 1000)}…` : message;
+  }
 
   /** 启动首次连接；`required` 等启动策略由调用本方法的插件服务层决定。 */
   async start(): Promise<void> {
@@ -228,7 +250,7 @@ export class WechatIpadBridge {
       if (!response.ok) throw new Error(`bridge HTTP ${response.status}`);
       return normalizeApiResponse(payload);
     } catch (error) {
-      const message = controller.signal.aborted ? "bridge request timed out" : errorMessage(error);
+      const message = controller.signal.aborted ? "bridge request timed out" : this.sanitizeError(error);
       return { ok: false, error: message };
     } finally {
       clearTimeout(timeout);
@@ -268,7 +290,7 @@ export class WechatIpadBridge {
       socket.once("error", (error) => {
         if (!settled) {
           settled = true;
-          reject(new Error(`bridge connection failed: ${errorMessage(error)}`));
+          reject(new Error(`bridge connection failed: ${this.sanitizeError(error)}`));
         }
       });
       socket.once("close", (code) => {
@@ -281,7 +303,7 @@ export class WechatIpadBridge {
 
     socket.on("message", (raw) => this.handleMessage(raw));
     socket.on("pong", () => this.handlePong());
-    socket.on("error", (error) => this.logger.warn(`[wechat-ipad] bridge socket error: ${errorMessage(error)}`));
+    socket.on("error", (error) => this.logger.warn(`[wechat-ipad] bridge socket error: ${this.sanitizeError(error)}`));
     socket.on("close", (code) => this.handleClose(socket, code));
 
     try {
@@ -303,14 +325,17 @@ export class WechatIpadBridge {
       }
       if (event.type === EventType.LoginStatus) {
         const payload = event.data as Partial<WxLoginPayload>;
-        if (typeof payload.status !== "string") throw new Error("login_status payload is invalid");
+        if (typeof payload.status !== "string" ||
+            !LOGIN_STATUSES.has(payload.status as WxLoginPayload["status"])) {
+          throw new Error("login_status payload is invalid");
+        }
         this.loginStatus = payload.status as WxLoginPayload["status"];
         this.state = payload.status === "logged_in" ? "logged_in" :
           payload.status === "logged_out" || payload.status === "token_expired" ? "logged_out" : this.state;
       }
       void this.emit(event.type, event.data);
     } catch (error) {
-      this.logger.warn(`[wechat-ipad] rejected invalid bridge event: ${errorMessage(error)}`);
+      this.logger.warn(`[wechat-ipad] rejected invalid bridge event: ${this.sanitizeError(error)}`);
     }
   }
 
@@ -320,7 +345,7 @@ export class WechatIpadBridge {
       try {
         await listener(data);
       } catch (error) {
-        this.logger.error(`[wechat-ipad] event handler failed (${type}): ${errorMessage(error)}`);
+        this.logger.error(`[wechat-ipad] event handler failed (${type}): ${this.sanitizeError(error)}`);
       }
     }
   }
@@ -363,6 +388,8 @@ export class WechatIpadBridge {
     this.clearHeartbeat();
     const tick = () => {
       if (this.ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+      // 理论上上一轮 Pong 应先到达；仍有等待任务说明连接已异常，先清理旧任务再建立唯一超时哨兵。
+      if (this.pongTimer) clearTimeout(this.pongTimer);
       socket.ping();
       this.pongTimer = unref(setTimeout(() => {
         if (this.ws === socket) socket.terminate();
@@ -412,6 +439,16 @@ let activeBridge: WechatIpadBridge | null = null;
 /** 由插件服务生命周期设置或清除当前活动桥接器。 */
 export function setActiveBridge(bridge: WechatIpadBridge | null): void {
   activeBridge = bridge;
+}
+
+/**
+ * 仅当调用方仍拥有当前活动实例时才清除全局引用。
+ * 热重载期间旧账户的 finally 可能晚于新账户启动，比较实例可避免误清理新连接。
+ */
+export function clearActiveBridge(bridge: WechatIpadBridge): boolean {
+  if (activeBridge !== bridge) return false;
+  activeBridge = null;
+  return true;
 }
 
 /** 获取当前活动桥接器；插件尚未启动时返回 `null`。 */

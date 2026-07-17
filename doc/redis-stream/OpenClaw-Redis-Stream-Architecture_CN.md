@@ -368,7 +368,10 @@ process.env.REDIS_URL > channels.redis-stream.url > 默认值
 - `stream.blockMs`: 必须 ≥ 0
 - `stream.count`: 必须 > 0
 - `connection.reconnectMs`: 必须 > 0
+- `connection.reconnectMaxMs`: 必须 ≥ `reconnectMs`
+- `connection.reconnectJitterRatio`: 必须在 0~1
 - `connection.maxRetries`: 必须 ≥ 0；0 表示持续重连
+- 远程地址默认必须使用 `rediss://`；明文 `redis://` 仅允许回环地址或显式风险确认
 
 ### 9.3 安全：URL 密码脱敏
 
@@ -381,8 +384,8 @@ export function redactUrl(url: string): string {
 }
 ```
 
-用于 `/redis-stream/health` 和 `/redis-stream/status` HTTP 响应中展示配置，
-确保密码不会泄露到日志或 HTTP 输出。
+用于 `/redis-stream/health` 和 `/redis-stream/status` HTTP 响应中展示配置。连接异常构造器还会
+执行第二次脱敏，即使调用方遗漏预处理，也不会把 Redis ACL 用户名和密码写入日志。
 
 ## 10. Redis 传输层（transport/server.ts）
 
@@ -400,6 +403,7 @@ startRedisServer(config)
   └── [stream] consumeLoop()              → 后台消费循环
 
 stopRedisServer()
+  ├── consumeAbortController.abort()      → 中断错误退避定时器
   ├── clearPublisherClient()
   ├── consumerClient.destroy()            → 中断阻塞读取并等待消费循环结束
   ├── subscriberClient.unsubscribe().pUnsubscribe().quit()
@@ -416,8 +420,23 @@ reconnectStrategy: (retries: number) => {
   if (config.connection.maxRetries > 0 && retries >= config.connection.maxRetries) {
     return false;
   }
-  return config.connection.reconnectMs;  // 默认 3000ms，0 表示持续重连
+  return computeRedisReconnectDelay(config, retries);
 }
+```
+
+`computeRedisReconnectDelay` 使用 `min(reconnectMs × 2^retries, reconnectMaxMs)`，再叠加
+`reconnectJitterRatio` 双向抖动。`maxRetries=0` 只表示持续尝试，不表示零延迟。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Connecting
+    Connecting --> Ready: connect 成功
+    Connecting --> Backoff: connect 失败且未耗尽
+    Backoff --> Connecting: 指数退避 + 抖动到期
+    Ready --> Backoff: 连接断开
+    Connecting --> Stopped: maxRetries 耗尽
+    Backoff --> Stopped: Gateway abort
+    Ready --> Stopped: Gateway stop
 ```
 
 ### 10.3 Pub/Sub 订阅

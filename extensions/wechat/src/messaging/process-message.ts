@@ -1,11 +1,11 @@
 /**
  * @module wechat/messaging/process-message
  *
- * 单条入站消息的 **完整处理管线**（slash → 鉴权 → 媒体下载 → Agent dispatch → 出站）。
+ * 单条入站消息的 **完整处理管线**（鉴权 → slash → 媒体下载 → Agent dispatch → 出站）。
  *
  * **职责**：
- * - Slash 命令短路（不进入 AI pipeline）
- * - DM / 命令授权（openclaw command-auth）
+ * - DM / 命令授权（openclaw command-auth），并保证授权前不访问远端配置或媒体
+ * - 已授权 Slash 命令短路（不进入 AI pipeline）
  * - 媒体项下载（IMAGE/VIDEO/FILE/VOICE 优先级）并注入 MsgContext
  * - 创建 typing 回调、流式 markdown 过滤、错误通知
  *
@@ -32,6 +32,7 @@ import { readFrameworkAllowFromList } from "../auth/pairing.js";
 import { downloadRemoteImageToTemp } from "../cdn/upload.js";
 import { downloadMediaFromItem } from "../media/media-download.js";
 import { logger } from "../util/logger.js";
+import { sanitizeLogMessage } from "../util/redact.js";
 
 import { isDebugMode } from "./debug-mode.js";
 import { sendWeixinErrorNotice } from "./error-notice.js";
@@ -57,7 +58,10 @@ export type ProcessMessageDeps = {
   baseUrl: string;
   cdnBaseUrl: string;
   token?: string;
-  typingTicket?: string;
+  /** 静态白名单与扫码配对名单合并；空数组不代表放行所有人。 */
+  allowFrom?: string[];
+  /** 鉴权通过后才获取 typing ticket，防止陌生发送者放大远端 getConfig 请求。 */
+  resolveTypingTicket?: (userId: string, contextToken?: string) => Promise<string | undefined>;
   log: (msg: string) => void;
   errLog: (m: string) => void;
 };
@@ -82,11 +86,12 @@ export async function processOneMessage(
   deps: ProcessMessageDeps,
 ): Promise<void> {
   if (!deps?.channelRuntime) {
-    logger.error(
-      "processOneMessage: channelRuntime is undefined, skipping inbound message",
-    );
-    deps.errLog("processOneMessage: channelRuntime is undefined, skip");
-    return;
+    const error = new Error("processOneMessage: channelRuntime is unavailable");
+    logger.error(error.message);
+    deps.errLog(error.message);
+    // 这里必须抛错：monitor 只有在本批全部成功后才提交 get_updates_buf。
+    // 若静默 return，消息会被标记完成并永久越过游标，等同于数据丢失。
+    throw error;
   }
 
   const receivedAt = Date.now();
@@ -95,20 +100,11 @@ export async function processOneMessage(
   const debugTs: Record<string, number> = { received: receivedAt };
 
   const textBody = extractTextBody(full.item_list);
-  if (textBody.startsWith("/")) {
-    const slashResult = await handleSlashCommand(textBody, {
-      to: full.from_user_id ?? "",
-      contextToken: full.context_token,
-      baseUrl: deps.baseUrl,
-      token: deps.token,
-      accountId: deps.accountId,
-      log: deps.log,
-      errLog: deps.errLog,
-    }, receivedAt, full.create_time_ms);
-    if (slashResult.handled) {
-      logger.info(`[weixin] Slash command handled, skipping AI pipeline`);
-      return;
-    }
+  const senderId = full.from_user_id?.trim() ?? "";
+  if (!senderId) {
+    // 没有稳定发送者 ID 就无法建立 allowFrom、会话与 context_token 的隔离键。
+    // 抛错保留游标，便于后端修复异常消息，而不是把它误记为已消费。
+    throw new Error("weixin inbound message is missing from_user_id");
   }
 
   if (debug) {
@@ -119,6 +115,55 @@ export async function processOneMessage(
       `│ body="${textBody.slice(0, 40)}${textBody.length > 40 ? "…" : ""}" (len=${textBody.length}) itemTypes=[${itemTypes}]`,
       `│ sessionId=${full.session_id ?? "?"} contextToken=${full.context_token ? "present" : "none"}`,
     );
+  }
+
+  // --- Framework DM / command authorization ---
+  // 鉴权必须是第一个有副作用步骤：未授权消息不得触发 slash、媒体下载、
+  // getConfig、会话落盘或 Agent 调用。
+  const configuredAllowFrom = [...new Set((deps.allowFrom ?? []).map((id) => id.trim()).filter(Boolean))];
+  const { senderAllowedForCommands, commandAuthorized } =
+    await resolveSenderCommandAuthorizationWithRuntime({
+      cfg: deps.config,
+      rawBody: textBody.trim(),
+      isGroup: false,
+      dmPolicy: "pairing",
+      configuredAllowFrom,
+      configuredGroupAllowFrom: [],
+      senderId,
+      isSenderAllowed: (id: string, list: string[]) => list.includes(id),
+      /** 配对文件优先；扫码账号的 userId 仅作为旧安装迁移兜底。 */
+      readAllowFromStore: async () => {
+        const paired = readFrameworkAllowFromList(deps.accountId);
+        const linkedUserId = loadWeixinAccount(deps.accountId)?.userId?.trim();
+        return [...new Set([...configuredAllowFrom, ...paired, ...(linkedUserId ? [linkedUserId] : [])])];
+      },
+      runtime: deps.channelRuntime.commands,
+    });
+
+  const directDmOutcome = resolveDirectDmAuthorizationOutcome({
+    isGroup: false,
+    dmPolicy: "pairing",
+    senderAllowedForCommands,
+  });
+  if (directDmOutcome === "disabled" || directDmOutcome === "unauthorized") {
+    logger.info(`authorization: dropping message outcome=${directDmOutcome}`);
+    return;
+  }
+
+  if (textBody.startsWith("/") && commandAuthorized) {
+    const slashResult = await handleSlashCommand(textBody, {
+      to: senderId,
+      contextToken: full.context_token,
+      baseUrl: deps.baseUrl,
+      token: deps.token,
+      accountId: deps.accountId,
+      log: deps.log,
+      errLog: deps.errLog,
+    }, receivedAt, full.create_time_ms);
+    if (slashResult.handled) {
+      logger.info(`[weixin] authorized slash command handled, skipping AI pipeline`);
+      return;
+    }
   }
 
   const mediaOpts: WeixinInboundMediaOpts = {};
@@ -176,44 +221,8 @@ export async function processOneMessage(
 
   const ctx = weixinMessageToMsgContext(full, deps.accountId, mediaOpts);
 
-  // --- Framework command authorization ---
   const rawBody = ctx.Body?.trim() ?? "";
   ctx.CommandBody = rawBody;
-
-  const senderId = full.from_user_id ?? "";
-
-  const { senderAllowedForCommands, commandAuthorized } =
-    await resolveSenderCommandAuthorizationWithRuntime({
-      cfg: deps.config,
-      rawBody,
-      isGroup: false,
-      dmPolicy: "pairing",
-      configuredAllowFrom: [],
-      configuredGroupAllowFrom: [],
-      senderId,
-      isSenderAllowed: (id: string, list: string[]) => list.length === 0 || list.includes(id),
-      /** Pairing: framework credentials `*-allowFrom.json`, with account `userId` fallback for legacy installs. */
-      readAllowFromStore: async () => {
-        const fromStore = readFrameworkAllowFromList(deps.accountId);
-        if (fromStore.length > 0) return fromStore;
-        const uid = loadWeixinAccount(deps.accountId)?.userId?.trim();
-        return uid ? [uid] : [];
-      },
-      runtime: deps.channelRuntime.commands,
-    });
-
-  const directDmOutcome = resolveDirectDmAuthorizationOutcome({
-    isGroup: false,
-    dmPolicy: "pairing",
-    senderAllowedForCommands,
-  });
-
-  if (directDmOutcome === "disabled" || directDmOutcome === "unauthorized") {
-    logger.info(
-      `authorization: dropping message outcome=${directDmOutcome}`,
-    );
-    return;
-  }
 
   ctx.CommandAuthorized = commandAuthorized;
   logger.debug(
@@ -285,7 +294,8 @@ export async function processOneMessage(
   }
   const humanDelay = deps.channelRuntime.reply.resolveHumanDelayConfig(deps.config, route.agentId);
 
-  const hasTypingTicket = Boolean(deps.typingTicket);
+  const typingTicket = await deps.resolveTypingTicket?.(senderId, full.context_token);
+  const hasTypingTicket = Boolean(typingTicket);
   const typingCallbacks = createTypingCallbacks({
     start: hasTypingTicket
       ? () =>
@@ -294,7 +304,7 @@ export async function processOneMessage(
             token: deps.token,
             body: {
               ilink_user_id: ctx.To,
-              typing_ticket: deps.typingTicket!,
+              typing_ticket: typingTicket!,
               status: TypingStatus.TYPING,
             },
           })
@@ -306,13 +316,13 @@ export async function processOneMessage(
             token: deps.token,
             body: {
               ilink_user_id: ctx.To,
-              typing_ticket: deps.typingTicket!,
+              typing_ticket: typingTicket!,
               status: TypingStatus.CANCEL,
             },
           })
       : async () => {},
-    onStartError: (err) => deps.log(`[weixin] typing send error: ${String(err)}`),
-    onStopError: (err) => deps.log(`[weixin] typing cancel error: ${String(err)}`),
+    onStartError: (err) => deps.log(sanitizeLogMessage(`[weixin] typing send error: ${String(err)}`)),
+    onStopError: (err) => deps.log(sanitizeLogMessage(`[weixin] typing cancel error: ${String(err)}`)),
     keepaliveIntervalMs: 5000,
   });
 
@@ -398,7 +408,7 @@ export async function processOneMessage(
         }
       },
       onError: (err, info) => {
-        deps.errLog(`weixin reply ${info.kind}: ${String(err)}`);
+        deps.errLog(sanitizeLogMessage(`weixin reply ${info.kind}: ${String(err)}`));
         const errMsg = err instanceof Error ? err.message : String(err);
         let notice: string;
         if (errMsg.includes("remote media download failed") || errMsg.includes("fetch")) {
@@ -410,7 +420,7 @@ export async function processOneMessage(
         ) {
           notice = `⚠️ 媒体文件上传失败，请稍后重试。`;
         } else {
-          notice = `⚠️ 消息发送失败：${errMsg}`;
+          notice = "⚠️ 消息发送失败，请稍后重试。";
         }
         void sendWeixinErrorNotice({
           to: ctx.To,

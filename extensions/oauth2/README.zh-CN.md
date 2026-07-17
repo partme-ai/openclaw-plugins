@@ -15,6 +15,30 @@
 
 插件不包含任何厂商专用实现。Auth0、Keycloak、Azure AD 或其他标准服务都通过同一组配置接入。
 
+## 授权与代理架构
+
+```mermaid
+sequenceDiagram
+    participant Browser as 浏览器
+    participant Proxy as OAuth2 插件代理
+    participant IdP as 外部 OAuth2/OIDC Server
+    participant Gateway as OpenClaw Gateway
+
+    Browser->>Proxy: 访问受保护资源
+    Proxy-->>Browser: 302 /auth/oauth2/login
+    Browser->>IdP: Authorization Code + PKCE S256
+    IdP-->>Proxy: callback(code, state)
+    Proxy->>IdP: code + verifier 换取 Token
+    Proxy->>IdP: UserInfo / Introspection（按配置）
+    Proxy-->>Browser: HttpOnly 会话 Cookie
+    Browser->>Proxy: 再次访问 HTTP / WebSocket
+    Proxy->>Proxy: 校验会话、scope、过期与刷新
+    Proxy->>Gateway: 覆盖可信身份 Header 后转发
+    Gateway-->>Browser: 业务响应
+```
+
+OAuth2 Server 负责登录、授权和 Token 签发；本插件是标准 Client 与授权拦截代理，不实现账号体系，也不充当 OAuth2 Server。
+
 ## Discovery 配置
 
 ```json

@@ -52,7 +52,9 @@ export async function handleInboundMessage(
   }
 
   // Pub/Sub has no stable delivery ID; only Stream entries participate in dedupe.
-  const messageId = message.streamEntryId ? `${channel}:${message.streamEntryId}` : undefined;
+  const messageId = message.streamEntryId
+    ? `${channel}:${message.streamEntryId}`
+    : undefined;
 
   // 3. 路由解析（显式绑定优先，Stream fieldAgentId 字段覆盖）
   let route = message.fieldAgentId
@@ -152,7 +154,14 @@ export async function handleInboundMessage(
               accountId: route.accountId,
             });
           } else {
-            await publishMessage(replyChannel, wire);
+            // Redis Pub/Sub 没有离线积压：PUBLISH 返回 0 就意味着本次回复已永久丢失，
+            // 因此不能向 OpenClaw 回报“发送成功”，让上层按失败策略处理。
+            const subscriberCount = await publishMessage(replyChannel, wire);
+            if (subscriberCount === 0) {
+              throw new Error(
+                `[openclaw-redis-stream] No active subscriber for reply channel: ${replyChannel}`,
+              );
+            }
           }
         },
         outboundFormat: "envelope",

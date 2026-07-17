@@ -16,6 +16,7 @@ import { getSyncBufFilePath, loadGetUpdatesBuf, saveGetUpdatesBuf } from "../sto
 import { ProcessedMessageStore } from "../storage/processed-messages.js";
 import { logger } from "../util/logger.js";
 import type { Logger } from "../util/logger.js";
+import { sanitizeLogMessage } from "../util/redact.js";
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -37,7 +38,9 @@ export async function processUpdateBatch<T>(params: {
   for (const message of params.messages) {
     await params.processMessage(message);
   }
-  if (params.nextSyncBuf) {
+  // 空字符串也是合法游标：服务端会用它显式要求客户端重置同步上下文。
+  // 只判断 truthy 会让本地继续使用旧游标，造成重复拉取或永久不同步。
+  if (params.nextSyncBuf !== undefined) {
     params.commitSyncBuf(params.nextSyncBuf);
   }
 }
@@ -151,11 +154,9 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         }
 
         consecutiveFailures += 1;
-        errLog(
-          `weixin getUpdates failed: ret=${resp.ret} errcode=${resp.errcode} errmsg=${resp.errmsg ?? ""} (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`,
-        );
+        errLog(`weixin getUpdates failed: ret=${resp.ret} errcode=${resp.errcode} (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`);
         aLog.error(
-          `getUpdates failed: ret=${resp.ret} errcode=${resp.errcode} errmsg=${resp.errmsg ?? ""}`,
+          `getUpdates failed: ret=${resp.ret} errcode=${resp.errcode}`,
         );
         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
           errLog(
@@ -188,12 +189,6 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         const now = Date.now();
         setStatus?.({ accountId, lastEventAt: now, lastInboundAt: now });
 
-        // allowFrom filtering is delegated to processOneMessage via the framework
-        // authorization pipeline (resolveSenderCommandAuthorizationWithRuntime).
-
-        const fromUserId = full.from_user_id ?? "";
-        const cachedConfig = await configManager.getForUser(fromUserId, full.context_token);
-
         await processOneMessage(full, {
           accountId,
           config,
@@ -201,7 +196,10 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
           baseUrl,
           cdnBaseUrl,
           token,
-          typingTicket: cachedConfig.typingTicket,
+          allowFrom: opts.allowFrom,
+          // processOneMessage 在 DM 鉴权通过后才调用，避免未授权用户消耗 getConfig 配额。
+          resolveTypingTicket: async (userId, contextToken) =>
+            (await configManager.getForUser(userId, contextToken)).typingTicket,
           log: opts.runtime?.log ?? (() => {}),
           errLog,
         });
@@ -221,9 +219,9 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
         return;
       }
       consecutiveFailures += 1;
-      errLog(
+      errLog(sanitizeLogMessage(
         `weixin getUpdates error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${String(err)}`,
-      );
+      ));
       aLog.error(`getUpdates error: ${err instanceof Error ? err.message : String(err)}`);
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         errLog(

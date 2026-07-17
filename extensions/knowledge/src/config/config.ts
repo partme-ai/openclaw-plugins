@@ -108,6 +108,9 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
     if (emb.maxBatchSize !== undefined && (!Number.isInteger(emb.maxBatchSize) || emb.maxBatchSize < 1 || emb.maxBatchSize > 2048)) {
       errors.push('embedding.maxBatchSize 必须是 1-2048 的整数');
     }
+    if (emb.maxResponseBytes !== undefined && (!Number.isInteger(emb.maxResponseBytes) || emb.maxResponseBytes < 1024 || emb.maxResponseBytes > 67_108_864)) {
+      errors.push('embedding.maxResponseBytes 必须是 1024-67108864 的整数');
+    }
   }
 
   // --- store ---
@@ -200,10 +203,28 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
   }
 
   if (config.tokenizer?.provider && !['tiktoken', 'zhipu'].includes(config.tokenizer.provider.toLowerCase())) errors.push('tokenizer.provider 不受支持');
-  if (config.reranker?.provider && !['jina', 'zhipu', 'ollama'].includes(config.reranker.provider.toLowerCase())) errors.push('reranker.provider 不受支持');
+  validateRemoteOptions(config.tokenizer, 'tokenizer', errors, 8_388_608);
+  if (config.reranker?.provider && !['jina', 'zhipu'].includes(config.reranker.provider.toLowerCase())) errors.push('reranker.provider 不受支持');
+  validateRemoteOptions(config.reranker, 'reranker', errors, 67_108_864);
+  if (config.reranker?.topN !== undefined && (!Number.isInteger(config.reranker.topN) || config.reranker.topN < 0 || config.reranker.topN > 100)) errors.push('reranker.topN 必须是 0-100 的整数');
+  if (config.reranker?.returnDocuments !== undefined && typeof config.reranker.returnDocuments !== 'boolean') errors.push('reranker.returnDocuments 必须是布尔值');
   if (config.parser?.provider && !['zhipu', 'ollama'].includes(config.parser.provider.toLowerCase())) errors.push('parser.provider 不受支持');
+  validateRemoteOptions(config.parser, 'parser', errors, 67_108_864);
+  if (config.parser?.maxFileBytes !== undefined && (!Number.isInteger(config.parser.maxFileBytes) || config.parser.maxFileBytes < 1024 || config.parser.maxFileBytes > 1_073_741_824)) errors.push('parser.maxFileBytes 必须是 1024-1073741824 的整数');
 
   return errors;
+}
+
+function validateRemoteOptions(
+  config: { requestTimeoutMs?: number; maxRetries?: number; maxResponseBytes?: number } | undefined,
+  field: string,
+  errors: string[],
+  maximumResponseBytes: number,
+): void {
+  if (!config) return;
+  if (config.requestTimeoutMs !== undefined && (!Number.isInteger(config.requestTimeoutMs) || config.requestTimeoutMs < 100 || config.requestTimeoutMs > 300_000)) errors.push(`${field}.requestTimeoutMs 必须是 100-300000 的整数`);
+  if (config.maxRetries !== undefined && (!Number.isInteger(config.maxRetries) || config.maxRetries < 0 || config.maxRetries > 5)) errors.push(`${field}.maxRetries 必须是 0-5 的整数`);
+  if (config.maxResponseBytes !== undefined && (!Number.isInteger(config.maxResponseBytes) || config.maxResponseBytes < 1024 || config.maxResponseBytes > maximumResponseBytes)) errors.push(`${field}.maxResponseBytes 必须是 1024-${maximumResponseBytes} 的整数`);
 }
 
 // ===================================================================

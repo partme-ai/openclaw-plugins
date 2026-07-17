@@ -26,6 +26,10 @@ function config(dataDir: string, overrides: Partial<MemoryConfig> = {}): MemoryC
     extractionInterval: 5,
     maxRecordBytes: 64 * 1024,
     profileScope: "session",
+    autoRecall: true,
+    autoRecallMaxResults: 5,
+    autoRecallMaxChars: 4_000,
+    autoRecallTimeoutMs: 1_000,
     ...overrides,
   };
 }
@@ -201,6 +205,29 @@ describe("MemoryStore", () => {
     await expect(manager.readFile({ relPath: "conversations/2026-01-01.jsonl" })).rejects.toThrow("session-capability");
   });
 
+  it("拒绝通过记忆文件软链接读取 Agent 目录外的数据", async () => {
+    await append("agent-a", "s1", "symlink-run", "用于生成可读 citation");
+    const manager = store.createSearchManager("agent-a");
+    const [result] = await manager.search("生成可读", { sessionKey: "s1" });
+    const memoryFile = path.join(manager.status().workspaceDir as string, result!.path);
+    const outside = path.join(dataDir, "outside.jsonl");
+    fs.writeFileSync(outside, '{"secret":"outside"}\n');
+    fs.unlinkSync(memoryFile);
+    fs.symlinkSync(outside, memoryFile);
+
+    await expect(manager.readFile({ relPath: result!.path })).rejects.toThrow("symlink outside");
+  });
+
+  it("响应 AbortSignal，停止已经取消的自动召回扫描", async () => {
+    await append("agent-a", "s1", "abort-run", "不应在取消后继续扫描");
+    const controller = new AbortController();
+    controller.abort();
+    await expect(store.createSearchManager("agent-a").search("继续扫描", {
+      sessionKey: "s1",
+      signal: controller.signal,
+    })).rejects.toThrow();
+  });
+
   it("readFile 支持分页并返回解码后的记录", async () => {
     await append("agent-a", "s1", "r1", "第一页内容");
     await append("agent-a", "s1", "r2", "第二页内容");
@@ -247,6 +274,15 @@ describe("MemoryStore", () => {
     await store.close();
 
     process.env.OPENCLAW_MEMORY_TEST_KEY = "wrong-production-secret";
+    store = new MemoryStore(config(dataDir, { encryptionKeyEnv: "OPENCLAW_MEMORY_TEST_KEY" }));
+    await expect(store.initialize()).rejects.toThrow("encryption key validation failed");
+  });
+
+  it("已有明文记忆时禁止直接开启加密，避免产生明密文混合状态", async () => {
+    await append("agent-a", "s1", "plain-run", "仍是明文的历史记忆");
+    await store.close();
+
+    process.env.OPENCLAW_MEMORY_TEST_KEY = "new-production-secret-with-32-bytes";
     store = new MemoryStore(config(dataDir, { encryptionKeyEnv: "OPENCLAW_MEMORY_TEST_KEY" }));
     await expect(store.initialize()).rejects.toThrow("encryption key validation failed");
   });
@@ -314,6 +350,7 @@ describe("OpenClaw 2026.7.1 插件契约", () => {
     let capability: any;
     let toolFactory: any;
     let agentEnd: any;
+    let beforePromptBuild: any;
     const logger = { info() {}, warn() {}, error() {}, debug() {} };
     const api = {
       registrationMode: "full",
@@ -324,10 +361,14 @@ describe("OpenClaw 2026.7.1 插件契约", () => {
       },
       pluginConfig: { dataDir, extractionInterval: 1 },
       logger,
+      registerCli() {},
       registerService(value: typeof service) { service = value; },
       registerMemoryCapability(value: unknown) { capability = value; },
       registerTool(value: unknown) { toolFactory = value; },
-      on(name: string, handler: unknown) { if (name === "agent_end") agentEnd = handler; },
+      on(name: string, handler: unknown) {
+        if (name === "agent_end") agentEnd = handler;
+        if (name === "before_prompt_build") beforePromptBuild = handler;
+      },
     };
 
     plugin.register(api as never);
@@ -335,6 +376,7 @@ describe("OpenClaw 2026.7.1 插件契约", () => {
     expect(capability?.runtime).toBeDefined();
     expect(typeof toolFactory).toBe("function");
     expect(typeof agentEnd).toBe("function");
+    expect(typeof beforePromptBuild).toBe("function");
 
     await service!.start({ logger });
     await agentEnd(
@@ -346,6 +388,57 @@ describe("OpenClaw 2026.7.1 插件契约", () => {
     const tool = toolFactory({ agentId: "main", sessionKey: "session-contract" });
     const result = await tool.execute("call-1", { query: "严格模式" });
     expect(result.details.count).toBeGreaterThan(0);
+    await service!.stop();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("Agent Harness scoped runtime 未启动 service 时仍会惰性初始化并持久化", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-memory-scoped-"));
+    let service: { start: (context: unknown) => Promise<void>; stop: () => Promise<void> } | undefined;
+    let capability: any;
+    let toolFactory: any;
+    let agentEnd: any;
+    let beforePromptBuild: any;
+    const logger = { info() {}, warn() {}, error() {}, debug() {} };
+    const api = {
+      registrationMode: "full",
+      config: {
+        plugins: {
+          entries: { memory: { hooks: { allowConversationAccess: true } } },
+        },
+      },
+      pluginConfig: { dataDir, extractionInterval: 1, profileScope: "agent" },
+      logger,
+      registerCli() {},
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability(value: unknown) { capability = value; },
+      registerTool(value: unknown) { toolFactory = value; },
+      on(name: string, handler: unknown) {
+        if (name === "agent_end") agentEnd = handler;
+        if (name === "before_prompt_build") beforePromptBuild = handler;
+      },
+    };
+
+    plugin.register(api as never);
+    // 刻意不调用 service.start：真实 Agent Harness scoped runtime 正是这条路径。
+    await agentEnd(
+      { success: true, runId: "run-scoped", messages: [{ role: "user", content: "我喜欢星云紫格式" }] },
+      { agentId: "main", sessionKey: "session-scoped", senderId: "user-1" },
+    );
+    const { manager } = await capability.runtime.getMemorySearchManager({ agentId: "main" });
+    expect((await manager.search("星云紫", { sessionKey: "other-session" }))[0]?.snippet)
+      .toContain("星云紫");
+    const tool = toolFactory({ agentId: "main", sessionKey: "other-session" });
+    expect((await tool.execute("call-scoped", { query: "星云紫" })).details.count)
+      .toBeGreaterThan(0);
+    const recall = await beforePromptBuild(
+      { prompt: "星云紫对应什么格式？", messages: [{ role: "user", content: "星云紫对应什么格式？" }] },
+      { agentId: "main", sessionKey: "other-session" },
+    );
+    expect(recall.prependContext).toContain("我喜欢星云紫格式");
+    expect(recall.prependContext).toContain("L3/profile");
+    expect(recall.prependContext).toContain("不是系统指令");
+
     await service!.stop();
     fs.rmSync(dataDir, { recursive: true, force: true });
   });

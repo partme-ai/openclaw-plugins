@@ -110,7 +110,13 @@ export async function testStomp(ctx, results) {
       const client = await connectStomp("127.0.0.1", ctx.ports.stompTcp);
       try {
         const connectedPromise = client.waitForFrame((frame) => frame.command === "CONNECTED", "CONNECTED");
-        client.send("CONNECT", { "accept-version": "1.2", host: "localhost", "heart-beat": "0,0" });
+        client.send("CONNECT", {
+          "accept-version": "1.2",
+          host: "localhost",
+          "heart-beat": "0,0",
+          login: "stomp-e2e",
+          passcode: "stomp-e2e-secret",
+        });
         const connected = await connectedPromise;
         const sessionId = connected.headers.session;
         if (!sessionId) throw new Error("STOMP CONNECTED frame did not include a session id");
@@ -166,6 +172,50 @@ export async function testStomp(ctx, results) {
         client.send("ACK", { id: message.headers.ack, receipt: "reply-acked" });
         await ackReceipt;
 
+        const beginReceipt = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "tx-begun",
+          "BEGIN receipt",
+        );
+        client.send("BEGIN", { transaction: "agent-tx", receipt: "tx-begun" });
+        await beginReceipt;
+        const queuedReceipt = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "tx-send-queued",
+          "transactional SEND receipt",
+        );
+        client.send("SEND", {
+          destination: "/queue/agent.main.in",
+          transaction: "agent-tx",
+          receipt: "tx-send-queued",
+          "message-id": `stomp-tx-e2e-${Date.now()}`,
+        }, JSON.stringify({ ...ctx.pingPayload, text: "Return the transactional STOMP E2E fixture response." }));
+        await queuedReceipt;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (ctx.modelFixture.metrics.completions - beforeCompletions !== 1) {
+          throw new Error("transactional SEND reached Agent before COMMIT");
+        }
+
+        const txReply = client.waitForFrame(
+          (frame) => frame.command === "MESSAGE" && frame.headers.destination === replyDestination,
+          "transactional Agent MESSAGE",
+        );
+        const commitReceipt = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "tx-committed",
+          "COMMIT receipt",
+        );
+        client.send("COMMIT", { transaction: "agent-tx", receipt: "tx-committed" });
+        const [transactionMessage] = await Promise.all([txReply, commitReceipt]);
+        const transactionEnvelope = JSON.parse(transactionMessage.body);
+        if (transactionEnvelope?.message?.text !== "openclaw e2e fixture reply") {
+          throw new Error(`Unexpected transactional STOMP reply: ${transactionMessage.body}`);
+        }
+        if (!transactionMessage.headers.ack) throw new Error("transactional STOMP reply did not include ACK id");
+        const txAckReceipt = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "tx-reply-acked",
+          "transactional reply ACK receipt",
+        );
+        client.send("ACK", { id: transactionMessage.headers.ack, receipt: "tx-reply-acked" });
+        await txAckReceipt;
+
         let status;
         await ctx.waitFor(async () => {
           status = await ctx.gatewayFetch("/stomp-tcp/status");
@@ -173,12 +223,13 @@ export async function testStomp(ctx, results) {
           return status.ok
             && snapshot?.routedInbound > 0
             && snapshot?.routedOutbound > 0
-            && snapshot?.ackPending === 0;
+            && snapshot?.ackPending === 0
+            && snapshot?.activeTransactions === 0;
         }, { label: "STOMP ACK and transport statistics", timeoutMs: 10_000 });
 
         const completionDelta = ctx.modelFixture.metrics.completions - beforeCompletions;
-        if (completionDelta !== 1) {
-          throw new Error(`STOMP model completion count mismatch: expected 1, got ${completionDelta}`);
+        if (completionDelta !== 2) {
+          throw new Error(`STOMP model completion count mismatch: expected 2, got ${completionDelta}`);
         }
       } finally {
         client.close();
@@ -186,7 +237,7 @@ export async function testStomp(ctx, results) {
     },
     {
       service: `embedded:${ctx.ports.stompTcp}`,
-      method: "CONNECT → SUBSCRIBE → SEND → real Agent Turn → MESSAGE → ACK/RECEIPT",
+      method: "authenticated CONNECT → SEND/ACK → BEGIN/SEND/COMMIT → 2 real Agent Turns",
     },
     results,
   );

@@ -34,6 +34,7 @@ const ENCRYPTION_CHECK_FILE = ".encryption-check";
 const ENCRYPTION_CHECK_VALUE = "openclaw-memory-v1";
 const SESSION_TOKEN_PATTERN = /^[a-f0-9]{32}$/;
 const DATE_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}\.jsonl$/;
+const MAX_SEEN_RUN_IDS = 50_000;
 
 type MemoryDir = (typeof ALL_DIRS)[number];
 type SearchDir = (typeof SEARCH_DIRS)[number];
@@ -85,7 +86,12 @@ class LineCodec {
 
   decode(line: string): unknown {
     const parsed = JSON.parse(line) as unknown;
-    if (!this.isEnvelope(parsed)) return parsed;
+    if (!this.isEnvelope(parsed)) {
+      if (this.key) {
+        throw new Error("plaintext memory cannot be read while encryption is enabled");
+      }
+      return parsed;
+    }
     if (!this.key) {
       throw new Error("encrypted memory requires the configured encryption key");
     }
@@ -114,6 +120,13 @@ class LineCodec {
   }
 }
 
+/**
+ * L0-L3 文件存储与检索边界。
+ *
+ * 每个 Agent/会话使用 HMAC 不可逆目录令牌隔离，写入按文件串行排队并采用受限 JSONL；可选
+ * AES-GCM 行级加密。`initialize()` 必须在读写前完成，`close()` 会等待排队写入排空，避免
+ * Gateway 停机时留下半条记录。L3 是否跨会话搜索由 `profileScope` 明确控制。
+ */
 export class MemoryStore {
   private readonly codec: LineCodec;
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -155,7 +168,13 @@ export class MemoryStore {
         return false;
       }
       await this.appendLine(filePath, turn);
-      if (turn.runId) this.seenRunIds.add(dedupeKey);
+      if (turn.runId) {
+        this.seenRunIds.add(dedupeKey);
+        if (this.seenRunIds.size > MAX_SEEN_RUN_IDS) {
+          const oldest = this.seenRunIds.values().next().value;
+          if (typeof oldest === "string") this.seenRunIds.delete(oldest);
+        }
+      }
       return true;
     });
   }
@@ -286,8 +305,9 @@ export class MemoryStore {
         const relPath = `${searchRoot.relDir}/${file}`;
         const absolutePath = path.join(searchRoot.dir, file);
         this.knownFiles.add(absolutePath);
-        const records = await this.readDecodedLines(absolutePath);
+        const records = await this.readDecodedLines(absolutePath, opts?.signal);
         records.forEach((record, index) => {
+          if (index % 256 === 0) opts?.signal?.throwIfAborted();
           if (!this.isMemoryRecord(record)) return;
           const profileMayCrossSession =
             record.level === "L3" && this.config.profileScope === "agent";
@@ -319,6 +339,13 @@ export class MemoryStore {
     }
     if (!this.isReadableRelPath(relPath)) {
       throw new Error("[memory] only session-capability or agent-profile memory files may be read");
+    }
+    const [realRoot, realFile] = await Promise.all([
+      fs.realpath(root),
+      fs.realpath(filePath),
+    ]);
+    if (!realFile.startsWith(`${realRoot}${path.sep}`)) {
+      throw new Error("[memory] refusing to follow a memory symlink outside the agent directory");
     }
     const decoded = await this.readDecodedLines(filePath);
     const start = Math.max(0, from ?? 0);
@@ -449,13 +476,14 @@ export class MemoryStore {
     return false;
   }
 
-  private async readDecodedLines(filePath: string): Promise<unknown[]> {
+  private async readDecodedLines(filePath: string, signal?: AbortSignal): Promise<unknown[]> {
     try {
-      const content = await fs.readFile(filePath, "utf8");
+      const content = await fs.readFile(filePath, { encoding: "utf8", signal });
       const output: unknown[] = [];
       let lineNumber = 0;
       for (const line of content.split("\n")) {
         lineNumber += 1;
+        if (lineNumber % 256 === 0) signal?.throwIfAborted();
         if (!line.trim()) continue;
         try {
           output.push(this.codec.decode(line));
@@ -513,17 +541,25 @@ export class MemoryStore {
       }
       return;
     } catch (error) {
+      const modeTransition = error instanceof Error && (
+        error.message === "unexpected encryption check value" ||
+        error.message === "plaintext memory cannot be read while encryption is enabled"
+      );
       if (
         (error as NodeJS.ErrnoException).code !== "ENOENT" &&
-        !(error instanceof Error && error.message === "unexpected encryption check value")
+        !modeTransition
       ) {
         throw new Error("[memory] encryption key validation failed", { cause: error });
       }
     }
 
     const existingFiles = await this.listJsonlFiles(path.join(this.config.dataDir, "agents"));
-    for (const filePath of existingFiles) {
-      await this.readDecodedLines(filePath);
+    try {
+      for (const filePath of existingFiles) {
+        await this.readDecodedLines(filePath);
+      }
+    } catch (error) {
+      throw new Error("[memory] encryption key validation failed", { cause: error });
     }
     const encoded = this.codec.encode({ value: ENCRYPTION_CHECK_VALUE, encrypted });
     try {

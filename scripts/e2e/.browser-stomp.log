@@ -1,21 +1,18 @@
-[12:47:32.370] << ERROR
-message:Agent is not allowed\c demo
+[18:05:08.523] << MESSAGE
+subscription:browser-sub-1
+message-id:msg-2
+destination:/topic/session.stomp\cf06cb7f6-7727-40d8-8625-edef88d11fb3@main
 content-type:text/plain
-content-length:26
+ack:msg-2
+content-length:503
 
-Agent is not allowed: demo\0
-[12:47:32.369] >> SEND /queue/agent.demo
-[12:47:32.339] << ERROR
-message:Subscription is outside this connection's session scope
-content-type:text/plain
-content-length:55
-
-Subscription is outside this connection's session scope\0
-[12:47:32.338] >> SUBSCRIBE /topic/session.demo
-[12:47:32.288] << CONNECTED
+{"version":"1","message":{"messageId":"stomp-d5246b53-3aee-4f24-b351-c09f5d13094e","traceId":"1427e10b-e98b-4410-a602-ea3c4505125a","timestamp":1784225108522,"source":{"channel":"stomp","accountId":"default","userId":"stomp:f06cb7f6-7727-40d8-8625-edef88d11fb3@main","chatType":"direct","agentId":"main"},"contentType":"text","text":"openclaw e2e fixture reply","media":[],"direction":"outbound"},"headers":{"replyRoute":{"destination":"/topic/session.stomp:f06cb7f6-7727-40d8-8625-edef88d11fb3@main"}}}\0
+[18:05:08.305] >> SEND /queue/agent.main
+[18:05:08.272] >> SUBSCRIBE /topic/session.stomp:f06cb7f6-7727-40d8-8625-edef88d11fb3@main
+[18:05:08.240] << CONNECTED
 version:1.2
 heart-beat:10000,10000
-server:openclaw-web-stomp/2026.5.25-2
-session:e296cf71-eae1-49f0-ae3d-a803aa907f25
+server:openclaw-web-stomp/2026.7.1
+session:f06cb7f6-7727-40d8-8625-edef88d11fb3
 
 \0

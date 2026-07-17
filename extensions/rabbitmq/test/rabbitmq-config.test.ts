@@ -169,6 +169,43 @@ describe('rabbitmq-config', () => {
       expect(issues).toContain('RabbitMQ URL protocol must be amqp:// or amqps://');
       expect(issues).toContain('RabbitMQ quorum queue must be durable, non-exclusive, and non-auto-delete');
     });
+
+    it('requires TLS for remote brokers unless plaintext is explicitly allowed', () => {
+      const remote = resolveRabbitmqConfig({
+        channels: { rabbitmq: { url: 'amqp://rabbitmq.example.com' } },
+      });
+      expect(validateRabbitmqConfig(remote)).toContain(
+        'Remote RabbitMQ must use amqps:// unless connection.allowInsecureRemote=true',
+      );
+
+      const explicitlyAllowed = resolveRabbitmqConfig({
+        channels: {
+          rabbitmq: {
+            url: 'amqp://rabbitmq.example.com',
+            connection: { allowInsecureRemote: true },
+          },
+        },
+      });
+      expect(validateRabbitmqConfig(explicitlyAllowed)).not.toContain(
+        'Remote RabbitMQ must use amqps:// unless connection.allowInsecureRemote=true',
+      );
+    });
+
+    it('reports explicit invalid enum and numeric values instead of silently using defaults', () => {
+      const config = resolveRabbitmqConfig({
+        channels: {
+          rabbitmq: {
+            exchangeType: 'invalid',
+            retry: { maxAttempts: -1 },
+            connection: { reconnectJitterRatio: 2 },
+          },
+        },
+      });
+      const issues = validateRabbitmqConfig(config);
+      expect(issues).toContain('RabbitMQ exchangeType must be topic, direct, fanout, or headers');
+      expect(issues).toContain('retry.maxAttempts must be an integer >= 0');
+      expect(issues).toContain('connection.reconnectJitterRatio must be between 0 and 1');
+    });
   });
 
   describe('buildRabbitmqConfigSnapshot', () => {

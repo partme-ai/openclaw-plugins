@@ -1,3 +1,4 @@
+/** RabbitMQ 插件测试配置：单进程执行，避免共享的模拟连接状态在测试文件间并发污染。 */
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({

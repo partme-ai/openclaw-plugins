@@ -58,3 +58,30 @@ export function redactUrl(rawUrl: string): string {
     return truncate(rawUrl, 80);
   }
 }
+
+/**
+ * 日志最终出口的兜底脱敏。
+ *
+ * 业务代码仍应优先只记录状态、长度和错误类别；这里防止第三方错误文本或后续维护
+ * 又把 userId、session、文件路径、URL 参数等拼回日志。它会主动牺牲可逆性，
+ * 因此只用于运行日志，不用于需要保存原文的审计记录。
+ */
+export function sanitizeLogMessage(message: string, maxLen = 1_000): string {
+  const withoutControls = message.replace(/[\r\n\t\0]/g, " ");
+  const redactedQuoted = withoutControls.replace(
+    /\b(body|text|args|preview)=("[^"]*"|'[^']*')/gi,
+    "$1=<redacted>",
+  );
+  const redactedFields = redactedQuoted.replace(
+    /\b(from|to|userId|accountId|account|sessionId|sessionKey|mainSessionKey|clientId|contextToken|token|qrcode|filePath|path)=([^\s,]+)/gi,
+    "$1=<redacted>",
+  );
+  const redactedUrls = redactedFields.replace(/https?:\/\/[^\s]+/gi, (raw) => {
+    try {
+      return `<url:${new URL(raw).hostname}>`;
+    } catch {
+      return "<url:redacted>";
+    }
+  });
+  return truncate(redactedUrls, maxLen);
+}

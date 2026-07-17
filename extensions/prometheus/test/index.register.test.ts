@@ -143,12 +143,12 @@ function createFakeApi() {
     registerService() {},
     on: () => () => {},
     pluginConfig: {
-      metricsPath: "/metrics",
+      path: "/metrics",
       collectIntervalMs: 0,
       snapshotIntervalMs: 30_000,
       monitoredProviders: ["openai"],
       includeRuntime: false,
-      scrapeAuthEnabled: false,
+      scrapeAuth: { enabled: false },
     },
     registerHttpRoute(route: { path: string; handler: unknown; auth?: string }) {
       routes.set(route.path, route);

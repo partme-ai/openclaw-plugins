@@ -24,6 +24,12 @@ export { mqttPlugin } from "./runtime/mqtt-plugin.js";
 export { resolveBrokerConfig } from "./config.js";
 export type { ResolvedMqttAccount } from "./config.js";
 
+/**
+ * 生成可由状态接口公开的 MQTT 配置摘要。
+ *
+ * 返回值刻意排除用户名密码、证书路径、遗嘱内容等敏感或业务字段，仅保留排障所需的监听、
+ * 容量和策略元数据；新增配置字段时不得直接展开整个配置对象。
+ */
 export function sanitizeMqttConfig(config: MqttBrokerConfig | null): Record<string, unknown> | null {
   if (!config) return null;
   return {

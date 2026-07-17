@@ -16,7 +16,10 @@ import {
   type DispatchInboundParams,
   type DispatchInboundResult,
 } from "../bridge/inbound-bridge.js";
-import { InboundMessageQueue } from "../queue/inbound-message-queue.js";
+import {
+  InboundMessageQueue,
+  InboundMessageQueueCapacityError,
+} from "../queue/inbound-message-queue.js";
 import type { WireDispatchConfig } from "./types.js";
 
 /**
@@ -64,17 +67,21 @@ export async function dispatchWireMessage(
     const key =
       params.unified.messageId ||
       (typeof params.extra?.messageId === "string" ? params.extra.messageId : undefined);
-    const accepted = await queue.push({
+    const pushResult = await queue.pushDetailed({
       message: params.unified,
       idempotencyKey: key,
       transportMeta: params.extra,
     });
-    if (!accepted) {
+    if (pushResult === "duplicate") {
       return {
         ctx: { skippedDuplicate: true },
         dispatcher: undefined,
         replyOptions: {},
       } as DispatchInboundResult;
+    }
+    if (pushResult === "full") {
+      // 满载不是幂等命中：抛出可识别错误，让 MQ/Webhook 上游重试或执行反压。
+      throw new InboundMessageQueueCapacityError(queue.maxCapacity);
     }
     return (
       dispatchResult ??

@@ -43,7 +43,10 @@ function scheduleReconnect(
   onDisconnect?: (connectionId: string) => void,
 ): void {
   if (abortConnect || !config.client.reconnect.enabled || reconnectTimer) return;
-  const delay = Math.min(config.client.reconnect.initialDelayMs * 2 ** reconnectAttempt, config.client.reconnect.maxDelayMs);
+  const baseDelay = Math.min(config.client.reconnect.initialDelayMs * 2 ** reconnectAttempt, config.client.reconnect.maxDelayMs);
+  // 对称随机抖动用于打散集群重连；最终值仍限制在 [1, maxDelayMs]，不会出现负延迟。
+  const jitter = baseDelay * config.client.reconnect.jitterRatio * (Math.random() * 2 - 1);
+  const delay = Math.max(1, Math.min(Math.round(baseDelay + jitter), config.client.reconnect.maxDelayMs));
   reconnectAttempt += 1;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
@@ -73,6 +76,8 @@ function connectOnce(
     let pending = 0;
     let queue = Promise.resolve();
     let awaitingPongAt: number | null = null;
+    let windowStart = Date.now();
+    let windowMessages = 0;
 
     const cleanup = () => {
       if (cleaned) return;
@@ -124,6 +129,15 @@ function connectOnce(
     ws.on("message", (data, isBinary) => {
       touchConnection(connectionId);
       if (clientInfo) clientInfo.lastActiveAt = new Date().toISOString();
+      const now = Date.now();
+      if (now - windowStart >= 60_000) {
+        windowStart = now;
+        windowMessages = 0;
+      }
+      if (++windowMessages > config.limits.messagesPerMinute) {
+        ws.close(1008, "Message rate limit exceeded");
+        return;
+      }
       if (isBinary) {
         ws.close(1003, "Binary frames not supported");
         return;
@@ -134,7 +148,10 @@ function connectOnce(
         sendToConnection(connectionId, serializePongFrame(), config.limits.maxBufferedBytes);
         return;
       }
-      if (!parsed) return;
+      if (!parsed) {
+        sendToConnection(connectionId, serializeErrorFrame("Invalid message frame"), config.limits.maxBufferedBytes);
+        return;
+      }
       if (pending >= config.limits.maxPendingMessages) {
         ws.close(1013, "Inbound queue full");
         return;
@@ -152,7 +169,12 @@ function connectOnce(
       if (!opened) reject(error);
       else console.error(`[openclaw-web-socket] Client socket error ${connectionId}:`, error);
     });
-    ws.once("close", cleanup);
+    ws.once("close", () => {
+      cleanup();
+      // TCP/HTTP 对端可能在握手完成前直接断开且不触发 error；必须终结启动 Promise，
+      // 否则 Gateway start/stop 会永久等待一个已经不存在的连接。
+      if (!opened) reject(new Error("WebSocket connection closed before handshake completed"));
+    });
   });
 }
 

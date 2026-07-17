@@ -28,13 +28,30 @@ describe("rockermqOutbound Router delivery", () => {
   it("keeps ordinary durable replies on the session reply topic", async () => {
     const sessionKey = "agent:demo:rocketmq:direct:peer-1";
     upsertSessionContext(sessionKey, {
-      peerId: "peer-1", agentId: "demo", accountId: "default", replyTopic: "reply-safe", replyTag: "reply", updatedAt: 0,
+      peerId: "peer-1",
+      agentId: "demo",
+      accountId: "default",
+      replyTopic: "reply-safe",
+      replyTag: "reply",
+      updatedAt: 0,
     });
     await rockermqOutbound.sendText({
       to: sessionKey,
       text: "core reply",
       deliveryQueueId: "core-durable-id",
     });
-    expect(publishMessage).toHaveBeenCalledWith(expect.objectContaining({ topic: "reply-safe", tag: "reply" }));
+    expect(publishMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ topic: "reply-safe", tag: "reply" }),
+    );
+  });
+
+  it("fails when an ordinary outbound target has no session context", async () => {
+    await expect(
+      rockermqOutbound.sendText({
+        to: "agent:missing:rocketmq:direct:peer",
+        text: "must not disappear",
+      }),
+    ).rejects.toThrow("No session context");
+    expect(publishMessage).not.toHaveBeenCalled();
   });
 });

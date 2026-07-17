@@ -4,6 +4,7 @@
 
 import type { CollectorDiagnostic, MetricDefinition, MetricSample } from "../types.js";
 
+/** 单次采集生成的定义、样本、诊断和耗时快照；缓存以整个 Bundle 为原子单位更新。 */
 export type CollectBundle = {
   definitions: MetricDefinition[];
   samples: MetricSample[];

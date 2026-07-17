@@ -62,15 +62,19 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
   const username = getClientUsername(event.clientId);
   const user = config.auth.users.find((entry) => entry.username === username);
   if (
-    user &&
-    !isUserActionAllowed({
-      user,
-      action: "inbound",
-      topic: event.topic,
-      accountId: route.accountId,
-    })
+    config.auth.required &&
+    (!user ||
+      !isUserActionAllowed({
+        user,
+        action: "inbound",
+        topic: event.topic,
+        accountId: route.accountId,
+      }))
   ) {
-    return { accepted: false, reason: "acl_inbound_denied" };
+    return {
+      accepted: false,
+      reason: user ? "acl_inbound_denied" : "acl_inbound_identity_missing",
+    };
   }
 
   const runtime = tryGetWebMqttRuntime();

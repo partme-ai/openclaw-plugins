@@ -73,4 +73,41 @@ describe("tracing plugin", () => {
 
     await hooks.get("gateway_stop")?.[0]?.({}, {});
   });
+
+  it("gateway_start 与首个 Hook 并发时复用同一初始化 Promise，不漏首条 Trace", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const routes = new Map<string, { handler: Hook }>();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const api = {
+      config: {},
+      pluginConfig: { enabled: true, backend: "log", sampleRate: 1 },
+      logger,
+      on(name: string, handler: Hook) {
+        hooks.set(name, [...(hooks.get(name) ?? []), handler]);
+      },
+      registerHttpRoute(route: { path: string; handler: Hook }) {
+        routes.set(route.path, route);
+      },
+    };
+    plugin.register(api as never);
+
+    await Promise.all([
+      hooks.get("gateway_start")?.[0]?.({}, {}),
+      hooks.get("message_received")?.[0]?.(
+        { content: "first" },
+        { sessionKey: "sk-concurrent-init", runId: "run-concurrent-init", channelId: "wecom" },
+      ),
+    ]);
+
+    const statusResponse = response();
+    await routes.get("/tracing/status")?.handler(
+      { method: "GET", url: "/tracing/status", headers: {} },
+      statusResponse as never,
+    );
+    expect(JSON.parse(statusResponse.body)).toMatchObject({
+      data: { status: "active", activeSpans: 1, activeTraces: 1 },
+    });
+    expect(logger.info.mock.calls.filter(([message]) => String(message).includes("Log backend initialized"))).toHaveLength(1);
+    await hooks.get("gateway_stop")?.[0]?.({}, {});
+  });
 });

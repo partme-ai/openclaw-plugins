@@ -15,6 +15,10 @@
       "extractionInterval": { "type": "integer", "minimum": 1, "maximum": 100, "default": 5 },
       "maxRecordBytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 65536 },
       "profileScope": { "type": "string", "enum": ["session", "agent"], "default": "session" },
+      "autoRecall": { "type": "boolean", "default": true, "description": "在构建 Agent Prompt 前自动召回相关记忆" },
+      "autoRecallMaxResults": { "type": "integer", "minimum": 1, "maximum": 10, "default": 5 },
+      "autoRecallMaxChars": { "type": "integer", "minimum": 256, "maximum": 16000, "default": 4000 },
+      "autoRecallTimeoutMs": { "type": "integer", "minimum": 50, "maximum": 5000, "default": 1000 },
       "encryptionKeyEnv": { "type": "string", "description": "可选 AES-256-GCM 密钥环境变量名" }
     }
   },

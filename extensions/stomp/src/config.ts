@@ -53,8 +53,9 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-function boundedInt(value: unknown, fallback: number, min: number, max: number): number {
-  return typeof value === "number" && Number.isInteger(value) && value >= min ? Math.min(value, max) : fallback;
+function boundedInt(value: unknown, fallback: number, _min: number, _max: number): number {
+  // 只对缺失字段应用默认值；显式越界值必须保留到 validate 阶段报错，不能静默截断。
+  return typeof value === "number" ? value : fallback;
 }
 
 function strings(value: unknown): string[] {
@@ -99,7 +100,7 @@ function topicBindings(value: unknown): TopicBinding[] {
 }
 
 function ackMode(value: unknown): StompAckMode {
-  return value === "client" || value === "client-individual" ? value : "auto";
+  return (typeof value === "string" ? value : "auto") as StompAckMode;
 }
 
 /** 将 OpenClaw 全局配置解析为边界完整的 STOMP Server 配置。 */
@@ -154,9 +155,32 @@ function isLoopback(host: string): boolean {
   return value === "localhost" || value === "::1" || value.startsWith("127.");
 }
 
+function validateInteger(issues: string[], name: string, value: number, min: number, max: number): void {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    issues.push(`${name} must be an integer between ${min} and ${max}`);
+  }
+}
+
 /** 返回所有生产安全问题，便于 CLI/测试一次展示完整诊断。 */
 export function validateStompTcpConfig(config: StompTcpConfig): string[] {
   const issues: string[] = [];
+  validateInteger(issues, "port", config.port, 0, 65_535);
+  validateInteger(issues, "tlsPort", config.tlsPort, 1, 65_535);
+  validateInteger(issues, "heartbeat.serverMs", config.heartbeat.serverMs, 0, 300_000);
+  validateInteger(issues, "heartbeat.clientMs", config.heartbeat.clientMs, 0, 300_000);
+  validateInteger(issues, "maxConnections", config.maxConnections, 1, 100_000);
+  validateInteger(issues, "maxFrameSize", config.maxFrameSize, 1, 16 * 1024 * 1024);
+  validateInteger(issues, "maxBufferedBytes", config.maxBufferedBytes, 1, 64 * 1024 * 1024);
+  validateInteger(issues, "maxSubscriptionsPerConnection", config.maxSubscriptionsPerConnection, 1, 10_000);
+  validateInteger(issues, "maxQueueDepthPerSubscription", config.maxQueueDepthPerSubscription, 1, 100_000);
+  validateInteger(issues, "maxPendingMessages", config.maxPendingMessages, 1, 10_000);
+  validateInteger(issues, "messagesPerMinute", config.messagesPerMinute, 1, 1_000_000);
+  validateInteger(issues, "connectTimeoutMs", config.connectTimeoutMs, 1, 120_000);
+  validateInteger(issues, "maxDurableSubscriptions", config.maxDurableSubscriptions, 1, 100_000);
+  validateInteger(issues, "prefetchCount", config.prefetchCount, 1, 100_000);
+  if (!(["auto", "client", "client-individual"] as string[]).includes(config.defaultAckMode)) {
+    issues.push("defaultAckMode must be auto, client, or client-individual");
+  }
   if (config.port > 0 && !isLoopback(config.host)) issues.push("plaintext STOMP may only bind a loopback address");
   if (config.tls.enabled && (!config.tls.keyFile || !config.tls.certFile)) issues.push("tls.enabled=true requires tls.keyFile and tls.certFile");
   if (

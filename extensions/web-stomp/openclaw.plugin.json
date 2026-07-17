@@ -1,7 +1,7 @@
 {
   "id": "web-stomp",
   "name": "web-stomp",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "Production STOMP 1.2 over WebSocket/WSS channel for OpenClaw",
   "main": "dist/index.js",
   "channels": ["stomp"],

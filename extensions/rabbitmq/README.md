@@ -5,7 +5,7 @@
 **OpenClaw plugin — RabbitMQ channel bridge with multi-agent async collaboration and topic subscription support**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--rabbitmq-blue)
-![Node](https://img.shields.io/badge/Node.js-20+-green)
+![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 </div>
@@ -63,7 +63,7 @@
 ### Prerequisites
 
 - OpenClaw `>= 2026.7.1`
-- Node.js `20+`
+- Node.js `22+`
 - RabbitMQ server `>= 3.8`
 
 ### Install
@@ -162,10 +162,13 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
         "deadLetterSuffix": ".dlq"
       },
       "connection": {
+        "allowInsecureRemote": false,
         "timeoutMs": 30000,
         "heartbeatSeconds": 30,
         "reconnectAttempts": 5,
         "reconnectDelayMs": 5000,
+        "reconnectMaxDelayMs": 60000,
+        "reconnectJitterRatio": 0.2,
         "publishConfirmTimeoutMs": 10000
       },
       "consume": {
@@ -238,7 +241,10 @@ To configure, set in your `openclaw.json`:
 | `topicPrefix` | string | `openclaw` | Topic prefix for standard format |
 | `connection.timeout` | number | 30000 | Connection timeout (ms) |
 | `connection.reconnectAttempts` | number | 5 | Reconnect attempts |
-| `connection.reconnectDelay` | number | 5000 | Reconnect delay (ms) |
+| `connection.allowInsecureRemote` | boolean | false | Allow plaintext `amqp://` for remote hosts; keep false in production |
+| `connection.reconnectDelayMs` | number | 5000 | Exponential-backoff base delay (ms) |
+| `connection.reconnectMaxDelayMs` | number | 60000 | Exponential-backoff maximum delay (ms) |
+| `connection.reconnectJitterRatio` | number | 0.2 | Jitter ratio used to reduce reconnect stampedes |
 
 ### Topics
 

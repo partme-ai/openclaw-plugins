@@ -64,7 +64,12 @@ export async function createVectorStore(
   }
 }
 
-/** Derive an isolated persistence file without exposing the namespace in a filesystem path. */
+/**
+ * 为命名空间派生互不冲突的持久化文件路径。
+ *
+ * namespace 仅参与 SHA-256 摘要，不直接拼入文件名，既隔离租户数据，也避免路径
+ * 分隔符、超长账号名或业务标识泄漏到宿主文件系统。
+ */
 export function namespaceDataPath(dbPath: string, namespace: string): string {
   const extension = extname(dbPath);
   const stem = basename(dbPath, extension);

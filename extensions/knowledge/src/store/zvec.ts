@@ -34,6 +34,13 @@ type ZVecRecord = {
   metadata: VectorChunkMetadata;
 };
 
+/**
+ * 轻量级内存向量库，面向本地开发和小规模单进程部署。
+ *
+ * 检索始终在内存中完成；配置 `dbPath` 后，以临时文件写入再原子重命名的方式
+ * 保存 JSON 快照。它不提供跨进程锁、WAL 或事务隔离，生产多实例场景应使用
+ * {@link SqliteVecStore} 等具备事务能力的后端。
+ */
 export class ZVecStore implements VectorStore {
   private records: ZVecRecord[] = [];
   private config: ZVecConfig;
@@ -53,20 +60,21 @@ export class ZVecStore implements VectorStore {
     if (this.config.dbPath) {
       try {
         const raw = await readFile(this.config.dbPath, 'utf-8');
-        const parsed = JSON.parse(raw) as ZVecRecord[];
-        // 验证数据结构
-        if (Array.isArray(parsed)) {
-          this.records = parsed.filter((record) =>
-            typeof record?.id === 'string' &&
-            Array.isArray(record.vector) &&
-            record.vector.length === this.config.dimensions &&
-            record.metadata !== null &&
-            typeof record.metadata === 'object'
-          );
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) throw new Error('持久化快照根节点必须是数组');
+
+        // 不能过滤坏记录后继续启动：静默丢弃会让“部分索引损坏”伪装成正常空库。
+        for (const [index, record] of parsed.entries()) {
+          if (!isZVecRecord(record)) throw new Error(`持久化快照第 ${index} 条记录结构无效`);
+          assertVector(record.vector, this.config.dimensions, `persisted record ${record.id}`);
         }
-      } catch {
-        // 文件不存在或格式错误，初始化为空
-        this.records = [];
+        this.records = parsed;
+      } catch (error) {
+        if (isFileNotFound(error)) {
+          this.records = [];
+          return;
+        }
+        throw new Error(`无法加载 ZVec 持久化快照 ${this.config.dbPath}`, { cause: error });
       }
     }
   }
@@ -257,4 +265,18 @@ export class ZVecStore implements VectorStore {
     }
     await this.flush();
   }
+}
+
+function isZVecRecord(value: unknown): value is ZVecRecord {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Partial<ZVecRecord>;
+  return typeof record.id === 'string'
+    && Array.isArray(record.vector)
+    && record.metadata !== null
+    && typeof record.metadata === 'object'
+    && typeof record.metadata.text === 'string';
+}
+
+function isFileNotFound(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }

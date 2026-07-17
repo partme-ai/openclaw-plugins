@@ -25,6 +25,7 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
   const ids = resolvePlugins(pluginIds);
   const installed = readInstalledPlugins();
   const installedIds = installed.map((plugin) => plugin.id);
+  const manifestIdFor = (id) => PLUGIN_REGISTRY.find((plugin) => plugin.id === id)?.manifestId ?? id;
   const secretsPath = join(E2E_DIR, ".e2e-secrets.json");
   let gotifySecrets = opts.gotifySecrets;
   if (!gotifySecrets && ids.includes("gotify") && existsSync(secretsPath)) {
@@ -39,13 +40,13 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
   /** Disable installed plugins not in this run so gateway startup does not require their config. */
   for (const installedId of installedIds) {
     if (ids.includes(installedId)) continue;
-    fragments.pluginEntries[installedId] = { enabled: false };
+    fragments.pluginEntries[manifestIdFor(installedId)] = { enabled: false };
   }
 
   /** Ensure registry-known plugins not installed are not referenced. */
   for (const def of PLUGIN_REGISTRY) {
     if (!ids.includes(def.id) && !installedIds.includes(def.id)) {
-      delete fragments.pluginEntries[def.id];
+      delete fragments.pluginEntries[def.manifestId ?? def.id];
     }
   }
 
@@ -68,7 +69,8 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
     },
     session: { dmScope: "main" },
     plugins: {
-      allow: ids,
+      allow: ids.map(manifestIdFor),
+      ...(Object.keys(fragments.pluginSlots).length > 0 ? { slots: fragments.pluginSlots } : {}),
       // OpenClaw profiles can inherit managed npm projects from the host. Keep
       // this run's freshly packed paths explicit so an older published package
       // cannot win schema validation or runtime loading.
@@ -81,7 +83,7 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
     },
     channels: fragments.channelEntries,
     ...(ids.some((id) =>
-      id === "tracing" || id === "rabbitmq" || id === "redis-stream" || id === "rocketmq" || id === "gotify" || id === "stomp" || id === "web-stomp" || id === "web-mqtt"
+      id === "mqtt" || id === "tracing" || id === "rabbitmq" || id === "redis-stream" || id === "rocketmq" || id === "gotify" || id === "stomp" || id === "web-stomp" || id === "web-mqtt" || id === "web-socket" || id === "memory" || id === "openmem" || id === "knowledge" || id === "douyin" || id === "amap" || id === "meituan" || id === "rednode" || id === "wechat" || id === "wechat-ipad" || id === "wecom-kf" || id === "bridge"
     ) ? {
       models: {
         mode: "replace",
@@ -101,7 +103,7 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
               // preflight context guard.
               contextWindow: 131072,
               maxTokens: 1024,
-              compat: { supportsTools: false, requiresStringContent: true },
+              compat: { supportsTools: ids.includes("amap") || ids.includes("meituan") || ids.includes("rednode"), requiresStringContent: true },
             }],
           },
         },
@@ -163,6 +165,9 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
       deadLetters: [],
       audit: [],
     }, null, 2));
+  }
+  if (ids.includes("bridge") && !ids.includes("mqtt")) {
+    throw new Error("bridge E2E requires --plugins bridge,mqtt");
   }
   writeFileSync(join(E2E_DIR, ".e2e-config-meta.json"), JSON.stringify({ rocketmqTopic: e2eTopic, plugins: ids }, null, 2));
   console.log("[config] wrote %s (gateway:%s, plugins:%s)", configPath, GATEWAY_PORT, ids.join(","));

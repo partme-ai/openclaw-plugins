@@ -14,7 +14,7 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  target: "node20",
+  target: "node22",
   outDir: "dist",
   /** OpenClaw 由 Gateway 运行时提供，不得打入 dist */
   external: [
@@ -23,7 +23,7 @@ export default defineConfig({
     "aedes-persistence-redis",
     "aedes-persistence-mongodb",
     "aedes-persistence-level",
-    "aedes-persistence-nedb",
+    "level",
     "ioredis",
     "mqemitter-redis",
     "ws",

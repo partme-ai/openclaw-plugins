@@ -13,6 +13,7 @@ import { publishOutboundMessage } from "../src/outbound.js";
 describe("publishOutboundMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(publishToDestination).mockReturnValue(1);
   });
 
   it("delegates to publishToDestination", () => {
@@ -23,5 +24,10 @@ describe("publishOutboundMessage", () => {
   it("forwards empty body", () => {
     publishOutboundMessage("/topic/empty", "");
     expect(publishToDestination).toHaveBeenCalledWith("/topic/empty", "");
+  });
+
+  it("没有订阅者接受时抛错，避免上层把消息误判为已投递", () => {
+    vi.mocked(publishToDestination).mockReturnValue(0);
+    expect(() => publishOutboundMessage("/topic/offline", "retry-me")).toThrow("No STOMP subscriber");
   });
 });

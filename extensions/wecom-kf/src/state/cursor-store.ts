@@ -59,6 +59,8 @@ class CursorStore {
       const filePath = this.getCursorFilePath(normalizedKey);
       const temporaryPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
       await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
+      // mkdir 的 mode 只影响新目录；升级安装若目录原先过宽，必须主动收紧。
+      await chmod(dirname(filePath), 0o700);
       try {
         await writeFile(temporaryPath, `${normalized}\n`, { encoding: "utf-8", mode: 0o600 });
         await rename(temporaryPath, filePath);

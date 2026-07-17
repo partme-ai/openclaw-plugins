@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -194,5 +194,22 @@ describe("ReliableRouteDispatcher", () => {
     await first.close();
     await expect(second.initialize()).resolves.toBeUndefined();
     await second.close();
+  });
+
+  it("reclaims a timed-out writer lease left by another host", async () => {
+    const directory = await stateDir();
+    const lockDirectory = join(directory, ".writer.lock");
+    await mkdir(lockDirectory, { recursive: true });
+    await writeFile(join(lockDirectory, "owner.json"), JSON.stringify({
+      token: "dead-remote-writer",
+      pid: 123,
+      hostname: "another-gateway-host",
+      startedAt: Date.now() - 60_000,
+      heartbeatAt: Date.now() - 60_000,
+    }));
+
+    const store = new DurableRouteStore(directory, config({ lockTimeoutMs: 500 }));
+    await expect(store.initialize()).resolves.toBeUndefined();
+    await store.close();
   });
 });

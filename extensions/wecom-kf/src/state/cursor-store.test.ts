@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -20,10 +20,13 @@ describe("CursorStore", () => {
   });
 
   it("原子持久化游标并限制文件权限", async () => {
+    // 模拟旧版本遗留的宽权限目录，保存时应自动修复而不是只保护新文件。
+    await chmod(storeDir, 0o777);
     await getCursorStore().saveCursor("default:kf_001", "cursor-1");
     const digest = createHash("sha256").update("default:kf_001").digest("hex").slice(0, 16);
     const filePath = join(storeDir, `default_kf_001-${digest}.cursor`);
     expect(await readFile(filePath, "utf8")).toBe("cursor-1\n");
+    expect((await stat(storeDir)).mode & 0o777).toBe(0o700);
     expect((await stat(filePath)).mode & 0o777).toBe(0o600);
   });
 

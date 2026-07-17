@@ -21,6 +21,7 @@ export type PrometheusPluginUserConfig = {
   };
 };
 
+/** 经默认值、范围和路径校验后，可直接供采集与 HTTP 路由使用的完整配置。 */
 export type ResolvedPrometheusConfig = {
   metricsPath: string;
   collectIntervalMs: number;
@@ -40,6 +41,19 @@ export type ResolvedPrometheusConfig = {
 const ENV_BEARER = "OPENCLAW_PROMETHEUS_BEARER_TOKEN";
 const LEGACY_ENV_BEARER = "openclaw-prometheus_BEARER_TOKEN";
 const HTTP_PATH_PATTERN = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/;
+const ROOT_KEYS = new Set([
+  "path",
+  "collectIntervalMs",
+  "snapshotIntervalMs",
+  "workloadWindowMs",
+  "includeRuntime",
+  "monitoredProviders",
+  "instance",
+  "collectorTimeoutMs",
+  "maxScrapeSeries",
+  "scrapeAuth",
+]);
+const SCRAPE_AUTH_KEYS = new Set(["enabled", "bearerToken"]);
 
 /**
  * 将用户配置合并为带默认值的解析结果。
@@ -51,7 +65,30 @@ export function resolvePrometheusConfig(
   raw: Record<string, unknown> | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedPrometheusConfig {
+  if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) {
+    throw new Error("prometheus config must be an object");
+  }
+  const unknownKeys = Object.keys(raw ?? {}).filter((key) => !ROOT_KEYS.has(key));
+  if (unknownKeys.length > 0) {
+    throw new Error(`prometheus config contains unknown field: ${unknownKeys.join(", ")}`);
+  }
   const c = (raw ?? {}) as PrometheusPluginUserConfig;
+  if (c.includeRuntime !== undefined && typeof c.includeRuntime !== "boolean") {
+    throw new Error("prometheus.includeRuntime must be a boolean");
+  }
+  if (
+    c.scrapeAuth !== undefined &&
+    (!c.scrapeAuth || typeof c.scrapeAuth !== "object" || Array.isArray(c.scrapeAuth))
+  ) {
+    throw new Error("prometheus.scrapeAuth must be an object");
+  }
+  const scrapeAuthUnknown = Object.keys(c.scrapeAuth ?? {}).filter((key) => !SCRAPE_AUTH_KEYS.has(key));
+  if (scrapeAuthUnknown.length > 0) {
+    throw new Error(`prometheus.scrapeAuth contains unknown field: ${scrapeAuthUnknown.join(", ")}`);
+  }
+  if (c.scrapeAuth?.enabled !== undefined && typeof c.scrapeAuth.enabled !== "boolean") {
+    throw new Error("prometheus.scrapeAuth.enabled must be a boolean");
+  }
   const metricsPath = readPath(c.path);
   const collectIntervalMs = readInteger(c.collectIntervalMs, "collectIntervalMs", 0, 3_600_000, 15_000);
   const snapshotIntervalMs = readInteger(c.snapshotIntervalMs, "snapshotIntervalMs", 1_000, 3_600_000, 30_000);
@@ -63,6 +100,24 @@ export function resolvePrometheusConfig(
   const fromConfig =
     typeof c.scrapeAuth?.bearerToken === "string" ? c.scrapeAuth.bearerToken.trim() : "";
   const scrapeBearerToken = fromEnv || fromConfig || undefined;
+  if (c.scrapeAuth?.bearerToken !== undefined) {
+    if (
+      typeof c.scrapeAuth.bearerToken !== "string" ||
+      c.scrapeAuth.bearerToken.trim().length === 0 ||
+      c.scrapeAuth.bearerToken.length > 4_096 ||
+      /[\r\n]/.test(c.scrapeAuth.bearerToken)
+    ) {
+      throw new Error("prometheus.scrapeAuth.bearerToken must be a non-empty single-line string up to 4096 characters");
+    }
+  }
+  if (scrapeBearerToken && (scrapeBearerToken.length > 4_096 || /[\r\n]/.test(scrapeBearerToken))) {
+    throw new Error(`prometheus ${ENV_BEARER} must be a single-line token up to 4096 characters`);
+  }
+  if (scrapeAuthEnabled && !scrapeBearerToken) {
+    throw new Error(
+      `prometheus.scrapeAuth.enabled requires ${ENV_BEARER} or scrapeAuth.bearerToken`,
+    );
+  }
 
   return {
     metricsPath,

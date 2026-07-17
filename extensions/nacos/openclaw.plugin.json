@@ -1,7 +1,7 @@
 {
   "id": "nacos",
   "name": "@partme.ai/openclaw-nacos",
-  "version": "2026.5.24",
+  "version": "2026.7.1",
   "description": "Nacos Config Center merge and Gateway/Hooks naming registration with webhook cluster discovery",
   "main": "dist/bootstrap.cjs",
   "activation": {
@@ -21,6 +21,12 @@
       "enabled": {
         "type": "boolean",
         "description": "When false, skip the entire plugin"
+      },
+      "startupFailurePolicy": {
+        "type": "string",
+        "enum": ["fail", "degrade"],
+        "default": "fail",
+        "description": "Nacos startup failure policy. fail aborts Gateway startup; degrade keeps Gateway running with degraded health."
       },
       "serverList": {
         "type": "string",

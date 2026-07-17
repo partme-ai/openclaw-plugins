@@ -31,6 +31,12 @@ function loadPromClientModule(): PromClientModule | null {
 
 // ──────────────────── 类型 ────────────────────
 
+/**
+ * MQ/WebSocket 传输层共享的指标句柄。
+ *
+ * 渠道只上报协议事实（连接、收发、丢弃、鉴权和 ACL），Prometheus Registry 的暴露方式
+ * 由宿主插件决定，从而避免 SDK 私自注册 HTTP 路由或全局默认 Registry。
+ */
 export interface TransportMetrics {
   registry: unknown;
   getMetrics(): Promise<string>;
@@ -48,6 +54,7 @@ export interface TransportMetrics {
   setSessionsPendingExpiry(n: number): void;
 }
 
+/** 创建传输指标时使用的 Prometheus 指标名前缀，调用方应保证跨插件唯一。 */
 export interface TransportMetricsOptions {
   prefix: string;
 }

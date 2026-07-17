@@ -44,22 +44,28 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function positiveInt(value: unknown, fallback: number, max: number): number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0
-    ? Math.min(value, max)
-    : fallback;
-}
-
-function nonNegativeInt(value: unknown, fallback: number, max: number): number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0
-    ? Math.min(value, max)
-    : fallback;
+/** 保留用户显式配置的有限数字，让启动校验能暴露 0、负数、小数和超上限误配。 */
+function configuredNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function strings(value: unknown): string[] {
   return Array.isArray(value)
     ? [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))]
     : [];
+}
+
+/** 合法 Origin 统一为 URL.origin；非法值保留，交由 validate 输出可定位错误。 */
+function origins(value: unknown): string[] {
+  return [...new Set(strings(value).map((origin) => {
+    try {
+      const url = new URL(origin);
+      if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== "/")) return origin;
+      return url.origin;
+    } catch {
+      return origin;
+    }
+  }))];
 }
 
 function authUsers(value: unknown): StompAuthUser[] {
@@ -87,31 +93,29 @@ export function resolveStompWsConfig(globalConfig: Record<string, unknown>): Sto
   const tls = record(raw.tls);
   const ws = record(raw.ws);
   return {
-    wsPort: positiveInt(raw.wsPort ?? raw.port, DEFAULT_STOMP_WS_CONFIG.wsPort, 65_535),
+    wsPort: configuredNumber(raw.wsPort ?? raw.port, DEFAULT_STOMP_WS_CONFIG.wsPort),
     path: (() => {
       const path = typeof raw.path === "string" ? raw.path.trim() : DEFAULT_STOMP_WS_CONFIG.path;
       return path.startsWith("/") ? path : `/${path}`;
     })(),
     host: typeof raw.host === "string" && raw.host.trim() ? raw.host.trim() : DEFAULT_STOMP_WS_CONFIG.host,
-    heartbeatIncoming: nonNegativeInt(
+    heartbeatIncoming: configuredNumber(
       raw.heartbeatIncoming ?? heartbeat.clientMs,
       DEFAULT_STOMP_WS_CONFIG.heartbeatIncoming,
-      300_000,
     ),
-    heartbeatOutgoing: nonNegativeInt(
+    heartbeatOutgoing: configuredNumber(
       raw.heartbeatOutgoing ?? heartbeat.serverMs,
       DEFAULT_STOMP_WS_CONFIG.heartbeatOutgoing,
-      300_000,
     ),
-    maxConnections: positiveInt(raw.maxConnections ?? limits.maxConnections, DEFAULT_STOMP_WS_CONFIG.maxConnections, 100_000),
-    maxFrameSize: positiveInt(raw.maxFrameSize ?? limits.maxFrameSize, DEFAULT_STOMP_WS_CONFIG.maxFrameSize, 16 * 1024 * 1024),
-    maxBufferedBytes: positiveInt(limits.maxBufferedBytes, DEFAULT_STOMP_WS_CONFIG.maxBufferedBytes, 64 * 1024 * 1024),
-    maxSubscriptionsPerConnection: positiveInt(limits.maxSubscriptionsPerConnection, DEFAULT_STOMP_WS_CONFIG.maxSubscriptionsPerConnection, 10_000),
-    maxPendingMessages: positiveInt(limits.maxPendingMessages, DEFAULT_STOMP_WS_CONFIG.maxPendingMessages, 10_000),
-    maxPendingAcks: positiveInt(limits.maxPendingAcks ?? raw.prefetchCount, DEFAULT_STOMP_WS_CONFIG.maxPendingAcks, 100_000),
-    messagesPerMinute: positiveInt(limits.messagesPerMinute, DEFAULT_STOMP_WS_CONFIG.messagesPerMinute, 1_000_000),
-    connectTimeoutMs: positiveInt(limits.connectTimeoutMs, DEFAULT_STOMP_WS_CONFIG.connectTimeoutMs, 120_000),
-    allowedOrigins: strings(ws.allowedOrigins ?? raw.allowedOrigins),
+    maxConnections: configuredNumber(raw.maxConnections ?? limits.maxConnections, DEFAULT_STOMP_WS_CONFIG.maxConnections),
+    maxFrameSize: configuredNumber(raw.maxFrameSize ?? limits.maxFrameSize, DEFAULT_STOMP_WS_CONFIG.maxFrameSize),
+    maxBufferedBytes: configuredNumber(limits.maxBufferedBytes, DEFAULT_STOMP_WS_CONFIG.maxBufferedBytes),
+    maxSubscriptionsPerConnection: configuredNumber(limits.maxSubscriptionsPerConnection, DEFAULT_STOMP_WS_CONFIG.maxSubscriptionsPerConnection),
+    maxPendingMessages: configuredNumber(limits.maxPendingMessages, DEFAULT_STOMP_WS_CONFIG.maxPendingMessages),
+    maxPendingAcks: configuredNumber(limits.maxPendingAcks ?? raw.prefetchCount, DEFAULT_STOMP_WS_CONFIG.maxPendingAcks),
+    messagesPerMinute: configuredNumber(limits.messagesPerMinute, DEFAULT_STOMP_WS_CONFIG.messagesPerMinute),
+    connectTimeoutMs: configuredNumber(limits.connectTimeoutMs, DEFAULT_STOMP_WS_CONFIG.connectTimeoutMs),
+    allowedOrigins: origins(ws.allowedOrigins ?? raw.allowedOrigins),
     allowSharedTopics: raw.allowSharedTopics === true,
     defaultAgentId: typeof raw.defaultAgentId === "string" && raw.defaultAgentId.trim()
       ? raw.defaultAgentId.trim()
@@ -140,6 +144,37 @@ function isLoopback(host: string): boolean {
 
 export function validateStompWsConfig(config: StompServerConfig): string[] {
   const issues: string[] = [];
+  const integerRanges: Array<[keyof StompServerConfig, number, number]> = [
+    ["wsPort", 1, 65_535],
+    ["heartbeatIncoming", 0, 300_000],
+    ["heartbeatOutgoing", 0, 300_000],
+    ["maxConnections", 1, 100_000],
+    ["maxFrameSize", 1, 16 * 1024 * 1024],
+    ["maxBufferedBytes", 1, 64 * 1024 * 1024],
+    ["maxSubscriptionsPerConnection", 1, 10_000],
+    ["maxPendingMessages", 1, 10_000],
+    ["maxPendingAcks", 1, 100_000],
+    ["messagesPerMinute", 1, 1_000_000],
+    ["connectTimeoutMs", 1, 120_000],
+  ];
+  for (const [key, min, max] of integerRanges) {
+    const value = config[key];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+      issues.push(`${String(key)} must be an integer between ${min} and ${max}`);
+    }
+  }
+  if (!/^\/[^?#]*$/.test(config.path)) issues.push("path must be an absolute WebSocket path without query or fragment");
+  const validAgentId = (value: string) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
+  if (!validAgentId(config.defaultAgentId)) issues.push("defaultAgentId is invalid");
+  if (config.allowedAgentIds.some((agentId) => !validAgentId(agentId))) issues.push("allowedAgentIds contains an invalid Agent id");
+  for (const origin of config.allowedOrigins) {
+    try {
+      const url = new URL(origin);
+      if (!(["http:", "https:"] as string[]).includes(url.protocol) || url.origin !== origin || origin === "*") throw new Error();
+    } catch {
+      issues.push(`allowedOrigins contains an invalid canonical http/https Origin: ${origin}`);
+    }
+  }
   if (config.tls.enabled && (!config.tls.keyFile || !config.tls.certFile)) {
     issues.push("tls.enabled=true requires tls.keyFile and tls.certFile");
   }
@@ -156,8 +191,17 @@ export function validateStompWsConfig(config: StompServerConfig): string[] {
   for (const user of config.auth.users) {
     if (logins.has(user.login)) issues.push(`duplicate auth user: ${user.login}`);
     logins.add(user.login);
+    if (/\p{C}/u.test(user.login)) issues.push(`auth user login contains control characters: ${user.login}`);
+    const credentialCount = [user.password, user.passwordEnv, user.passwordHash].filter((value) => value !== undefined).length;
+    if (credentialCount !== 1) issues.push(`auth user ${user.login} must configure exactly one credential source`);
     const password = user.passwordEnv ? process.env[user.passwordEnv] : user.password;
-    if (!password && !user.passwordHash) issues.push(`auth user ${user.login} has no password, passwordEnv value, or passwordHash`);
+    if (user.passwordEnv && !password) issues.push(`auth user ${user.login} has no password in environment variable ${user.passwordEnv}`);
+    if (user.passwordHash) {
+      const expectedLength = user.hashAlgorithm === "sha512" ? 128 : 64;
+      if (!new RegExp(`^[a-fA-F0-9]{${expectedLength}}$`).test(user.passwordHash)) {
+        issues.push(`auth user ${user.login} has an invalid ${user.hashAlgorithm ?? "sha256"} passwordHash`);
+      }
+    }
   }
   return issues;
 }

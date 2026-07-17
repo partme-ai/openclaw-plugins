@@ -18,17 +18,38 @@
 
 ### Connection Lifecycle
 
+```mermaid
+stateDiagram-v2
+    [*] --> Starting: startRockermqServer
+    Starting --> ProducerReady: producer.startup
+    ProducerReady --> Connected: consumer.startup
+    Starting --> Backoff: startup failed
+    ProducerReady --> Backoff: consumer startup failed / rollback producer
+    Backoff --> Starting: exponential delay + jitter
+    Backoff --> Stopped: AbortSignal / stop
+    Connected --> Stopped: stopRockermqServer
+    Stopped --> [*]
 ```
+
+对应源码调用关系保留如下，便于从状态图直接定位实现，而不必只靠文字猜测：
+
+```text
 startRockermqServer()
-  └── connectWithRetry()    # 5 attempts, 5s delay between
+  └── connectWithRetry(signal)
        └── connectOnce()
             ├── new Producer() → producer.startup()
             └── new PushConsumer() → consumer.startup()
+                 └── 失败时 shutdown producer（回滚半启动状态）
 
 stopRockermqServer()
+  ├── AbortController.abort()（打断退避等待）
   ├── consumer.shutdown()
   └── producer.shutdown()
 ```
+
+默认最多尝试 6 次；等待时间从 `retryDelayMs` 开始指数增长，受
+`retryMaxDelayMs` 限制，并按 `retryJitterRatio` 加入抖动。停止账号会通过
+`AbortSignal` 打断等待，不会让 Gateway 关闭流程卡在定时器上。
 
 ### Stats Tracking
 
@@ -37,6 +58,10 @@ Module-level `RockermqStats` object tracks:
 - Message counters (`messagesReceived`, `messagesSent`, `messagesAcked`, `messagesNacked`, `messagesRequeued`)
 - Error state (`lastError`, `errors`)
 - In-flight count (`inFlight`)
+
+计数语义：`messagesAcked` 对应返回 Broker 的 `SUCCESS`；`messagesNacked` 与
+`messagesRequeued` 对应 `FAILURE`；永久拒绝另记 `messagesDropped`；DLQ 转发成功另记
+`messagesDeadLettered`，随后才 ACK 原消息。
 
 Stats are returned as a shallow copy via `getStats()` to prevent external mutation.
 
@@ -121,11 +146,12 @@ resolveRockermqConfig(cfg)
 ### Validation Rules
 
 `validateRockermqConfig()` checks:
-1. `endpoints` must be non-empty
-2. `consumer.groupId` must be non-empty
-3. `producer.maxAttempts` and connection retry settings must be positive
+1. `endpoints`、ACL 成对凭证与 Broker 资源名
+2. Producer/Consumer/幂等/连接重试数值范围及整数约束
+3. Payload/dispatch 枚举、重复 subscription/binding 与重试上下限关系
 
-Invalid configuration fails channel startup with a combined validation error.
+只有缺省字段才使用默认值；显式非法值不会静默回退。Invalid configuration fails
+channel startup with a combined validation error.
 
 ### Credential Masking
 

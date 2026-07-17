@@ -53,5 +53,27 @@ describe("resolveRouterConfig", () => {
       actions: [{ type: "reply-via", target: "wecom", accountId: "ops" }],
     });
   });
-});
 
+  it("rejects unknown fields, invalid explicit types, and unsafe retry ranges", () => {
+    expect(() => resolveRouterConfig(api({ delivery: { publishTimoutMs: 1000 } })))
+      .toThrow(/unknown field.*publishTimoutMs/);
+    expect(() => resolveRouterConfig(api({ rules: "not-an-array" })))
+      .toThrow(/rules must be an array/);
+    expect(() => resolveRouterConfig(api({ enabled: "yes" })))
+      .toThrow(/enabled must be a boolean/);
+    expect(() => resolveRouterConfig(api({ delivery: { maxAttempts: -1 } })))
+      .toThrow(/maxAttempts must be a finite number/);
+    expect(() => resolveRouterConfig(api({
+      delivery: { initialDelayMs: 1000, maxDelayMs: 100 },
+    }))).toThrow(/maxDelayMs must be greater than or equal/);
+  });
+
+  it("rejects misspelled rule and action fields", () => {
+    expect(() => resolveRouterConfig(api({
+      rules: [{ id: "r", matc: {}, actions: [{ type: "forward", target: "mqtt" }] }],
+    }))).toThrow(/unknown field.*matc/);
+    expect(() => resolveRouterConfig(api({
+      rules: [{ id: "r", actions: [{ type: "forward", target: "mqtt", topc: "events" }] }],
+    }))).toThrow(/unknown field.*topc/);
+  });
+});

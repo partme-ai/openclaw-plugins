@@ -43,10 +43,19 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "channelPattern": { "type": "string", "description": "Channel pattern (supports * wildcard)" },
+            "channelPattern": {
+              "type": "string",
+              "description": "Channel pattern (supports * wildcard)"
+            },
             "agentId": { "type": "string", "description": "Target agent ID" },
-            "accountId": { "type": "string", "description": "Account ID (default: \"default\")" },
-            "replyChannel": { "type": "string", "description": "Reply channel override" }
+            "accountId": {
+              "type": "string",
+              "description": "Account ID (default: \"default\")"
+            },
+            "replyChannel": {
+              "type": "string",
+              "description": "Reply channel override"
+            }
           },
           "required": ["channelPattern", "agentId"]
         },
@@ -60,13 +69,24 @@
           "inboundKey": { "type": "string", "default": "openclaw:inbound" },
           "outboundKey": { "type": "string", "default": "openclaw:outbound" },
           "consumerGroup": { "type": "string", "default": "openclaw-group" },
-          "consumerName": { "type": "string", "default": "", "description": "Unique consumer name; empty derives host + process id." },
+          "consumerName": {
+            "type": "string",
+            "default": "",
+            "description": "Unique consumer name; empty derives host + process id."
+          },
           "blockMs": { "type": "number", "default": 5000 },
           "count": { "type": "number", "default": 10 },
           "createGroup": { "type": "boolean", "default": true },
-          "pendingClaimIdleMs": { "type": "number", "minimum": 0, "default": 120000 },
+          "pendingClaimIdleMs": {
+            "type": "number",
+            "minimum": 0,
+            "default": 120000
+          },
           "maxAttempts": { "type": "number", "minimum": 1, "default": 5 },
-          "deadLetterKey": { "type": "string", "default": "openclaw:inbound:dlq" },
+          "deadLetterKey": {
+            "type": "string",
+            "default": "openclaw:inbound:dlq"
+          },
           "maxLen": { "type": "number", "minimum": 0, "default": 100000 }
         },
         "default": {
@@ -118,15 +138,50 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "allowInsecureRemote": {
+            "type": "boolean",
+            "default": false,
+            "description": "Allow plaintext redis:// for non-loopback hosts. Keep false in production."
+          },
           "reconnectMs": { "type": "number", "default": 3000 },
-        "maxRetries": { "type": "number", "minimum": 0, "default": 0 },
-        "startupTimeoutMs": { "type": "number", "minimum": 1, "default": 30000 }
+          "reconnectMaxMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 30000
+          },
+          "reconnectJitterRatio": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.2
+          },
+          "maxRetries": { "type": "number", "minimum": 0, "default": 0 },
+          "maxPubSubInFlight": {
+            "type": "number",
+            "minimum": 1,
+            "default": 32
+          },
+          "startupTimeoutMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 30000
+          },
+          "shutdownTimeoutMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 10000
+          }
         },
         "default": {
+          "allowInsecureRemote": false,
           "reconnectMs": 3000,
-        "maxRetries": 0,
-        "startupTimeoutMs": 30000
-      }
+          "reconnectMaxMs": 30000,
+          "reconnectJitterRatio": 0.2,
+          "maxRetries": 0,
+          "maxPubSubInFlight": 32,
+          "startupTimeoutMs": 30000,
+          "shutdownTimeoutMs": 10000
+        }
       },
       "idempotency": {
         "type": "object",

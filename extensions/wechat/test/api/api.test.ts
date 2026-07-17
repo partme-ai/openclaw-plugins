@@ -96,6 +96,14 @@ describe("getUpdates", () => {
 });
 
 describe("HTTP response safety", () => {
+  it("clears the request timeout after a successful response", async () => {
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    mockFetch.mockResolvedValueOnce(mockResponse({ ok: true }));
+    await apiGetFetch({ baseUrl: "https://api.example.com", endpoint: "ok", label: "safeGet" });
+    expect(clearTimeoutSpy).toHaveBeenCalledOnce();
+    clearTimeoutSpy.mockRestore();
+  });
+
   it("does not expose an error response body", async () => {
     mockFetch.mockResolvedValueOnce(mockResponse("token=top-secret", 500, false));
     await expect(

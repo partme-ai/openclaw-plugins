@@ -4,6 +4,7 @@ import type { ChannelLimitsOpenClawConfig } from "../runtime/runtime-api.js";
 import type { DouyinAccountConfig, ToolDefinition } from "../types.js";
 import { requestDouyinOpenApi } from "../api/openapi.js";
 
+/** Tool 执行时惰性读取的 OpenClaw 根配置与抖音多账号配置。 */
 export type DouyinToolsConfig = {
   rootConfig: ChannelLimitsOpenClawConfig;
   section?: DouyinAccountConfig;

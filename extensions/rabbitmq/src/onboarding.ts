@@ -16,5 +16,7 @@ const { setupAdapter, setupWizard } = createUrlChannelSetup({
   ],
 });
 
+/** 将 CLI 输入的 AMQP URL 写入 `channels.rabbitmq` 的声明式适配器。 */
 export const rabbitmqSetupAdapter = setupAdapter;
+/** 引导用户完成 RabbitMQ 基础连接配置的 OpenClaw 配置向导。 */
 export const rabbitmqSetupWizard = setupWizard;

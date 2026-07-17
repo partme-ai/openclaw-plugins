@@ -8,10 +8,15 @@ import type { Client, Subscription, PublishPacket } from "aedes";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import { readFileSync } from "node:fs";
-import { Duplex } from "node:stream";
+import type { Duplex } from "node:stream";
 import type { Socket } from "node:net";
-import { WebSocketServer, type WebSocket } from "ws";
-import { verifyPassword as verifyPasswordShared, safeEqualBuffer, matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
+import { WebSocketServer, createWebSocketStream, type WebSocket } from "ws";
+import {
+  verifyPassword as verifyPasswordShared,
+  safeEqualBuffer,
+  matchTopic as matchTopicShared,
+  isValidMqttTopicName,
+} from "@partme.ai/openclaw-message-sdk/transport";
 import { createKeyedRunQueue, type KeyedRunQueue } from "@partme.ai/openclaw-message-sdk";
 import type { InboundHandler, WebMqttConfig, WebMqttServiceStats } from "../types.js";
 import { isUserActionAllowed } from "./acl.js";
@@ -32,11 +37,16 @@ let clientSubscriptions = new WeakMap<Client, Set<string>>();
 
 const stats: WebMqttServiceStats = {
   connectedClients: 0,
+  rejectedConnections: 0,
+  authFailures: 0,
+  aclDenials: 0,
   acceptedMessages: 0,
   droppedMessages: 0,
   routedByBinding: 0,
   routedByStandard: 0,
   outboundMessages: 0,
+  inboundQueued: 0,
+  inboundActive: 0,
   brokerReady: false,
 };
 
@@ -65,6 +75,10 @@ export async function startWebMqttServer(config: WebMqttConfig, onInbound: Inbou
     configureAuthGuards(config, onInbound);
 
     server = createWebServer(config);
+    // Upgrade 前的普通 HTTP 请求只用于握手，限制慢 Header/长请求占用连接资源。
+    server.headersTimeout = 10_000;
+    server.requestTimeout = 15_000;
+    server.keepAliveTimeout = 5_000;
     wss = new WebSocketServer({
       server,
       path: config.path,
@@ -74,10 +88,14 @@ export async function startWebMqttServer(config: WebMqttConfig, onInbound: Inbou
       verifyClient: (info, done) => {
         const origin = info.origin;
         if (wss && wss.clients.size >= config.maxConnections) {
+          stats.rejectedConnections += 1;
+          stats.lastError = "maximum_connections_reached";
           done(false, 503, "maximum connections reached");
           return;
         }
-        if (origin && !config.ws.allowedOrigins.includes(origin)) {
+        if (origin && !isAllowedBrowserOrigin(origin, config.ws.allowedOrigins)) {
+          stats.rejectedConnections += 1;
+          stats.lastError = "origin_forbidden";
           done(false, 403, "origin forbidden");
           return;
         }
@@ -148,7 +166,12 @@ export async function stopWebMqttServer(): Promise<void> {
  * 获取状态。
  */
 export function getStats(): WebMqttServiceStats {
-  return { ...stats };
+  const queue = inboundQueue?.snapshot();
+  return {
+    ...stats,
+    inboundQueued: queue?.queuedCount ?? 0,
+    inboundActive: queue?.activeCount ?? 0,
+  };
 }
 
 /**
@@ -167,6 +190,10 @@ export function trackRoute(source: "binding" | "standard"): void {
 export async function publishToTopic(topic: string, payload: string): Promise<number> {
   if (!broker) {
     throw new Error("[openclaw-web-mqtt] Cannot publish — broker not running");
+  }
+  if (!isValidMqttTopicName(topic)) {
+    stats.lastError = "invalid_outbound_topic";
+    throw new Error(`[openclaw-web-mqtt] Invalid outbound MQTT Topic Name: ${topic}`);
   }
   const payloadBytes = Buffer.byteLength(payload, "utf-8");
   if (currentConfig && payloadBytes > currentConfig.limits.maxPayloadBytes) {
@@ -250,30 +277,40 @@ function bindBrokerEventHandlers(): void {
 function configureAuthGuards(config: WebMqttConfig, onInbound: InboundHandler): void {
   (broker as any).authenticate = (client: Client, username: Buffer | undefined, password: Buffer | undefined, done: (err: Error | null, success: boolean) => void) => {
     const usernameText = username?.toString("utf-8");
+    const finish = (success: boolean, error: Error | null = null): void => {
+      if (!success) {
+        stats.authFailures += 1;
+        stats.lastError = error?.message ?? "authentication_failed";
+      }
+      done(error, success);
+    };
     if (
       !connectedClients.has(client.id) &&
       connectedClients.size + pendingClients.size >= config.maxConnections
-    ) return done(new Error("maximum_connections_reached"), false);
+    ) {
+      stats.rejectedConnections += 1;
+      return finish(false, new Error("maximum_connections_reached"));
+    }
     if (!config.auth.required) {
       clientUsernameMap.set(client, "anonymous");
       pendingClients.add(client);
-      return done(null, true);
+      return finish(true);
     }
     if (config.auth.allowAnonymous && !usernameText) {
       clientUsernameMap.set(client, "anonymous");
       pendingClients.add(client);
-      return done(null, true);
+      return finish(true);
     }
-    if (!usernameText || !password) return done(new Error("missing_credentials"), false);
+    if (!usernameText || !password) return finish(false);
 
     const user = config.auth.users.find((item) => item.username === usernameText);
-    if (!user) return done(new Error("invalid_credentials"), false);
+    if (!user) return finish(false);
 
     const ok = verifyPasswordAdapted(user.password, user.passwordHash, user.hashAlgorithm, password);
-    if (!ok) return done(new Error("invalid_credentials"), false);
+    if (!ok) return finish(false);
     clientUsernameMap.set(client, usernameText);
     pendingClients.add(client);
-    return done(null, true);
+    return finish(true);
   };
 
   broker!.authorizeSubscribe = (
@@ -288,6 +325,10 @@ function configureAuthGuards(config: WebMqttConfig, onInbound: InboundHandler): 
       subscriptions.add(sub.topic);
       clientSubscriptions.set(client, subscriptions);
     }
+    if (!allowed) {
+      stats.aclDenials += 1;
+      stats.lastError = overLimit ? "subscription_limit_reached" : "subscribe_acl_denied";
+    }
     // Aedes requires a null subscription (not an Error) to emit SUBACK QoS 128.
     // Returning an Error leaves MQTT.js waiting for a SUBACK and only emits clientError.
     done(null, allowed ? sub : undefined);
@@ -300,7 +341,11 @@ function configureAuthGuards(config: WebMqttConfig, onInbound: InboundHandler): 
       return done(new Error("payload_too_large"));
     }
     const allowed = allowTopicByUser(config, client, packet.topic, "publish");
-    if (!allowed) return done(new Error("topic_forbidden"));
+    if (!allowed) {
+      stats.aclDenials += 1;
+      trackInboundDropped("publish_acl_denied");
+      return done(new Error("topic_forbidden"));
+    }
     const queue = inboundQueue;
     if (!queue) return done(new Error("inbound_queue_not_ready"));
     const depth = queue.snapshot().keys[client.id]?.depth ?? 0;
@@ -356,40 +401,37 @@ function createWebServer(config: WebMqttConfig): HttpServer | HttpsServer {
  * 将 WebSocket 双向流桥接为 Aedes 可消费的 Duplex（含 idle 超时 terminate）。
  */
 function createDuplexFromWs(ws: WebSocket, idleTimeoutMs: number): Duplex {
-  const stream = new Duplex({
-    read() {},
-    write(chunk: Buffer, _encoding, callback) {
-      if (ws.readyState === ws.OPEN) ws.send(chunk, callback);
-      else callback();
-    },
-    final(callback) {
-      ws.close();
-      callback();
-    },
-  });
+  // ws 官方 Duplex 适配器会把 Node Stream 的 pause/drain 语义传递到底层 socket，
+  // 避免手写 push/send 桥接在浏览器慢消费者场景下无界积压内存。
+  const stream = createWebSocketStream(ws);
 
   let timer: NodeJS.Timeout | null = null;
   const bumpIdleTimer = (): void => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => ws.terminate(), idleTimeoutMs);
+    timer.unref?.();
   };
 
-  ws.on("message", (data: Buffer) => {
-    bumpIdleTimer();
-    stream.push(data);
-  });
+  ws.on("message", bumpIdleTimer);
   ws.on("pong", bumpIdleTimer);
   ws.on("close", () => {
     if (timer) clearTimeout(timer);
-    stream.push(null);
-    stream.destroy();
   });
-  ws.on("error", (err: Error) => {
+  ws.on("error", () => {
     if (timer) clearTimeout(timer);
-    stream.destroy(err);
   });
   bumpIdleTimer();
   return stream;
+}
+
+/** 浏览器 Origin 必须能规范化为配置中的精确 http/https Origin。 */
+function isAllowedBrowserOrigin(origin: string, allowedOrigins: string[]): boolean {
+  try {
+    const parsed = new URL(origin);
+    return parsed.origin === origin && allowedOrigins.includes(parsed.origin);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -432,11 +474,16 @@ function verifyPasswordAdapted(
 
 function resetStats(): void {
   stats.connectedClients = 0;
+  stats.rejectedConnections = 0;
+  stats.authFailures = 0;
+  stats.aclDenials = 0;
   stats.acceptedMessages = 0;
   stats.droppedMessages = 0;
   stats.routedByBinding = 0;
   stats.routedByStandard = 0;
   stats.outboundMessages = 0;
+  stats.inboundQueued = 0;
+  stats.inboundActive = 0;
   stats.lastError = undefined;
   stats.brokerReady = false;
 }

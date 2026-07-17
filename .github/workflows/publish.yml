@@ -29,6 +29,8 @@ jobs:
         run: |
           pnpm check-release-readiness
           node scripts/check-plugin-structure.mjs --strict-base --strict-new
+          pnpm check-explanatory-assets
+          pnpm test:e2e:harness
           pnpm typecheck
           pnpm test:unit
           pnpm build

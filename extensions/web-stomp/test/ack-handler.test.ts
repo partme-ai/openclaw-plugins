@@ -54,10 +54,26 @@ describe("handleAck", () => {
     expect(getAckStats().pendingCount).toBe(0);
   });
 
-  it("confirms batch in client mode", () => {
+  it("client 模式只累计确认目标消息及之前消息，不误确认之后消息", () => {
     const id1 = registerMessage("sub-1", "conn-a", "/topic/a", "client");
-    registerMessage("sub-1", "conn-a", "/topic/a", "client");
-    expect(handleAck(id1)).toBe(2);
+    const id2 = registerMessage("sub-1", "conn-a", "/topic/a", "client");
+    expect(handleAck(id1)).toBe(1);
+    expect(getAckStats().pendingCount).toBe(1);
+    expect(handleAck(id2)).toBe(1);
+  });
+
+  it("同一毫秒投递也按单调序号累计 ACK", () => {
+    const now = Date.now;
+    Date.now = () => 1_000;
+    try {
+      registerMessage("sub-1", "conn-a", "/topic/a", "client");
+      const id2 = registerMessage("sub-1", "conn-a", "/topic/a", "client");
+      registerMessage("sub-1", "conn-a", "/topic/a", "client");
+      expect(handleAck(id2)).toBe(2);
+      expect(getAckStats().pendingCount).toBe(1);
+    } finally {
+      Date.now = now;
+    }
   });
 
   it("returns 0 for unknown message id", () => {

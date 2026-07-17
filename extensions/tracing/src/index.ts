@@ -22,7 +22,9 @@ import {
 import { TracingSampler } from "./runtime/sampler.js";
 import {
   cleanupSessionTraces,
+  finishAllActiveTraces,
   getActiveSpanCount,
+  getActiveTraceCount,
   getRecentTraceCount,
   getTraceSpans,
   listRecentTraces,
@@ -39,6 +41,9 @@ const SUPPORTED_BACKENDS: TracingConfig["backend"][] = ["log", "file", "otlp"];
 let activeContext: TracingHookContext | null = null;
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 let initialized = false;
+let initializationPromise: Promise<void> | null = null;
+let stopping = false;
+let lifecycleGeneration = 0;
 
 function createBackend(type: TracingConfig["backend"], logger: TracingLogger): TracingBackend {
   if (type === "file") return new FileBackend(logger);
@@ -54,10 +59,24 @@ function resolveTracingConfig(api: OpenClawPluginApi): TracingConfig {
 }
 
 async function initTracing(api: OpenClawPluginApi): Promise<void> {
+  if (stopping) return;
   if (initialized) return;
+  if (initializationPromise) return initializationPromise;
+  const pending = initializeTracing(api);
+  initializationPromise = pending;
+  try {
+    await pending;
+  } finally {
+    if (initializationPromise === pending) initializationPromise = null;
+  }
+}
+
+/** 真正执行一次初始化；外层 Promise 门闩保证 gateway_start 与首批 Hook 不会重复建后端或漏事件。 */
+async function initializeTracing(api: OpenClawPluginApi): Promise<void> {
+  const generation = lifecycleGeneration;
   const config = resolveTracingConfig(api);
-  initialized = true;
   if (!config.enabled) {
+    initialized = true;
     api.logger.info("[tracing] Disabled by configuration");
     return;
   }
@@ -65,11 +84,17 @@ async function initTracing(api: OpenClawPluginApi): Promise<void> {
   const backend = createBackend(config.backend, api.logger);
   try {
     await backend.init(config);
+    if (stopping || generation !== lifecycleGeneration) {
+      // 初始化与 gateway_stop 竞态时，不得在停止完成后重新发布一个僵尸 activeContext。
+      await backend.shutdown();
+      return;
+    }
     activeContext = {
       backend,
       sampler: new TracingSampler(config.sampleRate),
       config,
     };
+    initialized = true;
     cleanupTimer = setInterval(() => {
       void cleanupSessionTraces(backend).then((count) => {
         if (count > 0) api.logger.warn(`[tracing] Closed ${count} expired active traces`);
@@ -93,17 +118,62 @@ async function initTracing(api: OpenClawPluginApi): Promise<void> {
 }
 
 async function shutdownTracing(): Promise<void> {
+  stopping = true;
+  lifecycleGeneration += 1;
   if (cleanupTimer) {
     clearInterval(cleanupTimer);
     cleanupTimer = null;
   }
-  const backend = activeContext?.backend ?? null;
-  activeContext = null;
-  initialized = false;
+  let firstError: unknown;
+  const shutdownTimeoutMs = activeContext?.config.shutdownTimeoutMs ?? 15_000;
   try {
-    if (backend) await backend.shutdown();
+    await withTimeout((async () => {
+      if (initializationPromise) {
+        try {
+          await initializationPromise;
+        } catch (error) {
+          firstError ??= error;
+        }
+      }
+      const backend = activeContext?.backend ?? null;
+      activeContext = null;
+      initialized = false;
+      try {
+        if (backend) await finishAllActiveTraces(backend, "gateway_shutdown");
+      } catch (error) {
+        firstError ??= error;
+      }
+      try {
+        if (backend) await backend.shutdown();
+      } catch (error) {
+        firstError ??= error;
+      }
+    })(), shutdownTimeoutMs, `Tracing shutdown timed out after ${shutdownTimeoutMs}ms`);
+  } catch (error) {
+    firstError ??= error;
   } finally {
+    activeContext = null;
+    initialized = false;
+    initializationPromise = null;
     resetTraceStore();
+    stopping = false;
+  }
+  if (firstError) throw firstError;
+}
+
+/** 为停止阶段提供总时限；底层 OTLP 自带请求 Abort，文件系统异常也不能无限阻塞 Gateway。 */
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -115,11 +185,16 @@ function statusHandler(req: IncomingMessage, res: ServerResponse): void {
     ok: healthy,
     data: {
       plugin: PLUGIN_ID,
-      status: activeContext ? (healthy ? "active" : "degraded") : "disabled",
+      status: activeContext
+        ? (healthy ? "active" : "degraded")
+        : initializationPromise
+          ? "initializing"
+          : "disabled",
       backend: activeContext?.backend.name ?? "none",
       backendStatus: backendStatus ?? null,
       sampleRate: activeContext?.sampler.getSampleRate() ?? 0,
       activeSpans: getActiveSpanCount(),
+      activeTraces: getActiveTraceCount(),
       recentTraces: getRecentTraceCount(),
       features: { pluginHooks: true, backends: SUPPORTED_BACKENDS },
     },

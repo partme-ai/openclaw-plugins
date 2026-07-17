@@ -89,7 +89,10 @@ export function createDouyinPluginHttpHandler(params: {
         return true;
       }
       const runtime = getDouyinRuntime();
-      const cfg = (runtime.config ?? {}) as Record<string, unknown>;
+      // `runtime.config` 是宿主提供的配置服务，不是可直接传给路由器的
+      // `openclaw.json` 快照。必须在收到事件时调用 loadConfig()，这样既能拿到
+      // 当前热更新后的 bindings/session/channel 配置，也不会把服务方法误当配置字段。
+      const cfg = runtime.config.loadConfig() as Record<string, unknown>;
       const peerId =
         extractDouyinSenderId(body) ?? `anonymous:${account.shop_id ?? account.accountId}`;
 
@@ -109,6 +112,8 @@ export function createDouyinPluginHttpHandler(params: {
       void dispatch.then((result) => {
         if (result === "skipped") {
           log?.warn?.("[douyin] inbound skipped: no transcript runtime available");
+        } else if (result === "blocked") {
+          log?.warn?.(`[douyin] inbound blocked by account ${account.accountId} access policy`);
         }
       }).catch((error: unknown) => {
         log?.error?.(`[douyin] webhook dispatch failed: ${String(error)}`);

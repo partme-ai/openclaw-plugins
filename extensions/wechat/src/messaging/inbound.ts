@@ -19,6 +19,7 @@ import { generateId } from "../util/random.js";
 import type { WeixinMessage, MessageItem } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
 import { resolveStateDir } from "../storage/state-dir.js";
+import { writePrivateJsonAtomic } from "../storage/atomic-json.js";
 
 // ---------------------------------------------------------------------------
 // Context token store (in-process cache + disk persistence)
@@ -30,6 +31,10 @@ import { resolveStateDir } from "../storage/state-dir.js";
  * lookup; a disk-backed file per account ensures tokens survive gateway restarts.
  */
 const contextTokenStore = new Map<string, string>();
+const MAX_CONTEXT_TOKENS_PER_ACCOUNT = 10_000;
+const MAX_CONTEXT_TOKEN_FILE_BYTES = 4 * 1024 * 1024;
+const MAX_CONTEXT_TOKEN_LENGTH = 16 * 1024;
+const MAX_CONTEXT_USER_ID_LENGTH = 256;
 
 function contextTokenKey(accountId: string, userId: string): string {
   return `${accountId}:${userId}`;
@@ -59,11 +64,9 @@ function persistContextTokens(accountId: string): void {
   }
   const filePath = resolveContextTokenFilePath(accountId);
   try {
-    const dir = path.dirname(filePath);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(tokens, null, 0), "utf-8");
+    writePrivateJsonAtomic(filePath, tokens);
   } catch (err) {
-    logger.warn(`persistContextTokens: failed to write ${filePath}: ${String(err)}`);
+    logger.warn(`persistContextTokens: private state write failed: ${err instanceof Error ? err.name : "unknown error"}`);
   }
 }
 
@@ -75,18 +78,32 @@ export function restoreContextTokens(accountId: string): void {
   const filePath = resolveContextTokenFilePath(accountId);
   try {
     if (!fs.existsSync(filePath)) return;
+    if (fs.statSync(filePath).size > MAX_CONTEXT_TOKEN_FILE_BYTES) {
+      throw new Error("context token file exceeds safe size limit");
+    }
     const raw = fs.readFileSync(filePath, "utf-8");
-    const tokens = JSON.parse(raw) as Record<string, string>;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("context token file must contain an object");
+    }
+    const tokens = parsed as Record<string, unknown>;
     let count = 0;
     for (const [userId, token] of Object.entries(tokens)) {
-      if (typeof token === "string" && token) {
+      if (count >= MAX_CONTEXT_TOKENS_PER_ACCOUNT) break;
+      if (
+        userId.length > 0 &&
+        userId.length <= MAX_CONTEXT_USER_ID_LENGTH &&
+        typeof token === "string" &&
+        token.length > 0 &&
+        token.length <= MAX_CONTEXT_TOKEN_LENGTH
+      ) {
         contextTokenStore.set(contextTokenKey(accountId, userId), token);
         count++;
       }
     }
-    logger.info(`restoreContextTokens: restored ${count} tokens for account=${accountId}`);
+    logger.info(`restoreContextTokens: restored ${count} tokens`);
   } catch (err) {
-    logger.warn(`restoreContextTokens: failed to read ${filePath}: ${String(err)}`);
+    logger.warn(`restoreContextTokens: private state read failed: ${err instanceof Error ? err.name : "unknown error"}`);
   }
 }
 
@@ -102,26 +119,45 @@ export function clearContextTokensForAccount(accountId: string): void {
   try {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   } catch (err) {
-    logger.warn(`clearContextTokensForAccount: failed to remove ${filePath}: ${String(err)}`);
+    logger.warn(`clearContextTokensForAccount: private state removal failed: ${err instanceof Error ? err.name : "unknown error"}`);
   }
-  logger.info(`clearContextTokensForAccount: cleared tokens for account=${accountId}`);
+  logger.info("clearContextTokensForAccount: tokens cleared");
 }
 
 /** Store a context token for a given account+user pair (memory + disk). */
 export function setContextToken(accountId: string, userId: string, token: string): void {
-  const k = contextTokenKey(accountId, userId);
-  logger.debug(`setContextToken: key=${k}`);
+  const normalizedAccountId = accountId.trim();
+  const normalizedUserId = userId.trim();
+  if (!normalizedAccountId || !normalizedUserId || normalizedUserId.length > MAX_CONTEXT_USER_ID_LENGTH) {
+    throw new Error("weixin context token requires a valid accountId and userId");
+  }
+  if (!token || token.length > MAX_CONTEXT_TOKEN_LENGTH) {
+    throw new Error("weixin context token is empty or exceeds the safe size limit");
+  }
+  const k = contextTokenKey(normalizedAccountId, normalizedUserId);
+  // 重新插入用于维持每账号的 LRU 顺序。
+  contextTokenStore.delete(k);
+  let accountEntryCount = 0;
+  let oldestAccountKey: string | undefined;
+  const prefix = `${normalizedAccountId}:`;
+  for (const existingKey of contextTokenStore.keys()) {
+    if (!existingKey.startsWith(prefix)) continue;
+    oldestAccountKey ??= existingKey;
+    accountEntryCount++;
+  }
+  if (accountEntryCount >= MAX_CONTEXT_TOKENS_PER_ACCOUNT && oldestAccountKey) {
+    contextTokenStore.delete(oldestAccountKey);
+  }
   contextTokenStore.set(k, token);
-  persistContextTokens(accountId);
+  logger.debug("setContextToken: token stored");
+  persistContextTokens(normalizedAccountId);
 }
 
 /** Retrieve the cached context token for a given account+user pair. */
 export function getContextToken(accountId: string, userId: string): string | undefined {
   const k = contextTokenKey(accountId, userId);
   const val = contextTokenStore.get(k);
-  logger.debug(
-    `getContextToken: key=${k} found=${val !== undefined} storeSize=${contextTokenStore.size}`,
-  );
+  logger.debug(`getContextToken: found=${val !== undefined} storeSize=${contextTokenStore.size}`);
   return val;
 }
 

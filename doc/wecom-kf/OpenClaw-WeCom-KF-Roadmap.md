@@ -41,11 +41,11 @@ Tool 旁路 → control-tools.ts → admin API（结果 redacted）
 |--------|------|
 | wecom-cs **Bot 模式**（群聊 / @机器人 / WS 流式） | 删除 `monitor.ts`、`ws-adapter.ts`；`legacyWecomCsEnabled` Phase 2 移除 |
 | wecom-cs **Agent 模式**（自建应用 XML 回调） | 迁出至 `extensions/wecom`；删除 `handleAgentWebhook` |
-| Bot/Agent 双分支 outbound | 薄化为 `outbound/kf-outbound.ts` 仅 KF |
+| Bot/Agent 双分支 outbound | 已薄化为 `outbound/kf-send.ts`，仅处理 KF |
 | 客服账号 / 接待人员 **增删改** 管理 API | 不做；仅 list + trans |
 | 95159 客户详情 **暴露给 LLM Tool** | 仅 ICS admin 或 dialogue state |
 | 知识库 RAG / ICS REST **硬依赖** | 可选子系统；`ics.enabled=false` 可独立启动 |
-| `wecom_kf_mcp` 替代 Control Tools | MCP 通用代理；客服 Agent allowlist 优先 `wecom_kf_*` |
+| `wecom_kf_mcp` 替代 Control Tools | 不支持；通用 MCP 已删除，客服 Agent 仅使用可审计的 `wecom_kf_*` Tools |
 
 ### 1.3 Phase 1 已完成（基线）
 
@@ -54,9 +54,9 @@ Tool 旁路 → control-tools.ts → admin API（结果 redacted）
 | KF-only onboarding 向导 | ✅ | `src/kf-onboarding.ts` → `channel.ts` |
 | 动态 KF 路由（全局 + 账号 `webhookPath`） | ✅ | `src/config/kf-routes.ts` → `index.ts` |
 | Legacy wecom-cs 默认关闭 | ✅ | `legacyWecomCsEnabled` 默认 `false`；`isLegacyWecomCsEnabled()` |
-| KF 回调 + sync_msg + 文本 round-trip | ✅ | `callback.ts`、`agent/handler.ts` |
+| KF 回调 + sync_msg + 文本 round-trip | ✅ | `webhook/callback.ts`、`dispatch/inbound-dispatcher.ts` |
 | 多账号 `open_kfid` 路由 + failClosed | ✅ | `config/accounts.ts`、`config/routing.ts` |
-| control-tools 注册（redacted 路径） | ✅ | `kf/control-tools.ts` |
+| control-tools 注册（redacted 路径） | ✅ | `tools/control-tools.ts` |
 
 **Phase 1 回归命令：**
 
@@ -99,7 +99,7 @@ extensions/wecom-kf/src/
 │   ├── session.ts
 │   └── admin.ts
 │
-├── dispatch/                  # 🆕 自 callback + agent/handler 拆出
+├── dispatch/                  # ✅ callback 解密后进入的 KF-only 分发层
 │   ├── process-sync-batch.ts
 │   ├── customer-message.ts    # origin=3 → message-sdk bridge
 │   └── system-event.ts        # ← agent/system-event.ts 迁入
@@ -123,13 +123,12 @@ extensions/wecom-kf/src/
 | 问题 | 现状路径 | 目标处置 | Phase |
 |------|----------|----------|:-----:|
 | **巨石 monitor** | `monitor.ts`（3000+ 行）、`gateway-monitor.ts` | 删除；KF 不注册 CS 路由 | 2 |
-| **职责混杂 handler** | `agent/handler.ts`（客户消息 + Agent Webhook） | 拆至 `dispatch/customer-message.ts` | 2 |
+| **旧职责混杂 handler** | `agent/handler.ts` 已删除 | 当前入口为 `webhook/callback.ts` → `dispatch/inbound-dispatcher.ts` | ✅ |
 | **API 客户端单体** | `agent/api-client.ts` | 拆至 `api/*.ts` | 2–3 |
-| **outbound 双模式** | `outbound.ts` Bot/Agent 分支 | `outbound/kf-outbound.ts` KF-only | 2 |
-| **Legacy Tools 泄漏 session** | `kf/tools.ts` 长文本 `content` | 删除或合并进 `control-tools.ts` | 2–3 |
-| **ICS 与核心耦合** | `ics-handlers/*` 默认注册 | `ics.enabled` 开关；M3 外迁 | 3 |
+| **outbound 双模式** | 旧 Bot/Agent 分支已移除 | 当前为 `outbound/index.ts` + `outbound/kf-send.ts` KF-only | ✅ |
+| **Legacy Tools / MCP 旁路** | 未注册的 `mcp/` 已删除 | 管理操作统一使用 `tools/control-tools.ts` | ✅ |
 | **目录扁平 / 命名漂移** | `agent/*` 承载 KF 逻辑 | 与 `wecom` 的 `webhook/`、`outbound/` 对齐 | 2 |
-| **未接 message-sdk bridge** | handler 内联 runtime | `bridge/inbound-bridge` + `reply-bridge` | 2 |
+| **Runtime 分发边界** | 已从旧 handler 移出 | `dispatch/kf-transcript-dispatch.ts` 统一封装 | ✅ |
 | **research 能力缺失** | 无 `probe.ts`、账号 state 分散 | cherry-pick `probe.ts`、`state.ts` 模式 | 2–4 |
 
 ### 2.3 与 `wecom` 模块对照（借鉴边界）
@@ -137,7 +136,7 @@ extensions/wecom-kf/src/
 | wecom 模块 | wecom-kf 对应 | 说明 |
 |------------|---------------|------|
 | `webhook/handler.ts` | `callback.ts` + `dispatch/*` | KF 无 Bot XML |
-| `outbound/reply-deliver.ts` | `outbound/kf-outbound.ts` | 仅 `send_msg` |
+| `outbound/reply-deliver.ts` | `outbound/kf-send.ts` | 仅 `send_msg` |
 | `accounts.ts` | `config/accounts.ts` | ✅ 已矩阵化 |
 | `onboarding.ts` | `kf-onboarding.ts` | ✅ Phase 1 |
 | `probe.ts` | `probe.ts`（待增） | 健康检查 |
@@ -167,9 +166,9 @@ extensions/wecom-kf/src/
 |:--:|:----:|------------|-----------------|----------|
 | **P2-01** | 实施中 | `config/` + `index.ts` | **删逻辑：** 移除 `legacyWecomCsEnabled` 分支及 CS 路由注册；**删：** 对 `monitor.js` 的 import（CS 路径） | `grep -r 'legacyWecomCsEnabled' extensions/wecom-kf/src extensions/wecom-kf/index.ts` → 0（或仅 deprecated 注释）；`grep 'handleWecomWebhookRequest' index.ts` → 0 |
 | **P2-02** | 实施中 | `monitor/` 清理 | **删：** `src/monitor.ts`、`src/gateway-monitor.ts`、`src/ws-adapter.ts`；**迁：** 测试至 `legacy/` | `test ! -f src/monitor.ts`（当前仍存在）；`pnpm test` ≥120 passed |
-| **P2-03** | 部分完成 | `dispatch/` | **增：** `dispatch.ts` + `webhook/callback.ts` 薄层；**待：** `dispatch/customer-message.ts`、`process-sync-batch.ts` | `pnpm test src/dispatch.test.ts src/webhook/callback.test.ts`；origin=3 文本 E2E（联调 Checklist §2） |
+| **P2-03** | ✅ | `dispatch/` | `webhook/callback.ts` 负责验签与同步；`dispatch/inbound-dispatcher.ts` 负责 origin 矩阵与 Agent 入站 | `webhook/callback.test.ts`、`dispatch/inbound-dispatcher.test.ts` |
 | **P2-04** | 实施中 | `bridge` + message-sdk | **改：** `dispatch.ts` 接入 `dispatchInbound`；outbound 接入 `createReplyHandler` | `grep 'dispatchInbound' src/` → 命中；`pnpm test` |
-| **P2-05** | 部分完成 | `outbound/` | **增：** `outbound/kf-send.ts`；**待：** `outbound/kf-outbound.ts`、`chunker.ts`；薄化 `outbound.ts` | `pnpm test src/outbound.test.ts` |
+| **P2-05** | ✅ | `outbound/` | `outbound/kf-send.ts` 负责文本、媒体与大小限制；文本分片由 message-sdk 完成 | `outbound/outbound.test.ts`、`agent/api-client.send.test.ts` |
 | **P2-06** | 部分完成 | `ingress` + dm policy | **改：** `shared/command-auth.ts` + `dm-policy.ts`；账号 `dm.policy` / `allowFrom` | `pnpm test`；非白名单用户被拒（联调 Checklist §4） |
 | **P2-07** | 实施中 | `media/` 入站 | **增/改：** 入站 `image`/`file` 经 `media/`；**可选：** `voice-transcode` | 联调 Checklist §3.4 |
 | **P2-08** | 部分完成 | `outbound` MEDIA | **改：** `MEDIA:` 经 `media/` + KF 大小限制；`before_prompt_build` 已注入 MEDIA 说明 | 联调 Checklist §3.5 |
@@ -197,7 +196,7 @@ find src -name '*.ts' ! -path '*/ics-*' | wc -l   # 目标较 Phase 1 减少 mon
 
 | ID | 状态 | 负责人模块 | 删除 / 新增 | 验收命令 |
 |:--:|:----:|------------|-------------|----------|
-| **P3-01** | ✅ | `kf/control-tools` | **已有：** transfer + `session-side-effect-store` + `transfer-policy` 自动选席 | 联调 Checklist §5；`pnpm test src/kf/control-tools.test.ts` |
+| **P3-01** | ✅ | `tools/control-tools` | **已有：** transfer + `session-side-effect-store` + `transfer-policy` 自动选席 | 联调 Checklist §5；`tools/control-tools.test.ts` |
 | **P3-02** | ✅ | `dispatch/system-event` | **已有：** `session_status_change` → `session-service-state`；state=3/4 停 Agent 自动回复 | `pnpm test src/agent/system-event.test.ts` |
 | **P3-03** | ✅ | 事件消息管线 | **已有：** welcome + `msg_code` → `event-message-dispatch` 排队/结束/满意度 | 联调 Checklist §5.4–5.5 |
 | **P3-04** | ✅ | `intelligence/*` | **已有：** `before_prompt_build` 注入 `buildStateAwarePrompt`（`intelligence/hooks.ts` + `prompt-builder.ts`） | dialogue 单测绿；日志可见状态标签 |
@@ -227,7 +226,7 @@ grep 'icsEnabled' src/config/kf-routes.ts  # 期望命中
 | **P4-03** | Ralph 进行中 | `config/` | **改：** `apiBaseUrl` 私有化部署 | `resolveApiBaseUrl` 单测 |
 | **P4-04** | Ralph 进行中 | `dispatch/process-sync-batch` | **改：** 并发 limit（默认 ≤8）+ 压测 | 压测脚本或集成测试 |
 | **P4-05** | Ralph 进行中 | 清理 | **删：** 全部 monitor/ws 死代码、duplicate types | 包体积 / 文件数 ≥30%↓ |
-| **P4-06** | Ralph 进行中 | `ics-handlers/stats` | **改：** audit 汇总 → US-017 | 可选 Prometheus |
+| **P4-06** | 待增强 | Control Tools 审计日志 | 汇总 Tool 调用次数与转人工成功率 | 可选接入 Prometheus 插件 |
 
 ---
 
@@ -252,12 +251,12 @@ grep 'icsEnabled' src/config/kf-routes.ts  # 期望命中
 
 | message-sdk 模块 | 替换/wecom-kf 挂载点 | 动作 |
 |------------------|----------------------|------|
-| **`bridge/inbound-bridge`** · `dispatchInbound` | `dispatch/customer-message.ts` | 替代 handler 内联 runtime |
-| **`bridge/reply-bridge`** · `createReplyHandler` | `outbound/kf-outbound.ts` | 回复 deliver → `send_msg` |
-| **`ingress/wire-ingress`** | `dispatch/customer-message.ts` | 构造 `InboundWireMessage` |
+| OpenClaw Runtime dispatch | `dispatch/kf-transcript-dispatch.ts` | 已替代旧 handler 内联 runtime |
+| Channel outbound adapter | `outbound/index.ts` + `outbound/kf-send.ts` | Agent 回复 → `send_msg` |
+| message-sdk ingress | `dispatch/inbound-dispatcher.ts` | 构造并分发标准入站消息 |
 | **`ingress/dm-policy`** | `shared/command-auth.ts` + config | `dm.policy` / `allowFrom` |
-| **`media/media-io`** | `dispatch/customer-message.ts` | 入站 image/file 下载 |
-| **`media/parse-directives`** | `outbound/kf-outbound.ts` | 解析 `MEDIA:` |
+| **媒体 IO** | `dispatch/inbound-media.ts` | 入站 image/file 下载、解密与落盘 |
+| **Path Guard** | `outbound/kf-send.ts` + `media/path-guard.ts` | 解析并安全读取本地媒体 |
 | **`transcript/reply-dispatcher-factory`** | outbound 流式分块 | 与 blockStreaming 对齐 |
 | **`http/safe-fetch`** | outbound 媒体 URL | 远程媒体下载 |
 | **`dedup/persistent-dedupe`** | `dedup/` + `cursor-store.ts` | 与 msgid dedup 同 backend |
@@ -273,7 +272,7 @@ grep 'icsEnabled' src/config/kf-routes.ts  # 期望命中
 ### 4.4 入站 Wire 字段约定（薄封装契约）
 
 ```typescript
-// dispatch/customer-message.ts 构造示意
+// dispatch/inbound-dispatcher.ts 构造示意
 {
   channel: "wecom-kf",
   surface: "wecom-kf",
@@ -292,9 +291,9 @@ grep 'icsEnabled' src/config/kf-routes.ts  # 期望命中
 | Research 文件 | 职责 | Plugins 目标位置 | 状态 | 备注 |
 |---------------|------|------------------|:----:|------|
 | `webhook.ts` | 验签、sync 循环、target 注册 | `callback.ts` + `config/kf-routes.ts` | ✅/🔄 | 路由收集已完成；sync 仍在 callback |
-| `dispatch.ts` | origin 矩阵、dmPolicy | `dispatch/customer-message.ts` + `dispatch/system-event.ts` | 🔄 P2-03 | 实现改用 message-sdk bridge |
+| `dispatch.ts` | origin 矩阵、dmPolicy | `dispatch/inbound-dispatcher.ts` + `agent/system-event.ts` | ✅ P2-03 | 已迁移到真实运行入口 |
 | `api.ts` | token、sync_msg、send、分片 | `api/sync.ts`、`api/send.ts`、`api/token.ts` | 🔄 P2-10 | 从 `agent/api-client.ts` 拆 |
-| `send.ts` | 高层 send DM | `outbound/kf-outbound.ts` | 🔄 P2-05 | |
+| `send.ts` | 高层 send DM | `outbound/kf-send.ts` | ✅ P2-05 | |
 | `state.ts` | cursor、msg 去重、账号 state | `cursor-store.ts` + `dedup/` + **增** `config/account-state.ts` | 🔄 P2-13 | lastError / lastSyncAt |
 | `onboarding.ts` | 分步向导 | `kf-onboarding.ts` | ✅ | Phase 1 |
 | `probe.ts` | 健康检查 | **增** `probe.ts` | ⏳ P2-13 | |
@@ -323,7 +322,7 @@ processSyncBatch (research webhook 内循环)
   → dispatch/process-sync-batch.ts
 
 dispatchKfMessage (research)
-  → dispatch/customer-message.ts + message-sdk dispatchInbound
+  → dispatch/inbound-dispatcher.ts + kf-transcript-dispatch.ts
 ```
 
 ---

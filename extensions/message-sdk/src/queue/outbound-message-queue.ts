@@ -1,7 +1,7 @@
 /**
  * @module queue/outbound-message-queue
  *
- * 按 sessionKey 分组的 FIFO 出站消息队列（单进程内存结构）。
+ * 按 sessionKey 分组、跨 session 轮询公平的 FIFO 出站消息队列（单进程内存结构）。
  *
  * **职责**：缓存 Agent 产出的回复，按 OpenClaw 会话 key 分组，支持 push / pop / peek / clear。
  *
@@ -27,6 +27,12 @@ export interface OutboundQueueItem {
   pushedAt: number;
 }
 
+/**
+ * 出站内存队列的容量与溢出策略。
+ *
+ * 队列达到 `maxSize` 后不会静默丢弃旧消息，也不会无限扩容；新消息返回 `false`，并通过
+ * `onOverflow` 交给渠道记录指标、告警或执行自己的降级策略。
+ */
 export interface OutboundMessageQueueOptions {
   /** 全部 session 合计的最大条目数；默认 10000。 */
   maxSize?: number;
@@ -37,8 +43,8 @@ export interface OutboundMessageQueueOptions {
 /**
  * 按 sessionKey 分组的 FIFO 出站队列。
  *
- * 不传 sessionKey 调用 `pop` 时会从 Map 迭代顺序中第一个非空 session 取一条，
- * 适合简单 drain；需要严格跨 session 公平性时应在调用方自行调度。
+ * 指定 sessionKey 时保持该会话 FIFO；不指定时按 session 轮询，每次最多取一条后把
+ * 仍有积压的 session 移到轮询队尾，避免高流量会话长期饿死其他会话。
  *
  * @example
  * ```ts
@@ -82,7 +88,7 @@ export class OutboundMessageQueue {
   /**
    * 取出一条出站消息。
    *
-   * @param sessionKey - 指定时只从该 session 取；不指定时从任意非空 session 取
+   * @param sessionKey - 指定时只从该 session 取；不指定时按 session 轮询取一条
    * @returns 出站条目；队列为空时返回 `undefined`
    */
   pop(sessionKey?: string): OutboundQueueItem | undefined {
@@ -98,7 +104,13 @@ export class OutboundMessageQueue {
       if (list.length > 0) {
         const item = list.shift();
         if (item) this.totalSize -= 1;
-        if (list.length === 0) this.bySession.delete(key);
+        if (list.length === 0) {
+          this.bySession.delete(key);
+        } else {
+          // Map 保留插入顺序：删除后重新插入，相当于把本 session 移到轮询队尾。
+          this.bySession.delete(key);
+          this.bySession.set(key, list);
+        }
         return item;
       }
     }

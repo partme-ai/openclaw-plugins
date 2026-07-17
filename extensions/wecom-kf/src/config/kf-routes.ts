@@ -80,8 +80,13 @@ export function resolveApiBaseUrl(config?: { apiBaseUrl?: string }): string {
     } catch {
         throw new Error("wecom-kf apiBaseUrl must be an absolute HTTPS URL");
     }
-    if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
-        throw new Error("wecom-kf apiBaseUrl must use HTTPS without embedded credentials");
+    const loopbackHost = parsed.hostname === "localhost" ||
+        parsed.hostname === "127.0.0.1" ||
+        parsed.hostname === "[::1]";
+    // 生产代理必须使用 HTTPS；仅对白名单 loopback 放行 HTTP，支持本地沙箱、离线联调和安装态 E2E。
+    if ((parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopbackHost)) ||
+        parsed.username || parsed.password) {
+        throw new Error("wecom-kf apiBaseUrl must use HTTPS (HTTP is allowed only for loopback) without embedded credentials");
     }
     parsed.hash = "";
     parsed.search = "";

@@ -70,6 +70,7 @@ export interface GatewayRuntime {
   };
 }
 
+/** 插件运行时所需的最小结构化日志接口。 */
 export interface RuntimeLogger {
   info: (message: string, meta?: Record<string, unknown>) => void;
   warn: (message: string, meta?: Record<string, unknown>) => void;
@@ -77,6 +78,7 @@ export interface RuntimeLogger {
   debug?: (message: string, meta?: Record<string, unknown>) => void;
 }
 
+/** Provider 凭据解析结果；采集器只导出来源/模式状态，绝不能暴露 apiKey。 */
 export interface ResolvedProviderAuth {
   apiKey?: string;
   profileId?: string;
@@ -84,6 +86,7 @@ export interface ResolvedProviderAuth {
   mode: string;
 }
 
+/** Gateway Agent 事件流的最小投影，用于更新低基数运行指标。 */
 export interface AgentRuntimeEvent {
   runId: string;
   seq: number;
@@ -93,6 +96,7 @@ export interface AgentRuntimeEvent {
   data: Record<string, unknown>;
 }
 
+/** 会话转录增量通知；观察器只提取计数元数据，不导出消息正文。 */
 export interface SessionTranscriptUpdate {
   sessionFile: string;
   sessionKey?: string;
@@ -139,12 +143,14 @@ export interface MetricCollector {
   collect(): Promise<MetricSample[]>;
 }
 
+/** 单个采集器的成功/失败诊断，错误文本在对外输出前必须脱敏。 */
 export interface CollectorDiagnostic {
   collector: string;
   ok: boolean;
   error?: string;
 }
 
+/** Provider 鉴权可用性的周期快照，仅保留低敏状态、来源和模式。 */
 export interface MonitoredProviderSnapshot {
   provider: string;
   status: "ok" | "missing" | "error";
@@ -278,12 +284,14 @@ export interface CronJob {
   [key: string]: unknown;
 }
 
+/** OpenClaw model-auth RPC 返回的单个用量窗口投影。 */
 export interface ModelAuthWindow {
   label?: string;
   usedPercent?: number;
   resetAt?: number;
 }
 
+/** 单个模型鉴权 Profile 的状态与到期时间投影，不包含真实密钥。 */
 export interface ModelAuthProfile {
   profileId?: string;
   type?: string;
@@ -295,6 +303,7 @@ export interface ModelAuthProfile {
   };
 }
 
+/** Provider 级鉴权状态、Profile 和用量窗口的 RPC 响应投影。 */
 export interface ModelAuthProvider {
   provider?: string;
   displayName?: string;
@@ -311,6 +320,7 @@ export interface ModelAuthProvider {
   };
 }
 
+/** 某一时刻的全部 Provider 鉴权状态快照。 */
 export interface ModelAuthStatusSnapshot {
   ts?: number;
   providers?: ModelAuthProvider[];

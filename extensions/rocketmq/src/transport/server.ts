@@ -19,7 +19,7 @@ import {
   PushConsumer,
   type MessageView,
 } from "rocketmq-client-nodejs";
-import type { RockermqConfig } from "../config.js";
+import { DEFAULT_ROCKERMQ_CONFIG, type RockermqConfig } from "../config.js";
 
 /** @description PushConsumer 回调的入站消息事件。 */
 export type InboundEvent = {
@@ -32,10 +32,14 @@ export type InboundEvent = {
 };
 
 /** @description 消费端处置结果（SUCCESS / 触发 reconsume）。 */
-export type InboundDisposition = { ok: true } | { ok: false; reconsume?: boolean; reason?: string };
+export type InboundDisposition =
+  | { ok: true }
+  | { ok: false; reconsume?: boolean; reason?: string };
 
 /** @description 入站消息处理器类型。 */
-export type InboundHandler = (event: InboundEvent) => Promise<InboundDisposition>;
+export type InboundHandler = (
+  event: InboundEvent,
+) => Promise<InboundDisposition>;
 
 /** @description RocketMQ 客户端连接与消息统计。 */
 export type RockermqStats = {
@@ -64,12 +68,12 @@ let stopping = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let startupPromise: Promise<void> | null = null;
 const ROCKETMQ_STATUS_OK = 20_000;
+const DEFAULT_MAX_MESSAGE_SIZE_IN_BYTES = 4 * 1024 * 1024;
 
 /**
- * The Node SDK currently ignores Broker `CUSTOMIZED_BACKOFF` settings, leaving
- * non-FIFO nack invisible duration at zero. Pin a configured policy so FAILURE
- * always results in a valid delayed redelivery and exposes a deterministic
- * max-attempt value to DLQ forwarding.
+ * Node SDK 当前会忽略 Broker 的 `CUSTOMIZED_BACKOFF` 配置，导致非 FIFO 消息
+ * NACK 后的不可见时间可能为 0。这里固定使用插件配置的退避策略，保证 FAILURE
+ * 总能得到有效的延迟重投，同时为 DLQ 转发提供确定的最大尝试次数。
  */
 class CompatiblePushConsumer extends PushConsumer {
   constructor(
@@ -84,7 +88,7 @@ class CompatiblePushConsumer extends PushConsumer {
   }
 }
 
-/** RocketMQ 5 may report the first non-FIFO delivery as attempt 0. */
+/** RocketMQ 5 可能把非 FIFO 消息第一次投递的 attempt 报为 0，因此统一修正为至少 1。 */
 class SafeExponentialBackoffRetryPolicy extends ExponentialBackoffRetryPolicy {
   override getNextAttemptDelay(attempt: number): number {
     return super.getNextAttemptDelay(Math.max(1, attempt));
@@ -175,20 +179,34 @@ export async function publishMessage(params: {
   endpoints?: string;
   namespace?: string;
   requestTimeout?: number;
+  maxMessageSizeInBytes?: number;
   sessionCredentials?: RockermqConfig["sessionCredentials"];
 }): Promise<unknown> {
+  if (!params.topic.trim()) {
+    throw new Error("RocketMQ publish topic is required");
+  }
+  const body = Buffer.from(params.payload);
+  const maxMessageSizeInBytes =
+    params.maxMessageSizeInBytes ??
+    config?.producer.maxMessageSizeInBytes ??
+    DEFAULT_MAX_MESSAGE_SIZE_IN_BYTES;
+  if (body.byteLength > maxMessageSizeInBytes) {
+    throw new Error(
+      `RocketMQ payload exceeds producer.maxMessageSizeInBytes (${body.byteLength} > ${maxMessageSizeInBytes})`,
+    );
+  }
   if (producer) {
     const receipt = await producer.send({
       topic: params.topic,
       tag: params.tag,
       keys: params.keys,
-      body: Buffer.from(params.payload),
+      body,
     });
     stats.messagesSent++;
     return receipt;
   }
 
-  // Fallback for subagent/child-process contexts: create one-shot producer
+  // 子 Agent / 子进程无法复用主进程长连接时，创建仅发送一次的临时 Producer。
   const endpoints = params.endpoints ?? config?.endpoints;
   if (!endpoints) {
     throw new Error("RocketMQ endpoints not available");
@@ -196,7 +214,8 @@ export async function publishMessage(params: {
   const oneShot = new Producer({
     endpoints,
     namespace: params.namespace ?? config?.namespace ?? "",
-    requestTimeout: params.requestTimeout ?? config?.producer?.requestTimeout ?? 5000,
+    requestTimeout:
+      params.requestTimeout ?? config?.producer?.requestTimeout ?? 5000,
     maxAttempts: config?.producer.maxAttempts ?? 3,
     sessionCredentials: params.sessionCredentials ?? config?.sessionCredentials,
   });
@@ -206,12 +225,23 @@ export async function publishMessage(params: {
       topic: params.topic,
       tag: params.tag,
       keys: params.keys,
-      body: Buffer.from(params.payload),
+      body,
     });
     stats.messagesSent++;
     return receipt;
   } finally {
-    await oneShot.shutdown();
+    // send 的结果比临时客户端清理更重要：shutdown 失败要进入诊断统计，但不能覆盖
+    // 已经成功取得的 Broker receipt，也不能把原始 send 异常替换成次生异常。
+    try {
+      await withTimeout(
+        oneShot.shutdown(),
+        config?.connection.shutdownTimeoutMs ??
+          DEFAULT_ROCKERMQ_CONFIG.connection.shutdownTimeoutMs,
+        "RocketMQ one-shot producer shutdown",
+      );
+    } catch (error) {
+      recordError(error);
+    }
   }
 }
 
@@ -230,7 +260,7 @@ export function getStats(): RockermqStats {
  * @throws 不抛出。
  */
 export function trackInboundAccepted(): void {
-  // accepted counts are tracked via messagesReceived + messagesAcked
+  // 接受数量由 messagesReceived 与 messagesAcked 的组合体现，暂不重复维护计数器。
 }
 
 /**
@@ -251,7 +281,7 @@ export function trackInboundDropped(reason: string): void {
  * @throws 不抛出。
  */
 export function trackRoute(_source: string): void {
-  // route tracking for diagnostics
+  // 保留诊断扩展点，后续可按 binding / standard 统计路由来源。
 }
 
 // ─────────────── 内部实现 ───────────────
@@ -285,11 +315,19 @@ async function connectWithRetry(abortSignal?: AbortSignal): Promise<void> {
       }
       lastErr = err;
       stats.errors++;
-      stats.lastError = err instanceof Error ? err.message : String(err);
+      stats.lastError = formatError(err);
       if (attempt >= maxAttempts) {
         break;
       }
-      await sleep(cfg.connection.retryDelayMs, abortSignal);
+      await sleep(
+        computeStartupRetryDelay(
+          cfg.connection.retryDelayMs,
+          cfg.connection.retryMaxDelayMs,
+          cfg.connection.retryJitterRatio,
+          attempt,
+        ),
+        abortSignal,
+      );
     }
   }
   if (stopping || abortSignal?.aborted) {
@@ -318,85 +356,112 @@ async function connectOnce(cfg: RockermqConfig): Promise<void> {
   await producer.startup();
 
   const retry = cfg.consumer.retry;
-  consumer = new CompatiblePushConsumer({
-    endpoints: cfg.endpoints,
-    namespace: cfg.namespace,
-    consumerGroup: cfg.consumer.groupId,
-    sessionCredentials: cfg.sessionCredentials,
-    subscriptions: buildSubscriptions(cfg),
-    maxCacheMessageCount: cfg.consumer.maxCacheMessageCount,
-    maxCacheMessageSizeInBytes: cfg.consumer.maxCacheMessageSizeInBytes,
-    longPollingTimeout: cfg.consumer.longPollingTimeout,
-    requestTimeout: cfg.consumer.requestTimeout,
-    messageListener: {
-      async consume(messageView: MessageView): Promise<ConsumeResult> {
-        if (!inboundHandler || !config) {
-          return ConsumeResult.FAILURE;
-        }
-        const activeConfig = config;
+  consumer = new CompatiblePushConsumer(
+    {
+      endpoints: cfg.endpoints,
+      namespace: cfg.namespace,
+      consumerGroup: cfg.consumer.groupId,
+      sessionCredentials: cfg.sessionCredentials,
+      subscriptions: buildSubscriptions(cfg),
+      maxCacheMessageCount: cfg.consumer.maxCacheMessageCount,
+      maxCacheMessageSizeInBytes: cfg.consumer.maxCacheMessageSizeInBytes,
+      longPollingTimeout: cfg.consumer.longPollingTimeout,
+      requestTimeout: cfg.consumer.requestTimeout,
+      messageListener: {
+        async consume(messageView: MessageView): Promise<ConsumeResult> {
+          if (!inboundHandler || !config) {
+            return ConsumeResult.FAILURE;
+          }
+          const activeConfig = config;
 
-        stats.messagesReceived++;
-        stats.inFlight++;
+          stats.messagesReceived++;
+          stats.inFlight++;
 
-        let disposition: InboundDisposition;
-        try {
-          disposition = await inboundHandler({
-            topic: String(messageView.topic),
-            tag: typeof messageView.tag === "string" ? messageView.tag : undefined,
-            body: toMessageBuffer(messageView.body),
-            keys: Array.isArray(messageView.keys) ? messageView.keys.map(String) : undefined,
-            messageId:
-              typeof messageView.messageId === "string" ? messageView.messageId : undefined,
-            deliveryAttempt:
+          let disposition: InboundDisposition;
+          try {
+            disposition = await inboundHandler({
+              topic: String(messageView.topic),
+              tag:
+                typeof messageView.tag === "string"
+                  ? messageView.tag
+                  : undefined,
+              body: toMessageBuffer(messageView.body),
+              keys: Array.isArray(messageView.keys)
+                ? messageView.keys.map(String)
+                : undefined,
+              messageId:
+                typeof messageView.messageId === "string"
+                  ? messageView.messageId
+                  : undefined,
+              deliveryAttempt:
+                typeof messageView.deliveryAttempt === "number"
+                  ? messageView.deliveryAttempt
+                  : undefined,
+            });
+          } catch (error) {
+            recordError(error);
+            if (activeConfig.consumer.reconsumeOnError) {
+              // 抛异常和 handler 显式返回 reconsume=true 必须进入同一状态机；否则异常路径
+              // 会绕过 maxAttempts/DLQ，非 FIFO 毒消息可能永久重投。
+              disposition = {
+                ok: false,
+                reconsume: true,
+                reason: "inbound_handler_error",
+              };
+            } else {
+              // 明确关闭重消费意味着“记录并确认丢弃”，否则 Broker 会认为成功，
+              // 但运维指标里既看不到 ACK，也看不到消息为何消失。
+              stats.messagesDropped++;
+              stats.lastDropReason = "inbound_handler_error";
+              disposition = {
+                ok: false,
+                reconsume: false,
+                reason: "inbound_handler_error",
+              };
+            }
+          } finally {
+            stats.lastConsumeAt = Date.now();
+            stats.inFlight = Math.max(0, stats.inFlight - 1);
+          }
+
+          if (disposition.ok) {
+            stats.messagesAcked++;
+            return ConsumeResult.SUCCESS;
+          }
+          if (disposition.reconsume ?? activeConfig.consumer.reconsumeOnError) {
+            const deliveryAttempt = Math.max(
+              1,
               typeof messageView.deliveryAttempt === "number"
                 ? messageView.deliveryAttempt
-                : undefined,
-          });
-        } catch (error) {
-          stats.errors++;
-          stats.lastError = error instanceof Error ? error.message : String(error);
-          stats.inFlight = Math.max(0, stats.inFlight - 1);
-          return activeConfig.consumer.reconsumeOnError
-            ? ConsumeResult.FAILURE
-            : ConsumeResult.SUCCESS;
-        }
-
-        stats.lastConsumeAt = Date.now();
-        stats.inFlight = Math.max(0, stats.inFlight - 1);
-
-        if (disposition.ok) {
+                : 1,
+            );
+            if (deliveryAttempt >= activeConfig.consumer.retry.maxAttempts) {
+              try {
+                await forwardToDeadLetterQueue(messageView);
+                stats.messagesDeadLettered++;
+                stats.messagesAcked++;
+                return ConsumeResult.SUCCESS;
+              } catch (error) {
+                recordError(error);
+              }
+            }
+            markBrokerReconsume();
+            return ConsumeResult.FAILURE;
+          }
+          // 永久性拒绝由 channel 层通过 trackInboundDropped 记录业务原因；传输层仍需
+          // 对 Broker 返回 SUCCESS，防止无路由/空载荷形成永不终止的毒消息循环。
           stats.messagesAcked++;
           return ConsumeResult.SUCCESS;
-        }
-        if (disposition.reconsume ?? activeConfig.consumer.reconsumeOnError) {
-          stats.messagesNacked++;
-          const deliveryAttempt = Math.max(
-            1,
-            typeof messageView.deliveryAttempt === "number" ? messageView.deliveryAttempt : 1,
-          );
-          if (deliveryAttempt >= activeConfig.consumer.retry.maxAttempts) {
-            try {
-              await forwardToDeadLetterQueue(messageView);
-              stats.messagesDeadLettered++;
-              return ConsumeResult.SUCCESS;
-            } catch (error) {
-              stats.errors++;
-              stats.lastError = error instanceof Error ? error.message : String(error);
-            }
-          }
-          stats.messagesRequeued++;
-          return ConsumeResult.FAILURE;
-        }
-        stats.messagesNacked++;
-        return ConsumeResult.SUCCESS;
+        },
       },
     },
-  }, new SafeExponentialBackoffRetryPolicy(
-    retry.maxAttempts,
-    retry.initialDelayMs,
-    retry.maxDelayMs,
-    retry.multiplier,
-  ));
+    new SafeExponentialBackoffRetryPolicy(
+      retry.maxAttempts,
+      retry.initialDelayMs,
+      retry.maxDelayMs,
+      retry.multiplier,
+    ),
+  );
 
   await consumer.startup();
   stats.connected = true;
@@ -447,8 +512,53 @@ function sleep(ms: number, abortSignal?: AbortSignal): Promise<void> {
       resolve();
     };
     reconnectTimer = setTimeout(finish, ms);
+    reconnectTimer.unref?.();
     abortSignal?.addEventListener("abort", finish, { once: true });
   });
+}
+
+/**
+ * 计算第 `failedAttempt` 次启动失败后的指数退避，并加入对称抖动。
+ *
+ * 将计算导出是为了让“不会形成重连风暴”成为可单测的契约；`random=0.5`
+ * 时抖动为零，便于测试锁定纯指数序列。
+ */
+export function computeStartupRetryDelay(
+  baseDelayMs: number,
+  maxDelayMs: number,
+  jitterRatio: number,
+  failedAttempt: number,
+  random: () => number = Math.random,
+): number {
+  if (baseDelayMs <= 0) {
+    return 0;
+  }
+  const exponential = Math.min(
+    maxDelayMs,
+    baseDelayMs * 2 ** Math.max(0, failedAttempt - 1),
+  );
+  const jitter = exponential * jitterRatio * (random() * 2 - 1);
+  return Math.max(0, Math.round(exponential + jitter));
+}
+
+/** Broker FAILURE 的两个指标必须同步递增，避免 NACK 与重投数量相互矛盾。 */
+function markBrokerReconsume(): void {
+  stats.messagesNacked++;
+  stats.messagesRequeued++;
+}
+
+/** 集中记录传输错误，避免不同分支遗漏 errors/lastError。 */
+function recordError(error: unknown): void {
+  stats.errors++;
+  stats.lastError = formatError(error);
+}
+
+/** 诊断只保留单行错误摘要，避免控制字符污染日志或状态接口。 */
+function formatError(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).replace(
+    /[\r\n\t]/g,
+    " ",
+  );
 }
 
 /**
@@ -467,8 +577,10 @@ function toMessageBuffer(body: unknown): Buffer {
   return Buffer.from(String(body ?? ""));
 }
 
-/** Forward a message explicitly because the Node SDK only performs this check for FIFO queues. */
-async function forwardToDeadLetterQueue(messageView: MessageView): Promise<void> {
+/** Node SDK 只对 FIFO 队列执行耗尽检查，因此非 FIFO 消息需要在这里显式转入 Broker DLQ。 */
+async function forwardToDeadLetterQueue(
+  messageView: MessageView,
+): Promise<void> {
   const activeConsumer = consumer;
   if (!activeConsumer) {
     throw new Error("RocketMQ consumer is not initialized for DLQ forwarding");
@@ -480,7 +592,9 @@ async function forwardToDeadLetterQueue(messageView: MessageView): Promise<void>
   );
   const status = response.getStatus()?.toObject();
   if (status?.code !== ROCKETMQ_STATUS_OK) {
-    throw new Error(`RocketMQ DLQ forwarding failed: ${status?.message ?? "unknown status"}`);
+    throw new Error(
+      `RocketMQ DLQ forwarding failed: ${status?.message ?? "unknown status"}`,
+    );
   }
 }
 
@@ -488,26 +602,62 @@ async function forwardToDeadLetterQueue(messageView: MessageView): Promise<void>
  * @description 关闭现有 Producer/Consumer 引用，便于重连前清理。
  */
 async function teardownTransport(): Promise<void> {
+  const timeoutMs =
+    config?.connection.shutdownTimeoutMs ??
+    DEFAULT_ROCKERMQ_CONFIG.connection.shutdownTimeoutMs;
   try {
     if (consumer) {
-      await consumer.shutdown();
+      await withTimeout(
+        consumer.shutdown(),
+        timeoutMs,
+        "RocketMQ consumer shutdown",
+      );
     }
-  } catch {
-    // shutdown errors are non-fatal
+  } catch (error) {
+    // 关闭 Consumer 失败或超时不阻断 Producer 清理；错误仍进入健康诊断。
+    recordError(error);
   } finally {
     consumer = null;
   }
 
   try {
     if (producer) {
-      await producer.shutdown();
+      await withTimeout(
+        producer.shutdown(),
+        timeoutMs,
+        "RocketMQ producer shutdown",
+      );
     }
-  } catch {
-    // shutdown errors are non-fatal
+  } catch (error) {
+    // 关闭 Producer 失败或超时不阻断账户停止流程，防止 Gateway 无法退出。
+    recordError(error);
   } finally {
     producer = null;
   }
 
   stats.connected = false;
   stats.lastDisconnectAt = Date.now();
+}
+
+/** 固定时间预算包装器：SDK 未及时返回时放弃等待，避免账户停止永久挂起。 */
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

@@ -10,6 +10,21 @@
 #   OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs
 
 services:
+  nacos:
+    image: nacos/nacos-server:v2.5.1
+    container_name: openclaw-e2e-nacos
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 256m
+      JVM_XMX: 256m
+      JVM_XMN: 128m
+    ports:
+      # SDK 2.x 会在 HTTP 端口基础上派生 gRPC 端口，因此三者必须成组映射。
+      - "18848:8848"
+      - "19848:9848"
+      - "19849:9849"
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.128.0
     container_name: openclaw-e2e-otel-collector

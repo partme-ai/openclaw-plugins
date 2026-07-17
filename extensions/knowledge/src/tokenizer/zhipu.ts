@@ -6,18 +6,27 @@
  * @module knowledge/tokenizer/zhipu
  */
 import type { TokenizerService, KnowledgeTokenizerConfig } from '../types.js';
+import { requestProviderJson } from '../shared/provider-http.js';
 
 /** 默认模型 */
 const DEFAULT_MODEL = 'glm-4.6';
 /** 智谱 Tokenizer API 端点 */
 const DEFAULT_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4/tokenizer';
 
+/**
+ * 智谱远程 Tokenizer 适配器。
+ *
+ * 使用服务端模型获得精确 token 数；截断时通过二分搜索多次计数逼近预算，因此比
+ * 本地 tiktoken 延迟更高，适用于必须与智谱模型口径完全一致的场景。
+ */
 export class ZhipuTokenizerService implements TokenizerService {
   readonly modelName: string;
   private baseUrl: string;
   private apiKey: string;
+  private config?: KnowledgeTokenizerConfig;
 
   constructor(config?: KnowledgeTokenizerConfig) {
+    this.config = config;
     this.baseUrl = config?.baseUrl ?? DEFAULT_BASE_URL;
     this.apiKey = config?.apiKey ?? '';
     this.modelName = config?.model ?? DEFAULT_MODEL;
@@ -33,25 +42,24 @@ export class ZhipuTokenizerService implements TokenizerService {
       messages: [{ role: 'user' as const, content: text }],
     };
 
-    const response = await fetch(this.baseUrl, {
+    const data = await requestProviderJson<{ usage?: { prompt_tokens?: unknown; total_tokens?: unknown } }>(this.baseUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(body),
-    });
+    }, {
+      timeoutMs: this.config?.requestTimeoutMs,
+      maxRetries: this.config?.maxRetries,
+      maxResponseBytes: this.config?.maxResponseBytes ?? 1024 * 1024,
+    }, 'Zhipu', 'Tokenizer');
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'unknown');
-      throw new Error(`Zhipu Tokenizer API error: ${response.status} — ${errorText}`);
+    const count = data.usage?.prompt_tokens ?? data.usage?.total_tokens;
+    if (!Number.isSafeInteger(count) || (count as number) < 0) {
+      throw new Error('Zhipu Tokenizer returned an invalid token count');
     }
-
-    const data = (await response.json()) as {
-      usage: { prompt_tokens: number; total_tokens: number };
-    };
-
-    return data.usage?.prompt_tokens ?? data.usage?.total_tokens ?? 0;
+    return count as number;
   }
 
   async truncate(text: string, maxTokens: number): Promise<string> {

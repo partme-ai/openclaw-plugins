@@ -49,12 +49,15 @@ describe("kf-routes", () => {
         })).toThrow("assigned to both");
     });
 
-    it("resolveApiBaseUrl 默认官方域名并可覆盖", () => {
+    it("resolveApiBaseUrl 默认官方域名，并只对白名单 loopback 放行 HTTP", () => {
         expect(resolveApiBaseUrl()).toBe(DEFAULT_API_BASE_URL);
         expect(resolveApiBaseUrl({ apiBaseUrl: "https://proxy.example.com/" })).toBe(
             "https://proxy.example.com",
         );
-        expect(() => resolveApiBaseUrl({ apiBaseUrl: "http://127.0.0.1:8080" })).toThrow("must use HTTPS");
+        expect(resolveApiBaseUrl({ apiBaseUrl: "http://127.0.0.1:8080/" })).toBe("http://127.0.0.1:8080");
+        expect(resolveApiBaseUrl({ apiBaseUrl: "http://localhost:8080" })).toBe("http://localhost:8080");
+        expect(() => resolveApiBaseUrl({ apiBaseUrl: "http://10.0.0.8:8080" })).toThrow("loopback");
+        expect(() => resolveApiBaseUrl({ apiBaseUrl: "https://user:pass@proxy.example.com" })).toThrow("credentials");
         expect(() => resolveApiBaseUrl({ apiBaseUrl: "not-a-url" })).toThrow("absolute HTTPS URL");
     });
 

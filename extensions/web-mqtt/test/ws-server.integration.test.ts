@@ -149,6 +149,48 @@ describe("web-mqtt ws-server integration", () => {
     expect(await publishToTopic("openclaw/agent/nobody/out", "lost")).toBe(0);
   });
 
+  it("publishToTopic should reject wildcard Topic Names", async () => {
+    await startWebMqttServer(baseConfig, vi.fn());
+    await expect(publishToTopic("openclaw/agent/+/out", "invalid")).rejects.toThrow(
+      "Invalid outbound MQTT Topic Name",
+    );
+  });
+
+  it("should serialize one client while different clients run in parallel", async () => {
+    const releases = new Map<string, () => void>();
+    const started: string[] = [];
+    const handler = vi.fn(async (event: { payload: Buffer }) => {
+      const label = event.payload.toString("utf-8");
+      started.push(label);
+      if (label === "a-1" || label === "b-1") {
+        await new Promise<void>((resolve) => releases.set(label, resolve));
+      }
+    });
+    await startWebMqttServer(baseConfig, handler);
+    const url = `ws://127.0.0.1:${baseConfig.port}${baseConfig.path}`;
+    const clientA = mqtt.connect(url, { clientId: "fifo-a", reconnectPeriod: 0 });
+    const clientB = mqtt.connect(url, { clientId: "fifo-b", reconnectPeriod: 0 });
+    await Promise.all([
+      new Promise<void>((resolve, reject) => { clientA.once("connect", resolve); clientA.once("error", reject); }),
+      new Promise<void>((resolve, reject) => { clientB.once("connect", resolve); clientB.once("error", reject); }),
+    ]);
+
+    const firstA = clientA.publishAsync("openclaw/agent/main/in", "a-1", { qos: 1 });
+    const secondA = clientA.publishAsync("openclaw/agent/main/in", "a-2", { qos: 1 });
+    const firstB = clientB.publishAsync("openclaw/agent/main/in", "b-1", { qos: 1 });
+    await vi.waitFor(() => expect(started).toEqual(expect.arrayContaining(["a-1", "b-1"])));
+    expect(started).not.toContain("a-2");
+    expect(getStats()).toMatchObject({ inboundActive: 2, inboundQueued: 1 });
+
+    releases.get("b-1")?.();
+    await firstB;
+    expect(started).not.toContain("a-2");
+    releases.get("a-1")?.();
+    await Promise.all([firstA, secondA]);
+    expect(started.indexOf("a-2")).toBeGreaterThan(started.indexOf("a-1"));
+    await Promise.all([clientA.endAsync(), clientB.endAsync()]);
+  });
+
   it("should enforce authenticated user ACLs", async () => {
     await startWebMqttServer({
       ...baseConfig,
@@ -200,6 +242,24 @@ describe("web-mqtt ws-server integration", () => {
       socket.once("error", () => undefined);
     });
     expect(status).toBe(403);
+    expect(getStats().rejectedConnections).toBe(1);
+  });
+
+  it("should accept an exact browser Origin from the allowlist", async () => {
+    await startWebMqttServer({
+      ...baseConfig,
+      ws: { ...baseConfig.ws, allowedOrigins: ["https://console.example.com"] },
+    }, vi.fn());
+    const socket = new WebSocket(
+      `ws://127.0.0.1:${baseConfig.port}${baseConfig.path}`,
+      "mqtt",
+      { origin: "https://console.example.com" },
+    );
+    await new Promise<void>((resolve, reject) => {
+      socket.once("open", resolve);
+      socket.once("error", reject);
+    });
+    socket.close();
   });
 
   it("should enforce the WebSocket connection limit", async () => {
@@ -222,7 +282,48 @@ describe("web-mqtt ws-server integration", () => {
       second.once("error", () => undefined);
     });
     expect(status).toBe(503);
+    expect(getStats().rejectedConnections).toBe(1);
     await first.endAsync();
+  });
+
+  it("should terminate a silent connection after the configured idle timeout", async () => {
+    await startWebMqttServer({
+      ...baseConfig,
+      ws: { ...baseConfig.ws, idleTimeoutMs: 100 },
+    }, vi.fn());
+    const client = mqtt.connect(`ws://127.0.0.1:${baseConfig.port}${baseConfig.path}`, {
+      clientId: "idle-client",
+      reconnectPeriod: 0,
+      keepalive: 0,
+    });
+    await new Promise<void>((resolve, reject) => {
+      client.once("connect", resolve);
+      client.once("error", reject);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("idle connection was not terminated")), 2_000);
+      client.once("close", () => { clearTimeout(timer); resolve(); });
+    });
+    await vi.waitFor(() => expect(getStats().connectedClients).toBe(0));
+  });
+
+  it("should accept a new connection and publish after the same clientId reconnects", async () => {
+    const inboundSpy = vi.fn();
+    await startWebMqttServer(baseConfig, inboundSpy);
+    const url = `ws://127.0.0.1:${baseConfig.port}${baseConfig.path}`;
+    const first = mqtt.connect(url, { clientId: "reconnect-client", reconnectPeriod: 0 });
+    await new Promise<void>((resolve, reject) => { first.once("connect", resolve); first.once("error", reject); });
+    await first.endAsync();
+    await vi.waitFor(() => expect(getStats().connectedClients).toBe(0));
+
+    const second = mqtt.connect(url, { clientId: "reconnect-client", reconnectPeriod: 0 });
+    await new Promise<void>((resolve, reject) => { second.once("connect", resolve); second.once("error", reject); });
+    await second.publishAsync("openclaw/agent/main/in", "after-reconnect", { qos: 1 });
+    expect(inboundSpy).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: "reconnect-client",
+      topic: "openclaw/agent/main/in",
+    }));
+    await second.endAsync();
   });
 
   it("should accept a real WSS MQTT connection", async () => {

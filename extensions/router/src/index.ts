@@ -82,6 +82,16 @@ function resolveContent(event: Record<string, unknown>): string | undefined {
   return readString(event.content) ?? readString(event.text) ?? readString(record(event.message).content);
 }
 
+function resolveRouterDeliveryIdentity(event: Record<string, unknown>, ctx: Record<string, unknown>): string | undefined {
+  const metadata = record(event.metadata);
+  const router = record(metadata.router);
+  return readString(event.deliveryQueueId)
+    ?? readString(event.idempotencyKey)
+    ?? readString(metadata.idempotencyKey)
+    ?? readString(router.deliveryId)
+    ?? readString(ctx.deliveryQueueId);
+}
+
 const DIRECT_BROKER_CHANNELS = new Set(["mqtt", "mqtt-ws", "web-mqtt", "rabbitmq", "redis-stream", "rocketmq"]);
 const DIRECT_TARGET_PREFIX = "openclaw-direct-topic:v1:";
 
@@ -131,7 +141,7 @@ function resolveEvent(eventValue: unknown, ctxValue: unknown, direction: RouteDi
   const metadata = record(event.metadata);
   const messageId = readString(ctx.messageId) ?? readString(event.messageId) ?? readString(event.id);
   const runId = readString(ctx.runId) ?? readString(event.runId);
-  const stableIdentity = messageId ?? runId;
+  const stableIdentity = resolveRouterDeliveryIdentity(event, ctx) ?? messageId ?? runId;
   return {
     channelId: readString(ctx.channelId) ?? readString(event.channelId) ?? "unknown",
     direction,
@@ -155,6 +165,12 @@ function readTrace(metadata: Record<string, unknown>): RouterTrace {
   return { version: 1, hops };
 }
 
+/**
+ * 展开 Router Topic 模板中的 `{{name}}` 占位符。
+ *
+ * 未提供的变量保持原样，便于运维从最终 Topic 识别配置错误，而不是静默替换为空字符串并
+ * 把消息投递到意外目标。
+ */
 export function tmpl(template: string, values: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => values[key] ?? `{{${key}}}`);
 }
@@ -283,7 +299,11 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.on("message_sent", async (event, ctx) => {
       if ((event as { success?: boolean }).success === false) return;
-      const identity = readString((event as { runId?: unknown }).runId) ?? readString((event as { messageId?: unknown }).messageId);
+      const eventRecord = record(event);
+      const ctxRecord = record(ctx);
+      const identity = resolveRouterDeliveryIdentity(eventRecord, ctxRecord)
+        ?? readString(eventRecord.runId)
+        ?? readString(eventRecord.messageId);
       if (await dispatcher.ownsIdentity(identity)) return;
       const route = resolveEvent(event, ctx, "outbound");
       if (route) await routeEvent(dispatcher, config, route, "forward");

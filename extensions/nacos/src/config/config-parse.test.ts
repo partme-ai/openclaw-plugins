@@ -76,6 +76,25 @@ describe("parseNacosPluginConfig", () => {
     }
   });
 
+  it("默认失败关闭，并保留显式 degrade 与 clusterDiscovery 开关", () => {
+    const defaultPolicy = parseNacosPluginConfig({ serverList: "127.0.0.1:8848" });
+    expect(defaultPolicy.kind).toBe("ok");
+    if (defaultPolicy.kind === "ok") {
+      expect(defaultPolicy.config.startupFailurePolicy).toBe("fail");
+    }
+
+    const degraded = parseNacosPluginConfig({
+      serverList: "127.0.0.1:8848",
+      startupFailurePolicy: "degrade",
+      clusterDiscovery: { enabled: false },
+    });
+    expect(degraded.kind).toBe("ok");
+    if (degraded.kind === "ok") {
+      expect(degraded.config.startupFailurePolicy).toBe("degrade");
+      expect(degraded.config.clusterDiscovery?.enabled).toBe(false);
+    }
+  });
+
   it("parses Spring-style nacos block with server-addr and shared-configs", () => {
     const r = parseNacosPluginConfig({
       nacos: {

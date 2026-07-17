@@ -130,6 +130,9 @@ export function parseNacosPluginConfig(raw: unknown): ParsePluginConfigResult {
       : undefined;
 
   const namingRaw = isPlainObject(flat.naming) ? flat.naming : undefined;
+  const clusterDiscoveryRaw = isPlainObject(flat.clusterDiscovery)
+    ? flat.clusterDiscovery
+    : undefined;
   const configCenter = parseConfigCenter(flat.configCenter);
 
   const namingServerList =
@@ -143,6 +146,7 @@ export function parseNacosPluginConfig(raw: unknown): ParsePluginConfigResult {
 
   const config: NacosPluginConfig = {
     enabled: flat.enabled !== false,
+    startupFailurePolicy: flat.startupFailurePolicy === "degrade" ? "degrade" : "fail",
     serverList,
     ...(namingServerList ? { namingServerList } : {}),
     ...(configServerList ? { configServerList } : {}),
@@ -167,6 +171,9 @@ export function parseNacosPluginConfig(raw: unknown): ParsePluginConfigResult {
       : {}),
     ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
     ...(namingRaw && namingRaw.enabled === false ? { naming: { enabled: false } } : {}),
+    ...(clusterDiscoveryRaw && clusterDiscoveryRaw.enabled === false
+      ? { clusterDiscovery: { enabled: false } }
+      : {}),
     ...(configCenter ? { configCenter } : {}),
   };
 

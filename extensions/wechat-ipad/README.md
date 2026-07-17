@@ -11,7 +11,8 @@ flowchart LR
     WX["微信网络"] <--> IPAD["外部 iPad 协议服务<br/>MMTLS / Protobuf / 登录态"]
     IPAD -- "WebSocket<br/>入站事件" --> BRIDGE["WechatIpadBridge<br/>鉴权、校验、心跳、重连"]
     BRIDGE -- "HTTP API<br/>发送消息 / 查询状态" --> IPAD
-    BRIDGE --> IN["OpenClaw 入站管道<br/>去重、会话、权限"]
+    BRIDGE --> QUEUE["有界串行队列<br/>顺序与背压"]
+    QUEUE --> IN["OpenClaw 入站管道<br/>私聊/群聊准入、命令授权、去重"]
     IN --> AGENT["OpenClaw Agent"]
     AGENT --> OUT["OpenClaw 出站管道"]
     OUT --> BRIDGE
@@ -21,7 +22,7 @@ flowchart LR
     classDef plugin fill:#e8f5e9,stroke:#2e7d32,color:#123d17
     classDef runtime fill:#e3f2fd,stroke:#1565c0,color:#0d315c
     class WX,IPAD external
-    class BRIDGE plugin
+    class BRIDGE,QUEUE plugin
     class IN,AGENT,OUT,GW runtime
 ```
 
@@ -44,7 +45,7 @@ sequenceDiagram
         B-->>S: 丢弃并记录脱敏告警
     else 合法消息
         B->>I: emit(message, payload)
-        I->>I: 自发消息过滤、群白名单、文本限制
+        I->>I: 自发消息过滤、DM/群白名单、命令授权、文本限制
         I->>A: 标准 OpenClaw 入站上下文
         A-->>O: Agent 回复
         O->>B: SendMessageRequest
@@ -79,10 +80,13 @@ stateDiagram-v2
 ## 安全边界
 
 - 远程服务强制使用 `wss://` 和 `https://`；仅回环地址允许 `ws://`、`http://`。
+- 远程服务必须提供 Token；WebSocket 与 HTTP API 默认必须同主机，拆分部署需显式确认 `allowSplitBridgeHosts=true`。
 - Token 使用 WebSocket/HTTP `Authorization: Bearer ...`，不会进入 URL、状态输出或日志。
 - 配置可使用 `auth.token`，也可通过 `WECHAT_IPAD_BRIDGE_TOKEN` 注入。
 - 状态端点为精确匹配并强制 OpenClaw Gateway 认证，只返回脱敏连接状态。
 - 群消息默认关闭；开启后必须配置 `groupWhitelist`，除非再次显式设置 `allowAllGroups=true`。
+- 私聊默认 `dmPolicy=allowlist` 且启用时必须提供 `allowFrom`；`commandAllowFrom` 单独决定 `CommandAuthorized`，普通会话权限不会自动升级为管理命令权限。
+- 入站 Agent Turn 使用有界单消费者队列，保持消息顺序，并以 `maxPendingMessages` 限制桥接洪泛产生的等待任务。
 - 具备连接、请求、事件、响应和文本大小限制；断线采用指数退避与抖动重连。
 - Gateway 生命周期会启动和停止连接，不注册全局进程信号处理器。
 
@@ -97,6 +101,7 @@ stateDiagram-v2
       "enabled": true,
       "acknowledgeUnofficialProtocolRisk": true,
       "required": true,
+      "allowSplitBridgeHosts": false,
       "serviceUrl": "wss://bridge.example.com/events",
       "apiUrl": "https://bridge.example.com",
       "auth": {
@@ -118,18 +123,44 @@ stateDiagram-v2
         "pongTimeoutMs": 10000
       },
       "message": {
+        "dmPolicy": "allowlist",
+        "allowFrom": ["<OWNER_WXID>"],
+        "commandAllowFrom": ["<OWNER_WXID>"],
         "handleGroup": true,
         "groupWhitelist": ["<GROUP_WXID>"],
         "allowAllGroups": false,
         "ignoreSelf": true,
-        "maxTextChars": 20000
+        "maxTextChars": 20000,
+        "maxPendingMessages": 256
       }
     }
   }
 }
 ```
 
-本机开发可使用默认的 `ws://127.0.0.1:5555` 和 `http://127.0.0.1:5556`。`required=true` 表示首次连接失败将使插件服务启动失败；设为 `false` 时会降级并在后台重连。`maxRetries=0` 表示不限制重连次数。
+本机开发可使用默认的 `ws://127.0.0.1:5555` 和 `http://127.0.0.1:5556`。`required=true` 表示首次连接失败将使插件服务启动失败；设为 `false` 时会降级并在后台重连。`maxRetries=0` 表示不限制重连次数。升级旧配置时必须补充 `message.allowFrom`，或者显式选择 `dmPolicy=disabled/open`；这是为修复旧版“任意 wxid 都能进入 Agent 且被标记为命令已授权”的安全缺口而加入的非静默迁移要求。
+
+### 入站授权决策
+
+```mermaid
+flowchart TD
+    E["message 事件"] --> Q{"maxPendingMessages 未满?"}
+    Q -->|否| X["拒绝并告警"]
+    Q -->|是| T{"私聊或群聊?"}
+    T -->|私聊| D{"dmPolicy"}
+    D -->|disabled| X
+    D -->|allowlist| A{"fromWxid ∈ allowFrom"}
+    A -->|否| X
+    A -->|是| C
+    D -->|open| C{"sender ∈ commandAllowFrom"}
+    T -->|群聊| G{"handleGroup 且群白名单命中"}
+    G -->|否| X
+    G -->|是| C
+    C -->|是| CA["CommandAuthorized=true"]
+    C -->|否| CU["CommandAuthorized=false"]
+    CA --> AGENT["Agent Turn"]
+    CU --> AGENT
+```
 
 ## 外部桥接服务契约
 
@@ -162,6 +193,18 @@ HTTP API：
 
 插件自身仅暴露 `GET /wechat-ipad/status`，需要 OpenClaw Gateway 认证；已删除会泄露 wxid 的会话列表端点。
 
+桥接器由 OpenClaw 2026.7.1 的 `gateway.startAccount` 管理。`connected` 只表示 Socket 可达；只有收到合法 `login_status=logged_in` 后账户探针才驱动 `/readyz` 为业务就绪。热重载清理使用桥接实例所有权比较，旧生命周期不能清除新连接或新实例的去重状态。成功消息 ID 使用 0700 目录、0600 JSONL 文件持久化；只有 Agent 回复投递成功后才提交，重启重放会跳过，失败处理仍可重试。
+
+```mermaid
+flowchart LR
+    E["WS 事件 msgId"] --> Q{"持久日志已完成?"}
+    Q -->|是| X["跳过重复 Agent Turn"]
+    Q -->|否| A["Agent Turn"]
+    A --> H["HTTP /api/send"]
+    H -->|成功| D["私有 JSONL 追加 msgId"]
+    H -->|失败| R["不提交，允许重试"]
+```
+
 ## 验收清单
 
 ```bash
@@ -178,6 +221,7 @@ openclaw channels status --probe
 pnpm --filter @partme.ai/wechat-ipad typecheck
 pnpm --filter @partme.ai/wechat-ipad test
 pnpm --filter @partme.ai/wechat-ipad build
+node scripts/e2e/run-e2e.mjs --plugins wechat-ipad
 ```
 
 ## 许可证

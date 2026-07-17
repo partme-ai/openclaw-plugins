@@ -76,7 +76,9 @@ describe("openmem OpenClaw 2026.7.1 contract", () => {
   it("tool 使用可信 sessionKey 并按 maxSearchResults 限制", async () => {
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const url = String(input);
-      if (url.includes("/sessions?status=ARCHIVED")) return json({ sessions: [] });
+      if (url.includes("/sessions?status=ACTIVE") || url.includes("/sessions?status=ARCHIVED")) {
+        return json({ sessions: [] });
+      }
       if (url.endsWith("/inspect/search")) {
         const body = JSON.parse(String(init?.body));
         expect(body.limit).toBe(3);
@@ -102,6 +104,7 @@ describe("openmem OpenClaw 2026.7.1 contract", () => {
       if (url.includes("/sessions?status=ACTIVE")) return json({ sessions: [] });
       if (url.endsWith("/sessions/start")) return json({ session_id: "om1", status: "ACTIVE", updated_at: "now" }, 201);
       if (url.endsWith("/events/ingest")) return json({ ingested: body.events, skipped: 0 }, 201);
+      if (url.endsWith("/sessions/om1")) return json({ session_id: "om1", metadata: { append_notes: [] } });
       if (url.endsWith("/sessions/om1/append")) return json({ ok: true });
       throw new Error(`unexpected ${url}`);
     });

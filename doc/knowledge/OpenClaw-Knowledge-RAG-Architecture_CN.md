@@ -33,7 +33,7 @@ flowchart LR
 
 ## 隔离与生命周期
 
-- namespace 由当前 `accountId` 和 bot/agent 模式派生。
+- OpenClaw 2026.7.1 的 Prompt Hook 不提供 `accountId`；namespace 由 Hook/Tool 共有的稳定 `sessionKey` 摘要和 bot/agent 模式派生。
 - 非 owner 只能访问自己的精确 namespace；owner 是否可跨 namespace 由配置控制。
 - SQLite 表名、ZVec 文件名使用稳定哈希，防止清洗碰撞。
 - store 缓存同时按 namespace 和完整配置指纹区分；并发初始化去重。
@@ -41,7 +41,9 @@ flowchart LR
 
 ## 能力边界
 
-插件正式支持 `sqlite-vec` 和 `zvec`。PDF/Office、URL 抓取、原生 ZVec、外部向量数据库和 parser 管道不属于 2026.7.1 独立插件承诺面。
+插件正式支持 `sqlite-vec` 和 `zvec`，并可选接入智谱 Layout Parsing 或 Ollama 视觉模型，
+将 PDF/Office/图片转换为 Markdown 后进入统一切块链路。远程 URL 抓取、外部向量数据库、
+原生 ZVec 和多节点共享写入不属于 2026.7.1 承诺面。
 
 ## 组件协作图
 
@@ -50,7 +52,7 @@ flowchart TB
     subgraph HOST["OpenClaw Gateway"]
         HOOK["before_prompt_build Hook"]
         TOOL["knowledge_add/query/update/delete"]
-        CTX["Tool/Hook Context<br/>accountId / agentId / owner"]
+        CTX["Tool/Hook Context<br/>sessionKey / agentId / owner"]
     end
 
     subgraph ORCH["Knowledge Runtime"]
@@ -180,7 +182,8 @@ sequenceDiagram
     end
 ```
 
-同一 `sourceId` 的并发更新在调用层按顺序执行。`replaceBySource` 是存储契约的一部分：SQLite
+同一 `sourceId` 的 add/update/delete 在调用层按顺序执行；namespace clear 使用 Store 级
+独占屏障，先等待已登记写入，再阻止后续写入越过清空操作。`replaceBySource` 是存储契约的一部分：SQLite
 在同一事务中删除旧向量/FTS 行并写入新行；ZVec 在新快照准备完成后替换内存状态。任何阶段
 失败都不能留下“部分新块 + 部分旧块”的混合索引。
 
@@ -188,9 +191,10 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    CTX["OpenClaw Context"] --> MODE{"Bot 还是 Agent?"}
-    MODE -->|Bot| BOT["accountId:bot"]
-    MODE -->|Agent| AGENT["accountId:agent"]
+    CTX["OpenClaw Context<br/>稳定 sessionKey"] --> HASHKEY["SHA-256 前 24 hex<br/>不暴露原始会话键"]
+    HASHKEY --> MODE{"Bot 还是 Agent?"}
+    MODE -->|Bot| BOT["session-{digest}:bot"]
+    MODE -->|Agent| AGENT["session-{digest}:agent"]
     BOT --> POLICY{"调用者是 Owner?"}
     AGENT --> POLICY
     POLICY -->|否| EXACT["只能访问精确 namespace"]
@@ -204,7 +208,7 @@ flowchart TD
 隔离要点：
 
 - namespace 来自可信 OpenClaw Context，不接受普通用户任意覆盖；
-- 非 owner 只能使用当前账户和模式派生出的精确 namespace；
+- 非 owner 只能使用当前 sessionKey 和模式派生出的精确 namespace；
 - owner 跨 namespace 仍需 `allowOwnerGlobalNamespaces=true`；
 - SQLite 表名和 ZVec 文件名使用“可读前缀 + 稳定哈希”，避免仅替换标点造成碰撞；
 - Store Cache 键包含完整配置指纹，namespace 相同但 Embedding/Store 配置不同不会错误复用。
@@ -241,6 +245,24 @@ JavaScript 余弦实现，更适合测试、小数据集或无原生 SQLite 能�
 
 ## Embedding Provider 边界
 
+```mermaid
+flowchart LR
+    K["Knowledge 编排层"] --> H["统一有界 Provider HTTP"]
+    K --> SDK["无 AbortSignal 的官方 SDK<br/>调用方硬超时"]
+    H --> E["Embedding API"]
+    H --> R["Reranker API"]
+    H --> T["Tokenizer API"]
+    H --> P["Parser API"]
+    SDK --> O["Ollama SDK"]
+
+    H -.-> LIMIT["超时 / 响应字节上限"]
+    H -.-> RETRY["仅网络、408、429、5xx 有限重试"]
+    H -.-> SAFE["凭据脱敏的错误摘要"]
+    E --> VALIDATE["数量、维度、有限值校验"]
+    R --> TRUST["只信任索引与分数<br/>原文从本地候选恢复"]
+    P --> MARKDOWN["非空 Markdown 与布局结构校验"]
+```
+
 | Provider | 接入方式 | 默认凭据/端点 |
 |---|---|---|
 | OpenAI-compatible | `/embeddings` | `OPENAI_API_KEY`、`OPENAI_BASE_URL` |
@@ -249,12 +271,29 @@ JavaScript 余弦实现，更适合测试、小数据集或无原生 SQLite 能�
 | 千帆 | `/v2/embeddings` | BCE IAM Token |
 | Ollama | 官方 `ollama` SDK `/api/embed` | `OLLAMA_HOST` |
 
+Reranker 只注册具备已核实 HTTP 契约的智谱 `/api/paas/v4/rerank` 与 Jina `/v1/rerank`。
+不再把 Qwen3-Reranker 当作普通 Chat 模型要求其生成 JSON：这种方式无法取得 cross-encoder
+的 `yes/no` logits，结果不具备可解释的重排分数语义。
+
+```mermaid
+flowchart LR
+    CANDIDATE["混合召回候选"] --> CHOICE{"reranker.provider"}
+    CHOICE -->|zhipu| Z["智谱 /rerank"]
+    CHOICE -->|jina| J["Jina /rerank"]
+    Z --> V["校验索引唯一性、范围、0-1 分数"]
+    J --> V
+    V --> LOCAL["按本地候选恢复正文"]
+    CHOICE -.->|未配置| SKIP["跳过精排"]
+```
+
 所有 Provider 共享以下约束：
 
 - `requestTimeoutMs` 控制单次远程请求；
 - `maxRetries` 只针对网络、408、429 和 5xx 等瞬时错误；
 - `maxBatchSize` 控制每次请求文本数；
 - 返回向量数量、数值有限性和 dimensions 必须完整匹配；
+- Reranker 返回的文档正文不受信任，只使用经过校验的索引和 0-1 分数；
+- Parser 输出必须包含非空 Markdown，响应体和本地输入文件都有字节上限；
 - 更换模型或维度后必须重新索引，旧向量不能继续混用。
 
 ## 失败模式与可恢复性
@@ -265,15 +304,15 @@ JavaScript 余弦实现，更适合测试、小数据集或无原生 SQLite 能�
 | 返回向量维度错误 | 立即拒绝 | 不写入 Store |
 | SQLite 事务失败 | rollback | 旧 source 完整保留 |
 | ZVec JSON 写入失败 | 保留内存状态并在关闭时重试 flush | 状态端应报告错误 |
+| ZVec 快照损坏 | 启动失败并保留现场 | 不把损坏索引静默当空库 |
 | 自动召回无结果 | 不注入上下文 | Agent 使用原 Prompt |
 | 非 owner 越权 namespace | 策略层拒绝 | 不查询、不写入 |
 | Gateway stop | 等待初始化并关闭/刷新 Store | 不遗留打开句柄或延迟写入 |
 
 ## 当前非目标
 
-下列源码目录或实验接口不代表 2026.7.1 插件对外承诺：
+下列能力不代表 2026.7.1 插件对外承诺：
 
-- PDF、Office、图片 OCR 等文档解析；
 - 远程 URL 抓取与网页清洗；
 - 外部 Milvus、Pinecone、Weaviate 等向量数据库；
 - 多节点共享写入、分布式锁和在线索引迁移；

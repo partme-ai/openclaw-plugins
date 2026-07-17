@@ -48,7 +48,7 @@ flowchart LR
 
 ## 工具权限
 
-- `knowledge_query/add/update/delete` 默认只作用于当前 `accountId:bot|agent`。
+- `knowledge_query/add/update/delete` 默认只作用于当前 `sessionKey` 摘要派生的私有 namespace。
 - 非 owner 指定其他 namespace 会被拒绝。
 - owner 的跨 namespace 权限可通过 `allowOwnerGlobalNamespaces` 关闭。
 - `store_file` 只允许 owner，且还需启用文件开关并配置至少一个允许根目录。

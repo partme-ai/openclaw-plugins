@@ -203,9 +203,8 @@ export async function apiGetFetch(params: {
       throw new Error(`${params.label} ${res.status}`);
     }
     return rawText;
-  } catch (err) {
+  } finally {
     clearTimeout(t);
-    throw err;
   }
 }
 
@@ -242,9 +241,8 @@ async function apiPostFetch(params: {
       throw new Error(`${params.label} ${res.status}`);
     }
     return rawText;
-  } catch (err) {
+  } finally {
     clearTimeout(t);
-    throw err;
   }
 }
 

@@ -20,11 +20,11 @@ vi.mock("../src/transport/acl.js", () => ({
 
 vi.mock("../src/state/mqtt-state.js", () => ({
   getWebMqttChannelConfig: vi.fn(() => ({
-    auth: { users: [{ username: "alice" }] },
+    auth: { required: true, users: [{ username: "alice" }] },
   })),
 }));
 
-import { publishToTopic } from "../src/transport/server.js";
+import { getClientUsername, publishToTopic } from "../src/transport/server.js";
 import { isUserActionAllowed } from "../src/transport/acl.js";
 import { upsertSessionContext } from "../src/routing/session-mapper.js";
 import { publishDirectText, publishOutboundText } from "../src/outbound.js";
@@ -34,6 +34,7 @@ describe("publishOutboundText", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(publishToTopic).mockResolvedValue(1);
+    vi.mocked(getClientUsername).mockReturnValue("alice");
   });
 
   it("publishes to replyTopic from session context", async () => {
@@ -80,6 +81,22 @@ describe("publishOutboundText", () => {
     vi.mocked(isUserActionAllowed).mockReturnValueOnce(false);
 
     await expect(publishOutboundText(sessionKey, "blocked", "openclaw/")).rejects.toThrow(/Outbound ACL denied/);
+    expect(publishToTopic).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when authenticated session identity is missing", async () => {
+    const sessionKey = "agent:demo:mqtt-ws:direct:missing-identity";
+    upsertSessionContext(sessionKey, {
+      clientId: "missing-identity",
+      agentId: "demo",
+      accountId: "default",
+      lastInboundTopic: "openclaw/agent/demo/in",
+      replyTopic: "secure/out",
+    });
+    vi.mocked(getClientUsername).mockReturnValueOnce(null);
+
+    await expect(publishOutboundText(sessionKey, "blocked", "openclaw/"))
+      .rejects.toThrow(/Authenticated identity missing/);
     expect(publishToTopic).not.toHaveBeenCalled();
   });
 

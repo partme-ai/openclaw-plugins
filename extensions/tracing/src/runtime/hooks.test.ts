@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { registerTracingPluginHooks } from "./hooks.js";
 import { TracingSampler } from "./sampler.js";
 import {
+  createSpan,
+  finishAllActiveTraces,
   getActiveSpanCount,
   getRecentTraceCount,
   getTraceSpans,
@@ -43,14 +45,17 @@ const baseConfig: TracingConfig = {
   enabled: true,
   backend: "log",
   otlpEndpoint: "http://localhost:4318",
+  otlpHeaders: {},
   sampleRate: 1,
   traceDir: "./traces",
   traceRetentionDays: 7,
   maxSpansPerTrace: 10,
+  maxActiveTraces: 100,
   maxBufferedSpans: 100,
   flushIntervalMs: 5000,
   exportTimeoutMs: 1000,
   exportRetryAttempts: 1,
+  shutdownTimeoutMs: 1000,
   captureMessageBody: false,
 };
 
@@ -253,6 +258,66 @@ describe("registerTracingPluginHooks", () => {
     await api.emit("message_received", {}, { sessionKey: "disabled" });
     expect(getActiveSpanCount()).toBe(0);
   });
+
+  it("惰性初始化失败时记录错误并 fail-open，不把异常抛回主 Hook", async () => {
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, async () => {
+      throw new Error("backend init failed");
+    });
+    await expect(api.emit("message_received", {}, { sessionKey: "sk-init-fail" })).resolves.toBeUndefined();
+    expect(api.logger.error).toHaveBeenCalledWith(expect.stringContaining("backend init failed"));
+    expect(getActiveSpanCount()).toBe(0);
+  });
+
+  it("缺少 sessionKey 和 runId 时不创建无法关联结束事件的孤儿 root span", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: baseConfig,
+    }));
+    await api.emit("message_received", {}, { channelId: "unknown" });
+    expect(getActiveSpanCount()).toBe(0);
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("both sessionKey and runId are missing"));
+  });
+
+  it("活动 Trace 达到上限时跳过新会话并报告容量错误", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: { ...baseConfig, maxActiveTraces: 1 },
+    }));
+    await api.emit("message_received", {}, { sessionKey: "sk-limit-1", runId: "run-limit-1" });
+    await api.emit("message_received", {}, { sessionKey: "sk-limit-2", runId: "run-limit-2" });
+    expect(getActiveSpanCount()).toBe(1);
+    expect(api.logger.error).toHaveBeenCalledWith(expect.stringContaining("active trace limit reached"));
+  });
+
+  it("相同 toolCallId 在不同 Trace 中不会互相覆盖绑定", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: baseConfig,
+    }));
+    const trace1 = "11111111111111111111111111111111";
+    const trace2 = "22222222222222222222222222222222";
+    await api.emit("message_received", {}, { sessionKey: "sk-tool-1", runId: "run-tool-1", traceId: trace1 });
+    await api.emit("message_received", {}, { sessionKey: "sk-tool-2", runId: "run-tool-2", traceId: trace2 });
+    await api.emit("before_tool_call", { toolName: "shared", toolCallId: "call-1" }, { sessionKey: "sk-tool-1", runId: "run-tool-1" });
+    await api.emit("before_tool_call", { toolName: "shared", toolCallId: "call-1" }, { sessionKey: "sk-tool-2", runId: "run-tool-2" });
+    await api.emit("after_tool_call", { toolCallId: "call-1" }, { sessionKey: "sk-tool-1", runId: "run-tool-1" });
+    await api.emit("after_tool_call", { toolCallId: "call-1" }, { sessionKey: "sk-tool-2", runId: "run-tool-2" });
+
+    const toolSpans = vi.mocked(backend.exportSpans).mock.calls
+      .flatMap(([spans]) => spans)
+      .filter((span) => span.name === "tool:shared");
+    expect(toolSpans.map((span) => span.traceId).sort()).toEqual([trace1, trace2]);
+  });
 });
 
 describe("trace-store getTraceSpans", () => {
@@ -282,5 +347,18 @@ describe("trace-store getTraceSpans", () => {
     expect(traces?.[0]?.name).toBe("message.received");
     traces![0]!.name = "mutated";
     expect(getTraceSpans("abc123abc123abc1abc123abc123abc1")?.[0]?.name).toBe("message.received");
+  });
+
+  it("Gateway 关闭时导出没有 session/run 索引的孤儿 Span", async () => {
+    const backend = createMockBackend();
+    createSpan("orphan.operation");
+
+    await finishAllActiveTraces(backend, "gateway_shutdown");
+
+    expect(getActiveSpanCount()).toBe(0);
+    const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
+    expect(exported).toHaveLength(1);
+    expect(exported[0]?.status).toBe("error");
+    expect(exported[0]?.attributes["openclaw.end_reason"]).toBe("gateway_shutdown");
   });
 });

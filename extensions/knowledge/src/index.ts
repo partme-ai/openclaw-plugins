@@ -18,6 +18,7 @@
  */
 
 export { registerKnowledgeHooks, getOrCreateStore, invalidateStoreCache } from './runtime/hooks.js';
+export { resolveConversationNamespace } from './runtime/namespace.js';
 export { extractKnowledgeConfig, deepMergeKnowledgeConfig } from './runtime/hooks.js';
 export { indexDocument, indexDocuments, retrieveContext } from './indexer/scheduler.js';
 export { createKnowledgeConfig, validateKnowledgeConfig, mergeKnowledgeConfig } from './config/config.js';
@@ -70,7 +71,7 @@ const INDEXABLE_EXTENSIONS = new Set(['.md', '.txt', '.csv', '.json', '.text']);
 export type FileIndexOptions = {
   /** 知识库配置（已合并） */
   config: KnowledgeConfig;
-  /** 命名空间（格式：accountId:mode） */
+  /** 命名空间；推荐使用 resolveConversationNamespace 从官方会话上下文派生。 */
   namespace: string;
   /** 来源标识 */
   sourceId: string;
@@ -91,12 +92,12 @@ export async function indexFile(
   options: FileIndexOptions,
 ): Promise<IndexResult> {
   const ext = extname(filePath).toLowerCase();
-  if (!INDEXABLE_EXTENSIONS.has(ext)) {
+  if (!INDEXABLE_EXTENSIONS.has(ext) && !options.config.parser?.provider) {
     return {
       chunksAdded: 0,
       sourceId: options.sourceId,
       success: false,
-      error: `不支持的文件类型: ${ext}（支持: .md, .txt, .csv, .json）`,
+      error: `不支持的文件类型: ${ext}（纯文本支持: .md, .txt, .text, .csv, .json；其它格式需配置 parser）`,
     };
   }
 
@@ -111,6 +112,15 @@ export async function indexFile(
         error: '文件不存在或为空',
       };
     }
+    const maxFileBytes = options.config.parser?.maxFileBytes ?? options.config.tools?.maxFileBytes ?? 20 * 1024 * 1024;
+    if (fileStat.size > maxFileBytes) {
+      return {
+        chunksAdded: 0,
+        sourceId: options.sourceId,
+        success: false,
+        error: `文件超过最大大小 ${maxFileBytes} bytes`,
+      };
+    }
   } catch {
     return {
       chunksAdded: 0,
@@ -121,7 +131,7 @@ export async function indexFile(
   }
 
   const { store, embedding } = await getOrCreateStore(options.config, options.namespace);
-  return indexDocument(filePath, options.sourceId, embedding, store, options.chunkerConfig);
+  return indexDocument(filePath, options.sourceId, embedding, store, options.chunkerConfig, options.config.parser);
 }
 
 /**

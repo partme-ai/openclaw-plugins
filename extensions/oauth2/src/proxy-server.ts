@@ -14,6 +14,7 @@ import { extractBearerToken } from "./auth/request-auth.js";
 import { OAuth2SessionStore } from "./auth/session-store.js";
 import type { AuthContext, AuthOAuth2Config, OAuth2ProxyConfig } from "./shared/types.js";
 
+/** 代理服务依赖的最小日志接口，避免网络层耦合完整 OpenClaw Plugin API。 */
 export type OAuth2ProxyLogger = {
   info(message: string): void;
   warn(message: string): void;

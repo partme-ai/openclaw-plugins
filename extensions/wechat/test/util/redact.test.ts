@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { truncate, redactToken, redactBody, redactUrl } from "../../src/util/redact.js";
+import { truncate, redactToken, redactBody, redactUrl, sanitizeLogMessage } from "../../src/util/redact.js";
 
 describe("truncate", () => {
   it("returns empty string for undefined", () => {
@@ -92,5 +92,30 @@ describe("redactUrl", () => {
   it("handles invalid URLs gracefully", () => {
     const result = redactUrl("not-a-url-but-very-long-" + "x".repeat(100));
     expect(result).toContain("…(len=");
+  });
+});
+
+describe("sanitizeLogMessage", () => {
+  it("redacts identifiers, message previews, paths and URL details", () => {
+    const result = sanitizeLogMessage(
+      'from=user-1 sessionKey=session-1 body="hello world" filePath=/tmp/secret.png url=https://example.com/qrcode/secret?token=x',
+    );
+    expect(result).not.toContain("user-1");
+    expect(result).not.toContain("session-1");
+    expect(result).not.toContain("hello world");
+    expect(result).not.toContain("/tmp/secret.png");
+    expect(result).not.toContain("qrcode/secret");
+    expect(result).toContain("<url:example.com>");
+  });
+
+  it("removes control characters and bounds the result", () => {
+    const result = sanitizeLogMessage(`line1\nline2 ${"x".repeat(100)}`, 20);
+    expect(result).not.toContain("\n");
+    expect(result).toContain("…(len=");
+  });
+
+  it("redacts malformed URL-like values without throwing", () => {
+    expect(sanitizeLogMessage("endpoint=http://%"))
+      .toContain("<url:redacted>");
   });
 });

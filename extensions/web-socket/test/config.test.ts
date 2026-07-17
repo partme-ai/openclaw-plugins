@@ -74,6 +74,38 @@ describe("resolveWebsocketConfig", () => {
     const cfg = resolveWebsocketConfig({ channels: { "web-socket": { mode: "client", url: "ws://example.com/ws" } } });
     expect(() => validateWebsocketConfig(cfg)).toThrow(/remote plaintext client/);
   });
+
+  it("rejects enabled auth without a token even on loopback", () => {
+    const cfg = resolveWebsocketConfig({
+      channels: { "web-socket": { auth: { enabled: true } } },
+    });
+    expect(() => validateWebsocketConfig(cfg)).toThrow(/at least one non-empty token/);
+  });
+
+  it("rejects unsafe origins and explicit invalid numeric values", () => {
+    const wildcard = resolveWebsocketConfig({
+      channels: { "web-socket": { allowedOrigins: ["*"] } },
+    });
+    expect(() => validateWebsocketConfig(wildcard)).toThrow(/must not contain/);
+
+    const invalidPort = resolveWebsocketConfig({
+      channels: { "web-socket": { wsPort: 70_000 } },
+    });
+    expect(invalidPort.server.wsPort).toBe(70_000);
+    expect(() => validateWebsocketConfig(invalidPort)).toThrow(/server\.wsPort/);
+  });
+
+  it("requires TLS key material and a valid reconnect interval", () => {
+    const tls = resolveWebsocketConfig({
+      channels: { "web-socket": { tls: { enabled: true } } },
+    });
+    expect(() => validateWebsocketConfig(tls)).toThrow(/keyFile and certFile/);
+
+    const reconnect = resolveWebsocketConfig({
+      channels: { "web-socket": { mode: "client", url: "ws://localhost/ws", client: { reconnect: { initialDelayMs: 2000, maxDelayMs: 1000 } } } },
+    });
+    expect(() => validateWebsocketConfig(reconnect)).toThrow(/must not exceed/);
+  });
 });
 
 describe("isWebsocketChannelConfigured", () => {

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  WEBSOCKET_PROTOCOL_VERSION,
   parseClientFrame,
   serializeConnectedFrame,
+  serializeEnvelopeReplyFrame,
   serializeReplyFrame,
 } from "../src/transport/protocol.js";
 
@@ -38,6 +40,7 @@ describe("parseClientFrame", () => {
 describe("serialize frames", () => {
   it("serializes connected and reply", () => {
     expect(JSON.parse(serializeConnectedFrame("cid-1"))).toMatchObject({
+      version: WEBSOCKET_PROTOCOL_VERSION,
       type: "connected",
       connectionId: "cid-1",
     });
@@ -45,6 +48,20 @@ describe("serialize frames", () => {
       type: "reply",
       text: "hi",
       sessionKey: "sk",
+      version: WEBSOCKET_PROTOCOL_VERSION,
+    });
+  });
+
+  it("rejects an explicitly unsupported protocol version", () => {
+    expect(parseClientFrame(JSON.stringify({ version: "2", type: "message", text: "hello" }))).toBeNull();
+  });
+
+  it("wraps a message-sdk envelope as a versioned reply frame", () => {
+    expect(JSON.parse(serializeEnvelopeReplyFrame(JSON.stringify({ message: { text: "hi" } }), { messageId: "m-1" }))).toMatchObject({
+      version: "1",
+      type: "reply",
+      messageId: "m-1",
+      message: { text: "hi" },
     });
   });
 });

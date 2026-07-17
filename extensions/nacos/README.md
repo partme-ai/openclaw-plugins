@@ -4,7 +4,7 @@
 
 **OpenClaw plugin — Nacos Config Center merge and Gateway / Hooks naming registration**
 
-![npm](https://img.shields.io/badge/npm-2026.5.12-blue)
+![npm](https://img.shields.io/badge/npm-2026.7.1-blue)
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Nacos](https://img.shields.io/badge/Nacos-SDK-orange)
@@ -30,7 +30,7 @@
   - **Primary config mode** (`primaryConfigDataId`): Load the **complete** `openclaw.json` from a single Nacos dataId as the source of truth. `sharedConfigs` and `pluginConfigIds` are still layered on top.
   - **Shared configs mode** (`sharedConfigs`): Pull multiple partial configs and deep-merge them with the current runtime config.
 - Supports optional `applicationDataId` and per-plugin `<pluginId>-<profile>.json` via `pluginConfigIds`.
-- Before `runtime.config.replaceConfigFile`, backs up the active config file under `stateDir` as `openclaw-nacos-<yyyyMMddHHmmss>.json`.
+- Before `runtime.config.replaceConfigFile`, backs up the active config as `openclaw-nacos-<yyyyMMddHHmmss>-<random>.json` so same-second writes cannot collide.
 - Subscribes to Nacos config changes and **re-applies** on every change (pull → merge → backup → write).
 - Naming and Config share **`serverList` / `username` / `password` / default `namespace`**; Config may override with **`configCenter.namespace`**.
 
@@ -38,7 +38,7 @@
 
 - Discovers peer Gateway nodes registered under the same Nacos service name.
 - Maintains an in-memory peer list that **auto-updates** via Nacos naming subscription.
-- Exposes `GET /nacos/cluster` HTTP endpoint with full peer metadata (IP, port, hooks path, health status).
+- Exposes `GET /nacos/cluster` with peer IP, port, hooks path and health; sensitive metadata keys are redacted.
 - `GET /nacos/health` includes cluster discovery status and peer count.
 
 ### ✨ Highlights
@@ -56,7 +56,7 @@
 #### 3. Backup and write
 
 - Backup source: `OPENCLAW_CONFIG_PATH` if set, else `stateDir/openclaw.json`.
-- Backup file: `stateDir/openclaw-nacos-<yyyyMMddHHmmss>.json` (local 14-digit timestamp).
+- Backup file: `stateDir/openclaw-nacos-<yyyyMMddHHmmss>-<8-char random>.json`.
 
 #### 4. Switches
 
@@ -127,7 +127,7 @@ Wire the package into OpenClaw using your version’s plugin discovery rules (`o
 
 #### Spring-style `nacos` block (optional)
 
-You may nest a `nacos` object under `plugins.entries.openclaw-nacos.config` (similar to Spring Boot `application.yml`). The plugin flattens it before validation; **top-level keys win** when both are present. See [README.zh-CN.md](./README.zh-CN.md) for field mapping (`server-addr`, `discovery`, `config`, `shared-configs`, `data-id`).
+You may nest a `nacos` object under `plugins.entries.nacos.config` (similar to Spring Boot `application.yml`). The plugin flattens it before validation; **top-level keys win** when both are present. See [README.zh-CN.md](./README.zh-CN.md) for field mapping (`server-addr`, `discovery`, `config`, `shared-configs`, `data-id`).
 
 #### npm `nacos` 2.x only
 
@@ -153,7 +153,7 @@ Edit your OpenClaw config (often `~/.openclaw/openclaw.json` or `OPENCLAW_CONFIG
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           "serverList": "127.0.0.1:8848",
@@ -185,7 +185,7 @@ Store your **entire** `openclaw.json` as a Nacos config (e.g. dataId `openclaw.j
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           "serverList": "127.0.0.1:8848",
@@ -206,7 +206,7 @@ Store your **entire** `openclaw.json` as a Nacos config (e.g. dataId `openclaw.j
 With this setup:
 - The **primary config** (`openclaw.json` in Nacos) replaces the local config snapshot as the base.
 - `openclaw-weixin-dev.json` and `openclaw-dingtalk-dev.json` are loaded into `plugins.entries["openclaw-weixin"].config` etc.
-- Any Nacos config change triggers: pull → merge → **backup** (`openclaw-nacos-yyyyMMddHHmmss.json`) → write.
+- Any Nacos config change triggers: pull → validate → merge → **unique backup** (`openclaw-nacos-yyyyMMddHHmmss-xxxxxxxx.json`) → write.
 
 #### 3b. Webhook cluster with peer discovery
 
@@ -214,7 +214,7 @@ With this setup:
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           "serverList": "127.0.0.1:8848",
@@ -318,7 +318,7 @@ node scripts/publish-changed.mjs --plugin nacos
 | --- | --- | --- |
 | `enabled` | `true` | `false` disables the **entire** plugin |
 | `naming.enabled` | `true` | `false` skips naming only |
-| `namespace` | `public` | Namespace; default for Config if `configCenter.namespace` unset |
+| `namespace` | `public` | Naming namespace; Config maps the displayed `public` name to Nacos' empty default tenant id |
 | `username` / `password` | — | Nacos auth (shared by Naming and Config) |
 | `serviceName` | `openclaw-gateway` | Service name |
 | `groupName` | `DEFAULT_GROUP` | Group |
@@ -374,7 +374,7 @@ node scripts/publish-changed.mjs --plugin nacos
 
 | **Item** | **Version** |
 | --- | --- |
-| @partme.ai/openclaw-nacos | 2026.5.12.2 |
+| @partme.ai/openclaw-nacos | 2026.7.1 |
 | Recommended Node | 22+ |
 
 ### 🔗 Links

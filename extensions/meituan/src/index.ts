@@ -6,7 +6,7 @@
  */
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { definePluginEntry, type OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
-import { resolveMeituanConfig } from "./config.js";
+import { bindMeituanAccount, resolveMeituanConfig } from "./config.js";
 import { MeituanApiError, MeituanClient, signMeituanParams } from "./meituan/meituan-api.js";
 import { createMeituanTool, MEITUAN_TOOL_NAME } from "./tools/tools.js";
 
@@ -20,14 +20,26 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       api.logger.info("[meituan] Disabled");
       return;
     }
-    const client = new MeituanClient(config);
-    api.registerTool((ctx) => createMeituanTool(ctx, config, client), { name: MEITUAN_TOOL_NAME });
+    // 每个受信任账号复用独立 Client：Token 不跨账号，同时保留每账号进程内限流窗口。
+    const clients = new Map<string, MeituanClient>();
+    api.registerTool((ctx) => {
+      const boundConfig = bindMeituanAccount(config, ctx.agentAccountId);
+      // 仅已配置账号拥有独立槽位；任意未匹配运行时 ID 共享一个失败关闭/回退客户端，避免 Map 无界增长。
+      const configuredAccount = config.accounts.some((account) => account.accountId === ctx.agentAccountId);
+      const clientKey = configuredAccount ? `account:${ctx.agentAccountId}` : "__unbound__";
+      let client = clients.get(clientKey);
+      if (!client) {
+        client = new MeituanClient(boundConfig);
+        clients.set(clientKey, client);
+      }
+      return createMeituanTool(ctx, boundConfig, client);
+    }, { name: MEITUAN_TOOL_NAME });
     api.logger.info(`[meituan] MTOp tool registered with ${config.operations.length} allowlisted operations`);
   },
 });
 
-export { resolveMeituanConfig } from "./config.js";
+export { bindMeituanAccount, resolveMeituanConfig } from "./config.js";
 export { MeituanApiError, MeituanClient, signMeituanParams };
 export { createMeituanTool, MEITUAN_TOOL_NAME } from "./tools/tools.js";
-export type { MeituanApiResponse, MeituanOperation, MeituanPluginConfig } from "./types.js";
+export type { MeituanAccountCredential, MeituanApiResponse, MeituanOperation, MeituanPluginConfig } from "./types.js";
 export default plugin;

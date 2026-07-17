@@ -4,6 +4,10 @@
  */
 
 import type { WebMqttConfig, WebMqttTopicBinding, WebMqttUser } from "./types.js";
+import {
+  isValidMqttTopicFilter,
+  isValidMqttTopicName,
+} from "@partme.ai/openclaw-message-sdk/transport";
 
 /**
  * 默认配置。
@@ -55,10 +59,10 @@ export function resolveWebMqttConfig(globalConfig: Record<string, unknown>): Web
   const topicPrefix = normalizeTopicPrefix(raw.topicPrefix ?? DEFAULT_WEB_MQTT_CONFIG.topicPrefix);
 
   return {
-    port: asSafeInteger(raw.port, DEFAULT_WEB_MQTT_CONFIG.port),
+    port: asConfiguredNumber(raw.port, DEFAULT_WEB_MQTT_CONFIG.port),
     path: normalizeWsPath(raw.path ?? DEFAULT_WEB_MQTT_CONFIG.path),
     host: typeof raw.host === "string" && raw.host.trim() ? raw.host.trim() : DEFAULT_WEB_MQTT_CONFIG.host,
-    maxConnections: asSafeInteger(raw.maxConnections, DEFAULT_WEB_MQTT_CONFIG.maxConnections),
+    maxConnections: asConfiguredNumber(raw.maxConnections, DEFAULT_WEB_MQTT_CONFIG.maxConnections),
     topicPrefix,
     subscribeTopics: normalizeStringArray(raw.subscribeTopics),
     topicBindings: normalizeBindings(raw.topicBindings),
@@ -87,21 +91,21 @@ export function resolveWebMqttConfig(globalConfig: Record<string, unknown>): Web
     },
     ws: {
       compress: raw.ws?.compress ?? DEFAULT_WEB_MQTT_CONFIG.ws.compress,
-      idleTimeoutMs: asSafeInteger(raw.ws?.idleTimeoutMs, DEFAULT_WEB_MQTT_CONFIG.ws.idleTimeoutMs),
-      maxFrameSize: asSafeInteger(raw.ws?.maxFrameSize, DEFAULT_WEB_MQTT_CONFIG.ws.maxFrameSize),
-      allowedOrigins: normalizeStringArray(raw.ws?.allowedOrigins),
+      idleTimeoutMs: asConfiguredNumber(raw.ws?.idleTimeoutMs, DEFAULT_WEB_MQTT_CONFIG.ws.idleTimeoutMs),
+      maxFrameSize: asConfiguredNumber(raw.ws?.maxFrameSize, DEFAULT_WEB_MQTT_CONFIG.ws.maxFrameSize),
+      allowedOrigins: normalizeOrigins(raw.ws?.allowedOrigins),
     },
     limits: {
-      maxPayloadBytes: asSafeInteger(raw.limits?.maxPayloadBytes, DEFAULT_WEB_MQTT_CONFIG.limits.maxPayloadBytes),
-      maxSubscriptionsPerClient: asSafeInteger(
+      maxPayloadBytes: asConfiguredNumber(raw.limits?.maxPayloadBytes, DEFAULT_WEB_MQTT_CONFIG.limits.maxPayloadBytes),
+      maxSubscriptionsPerClient: asConfiguredNumber(
         raw.limits?.maxSubscriptionsPerClient,
         DEFAULT_WEB_MQTT_CONFIG.limits.maxSubscriptionsPerClient,
       ),
-      maxPendingMessagesPerClient: asSafeInteger(
+      maxPendingMessagesPerClient: asConfiguredNumber(
         raw.limits?.maxPendingMessagesPerClient,
         DEFAULT_WEB_MQTT_CONFIG.limits.maxPendingMessagesPerClient,
       ),
-      inboundTaskTimeoutMs: asSafeInteger(
+      inboundTaskTimeoutMs: asConfiguredNumber(
         raw.limits?.inboundTaskTimeoutMs,
         DEFAULT_WEB_MQTT_CONFIG.limits.inboundTaskTimeoutMs,
       ),
@@ -207,6 +211,25 @@ export function validateWebMqttConfig(config: WebMqttConfig): string[] {
   if (!Number.isSafeInteger(config.limits.inboundTaskTimeoutMs) || config.limits.inboundTaskTimeoutMs < 1) {
     issues.push("limits.inboundTaskTimeoutMs 必须是正安全整数。");
   }
+  for (const origin of config.ws.allowedOrigins) {
+    if (!isValidBrowserOrigin(origin)) {
+      issues.push(`ws.allowedOrigins 包含非法 Origin：${origin}。仅允许规范化的 http/https Origin。`);
+    }
+  }
+  for (const topic of config.subscribeTopics) {
+    if (!isValidMqttTopicFilter(topic)) issues.push(`subscribeTopics 包含非法 MQTT Topic Filter：${topic}。`);
+  }
+  if (!isValidMqttTopicName(config.topicPrefix)) {
+    issues.push("topicPrefix 必须是非空且不含 NUL、+、# 的 MQTT Topic 前缀。");
+  }
+  config.topicBindings.forEach((binding, index) => {
+    if (!isValidMqttTopicFilter(binding.topicPattern)) {
+      issues.push(`topicBindings[${index}].topicPattern 不是合法 MQTT Topic Filter。`);
+    }
+    if (binding.replyTopic !== undefined && !isValidMqttTopicName(binding.replyTopic)) {
+      issues.push(`topicBindings[${index}].replyTopic 不是合法 MQTT Topic Name。`);
+    }
+  });
   const usernames = new Set<string>();
   for (const user of config.auth.users) {
     const username = user.username.trim();
@@ -224,6 +247,9 @@ export function validateWebMqttConfig(config: WebMqttConfig): string[] {
       ...(user.aclRules ?? []).map((rule) => rule.topicPattern),
     ];
     if (patterns.some((pattern) => !pattern.trim())) issues.push(`用户 ${username} 包含空 ACL topicPattern。`);
+    if (patterns.some((pattern) => !isValidMqttTopicFilter(pattern))) {
+      issues.push(`用户 ${username} 包含非法 MQTT ACL Topic Filter。`);
+    }
   }
   return issues;
 }
@@ -252,14 +278,50 @@ function normalizeWsPath(path: string): string {
   return path.startsWith("/") ? path : `/${path}`;
 }
 
-function asSafeInteger(input: unknown, fallback: number): number {
-  if (typeof input !== "number" || !Number.isFinite(input) || input <= 0) return fallback;
-  return Math.floor(input);
+/** 保留用户显式提供的有限数字，让 validate 阶段能发现 0、负数和小数误配。 */
+function asConfiguredNumber(input: unknown, fallback: number): number {
+  return typeof input === "number" && Number.isFinite(input) ? input : fallback;
 }
 
 function normalizeStringArray(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
-  return input.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  return input
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim());
+}
+
+/** 将合法浏览器 Origin 规范化为 URL.origin；非法值保留给 validate 输出明确错误。 */
+function normalizeOrigins(input: unknown): string[] {
+  const normalized = normalizeStringArray(input).map((origin) => {
+    try {
+      const url = new URL(origin);
+      if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== "/")) {
+        return origin;
+      }
+      return url.origin;
+    } catch {
+      return origin;
+    }
+  });
+  return [...new Set(normalized)];
+}
+
+/** Origin 白名单仅接受不带凭据、路径、查询和片段的 http/https 源。 */
+function isValidBrowserOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      (url.pathname === "" || url.pathname === "/") &&
+      url.origin === origin
+    );
+  } catch {
+    return false;
+  }
 }
 
 function normalizeBindings(input: unknown): WebMqttTopicBinding[] {

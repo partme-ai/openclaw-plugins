@@ -289,12 +289,12 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
   /**
    * 带鉴权与缓存的采集
    */
-  async function runCollect(req: IncomingMessage, res: ServerResponse): Promise<{
+  async function runCollect(req: IncomingMessage, res: ServerResponse, alreadyAuthorized = false): Promise<{
     definitions: MetricDefinition[];
     samples: MetricSample[];
     diagnostics: CollectorDiagnostic[];
   } | null> {
-    if (!assertScrapeAuthorized(req, res, cfg)) {
+    if (!alreadyAuthorized && !assertScrapeAuthorized(req, res, cfg)) {
       return null;
     }
 
@@ -348,13 +348,15 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
 
   async function detailedHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     await withRouteMetrics(metricsChildPath(base, "/detailed"), req, res, async () => {
+      // 鉴权必须早于参数校验，避免未授权调用方利用 400/401 差异探测运维端点行为。
+      if (!assertScrapeAuthorized(req, res, cfg)) return;
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const familyFilter = url.searchParams.get("family");
       if (familyFilter && !/^[A-Za-z_:][A-Za-z0-9_:]{0,127}$/.test(familyFilter)) {
         writeJson(res, 400, { ok: false, error: "family must be a valid Prometheus metric name prefix" });
         return;
       }
-      const bundle = await runCollect(req, res);
+      const bundle = await runCollect(req, res, true);
       if (!bundle) return;
 
       let filteredDefs = [...bundle.definitions];

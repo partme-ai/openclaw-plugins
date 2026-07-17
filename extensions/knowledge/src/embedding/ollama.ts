@@ -11,6 +11,12 @@ import type { EmbeddingService, KnowledgeEmbeddingConfig } from '../types.js';
 import { DEFAULT_EMBEDDING_TIMEOUT_MS, inEmbeddingBatches, withEmbeddingTimeout } from './http.js';
 import { assertVector } from '../store/vector-validation.js';
 
+/**
+ * Ollama 本地向量化适配器。
+ *
+ * 通过官方 SDK 调用本机或内网 Ollama；批量输入按配置拆批，并在写入向量库前
+ * 校验返回数量、维度及有限数值，避免模型切换造成的维度漂移污染已有索引。
+ */
 export class OllamaEmbeddingService implements EmbeddingService {
   readonly dimensions: number;
   readonly modelName: string;

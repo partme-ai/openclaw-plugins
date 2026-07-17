@@ -89,6 +89,24 @@ describe("router plugin", () => {
     await service.stop();
   });
 
+  it("recognizes Router delivery metadata even when host runId differs", async () => {
+    const { hooks, sendText, service } = await harness();
+    await hooks.get("message_received")?.({ id: "m-meta", content: "loop" }, { channelId: "web-mqtt" });
+    await waitFor(() => sendText.mock.calls.length === 1);
+    const deliveryId = sendText.mock.calls[0]?.[0]?.deliveryQueueId;
+
+    await hooks.get("message_sent")?.({
+      success: true,
+      runId: "host-generated-run-id",
+      content: "loop",
+      metadata: { idempotencyKey: deliveryId, router: { deliveryId } },
+    }, { channelId: "web-mqtt" });
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(sendText).toHaveBeenCalledTimes(1);
+    await service.stop();
+  });
+
   it("delivers every reply payload in the same run, including identical chunks", async () => {
     const { hooks, sendText, service } = await harness();
     const handler = hooks.get("reply_payload_sending");

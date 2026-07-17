@@ -22,7 +22,9 @@ export class OtlpBackend implements TracingBackend {
   private maxBufferedSpans = 10_000;
   private timeoutMs = 10_000;
   private retryAttempts = 3;
+  private headers: Record<string, string> = {};
   private buffer: Span[] = [];
+  private inFlightSpans = 0;
   private batchTimer: ReturnType<typeof setInterval> | null = null;
   private flushPromise: Promise<void> | null = null;
   private status: TracingBackendStatus = {
@@ -38,6 +40,7 @@ export class OtlpBackend implements TracingBackend {
     this.maxBufferedSpans = config.maxBufferedSpans;
     this.timeoutMs = config.exportTimeoutMs;
     this.retryAttempts = config.exportRetryAttempts;
+    this.headers = { ...config.otlpHeaders };
     this.batchTimer = setInterval(() => {
       void this.flush().catch((error: unknown) => {
         this.logger.error(`[tracing] OTLP export failed: ${toErrorMessage(error)}`);
@@ -51,12 +54,15 @@ export class OtlpBackend implements TracingBackend {
     this.buffer.push(...spans.map(cloneSpan));
     this.enforceBufferLimit();
     if (this.buffer.length >= BATCH_SIZE) {
-      await this.flush();
+      // 网络导出在后台串行执行；Hook 只负责把 Span 放入有界缓冲，避免 Collector 故障反压主链。
+      void this.flush().catch((error: unknown) => {
+        this.logger.error(`[tracing] OTLP export failed: ${toErrorMessage(error)}`);
+      });
     }
   }
 
   getStatus(): TracingBackendStatus {
-    return { ...this.status, bufferedSpans: this.buffer.length };
+    return { ...this.status, bufferedSpans: this.buffer.length + this.inFlightSpans };
   }
 
   async shutdown(): Promise<void> {
@@ -81,35 +87,45 @@ export class OtlpBackend implements TracingBackend {
 
   private async flushInternal(): Promise<void> {
     if (this.buffer.length === 0) return;
-    const spans = this.buffer.splice(0);
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= this.retryAttempts; attempt += 1) {
-      try {
-        await this.send(spans);
-        this.status = {
-          ...this.status,
-          healthy: true,
-          bufferedSpans: this.buffer.length,
-          lastExportAt: Date.now(),
-          lastError: undefined,
-        };
-        return;
-      } catch (error) {
-        lastError = error;
-        if (attempt < this.retryAttempts) {
-          await delay(Math.min(250 * 2 ** (attempt - 1), 2_000));
+    // 固定每个 HTTP 请求最多 BATCH_SIZE，且只处理本轮开始前的快照，控制载荷和单轮耗时。
+    let remaining = this.buffer.length;
+    while (remaining > 0) {
+      const spans = this.buffer.splice(0, Math.min(BATCH_SIZE, remaining));
+      remaining -= spans.length;
+      this.inFlightSpans = spans.length;
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= this.retryAttempts; attempt += 1) {
+        try {
+          await this.send(spans);
+          this.inFlightSpans = 0;
+          this.status = {
+            ...this.status,
+            healthy: true,
+            bufferedSpans: this.buffer.length,
+            lastExportAt: Date.now(),
+            lastError: undefined,
+          };
+          lastError = undefined;
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt < this.retryAttempts) {
+            await delay(Math.min(250 * 2 ** (attempt - 1), 2_000));
+          }
         }
       }
+      if (!lastError) continue;
+      this.inFlightSpans = 0;
+      this.buffer.unshift(...spans);
+      this.enforceBufferLimit();
+      this.status = {
+        ...this.status,
+        healthy: false,
+        bufferedSpans: this.buffer.length,
+        lastError: toErrorMessage(lastError),
+      };
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
     }
-    this.buffer.unshift(...spans);
-    this.enforceBufferLimit();
-    this.status = {
-      ...this.status,
-      healthy: false,
-      bufferedSpans: this.buffer.length,
-      lastError: toErrorMessage(lastError),
-    };
-    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   private async send(spans: Span[]): Promise<void> {
@@ -119,12 +135,32 @@ export class OtlpBackend implements TracingBackend {
     try {
       const response = await fetch(this.endpoint, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        // 用户头可承载 Authorization，但 content-type 始终由插件固定，避免错误配置破坏 OTLP 编码。
+        headers: { ...this.headers, "content-type": "application/json" },
         body: JSON.stringify(this.toOtlpPayload(spans)),
         signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`OTLP HTTP ${response.status}: ${response.statusText}`);
+      }
+      const responseText = await response.text();
+      if (responseText) {
+        try {
+          const payload = JSON.parse(responseText) as { partialSuccess?: { rejectedSpans?: number; errorMessage?: string } };
+          const rejected = payload.partialSuccess?.rejectedSpans ?? 0;
+          if (rejected > 0) {
+            throw new Error(
+              `OTLP partial success rejected ${rejected} spans` +
+              (payload.partialSuccess?.errorMessage ? `: ${payload.partialSuccess.errorMessage}` : ""),
+            );
+          }
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            this.logger.warn("[tracing] OTLP success response contained non-JSON body; ignoring body");
+          } else {
+            throw error;
+          }
+        }
       }
     } finally {
       clearTimeout(timeout);

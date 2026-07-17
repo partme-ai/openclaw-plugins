@@ -14,6 +14,20 @@
 
 `@partme.ai/openclaw-rocketmq` bridges external RocketMQ messages into OpenClaw agents and publishes agent replies back to RocketMQ. It uses `rocketmq-client-nodejs` for Producer and PushConsumer, with a full OpenClaw channel plugin lifecycle.
 
+```mermaid
+flowchart LR
+    APP["Business system / device"] -->|"inbound message"| B["RocketMQ Broker + Proxy"]
+    B --> C["PushConsumer"]
+    C --> R["Topic + Tag route<br/>claimable dedupe"]
+    R --> A["OpenClaw Agent"]
+    A --> P["long-lived or one-shot Producer"]
+    P -->|"Broker receipt"| B
+    B --> OUT["reply consumer"]
+    C -->|"FAILURE"| RETRY["delayed redelivery"]
+    RETRY --> C
+    C -->|"attempts exhausted"| DLQ["Broker DLQ"]
+```
+
 ## Features
 
 - **Producer + PushConsumer** — Full RocketMQ production and consumption lifecycle
@@ -35,7 +49,7 @@
 openclaw plugins install @partme.ai/openclaw-rocketmq
 ```
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1` and OpenClaw >= 2026.7.1.
+Requires `@partme.ai/openclaw-message-sdk >= 2026.7.1` and OpenClaw >= 2026.7.1.
 
 ### Minimal Configuration
 
@@ -51,9 +65,7 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1` and OpenClaw >= 2026.7.1.
       },
       "consumer": {
         "groupId": "openclaw-rocketmq-consumer",
-        "subscriptions": [
-          { "topic": "device-status", "filterExpression": "*" }
-        ]
+        "subscriptions": [{ "topic": "device-status", "filterExpression": "*" }]
       },
       "topicBindings": [
         {
@@ -81,104 +93,116 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1` and OpenClaw >= 2026.7.1.
 {
   "channels": {
     "rocketmq": {
-      "endpoints": "127.0.0.1:8081",           // RocketMQ proxy/namesrv endpoint
-      "namespace": "",                          // RocketMQ namespace
-      "topicPrefix": "openclaw",               // Topic prefix for fallback topics
-      "sessionCredentials": {                   // Optional: ACL credentials
+      "endpoints": "127.0.0.1:8081", // RocketMQ proxy/namesrv endpoint
+      "namespace": "", // RocketMQ namespace
+      "topicPrefix": "openclaw", // Topic prefix for fallback topics
+      "sessionCredentials": {
+        // Optional: ACL credentials
         "accessKey": "",
         "accessSecret": "",
-        "securityToken": ""
+        "securityToken": "",
       },
       "producer": {
         "groupId": "openclaw-rocketmq-producer", // Deprecated compatibility label
-        "requestTimeout": 5000,                  // Request timeout in ms
-        "maxAttempts": 3                         // SDK producer send attempts
+        "requestTimeout": 5000, // Request timeout in ms
+        "maxAttempts": 3, // SDK producer send attempts
+        "maxMessageSizeInBytes": 4194304, // Maximum outbound payload size
       },
       "consumer": {
         "groupId": "openclaw-rocketmq-consumer", // Consumer group ID
-        "subscriptions": [                       // Topics to subscribe
-          { "topic": "my-topic", "filterExpression": "*" }
+        "subscriptions": [
+          // Topics to subscribe
+          { "topic": "my-topic", "filterExpression": "*" },
         ],
         "maxCacheMessageCount": 1024,
         "maxCacheMessageSizeInBytes": 67108864,
         "longPollingTimeout": 30000,
         "requestTimeout": 3000,
-        "reconsumeOnError": true,                // Re-consume on dispatch error
+        "reconsumeOnError": true, // Re-consume on dispatch error
         "retry": {
           "maxAttempts": 17,
           "initialDelayMs": 1000,
           "maxDelayMs": 60000,
-          "multiplier": 2
-        }
+          "multiplier": 2,
+        },
       },
-      "topicBindings": [                         // Topic-to-agent routing rules
+      "topicBindings": [
+        // Topic-to-agent routing rules
         {
           "topic": "device-status",
           "tag": "iot",
           "agentId": "iot-agent",
           "accountId": "default",
-          "peerId": "device-1",                  // Optional: peer identifier
-          "replyTopic": "device-command",        // Optional: reply topic
-          "replyTag": "command"                   // Optional: reply tag
-        }
+          "peerId": "device-1", // Optional: peer identifier
+          "replyTopic": "device-command", // Optional: reply topic
+          "replyTag": "command", // Optional: reply tag
+        },
       ],
       "payload": {
-        "mode": "jsonTextOrPlain"                // "jsonTextOrPlain" | "jsonOnly" | "plainText"
+        "mode": "jsonTextOrPlain", // "jsonTextOrPlain" | "jsonOnly" | "plainText"
       },
       "dispatch": {
-        "mode": "embedded-agent",                // "embedded-agent" | "subagent" | "reply-pipeline"
-        "timeoutMs": 120000,                      // Agent processing timeout
-        "reply": { "enabled": true }              // Enable reply publishing
+        "mode": "embedded-agent", // "embedded-agent" | "subagent" | "reply-pipeline"
+        "timeoutMs": 120000, // Agent processing timeout
+        "reply": { "enabled": true }, // Enable reply publishing
       },
-      "idempotency": {                           // Claim/commit/release dedup
+      "idempotency": {
+        // Claim/commit/release dedup
         "enabled": true,
         "ttlMs": 600000,
-        "maxEntries": 10000
+        "maxEntries": 10000,
       },
       "connection": {
         "startupAttempts": 6,
-        "retryDelayMs": 5000
-      }
-    }
-  }
+        "retryDelayMs": 5000,
+        "retryMaxDelayMs": 60000,
+        "retryJitterRatio": 0.2,
+        "shutdownTimeoutMs": 10000,
+      },
+    },
+  },
 }
 ```
 
 ### Configuration Fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `endpoints` | string | `"127.0.0.1:8081"` | RocketMQ proxy/namesrv endpoint |
-| `namespace` | string | `""` | RocketMQ namespace |
-| `topicPrefix` | string | `"openclaw"` | Topic prefix for fallback message routing |
-| `producer.groupId` | string | `"openclaw-rocketmq-producer"` | Deprecated compatibility label; the RocketMQ 5 Node Producer does not use a producer group |
-| `producer.requestTimeout` | number | `5000` | Producer request timeout (ms) |
-| `producer.maxAttempts` | number | `3` | Producer send attempts handled by the SDK |
-| `consumer.groupId` | string | `"openclaw-rocketmq-consumer"` | Consumer group ID |
-| `consumer.reconsumeOnError` | boolean | `true` | Re-consume message on dispatch error |
-| `consumer.retry` | object | exponential, 17 attempts | Client-side retry delay and exhaustion threshold; exhausted non-FIFO messages are forwarded through the Broker DLQ API |
-| `payload.mode` | string | `"jsonTextOrPlain"` | Payload parsing mode |
-| `dispatch.mode` | string | `"embedded-agent"` | Agent dispatch mode |
-| `dispatch.timeoutMs` | number | `120000` | Agent processing timeout (ms) |
-| `idempotency.enabled` | boolean | `true` | Claim message ID before dispatch and commit only after success |
-| `connection.startupAttempts` | number | `6` | Producer/consumer startup attempts |
-| `connection.retryDelayMs` | number | `5000` | Delay between startup attempts |
+| Field                            | Type    | Default                        | Description                                                                                                            |
+| -------------------------------- | ------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `endpoints`                      | string  | `"127.0.0.1:8081"`             | RocketMQ proxy/namesrv endpoint                                                                                        |
+| `namespace`                      | string  | `""`                           | RocketMQ namespace                                                                                                     |
+| `topicPrefix`                    | string  | `"openclaw"`                   | Topic prefix for fallback message routing                                                                              |
+| `producer.groupId`               | string  | `"openclaw-rocketmq-producer"` | Deprecated compatibility label; the RocketMQ 5 Node Producer does not use a producer group                             |
+| `producer.requestTimeout`        | number  | `5000`                         | Producer request timeout (ms)                                                                                          |
+| `producer.maxAttempts`           | number  | `3`                            | Producer send attempts handled by the SDK                                                                              |
+| `producer.maxMessageSizeInBytes` | integer | `4194304`                      | Maximum UTF-8 payload size per outbound message                                                                        |
+| `consumer.groupId`               | string  | `"openclaw-rocketmq-consumer"` | Consumer group ID                                                                                                      |
+| `consumer.reconsumeOnError`      | boolean | `true`                         | Re-consume message on dispatch error                                                                                   |
+| `consumer.retry`                 | object  | exponential, 17 attempts       | Client-side retry delay and exhaustion threshold; exhausted non-FIFO messages are forwarded through the Broker DLQ API |
+| `payload.mode`                   | string  | `"jsonTextOrPlain"`            | Payload parsing mode                                                                                                   |
+| `dispatch.mode`                  | string  | `"embedded-agent"`             | Agent dispatch mode                                                                                                    |
+| `dispatch.timeoutMs`             | number  | `120000`                       | Agent processing timeout (ms)                                                                                          |
+| `idempotency.enabled`            | boolean | `true`                         | Claim message ID before dispatch and commit only after success                                                         |
+| `connection.startupAttempts`     | number  | `6`                            | Producer/consumer startup attempts                                                                                     |
+| `connection.retryDelayMs`        | number  | `5000`                         | Delay between startup attempts                                                                                         |
+| `connection.retryMaxDelayMs`     | number  | `60000`                        | Maximum exponential startup backoff                                                                                    |
+| `connection.retryJitterRatio`    | number  | `0.2`                          | Backoff jitter ratio from 0 to 1                                                                                       |
+| `connection.shutdownTimeoutMs`   | number  | `10000`                        | Maximum wait per Producer/Consumer shutdown before Gateway continues stopping                                          |
 
 ### Dispatch Modes
 
-| Mode | Description |
-|------|-------------|
-| `embedded-agent` | Messages are routed to an agent embedded within the current process |
-| `subagent` | Messages are routed to a separate subagent instance |
+| Mode             | Description                                                             |
+| ---------------- | ----------------------------------------------------------------------- |
+| `embedded-agent` | Messages are routed to an agent embedded within the current process     |
+| `subagent`       | Messages are routed to a separate subagent instance                     |
 | `reply-pipeline` | Messages are processed through a reply pipeline (request/reply pattern) |
 
 ### Payload Modes
 
-| Mode | Description |
-|------|-------------|
+| Mode              | Description                                    |
+| ----------------- | ---------------------------------------------- |
 | `jsonTextOrPlain` | Prefer JSON `text` field, fallback to raw text |
-| `jsonOnly` | Parse payload as JSON only |
-| `plainText` | Treat entire payload as plain text |
+| `jsonOnly`        | Parse payload as JSON only                     |
+| `plainText`       | Treat entire payload as plain text             |
 
 ## Message Model
 
@@ -194,14 +218,44 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1` and OpenClaw >= 2026.7.1.
 - **Standard fallback**: `{topicPrefix}--agent--<agentId>--out[--<peerId>]`
 - **Consumption**: PushConsumer with `ConsumeResult.SUCCESS` / `FAILURE` acknowledgment
 
+### Failure, retry, and dead-letter state machine
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as RocketMQ Broker
+    participant C as PushConsumer
+    participant P as RocketMQ plugin
+    participant A as OpenClaw Agent
+    B->>C: deliver (deliveryAttempt=N)
+    C->>P: process inbound message
+    P->>A: dispatch and publish reply
+    alt success
+        A-->>P: completed
+        P-->>C: ok=true
+        C-->>B: SUCCESS (ACK)
+    else returned failure or thrown exception, attempts remain
+        A--xP: timeout / exception / publish error
+        P-->>C: reconsume=true
+        C-->>B: FAILURE (delayed redelivery)
+    else returned failure or thrown exception, attempts exhausted
+        C->>B: forwardMessageToDeadLetterQueue
+        B-->>C: DLQ write confirmed
+        C-->>B: SUCCESS (ACK source)
+    else permanent route/payload rejection
+        P-->>C: reconsume=false
+        C-->>B: SUCCESS (count dropped)
+    end
+```
+
 ## Health Endpoints
 
 Available when the plugin registers in "full" mode:
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /rocketmq/health` | Basic health check (200 = healthy, 503 = unhealthy) |
-| `GET /rocketmq/stats` | Connection stats and session statistics |
+| Endpoint               | Description                                                |
+| ---------------------- | ---------------------------------------------------------- |
+| `GET /rocketmq/health` | Basic health check (200 = healthy, 503 = unhealthy)        |
+| `GET /rocketmq/stats`  | Connection stats and session statistics                    |
 | `GET /rocketmq/status` | Full status including config snapshot and session mappings |
 
 ## Transport Layer Notes
@@ -210,7 +264,10 @@ Available when the plugin registers in "full" mode:
 - Topic and consumer-group resources use RocketMQ-safe names (`[a-zA-Z0-9_-]`); dots and `/` are rejected before startup. The standard route reserves `--` as its segment delimiter.
 - Retries are handled by RocketMQ broker/consumer group mechanism
 - Dispatch or reply publication failures return `ConsumeResult.FAILURE`; the configured client retry delay avoids the Node SDK's unsupported Broker customized-backoff gap, and exhausted messages are forwarded through the Broker DLQ API
+- Thrown handler exceptions and explicit `reconsume=true` results share the same max-attempt/DLQ state machine; exceptions cannot bypass poison-message exhaustion handling
 - Unroutable messages are acknowledged as permanent drops; runtime and dispatch failures request redelivery
+- Normal outbound delivery without a session context fails before publishing instead of returning a placeholder success message ID
+- Producer and Consumer shutdown calls are time-bounded by `connection.shutdownTimeoutMs`; a stuck SDK shutdown is recorded but cannot block Gateway termination indefinitely
 - Idempotency is process-local and does not provide cross-node exactly-once semantics
 - No manual retry queue management needed (unlike RabbitMQ)
 - Request/reply RPC requires an explicit `replyTopic` + `replyTag` binding (RocketMQ does not natively support direct-reply-to like RabbitMQ)

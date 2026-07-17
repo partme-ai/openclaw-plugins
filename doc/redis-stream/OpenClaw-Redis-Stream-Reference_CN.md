@@ -383,7 +383,10 @@ dmScope (来自 cfg.session.dmScope):
 |------|--------|------|
 | `stream.blockMs` | 5000 | XREADGROUP 阻塞超时。过短增加空轮询，过长延迟关闭 |
 | `stream.count` | 10 | 每批次最大消息数。过高增加内存，过低降低吞吐 |
-| `connection.reconnectMs` | 3000 | 重连间隔。设置过低会频繁重试 |
+| `connection.allowInsecureRemote` | false | 是否允许远程明文 `redis://`；生产应保持 false |
+| `connection.reconnectMs` | 3000 | 指数退避基础间隔 |
+| `connection.reconnectMaxMs` | 30000 | 指数退避上限 |
+| `connection.reconnectJitterRatio` | 0.2 | 双向随机抖动比例 |
 | `connection.maxRetries` | 0 | 最大重连次数；0 表示持续重连 |
 | `connection.startupTimeoutMs` | 30000 | 启动连接超时 |
 | `stream.pendingClaimIdleMs` | 120000 | XAUTOCLAIM 的最小 idle 时间 |

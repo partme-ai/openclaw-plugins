@@ -109,7 +109,6 @@ export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundH
  */
 export async function stopRabbitmqServer(): Promise<void> {
   stopping = true;
-  nackAllPendingDeliveries(true, "server_stop");
   inboundLimiter = null;
   retryExchangeName = null;
   deadLetterExchangeName = null;
@@ -121,6 +120,9 @@ export async function stopRabbitmqServer(): Promise<void> {
   } finally {
     consumerTag = null;
   }
+  // 先 cancel 阻止新 delivery，再统一 NACK 已跟踪消息；消费回调也检查 stopping，覆盖 cancel
+  // 生效前的竞态窗口，避免停机过程中又启动新的 Agent Turn。
+  nackAllPendingDeliveries(true, "server_stop");
   try {
     if (consumeChannel) {
       await consumeChannel.close();
@@ -186,11 +188,23 @@ export async function requestMessage(params: {
   if (!connection) {
     throw new Error("RabbitMQ connection not initialized");
   }
-  const ch = await connection.createChannel();
+  if (!params.queue.trim()) {
+    throw new Error("mq.request queue is required");
+  }
+  if (!Number.isInteger(params.timeoutMs) || params.timeoutMs <= 0) {
+    throw new Error("mq.request timeoutMs must be a positive integer");
+  }
+  /*
+   * RPC 也使用 ConfirmChannel。普通 Channel 的 sendToQueue 返回 true 只表示写入本地 socket
+   * 缓冲区，并不代表 Broker 已接收；确认发布 + mandatory 可以同时识别 Broker NACK、超时、
+   * 背压以及目标队列不存在，避免工具返回“请求已发送”的假成功。
+   */
+  const ch = await connection.createConfirmChannel();
   const correlationId = params.correlationId ?? randomUUID();
   try {
     const result = await new Promise<string>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("mq.request timeout")), params.timeoutMs);
+      t.unref?.();
       ch.consume(
         "amq.rabbitmq.reply-to",
         (msg: ConsumeMessage | null) => {
@@ -202,11 +216,12 @@ export async function requestMessage(params: {
           resolve(msg.content.toString("utf-8"));
         },
         { noAck: true },
-      ).then(() => {
-        ch.sendToQueue(params.queue, Buffer.from(params.payload), {
+      ).then(async () => {
+        await publishConfirmed(ch, "", params.queue.trim(), Buffer.from(params.payload), {
           correlationId,
           replyTo: "amq.rabbitmq.reply-to",
           contentType: "application/json",
+          persistent: true,
         });
       }).catch((err) => {
         clearTimeout(t);
@@ -242,7 +257,7 @@ export function trackRoute(source: string): void {
 }
 
 /**
- * @description 带指数退避的重连循环：在 `reconnectAttempts` 耗尽前反复调用 `connectOnce`。
+ * @description 带指数退避和随机抖动的重连循环：在 `reconnectAttempts` 耗尽前反复调用 `connectOnce`。
  * @returns 连接成功时 resolve；全部失败时抛出最后一次错误
  * @throws 配置未设置或所有重连尝试均失败
  */
@@ -267,7 +282,7 @@ async function connectWithRetry(): Promise<void> {
       if (attempt >= maxAttempts) {
         break;
       }
-      await sleep(cfg.connection.reconnectDelayMs);
+      await sleep(computeReconnectDelay(cfg, attempt - 1));
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
@@ -354,6 +369,10 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
   const { consumerTag: tag } = await consumeCh.consume(
     queue.queue,
     (msg: ConsumeMessage | null) => {
+      if (msg && stopping) {
+        consumeChannel?.nack(msg, false, true);
+        return;
+      }
       if (!msg || !inboundHandler || !consumeChannel || !config || !inboundLimiter) {
         return;
       }
@@ -458,7 +477,7 @@ async function reconnectAfterClose(): Promise<void> {
   stats.reconnecting = true;
   while (!stopping) {
     await teardownTransport();
-    await sleep(cfg.connection.reconnectDelayMs);
+    await sleep(computeReconnectDelay(cfg, 0));
     if (stopping) return;
     try {
       await connectWithRetry();
@@ -600,6 +619,26 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * 计算单次重连等待时间。
+ *
+ * `failureIndex` 从 0 开始：第一次失败等待基础间隔，随后按 2 的指数增长并受最大值限制；
+ * 最后加入双向随机抖动，避免一批 Gateway 在 RabbitMQ 恢复瞬间同时发起连接。
+ * 导出该纯函数是为了让边界值可被单元测试稳定验证。
+ */
+export function computeReconnectDelay(
+  cfg: RabbitmqConfig,
+  failureIndex: number,
+  random: () => number = Math.random,
+): number {
+  const base = Math.min(
+    cfg.connection.reconnectDelayMs * 2 ** Math.max(0, failureIndex),
+    cfg.connection.reconnectMaxDelayMs,
+  );
+  const jitter = base * cfg.connection.reconnectJitterRatio * (random() * 2 - 1);
+  return Math.max(0, Math.round(base + jitter));
+}
+
+/**
  * @description 将失败消息投递到 retry 队列（带 `x-attempt` 头），未超 maxAttempts 时 ACK 原消息。
  * @param msg - 原始 AMQP 消费消息
  * @returns 是否已由 retry 队列接管（true 时调用方无需再 nack）
@@ -614,12 +653,9 @@ async function maybeRetryMessage(
     return false;
   }
   const raw = (msg.properties.headers as Record<string, unknown> | undefined)?.["x-attempt"];
-  const attempt =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number.parseInt(raw, 10)
-        : 0;
+  /* 外部 header 不可信：只接受非负整数，避免 NaN/负数绕过最大重试次数。 */
+  const parsedAttempt = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : 0;
+  const attempt = Number.isSafeInteger(parsedAttempt) && parsedAttempt >= 0 ? parsedAttempt : 0;
   const originalRoutingKey = resolveInboundRoutingKey(msg);
   if (attempt >= cfg.retry.maxAttempts || !retryExchangeName) {
     await publishConfirmed(
@@ -669,15 +705,46 @@ async function publishConfirmed(
   options: Options.Publish,
 ): Promise<void> {
   const timeoutMs = config?.connection.publishConfirmTimeoutMs ?? 10000;
+  const publishId = randomUUID();
   let timer: NodeJS.Timeout | undefined;
   let writable = true;
   const confirmation = new Promise<void>((resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`RabbitMQ publish confirm timeout for routingKey=${routingKey}`)), timeoutMs);
-    timer.unref?.();
-    writable = channel.publish(exchange, routingKey, content, options, (error) => {
+    let settled = false;
+    const cleanup = (): void => {
       if (timer) clearTimeout(timer);
+      channel.off("return", onReturned);
+    };
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       if (error) reject(error);
       else resolve();
+    };
+    const onReturned = (returned: ConsumeMessage): void => {
+      if (returned.properties.headers?.["x-openclaw-publish-id"] !== publishId) return;
+      finish(new Error(`RabbitMQ message was unroutable for routingKey=${routingKey}`));
+    };
+    channel.on("return", onReturned);
+    timer = setTimeout(
+      () => finish(new Error(`RabbitMQ publish confirm timeout for routingKey=${routingKey}`)),
+      timeoutMs,
+    );
+    timer.unref?.();
+    writable = channel.publish(exchange, routingKey, content, {
+      ...options,
+      mandatory: true,
+      headers: {
+        ...(options.headers ?? {}),
+        "x-openclaw-publish-id": publishId,
+      },
+    }, (error) => {
+      if (error) {
+        finish(error);
+        return;
+      }
+      /* RabbitMQ 会在同一消息的 publisher confirm 之前发送 basic.return；延后一拍再成功收口。 */
+      setImmediate(() => finish());
     });
   });
   const drained = writable ? Promise.resolve() : once(channel, "drain").then(() => undefined);

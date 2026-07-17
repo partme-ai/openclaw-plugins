@@ -50,7 +50,7 @@ async function readForm(req: http.IncomingMessage): Promise<URLSearchParams> {
 function explicitClient(oauthPort: number) {
   return {
     discovery: false,
-    redirectUri: "http://openclaw.example/auth/oauth2/callback",
+    redirectUri: "http://127.0.0.1/auth/oauth2/callback",
     authorizationEndpoint: `http://127.0.0.1:${oauthPort}/authorize`,
     tokenEndpoint: `http://127.0.0.1:${oauthPort}/token`,
     introspectionEndpoint: `http://127.0.0.1:${oauthPort}/introspect`,
@@ -213,7 +213,7 @@ describe("OAuth2ProxyServer", () => {
       clientSecret: "client-secret",
       client: {
         discovery: true,
-        redirectUri: "http://openclaw.example/auth/oauth2/callback",
+        redirectUri: "http://127.0.0.1/auth/oauth2/callback",
         sessionSecret: "test-session-secret-that-is-at-least-32-characters",
         secureCookies: false,
         requiredScopes: ["openclaw:operator"],

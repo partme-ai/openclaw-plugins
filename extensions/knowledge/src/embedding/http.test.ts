@@ -30,6 +30,17 @@ describe('embedding HTTP guardrails', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('cancels and rejects an oversized successful response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ data: 'payload-too-large' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postEmbeddingJson('https://embedding.test', { method: 'POST' }, {
+      requestTimeoutMs: 1_000,
+      maxRetries: 0,
+      maxResponseBytes: 8,
+    }, 'Test')).rejects.toThrow(/response exceeds 8 bytes/);
+  });
+
   it('rejects missing, duplicate, non-finite, and wrong-dimension vectors', () => {
     expect(() => validateEmbeddingData(undefined, 1, 2, 'Test')).toThrow('expected 1');
     expect(() => validateEmbeddingData([

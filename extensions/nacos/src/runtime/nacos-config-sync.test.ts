@@ -243,6 +243,54 @@ describe("NacosConfigSyncService", () => {
       await svc.start(deps);
       expect(mockGetConfig).not.toHaveBeenCalled();
     });
+
+    it("初始拉取失败时关闭 Config 客户端", async () => {
+      mockGetConfig.mockRejectedValueOnce(new Error("nacos unavailable"));
+      const svc = new NacosConfigSyncService();
+
+      await expect(svc.start(testDeps)).rejects.toThrow("nacos unavailable");
+      expect(mockClose).toHaveBeenCalledOnce();
+    });
+
+    it("订阅失败时回收已建立的订阅和客户端", async () => {
+      mockGetConfig.mockResolvedValue('{"key":"val"}');
+      mockSubscribe.mockImplementationOnce(() => {
+        throw new Error("subscribe failed");
+      });
+      const svc = new NacosConfigSyncService();
+
+      await expect(svc.start(testDeps)).rejects.toThrow("subscribe failed");
+      expect(mockClose).toHaveBeenCalledOnce();
+    });
+
+    it("拉取期间连续变更会合并为后续一轮而不是丢失", async () => {
+      mockGetConfig.mockResolvedValue('{"initial":true}');
+      const svc = new NacosConfigSyncService();
+      await svc.start(testDeps);
+      const listener = mockSubscribe.mock.calls[0][1] as () => void;
+
+      let finishFirst!: (value: string) => void;
+      const firstPull = new Promise<string>((resolve) => {
+        finishFirst = resolve;
+      });
+      mockGetConfig.mockReset();
+      mockGetConfig
+        .mockImplementationOnce(() => firstPull)
+        .mockResolvedValue('{"latest":true}');
+      (testDeps.replaceConfig as ReturnType<typeof vi.fn>).mockClear();
+
+      listener();
+      await vi.waitFor(() => expect(mockGetConfig).toHaveBeenCalledTimes(1));
+      listener();
+      finishFirst('{"intermediate":true}');
+
+      await vi.waitFor(() => expect(mockGetConfig).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(testDeps.replaceConfig).toHaveBeenCalledTimes(2));
+      expect(testDeps.replaceConfig).toHaveBeenLastCalledWith(
+        expect.objectContaining({ latest: true }),
+      );
+      await svc.stop(logger as unknown as import("./types.js").PluginLog);
+    });
   });
 
   describe("stop", () => {
@@ -260,6 +308,28 @@ describe("NacosConfigSyncService", () => {
 
       expect(mockUnSubscribe).toHaveBeenCalled();
       expect(mockClose).toHaveBeenCalled();
+    });
+
+    it("does not publish a stale pull error after the lifecycle has stopped", async () => {
+      mockGetConfig.mockResolvedValue('{"key":"initial"}');
+      const onError = vi.fn();
+      const svc = new NacosConfigSyncService();
+      await svc.start({ ...testDeps, onError });
+      const listener = mockSubscribe.mock.calls[0][1] as () => void;
+
+      let rejectPull!: (error: Error) => void;
+      mockGetConfig.mockReset();
+      mockGetConfig.mockImplementationOnce(() => new Promise<string>((_resolve, reject) => {
+        rejectPull = reject;
+      }));
+      listener();
+      await vi.waitFor(() => expect(mockGetConfig).toHaveBeenCalledOnce());
+
+      await svc.stop(logger as unknown as import("./types.js").PluginLog);
+      rejectPull(new Error("client closed during stop"));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(onError).not.toHaveBeenCalled();
     });
   });
 
@@ -400,6 +470,16 @@ describe("NacosConfigSyncService", () => {
         expect.stringContaining(stateDir),
         expect.stringContaining(stateDir),
       );
+    });
+
+    it("同一秒连续备份也使用不同文件名", async () => {
+      const { backupOpenClawConfig } = await import("./nacos-config-sync.js");
+      backupOpenClawConfig("/tmp/test-state", {}, logger as unknown as import("./types.js").PluginLog);
+      backupOpenClawConfig("/tmp/test-state", {}, logger as unknown as import("./types.js").PluginLog);
+
+      const firstDestination = mockCopyFileSync.mock.calls[0][1];
+      const secondDestination = mockCopyFileSync.mock.calls[1][1];
+      expect(firstDestination).not.toBe(secondDestination);
     });
 
     it("skips backup when source file not found", async () => {

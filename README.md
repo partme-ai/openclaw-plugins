@@ -102,7 +102,7 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 | 层级 | 分类 | 数量 | 代表包 | 核心能力 |
 |------|------|------|--------|----------|
 | L1 | **IM（自建）** | 6 | wecom、wechat、wecom-kf、wechat-ipad、douyin、gotify | Bot/Webhook/Agent · 媒体 · 去重 · Skills |
-| L1 | **IM（桥接）** | 1 + 22 上游 | openclaw-bridge | 上下文注入 · UnifiedMessage MQ 转发 · 22 个渠道能力记录 |
+| L1 | **跨渠道观测桥** | 1 + 27 来源预设 | openclaw-bridge | 上下文注入 · `message_received`/`message_sent` · UnifiedMessage MQ 镜像 |
 | L1 | **消息队列** | 8 | mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq | topicBindings · Wire 分发 · 幂等 · 多协议接入 |
 | L2 | **AI 能力** | 5 | knowledge、memory、router、openmem、message-sdk | RAG · L0–L3 记忆 · 路由规则 · OpenMem HTTP 桥 · 统一线格式 |
 | L2–L4 | **基础设施** | 5 | nacos、prometheus、tracing、oauth2、mtls | 配置中心 · 指标 · OTel · 认证 · mTLS |
@@ -523,7 +523,7 @@ npm 已发布版本：[@partme.ai on npm](https://www.npmjs.com/search?q=%40part
 | [Nacos 指南](./doc/nacos/zh/OpenClaw-Nacos-Guide_CN.md) | 配置中心与服务注册 |
 | [WeCom 配置](./doc/wecom/OpenClaw-WeCom-Configuration.md) | 企业微信完整配置 |
 | [WeCom 联调测试](./doc/wecom/OpenClaw-WeCom-Testing.md) | 主动发消息、多 Bot、CLI 联调 |
-| [Bridge README](./extensions/bridge/README.zh-CN.md) | 22 个渠道能力记录与真实安装边界 |
+| [Bridge README](./extensions/bridge/README.zh-CN.md) | 27 个渠道预设、官方 Hook 契约与真实安装边界 |
 | [文档索引](./doc/README.md) | 全部专题指南（prometheus、gotify、rocketmq 等） |
 
 ---

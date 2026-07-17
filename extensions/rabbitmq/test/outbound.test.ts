@@ -36,4 +36,14 @@ describe("rabbitmqOutbound Router delivery", () => {
     });
     expect(publishMessage).toHaveBeenCalledWith("reply.safe", "core reply");
   });
+
+  it("missing session mapping throws so Router can retry instead of accepting a placeholder id", async () => {
+    await expect(rabbitmqOutbound.sendText!({
+      cfg: {} as never,
+      to: "agent:missing:rabbitmq:offline",
+      text: "do not drop",
+      deliveryQueueId: "router-missing",
+    })).rejects.toThrow("No peer mapping");
+    expect(publishMessage).not.toHaveBeenCalled();
+  });
 });

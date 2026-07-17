@@ -30,14 +30,14 @@ export const webSocketOutbound: ChannelOutboundAdapter = {
     const sessionKey = ctx.to;
     const connectionId = getConnectionIdBySession(sessionKey);
     if (!connectionId) {
-      console.warn(`[openclaw-web-socket] No connection for session: ${sessionKey}`);
-      return { channel: "web-socket", messageId: "no-connection" };
+      // Outbound Adapter 的返回值代表“目标已接受”。返回占位 messageId 会让 Router
+      // 错把失败任务从 Outbox 删除，因此不可投递必须抛错交给上层重试/DLQ。
+      throw new Error(`WebSocket outbound has no connection for session: ${sessionKey}`);
     }
 
     const sessionContext = getSessionContext(sessionKey);
     if (!sessionContext?.agentId) {
-      console.error(`[openclaw-web-socket] Missing session context: ${sessionKey}`);
-      return { channel: "web-socket", messageId: "no-session-context" };
+      throw new Error(`WebSocket outbound is missing session context: ${sessionKey}`);
     }
 
     const cfg = getWebsocketChannelConfig() ?? DEFAULT_WEBSOCKET_CONFIG;
@@ -48,8 +48,7 @@ export const webSocketOutbound: ChannelOutboundAdapter = {
 
     const ok = sendToConnection(connectionId, frame, cfg.limits.maxBufferedBytes);
     if (!ok) {
-      console.warn(`[openclaw-web-socket] Send failed — socket closed: ${connectionId}`);
-      return { channel: "web-socket", messageId: "socket-closed" };
+      throw new Error(`WebSocket outbound delivery failed: ${connectionId}`);
     }
 
     console.log(`[openclaw-web-socket] Reply sent to ${connectionId}`);

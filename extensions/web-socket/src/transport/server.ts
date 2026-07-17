@@ -1,16 +1,18 @@
 /**
  * @fileoverview 带认证和有界资源控制的内嵌 WebSocket Server。
  *
- * Upgrade 阶段校验路径、Origin 和 Bearer Token，连接建立后注册到共享 Hub，并以 Ping/Pong
+ * Upgrade 阶段校验路径、Origin 和 Bearer/浏览器子协议 Token，连接建立后注册到共享 Hub，并以 Ping/Pong
  * 检测失活客户端。每条连接的入站消息串行处理，同时限制连接数、Payload、待处理消息、
  * 分钟速率和发送缓冲；关闭 Server 时释放所有连接、心跳和全局回调。
  */
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage } from "node:http";
+import { readFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type Server as HttpServer } from "node:http";
+import { createServer as createSecureServer, type Server as HttpsServer } from "node:https";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 
-import { parseClientFrame, serializeConnectedFrame, serializeErrorFrame, serializePongFrame } from "./protocol.js";
+import { parseClientFrame, serializeAcceptedFrame, serializeConnectedFrame, serializeErrorFrame, serializePongFrame } from "./protocol.js";
 import type { WebsocketChannelConfig, WebsocketConnectionInfo } from "../types.js";
 import {
   getAllConnectionInfo,
@@ -28,7 +30,10 @@ export type WebsocketInboundCallback = (ctx: {
   peerId?: string;
 }) => Promise<void> | void;
 
-let httpServer: ReturnType<typeof createServer> | null = null;
+const APPLICATION_SUBPROTOCOL = "openclaw.v1";
+const AUTH_SUBPROTOCOL_PREFIX = "openclaw.auth.";
+
+let httpServer: HttpServer | HttpsServer | null = null;
 let wss: WebSocketServer | null = null;
 let activeConfig: WebsocketChannelConfig | null = null;
 let serverRunning = false;
@@ -40,10 +45,30 @@ function tokenDigest(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();
 }
 
-function extractAuthToken(req: IncomingMessage, allowQueryToken: boolean): string | undefined {
+function decodeProtocolToken(req: IncomingMessage): string | undefined {
+  const header = req.headers["sec-websocket-protocol"];
+  if (typeof header !== "string") return undefined;
+  const encoded = header
+    .split(",")
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(AUTH_SUBPROTOCOL_PREFIX))
+    ?.slice(AUTH_SUBPROTOCOL_PREFIX.length);
+  if (!encoded) return undefined;
+  try {
+    return Buffer.from(encoded, "base64url").toString("utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function extractAuthToken(req: IncomingMessage, config: WebsocketChannelConfig): string | undefined {
   const auth = req.headers.authorization;
   if (typeof auth === "string" && /^bearer\s/i.test(auth)) return auth.replace(/^bearer\s+/i, "").trim();
-  if (!allowQueryToken) return undefined;
+  if (config.server.auth.allowProtocolToken) {
+    const protocolToken = decodeProtocolToken(req);
+    if (protocolToken) return protocolToken;
+  }
+  if (!config.server.auth.allowQueryToken) return undefined;
   try {
     return new URL(req.url ?? "/", "http://localhost").searchParams.get("token")?.trim() || undefined;
   } catch {
@@ -54,7 +79,7 @@ function extractAuthToken(req: IncomingMessage, allowQueryToken: boolean): strin
 function verifyAuthToken(req: IncomingMessage, config: WebsocketChannelConfig): boolean {
   const auth = config.server.auth;
   if (!auth.enabled) return true;
-  const presented = extractAuthToken(req, auth.allowQueryToken);
+  const presented = extractAuthToken(req, config);
   if (!presented) return false;
   const actual = tokenDigest(presented);
   return auth.tokens.some((token) => timingSafeEqual(actual, tokenDigest(token)));
@@ -73,26 +98,51 @@ function isOriginAllowed(req: IncomingMessage, config: WebsocketChannelConfig): 
   if (allowed.length === 0) return true;
   const origin = req.headers.origin;
   if (typeof origin !== "string") return true;
-  return allowed.includes("*") || allowed.includes(origin);
+  return allowed.includes(origin);
 }
 
 export { sendToConnection };
 
-export function startWebSocketServer(
+async function createListener(config: WebsocketChannelConfig): Promise<HttpServer | HttpsServer> {
+  const requestHandler = (_req: IncomingMessage, res: import("node:http").ServerResponse) => {
+    res.writeHead(426, { "Content-Type": "text/plain", Connection: "close" });
+    res.end("Upgrade Required");
+  };
+  if (!config.server.tls.enabled) return createServer(requestHandler);
+
+  // 证书只在启动阶段读取一次；读取失败会阻止插件进入 running 状态，避免误以为 WSS 已生效。
+  const [key, cert, ca] = await Promise.all([
+    readFile(config.server.tls.keyFile!),
+    readFile(config.server.tls.certFile!),
+    config.server.tls.caFile ? readFile(config.server.tls.caFile) : Promise.resolve(undefined),
+  ]);
+  return createSecureServer({
+    key,
+    cert,
+    ...(ca ? { ca } : {}),
+    minVersion: config.server.tls.minVersion,
+    requestCert: config.server.tls.requestCert,
+    rejectUnauthorized: config.server.tls.rejectUnauthorized,
+  }, requestHandler);
+}
+
+export async function startWebSocketServer(
   config: WebsocketChannelConfig,
   messageHandler: WebsocketInboundCallback,
   onConnect?: (connectionId: string) => void,
   onDisconnect?: (connectionId: string) => void,
 ): Promise<void> {
+  if (serverRunning) return;
+  const nextHttpServer = await createListener(config);
   return new Promise((resolve, reject) => {
-    if (serverRunning) return resolve();
     activeConfig = config;
     const serverCfg = config.server;
-    const nextHttpServer = createServer((_req, res) => {
-      res.writeHead(426, { "Content-Type": "text/plain", Connection: "close" });
-      res.end("Upgrade Required");
+    const nextWss = new WebSocketServer({
+      noServer: true,
+      maxPayload: config.limits.maxPayloadBytes,
+      // 认证子协议只负责携带浏览器 token，绝不能被服务端回显；应用层只协商固定版本协议。
+      handleProtocols: (protocols) => protocols.has(APPLICATION_SUBPROTOCOL) ? APPLICATION_SUBPROTOCOL : false,
     });
-    const nextWss = new WebSocketServer({ noServer: true, maxPayload: config.limits.maxPayloadBytes });
     httpServer = nextHttpServer;
     wss = nextWss;
 
@@ -167,6 +217,9 @@ export function startWebSocketServer(
         pending += 1;
         queue = queue
           .then(() => messageHandler({ connectionId, rawPayload: raw, frameAgentId: parsed.agentId, messageId: parsed.messageId, peerId: parsed.peerId }))
+          .then(() => {
+            sendToConnection(connectionId, serializeAcceptedFrame(parsed.messageId), config.limits.maxBufferedBytes);
+          })
           .catch((error: unknown) => {
             console.error(`[openclaw-web-socket] Inbound handler failed ${connectionId}:`, error);
             sendToConnection(connectionId, serializeErrorFrame("Message processing failed"), config.limits.maxBufferedBytes);
@@ -232,8 +285,14 @@ export async function stopWebSocketServer(): Promise<void> {
   await new Promise<void>((resolve) => closingHttp ? closingHttp.close(() => resolve()) : resolve());
 }
 
-export function getServerStats(): { running: boolean; connectionCount: number; wsPort: number | null; path: string | null } {
-  return { running: serverRunning, connectionCount: serverConnections.size, wsPort: activeConfig?.server.wsPort ?? null, path: activeConfig?.server.path ?? null };
+export function getServerStats(): { running: boolean; connectionCount: number; wsPort: number | null; path: string | null; secure: boolean } {
+  return {
+    running: serverRunning,
+    connectionCount: serverConnections.size,
+    wsPort: activeConfig?.server.wsPort ?? null,
+    path: activeConfig?.server.path ?? null,
+    secure: activeConfig?.server.tls.enabled ?? false,
+  };
 }
 
 export function getConnectedClients(): WebsocketConnectionInfo[] {

@@ -33,6 +33,7 @@ export class FileBackend implements TracingBackend {
   private retentionDays = 7;
   private lastRetentionDate = "";
   private buffer: string[] = [];
+  private inFlightSpans = 0;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private flushPromise: Promise<void> | null = null;
   private status: TracingBackendStatus = {
@@ -62,12 +63,15 @@ export class FileBackend implements TracingBackend {
     this.buffer.push(...spans.map(serializeSpan));
     this.enforceBufferLimit();
     if (this.buffer.length >= FLUSH_BATCH_SIZE) {
-      await this.flush();
+      // Tracing 是旁路观测能力：达到批量阈值只触发后台刷盘，不能让第 100 个业务 Hook 等待磁盘。
+      void this.flush().catch((error: unknown) => {
+        this.logger.error(`[tracing] File flush failed: ${toErrorMessage(error)}`);
+      });
     }
   }
 
   getStatus(): TracingBackendStatus {
-    return { ...this.status, bufferedSpans: this.buffer.length };
+    return { ...this.status, bufferedSpans: this.buffer.length + this.inFlightSpans };
   }
 
   async shutdown(): Promise<void> {
@@ -94,27 +98,35 @@ export class FileBackend implements TracingBackend {
     if (this.buffer.length === 0) return;
     const date = new Date().toISOString().slice(0, 10);
     if (date !== this.lastRetentionDate) await this.cleanupExpiredFiles();
-    const lines = this.buffer.splice(0);
     const filePath = join(this.traceDir, `traces-${date}.jsonl`);
-    try {
-      await appendFile(filePath, `${lines.join("\n")}\n`, "utf8");
-      this.status = {
-        ...this.status,
-        healthy: true,
-        bufferedSpans: this.buffer.length,
-        lastExportAt: Date.now(),
-        lastError: undefined,
-      };
-    } catch (error) {
-      this.buffer.unshift(...lines);
-      this.enforceBufferLimit();
-      this.status = {
-        ...this.status,
-        healthy: false,
-        bufferedSpans: this.buffer.length,
-        lastError: toErrorMessage(error),
-      };
-      throw error;
+    // 只处理进入本轮 flush 前的快照，避免持续高流量让一次刷盘永不结束。
+    let remaining = this.buffer.length;
+    while (remaining > 0) {
+      const lines = this.buffer.splice(0, Math.min(FLUSH_BATCH_SIZE, remaining));
+      remaining -= lines.length;
+      this.inFlightSpans = lines.length;
+      try {
+        await appendFile(filePath, `${lines.join("\n")}\n`, "utf8");
+        this.inFlightSpans = 0;
+        this.status = {
+          ...this.status,
+          healthy: true,
+          bufferedSpans: this.buffer.length,
+          lastExportAt: Date.now(),
+          lastError: undefined,
+        };
+      } catch (error) {
+        this.inFlightSpans = 0;
+        this.buffer.unshift(...lines);
+        this.enforceBufferLimit();
+        this.status = {
+          ...this.status,
+          healthy: false,
+          bufferedSpans: this.buffer.length,
+          lastError: toErrorMessage(error),
+        };
+        throw error;
+      }
     }
   }
 

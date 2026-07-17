@@ -8,8 +8,8 @@ import {
 } from "../../src/bridge/channels.js";
 
 describe("ALL_CHANNELS registry", () => {
-  it("has exactly 22 channels registered", () => {
-    expect(ALL_CHANNELS).toHaveLength(22);
+  it("registers stock, external, and repository channels", () => {
+    expect(ALL_CHANNELS).toHaveLength(27);
   });
 
   it("every channel has required fields", () => {
@@ -22,8 +22,8 @@ describe("ALL_CHANNELS registry", () => {
     }
   });
 
-  it("two channels require non-stock plugins", () => {
-    expect(getExternalChannels()).toHaveLength(2);
+  it("seven channels require non-stock plugins", () => {
+    expect(getExternalChannels()).toHaveLength(7);
   });
 
   it("20 channels are OpenClaw 2026.7.1 stock channels", () => {

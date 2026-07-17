@@ -13,6 +13,7 @@
       "enabled": { "type": "boolean", "default": false },
       "acknowledgeUnofficialProtocolRisk": { "type": "boolean", "default": false },
       "required": { "type": "boolean", "default": true },
+      "allowSplitBridgeHosts": { "type": "boolean", "default": false },
       "serviceUrl": { "type": "string", "format": "uri", "default": "ws://127.0.0.1:5555" },
       "apiUrl": { "type": "string", "format": "uri", "default": "http://127.0.0.1:5556" },
       "reconnect": {
@@ -47,11 +48,15 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "dmPolicy": { "type": "string", "enum": ["allowlist", "open", "disabled"], "default": "allowlist" },
+          "allowFrom": { "type": "array", "maxItems": 1000, "items": { "type": "string", "minLength": 1, "maxLength": 256 }, "default": [] },
+          "commandAllowFrom": { "type": "array", "maxItems": 1000, "items": { "type": "string", "minLength": 1, "maxLength": 256 }, "default": [] },
           "handleGroup": { "type": "boolean", "default": false },
-          "groupWhitelist": { "type": "array", "items": { "type": "string", "minLength": 1 }, "default": [] },
+          "groupWhitelist": { "type": "array", "maxItems": 1000, "items": { "type": "string", "minLength": 1, "maxLength": 256 }, "default": [] },
           "allowAllGroups": { "type": "boolean", "default": false },
           "ignoreSelf": { "type": "boolean", "default": true },
-          "maxTextChars": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 20000 }
+          "maxTextChars": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 20000 },
+          "maxPendingMessages": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 256 }
         }
       }
     }
@@ -62,6 +67,9 @@
     "serviceUrl": { "label": "Bridge WebSocket URL", "placeholder": "wss://bridge.example.com/events" },
     "apiUrl": { "label": "Bridge HTTP API URL", "placeholder": "https://bridge.example.com" },
     "auth.token": { "label": "Bridge token", "secret": true },
+    "message.dmPolicy": { "label": "Direct-message policy" },
+    "message.allowFrom": { "label": "Allowed direct-message wxids" },
+    "message.commandAllowFrom": { "label": "Command-authorized wxids" },
     "message.groupWhitelist": { "label": "Allowed group wxids" },
     "message.allowAllGroups": { "label": "Allow every group (high risk)" }
   },
@@ -76,6 +84,7 @@
           "enabled": { "type": "boolean", "default": false },
           "acknowledgeUnofficialProtocolRisk": { "type": "boolean", "default": false },
           "required": { "type": "boolean", "default": true },
+          "allowSplitBridgeHosts": { "type": "boolean", "default": false },
           "serviceUrl": { "type": "string", "format": "uri", "default": "ws://127.0.0.1:5555" },
           "apiUrl": { "type": "string", "format": "uri", "default": "http://127.0.0.1:5556" },
           "reconnect": {
@@ -110,11 +119,15 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
+              "dmPolicy": { "type": "string", "enum": ["allowlist", "open", "disabled"], "default": "allowlist" },
+              "allowFrom": { "type": "array", "maxItems": 1000, "items": { "type": "string", "minLength": 1, "maxLength": 256 }, "default": [] },
+              "commandAllowFrom": { "type": "array", "maxItems": 1000, "items": { "type": "string", "minLength": 1, "maxLength": 256 }, "default": [] },
               "handleGroup": { "type": "boolean", "default": false },
-              "groupWhitelist": { "type": "array", "items": { "type": "string", "minLength": 1 }, "default": [] },
+              "groupWhitelist": { "type": "array", "maxItems": 1000, "items": { "type": "string", "minLength": 1, "maxLength": 256 }, "default": [] },
               "allowAllGroups": { "type": "boolean", "default": false },
               "ignoreSelf": { "type": "boolean", "default": true },
-              "maxTextChars": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 20000 }
+              "maxTextChars": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 20000 },
+              "maxPendingMessages": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 256 }
             }
           }
         }

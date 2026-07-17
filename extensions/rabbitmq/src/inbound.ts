@@ -87,8 +87,12 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
 
   const rt = getRabbitmqRuntime();
   if (!rt) {
-    console.warn("[openclaw-rabbitmq] Runtime not initialized, cannot dispatch message");
-    return { accepted: false, reason: "runtime_not_initialized" };
+    /*
+     * 这里必须抛错，不能只返回 accepted=false：transport 将普通返回视为 handler 已完成，
+     * 随后可能 ACK 原消息。抛错后才会进入 retry/DLQ 或按策略 NACK，保证“没有 Agent
+     * Runtime 就绝不确认消费”。
+     */
+    throw new Error("RabbitMQ runtime is not initialized");
   }
 
   const { agentId, sessionKey } = await resolveChannelDispatchIdentity(rt as unknown as BridgePluginRuntime, {
@@ -165,8 +169,7 @@ async function dispatchToRuntime(
 ): Promise<void> {
   const rt = getRabbitmqRuntime();
   if (!rt) {
-    console.warn("[openclaw-rabbitmq] Runtime not initialized, cannot dispatch message");
-    return;
+    throw new Error("RabbitMQ runtime is not initialized");
   }
 
   const mode = config.dispatch.mode as ChannelDispatchMode;

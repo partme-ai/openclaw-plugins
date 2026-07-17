@@ -2,7 +2,7 @@
  * ZVec 存储后端测试
  */
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, readFile, realpath } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cosineSimilarity } from './store/math.js';
@@ -134,6 +134,15 @@ describe('ZVecStore', () => {
     const persisted = JSON.parse(await readFile(dbPath, 'utf8')) as VectorChunk[];
     expect(persisted).toHaveLength(1);
     expect(persisted[0].id).toBe('c1');
+  });
+
+  it('fails closed when the persisted snapshot is corrupt', async () => {
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'knowledge-zvec-corrupt-')));
+    const dbPath = join(directory, 'store.json');
+    await writeFile(dbPath, '[{"id":"broken","vector":[1],"metadata":{"text":"x"}}]');
+
+    const store = new ZVecStore({ namespace: 'tenant-a:bot', dimensions: 3, dbPath });
+    await expect(store.initialize()).rejects.toThrow('无法加载 ZVec 持久化快照');
   });
 
   it('derives collision-resistant persistence files per namespace', () => {

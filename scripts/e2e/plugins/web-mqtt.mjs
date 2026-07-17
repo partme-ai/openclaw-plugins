@@ -49,6 +49,8 @@ export async function testWebMqtt(ctx, results) {
       const replyTopic = "openclaw/agent/main/out";
       const client = mqtt.connect(`ws://127.0.0.1:${port}/ws`, {
         clientId,
+        username: "web-mqtt-e2e",
+        password: "web-mqtt-e2e-secret",
         reconnectPeriod: 0,
         connectTimeout: 15_000,
         clean: true,
