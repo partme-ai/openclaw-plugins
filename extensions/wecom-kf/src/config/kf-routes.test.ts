@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
     collectWecomKfRoutePaths,
+    collectWecomKfRouteBindings,
     DEFAULT_API_BASE_URL,
     DEFAULT_KF_WEBHOOK_PATH,
     normalizeRoutePath,
@@ -30,11 +31,34 @@ describe("kf-routes", () => {
         expect(paths).toContain("/plugins/wecom-kf");
     });
 
-    it("resolveApiBaseUrl 默认官方域名并可覆盖", () => {
+    it("为未显式配置路径的多账号生成独立回调路径", () => {
+        const bindings = collectWecomKfRouteBindings({
+            defaultAccount: "desk1",
+            accounts: { desk1: {}, desk2: {} },
+        });
+        expect(bindings).toContainEqual({ path: "/wecom-kf", accountId: "desk1" });
+        expect(bindings).toContainEqual({ path: "/wecom-kf/desk2", accountId: "desk2" });
+    });
+
+    it("拒绝多个账号复用同一个回调路径", () => {
+        expect(() => collectWecomKfRouteBindings({
+            accounts: {
+                desk1: { webhookPath: "/shared" },
+                desk2: { webhookPath: "/shared" },
+            },
+        })).toThrow("assigned to both");
+    });
+
+    it("resolveApiBaseUrl 默认官方域名，并只对白名单 loopback 放行 HTTP", () => {
         expect(resolveApiBaseUrl()).toBe(DEFAULT_API_BASE_URL);
         expect(resolveApiBaseUrl({ apiBaseUrl: "https://proxy.example.com/" })).toBe(
             "https://proxy.example.com",
         );
+        expect(resolveApiBaseUrl({ apiBaseUrl: "http://127.0.0.1:8080/" })).toBe("http://127.0.0.1:8080");
+        expect(resolveApiBaseUrl({ apiBaseUrl: "http://localhost:8080" })).toBe("http://localhost:8080");
+        expect(() => resolveApiBaseUrl({ apiBaseUrl: "http://10.0.0.8:8080" })).toThrow("loopback");
+        expect(() => resolveApiBaseUrl({ apiBaseUrl: "https://user:pass@proxy.example.com" })).toThrow("credentials");
+        expect(() => resolveApiBaseUrl({ apiBaseUrl: "not-a-url" })).toThrow("absolute HTTPS URL");
     });
 
     it("resolveKfAccountWebhookPath 支持账号级默认后缀", () => {

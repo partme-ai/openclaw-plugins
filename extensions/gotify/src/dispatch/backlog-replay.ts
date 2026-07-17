@@ -8,7 +8,11 @@
  * 仅复用与 `/stream` 相同的派发钩子以保持语义对齐 Channel Plugin。
  */
 
-import type { GotifyPagedMessages, GotifyStreamEnvelope, ResolvedGotifyAccount } from "../types.js";
+import type {
+  GotifyPagedMessages,
+  GotifyStreamEnvelope,
+  ResolvedGotifyAccount,
+} from "../types.js";
 import { GotifyConfigError } from "../shared/errors.js";
 import { getApplicationMessages } from "../transport/gotify-api.js";
 import { readBacklogCursor, writeBacklogCursor } from "./backlog-cursor.js";
@@ -32,6 +36,7 @@ type ReplayParams = {
     params?: { limit?: number; since?: number },
   ) => Promise<GotifyPagedMessages>;
   pageLimit?: number;
+  maxMessages?: number;
 };
 
 /**
@@ -44,7 +49,9 @@ type ReplayParams = {
  */
 function parsePositiveMessageId(id: number | string | undefined): number {
   const normalized =
-    typeof id === "number" ? Math.trunc(id) : Number.parseInt(String(id ?? ""), 10);
+    typeof id === "number"
+      ? Math.trunc(id)
+      : Number.parseInt(String(id ?? ""), 10);
   return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
 }
 
@@ -80,10 +87,21 @@ export async function replayBacklogForAccount(
   const saveCursor = params.saveCursor ?? writeBacklogCursor;
   const fetchPage = params.fetchPage ?? getApplicationMessages;
   const pageLimit = params.pageLimit ?? 100;
+  const maxMessages = params.maxMessages ?? 10_000;
+  if (!Number.isInteger(pageLimit) || pageLimit < 1 || pageLimit > 200) {
+    throw new GotifyConfigError(
+      "pageLimit",
+      "must be an integer between 1 and 200",
+    );
+  }
+  if (!Number.isInteger(maxMessages) || maxMessages < 1) {
+    throw new GotifyConfigError("maxMessages", "must be a positive integer");
+  }
 
   let cursor = await loadCursor(params.account.accountId, allowedAppId);
   let replayed = 0;
   const pending: GotifyStreamEnvelope[] = [];
+  const pendingIds = new Set<number>();
   let since = 0;
 
   /*
@@ -103,14 +121,29 @@ export async function replayBacklogForAccount(
 
     for (const message of messages) {
       const messageId = parsePositiveMessageId(message.id);
-      if (messageId > cursor) {
+      if (messageId > cursor && !pendingIds.has(messageId)) {
+        pendingIds.add(messageId);
         pending.push(message);
+        if (pending.length > maxMessages) {
+          throw new GotifyConfigError(
+            "backlog",
+            `replay exceeds the safety limit of ${maxMessages} messages`,
+          );
+        }
       }
     }
 
-    const oldestInPage = parsePositiveMessageId(messages[messages.length - 1]?.id);
+    const oldestInPage = parsePositiveMessageId(
+      messages[messages.length - 1]?.id,
+    );
     if (!oldestInPage || oldestInPage <= cursor) {
       break;
+    }
+    if (oldestInPage === since) {
+      throw new GotifyConfigError(
+        "backlog",
+        `pagination cursor did not advance from message ${since}`,
+      );
     }
     since = oldestInPage;
   }

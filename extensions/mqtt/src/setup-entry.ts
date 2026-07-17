@@ -8,7 +8,7 @@
  * @see https://docs.openclaw.ai/plugins/sdk-entrypoints#definesetuppluginentry
  */
 
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { mqttPlugin } from "./runtime/mqtt-plugin.js";
 

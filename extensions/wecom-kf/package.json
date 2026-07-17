@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/wecom-kf",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "description": "OpenClaw WeCom KF (WeChat Work Customer Service) — multi-agent mapping + KF Control Tools",
   "type": "module",
   "main": "dist/index.js",
@@ -25,12 +25,14 @@
   ],
   "author": "PartMe",
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "zod": "^3.22.0",
     "undici": "^6.0.0",
-    "fast-xml-parser": "^4.3.0",
-    "@wecom/aibot-node-sdk": "^1.0.0",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "fast-xml-parser": "5.10.1",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "files": [
     "dist",
@@ -38,11 +40,11 @@
     "README.md",
     "README.en.md",
     "README.zh-CN.md",
-    "skills"
+    "skills",
+    "LICENSE"
   ],
   "publishConfig": {
-    "access": "public",
-    "registry": "https://packages.aliyun.com/5fdc0afd99b59ba3c5ead757/npm/repo-cxytb/"
+    "access": "public"
   },
   "openclaw": {
     "extensions": [
@@ -66,15 +68,11 @@
       "order": 86
     },
     "install": {
-      "npmSpec": "@partme.ai/wecom_kf",
+      "npmSpec": "@partme.ai/wecom-kf",
       "localPath": "extensions/wecom-kf",
-      "defaultChoice": "npm"
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -83,12 +81,7 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
-  },
-  "peerDependenciesMeta": {
-    "openclaw": {
-      "optional": true
-    }
+    "openclaw": ">=2026.7.1"
   },
   "repository": {
     "type": "git",

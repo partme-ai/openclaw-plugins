@@ -77,19 +77,19 @@ openclaw-rocketmq/
 ├── src/
 │   ├── index.ts              # Plugin entry (defineChannelPluginEntry)
 │   ├── channel.ts            # Channel lifecycle + config
-│   ├── rocketmq-config.ts    # Config parsing + validation
-│   ├── rocketmq-server.ts    # Transport (Producer + PushConsumer)
-│   ├── rocketmq-state.ts     # Runtime config singleton
+│   ├── config.ts             # Config parsing + validation
+│   ├── transport/server.ts   # Transport (Producer + PushConsumer)
+│   ├── state/state.ts        # Runtime config singleton
 │   ├── inbound.ts            # Inbound processing + dispatch
 │   ├── outbound.ts           # Outbound adapter
-│   ├── topic-router.ts       # Topic → agent routing
-│   ├── session-mapper.ts     # Session ↔ peer mapping
-│   ├── mq-tools.ts           # mq.publish debug tool
+│   ├── routing/topic-router.ts   # Topic → agent routing
+│   ├── routing/session-mapper.ts # Session ↔ peer mapping
+│   ├── shared/wire-helpers.ts    # Message SDK + claimable dedupe helpers
 │   ├── runtime.ts            # Runtime reference
 │   ├── types.ts              # Core types
 │   ├── utils.ts              # Text utilities
 │   ├── setup-entry.ts        # Setup entry
-│   └── openclaw-sdk.d.ts     # SDK type declarations
+│   └── types.ts              # Plugin transport and routing types
 ├── test/
 │   ├── rocketmq-config.test.ts   # Config parsing tests
 │   ├── topic-router.test.ts      # Routing tests
@@ -131,9 +131,9 @@ openclaw-rocketmq/
 - `session-mapper.test.ts` — session context CRUD, peer mappings, stats
 
 ### Integration Tests
-- `integration.test.ts` — requires running RocketMQ + OpenClaw Gateway
-- Tests: plugin registration, health endpoints, message routing, agent replies
-- Uses real `rocketmq-client-nodejs` Producer + PushConsumer
+- `docker-integration.test.ts` — opt-in live Broker/Proxy transport test (`RUN_ROCKETMQ_DOCKER_TESTS=1`)
+- `transport-reliability.test.ts` — startup rollback, nack/redelivery mapping, and lifecycle guards with a controlled SDK double
+- `inbound-reliability.test.ts` — claim/release/commit semantics around Agent dispatch
 
 ## Linting & Formatting
 
@@ -159,10 +159,10 @@ npx prettier --write "src/**/*.ts" "test/**/*.ts"
 ### `openclaw.plugin.json`
 
 Defines the plugin manifest:
-- `id`: `"openclaw-rocketmq"`
+- `id`: `"rocketmq"`
 - `channels`: `["rocketmq"]`
 - `configSchema`: Channel config JSON Schema
-- `contracts.tools`: `["mq.publish"]`
+- `contracts.tools`: `[]` (the channel does not expose a general-purpose publish tool)
 - `channelConfigs.rocketmq.schema`: Full config schema
 - `channelConfigs.rocketmq.uiHints`: UI labels + sensitive field markers
 

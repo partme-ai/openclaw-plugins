@@ -2,7 +2,12 @@
  * 配置解析测试。
  */
 import { describe, it, expect } from "vitest";
-import { resolveRedisChannelConfig, DEFAULT_REDIS_CHANNEL_CONFIG } from "../src/config.js";
+import {
+  resolveRedisChannelConfig,
+  DEFAULT_REDIS_CHANNEL_CONFIG,
+  redactUrl,
+  safeParseRedisStreamConfig,
+} from "../src/config.js";
 
 describe("resolveRedisChannelConfig", () => {
   it("returns defaults when config is empty", () => {
@@ -11,6 +16,8 @@ describe("resolveRedisChannelConfig", () => {
     expect(config.channelMode).toBe("pubsub");
     expect(config.stream.inboundKey).toBe("openclaw:inbound");
     expect(config.payload.mode).toBe("jsonTextOrPlain");
+    expect(config.connection.maxPubSubInFlight).toBe(32);
+    expect(config.connection.shutdownTimeoutMs).toBe(10_000);
   });
 
   it("reads url from channels.redis-stream", () => {
@@ -61,6 +68,21 @@ describe("resolveRedisChannelConfig", () => {
     expect(config.stream.pendingClaimIdleMs).toBe(60_000);
   });
 
+  it("reads Pub/Sub concurrency and shutdown limits", () => {
+    const config = resolveRedisChannelConfig({
+      channels: {
+        "redis-stream": {
+          connection: {
+            maxPubSubInFlight: 8,
+            shutdownTimeoutMs: 2500,
+          },
+        },
+      },
+    });
+    expect(config.connection.maxPubSubInFlight).toBe(8);
+    expect(config.connection.shutdownTimeoutMs).toBe(2500);
+  });
+
   it("defaults pendingClaimIdleMs when omitted", () => {
     const config = resolveRedisChannelConfig({
       channels: {
@@ -70,7 +92,28 @@ describe("resolveRedisChannelConfig", () => {
         },
       },
     });
-    expect(config.stream.pendingClaimIdleMs).toBe(120_000);
+    expect(config.stream.pendingClaimIdleMs).toBe(180_000);
+    expect(config.stream.maxAttempts).toBe(5);
+    expect(config.stream.deadLetterKey).toBe("openclaw:inbound:dlq");
+    expect(config.stream.maxLen).toBe(100_000);
+  });
+
+  it("reads the Agent timeout and rejects a reclaim lease that can expire mid-turn", () => {
+    const config = resolveRedisChannelConfig({
+      channels: {
+        "redis-stream": {
+          channelMode: "stream",
+          stream: { pendingClaimIdleMs: 20_000 },
+          network: { agentReplyTimeoutMs: 30_000 },
+        },
+      },
+    });
+    expect(config.network.agentReplyTimeoutMs).toBe(30_000);
+    expect(safeParseRedisStreamConfig(config).success).toBe(false);
+    expect(safeParseRedisStreamConfig({
+      ...config,
+      stream: { ...config.stream, pendingClaimIdleMs: 45_000 },
+    }).success).toBe(true);
   });
 
   it("defaults to pubsub for invalid channelMode", () => {
@@ -92,7 +135,12 @@ describe("resolveRedisChannelConfig", () => {
           url: "redis://localhost:6379",
           channelBindings: [
             { channelPattern: "test:*", agentId: "agent1" },
-            { channelPattern: "sensor:temp", agentId: "agent2", accountId: "acct2", replyChannel: "resp" },
+            {
+              channelPattern: "sensor:temp",
+              agentId: "agent2",
+              accountId: "acct2",
+              replyChannel: "resp",
+            },
           ],
         },
       },
@@ -206,5 +254,27 @@ describe("resolveRedisChannelConfig", () => {
       },
     });
     expect(json.payload.mode).toBe("jsonTextOrPlain");
+  });
+
+  it("uses a process-unique consumer name by default", () => {
+    const config = resolveRedisChannelConfig({});
+    expect(config.stream.consumerName).toContain(`-${process.pid}`);
+  });
+
+  it("rejects non-Redis URL protocols", () => {
+    const result = safeParseRedisStreamConfig({
+      ...DEFAULT_REDIS_CHANNEL_CONFIG,
+      url: "https://redis.example.com",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("redacts both username and password", () => {
+    const value = redactUrl(
+      "rediss://secret-user:secret-pass@redis.example.com:6380",
+    );
+    expect(value).not.toContain("secret-user");
+    expect(value).not.toContain("secret-pass");
+    expect(value).toContain("redis.example.com");
   });
 });

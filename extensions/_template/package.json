@@ -50,16 +50,17 @@
       "order": 90
     },
     "install": {
-      "npmSpec": "@partme.ai/TEMPLATE_NAME",
+      "npmSpec": "@partme.ai/openclaw-TEMPLATE_NAME",
       "localPath": "plugins/TEMPLATE_NAME",
-      "defaultChoice": "npm"
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.5.24"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "devDependencies": {
     "tsup": "^8.2.0",

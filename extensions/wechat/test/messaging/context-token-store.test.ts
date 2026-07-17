@@ -32,4 +32,9 @@ describe("context-token-store", () => {
     expect(getContextToken("acc", "userA")).toBe("tokenA");
     expect(getContextToken("acc", "userB")).toBe("tokenB");
   });
+
+  it("rejects invalid identifiers and oversized tokens", () => {
+    expect(() => setContextToken("acc", "", "token")).toThrow("valid accountId and userId");
+    expect(() => setContextToken("acc", "user", "x".repeat(16 * 1024 + 1))).toThrow("safe size limit");
+  });
 });

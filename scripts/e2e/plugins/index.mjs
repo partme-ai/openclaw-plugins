@@ -4,22 +4,62 @@
 import { createTestContext } from "./_context.mjs";
 import { testMqtt } from "./mqtt.mjs";
 import { testRabbitmq } from "./rabbitmq.mjs";
+import { testRedisStream } from "./redis-stream.mjs";
 import { testRocketmq } from "./rocketmq.mjs";
 import { testGotify } from "./gotify.mjs";
+import { testRouter } from "./router.mjs";
 import { testStomp } from "./stomp.mjs";
 import { testWebMqtt } from "./web-mqtt.mjs";
 import { testWebStomp } from "./web-stomp.mjs";
+import { testMtls } from "./mtls.mjs";
+import { testOAuth2 } from "./oauth2.mjs";
+import { testWebSocket } from "./web-socket.mjs";
+import { testTracing } from "./tracing.mjs";
+import { testPrometheus } from "./prometheus.mjs";
+import { testMemory } from "./memory.mjs";
+import { testOpenMem } from "./openmem.mjs";
+import { testKnowledge } from "./knowledge.mjs";
+import { testDouyin } from "./douyin.mjs";
+import { testAmap } from "./amap.mjs";
+import { testMeituan } from "./meituan.mjs";
+import { testRednode } from "./rednode.mjs";
+import { testWechat } from "./wechat.mjs";
+import { testWechatIpad } from "./wechat-ipad.mjs";
+import { testWecomKf } from "./wecom-kf.mjs";
+import { testWecom } from "./wecom.mjs";
+import { testBridge } from "./bridge.mjs";
+import { testNacos } from "./nacos.mjs";
 import { resolvePlugins } from "../lib/registry.mjs";
 
 /** @type {Record<string, (ctx: ReturnType<typeof createTestContext>, results: import('../lib/utils.mjs').resultRow[]) => Promise<void>>} */
 const ADAPTERS = {
   mqtt: testMqtt,
   rabbitmq: testRabbitmq,
+  "redis-stream": testRedisStream,
   rocketmq: testRocketmq,
   gotify: testGotify,
+  router: testRouter,
   stomp: testStomp,
   "web-mqtt": testWebMqtt,
   "web-stomp": testWebStomp,
+  mtls: testMtls,
+  oauth2: testOAuth2,
+  "web-socket": testWebSocket,
+  tracing: testTracing,
+  prometheus: testPrometheus,
+  memory: testMemory,
+  openmem: testOpenMem,
+  knowledge: testKnowledge,
+  douyin: testDouyin,
+  amap: testAmap,
+  meituan: testMeituan,
+  rednode: testRednode,
+  wechat: testWechat,
+  "wechat-ipad": testWechatIpad,
+  "wecom-kf": testWecomKf,
+  wecom: testWecom,
+  bridge: testBridge,
+  nacos: testNacos,
 };
 
 /**
@@ -38,10 +78,10 @@ export const results = [];
  * Run installed-plugin smoke tests for selected plugins.
  * @param {string[]|undefined} pluginIds
  */
-export async function runPluginTests(pluginIds) {
+export async function runPluginTests(pluginIds, services = {}) {
   const ids = resolvePlugins(pluginIds);
   results.length = 0;
-  const ctx = createTestContext(ids);
+  const ctx = createTestContext(ids, services);
 
   for (const id of ids) {
     const adapter = ADAPTERS[id];

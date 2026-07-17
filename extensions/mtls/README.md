@@ -10,7 +10,7 @@
 
 ## 📖 Introduction
 
-`@partme.ai/openclaw-mtls` is an OpenClaw security plugin that provides **mTLS (Mutual TLS)** bidirectional certificate-based authentication for the OpenClaw Gateway.
+`@partme.ai/openclaw-mtls` is an HTTPS/mTLS reverse proxy for OpenClaw. It validates client certificates, overwrites spoofable identity headers, proxies HTTP and WebSocket traffic, and integrates with OpenClaw's official `trusted-proxy` authentication mode.
 
 ### What is mTLS?
 
@@ -22,7 +22,7 @@ mTLS (Mutual TLS) is a security mechanism where both the client and server authe
 - **Client Certificate Validation**: Extract and verify client certificate CN, issuer, fingerprint
 - **Whitelist Control**: Fine-grained access control via `allowedClients` (CN/issuer/fingerprint)
 - **Path-Based Protection**: Configure which paths require mTLS authentication via `protectedPaths`
-- **Passthrough Mode**: Optional `passthrough` mode allows unauthenticated requests when no certificate is provided
+- **Fail-Closed Policy**: Protected routes never accept missing or unverified client certificates; public routes must be declared explicitly
 - **Certificate Info Propagation**: Pass client certificate information to downstream services via HTTP headers
 - **OpenClaw Integration**: Follows OpenClaw's security plugin architecture
 
@@ -31,25 +31,26 @@ mTLS (Mutual TLS) is a security mechanism where both the client and server authe
 ```
 Client (with client cert)
     → HTTPS + mTLS
-    → OpenClaw Gateway
-    → mTLS Middleware (validates client cert)
-    → Downstream handlers
+    → mTLS HTTPS proxy (this plugin, default :18443)
+    → Verified identity headers
+    → OpenClaw Gateway (loopback :18789, trusted-proxy mode)
 ```
 
 ### Lifecycle
 
-- Plugin registers via `registerHttpRoute` when Gateway loads the plugin
-- mTLS middleware intercepts HTTP requests on protected paths
-- Client certificate is extracted from the TLS socket
+- Plugin starts a dedicated HTTPS proxy through `registerService`
+- The proxy supports both HTTP requests and WebSocket upgrades
+- Client certificate is extracted from the proxy TLS socket
 - Certificate is validated against `allowedClients` whitelist (if configured)
-- Authenticated context is attached to the request for downstream use
-- Status endpoint available at `GET /mtls/status`
+- Spoofable identity headers are removed and replaced with the verified certificate CN
+- OpenClaw performs final authorization through `gateway.auth.mode: "trusted-proxy"`
+- `GET https://<host>:18443/mtls/status` is forwarded to OpenClaw's `auth: "gateway"` route; proxy-local runtime details are not exposed anonymously
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- OpenClaw `>= 2026.4.0`
+- OpenClaw `>= 2026.7.1`
 - Node.js `20+`
 - TLS certificates (server cert/key and CA for client cert validation)
 
@@ -63,27 +64,39 @@ openclaw plugins install @partme.ai/openclaw-mtls
 
 ```json
 {
-  "mtls": {
-    "enabled": true,
-    "tls": {
-      "enabled": true,
-      "certFile": "/path/to/server-cert.pem",
-      "keyFile": "/path/to/server-key.pem",
-      "caFile": "/path/to/ca-cert.pem",
-      "requestCert": true,
-      "rejectUnauthorized": true
-    },
-    "protectedPaths": [
-      { "path": "/", "match": "prefix", "allowUnauthenticated": false }
-    ],
-    "allowedClients": [
-      { "cn": "trusted-client-1" },
-      { "cn": "trusted-client-2", "issuer": "My CA" }
-    ],
-    "skipPaths": ["/health", "/auth/status", "/mtls/status"],
-    "passthrough": false,
-    "headerName": "X-Client-Cert",
-    "headerCertField": "subject"
+  "gateway": {
+    "bind": "loopback",
+    "port": 18789,
+    "trustedProxies": ["127.0.0.1", "::1"],
+    "auth": {
+      "mode": "trusted-proxy",
+      "trustedProxy": {
+        "allowLoopback": true,
+        "userHeader": "x-forwarded-user",
+        "allowUsers": ["trusted-client-1"]
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "mtls": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "tls": {
+            "certFile": "/path/to/server-cert.pem",
+            "keyFile": "/path/to/server-key.pem",
+            "caFile": "/path/to/ca-cert.pem"
+          },
+          "proxy": {
+            "listenPort": 18443,
+            "upstreamHost": "127.0.0.1",
+            "upstreamPort": 18789
+          },
+          "allowedClients": [{ "cn": "trusted-client-1" }]
+        }
+      }
+    }
   }
 }
 ```
@@ -94,12 +107,13 @@ openclaw plugins install @partme.ai/openclaw-mtls
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `enabled` | `true` | Enable/disable the mTLS plugin |
+| `enabled` | `false` | Enable the mTLS proxy; missing certificates fail startup |
 | `tls` | — | TLS server configuration |
+| `proxy` | `:18443 → 127.0.0.1:18789` | Listener and upstream Gateway configuration |
 | `protectedPaths` | `[{path:"/",match:"prefix"}]` | Paths requiring mTLS authentication |
 | `allowedClients` | `[]` | Whitelist of allowed client certificates |
 | `skipPaths` | See below | Paths to skip authentication |
-| `passthrough` | `false` | Allow unauthenticated requests when no cert |
+| `passthrough` | `false` (fixed) | Legacy field; protected routes cannot be put into passthrough mode |
 | `headerName` | `X-Client-Cert` | Header to pass cert info downstream |
 | `headerCertField` | `subject` | Which cert field to use for header |
 
@@ -111,8 +125,8 @@ openclaw plugins install @partme.ai/openclaw-mtls
 | `tls.certFile` | — | Server certificate file path |
 | `tls.keyFile` | — | Server private key file path |
 | `tls.caFile` | — | CA certificate for client cert validation |
-| `tls.requestCert` | `true` | Request client certificate |
-| `tls.rejectUnauthorized` | `true` | Reject clients without valid certificate |
+| `tls.requestCert` | `true` (required) | Request client certificates at the TLS listener |
+| `tls.rejectUnauthorized` | `true` (required) | Require CA verification before a certificate can become an identity |
 
 ### Path Rules
 
@@ -164,9 +178,12 @@ git push origin main --follow-tags
 ```
 openclaw-mtls/
 ├── src/
-│   ├── index.ts              # Plugin entry — registerHttpRoute middleware
-│   ├── types.ts              # Type definitions
-│   └── stats.ts             # Statistics tracking
+│   ├── index.ts              # Plugin lifecycle and status route
+│   ├── config.ts             # Fail-closed configuration validation
+│   ├── policy.ts             # Certificate and path policy
+│   ├── proxy-server.ts       # HTTPS + WebSocket reverse proxy
+│   ├── shared/types.ts       # Type definitions
+│   └── runtime/stats.ts      # Statistics tracking
 ├── test/
 │   └── mtls.test.ts         # Unit tests
 ├── .github/workflows/
@@ -199,7 +216,7 @@ Use `allowedClients` with CN, issuer, or fingerprint. Multiple match criteria ar
 
 **What happens when a client doesn't provide a certificate?**
 
-By default (`passthrough: false`), the request is rejected with 401. If `passthrough: true`, the request is allowed through but no `mtlsAuth` context is attached.
+Protected paths reject the request with 401. To expose a public endpoint, add an explicit `allowUnauthenticated` path rule or `skipPaths` entry; the global proxy never downgrades protected paths into passthrough mode.
 
 ## 📄 License
 

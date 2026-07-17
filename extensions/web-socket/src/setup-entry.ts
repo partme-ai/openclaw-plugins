@@ -4,7 +4,7 @@
  * 轻量 setup 入口（延迟加载时仅导出 ChannelPlugin）。
  */
 
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { webSocketPlugin } from "./runtime/web-socket-plugin.js";
 

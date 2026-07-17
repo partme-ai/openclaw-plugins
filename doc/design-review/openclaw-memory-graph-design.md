@@ -194,7 +194,7 @@ openclaw-memory-graph/
 
 ```json
 {
-  "id": "openclaw-memory-graph",
+  "id": "memory-graph",
   "name": "Memory Graph",
   "description": "Knowledge graph memory plugin — auto-extracts entities and relations from conversations, supports graph traversal recall and temporal tracking",
   "version": "1.0.0",
@@ -299,7 +299,7 @@ import { registerAfterTurnHook } from "./hooks/after-turn";
 import { registerCorpusSupplement } from "./corpus-supplement";
 
 export default definePluginEntry({
-  id: "openclaw-memory-graph",
+  id: "memory-graph",
   name: "Memory Graph",
 
   register(api, ctx) {

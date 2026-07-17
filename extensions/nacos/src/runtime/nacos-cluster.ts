@@ -25,7 +25,7 @@ export class WebhookClusterService {
   private lastUpdated = 0;
   private selfIp: string | null = null;
   private selfPort: number | null = null;
-  private unsubscribeFn: (() => void) | null = null;
+  private unsubscribeFn: (() => Promise<void>) | null = null;
 
   /**
    * Returns the current list of discovered peer nodes (excluding self).
@@ -73,10 +73,24 @@ export class WebhookClusterService {
         : {}),
     });
 
-    await client.ready();
+    // 先保存引用，后续 ready/subscribe/initial fetch 任一步失败都可由 stop 统一回收。
+    this.client = client;
 
-    const updatePeers = (hosts: Array<{ ip: string; port: number; weight?: number; healthy?: boolean; metadata?: Record<string, string>; clusterName?: string }>) => {
+    const updatePeers = (hosts: unknown) => {
+      if (!Array.isArray(hosts)) {
+        logger.warn("[openclaw-nacos] ignored invalid cluster update: hosts is not an array");
+        return;
+      }
       this.peers = hosts
+        .filter((host): host is { ip: string; port: number; weight?: number; healthy?: boolean; metadata?: Record<string, string>; clusterName?: string } => {
+          if (!host || typeof host !== "object") return false;
+          const candidate = host as { ip?: unknown; port?: unknown };
+          return typeof candidate.ip === "string" && candidate.ip.length > 0 &&
+            typeof candidate.port === "number" && Number.isInteger(candidate.port) &&
+            candidate.port > 0 && candidate.port <= 65_535;
+        })
+        // 防御异常注册表或恶意服务端响应，诊断端点和进程内状态都保持有界。
+        .slice(0, 1_000)
         .filter((h) => !(h.ip === this.selfIp && h.port === this.selfPort))
         .map((h) => ({
           ip: h.ip,
@@ -95,32 +109,27 @@ export class WebhookClusterService {
     };
 
     try {
-      client.subscribe(
-        { serviceName, groupName, clusters: pluginConfig.clusterName?.trim() || undefined },
-        (hosts: unknown) => {
-          updatePeers(hosts as Array<{ ip: string; port: number; weight?: number; healthy?: boolean; metadata?: Record<string, string>; clusterName?: string }>);
-        },
-      );
-      this.unsubscribeFn = () => {
-        try {
-          client.unSubscribe({ serviceName, groupName }, undefined as never);
-        } catch {
-          /* ignore */
-        }
+      await client.ready();
+      const clusters = pluginConfig.clusterName?.trim() || undefined;
+      const subscription = { serviceName, groupName, clusters };
+      const listener = (hosts: unknown) => updatePeers(hosts);
+      await Promise.resolve(client.subscribe(subscription, listener));
+      this.unsubscribeFn = async () => {
+        await Promise.resolve(client.unSubscribe(subscription, listener));
       };
 
       // Initial fetch
       const initialHosts = await client.getAllInstances(serviceName, groupName, pluginConfig.clusterName?.trim() || undefined, false);
       if (initialHosts && Array.isArray(initialHosts)) {
-        updatePeers(initialHosts as Array<{ ip: string; port: number; weight?: number; healthy?: boolean; metadata?: Record<string, string>; clusterName?: string }>);
+        updatePeers(initialHosts);
       }
 
-      this.client = client;
       logger.info(
         `[openclaw-nacos] cluster discovery started for ${serviceName} (${groupName}, ns=${namespace})`,
       );
     } catch (err) {
       logger.error(`[openclaw-nacos] cluster discovery failed: ${String(err)}`);
+      await this.stop(logger);
       throw err;
     }
   }
@@ -131,9 +140,9 @@ export class WebhookClusterService {
   async stop(logger: PluginLog): Promise<void> {
     if (this.unsubscribeFn) {
       try {
-        this.unsubscribeFn();
-      } catch {
-        /* ignore */
+        await this.unsubscribeFn();
+      } catch (error) {
+        logger.warn(`[openclaw-nacos] cluster unsubscribe failed: ${String(error)}`);
       }
       this.unsubscribeFn = null;
     }

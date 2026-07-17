@@ -20,7 +20,7 @@
 | 插件 | 分级 | 入站 ACK/commit | 出站 reply 确认 | 失败重试 | 自消费防护 |
 |------|------|-----------------|-----------------|----------|------------|
 | **rabbitmq** | 可企业试点 | 延迟 ACK（reply 成功后） | `publish` 背压抛错 | retry 队列 + nack/requeue | 靠 `subscribeTopics` 白名单 |
-| **redis-stream** (Stream) | 可企业试点 | 处理成功 `XACK` | `publish`/`XADD` await | PEL 保留 + **XAUTOCLAIM** | `*:out` / outbound channel 跳过 |
+| **redis-stream** (Stream) | 可企业试点 | 派发与回复成功后 `XACK` | `XADD` await | PEL + **XAUTOCLAIM** + 有界重试 + 原子 DLQ | Stream entry ID claim/commit/release |
 | **redis-stream** (Pub/Sub) | 协议限制 | 无 ACK | await | 无 | 白名单 + outbound 后缀 |
 | **mqtt** | 可企业试点 | 协议无 consumer ACK | broker `publish` await | QoS1 出站重试 | server publish 跳过入站 |
 | **web-mqtt** | 协议限制 | QoS0 即时 PUBACK | `publishToTopic` await | 无 | 同上 + per-client 串行队列 |
@@ -173,7 +173,7 @@ web-mqtt 入站按 `clientId` 串行，避免同一客户端并发 dispatch 压�
 }
 ```
 
-**运维**：监控 PEL 长度（`XPENDING`）；多 consumer 使用不同 `consumerName`。
+**运维**：监控 PEL 和 DLQ 长度；多 consumer 使用不同 `consumerName`。Redis Cluster 下入站与 DLQ key 必须共享 hash tag；插件当前不负责原生 Cluster 拓扑发现。进程内幂等不等于跨节点 exactly-once。
 
 ---
 

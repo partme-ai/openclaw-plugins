@@ -21,6 +21,7 @@ const RECONNECT_DELAY_MS = 5_000;
 let _runtime: GatewayRuntime | null = null;
 let _gatewayClient: GatewayClient | null = null;
 let _gatewayReadyPromise: Promise<GatewayClient> | null = null;
+let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * 设置 Gateway Runtime 引用
@@ -29,7 +30,30 @@ let _gatewayReadyPromise: Promise<GatewayClient> | null = null;
  * @param runtime - Gateway 注入的运行时
  */
 export function setRuntime(runtime: GatewayRuntime): void {
+  resetGatewayConnection();
   _runtime = runtime;
+}
+
+/** 停止 Gateway RPC Client、取消待执行重连并清除 Runtime 引用，供关闭和测试隔离使用。 */
+export function resetRuntime(): void {
+  resetGatewayConnection();
+  _runtime = null;
+  setRpcClientInitialized(false);
+}
+
+function resetGatewayConnection(): void {
+  if (_reconnectTimer) {
+    clearTimeout(_reconnectTimer);
+    _reconnectTimer = null;
+  }
+  const client = _gatewayClient;
+  _gatewayClient = null;
+  _gatewayReadyPromise = null;
+  try {
+    client?.stop();
+  } catch {
+    // Shutdown is best-effort.
+  }
 }
 
 /**
@@ -170,8 +194,8 @@ async function connectWithRetry(
       },
       onClose: () => {
         setRpcClientInitialized(false);
-        // 不清空 _gatewayReadyPromise，让下次 rpcCall 触发重连
         _gatewayClient = null;
+        _gatewayReadyPromise = null;
       },
     });
 
@@ -188,13 +212,20 @@ function handleConnectionFailure(
   attempt: number,
   reject: (reason: Error) => void,
 ): void {
+  const failedClient = _gatewayClient;
   _gatewayClient = null;
   _gatewayReadyPromise = null;
+  try {
+    failedClient?.stop();
+  } catch {
+    // Connection failure cleanup is best-effort.
+  }
 
   const nextAttempt = attempt + 1;
   if (nextAttempt < MAX_RECONNECT_ATTEMPTS) {
     // 延迟后重试
-    setTimeout(() => {
+    _reconnectTimer = setTimeout(() => {
+      _reconnectTimer = null;
       _gatewayReadyPromise = connectWithRetry(url, connect, nextAttempt);
       // 重连 Promise 静默替换，下次 rpcCall 会使用新的
     }, RECONNECT_DELAY_MS);

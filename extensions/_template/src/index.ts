@@ -2,7 +2,7 @@
  * 插件主入口：defineChannelPluginEntry 注册 Channel + Runtime。
  */
 
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { plugin as templateChannel } from "./channel.js";
 import { setRuntime } from "./runtime.js";

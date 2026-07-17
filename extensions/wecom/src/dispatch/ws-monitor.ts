@@ -768,7 +768,15 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
   runtime.log?.(`[${account.accountId}] [${PLUGIN_VERSION}] Initializing WSClient with SDK...`);
 
   // 启动消息状态定期清理
-  startMessageStateCleanup();
+  startMessageStateCleanup(account.accountId);
+
+  // 配置热重载时，OpenClaw 可能在旧启动任务真正执行前就已经发出 abort。
+  // 此时不能再构造或连接 WSClient，否则会产生一个脱离框架生命周期的幽灵连接。
+  if (abortSignal?.aborted) {
+    stopMessageStateCleanup(account.accountId);
+    await cleanupAccount(account.accountId);
+    return;
+  }
 
   return new Promise((resolve, reject) => {
     const logger = createSdkLogger(runtime, account.accountId);
@@ -792,7 +800,7 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
     const cleanup = async () => {
       if (cleanedUp) return;
       cleanedUp = true;
-      stopMessageStateCleanup();
+      stopMessageStateCleanup(account.accountId);
       await cleanupAccount(account.accountId);
     };
 
@@ -804,7 +812,7 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
         wsClient.disconnect();
         await cleanup();
         resolve();
-      });
+      }, { once: true });
     }
 
     // 监听连接事件

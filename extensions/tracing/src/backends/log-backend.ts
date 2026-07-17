@@ -7,7 +7,13 @@
  * - 日志聚合系统（如 ELK）已配置 stdout 采集
  */
 
-import type { TracingBackend, TracingConfig, Span } from "../shared/types.js";
+import type {
+  TracingBackend,
+  TracingBackendStatus,
+  TracingConfig,
+  TracingLogger,
+  Span,
+} from "../shared/types.js";
 
 /**
  * Console Log 追踪后端
@@ -16,14 +22,13 @@ import type { TracingBackend, TracingConfig, Span } from "../shared/types.js";
 export class LogBackend implements TracingBackend {
   name = "log";
 
-  /** 是否输出紧凑 JSON（默认 true） */
-  private compact = true;
+  constructor(private readonly logger: TracingLogger) {}
 
   /**
    * 初始化 Log 后端
    */
   async init(_config: TracingConfig): Promise<void> {
-    console.log("[openclaw-tracing] Log backend initialized");
+    this.logger.info("[tracing] Log backend initialized");
   }
 
   /**
@@ -49,18 +54,18 @@ export class LogBackend implements TracingBackend {
         events: span.events.length > 0 ? span.events : undefined,
       };
 
-      if (this.compact) {
-        console.log(JSON.stringify(output));
-      } else {
-        console.log(JSON.stringify(output, null, 2));
-      }
+      this.logger.info(JSON.stringify(output));
     }
+  }
+
+  getStatus(): TracingBackendStatus {
+    return { healthy: true, bufferedSpans: 0, droppedSpans: 0 };
   }
 
   /**
    * 关闭后端（Log 无需特殊关闭操作）
    */
   async shutdown(): Promise<void> {
-    console.log("[openclaw-tracing] Log backend shutdown");
+    this.logger.info("[tracing] Log backend shut down");
   }
 }

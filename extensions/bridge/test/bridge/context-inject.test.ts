@@ -45,6 +45,13 @@ describe("registerContextInjection", () => {
     expect(result.appendSystemContext).toContain("Discord");
   });
 
+  it("uses the official agent hook channel field before the conversation channelId", () => {
+    const api = createMockApi({ channels: { discord: {} } });
+    registerContextInjection(api);
+    const result = invokeHook(api, "before_prompt_build", { channel: "discord", channelId: "conversation-42" });
+    expect(result.appendSystemContext).toContain("Discord");
+  });
+
   it("returns preset for external channel (dingtalk)", () => {
     const api = createMockApi({
       channels: { "dingtalk-connector": {} },

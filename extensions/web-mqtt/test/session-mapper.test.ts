@@ -2,10 +2,17 @@
  * session-mapper 单元测试。
  */
 
-import { describe, expect, it } from "vitest";
-import { upsertSessionContext, getSessionContext } from "../src/routing/session-mapper.js";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  clearSessionContexts,
+  getSessionContext,
+  getSessionStats,
+  removeSessionContextsByClient,
+  upsertSessionContext,
+} from "../src/routing/session-mapper.js";
 
 describe("session mapper", () => {
+  beforeEach(() => clearSessionContexts());
   it("stores outbound context by OpenClaw sessionKey", () => {
     const sessionKey = "agent:agent-a:mqtt-ws:direct:client-a";
     const session = upsertSessionContext(sessionKey, {
@@ -52,5 +59,23 @@ describe("session mapper", () => {
     });
     expect(getSessionContext("agent:a1:main")?.clientId).toBe("c1");
     expect(getSessionContext("agent:a2:main")?.clientId).toBe("c2");
+  });
+
+  it("removes all route contexts owned by a disconnected client", () => {
+    upsertSessionContext("agent:a1:client-a", {
+      clientId: "client-a", agentId: "a1", accountId: "default", lastInboundTopic: "a1/in",
+    });
+    upsertSessionContext("agent:a2:client-a", {
+      clientId: "client-a", agentId: "a2", accountId: "default", lastInboundTopic: "a2/in",
+    });
+    upsertSessionContext("agent:a3:client-b", {
+      clientId: "client-b", agentId: "a3", accountId: "default", lastInboundTopic: "a3/in",
+    });
+
+    removeSessionContextsByClient("client-a");
+    expect(getSessionContext("agent:a1:client-a")).toBeNull();
+    expect(getSessionContext("agent:a2:client-a")).toBeNull();
+    expect(getSessionContext("agent:a3:client-b")).not.toBeNull();
+    expect(getSessionStats().totalSessions).toBe(1);
   });
 });

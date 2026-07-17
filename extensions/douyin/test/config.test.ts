@@ -7,6 +7,7 @@ import {
   listDouyinAccountIds,
   resolveDefaultDouyinAccountId,
   resolveDouyinAccount,
+  resolveDouyinWebhookInboxConfig,
 } from "../src/config.js";
 
 describe("resolveDouyinAccount", () => {
@@ -62,7 +63,7 @@ describe("resolveDouyinAccount", () => {
     expect(account.app_key).toBe("shared-key");
     expect(account.app_secret).toBe("ops-secret");
     expect(account.shop_id).toBe("ops-shop");
-    expect(account.webhook_path).toBe("/custom/webhook");
+    expect(account.webhook_path).toBe("/custom/webhook/ops");
     expect(account.configured).toBe(true);
   });
 
@@ -82,6 +83,26 @@ describe("resolveDouyinAccount", () => {
     expect(account.webhook_path).toBe("/hooks/douyin");
   });
 
+  it("derives a unique webhook path for a named account", () => {
+    const account = resolveDouyinAccount(
+      {
+        channels: {
+          douyin: {
+            accounts: { "shop a": { app_key: "k", app_secret: "s" } },
+          },
+        },
+      },
+      "shop a",
+    );
+    expect(account.webhook_path).toBe("/channels/douyin/webhook/shop-a");
+  });
+
+  it("rejects an unsafe webhook path", () => {
+    expect(() => resolveDouyinAccount({
+      channels: { douyin: { app_key: "k", app_secret: "s", webhook_path: "//evil/path" } },
+    }, "default")).toThrow(/webhook_path must be an absolute path/);
+  });
+
   it("respects enabled=false on merged account", () => {
     const account = resolveDouyinAccount(
       {
@@ -96,6 +117,28 @@ describe("resolveDouyinAccount", () => {
       "default",
     );
     expect(account.enabled).toBe(false);
+  });
+
+  it("validates durable webhook delivery bounds at runtime", () => {
+    const account = resolveDouyinAccount({
+      channels: {
+        douyin: {
+          app_key: "k",
+          app_secret: "s",
+          webhookDelivery: { maxPending: 25, maxAttempts: 7 },
+        },
+      },
+    }, "default");
+    expect(resolveDouyinWebhookInboxConfig(account)).toMatchObject({
+      maxPending: 25,
+      maxAttempts: 7,
+      initialDelayMs: 1000,
+    });
+
+    account.config.webhookDelivery = { maxAttempts: 0 };
+    expect(() => resolveDouyinWebhookInboxConfig(account)).toThrow(
+      "webhookDelivery.maxAttempts",
+    );
   });
 });
 

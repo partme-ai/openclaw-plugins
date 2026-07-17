@@ -1,90 +1,296 @@
 /**
- * @fileoverview STOMP TCP 运行时配置解析（channels.stomp-tcp）。
+ * @fileoverview `channels.stomp-tcp` 配置解析、默认值和生产安全校验。
  *
- * @description
- * `resolveStompTcpConfig` 从网关全局配置合并默认值；topicBindings 经
- * `normalizeTopicBindings` 过滤无效项。
- *
- * @module config
+ * 配置涵盖 TCP/TLS 监听器、登录用户、心跳、订阅/队列/速率上限、ACK 模式与 Topic 路由。
+ * 明文监听只能绑定回环地址；非回环 TLS 必须具备登录认证或受信客户端证书；状态快照会移除
+ * 明文密码，只展示凭据是否已配置。
  */
+import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk";
 
-/**
- * STOMP 配置 — Base Profile 入口。
- */
+import type {
+  ResolvedStompTcpAccount,
+  StompAckMode,
+  StompAuthUser,
+  StompTcpConfig,
+  TopicBinding,
+} from "./types.js";
 
-import type { StompTcpConfig, TopicBinding } from "./types.js";
+export const STOMP_TCP_ACCOUNT_ID = "default";
 
-/** @description 默认 STOMP TCP 服务配置（端口、心跳、auth、prefetch 等）。 */
 export const DEFAULT_STOMP_TCP_CONFIG: StompTcpConfig = {
+  host: "127.0.0.1",
   port: 61613,
   tlsPort: 61614,
-  tls: { enabled: false },
+  tls: {
+    enabled: false,
+    host: "127.0.0.1",
+    minVersion: "TLSv1.2",
+    requestCert: false,
+    rejectUnauthorized: false,
+  },
   heartbeat: { serverMs: 10_000, clientMs: 10_000 },
-  maxConnections: 1000,
-  maxFrameSize: 1024 * 1024 * 4,
-  auth: { required: true },
+  maxConnections: 500,
+  maxFrameSize: 256 * 1024,
+  maxBufferedBytes: 1024 * 1024,
+  maxSubscriptionsPerConnection: 100,
+  maxQueueDepthPerSubscription: 1_000,
+  maxPendingMessages: 32,
+  messagesPerMinute: 120,
+  connectTimeoutMs: 10_000,
+  shutdownTimeoutMs: 10_000,
+  maxDurableSubscriptions: 1_000,
+  auth: { required: true, users: [] },
   subscribeTopics: [],
   topicBindings: [],
+  defaultAgentId: "main",
+  allowedAgentIds: [],
+  allowSharedTopics: false,
+  allowDurableSubscriptions: false,
   defaultAckMode: "auto",
   prefetchCount: 100,
 };
 
-/**
- * @description 从全局网关配置解析 `channels.stomp-tcp` 并合并默认值。
- * @param globalConfig - 宿主 runtime.config。
- * @returns 合并后的 `StompTcpConfig`。
- * @throws 不抛出。
- */
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function boundedInt(value: unknown, fallback: number, _min: number, _max: number): number {
+  // 只对缺失字段应用默认值；显式越界值必须保留到 validate 阶段报错，不能静默截断。
+  return typeof value === "number" ? value : fallback;
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))]
+    : [];
+}
+
+function authUsers(value: unknown, legacy: Record<string, unknown>): StompAuthUser[] {
+  const users = Array.isArray(value) ? value.flatMap((item): StompAuthUser[] => {
+    const row = record(item);
+    const login = typeof row.login === "string" ? row.login.trim() : "";
+    if (!login) return [];
+    return [{
+      login,
+      password: typeof row.password === "string" ? row.password : undefined,
+      passwordEnv: typeof row.passwordEnv === "string" ? row.passwordEnv.trim() || undefined : undefined,
+      passwordHash: typeof row.passwordHash === "string" ? row.passwordHash.trim() || undefined : undefined,
+      hashAlgorithm: row.hashAlgorithm === "sha512" ? "sha512" : "sha256",
+    }];
+  }) : [];
+  if (users.length > 0) return users;
+  const login = typeof legacy.defaultUser === "string" ? legacy.defaultUser.trim() : "";
+  const password = typeof legacy.defaultPass === "string" ? legacy.defaultPass : "";
+  return login && password ? [{ login, password }] : [];
+}
+
+function topicBindings(value: unknown): TopicBinding[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): TopicBinding[] => {
+    const row = record(item);
+    const topicPattern = typeof row.topicPattern === "string" ? row.topicPattern.trim() : "";
+    const agentId = typeof row.agentId === "string" ? row.agentId.trim() : "";
+    if (!topicPattern || !agentId) return [];
+    return [{
+      topicPattern,
+      agentId,
+      accountId: typeof row.accountId === "string" ? row.accountId.trim() || undefined : undefined,
+      replyTopic: typeof row.replyTopic === "string" ? row.replyTopic.trim() || undefined : undefined,
+    }];
+  });
+}
+
+function ackMode(value: unknown): StompAckMode {
+  return (typeof value === "string" ? value : "auto") as StompAckMode;
+}
+
+/** 将 OpenClaw 全局配置解析为边界完整的 STOMP Server 配置。 */
 export function resolveStompTcpConfig(globalConfig: Record<string, unknown>): StompTcpConfig {
-  const channels = (globalConfig.channels as Record<string, unknown> | undefined) ?? {};
-  const cfg = (channels["stomp-tcp"] as Partial<StompTcpConfig> | undefined) ?? {};
-  const defaults = DEFAULT_STOMP_TCP_CONFIG;
+  const raw = record(record(globalConfig.channels)["stomp-tcp"]);
+  const tls = record(raw.tls);
+  const heartbeat = record(raw.heartbeat);
+  const limits = record(raw.limits);
+  const auth = record(raw.auth);
+  const host = typeof raw.host === "string" && raw.host.trim() ? raw.host.trim() : DEFAULT_STOMP_TCP_CONFIG.host;
   return {
-    port: cfg.port ?? defaults.port,
-    tlsPort: cfg.tlsPort ?? defaults.tlsPort,
+    host,
+    port: boundedInt(raw.port, DEFAULT_STOMP_TCP_CONFIG.port, 0, 65_535),
+    tlsPort: boundedInt(raw.tlsPort, DEFAULT_STOMP_TCP_CONFIG.tlsPort, 1, 65_535),
     tls: {
-      enabled: cfg.tls?.enabled ?? defaults.tls.enabled,
-      certFile: cfg.tls?.certFile,
-      keyFile: cfg.tls?.keyFile,
-      caFile: cfg.tls?.caFile,
+      enabled: tls.enabled === true,
+      host: typeof tls.host === "string" && tls.host.trim() ? tls.host.trim() : host,
+      certFile: typeof tls.certFile === "string" ? tls.certFile.trim() || undefined : undefined,
+      keyFile: typeof tls.keyFile === "string" ? tls.keyFile.trim() || undefined : undefined,
+      caFile: typeof tls.caFile === "string" ? tls.caFile.trim() || undefined : undefined,
+      minVersion: tls.minVersion === "TLSv1.3" ? "TLSv1.3" : "TLSv1.2",
+      requestCert: tls.requestCert === true,
+      rejectUnauthorized: tls.rejectUnauthorized === true,
     },
     heartbeat: {
-      serverMs: cfg.heartbeat?.serverMs ?? defaults.heartbeat.serverMs,
-      clientMs: cfg.heartbeat?.clientMs ?? defaults.heartbeat.clientMs,
+      serverMs: boundedInt(heartbeat.serverMs, DEFAULT_STOMP_TCP_CONFIG.heartbeat.serverMs, 0, 300_000),
+      clientMs: boundedInt(heartbeat.clientMs, DEFAULT_STOMP_TCP_CONFIG.heartbeat.clientMs, 0, 300_000),
     },
-    maxConnections: cfg.maxConnections ?? defaults.maxConnections,
-    maxFrameSize: cfg.maxFrameSize ?? defaults.maxFrameSize,
-    auth: {
-      required: cfg.auth?.required ?? defaults.auth.required,
-      defaultUser: cfg.auth?.defaultUser,
-      defaultPass: cfg.auth?.defaultPass,
-    },
-    subscribeTopics: Array.isArray(cfg.subscribeTopics) ? cfg.subscribeTopics : defaults.subscribeTopics,
-    topicBindings: normalizeTopicBindings(cfg.topicBindings),
-    defaultAckMode: cfg.defaultAckMode ?? defaults.defaultAckMode,
-    prefetchCount: cfg.prefetchCount ?? defaults.prefetchCount,
+    maxConnections: boundedInt(raw.maxConnections ?? limits.maxConnections, DEFAULT_STOMP_TCP_CONFIG.maxConnections, 1, 100_000),
+    maxFrameSize: boundedInt(raw.maxFrameSize ?? limits.maxFrameSize, DEFAULT_STOMP_TCP_CONFIG.maxFrameSize, 1, 16 * 1024 * 1024),
+    maxBufferedBytes: boundedInt(limits.maxBufferedBytes, DEFAULT_STOMP_TCP_CONFIG.maxBufferedBytes, 1, 64 * 1024 * 1024),
+    maxSubscriptionsPerConnection: boundedInt(limits.maxSubscriptionsPerConnection, DEFAULT_STOMP_TCP_CONFIG.maxSubscriptionsPerConnection, 1, 10_000),
+    maxQueueDepthPerSubscription: boundedInt(limits.maxQueueDepthPerSubscription, DEFAULT_STOMP_TCP_CONFIG.maxQueueDepthPerSubscription, 1, 100_000),
+    maxPendingMessages: boundedInt(limits.maxPendingMessages, DEFAULT_STOMP_TCP_CONFIG.maxPendingMessages, 1, 10_000),
+    messagesPerMinute: boundedInt(limits.messagesPerMinute, DEFAULT_STOMP_TCP_CONFIG.messagesPerMinute, 1, 1_000_000),
+    connectTimeoutMs: boundedInt(limits.connectTimeoutMs, DEFAULT_STOMP_TCP_CONFIG.connectTimeoutMs, 1, 120_000),
+    shutdownTimeoutMs: boundedInt(limits.shutdownTimeoutMs, DEFAULT_STOMP_TCP_CONFIG.shutdownTimeoutMs, 100, 120_000),
+    maxDurableSubscriptions: boundedInt(limits.maxDurableSubscriptions, DEFAULT_STOMP_TCP_CONFIG.maxDurableSubscriptions, 1, 100_000),
+    auth: { required: auth.required !== false, users: authUsers(auth.users, auth) },
+    subscribeTopics: strings(raw.subscribeTopics),
+    topicBindings: topicBindings(raw.topicBindings),
+    defaultAgentId: typeof raw.defaultAgentId === "string" && raw.defaultAgentId.trim() ? raw.defaultAgentId.trim() : DEFAULT_STOMP_TCP_CONFIG.defaultAgentId,
+    allowedAgentIds: strings(raw.allowedAgentIds),
+    allowSharedTopics: raw.allowSharedTopics === true,
+    allowDurableSubscriptions: raw.allowDurableSubscriptions === true,
+    defaultAckMode: ackMode(raw.defaultAckMode),
+    prefetchCount: boundedInt(raw.prefetchCount, DEFAULT_STOMP_TCP_CONFIG.prefetchCount, 1, 100_000),
   };
 }
 
-/**
- * @description 过滤并规范化 topicBindings 数组（要求 topicPattern + agentId）。
- * @param input - 原始配置值。
- * @returns 有效的 TopicBinding 列表。
- * @throws 不抛出。
- */
-function normalizeTopicBindings(input: unknown): TopicBinding[] {
-  if (!Array.isArray(input)) return [];
-  const result: TopicBinding[] = [];
-  for (const row of input) {
-    if (!row || typeof row !== "object") continue;
-    const candidate = row as Partial<TopicBinding>;
-    if (!candidate.topicPattern || !candidate.agentId) continue;
-    result.push({
-      topicPattern: candidate.topicPattern,
-      agentId: candidate.agentId,
-      accountId: candidate.accountId,
-      replyTopic: candidate.replyTopic,
-    });
+function isLoopback(host: string): boolean {
+  const value = host.trim().toLowerCase();
+  return value === "localhost" || value === "::1" || value.startsWith("127.");
+}
+
+function validateInteger(issues: string[], name: string, value: number, min: number, max: number): void {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    issues.push(`${name} must be an integer between ${min} and ${max}`);
   }
-  return result;
+}
+
+/** 返回所有生产安全问题，便于 CLI/测试一次展示完整诊断。 */
+export function validateStompTcpConfig(config: StompTcpConfig): string[] {
+  const issues: string[] = [];
+  validateInteger(issues, "port", config.port, 0, 65_535);
+  validateInteger(issues, "tlsPort", config.tlsPort, 1, 65_535);
+  validateInteger(issues, "heartbeat.serverMs", config.heartbeat.serverMs, 0, 300_000);
+  validateInteger(issues, "heartbeat.clientMs", config.heartbeat.clientMs, 0, 300_000);
+  validateInteger(issues, "maxConnections", config.maxConnections, 1, 100_000);
+  validateInteger(issues, "maxFrameSize", config.maxFrameSize, 1, 16 * 1024 * 1024);
+  validateInteger(issues, "maxBufferedBytes", config.maxBufferedBytes, 1, 64 * 1024 * 1024);
+  validateInteger(issues, "maxSubscriptionsPerConnection", config.maxSubscriptionsPerConnection, 1, 10_000);
+  validateInteger(issues, "maxQueueDepthPerSubscription", config.maxQueueDepthPerSubscription, 1, 100_000);
+  validateInteger(issues, "maxPendingMessages", config.maxPendingMessages, 1, 10_000);
+  validateInteger(issues, "messagesPerMinute", config.messagesPerMinute, 1, 1_000_000);
+  validateInteger(issues, "connectTimeoutMs", config.connectTimeoutMs, 1, 120_000);
+  validateInteger(issues, "shutdownTimeoutMs", config.shutdownTimeoutMs, 100, 120_000);
+  validateInteger(issues, "maxDurableSubscriptions", config.maxDurableSubscriptions, 1, 100_000);
+  validateInteger(issues, "prefetchCount", config.prefetchCount, 1, 100_000);
+  if (!(["auto", "client", "client-individual"] as string[]).includes(config.defaultAckMode)) {
+    issues.push("defaultAckMode must be auto, client, or client-individual");
+  }
+  if (config.port > 0 && !isLoopback(config.host)) issues.push("plaintext STOMP may only bind a loopback address");
+  if (config.tls.enabled && (!config.tls.keyFile || !config.tls.certFile)) issues.push("tls.enabled=true requires tls.keyFile and tls.certFile");
+  if (
+    config.tls.enabled &&
+    !isLoopback(config.tls.host) &&
+    !config.auth.required &&
+    !(config.tls.requestCert && config.tls.rejectUnauthorized)
+  ) {
+    issues.push("a non-loopback TLS listener requires login authentication or verified client certificates");
+  }
+  if (config.auth.required && config.auth.users.length === 0) issues.push("auth.required=true requires at least one auth.users entry");
+  if (config.allowDurableSubscriptions && !config.auth.required) {
+    issues.push("allowDurableSubscriptions=true requires authentication to isolate durable owners");
+  }
+  const logins = new Set<string>();
+  for (const user of config.auth.users) {
+    if (logins.has(user.login)) issues.push(`duplicate auth user: ${user.login}`);
+    logins.add(user.login);
+    if (/\p{C}/u.test(user.login)) issues.push(`auth user login contains control characters: ${user.login}`);
+    const credentialCount = [user.password, user.passwordEnv, user.passwordHash]
+      .filter((value) => value !== undefined).length;
+    if (credentialCount !== 1) issues.push(`auth user ${user.login} must configure exactly one credential source`);
+    const password = user.passwordEnv ? process.env[user.passwordEnv] : user.password;
+    if (!password && !user.passwordHash) issues.push(`auth user ${user.login} has no password, passwordEnv value, or passwordHash`);
+    if (user.passwordHash) {
+      const expectedLength = user.hashAlgorithm === "sha512" ? 128 : 64;
+      if (!new RegExp(`^[a-fA-F0-9]{${expectedLength}}$`).test(user.passwordHash)) {
+        issues.push(`auth user ${user.login} has an invalid ${user.hashAlgorithm ?? "sha256"} passwordHash`);
+      }
+    }
+  }
+  if (config.tls.rejectUnauthorized && !config.tls.requestCert) issues.push("tls.rejectUnauthorized=true requires tls.requestCert=true");
+  if (config.port === 0 && !config.tls.enabled) issues.push("at least one TCP or TLS listener must be enabled");
+  return issues;
+}
+
+export function assertValidStompTcpConfig(config: StompTcpConfig): void {
+  const issues = validateStompTcpConfig(config);
+  if (issues.length > 0) throw new Error(`Invalid channels.stomp-tcp config: ${issues.join("; ")}`);
+}
+
+export function buildStompTcpConfigSnapshot(config: StompTcpConfig): Record<string, unknown> {
+  return {
+    host: config.host,
+    port: config.port,
+    tlsPort: config.tlsPort,
+    heartbeat: { ...config.heartbeat },
+    maxConnections: config.maxConnections,
+    maxFrameSize: config.maxFrameSize,
+    maxBufferedBytes: config.maxBufferedBytes,
+    maxSubscriptionsPerConnection: config.maxSubscriptionsPerConnection,
+    maxQueueDepthPerSubscription: config.maxQueueDepthPerSubscription,
+    maxPendingMessages: config.maxPendingMessages,
+    messagesPerMinute: config.messagesPerMinute,
+    connectTimeoutMs: config.connectTimeoutMs,
+    shutdownTimeoutMs: config.shutdownTimeoutMs,
+    maxDurableSubscriptions: config.maxDurableSubscriptions,
+    subscribeTopics: [...config.subscribeTopics],
+    topicBindings: config.topicBindings.map((binding) => ({ ...binding })),
+    defaultAgentId: config.defaultAgentId,
+    allowedAgentIds: [...config.allowedAgentIds],
+    allowSharedTopics: config.allowSharedTopics,
+    allowDurableSubscriptions: config.allowDurableSubscriptions,
+    defaultAckMode: config.defaultAckMode,
+    prefetchCount: config.prefetchCount,
+    auth: {
+      required: config.auth.required,
+      users: config.auth.users.map((user) => ({
+        login: user.login,
+        credentialConfigured: Boolean(user.password || user.passwordEnv || user.passwordHash),
+        passwordEnv: user.passwordEnv ?? null,
+        hashAlgorithm: user.hashAlgorithm ?? "sha256",
+      })),
+    },
+    tls: {
+      enabled: config.tls.enabled,
+      host: config.tls.host,
+      minVersion: config.tls.minVersion,
+      requestCert: config.tls.requestCert,
+      rejectUnauthorized: config.tls.rejectUnauthorized,
+      keyConfigured: Boolean(config.tls.keyFile),
+      certificateConfigured: Boolean(config.tls.certFile),
+      caConfigured: Boolean(config.tls.caFile),
+    },
+  };
+}
+
+export function listStompTcpAccountIds(_cfg: OpenClawConfig): string[] { return [STOMP_TCP_ACCOUNT_ID]; }
+
+export function resolveStompTcpAccount(cfg: OpenClawConfig): ResolvedStompTcpAccount {
+  const section = record((cfg.channels as Record<string, unknown> | undefined)?.["stomp-tcp"]);
+  return {
+    accountId: STOMP_TCP_ACCOUNT_ID,
+    name: "STOMP TCP",
+    enabled: section.enabled !== false,
+    configured: Object.keys(section).length > 0,
+  };
+}
+
+export function describeStompTcpAccount(account: ResolvedStompTcpAccount, config: StompTcpConfig): ChannelAccountSnapshot {
+  return {
+    accountId: account.accountId,
+    name: account.name,
+    enabled: account.enabled,
+    configured: account.configured,
+    running: false,
+    port: config.port || config.tlsPort,
+    webhookPath: "/stomp-tcp/status",
+  };
 }

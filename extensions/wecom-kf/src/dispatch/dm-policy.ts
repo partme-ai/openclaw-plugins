@@ -15,6 +15,11 @@ import type { WecomAccountConfig } from "../types/index.js";
 
 export type { DmPolicyCheckResult };
 
+/** SDK 的通用策略日志会包含 senderId；KF 渠道在转交宿主日志前移除该用户标识。 */
+function redactSenderIdFromLog(message: string, senderId: string): string {
+  return senderId ? message.split(senderId).join("[REDACTED_USER]") : message;
+}
+
 /**
  * 解析 KF 账号 DM 策略与 allowFrom（agent.dm 优先，兼容 bot.dm）。
  */
@@ -44,8 +49,12 @@ export async function checkKfDmPolicy(params: {
   const { core, cfg, accountConfig, openKfId, senderId } = params;
   const { dmPolicy, allowFrom } = resolveKfDmConfig(accountConfig);
   const runtime = {
-    log: params.log ? (...args: unknown[]) => params.log!(String(args[0] ?? "")) : undefined,
-    error: params.error ? (...args: unknown[]) => params.error!(String(args[0] ?? "")) : undefined,
+    log: params.log
+      ? (...args: unknown[]) => params.log!(redactSenderIdFromLog(String(args[0] ?? ""), senderId))
+      : undefined,
+    error: params.error
+      ? (...args: unknown[]) => params.error!(redactSenderIdFromLog(String(args[0] ?? ""), senderId))
+      : undefined,
   };
 
   return checkChannelDmPolicy({
@@ -86,7 +95,7 @@ export async function checkKfDmPolicy(params: {
     sendPairingReply: async ({ senderId: id, code }) => {
       const agent = resolveKfAgentAccount(cfg, openKfId);
       if (!agent) {
-        params.error?.(`[wecom-kf] Cannot send pairing reply: missing corp credentials open_kfid=${openKfId}`);
+        params.error?.("[wecom-kf] Cannot send pairing reply: missing corp credentials");
         return;
       }
       const text = core.channel.pairing.buildPairingReply({

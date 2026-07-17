@@ -89,6 +89,13 @@ describe("saveGetUpdatesBuf", () => {
     expect(loadGetUpdatesBuf(fp)).toBe("saved-buf");
   });
 
+  it("persists an explicit empty cursor reset", async () => {
+    const { saveGetUpdatesBuf, loadGetUpdatesBuf, getSyncBufFilePath } = await loadModule();
+    const fp = getSyncBufFilePath("acc-reset");
+    saveGetUpdatesBuf(fp, "");
+    expect(loadGetUpdatesBuf(fp)).toBe("");
+  });
+
   it("creates parent directory if needed", async () => {
     const { saveGetUpdatesBuf, getSyncBufFilePath } = await loadModule();
     const fp = getSyncBufFilePath("new-acc");

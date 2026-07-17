@@ -1,7 +1,7 @@
 /**
  * @fileoverview DocParser 引擎工厂 — 非纯文本 ingest 可选节点。
  *
- * @description 支持 `zhipu`（layout_parsing）、`ollama`（VLM OCR）；默认 Ollama 本地。
+ * @description 支持 `zhipu`（layout_parsing）、`ollama`（VLM OCR）；必须显式选择。
  * **模块角色**：Knowledge Plugin · Parser adapter registry。
  *
  * @module knowledge/parser/factory
@@ -11,7 +11,7 @@ import { ZhipuDocParserService } from './zhipu.js';
 import { OllamaDocParserService } from './ollama.js';
 
 /**
- * @description 创建 {@link DocParserService}；无 provider 时默认 Ollama。
+ * @description 创建 {@link DocParserService}；无 provider 时拒绝猜测文件出站路径。
  *
  * @param config - 可选 Parser 配置。
  * @returns 文档解析服务实例。
@@ -33,6 +33,5 @@ export function createParserService(config?: KnowledgeParserConfig): DocParserSe
     }
   }
 
-  // 无显式 provider 时默认使用 ollama 本地方案
-  return new OllamaDocParserService(config);
+  throw new Error('Parser provider is required. Supported: zhipu, ollama');
 }

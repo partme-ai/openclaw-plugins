@@ -1,140 +1,47 @@
 /**
- * openclaw_wechat_ipad 插件入口
+ * @fileoverview 微信 iPad 外部桥接插件的 OpenClaw 注册入口。
  *
- * 微信 iPad 协议桥接插件 —— 通过外部 iPad 协议服务实现
- * 个人微信号与 OpenClaw Agent 的双向消息对接。
+ * 这里负责把 Channel、运行时、桥接服务和受 Gateway 保护的状态路由组装到同一个插件
+ * 生命周期中。底层协议连接由 `WechatIpadBridge` 管理，入站处理器只在服务启动成功或进入
+ * 后台重连后保持注册，停止时则按“监听器 → Socket → 缓存 → Runtime”的顺序彻底释放。
  */
-
-import type { PluginApi } from "./types.js";
+import {
+  defineChannelPluginEntry,
+  type OpenClawPluginApi,
+} from "openclaw/plugin-sdk/core";
 import { wechatIpadChannel } from "./channel.js";
 import {
-  startBridge,
-  stopBridge,
-  getBridgeStatusSummary,
-  getServiceStatus,
-} from "./transport/server.js";
-import {
-  getSessionStats,
-  listSessions,
-  clearAllSessions,
-} from "./routing/session-mapper.js";
-import { resolveWechatIpadConfig } from "./config.js";
-import {
-  registerWechatIpadEventHandlers,
-} from "./inbound.js";
-import {
   setWechatIpadRuntime,
-  setResolvedWechatIpadConfig,
 } from "./runtime.js";
+import { getBridgeStatusSummary } from "./transport/ipad-bridge.js";
 
-/**
- * 安全的 onReady 替代方案
- * 优先 registerService → onReady → 延迟执行
- *
- * @param api - 插件 API
- * @param name - 服务名称
- * @param callback - 就绪回调
- */
-function safeOnReady(
-  api: PluginApi,
-  name: string,
-  callback: () => Promise<void>,
-): void {
-  const a = api as unknown as Record<string, unknown>;
-  if (typeof a.registerService === "function") {
-    (a.registerService as (def: { id: string; start: () => Promise<void> }) => void)({
-      id: name,
-      start: callback,
-    });
-  } else if (typeof a.onReady === "function") {
-    (a.onReady as (cb: () => Promise<void>) => void)(callback);
-  } else {
-    Promise.resolve()
-      .then(() => callback())
-      .catch((e) => console.error(`[${name}] Startup error:`, e));
-  }
-}
-
-/**
- * 注册 HTTP 状态查询端点
- *
- * @param api - 插件 API
- */
-function registerHttpRoutes(api: PluginApi): void {
+/** 注册需要完整 Gateway 能力的服务和 HTTP 状态端点。 */
+function registerFull(api: OpenClawPluginApi): void {
+  // 网络生命周期由 Channel gateway.startAccount 管理；完整注册阶段只提供受 Gateway 认证保护的状态路由。
   api.registerHttpRoute({
     path: "/wechat-ipad/status",
-    handler: async (_req, res) => {
-      const bridgeStatus = getBridgeStatusSummary();
-      const sessionStats = getSessionStats();
-      let serviceStatus: Record<string, unknown> | null = null;
-
-      try {
-        const svcResult = await getServiceStatus();
-        serviceStatus = svcResult.ok ? (svcResult.data as Record<string, unknown>) : null;
-      } catch {
-        serviceStatus = null;
-      }
-
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({
-          ok: true,
-          data: {
-            bridge: bridgeStatus,
-            sessions: sessionStats,
-            service: serviceStatus,
-          },
-        }),
-      );
-    },
-  });
-
-  api.registerHttpRoute({
-    path: "/wechat-ipad/sessions",
-    handler: async (_req, res) => {
-      const sessions = listSessions();
-
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, data: sessions }));
+    auth: "gateway",
+    match: "exact",
+    handler: (_req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(JSON.stringify({ ok: true, data: getBridgeStatusSummary() }));
     },
   });
 }
 
-/**
- * 插件注册入口
- * 由 OpenClaw Gateway 在加载插件时调用
- *
- * @param api - Gateway 注入的插件 API
- */
-export default function register(api: PluginApi): void {
-  setWechatIpadRuntime(api.runtime);
-
-  api.registerChannel({ plugin: wechatIpadChannel });
-
-  registerHttpRoutes(api);
-
-  safeOnReady(api, "wechat-ipad-bridge", async () => {
-    const config = resolveWechatIpadConfig(api.runtime.config);
-    setResolvedWechatIpadConfig(config);
-
-    registerWechatIpadEventHandlers(config);
-
-    try {
-      startBridge(config);
-      console.log("[wechat-ipad] Bridge started successfully");
-    } catch (err) {
-      console.error("[wechat-ipad] Failed to start bridge:", err);
-    }
-  });
-
-  console.log("[wechat-ipad] Plugin registered — WeChat iPad channel ready");
-  console.log("[wechat-ipad] Endpoints:");
-  console.log("  /wechat-ipad/status  — Bridge & login status");
-  console.log("  /wechat-ipad/sessions — Active session list");
-}
-
-process.on("SIGTERM", async () => {
-  console.log("[wechat-ipad] Shutting down...");
-  stopBridge();
-  clearAllSessions();
+const entry: ReturnType<typeof defineChannelPluginEntry> = defineChannelPluginEntry({
+  id: "wechat-ipad",
+  name: "WeChat iPad External Bridge",
+  description: "Opt-in OpenClaw channel for a separately operated, unofficial WeChat iPad bridge.",
+  plugin: wechatIpadChannel,
+  setRuntime: setWechatIpadRuntime,
+  registerFull,
 });
+
+export { wechatIpadChannel } from "./channel.js";
+export { WechatIpadBridge } from "./transport/ipad-bridge.js";
+export { resolveWechatIpadConfig } from "./config.js";
+export default entry;

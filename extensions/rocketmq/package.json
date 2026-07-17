@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-rocketmq",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "RocketMQ channel plugin for OpenClaw with producer and push-consumer integration.",
   "type": "module",
   "main": "dist/index.js",
@@ -11,6 +11,7 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "prepublishOnly": "pnpm build"
   },
   "keywords": [
@@ -26,13 +27,14 @@
   "files": [
     "dist",
     "openclaw.plugin.json",
-    "README.md"
+    "README.md",
+    "README.zh-CN.md"
   ],
   "publishConfig": {
     "access": "public"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -48,11 +50,16 @@
       "id": "rocketmq",
       "label": "RocketMQ",
       "blurb": "RocketMQ channel plugin with producer and push-consumer support."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-rocketmq",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "dependencies": {
-    "rocketmq-client-nodejs": "^1.0.5",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "rocketmq-client-nodejs": "^1.0.7",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

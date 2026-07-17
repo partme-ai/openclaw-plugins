@@ -119,6 +119,12 @@ describe("matchRule", () => {
       const rule = { ...baseRule, match: { topic: "specific" } };
       expect(matchRule(rule, "mqtt", "inbound", undefined)).toBe(false);
     });
+
+    it("支持 topic 与 channel 通配符", () => {
+      const rule = { ...baseRule, match: { channels: ["web-*"], topic: "alerts/**" } };
+      expect(matchRule(rule, "web-mqtt", "inbound", "alerts/critical/db")).toBe(true);
+      expect(matchRule(rule, "mqtt", "inbound", "alerts/critical/db")).toBe(false);
+    });
   });
 
   describe("accountId 匹配", () => {
@@ -126,6 +132,12 @@ describe("matchRule", () => {
       const rule = { ...baseRule, match: { accountId: "acct-1" } };
       expect(matchRule(rule, "wecom", "inbound", undefined, "acct-1")).toBe(true);
       expect(matchRule(rule, "wecom", "inbound", undefined, "acct-2")).toBe(false);
+    });
+
+    it("支持 accountId 单字符与多字符通配符", () => {
+      const rule = { ...baseRule, match: { accountId: "tenant-?-*" } };
+      expect(matchRule(rule, "wecom", "inbound", undefined, "tenant-a-prod")).toBe(true);
+      expect(matchRule(rule, "wecom", "inbound", undefined, "tenant-prod")).toBe(false);
     });
 
     it("未指定 accountId 时不限制", () => {

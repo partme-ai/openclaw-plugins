@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-web-socket",
-  "version": "0.1.0",
+  "version": "2026.7.1",
   "description": "Native WebSocket channel for OpenClaw — JSON text protocol via embedded ws server",
   "type": "module",
   "main": "dist/index.js",
@@ -11,6 +11,7 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "prepublishOnly": "pnpm build"
   },
@@ -23,10 +24,15 @@
   ],
   "author": "PartMe",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "files": [
     "dist",
     "openclaw.plugin.json",
-    "README.md"
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
@@ -36,14 +42,9 @@
     "url": "https://github.com/partme-ai/openclaw-plugins.git",
     "directory": "extensions/web-socket"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  },
   "dependencies": {
     "ws": "^8.18.0",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -53,7 +54,7 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -66,13 +67,18 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "compat": {
-      "pluginApi": ">=2026.3.24-beta.2",
-      "minGatewayVersion": "2026.3.24-beta.2"
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
     },
     "channel": {
       "id": "web-socket",
       "label": "WebSocket",
       "blurb": "Native WebSocket channel with JSON message frames for apps and integrations."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-web-socket",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

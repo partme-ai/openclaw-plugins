@@ -9,19 +9,23 @@ import type { ChannelAccountSnapshot, ChannelGatewayContext } from "openclaw/plu
 import { handleInboundMessage } from "../inbound.js";
 import {
   configureSessionExpiry,
+  clearSessionMappings,
   handleConnectionDisconnected,
   markConnectionConnected,
+  removeConnectionSessions,
 } from "../routing/session-mapper.js";
 import {
   isClientModeEnabled,
   isServerModeEnabled,
   resolveOpenClawDmScope,
   resolveWebsocketConfig,
+  validateWebsocketConfig,
   type ResolvedWebsocketAccount,
 } from "../config.js";
 import { setWebsocketChannelConfig } from "../state/web-socket-state.js";
 import { startWebSocketClient, stopWebSocketClient } from "./client.js";
 import { startWebSocketServer, stopWebSocketServer } from "./server.js";
+import { redactWebSocketError, sanitizeWebSocketUrl } from "../shared/redact.js";
 
 /**
  * 等待 Gateway abort 信号。
@@ -39,9 +43,8 @@ function waitForAbortSignal(abortSignal: AbortSignal): Promise<void> {
   });
 }
 
-const inboundHandler = (message: Parameters<typeof handleInboundMessage>[0]) => {
-  void handleInboundMessage(message);
-};
+const inboundHandler = (message: Parameters<typeof handleInboundMessage>[0]) =>
+  handleInboundMessage(message);
 
 /**
  * 长驻监控：按 mode 启动传输层直至 abort。
@@ -49,9 +52,12 @@ const inboundHandler = (message: Parameters<typeof handleInboundMessage>[0]) => 
 export async function monitorWebSocketChannel(
   ctx: ChannelGatewayContext<ResolvedWebsocketAccount>,
 ): Promise<void> {
+  let resolvedConfig: ReturnType<typeof resolveWebsocketConfig> | null = null;
   try {
     const globalConfig = ctx.cfg as unknown as Record<string, unknown>;
     const config = resolveWebsocketConfig(globalConfig);
+    resolvedConfig = config;
+    validateWebsocketConfig(config);
     const dmScope = resolveOpenClawDmScope(globalConfig);
     setWebsocketChannelConfig(config, dmScope);
     configureSessionExpiry(
@@ -68,9 +74,10 @@ export async function monitorWebSocketChannel(
         inboundHandler,
         markConnectionConnected,
         handleConnectionDisconnected,
+        ctx.log,
       );
       ctx.log?.info?.(
-        `[${ctx.account.accountId}] WebSocket client connecting to ${config.client.url}`,
+        `[${ctx.account.accountId}] WebSocket client connecting to ${sanitizeWebSocketUrl(config.client.url) ?? "invalid-url"}`,
       );
     }
 
@@ -79,7 +86,8 @@ export async function monitorWebSocketChannel(
         config,
         inboundHandler,
         markConnectionConnected,
-        handleConnectionDisconnected,
+        removeConnectionSessions,
+        ctx.log,
       );
       ctx.log?.info?.(
         `[${ctx.account.accountId}] WebSocket server ws://${config.server.host}:${config.server.wsPort}${config.server.path}`,
@@ -100,12 +108,14 @@ export async function monitorWebSocketChannel(
     ctx.setStatus({
       accountId: ctx.account.accountId,
       running: false,
-      lastError: String(err),
+      // 状态会被管理接口读取，不能把 URL 凭据、Bearer Token 或自定义认证 Header 原样暴露。
+      lastError: redactWebSocketError(err, resolvedConfig ?? undefined),
     } as ChannelAccountSnapshot);
-    throw err;
+    throw new Error(redactWebSocketError(err, resolvedConfig ?? undefined));
   } finally {
     await stopWebSocketClient();
     await stopWebSocketServer();
+    clearSessionMappings();
     setWebsocketChannelConfig(null);
     ctx.setStatus({
       accountId: ctx.account.accountId,

@@ -1,179 +1,107 @@
-<div align="center">
-
 # OpenClaw OAuth2
 
-**OAuth 2.0 authentication backend — Sa-Token · JWT · Introspection**
+Standards-based OAuth2/OIDC client authentication proxy for OpenClaw, powered by [`openid-client`](https://github.com/panva/openid-client).
 
-![Version](https://img.shields.io/badge/Version-0.1.0-blue) ![License](https://img.shields.io/badge/License-MIT-green)
+The plugin runs an HTTP/WebSocket reverse proxy in front of the OpenClaw Gateway. It handles Authorization Code + PKCE, sessions, refresh, revocation, UserInfo or introspection, and injects verified identity into OpenClaw trusted-proxy headers.
 
-</div>
-
-[中文](README.zh-CN.md) | English
-
----
-
-> **Status**: Implemented — OIDC Discovery, JWKS caching, JWT RS256 validation, Token Introspection, Scope-Role mapping, and global Bearer Token middleware are all complete.
-
-Inspired by [rabbitmq_auth_backend_oauth2](https://www.rabbitmq.com/docs/oauth2), adapted for [Sa-Token OAuth2](https://sa-token.cc/doc.html#/oauth2/readme).
-
-## Overview
-
-
-Key features:
-
-- **OIDC Discovery**: Auto-configure from `/.well-known/openid-configuration`
-- **JWKS Caching**: Automatic JWKS refresh with configurable TTL (default 1 hour), forced refresh on kid miss
-- **JWT Validation**: RS256 signature verification, `exp`/`iss`/`aud` claim validation, Sa-Token custom claims extraction
-- **Token Introspection**: Fallback for opaque UUID tokens via `/oauth2/check_token` (RFC 7662), short TTL cache (30s)
-- **Scope-to-Role Mapping**: `openclaw:admin` → admin, `openclaw:operator` → operator, `openclaw:viewer` → viewer
-- **Global Middleware**: Injects `AuthContext` into all requests for downstream plugins
-
-## Architecture
-
-```
-Client (Business backend / API call)
-  │
-  ├── Authorization: Bearer <JWT>          ← Primary path (zero network overhead)
-  ├── Authorization: Bearer <UUID Token>   ← Fallback path (one HTTP call)
-  │
-  ▼
-┌──────────────────────────────────────────────┐
-│  openclaw-oauth2 middleware              │
-│                                              │
-│  1. Extract Bearer Token                     │
-│  2. Detect token format (JWT 3-part / UUID)  │
-│     ├── JWT → Local validation (JWKS + RS256)│
-│     │         ├── Success → Extract claims   │
-│     │         └── Failure → Introspection    │
-│     └── UUID → Token Introspection           │
-│               └── POST /oauth2/check_token   │
-│  3. Parse Sa-Token claims                    │
-│     ├── loginId / tenantId / loginType       │
-│     └── scope → Role mapping                 │
-│  4. Inject AuthContext → req.authContext      │
-└──────────────────────┬───────────────────────┘
-                       │
-                       ▼
-         (reads req.authContext for authorization)
-```
-
-## Authentication Strategy
-
-| Step | Token Type | Validation | Network Cost |
-|------|-----------|------------|-------------|
-| 1 | JWT (3-part base64url) | Local RS256 signature | **Zero** |
-| 2 | JWT validation fails | Fallback to Introspection | 1 HTTP call |
-| 3 | UUID opaque token | Direct Introspection | 1 HTTP call |
-
-## Configuration
+## Discovery configuration
 
 ```json
 {
-  "plugins": {
-    "openclaw-oauth2": {
-      "issuerUrl": "https://api.example.com",
-      "clientId": "openclaw-gateway",
-      "clientSecret": "your-client-secret",
-      "audience": "openclaw-api",
-      "scopeMapping": {
-        "openclaw:admin": "admin",
-        "openclaw:operator": "operator",
-        "openclaw:viewer": "viewer"
-      },
-      "satoken": {
-        "loginIdClaim": "loginId",
-        "tenantIdClaim": "tenantId",
-        "loginTypeClaim": "loginType"
-      },
-      "publicPaths": ["/health", "/auth/oauth2/status"],
-      "jwksRefreshInterval": 3600000,
-      "introspectionCacheTtl": 30000
+  "enabled": true,
+  "issuerUrl": "https://auth.example.com/",
+  "clientId": "openclaw-gateway",
+  "clientSecret": "replace-with-secret",
+  "client": {
+    "discovery": true,
+    "redirectUri": "https://gateway.example.com/auth/oauth2/callback",
+    "scopes": ["openid", "profile"],
+    "requiredScopes": ["openclaw:operator"],
+    "clientAuthMethod": "client_secret_post",
+    "authorizationParameters": {
+      "audience": "openclaw-api"
+    },
+    "sessionSecret": "replace-with-at-least-32-random-characters",
+    "secureCookies": true,
+    "userIdField": "sub"
+  },
+  "proxy": {
+    "listenHost": "0.0.0.0",
+    "listenPort": 18080,
+    "upstreamHost": "127.0.0.1",
+    "upstreamPort": 18789,
+    "forwardedProto": "https"
+  }
+}
+```
+
+## Explicit endpoint configuration
+
+Set `client.discovery=false` when the authorization server does not publish metadata. Configure at least `authorizationEndpoint` and `tokenEndpoint`; UserInfo, introspection, and revocation are optional standard capabilities.
+
+```json
+{
+  "enabled": true,
+  "issuerUrl": "https://auth.example.com/",
+  "clientId": "openclaw-gateway",
+  "clientSecret": "replace-with-secret",
+  "client": {
+    "discovery": false,
+    "redirectUri": "https://gateway.example.com/auth/oauth2/callback",
+    "authorizationEndpoint": "https://auth.example.com/oauth2/authorize",
+    "tokenEndpoint": "https://auth.example.com/oauth2/token",
+    "userInfoEndpoint": "https://auth.example.com/oauth2/userinfo",
+    "introspectionEndpoint": "https://auth.example.com/oauth2/introspect",
+    "revokeEndpoint": "https://auth.example.com/oauth2/revoke",
+    "clientAuthMethod": "client_secret_basic",
+    "authorizationParameters": {},
+    "tokenParameters": {},
+    "sessionSecret": "replace-with-at-least-32-random-characters"
+  }
+}
+```
+
+The authenticated identity can come from ID Token claims, UserInfo, or introspection. Bearer API requests require UserInfo or introspection.
+
+## Local endpoints
+
+- `GET /auth/oauth2/login`
+- `GET /auth/oauth2/callback`
+- `POST /auth/oauth2/logout`
+- `/auth/oauth2/status` is forwarded to OpenClaw's `auth: "gateway"` route
+- `GET/HEAD /health`
+
+`requiredScopes` gates access at the OAuth2 proxy. OAuth scopes are not translated into OpenClaw operator scopes; configure OpenClaw trusted-proxy and `allowUsers` for Gateway authorization. For production, use HTTPS, secure cookies, bounded sessions, and Redis-backed sessions for multiple proxy instances.
+
+## OpenClaw trusted-proxy requirement
+
+The Gateway must remain loopback-only and trust exactly the identity header emitted by this plugin:
+
+```json
+{
+  "gateway": {
+    "port": 18789,
+    "bind": "loopback",
+    "trustedProxies": ["127.0.0.1"],
+    "auth": {
+      "mode": "trusted-proxy",
+      "trustedProxy": {
+        "userHeader": "x-forwarded-user",
+        "allowLoopback": true,
+        "allowUsers": ["allowed-user-id"]
+      }
     }
   }
-} 
+}
 ```
 
-| Config | Type | Default | Description |
-|--------|------|---------|-------------|
-| `issuerUrl` | string | — | Sa-Token OAuth2 Server URL (required) |
-| `clientId` | string | — | OAuth2 Client ID |
-| `clientSecret` | string | — | OAuth2 Client Secret |
-| `audience` | string | — | JWT aud validation value (optional) |
-| `scopeMapping` | object | see above | Scope → Role mapping |
-| `satoken.loginIdClaim` | string | `loginId` | JWT claim for user ID |
-| `satoken.tenantIdClaim` | string | `tenantId` | JWT claim for tenant ID |
-| `publicPaths` | string[] | `["/health"]` | Paths exempt from auth |
-| `jwksRefreshInterval` | number | `3600000` | JWKS refresh interval (ms) |
-| `introspectionCacheTtl` | number | `30000` | Introspection cache TTL (ms) |
+The plugin validates auth mode, identity header, loopback trust, trusted proxy address, and Gateway port before opening its listener. `proxy.upstreamHost` only accepts `127.0.0.1` or `::1`.
 
-## HTTP Endpoints
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/auth/oauth2/status` | GET | Plugin status (enabled, provider info) |
-
-## Directory Structure
-
-```
-openclaw-oauth2/
-  src/
-    index.ts                    # Entry: init + register middleware
-    types.ts                    # AuthContext, SaTokenClaims, etc.
-    middleware.ts               # Global Bearer Token middleware
-    satoken-discovery.ts        # OIDC Discovery + JWKS fetch/cache
-    satoken-jwt.ts              # JWT RS256 local validation
-    satoken-introspection.ts    # Token Introspection (UUID fallback)
-    satoken-scope-mapper.ts     # Scope → Role/Permission mapping
-    satoken-scope-mapper.test.ts
-    satoken-jwt.test.ts
-```
-
-## Implementation Status
-
-- [x] OIDC Discovery (auto-fetch JWKS URI, issuer, etc.)
-- [x] JWKS public key fetching, caching and periodic refresh
-- [x] JWT RS256 signature validation
-- [x] Sa-Token claims extraction (loginId, tenantId, loginType)
-- [x] Opaque Token Introspection (RFC 7662)
-- [x] Scope → Role/Permission mapping
-- [x] Global Bearer Token middleware
-- [x] AuthContext injection
-- [ ] Token refresh flow (Business backend responsibility)
-- [ ] Multi-provider support
-
-## Testing
+## Verification
 
 ```bash
-pnpm test            # run unit tests
-pnpm test:watch      # watch mode
-pnpm test:coverage   # coverage report
+pnpm --dir extensions/oauth2 test
+pnpm --dir extensions/oauth2 typecheck
+pnpm --dir extensions/oauth2 build
+OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins oauth2
 ```
-
-Test coverage:
-- `satoken-scope-mapper.test.ts` — Scope→Role mapping, priority, custom config (14 tests)
-- `satoken-jwt.test.ts` — JWT format detection (6 tests)
-
-## Development
-
-```bash
-pnpm install
-pnpm build
-pnpm dev   # watch mode
-```
-
-## Related OpenClaw plugins
-
-| Plugin | Description |
-|--------|--------------|
-| [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 authentication |
-| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
-| [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT protocol adapter |
-| [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus metrics exporter |
-| [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |
-| [openclaw-tracing](https://github.com/partme-ai/openclaw-tracing) | Distributed tracing |
-| [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt) | WebSocket MQTT |
-| [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp) | WebSocket STOMP |
-
-## License
-
-MIT

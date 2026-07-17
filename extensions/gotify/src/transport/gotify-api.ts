@@ -3,7 +3,8 @@
  *
  * @description 提供 Message / Application / Client / Health / Doctor / Probe 等方法族；
  * 所有写路径默认 `withAccountLock` 避免同账号 burst 触发 Gotify rate limit；
- * `fetchWithRetry` 在 5xx 与瞬态网络故障时指数退避重试。
+ * `fetchWithRetry` 只对幂等 HTTP 方法自动重试；POST 等非幂等写入默认单次执行，
+ * 避免响应丢失后盲重试造成重复通知、重复 Application 或重复 Client。
  * **模块角色**：Channel Plugin · Outbound/admin HTTP client layer。
  *
  * ### API 分组（token 维度）
@@ -27,6 +28,7 @@ import {
   GotifyTimeoutError,
   GotifyConfigError,
 } from "../shared/errors.js";
+import { redactGotifyError } from "../shared/redact.js";
 
 /**
  * Gotify API 调用的 fetch 行为选项。
@@ -42,6 +44,8 @@ export interface GotifyFetchOptions {
   retryCount?: number;
   /** 两次重试之间的等待时间，单位毫秒。 */
   retryDelayMs?: number;
+  /** 显式允许 POST 等非幂等方法重试；默认 false，启用方必须自行承担重复写风险。 */
+  retryUnsafeMethods?: boolean;
 }
 
 // ── 账号级并发锁 ────────────────────────────────────────────────────────────────
@@ -111,15 +115,19 @@ async function withAccountLock<T>(
   accountId: string,
   task: () => Promise<T>,
 ): Promise<T> {
-  const prev = accountLocks.get(accountId);
-  const lock: Promise<void> = (prev ?? Promise.resolve()).then(() => undefined);
-  accountLocks.set(accountId, lock);
+  const previous = accountLocks.get(accountId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  // tail 同时包含前序任务和当前任务的完成门闩；后续请求必须等待整个 task，而非只等入队。
+  const tail = previous.catch(() => undefined).then(() => current);
+  accountLocks.set(accountId, tail);
 
   try {
-    await lock;
+    await previous.catch(() => undefined);
     return await task();
   } finally {
-    if (accountLocks.get(accountId) === lock) {
+    release();
+    if (accountLocks.get(accountId) === tail) {
       accountLocks.delete(accountId);
     }
   }
@@ -132,7 +140,8 @@ async function withAccountLock<T>(
  *
  * 规则：
  * - 2xx/3xx 直接返回 Response。
- * - 5xx 在 retryCount 范围内重试。
+ * - GET/HEAD/OPTIONS/PUT/DELETE 的 5xx 在 retryCount 范围内重试。
+ * - POST/PATCH 默认不重试，只有 `retryUnsafeMethods=true` 才允许。
  * - 4xx 读取响应正文并抛出 GotifyApiError，不重试。
  * - 网络错误重试，最终包装为 GotifyConnectionError。
  *
@@ -148,10 +157,14 @@ async function fetchWithRetry(
   init: RequestInit,
   options: Pick<
     GotifyFetchOptions,
-    "timeoutMs" | "retryCount" | "retryDelayMs"
+    "timeoutMs" | "retryCount" | "retryDelayMs" | "retryUnsafeMethods"
   > = {},
 ): Promise<Response> {
-  const retryCount = Math.max(0, options.retryCount ?? 1);
+  const method = String(init.method ?? "GET").toUpperCase();
+  const retrySafe =
+    options.retryUnsafeMethods === true ||
+    ["GET", "HEAD", "OPTIONS", "PUT", "DELETE"].includes(method);
+  const retryCount = retrySafe ? Math.max(0, options.retryCount ?? 1) : 0;
   const retryDelayMs = Math.max(0, options.retryDelayMs ?? 250);
   const timeoutMs = Math.max(0, options.timeoutMs ?? 8000);
 
@@ -166,7 +179,7 @@ async function fetchWithRetry(
       }
       const body = await safeReadText(response);
       throw new GotifyApiError(
-        `Gotify API failed (${response.status}): ${body}`,
+        `Gotify API failed (${response.status}): ${redactGotifyError(body)}`,
         response.status,
       );
     } catch (error) {
@@ -182,9 +195,9 @@ async function fetchWithRetry(
     }
   }
   if (lastError instanceof Error) {
-    throw new GotifyConnectionError(lastError.message);
+    throw new GotifyConnectionError(redactGotifyError(lastError));
   }
-  throw new GotifyConnectionError(String(lastError));
+  throw new GotifyConnectionError(redactGotifyError(lastError));
 }
 
 /**
@@ -301,7 +314,8 @@ export async function sendGotifyMessage(
 }
 
 /**
- * 出站投递用：首次失败后等待一次再重试（共最多 2 次 POST），提高一来一回回复可靠性。
+ * 出站投递兼容入口。Gotify `POST /message` 没有服务端幂等键，因此默认只发送一次；
+ * 调用方只有显式传入 `retryUnsafeMethods=true` 时才允许重试，并需接受重复通知风险。
  *
  * @param account - 已解析 Gotify 账号。
  * @param payload - 消息 payload。
@@ -313,19 +327,7 @@ export async function sendGotifyMessageWithDeliveryRetry(
   payload: GotifyMessagePayload,
   options: GotifyFetchOptions = {},
 ): Promise<GotifyMessageResponse> {
-  try {
-    return await sendGotifyMessage(account, payload, options);
-  } catch (firstError) {
-    await sleep(Math.max(0, options.retryDelayMs ?? 300));
-    try {
-      return await sendGotifyMessage(account, payload, {
-        ...options,
-        retryCount: 0,
-      });
-    } catch {
-      throw firstError;
-    }
-  }
+  return sendGotifyMessage(account, payload, options);
 }
 
 /**
@@ -829,7 +831,11 @@ export async function healthCheck(
     );
     return { ok: true, latencyMs: Date.now() - start };
   } catch (error) {
-    return { ok: false, latencyMs: Date.now() - start, error: String(error) };
+    return {
+      ok: false,
+      latencyMs: Date.now() - start,
+      error: redactGotifyError(error, account),
+    };
   }
 }
 
@@ -876,13 +882,13 @@ export async function runGotifyDoctor(
       await listApplications(account, options);
       applicationsChecked = true;
     } catch (error) {
-      errors.push(`Application API: ${String(error)}`);
+      errors.push(`Application API: ${redactGotifyError(error, account)}`);
     }
     try {
       await listClients(account, options);
       clientsChecked = true;
     } catch (error) {
-      errors.push(`Client API: ${String(error)}`);
+      errors.push(`Client API: ${redactGotifyError(error, account)}`);
     }
   }
 
@@ -959,7 +965,7 @@ export async function probeGotifyAccount(
         healthOk: true,
         clientTokenValid: false,
         appTokenValid,
-        error: String(error),
+        error: redactGotifyError(error, account),
       };
     }
   }

@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/weixin",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "description": "OpenClaw Weixin channel",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Tencent",
@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^3.1.0",
-    "openclaw": "^2026.5.18",
+    "openclaw": "2026.7.1",
     "silk-wasm": "^3.7.1",
     "tsup": "^8.2.0",
     "typescript": "^5.8.0",
@@ -56,9 +56,9 @@
       "order": 75
     },
     "install": {
-      "npmSpec": "@tencent-weixin/openclaw-weixin",
+      "npmSpec": "@partme.ai/weixin",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.3.22"
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "ilink_appid": "bot",
@@ -78,6 +78,6 @@
     }
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   }
 }

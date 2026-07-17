@@ -15,6 +15,8 @@
 export {
   matchTopic,
   isTopicAllowed,
+  isValidMqttTopicName,
+  isValidMqttTopicFilter,
 } from "./topic-matcher.js";
 
 export {

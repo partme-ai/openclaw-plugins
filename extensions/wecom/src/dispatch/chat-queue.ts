@@ -36,6 +36,10 @@ let chatQueue: KeyedRunQueue = createWeComChatQueue();
 function createWeComChatQueue(): KeyedRunQueue {
   return createKeyedRunQueue({
     waitWarnMs: CHAT_QUEUE_WAIT_WARN_MS,
+    onError: (error, key) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[wecom-queue] task failed key=${compactQueueKey(key)} error=${message}`);
+    },
     onWaitWarn: ({ key, waitMs, depth }) => {
       console.warn(
         `[wecom-queue] chat wait high key=${compactQueueKey(key)} waitMs=${waitMs} depth=${depth}`,
@@ -120,6 +124,9 @@ export function enqueueWeComChatTask(params: {
       console.log(`[wecom-queue] task done key=${compactQueueKey(key)} elapsedMs=${elapsed}`);
     }
   });
+  // WS 监听主路径是 fire-and-forget，只读取 status；预挂 rejection handler 防止任务失败升级为
+  // 进程级 unhandledRejection。返回的原 Promise 仍保持 rejected，显式 await 的调用方可正常感知错误。
+  void promise.catch(() => undefined);
   return { status, promise };
 }
 

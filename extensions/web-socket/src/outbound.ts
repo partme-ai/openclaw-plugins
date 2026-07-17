@@ -12,10 +12,10 @@ import { chunkText } from "openclaw/plugin-sdk/reply-runtime";
 import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 
 import { DEFAULT_WEBSOCKET_CONFIG } from "./config.js";
-import { serializeReplyFrame } from "./protocol.js";
+import { serializeReplyFrame } from "./transport/protocol.js";
 import { getConnectionIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { getWebsocketChannelConfig } from "./state/web-socket-state.js";
-import { sendToConnection } from "./transport/connection-hub.js";
+import { sendToConnectionConfirmed } from "./transport/connection-hub.js";
 
 /**
  * OpenClaw ChannelOutboundAdapter：向 WebSocket 连接发送回复。
@@ -30,14 +30,14 @@ export const webSocketOutbound: ChannelOutboundAdapter = {
     const sessionKey = ctx.to;
     const connectionId = getConnectionIdBySession(sessionKey);
     if (!connectionId) {
-      console.warn(`[openclaw-web-socket] No connection for session: ${sessionKey}`);
-      return { channel: "web-socket", messageId: "no-connection" };
+      // Outbound Adapter 的返回值代表“目标已接受”。返回占位 messageId 会让 Router
+      // 错把失败任务从 Outbox 删除，因此不可投递必须抛错交给上层重试/DLQ。
+      throw new Error(`WebSocket outbound has no connection for session: ${sessionKey}`);
     }
 
     const sessionContext = getSessionContext(sessionKey);
     if (!sessionContext?.agentId) {
-      console.error(`[openclaw-web-socket] Missing session context: ${sessionKey}`);
-      return { channel: "web-socket", messageId: "no-session-context" };
+      throw new Error(`WebSocket outbound is missing session context: ${sessionKey}`);
     }
 
     const cfg = getWebsocketChannelConfig() ?? DEFAULT_WEBSOCKET_CONFIG;
@@ -46,13 +46,16 @@ export const webSocketOutbound: ChannelOutboundAdapter = {
         ? ctx.text
         : serializeReplyFrame(ctx.text, { sessionKey });
 
-    const ok = sendToConnection(connectionId, frame);
+    const ok = await sendToConnectionConfirmed(
+      connectionId,
+      frame,
+      cfg.limits.maxBufferedBytes,
+      cfg.limits.sendTimeoutMs,
+    );
     if (!ok) {
-      console.warn(`[openclaw-web-socket] Send failed — socket closed: ${connectionId}`);
-      return { channel: "web-socket", messageId: "socket-closed" };
+      throw new Error(`WebSocket outbound delivery failed: ${connectionId}`);
     }
 
-    console.log(`[openclaw-web-socket] Reply sent to ${connectionId}`);
     return { channel: "web-socket", messageId: sessionKey };
   },
 };

@@ -14,10 +14,10 @@
  */
 
 /**
- * OpenClaw Bridge — 21 渠道上下文预设
+ * OpenClaw Bridge — 渠道上下文预设
  *
  * 每个渠道注入 before_prompt_build 的平台特定系统上下文。
- * 全部 21 个渠道均有独立预设，不再使用 generic-chat/generic-social 兜底。
+ * 每个已登记渠道都有独立预设，不使用 generic-chat/generic-social 兜底。
  */
 
 import type { ChannelContextPreset } from "./channels.js";
@@ -65,6 +65,41 @@ export const PRESETS: Record<ChannelContextPreset, string> = {
     "- 支持模板卡片消息（通知/投票/按钮交互等）",
     "- 发送媒体使用 MEDIA: 指令",
     "- 群聊规则遵循 wecom-channel-rules skill",
+  ].join("\n"),
+
+  wechat: [
+    "你正在通过微信 iLink 渠道与用户交互。",
+    "- 回复应简洁自然，避免依赖复杂 Markdown 排版",
+    "- 发送目标和上下文令牌由渠道适配器维护，不要在正文中回显",
+    "- 媒体能力以当前账号和渠道能力探测结果为准",
+  ].join("\n"),
+
+  "wechat-ipad": [
+    "你正在通过微信 iPad 外部桥接渠道与用户交互。",
+    "- 该渠道依赖独立运行的非官方协议服务，回复以纯文本为主",
+    "- 不要在正文中输出 wxid、访问令牌或桥接服务内部状态",
+    "- 生产使用必须遵守账号隔离和非官方协议风险确认策略",
+  ].join("\n"),
+
+  "wecom-kf": [
+    "你正在通过微信客服 (WeCom KF) 与客户交互。",
+    "- 回复应面向客户服务场景，准确、礼貌并保持上下文连续",
+    "- 不要向客户暴露 open_kfid、external_userid、游标或内部路由信息",
+    "- 接待转移、媒体和会话状态操作应遵循微信客服平台能力限制",
+  ].join("\n"),
+
+  douyin: [
+    "你正在通过抖音渠道与用户交互。",
+    "- 回复应简洁，避免承诺未经开放平台确认的订单或售后状态",
+    "- 涉及商户、门店和订单信息时仅使用当前账号授权范围内的数据",
+    "- 不要在正文中泄露 client_key、签名、访问令牌或回调校验细节",
+  ].join("\n"),
+
+  mqtt: [
+    "你正在通过 MQTT 消息通道与设备或系统用户交互。",
+    "- 回复应使用可被机器稳定消费的简洁文本，除非调用方明确要求其它格式",
+    "- 不要在正文中泄露 Broker 凭据、ACL 规则、内部 Topic 或客户端认证信息",
+    "- QoS 表示 Broker 投递语义，不等同于业务处理恰好一次",
   ].join("\n"),
 
   discord: [

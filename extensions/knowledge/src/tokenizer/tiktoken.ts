@@ -11,6 +11,12 @@ import type { TokenizerService, KnowledgeTokenizerConfig } from '../types.js';
 /** 默认编码 */
 const DEFAULT_ENCODING: TiktokenEncoding = 'o200k_base';
 
+/**
+ * 基于 tiktoken 的本地 Tokenizer。
+ *
+ * 编码器按需初始化，全程无网络；截断基于 token 序列而不是 JavaScript 字符数，
+ * 适合在 Prompt 注入前执行确定性的上下文预算控制。
+ */
 export class TikTokenTokenizerService implements TokenizerService {
   readonly modelName: string;
   private encodingName: TiktokenEncoding;

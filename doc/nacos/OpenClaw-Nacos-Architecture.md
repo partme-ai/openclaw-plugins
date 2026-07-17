@@ -8,6 +8,21 @@ openclaw-nacos integrates OpenClaw Gateway with Nacos, providing three core capa
 2. **Service Registration** — Register the Gateway instance as an ephemeral Nacos service with webhook/Hooks metadata.
 3. **Cluster Discovery** — Subscribe to Nacos naming to discover peer Gateway nodes in real time.
 
+```mermaid
+flowchart LR
+    NACOS["Nacos Server<br/>Config + Naming"]
+    CONFIG["NacosConfigSyncService<br/>fetch / merge / backup / subscribe"]
+    REGISTRY["GatewayNacosRegistry<br/>ephemeral registration"]
+    CLUSTER["WebhookClusterService<br/>peer discovery"]
+    GATEWAY["OpenClaw Gateway<br/>runtime config + hooks"]
+    ROUTES["/nacos/health<br/>/nacos/cluster"]
+
+    NACOS --> CONFIG --> GATEWAY
+    GATEWAY --> REGISTRY --> NACOS
+    NACOS --> CLUSTER --> ROUTES
+    CLUSTER --> GATEWAY
+```
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    OpenClaw Gateway                               │
@@ -149,7 +164,7 @@ Remote Nacos Config
   validateMergedConfig() — JSON serializability check
         │
         ▼
-  backupOpenClawConfig() → stateDir/openclaw-nacos-yyyyMMddHHmmss.json
+  backupOpenClawConfig() → stateDir/openclaw-nacos-yyyyMMddHHmmss-<uuid>.json
         │
         ▼
   api.runtime.config.replaceConfigFile() → openclaw.json on disk
@@ -205,8 +220,8 @@ Config from Nacos is **merged** into the current runtime config, not replaced. T
 
 ### Backup Before Write
 
-Every Nacos-triggered config write is preceded by a timestamped backup. This provides an audit trail and rollback capability. Backups are stored in the OpenClaw `stateDir` with the naming pattern `openclaw-nacos-yyyyMMddHHmmss.json`.
+Every Nacos-triggered config write is preceded by a uniquely named backup. This provides an audit trail and rollback capability without overwriting two backups created in the same second. Backups are stored in the OpenClaw `stateDir` with the naming pattern `openclaw-nacos-yyyyMMddHHmmss-<uuid>.json`.
 
 ### Plugin Config IDs with Profile Support
 
-Per-plugin config follows the convention `{pluginId}-{profile}.json` (e.g., `openclaw-weixin-dev.json`). The profile is resolved from plugin config → `OPENCLAW_PROFILE` → `SPRING_PROFILES_ACTIVE` → `"default"`.
+Per-plugin config follows the convention `{pluginId}-{profile}.json` (e.g., `wechat-dev.json`). The profile is resolved from plugin config → `OPENCLAW_PROFILE` → `SPRING_PROFILES_ACTIVE` → `"default"`.

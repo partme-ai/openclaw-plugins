@@ -8,8 +8,8 @@
  * @module knowledge/tools/knowledge-query
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type OpenClawPluginToolContext = any;
+import type { OpenClawPluginToolContext } from 'openclaw/plugin-sdk/plugin-entry';
+import type { KnowledgeConfig } from '../types.js';
 type AgentToolResult<T = unknown> = {
   content: { type: 'text'; text: string }[];
   details: T | undefined;
@@ -17,6 +17,8 @@ type AgentToolResult<T = unknown> = {
 
 import { getOrCreateStore } from '../runtime/hooks.js';
 import { hybridSearch } from '../retriever/hybrid.js';
+import { authorizeNamespace, validateSourceId, validateTextSize } from './policy.js';
+import { safeKnowledgeError } from '../shared/safe-error.js';
 
 // ===================================================================
 // 类型定义
@@ -67,14 +69,6 @@ function failedResult(message: string): AgentToolResult<unknown> {
 // 获取共享配置
 // ===================================================================
 
-function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').KnowledgeConfig {
-  const knowledgeConfig = (ctx.pluginConfig ?? {}) as import('../types.js').KnowledgeConfig;
-  if (knowledgeConfig.enabled ?? true) {
-    return knowledgeConfig;
-  }
-  return { enabled: true };
-}
-
 // ===================================================================
 // 工具定义
 // ===================================================================
@@ -85,7 +79,7 @@ function buildBaseConfig(ctx: OpenClawPluginToolContext): import('../types.js').
  * @param ctx - OpenClaw Tool 上下文（含 accountId/agentId/pluginConfig）。
  * @returns Agent Tool 描述对象（JSON Schema + execute）。
  */
-export function createKnowledgeQueryTool(ctx: OpenClawPluginToolContext) {
+export function createKnowledgeQueryTool(ctx: OpenClawPluginToolContext, config: KnowledgeConfig) {
   return {
     name: 'knowledge_query',
     label: '知识库检索',
@@ -103,7 +97,7 @@ export function createKnowledgeQueryTool(ctx: OpenClawPluginToolContext) {
       '  minScore（可选）：最小相似度阈值（0-1），低于此值的不返回',
       '  strategy（可选）：检索策略，默认 hybrid',
       '  sourceId（可选）：按 sourceId 精确过滤',
-      '  namespace（可选）：知识库命名空间，默认对话级别（{accountId}:{mode}）',
+      '  namespace（可选）：默认使用当前 OpenClaw sessionKey 派生的私有 namespace',
       '',
       '返回结构化结果列表，每条包含 sourceId、chunkIndex、score、text、metadata。',
     ].join('\n'),
@@ -133,7 +127,7 @@ export function createKnowledgeQueryTool(ctx: OpenClawPluginToolContext) {
         },
         namespace: {
           type: 'string',
-          description: '知识库命名空间，默认当前对话命名空间（{accountId}:{mode}）',
+          description: '知识库命名空间，默认由当前 OpenClaw sessionKey 派生',
         },
       },
       required: ['query'],
@@ -146,26 +140,36 @@ export function createKnowledgeQueryTool(ctx: OpenClawPluginToolContext) {
       }
 
       const query = p.query.trim();
+      const sizeError = validateTextSize(query, config, 'query');
+      if (sizeError) return failedResult(sizeError);
       const topK = p.topK ?? 5;
       const minScore = p.minScore ?? 0;
       const strategy = p.strategy ?? 'hybrid';
-
-      let namespace = p.namespace;
-      if (!namespace) {
-        const accountId = ctx.agentAccountId ?? 'default';
-        const mode = ctx.agentId ? 'agent' : 'bot';
-        namespace = `${accountId}:${mode}`;
+      if (!Number.isInteger(topK) || topK < 1 || topK > 100) return failedResult('topK 必须是 1-100 的整数');
+      if (typeof minScore !== 'number' || !Number.isFinite(minScore) || minScore < 0 || minScore > 1) {
+        return failedResult('minScore 必须是 0-1 的有限数字');
+      }
+      const access = authorizeNamespace(ctx, p.namespace, config);
+      if (!access.ok) return failedResult(access.error);
+      let sourceId: string | undefined;
+      if (p.sourceId !== undefined) {
+        const source = validateSourceId(p.sourceId, '');
+        if (!source.ok) return failedResult(source.error);
+        sourceId = source.sourceId;
       }
 
       try {
-        const config = buildBaseConfig(ctx);
-        const { store, embedding } = await getOrCreateStore(config, namespace);
+        const { store, embedding } = await getOrCreateStore(config, access.namespace);
 
         const results = await hybridSearch(query, embedding, store, {
           topK,
           minScore,
-          sourceId: p.sourceId,
-          config: { strategy },
+          sourceId,
+          config: {
+            strategy,
+            vectorWeight: config.retrieval?.vectorWeight ?? 0.7,
+            keywordWeight: config.retrieval?.keywordWeight ?? 0.3,
+          },
         });
 
         const items: ResultItem[] = results.map((r) => ({
@@ -179,12 +183,12 @@ export function createKnowledgeQueryTool(ctx: OpenClawPluginToolContext) {
         return successResult({
           query,
           strategy,
-          namespace,
+          namespace: access.namespace,
           total: items.length,
           results: items,
         });
       } catch (err) {
-        return failedResult(`检索失败: ${err instanceof Error ? err.message : String(err)}`);
+        return failedResult(`检索失败: ${safeKnowledgeError(err)}`);
       }
     },
   };

@@ -1,7 +1,19 @@
 {
   "id": "bridge",
   "name": "OpenClaw Bridge",
-  "description": "统一 IM 渠道适配层 — 将所有 OpenClaw IM 渠道（钉钉/飞书/QQ/Discord/Slack/Telegram 等 21 个）接入 PartMe.AI 生态",
+  "version": "2026.7.1",
+  "description": "OpenClaw 2026.7.1 IM context and MQ observation bridge using official hooks and outbound adapters",
+  "main": "dist/index.js",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["hook"]
+  },
+  "channels": [],
+  "commands": [],
+  "skills": [],
+  "contracts": {
+    "hooks": ["before_prompt_build", "message_received", "message_sent"]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -13,9 +25,30 @@
           "properties": {
             "enabled": { "type": "boolean", "default": true },
             "forwardToMq": { "type": "boolean", "default": true },
-            "mqChannel": { "type": "string", "default": "mqtt" },
-            "contextInjection": { "type": "boolean", "default": true }
-          }
+            "mqChannel": {
+              "type": "string",
+              "enum": ["mqtt", "mqtt-ws", "web-mqtt", "rabbitmq", "redis-stream", "rocketmq", "stomp", "web-stomp", "stomp-tcp"],
+              "default": "mqtt"
+            },
+            "mqAccountId": { "type": "string" },
+            "topicPrefix": { "type": "string", "minLength": 1 },
+            "contextInjection": { "type": "boolean", "default": true },
+            "includeMediaUrls": { "type": "boolean", "default": false }
+          },
+          "additionalProperties": false
+        }
+      },
+      "delivery": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxAttempts": { "type": "integer", "minimum": 1, "default": 3 },
+          "retryDelayMs": { "type": "integer", "minimum": 1, "default": 250 },
+          "publishTimeoutMs": { "type": "integer", "minimum": 1, "default": 5000 },
+          "maxPayloadBytes": { "type": "integer", "minimum": 1, "default": 1048576 },
+          "maxInFlight": { "type": "integer", "minimum": 1, "default": 4 },
+          "maxBufferedMessages": { "type": "integer", "minimum": 1, "default": 1024 },
+          "shutdownTimeoutMs": { "type": "integer", "minimum": 1, "default": 10000 }
         }
       }
     }

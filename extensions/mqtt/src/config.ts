@@ -6,12 +6,14 @@
 
 import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk";
 
-import type { MqttChannelConfig, OpenClawDmScope, MqttPersistenceConfig } from "./types.js";
+import type { MqttBrokerConfig, MqttChannelConfig, OpenClawDmScope, MqttPersistenceConfig } from "./types.js";
 
 export type { MqttChannelConfig } from "./types.js";
 
 /** 默认账号 id（单账号阶段固定为 default） */
 export const DEFAULT_MQTT_ACCOUNT_ID = "default";
+
+const PERSISTENCE_BACKENDS = new Set(["memory", "redis", "mongodb", "level"]);
 
 /**
  * 解析后的 MQTT 账号视图（供 ChannelPlugin 使用）。
@@ -25,8 +27,8 @@ export type ResolvedMqttAccount = {
 
 /** 与 {@link resolveBrokerConfig} 默认一致 */
 export const DEFAULT_BROKER_CONFIG: MqttChannelConfig = {
+  host: "127.0.0.1",
   port: 1883,
-  wsPort: 8883,
   maxConnections: 1000,
   tls: {
     enabled: false,
@@ -43,12 +45,14 @@ export const DEFAULT_BROKER_CONFIG: MqttChannelConfig = {
       port: 6379,
       db: 0,
       keyPrefix: "mqtt",
-      subscriptionTTL: 3600,
+      packetTTL: 0,
       retainedTTL: 0,
     },
   },
   limits: {
     maxPayloadBytes: 1024 * 1024,
+    maxPendingMessagesPerClient: 32,
+    inboundTaskTimeoutMs: 120_000,
   },
   session: {
     maxExpirySeconds: 86400,
@@ -121,6 +125,135 @@ export function resolveMqttAccount(cfg: OpenClawConfig, accountId?: string | nul
   };
 }
 
+/** 在监听端口前验证会改变安全边界的 Broker 配置。 */
+export function validateBrokerConfig(config: MqttBrokerConfig): void {
+  const assertPort = (value: number, name: string, allowDisabled: boolean): void => {
+    const minimum = allowDisabled ? 0 : 1;
+    if (!Number.isInteger(value) || value < minimum || value > 65_535) {
+      throw new Error(`[openclaw-mqtt] ${name} must be an integer between ${minimum} and 65535`);
+    }
+  };
+  assertPort(config.port, "port", true);
+  if (config.tls.enabled) {
+    assertPort(config.tls.port, "tls.port", false);
+    if (!config.tls.certFile?.trim() || !config.tls.keyFile?.trim()) {
+      throw new Error("[openclaw-mqtt] TLS requires certFile and keyFile");
+    }
+    if (config.tls.rejectUnauthorized && !config.tls.requestCert) {
+      throw new Error("[openclaw-mqtt] TLS rejectUnauthorized requires requestCert=true");
+    }
+  }
+  if (config.port === 0 && !config.tls.enabled) {
+    throw new Error("[openclaw-mqtt] at least one TCP or TLS listener must be enabled");
+  }
+  const host = config.host?.trim() || "127.0.0.1";
+  const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
+  if (!loopbackHosts.has(host) && !config.auth.enabled) {
+    throw new Error("[openclaw-mqtt] authentication must be enabled when binding beyond loopback");
+  }
+  if (config.auth.enabled && !config.auth.allowAnonymous && config.auth.users.length === 0) {
+    throw new Error("[openclaw-mqtt] at least one authenticated user is required");
+  }
+  if (config.auth.enabled && config.auth.allowAnonymous) {
+    const anonymous = config.auth.users.find((user) => user.username === "anonymous");
+    const hasRules = Boolean(
+      anonymous &&
+        ((anonymous.aclRules?.length ?? 0) > 0 ||
+          (anonymous.publishAllow?.length ?? 0) > 0 ||
+          (anonymous.subscribeAllow?.length ?? 0) > 0),
+    );
+    if (!hasRules) {
+      throw new Error("[openclaw-mqtt] allowAnonymous requires an explicit anonymous user with ACL rules");
+    }
+  }
+  if (!Number.isInteger(config.maxConnections) || config.maxConnections < 1) {
+    throw new Error("[openclaw-mqtt] maxConnections must be a positive integer");
+  }
+  if (!Number.isSafeInteger(config.limits.maxPayloadBytes) || config.limits.maxPayloadBytes < 1) {
+    throw new Error("[openclaw-mqtt] limits.maxPayloadBytes must be a positive safe integer");
+  }
+  if (
+    !Number.isSafeInteger(config.limits.maxPendingMessagesPerClient) ||
+    config.limits.maxPendingMessagesPerClient < 1
+  ) {
+    throw new Error("[openclaw-mqtt] limits.maxPendingMessagesPerClient must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(config.limits.inboundTaskTimeoutMs) || config.limits.inboundTaskTimeoutMs < 1) {
+    throw new Error("[openclaw-mqtt] limits.inboundTaskTimeoutMs must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(config.qos0.mailboxSoftLimit) || config.qos0.mailboxSoftLimit < 1) {
+    throw new Error("[openclaw-mqtt] qos0.mailboxSoftLimit must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(config.session.maxExpirySeconds) || config.session.maxExpirySeconds < 0) {
+    throw new Error("[openclaw-mqtt] session.maxExpirySeconds must be a non-negative safe integer");
+  }
+  if (config.persistence.enabled) {
+    const backend = config.persistence.backend ?? "memory";
+    if (!PERSISTENCE_BACKENDS.has(backend)) {
+      throw new Error(`[openclaw-mqtt] unsupported persistence backend: ${String(backend)}`);
+    }
+    if (backend === "redis") {
+      const redis = config.persistence.redis;
+      const host = redis?.host?.trim() || "localhost";
+      if (!host) throw new Error("[openclaw-mqtt] persistence.redis.host must not be blank");
+      assertPort(redis?.port ?? 6379, "persistence.redis.port", false);
+      if (!Number.isSafeInteger(redis?.db ?? 0) || (redis?.db ?? 0) < 0) {
+        throw new Error("[openclaw-mqtt] persistence.redis.db must be a non-negative safe integer");
+      }
+      if (!(redis?.keyPrefix ?? "mqtt").trim()) {
+        throw new Error("[openclaw-mqtt] persistence.redis.keyPrefix must not be blank");
+      }
+      for (const [name, value] of [
+        ["packetTTL", redis?.packetTTL],
+        ["retainedTTL", redis?.retainedTTL],
+      ] as const) {
+        if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+          throw new Error(`[openclaw-mqtt] persistence.redis.${name} must be a non-negative safe integer`);
+        }
+      }
+    }
+    if (backend === "mongodb") {
+      const mongodb = config.persistence.mongodb;
+      const url = mongodb?.url?.trim() || "mongodb://localhost:27017";
+      if (!/^mongodb(?:\+srv)?:\/\//u.test(url)) {
+        throw new Error("[openclaw-mqtt] persistence.mongodb.url must use mongodb:// or mongodb+srv://");
+      }
+      if (mongodb?.dbName !== undefined && !mongodb.dbName.trim()) {
+        throw new Error("[openclaw-mqtt] persistence.mongodb.dbName must not be blank");
+      }
+      const prefix = mongodb?.collectionPrefix ?? mongodb?.collectionName;
+      if (prefix !== undefined && !prefix.trim()) {
+        throw new Error("[openclaw-mqtt] persistence.mongodb.collectionPrefix must not be blank");
+      }
+    }
+    if (backend === "level" && config.persistence.level?.path !== undefined && !config.persistence.level.path.trim()) {
+      throw new Error("[openclaw-mqtt] persistence.level.path must not be blank");
+    }
+  }
+  const usernames = new Set<string>();
+  for (const user of config.auth.users) {
+    const username = user.username.trim();
+    if (!username) throw new Error("[openclaw-mqtt] auth user username must not be blank");
+    if (usernames.has(username)) throw new Error(`[openclaw-mqtt] duplicate auth username: ${username}`);
+    usernames.add(username);
+    if (config.auth.enabled && username !== "anonymous") {
+      const hasPassword = Boolean(user.password);
+      const hasPasswordHash = Boolean(user.passwordHash);
+      if (hasPassword === hasPasswordHash) {
+        throw new Error(`[openclaw-mqtt] auth user ${username} requires exactly one of password or passwordHash`);
+      }
+    }
+    const topicPatterns = [
+      ...(user.publishAllow ?? []),
+      ...(user.subscribeAllow ?? []),
+      ...(user.aclRules ?? []).map((rule) => rule.topicPattern),
+    ];
+    if (topicPatterns.some((pattern) => !pattern.trim())) {
+      throw new Error(`[openclaw-mqtt] auth user ${username} contains a blank ACL topic pattern`);
+    }
+  }
+}
+
 /**
  * 从 OpenClaw 全局配置解析 `channels.mqtt` 为 Broker/Channel 共用结构。
  *
@@ -143,8 +276,8 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
     : [];
 
   return {
+    host: mqttConfig?.host?.trim() || DEFAULT_BROKER_CONFIG.host,
     port: mqttConfig?.port ?? DEFAULT_BROKER_CONFIG.port,
-    wsPort: mqttConfig?.wsPort ?? DEFAULT_BROKER_CONFIG.wsPort,
     maxConnections: mqttConfig?.maxConnections ?? DEFAULT_BROKER_CONFIG.maxConnections,
     subscribeTopics,
     topicBindings,
@@ -175,6 +308,12 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
     limits: {
       maxPayloadBytes:
         mqttConfig?.limits?.maxPayloadBytes ?? DEFAULT_BROKER_CONFIG.limits.maxPayloadBytes,
+      maxPendingMessagesPerClient:
+        mqttConfig?.limits?.maxPendingMessagesPerClient ??
+        DEFAULT_BROKER_CONFIG.limits.maxPendingMessagesPerClient,
+      inboundTaskTimeoutMs:
+        mqttConfig?.limits?.inboundTaskTimeoutMs ??
+        DEFAULT_BROKER_CONFIG.limits.inboundTaskTimeoutMs,
     },
     session: {
       maxExpirySeconds:
@@ -212,9 +351,22 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
         db: mqttConfig?.persistence?.redis?.db ?? DEFAULT_BROKER_CONFIG.persistence.redis?.db,
         password: mqttConfig?.persistence?.redis?.password,
         keyPrefix: mqttConfig?.persistence?.redis?.keyPrefix ?? DEFAULT_BROKER_CONFIG.persistence.redis?.keyPrefix,
-        subscriptionTTL: mqttConfig?.persistence?.redis?.subscriptionTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.subscriptionTTL,
+        packetTTL: mqttConfig?.persistence?.redis?.packetTTL ?? mqttConfig?.persistence?.redis?.retainedTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.packetTTL,
         retainedTTL: mqttConfig?.persistence?.redis?.retainedTTL ?? DEFAULT_BROKER_CONFIG.persistence.redis?.retainedTTL,
       },
+      mongodb: mqttConfig?.persistence?.mongodb
+        ? {
+            url: mqttConfig.persistence.mongodb.url,
+            dbName: mqttConfig.persistence.mongodb.dbName,
+            collectionPrefix:
+              mqttConfig.persistence.mongodb.collectionPrefix ??
+              mqttConfig.persistence.mongodb.collectionName,
+            collectionName: mqttConfig.persistence.mongodb.collectionName,
+          }
+        : undefined,
+      level: mqttConfig?.persistence?.level
+        ? { path: mqttConfig.persistence.level.path }
+        : undefined,
     },
   };
 }

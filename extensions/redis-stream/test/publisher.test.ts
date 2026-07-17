@@ -24,16 +24,21 @@ describe("transport/publisher", () => {
   });
 
   it("throws RedisConnectionError when client is not set", async () => {
-    await expect(publishMessage("ch", "msg")).rejects.toBeInstanceOf(RedisConnectionError);
-    await expect(publishEntry("stream", { text: "x" })).rejects.toBeInstanceOf(RedisConnectionError);
+    await expect(publishMessage("ch", "msg")).rejects.toBeInstanceOf(
+      RedisConnectionError,
+    );
+    await expect(publishEntry("stream", { text: "x" })).rejects.toBeInstanceOf(
+      RedisConnectionError,
+    );
   });
 
   it("publishMessage delegates to redis client.publish", async () => {
     const publish = vi.fn().mockResolvedValue(1);
     setPublisherClient({ publish } as never);
 
-    await publishMessage("openclaw:inbound", "hello");
+    const subscribers = await publishMessage("openclaw:inbound", "hello");
     expect(publish).toHaveBeenCalledWith("openclaw:inbound", "hello");
+    expect(subscribers).toBe(1);
     expect(getMessagesWritten()).toBe(1);
   });
 
@@ -42,15 +47,32 @@ describe("transport/publisher", () => {
     setPublisherClient({ xAdd } as never);
 
     const id = await publishEntry("openclaw:outbound", { text: "reply" });
-    expect(xAdd).toHaveBeenCalledWith("openclaw:outbound", "*", { text: "reply" });
+    expect(xAdd).toHaveBeenCalledWith("openclaw:outbound", "*", {
+      text: "reply",
+    });
     expect(id).toBe("170-0");
     expect(getMessagesWritten()).toBe(1);
+  });
+
+  it("applies approximate MAXLEN to plugin-owned streams", async () => {
+    const xAdd = vi.fn().mockResolvedValue("171-0");
+    setPublisherClient({ xAdd } as never, 5000);
+
+    await publishEntry("openclaw:outbound", { text: "bounded" });
+    expect(xAdd).toHaveBeenCalledWith(
+      "openclaw:outbound",
+      "*",
+      { text: "bounded" },
+      { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: 5000 } },
+    );
   });
 
   it("clearPublisherClient resets client reference", async () => {
     setPublisherClient({ publish: vi.fn() } as never);
     clearPublisherClient();
-    await expect(publishMessage("ch", "x")).rejects.toBeInstanceOf(RedisConnectionError);
+    await expect(publishMessage("ch", "x")).rejects.toBeInstanceOf(
+      RedisConnectionError,
+    );
   });
 
   it("incrMessagesWritten accumulates counter", () => {

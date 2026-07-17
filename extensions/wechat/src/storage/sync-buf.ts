@@ -10,6 +10,7 @@ import path from "node:path";
 import { deriveRawAccountId } from "../auth/accounts.js";
 
 import { resolveStateDir } from "./state-dir.js";
+import { writePrivateJsonAtomic } from "./atomic-json.js";
 
 function resolveAccountsDir(): string {
   return path.join(resolveStateDir(), "openclaw-weixin", "accounts");
@@ -81,7 +82,5 @@ export function loadGetUpdatesBuf(filePath: string): string | undefined {
  * Persist get_updates_buf. Creates parent dir if needed.
  */
 export function saveGetUpdatesBuf(filePath: string, getUpdatesBuf: string): void {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify({ get_updates_buf: getUpdatesBuf }, null, 0), "utf-8");
+  writePrivateJsonAtomic(filePath, { get_updates_buf: getUpdatesBuf });
 }

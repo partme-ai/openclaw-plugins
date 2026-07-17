@@ -93,6 +93,7 @@ export async function sendMessageWeixin(params: {
     await sendMessageApi({
       baseUrl: opts.baseUrl,
       token: opts.token,
+      routeTag: opts.routeTag,
       timeoutMs: opts.timeoutMs,
       body: req,
     });
@@ -140,6 +141,7 @@ async function sendMediaItems(params: {
       await sendMessageApi({
         baseUrl: opts.baseUrl,
         token: opts.token,
+        routeTag: opts.routeTag,
         timeoutMs: opts.timeoutMs,
         body: req,
       });

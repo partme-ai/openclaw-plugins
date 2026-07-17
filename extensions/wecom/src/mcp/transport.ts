@@ -15,18 +15,31 @@ import { generateReqId } from "@wecom/aibot-node-sdk";
 import { fetch as undiciFetch } from "undici";
 import { DEFAULT_ACCOUNT_ID } from "../shared/openclaw-compat.js";
 import { getWeComWebSocket } from "../state/state-manager.js";
-import { MCP_GET_CONFIG_CMD, MCP_CONFIG_FETCH_TIMEOUT_MS } from "../types/const.js";
+import {
+  MCP_GET_CONFIG_CMD,
+  MCP_CONFIG_FETCH_TIMEOUT_MS,
+} from "../types/const.js";
 import { withTimeout } from "../shared/timeout.js";
 import { PLUGIN_VERSION } from "../types/version.js";
 import { getWeComRuntime } from "../runtime.js";
 import { mcpDebugLog } from "./debug-log.js";
-import { retryWeComFetch, shouldRetryWeComHttpResponse, WeComTransientHttpError } from "../webhook/http-retry.js";
+import {
+  retryWeComFetch,
+  shouldRetryWeComHttpResponse,
+  WeComTransientHttpError,
+} from "../webhook/http-retry.js";
 import {
   resolveDefaultWeComAccountId,
   listWeComAccountIds,
   resolveWeComAccountMulti,
 } from "../config/accounts.js";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
+
+/**
+ * MCP 媒体接口允许返回约 20 MiB 原文件，base64 与 JSON 信封后需预留余量。
+ * 32 MiB 是整个 HTTP/SSE 响应的硬上限，防止外部 MCP Server 用无界正文耗尽 Gateway 内存。
+ */
+const MAX_MCP_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 // ============================================================================
 // 类型定义
@@ -250,10 +263,15 @@ export function resolveCurrentAccountId(): string {
  * @param category - MCP 品类名称，如 doc、contact
  * @returns 完整的 response.body 配置对象（至少包含 url 字段）
  */
-async function fetchMcpConfig(accountId: string, category: string): Promise<Record<string, unknown>> {
+async function fetchMcpConfig(
+  accountId: string,
+  category: string,
+): Promise<Record<string, unknown>> {
   const wsClient = getWeComWebSocket(accountId);
   if (!wsClient) {
-    throw new Error(`WSClient 未连接 (accountId="${accountId}")，无法拉取 MCP 配置`);
+    throw new Error(
+      `WSClient 未连接 (accountId="${accountId}")，无法拉取 MCP 配置`,
+    );
   }
 
   const reqId = generateReqId("mcp_config");
@@ -261,7 +279,7 @@ async function fetchMcpConfig(accountId: string, category: string): Promise<Reco
   const response = await withTimeout(
     wsClient.reply(
       { headers: { req_id: reqId } },
-      { biz_type: category, plugin_version: PLUGIN_VERSION  },
+      { biz_type: category, plugin_version: PLUGIN_VERSION },
       MCP_GET_CONFIG_CMD,
     ),
     MCP_CONFIG_FETCH_TIMEOUT_MS,
@@ -276,13 +294,15 @@ async function fetchMcpConfig(accountId: string, category: string): Promise<Reco
 
   const body = response.body as { url?: string } | undefined;
   if (!body?.url) {
-    throw new Error(
-      `MCP 配置响应缺少 url 字段 (category="${category}")`,
-    );
+    throw new Error(`MCP 配置响应缺少 url 字段 (category="${category}")`);
   }
 
-  console.log(`${LOG_TAG} 配置拉取成功 (accountId="${accountId}", category="${category}")`);
-  mcpDebugLog(`${LOG_TAG} fetchMcpConfig body keys=${Object.keys(body).join(",")}`);
+  console.log(
+    `${LOG_TAG} 配置拉取成功 (accountId="${accountId}", category="${category}")`,
+  );
+  mcpDebugLog(
+    `${LOG_TAG} fetchMcpConfig body keys=${Object.keys(body).join(",")}`,
+  );
   return body as Record<string, unknown>;
 }
 
@@ -329,7 +349,11 @@ async function sendRawJsonRpc(
   body: JsonRpcRequest,
   timeoutMs: number = HTTP_REQUEST_TIMEOUT_MS,
   requesterUserId?: string,
-): Promise<{ response: Response; rpcResult: unknown; newSessionId: string | null }> {
+): Promise<{
+  response: Response;
+  rpcResult: unknown;
+  newSessionId: string | null;
+}> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -359,19 +383,26 @@ async function sendRawJsonRpc(
       signal: controller.signal,
     })) as unknown as Response;
     if (shouldRetryWeComHttpResponse(res)) {
-      throw new WeComTransientHttpError(res.status, `MCP transient HTTP ${res.status}`);
+      throw new WeComTransientHttpError(
+        res.status,
+        `MCP transient HTTP ${res.status}`,
+      );
     }
     return res;
   };
 
   let response: Response;
   try {
-    response = await retryWeComFetch(fetchOnce, { label: `mcp ${body.method}` });
+    response = await retryWeComFetch(fetchOnce, {
+      label: `mcp ${body.method}`,
+    });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new Error(`MCP 请求超时 (${timeoutMs}ms)`);
     }
-    throw new Error(`MCP 网络请求失败: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `MCP 网络请求失败: ${err instanceof Error ? err.message : String(err)}`,
+    );
   } finally {
     clearTimeout(timeoutId);
   }
@@ -396,11 +427,15 @@ async function sendRawJsonRpc(
 
   // 处理 SSE 流式响应
   if (contentType.includes("text/event-stream")) {
-    return { response, rpcResult: await parseSseResponse(response), newSessionId };
+    return {
+      response,
+      rpcResult: await parseSseResponse(response),
+      newSessionId,
+    };
   }
 
   // 普通 JSON 响应 — 先读取文本，防止空内容导致 JSON.parse 报错
-  const text = await response.text();
+  const text = await readMcpResponseText(response);
   if (!text.trim()) {
     return { response, rpcResult: undefined, newSessionId };
   }
@@ -433,9 +468,15 @@ async function initializeSession(
   requesterUserId?: string,
 ): Promise<McpSession> {
   const key = cacheKey(accountId, category);
-  const session: McpSession = { sessionId: null, initialized: false, stateless: false };
+  const session: McpSession = {
+    sessionId: null,
+    initialized: false,
+    stateless: false,
+  };
 
-  mcpDebugLog(`${LOG_TAG} 开始 initialize 握手 (accountId="${accountId}", category="${category}")`);
+  mcpDebugLog(
+    `${LOG_TAG} 开始 initialize 握手 (accountId="${accountId}", category="${category}")`,
+  );
 
   // 1. 发送 initialize 请求
   const initBody: JsonRpcRequest = {
@@ -469,7 +510,9 @@ async function initializeSession(
     session.initialized = true;
     statelessCategories.add(key);
     mcpSessionCache.set(key, session);
-    mcpDebugLog(`${LOG_TAG} 无状态 Server 确认 (accountId="${accountId}", category="${category}")`);
+    mcpDebugLog(
+      `${LOG_TAG} 无状态 Server 确认 (accountId="${accountId}", category="${category}")`,
+    );
     return session;
   }
 
@@ -529,7 +572,12 @@ async function getOrCreateSession(
   const inflight = inflightInitRequests.get(key);
   if (inflight) return inflight;
 
-  const promise = initializeSession(url, accountId, category, requesterUserId).finally(() => {
+  const promise = initializeSession(
+    url,
+    accountId,
+    category,
+    requesterUserId,
+  ).finally(() => {
     inflightInitRequests.delete(key);
   });
   inflightInitRequests.set(key, promise);
@@ -547,7 +595,7 @@ async function getOrCreateSession(
  * 空行分隔不同事件，取最后一个完整事件的数据。
  */
 async function parseSseResponse(response: Response): Promise<unknown> {
-  const text = await response.text();
+  const text = await readMcpResponseText(response);
   const lines = text.split("\n");
 
   // 按 SSE 规范解析：空行分隔事件，同一事件内的 data 行用换行拼接
@@ -594,6 +642,41 @@ async function parseSseResponse(response: Response): Promise<unknown> {
   }
 }
 
+/**
+ * 有界读取 MCP 响应正文。
+ *
+ * 先拒绝可信的超大 Content-Length，再对 chunked/SSE 流逐块累计；实际字节越界时主动
+ * cancel reader，不能依赖服务端一定声明长度。返回字符串前最多只持有 32 MiB Buffer。
+ */
+async function readMcpResponseText(response: Response): Promise<string> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (
+    Number.isFinite(declaredLength) &&
+    declaredLength > MAX_MCP_RESPONSE_BYTES
+  ) {
+    throw new Error(`MCP response exceeds ${MAX_MCP_RESPONSE_BYTES} bytes`);
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    totalBytes += value.byteLength;
+    if (totalBytes > MAX_MCP_RESPONSE_BYTES) {
+      await reader.cancel("MCP response too large").catch(() => undefined);
+      throw new Error(`MCP response exceeds ${MAX_MCP_RESPONSE_BYTES} bytes`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString(
+    "utf8",
+  );
+}
+
 // ============================================================================
 // 公共 API
 // ============================================================================
@@ -608,7 +691,9 @@ async function parseSseResponse(response: Response): Promise<unknown> {
  */
 export function clearCategoryCache(accountId: string, category: string): void {
   const key = cacheKey(accountId, category);
-  console.log(`${LOG_TAG} 清理缓存 (accountId="${accountId}", category="${category}")`);
+  console.log(
+    `${LOG_TAG} 清理缓存 (accountId="${accountId}", category="${category}")`,
+  );
   mcpConfigCache.delete(key);
   mcpSessionCache.delete(key);
   statelessCategories.delete(key);
@@ -691,7 +776,12 @@ export async function sendJsonRpc(
     ...(params !== undefined ? { params } : {}),
   };
 
-  let session = await getOrCreateSession(url, accountId, category, requesterUserId);
+  let session = await getOrCreateSession(
+    url,
+    accountId,
+    category,
+    requesterUserId,
+  );
 
   try {
     const { rpcResult, newSessionId } = await sendRawJsonRpc(
@@ -718,7 +808,9 @@ export async function sendJsonRpc(
     // 有状态 Server：session 失效时服务端返回 404，需要重新初始化并重试一次
     // 使用 McpHttpError.statusCode 精确匹配，避免字符串匹配 "404" 导致误判
     if (err instanceof McpHttpError && err.statusCode === 404) {
-      mcpDebugLog(`${LOG_TAG} Session 失效 (accountId="${accountId}", category="${category}")，开始重建...`);
+      mcpDebugLog(
+        `${LOG_TAG} Session 失效 (accountId="${accountId}", category="${category}")，开始重建...`,
+      );
       mcpSessionCache.delete(key);
 
       // 使用 rebuildSession 合并并发的 session 重建请求，避免竞态条件
@@ -737,7 +829,9 @@ export async function sendJsonRpc(
     }
 
     // 其他错误记录日志后抛出
-    console.error(`${LOG_TAG} RPC 请求失败 (accountId="${accountId}", category="${category}", method="${method}"): ${err instanceof Error ? err.message : String(err)}`);
+    console.error(
+      `${LOG_TAG} RPC 请求失败 (accountId="${accountId}", category="${category}", method="${method}"): ${err instanceof Error ? err.message : String(err)}`,
+    );
     throw err;
   }
 }
@@ -758,7 +852,12 @@ async function rebuildSession(
   const inflight = inflightInitRequests.get(key);
   if (inflight) return inflight;
 
-  const promise = initializeSession(url, accountId, category, requesterUserId).finally(() => {
+  const promise = initializeSession(
+    url,
+    accountId,
+    category,
+    requesterUserId,
+  ).finally(() => {
     inflightInitRequests.delete(key);
   });
   inflightInitRequests.set(key, promise);

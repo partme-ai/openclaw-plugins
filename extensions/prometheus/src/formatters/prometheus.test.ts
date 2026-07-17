@@ -72,6 +72,19 @@ describe("formatPrometheus", () => {
     expect(output).toContain("ts_metric 10 1700000000000");
   });
 
+  it("按 Prometheus 语法输出特殊浮点值并保留零时间戳", () => {
+    const output = formatPrometheus([], [
+      { name: "positive_inf", value: Number.POSITIVE_INFINITY },
+      { name: "negative_inf", value: Number.NEGATIVE_INFINITY },
+      { name: "not_a_number", value: Number.NaN },
+      { name: "epoch_metric", value: 1, timestamp: 0 },
+    ]);
+    expect(output).toContain("positive_inf +Inf");
+    expect(output).toContain("negative_inf -Inf");
+    expect(output).toContain("not_a_number NaN");
+    expect(output).toContain("epoch_metric 1 0");
+  });
+
   it("空输入应返回空字符串", () => {
     const output = formatPrometheus([], []);
     expect(output.trim()).toBe("");
@@ -90,5 +103,22 @@ describe("formatPrometheus", () => {
     const lines = output.split("\n");
     const helpCount = lines.filter((l) => l.includes("# HELP http_requests")).length;
     expect(helpCount).toBe(1); // 只应有一个 HELP 行
+  });
+
+  it("应在 histogram 定义下输出 bucket/sum/count 且不重复自动发现", () => {
+    const output = formatPrometheus(
+      [{ name: "request_duration_seconds", help: "Request duration", type: "histogram" }],
+      [
+        { name: "request_duration_seconds_bucket", labels: { le: "1" }, value: 2 },
+        { name: "request_duration_seconds_bucket", labels: { le: "+Inf" }, value: 3 },
+        { name: "request_duration_seconds_sum", value: 1.5 },
+        { name: "request_duration_seconds_count", value: 3 },
+      ],
+    );
+
+    expect(output.match(/# HELP request_duration_seconds /g)).toHaveLength(1);
+    expect(output).toContain("# TYPE request_duration_seconds histogram");
+    expect(output).toContain('request_duration_seconds_bucket{le="1"} 2');
+    expect(output).not.toContain("# HELP request_duration_seconds_bucket (auto-discovered)");
   });
 });

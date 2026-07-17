@@ -21,6 +21,7 @@ const CHANNEL_LABEL = "Douyin";
 const AGENT_REPLY_TIMEOUT_TEMPLATE =
   "抱歉，处理您的消息超时（约 {minutes} 分钟），请稍后重试。";
 
+/** 抖音用户映射到 OpenClaw Agent 会话后的稳定路由快照。 */
 export type DouyinTranscriptRoute = {
   sessionKey: string;
   agentId?: string;
@@ -28,6 +29,7 @@ export type DouyinTranscriptRoute = {
   mainSessionKey?: string;
 };
 
+/** Transcript 编排输入：包含可信账号、发送方、正文和可选平台消息号。 */
 export type DouyinTranscriptDispatchParams = {
   runtime: PluginRuntime;
   cfg: Record<string, unknown>;
@@ -36,10 +38,13 @@ export type DouyinTranscriptDispatchParams = {
   shopId: string;
   rawText: string;
   messageSid?: string;
+  /** 经 DM policy + OpenClaw command authorizer 计算后的结论 */
+  commandAuthorized?: boolean;
   log?: (message: string) => void;
   error?: (message: string) => void;
 };
 
+/** Transcript 执行结果：区分生成、平台交付和超时，不能把“生成成功”误报为“已送达”。 */
 export type DouyinTranscriptDispatchResult = {
   route: DouyinTranscriptRoute;
   delivered: boolean;
@@ -112,6 +117,7 @@ export function buildDouyinTranscriptInboundContext(params: {
   shopId: string;
   rawText: string;
   messageSid?: string;
+  commandAuthorized?: boolean;
   route: DouyinTranscriptRoute;
   storePath?: string;
 }): Record<string, unknown> {
@@ -157,7 +163,7 @@ export function buildDouyinTranscriptInboundContext(params: {
       MessageSid: params.messageSid,
       OriginatingChannel: CHANNEL_ID,
       OriginatingTo: to,
-      CommandAuthorized: true,
+      CommandAuthorized: params.commandAuthorized ?? true,
     }) as Record<string, unknown> | undefined) ?? {
       Body: body,
       RawBody: rawText,
@@ -175,7 +181,7 @@ export function buildDouyinTranscriptInboundContext(params: {
       MessageSid: params.messageSid,
       OriginatingChannel: CHANNEL_ID,
       OriginatingTo: to,
-      CommandAuthorized: true,
+      CommandAuthorized: params.commandAuthorized ?? true,
     }
   );
 }
@@ -216,6 +222,7 @@ export async function dispatchDouyinTranscriptTurn(
     shopId,
     rawText: params.rawText,
     messageSid: params.messageSid,
+    commandAuthorized: params.commandAuthorized,
     route,
     storePath,
   });

@@ -1,8 +1,8 @@
 {
   "name": "@partme.ai/openclaw-router",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "type": "module",
-  "description": "企业级消息路由引擎 — 跨渠道消息转发、知识库/记忆自动注入",
+  "description": "OpenClaw 跨渠道消息路由 — 持久 Outbox、重试、去重与 DLQ",
   "license": "MIT",
   "main": "dist/index.js",
   "files": [
@@ -28,22 +28,36 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.6",
     "tsup": "^8.2.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.0.0"
+    "vitest": "^4.1.6"
   },
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "build": {
+      "openclawVersion": "2026.7.1"
+    },
+    "compat": {
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-router",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
+    }
   }
 }

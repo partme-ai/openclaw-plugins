@@ -16,47 +16,42 @@
 
 ## Compatibility
 
-| Plugin Version | OpenClaw Version | npm dist-tag | Status |
-|----------------|------------------|--------------|--------|
-| 2.0.x | `>=2026.3.22` | `latest` | Active |
-| 1.0.x | `>=2026.1.0 <2026.3.22` | `legacy` | Maintenance |
+| Plugin Version | OpenClaw Version | Status           |
+| -------------- | ---------------- | ---------------- |
+| 2026.7.1       | `>=2026.7.1`     | Current baseline |
 
 The plugin checks the host version at startup and refuses to load when the running OpenClaw version is outside the supported range.
 
 ## Install and Update
 
-Quick install:
+Install:
 
 ```bash
-npx -y @tencent-weixin/openclaw-weixin-cli install
-```
-
-Manual install:
-
-```bash
-openclaw plugins install "@tencent-weixin/openclaw-weixin"
-openclaw config set plugins.entries.openclaw-weixin.enabled true
+openclaw plugins install "@partme.ai/weixin"
+openclaw config set plugins.entries.wechat.enabled true
 openclaw gateway restart
 ```
 
 Update:
 
 ```bash
-openclaw plugins update @tencent-weixin/openclaw-weixin
+openclaw plugins update @partme.ai/weixin
 ```
 
 ## Quick Start
 
 ```bash
 openclaw --version
-openclaw plugins install "@tencent-weixin/openclaw-weixin"
-openclaw config set plugins.entries.openclaw-weixin.enabled true
+openclaw plugins install "@partme.ai/weixin"
+openclaw config set plugins.entries.wechat.enabled true
 openclaw channels login --channel openclaw-weixin
 openclaw gateway restart
 openclaw channels status --probe
 ```
 
 The terminal shows a QR code. Scan it with WeChat and confirm authorization. The plugin saves credentials locally after login.
+
+> The plugin ID is `wechat`; the external channel ID remains `openclaw-weixin`. They belong to different naming layers.
 
 ## Multi-Account Sessions
 
@@ -77,13 +72,13 @@ openclaw gateway restart
 
 The plugin communicates with the backend gateway through HTTP JSON APIs. All endpoints use `POST` with JSON request and response bodies.
 
-| Endpoint | Path | Purpose |
-|----------|------|---------|
-| `getUpdates` | `getupdates` | Long-poll for new messages |
-| `sendMessage` | `sendmessage` | Send text, image, video, or file messages |
-| `getUploadUrl` | `getuploadurl` | Get CDN upload parameters |
-| `getConfig` | `getconfig` | Get account config such as typing ticket |
-| `sendTyping` | `sendtyping` | Send or cancel typing status |
+| Endpoint       | Path           | Purpose                                   |
+| -------------- | -------------- | ----------------------------------------- |
+| `getUpdates`   | `getupdates`   | Long-poll for new messages                |
+| `sendMessage`  | `sendmessage`  | Send text, image, video, or file messages |
+| `getUploadUrl` | `getuploadurl` | Get CDN upload parameters                 |
+| `getConfig`    | `getconfig`    | Get account config such as typing ticket  |
+| `sendTyping`   | `sendtyping`   | Send or cancel typing status              |
 
 Text send example:
 
@@ -104,7 +99,58 @@ Text send example:
 }
 ```
 
-Media messages use CDN parameters and AES-128-ECB encryption. See `src/api/types.ts` and `src/api/api.ts` for implementation details.
+Media messages use CDN parameters and AES-128-ECB encryption. Local files must stay under OpenClaw-managed roots or the account-level `mediaLocalRoots`; the Path Guard rejects traversal, symlink escapes, special files, and files above 100 MiB. HTTPS media downloads use OpenClaw's DNS/redirect-aware SSRF Guard, and plugin-created temporary files are removed on both success and failure. Server-provided upload URLs must match the configured CDN origin and `/upload` path; uploads reject redirects, time out after 30 seconds, never retry 4xx, and retry network/5xx failures at most three times.
+
+Each account may also define its own `routeTag`; the plugin propagates it as `SKRouteTag` to every iLink API call for that account:
+
+```json
+{
+  "channels": {
+    "openclaw-weixin": {
+      "accounts": {
+        "your-account-id": {
+          "routeTag": "shard-a",
+          "mediaLocalRoots": ["/data/openclaw/weixin-media"]
+        }
+      }
+    }
+  }
+}
+```
+
+See `src/api/types.ts` and `src/api/api.ts` for protocol details.
+
+## Inbound transaction boundary
+
+The text diagram is retained for terminals and raw Markdown; the Mermaid flow remains below for rendered relationships.
+
+```text
+WeChat user
+    │
+    ▼
+iLink API ◀── getUpdates + durable cursor ── Monitor
+    ▲                                         │
+    │                                         ▼
+    │                              authorization + message dedupe
+    │                                         │
+    │                                         ▼
+    └── sendMessage / CDN ◀── outbound ◀── OpenClaw Agent
+
+Success: commit the cursor after the full batch; failure: retain and replay
+```
+
+```mermaid
+flowchart LR
+    P["getUpdates batch"] --> A["DM and command authorization"]
+    A -->|unauthorized| D["Drop without slash, media, getConfig, or Agent work"]
+    A -->|authorized| W["Command or Agent processing"]
+    W --> M["Persist completed message_id"]
+    D --> M
+    M --> C["Commit next cursor only after the full batch"]
+    W -->|failure| R["Keep cursor and retry with at-least-once semantics"]
+```
+
+`allowFrom` is an optional static allowlist merged with the QR pairing store. Runtime caches and private context-token state are bounded. QR values, tokens, and user identifiers expose no prefix in logs, while the final log boundary also redacts Bearer/Authorization values, identifiers, sessions, content previews, paths, and URL details.
 
 ## Verification and Development
 
@@ -122,17 +168,17 @@ pnpm test
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| `requires OpenClaw >=2026.3.22` | Upgrade OpenClaw or install `@tencent-weixin/openclaw-weixin@legacy` |
-| Channel is OK but not connected | Ensure `plugins.entries.openclaw-weixin.enabled` is `true`, then restart Gateway |
-| Multiple accounts share context | Set `session.dmScope` to `per-account-channel-peer` |
-| Login session expired | Run `openclaw channels login --channel openclaw-weixin` again |
+| Symptom                         | Fix                                                                              |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `requires OpenClaw >=2026.7.1`  | Upgrade OpenClaw before enabling this plugin                                     |
+| Channel is OK but not connected | Ensure `plugins.entries.wechat.enabled` is `true`, then restart Gateway |
+| Multiple accounts share context | Set `session.dmScope` to `per-account-channel-peer`                              |
+| Login session expired           | Run `openclaw channels login --channel openclaw-weixin` again                    |
 
 ## Uninstall
 
 ```bash
-openclaw plugins uninstall @tencent-weixin/openclaw-weixin
+openclaw plugins uninstall @partme.ai/weixin
 ```
 
 ## License

@@ -38,6 +38,36 @@ describe("createLocalPathGuard", () => {
     ).rejects.toThrow(/escapes root/);
   });
 
+  it("rejects a symlink inside root that resolves outside root", async () => {
+    if (process.platform === "win32") return;
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "path-guard-root-"));
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "path-guard-outside-"));
+    tmpDirs.push(root, outside);
+    const secret = path.join(outside, "secret.txt");
+    await fs.writeFile(secret, "secret", "utf8");
+    const link = path.join(root, "linked-secret.txt");
+    await fs.symlink(secret, link);
+
+    const guard = createLocalPathGuard();
+    await expect(guard.readRegularFile(link, { rootDir: root })).rejects.toThrow(/symlink/);
+  });
+
+  it("refuses to overwrite a symbolic-link target", async () => {
+    if (process.platform === "win32") return;
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "path-guard-root-"));
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "path-guard-outside-"));
+    tmpDirs.push(root, outside);
+    const target = path.join(outside, "target.txt");
+    await fs.writeFile(target, "original", "utf8");
+    await fs.symlink(target, path.join(root, "output.txt"));
+
+    const guard = createLocalPathGuard();
+    await expect(
+      guard.writeExternalFileWithinRoot({ rootDir: root, relativePath: "output.txt", data: "changed" }),
+    ).rejects.toThrow(/symbolic link/);
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("original");
+  });
+
   it("compares secrets with timingSafeEqual", () => {
     const guard = createLocalPathGuard();
     expect(guard.safeEqualSecret("abc", "abc")).toBe(true);

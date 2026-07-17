@@ -1,446 +1,406 @@
 /**
- * @fileoverview openclaw-router 企业级消息路由引擎插件入口。
+ * @fileoverview OpenClaw 跨渠道消息 Router 的注册、规则匹配和运维入口。
  *
- * @description
- * 基于 Plugin Hooks（message_received / message_sent / reply_dispatch）实现
- * IM↔MQ 跨渠道 forward 与 reply-via；规则匹配、模板展开与幂等去重见本模块与 dedupe。
- *
- * @module index
+ * 监听 inbound、outbound 和 reply_payload 事件，按规则生成稳定幂等键与 hop trace，再交给
+ * `ReliableRouteDispatcher` 持久化投递。trace 限制和已拥有 identity 检查防止路由环路；
+ * 状态、健康、DLQ、审计及重放端点均要求插件认证，并只返回脱敏摘要。
  */
+import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { definePluginEntry, type OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 
-import { RouteDedupeCache, buildRouteDedupeKey } from "./dedupe.js";
+import { resolveRouterConfig, resolveRouterStateDir } from "./config.js";
+import { DurableRouteStore } from "./durable-store.js";
+import { matchRule } from "./matcher.js";
+import { ReliableRouteDispatcher, stableDeliveryKey } from "./reliable-dispatcher.js";
+import type {
+  PublishInboundParams,
+  RouteAction,
+  RouteDirection,
+  RouterConfig,
+  RouterRule,
+} from "./types.js";
 
-// ============================================================================
-// 类型
-// ============================================================================
+export { matchRule } from "./matcher.js";
+export { stableDeliveryKey } from "./reliable-dispatcher.js";
+export type { RouteAction, RouterConfig, RouterRule } from "./types.js";
 
-/** @description 路由规则：match 条件 + forward/reply-via 动作列表。 */
-interface RouterRule {
-  id: string;
-  match: {
-    channels?: string[];
-    direction?: "inbound" | "outbound" | "both";
-    topic?: string;
-    accountId?: string;
-  };
-  actions: Array<
-    | { type: "forward"; target: string; topic?: string }
-    | { type: "reply-via"; target: string; accountId?: string; to?: string }
-  >;
-}
+type ChannelSendFn = (params: PublishInboundParams, signal?: AbortSignal) => Promise<void>;
 
-/** @description 插件根配置：enabled、rules、audit。 */
-interface RouterConfig {
-  enabled: boolean;
-  rules: RouterRule[];
-  audit?: { enabled: boolean; logToConsole: boolean };
-}
-
-const DEFAULTS: RouterConfig = {
-  enabled: true,
-  rules: [],
-  audit: { enabled: false, logToConsole: false },
+type RouteEvent = {
+  channelId: string;
+  direction: RouteDirection;
+  content: string;
+  topic?: string;
+  accountId?: string;
+  recipient?: string;
+  sessionKey?: string;
+  runId?: string;
+  messageId?: string;
+  eventId: string;
+  metadata: Record<string, unknown>;
 };
 
-/** 全局幂等缓存（单 Gateway 进程内） */
-const dedupeCache = new RouteDedupeCache();
+type RouterTrace = { version: 1; hops: string[] };
 
-/**
- * @description 从 api.pluginConfig 合并默认 Router 配置。
- * @param api - OpenClaw 插件 API。
- * @returns 合并后的 `RouterConfig`。
- * @throws 不抛出。
- */
-function getConfig(api: OpenClawPluginApi): RouterConfig {
-  const r = (api.pluginConfig ?? {}) as Partial<RouterConfig>;
-  return {
-    ...DEFAULTS,
-    ...r,
-    audit: {
-      enabled: r.audit?.enabled ?? DEFAULTS.audit!.enabled,
-      logToConsole: r.audit?.logToConsole ?? DEFAULTS.audit!.logToConsole,
-    },
-    rules: Array.isArray(r.rules) ? r.rules : [],
-  };
+class ReplyPayloadIdentityTracker {
+  private readonly nextByRun = new Map<string, number>();
+
+  next(event: Record<string, unknown>, ctx: Record<string, unknown>): string {
+    const runId = readString(event.runId) ?? readString(ctx.runId);
+    if (!runId) return `reply-unidentified-${randomUUID()}`;
+    const key = `${readString(event.sessionKey) ?? readString(ctx.sessionKey) ?? "unknown"}:${runId}`;
+    const sequence = this.nextByRun.get(key) ?? 0;
+    this.nextByRun.delete(key);
+    this.nextByRun.set(key, sequence + 1);
+    if (this.nextByRun.size > 10_000) this.nextByRun.delete(this.nextByRun.keys().next().value as string);
+    return `reply:${key}:${sequence}`;
+  }
 }
 
-/**
- * @description 判断路由规则是否匹配当前渠道、方向、topic 与 account。
- * @param rule - 路由规则
- * @param channelId - 来源渠道 ID
- * @param direction - 入站或出站
- * @param topic - 可选 topic 过滤
- * @param accountId - 可选 account 过滤
- * @returns 是否命中
- */
-export function matchRule(
-  rule: RouterRule,
-  channelId: string,
-  direction: "inbound" | "outbound",
-  topic?: string,
-  accountId?: string,
-): boolean {
-  const m = rule.match;
-  if (m.channels?.length && !m.channels.includes(channelId)) return false;
-  if (m.direction && m.direction !== "both" && m.direction !== direction) return false;
-  if (m.topic && topic !== m.topic) return false;
-  if (m.accountId && accountId !== m.accountId) return false;
-  return true;
-}
-
-/**
- * @description 模板变量展开：将 {{channel}} 等占位符替换为实际上下文值。
- * @param t - 模板字符串
- * @param v - 变量表
- * @returns 展开后的字符串
- */
-export function tmpl(t: string, v: Record<string, string>): string {
-  return t.replace(/\{\{(\w+)\}\}/g, (_, k) => v[k] ?? `{{${k}}}`);
-}
-
-/**
- * @description 安全读取非空 trim 字符串。
- * @param value - 任意值。
- * @returns trim 后字符串或 `undefined`。
- * @throws 不抛出。
- */
 function readString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-/**
- * @description 从 Hook 上下文解析 accountId（含 agentAccountId 别名）。
- * @param ctx - Hook 上下文字典。
- * @returns accountId 或 `undefined`。
- * @throws 不抛出。
- */
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
 function resolveAccountId(ctx: Record<string, unknown>): string | undefined {
   return readString(ctx.accountId) ?? readString(ctx.agentAccountId);
 }
 
-/**
- * @description 从 event 或 metadata 解析 topic 过滤字段。
- * @param event - Hook 事件 payload。
- * @returns topic 或 `undefined`。
- * @throws 不抛出。
- */
 function resolveTopic(event: Record<string, unknown>): string | undefined {
-  const direct = readString(event.topic);
-  if (direct) return direct;
-  const metadata = event.metadata;
-  if (metadata && typeof metadata === "object") {
-    return readString((metadata as Record<string, unknown>).topic);
-  }
-  return undefined;
+  return readString(event.topic) ?? readString(record(event.metadata).topic);
 }
 
-/**
- * @description 从 event 提取非空 content 字符串。
- * @param event - Hook 事件 payload。
- * @returns content 或 `undefined`。
- * @throws 不抛出。
- */
 function resolveContent(event: Record<string, unknown>): string | undefined {
-  const content = event.content;
-  if (typeof content === "string" && content.trim().length > 0) {
-    return content;
-  }
-  return undefined;
+  return readString(event.content) ?? readString(event.text) ?? readString(record(event.message).content);
 }
 
-type PublishInboundFn = (params: {
-  channel: string;
-  content: string;
-  topic?: string;
-  accountId?: string;
-  to?: string;
-  metadata?: Record<string, unknown>;
-}) => void | Promise<void>;
-
-/**
- * @description 解析 publishInbound（兼容 api 直连与 runtime.channel.publishInbound）。
- * @param api - OpenClaw 插件 API。
- * @returns publish 函数或 `undefined`。
- * @throws 不抛出。
- */
-function resolvePublishInbound(api: OpenClawPluginApi): PublishInboundFn | undefined {
-  const direct = (api as OpenClawPluginApi & { publishInbound?: PublishInboundFn }).publishInbound;
-  if (typeof direct === "function") {
-    return direct;
-  }
-  const runtimePublish = (
-    api.runtime as { channel?: { publishInbound?: PublishInboundFn } } | undefined
-  )?.channel?.publishInbound;
-  return typeof runtimePublish === "function" ? runtimePublish : undefined;
+function resolveRouterDeliveryIdentity(event: Record<string, unknown>, ctx: Record<string, unknown>): string | undefined {
+  const metadata = record(event.metadata);
+  const router = record(metadata.router);
+  return readString(event.deliveryQueueId)
+    ?? readString(event.idempotencyKey)
+    ?? readString(metadata.idempotencyKey)
+    ?? readString(router.deliveryId)
+    ?? readString(ctx.deliveryQueueId);
 }
 
-/**
- * @description 执行规则中的 forward 动作（经 publishInbound 写目标渠道）。
- * @param api - OpenClaw 插件 API。
- * @param cfg - Router 配置（含 audit）。
- * @param params - 规则、渠道、内容与 dedupe 键材料。
- * @returns void
- * @throws 不抛出；publish 失败写 error 日志。
- */
-function executeForward(
-  api: OpenClawPluginApi,
-  cfg: RouterConfig,
-  params: {
-    rule: RouterRule;
-    channelId: string;
-    direction: "inbound" | "outbound";
-    content: string;
-    topic?: string;
-    accountId?: string;
-    sessionKey?: string;
-    runId?: string;
-    messageId?: string;
-  },
-): void {
-  const publish = resolvePublishInbound(api);
-  if (!publish) {
-    api.logger.warn("[router] publishInbound unavailable — skip forward");
-    return;
-  }
+const DIRECT_BROKER_CHANNELS = new Set(["mqtt", "mqtt-ws", "web-mqtt", "rabbitmq", "redis-stream", "rocketmq"]);
+const DIRECT_TARGET_PREFIX = "openclaw-direct-topic:v1:";
 
-  for (const action of params.rule.actions) {
-    if (action.type !== "forward") continue;
+function encodeOutboundTarget(channel: string, target: string): string {
+  return DIRECT_BROKER_CHANNELS.has(channel)
+    ? `${DIRECT_TARGET_PREFIX}${encodeURIComponent(target)}`
+    : target;
+}
 
-    const dedupeKey = buildRouteDedupeKey([
-      params.runId,
-      params.messageId,
-      params.rule.id,
-      params.direction,
-      action.target,
-      action.topic ?? "default",
-    ]);
-    if (dedupeCache.shouldSkip(dedupeKey)) {
-      if (cfg.audit?.logToConsole) {
-        api.logger.info(`[router] dedupe skip forward rule=${params.rule.id} direction=${params.direction}`);
-      }
-      continue;
+function resolveChannelSend(api: OpenClawPluginApi): ChannelSendFn {
+  return async (params, signal) => {
+    const target = readString(params.to) ?? readString(params.topic);
+    if (!target) throw new Error(`router target ${params.channel} requires action.to or action.topic`);
+    const idempotencyKey = readString(params.metadata?.idempotencyKey);
+    if (!idempotencyKey) throw new Error("router delivery is missing idempotencyKey");
+    const adapter = await api.runtime.channel.outbound.loadAdapter(params.channel);
+    if (!adapter) throw new Error(`router target channel adapter is unavailable: ${params.channel}`);
+    const context = {
+      cfg: api.runtime.config.current() as never,
+      to: encodeOutboundTarget(params.channel, target),
+      text: params.content,
+      accountId: params.accountId ?? null,
+      deliveryQueueId: idempotencyKey,
+      abortSignal: signal,
+    };
+    if (adapter.sendText) {
+      await adapter.sendText(context);
+      return;
     }
+    if (adapter.sendFormattedText) {
+      await adapter.sendFormattedText(context);
+      return;
+    }
+    if (adapter.sendPayload) {
+      await adapter.sendPayload({ ...context, payload: { text: params.content } });
+      return;
+    }
+    throw new Error(`router target channel has no text outbound method: ${params.channel}`);
+  };
+}
 
-    const subj = tmpl(action.topic ?? `openclaw/router/${params.channelId}/${params.direction}`, {
-      channel: params.channelId,
-      direction: params.direction,
-      account: params.accountId ?? "default",
+function resolveEvent(eventValue: unknown, ctxValue: unknown, direction: RouteDirection): RouteEvent | null {
+  const event = record(eventValue);
+  const ctx = record(ctxValue);
+  const content = resolveContent(event);
+  if (!content) return null;
+  const metadata = record(event.metadata);
+  const messageId = readString(ctx.messageId) ?? readString(event.messageId) ?? readString(event.id);
+  const runId = readString(ctx.runId) ?? readString(event.runId);
+  const stableIdentity = resolveRouterDeliveryIdentity(event, ctx) ?? messageId ?? runId;
+  return {
+    channelId: readString(ctx.channelId) ?? readString(event.channelId) ?? "unknown",
+    direction,
+    content,
+    topic: resolveTopic(event),
+    accountId: resolveAccountId(ctx),
+    recipient: readString(event.to) ?? readString(event.from) ?? readString(ctx.conversationId) ?? readString(ctx.senderId),
+    sessionKey: readString(ctx.sessionKey),
+    runId,
+    messageId,
+    eventId: stableIdentity ?? `unidentified-${randomUUID()}`,
+    metadata,
+  };
+}
+
+function readTrace(metadata: Record<string, unknown>): RouterTrace {
+  const router = record(metadata.router);
+  const hops = Array.isArray(router.hops)
+    ? router.hops.filter((item): item is string => typeof item === "string")
+    : [];
+  return { version: 1, hops };
+}
+
+/**
+ * 展开 Router Topic 模板中的 `{{name}}` 占位符。
+ *
+ * 未提供的变量保持原样，便于运维从最终 Topic 识别配置错误，而不是静默替换为空字符串并
+ * 把消息投递到意外目标。
+ */
+export function tmpl(template: string, values: Record<string, string>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => values[key] ?? `{{${key}}}`);
+}
+
+function payloadForAction(
+  event: RouteEvent,
+  rule: RouterRule,
+  action: RouteAction,
+  actionIndex: number,
+  config: RouterConfig,
+): PublishInboundParams | null {
+  const trace = readTrace(event.metadata);
+  const hop = `${rule.id}:${actionIndex}:${action.type}:${action.target}`;
+  if (trace.hops.length >= config.delivery.maxHops || trace.hops.includes(hop)) return null;
+  const metadata = {
+    ...event.metadata,
+    sessionKey: event.sessionKey,
+    sourceChannel: event.channelId,
+    ruleId: rule.id,
+    direction: event.direction,
+    runId: event.runId,
+    messageId: event.messageId,
+    router: { version: 1, hops: [...trace.hops, hop] },
+  };
+  if (action.type === "forward") {
+    const topic = tmpl(action.topic ?? `openclaw/router/${event.channelId}/${event.direction}`, {
+      channel: event.channelId,
+      direction: event.direction,
+      account: event.accountId ?? "default",
     });
-
-    void Promise.resolve(
-      publish({
-        channel: action.target,
-        content: params.content,
-        topic: subj,
-        metadata: {
-          sessionKey: params.sessionKey,
-          sourceChannel: params.channelId,
-          ruleId: params.rule.id,
-          topic: subj,
-          direction: params.direction,
-          runId: params.runId,
-          messageId: params.messageId,
-        },
-      }),
-    )
-      .then(() => {
-        if (cfg.audit?.logToConsole) {
-          api.logger.info(`[router] → ${action.target}/${subj} (${params.direction})`);
-        }
-      })
-      .catch((err: unknown) => api.logger.error(`[router] Forward failed: ${String(err)}`));
+    return { channel: action.target, content: event.content, topic, to: topic, metadata: { ...metadata, topic } };
   }
+  return {
+    channel: action.target,
+    content: event.content,
+    ...(action.accountId ? { accountId: action.accountId } : {}),
+    ...(action.to ?? event.recipient ? { to: action.to ?? event.recipient } : {}),
+    metadata,
+  };
 }
 
-/**
- * @description 执行规则中的 reply-via 动作（将回复转发至另一渠道）。
- * @param api - OpenClaw 插件 API。
- * @param cfg - Router 配置（含 audit）。
- * @param params - 规则、渠道、内容与 dedupe 键材料。
- * @returns void
- * @throws 不抛出；publish 失败写 error 日志。
- */
-function executeReplyVia(
-  api: OpenClawPluginApi,
-  cfg: RouterConfig,
-  params: {
-    rule: RouterRule;
-    channelId: string;
-    content: string;
-    sessionKey?: string;
-    runId?: string;
-    messageId?: string;
-  },
-): void {
-  const publish = resolvePublishInbound(api);
-  if (!publish) {
-    api.logger.warn("[router] publishInbound unavailable — skip reply-via");
-    return;
-  }
-
-  for (const action of params.rule.actions) {
-    if (action.type !== "reply-via") continue;
-
-    const dedupeKey = buildRouteDedupeKey([
-      params.runId,
-      params.messageId,
-      params.rule.id,
-      "reply-via",
-      action.target,
-      action.accountId ?? "default",
-      action.to ?? "",
-    ]);
-    if (dedupeCache.shouldSkip(dedupeKey)) {
-      if (cfg.audit?.logToConsole) {
-        api.logger.info(`[router] dedupe skip reply-via rule=${params.rule.id}`);
-      }
-      continue;
+async function routeEvent(
+  dispatcher: ReliableRouteDispatcher,
+  config: RouterConfig,
+  event: RouteEvent,
+  actionType: RouteAction["type"],
+): Promise<void> {
+  const deliveries: Array<Parameters<ReliableRouteDispatcher["enqueueBatch"]>[0][number]> = [];
+  for (const rule of config.rules) {
+    if (!matchRule(rule, event.channelId, event.direction, event.topic, event.accountId)) continue;
+    for (const [actionIndex, action] of rule.actions.entries()) {
+      if (action.type !== actionType) continue;
+      const payload = payloadForAction(event, rule, action, actionIndex, config);
+      if (!payload) continue;
+      const dedupeKey = stableDeliveryKey({
+        eventId: event.eventId,
+        channelId: event.channelId,
+        accountId: event.accountId,
+        direction: event.direction,
+        ruleId: rule.id,
+        actionIndex,
+        action,
+      });
+      payload.metadata = {
+        ...payload.metadata,
+        idempotencyKey: dedupeKey,
+        router: {
+          ...record(payload.metadata?.router),
+          deliveryId: dedupeKey,
+        },
+      };
+      deliveries.push({ dedupeKey, ruleId: rule.id, actionType: action.type, payload });
     }
-
-    void Promise.resolve(
-      publish({
-        channel: action.target,
-        content: params.content,
-        accountId: action.accountId,
-        to: action.to,
-        metadata: {
-          sessionKey: params.sessionKey,
-          sourceChannel: params.channelId,
-          ruleId: params.rule.id,
-          runId: params.runId,
-          messageId: params.messageId,
-        },
-      }),
-    )
-      .then(() => {
-        if (cfg.audit?.logToConsole) {
-          api.logger.info(`[router] ↪ ${action.target}/${action.accountId ?? "default"}`);
-        }
-      })
-      .catch((err: unknown) => api.logger.error(`[router] Reply-via failed: ${String(err)}`));
   }
+  if (deliveries.length > 0) await dispatcher.enqueueBatch(deliveries);
 }
 
-// ============================================================================
-// 插件入口
-// ============================================================================
+function writeJson(res: { writeHead: (status: number, headers?: Record<string, string>) => void; end: (body?: string) => void }, status: number, body: unknown): void {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  res.end(JSON.stringify(body));
+}
 
-/** @description Router 插件 definePluginEntry 注册入口。 */
-export default definePluginEntry({
+function deadLetterSummary(task: Awaited<ReturnType<ReliableRouteDispatcher["deadLetters"]>>[number]): Record<string, unknown> {
+  return {
+    id: task.id,
+    ruleId: task.ruleId,
+    actionType: task.actionType,
+    target: task.payload.channel,
+    to: task.payload.to ?? task.payload.topic,
+    contentBytes: Buffer.byteLength(task.payload.content, "utf8"),
+    attempts: task.attempts,
+    createdAt: task.createdAt,
+    nextAttemptAt: task.nextAttemptAt,
+    lastError: task.lastError?.slice(0, 500),
+  };
+}
+
+const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "router",
   name: "Message Router",
-  description: "企业级消息路由引擎 — 跨渠道 IM↔MQ 消息转发",
+  description: "Durable cross-channel routing with retry, DLQ, dedupe, audit, and loop protection",
   register(api: OpenClawPluginApi) {
-    const cfg = getConfig(api);
-    if (!cfg.enabled) {
-      api.logger.info("[router] Disabled");
+    if (api.registrationMode !== "full") return;
+    const config = resolveRouterConfig(api);
+    if (!config.enabled) {
+      api.logger.info("[router] disabled");
       return;
     }
 
-    api.logger.info(`[router] Initialized · ${cfg.rules.length} rule(s)`);
-
-    api.on(
-      "message_received",
-      (event, ctx) => {
-        const channelId = readString(ctx.channelId) ?? "unknown";
-        const accountId = resolveAccountId(ctx as Record<string, unknown>);
-        const topic = resolveTopic(event as Record<string, unknown>);
-        const content = resolveContent(event as Record<string, unknown>);
-        if (!content) return;
-
-        if (cfg.audit?.logToConsole) {
-          api.logger.info(`[router] message_received channel=${channelId} account=${accountId ?? "-"}`);
-        }
-
-        for (const rule of cfg.rules) {
-          if (!matchRule(rule, channelId, "inbound", topic, accountId)) continue;
-          executeForward(api, cfg, {
-            rule,
-            channelId,
-            direction: "inbound",
-            content,
-            topic,
-            accountId,
-            sessionKey: readString(ctx.sessionKey),
-            runId: readString(ctx.runId),
-            messageId: readString(ctx.messageId),
-          });
-        }
-      },
-      { priority: 50 },
-    );
-
-    api.on(
-      "message_sent",
-      (event, ctx) => {
-        if ((event as { success?: boolean }).success === false) return;
-
-        const channelId = readString(ctx.channelId) ?? "unknown";
-        const accountId = resolveAccountId(ctx as Record<string, unknown>);
-        const topic = resolveTopic(event as Record<string, unknown>);
-        const content = resolveContent(event as Record<string, unknown>);
-        if (!content) return;
-
-        if (cfg.audit?.logToConsole) {
-          api.logger.info(`[router] message_sent channel=${channelId} account=${accountId ?? "-"}`);
-        }
-
-        for (const rule of cfg.rules) {
-          if (!matchRule(rule, channelId, "outbound", topic, accountId)) continue;
-          executeForward(api, cfg, {
-            rule,
-            channelId,
-            direction: "outbound",
-            content,
-            topic,
-            accountId,
-            sessionKey: readString(ctx.sessionKey),
-            runId: readString(ctx.runId),
-            messageId: readString(ctx.messageId),
-          });
-        }
-      },
-      { priority: 50 },
-    );
-
-    api.on(
-      "reply_dispatch",
-      (event, ctx) => {
-        const hookCtx = ctx as Record<string, unknown>;
-        const channelId = readString(hookCtx.channelId) ?? "unknown";
-        const accountId = resolveAccountId(hookCtx);
-        const topic = resolveTopic(event as Record<string, unknown>);
-        const content = resolveContent(event as Record<string, unknown>);
-        if (!content) return;
-
-        for (const rule of cfg.rules) {
-          if (!matchRule(rule, channelId, "outbound", topic, accountId)) continue;
-          const hasReplyVia = rule.actions.some((a) => a.type === "reply-via");
-          if (!hasReplyVia) continue;
-
-          executeReplyVia(api, cfg, {
-            rule,
-            channelId,
-            content,
-            sessionKey: readString(hookCtx.sessionKey),
-            runId: readString(hookCtx.runId),
-            messageId: readString(hookCtx.messageId),
-          });
-        }
-      },
-      { priority: 50 },
-    );
-
-    api.on("gateway_stop", () => {
-      dedupeCache.clear();
-      api.logger.info("[router] Cleared route dedupe cache on gateway_stop");
+    const store = new DurableRouteStore(resolveRouterStateDir(config), config);
+    const dispatcher = new ReliableRouteDispatcher(api, config, store, resolveChannelSend(api));
+    const replyIdentities = new ReplyPayloadIdentityTracker();
+    api.registerService({
+      id: "openclaw-router-delivery",
+      start: async () => dispatcher.start(),
+      stop: async () => dispatcher.stop(),
     });
 
-    api.logger.info("[router] Registered — message_received / message_sent / reply_dispatch hooks");
+    api.on("message_received", async (event, ctx) => {
+      const route = resolveEvent(event, ctx, "inbound");
+      if (route) await routeEvent(dispatcher, config, route, "forward");
+    }, { priority: 50 });
+
+    api.on("message_sent", async (event, ctx) => {
+      if ((event as { success?: boolean }).success === false) return;
+      const eventRecord = record(event);
+      const ctxRecord = record(ctx);
+      const identity = resolveRouterDeliveryIdentity(eventRecord, ctxRecord)
+        ?? readString(eventRecord.runId)
+        ?? readString(eventRecord.messageId);
+      if (await dispatcher.ownsIdentity(identity)) return;
+      const route = resolveEvent(event, ctx, "outbound");
+      if (route) await routeEvent(dispatcher, config, route, "forward");
+    }, { priority: 50 });
+
+    api.on("reply_payload_sending", async (event, ctx) => {
+      const replyEvent = {
+        ...record(event),
+        ...record(record(event).payload),
+        channelId: readString(record(event).channel),
+        runId: readString(record(event).runId),
+        sessionKey: readString(record(event).sessionKey),
+        messageId: replyIdentities.next(record(event), record(ctx)),
+      };
+      const route = resolveEvent(replyEvent, ctx, "outbound");
+      if (route) await routeEvent(dispatcher, config, route, "reply-via");
+    }, { priority: 50 });
+
+    api.registerHttpRoute({
+      path: "/router/status",
+      auth: "plugin",
+      match: "exact",
+      handler: async (req, res) => {
+        if ((req.method ?? "GET") !== "GET") {
+          res.setHeader("Allow", "GET");
+          writeJson(res, 405, { ok: false, error: "Method Not Allowed" });
+          return;
+        }
+        writeJson(res, 200, { ok: true, data: await dispatcher.status() });
+      },
+    });
+
+    api.registerHttpRoute({
+      path: "/router/health",
+      auth: "plugin",
+      match: "exact",
+      handler: async (req, res) => {
+        if ((req.method ?? "GET") !== "GET") {
+          res.setHeader("Allow", "GET");
+          writeJson(res, 405, { ok: false, error: "Method Not Allowed" });
+          return;
+        }
+        const status = await dispatcher.status();
+        writeJson(res, status.healthy ? 200 : 503, { ok: status.healthy, data: status });
+      },
+    });
+
+    api.registerHttpRoute({
+      path: "/router/dlq",
+      auth: "plugin",
+      match: "exact",
+      handler: async (req, res) => {
+        if ((req.method ?? "GET") !== "GET") {
+          res.setHeader("Allow", "GET");
+          writeJson(res, 405, { ok: false, error: "Method Not Allowed" });
+          return;
+        }
+        const url = new URL(req.url ?? "/router/dlq", "http://localhost");
+        const limit = Math.min(1_000, Math.max(1, Number(url.searchParams.get("limit") ?? 100) || 100));
+        writeJson(res, 200, { ok: true, data: (await dispatcher.deadLetters(limit)).map(deadLetterSummary) });
+      },
+    });
+
+    api.registerHttpRoute({
+      path: "/router/audit",
+      auth: "plugin",
+      match: "exact",
+      handler: async (req, res) => {
+        if ((req.method ?? "GET") !== "GET") {
+          res.setHeader("Allow", "GET");
+          writeJson(res, 405, { ok: false, error: "Method Not Allowed" });
+          return;
+        }
+        const url = new URL(req.url ?? "/router/audit", "http://localhost");
+        const limit = Math.min(1_000, Math.max(1, Number(url.searchParams.get("limit") ?? 100) || 100));
+        writeJson(res, 200, { ok: true, data: await dispatcher.auditEntries(limit) });
+      },
+    });
+
+    api.registerHttpRoute({
+      path: "/router/dlq/replay",
+      auth: "plugin",
+      match: "exact",
+      handler: async (req, res) => {
+        if (req.method !== "POST") {
+          res.setHeader("Allow", "POST");
+          writeJson(res, 405, { ok: false, error: "Method Not Allowed" });
+          return;
+        }
+        const url = new URL(req.url ?? "/router/dlq/replay", "http://localhost");
+        const limit = Math.min(1_000, Math.max(1, Number(url.searchParams.get("limit") ?? 100) || 100));
+        writeJson(res, 202, { ok: true, data: { replayed: await dispatcher.replayDeadLetters(limit) } });
+      },
+    });
+
+    api.logger.info(`[router] registered ${config.rules.length} rule(s), durable delivery enabled`);
   },
 });
+
+export default plugin;

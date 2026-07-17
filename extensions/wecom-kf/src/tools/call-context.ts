@@ -85,5 +85,8 @@ export function resolveKfAgentAccount(
             }),
             apiBaseUrl: kfResolved.config.apiBaseUrl,
         },
+        // KF flat 配置不会经过 legacy agent 解析器；必须在这里显式透传，固定出口代理和
+        // 超时/重试策略才会真正抵达所有 OpenAPI 调用。
+        network: kfResolved.config.network,
     };
 }

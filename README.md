@@ -2,7 +2,7 @@
 
 # openclaw-plugins
 
-**29 个企业级插件。一个统一生态。**
+**28 个企业级插件。一个统一生态。**
 
 *IM 渠道 · 消息队列 · AI 能力 · 基础设施 — 生产级品质，独立发布。*
 
@@ -31,7 +31,7 @@
 
 ## 📖 简介
 
-**openclaw-plugins** 是 [OpenClaw](https://github.com/partme-ai/openclaw) 的官方企业级插件生态 — 一个 **pnpm monorepo**，包含 **29 个独立发布的 npm 包**，统一使用 `@partme.ai` scope，由 **PartMe.AI** 团队维护。
+**openclaw-plugins** 是 [OpenClaw](https://github.com/partme-ai/openclaw) 的官方企业级插件生态 — 一个 **pnpm monorepo**，包含 **28 个独立发布的 npm 包**，统一使用 `@partme.ai` scope，由 **PartMe.AI** 团队维护。
 
 OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息队列**、**RAG 知识库**、**长期记忆**、**可观测性** 与 **企业基础设施** 连接成闭环的多平台信息流。
 
@@ -62,9 +62,9 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 
 #### **绝不修改渠道代码**
 
-> OpenClaw 的 `api.on("agent_end", ctx)` 对**所有**渠道触发。非渠道插件可观察全部消息流。
+> OpenClaw 的全局消息与回复 Hook 对**所有**渠道触发。非渠道插件可在宿主权限策略允许的范围内观察消息流。
 
-**router** 与 **bridge** 位于渠道插件外部，监听 `agent_end` 与 `before_prompt_build`，实现跨渠道路由、审计转发与上下文注入，无需 fork wecom、mqtt 或任何上游渠道。
+**router** 与 **bridge** 位于渠道插件外部，监听 OpenClaw 2026.7.1 的消息与回复 Hook，实现跨渠道路由、审计转发与上下文注入，无需 fork wecom、mqtt 或任何上游渠道。
 
 #### **message-sdk 双路径（Wire vs Transcript）**
 
@@ -75,7 +75,7 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 
 两路径共享 `UnifiedMessage`、去重与回复辅助。详见 [message-sdk 架构](./extensions/message-sdk/docs/ARCHITECTURE.md)。
 
-#### 平台集成渠道 SDK 复用（douyin · meituan · rednode）
+#### 平台 Webhook 渠道 SDK 复用（douyin）
 
 公域 Webhook 渠道采用 **Transcript 路径**（与 wecom-kf / gotify 对齐），复用 message-sdk 能力如下：
 
@@ -102,13 +102,13 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 | 层级 | 分类 | 数量 | 代表包 | 核心能力 |
 |------|------|------|--------|----------|
 | L1 | **IM（自建）** | 6 | wecom、wechat、wecom-kf、wechat-ipad、douyin、gotify | Bot/Webhook/Agent · 媒体 · 去重 · Skills |
-| L1 | **IM（桥接）** | 1 + 21 上游 | openclaw-bridge | 上下文注入 · UnifiedMessage MQ 转发 · 21 个内置渠道 |
-| L1 | **消息队列** | 9 | mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq、cluster | topicBindings · Wire 分发 · 幂等 · 多协议发现 |
+| L1 | **跨渠道观测桥** | 1 + 27 来源预设 | bridge | 上下文注入 · `message_received`/`message_sent` · UnifiedMessage MQ 镜像 |
+| L1 | **消息队列** | 8 | mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq | topicBindings · Wire 分发 · 幂等 · 多协议接入 |
 | L2 | **AI 能力** | 5 | knowledge、memory、router、openmem、message-sdk | RAG · L0–L3 记忆 · 路由规则 · OpenMem HTTP 桥 · 统一线格式 |
 | L2–L4 | **基础设施** | 5 | nacos、prometheus、tracing、oauth2、mtls | 配置中心 · 指标 · OTel · 认证 · mTLS |
-| — | **平台集成** | 3 | amap、meituan、rednode | POI/店铺 Webhook · 小红书双模式 |
+| — | **平台集成** | 3 | amap、meituan、rednode | 高德地点工具 · 美团 MTOp 白名单工具 · 小红书 Ark 白名单工具 |
 
-**完整插件矩阵**（29 个包、npm 名、功能说明）：[架构设计 — 插件总览](./doc/OpenClaw-Plugins-Architecture_CN.md)。
+**完整插件矩阵**（28 个包、npm 名、功能说明）：[架构设计 — 插件总览](./doc/OpenClaw-Plugins-Architecture_CN.md)。
 
 ---
 
@@ -118,9 +118,9 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 |------|--------------|
 | **企业 IM 智能客服** | wecom / wecom-kf + knowledge + memory + router |
 | **业务系统 ↔ Agent** | mqtt / rabbitmq + message-sdk Wire 路径 |
-| **多云配置与注册** | nacos + cluster |
+| **配置中心与节点发现** | nacos |
 | **生产可观测** | prometheus + tracing |
-| **全渠道接入且不 fork 上游** | openclaw-bridge + 官方钉钉 / 飞书 / QQ 连接器 |
+| **全渠道接入且不 fork 上游** | bridge + 官方钉钉 / 飞书 / QQ 连接器 |
 | **本地优先外部记忆** | openmem + OpenMem 侧车（端口 3317） |
 | **移动端推送告警** | gotify + prometheus / 自定义发布者 |
 
@@ -166,8 +166,8 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
                              │
 ┌────────────────────────────▼────────────────────────────────┐
 │  第一层 — 渠道层（无需修改渠道代码）                           │
-│  IM：wecom wechat wecom-kf gotify … + bridge（21 上游）      │
-│  MQ：mqtt rabbitmq redis-stream rocketmq stomp cluster …    │
+│  IM：wecom wechat wecom-kf gotify … + bridge（22 上游）      │
+│  MQ：mqtt rabbitmq redis-stream rocketmq stomp …            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -175,7 +175,7 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 
 ```
 openclaw-plugins/
-├── extensions/              # 29 个 npm 包（不含 _template）
+├── extensions/              # 28 个 npm 包（不含 _template）
 │   ├── wecom/ mqtt/ …         # 渠道与能力插件
 │   └── message-sdk/           # 共享库（非 Gateway 插件）
 ├── sdk/                       # 多语言消息 SDK（TypeScript、Go、Java、Python）
@@ -204,20 +204,20 @@ openclaw-plugins/
 
 ```
 用户 @企业微信 → [wecom] → Agent → 回复企业微信
-                              └── [router] agent_end → forward-copy → [mqtt] 审计话题 → SCRM
+                              └── [router] message/reply hook → forward → [mqtt] 审计话题 → SCRM
 ```
 
 **流 2 — MQ 入站（业务系统 → Agent → IM 回复）**
 
 ```
 监控系统 → MQTT 发布 → [mqtt] → Agent → 同话题回复
-                              └── [router] agent_end → reply-via:wecom → 运维收到告警
+                              └── [router] message/reply hook → reply-via:wecom → 运维收到告警
 ```
 
 **流 3 — 增强（每次对话）**
 
 ```
-任意消息 → [router] before_prompt_build
+任意消息 → [bridge] before_prompt_build
              ├─ [knowledge] 自动检索 → 注入 system 上下文
              └─ [memory] 自动召回 → 注入用户历史
            → Agent 无需显式 tool call 即获得 RAG + 记忆
@@ -234,9 +234,9 @@ openclaw-plugins/
 | 分类 | 包数量 | 亮点 |
 |------|--------|------|
 | **IM（自建）** | 6 | 企业微信双模式 · 微信公众号 · 企业微信客服 · 微信 iPad · 抖音 · Gotify 推送 |
-| **IM（桥接）** | 1 | 21 个上游渠道统一配置 — 见 [bridge README](./extensions/bridge/README.zh-CN.md) |
+| **IM（桥接）** | 1 | 22 个上游渠道能力记录 — 见 [bridge README](./extensions/bridge/README.zh-CN.md) |
 | **AI 与路由** | 5 | knowledge · memory · router · openmem · message-sdk |
-| **消息队列** | 9 | MQTT/WebSocket/STOMP/RabbitMQ/Redis/RocketMQ + Web 变体 + 集群发现 |
+| **消息队列** | 8 | MQTT/WebSocket/STOMP/RabbitMQ/Redis/RocketMQ + Web 变体 |
 | **基础设施** | 5 | nacos · prometheus · tracing · oauth2 · mtls |
 | **平台集成** | 3 | amap · meituan · rednode（小红书）|
 
@@ -270,7 +270,7 @@ openclaw-plugins/
 
 - **Node.js** >= 22.0.0
 - **pnpm** >= 9（Monorepo 贡献者）
-- **OpenClaw** >= 2026.4.12 — [OpenClaw 仓库](https://github.com/partme-ai/openclaw)
+- **OpenClaw** >= 2026.7.1 — [OpenClaw 仓库](https://github.com/partme-ai/openclaw)
 
 #### 1. 安装 OpenClaw Gateway
 
@@ -361,7 +361,7 @@ pnpm install
 
 #### 1. 跨渠道路由（router）
 
-- 监听**所有**渠道的 `agent_end`
+- 监听所有渠道的 `message_received`、`message_sent` 与 `reply_payload_sending`
 - 规则引擎：按 channel / direction / topic / accountId 匹配，支持 `forward` 和 `reply-via` 动作
 - 模板变量展开（`{{channel}}`、`{{topic}}` 等）支持动态路由目标
 - `RouteDedupeCache`（TTL + 容量上限）防止 webhook 重试导致重复路由
@@ -371,9 +371,9 @@ pnpm install
 
 - 5 种 embedding 提供商（OpenAI、DashScope、智谱、千帆、Ollama）
 - 3 种重排序提供商（Ollama、Jina、智谱）
-- 3 种向量存储（sqlite-vec、zvec、zvec-native）
-- 混合检索（向量相似度 + 关键词搜索）、重排序、意图门控
-- 与 router 配合时通过 `before_prompt_build` 自动注入
+- 2 种本地向量存储（sqlite-vec、纯 JS zvec），按账号与 bot/agent namespace 隔离
+- 混合检索（向量相似度 + FTS5 关键词搜索）、可选重排序、意图门控和有界 Prompt 注入
+- 独立注册 `before_prompt_build`；文件摄取默认关闭且仅允许 owner 访问白名单根目录
 
 #### 3. 长期记忆（memory + openmem）
 
@@ -385,20 +385,18 @@ pnpm install
 - Wire JSON 信封 v1，兼容纯文本
 - 3 种分发模式：`reply-pipeline`（默认 Wire 信封）、`embedded-agent`（进程内）、`subagent`（子 Agent）
 - 共享 `topicBindings`、幂等缓存（TTL-based `IdempotencyCache`）
-- 插件：mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq、cluster
-- 插件：mqtt、rabbitmq、redis-stream、rocketmq、stomp、web-mqtt、web-stomp、cluster
+- 插件：mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq
 
 #### 5. 企业基础设施
 
-- **cluster**：8 种可插拔发现后端（Consul、DNS SRV、Etcd、Eureka、mDNS、Nacos、Redis、Static），支持自注册、TTL 心跳与拓扑变更回调
 - **nacos**：Spring Cloud 兼容配置合并、服务注册、集群发现（[Nacos 文档](./doc/nacos/zh/OpenClaw-Nacos-Guide_CN.md)）
-- **oauth2**：Sa-Token、Keycloak、Auth0、Azure AD、通用 JWT/introspection
+- **oauth2**：基于 `openid-client` 对接标准 OAuth2/OIDC 服务
 - **mtls**：客户端证书白名单、保护路径、透传模式
 
 #### 6. 可观测性
 
-- **prometheus**：端口 9090、scrape 认证、模型用量直方图、Grafana 仪表盘
-- **tracing**：OpenTelemetry — log / file / OTLP / SkyWalking 后端、采样、跨度限制
+- **prometheus**：Gateway `/metrics` 精确路由、scrape Bearer 认证、模型用量直方图、健康/诊断端点与 Grafana 仪表盘
+- **tracing**：OpenTelemetry 兼容模型 — log / file / OTLP 后端、确定性采样、有界缓冲与跨度限制
 
 ---
 
@@ -440,9 +438,10 @@ export { default } from "./src/index.js";
 | 模式 | 插件类型 | 示例 |
 |------|----------|------|
 | 完整 channel + channelConfigs schema | 渠道插件 | wecom、mqtt、gotify、rabbitmq |
-| 简单 channel 配置 | 轻量渠道 | amap、meituan、wechat-ipad |
+| 严格外部桥接 channel | 默认关闭、显式风险确认 | wechat-ipad |
+| 纯 Web API 工具 | 能力插件 | amap、meituan、rednode |
 | 纯能力（无 channels） | 基础设施 / AI | knowledge、prometheus、nacos、tracing |
-| 最小化（`additionalProperties: true`） | Router、bridge | router、bridge |
+| 严格配置（`additionalProperties: false`） | Router、bridge、tracing | router、bridge、tracing |
 
 要求：TypeScript strict、Zod 校验、同目录测试、80%+ 覆盖率目标。完整指南：[贡献指南](./doc/OpenClaw-Plugins-Contributing_CN.md)。
 
@@ -476,7 +475,7 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # 预发布
 - **Node.js** 22+（ESM）
 - **TypeScript** 5.x strict
 - **pnpm** 9 workspaces
-- **OpenClaw** Plugin API >= 2026.4.6
+- **OpenClaw** Plugin API >= 2026.7.1
 
 #### 构建与测试
 
@@ -501,11 +500,9 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # 预发布
 
 | 项 | 当前 |
 |----|------|
-| OpenClaw peer 依赖 | >= 2026.4.12 |
-| message-sdk | 2026.5.24 |
-| openclaw-nacos | 2026.5.24 |
-| openclaw-gotify | 2026.5.22 |
-| 多数活跃插件 | 2026.5.20 |
+| OpenClaw peer 依赖 | >= 2026.7.1 |
+| message-sdk | 2026.7.1 |
+| 28 个 npm 模块 | 2026.7.1 |
 | 版本策略 | `YYYY.M.D`（活跃）· semver（稳定）· 预发布 `--tag next` |
 
 npm 已发布版本：[@partme.ai on npm](https://www.npmjs.com/search?q=%40partme.ai)。
@@ -524,7 +521,7 @@ npm 已发布版本：[@partme.ai on npm](https://www.npmjs.com/search?q=%40part
 | [Nacos 指南](./doc/nacos/zh/OpenClaw-Nacos-Guide_CN.md) | 配置中心与服务注册 |
 | [WeCom 配置](./doc/wecom/OpenClaw-WeCom-Configuration.md) | 企业微信完整配置 |
 | [WeCom 联调测试](./doc/wecom/OpenClaw-WeCom-Testing.md) | 主动发消息、多 Bot、CLI 联调 |
-| [Bridge README](./extensions/bridge/README.zh-CN.md) | 21 渠道统一配置 |
+| [Bridge README](./extensions/bridge/README.zh-CN.md) | 27 个渠道预设、官方 Hook 契约与真实安装边界 |
 | [文档索引](./doc/README.md) | 全部专题指南（prometheus、gotify、rocketmq 等） |
 
 ---

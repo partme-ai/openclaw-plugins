@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  getWebMqttIdempotencyCache,
+  getWebMqttClaimableDedupe,
   resolveWebMqttInboundIdempotencyKey,
 } from "../src/shared/wire-helpers.js";
 import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
@@ -17,44 +17,46 @@ describe("resolvePayloadMode (shared)", () => {
 });
 
 describe("resolveWebMqttInboundIdempotencyKey", () => {
-  it("prefers MQTT messageId when present", () => {
+  it("does not use reusable MQTT packet messageId", () => {
     const key = resolveWebMqttInboundIdempotencyKey({
       clientId: "c1",
       topic: "devices/a/in",
       payload: Buffer.from("hello"),
       messageId: "msg-42",
     });
-    expect(key).toBe("msg-42");
+    expect(key).toBeUndefined();
   });
 
-  it("falls back to client+topic+payload fingerprint", () => {
+  it("does not dedupe repeated plain text by content", () => {
     const key = resolveWebMqttInboundIdempotencyKey({
       clientId: "c1",
       topic: "devices/a/in",
       payload: Buffer.from("hello"),
     });
-    expect(key).toBe("c1:devices/a/in:hello");
+    expect(key).toBeUndefined();
   });
 
-  it("uses provided payloadText without re-decoding buffer", () => {
+  it("uses an explicit application idempotency key", () => {
     const key = resolveWebMqttInboundIdempotencyKey(
       {
         clientId: "c1",
         topic: "t",
         payload: Buffer.from("ignored"),
       },
-      "from-text",
+      JSON.stringify({ text: "hello", idempotencyKey: "request-42" }),
     );
-    expect(key).toBe("c1:t:from-text");
+    expect(key).toBe("c1:t:request-42");
   });
 });
 
-describe("getWebMqttIdempotencyCache", () => {
-  it("returns singleton and dedupes keys", () => {
-    const a = getWebMqttIdempotencyCache();
-    const b = getWebMqttIdempotencyCache();
+describe("getWebMqttClaimableDedupe", () => {
+  it("returns singleton and commits successful claims", async () => {
+    const a = getWebMqttClaimableDedupe();
+    const b = getWebMqttClaimableDedupe();
     expect(a).toBe(b);
-    expect(a.remember("web-mqtt-dedup-1")).toBe(false);
-    expect(a.remember("web-mqtt-dedup-1")).toBe(true);
+    const key = `web-mqtt-dedup-${Date.now()}`;
+    expect((await a.claim(key)).kind).toBe("claimed");
+    await a.commit(key);
+    expect((await a.claim(key)).kind).toBe("duplicate");
   });
 });

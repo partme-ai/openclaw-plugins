@@ -14,4 +14,10 @@ describe("expandEnvPlaceholdersInValue", () => {
       expandEnvPlaceholdersInValue({ a: { b: "p-${P}" } }, env),
     ).toEqual({ a: { b: "p-1" } });
   });
+
+  it("fails closed when a variable has no value and no default", () => {
+    expect(() => expandEnvPlaceholdersInValue("http://${MISSING}/api", {})).toThrow(
+      "Missing environment variable: MISSING",
+    );
+  });
 });

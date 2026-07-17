@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { getWebStompIdempotencyCache } from "../src/shared/wire-helpers.js";
+import { getWebStompClaimableDedupe } from "../src/shared/wire-helpers.js";
 import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 
 describe("resolvePayloadMode (shared)", () => {
@@ -13,14 +13,16 @@ describe("resolvePayloadMode (shared)", () => {
   });
 });
 
-describe("getWebStompIdempotencyCache", () => {
+describe("getWebStompClaimableDedupe", () => {
   it("returns singleton cache", () => {
-    expect(getWebStompIdempotencyCache()).toBe(getWebStompIdempotencyCache());
+    expect(getWebStompClaimableDedupe()).toBe(getWebStompClaimableDedupe());
   });
 
-  it("dedupes repeated keys", () => {
-    const cache = getWebStompIdempotencyCache();
-    expect(cache.remember("web-stomp-key-1")).toBe(false);
-    expect(cache.remember("web-stomp-key-1")).toBe(true);
+  it("commits successful claims and reports duplicates", async () => {
+    const cache = getWebStompClaimableDedupe();
+    const key = `web-stomp-key-${Date.now()}`;
+    expect((await cache.claim(key)).kind).toBe("claimed");
+    await cache.commit(key);
+    expect((await cache.claim(key)).kind).toBe("duplicate");
   });
 });

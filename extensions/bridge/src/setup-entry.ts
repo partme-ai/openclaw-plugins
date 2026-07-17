@@ -1,16 +1,10 @@
 /**
- * @fileoverview Bridge 插件的「冷路径」装配入口。
+ * Bridge 的轻量 setup 入口。
  *
- * @description
- * 仅供 Base Profile / 工具链在 setup 场景拉取插件定义时使用：只再导出 `plugin-entry`，
- * 避免与 `index.ts` 的大规模 re-export 重复，从而缩短解析链路与 tree-shaking 噪音。
- *
- * @module setup-entry
+ * 这里只转交完整插件对象，不在模块加载时启动 Hook、队列或外部连接；运行副作用由
+ * OpenClaw 确认插件启用后通过正式注册生命周期触发。
  */
+import plugin from "./bridge/plugin-entry.js";
 
-/**
- * Bridge setup 冷路径：仅导出插件定义，不重复 index 的公开 re-export 面。
- */
-
-/** @description 插件清单默认导出（`id`、`configSchema`、`register`），供 setup 工具链单独解析。 */
-export { default } from "./bridge/plugin-entry.js";
+export { plugin };
+export default plugin;

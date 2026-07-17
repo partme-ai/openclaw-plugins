@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-memory",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "type": "module",
   "description": "多级长期记忆系统 (L0→L3) — 对话录制、记忆提取、场景归纳、用户画像，自动召回",
   "license": "MIT",
@@ -28,13 +28,14 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "devDependencies": {
     "tsup": "^8.2.0",
@@ -44,6 +45,11 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-memory",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
+    }
   }
 }

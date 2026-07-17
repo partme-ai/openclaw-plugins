@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-gotify",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "OpenClaw Gotify channel plugin — REST delivery, WebSocket stream inbound, bootstrap helpers, and config validation",
   "type": "module",
   "main": "dist/index.js",
@@ -10,11 +10,13 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:standard": "tsx test/run-gotify-standard-tests.ts",
     "test:ui-gate": "tsx test/ui-transcript-gate-test.ts",
     "test:wait-reply": "tsx test/wait-reply-test.ts",
-    "lint": "eslint src --fix",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
     "format": "prettier --write src",
     "prepublishOnly": "pnpm build"
   },
@@ -51,7 +53,7 @@
     "directory": "extensions/gotify"
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1",
     "ws": "^8.20.1",
     "zod": "^4.3.6"
   },
@@ -68,11 +70,12 @@
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
+    "vitest": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.6",
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -85,16 +88,21 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "build": {
-      "openclawVersion": "2026.4.0"
+      "openclawVersion": "2026.7.1"
     },
     "compat": {
-      "pluginApi": ">=2026.3.24-beta.2",
-      "minGatewayVersion": "2026.3.24-beta.2"
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
     },
     "channel": {
       "id": "gotify",
       "label": "Gotify",
       "blurb": "Send and receive OpenClaw channel messages through a self-hosted Gotify server."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-gotify",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

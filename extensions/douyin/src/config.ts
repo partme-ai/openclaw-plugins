@@ -14,6 +14,46 @@ import {
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/account-resolution";
 import type { DouyinChannelConfig, ResolvedDouyinAccount } from "./types.js";
+import type { DouyinWebhookInboxConfig } from "./dispatch/webhook-inbox.js";
+
+const DEFAULT_WEBHOOK_INBOX_CONFIG: DouyinWebhookInboxConfig = {
+  maxPending: 1000,
+  maxAttempts: 5,
+  initialDelayMs: 1000,
+  maxDelayMs: 60_000,
+  maxDeadLetters: 100,
+  maxStateBytes: 32 * 1024 * 1024,
+};
+
+function boundedInteger(
+  value: unknown,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  name: string,
+): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || (resolved as number) < minimum ||
+      (resolved as number) > maximum) {
+    throw new Error(`[douyin] ${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return resolved as number;
+}
+
+/** 解析账号级持久 Inbox 配置；运行时再次做范围校验，不能只依赖 manifest UI Schema。 */
+export function resolveDouyinWebhookInboxConfig(
+  account: ResolvedDouyinAccount,
+): DouyinWebhookInboxConfig {
+  const value = account.config.webhookDelivery ?? {};
+  return {
+    maxPending: boundedInteger(value.maxPending, DEFAULT_WEBHOOK_INBOX_CONFIG.maxPending, 1, 100_000, "webhookDelivery.maxPending"),
+    maxAttempts: boundedInteger(value.maxAttempts, DEFAULT_WEBHOOK_INBOX_CONFIG.maxAttempts, 1, 100, "webhookDelivery.maxAttempts"),
+    initialDelayMs: boundedInteger(value.initialDelayMs, DEFAULT_WEBHOOK_INBOX_CONFIG.initialDelayMs, 100, 300_000, "webhookDelivery.initialDelayMs"),
+    maxDelayMs: boundedInteger(value.maxDelayMs, DEFAULT_WEBHOOK_INBOX_CONFIG.maxDelayMs, 1000, 3_600_000, "webhookDelivery.maxDelayMs"),
+    maxDeadLetters: boundedInteger(value.maxDeadLetters, DEFAULT_WEBHOOK_INBOX_CONFIG.maxDeadLetters, 1, 10_000, "webhookDelivery.maxDeadLetters"),
+    maxStateBytes: boundedInteger(value.maxStateBytes, DEFAULT_WEBHOOK_INBOX_CONFIG.maxStateBytes, 1_048_576, 1_073_741_824, "webhookDelivery.maxStateBytes"),
+  };
+}
 
 /** 读取 channels.douyin 原始配置节 */
 function getChannelSection(cfg: OpenClawConfig): DouyinChannelConfig {
@@ -52,6 +92,20 @@ function getRawAccountConfig(
   return { ...channelCfg, ...(channelCfg.accounts?.[accountId] ?? {}) };
 }
 
+function normalizeWebhookPath(value: string): string {
+  const normalized = value.trim();
+  if (
+    !normalized.startsWith("/") ||
+    normalized.startsWith("//") ||
+    /[\\\s?#]/.test(normalized)
+  ) {
+    throw new Error(
+      "[douyin] webhook_path must be an absolute path without whitespace, query, fragment, or backslash",
+    );
+  }
+  return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
+}
+
 /**
  * 解析单个抖音账号（合并 channel 顶层 + accounts.<id> 覆盖）。
  *
@@ -73,10 +127,19 @@ export function resolveDouyinAccount(
 
   const app_key = merged.app_key ?? "";
   const app_secret = merged.app_secret ?? "";
-  const webhook_path =
-    (typeof merged.webhook_path === "string" && merged.webhook_path.trim()
-      ? merged.webhook_path.trim()
-      : undefined) ?? "/channels/douyin/webhook";
+  const baseWebhookPath = normalizeWebhookPath(
+    typeof channelCfg.webhook_path === "string" && channelCfg.webhook_path.trim()
+      ? channelCfg.webhook_path
+      : "/channels/douyin/webhook",
+  );
+  const accountWebhookPath = channelCfg.accounts?.[id]?.webhook_path;
+  const webhook_path = normalizeWebhookPath(
+    typeof accountWebhookPath === "string" && accountWebhookPath.trim()
+      ? accountWebhookPath
+      : id === DEFAULT_ACCOUNT_ID
+        ? baseWebhookPath
+        : `${baseWebhookPath}/${encodeURIComponent(id)}`,
+  );
 
   return {
     accountId: id,
@@ -84,6 +147,8 @@ export function resolveDouyinAccount(
     configured: Boolean(app_key && app_secret),
     app_key,
     app_secret,
+    account_id: merged.account_id ?? merged.shop_id,
+    poi_id: merged.poi_id,
     shop_id: merged.shop_id,
     webhook_path,
     config: getRawAccountConfig(channelCfg, id),

@@ -14,6 +14,8 @@ export interface CachedConfig {
 const CONFIG_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CONFIG_CACHE_INITIAL_RETRY_MS = 2_000;
 const CONFIG_CACHE_MAX_RETRY_MS = 60 * 60 * 1000;
+const DEFAULT_CONFIG_CACHE_MAX_ENTRIES = 10_000;
+const MAX_USER_ID_LENGTH = 256;
 
 interface ConfigCacheEntry {
   config: CachedConfig;
@@ -30,13 +32,41 @@ export class WeixinConfigManager {
   private cache = new Map<string, ConfigCacheEntry>();
 
   constructor(
-    private apiOpts: { baseUrl: string; token?: string },
+    private apiOpts: { baseUrl: string; token?: string; routeTag?: string },
     private log: (msg: string) => void,
-  ) {}
+    private maxEntries = DEFAULT_CONFIG_CACHE_MAX_ENTRIES,
+  ) {
+    if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) {
+      throw new Error("weixin config cache maxEntries must be a positive integer");
+    }
+  }
+
+  /**
+   * 写入并触碰 LRU 顺序。缓存必须有上限，否则不断变化的陌生 userId 会让 Gateway
+   * 内存永久增长。最旧项被逐出后仅失去 typing ticket，不影响消息正确性。
+   */
+  private setEntry(userId: string, entry: ConfigCacheEntry): void {
+    this.cache.delete(userId);
+    while (this.cache.size >= this.maxEntries) {
+      const oldest = this.cache.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.cache.delete(oldest);
+    }
+    this.cache.set(userId, entry);
+  }
 
   async getForUser(userId: string, contextToken?: string): Promise<CachedConfig> {
+    const normalizedUserId = userId.trim();
+    if (!normalizedUserId || normalizedUserId.length > MAX_USER_ID_LENGTH) {
+      return { typingTicket: "" };
+    }
     const now = Date.now();
-    const entry = this.cache.get(userId);
+    const entry = this.cache.get(normalizedUserId);
+    if (entry) {
+      // Map 的插入顺序作为轻量 LRU，不需要额外定时器或链表。
+      this.cache.delete(normalizedUserId);
+      this.cache.set(normalizedUserId, entry);
+    }
     const shouldFetch = !entry || now >= entry.nextFetchAt;
 
     if (shouldFetch) {
@@ -45,23 +75,24 @@ export class WeixinConfigManager {
         const resp = await getConfig({
           baseUrl: this.apiOpts.baseUrl,
           token: this.apiOpts.token,
-          ilinkUserId: userId,
+          routeTag: this.apiOpts.routeTag,
+          ilinkUserId: normalizedUserId,
           contextToken,
         });
         if (resp.ret === 0) {
-          this.cache.set(userId, {
-            config: { typingTicket: resp.typing_ticket ?? "" },
+          this.setEntry(normalizedUserId, {
+            config: { typingTicket: typeof resp.typing_ticket === "string" ? resp.typing_ticket : "" },
             everSucceeded: true,
             nextFetchAt: now + Math.random() * CONFIG_CACHE_TTL_MS,
             retryDelayMs: CONFIG_CACHE_INITIAL_RETRY_MS,
           });
           this.log(
-            `[weixin] config ${entry?.everSucceeded ? "refreshed" : "cached"} for ${userId}`,
+            `[weixin] config ${entry?.everSucceeded ? "refreshed" : "cached"}`,
           );
           fetchOk = true;
         }
       } catch (err) {
-        this.log(`[weixin] getConfig failed for ${userId} (ignored): ${String(err)}`);
+        this.log(`[weixin] getConfig failed (ignored): ${err instanceof Error ? err.name : "unknown error"}`);
       }
       if (!fetchOk) {
         const prevDelay = entry?.retryDelayMs ?? CONFIG_CACHE_INITIAL_RETRY_MS;
@@ -70,7 +101,7 @@ export class WeixinConfigManager {
           entry.nextFetchAt = now + nextDelay;
           entry.retryDelayMs = nextDelay;
         } else {
-          this.cache.set(userId, {
+          this.setEntry(normalizedUserId, {
             config: { typingTicket: "" },
             everSucceeded: false,
             nextFetchAt: now + CONFIG_CACHE_INITIAL_RETRY_MS,
@@ -80,6 +111,6 @@ export class WeixinConfigManager {
       }
     }
 
-    return this.cache.get(userId)?.config ?? { typingTicket: "" };
+    return this.cache.get(normalizedUserId)?.config ?? { typingTicket: "" };
   }
 }

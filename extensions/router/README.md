@@ -1,31 +1,89 @@
 # OpenClaw Router
 
-> Enterprise Message Routing Engine — cross-channel message forwarding, IM to MQ, MQ to IM, config-driven rules, and audit logging.
+> Production-oriented cross-channel routing with a durable outbox, retry/DLQ, persisted deduplication, audit, and loop protection.
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--router-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-router)
 [![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-[简体中文](./README.md) | [English](./README.en.md)
+[简体中文](./README.zh-CN.md) | [English](./README.md)
 
 ---
 
 ## Overview
 
-`@partme.ai/openclaw-router` is the enterprise-grade message routing engine for OpenClaw. It listens to `agent_end` events and dispatches messages to multiple targets based on configurable rules. It supports IM-to-MQ forwarding (forward copies to message queues) and MQ-to-IM replying (reply back to channels).
+`@partme.ai/openclaw-router` listens to OpenClaw's `message_received`, `message_sent`, and `reply_payload_sending` hooks and routes messages according to validated rules. All actions for one event are atomically persisted before background delivery through OpenClaw's public channel outbound adapter API, retried with exponential backoff, and moved to a DLQ after exhaustion.
 
 **Pure configuration-driven** — no channel plugin code modification needed. All routing rules are defined in JSON config.
 
+## Runtime Architecture
+
+The character diagram separates event acceptance from reliable delivery for quick operational reading. The Mermaid diagram below preserves the same relationship in a renderable form.
+
+```text
+OpenClaw Hooks
+message_received / message_sent / reply_payload_sending
+        │
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│ openclaw-router                                              │
+│                                                              │
+│ rule match ──▶ template ──▶ hop guard ──▶ stable dedupe key   │
+│                                            │                 │
+│                                            ▼                 │
+│                              ┌────────────────────────┐      │
+│                              │ durable Outbox         │      │
+│                              │ optional AES-GCM+fsync │      │
+│                              └───────────┬────────────┘      │
+│                                          ▼                   │
+│                              bounded-concurrency worker       │
+│                         ┌────────────────┴──────────────┐     │
+│                         ▼                               ▼     │
+│              confirmed: commit dedupe         failure: retry │
+│                                                         │    │
+│                                                         ▼    │
+│                                                    durable DLQ│
+└──────────────────────────────────────────┬───────────────────┘
+                                           ▼
+                              Channel Outbound Adapter
+                                           │
+                                           ▼
+                                  target IM / MQ / Gotify
+```
+
+```mermaid
+flowchart LR
+    Hooks["OpenClaw official Hooks<br/>message_received / message_sent / reply_payload_sending"]
+    Match["Rule match and template expansion<br/>stable dedupe key + hop trace"]
+    Outbox[("Durable Outbox<br/>optional AES-256-GCM + atomic enqueue")]
+    Worker["Reliable delivery worker<br/>exponential backoff + jitter"]
+    Adapter["OpenClaw Channel<br/>Outbound Adapter"]
+    Target["Target IM / MQ plugin"]
+    Dedupe[("Committed dedupe record")]
+    DLQ[("Durable DLQ")]
+
+    Hooks --> Match --> Outbox --> Worker --> Adapter --> Target
+    Target -->|"confirmed"| Dedupe
+    Target -->|"retryable failure"| Worker
+    Worker -->|"attempts exhausted"| DLQ
+```
+
+The Outbox is the delivery source of truth. A pending task is removed and its dedupe key committed only after the target adapter confirms success. Adapter errors are redacted before they enter logs, status, audit records, or the persisted DLQ.
+
 ## Features
 
-- **agent_end Event Listener** — Automatically captures completed conversations
-- **Rule Engine** — Multi-condition matching: `channels`, `direction`, `topic`, `accountId`
+- **Durable outbox** — Pending deliveries survive Gateway restarts
+- **Reliable delivery** — Awaited publish, exponential backoff with jitter, bounded attempts, and persisted DLQ
+- **Persisted deduplication** — Commit-after-success keys survive restarts; events without an identity are never globally collapsed
+- **Loop protection** — Route-hop trace and configurable maximum hop count
+- **Rule Engine** — Wildcard matching for `channels`, `topic`, and `accountId`
 - **Template Topics** — Dynamic topic strings with `{{channel}}`, `{{direction}}`, `{{account}}` variables
 - **IM to MQ Forwarding** — Forward user messages and agent replies to message queue channels
 - **MQ to IM Replying** — Route agent replies back to specific IM channels and accounts
-- **Audit Logging** — Optional console audit trail for all routed messages
+- **Audit Logging** — Bounded persisted audit trail plus optional console logging
+- **Encryption at rest** — Optional AES-256-GCM state encryption with environment-only keys and previous-key rotation
+- **Operations API** — Authenticated status, DLQ inspection, and DLQ replay routes
 - **Pure Configuration** — No code changes needed in channel plugins
-- **Lightweight** — Zero external dependencies, single event handler
 
 ## Quick Start
 
@@ -103,7 +161,23 @@ openclaw plugins install @partme.ai/openclaw-router
           ],
           "audit": {
             "enabled": true,
-            "logToConsole": true                 // Log routing actions to console
+            "logToConsole": true,
+            "maxEntries": 5000
+          },
+          "delivery": {
+            "stateEncryptionKeyEnv": "OPENCLAW_ROUTER_STATE_KEY",
+            "statePreviousEncryptionKeyEnvs": [],
+            "maxAttempts": 5,
+            "initialDelayMs": 500,
+            "maxDelayMs": 30000,
+            "backoffMultiplier": 2,
+            "jitter": 0.2,
+            "dedupeTtlMs": 86400000,
+            "maxDeliveredKeys": 50000,
+            "maxDeadLetters": 10000,
+            "maxPendingTasks": 10000,
+            "maxPayloadBytes": 1048576,
+            "maxHops": 8
           }
         }
       }
@@ -116,10 +190,10 @@ openclaw plugins install @partme.ai/openclaw-router
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `channels` | string[] | Filter by source channel IDs (e.g., `["wecom", "dingtalk"]`). Empty/absent means any channel. |
+| `channels` | string[] | Filter by source channel IDs. `*` and `?` wildcards are supported. Empty/absent means any channel. |
 | `direction` | "inbound" \| "outbound" \| "both" | Message direction. `inbound` = user message, `outbound` = agent reply. |
-| `topic` | string | Filter by event topic. Exact match only. |
-| `accountId` | string | Filter by agent account ID. |
+| `topic` | string | Filter by event topic; supports `*` and `?`. |
+| `accountId` | string | Filter by account ID; supports `*` and `?`. |
 
 ### Action Types
 
@@ -144,8 +218,69 @@ Default topics:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `audit.enabled` | boolean | `false` | Enable audit logging |
+| `audit.enabled` | boolean | `true` | Enable the bounded persisted audit trail |
 | `audit.logToConsole` | boolean | `false` | Log routing actions to console |
+| `audit.maxEntries` | integer | `5000` | Maximum persisted audit entries |
+
+### Reliable delivery
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `delivery.maxAttempts` | `5` | Total publish attempts before DLQ |
+| `delivery.initialDelayMs` | `500` | Initial retry delay |
+| `delivery.maxDelayMs` | `30000` | Retry delay ceiling |
+| `delivery.backoffMultiplier` | `2` | Exponential backoff multiplier |
+| `delivery.jitter` | `0.2` | Random delay spread from `0` to `1` |
+| `delivery.dedupeTtlMs` | `86400000` | Successful-delivery dedupe retention |
+| `delivery.maxDeliveredKeys` | `50000` | Bounded successful-key count |
+| `delivery.maxDeadLetters` | `10000` | Bounded DLQ size |
+| `delivery.maxPendingTasks` | `10000` | Pending capacity; new batches are rejected instead of exhausting disk |
+| `delivery.maxPayloadBytes` | `1048576` | Maximum serialized payload size per delivery |
+| `delivery.maxHops` | `8` | Route-loop hop ceiling |
+| `delivery.publishTimeoutMs` | `15000` | Per-attempt Gateway send timeout |
+| `delivery.concurrency` | `4` | Bounded delivery concurrency |
+| `delivery.lockHeartbeatMs` | `5000` | Active-writer lease heartbeat |
+| `delivery.lockTimeoutMs` | `30000` | Stale remote-writer lease timeout |
+| `delivery.stateDir` | `<OpenClaw state>/router` | Optional state directory override |
+| `delivery.stateEncryptionKeyEnv` | none | Environment variable containing the current AES-256-GCM state key |
+| `delivery.statePreviousEncryptionKeyEnvs` | `[]` | Previous key environment variables accepted during rotation, up to four |
+
+### State encryption and rotation
+
+The Outbox and DLQ contain message bodies and delivery targets. For sensitive production traffic, generate a 32-byte key and expose only its environment variable name in configuration:
+
+```bash
+export OPENCLAW_ROUTER_STATE_KEY="$(openssl rand -base64 32)"
+```
+
+```text
+openclaw.json ── environment variable name only
+       │
+       ▼
+Gateway environment ── 32-byte key ── AES-256-GCM
+                                          │
+                                          ▼
+ delivery-state.json = keyId + IV + AuthTag + Ciphertext
+```
+
+```mermaid
+flowchart LR
+    C["openclaw.json<br/>environment name only"] --> E["Gateway environment<br/>current key"]
+    E --> G["AES-256-GCM<br/>AAD + random IV"] --> S[("Encrypted state<br/>ciphertext + AuthTag + keyId")]
+    O["Previous key environment"] --> R{"Read old state"}
+    R -->|authenticated| W["Atomically rewrite with current key"] --> S
+    R -->|missing or invalid key| F["Fail closed on startup"]
+```
+
+For rotation, retain the old environment name in `statePreviousEncryptionKeyEnvs`, point `stateEncryptionKeyEnv` at the new key, and restart. The authenticated old state is immediately rewritten with the current primary key. Remove the previous key only after that rewrite succeeds.
+
+Operational routes use OpenClaw plugin authentication and exact matching:
+
+- `GET /router/status`
+- `GET /router/health`
+- `GET /router/audit?limit=100`
+- `GET /router/dlq?limit=100`
+- `POST /router/dlq/replay?limit=100`
 
 ## Architecture
 
@@ -153,7 +288,7 @@ Default topics:
                     ┌─────────────────────────────────────┐
                     │           OpenClaw Runtime          │
                     │                                      │
-  User ──► IM Channel ──► Agent ──► agent_end event         │
+  User ──► IM Channel ──► Agent ──► message/reply hooks     │
                     │         │                            │
                     │         ▼                            │
                     │    ┌──────────┐                      │
@@ -178,8 +313,13 @@ Default topics:
 ## Scoping Notes
 
 - Knowledge base (RAG) and long-term memory auto-injection are handled by the OpenClaw core framework and the `openclaw-memory` plugin respectively. The router does not participate.
-- The router requires target MQ channels (mqtt, rabbitmq, redis-stream, etc.) to be installed and configured separately.
+- The router requires target channels to be installed and configured separately.
 - Template variables in topic strings are replaced at runtime with actual values from the event context.
+- The file-backed state enforces one active writer with a cross-process lease; a second Router using the same state directory fails startup. Keep exactly one active Router globally. Active-active multi-Gateway routing requires strict upstream partitioning or an external transactional store/leader; separate state directories alone do not prevent duplicate routing.
+- A lock created by another hostname is never auto-stolen. After verifying that the remote Router is stopped, an operator must remove a genuinely orphaned `.writer.lock` manually.
+- Delivery is intentionally at-least-once: a process crash or timeout after the target accepts a message but before the success marker is persisted can cause redelivery. Timeout abort is best-effort because not every adapter honors `AbortSignal`; `/router/status` counts these as `unknownOutcomes`. Router passes its stable delivery ID as the outbound adapter `deliveryQueueId`; downstream channel/broker adapters should preserve equivalent idempotency when available. Direct broker topics use the explicit `openclaw-direct-topic:v1:` target contract, so ordinary OpenClaw durable replies carrying a `deliveryQueueId` still use their session mapper, reply topic and ACL path. If state rename succeeds but directory fsync fails, Router keeps the delivery committed, sets `durabilityUncertain=true`, and reports unhealthy until restart rather than enqueueing a duplicate retry.
+- `storeErrors` counts storage and scheduler failures, while `deliveredKeys` reports persisted dedupe keys still inside their TTL. Transient failures trigger bounded wake-up recovery; while the store is unreadable, health returns an unhealthy last-known low-sensitivity snapshot instead of reporting success. Repeated identical storage logs are throttled to 30 seconds.
+- Without `stateEncryptionKeyEnv`, the backward-compatible state format is `0600` plaintext JSON and should not be used for sensitive conversations on shared disks or unencrypted backups.
 
 ## Development
 

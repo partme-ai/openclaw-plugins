@@ -12,6 +12,12 @@ import type { WecomAccountConfig } from "../types/index.js";
 const dispatchKfMessageMock = vi.hoisted(() => vi.fn(async () => undefined));
 const syncKfMessagesMock = vi.hoisted(() => vi.fn());
 const getWecomRuntimeMock = vi.hoisted(() => vi.fn());
+const claimInboundMock = vi.hoisted(() => vi.fn(async (_openKfId: string, msgid: string) => ({
+  kind: msgid === "msg-1-dup" ? "duplicate" : "claimed",
+  key: msgid,
+})));
+const commitInboundMock = vi.hoisted(() => vi.fn(async () => undefined));
+const releaseInboundMock = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("../dispatch/inbound-dispatcher.js", () => ({
   dispatchKfMessage: dispatchKfMessageMock,
@@ -31,7 +37,9 @@ vi.mock("../runtime/index.js", () => ({
 }));
 
 vi.mock("../dedup/kf-inbound-dedup.js", () => ({
-  claimWecomKfInboundMsgid: vi.fn(async (_openKfId: string, msgid: string) => msgid !== "msg-1-dup"),
+  claimWecomKfInboundMsgid: claimInboundMock,
+  commitWecomKfInboundMsgid: commitInboundMock,
+  releaseWecomKfInboundMsgid: releaseInboundMock,
   resolveKfInboundDedupeNamespace: vi.fn((openKfId: string) => `wecom-kf-inbound:${openKfId}`),
 }));
 
@@ -49,7 +57,11 @@ vi.mock("../state/cursor-store.js", () => {
   };
 });
 
-const { createKfCallbackHandler } = await import("./callback.js");
+const {
+  createKfCallbackHandler,
+  startKfCallbackProcessing,
+  stopKfCallbackProcessing,
+} = await import("./callback.js");
 
 const TOKEN = "test-token";
 const ENCODING_AES_KEY = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
@@ -160,6 +172,13 @@ describe("parseWecomCallback", () => {
 });
 
 describe("createKfCallbackHandler", () => {
+  // 大多数用例只验证一次同步的业务语义，关闭重试可避免失败用例之间残留后台任务。
+  // 重试本身由独立用例显式开启并验证。
+  const handlerOptions = {
+    nowSeconds: () => 1710000004,
+    syncRetryAttempts: 1,
+    syncRetryDelayMs: 0,
+  };
   const accountConfig: WecomAccountConfig = {
     corpId: CORP_ID,
     corpSecret: "secret",
@@ -171,36 +190,43 @@ describe("createKfCallbackHandler", () => {
   const getAccountConfig = () => accountConfig;
 
   beforeEach(() => {
+    startKfCallbackProcessing();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     getWecomRuntimeMock.mockReturnValue({
       config: {
-        channels: {
-          "wecom-kf": {
-            enabled: true,
-            defaultAccount: "default",
-            accounts: {
-              default: {
-                openKfId: "kf_001",
-                agentId: "agent-1",
-                corpId: CORP_ID,
-                corpSecret: "secret",
-                token: TOKEN,
-                encodingAESKey: ENCODING_AES_KEY,
+        current: () => ({
+          channels: {
+            "wecom-kf": {
+              enabled: true,
+              defaultAccount: "default",
+              accounts: {
+                default: {
+                  openKfId: "kf_001",
+                  agentId: "agent-1",
+                  corpId: CORP_ID,
+                  corpSecret: "secret",
+                  token: TOKEN,
+                  encodingAESKey: ENCODING_AES_KEY,
+                },
               },
             },
           },
-        },
+        }),
       },
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await stopKfCallbackProcessing(1_000).catch(() => undefined);
     vi.restoreAllMocks();
     getWecomRuntimeMock.mockReset();
     syncKfMessagesMock.mockReset();
     dispatchKfMessageMock.mockReset();
+    claimInboundMock.mockClear();
+    commitInboundMock.mockClear();
+    releaseInboundMock.mockClear();
   });
 
   it("GET 返回解密后的 echostr 明文", async () => {
@@ -219,7 +245,7 @@ describe("createKfCallbackHandler", () => {
       encrypt: encryptedEchostr,
     });
 
-    const handler = createKfCallbackHandler(getAccountConfig);
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
     const res = mockResponse();
     await handler(
       makeGetReq({
@@ -254,7 +280,7 @@ describe("createKfCallbackHandler", () => {
       encrypt,
     });
 
-    const handler = createKfCallbackHandler(getAccountConfig);
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
     const res = mockResponse();
     await handler(
       makePostReq({ msg_signature: msgSignature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
@@ -263,8 +289,8 @@ describe("createKfCallbackHandler", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe("success");
-    expect(console.log).toHaveBeenCalledWith("[wecom_kf] KF account authorized: kf_new");
-    expect(console.log).toHaveBeenCalledWith("[wecom_kf] KF account deauthorized: kf_old");
+    expect(console.log).toHaveBeenCalledWith("[wecom_kf] KF account authorized");
+    expect(console.log).toHaveBeenCalledWith("[wecom_kf] KF account deauthorized");
   });
 
   it("无账号配置时返回 500", async () => {
@@ -273,6 +299,22 @@ describe("createKfCallbackHandler", () => {
     await handler(makeGetReq({ echostr: "x" }), res);
     expect(res.statusCode).toBe(500);
     expect(res.body).toBe("No account config");
+  });
+
+  it("拒绝签名正确但时间戳过期的重放请求", async () => {
+    const encryptedEchostr = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: "stale",
+    });
+    const timestamp = "1709999000";
+    const nonce = "nonce-stale";
+    const msgSignature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt: encryptedEchostr });
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
+    const res = mockResponse();
+    await handler(makeGetReq({ msg_signature: msgSignature, timestamp, nonce, echostr: encryptedEchostr }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toBe("invalid callback");
   });
 
   it("POST kf_msg_or_event 快速 200 后触发 sync_msg 分页", async () => {
@@ -339,7 +381,7 @@ describe("createKfCallbackHandler", () => {
       encrypt,
     });
 
-    const handler = createKfCallbackHandler(getAccountConfig);
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
     const res = mockResponse();
     await handler(
       makePostReq({ msg_signature: msgSignature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
@@ -353,5 +395,224 @@ describe("createKfCallbackHandler", () => {
       expect(syncCallCount).toBe(2);
     });
     expect(dispatchKfMessageMock).toHaveBeenCalledTimes(1);
+    expect(commitInboundMock).toHaveBeenCalledWith("kf_001", "msg-1");
+  });
+
+  it("拒绝使用当前路径签名跨账号触发其他 OpenKfId", async () => {
+    const otherAccount: WecomAccountConfig = {
+      ...accountConfig,
+      openKfId: "kf_002",
+      corpSecret: "other-secret",
+    };
+    const getBoundAccountConfig = (openKfId?: string) =>
+      openKfId === "kf_002" ? otherAccount : accountConfig;
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_002]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: xml,
+    });
+    const timestamp = "1710000004";
+    const nonce = "nonce-cross-account";
+    const signature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const res = mockResponse();
+
+    await createKfCallbackHandler(getBoundAccountConfig, handlerOptions)(
+      makePostReq({ msg_signature: signature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
+      res,
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toBe("invalid callback");
+    expect(syncKfMessagesMock).not.toHaveBeenCalled();
+  });
+
+  it("派发失败时释放 msgid，且不推进当前页游标", async () => {
+    dispatchKfMessageMock.mockRejectedValueOnce(new Error("dispatch failed"));
+    syncKfMessagesMock.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "cursor-failed",
+      has_more: 0,
+      msg_list: [{
+        msgid: "msg-failed",
+        msgtype: "text",
+        origin: 3,
+        open_kfid: "kf_001",
+        external_userid: "wx-user-1",
+        text: { content: "retry me" },
+      }],
+    });
+
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({ encodingAESKey: ENCODING_AES_KEY, receiveId: CORP_ID, plaintext: xml });
+    const timestamp = "1710000005";
+    const nonce = "nonce-failed";
+    const msgSignature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
+    const res = mockResponse();
+    await handler(makePostReq({ msg_signature: msgSignature, timestamp, nonce }, wrapEncryptedXml(encrypt)), res);
+
+    expect(res.statusCode).toBe(200);
+    await vi.waitFor(() => expect(releaseInboundMock).toHaveBeenCalledWith("kf_001", "msg-failed", expect.any(Error)));
+    expect(commitInboundMock).not.toHaveBeenCalledWith("kf_001", "msg-failed");
+  });
+
+  it("sync_msg 返回临时错误时后台重试，成功后才结束同步任务", async () => {
+    syncKfMessagesMock
+      .mockResolvedValueOnce({
+        errcode: 50001,
+        errmsg: "temporary error",
+        has_more: 0,
+        msg_list: [],
+      })
+      .mockResolvedValueOnce({
+        errcode: 0,
+        errmsg: "ok",
+        next_cursor: "cursor-retry",
+        has_more: 0,
+        msg_list: [],
+      });
+
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: xml,
+    });
+    const timestamp = "1710000004";
+    const nonce = "nonce-retry";
+    const msgSignature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const handler = createKfCallbackHandler(getAccountConfig, {
+      ...handlerOptions,
+      syncRetryAttempts: 2,
+    });
+    const res = mockResponse();
+
+    await handler(
+      makePostReq({ msg_signature: msgSignature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
+      res,
+    );
+
+    // 企业微信回调不等待下游 API；防止平台因处理超时重复推送同一事件。
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe("success");
+    await vi.waitFor(() => expect(syncKfMessagesMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("快速 ACK 后 Runtime 尚未就绪时进入有界重试而不是假成功", async () => {
+    getWecomRuntimeMock.mockImplementation(() => {
+      throw new Error("runtime starting");
+    });
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: xml,
+    });
+    const timestamp = "1710000004";
+    const nonce = "nonce-runtime-starting";
+    const signature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const res = mockResponse();
+
+    await createKfCallbackHandler(getAccountConfig, {
+      ...handlerOptions,
+      syncRetryAttempts: 2,
+    })(makePostReq({ msg_signature: signature, timestamp, nonce }, wrapEncryptedXml(encrypt)), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe("success");
+    await vi.waitFor(() => expect(getWecomRuntimeMock).toHaveBeenCalledTimes(2));
+    expect(syncKfMessagesMock).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("background sync failed: Runtime not available for sync_msg"),
+    ));
+  });
+
+  it("拒绝失控的后台同步重试参数", () => {
+    expect(() => createKfCallbackHandler(getAccountConfig, {
+      ...handlerOptions,
+      syncRetryAttempts: 0,
+    })).toThrow("syncRetryAttempts");
+    expect(() => createKfCallbackHandler(getAccountConfig, {
+      ...handlerOptions,
+      syncRetryDelayMs: 30_001,
+    })).toThrow("syncRetryDelayMs");
+  });
+
+  it("停机期间不 ACK 新的同步通知，而是返回 503 让企微重投", async () => {
+    await stopKfCallbackProcessing();
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: xml,
+    });
+    const timestamp = "1710000004";
+    const nonce = "nonce-stopping";
+    const signature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const res = mockResponse();
+
+    await createKfCallbackHandler(getAccountConfig, handlerOptions)(
+      makePostReq({ msg_signature: signature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
+      res,
+    );
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toBe("service stopping");
+    expect(syncKfMessagesMock).not.toHaveBeenCalled();
+  });
+
+  it("Service stop 会等待已经快速 ACK 的后台同步完成", async () => {
+    let finishSync!: (value: unknown) => void;
+    syncKfMessagesMock.mockImplementationOnce(() => new Promise((resolve) => {
+      finishSync = resolve;
+    }));
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: xml,
+    });
+    const timestamp = "1710000004";
+    const nonce = "nonce-drain";
+    const signature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const res = mockResponse();
+    await createKfCallbackHandler(getAccountConfig, handlerOptions)(
+      makePostReq({ msg_signature: signature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
+      res,
+    );
+    expect(res.statusCode).toBe(200);
+    await vi.waitFor(() => expect(syncKfMessagesMock).toHaveBeenCalledOnce());
+
+    let drained = false;
+    const stopping = stopKfCallbackProcessing(1_000).then(() => { drained = true; });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    finishSync({ errcode: 0, errmsg: "ok", next_cursor: "cursor-drained", has_more: 0, msg_list: [] });
+    await stopping;
+    expect(drained).toBe(true);
+  });
+
+  it("拒绝非法的停机 drain 超时配置", async () => {
+    await expect(stopKfCallbackProcessing(0)).rejects.toThrow("drain timeout");
   });
 });

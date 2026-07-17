@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **OpenClaw** ≥ 2026.4.6
+- **OpenClaw** ≥ 2026.7.1
 - **Node.js** ≥ 22
 - **Nacos Server** ≥ 2.0.3 (recommended)
 
@@ -20,7 +20,7 @@ openclaw plugins install @partme.ai/openclaw-nacos
 cd openclaw-nacos
 pnpm build
 npm pack
-openclaw plugins install ./partme.ai-openclaw-nacos-2026.5.12.tgz
+openclaw plugins install ./partme.ai-openclaw-nacos-2026.7.1.tgz
 ```
 
 ### From Source (Development)
@@ -48,7 +48,7 @@ Add to `~/.openclaw/openclaw.json`:
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           "serverList": "127.0.0.1:8848",
@@ -102,21 +102,21 @@ Manage plugin-specific configs per environment (dev/staging/prod).
 
 **Nacos Configs**:
 ```
-openclaw-weixin-dev.json     →  { "appId": "dev-app", ... }
-openclaw-weixin-prod.json    →  { "appId": "prod-app", ... }
-openclaw-dingtalk-dev.json   →  { "appKey": "dev-key", ... }
+wechat-dev.json              →  { "appId": "dev-app", ... }
+wechat-prod.json             →  { "appId": "prod-app", ... }
+dingtalk-connector-dev.json  →  { "appKey": "dev-key", ... }
 ```
 
 **Plugin Config**:
 ```jsonc
 "configCenter": {
   "enabled": true,
-  "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+  "pluginConfigIds": ["wechat", "dingtalk-connector"],
   "profile": "dev"
 }
 ```
 
-Configs are auto-merged into `plugins.entries["openclaw-weixin"].config`.
+Configs are auto-merged into `plugins.entries["wechat"].config` and `plugins.entries["dingtalk-connector"].config`.
 
 ### Use Case 3: Webhook Cluster with Service Discovery
 

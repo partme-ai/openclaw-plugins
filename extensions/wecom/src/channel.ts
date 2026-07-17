@@ -22,7 +22,11 @@ import { getWeComRuntime } from "./runtime.js";
 import { monitorWeComProvider } from "./dispatch/ws-monitor.js";
 import { getWeComWebSocket } from "./state/state-manager.js";
 import { wecomSetupWizard, wecomSetupAdapter } from "./onboarding.js";
-import type { WeComConfig, ResolvedWeComAccount } from "./config/wecom-config.js";
+import {
+  resolveWecomMediaMaxBytes,
+  type WeComConfig,
+  type ResolvedWeComAccount,
+} from "./config/wecom-config.js";
 import {
   listWeComAccountIds,
   resolveWeComAccountMulti,
@@ -39,6 +43,11 @@ import { startWebhookGateway, stopWebhookGateway } from "./webhook/index.js";
 import type { ResolvedWebhookAccount, WebhookGatewayContext } from "./webhook/index.js";
 import { fetchAndSaveWecomDocMcpConfig } from "./mcp/config-fetch.js";
 import { probeWeComAccount } from "./runtime/probe.js";
+import {
+  getExtendedMediaLocalRoots,
+  readGuardedLocalMediaFile,
+} from "./media/media-path-guard.js";
+import { downloadGuardedHttpMedia } from "./media/http-media.js";
 
 /**
  * 主动发送文本消息：Bot WS 优先，不可用时回退 Agent HTTP。
@@ -94,7 +103,8 @@ async function sendWeComMessage({
     throw new Error(`Cannot resolve outbound target from "${to}"`);
   }
 
-  console.log(`[wecom-outbound] Bot WS unavailable, sending via Agent HTTP API to ${JSON.stringify(target)} (accountId=${resolvedAccountId})`);
+  // 目标成员/群聊标识属于业务数据，生产日志只记录降级路径和账户，不记录收件人。
+  console.log(`[wecom-outbound] Bot WS unavailable, falling back to Agent HTTP API (accountId=${resolvedAccountId})`);
   await sendAgentText({
     agent,
     toUser: target.touser,
@@ -122,6 +132,14 @@ const meta = {
   blurb: "企业微信智能机器人接入插件",
   systemImage: "message.fill",
 };
+
+/** Bot WS、Agent API、Bot Webhook 三种接入任一完整即可视为账号已配置。 */
+function isWeComAccountConfigured(account: ResolvedWeComAccount): boolean {
+  return Boolean(account.botId?.trim() && account.secret?.trim()) ||
+    Boolean(account.agent?.configured) ||
+    Boolean(account.token?.trim() && account.encodingAESKey?.trim());
+}
+
 export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
   id: CHANNEL_ID,
   meta: {
@@ -232,17 +250,14 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
     },
 
     // 检查是否已配置（Bot / Agent / botWebhook 凭证之一即可）
-    isConfigured: (account) =>
-      Boolean(account.botId?.trim() && account.secret?.trim()) ||
-      Boolean(account.agent?.configured) ||
-      Boolean(account.token?.trim() && account.encodingAESKey?.trim()),
+    isConfigured: isWeComAccountConfigured,
 
     // 描述账户信息
     describeAccount: (account) => ({
       accountId: account.accountId,
       name: account.name,
       enabled: account.enabled,
-      configured: Boolean(account.botId?.trim() && account.secret?.trim()) || Boolean(account.agent?.configured),
+      configured: isWeComAccountConfigured(account),
       botId: account.botId,
       websocketUrl: account.websocketUrl,
       agentConfigured: Boolean(account.agent?.configured),
@@ -401,36 +416,60 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
         throw new Error(`Cannot resolve outbound target from "${to}"`);
       }
 
-      console.log(`[wecom-outbound] Bot WS unavailable, sending media via Agent HTTP API to ${JSON.stringify(target)}`);
+      // 与文本降级保持同一脱敏策略，避免媒体发送日志泄露成员或群聊标识。
+      console.log(`[wecom-outbound] Bot WS unavailable, sending media via Agent HTTP API (accountId=${account.accountId})`);
 
-      // 尝试下载并上传媒体到企微
+      // 尝试下载并上传媒体到企微。远程 URL 必须经过 SSRF Guard，本地文件必须经过
+      // Path Guard；两条路径共用 media.maxBytes，不能让出站工具成为内网探测或任意读文件入口。
       try {
-        const mediaResponse = await fetch(mediaUrl);
-        if (mediaResponse.ok) {
-          const buffer = Buffer.from(await mediaResponse.arrayBuffer());
-          const filename = mediaUrl.split('/').pop() || 'file.bin';
-          const mediaId = await uploadAgentMedia({
-            agent,
-            type: 'file',
-            buffer,
-            filename,
+        const maxBytes = resolveWecomMediaMaxBytes(cfg);
+        const isRemote = /^https?:\/\//i.test(mediaUrl);
+        let buffer: Buffer;
+        let contentType = "";
+        if (isRemote) {
+          const downloaded = await downloadGuardedHttpMedia({
+            url: mediaUrl,
+            maxBytes,
+            timeoutMs: 30_000,
           });
-          await sendAgentMedia({
-            agent,
-            toUser: target.touser,
-            toParty: target.toparty,
-            toTag: target.totag,
-            chatId: target.chatid,
-            mediaId,
-            mediaType: 'file',
+          buffer = downloaded.buffer;
+          contentType = downloaded.contentType;
+        } else {
+          const local = await readGuardedLocalMediaFile({
+            filePath: mediaUrl,
+            allowedRoots: await getExtendedMediaLocalRoots(account.config),
+            maxBytes,
           });
-          if (text) {
-            await sendAgentText({ agent, toUser: target.touser, toParty: target.toparty, toTag: target.totag, chatId: target.chatid, text });
-          }
-          return { channel: CHANNEL_ID, messageId: `agent-media-${Date.now()}`, chatId };
+          if (!local.ok) throw new Error(local.error);
+          buffer = local.buffer;
         }
-      } catch (err) {
-        console.warn(`[wecom-outbound] Agent media upload failed, falling back to text:`, err);
+
+        const filename = mediaUrl.split(/[\\/]/).pop()?.split("?")[0] || "file.bin";
+        const mediaType = contentType.startsWith("image/")
+          ? "image"
+          : contentType.startsWith("audio/")
+            ? "voice"
+            : contentType.startsWith("video/")
+              ? "video"
+              : "file";
+        const mediaId = await uploadAgentMedia({ agent, type: mediaType, buffer, filename });
+        await sendAgentMedia({
+          agent,
+          toUser: target.touser,
+          toParty: target.toparty,
+          toTag: target.totag,
+          chatId: target.chatid,
+          mediaId,
+          mediaType,
+          ...(mediaType === "video" ? { title: filename, description: "" } : {}),
+        });
+        if (text) {
+          await sendAgentText({ agent, toUser: target.touser, toParty: target.toparty, toTag: target.totag, chatId: target.chatid, text });
+        }
+        return { channel: CHANNEL_ID, messageId: `agent-media-${Date.now()}`, chatId };
+      } catch {
+        // 降级会显式携带原 URL/路径，调用方仍能看到附件未真正上传；不要把凭据相关的
+        // SDK/网络错误原文拼进对外消息。
       }
 
       // 媒体上传失败，降级为文本 + URL
@@ -478,10 +517,7 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
       return probeWeComAccount(account);
     },
     buildAccountSnapshot: ({account, runtime}) => {
-      const configured = Boolean(
-        account.botId?.trim() &&
-        account.secret?.trim()
-      ) || Boolean(account.agent?.configured);
+      const configured = isWeComAccountConfigured(account);
       return {
         accountId: account.accountId,
         name: account.name,
@@ -528,11 +564,14 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
         const media = String(params.media ?? "").trim();
         if (media) {
           const wsClient = getWeComWebSocket(accountId ?? DEFAULT_ACCOUNT_ID);
-          if (wsClient?.isConnected) {
-            const chatId = to.replace(new RegExp(`^${CHANNEL_ID}:`, "i"), "");
-            await uploadAndSendMedia({ wsClient, mediaUrl: media, chatId });
+          if (!wsClient?.isConnected) throw new Error("wecom media action requires an active Bot WebSocket connection");
+          const chatId = to.replace(new RegExp(`^${CHANNEL_ID}:`, "i"), "");
+          const delivered = await uploadAndSendMedia({ wsClient, mediaUrl: media, chatId });
+          if (!delivered.ok || delivered.rejected || !delivered.messageId) {
+            throw new Error(delivered.rejectReason ?? "wecom media delivery failed");
           }
-          return { content: [{ type: "text" as const, text: message || `Sent ${media}` }], details: { ok: true, messageId: `media-${Date.now()}` } };
+          if (message) await sendWeComMessage({ to, content: message, accountId, cfg });
+          return { content: [{ type: "text" as const, text: message || `Sent ${media}` }], details: { ok: true, messageId: delivered.messageId } };
         }
         const result = await sendWeComMessage({ to, content: message, accountId, cfg });
         return { content: [{ type: "text" as const, text: message }], details: { ok: true, messageId: result.messageId } };
@@ -545,11 +584,14 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
         }
         const caption = String(params.caption ?? "").trim();
         const wsClient = getWeComWebSocket(accountId ?? DEFAULT_ACCOUNT_ID);
-        if (wsClient?.isConnected) {
-          const chatId = to.replace(new RegExp(`^${CHANNEL_ID}:`, "i"), "");
-          await uploadAndSendMedia({ wsClient, mediaUrl: media, chatId });
+        if (!wsClient?.isConnected) throw new Error("wecom sendAttachment requires an active Bot WebSocket connection");
+        const chatId = to.replace(new RegExp(`^${CHANNEL_ID}:`, "i"), "");
+        const delivered = await uploadAndSendMedia({ wsClient, mediaUrl: media, chatId });
+        if (!delivered.ok || delivered.rejected || !delivered.messageId) {
+          throw new Error(delivered.rejectReason ?? "wecom attachment delivery failed");
         }
-        return { content: [{ type: "text" as const, text: caption || `Attachment: ${media}` }], details: { ok: true, messageId: `attachment-${Date.now()}` } };
+        if (caption) await sendWeComMessage({ to, content: caption, accountId, cfg });
+        return { content: [{ type: "text" as const, text: caption || `Attachment: ${media}` }], details: { ok: true, messageId: delivered.messageId } };
       }
 
       return { content: [], details: { ok: false, error: `Unsupported wecom action: ${action}` } };
@@ -575,6 +617,8 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
       // ── Agent target 注册 ──────────────────────────────────────────
       const agent = account.agent;
       if (agent?.configured) {
+        // 配置热重载可能在旧 abort 回调到达前启动新实例；先清掉同账号旧目标，避免重复分发。
+        deregisterAgentWebhookTarget(agent.accountId);
         const isMulti = hasMultiAccounts(ctx.cfg);
         const defaultId = resolveDefaultWeComAccountId(ctx.cfg);
         const isDefault = ctx.accountId === defaultId;
@@ -600,7 +644,7 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
               `${WEBHOOK_PATHS.AGENT}/${DEFAULT_ACCOUNT_ID}`,
             ];
 
-        for (const p of paths) {
+        const unregisterTargets = paths.map((p) =>
           registerAgentWebhookTarget({
             agent,
             config: ctx.cfg,
@@ -609,13 +653,13 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
               error: ctx.log?.error ? (msg: string) => ctx.log!.error(msg) : undefined,
             },
             path: p,
-          });
-        }
+          }),
+        );
         ctx.log?.info(`[${ctx.accountId}] wecom agent webhook registered at ${paths.join(", ")}`);
 
         // 账号生命周期结束时清理
         ctx.abortSignal.addEventListener("abort", () => {
-          deregisterAgentWebhookTarget(agent.accountId);
+          for (const unregister of unregisterTargets) unregister();
         }, { once: true });
       }
 
@@ -626,7 +670,9 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
       if (hasBotCredentials) {
         // Fire-and-forget: fetch and save WeCom doc MCP config after WS client is authenticated
         const acctId = ctx.accountId;
+        let mcpFetchAttempts = 0;
         const mcpFetchTimer = setInterval(() => {
+          mcpFetchAttempts += 1;
           const ws = getWeComWebSocket(acctId);
           if (ws?.isConnected) {
             clearInterval(mcpFetchTimer);
@@ -640,8 +686,12 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
             }).catch((err: unknown) => {
               ctx.log?.error?.(`[wecom] MCP config fetch failed: ${String(err)}`);
             });
+          } else if (mcpFetchAttempts >= 60) {
+            clearInterval(mcpFetchTimer);
+            ctx.log?.warn?.("[wecom] MCP config fetch skipped: WebSocket was not ready within 60 seconds");
           }
         }, 1000);
+        mcpFetchTimer.unref();
         ctx.abortSignal?.addEventListener("abort", () => clearInterval(mcpFetchTimer), { once: true });
 
         return monitorWeComProvider({
@@ -692,6 +742,10 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
 
       // Agent-only：无 Bot，等待 abort 信号
       return new Promise<void>((resolve) => {
+        if (ctx.abortSignal.aborted) {
+          resolve();
+          return;
+        }
         ctx.abortSignal.addEventListener("abort", () => resolve(), { once: true });
       });
     },

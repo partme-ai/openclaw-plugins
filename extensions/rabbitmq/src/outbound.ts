@@ -15,11 +15,26 @@ import type {
 import { chunkText } from "openclaw/plugin-sdk/reply-runtime";
 import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 
-import { publishMessage } from "./transport/server.js";
+import { logRabbitmq, publishMessage } from "./transport/server.js";
 import { DEFAULT_RABBITMQ_CONFIG } from "./config.js";
 import { getRabbitmqChannelConfig } from "./state/state.js";
 import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
 import { buildOutboundTopic } from "./routing/topic-router.js";
+
+const DIRECT_TARGET_PREFIX = "openclaw-direct-topic:v1:";
+
+function parseDirectTarget(value: string): string | null {
+  if (!value.startsWith(DIRECT_TARGET_PREFIX)) return null;
+  const encoded = value.slice(DIRECT_TARGET_PREFIX.length);
+  if (!encoded) throw new Error("[openclaw-rabbitmq] Explicit direct target is empty");
+  try {
+    const target = decodeURIComponent(encoded);
+    if (!target) throw new Error("empty target");
+    return target;
+  } catch (error) {
+    throw new Error(`[openclaw-rabbitmq] Invalid explicit direct target: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 /** @description OpenClaw ChannelOutboundAdapter：直连文本发布到 RabbitMQ Exchange。 */
 export const rabbitmqOutbound: ChannelOutboundAdapter = {
@@ -29,18 +44,23 @@ export const rabbitmqOutbound: ChannelOutboundAdapter = {
   textChunkLimit: 4000,
   sanitizeText: ({ text }: { text: string }) => sanitizeForPlainText(text),
   sendText: async (ctx: ChannelOutboundContext) => {
+    const directTarget = parseDirectTarget(ctx.to);
+    if (directTarget) {
+      if (!ctx.deliveryQueueId) throw new Error("[openclaw-rabbitmq] Explicit direct delivery requires deliveryQueueId");
+      await publishMessage(directTarget, ctx.text, { persistent: true, correlationId: ctx.deliveryQueueId });
+      return { channel: "rabbitmq", messageId: ctx.deliveryQueueId };
+    }
     const sessionKey = ctx.to;
     const peerId = getPeerIdBySession(sessionKey);
     if (!peerId) {
-      console.warn(`[openclaw-rabbitmq] Cannot send — no peer for session: ${sessionKey}`);
-      return { channel: "rabbitmq", messageId: "no-peer" };
+      // Channel Adapter 返回即代表投递成功；占位 messageId 会让 Router 从 Outbox 删除失败任务。
+      throw new Error(`[openclaw-rabbitmq] No peer mapping for session: ${sessionKey}`);
     }
 
     const sessionContext = getSessionContext(sessionKey);
     const agentId = sessionContext?.agentId;
     if (!agentId) {
-      console.error(`[openclaw-rabbitmq] Cannot send — missing session context agentId: ${sessionKey}`);
-      return { channel: "rabbitmq", messageId: "no-session-context" };
+      throw new Error(`[openclaw-rabbitmq] Missing session context agentId: ${sessionKey}`);
     }
 
     const cfg = getRabbitmqChannelConfig() ?? DEFAULT_RABBITMQ_CONFIG;
@@ -48,7 +68,7 @@ export const rabbitmqOutbound: ChannelOutboundAdapter = {
 
     await publishMessage(outTopic, ctx.text);
 
-    console.log(`[openclaw-rabbitmq] Reply published to ${outTopic} for peer ${peerId}`);
+    logRabbitmq("debug", `[openclaw-rabbitmq] Reply published to ${outTopic} for peer ${peerId}`);
     return { channel: "rabbitmq", messageId: sessionKey };
   },
 };

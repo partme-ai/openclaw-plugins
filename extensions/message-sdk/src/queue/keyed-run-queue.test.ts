@@ -5,7 +5,12 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { createKeyedRunQueue, KeyedRunQueueInactiveError } from "./keyed-run-queue.js";
+import { AsyncTimeoutError } from "../util/async-timeout.js";
+import {
+  createKeyedRunQueue,
+  KeyedRunQueueCapacityError,
+  KeyedRunQueueInactiveError,
+} from "./keyed-run-queue.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -151,5 +156,134 @@ describe("createKeyedRunQueue", () => {
 
     gate.resolve(undefined);
     vi.useRealTimers();
+  });
+
+  it("times out the caller but waits for the real task before starting the next same-key task", async () => {
+    vi.useFakeTimers();
+    const firstGate = deferred<void>();
+    const order: string[] = [];
+    let firstSignal: AbortSignal | undefined;
+    const queue = createKeyedRunQueue({ taskTimeoutMs: 100 });
+
+    const first = queue.enqueue("chat-1", async ({ lifecycleSignal }) => {
+      firstSignal = lifecycleSignal;
+      order.push("first:start");
+      await firstGate.promise;
+      order.push("first:end");
+      return "first";
+    });
+    const second = queue.enqueue("chat-1", async () => {
+      order.push("second:start");
+      return "second";
+    });
+
+    await Promise.resolve();
+    const firstExpectation = expect(first).rejects.toBeInstanceOf(AsyncTimeoutError);
+    await vi.advanceTimersByTimeAsync(101);
+    await firstExpectation;
+    expect(firstSignal?.aborted).toBe(true);
+    expect(order).toEqual(["first:start"]);
+
+    firstGate.resolve(undefined);
+    await vi.runAllTimersAsync();
+    await expect(second).resolves.toBe("second");
+    expect(order).toEqual(["first:start", "first:end", "second:start"]);
+    vi.useRealTimers();
+  });
+
+  it("broadcasts cancellation to active work when deactivated", async () => {
+    const queue = createKeyedRunQueue();
+    const aborted = deferred<void>();
+
+    const running = queue.enqueue("chat-1", async ({ lifecycleSignal }) => {
+      lifecycleSignal?.addEventListener("abort", () => aborted.resolve(undefined), { once: true });
+      await aborted.promise;
+      return "stopped";
+    });
+    await Promise.resolve();
+
+    const runningExpectation = expect(running).rejects.toMatchObject({ name: "AbortError" });
+    queue.deactivate();
+
+    await aborted.promise;
+    await runningExpectation;
+  });
+
+  it("drains the underlying task after deactivation", async () => {
+    const queue = createKeyedRunQueue();
+    const released = deferred<void>();
+    const taskFinished = vi.fn();
+    const running = queue.enqueue("chat-1", async ({ lifecycleSignal }) => {
+      lifecycleSignal?.addEventListener("abort", () => released.resolve(undefined), { once: true });
+      await released.promise;
+      taskFinished();
+    });
+    await Promise.resolve();
+
+    const runningExpectation = expect(running).rejects.toMatchObject({ name: "AbortError" });
+    queue.deactivate();
+    await queue.drain();
+
+    await runningExpectation;
+    expect(taskFinished).toHaveBeenCalledOnce();
+    expect(queue.snapshot()).toMatchObject({ activeCount: 0, queuedCount: 0 });
+  });
+
+  it("bounds the total pending tasks and reports overflow", async () => {
+    const gate = deferred<void>();
+    const onOverflow = vi.fn();
+    const queue = createKeyedRunQueue({ maxPendingTasks: 1, onOverflow });
+    const first = queue.enqueue("a", async () => {
+      await gate.promise;
+      return "done";
+    });
+
+    await expect(queue.enqueue("b", async () => "never")).rejects.toMatchObject({
+      reason: "tasks",
+    });
+    expect(onOverflow).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "b", pendingTasks: 1, reason: "tasks" }),
+    );
+
+    gate.resolve(undefined);
+    await first;
+    await Promise.resolve();
+    await expect(queue.enqueue("b", async () => "accepted")).resolves.toBe("accepted");
+  });
+
+  it("bounds distinct keys without blocking more work for an existing key", async () => {
+    const gate = deferred<void>();
+    const queue = createKeyedRunQueue({ maxKeys: 1 });
+    const first = queue.enqueue("a", async () => {
+      await gate.promise;
+    });
+    const sameKey = queue.enqueue("a", async () => "same-key");
+
+    await expect(queue.enqueue("b", async () => "never")).rejects.toBeInstanceOf(
+      KeyedRunQueueCapacityError,
+    );
+    gate.resolve(undefined);
+    await first;
+    await expect(sameKey).resolves.toBe("same-key");
+  });
+
+  it("does not let an observer failure mask the original task error", async () => {
+    const original = new Error("task failed");
+    const queue = createKeyedRunQueue({
+      onError: async () => {
+        throw new Error("observer failed");
+      },
+    });
+
+    await expect(
+      queue.enqueue("chat-1", async () => {
+        throw original;
+      }),
+    ).rejects.toBe(original);
+  });
+
+  it("rejects invalid capacity configuration", () => {
+    expect(() => createKeyedRunQueue({ maxPendingTasks: 0 })).toThrow(/maxPendingTasks/);
+    expect(() => createKeyedRunQueue({ maxKeys: 1.5 })).toThrow(/maxKeys/);
   });
 });

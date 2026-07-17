@@ -113,3 +113,11 @@ export function getSessionStats(): {
     connectionCount: connections.size,
   };
 }
+
+/** Gateway 完整停机时清理所有映射与延迟 timer。 */
+export function clearSessionMappings(): void {
+  for (const timer of connectionExpiryTimers.values()) clearTimeout(timer);
+  connectionExpiryTimers.clear();
+  sessionConnectionMap.clear();
+  sessionContextMap.clear();
+}

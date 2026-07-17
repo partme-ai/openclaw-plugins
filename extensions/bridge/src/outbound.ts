@@ -1,18 +1,9 @@
 /**
- * @fileoverview Bridge 出站消息规范化能力的门面导出。
+ * @fileoverview Bridge 插件的跨渠道出站文本规范化公共出口。
  *
- * @description
- * 对应插件架构中的「出站适配」边界：把通用 Agent 文本转换为各 IM 渠道可接受的
- * 格式与分段策略。实现细节位于 `bridge/normalize.ts`，本文件仅为 Base Profile 固定路径入口。
- *
- * @module outbound
+ * 导出的规范化器负责 Markdown 方言转换、转义和长度分片；本文件作为稳定 facade，隔离
+ * 调用方与 `bridge/normalize.ts` 的内部组织方式。
  */
-
-/**
- * Bridge 出站规范化 — Base Profile 入口。
- */
-
-/** @description 按渠道能力矩阵做 Markdown 转义、剥离与智能分段。 */
 export {
   normalizeForChannel,
   getChannelNormalizer,

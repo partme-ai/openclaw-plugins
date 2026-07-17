@@ -1,104 +1,50 @@
-/**
- * @fileoverview Rednode 插件的类型聚合（账户、PluginApi、Channel 契约）。
- *
- * @description
- * 与《小红书开放平台对接规格》channels.xhs 字段对齐；集中导出供 inbound、
- * dispatch、channel 等模块引用，避免循环依赖。
- *
- * @module types
- */
-
-/**
- * Rednode 共享类型 — Base Profile 入口。
- */
-
-import type { IncomingMessage, ServerResponse } from "node:http";
-
-/** @description 小红书渠道账号/单店铺配置（直连或多租户底座模式）。 */
-export interface XhsAccountConfig {
-  app_id: string;
-  app_secret?: string;
-  callback_url?: string;
-  shop_id?: string;
-  seller_id?: string;
-  webhook_secret?: string;
-  /** 多租户底座模式：底座服务根地址，如 https://xxx/ddd4j-rednote */
-  ddd4j_api_base?: string;
-  /** 多租户底座模式：平台颁发的 API Key（与 appId 绑定） */
-  ddd4j_api_key?: string;
-}
-
-/** @description 入站发布参数：供运行时将 Webhook 事件写入 Session / 驱动 Agent。 */
-export interface PublishInboundParams {
-  channel: string;
-  sessionId: string;
-  shopId: string;
-  content: string;
-}
-
-/** @description 插件专用 Logger（可选，由宿主注入）。 */
-export interface PluginLogger {
-  info?: (msg: string) => void;
-  warn?: (msg: string) => void;
-  error?: (msg: string) => void;
-  debug?: (msg: string) => void;
-}
-
-/** @description 插件 API（与 OpenClaw 插件约定一致）。 */
-export interface PluginApi {
-  runtime: {
-    config: Record<string, unknown>;
-    channel?: {
-      publishInbound?: (params: PublishInboundParams) => void | Promise<void>;
-    };
-    /** 可选：plugins.entries.<pluginId>.config，由宿主注入 */
-    pluginConfig?: Record<string, unknown>;
-    /** 可选：带 [plugin:id] 前缀的 logger，由宿主注入 */
-    logger?: PluginLogger;
-  };
-  registerChannel: (options: { plugin: ChannelDefinition }) => void;
-  registerHttpRoute: (params: { path: string; handler: HttpHandler }) => void;
-  registerTool?: (tool: ToolDefinition, opts?: { optional?: boolean }) => void;
-  onReady?: (callback: () => Promise<void>) => void;
-}
-
-/** @description Gateway HTTP 路由处理器签名。 */
-export type HttpHandler = (
-  req: IncomingMessage,
-  res: ServerResponse
-) => Promise<void> | void;
-
-/** @description 渠道定义（与 OpenClaw Channel 约定一致）。 */
-export interface ChannelDefinition {
-  id: string;
-  meta: { id: string; label: string; blurb: string; aliases: string[] };
-  capabilities: { chatTypes: Array<"direct" | "group"> };
-  config: {
-    listAccountIds: (cfg: Record<string, unknown>) => string[];
-    resolveAccount: (
-      cfg: Record<string, unknown>,
-      accountId?: string
-    ) => XhsAccountConfig;
-  };
-  outbound: {
-    deliveryMode: "direct";
-    sendText: (params: SendTextParams) => Promise<{ ok: boolean }>;
-  };
-  setupWizard?: unknown;
-  setup?: unknown;
-}
-
-/** @description 出站 sendText 参数。 */
-export interface SendTextParams {
-  text: string;
-  to: string;
-  account: XhsAccountConfig;
-}
-
-/** @description 工具定义（与 OpenClaw registerTool 约定一致）。 */
-export interface ToolDefinition {
+/** 由管理员从小红书 Ark 官方文档复制并加入白名单的单个操作。 */
+export type RednodeOperation = {
   name: string;
-  description: string;
-  parameters?: Record<string, unknown>;
-  execute?: (params: Record<string, unknown>) => Promise<unknown> | unknown;
-}
+  description?: string;
+  method: "GET" | "POST" | "PUT";
+  apiPath: string;
+};
+
+/** 经过运行时严格校验、可直接交给 Ark 客户端使用的插件配置。 */
+export type RednodePluginConfig = {
+  enabled: true;
+  appKey: string;
+  appSecret: string;
+  environment: "production" | "sandbox";
+  apiBaseUrl: string;
+  operations: RednodeOperation[];
+  requestTimeoutMs: number;
+  maxRequestBytes: number;
+  maxResponseBytes: number;
+  /** 进入 Agent transcript 的独立结果上限，通常应小于上游响应上限。 */
+  maxToolResultBytes: number;
+  maxRequestsPerMinute: number;
+  /** 同时占用 Ark HTTP 连接的调用上限，避免突发请求耗尽连接池。 */
+  maxConcurrentRequests: number;
+  getRetryMaxAttempts: number;
+  retryInitialDelayMs: number;
+  retryMaxDelayMs: number;
+  retryJitterRatio: number;
+  allowCustomApiBaseUrl: boolean;
+  ownerOnly: boolean;
+};
+
+/** 不包含 operation 参数、响应正文或凭据的客户端运维快照。 */
+export type RednodeClientStatus = {
+  activeRequests: number;
+  maxConcurrentRequests: number;
+  requestsInCurrentWindow: number;
+  maxRequestsPerMinute: number;
+  attemptsTotal: number;
+  successfulInvocationsTotal: number;
+  failedInvocationsTotal: number;
+  concurrencyRejectedTotal: number;
+  rateLimitRejectedTotal: number;
+  lastSuccessAt: number | null;
+  lastErrorAt: number | null;
+  lastError: string | null;
+};
+
+/** Ark 标准 JSON 响应；具体 data 结构由白名单 operation 对应的官方接口决定。 */
+export type RednodeApiResponse = Record<string, unknown>;

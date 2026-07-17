@@ -9,16 +9,24 @@
  * 业务 ChannelPlugin 定义见 channel.ts；setup 轻量入口见 setup-entry.ts。
  */
 
-import type { OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
+import type {
+  OpenClawPluginApi,
+  OpenClawPluginDefinition,
+  OpenClawPluginToolContext,
+} from "openclaw/plugin-sdk/core";
 import { emptyChannelConfigSchema } from "openclaw/plugin-sdk/core";
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { wecomPlugin } from "./channel.js";
 import { createWeComMcpTool } from "./mcp/index.js";
+import { resolveWeComAccountMulti } from "./config/accounts.js";
 import { getSessionChatInfo } from "./state/state-manager.js";
 import { setWeComRuntime } from "./runtime.js";
 import { CHANNEL_ID, WEBHOOK_PATHS } from "./types/const.js";
-import { createWecomAgentWebhookHandler, handleWecomWebhookRequest } from "./transport/server.js";
+import {
+  createWecomAgentWebhookHandler,
+  handleWecomWebhookRequest,
+} from "./transport/server.js";
 import { handleTempMediaRequest } from "./outbound/outbound-reply.js";
 
 export { wecomPlugin } from "./channel.js";
@@ -29,7 +37,7 @@ export { setWeComRuntime, getWeComRuntime } from "./runtime.js";
  *
  * @param api OpenClaw 插件 API（full 模式下注册路由与 MCP）
  */
-export default defineChannelPluginEntry({
+const plugin: OpenClawPluginDefinition = defineChannelPluginEntry({
   id: "wecom",
   name: "企业微信",
   description: "企业微信 OpenClaw 插件",
@@ -43,9 +51,17 @@ export default defineChannelPluginEntry({
     api.registerTool(
       (ctx: OpenClawPluginToolContext) => {
         const trustedRequesterUserId =
-          ctx.messageChannel === CHANNEL_ID ? ctx.requesterSenderId?.trim() ?? undefined : undefined;
+          ctx.messageChannel === CHANNEL_ID
+            ? (ctx.requesterSenderId?.trim() ?? undefined)
+            : undefined;
 
         const sessionChat = getSessionChatInfo(ctx.sessionKey);
+        const account = resolveWeComAccountMulti({
+          cfg: api.runtime.config.current() as Parameters<
+            typeof resolveWeComAccountMulti
+          >[0]["cfg"],
+          accountId: ctx.agentAccountId,
+        });
         api.logger?.debug?.(
           `[wecom] MCP tool context: sessionKey="${ctx.sessionKey}", messageChannel="${ctx.messageChannel}", ` +
             `requesterSenderId="${ctx.requesterSenderId}", agentAccountId="${ctx.agentAccountId}", ` +
@@ -56,6 +72,7 @@ export default defineChannelPluginEntry({
           accountId: ctx.agentAccountId,
           chatId: sessionChat?.chatId,
           chatType: sessionChat?.chatType,
+          mediaLocalRoots: account.config.mediaLocalRoots,
         });
       },
       { name: "wecom_mcp" },
@@ -77,7 +94,11 @@ export default defineChannelPluginEntry({
       match: "prefix",
     });
 
-    const botRoutes = [WEBHOOK_PATHS.BOT_PLUGIN, WEBHOOK_PATHS.BOT_ALT, WEBHOOK_PATHS.BOT];
+    const botRoutes = [
+      WEBHOOK_PATHS.BOT_PLUGIN,
+      WEBHOOK_PATHS.BOT_ALT,
+      WEBHOOK_PATHS.BOT,
+    ];
     // Bot JSON 回调（WebSocket 模式的 HTTP 降级 / 纯 Webhook 模式）
     for (const routePath of botRoutes) {
       api.registerHttpRoute({
@@ -90,7 +111,9 @@ export default defineChannelPluginEntry({
 
     api.registerHttpRoute({
       path: "/wecom-media",
-      handler: handleTempMediaRequest as Parameters<OpenClawPluginApi["registerHttpRoute"]>[0]["handler"],
+      handler: handleTempMediaRequest as Parameters<
+        OpenClawPluginApi["registerHttpRoute"]
+      >[0]["handler"],
       auth: "plugin",
     });
 
@@ -107,3 +130,5 @@ export default defineChannelPluginEntry({
     });
   },
 });
+
+export default plugin;

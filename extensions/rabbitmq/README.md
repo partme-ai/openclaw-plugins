@@ -5,7 +5,7 @@
 **OpenClaw plugin — RabbitMQ channel bridge with multi-agent async collaboration and topic subscription support**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--rabbitmq-blue)
-![Node](https://img.shields.io/badge/Node.js-20+-green)
+![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 </div>
@@ -62,8 +62,8 @@
 
 ### Prerequisites
 
-- OpenClaw `>= 2026.4.0`
-- Node.js `20+`
+- OpenClaw `>= 2026.7.1`
+- Node.js `22+`
 - RabbitMQ server `>= 3.8`
 
 ### Install
@@ -150,19 +150,35 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
       "payload": {
         "mode": "jsonTextOrPlain"
       },
+      "queue": {
+        "name": "openclaw.rabbitmq",
+        "durable": true
+      },
+      "retry": {
+        "enabled": true,
+        "delayMs": 5000,
+        "maxAttempts": 5,
+        "queueSuffix": ".retry",
+        "deadLetterSuffix": ".dlq"
+      },
       "connection": {
+        "allowInsecureRemote": false,
         "timeoutMs": 30000,
         "heartbeatSeconds": 30,
         "reconnectAttempts": 5,
-        "reconnectDelayMs": 5000
+        "reconnectDelayMs": 5000,
+        "reconnectMaxDelayMs": 60000,
+        "reconnectJitterRatio": 0.2,
+        "publishConfirmTimeoutMs": 10000
       },
       "consume": {
         "prefetch": 50,
         "concurrency": 4,
-        "requeueOnError": true
+        "requeueOnError": false,
+        "shutdownTimeoutMs": 30000
       },
       "idempotency": {
-        "enabled": false
+        "enabled": true
       }
     }
   },
@@ -226,7 +242,10 @@ To configure, set in your `openclaw.json`:
 | `topicPrefix` | string | `openclaw` | Topic prefix for standard format |
 | `connection.timeout` | number | 30000 | Connection timeout (ms) |
 | `connection.reconnectAttempts` | number | 5 | Reconnect attempts |
-| `connection.reconnectDelay` | number | 5000 | Reconnect delay (ms) |
+| `connection.allowInsecureRemote` | boolean | false | Allow plaintext `amqp://` for remote hosts; keep false in production |
+| `connection.reconnectDelayMs` | number | 5000 | Exponential-backoff base delay (ms) |
+| `connection.reconnectMaxDelayMs` | number | 60000 | Exponential-backoff maximum delay (ms) |
+| `connection.reconnectJitterRatio` | number | 0.2 | Jitter ratio used to reduce reconnect stampedes |
 
 ### Topics
 
@@ -475,6 +494,47 @@ Official docs for plugins, the SDK, and this channel's building blocks:
 - [Architecture](https://docs.openclaw.ai/plugins/architecture)
 
 ## ❓ FAQ
+
+## Production reliability
+
+```text
+Gateway stop
+     │
+     ▼
+stopping=true ──▶ basic.cancel ──▶ reject new deliveries
+                                           │
+                                           ▼
+                              await Agent + publish confirms
+                                           │
+                      ┌────────────────────┴───────────────┐
+                      ▼                                    ▼
+             ACK / retry / DLQ done          consume.shutdownTimeoutMs
+                      └────▶ NACK unsettled deliveries ◀───┘
+                                           │
+                                           ▼
+                                  close channels/connection
+```
+
+```mermaid
+sequenceDiagram
+    participant G as Gateway
+    participant C as RabbitMQ Consumer
+    participant A as Agent Runtime
+    participant B as Broker
+    G->>C: stopping=true; basic.cancel
+    C->>A: drain accepted turns
+    A->>B: confirmed reply / retry / DLQ publish
+    B-->>C: publisher confirm
+    C-->>B: ACK original delivery
+    Note over C,A: timeout warns and NACKs remaining deliveries for requeue
+    C-->>G: close channels and connection
+```
+
+- Outbound replies, retries, and dead-letter transfers use RabbitMQ Publisher Confirms and persistent messages. The original delivery is ACKed only after the broker confirms the next durable hop.
+- Failed deliveries go through a dedicated `<exchange>.retry` exchange and TTL queue. After `maxAttempts`, they are confirmed into `<exchange>.dlx` and `<queue>.dlq`.
+- The default stable queue name (`openclaw.rabbitmq`) gives Gateway replicas competing-consumer semantics. Use distinct queue names when every replica must receive a copy.
+- Idempotency is enabled by default for messages carrying `correlationId` or `messageId`; it is claim/commit based, so failed processing releases the claim. The cache is process-local, so cross-replica exactly-once still requires a business idempotency store.
+- Status endpoints redact credentials from AMQP URLs. Use `amqps://` for remote brokers and grant the RabbitMQ account only the exchange/queue permissions it needs.
 
 ### Does this plugin require an external RabbitMQ server?
 

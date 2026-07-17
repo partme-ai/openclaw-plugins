@@ -103,7 +103,9 @@ export function verifyWecomSignature(params: {
     nonce: params.nonce,
     encrypt: params.encrypt,
   });
-  return expected === params.signature;
+  const signature = params.signature.trim().toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(signature)) return false;
+  return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"));
 }
 
 /**

@@ -1,403 +1,297 @@
-<div align="center">
-
 # OpenClaw Web STOMP
 
-**STOMP over WebSocket — STOMP 1.2 · ACK · Heartbeat · Spring / stomp.js**
+STOMP 1.2 over WebSocket/WSS for OpenClaw 2026.7.1. The plugin accepts authenticated browser or service connections, routes `SEND` frames to an allowlisted Agent, and exposes that connection's Agent replies as `MESSAGE` frames.
 
-![Version](https://img.shields.io/badge/Version-0.1.0-blue) ![License](https://img.shields.io/badge/License-MIT-green)
-
-</div>
-
-[中文](README.zh-CN.md) | English
-
----
-
-## Overview
-
-Inspired by `rabbitmq_web_stomp`, this plugin bridges STOMP (Simple Text Oriented Messaging Protocol) over WebSocket to OpenClaw, allowing web browsers and enterprise systems (like Spring STOMP clients) to communicate with AI agents using the familiar STOMP protocol.
-
-### RabbitMQ web-stomp Context
-
-**What rabbitmq_web_stomp does**: Bridges STOMP protocol to WebSocket, enabling browsers to subscribe/publish messages via STOMP.
-
-**OpenClaw scenarios**:
-- Web applications subscribe to Agent real-time reply streams via standard STOMP protocol
-- STOMP client libraries (stomp.js) connect directly to OpenClaw
-- Bridge STOMP messages to OpenClaw `chat.send` / `chat` events
-
-**Value**: Enables non-WS-native enterprise systems (e.g., Spring STOMP clients) to communicate with OpenClaw agents.
-
-### Key Features
-
-- **STOMP 1.2 Support**: Full implementation of STOMP 1.2 specification
-- **WebSocket Transport**: Browser-friendly WebSocket-based communication
-- **Destination-based Routing**: Route messages to agents via STOMP destinations
-- **Subscription Management**: Subscribe to session events and agent responses
-- **ACK/NACK Support**: Reliable message delivery with acknowledgment modes
-- **Heartbeat**: Connection keep-alive for long-running sessions
+[中文说明](README.zh-CN.md)
 
 ## Architecture
 
-```
-Web Browser / Enterprise System        OpenClaw Gateway
-    │                                        │
-    │  ┌─────────────────────────────────────┤
-    │  │    openclaw-web-stomp Plugin        │
-    │  │  ┌─────────────────────────────┐    │
-    │  │  │                             │    │
-    ├──┼──► stomp-server.ts             │    │
-    │  │  │   (STOMP over WS)           │    │
-    │  │  │         │                   │    │
-    │  │  │         ▼                   │    │
-    │  │  │   frame-parser.ts           │    │
-    │  │  │         │                   │    │
-    │  │  │         ▼                   │    │
-    │  │  │   destination-router.ts ────┼────┼──► OpenClaw Agent
-    │  │  │         │                   │    │      (AI Processing)
-    │  │  │         ▼                   │    │
-    │  │  │   subscription-mgr.ts       │    │
-    │  │  │         │                   │    │
-    │  │  │         ▼                   │    │
-    ◄──┼──┤   channel.ts                │    │
-    │  │  │   (MESSAGE frame)           │    │
-    │  │  └─────────────────────────────┘    │
-    │  └─────────────────────────────────────┤
-```
+The character diagram highlights the browser trust boundary, per-connection isolation, and bounded ACK window. The Mermaid diagram below preserves the full renderable component relationship.
 
-## STOMP Destination Convention
-
-```
-/topic/session.<sessionKey>           → Subscribe to session event stream
-/topic/agent.<agentId>.events         → Subscribe to agent-level events
-/queue/agent                          → Send message to default Agent
-/queue/agent.<agentId>                → Send message to specific Agent
+```text
+Browser / Spring STOMP client
+        │  WS/WSS Upgrade
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│ openclaw-web-stomp                                           │
+│                                                              │
+│ path + Origin + capacity ──▶ CONNECT auth ──▶ heartbeat/rate │
+│                                                  │           │
+│                                                  ▼           │
+│                                   per-connection frame queue │
+│                                                  │           │
+│                   ┌──────────────────────────────┴───────┐   │
+│                   ▼                                      ▼   │
+│       SEND /queue/agent.{id}              own-session SUBSCRIBE│
+│                   │                                      │   │
+│                   ▼                                      │   │
+│       message-sdk → OpenClaw Agent                       │   │
+│                   │                                      │   │
+│                   └────────── Agent reply ───────────────┘   │
+│                                          │                   │
+│                                          ▼                   │
+│                              MESSAGE + bounded ACK window     │
+└──────────────────────────────────────────┬───────────────────┘
+                                           ▼
+                                     ACK / NACK / RECEIPT
 ```
 
-### Example: Sending Message to Agent
-
-```
-SEND
-destination:/queue/agent.support-bot
-content-type:application/json
-
-{"text": "Hello, how can I help?"}
-^@
-```
-
-### Example: Subscribing to Session Events
-
-```
-SUBSCRIBE
-id:sub-1
-destination:/topic/session.user123
-
-^@
+```mermaid
+flowchart LR
+    Client["Browser / Spring STOMP client"] --> Guard["Path + Origin + capacity"]
+    Guard --> WS["WS/WSS\nframe and backpressure limits"]
+    WS --> Protocol["STOMP 1.2\nauth + heartbeat + rate limit"]
+    Protocol --> Queue["Per-connection serial queue"]
+    Queue --> Route["Destination routing\nAgent allowlist + session isolation"]
+    Route --> SDK["message-sdk\nparse + dedupe + dispatch"]
+    SDK --> Agent["OpenClaw Agent"]
+    Agent --> Subscription["Session subscription\nMESSAGE + ACK window"]
+    Subscription --> WS
 ```
 
-### Example: Receiving Agent Response
+This is an in-process STOMP access layer for one OpenClaw Gateway. Each connection owns its session id, serial frame queue, subscriptions, and ACK window; disconnect and shutdown remove all of them.
 
-```
-MESSAGE
-subscription:sub-1
-message-id:msg-001
-destination:/topic/session.user123
-content-type:application/json
+Internal Agent/Runtime failures are never returned verbatim to clients. A stable `Agent dispatch failed` protocol error is exposed while the redacted reason is retained in Gateway logs and channel status, preventing URL credentials, Authorization values, or tokens from leaking through STOMP `ERROR` frames.
 
-{"text": "I can help you with that!", "timestamp": 1699999999}
-^@
-```
+## Scope
 
-## Directory Structure
+- STOMP 1.2 `CONNECT`, `SEND`, `SUBSCRIBE`, `UNSUBSCRIBE`, `ACK`, `NACK`, and `DISCONNECT`
+- WebSocket and TLS-backed WSS listeners
+- Login/passcode authentication with environment-variable or SHA-256/SHA-512 credentials
+- Negotiated STOMP heartbeats, connection and subscription limits, rate limiting, frame-size limits, and outbound backpressure
+- Exact Origin allowlists for browser deployments
+- Connection-scoped reply topics by default, preventing one client from subscribing to another client's session
+- OpenClaw gateway lifecycle integration and a redacted `/stomp/status` endpoint
 
-```
-openclaw-web-stomp/
-  package.json
-  tsconfig.json
-  tsup.config.ts
-  openclaw.plugin.json    # channels: ["stomp"]
-  src/
-    index.ts              # Entry: start STOMP server + register channel
-    types.ts              # StompFrame, StompSubscription, etc.
-    stomp-server.ts       # STOMP over WebSocket server
-    frame-parser.ts       # STOMP frame parsing/serialization
-    channel.ts            # stomp channel definition
-    destination-router.ts # STOMP destination → Agent routing
-    subscription-mgr.ts   # Subscription management
-    ack-handler.ts        # ACK/NACK message confirmation
-```
+This is an OpenClaw channel adapter, not a durable message broker. Subscriptions and pending acknowledgements live in memory. `NACK` clears pending state; it does not redeliver or route to a dead-letter queue. With `content-length`, a UTF-8 body may contain NUL; without it, the first NUL terminates the frame. Use RabbitMQ or another broker when durable queues, replay, transactions, or broker clustering are required.
 
-## Protocol Mapping
-
-| STOMP Concept | OpenClaw Mapping |
-|---|---|
-| CONNECT | Gateway WS connect (authentication) |
-| SUBSCRIBE `/topic/session.<key>` | Subscribe to session's agent event stream |
-| SEND `/queue/agent` | Send message to Agent (chat.send) |
-| MESSAGE | Agent reply event (streaming) |
-| ACK/NACK | Message confirmation (for reliable delivery) |
-| DISCONNECT | End session gracefully |
+`client` cumulative ACK ordering uses a monotonic delivery sequence, not millisecond timestamps, so acknowledging one message cannot accidentally acknowledge a later message emitted in the same millisecond.
 
 ## Configuration
 
-### Channel Configuration in `openclaw.json`
-
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+The safe default binds `127.0.0.1:15674`, requires authentication, and refuses to start until at least one credential is configured. A non-loopback listener must use WSS.
 
 ```json
 {
   "channels": {
     "stomp": {
-      "port": 15674,
+      "enabled": true,
+      "host": "127.0.0.1",
+      "wsPort": 15674,
       "path": "/ws",
-      "heartbeat": {
-        "incoming": 10000,
-        "outgoing": 10000
+      "defaultAgentId": "main",
+      "allowedAgentIds": ["support"],
+      "auth": {
+        "required": true,
+        "users": [
+          {
+            "login": "browser",
+            "passwordEnv": "OPENCLAW_STOMP_PASSWORD"
+          }
+        ]
       },
-      "authentication": {
-        "enabled": true,
-        "users": {
-          "webapp": "secret123"
-        }
+      "heartbeat": {
+        "serverMs": 10000,
+        "clientMs": 10000
+      },
+      "limits": {
+        "maxConnections": 500,
+        "maxFrameSize": 262144,
+        "maxBufferedBytes": 1048576,
+        "maxSubscriptionsPerConnection": 100,
+        "maxPendingMessages": 32,
+        "maxPendingAcks": 100,
+        "messagesPerMinute": 120,
+        "connectTimeoutMs": 10000,
+        "shutdownTimeoutMs": 10000
+      },
+      "ws": {
+        "allowedOrigins": ["https://console.example.com"]
+      },
+      "tls": {
+        "enabled": false,
+        "minVersion": "TLSv1.2"
       }
     }
   }
 }
 ```
 
-### Agent Binding
+For a directly exposed listener, set a non-loopback `host` and configure TLS:
 
 ```json
 {
-  "bindings": [
-    {
-      "channel": "stomp",
-      "peer": "webapp-*",
-      "agent": "customer-support"
-    }
-  ]
+  "host": "0.0.0.0",
+  "tls": {
+    "enabled": true,
+    "keyFile": "/etc/openclaw/tls/stomp.key",
+    "certFile": "/etc/openclaw/tls/stomp.crt",
+    "caFile": "/etc/openclaw/tls/ca.crt",
+    "minVersion": "TLSv1.2"
+  }
 }
 ```
 
-## Client Examples
+Plaintext is intentionally limited to loopback. If TLS terminates at a reverse proxy, keep the plugin on loopback and proxy WSS to it. Avoid inline `password`; use `passwordEnv` or `passwordHash`. `allowedOrigins` accepts exact canonical HTTP(S) origins only; wildcard, path, query, and fragment values fail startup validation.
 
-### JavaScript (stomp.js)
+## Destination flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as STOMP client
+    participant S as Web STOMP server
+    participant O as OpenClaw Agent
+    C->>S: CONNECT(login, passcode, heart-beat)
+    S-->>C: CONNECTED(session, heart-beat)
+    C->>S: SUBSCRIBE own session topic + receipt
+    S-->>C: RECEIPT
+    C->>S: SEND Agent destination + receipt
+    S->>O: serialized Agent dispatch
+    O-->>S: reply
+    S-->>C: MESSAGE with ack id
+    S-->>C: SEND RECEIPT
+    C->>S: ACK + receipt
+    S-->>C: ACK RECEIPT
+```
+
+After a successful `CONNECT`, the `CONNECTED` frame contains a generated `session` header. For session `SESSION_ID`:
+
+| Operation | Destination | Meaning |
+|---|---|---|
+| Send | `/queue/agent` | Send to `defaultAgentId` |
+| Send | `/queue/agent.support` | Send to allowlisted Agent `support` |
+| Subscribe | `/topic/session.stomp:SESSION_ID@support` | Receive this connection's `support` replies |
+
+With the default `allowSharedTopics: false`, subscriptions outside the current connection's `stomp:SESSION_ID@...` session are rejected. Set `allowSharedTopics: true` only for explicitly trusted clients that need shared topics.
 
 ```javascript
-import { Client } from '@stomp/stompjs';
+import { Client } from "@stomp/stompjs";
 
 const client = new Client({
-  brokerURL: 'ws://gateway:15674/ws',
+  brokerURL: "wss://gateway.example.com/ws",
   connectHeaders: {
-    login: 'webapp',
-    passcode: 'secret123'
+    login: "browser",
+    passcode: "<injected-at-runtime>",
   },
-  onConnect: () => {
-    // Subscribe to session events
-    client.subscribe('/topic/session.user123', (message) => {
-      const response = JSON.parse(message.body);
-      console.log('Agent says:', response.text);
-    });
+  heartbeatIncoming: 10_000,
+  heartbeatOutgoing: 10_000,
+  onConnect(frame) {
+    const sessionId = frame.headers.session;
+    const destination = `/topic/session.stomp:${sessionId}@support`;
 
-    // Send message to agent
+    client.subscribe(destination, (message) => {
+      console.log(JSON.parse(message.body));
+    }, { id: "support-replies", ack: "auto" });
+
     client.publish({
-      destination: '/queue/agent.support-bot',
-      body: JSON.stringify({ text: 'Hello!' })
+      destination: "/queue/agent.support",
+      headers: { receipt: "request-1" },
+      body: JSON.stringify({ text: "Hello" }),
     });
-  }
+  },
 });
 
 client.activate();
 ```
 
-### Java (Spring WebSocket STOMP)
+Do not hardcode the browser credential shown as a placeholder; inject a short-lived or deployment-scoped credential through your application's secure bootstrap path.
 
-```java
-@Configuration
-@EnableWebSocketMessageBroker
-public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
-    
-    @Override
-    public void configureMessageBroker(MessageBrokerRegistry config) {
-        config.enableStompBrokerRelay("/topic", "/queue")
-              .setRelayHost("gateway")
-              .setRelayPort(15674)
-              .setClientLogin("webapp")
-              .setClientPasscode("secret123");
-    }
-}
+A `RECEIPT` for `SEND` is emitted only after OpenClaw accepts the inbound dispatch. For `client` or `client-individual` subscriptions, acknowledge the `ack` header from the `MESSAGE` frame.
 
-@Controller
-public class ChatController {
-    
-    @MessageMapping("/chat")
-    @SendTo("/topic/session.{sessionId}")
-    public AgentResponse chat(@DestinationVariable String sessionId, 
-                               ChatMessage message) {
-        // Message forwarded to OpenClaw agent
-        return agentResponse;
-    }
-}
+Inbound deduplication is enabled only when the client explicitly supplies `message-id`. A `receipt` is protocol correlation rather than request identity, and equal bodies may be legitimate repeated user requests, so neither is converted into an implicit idempotency key.
+
+## Failure and backpressure
+
+The character view makes the delivery boundary explicit: an Agent reply is successful only after the WebSocket send callback confirms that the frame reached the socket layer.
+
+```text
+Agent reply wire
+      │
+      ▼
+Find session subscription
+      ├── none / ACK window full ─────────▶ delivery failed
+      ▼
+Register pending ACK (non-auto)
+      ▼
+Check bufferedAmount + frame bytes
+      ├── over limit ─▶ close 1013 + discard pending ACK
+      ▼
+Await ws.send callback
+      ├── error ──────▶ terminate + discard pending ACK
+      ▼
+Confirmed delivery ──▶ finish Agent reply pipeline
 ```
 
-### Python
-
-```python
-import stomp
-
-class MyListener(stomp.ConnectionListener):
-    def on_message(self, frame):
-        print(f"Agent response: {frame.body}")
-
-conn = stomp.Connection([('gateway', 15674)])
-conn.set_listener('', MyListener())
-conn.connect('webapp', 'secret123', wait=True)
-
-conn.subscribe('/topic/session.user123', id=1)
-conn.send('/queue/agent.support-bot', '{"text": "Hello!"}')
+```mermaid
+flowchart TD
+    F["Incoming STOMP frame"] --> V{"Protocol, auth, rate and destination valid?"}
+    V -- No --> E["ERROR; close on framing errors"]
+    V -- Yes --> Q{"Per-connection queue has capacity?"}
+    Q -- No --> C1["Close 1013: inbound queue full"]
+    Q -- Yes --> A["Run Agent turn"]
+    A --> P{"Subscriber, ACK window and send buffer available?"}
+    P -- No --> C2["Close 1013 or fail delivery"]
+    P -- Yes --> M["Send MESSAGE / RECEIPT"]
 ```
 
-## ACK Modes
+## Shutdown drain
 
-| Mode | Description |
-|---|---|
-| `auto` | Messages auto-acknowledged on delivery |
-| `client` | Client must send ACK for each message |
-| `client-individual` | Each message requires individual ACK |
-
-For reliable delivery in critical applications, use `client` or `client-individual` mode:
-
-```
-SUBSCRIBE
-id:sub-1
-destination:/topic/session.user123
-ack:client
-
-^@
-```
-
-Then acknowledge received messages:
-
-```
-ACK
-id:msg-001
-
-^@
+```text
+Gateway AbortSignal
+       │
+       ▼
+Reject new upgrades / frames ──▶ stop heartbeat
+        │
+        ▼
+Retain WebSockets, subscriptions and Runtime references
+        │
+        ▼
+Await accepted Agent turns and reply delivery
+        │
+        ├── drained ───────────────────────────┐
+        │                                      │
+        └── shutdownTimeoutMs ──▶ warn          │
+                                               ▼
+                         close WebSockets → clear subscriptions / ACK / listener
 ```
 
-## Heartbeat
-
-Configure heartbeat to detect connection issues:
-
-```
-CONNECT
-accept-version:1.2
-host:gateway
-heart-beat:10000,10000
-login:webapp
-passcode:secret123
-
-^@
-```
-
-Server response:
-
-```
-CONNECTED
-version:1.2
-heart-beat:10000,10000
-
-^@
+```mermaid
+sequenceDiagram
+    participant G as OpenClaw Gateway
+    participant S as Web STOMP Server
+    participant Q as Per-connection queue
+    participant A as Agent Runtime
+    G->>S: AbortSignal / stopAccount
+    S->>S: accepting=false; stop heartbeat
+    S--xS: reject new upgrades / frames
+    Note over S,A: retain WS, subscriptions and Runtime references
+    S->>Q: await captured queues
+    Q->>A: finish accepted Agent turns
+    A-->>S: deliver reply through the original session
+    A-->>Q: success / failure
+    Q-->>S: drained
+    S--xS: close WS; clear subscriptions / ACK / listener
+    S-->>G: cleanup complete
+    Note over S,Q: warn and exit within shutdownTimeoutMs on timeout
 ```
 
-## Monitoring
+The bounded drain prevents routine Gateway shutdown from clearing runtime state underneath an accepted `SEND`. A hard kill can still leave an unknown outcome, so callers should retain idempotency keys.
 
-Access server status via HTTP:
+## Operations
 
-```
-GET /stomp/status
-```
-
-Response:
-
-```json
-{
-  "connectedClients": 15,
-  "activeSubscriptions": 42,
-  "messagesReceived": 1234,
-  "messagesSent": 5678,
-  "uptime": 86400
-}
-```
+- Restrict `allowedAgentIds`; an unlisted Agent cannot be addressed by a client.
+- Keep Origin restrictions enabled for browsers and enforce network policy at the ingress layer.
+- Monitor `/stomp/status`; it exposes connections, subscriptions, queued frames, pending ACKs, rejections, auth failures, protocol errors, drops, and redacted configuration.
+- Configure realistic frame, queue, ACK, and connection limits before load testing.
+- Restarting the gateway drops all WebSocket sessions, subscriptions, and pending ACK state.
 
 ## Development
 
 ```bash
-pnpm install
-pnpm build
-pnpm dev   # watch mode
+pnpm --filter @partme.ai/openclaw-web-stomp typecheck
+pnpm --filter @partme.ai/openclaw-web-stomp test
+pnpm --filter @partme.ai/openclaw-web-stomp build
 ```
 
-## Dependencies
-
-- `ws` - WebSocket server implementation
-
-## Use Cases
-
-### Web Chat Application
-
-Real-time chat interface in browser connecting to AI support agent.
-
-### Enterprise Integration
-
-Spring-based enterprise systems communicating with OpenClaw agents for automated processing.
-
-### Dashboard Notifications
-
-Subscribe to agent events for real-time dashboard updates.
-
-### Multi-client Broadcasting
-
-Multiple clients subscribed to same session for collaborative interactions.
-
-## Plugin Configuration (configSchema)
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `port` | number | 15674 | WebSocket listener port for STOMP |
-| `path` | string | `/ws` | WebSocket endpoint path |
-| `heartbeat.serverMs` / `clientMs` | number | 10000 | Server and client heartbeat (ms) |
-| `maxFrameSize` | number | 65536 | Max STOMP frame size (bytes) |
-| `prefetchCount` | number | 10 | Default prefetch for subscriptions |
-| `destinations.agentPrefix` / `topicPrefix` / `queuePrefix` | string | `/agent/`, `/topic/`, `/queue/` | Destination prefixes |
-| `auth.required` | boolean | true | Require STOMP CONNECT authentication |
-
-## Related OpenClaw plugins
-
-| Plugin | Description |
-|--------|--------------|
-| [openclaw_auth_oauth2](https://github.com/partme-ai/openclaw_auth_oauth2) | OAuth2 authentication |
-| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | Cluster coordination (discovery, config sync, session store, proxy) |
-| [openclaw_mqtt](https://github.com/partme-ai/openclaw_mqtt) | MQTT protocol adapter |
-| [openclaw_prometheus](https://github.com/partme-ai/openclaw_prometheus) | Prometheus metrics exporter |
-| [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP server |
-| [openclaw_tracing](https://github.com/partme-ai/openclaw_tracing) | Distributed tracing |
-| [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt) | WebSocket MQTT |
-| [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp) | WebSocket STOMP |
-| [openclaw_wecom_kf](https://github.com/partme-ai/openclaw_wecom_kf) | WeChat Work customer service channel |
-
-## Comparison with rabbitmq_web_stomp
-
-| Feature | rabbitmq_web_stomp | openclaw-web-stomp |
-|---|---|---|
-| Protocol | STOMP 1.0, 1.1, 1.2 | STOMP 1.2 |
-| Transport | WebSocket, SockJS | WebSocket |
-| Routing | Exchange/Queue | Destination → Agent |
-| Use Case | General messaging | AI Agent interaction |
-
-## License
-
-MIT
-
-## Message Format Guide
-
-Web STOMP uses the shared OpenClaw queue wire contract for inbound parsing and envelope replies. See [OpenClaw Queue Message Format Guide](../../doc/OpenClaw-Queue-Message-Format-Guide.en.md) for standard `MessageEnvelope` payloads, non-standard normalization, fixed envelope replies, and cross-language SDK adapter guidance.
+License: MIT.

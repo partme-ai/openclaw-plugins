@@ -71,6 +71,12 @@ export type RedisChannelConfig = {
     createGroup: boolean;
     /** XAUTOCLAIM 最小 idle 毫秒；0 表示禁用 pending 回收 */
     pendingClaimIdleMs: number;
+    /** Maximum delivery count before atomically moving an entry to deadLetterKey. */
+    maxAttempts: number;
+    /** Dead-letter stream key. */
+    deadLetterKey: string;
+    /** Approximate MAXLEN applied to plugin-owned output and DLQ streams; 0 disables trimming. */
+    maxLen: number;
   };
   subscribeChannels: string[];
   channelBindings: RedisChannelBinding[];
@@ -85,7 +91,28 @@ export type RedisChannelConfig = {
     replyStreamField: string;
   };
   connection: {
+    /** 远程主机是否允许使用明文 redis://；本机回环不受限制。 */
+    allowInsecureRemote: boolean;
     reconnectMs: number;
+    /** 指数退避最大等待时间。 */
+    reconnectMaxMs: number;
+    /** 双向抖动比例（0~1），降低多 Gateway 实例同时重连。 */
+    reconnectJitterRatio: number;
+    /** 0 means unlimited reconnects after the first successful connection. */
     maxRetries: number;
+    /** Pub/Sub 模式允许同时进入 Agent 管道的最大消息数；达到上限时拒绝新消息。 */
+    maxPubSubInFlight: number;
+    startupTimeoutMs: number;
+    /** Gateway 停止时等待 Redis 客户端优雅退出的最长时间。 */
+    shutdownTimeoutMs: number;
+  };
+  network: {
+    /** 单次 Agent Turn（含回复写入 Redis）的最大等待时间。 */
+    agentReplyTimeoutMs: number;
+  };
+  idempotency: {
+    enabled: boolean;
+    ttlMs: number;
+    maxEntries: number;
   };
 };

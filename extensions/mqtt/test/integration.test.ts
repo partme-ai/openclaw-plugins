@@ -27,12 +27,16 @@ describe("openclaw-mqtt 功能集成测试", () => {
   beforeAll(async () => {
     const config = {
       port: BROKER_PORT,
-      wsPort: 0,
       maxConnections: 100,
       auth: {
         enabled: true,
         allowAnonymous: true,
         users: [
+          {
+            username: "anonymous",
+            publishAllow: ["openclaw/agent/+/in", "devices/#"],
+            subscribeAllow: ["openclaw/agent/+/in", "devices/#"],
+          },
           {
             username: "test-user",
             password: "test-pass",
@@ -48,7 +52,11 @@ describe("openclaw-mqtt 功能集成测试", () => {
         ],
       },
       tls: { enabled: false, port: 0 },
-      limits: { maxPayloadBytes: 1024 * 1024 },
+      limits: {
+        maxPayloadBytes: 1024 * 1024,
+        maxPendingMessagesPerClient: 32,
+        inboundTaskTimeoutMs: 120_000,
+      },
       session: { maxExpirySeconds: 3600, persistentAcrossReconnect: true },
       qos0: { mailboxSoftLimit: 200 },
       retain: { allowInboundRetain: true, outboundRetain: false },

@@ -12,12 +12,16 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import { getWeixinRuntime } from "../runtime.js";
 import { resolveStateDir } from "../storage/state-dir.js";
+import { writePrivateJsonAtomic } from "../storage/atomic-json.js";
 import { resolveFrameworkAllowFromPath } from "./pairing.js";
 import { logger } from "../util/logger.js";
+import {
+  validateWeixinApiBaseUrl,
+  validateWeixinCdnBaseUrl,
+} from "../api/endpoint-policy.js";
 
 export const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 export const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
-
 
 // ---------------------------------------------------------------------------
 // Account ID compatibility (legacy raw ID → normalized ID)
@@ -59,7 +63,9 @@ export function listIndexedWeixinAccountIds(): string[] {
     const raw = fs.readFileSync(filePath, "utf-8");
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((id): id is string => typeof id === "string" && id.trim() !== "");
+    return parsed.filter(
+      (id): id is string => typeof id === "string" && id.trim() !== "",
+    );
   } catch {
     return [];
   }
@@ -67,14 +73,11 @@ export function listIndexedWeixinAccountIds(): string[] {
 
 /** Add accountId to the persistent index (no-op if already present). */
 export function registerWeixinAccountId(accountId: string): void {
-  const dir = resolveWeixinStateDir();
-  fs.mkdirSync(dir, { recursive: true });
-
   const existing = listIndexedWeixinAccountIds();
   if (existing.includes(accountId)) return;
 
   const updated = [...existing, accountId];
-  fs.writeFileSync(resolveAccountIndexPath(), JSON.stringify(updated, null, 2), "utf-8");
+  writePrivateJsonAtomic(resolveAccountIndexPath(), updated);
 }
 
 /** Remove accountId from the persistent index. */
@@ -82,7 +85,7 @@ export function unregisterWeixinAccountId(accountId: string): void {
   const existing = listIndexedWeixinAccountIds();
   const updated = existing.filter((id) => id !== accountId);
   if (updated.length !== existing.length) {
-    fs.writeFileSync(resolveAccountIndexPath(), JSON.stringify(updated, null, 2), "utf-8");
+    writePrivateJsonAtomic(resolveAccountIndexPath(), updated);
   }
 }
 
@@ -104,7 +107,9 @@ export function clearStaleAccountsForUserId(
     if (id === currentAccountId) continue;
     const data = loadWeixinAccount(id);
     if (data?.userId?.trim() === userId) {
-      logger.info(`clearStaleAccountsForUserId: removing stale account=${id} (same userId=${userId})`);
+      logger.info(
+        `clearStaleAccountsForUserId: removing stale account=${id} (same userId=${userId})`,
+      );
       onClearContextTokens?.(id);
       clearWeixinAccount(id);
       unregisterWeixinAccountId(id);
@@ -137,7 +142,12 @@ function resolveAccountPath(accountId: string): string {
  * Legacy single-file token: `credentials/openclaw-weixin/credentials.json` (pre per-account files).
  */
 function loadLegacyToken(): string | undefined {
-  const legacyPath = path.join(resolveStateDir(), "credentials", "openclaw-weixin", "credentials.json");
+  const legacyPath = path.join(
+    resolveStateDir(),
+    "credentials",
+    "openclaw-weixin",
+    "credentials.json",
+  );
   try {
     if (!fs.existsSync(legacyPath)) return undefined;
     const raw = fs.readFileSync(legacyPath, "utf-8");
@@ -151,7 +161,9 @@ function loadLegacyToken(): string | undefined {
 function readAccountFile(filePath: string): WeixinAccountData | null {
   try {
     if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, "utf-8")) as WeixinAccountData;
+      return JSON.parse(
+        fs.readFileSync(filePath, "utf-8"),
+      ) as WeixinAccountData;
     }
   } catch {
     // ignore
@@ -190,9 +202,6 @@ export function saveWeixinAccount(
   accountId: string,
   update: { token?: string; baseUrl?: string; userId?: string },
 ): void {
-  const dir = resolveAccountsDir();
-  fs.mkdirSync(dir, { recursive: true });
-
   const existing = loadWeixinAccount(accountId) ?? {};
 
   const token = update.token?.trim() || existing.token;
@@ -209,12 +218,7 @@ export function saveWeixinAccount(
   };
 
   const filePath = resolveAccountPath(accountId);
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
-  try {
-    fs.chmodSync(filePath, 0o600);
-  } catch {
-    // best-effort
-  }
+  writePrivateJsonAtomic(filePath, data);
 }
 
 /**
@@ -229,6 +233,7 @@ export function clearWeixinAccount(accountId: string): void {
   const accountFiles = [
     `${accountId}.json`,
     `${accountId}.sync.json`,
+    `${accountId}.sync.json.processed.json`,
     `${accountId}.context-tokens.json`,
   ];
   for (const file of accountFiles) {
@@ -260,23 +265,18 @@ function resolveConfigPath(): string {
  * Checks per-account `channels.<id>.accounts[accountId].routeTag` first, then section-level
  * `channels.<id>.routeTag`. Matches `feat_weixin_extension` behavior; channel key is `"openclaw-weixin"`.
  *
- * The config is cached after the first read since routeTag does not change at runtime.
+ * 登录流程没有已解析的账号对象，因此按需读取当前配置。这里不做永久缓存：Gateway 支持
+ * `channels.openclaw-weixin` 热重载，旧 routeTag 不能在重新登录时继续驻留进程。
  */
-let cachedRouteTagSection: Record<string, unknown> | null | undefined;
-
 function loadRouteTagSection(): Record<string, unknown> | null {
-  if (cachedRouteTagSection !== undefined) return cachedRouteTagSection;
   try {
     const configPath = resolveConfigPath();
-    if (!fs.existsSync(configPath)) { cachedRouteTagSection = null; return null; }
+    if (!fs.existsSync(configPath)) return null;
     const raw = fs.readFileSync(configPath, "utf-8");
     const cfg = JSON.parse(raw) as Record<string, unknown>;
     const channels = cfg.channels as Record<string, unknown> | undefined;
-    const section = (channels?.["openclaw-weixin"] as Record<string, unknown>) ?? null;
-    cachedRouteTagSection = section;
-    return section;
+    return (channels?.["openclaw-weixin"] as Record<string, unknown>) ?? null;
   } catch {
-    cachedRouteTagSection = null;
     return null;
   }
 }
@@ -285,7 +285,9 @@ export function loadConfigRouteTag(accountId?: string): string | undefined {
   const section = loadRouteTagSection();
   if (!section) return undefined;
   if (accountId) {
-    const accounts = section.accounts as Record<string, Record<string, unknown>> | undefined;
+    const accounts = section.accounts as
+      | Record<string, Record<string, unknown>>
+      | undefined;
     const tag = accounts?.[accountId]?.routeTag;
     if (typeof tag === "number") return String(tag);
     if (typeof tag === "string" && tag.trim()) return tag.trim();
@@ -302,10 +304,13 @@ export function loadConfigRouteTag(accountId?: string): string | undefined {
  */
 export async function triggerWeixinChannelReload(): Promise<void> {
   try {
-    const { loadConfig, writeConfigFile } = await import("openclaw/plugin-sdk/config-runtime");
+    const { loadConfig, writeConfigFile } =
+      await import("openclaw/plugin-sdk/config-runtime");
     const cfg = loadConfig();
     const channels = (cfg.channels ?? {}) as Record<string, unknown>;
-    const existing = (channels["openclaw-weixin"] as Record<string, unknown> | undefined) ?? {};
+    const existing =
+      (channels["openclaw-weixin"] as Record<string, unknown> | undefined) ??
+      {};
     const updated: OpenClawConfig = {
       ...cfg,
       channels: {
@@ -317,9 +322,13 @@ export async function triggerWeixinChannelReload(): Promise<void> {
       },
     };
     await writeConfigFile(updated);
-    logger.info("triggerWeixinChannelReload: wrote channel config to openclaw.json");
+    logger.info(
+      "triggerWeixinChannelReload: wrote channel config to openclaw.json",
+    );
   } catch (err) {
-    logger.warn(`triggerWeixinChannelReload: failed to update config: ${String(err)}`);
+    logger.warn(
+      `triggerWeixinChannelReload: failed to update config: ${String(err)}`,
+    );
   }
 }
 
@@ -336,14 +345,25 @@ export type ResolvedWeixinAccount = {
   /** true when a token has been obtained via QR login. */
   configured: boolean;
   name?: string;
+  /** 可选静态私聊白名单；会与扫码配对文件合并。 */
+  allowFrom: string[];
+  /** 每个账号独立透传到 iLink API 的 SKRouteTag。 */
+  routeTag?: string;
+  /** 在 OpenClaw 默认媒体根之外额外开放的可信本地目录。 */
+  mediaLocalRoots: string[];
 };
 
 type WeixinAccountConfig = {
   name?: string;
+  allowFrom?: string[];
   enabled?: boolean;
+  baseUrl?: string;
   cdnBaseUrl?: string;
+  allowCustomApiBaseUrl?: boolean;
+  allowCustomCdnBaseUrl?: boolean;
   /** Optional SKRouteTag source; read from openclaw.json when `accountId` is passed to `loadConfigRouteTag`. */
   routeTag?: number | string;
+  mediaLocalRoots?: string[];
 };
 
 type WeixinSectionConfig = WeixinAccountConfig & {
@@ -367,20 +387,69 @@ export function resolveWeixinAccount(
     throw new Error("weixin: accountId is required (no default account)");
   }
   const id = normalizeAccountId(raw);
-  const section = cfg.channels?.["openclaw-weixin"] as WeixinSectionConfig | undefined;
-  const accountCfg: WeixinAccountConfig = section?.accounts?.[id] ?? section ?? {};
+  const section = cfg.channels?.["openclaw-weixin"] as
+    | WeixinSectionConfig
+    | undefined;
+  // 顶层字段是所有账号的默认值，账号节点只覆盖显式配置项；直接二选一会让
+  // `routeTag`、端点策略和媒体白名单在创建 accounts 后悄然失效。
+  const accountCfg: WeixinAccountConfig = {
+    ...(section ?? {}),
+    ...(section?.accounts?.[id] ?? {}),
+  };
 
   const accountData = loadWeixinAccount(id);
   const token = accountData?.token?.trim() || undefined;
   const stateBaseUrl = accountData?.baseUrl?.trim() || "";
+  const configuredBaseUrl = accountCfg.baseUrl?.trim() || "";
+  const baseUrl = stateBaseUrl
+    ? validateWeixinApiBaseUrl(stateBaseUrl, false)
+    : validateWeixinApiBaseUrl(
+        configuredBaseUrl || DEFAULT_BASE_URL,
+        accountCfg.allowCustomApiBaseUrl === true,
+      );
+  const cdnBaseUrl = validateWeixinCdnBaseUrl(
+    accountCfg.cdnBaseUrl?.trim() || CDN_BASE_URL,
+    accountCfg.allowCustomCdnBaseUrl === true,
+  );
+  const routeTag = (() => {
+    if (accountCfg.routeTag == null) {
+      return undefined;
+    }
+    if (
+      typeof accountCfg.routeTag !== "string" &&
+      typeof accountCfg.routeTag !== "number"
+    ) {
+      throw new Error("weixin.routeTag must be a string or number");
+    }
+    const value = String(accountCfg.routeTag).trim();
+    if (!value || value.length > 128) {
+      throw new Error("weixin.routeTag must contain 1-128 characters");
+    }
+    return value;
+  })();
+  const mediaLocalRoots = (accountCfg.mediaLocalRoots ?? [])
+    .map((root) => {
+      if (typeof root !== "string") {
+        throw new Error("weixin.mediaLocalRoots entries must be strings");
+      }
+      return root.trim();
+    })
+    .filter(Boolean);
 
   return {
     accountId: id,
-    baseUrl: stateBaseUrl || DEFAULT_BASE_URL,
-    cdnBaseUrl: accountCfg.cdnBaseUrl?.trim() || CDN_BASE_URL,
+    baseUrl,
+    cdnBaseUrl,
     token,
     enabled: accountCfg.enabled !== false,
     configured: Boolean(token),
     name: accountCfg.name?.trim() || undefined,
+    allowFrom: [
+      ...new Set(
+        (accountCfg.allowFrom ?? []).map((id) => id.trim()).filter(Boolean),
+      ),
+    ],
+    routeTag,
+    mediaLocalRoots: [...new Set(mediaLocalRoots)],
   };
 }

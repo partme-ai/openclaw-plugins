@@ -108,6 +108,11 @@ export type WecomAgentConfig = {
     corpId: string;
     /** 应用 Secret */
     corpSecret: string;
+    /**
+     * 企业微信 OpenAPI 基础地址，默认 https://qyapi.weixin.qq.com。
+     * 仅允许 HTTPS；本机隔离测试可使用 localhost/loopback HTTP。
+     */
+    apiBaseUrl?: string;
     /** 应用 ID（可选；不填时可接收回调，但主动发送需具备该字段） */
     agentId?: number | string;
     /** 回调 Token (企微后台「设置API接收」) */

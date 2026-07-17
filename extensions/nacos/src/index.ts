@@ -11,6 +11,7 @@ import {
   definePluginEntry,
   emptyPluginConfigSchema,
   type OpenClawPluginApi,
+  type OpenClawPluginDefinition,
   type OpenClawPluginServiceContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { parseNacosPluginConfig } from "./config/config-parse.js";
@@ -57,21 +58,40 @@ const NACOS_PLUGIN_RELOAD = {
   hotPrefixes: ["hooks", "cron", "models", "agents.list", "agents.defaults"],
 } as const;
 
-/** Module-level health state shared between services and HTTP route. */
+/** 各组件独立保存错误，任一组件后续成功都不能覆盖其它组件的失败。 */
 const healthState = {
-  configSyncRunning: false,
-  namingRegistered: false,
-  clusterDiscoveryRunning: false,
-  lastSyncTime: 0,
-  lastError: null as string | null,
+  configSync: { running: false, lastSyncTime: 0, error: null as string | null },
+  naming: { registered: false, error: null as string | null },
+  clusterDiscovery: { running: false, error: null as string | null },
 };
 
 /** Sanitize error messages before exposing in HTTP responses. */
 function sanitizeError(err: unknown): string {
   const raw = String(err);
   return raw
+    .replace(/(https?:\/\/)[^/@\s]+:[^/@\s]+@/giu, "$1[REDACTED]@")
+    .replace(/([?&](?:password|token|secret|api[_-]?key)=)[^&\s]+/giu, "$1[REDACTED]")
+    .replace(/((?:password|token|secret|api[_-]?key)\s*[:=]\s*)[^,}\s]+/giu, "$1[REDACTED]")
     .replace(/\/[^\s]*\//g, "[path]/")
-    .replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, "[ip]");
+    .replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, "[ip]")
+    .slice(0, 500);
+}
+
+/** 默认失败关闭；只有显式 degrade 才允许 Nacos 不可用时继续启动 Gateway。 */
+function rethrowUnlessDegraded(policy: "fail" | "degrade" | undefined, error: unknown): void {
+  if (policy !== "degrade") throw error;
+}
+
+/** 诊断输出隐藏用户 metadata 中疑似凭据字段。 */
+function redactPeerMetadata(metadata: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(metadata).map(([key, value]) => [
+      key,
+      /password|secret|token|credential|api[_-]?key|authorization/iu.test(key)
+        ? "[REDACTED]"
+        : value,
+    ]),
+  );
 }
 
 /** 将 OpenClaw PluginLogger 适配为本插件的 {@link PluginLog} 接口。 */
@@ -122,15 +142,22 @@ function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
           stateDir: ctx.stateDir,
           logger: toPluginLog(ctx.logger),
           env: process.env,
+          onApplied: () => {
+            healthState.configSync.running = true;
+            healthState.configSync.lastSyncTime = Date.now();
+            healthState.configSync.error = null;
+          },
+          onError: (error) => {
+            healthState.configSync.error = sanitizeError(error);
+          },
         });
-        healthState.configSyncRunning = true;
-        healthState.lastSyncTime = Date.now();
-        healthState.lastError = null;
+        healthState.configSync.running = true;
       } catch (err) {
-        healthState.configSyncRunning = false;
-        healthState.lastError = sanitizeError(err);
+        healthState.configSync.running = false;
+        healthState.configSync.error = sanitizeError(err);
         ctx.logger.error(`[openclaw-nacos] config center failed: ${String(err)}`);
         sync = null;
+        rethrowUnlessDegraded(parsed.config.startupFailurePolicy, err);
       }
     },
     stop: async (ctx: OpenClawPluginServiceContext) => {
@@ -138,7 +165,8 @@ function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
         await sync.stop(toPluginLog(ctx.logger));
         sync = null;
       }
-      healthState.configSyncRunning = false;
+      healthState.configSync.running = false;
+      healthState.configSync.error = null;
     },
   });
 }
@@ -179,13 +207,14 @@ function registerNacosNamingService(api: OpenClawPluginApi): void {
           openClawConfig: ctx.config as OpenClawConfigSlice,
           logger: toPluginLog(ctx.logger),
         });
-        healthState.namingRegistered = true;
-        healthState.lastError = null;
+        healthState.naming.registered = true;
+        healthState.naming.error = null;
       } catch (err) {
-        healthState.namingRegistered = false;
-        healthState.lastError = sanitizeError(err);
+        healthState.naming.registered = false;
+        healthState.naming.error = sanitizeError(err);
         ctx.logger.error(`[openclaw-nacos] Nacos registration failed: ${String(err)}`);
         registry = null;
+        rethrowUnlessDegraded(parsed.config.startupFailurePolicy, err);
       }
     },
     stop: async (ctx: OpenClawPluginServiceContext) => {
@@ -193,7 +222,8 @@ function registerNacosNamingService(api: OpenClawPluginApi): void {
         await registry.stop(toPluginLog(ctx.logger));
         registry = null;
       }
-      healthState.namingRegistered = false;
+      healthState.naming.registered = false;
+      healthState.naming.error = null;
     },
   });
 }
@@ -232,13 +262,14 @@ function registerNacosClusterService(api: OpenClawPluginApi): void {
           logger: toPluginLog(ctx.logger),
         });
         activeClusterService = cluster;
-        healthState.clusterDiscoveryRunning = true;
-        healthState.lastError = null;
+        healthState.clusterDiscovery.running = true;
+        healthState.clusterDiscovery.error = null;
       } catch (err) {
-        healthState.clusterDiscoveryRunning = false;
-        healthState.lastError = sanitizeError(err);
+        healthState.clusterDiscovery.running = false;
+        healthState.clusterDiscovery.error = sanitizeError(err);
         ctx.logger.error(`[openclaw-nacos] cluster discovery failed: ${String(err)}`);
         cluster = null;
+        rethrowUnlessDegraded(parsed.config.startupFailurePolicy, err);
       }
     },
     stop: async (ctx: OpenClawPluginServiceContext) => {
@@ -247,12 +278,13 @@ function registerNacosClusterService(api: OpenClawPluginApi): void {
         cluster = null;
       }
       activeClusterService = null;
-      healthState.clusterDiscoveryRunning = false;
+      healthState.clusterDiscovery.running = false;
+      healthState.clusterDiscovery.error = null;
     },
   });
 }
 
-export default definePluginEntry({
+const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "nacos",
   name: "Nacos gateway registration",
   description:
@@ -283,15 +315,20 @@ export default definePluginEntry({
       auth: "plugin",
       match: "exact",
       handler: async (_req, res) => {
+        const errors = {
+          configSync: healthState.configSync.error,
+          naming: healthState.naming.error,
+          clusterDiscovery: healthState.clusterDiscovery.error,
+        };
         const body = JSON.stringify({
-          status: healthState.lastError ? "degraded" : "ok",
-          configSync: { running: healthState.configSyncRunning },
-          naming: { registered: healthState.namingRegistered },
-          clusterDiscovery: { running: healthState.clusterDiscoveryRunning },
-          lastSyncTime: healthState.lastSyncTime
-            ? new Date(healthState.lastSyncTime).toISOString()
+          status: Object.values(errors).some(Boolean) ? "degraded" : "ok",
+          configSync: { running: healthState.configSync.running },
+          naming: { registered: healthState.naming.registered },
+          clusterDiscovery: { running: healthState.clusterDiscovery.running },
+          lastSyncTime: healthState.configSync.lastSyncTime
+            ? new Date(healthState.configSync.lastSyncTime).toISOString()
             : null,
-          lastError: healthState.lastError,
+          errors,
         });
         (res as { writeHead: (s: number, h: Record<string, string>) => void; end: (d: string) => void }).writeHead(200, { "Content-Type": "application/json" });
         (res as { end: (d: string) => void }).end(body);
@@ -307,12 +344,15 @@ export default definePluginEntry({
         const clusterSvc = activeClusterService;
         const state = clusterSvc?.getState();
         const body = JSON.stringify({
-          peers: state?.peers ?? [],
+          peers: state?.peers.map((peer) => ({
+            ...peer,
+            metadata: redactPeerMetadata(peer.metadata),
+          })) ?? [],
           peerCount: state?.peers.length ?? 0,
           lastUpdated: state?.lastUpdated
             ? new Date(state.lastUpdated).toISOString()
             : null,
-          discoveryRunning: healthState.clusterDiscoveryRunning,
+          discoveryRunning: healthState.clusterDiscovery.running,
         });
         (res as { writeHead: (s: number, h: Record<string, string>) => void; end: (d: string) => void }).writeHead(200, { "Content-Type": "application/json" });
         (res as { end: (d: string) => void }).end(body);
@@ -320,3 +360,5 @@ export default definePluginEntry({
     });
   },
 });
+
+export default plugin;

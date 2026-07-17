@@ -14,6 +14,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { ResolvedPrometheusConfig } from "../config/plugin-config.js";
 import type { MetricSample, MonitoredProviderSnapshot } from "../types.js";
 import { MetricsRegistry } from "../diagnostics/metrics-registry.js";
+import { sanitizeLabel } from "../shared/label-sanitize.js";
 
 type ObservedChannelAccount = {
   channelId: string;
@@ -39,6 +40,10 @@ type RuntimeStoreState = {
 };
 
 let state: RuntimeStoreState | null = null;
+
+/** 独立于指标 series 上限的已观测渠道账号容量，防止 activity 刷新 Map 无界增长。 */
+export const MAX_OBSERVED_CHANNEL_ACCOUNTS = 512;
+const OBSERVED_ACCOUNTS_DROPPED = "openclaw_observed_channel_accounts_dropped_total";
 
 /**
  * @description 初始化 Prometheus 运行时仓库（register 阶段调用一次）。
@@ -82,13 +87,21 @@ export function getRuntimeStore(): RuntimeStoreState {
  */
 export function rememberObservedChannelAccount(channelId: string, accountId?: string): void {
   const store = getRuntimeStore();
-  const normalizedChannel = channelId.trim();
-  if (!normalizedChannel) {
+  const rawChannel = channelId.trim();
+  if (!rawChannel) {
     return;
   }
-  const normalizedAccount = accountId?.trim() || undefined;
+  const normalizedChannel = sanitizeLabel(rawChannel);
+  const normalizedAccount = accountId?.trim() ? sanitizeLabel(accountId) : undefined;
   const key = `${normalizedChannel}:${normalizedAccount ?? "default"}`;
   if (!store.observedChannelAccounts.has(key)) {
+    if (store.observedChannelAccounts.size >= MAX_OBSERVED_CHANNEL_ACCOUNTS) {
+      store.registry.inc(OBSERVED_ACCOUNTS_DROPPED, 1, {
+        help: "Observed channel/account pairs dropped because the activity tracking cap was reached",
+        type: "counter",
+      });
+      return;
+    }
     store.observedChannelAccounts.set(key, {
       channelId: normalizedChannel,
       ...(normalizedAccount ? { accountId: normalizedAccount } : {}),

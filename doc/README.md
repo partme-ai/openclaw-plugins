@@ -7,7 +7,7 @@
 | [Architecture](./OpenClaw-Plugins-Architecture.md) | [架构设计](./OpenClaw-Plugins-Architecture_CN.md) |
 | [Getting Started](./OpenClaw-Plugins-Getting-Started.md) | [快速开始](./OpenClaw-Plugins-Getting-Started_CN.md) |
 | [Contributing](./OpenClaw-Plugins-Contributing.md) | [贡献指南](./OpenClaw-Plugins-Contributing_CN.md) |
-| — | [插件目录结构与命名规范（强规范 / Normative）](./OpenClaw-Plugin-Structure-Standard.md) |
+| — | [插件目录结构与命名规范（强规范 / Normative）](./OpenClaw-Plugins-Structure-Standard.md) |
 
 ## 插件文档 / Plugin Docs
 
@@ -17,7 +17,7 @@
 
 | 插件 | 文档入口 | 说明 |
 |------|----------|------|
-| **wecom** | [Configuration](./wecom/OpenClaw-WeCom-Configuration.md) · [配置指南](./wecom/OpenClaw-WeCom-Configuration.zh-CN.md) · [架构 / Architecture](./wecom/OpenClaw-WeCom-Architecture.md) · [流式 / Streaming](./wecom/OpenClaw-WeCom-Streaming-Architecture.md) · [联调 / Testing](./wecom/OpenClaw-WeCom-Testing.md) · [Checklist](./wecom/OpenClaw-WeCom-Integration-Checklist.md) · [Feishu SDK 对照（内部参考）](./wecom/OpenClaw-WeCom-Feishu-SDK-Inventory.md) | 企业微信自建插件 |
+| **wecom** | [Configuration](./wecom/OpenClaw-WeCom-Configuration.md) · [配置指南](./wecom/OpenClaw-WeCom-Configuration.zh-CN.md) · [架构 / Architecture](./wecom/OpenClaw-WeCom-Architecture.md) · [流式 / Streaming](./wecom/OpenClaw-WeCom-Streaming-Architecture.md) · [联调 / Testing](./wecom/OpenClaw-WeCom-Testing.md) · [Checklist](./wecom/OpenClaw-WeCom-Integration-Checklist.md) | 企业微信自建插件 |
 | **lark** | [CLA](./lark/OpenClaw-Lark-CLA.md) | 贡献者协议；飞书/Lark 通道见官方 `@larksuite/openclaw-lark` + [openclaw-bridge](../extensions/bridge/README.zh-CN.md) |
 | **dingtalk** | — | 官方 `@dingtalk-real-ai/dingtalk-connector` + [openclaw-bridge](../extensions/bridge/README.zh-CN.md) |
 

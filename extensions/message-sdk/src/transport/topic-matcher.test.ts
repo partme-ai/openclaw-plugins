@@ -67,9 +67,8 @@ describe("matchTopic", () => {
     expect(matchTopic("a/b/c", "a/b/#")).toBe(true);
   });
 
-  it("# 不在末尾时当作字面量（实际行为：直接返回 true）", () => {
-    // 当前实现：遇到 # 立即返回 true，不论位置
-    expect(matchTopic("a/b/c", "a/#/c")).toBe(true);
+  it("# 不在末尾时 fail-closed", () => {
+    expect(matchTopic("a/b/c", "a/#/c")).toBe(false);
   });
 
   // ── 层级长度不匹配 ──
@@ -103,6 +102,28 @@ describe("matchTopic", () => {
     expect(matchTopic("home/living/light", "home/#")).toBe(true);
     expect(matchTopic("home", "home/#")).toBe(true);
     expect(matchTopic("office/living/light", "home/#")).toBe(false);
+  });
+});
+
+describe("MQTT topic 语法校验", () => {
+  it("接受合法 Topic Name，拒绝空值、NUL、通配符和超长名称", async () => {
+    const { isValidMqttTopicName } = await import("./topic-matcher.js");
+    expect(isValidMqttTopicName("devices/room-1/out")).toBe(true);
+    expect(isValidMqttTopicName("")).toBe(false);
+    expect(isValidMqttTopicName("devices/+/out")).toBe(false);
+    expect(isValidMqttTopicName("devices/#")).toBe(false);
+    expect(isValidMqttTopicName("devices/\0/out")).toBe(false);
+    expect(isValidMqttTopicName("x".repeat(65_536))).toBe(false);
+  });
+
+  it("只允许完整层级的 + 和位于末尾的 #", async () => {
+    const { isValidMqttTopicFilter } = await import("./topic-matcher.js");
+    expect(isValidMqttTopicFilter("devices/+/in")).toBe(true);
+    expect(isValidMqttTopicFilter("devices/#")).toBe(true);
+    expect(isValidMqttTopicFilter("devices/#/admin")).toBe(false);
+    expect(isValidMqttTopicFilter("devices/sensor+/in")).toBe(false);
+    expect(isValidMqttTopicFilter("devices/foo#")).toBe(false);
+    expect(isValidMqttTopicFilter("devices/*/in")).toBe(false);
   });
 });
 

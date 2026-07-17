@@ -44,17 +44,32 @@ export type RabbitmqConfig = {
     delayMs: number;
     maxAttempts: number;
     queueSuffix: string;
+    deadLetterSuffix: string;
   };
   connection: {
+    /**
+     * 是否允许远程 RabbitMQ 使用明文 AMQP。
+     *
+     * 本地开发的 localhost/回环地址不受此开关限制；生产远程地址默认必须使用 amqps，
+     * 避免用户名、密码和业务消息在网络中明文传输。
+     */
+    allowInsecureRemote: boolean;
     timeoutMs: number;
     heartbeatSeconds: number;
     reconnectAttempts: number;
     reconnectDelayMs: number;
+    /** 指数退避的最大等待时间，防止持续故障时高频冲击 Broker。 */
+    reconnectMaxDelayMs: number;
+    /** 重连抖动比例（0~1），用于降低多 Gateway 实例同时重连造成的惊群。 */
+    reconnectJitterRatio: number;
+    publishConfirmTimeoutMs: number;
   };
   consume: {
     prefetch: number;
     concurrency: number;
     requeueOnError: boolean;
+    /** 取消消费后等待已接纳 Agent Turn 完成 ACK/retry/DLQ 的最长时间。 */
+    shutdownTimeoutMs: number;
   };
   dispatch: {
     mode: DispatchMode;
@@ -83,28 +98,34 @@ export const DEFAULT_RABBITMQ_CONFIG: RabbitmqConfig = {
     mode: "jsonTextOrPlain",
   },
   queue: {
-    name: undefined,
+    name: "openclaw.rabbitmq",
     durable: true,
     exclusive: false,
     autoDelete: false,
     quorum: false,
   },
   retry: {
-    enabled: false,
+    enabled: true,
     delayMs: 5000,
     maxAttempts: 5,
     queueSuffix: ".retry",
+    deadLetterSuffix: ".dlq",
   },
   connection: {
+    allowInsecureRemote: false,
     timeoutMs: 30000,
     heartbeatSeconds: 30,
     reconnectAttempts: 5,
     reconnectDelayMs: 5000,
+    reconnectMaxDelayMs: 60000,
+    reconnectJitterRatio: 0.2,
+    publishConfirmTimeoutMs: 10000,
   },
   consume: {
     prefetch: 50,
     concurrency: 4,
-    requeueOnError: true,
+    requeueOnError: false,
+    shutdownTimeoutMs: 30_000,
   },
   dispatch: {
     mode: "embedded-agent",
@@ -114,11 +135,26 @@ export const DEFAULT_RABBITMQ_CONFIG: RabbitmqConfig = {
     },
   },
   idempotency: {
-    enabled: false,
+    enabled: true,
     ttlMs: 10 * 60_000,
     maxEntries: 10_000,
   },
 };
+
+/**
+ * 判断用户是否显式配置了非空 RabbitMQ URL。
+ *
+ * 同时兼容当前的 `channels.rabbitmq` 和旧版根级 `rabbitmq` 配置，但不注入默认地址；因此该
+ * 结果可以安全用于 setup 状态判断，不会把“尚未配置”误报为“已配置”。
+ */
+export function isRabbitmqConfigured(cfg: Record<string, unknown> | undefined | null): boolean {
+  const root = cfg ?? {};
+  const channels = root.channels as Record<string, unknown> | undefined;
+  const value = channels?.rabbitmq ?? root.rabbitmq;
+  if (!value || typeof value !== "object") return false;
+  const url = (value as Record<string, unknown>).url;
+  return typeof url === "string" && url.trim().length > 0;
+}
 
 /**
  * @description 从宿主运行时 openclaw.json 解析 RabbitMQ 通道配置。
@@ -140,26 +176,21 @@ export function resolveRabbitmqConfig(cfg: Record<string, unknown> | undefined |
   const queue = (rabbitmqConfig.queue as Record<string, unknown> | null | undefined) ?? {};
   const retry = (rabbitmqConfig.retry as Record<string, unknown> | null | undefined) ?? {};
 
-  const exchangeTypeRaw = rabbitmqConfig.exchangeType ?? DEFAULT_RABBITMQ_CONFIG.exchangeType;
-  const exchangeType =
-    exchangeTypeRaw === "direct" ||
-    exchangeTypeRaw === "fanout" ||
-    exchangeTypeRaw === "headers" ||
-    exchangeTypeRaw === "topic"
-      ? exchangeTypeRaw
-      : DEFAULT_RABBITMQ_CONFIG.exchangeType;
+  /*
+   * 显式写错的配置不能静默退回默认值。这里先保留原值，统一交给 validateRabbitmqConfig
+   * 生成可诊断错误；否则用户以为 direct 生效，插件却悄悄按 topic 运行，风险更大。
+   */
+  const exchangeType = String(
+    rabbitmqConfig.exchangeType ?? DEFAULT_RABBITMQ_CONFIG.exchangeType,
+  ) as RabbitmqConfig["exchangeType"];
 
-  const payloadModeRaw = payload.mode ?? DEFAULT_RABBITMQ_CONFIG.payload.mode;
-  const payloadMode =
-    payloadModeRaw === "jsonOnly" || payloadModeRaw === "plainText" || payloadModeRaw === "jsonTextOrPlain"
-      ? payloadModeRaw
-      : DEFAULT_RABBITMQ_CONFIG.payload.mode;
+  const payloadMode = String(
+    payload.mode ?? DEFAULT_RABBITMQ_CONFIG.payload.mode,
+  ) as RabbitmqConfig["payload"]["mode"];
 
-  const dispatchModeRaw = dispatch.mode ?? DEFAULT_RABBITMQ_CONFIG.dispatch.mode;
-  const dispatchMode: DispatchMode =
-    dispatchModeRaw === "reply-pipeline" || dispatchModeRaw === "embedded-agent" || dispatchModeRaw === "subagent"
-      ? dispatchModeRaw
-      : DEFAULT_RABBITMQ_CONFIG.dispatch.mode;
+  const dispatchMode = String(
+    dispatch.mode ?? DEFAULT_RABBITMQ_CONFIG.dispatch.mode,
+  ) as DispatchMode;
 
   return {
     url: String(rabbitmqConfig.url ?? DEFAULT_RABBITMQ_CONFIG.url),
@@ -180,84 +211,107 @@ export function resolveRabbitmqConfig(cfg: Record<string, unknown> | undefined |
       : DEFAULT_RABBITMQ_CONFIG.subscribeTopics,
     payload: {
       mode: payloadMode,
-      outboundFormat:
-        payload.outboundFormat === "envelope" ||
-        payload.outboundFormat === "legacyJsonText" ||
-        payload.outboundFormat === "plainText"
-          ? payload.outboundFormat
-          : undefined,
+      ...(payload.outboundFormat === "envelope" ||
+      payload.outboundFormat === "legacyJsonText" ||
+      payload.outboundFormat === "plainText"
+        ? { outboundFormat: payload.outboundFormat }
+        : {}),
     },
     queue: {
-      name: typeof queue.name === "string" && queue.name.trim().length > 0 ? queue.name.trim() : undefined,
+      name:
+        typeof queue.name === "string" && queue.name.trim().length > 0
+          ? queue.name.trim()
+          : DEFAULT_RABBITMQ_CONFIG.queue.name,
       durable: queue.durable !== false,
       exclusive: queue.exclusive === true,
       autoDelete: queue.autoDelete === true,
       quorum: queue.quorum === true,
     },
     retry: {
-      enabled: retry.enabled === true,
+      enabled: retry.enabled !== false,
       delayMs:
-        typeof retry.delayMs === "number" && retry.delayMs > 0
-          ? retry.delayMs
-          : DEFAULT_RABBITMQ_CONFIG.retry.delayMs,
+        retry.delayMs === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.retry.delayMs
+          : typeof retry.delayMs === "number" ? retry.delayMs : Number.NaN,
       maxAttempts:
-        typeof retry.maxAttempts === "number" && retry.maxAttempts >= 0
-          ? retry.maxAttempts
-          : DEFAULT_RABBITMQ_CONFIG.retry.maxAttempts,
+        retry.maxAttempts === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.retry.maxAttempts
+          : typeof retry.maxAttempts === "number" ? retry.maxAttempts : Number.NaN,
       queueSuffix:
         typeof retry.queueSuffix === "string" && retry.queueSuffix.trim().length > 0
           ? retry.queueSuffix.trim()
           : DEFAULT_RABBITMQ_CONFIG.retry.queueSuffix,
+      deadLetterSuffix:
+        typeof retry.deadLetterSuffix === "string" && retry.deadLetterSuffix.trim().length > 0
+          ? retry.deadLetterSuffix.trim()
+          : DEFAULT_RABBITMQ_CONFIG.retry.deadLetterSuffix,
     },
     connection: {
+      allowInsecureRemote: connection.allowInsecureRemote === true,
       timeoutMs:
-        typeof connection.timeoutMs === "number" && connection.timeoutMs > 0
-          ? connection.timeoutMs
-          : DEFAULT_RABBITMQ_CONFIG.connection.timeoutMs,
+        connection.timeoutMs === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.connection.timeoutMs
+          : typeof connection.timeoutMs === "number" ? connection.timeoutMs : Number.NaN,
       heartbeatSeconds:
-        typeof connection.heartbeatSeconds === "number" && connection.heartbeatSeconds >= 0
-          ? connection.heartbeatSeconds
-          : DEFAULT_RABBITMQ_CONFIG.connection.heartbeatSeconds,
+        connection.heartbeatSeconds === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.connection.heartbeatSeconds
+          : typeof connection.heartbeatSeconds === "number" ? connection.heartbeatSeconds : Number.NaN,
       reconnectAttempts:
-        typeof connection.reconnectAttempts === "number" && connection.reconnectAttempts >= 0
-          ? connection.reconnectAttempts
-          : DEFAULT_RABBITMQ_CONFIG.connection.reconnectAttempts,
+        connection.reconnectAttempts === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.connection.reconnectAttempts
+          : typeof connection.reconnectAttempts === "number" ? connection.reconnectAttempts : Number.NaN,
       reconnectDelayMs:
-        typeof connection.reconnectDelayMs === "number" && connection.reconnectDelayMs >= 0
-          ? connection.reconnectDelayMs
-          : DEFAULT_RABBITMQ_CONFIG.connection.reconnectDelayMs,
+        connection.reconnectDelayMs === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.connection.reconnectDelayMs
+          : typeof connection.reconnectDelayMs === "number" ? connection.reconnectDelayMs : Number.NaN,
+      reconnectMaxDelayMs:
+        connection.reconnectMaxDelayMs === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.connection.reconnectMaxDelayMs
+          : typeof connection.reconnectMaxDelayMs === "number" ? connection.reconnectMaxDelayMs : Number.NaN,
+      reconnectJitterRatio:
+        connection.reconnectJitterRatio === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.connection.reconnectJitterRatio
+          : typeof connection.reconnectJitterRatio === "number" ? connection.reconnectJitterRatio : Number.NaN,
+      publishConfirmTimeoutMs:
+        connection.publishConfirmTimeoutMs === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.connection.publishConfirmTimeoutMs
+          : typeof connection.publishConfirmTimeoutMs === "number" ? connection.publishConfirmTimeoutMs : Number.NaN,
     },
     consume: {
       prefetch:
-        typeof consume.prefetch === "number" && consume.prefetch >= 0
-          ? consume.prefetch
-          : DEFAULT_RABBITMQ_CONFIG.consume.prefetch,
+        consume.prefetch === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.consume.prefetch
+          : typeof consume.prefetch === "number" ? consume.prefetch : Number.NaN,
       concurrency:
-        typeof consume.concurrency === "number" && consume.concurrency > 0
-          ? consume.concurrency
-          : DEFAULT_RABBITMQ_CONFIG.consume.concurrency,
-      requeueOnError: consume.requeueOnError !== false,
+        consume.concurrency === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.consume.concurrency
+          : typeof consume.concurrency === "number" ? consume.concurrency : Number.NaN,
+      requeueOnError: consume.requeueOnError === true,
+      shutdownTimeoutMs:
+        consume.shutdownTimeoutMs === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.consume.shutdownTimeoutMs
+          : typeof consume.shutdownTimeoutMs === "number" ? consume.shutdownTimeoutMs : Number.NaN,
     },
     dispatch: {
       mode: dispatchMode,
       timeoutMs:
-        typeof dispatch.timeoutMs === "number" && dispatch.timeoutMs > 0
-          ? dispatch.timeoutMs
-          : DEFAULT_RABBITMQ_CONFIG.dispatch.timeoutMs,
+        dispatch.timeoutMs === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.dispatch.timeoutMs
+          : typeof dispatch.timeoutMs === "number" ? dispatch.timeoutMs : Number.NaN,
       reply: {
         enabled: dispatchReply.enabled !== false,
       },
     },
     idempotency: {
-      enabled: idempotency.enabled === true,
+      enabled: idempotency.enabled !== false,
       ttlMs:
-        typeof idempotency.ttlMs === "number" && idempotency.ttlMs > 0
-          ? idempotency.ttlMs
-          : DEFAULT_RABBITMQ_CONFIG.idempotency.ttlMs,
+        idempotency.ttlMs === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.idempotency.ttlMs
+          : typeof idempotency.ttlMs === "number" ? idempotency.ttlMs : Number.NaN,
       maxEntries:
-        typeof idempotency.maxEntries === "number" && idempotency.maxEntries > 0
-          ? idempotency.maxEntries
-          : DEFAULT_RABBITMQ_CONFIG.idempotency.maxEntries,
+        idempotency.maxEntries === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.idempotency.maxEntries
+          : typeof idempotency.maxEntries === "number" ? idempotency.maxEntries : Number.NaN,
     },
   };
 }
@@ -278,6 +332,63 @@ export function validateRabbitmqConfig(config: RabbitmqConfig): string[] {
   if (!config.topicPrefix) {
     issues.push("RabbitMQ topicPrefix is required");
   }
+  if (config.queue.quorum && (config.queue.exclusive || config.queue.autoDelete || !config.queue.durable)) {
+    issues.push("RabbitMQ quorum queue must be durable, non-exclusive, and non-auto-delete");
+  }
+  if (!config.queue.name && (config.queue.durable || config.queue.quorum)) {
+    issues.push("RabbitMQ durable/quorum queue requires an explicit queue.name");
+  }
+  try {
+    const url = new URL(config.url);
+    if (url.protocol !== "amqp:" && url.protocol !== "amqps:") {
+      issues.push("RabbitMQ URL protocol must be amqp:// or amqps://");
+    }
+    const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    const local = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    if (url.protocol === "amqp:" && !local && !config.connection.allowInsecureRemote) {
+      issues.push("Remote RabbitMQ must use amqps:// unless connection.allowInsecureRemote=true");
+    }
+  } catch {
+    issues.push("RabbitMQ URL is invalid");
+  }
+  if (!["topic", "direct", "fanout", "headers"].includes(config.exchangeType)) {
+    issues.push("RabbitMQ exchangeType must be topic, direct, fanout, or headers");
+  }
+  if (!["jsonTextOrPlain", "jsonOnly", "plainText"].includes(config.payload.mode)) {
+    issues.push("RabbitMQ payload.mode is invalid");
+  }
+  if (!["reply-pipeline", "embedded-agent", "subagent"].includes(config.dispatch.mode)) {
+    issues.push("RabbitMQ dispatch.mode is invalid");
+  }
+  const requireInteger = (value: number, minimum: number, name: string): void => {
+    if (!Number.isInteger(value) || value < minimum) {
+      issues.push(`${name} must be an integer >= ${minimum}`);
+    }
+  };
+  requireInteger(config.retry.delayMs, 1, "retry.delayMs");
+  requireInteger(config.retry.maxAttempts, 0, "retry.maxAttempts");
+  requireInteger(config.connection.timeoutMs, 1, "connection.timeoutMs");
+  requireInteger(config.connection.heartbeatSeconds, 0, "connection.heartbeatSeconds");
+  requireInteger(config.connection.reconnectAttempts, 0, "connection.reconnectAttempts");
+  requireInteger(config.connection.reconnectDelayMs, 0, "connection.reconnectDelayMs");
+  requireInteger(config.connection.reconnectMaxDelayMs, 1, "connection.reconnectMaxDelayMs");
+  requireInteger(config.connection.publishConfirmTimeoutMs, 1, "connection.publishConfirmTimeoutMs");
+  requireInteger(config.consume.prefetch, 0, "consume.prefetch");
+  requireInteger(config.consume.concurrency, 1, "consume.concurrency");
+  requireInteger(config.consume.shutdownTimeoutMs, 100, "consume.shutdownTimeoutMs");
+  requireInteger(config.dispatch.timeoutMs, 1, "dispatch.timeoutMs");
+  requireInteger(config.idempotency.ttlMs, 1, "idempotency.ttlMs");
+  requireInteger(config.idempotency.maxEntries, 1, "idempotency.maxEntries");
+  if (!Number.isFinite(config.connection.reconnectJitterRatio) ||
+      config.connection.reconnectJitterRatio < 0 || config.connection.reconnectJitterRatio > 1) {
+    issues.push("connection.reconnectJitterRatio must be between 0 and 1");
+  }
+  if (config.connection.reconnectMaxDelayMs < config.connection.reconnectDelayMs) {
+    issues.push("connection.reconnectMaxDelayMs must be >= connection.reconnectDelayMs");
+  }
+  if (config.retry.queueSuffix === config.retry.deadLetterSuffix) {
+    issues.push("retry.queueSuffix and retry.deadLetterSuffix must be different");
+  }
   for (const binding of config.topicBindings) {
     if (!binding.topicPattern) {
       issues.push("topicBindings: topicPattern is required");
@@ -296,7 +407,7 @@ export function validateRabbitmqConfig(config: RabbitmqConfig): string[] {
  */
 export function buildRabbitmqConfigSnapshot(config: RabbitmqConfig): Record<string, unknown> {
   return {
-    url: config.url,
+    url: redactRabbitmqUrl(config.url),
     exchange: config.exchange,
     exchangeType: config.exchangeType,
     exchangeDurable: config.exchangeDurable,
@@ -311,4 +422,16 @@ export function buildRabbitmqConfigSnapshot(config: RabbitmqConfig): Record<stri
     dispatch: config.dispatch,
     idempotency: config.idempotency,
   };
+}
+
+function redactRabbitmqUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (!url.username && !url.password) return value;
+    if (url.username) url.username = "***";
+    if (url.password) url.password = "***";
+    return url.toString();
+  } catch {
+    return "<invalid-rabbitmq-url>";
+  }
 }

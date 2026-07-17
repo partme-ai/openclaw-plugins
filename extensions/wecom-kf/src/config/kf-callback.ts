@@ -45,43 +45,6 @@ function mergeKfAccountConfig(
 }
 
 /**
- * 列出所有需预热的 KF 账号配置（去重 openKfId）。
- */
-export function listKfAccountConfigs(cfg: OpenClawConfig | undefined): WecomAccountConfig[] {
-  const channel = cfg?.channels?.["wecom-kf"] as WecomKfChannelConfig | undefined;
-  if (!channel) return [];
-
-  const results: WecomAccountConfig[] = [];
-  const seenOpenKfIds = new Set<string>();
-  const accounts = channel.accounts ?? {};
-
-  for (const [accountId, entry] of Object.entries(accounts)) {
-    const config = mergeKfAccountConfig(channel, entry, accountId);
-    const openKfId = config.openKfId?.trim();
-    if (!openKfId || seenOpenKfIds.has(openKfId)) continue;
-    if (!config.token?.trim() || !config.encodingAESKey?.trim()) continue;
-    seenOpenKfIds.add(openKfId);
-    results.push(config);
-  }
-
-  const defaultAccountId = channel.defaultAccount?.trim() || DEFAULT_ACCOUNT_ID;
-  const topLevel = mergeKfAccountConfig(channel, accounts[defaultAccountId], defaultAccountId);
-  const topOpenKfId = topLevel.openKfId?.trim();
-  if (
-    topOpenKfId &&
-    !seenOpenKfIds.has(topOpenKfId) &&
-    topLevel.token?.trim() &&
-    topLevel.encodingAESKey?.trim()
-  ) {
-    results.push(topLevel);
-  } else if (results.length === 0 && topLevel.token?.trim() && topLevel.encodingAESKey?.trim()) {
-    results.push(topLevel);
-  }
-
-  return results;
-}
-
-/**
  * 创建 KF 回调用的 getAccountConfig（按 OpenKfId 或默认账号解析）。
  */
 export function createKfAccountConfigGetter(
@@ -96,6 +59,10 @@ export function createKfAccountConfigGetter(
     const accounts = channel.accounts ?? {};
 
     if (normalizedOpenKfId) {
+      const accountEntry = accounts[normalizedOpenKfId];
+      if (accountEntry) {
+        return mergeKfAccountConfig(channel, accountEntry, normalizedOpenKfId);
+      }
       for (const [accountId, entry] of Object.entries(accounts)) {
         const kfNested = (entry?.kf ?? {}) as Record<string, unknown>;
         const candidateOpenKfId = String(entry?.openKfId ?? kfNested.openKfId ?? "").trim();

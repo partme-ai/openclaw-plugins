@@ -11,6 +11,13 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -22,15 +29,34 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - uses: pnpm/action-setup@v4
 
-      - name: Publish
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Release gates
         run: |
-          ARGS=""
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            ARGS="--dry-run"
+          pnpm check-release-readiness
+          pnpm test:release-scripts
+          node scripts/check-plugin-structure.mjs --strict-base --strict-new
+          pnpm check-explanatory-assets
+          pnpm test:e2e:harness
+          # 干净 runner 上消费者的类型声明来自 message-sdk/dist，必须先按工作区依赖构建。
+          pnpm build
+          pnpm typecheck
+          pnpm test:unit
+          pnpm check-package-archives
+
+      - name: Publish
+        shell: bash
+        run: |
+          args=()
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
           fi
-          if [ -n "${{ inputs.plugin }}" ]; then
-            ARGS="$ARGS --plugin ${{ inputs.plugin }}"
+          if [ -n "$PLUGIN" ]; then
+            args+=(--plugin "$PLUGIN")
           fi
-          node scripts/publish-changed.mjs $ARGS
+          node scripts/publish-changed.mjs "${args[@]}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PLUGIN: ${{ inputs.plugin }}

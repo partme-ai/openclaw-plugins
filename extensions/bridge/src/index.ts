@@ -12,13 +12,13 @@
 /**
  * OpenClaw Bridge — 统一 IM 渠道适配层
  *
- * 一个插件，覆盖所有 22 个 OpenClaw IM 渠道：
- * - 3 个外部官方（钉钉/飞书/QQ）— 需手动安装官方插件
- * - 19 个 bundled（WeCom/Discord/Slack/Telegram/WhatsApp...）— 随 OpenClaw 内置
+ * 一个插件，覆盖 27 个 OpenClaw 消息渠道：
+ * - 20 个 OpenClaw 2026.7.1 stock 渠道
+ * - 当前仓库 6 个渠道与外部钉钉连接器
  *
  * 功能：
  * 1. before_prompt_build — 按渠道注入平台特定的系统上下文
- * 2. agent_end — UnifiedMessage 消息桥接到 MQ
+ * 2. message_received / message_sent — UnifiedMessage 消息镜像到 MQ
  * 3. 导出 normalizeForChannel / getChannelCapabilities / deriveTraceId 等供下游使用
  */
 
@@ -42,7 +42,7 @@ export type { NormalizedMessage, ChannelNormalizer } from "./bridge/normalize.js
 
 // ── 消息桥接 ──
 export { deriveTraceId, generateMessageId, buildMessage } from "./bridge/message-bridge.js";
-export type { UnifiedMessage } from "./bridge/message-bridge.js";
+export type { UnifiedMessage, BridgeConfig, BridgeChannelConfig } from "./bridge/message-bridge.js";
 
 /**
  * @description 将 Bridge 插件注册到 OpenClaw 宿主；实际逻辑委托给 `bridge/plugin-entry` 的默认导出。

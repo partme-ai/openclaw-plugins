@@ -1,6 +1,6 @@
 {
   "id": "redis-stream",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "description": "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
   "main": "dist/index.js",
   "channels": ["redis-stream"],
@@ -11,14 +11,10 @@
   "contracts": {
     "tools": []
   },
-  "channelConfigs": {
-    "redis-stream": {
-      "label": "Redis Stream",
-      "description": "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
-      "schema": {
+  "configSchema": {
     "type": "object",
     "description": "Redis channel configuration for openclaw.json -> channels.redis-stream",
-    "additionalProperties": true,
+    "additionalProperties": false,
     "properties": {
       "url": {
         "type": "string",
@@ -47,10 +43,19 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "channelPattern": { "type": "string", "description": "Channel pattern (supports * wildcard)" },
+            "channelPattern": {
+              "type": "string",
+              "description": "Channel pattern (supports * wildcard)"
+            },
             "agentId": { "type": "string", "description": "Target agent ID" },
-            "accountId": { "type": "string", "description": "Account ID (default: \"default\")" },
-            "replyChannel": { "type": "string", "description": "Reply channel override" }
+            "accountId": {
+              "type": "string",
+              "description": "Account ID (default: \"default\")"
+            },
+            "replyChannel": {
+              "type": "string",
+              "description": "Reply channel override"
+            }
           },
           "required": ["channelPattern", "agentId"]
         },
@@ -64,19 +69,38 @@
           "inboundKey": { "type": "string", "default": "openclaw:inbound" },
           "outboundKey": { "type": "string", "default": "openclaw:outbound" },
           "consumerGroup": { "type": "string", "default": "openclaw-group" },
-          "consumerName": { "type": "string", "default": "openclaw-consumer-1" },
+          "consumerName": {
+            "type": "string",
+            "default": "",
+            "description": "Unique consumer name; empty derives host + process id."
+          },
           "blockMs": { "type": "number", "default": 5000 },
           "count": { "type": "number", "default": 10 },
-          "createGroup": { "type": "boolean", "default": true }
+          "createGroup": { "type": "boolean", "default": true },
+          "pendingClaimIdleMs": {
+            "type": "number",
+            "minimum": 0,
+            "default": 180000
+          },
+          "maxAttempts": { "type": "number", "minimum": 1, "default": 5 },
+          "deadLetterKey": {
+            "type": "string",
+            "default": "openclaw:inbound:dlq"
+          },
+          "maxLen": { "type": "number", "minimum": 0, "default": 100000 }
         },
         "default": {
           "inboundKey": "openclaw:inbound",
           "outboundKey": "openclaw:outbound",
           "consumerGroup": "openclaw-group",
-          "consumerName": "openclaw-consumer-1",
+          "consumerName": "",
           "blockMs": 5000,
           "count": 10,
-          "createGroup": true
+          "createGroup": true,
+          "pendingClaimIdleMs": 180000,
+          "maxAttempts": 5,
+          "deadLetterKey": "openclaw:inbound:dlq",
+          "maxLen": 100000
         }
       },
       "payload": {
@@ -114,103 +138,87 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "allowInsecureRemote": {
+            "type": "boolean",
+            "default": false,
+            "description": "Allow plaintext redis:// for non-loopback hosts. Keep false in production."
+          },
           "reconnectMs": { "type": "number", "default": 3000 },
-          "maxRetries": { "type": "number", "default": 10 }
+          "reconnectMaxMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 30000
+          },
+          "reconnectJitterRatio": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.2
+          },
+          "maxRetries": { "type": "number", "minimum": 0, "default": 0 },
+          "maxPubSubInFlight": {
+            "type": "number",
+            "minimum": 1,
+            "default": 32
+          },
+          "startupTimeoutMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 30000
+          },
+          "shutdownTimeoutMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 10000,
+            "description": "Total accepted-work drain and main-client shutdown budget; in-flight Stream entries remain pending on timeout."
+          }
         },
         "default": {
+          "allowInsecureRemote": false,
           "reconnectMs": 3000,
-          "maxRetries": 10
+          "reconnectMaxMs": 30000,
+          "reconnectJitterRatio": 0.2,
+          "maxRetries": 0,
+          "maxPubSubInFlight": 32,
+          "startupTimeoutMs": 30000,
+          "shutdownTimeoutMs": 10000
         }
+      },
+      "network": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "agentReplyTimeoutMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 120000,
+            "description": "Maximum Agent turn and Redis reply delivery time."
+          }
+        },
+        "default": { "agentReplyTimeoutMs": 120000 }
+      },
+      "idempotency": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "ttlMs": { "type": "number", "minimum": 1, "default": 600000 },
+          "maxEntries": { "type": "number", "minimum": 1, "default": 10000 }
+        },
+        "default": { "enabled": true, "ttlMs": 600000, "maxEntries": 10000 }
       }
     },
     "required": ["url"]
-  }
-      }
-    },
-    "configSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "type": "object",
-      "description": "Redis Stream channel plugin configuration",
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable/disable the Redis Stream channel"
-        },
-        "redisUrl": {
-          "type": "string",
-          "format": "uri",
-          "default": "redis://localhost:6379",
-          "description": "Redis connection URL"
-        },
-        "channelMode": {
-          "type": "string",
-          "enum": ["pubsub", "stream"],
-          "default": "pubsub",
-          "description": "Inbound mode: pubsub or stream"
-        },
-        "defaultAgentId": {
-          "type": "string",
-          "default": "",
-          "description": "Fallback agent ID when no route matches"
-        },
-        "channels": {
-          "type": "array",
-          "default": [],
-          "description": "Channel configurations",
-          "items": {
-            "type": "object",
-            "properties": {
-              "channel": { "type": "string", "description": "Channel name/pattern" },
-              "agentId": { "type": "string", "description": "Target agent ID" },
-              "accountId": { "type": "string", "default": "default", "description": "Account ID" },
-              "replyChannel": { "type": "string", "description": "Reply channel override" }
-            },
-            "required": ["channel", "agentId"]
-          }
-        },
-        "payloadMode": {
-          "type": "string",
-          "enum": ["plainText", "jsonOnly", "jsonTextOrPlain"],
-          "default": "jsonTextOrPlain",
-          "description": "Message payload parsing mode"
-        },
-        "subscribeChannels": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [],
-          "description": "Channels to subscribe (supports * wildcard)"
-        },
-        "stream": {
-          "type": "object",
-          "properties": {
-            "inboundKey": { "type": "string", "default": "openclaw:inbound" },
-            "outboundKey": { "type": "string", "default": "openclaw:outbound" },
-            "consumerGroup": { "type": "string", "default": "openclaw-group" },
-            "consumerName": { "type": "string", "default": "openclaw-consumer-1" },
-            "blockMs": { "type": "number", "default": 5000 },
-            "count": { "type": "number", "default": 10 },
-            "createGroup": { "type": "boolean", "default": true }
-          }
-        },
-        "fieldMapping": {
-          "type": "object",
-          "properties": {
-            "textField": { "type": "string", "default": "text" },
-            "agentIdField": { "type": "string", "default": "agentId" },
-            "peerIdField": { "type": "string", "default": "peerId" },
-            "accountIdField": { "type": "string", "default": "accountId" },
-            "replyStreamField": { "type": "string", "default": "replyStream" }
-          }
-        },
-        "connection": {
-          "type": "object",
-          "properties": {
-            "reconnectMs": { "type": "number", "default": 3000 },
-            "maxRetries": { "type": "number", "default": 10 }
-          }
-        }
+  },
+  "channelConfigs": {
+    "redis-stream": {
+      "label": "Redis Stream",
+      "description": "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {}
       }
     }
   }
+}

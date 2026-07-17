@@ -96,38 +96,50 @@ export const rockermqChannel = {
     }) => {
       const config = resolveRockermqConfig(cfg);
       setRockermqChannelConfig(config);
-      for (const issue of validateRockermqConfig(config)) {
-        console.warn(`[openclaw-rocketmq] config warning: ${issue}`);
+      const issues = validateRockermqConfig(config);
+      if (issues.length > 0) {
+        throw new Error(`Invalid RocketMQ configuration: ${issues.join("; ")}`);
       }
 
-      await startRockermqServer(config, async (event) => {
-        try {
-          const result = await processInbound(event, config);
-          if (result.accepted) {
-            trackInboundAccepted();
-            if (result.routeSource) trackRoute(result.routeSource);
-            return { ok: true as const };
-          }
-          trackInboundDropped(result.reason ?? "unknown_drop_reason");
-          return {
-            ok: false as const,
-            reconsume: false,
-            reason: result.reason ?? "drop",
-          };
-        } catch (error) {
-          trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
-          return {
-            ok: false as const,
-            reconsume: config.consumer.reconsumeOnError,
-            reason: "dispatch_error",
-          };
-        }
-      });
+      if (abortSignal.aborted) return;
 
-      await new Promise<void>((resolve) => {
-        abortSignal.addEventListener("abort", () => resolve(), { once: true });
+      let resolveAbort!: () => void;
+      const abortPromise = new Promise<void>((resolve) => {
+        resolveAbort = resolve;
       });
-      await stopRockermqServer();
+      const onAbort = (): void => resolveAbort();
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+
+      try {
+        await startRockermqServer(config, async (event) => {
+          try {
+            const result = await processInbound(event, config);
+            if (result.accepted) {
+              trackInboundAccepted();
+              if (result.routeSource) trackRoute(result.routeSource);
+              return { ok: true as const };
+            }
+            trackInboundDropped(result.reason ?? "unknown_drop_reason");
+            return {
+              ok: false as const,
+              reconsume: result.reconsume ?? false,
+              reason: result.reason ?? "drop",
+            };
+          } catch (error) {
+            // 传输层会记录已脱敏诊断；业务丢弃指标只保留低基数原因码。
+            trackInboundDropped("inbound_dispatch_error");
+            return {
+              ok: false as const,
+              reconsume: config.consumer.reconsumeOnError,
+              reason: "dispatch_error",
+            };
+          }
+        }, abortSignal);
+        if (!abortSignal.aborted) await abortPromise;
+      } finally {
+        abortSignal.removeEventListener("abort", onAbort);
+        await stopRockermqServer();
+      }
     },
   },
   outbound: rockermqOutbound,

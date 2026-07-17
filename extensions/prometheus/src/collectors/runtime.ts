@@ -76,8 +76,10 @@ export class RuntimeCollector implements MetricCollector {
       this.eventLoopLag = Math.max(0, actual - expected);
       this.lastCheck = now;
       this.timer = setTimeout(measure, expected);
+      this.timer.unref?.();
     };
     this.timer = setTimeout(measure, 100);
+    this.timer.unref?.();
   }
 
   /**

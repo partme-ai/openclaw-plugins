@@ -3,11 +3,11 @@
  *
  * TTS 模块 — 文本转语音（Text-to-Speech）。
  *
- * **远程方案**（纯 HTTP / CLI）：
- * - EdgeTTS — Microsoft 免费神经语音
- * - OpenAI TTS — tts-1 / tts-1-hd
+ * **可执行实现**：
+ * - OpenAI TTS — 官方 `/audio/speech` HTTP API
+ * - EdgeTTS — 本机 `edge-tts` Python CLI（不是远程零依赖 HTTP provider）
  *
- * **本地方案**（需 Python，见 `local.ts` 元数据）：
+ * **仅元数据描述**（见 `local.ts`，不包含合成函数）：
  * - ChatTTS、Mars5TTS、Qwen TTS、pyttsx3
  *
  * **关键导出**：`synthesizeEdgeTTS`、`synthesizeOpenAI`、本地 Provider 常量

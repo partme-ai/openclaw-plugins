@@ -16,19 +16,43 @@ import { serializeForTransport } from "@partme.ai/openclaw-message-sdk";
 
 import { DEFAULT_ROCKERMQ_CONFIG } from "./config.js";
 import { getRockermqChannelConfig } from "./state/state.js";
-import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
+import {
+  getPeerIdBySession,
+  getSessionContext,
+} from "./routing/session-mapper.js";
 import { buildOutboundTopic } from "./routing/topic-router.js";
 
 type ChannelOutboundContext = {
   to: string;
   text: string;
+  deliveryQueueId?: string;
 };
 
 type ChannelOutboundAdapter = {
   deliveryMode: "direct";
   textChunkLimit?: number;
-  sendText(ctx: ChannelOutboundContext): Promise<{ channel: string; messageId: string }>;
+  sendText(
+    ctx: ChannelOutboundContext,
+  ): Promise<{ channel: string; messageId: string }>;
 };
+
+const DIRECT_TARGET_PREFIX = "openclaw-direct-topic:v1:";
+
+function parseDirectTarget(value: string): string | null {
+  if (!value.startsWith(DIRECT_TARGET_PREFIX)) return null;
+  const encoded = value.slice(DIRECT_TARGET_PREFIX.length);
+  if (!encoded)
+    throw new Error("[openclaw-rocketmq] Explicit direct target is empty");
+  try {
+    const target = decodeURIComponent(encoded);
+    if (!target) throw new Error("empty target");
+    return target;
+  } catch (error) {
+    throw new Error(
+      `[openclaw-rocketmq] Invalid explicit direct target: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
 
 /**
  * @description RocketMQ Channel 出站适配器（direct 投递，4KB 文本分块上限）。
@@ -43,17 +67,45 @@ export const rockermqOutbound: ChannelOutboundAdapter = {
    * @throws publish 失败时由 transport 层抛出。
    */
   async sendText(ctx: ChannelOutboundContext) {
+    const directTarget = parseDirectTarget(ctx.to);
+    if (directTarget) {
+      if (!ctx.deliveryQueueId)
+        throw new Error(
+          "[openclaw-rocketmq] Explicit direct delivery requires deliveryQueueId",
+        );
+      const { publishMessage } = await import("./transport/server.js");
+      const receipt = await publishMessage({
+        topic: directTarget,
+        payload: ctx.text,
+        keys: [ctx.deliveryQueueId],
+      });
+      return {
+        channel: "rocketmq",
+        messageId: String(
+          (receipt as { messageId?: unknown })?.messageId ??
+            ctx.deliveryQueueId,
+        ),
+      };
+    }
     const sessionKey = ctx.to;
     const peerId = getPeerIdBySession(sessionKey);
     const sessionContext = getSessionContext(sessionKey);
     if (!sessionContext) {
-      return { channel: "rocketmq", messageId: "no-session-context" };
+      // 没有会话上下文就无法确定 replyTopic；返回占位 messageId 会让 OpenClaw/Router
+      // 误以为 Broker 已确认消息，实际上一条消息都没有发送。
+      throw new Error(
+        `[openclaw-rocketmq] No session context for outbound target: ${sessionKey}`,
+      );
     }
 
     const config = getRockermqChannelConfig() ?? DEFAULT_ROCKERMQ_CONFIG;
     const topic =
       sessionContext.replyTopic ??
-      buildOutboundTopic(sessionContext.agentId, config.topicPrefix, peerId ?? undefined);
+      buildOutboundTopic(
+        sessionContext.agentId,
+        config.topicPrefix,
+        peerId ?? undefined,
+      );
     const wire = serializeForTransport({
       channel: "rocketmq",
       accountId: sessionContext.accountId ?? "default",
@@ -70,7 +122,9 @@ export const rockermqOutbound: ChannelOutboundAdapter = {
     });
     return {
       channel: "rocketmq",
-      messageId: String((receipt as { messageId?: unknown })?.messageId ?? sessionKey),
+      messageId: String(
+        (receipt as { messageId?: unknown })?.messageId ?? sessionKey,
+      ),
     };
   },
 };

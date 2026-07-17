@@ -2,7 +2,7 @@
 
 # openclaw-plugins
 
-**29 Enterprise Plugins. One Unified Ecosystem.**
+**28 Enterprise Plugins. One Unified Ecosystem.**
 
 *IM channels · Message queues · AI capabilities · Infrastructure — production-ready, independently published.*
 
@@ -31,7 +31,7 @@ English | [简体中文](./README.zh-CN.md)
 
 ## 📖 Introduction
 
-**openclaw-plugins** is the official enterprise plugin ecosystem for [OpenClaw](https://github.com/partme-ai/openclaw) — a **pnpm monorepo** of **29 independently published npm packages** under the `@partme.ai` scope, maintained by **PartMe.AI**.
+**openclaw-plugins** is the official enterprise plugin ecosystem for [OpenClaw](https://github.com/partme-ai/openclaw) — a **pnpm monorepo** of **28 independently published npm packages** under the `@partme.ai` scope, maintained by **PartMe.AI**.
 
 OpenClaw Gateway runs AI Agents at the center. This repository connects **IM channels**, **message queues**, **RAG knowledge**, **long-term memory**, **observability**, and **enterprise infrastructure** into one closed-loop, multi-platform information flow.
 
@@ -87,12 +87,12 @@ Most channel plugins support `accounts` + `defaultAccount`. Sessions, Agents, an
 |-------|----------|-------|-------------------------|------------------|
 | L1 | **IM (self-built)** | 6 | wecom, wechat, wecom-kf, wechat-ipad, douyin, gotify | Bot/Webhook/Agent modes · media · dedup · Skills |
 | L1 | **IM (bridge)** | 1 + 21 upstream | openclaw-bridge | Context injection · UnifiedMessage MQ forwarding · 21 bundled channels |
-| L1 | **Message queues** | 9 | mqtt, web-mqtt, web-socket, stomp, web-stomp, rabbitmq, redis-stream, rocketmq, cluster | topicBindings · Wire dispatch · idempotency · multi-protocol discovery |
+| L1 | **Message queues** | 8 | mqtt, web-mqtt, web-socket, stomp, web-stomp, rabbitmq, redis-stream, rocketmq | topicBindings · Wire dispatch · idempotency · multi-protocol integration |
 | L2 | **AI capabilities** | 5 | knowledge, memory, router, openmem, message-sdk | RAG · L0–L3 memory · routing rules · OpenMem HTTP bridge · unified wire format |
 | L2–L4 | **Infrastructure** | 5 | nacos, prometheus, tracing, oauth2, mtls | Config center · metrics · OTel · auth · mTLS |
 | — | **Platform integrations** | 3 | amap, meituan, rednode | POI/shop webhooks · Xiaohongshu dual-mode |
 
-**Full plugin matrix** (all 29 packages, npm names, feature notes): [Architecture — Plugin Overview](./doc/OpenClaw-Plugins-Architecture.md).
+**Full plugin matrix** (all 28 packages, npm names, feature notes): [Architecture — Plugin Overview](./doc/OpenClaw-Plugins-Architecture.md).
 
 ---
 
@@ -102,7 +102,7 @@ Most channel plugins support `accounts` + `defaultAccount`. Sessions, Agents, an
 |----------|---------------------|
 | **Enterprise IM customer service** | wecom / wecom-kf + knowledge + memory + router |
 | **Business system ↔ Agent** | mqtt / rabbitmq + message-sdk Wire path |
-| **Multi-cloud config & registration** | nacos + cluster |
+| **Configuration and node discovery** | nacos |
 | **Production observability** | prometheus + tracing |
 | **Omnichannel without forking upstream** | openclaw-bridge + official dingtalk / lark / qq connectors |
 | **Local-first external memory** | openmem + OpenMem sidecar (port 3317) |
@@ -151,7 +151,7 @@ Most channel plugins support `accounts` + `defaultAccount`. Sessions, Agents, an
 ┌────────────────────────────▼────────────────────────────────┐
 │  Layer 1 — Channels (no modification needed)                │
 │  IM: wecom wechat wecom-kf gotify … + bridge (21 upstream)  │
-│  MQ: mqtt rabbitmq redis-stream rocketmq stomp cluster …    │
+│  MQ: mqtt rabbitmq redis-stream rocketmq stomp …            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -159,7 +159,7 @@ Most channel plugins support `accounts` + `defaultAccount`. Sessions, Agents, an
 
 ```
 openclaw-plugins/
-├── extensions/              # 29 npm packages (excludes _template)
+├── extensions/              # 28 npm packages (excludes _template)
 │   ├── wecom/ mqtt/ …         # Channel & capability plugins
 │   └── message-sdk/           # Shared library (not a Gateway plugin)
 ├── sdk/                       # Multi-language message SDKs (TypeScript, Go, Java, Python)
@@ -220,7 +220,7 @@ Summary by category. For npm names, channel IDs, ports, and feature matrices, se
 | **IM (self-built)** | 6 | WeCom dual-mode · WeChat OA · WeCom KF · WeChat iPad · Douyin · Gotify push |
 | **IM (bridge)** | 1 | 21 upstream channels via single config — see [bridge README](./extensions/bridge/README.md) |
 | **AI & routing** | 5 | knowledge · memory · router · openmem · message-sdk |
-| **Message queues** | 9 | MQTT/WebSocket/STOMP/RabbitMQ/Redis/RocketMQ + Web variants + cluster discovery |
+| **Message queues** | 8 | MQTT/WebSocket/STOMP/RabbitMQ/Redis/RocketMQ plus Web variants |
 | **Infrastructure** | 5 | nacos · prometheus · tracing · oauth2 · mtls |
 | **Platform** | 3 | amap · meituan · rednode (XHS) |
 
@@ -254,7 +254,7 @@ Shipped with OpenClaw, bridged via `@partme.ai/openclaw-bridge` with zero extra 
 
 - **Node.js** >= 22.0.0
 - **pnpm** >= 9 (monorepo contributors)
-- **OpenClaw** >= 2026.4.12 — [OpenClaw repository](https://github.com/partme-ai/openclaw)
+- **OpenClaw** >= 2026.7.1 — [OpenClaw repository](https://github.com/partme-ai/openclaw)
 
 #### 1. Install OpenClaw Gateway
 
@@ -369,11 +369,10 @@ pnpm install
 - Wire JSON envelope v1 with backward-compatible plain text
 - 3 dispatch modes: `reply-pipeline` (default wire envelope), `embedded-agent` (in-process), `subagent` (child agent)
 - Shared `topicBindings`, idempotency cache (TTL-based `IdempotencyCache`)
-- Plugins: mqtt, web-mqtt, web-socket, stomp, web-stomp, rabbitmq, redis-stream, rocketmq, cluster
+- Plugins: mqtt, web-mqtt, web-socket, stomp, web-stomp, rabbitmq, redis-stream, rocketmq
 
 #### 5. Enterprise Infrastructure
 
-- **cluster**: 8 pluggable discovery backends (Consul, DNS SRV, Etcd, Eureka, mDNS, Nacos, Redis, Static) with self-registration, TTL heartbeat, and topology change callbacks
 - **nacos**: Spring Cloud compatible config merge, service registration, cluster peer discovery ([Nacos docs](./doc/nacos/OpenClaw-Nacos-Guide.md))
 - **oauth2**: Sa-Token, Keycloak, Auth0, Azure AD, generic JWT/introspection
 - **mtls**: Client cert whitelist, protected paths, passthrough mode
@@ -459,7 +458,7 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # prerelease
 - **Node.js** 22+ (ESM)
 - **TypeScript** 5.x strict mode
 - **pnpm** 9 workspaces
-- **OpenClaw** Plugin API >= 2026.4.6
+- **OpenClaw** Plugin API >= 2026.7.1
 
 #### Build & Test
 
@@ -484,7 +483,7 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # prerelease
 
 | Item | Current |
 |------|---------|
-| OpenClaw peer dependency | >= 2026.4.12 |
+| OpenClaw peer dependency | >= 2026.7.1 |
 | message-sdk | 2026.5.24 |
 | openclaw-nacos | 2026.5.24 |
 | openclaw-gotify | 2026.5.22 |

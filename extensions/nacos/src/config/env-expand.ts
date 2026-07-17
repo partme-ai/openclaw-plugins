@@ -20,7 +20,14 @@ export function expandEnvPlaceholdersInValue(value: unknown, env: NodeJS.Process
       if (v !== undefined && v !== "") {
         return v;
       }
-      return def !== undefined ? def : "";
+      if (def !== undefined) {
+        return def;
+      }
+
+      // 远端配置通常用占位符承载密码、Token 与服务地址。静默替换为空字符串会让
+      // Gateway 带着损坏配置继续重载，错误直到业务请求到来才暴露，且很难回溯。
+      // 因此没有默认值的变量必须失败关闭，由配置同步层保留当前配置并报告健康降级。
+      throw new Error(`Missing environment variable: ${key}`);
     });
   }
   if (Array.isArray(value)) {

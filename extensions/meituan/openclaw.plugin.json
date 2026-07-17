@@ -1,46 +1,200 @@
 {
   "id": "meituan",
   "name": "@partme.ai/openclaw-meituan",
-  "version": "0.1.0",
-  "description": "美团开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
+  "version": "2026.7.1",
+  "description": "美团技术服务合作中心 MTOp OpenAPI capability",
   "main": "dist/index.js",
-  "channels": [
-    "meituan"
-  ],
+  "activation": { "onStartup": true },
+  "contracts": { "tools": ["meituan_openapi_invoke"] },
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "app_key": {
+      "enabled": { "type": "boolean", "default": false },
+      "developerId": { "type": "string", "pattern": "^\\d{1,19}$" },
+      "signKey": {
         "type": "string",
-        "description": "美团开放平台 AppKey"
+        "minLength": 1,
+        "maxLength": 512,
+        "sensitive": true
       },
-      "app_secret": {
+      "appAuthToken": {
         "type": "string",
-        "description": "美团开放平台 AppSecret"
+        "minLength": 1,
+        "maxLength": 2048,
+        "sensitive": true
       },
-      "callback_url": {
-        "type": "string",
-        "description": "Webhook 回调 URL"
+      "accounts": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "description": "Trusted OpenClaw agentAccountId to shop appAuthToken bindings",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["accountId"],
+          "properties": {
+            "accountId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+            "appAuthToken": { "type": "string", "minLength": 1, "maxLength": 2048, "sensitive": true },
+            "appAuthTokenEnv": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]{0,127}$" }
+          },
+          "oneOf": [
+            { "required": ["appAuthToken"] },
+            { "required": ["appAuthTokenEnv"] }
+          ]
+        }
       },
-      "shop_id": {
-        "type": "string",
-        "description": "店铺 ID（单店铺）"
+      "requireAccountBinding": {
+        "type": "boolean",
+        "description": "Fail closed when agentAccountId has no configured shop credential; defaults true when accounts are configured"
       },
-      "webhook_secret": {
+      "apiBaseUrl": {
         "type": "string",
-        "description": "Webhook 验签密钥（若平台要求）"
-      }
-    }
-  },
-  "channelConfigs": {
-    "meituan": {
-      "label": "@partme.ai/openclaw-meituan",
-      "description": "美团开放平台渠道与运营工具 - 公域 Agent-First 智能运营",
-      "schema": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {}
-      }
+        "format": "uri",
+        "default": "https://api-open-cater.meituan.com"
+      },
+      "version": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16,
+        "default": "2"
+      },
+      "operations": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "apiPath", "businessId"],
+          "properties": {
+            "name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+            "description": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "apiPath": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 256,
+              "pattern": "^/"
+            },
+            "businessId": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "requiresAuth": { "type": "boolean", "default": true },
+            "riskLevel": {
+              "type": "string",
+              "enum": ["read", "write"],
+              "default": "write",
+              "description": "Write operations require confirm=true for every tool invocation"
+            },
+            "successCodes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,64}$"
+              },
+              "default": ["OP_SUCCESS"]
+            },
+            "idempotencyBizField": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,127}$",
+              "description": "Required by default for write operations; names the top-level biz field used for bounded local duplicate suppression"
+            }
+          }
+        }
+      },
+      "requestTimeoutMs": {
+        "type": "integer",
+        "minimum": 500,
+        "maximum": 60000,
+        "default": 10000
+      },
+      "maxRequestBytes": {
+        "type": "integer",
+        "minimum": 256,
+        "maximum": 1048576,
+        "default": 65536
+      },
+      "maxResponseBytes": {
+        "type": "integer",
+        "minimum": 1024,
+        "maximum": 5242880,
+        "default": 1048576
+      },
+      "maxToolResultBytes": {
+        "type": "integer",
+        "minimum": 1024,
+        "maximum": 1048576,
+        "default": 262144
+      },
+      "maxRequestsPerMinute": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10000,
+        "default": 60
+      },
+      "maxConcurrentRequests": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 128,
+        "default": 8
+      },
+      "readRetryMaxAttempts": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 4,
+        "default": 2,
+        "description": "Total attempts for read operations; write operations are always attempted once"
+      },
+      "retryInitialDelayMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10000,
+        "default": 250
+      },
+      "retryMaxDelayMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 60000,
+        "default": 2000
+      },
+      "retryJitterRatio": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.2
+      },
+      "requireWriteIdempotency": {
+        "type": "boolean",
+        "default": true,
+        "description": "Require every write operation to declare idempotencyBizField"
+      },
+      "idempotencyTtlMs": {
+        "type": "integer",
+        "minimum": 60000,
+        "maximum": 604800000,
+        "default": 86400000
+      },
+      "maxIdempotencyEntries": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100000,
+        "default": 10000
+      },
+      "allowCustomApiBaseUrl": {
+        "type": "boolean",
+        "default": false,
+        "description": "Explicitly allow sending Meituan credentials to a trusted custom HTTPS proxy"
+      },
+      "ownerOnly": { "type": "boolean", "default": true }
     }
   }
 }

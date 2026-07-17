@@ -18,6 +18,7 @@
  */
 
 export { registerKnowledgeHooks, getOrCreateStore, invalidateStoreCache } from './runtime/hooks.js';
+export { resolveConversationNamespace } from './runtime/namespace.js';
 export { extractKnowledgeConfig, deepMergeKnowledgeConfig } from './runtime/hooks.js';
 export { indexDocument, indexDocuments, retrieveContext } from './indexer/scheduler.js';
 export { createKnowledgeConfig, validateKnowledgeConfig, mergeKnowledgeConfig } from './config/config.js';
@@ -51,7 +52,7 @@ export type {
 
 import { extname } from 'node:path';
 import { stat } from 'node:fs/promises';
-import { getOrCreateStore } from './runtime/hooks.js';
+import { getOrCreateStore, invalidateStoreCache } from './runtime/hooks.js';
 import { indexDocument, retrieveContext } from './indexer/scheduler.js';
 import type { IndexResult } from './indexer/scheduler.js';
 import type { KnowledgeConfig } from './types.js';
@@ -70,7 +71,7 @@ const INDEXABLE_EXTENSIONS = new Set(['.md', '.txt', '.csv', '.json', '.text']);
 export type FileIndexOptions = {
   /** 知识库配置（已合并） */
   config: KnowledgeConfig;
-  /** 命名空间（格式：accountId:mode） */
+  /** 命名空间；推荐使用 resolveConversationNamespace 从官方会话上下文派生。 */
   namespace: string;
   /** 来源标识 */
   sourceId: string;
@@ -91,12 +92,12 @@ export async function indexFile(
   options: FileIndexOptions,
 ): Promise<IndexResult> {
   const ext = extname(filePath).toLowerCase();
-  if (!INDEXABLE_EXTENSIONS.has(ext)) {
+  if (!INDEXABLE_EXTENSIONS.has(ext) && !options.config.parser?.provider) {
     return {
       chunksAdded: 0,
       sourceId: options.sourceId,
       success: false,
-      error: `不支持的文件类型: ${ext}（支持: .md, .txt, .csv, .json）`,
+      error: `不支持的文件类型: ${ext}（纯文本支持: .md, .txt, .text, .csv, .json；其它格式需配置 parser）`,
     };
   }
 
@@ -111,17 +112,26 @@ export async function indexFile(
         error: '文件不存在或为空',
       };
     }
+    const maxFileBytes = options.config.parser?.maxFileBytes ?? options.config.tools?.maxFileBytes ?? 20 * 1024 * 1024;
+    if (fileStat.size > maxFileBytes) {
+      return {
+        chunksAdded: 0,
+        sourceId: options.sourceId,
+        success: false,
+        error: `文件超过最大大小 ${maxFileBytes} bytes`,
+      };
+    }
   } catch {
     return {
       chunksAdded: 0,
       sourceId: options.sourceId,
       success: false,
-      error: `无法读取文件: ${filePath}`,
+      error: '无法读取文件',
     };
   }
 
   const { store, embedding } = await getOrCreateStore(options.config, options.namespace);
-  return indexDocument(filePath, options.sourceId, embedding, store, options.chunkerConfig);
+  return indexDocument(filePath, options.sourceId, embedding, store, options.chunkerConfig, options.config.parser);
 }
 
 /**
@@ -190,8 +200,10 @@ export function getSupportedExtensions(): string {
 // Plugin entry — 自注册 hook + tools
 // ===================================================================
 
-import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
+import { definePluginEntry, type OpenClawPluginDefinition } from 'openclaw/plugin-sdk/plugin-entry';
 import { registerKnowledgeHooks } from './runtime/hooks.js';
+import { createKnowledgeConfig, validateKnowledgeConfig } from './config/config.js';
 import { createKnowledgeAddTool } from './tools/knowledge-add.js';
 import { createKnowledgeQueryTool } from './tools/knowledge-query.js';
 import { createKnowledgeUpdateTool } from './tools/knowledge-update.js';
@@ -201,12 +213,10 @@ import { createKnowledgeDeleteTool } from './tools/knowledge-delete.js';
  * @description OpenClaw 运行时注册的默认知识库插件：挂载钩子与 4 个托管工具，形成「自动 RAG 注入」+
  *              「模型自服务 CRUD」双层能力面。
  */
-const plugin = {
+const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: 'knowledge',
   name: 'Knowledge RAG',
   description: '知识库 RAG 引擎 — 自动检索注入 + AI 自主知识管理',
-  configSchema: { type: 'object' as const, additionalProperties: true, properties: {} },
-
   /**
    * @description 向 OpenClaw 注册 `before_prompt_build` 钩子和 `knowledge_add|query|update|delete` 工具。
    *              当 `pluginConfig.enabled === false` 时提前返回，不注册任何能力。
@@ -214,23 +224,28 @@ const plugin = {
    * @param api - OpenClaw 插件 API（含 `config`、`pluginConfig`、`registerTool`、`logger` 等）
    */
   register(api: OpenClawPluginApi) {
-    const cfg = (api.pluginConfig ?? {}) as Record<string, unknown>;
-    if (cfg.enabled === false) {
+    const cfg = createKnowledgeConfig(api.pluginConfig);
+    if (!cfg) {
       api.logger.info('[knowledge] Disabled');
       return;
     }
+    const errors = validateKnowledgeConfig(cfg);
+    if (errors.length > 0) throw new Error(`[knowledge] invalid configuration: ${errors.join('; ')}`);
+    if (cfg.store?.dbPath) cfg.store.dbPath = api.resolvePath(cfg.store.dbPath);
+    if (cfg.tools?.allowedFileRoots) cfg.tools.allowedFileRoots = cfg.tools.allowedFileRoots.map((root) => api.resolvePath(root));
 
-    registerKnowledgeHooks(api);
+    registerKnowledgeHooks(api, undefined, cfg);
     api.logger.info('[knowledge] before_prompt_build hook registered');
 
-    api.registerTool((ctx) => createKnowledgeAddTool(ctx), { name: 'knowledge_add' });
-    api.registerTool((ctx) => createKnowledgeQueryTool(ctx), { name: 'knowledge_query' });
-    api.registerTool((ctx) => createKnowledgeUpdateTool(ctx), { name: 'knowledge_update' });
-    api.registerTool((ctx) => createKnowledgeDeleteTool(ctx), { name: 'knowledge_delete' });
+    api.registerTool((ctx) => createKnowledgeAddTool(ctx, cfg), { name: 'knowledge_add' });
+    api.registerTool((ctx) => createKnowledgeQueryTool(ctx, cfg), { name: 'knowledge_query' });
+    api.registerTool((ctx) => createKnowledgeUpdateTool(ctx, cfg), { name: 'knowledge_update' });
+    api.registerTool((ctx) => createKnowledgeDeleteTool(ctx, cfg), { name: 'knowledge_delete' });
+    api.on('gateway_stop', async () => invalidateStoreCache());
 
     api.logger.info('[knowledge] 4 tools registered: add, query, update, delete');
     api.logger.info('[knowledge] Plugin ready — auto RAG injection + AI knowledge management');
   },
-};
+});
 
 export default plugin;

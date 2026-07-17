@@ -12,7 +12,7 @@
  * RocketMQ setup 冷路径：仅导出 Channel 定义，不重复 index 的 HTTP 路由注册。
  */
 
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { rockermqChannel } from "./channel.js";
 

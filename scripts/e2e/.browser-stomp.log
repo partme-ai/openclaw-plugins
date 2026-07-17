@@ -1,9 +1,18 @@
-[13:08:13.831] >> SEND /queue/agent.demo
-[13:08:13.719] >> SUBSCRIBE /topic/session.demo
-[13:08:13.415] << CONNECTED
+[15:23:32.152] << MESSAGE
+subscription:browser-sub-1
+message-id:msg-2
+destination:/topic/session.stomp\cfb753a5d-a5df-4785-9e33-8319f8c3f927@main
+content-type:text/plain
+ack:msg-2
+content-length:503
+
+{"version":"1","message":{"messageId":"stomp-b2bb2218-eb61-4c6a-bd34-bce7c5340d96","traceId":"d387c219-c2ca-4d82-9733-7450c8cf4392","timestamp":1784301812151,"source":{"channel":"stomp","accountId":"default","userId":"stomp:fb753a5d-a5df-4785-9e33-8319f8c3f927@main","chatType":"direct","agentId":"main"},"contentType":"text","text":"openclaw e2e fixture reply","media":[],"direction":"outbound"},"headers":{"replyRoute":{"destination":"/topic/session.stomp:fb753a5d-a5df-4785-9e33-8319f8c3f927@main"}}}\0
+[15:23:31.075] >> SEND /queue/agent.main
+[15:23:31.041] >> SUBSCRIBE /topic/session.stomp:fb753a5d-a5df-4785-9e33-8319f8c3f927@main
+[15:23:31.005] << CONNECTED
 version:1.2
 heart-beat:10000,10000
-server:openclaw-web-stomp/0.1.0
-session:2432b388-cac2-4291-93db-9640f550a10e
+server:openclaw-web-stomp/2026.7.1
+session:fb753a5d-a5df-4785-9e33-8319f8c3f927
 
 \0

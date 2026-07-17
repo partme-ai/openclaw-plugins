@@ -1,5 +1,11 @@
 # OpenClaw Plugins — 快速开始
 
+## 前置条件
+
+- OpenClaw >= 2026.7.1
+- Node.js >= 22
+- pnpm 9（从源码开发时，与根 `packageManager` 保持一致）
+
 ## 安装插件
 
 每个插件独立安装：

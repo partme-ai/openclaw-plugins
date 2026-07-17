@@ -130,7 +130,9 @@ export async function ensureDynamicAgentListed(agentId: string, runtime: any): P
       ensuredDynamicAgentIds.add(normalizedId);
     })
     .catch((err) => {
-      console.warn(`[wecom-kf] 动态 Agent 添加失败: ${normalizedId}`, err);
+      const message = err instanceof Error ? err.message : String(err);
+      // 动态 Agent ID 通常由客服账号/外部联系人派生，不在默认日志中回显。
+      console.warn(`[wecom-kf] 动态 Agent 添加失败: ${message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 256)}`);
     });
 
   await ensureDynamicAgentWriteQueue;

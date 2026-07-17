@@ -7,15 +7,17 @@ function createMockApi(config: OpenClawConfig = { channels: {} }) {
   const registerChannel = vi.fn();
   const registerHttpRoute = vi.fn();
   const registerTool = vi.fn();
+  const registerService = vi.fn();
   const on = vi.fn();
   const api = {
-    runtime: { config },
+    runtime: { config: { current: () => config } },
     registerChannel,
     registerHttpRoute,
     registerTool,
+    registerService,
     on,
   } as unknown as OpenClawPluginApi;
-  return { api, registerChannel, registerHttpRoute, registerTool, on };
+  return { api, registerChannel, registerHttpRoute, registerTool, registerService, on };
 }
 
 describe("wecom-kf plugin register", () => {
@@ -43,17 +45,27 @@ describe("wecom-kf plugin register", () => {
     expect(registeredPaths).toContain("/kf/desk2");
     expect(registeredPaths).toContain(WEBHOOK_PATHS.KF);
     expect(registeredPaths).toContain("/plugins/wecom-kf");
+    expect(registerHttpRoute.mock.calls.every((call) => call[0].match === "exact")).toBe(true);
   });
 
-  it("registers wecom_kf_mcp tool", () => {
+  it("registers durable state initialization as an awaited service", async () => {
+    const { api, registerService } = createMockApi();
+    plugin.register(api);
+    expect(registerService).toHaveBeenCalledWith(expect.objectContaining({
+      id: "wecom-kf-state",
+      start: expect.any(Function),
+      stop: expect.any(Function),
+    }));
+    await expect(registerService.mock.calls[0][0].start()).resolves.toBeUndefined();
+    await expect(registerService.mock.calls[0][0].stop()).resolves.toBeUndefined();
+  });
+
+  it("does not register the removed legacy MCP bridge", () => {
     const { api, registerTool } = createMockApi();
 
     plugin.register(api);
 
-    expect(registerTool).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ name: "wecom_kf_mcp" }),
-    );
+    expect(registerTool.mock.calls.some((call) => call[1]?.name === "wecom_kf_mcp")).toBe(false);
   });
 
   it("registers wecom_kf control tools with isolated naming", () => {

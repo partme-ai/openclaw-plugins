@@ -1,10 +1,9 @@
 /**
- * 解析插件侧配置（来自 `plugins.entries.openclaw-prometheus.config` / `api.pluginConfig`）。
+ * 解析插件侧配置（来自 `plugins.entries.prometheus.config` / `api.pluginConfig`）。
  */
 
 /** 与 openclaw.plugin.json 中 configSchema 对齐的运行时配置形状 */
 export type PrometheusPluginUserConfig = {
-  port?: number;
   path?: string;
   collectIntervalMs?: number;
   snapshotIntervalMs?: number;
@@ -12,16 +11,18 @@ export type PrometheusPluginUserConfig = {
   includeRuntime?: boolean;
   monitoredProviders?: string[];
   instance?: string;
+  collectorTimeoutMs?: number;
+  maxScrapeSeries?: number;
   scrapeAuth?: {
     /** 为 true 时要求请求携带 Bearer Token（优先环境变量，见 README） */
     enabled?: boolean;
-    /** 仅建议用于本地测试；生产请使用 openclaw-prometheus_BEARER_TOKEN */
+    /** 仅建议用于本地测试；生产请使用 OPENCLAW_PROMETHEUS_BEARER_TOKEN */
     bearerToken?: string;
   };
 };
 
+/** 经默认值、范围和路径校验后，可直接供采集与 HTTP 路由使用的完整配置。 */
 export type ResolvedPrometheusConfig = {
-  port: number;
   metricsPath: string;
   collectIntervalMs: number;
   snapshotIntervalMs: number;
@@ -33,9 +34,27 @@ export type ResolvedPrometheusConfig = {
   scrapeBearerToken: string | undefined;
   /** Instance label for multi-deployment */
   instance: string;
+  collectorTimeoutMs: number;
+  maxScrapeSeries: number;
 };
 
-const ENV_BEARER = "openclaw-prometheus_BEARER_TOKEN";
+const ENV_BEARER = "OPENCLAW_PROMETHEUS_BEARER_TOKEN";
+const LEGACY_ENV_BEARER = "openclaw-prometheus_BEARER_TOKEN";
+const HTTP_PATH_PATTERN = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/;
+const ROOT_KEYS = new Set([
+  "path",
+  "collectIntervalMs",
+  "snapshotIntervalMs",
+  "workloadWindowMs",
+  "includeRuntime",
+  "monitoredProviders",
+  "instance",
+  "collectorTimeoutMs",
+  "maxScrapeSeries",
+  "scrapeAuth",
+]);
+const SCRAPE_AUTH_KEYS = new Set(["enabled", "bearerToken"]);
+const TOKEN_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
 
 /**
  * 将用户配置合并为带默认值的解析结果。
@@ -47,35 +66,53 @@ export function resolvePrometheusConfig(
   raw: Record<string, unknown> | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedPrometheusConfig {
+  if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) {
+    throw new Error("prometheus config must be an object");
+  }
+  const unknownKeys = Object.keys(raw ?? {}).filter((key) => !ROOT_KEYS.has(key));
+  if (unknownKeys.length > 0) {
+    throw new Error(`prometheus config contains unknown field: ${unknownKeys.join(", ")}`);
+  }
   const c = (raw ?? {}) as PrometheusPluginUserConfig;
-  const metricsPath =
-    typeof c.path === "string" && c.path.startsWith("/") ? c.path : "/metrics";
-  const collectIntervalMs =
-    typeof c.collectIntervalMs === "number" && c.collectIntervalMs >= 0
-      ? c.collectIntervalMs
-      : 15000;
-  const snapshotIntervalMs =
-    typeof c.snapshotIntervalMs === "number" && c.snapshotIntervalMs >= 1000
-      ? c.snapshotIntervalMs
-      : 30000;
-  const workloadWindowMs =
-    typeof c.workloadWindowMs === "number" && c.workloadWindowMs >= 60000
-      ? c.workloadWindowMs
-      : 300000;
+  if (c.includeRuntime !== undefined && typeof c.includeRuntime !== "boolean") {
+    throw new Error("prometheus.includeRuntime must be a boolean");
+  }
+  if (
+    c.scrapeAuth !== undefined &&
+    (!c.scrapeAuth || typeof c.scrapeAuth !== "object" || Array.isArray(c.scrapeAuth))
+  ) {
+    throw new Error("prometheus.scrapeAuth must be an object");
+  }
+  const scrapeAuthUnknown = Object.keys(c.scrapeAuth ?? {}).filter((key) => !SCRAPE_AUTH_KEYS.has(key));
+  if (scrapeAuthUnknown.length > 0) {
+    throw new Error(`prometheus.scrapeAuth contains unknown field: ${scrapeAuthUnknown.join(", ")}`);
+  }
+  if (c.scrapeAuth?.enabled !== undefined && typeof c.scrapeAuth.enabled !== "boolean") {
+    throw new Error("prometheus.scrapeAuth.enabled must be a boolean");
+  }
+  const metricsPath = readPath(c.path);
+  const collectIntervalMs = readInteger(c.collectIntervalMs, "collectIntervalMs", 0, 3_600_000, 15_000);
+  const snapshotIntervalMs = readInteger(c.snapshotIntervalMs, "snapshotIntervalMs", 1_000, 3_600_000, 30_000);
+  const workloadWindowMs = readInteger(c.workloadWindowMs, "workloadWindowMs", 60_000, 86_400_000, 300_000);
   const includeRuntime = c.includeRuntime !== false;
-  const monitoredProviders = Array.isArray(c.monitoredProviders)
-    ? c.monitoredProviders
-        .map((value) => (typeof value === "string" ? value.trim() : ""))
-        .filter((value): value is string => value.length > 0)
-    : [];
+  const monitoredProviders = readProviders(c.monitoredProviders);
   const scrapeAuthEnabled = c.scrapeAuth?.enabled === true;
-  const fromEnv = env[ENV_BEARER]?.trim();
-  const fromConfig =
-    typeof c.scrapeAuth?.bearerToken === "string" ? c.scrapeAuth.bearerToken.trim() : "";
+  // 必须先检查原始字符串再 trim；否则 "\nsecret\n" 会被清洗成合法 token，违背启动即失败边界。
+  const fromEnv = readBearerToken(env[ENV_BEARER], ENV_BEARER, true)
+    ?? readBearerToken(env[LEGACY_ENV_BEARER], LEGACY_ENV_BEARER, true);
+  const fromConfig = readBearerToken(
+    c.scrapeAuth?.bearerToken,
+    "scrapeAuth.bearerToken",
+    false,
+  );
   const scrapeBearerToken = fromEnv || fromConfig || undefined;
+  if (scrapeAuthEnabled && !scrapeBearerToken) {
+    throw new Error(
+      `prometheus.scrapeAuth.enabled requires ${ENV_BEARER} or scrapeAuth.bearerToken`,
+    );
+  }
 
   return {
-    port: typeof c.port === "number" ? c.port : 9090,
     metricsPath,
     collectIntervalMs,
     snapshotIntervalMs,
@@ -84,8 +121,68 @@ export function resolvePrometheusConfig(
     monitoredProviders,
     scrapeAuthEnabled,
     scrapeBearerToken,
-    instance: c.instance ?? "",
+    instance: readInstance(c.instance),
+    collectorTimeoutMs: readInteger(c.collectorTimeoutMs, "collectorTimeoutMs", 100, 60_000, 10_000),
+    maxScrapeSeries: readInteger(c.maxScrapeSeries, "maxScrapeSeries", 100, 50_000, 10_000),
   };
+}
+
+/** 读取 Bearer Token；所有 C0/DEL 控制字符都在规范化前拒绝，防止请求头和日志注入。 */
+function readBearerToken(value: unknown, name: string, allowMissing: boolean): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`prometheus ${name} must be a string`);
+  }
+  if (value.trim().length === 0) {
+    if (allowMissing) return undefined;
+    throw new Error(`prometheus.${name} must be a non-empty token`);
+  }
+  if (value.length > 4_096 || TOKEN_CONTROL_CHARACTER_PATTERN.test(value)) {
+    throw new Error(`prometheus ${name} must not contain control characters and must be at most 4096 characters`);
+  }
+  return value.trim();
+}
+
+function readPath(value: unknown): string {
+  if (value === undefined) return "/metrics";
+  if (typeof value !== "string" || !HTTP_PATH_PATTERN.test(value) || value.includes("//") || value.length > 256) {
+    throw new Error("prometheus.path must be a valid absolute HTTP path (max 256 characters)");
+  }
+  const normalized = value.length > 1 ? value.replace(/\/$/, "") : value;
+  if (normalized === "/") {
+    throw new Error("prometheus.path must not claim the Gateway root path");
+  }
+  return normalized;
+}
+
+function readInteger(value: unknown, name: string, min: number, max: number, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value) || (value as number) < min || (value as number) > max) {
+    throw new Error(`prometheus.${name} must be an integer between ${min} and ${max}`);
+  }
+  return value as number;
+}
+
+function readProviders(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 64) {
+    throw new Error("prometheus.monitoredProviders must be an array with at most 64 entries");
+  }
+  const providers = value.map((entry) => {
+    if (typeof entry !== "string" || entry.trim().length === 0 || entry.trim().length > 128) {
+      throw new Error("prometheus.monitoredProviders entries must be non-empty strings up to 128 characters");
+    }
+    return entry.trim();
+  });
+  return [...new Set(providers)];
+}
+
+function readInstance(value: unknown): string {
+  if (value === undefined) return "";
+  if (typeof value !== "string" || value.trim().length > 128) {
+    throw new Error("prometheus.instance must be a string up to 128 characters");
+  }
+  return value.trim();
 }
 
 /**

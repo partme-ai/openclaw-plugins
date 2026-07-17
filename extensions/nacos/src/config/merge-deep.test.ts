@@ -17,4 +17,16 @@ describe("deepMerge", () => {
   it("skips undefined values in source", () => {
     expect(deepMerge({ a: 1 }, { a: undefined, b: 2 })).toEqual({ a: 1, b: 2 });
   });
+
+  it.each(["__proto__", "prototype", "constructor"])(
+    "rejects unsafe key %s at any nesting level",
+    (key) => {
+      const source = JSON.parse(`{"safe":{"${key}":{"polluted":true}}}`) as Record<
+        string,
+        unknown
+      >;
+      expect(() => deepMerge({}, source)).toThrow(`Cannot merge unsafe key: ${key}`);
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    },
+  );
 });

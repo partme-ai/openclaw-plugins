@@ -1,10 +1,13 @@
 {
   "name": "@partme.ai/openclaw-meituan",
-  "version": "2026.5.20",
-  "description": "OpenClaw 美团开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
+  "version": "2026.7.1",
+  "description": "OpenClaw 美团技术服务合作中心 MTOp OpenAPI capability",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -12,38 +15,33 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "prepublishOnly": "pnpm build"
   },
   "keywords": [
     "openclaw",
     "plugin",
     "meituan",
-    "channel",
-    "公域",
-    "智能运营"
+    "mtop",
+    "openapi"
   ],
   "author": "PartMe",
   "license": "MIT",
-  "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
-  },
+  "dependencies": {},
   "files": [
     "dist",
     "openclaw.plugin.json",
     "README.md",
     "README.zh-CN.md",
-    "LICENSE",
-    "tsconfig.json",
-    "tsup.config.ts",
-    "vitest.config.ts",
-    ".gitignore"
+    "LICENSE"
   ],
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "openclaw": ">=2026.4.12",
+    "@vitest/coverage-v8": "^4.1.6",
+    "openclaw": "2026.7.1",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.6"
   },
   "repository": {
     "type": "git",
@@ -57,7 +55,7 @@
     }
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -68,11 +66,21 @@
     "extensions": [
       "./dist/index.js"
     ],
-    "setupEntry": "./dist/setup-entry.js",
-    "channel": {
-      "id": "meituan",
-      "label": "美团",
-      "blurb": "美团开放平台渠道与运营工具"
+    "capabilities": [
+      "tools"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
+    },
+    "build": {
+      "openclawVersion": "2026.7.1",
+      "pluginSdkVersion": "2026.7.1"
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-meituan",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   }
 }

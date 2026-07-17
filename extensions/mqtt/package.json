@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-mqtt",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "MQTT protocol bridge for OpenClaw — IoT device integration via embedded Aedes MQTT broker",
   "type": "module",
   "main": "dist/index.js",
@@ -27,12 +27,15 @@
   ],
   "author": "PartMe",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0"
+  },
   "files": [
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md",
-    "RELEASING.md"
+    "README.zh-CN.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
@@ -43,19 +46,16 @@
     "directory": "extensions/mqtt"
   },
   "dependencies": {
-    "aedes": "^0.51.3",
+    "aedes": "^1.1.1",
     "aedes-persistence-level": "^9.1.3",
-    "aedes-persistence-mongodb": "^9.4.1",
-    "aedes-persistence-nedb": "^2.0.3",
-    "aedes-persistence-redis": "^9.0.2",
+    "aedes-persistence-mongodb": "^9.4.2",
+    "aedes-persistence-redis": "^11.2.2",
     "ioredis": "^5.10.1",
-    "mqemitter-redis": "^5.1.0",
-    "ws": "^8.20.0",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "level": "^10.0.0",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.18.1",
     "mqtt": "^5.13.2",
     "prom-client": "^15.1.3",
     "tsup": "^8.0.0",
@@ -64,7 +64,7 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -80,6 +80,11 @@
       "id": "mqtt",
       "label": "MQTT",
       "blurb": "MQTT protocol bridge for IoT and device integration via embedded Aedes."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-mqtt",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

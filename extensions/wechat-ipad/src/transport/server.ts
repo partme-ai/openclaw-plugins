@@ -3,12 +3,10 @@
  */
 
 export {
-  startBridge,
-  stopBridge,
-  getBridgeState,
+  WechatIpadBridge,
+  getActiveBridge,
+  setActiveBridge,
   getBridgeStatusSummary,
-  getLoginInfo,
   getServiceStatus,
   sendMessage,
-  on,
 } from "./ipad-bridge.js";

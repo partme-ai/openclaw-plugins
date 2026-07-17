@@ -21,6 +21,15 @@ export function setWechatIpadRuntime(runtime: GatewayRuntime): void {
 }
 
 /**
+ * 清空 Gateway Runtime 与配置缓存。
+ * Gateway 停止或测试隔离时必须同时释放两者，避免下一次注册读取上一实例的状态。
+ */
+export function clearWechatIpadRuntime(): void {
+  _runtime = null;
+  _resolvedConfig = null;
+}
+
+/**
  * 获取已注入的 Gateway Runtime。
  *
  * @returns 运行时引用；未注册时为 null

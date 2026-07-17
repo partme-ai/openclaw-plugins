@@ -1,163 +1,155 @@
 # OpenClaw Knowledge
 
-> OpenClaw Knowledge Base RAG 引擎 — 独立的 Embedding、向量存储、混合检索、多类型分块（文档/FAQ/对话）插件。
+适配 OpenClaw `2026.7.1` 的本地知识库 RAG 插件。插件注册 `before_prompt_build` 自动检索钩子，以及 `knowledge_add`、`knowledge_query`、`knowledge_update`、`knowledge_delete` 四个工具。
 
-面向 OpenClaw 渠道插件（wecom/lark/dingtalk/qqbot/weixin）提供即插即用的知识库 RAG 能力。每个渠道只需 **~10 行胶水代码**即可集成。
+同一 `sourceId` 的重建使用存储层原子替换，并对并发写入按调用顺序串行；SQLite 会在同一事务中更新向量与 FTS，失败时保留旧文档。
 
----
+## 架构总览
 
-## 特性
+```text
+可信文本 / Owner 文件                         用户问题
+        │                                      │
+        ▼                                      ▼
+Namespace ACL + realpath + 大小限制        Intent Gate
+        │                                      │
+        ▼                                      ▼
+Parser（可选）→ Chunk → Embedding       Vector / Keyword 双路召回
+        │                                      │
+        └──────────────┐       ┌───────────────┘
+                       ▼       ▼
+                 SQLite + FTS5 / ZVec
+                           │
+                           ▼
+                 Reranker（可选）→ Token 预算
+                           │
+                           ▼
+              before_prompt_build → Agent Prompt
 
-- **多 Embedding Provider** — OpenAI / DashScope / 智谱 / 千帆 / Ollama
-- **多向量后端** — sqlite-vec（生产推荐）/ ZVec（零依赖）/ ZVec-Native
-- **混合检索** — 向量相似度 + FTS5 关键词搜索，可调比例
-- **多类型分块** — document（标题树） / FAQ（QA 双通道） / conversation（滑动窗口）
-- **重排序** — Jina / 智谱 / Ollama
-- **文档解析** — Ollama / 智谱
-- **Token 化** — tiktoken / 智谱
-- **意图门控** — rule（0ms 快速决策） / strict（严格模式）
-- **CRUD 工具** — `knowledge_add` / `knowledge_query` / `knowledge_update` / `knowledge_delete`
-- **配置层级** — 全局配置 → 按 account 覆盖（扁平化，支持任意字段覆盖）
+共同边界：sessionKey 摘要隔离 │ 原子替换 │ Provider 超时/重试/响应上限
+          凭据/路径脱敏       │ Gateway stop 关闭 Store
+```
 
----
+Provider 资源配置在调用前 fail-fast：`requestTimeoutMs=1..300000`、`maxRetries=0..10`、
+`maxResponseBytes=1..64MiB`、`maxBatchSize=1..2048`。非法值不会进入批处理循环，也不会
+发出网络请求；实际批次继续受各 Provider 更小的官方硬上限约束。
 
-## 快速开始
+```mermaid
+flowchart LR
+    C["Provider 配置"] --> V{"有界整数校验"}
+    V -->|非法| F["Fail fast<br/>0 loop / 0 fetch"]
+    V -->|合法| B["min 配置批次与供应商上限"]
+    B --> H["超时 + 有限重试 + 响应上限"]
+    H --> D["契约校验"] --> S["原子写入"]
+```
 
-### 安装
+```mermaid
+flowchart LR
+    DOC["可信文档 / Tool 输入"] --> ACL["Owner + Namespace + 大小校验"]
+    ACL --> TYPE{"纯文本?"}
+    TYPE -->|是| CHUNK["语义切块"]
+    TYPE -->|否且已配置| PARSER["智谱 / Ollama Parser"] --> CHUNK
+    CHUNK --> EMB["Embedding"] --> STORE["SQLite/FTS5 或 ZVec"]
+    USER["用户问题"] --> GATE["Intent Gate"] --> RETRIEVE["Vector / Keyword / Hybrid"]
+    STORE --> RETRIEVE --> BUDGET["Reranker + Chunk/Token 预算"] --> PROMPT["Agent Prompt"]
+```
+
+## 当前能力边界
+
+- Embedding：OpenAI-compatible、DashScope、智谱、千帆、Ollama。
+- 存储：`sqlite-vec`（默认，Node.js 内置 SQLite + FTS5）和 `zvec`（纯 JavaScript，小规模/开发用途，可选 JSON 持久化）。
+- 检索：vector、keyword、hybrid；hybrid 默认权重为 0.7/0.3，可选智谱或 Jina Reranker。
+- 文档解析：可选智谱 Layout Parsing 或 Ollama 视觉模型。智谱支持 PDF/PNG/JPEG；Ollama
+  的 `images` 输入仅接收图片，PDF 必须先逐页渲染或改用智谱。
+- 注入：按块数及 token/字符上限约束，可注入 system 或 user prompt。
+- 隔离：默认 namespace 由 OpenClaw `sessionKey` 的 SHA-256 摘要派生；Hook 与 Tool 使用同一解析器，非 owner 不能跨 namespace。
+- 文件摄取：默认关闭；仅 owner 可用，并且文件 realpath 必须位于允许根目录内。
+- 错误边界：Provider、Parser、SQLite 和文件系统异常在进入 Hook 日志或 Tool 响应前统一遮蔽凭据、绝对路径和控制字符。
+
+本插件当前不承诺远程 URL 抓取、外部向量数据库或多节点共享索引。PDF/Office/图片等格式必须显式配置 `parser.provider`，并在真实 Provider 环境验收。
+
+## 安装与配置
 
 ```bash
-npm install @partme.ai/openclaw-knowledge
+openclaw plugins install @partme.ai/openclaw-knowledge@2026.7.1
 ```
 
-### 集成到渠道插件
-
-```typescript
-import {
-  registerKnowledgeHooks,
-  createKnowledgeAddTool,
-  createKnowledgeQueryTool,
-  createKnowledgeUpdateTool,
-  createKnowledgeDeleteTool,
-} from '@partme.ai/openclaw-knowledge';
-
-export function onRegister(api: PluginApi) {
-  registerKnowledgeHooks(api, 'channels.wecom.knowledge');
-  api.registerTool(createKnowledgeAddTool);
-  api.registerTool(createKnowledgeQueryTool);
-  api.registerTool(createKnowledgeUpdateTool);
-  api.registerTool(createKnowledgeDeleteTool);
-}
-```
-
-### 最小配置
+在 OpenClaw 配置中启用：
 
 ```json
 {
-  "channels": {
-    "wecom": {
+  "plugins": {
+    "entries": {
       "knowledge": {
         "enabled": true,
-        "embedding": { "model": "text-embedding-3-small" },
-        "store": { "provider": "zvec" }
+        "config": {
+          "enabled": true,
+          "embedding": {
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536
+          },
+          "store": {
+            "provider": "sqlite-vec",
+            "dbPath": "./data/knowledge.db"
+          },
+          "retrieval": {
+            "strategy": "hybrid",
+            "topK": 5,
+            "minScore": 0.3,
+            "vectorWeight": 0.7,
+            "keywordWeight": 0.3
+          },
+          "injection": {
+            "position": "system",
+            "maxChunks": 5,
+            "maxTokens": 2048,
+            "template": "以下是相关知识库内容，请据此回答用户问题：\n\n{context}"
+          },
+          "tools": {
+            "allowFileIngest": false,
+            "allowedFileRoots": [],
+            "maxFileBytes": 10485760,
+            "maxInputChars": 100000,
+            "allowOwnerGlobalNamespaces": true
+          }
+        }
       }
     }
   }
 }
 ```
 
-详细配置见 [INSTALL.md](INSTALL.md)。
+OpenAI-compatible 模式默认读取 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `OPENAI_EMBEDDING_MODEL`。不要把密钥提交到仓库。
 
----
+启用文件摄取时必须同时配置：
 
-## 架构概览
-
-```
-用户输入
-    │
-    ▼
-IntentGate (rule/strict) ─── 非检索意图 → 跳过
-    │
-    ▼ (检索意图)
-Embedding ─── Tokenizer ─── Chunker
-    │                                    ┌─────────────┐
-    ▼                                    │  Reranker    │
-VectorStore ─── HybridRetriever ───►─────┤ (可选)       │
-    │                                    │ jina/zhipu/  │
-    ▼                                    │ ollama       │
-before_prompt_build hook                  └─────────────┘
-    │
-    ▼
-Injection → AI Response
+```json
+{
+  "tools": {
+    "allowFileIngest": true,
+    "allowedFileRoots": ["./knowledge-docs"],
+    "maxFileBytes": 10485760
+  }
+}
 ```
 
-三层架构：
+纯文本支持 `.md`、`.txt`、`.text`、`.csv`、`.json`；其它格式需配置 Parser。符号链接越界会被拒绝。
 
-1. **knowledge-core** — Agent 自身记忆（正交）
-2. **knowledge-wiki** — Agent 编译的结构化记忆（正交）
-3. **openclaw-knowledge** — 用户外部文档 RAG（本插件）
+## 数据与升级说明
 
-三者共存，互不干扰。
+- SQLite 使用同一数据库内的 namespace 专属表，表名包含稳定哈希，避免 `a:b` 与 `a_b` 碰撞。
+- `zvec` 配置 `dbPath` 后会为每个 namespace 派生独立哈希文件，并在关闭时原子落盘。
+- 早期版本对 namespace 的清洗可能产生碰撞。升级到 2026.7.1 后，含标点或大写字符的旧 namespace 表不会自动迁移；请从可信源重新索引，避免把历史碰撞数据复制到错误租户。
+- 旧 `accountId:mode` 数据不会自动复制到新的会话摘要 namespace；这是有意的跨租户安全边界，应从可信源重新索引。
+- 更换 embedding 模型或 dimensions 后应重新索引已有内容。
+- `embedding.requestTimeoutMs`、`embedding.maxRetries`、`embedding.maxBatchSize` 分别控制外部请求超时、瞬时错误重试和单批规模；默认值为 30000、2、64。
 
----
-
-## 配置架构
-
-- 全局配置：`channels.{channel}.knowledge.*`
-- 按 account 覆盖：`channels.{channel}.accounts.{id}.knowledge.*`
-- 覆盖策略：仅覆盖指定字段，未指定的从全局继承
-- 注意：`enabled` 仅全局生效；`store.sources` 整体替换而非合并
-
----
-
-## 管道节点速览
-
-| 节点 | 配置即启用 | 失败不阻断 | 可选 Provider |
-|------|-----------|-----------|---------------|
-| Embedding | ✅ | ✅ | openai / dashscope / zhipu / qianfan / ollama |
-| Tokenizer | ✅ | ✅ | tiktoken / zhipu |
-| Chunker | ✅ | ✅ | 内置（3 种策略） |
-| VectorStore | ✅ | ✅ | sqlite-vec / zvec / zvec-native |
-| HybridRetriever | ✅ | ✅ | 内置（alpha 可调） |
-| Reranker | ⬜ | ✅ | jina / zhipu / ollama |
-| Parser | ⬜ | ✅ | ollama / zhipu |
-| IntentGate | ✅ | ✅ | rule / strict |
-
-> ✅ = 默认启用 / ⬜ = 配置后才启用 / 失败不阻断 = 某个节点失败不影响其他节点
-
----
-
-## 开发
+## 验证
 
 ```bash
-# 安装依赖
-pnpm install
-
-# 构建
-pnpm build
-
-# 测试（107 个测试）
-pnpm test
-
-# 类型检查
 pnpm typecheck
+pnpm test
+pnpm build
 ```
 
----
-
-## 发布
-
-```bash
-# 打 Tag 触发 CI/CD
-git tag v0.1.0
-git push --tags
-```
-
-自动发布到 npmjs + GitHub Packages。
-
----
-
-## 文档
-
-- [安装与配置指南](INSTALL.md)
-- [架构与策略文档](../../docs/knowledge/OpenClaw-Knowledge-RAG-Strategy_CN.md)
-- [配置与使用指南](../../docs/knowledge/OpenClaw-Knowledge-RAG-Guide_CN.md)
+详细设计和运维边界见 [`../../doc/knowledge`](../../doc/knowledge)。

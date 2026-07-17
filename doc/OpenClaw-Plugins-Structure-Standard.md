@@ -24,12 +24,11 @@
 
 | Profile | 代表插件 | Channel 平铺 MUST | 入口要求 | 说明 |
 |---------|----------|:-----------------:|----------|------|
-| **channel-base** | `_template`、`amap`、`mqtt`、`wechat`… | MUST | `index.ts` + `setup-entry.ts` 双入口 | Base 平铺骨架；Tier A 严格集 |
+| **channel-base** | `_template`、`mqtt`、`wechat`… | MUST | `index.ts` + `setup-entry.ts` 双入口 | Base 平铺骨架；Tier A 严格集 |
 | **channel-extended** | `wecom`、`wecom-kf` | MUST | 同 channel-base | Base + 语义目录；`--strict-new` 启用 Extended 阈值 |
 | **channel-legacy** | `bridge` | MUST（Phase 2 迁移） | 待对齐 | 暂标记为 Channel；Phase 2 MUST 迁移至 channel-base |
 | **capability-memory** | `memory`、`openmem` | MUST NOT | 根或 `src/` 入口 + manifest | `kind: memory`；无 `channel.ts` / `inbound.ts` |
 | **capability** | `mtls`、`oauth2` | MUST NOT | `src/index.ts` 或 manifest `main` | 安全/认证等横切能力 |
-| **capability-cluster** | `cluster` | MUST NOT | `src/index.ts` + `openclaw.extensions[]` | 集群协调；无 setup 冷路径 |
 | **infra** | `nacos`、`tracing`、`prometheus` | MUST NOT | `src/index.ts` + `openclaw.extensions[]` | 观测/配置/注册；`prometheus` MAY 后续升级 channel-capability 混合 |
 | **sdk-rag** | `knowledge` | MUST NOT | `src/index.ts` + manifest | RAG 引擎；领域 `src/` 收敛 |
 | **sdk** | `message-sdk` | MUST NOT | `src/index.ts` | 共享库/SDK；最小集：`.gitignore`、`src/`、`LICENSE` |
@@ -46,7 +45,7 @@
 | 维度 | 规则 |
 |------|------|
 | 新 Channel 插件 | MUST channel-base；超阈值 SHOULD channel-extended |
-| Tier A Channel（`amap`、`mqtt` 等 12 个） | default 模式下 Base MUST 缺失为 **error** |
+| Tier A Channel（`mqtt` 等） | default 模式下 Base MUST 缺失为 **error** |
 | Capability / Infra / SDK | MUST NOT 要求 `channel.ts`、`inbound.ts`、`setup-entry.ts` 等 Channel 平铺文件 |
 | 构建产物 | `dist/`、`node_modules/` MUST NOT 作为结构依据或提交 |
 
@@ -146,7 +145,7 @@ extensions/<plugin-id>/
 | `package.json#openclaw.extensions[]` | MUST | 指向 `./dist/index.js`（或等价编译产物） |
 | `package.json#openclaw.setupEntry` | MUST | 指向 `./dist/setup-entry.js`；MUST NOT 复用运行时入口 |
 | `package.json#openclaw.channel` | SHOULD | Channel 元数据（id、label、install） |
-| Manifest `id` | MUST | 与目录名 `<plugin-id>` 一致，kebab-case |
+| Manifest `id` | MUST | 与目录名 `<plugin-id>` 一致，使用短 kebab-case ID；外部 Channel ID 不得反向污染插件 ID |
 | 插件根目录 `*.ts`（运行时） | MUST NOT | 除 `tsup.config.ts`、`vitest.config.ts` 外，运行时代码 MUST 在 `src/` |
 | `dist/`、`node_modules/` | MUST NOT | 提交仓库或作为架构文档依据 |
 | `*.tgz` | MUST NOT | 提交插件包 |
@@ -261,7 +260,9 @@ Base Profile 必须先成立。Extended Profile 在 Base 之上叠加语义子�
 
 | 对象 | 规则 | 示例 |
 |------|------|------|
-| 插件目录 / Manifest `id` | kebab-case，二者 MUST 一致 | `wecom-kf` |
+| 插件目录 / Manifest `id` | kebab-case，二者 MUST 一致，不允许兼容例外 | `wecom-kf` |
+| npm 包名 | 默认 `@partme.ai/openclaw-<plugin-id>`；独立品牌包在命名契约中显式登记 | `@partme.ai/openclaw-nacos` |
+| 历史插件 ID | 只用于升级迁移，不得继续作为 canonical ID | `openclaw-nacos` → `nacos` |
 | `src/` 子目录 | kebab-case | `dispatch/` |
 | 源文件 | kebab-case | `inbound-media.ts` |
 | Channel id | kebab-case | `wecom-kf` |
@@ -291,6 +292,54 @@ Base Profile 必须先成立。Extended Profile 在 Base 之上叠加语义子�
 
 单元测试 SHOULD 置于 `test/`；迁移期 MAY 与 `src/` 共存，但新插件 SHOULD NOT 新增 `src/**/*.test.ts` 作为主位置。
 
+### 9.1 中文注释与可视化文档
+
+注释和图不是装饰性资产，而是插件协议边界与故障语义的一部分。重构代码时 MUST 同步迁移仍然
+成立的原理说明；不得因为实现方式变化而整段删除“为什么这样设计”的内容。旧说明已经失效时，
+应在新实现中重写为当前事实，而不是只保留函数名复述。
+
+| 位置 | 级别 | 必须说明的内容 |
+|------|------|----------------|
+| 生产源码文件头 | MUST | 文件职责、上下游、协议/安全边界；入口薄文件可简写 |
+| 长连接、Broker、Webhook transport | MUST | 生命周期、心跳/重连、超时、背压、停止语义 |
+| 入站编排 | MUST | 校验、路由、幂等、Agent 分发，以及何时 ACK/提交游标 |
+| 出站编排 | MUST | 真实送达判定、重试条件、重复发送风险和失败传播 |
+| 关键状态字段 | SHOULD | 状态代表什么、何时更新、为何不能与相邻状态合并 |
+| 配置项 | SHOULD | 默认值的安全含义，尤其是 TLS、鉴权、容量和失败策略 |
+| 测试 | SHOULD | 场景名称表达业务语义；复杂故障注入说明验证目标 |
+
+注释 MUST 优先使用中文解释设计意图；协议名、API 名和标准术语保留英文。禁止给每一行机械添加
+同义注释，也禁止用大段注释掩盖可拆解的复杂代码。
+
+架构、流程、状态变化或三方以上调用关系不能只用连续段落描述。对应 README/`doc/` 文档 MUST
+同时提供一张字符速览图和一张与当前源码一致的 Mermaid 图：字符图用于终端、源码评审、纯文本工单
+和快速扫读，Mermaid 用于结构化渲染、节点追踪和复杂时序。两种图示 MUST 表达同一实现事实，但 MAY
+分别突出组件边界与调用顺序；不得用其中一种替换或删除另一种。涉及 ACK、重试、授权、回调等时序时
+SHOULD 再提供 `sequenceDiagram` 或 `stateDiagram-v2`。推荐最小表达如下：
+
+```text
+外部系统
+    │ 入站事件
+    ▼
+插件传输层 ──▶ 校验 / 路由 / 幂等 ──▶ OpenClaw Runtime / Agent
+    ▲                    │                         │
+    │                    └──▶ 重试 / DLQ / 补偿    │
+    └────────────────────── 出站确认 ◀─────────────┘
+```
+
+```mermaid
+flowchart LR
+    E["外部系统"] --> T["插件传输层"]
+    T --> I["校验 / 路由 / 幂等"]
+    I --> A["OpenClaw Runtime / Agent"]
+    A --> O["出站确认"]
+    O --> E
+    I -->|"失败"| R["重试 / DLQ / 补偿"]
+```
+
+文档更新 MUST 保留仍有效的字符图、Mermaid 图、配置样例、报文样例和故障处理说明。大量缩减文档前
+SHOULD 在变更说明中列出删除项及其失效依据；没有失效依据的原理图、代码样例和运维说明不得删除。
+
 ---
 
 ## 10. 治理与校验
@@ -311,15 +360,14 @@ Base Profile 必须先成立。Extended Profile 在 Base 之上叠加语义子�
 | 插件 id | Profile |
 |---------|---------|
 | `memory`、`openmem` | capability-memory |
-| `mtls`、`oauth2` | capability |
-| `cluster` | capability-cluster |
+| `mtls`、`oauth2`、`amap`、`meituan`、`rednode` | capability |
 | `nacos`、`tracing`、`prometheus` | infra |
 | `knowledge` | sdk-rag |
 | `message-sdk` | sdk |
 | `router` | utility-minimal |
 | `bridge` | channel-legacy |
 | `wecom`、`wecom-kf` | channel-extended |
-| Tier A（`amap`、`mqtt` 等 12 个） | channel-base |
+| Tier A（`mqtt` 等） | channel-base |
 
 ### 10.2 规则级别
 

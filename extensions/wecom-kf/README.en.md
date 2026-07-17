@@ -26,6 +26,23 @@
 - Recommended per-account/channel/peer session isolation.
 - Optional Agent templates and transfer-to-human skills.
 
+The text diagram is retained for terminals and raw Markdown; the rendered Mermaid sequence and state diagrams remain in the message-flow section.
+
+```text
+WeChat customer
+      │
+      ▼
+WeCom KF ── encrypted callback ──▶ verify/decrypt/fast ACK
+      ▲                                  │
+      │                                  ▼
+      │                         serialized sync_msg
+      │                         cursor + msgid claim
+      │                                  │
+      └── send_msg / transfer ◀── Agent or system event
+
+Failure: release msgid and retain the page cursor; shutdown: 503 then drain
+```
+
 ## Install and Update
 
 ```bash
@@ -110,6 +127,12 @@ Minimal JSON:
       "corpSecret": "<YOUR_CORP_SECRET>",
       "token": "<YOUR_CALLBACK_TOKEN>",
       "encodingAESKey": "<YOUR_43_CHAR_ENCODING_AES_KEY>",
+      "network": {
+        "timeoutMs": 15000,
+        "retries": 2,
+        "retryDelayMs": 500,
+        "egressProxyUrl": "http://127.0.0.1:3128"
+      },
       "eventMessages": {
         "welcome": {
           "enabled": true,
@@ -135,17 +158,18 @@ Minimal JSON:
           ]
         }
       },
-      "humanTransfer": {
-        "enabled": true,
-        "keywords": ["human agent", "manual support"],
-        "waitTimeout": 300
-      }
+      "welcomeText": "Hello, I am your AI customer service assistant."
     }
   }
 }
 ```
 
 Never commit real `corpSecret`, `token`, or `encodingAESKey` values.
+
+`network` controls the fixed egress proxy, timeout, and bounded transient retries. Account-level
+`accounts.*.network` overrides channel defaults. Retries apply only to token, sync, download, and
+list operations; send, transfer, upload, and contact-link creation remain single-attempt to avoid
+duplicate side effects. Sensitive URL query values and proxy credentials are redacted before logging.
 
 ## Message and Handoff Flow
 
@@ -162,6 +186,15 @@ Customer message
 
 Human handoff usually calls `wecom_kf_list_servicers` first, then `wecom_kf_transfer_session`.
 
+For multiple accounts, use a distinct callback URL per account. Without an explicit
+`accounts.<accountId>.webhookPath`, the URL is `/wecom-kf/<accountId>`. The route selects that
+account's callback token and AES key before XML decryption, so callback paths cannot be shared.
+
+Inbound `msgid` values are committed to persistent deduplication only after dispatch succeeds.
+Failures release the claim and retain the current page cursor for retry. Sync work is serialized per
+KF account, and cursors are atomically persisted with `0600` permissions. Startup does not silently
+skip message history within WeCom's available `sync_msg` window.
+
 ## API Coverage and Limits
 
 | Capability | WeCom API | Notes |
@@ -170,7 +203,7 @@ Human handoff usually calls `wecom_kf_list_servicers` first, then `wecom_kf_tran
 | Sync messages | `kf/sync_msg` | Pulls messages within 3 days |
 | Send message | `kf/send_msg` | Up to 5 replies within 48h after the customer message |
 | Event message | `kf/send_msg_on_event` | Welcome, queue, ending, satisfaction messages |
-| Session state | `kf/service_state/get` | Reads current service state |
+| Session state | `session_status_change` | Persists state from sync events; no `service_state/get` Tool yet |
 | Transfer | `kf/service_state/trans` | Transfers, queues, or ends sessions |
 | Account list | `kf/account/list` | Discovers KF accounts |
 | Servicer list | `kf/servicer/list` | Finds available human agents |
@@ -191,8 +224,6 @@ pnpm typecheck
 pnpm test
 pnpm test:coverage
 ```
-
-In chat, `/kf-status` returns KF account connection status and online servicer counts.
 
 ## Troubleshooting
 

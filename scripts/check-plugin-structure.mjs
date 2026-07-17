@@ -4,7 +4,7 @@
  *
  * Standard reference: doc/OpenClaw-Plugin-Structure-Standard.md v1.0
  * Profiles (doc §1.2): channel-base | channel-extended | channel-legacy |
- *   capability-memory | capability | capability-cluster | infra | sdk-rag | sdk | utility-minimal
+ *   capability-memory | capability | infra | sdk-rag | sdk | utility-minimal
  *
  * Modes:
  *   default       — Profile-aware rules; Tier A / _template channel-base MUST → error
@@ -24,7 +24,7 @@ const ROOT = new URL("..", import.meta.url).pathname;
 const EXTENSIONS_DIR = join(ROOT, "extensions");
 const BASE_TEMPLATE_ID = "_template";
 
-/** @typedef {'channel-base'|'channel-extended'|'channel-legacy'|'capability-memory'|'capability'|'capability-cluster'|'infra'|'sdk-rag'|'sdk'|'utility-minimal'} PluginProfile */
+/** @typedef {'channel-base'|'channel-extended'|'channel-legacy'|'capability-memory'|'capability'|'infra'|'sdk-rag'|'sdk'|'utility-minimal'} PluginProfile */
 
 /** Explicit plugin → profile mapping (doc §10.1.1). Overrides manifest/heuristic. */
 const PLUGIN_PROFILE_OVERRIDE = Object.freeze({
@@ -36,7 +36,9 @@ const PLUGIN_PROFILE_OVERRIDE = Object.freeze({
   openmem: "capability-memory",
   mtls: "capability",
   oauth2: "capability",
-  cluster: "capability-cluster",
+  amap: "capability",
+  meituan: "capability",
+  rednode: "capability",
   nacos: "infra",
   tracing: "infra",
   prometheus: "infra",
@@ -50,15 +52,12 @@ const EXTENDED_STRICT_PLUGINS = new Set(["wecom-kf", "wecom"]);
 
 /** channel-base plugins enforced at error level in default mode (Tier A) */
 const BASE_STRICT_PLUGINS = new Set([
-  "amap",
   "bridge",
   "douyin",
   "gotify",
-  "meituan",
   "mqtt",
   "rabbitmq",
   "redis-stream",
-  "rednode",
   "rocketmq",
   "stomp",
   "web-mqtt",
@@ -520,14 +519,14 @@ Profiles (doc §1.2):
   channel-base      Tier A channels + _template — full Base flat src/
   channel-extended  wecom, wecom-kf — Base + Extended semantic dirs
   channel-legacy    bridge — Phase 2 migration target
-  capability-*      memory, mtls, oauth2, cluster — no channel.ts/inbound.ts
+  capability-*      memory, mtls, oauth2, amap, meituan, rednode — no channel.ts/inbound.ts
   infra             nacos, tracing, prometheus
   sdk / sdk-rag     message-sdk, knowledge
   utility-minimal   router
 
 Tier A (channel-base, default error on MUST gaps):
-  amap, douyin, gotify, meituan, mqtt, rabbitmq, redis-stream,
-  rednode, rocketmq, stomp, web-mqtt, web-stomp
+  douyin, gotify, mqtt, rabbitmq, redis-stream,
+  rocketmq, stomp, web-mqtt, web-stomp
 
 Reference: doc/OpenClaw-Plugin-Structure-Standard.md
 `);
@@ -651,7 +650,12 @@ function gitTrackedUnder(pluginDir) {
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
-      .map((line) => join(ROOT, line));
+      .map((line) => join(ROOT, line))
+      // `git ls-files` also returns paths staged/marked for deletion until the
+      // next commit. Structure checks evaluate the current working tree, so a
+      // deleted artifact must not keep the gate red merely because it is still
+      // present in the index metadata.
+      .filter((filePath) => existsSync(filePath));
   } catch {
     return [];
   }
@@ -938,17 +942,19 @@ function checkManifestAndPackage(pluginDir, pluginId, profile, issues, flags) {
   const pkgPath = join(pluginDir, "package.json");
 
   const manifest = readJson(manifestPath);
-  // _template keeps TEMPLATE_NAME placeholders until new-plugin.mjs materializes a real id
+  // _template keeps TEMPLATE_NAME placeholders until new-plugin.mjs materializes a real id.
+  // Real extensions use the directory id as canonical manifest id; Channel id is a separate layer.
+  const expectedManifestId = pluginId;
   if (
     isChannelProfile(profile) &&
     pluginId !== BASE_TEMPLATE_ID &&
     manifest?.id &&
-    manifest.id !== pluginId
+    manifest.id !== expectedManifestId
   ) {
     addIssue(issues, {
       rule: "manifest-id-match",
       path: manifestPath,
-      message: `Manifest id "${manifest.id}" MUST match plugin directory "${pluginId}"`,
+      message: `Manifest id "${manifest.id}" MUST match expected id "${expectedManifestId}" for directory "${pluginId}"`,
       pluginId,
       profile,
       category: "manifest-must",

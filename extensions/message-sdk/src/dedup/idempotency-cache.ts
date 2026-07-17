@@ -26,6 +26,7 @@ export interface IdempotencyCacheOptions {
  *
  * @property has - 查询 key 是否在 TTL 内已见过（不写入）
  * @property remember - 记录 key；返回 `true` 表示重复，`false` 表示首次见到
+ * @property forget - 删除 key；处理失败或入队失败时用于释放预占记录
  * @property prune - 手动清理过期项并 enforce maxEntries
  * @property clear - 清空全部缓存
  */
@@ -34,6 +35,8 @@ export interface IdempotencyCache {
   has(key: string): boolean;
   /** 记录 key，返回 true 表示重复（已见过），false 表示首次见到。 */
   remember(key: string): boolean;
+  /** 删除 key；返回该 key 是否原本存在。 */
+  forget(key: string): boolean;
   prune(now?: number): void;
   clear(): void;
 }
@@ -87,6 +90,9 @@ export function createIdempotencyCache(options: IdempotencyCacheOptions): Idempo
       if (this.has(key)) return true;
       store.set(key, Date.now() + options.ttlMs);
       return false;
+    },
+    forget(key: string): boolean {
+      return store.delete(key);
     },
     prune,
     clear() {

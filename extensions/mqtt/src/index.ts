@@ -10,19 +10,50 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { getBrokerStats, getConnectedClients } from "./transport/server.js";
 import { mqttPlugin } from "./runtime/mqtt-plugin.js";
-import { getPendingAckStats } from "./transport/qos-handler.js";
 import { getSessionStats } from "./routing/session-mapper.js";
 import { setMqttRuntime } from "./runtime.js";
 import { getMqttChannelConfig, getMqttPolicyMeta } from "./state/mqtt-state.js";
+import type { MqttBrokerConfig } from "./types.js";
 
 export { mqttPlugin } from "./runtime/mqtt-plugin.js";
 export { resolveBrokerConfig } from "./config.js";
 export type { ResolvedMqttAccount } from "./config.js";
+
+/**
+ * 生成可由状态接口公开的 MQTT 配置摘要。
+ *
+ * 返回值刻意排除用户名密码、证书路径、遗嘱内容等敏感或业务字段，仅保留排障所需的监听、
+ * 容量和策略元数据；新增配置字段时不得直接展开整个配置对象。
+ */
+export function sanitizeMqttConfig(config: MqttBrokerConfig | null): Record<string, unknown> | null {
+  if (!config) return null;
+  return {
+    host: config.host,
+    port: config.port,
+    maxConnections: config.maxConnections,
+    auth: {
+      enabled: config.auth.enabled,
+      allowAnonymous: config.auth.allowAnonymous,
+      userCount: config.auth.users.length,
+    },
+    tls: {
+      enabled: config.tls.enabled,
+      port: config.tls.port,
+      requestCert: config.tls.requestCert,
+      rejectUnauthorized: config.tls.rejectUnauthorized,
+    },
+    persistence: {
+      enabled: config.persistence.enabled,
+      backend: config.persistence.backend,
+    },
+    limits: { ...config.limits },
+  };
+}
 
 export default defineChannelPluginEntry({
   id: "mqtt",
@@ -42,10 +73,10 @@ export default defineChannelPluginEntry({
       handler: async (_req: IncomingMessage, res: ServerResponse) => {
         const brokerStats = getBrokerStats();
         const sessionStats = getSessionStats();
-        const qosStats = getPendingAckStats();
         const clients = getConnectedClients();
         const policyMeta = getMqttPolicyMeta();
         const config = getMqttChannelConfig();
+        const safeConfig = sanitizeMqttConfig(config);
 
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
@@ -54,9 +85,9 @@ export default defineChannelPluginEntry({
             data: {
               broker: brokerStats,
               sessions: sessionStats,
-              qos: qosStats,
+              qos: { handledBy: "aedes", levels: [0, 1, 2] },
               clients,
-              config,
+              config: safeConfig,
               policy: {
                 ...policyMeta,
                 summary: config
@@ -73,19 +104,7 @@ export default defineChannelPluginEntry({
         );
       },
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
     });
-
-    console.log("[openclaw-mqtt] Plugin registered — MQTT channel ready");
-    console.log("[openclaw-mqtt] Endpoints: /mqtt/status — broker status & connected clients");
   },
-});
-
-process.on("SIGTERM", async () => {
-  /** Graceful shutdown：停止 QoS handler 与 embedded Aedes broker。 */
-  console.log("[openclaw-mqtt] Shutting down...");
-  const { stopQosHandler } = await import("./transport/qos-handler.js");
-  const { stopBroker } = await import("./transport/server.js");
-  stopQosHandler();
-  await stopBroker();
 });

@@ -14,7 +14,7 @@
 
 `@partme.ai/wecom` 用于把 OpenClaw 接入企业微信。它面向中国企业微信用户，支持智能机器人 Bot WebSocket、Bot HTTP Webhook 和自建应用 Agent 三条路径：Bot 负责低门槛交互式对话与流式回复，Agent 负责主动推送、Cron 定时投递、部门/标签广播和完整文件兜底。
 
-当前版本：`2026.6.1`。依赖 `@partme.ai/openclaw-message-sdk`：`2026.6.1`。`pnpm test` 当前 395 个 Vitest 用例。
+当前插件包版本：`2026.7.1`。OpenClaw 兼容基线为 `>=2026.7.1`，依赖 `@partme.ai/openclaw-message-sdk`：`2026.7.1`。测试数量会随实现演进，请以当前 `pnpm test` 输出为准。
 
 ## ✨ 核心能力
 
@@ -165,6 +165,39 @@ openclaw channels status --probe
 ```
 
 如果不需要固定出口代理，请删除 `network.egressProxyUrl`。不要把真实企业微信密钥提交到仓库。
+
+`agent.apiBaseUrl` 默认是 `https://qyapi.weixin.qq.com`，通常无需配置。私有 HTTPS
+兼容网关可以显式覆盖；明文 HTTP 只允许 `localhost` / loopback，用于本机协议夹具，避免把
+CorpSecret 和 AccessToken 发送到不安全的远端地址。
+
+Agent 安装态闭环既保留字符速览，也提供可渲染 Mermaid：
+
+```text
+加密 XML 回调
+      │ AES/SHA1 验签解密
+      ▼
+OpenClaw 2026.7.1 Gateway
+      │ Agent Turn
+      ▼
+本地模型夹具 ──回复──> WeCom Agent API 客户端
+                           │ gettoken + message/send
+                           ▼
+                    本地 OpenAPI 夹具
+
+同 MsgId 再投递 ──> 持久化去重 ──> 不再触发 Agent
+Gateway 重启后重放 ────────────────┘
+```
+
+```mermaid
+flowchart LR
+  Callback["加密 XML 回调"] -->|"AES/SHA1 验签解密"| Gateway["OpenClaw 2026.7.1 Gateway"]
+  Gateway --> Turn["Agent Turn"]
+  Turn --> Model["OpenAI-compatible 本地模型夹具"]
+  Model --> Client["WeCom Agent API 客户端"]
+  Client -->|"gettoken + message/send"| Api["本地 OpenAPI 夹具"]
+  Callback --> Dedup["MsgId 持久化去重"]
+  Dedup -->|"进程内/重启后重放"| Stop["短路，不重复触发 Agent"]
+```
 
 ## 模式总览
 
@@ -528,6 +561,30 @@ full 模式注册 Agent 工具 **`wecom_mcp`**（`mcp/tool.ts`）：
 | `call` | 调用 doc、contact、msg 等品类下的 MCP 方法 |
 
 会话上下文自动注入：`requesterUserId`、`accountId`、`chatId`、`chatType`（来自 OpenClaw session）。文档类 MCP 端点可通过 Bot WS 命令 `aibot_get_mcp_config` 拉取并持久化到 state 目录 `wecomConfig/config.json`（`mcp/config-fetch.ts`）。
+
+MCP 安全边界：
+
+- JSON 与 SSE 响应均限制为 32 MiB；chunked 响应按实际字节计数，越界主动取消。
+- `smartsheet_add_records` / `smartsheet_update_records` 中的 `image_path`、`file_path` 必须通过 Path Guard 与账号级 `mediaLocalRoots`，不能读取任意本地文件或通过符号链接逃逸。
+- 单次最多上传 20 个本地文件，单文件最多 10 MiB、合计最多 20 MiB；上传后才把私有路径字段替换为标准 `image_url` / `file_id`。
+- 完整本地路径只允许在显式 MCP debug 模式下进入有界诊断，不写默认控制台日志。
+
+```text
+wecom_mcp → beforeCall → Path Guard / bounded upload → MCP HTTP/SSE 32 MiB gate
+                                                          │
+                                                          ▼
+                                                afterCall → Agent result
+```
+
+```mermaid
+flowchart LR
+    T["wecom_mcp"] --> I["beforeCall interceptors"]
+    I --> P["Path Guard + bounded upload"]
+    P --> H["MCP HTTP / SSE"]
+    H --> G{"response <= 32 MiB"}
+    G -->|"yes"| A["afterCall interceptors"]
+    G -->|"no"| F["cancel stream / fail closed"]
+```
 
 ### 内置 Skills（extensions/wecom/skills/）
 

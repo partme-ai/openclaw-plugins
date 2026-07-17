@@ -106,14 +106,27 @@ export function deleteWeComWebSocket(accountId: string): void {
   shared.wsClientInstances.delete(accountId);
 }
 
-/** 启动 MessageState TTL 定期清理（monitor 启动时调用） */
-export function startMessageStateCleanup(): void {
+/**
+ * 正在使用共享 MessageState 清理器的 WS 账号。
+ *
+ * WHY：MessageStateStore 是进程级单例。旧实现中任一账号断开都会直接停止全局定时器，
+ * 导致其他仍在线账号的过期流式状态不再回收；按 accountId 引用计数后，仅最后一个账号
+ * 退出时才真正停止清理器。
+ */
+const messageStateCleanupAccounts = new Set<string>();
+
+/** 启动 MessageState TTL 定期清理（同一账号重复启动保持幂等） */
+export function startMessageStateCleanup(accountId = "default"): void {
+  messageStateCleanupAccounts.add(accountId);
   shared.messageStates.startCleanup();
 }
 
-/** 停止 MessageState TTL 定期清理（monitor 停止时调用） */
-export function stopMessageStateCleanup(): void {
-  shared.messageStates.stopCleanup();
+/** 释放账号对共享清理器的占用；仍有其他账号在线时保留定时器。 */
+export function stopMessageStateCleanup(accountId = "default"): void {
+  messageStateCleanupAccounts.delete(accountId);
+  if (messageStateCleanupAccounts.size === 0) {
+    shared.messageStates.stopCleanup();
+  }
 }
 
 /**
@@ -283,7 +296,8 @@ export async function cleanupAccount(accountId: string): Promise<void> {
 
 /** 清理所有账号 WS 连接与 MessageState（进程退出 / 测试 teardown） */
 export async function cleanupAll(): Promise<void> {
-  stopMessageStateCleanup();
+  messageStateCleanupAccounts.clear();
+  shared.messageStates.stopCleanup();
 
   for (const [, wsClient] of shared.wsClientInstances) {
     try {

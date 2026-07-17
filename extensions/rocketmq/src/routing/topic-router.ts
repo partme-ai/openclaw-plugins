@@ -2,12 +2,12 @@
  * @fileoverview RocketMQ 主题路由：显式 binding 与标准 Topic 命名规范。
  *
  * @description
- * 支持 `topicBindings` 精确匹配与 `{prefix}.agent.<agentId>.in[.<peerId>]` 标准格式回退；
+ * 支持 `topicBindings` 精确匹配与 `{prefix}--agent--<agentId>--in[--<peerId>]` 标准格式回退；
  * 提供通配符 `matchTopic`、出站 Topic 构造及入站 reply Topic 推导。
  *
  * Topic 规范：
- * - {topicPrefix}.agent.<agentId>.in[.<peerId>]  -- 入站
- * - {topicPrefix}.agent.<agentId>.out[.<peerId>] -- 出站
+ * - {topicPrefix}--agent--<agentId>--in[--<peerId>]  -- 入站
+ * - {topicPrefix}--agent--<agentId>--out[--<peerId>] -- 出站
  *
  * @module routing/topic-router
  */
@@ -17,6 +17,8 @@
  */
 
 import type { RockermqConfig, TopicBinding } from "../config.js";
+
+const ROCKETMQ_RESOURCE_NAME = /^[a-zA-Z0-9_-]+$/;
 
 /** @description 入站路由解析结果（binding 或 standard 来源）。 */
 export type RockermqInboundRoute = {
@@ -30,7 +32,7 @@ export type RockermqInboundRoute = {
 };
 
 /**
- * @description 解析标准命名 Topic（`{prefix}.agent.<id>.in|out[.<peer>]`）。
+ * @description 解析标准命名 Topic（`{prefix}--agent--<id>--in|out[--<peer>]`）。
  * @param topic - 完整 Topic 名。
  * @param topicPrefix - 配置中的 topic 前缀。
  * @returns 解析出的 agentId、方向与 peerId，或 `null`。
@@ -40,22 +42,25 @@ export function parseStandardTopic(
   topic: string,
   topicPrefix: string,
 ): { agentId: string; direction: "in" | "out"; peerId: string } | null {
-  const prefix = topicPrefix ? `${topicPrefix}.` : "";
+  if (!ROCKETMQ_RESOURCE_NAME.test(topic) || topicPrefix.includes("--")) {
+    return null;
+  }
+  const prefix = topicPrefix ? `${topicPrefix}--agent--` : "agent--";
   if (!topic.startsWith(prefix)) {
     return null;
   }
-  const parts = topic.slice(prefix.length).split(".");
-  if (parts.length < 3 || parts[0] !== "agent") {
+  const parts = topic.slice(prefix.length).split("--");
+  if (parts.length < 2 || parts.length > 3 || parts.some((part) => !part)) {
     return null;
   }
-  const direction = parts[2];
+  const direction = parts[1];
   if (direction !== "in" && direction !== "out") {
     return null;
   }
   return {
-    agentId: parts[1],
+    agentId: parts[0],
     direction,
-    peerId: parts.slice(3).join("."),
+    peerId: parts[2] ?? "",
   };
 }
 
@@ -66,7 +71,7 @@ export function parseStandardTopic(
  * @param config - RocketMQ 配置（含 topicBindings）。
  * @param peerIdHint - 可选 peer 提示（binding 未指定 peerId 时使用）。
  * @returns 路由结果，无匹配时 `null`。
- * @throws 不抛出。
+ * @throws agentId、peerId 或 topicPrefix 不能形成合法 RocketMQ Topic 时抛出。
  */
 export function resolveInboundRoute(
   topic: string,
@@ -103,18 +108,22 @@ export function resolveInboundRoute(
 }
 
 /**
- * @description 基于入站 Topic 推导默认 reply 出站 Topic（`.in` → `.out`）。
+ * @description 基于入站 Topic 推导默认 reply 出站 Topic（`--in` → `--out`）。
  * @param inboundTopic - 入站 Topic。
  * @param _topicPrefix - 保留参数（标准格式下由 inboundTopic 自身携带前缀）。
  * @returns reply Topic 名。
  * @throws 不抛出。
  */
-export function buildReplyTopicFromInbound(inboundTopic: string, _topicPrefix: string): string {
-  return inboundTopic.endsWith(".in") ? `${inboundTopic.slice(0, -3)}.out` : `${inboundTopic}.out`;
+export function buildReplyTopicFromInbound(inboundTopic: string, topicPrefix: string): string {
+  const parsed = parseStandardTopic(inboundTopic, topicPrefix);
+  if (parsed?.direction === "in") {
+    return buildOutboundTopic(parsed.agentId, topicPrefix, parsed.peerId || undefined);
+  }
+  return `${inboundTopic}-out`;
 }
 
 /**
- * @description 构建标准出站 Topic（`{prefix}.agent.<agentId>.out[.<peerId>]`）。
+ * @description 构建标准出站 Topic（`{prefix}--agent--<agentId>--out[--<peerId>]`）。
  * @param agentId - 目标 Agent ID。
  * @param topicPrefix - Topic 前缀。
  * @param peerId - 可选 peer 后缀。
@@ -122,8 +131,13 @@ export function buildReplyTopicFromInbound(inboundTopic: string, _topicPrefix: s
  * @throws 不抛出。
  */
 export function buildOutboundTopic(agentId: string, topicPrefix: string, peerId?: string): string {
-  const prefix = topicPrefix ? `${topicPrefix}.` : "";
-  return peerId ? `${prefix}agent.${agentId}.out.${peerId}` : `${prefix}agent.${agentId}.out`;
+  for (const [name, value] of [["topicPrefix", topicPrefix], ["agentId", agentId], ["peerId", peerId]] as const) {
+    if (value && (!ROCKETMQ_RESOURCE_NAME.test(value) || value.includes("--"))) {
+      throw new Error(`RocketMQ ${name} must use [a-zA-Z0-9_-] and must not contain '--'`);
+    }
+  }
+  const prefix = topicPrefix ? `${topicPrefix}--agent--` : "agent--";
+  return peerId ? `${prefix}${agentId}--out--${peerId}` : `${prefix}${agentId}--out`;
 }
 
 /**

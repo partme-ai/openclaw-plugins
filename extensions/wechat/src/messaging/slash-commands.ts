@@ -21,6 +21,7 @@ export interface SlashCommandContext {
   contextToken?: string;
   baseUrl: string;
   token?: string;
+  routeTag?: string;
   accountId: string;
   log: (msg: string) => void;
   errLog: (msg: string) => void;
@@ -31,6 +32,7 @@ async function sendReply(ctx: SlashCommandContext, text: string): Promise<void> 
   const opts: WeixinApiOptions & { contextToken?: string } = {
     baseUrl: ctx.baseUrl,
     token: ctx.token,
+    routeTag: ctx.routeTag,
     contextToken: ctx.contextToken,
   };
   await sendMessageWeixin({ to: ctx.to, text, opts });

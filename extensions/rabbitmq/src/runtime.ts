@@ -16,7 +16,6 @@ let runtime: any = null;
  */
 export function setRabbitmqRuntime(runtimeInstance: any): void {
   runtime = runtimeInstance;
-  console.log("[openclaw-rabbitmq] Runtime set");
 }
 
 /**

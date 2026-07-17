@@ -7,95 +7,21 @@
  * - 会话映射与插件配置
  */
 
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type {
+  OpenClawPluginApi,
+  PluginRuntime,
+} from "openclaw/plugin-sdk/core";
 
-// ─────────────────── OpenClaw Plugin API 类型 ───────────────────
+/** OpenClaw 注入插件注册阶段的 API 类型。 */
+export type PluginApi = OpenClawPluginApi;
+/** OpenClaw Channel 消息调度和回复投递所需的 Gateway Runtime。 */
+export type GatewayRuntime = PluginRuntime;
 
-/**
- * OpenClaw 插件 API 接口
- * 由 Gateway 在插件加载时注入
- */
-export interface PluginApi {
-  /** Gateway 运行时实例 */
-  runtime: GatewayRuntime;
-  /** 注册渠道 */
-  registerChannel(channel: ChannelRegistration): void;
-  /** 注册 HTTP 路由端点 */
-  registerHttpRoute(route: HttpRouteDefinition): void;
-}
-
-/** 渠道注册包装 */
-export interface ChannelRegistration {
-  plugin: ChannelDefinition;
-}
-
-/** 渠道元数据（UI 展示与排序） */
-export interface ChannelMeta {
-  id: string;
-  label: string;
-  selectionLabel: string;
-  docsPath: string;
-  blurb: string;
-  aliases?: string[];
-  order?: number;
-}
-
-/** 渠道定义（OpenClaw Channel 契约） */
-export interface ChannelDefinition {
-  id: string;
-  name: string;
-  meta: ChannelMeta;
-  capabilities: { chatTypes: ("direct" | "group" | "channel" | "thread")[] };
-  config: {
-    listAccountIds: (cfg: Record<string, unknown>) => string[];
-    resolveAccount: (cfg: Record<string, unknown>, accountId?: string | null) => Record<string, unknown>;
-  };
-  outbound: {
-    sendText: (sessionKey: string, text: string) => Promise<void>;
-  };
-  setupWizard?: unknown;
-  setup?: unknown;
-}
-
-/** HTTP 路由定义 */
-export interface HttpRouteDefinition {
-  path: string;
-  handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void;
-}
-
-/** Gateway 运行时（消息管道入口） */
-export interface GatewayRuntime {
-  config: Record<string, unknown>;
-  channel: {
-    routing: {
-      resolveAgentRoute(params: {
-        cfg: Record<string, unknown>;
-        channel: string;
-        accountId: string;
-        peer: { kind: string; id: string };
-      }): Promise<{ agentId: string; [key: string]: unknown }>;
-    };
-    reply: {
-      finalizeInboundContext(params: {
-        channel: string;
-        accountId: string;
-        from: string;
-        text: string;
-        chatType: string;
-        extra?: Record<string, unknown>;
-      }): Promise<Record<string, unknown>>;
-      createReplyDispatcherWithTyping(params: {
-        deliver: (payload: { text: string }) => Promise<void>;
-      }): Record<string, unknown>;
-      dispatchReplyFromConfig(params: {
-        ctx: Record<string, unknown>;
-        cfg: Record<string, unknown>;
-        dispatcher: Record<string, unknown>;
-        replyOptions: { agentId: string; [key: string]: unknown };
-      }): Promise<void>;
-    };
-  };
-}
+/** 桥接层使用的最小日志接口，避免 transport 依赖完整插件 API。 */
+export type PluginLogger = Pick<
+  OpenClawPluginApi["logger"],
+  "debug" | "info" | "warn" | "error"
+>;
 
 // ─────────────────── iPad 协议服务类型 ───────────────────
 
@@ -113,12 +39,12 @@ export type BridgeState =
  * 微信登录状态
  */
 export type WxLoginStatus =
-  | "waiting_scan"    // 等待扫码
-  | "scanned"         // 已扫码，等待确认
-  | "confirmed"       // 已确认登录
-  | "logged_in"       // 登录成功
-  | "logged_out"      // 已退出
-  | "token_expired";  // Token 过期
+  | "waiting_scan" // 等待扫码
+  | "scanned" // 已扫码，等待确认
+  | "confirmed" // 已确认登录
+  | "logged_in" // 登录成功
+  | "logged_out" // 已退出
+  | "token_expired"; // Token 过期
 
 /**
  * 微信消息类型（协议服务推送的原始类型码）
@@ -287,6 +213,14 @@ export interface IpadApiResponse<T = unknown> {
  * 插件配置（从 openclaw.plugin.json configSchema 映射）
  */
 export interface WechatIpadConfig {
+  /** 默认关闭，避免未经授权自动连接外部协议服务。 */
+  enabled: boolean;
+  /** 必须显式确认使用非官方协议的账号与合规风险。 */
+  acknowledgeUnofficialProtocolRisk: boolean;
+  /** 初次连接失败时是否阻止 Gateway 启动。 */
+  required: boolean;
+  /** 是否允许 WebSocket 与 HTTP API 指向不同远程主机；默认关闭以降低 Token 误发风险。 */
+  allowSplitBridgeHosts: boolean;
   /** iPad 协议服务 WebSocket 地址 */
   serviceUrl: string;
   /** iPad 协议服务 HTTP API 地址 */
@@ -294,34 +228,77 @@ export interface WechatIpadConfig {
   /** 重连配置 */
   reconnect: {
     enabled: boolean;
-    intervalMs: number;
+    initialDelayMs: number;
+    maxDelayMs: number;
     maxRetries: number;
+    jitterRatio: number;
   };
   /** 认证配置 */
   auth: {
     token?: string;
   };
+  network: {
+    connectTimeoutMs: number;
+    requestTimeoutMs: number;
+    maxResponseBytes: number;
+    maxEventBytes: number;
+    heartbeatIntervalMs: number;
+    pongTimeoutMs: number;
+    /** 连接持续到该时长后才清零连续重连计数，防止“刚连上就断开”绕过 maxRetries。 */
+    stableConnectionMs: number;
+  };
   /** 消息处理配置 */
   message: {
+    /** 私聊准入策略；外部桥接无法使用官方 pairing，因此默认采用白名单。 */
+    dmPolicy: "allowlist" | "open" | "disabled";
+    /** 允许进入 Agent 的私聊发送者 wxid；仅 `allowlist` 策略使用。 */
+    allowFrom: string[];
+    /** 允许执行 OpenClaw 命令的发送者 wxid；与普通对话准入分离。 */
+    commandAllowFrom: string[];
     handleGroup: boolean;
     groupWhitelist: string[];
-    ignoreself: boolean;
+    allowAllGroups: boolean;
+    ignoreSelf: boolean;
+    maxTextChars: number;
+    /** 串行 Agent 管道前允许等待的最大消息数，防止桥接事件洪泛耗尽内存。 */
+    maxPendingMessages: number;
   };
 }
 
 /** 默认插件配置 */
 export const DEFAULT_CONFIG: WechatIpadConfig = {
+  enabled: false,
+  acknowledgeUnofficialProtocolRisk: false,
+  required: true,
+  allowSplitBridgeHosts: false,
   serviceUrl: "ws://127.0.0.1:5555",
   apiUrl: "http://127.0.0.1:5556",
   reconnect: {
     enabled: true,
-    intervalMs: 5000,
+    initialDelayMs: 1000,
+    maxDelayMs: 30_000,
     maxRetries: 30,
+    jitterRatio: 0.2,
   },
   auth: {},
+  network: {
+    connectTimeoutMs: 10_000,
+    requestTimeoutMs: 10_000,
+    maxResponseBytes: 1024 * 1024,
+    maxEventBytes: 1024 * 1024,
+    heartbeatIntervalMs: 30_000,
+    pongTimeoutMs: 10_000,
+    stableConnectionMs: 60_000,
+  },
   message: {
+    dmPolicy: "allowlist",
+    allowFrom: [],
+    commandAllowFrom: [],
     handleGroup: false,
     groupWhitelist: [],
-    ignoreself: true,
+    allowAllGroups: false,
+    ignoreSelf: true,
+    maxTextChars: 20_000,
+    maxPendingMessages: 256,
   },
 };

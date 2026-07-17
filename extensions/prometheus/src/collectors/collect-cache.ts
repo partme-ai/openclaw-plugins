@@ -4,6 +4,7 @@
 
 import type { CollectorDiagnostic, MetricDefinition, MetricSample } from "../types.js";
 
+/** 单次采集生成的定义、样本、诊断和耗时快照；缓存以整个 Bundle 为原子单位更新。 */
 export type CollectBundle = {
   definitions: MetricDefinition[];
   samples: MetricSample[];
@@ -17,6 +18,7 @@ export type CollectBundle = {
 export class CollectCache {
   private last: CollectBundle | null = null;
   private lastAt = 0;
+  private inFlight: Promise<CollectBundle> | null = null;
 
   /**
    * @param intervalMs - 0 表示禁用缓存（每次重新采集）
@@ -27,17 +29,23 @@ export class CollectCache {
    * 若缓存仍有效则返回缓存，否则调用 factory 并更新缓存。
    */
   async getOrCollect(factory: () => Promise<CollectBundle>): Promise<CollectBundle> {
-    if (this.intervalMs <= 0) {
-      return factory();
-    }
     const now = Date.now();
-    if (this.last && now - this.lastAt < this.intervalMs) {
+    if (this.intervalMs > 0 && this.last && now - this.lastAt < this.intervalMs) {
       return this.last;
     }
-    const bundle = await factory();
-    this.last = bundle;
-    this.lastAt = now;
-    return bundle;
+    if (this.inFlight) return this.inFlight;
+
+    const pending = factory().then((bundle) => {
+      this.last = bundle;
+      this.lastAt = Date.now();
+      return bundle;
+    });
+    this.inFlight = pending;
+    try {
+      return await pending;
+    } finally {
+      if (this.inFlight === pending) this.inFlight = null;
+    }
   }
 
   /** 测试或热更新配置时清空缓存 */

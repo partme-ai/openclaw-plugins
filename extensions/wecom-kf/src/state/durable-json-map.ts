@@ -7,7 +7,8 @@
 
 export { resolveOpenClawStateDir as resolveStateDir } from "@partme.ai/openclaw-message-sdk/openclaw";
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveOpenClawStateDir } from "@partme.ai/openclaw-message-sdk/openclaw";
 
@@ -44,9 +45,7 @@ export class DurableJsonMapStore<T> {
         }
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        console.warn(`[wecom_kf] durable store load failed (${this.relativePath}):`, error);
-      }
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     this.loaded = true;
   }
@@ -93,12 +92,27 @@ export class DurableJsonMapStore<T> {
   }
 
   private async schedulePersist(): Promise<void> {
-    this.persistChain = this.persistChain.then(async () => {
+    const persist = async (): Promise<void> => {
       const filePath = this.resolveFilePath();
+      const temporaryPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
       const payload = Object.fromEntries(this.memory.entries());
-      await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
-    });
-    await this.persistChain;
+      await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
+      // state 可能来自旧版本或管理员预建目录，不能假设现有权限等于 mkdir 的 mode。
+      await chmod(dirname(filePath), 0o700);
+      try {
+        await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, {
+          encoding: "utf-8",
+          mode: 0o600,
+        });
+        await rename(temporaryPath, filePath);
+        await chmod(filePath, 0o600);
+      } catch (error) {
+        await rm(temporaryPath, { force: true }).catch(() => undefined);
+        throw error;
+      }
+    };
+    const next = this.persistChain.then(persist, persist);
+    this.persistChain = next.catch(() => undefined);
+    await next;
   }
 }

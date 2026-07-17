@@ -10,7 +10,8 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  target: "node20",
+  // 与 OpenClaw 2026.7.1 和 package.json engines 保持一致，避免发布物暗示旧宿主受支持。
+  target: "node22",
   outDir: "dist",
   noExternal: ["ws"],
 });

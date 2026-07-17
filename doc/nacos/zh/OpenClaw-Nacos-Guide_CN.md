@@ -2,7 +2,7 @@
 
 ## 前置条件
 
-- **OpenClaw** ≥ 2026.4.6
+- **OpenClaw** ≥ 2026.7.1
 - **Node.js** ≥ 22
 - **Nacos Server** ≥ 2.0.3（推荐）
 
@@ -20,7 +20,7 @@ openclaw plugins install @partme.ai/openclaw-nacos
 cd openclaw-nacos
 pnpm build
 npm pack
-openclaw plugins install ./partme.ai-openclaw-nacos-2026.5.12.tgz
+openclaw plugins install ./partme.ai-openclaw-nacos-2026.7.1.tgz
 ```
 
 ### 从源码安装（开发模式）
@@ -48,7 +48,7 @@ docker run -d --name nacos \
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           "serverList": "127.0.0.1:8848",
@@ -102,21 +102,21 @@ curl "http://127.0.0.1:8848/nacos/v1/ns/instance/list?serviceName=openclaw-gatew
 
 **Nacos 配置列表**：
 ```
-openclaw-weixin-dev.json     →  { "appId": "dev-app", ... }
-openclaw-weixin-prod.json    →  { "appId": "prod-app", ... }
-openclaw-dingtalk-dev.json   →  { "appKey": "dev-key", ... }
+wechat-dev.json              →  { "appId": "dev-app", ... }
+wechat-prod.json             →  { "appId": "prod-app", ... }
+dingtalk-connector-dev.json  →  { "appKey": "dev-key", ... }
 ```
 
 **插件配置**：
 ```jsonc
 "configCenter": {
   "enabled": true,
-  "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+  "pluginConfigIds": ["wechat", "dingtalk-connector"],
   "profile": "dev"
 }
 ```
 
-配置自动合并到 `plugins.entries["openclaw-weixin"].config`。
+配置自动合并到 `plugins.entries["wechat"].config` 和 `plugins.entries["dingtalk-connector"].config`。
 
 ### 场景 3：Webhook 集群服务发现
 

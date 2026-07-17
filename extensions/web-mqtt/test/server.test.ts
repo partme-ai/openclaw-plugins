@@ -21,6 +21,15 @@ describe("transport/server stats", () => {
     expect(after.lastError).toContain("unit_test_drop");
   });
 
+  /** 状态端点使用同一统计对象，因此任意外部错误都不能把凭据写入 lastError。 */
+  it("should redact credentials from dropped-message diagnostics", () => {
+    trackInboundDropped("dispatch failed Authorization: Bearer browser-token");
+    const snapshot = getStats();
+
+    expect(snapshot.lastError).not.toContain("browser-token");
+    expect(snapshot.lastError).toContain("[REDACTED]");
+  });
+
   /**
    * 验证路由来源计数递增。
    */

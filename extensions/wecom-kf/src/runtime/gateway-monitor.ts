@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 企业微信客服账号在 OpenClaw Gateway 中的长运行生命周期监视器。
+ *
+ * 启动时先检查账号与其它企微 Channel 的路由冲突，再发布 KF Webhook 路径和运行状态；
+ * 监视器一直等待账户 AbortSignal，停止时回写 lastStopAt。遗留 Bot/Agent 配置只告警，不会
+ * 重新启用已移除的 wecom-cs 路径。
+ */
 import type {
   ChannelGatewayContext,
   OpenClawConfig,
@@ -9,35 +16,7 @@ import {
   resolveWecomAccountConflict,
   resolveKfAccountWebhookPath,
 } from "../config/index.js";
-import { primeWecomKfCursor } from "../webhook/callback.js";
-import { listKfAccountConfigs } from "../config/kf-callback.js";
 import type { ResolvedWecomAccount } from "../types/index.js";
-
-/** 避免多账号并行启动时重复预热 KF 游标 */
-let kfCursorPrimeStarted = false;
-
-async function primeKfCursorsOnStartup(
-  cfg: OpenClawConfig,
-  log?: (message: string) => void,
-): Promise<void> {
-  if (kfCursorPrimeStarted) return;
-  kfCursorPrimeStarted = true;
-
-  const kfAccounts = listKfAccountConfigs(cfg);
-  if (kfAccounts.length === 0) return;
-
-  for (const accountConfig of kfAccounts) {
-    try {
-      await primeWecomKfCursor({ accountConfig });
-    } catch (error) {
-      log?.(
-        `[wecom_kf] Cursor prime failed for openKfId=${accountConfig.openKfId ?? "default"}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-}
 
 function waitForAbortSignal(abortSignal: AbortSignal): Promise<void> {
   if (abortSignal.aborted) {
@@ -82,8 +61,6 @@ export async function monitorWecomProvider(
         `仅 KF 回调与 KF 出站生效。请迁移至 KF 凭证或移除过时的 bot/agent 配置块。`,
     );
   }
-
-  void primeKfCursorsOnStartup(cfg, (message) => ctx.log?.info(message));
 
   const webhookPath = resolveKfAccountWebhookPath({
     accountId: account.accountId,

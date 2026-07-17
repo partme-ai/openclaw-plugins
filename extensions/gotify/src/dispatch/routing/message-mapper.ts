@@ -23,7 +23,10 @@ import {
   buildMessage,
   type UnifiedMessage,
 } from "@partme.ai/openclaw-message-sdk";
-import type { GotifyMessagePayload, GotifyStreamEnvelope } from "../../types.js";
+import type {
+  GotifyMessagePayload,
+  GotifyStreamEnvelope,
+} from "../../types.js";
 
 type GotifyOutboundContext = ChannelOutboundContext & {
   extras?: Record<string, unknown>;

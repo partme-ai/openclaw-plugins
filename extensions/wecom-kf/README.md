@@ -63,7 +63,7 @@ pnpm build
    - Token：与 `channels.wecom-kf.token` 一致
    - EncodingAESKey：与 `channels.wecom-kf.encodingAESKey` 一致
 
-服务器需要在 5 秒内返回 HTTP 200，否则企业微信会重试。
+正常运行时服务器需要在 5 秒内返回 HTTP 200，否则企业微信会重试。Gateway 停机阶段会返回 503 拒绝新任务，并等待已确认的后台同步队列排空。
 
 ### 2. 写入最小配置
 
@@ -132,9 +132,11 @@ openclaw channels status --probe
       "corpSecret": "<YOUR_CORP_SECRET>",
       "token": "<YOUR_CALLBACK_TOKEN>",
       "encodingAESKey": "<YOUR_43_CHAR_ENCODING_AES_KEY>",
-      "session": {
-        "dmScope": "per-account-channel-peer",
-        "idleResetMinutes": 2880
+      "network": {
+        "timeoutMs": 15000,
+        "retries": 2,
+        "retryDelayMs": 500,
+        "egressProxyUrl": "http://127.0.0.1:3128"
       },
       "eventMessages": {
         "welcome": {
@@ -161,13 +163,9 @@ openclaw channels status --probe
           ]
         }
       },
-      "humanTransfer": {
-        "enabled": true,
-        "keywords": ["转人工", "人工客服", "人工"],
-        "waitTimeout": 300
-      },
       "accounts": {
         "kf_presale_001": {
+          "openKfId": "kf_presale_001",
           "agentId": "presale-agent",
           "eventMessages": {
             "welcome": {
@@ -185,19 +183,142 @@ openclaw channels status --probe
 }
 ```
 
+多账号必须使用账号独立回调 URL。未设置 `accounts.<accountId>.webhookPath` 时，默认 URL 为
+`/wecom-kf/<accountId>`；每个 URL 会在解密前选择该账号的 `token` 与 `encodingAESKey`。两个账号不能复用同一路径。
+
 所有密钥均使用占位符，不要提交真实 `corpSecret`、`token` 或 `encodingAESKey`。
+
+`network` 可配置渠道级固定出口、超时和瞬态重试，账号级 `accounts.*.network` 可覆盖它。为避免
+重复回复，自动重试只用于 token 获取、`sync_msg`、媒体下载和列表查询等读/同步请求；
+`send_msg`、事件消息、转接、上传和创建客服链接不会盲重试。`retries` 表示首次请求之后的额外
+次数，范围 `0..5`；`timeoutMs` 范围 `1000..120000`，`retryDelayMs` 范围 `0..30000`。
+
+```text
+channels.wecom-kf.network ──┐
+                            ├─ merge ─▶ ResolvedAgentAccount.network
+accounts.<id>.network ──────┘                    │
+                                                 ▼
+                                  固定出口代理 + 请求超时
+                                                 │
+                           ┌─────────────────────┴────────────────────┐
+                           ▼                                          ▼
+                  token/sync/download/list                  send/transfer/upload/link
+                     瞬态错误可重试                           禁止自动重试，避免重复副作用
+                           └─────────────────────┬────────────────────┘
+                                                 ▼
+                                日志 URL 对凭据统一脱敏
+```
+
+```mermaid
+flowchart TD
+    C["渠道级 network"] --> M["账号配置合并"]
+    A["账号级 network 覆盖"] --> M
+    M --> R["ResolvedAgentAccount.network"]
+    R --> P["固定出口代理与 timeoutMs"]
+    P --> Q{"请求是否可安全重试?"}
+    Q -->|"token、sync、download、list"| S["429、5xx、网络失败有限退避"]
+    Q -->|"send、transfer、upload、link"| N["单次调用，交由业务幂等与人工判断"]
+    S --> L["日志 URL 脱敏"]
+    N --> L
+```
 
 ## 消息与转人工流程
 
+字符图保留给终端、源码注释和 Markdown 原文阅读；下面已有的 Mermaid 时序图与状态图继续保留，不互相替代。
+
+多账号部署时，URL 路径决定唯一账号。`OpenKfId` 解密后只做一致性校验，不再用于切换凭据：
+
 ```text
-客户发消息
-  → 企业微信回调 /wecom/kefu
-  → 插件验签解密
-  → sync_msg 拉取消息批次
-  → msgid 去重与 cursor 持久化
-  → 按 open_kfid / bindings 路由到 Agent
-  → Agent 回复
-  → kf/send_msg 下发给客户
+POST /wecom-kf/sales                    POST /wecom-kf/support
+          │                                       │
+          ▼                                       ▼
+绑定 accounts.sales                       绑定 accounts.support
+token / AES key / corpId                  token / AES key / corpId
+          │                                       │
+          └──────────────┬────────────────────────┘
+                         ▼
+              时间窗 → 验签 → AES 解密
+                         │
+                         ▼
+             解密事件 OpenKfId == 路径绑定值？
+                    ┌────┴────┐
+                  否│         │是
+                    ▼         ▼
+             400，不快速 ACK   账号串行队列 → 200 success
+
+禁止：用 sales 路径的签名携带 support 的 OpenKfId，再切换到 support 的 corpSecret
+```
+
+```mermaid
+flowchart TD
+    R["精确回调路径<br/>/wecom-kf/accountId"] --> B["绑定唯一 account 配置"]
+    B --> V["时间窗 + SHA-1 验签 + AES 解密"]
+    V --> M{"事件 OpenKfId<br/>等于路径绑定值?"}
+    M -->|否| X["HTTP 400<br/>不入队、不调用其他账号凭据"]
+    M -->|是| Q["以绑定 OpenKfId 进入账号串行队列"]
+    Q --> A["HTTP 200 success<br/>后台 sync_msg"]
+```
+
+```text
+微信客户
+   │
+   ▼
+企业微信客服 ── 加密回调 ──▶ 验签/解密/快速 ACK
+   ▲                              │
+   │                              ▼
+   │                       账号串行 sync_msg
+   │                       cursor + msgid claim
+   │                              │
+   │                              ▼
+   └── send_msg / transfer ◀── Agent / 系统事件
+
+失败：release msgid，不推进当前页 cursor；停机：新回调返回 503，旧队列 drain
+```
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 微信客户
+    participant W as 企业微信客服
+    participant C as wecom-kf 回调层
+    participant S as 游标与去重存储
+    participant A as OpenClaw Agent
+
+    U->>W: 发送客户消息
+    W->>C: kf_msg_or_event 加密回调
+    alt Gateway 正常运行
+        C-->>W: 立即 HTTP 200 success
+    else Gateway 正在停止
+        C-->>W: HTTP 503 service stopping
+        Note over W,C: 保留平台重试语义，不接受后丢失
+    end
+    loop sync_msg 最多 100 页
+        C->>W: token 或持久 cursor 拉取
+        W-->>C: msg_list + next_cursor
+        C->>S: claim(msgid)
+        C->>A: 按 open_kfid 路由 Agent Turn
+        A-->>C: 回复文本或媒体
+        C->>W: kf/send_msg
+        W-->>U: 投递回复
+        C->>S: commit(msgid) 后原子保存 cursor
+    end
+```
+
+`msgid` 只有在 Agent/事件处理成功后才提交去重；失败会释放占用并保留当前页游标，后续回调可重试。
+后台 `sync_msg` 失败以及账号映射、Runtime、`open_kfid`、`corpSecret` 尚未就绪，都会在同一账号串行队列中执行有界指数退避；全部尝试失败才记录错误，等待平台下一次回调继续。
+同一客服账号的回调按顺序拉取，状态目录为 `0700`，游标与去重文件采用原子替换并以 `0600` 权限保存。首次启动不会自动跳过历史消息；
+企业微信 `sync_msg` 仍只覆盖平台允许拉取的时间窗口。
+
+`send_msg` 在请求前按 `open_kfid + external_userid` 原子预占回复额度，API 失败或网络异常时回滚；这可防止多个并发 Agent 回复同时通过检查而突破 5 条限制。Token 缓存使用 `corpId + corpSecret + apiBaseUrl` 的 SHA-256 指纹隔离，凭据轮换和私有化网关切换不会继续命中旧缓存。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Claimed: claim(msgid)
+    Claimed --> Committed: Agent/事件处理与出站成功
+    Claimed --> Retryable: API、派发或出站失败
+    Retryable --> Claimed: 释放 claim + 后台/后续回调重试
+    Committed --> Duplicate: 重启后回放同一 msgid
+    Duplicate --> [*]: 跳过，不再次调用 Agent
 ```
 
 转人工流程：
@@ -215,7 +336,7 @@ openclaw channels status --probe
 | 同步消息 | `kf/sync_msg` | 拉取 3 天内消息 |
 | 发送消息 | `kf/send_msg` | 客户最后消息后 48 小时内，最多 5 条 |
 | 事件消息 | `kf/send_msg_on_event` | 欢迎、排队、结束、满意度等 |
-| 会话状态 | `kf/service_state/get` | 查询当前会话状态 |
+| 会话状态 | `session_status_change` | 从同步事件持久化本地状态；当前未开放 `service_state/get` Tool |
 | 转接会话 | `kf/service_state/trans` | 转人工、排队、结束会话 |
 | 账号列表 | `kf/account/list` | 发现客服账号 |
 | 接待人员 | `kf/servicer/list` | 查询人工客服可用性 |
@@ -228,7 +349,7 @@ openclaw channels status --probe
 | 客户回复窗口 | 48 小时 |
 | 单条客户消息回复条数 | 最多 5 条 |
 | `sync_msg` 可拉取时间 | 3 天内 |
-| access token 有效期 | 约 10 分钟 |
+| access token 有效期 | 以接口 `expires_in` 为准（默认按 7200 秒处理并提前刷新） |
 | welcome_code 有效期 | 约 20 秒 |
 
 ## 常用命令
@@ -249,13 +370,10 @@ openclaw config set session.dmScope per-account-channel-peer
 cd extensions/wecom-kf
 pnpm test
 pnpm typecheck
+
+# OpenClaw 2026.7.1 安装态协议闭环（本机 AES/OpenAPI 夹具）
+OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins wecom-kf --skip-browser
 ```
-
-会话中可用命令：
-
-| 命令 | 说明 |
-|------|------|
-| `/kf-status` | 返回客服账号连接状态与在线接待人员数量 |
 
 ## Agent 模板与技能
 
@@ -276,6 +394,10 @@ pnpm typecheck
 pnpm test
 pnpm test:coverage
 ```
+
+当前自动化证据：37 个测试文件、171 个测试通过；安装态 E2E 已覆盖 tarball 安装、企业微信格式 AES 回调、
+`gettoken`、`sync_msg`、真实 Agent Turn、`send_msg`，以及 Gateway 重启后的 cursor 恢复和 `msgid` 持久防重。
+本地 OpenAPI 夹具允许 `http://localhost` / `127.0.0.1`；非 loopback 地址仍强制 HTTPS。
 
 真实联调建议：
 

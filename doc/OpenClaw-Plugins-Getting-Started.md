@@ -1,5 +1,11 @@
 # OpenClaw Plugins — Getting Started
 
+## Prerequisites
+
+- OpenClaw >= 2026.7.1
+- Node.js >= 22
+- pnpm 9 (for source development, matching the root `packageManager`)
+
 ## Installation
 
 Each plugin installs independently:

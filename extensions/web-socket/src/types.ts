@@ -22,7 +22,18 @@ export type WebsocketAgentBinding = {
   accountId?: string;
 };
 
-/** 内置 WebSocket 服务端配置 */
+/** TLS 终止配置。启用后插件直接监听 WSS，不再依赖前置反向代理。 */
+export type WebsocketTlsConfig = {
+  enabled: boolean;
+  keyFile?: string;
+  certFile?: string;
+  caFile?: string;
+  minVersion: "TLSv1.2" | "TLSv1.3";
+  requestCert: boolean;
+  rejectUnauthorized: boolean;
+};
+
+/** 内置 WebSocket 服务端配置。 */
 export type WebsocketServerConfig = {
   wsPort: number;
   path: string;
@@ -32,7 +43,21 @@ export type WebsocketServerConfig = {
     enabled: boolean;
     token?: string;
     tokens: string[];
+    /** 兼容旧浏览器客户端；会把凭据暴露给 URL 日志，默认关闭。 */
+    allowQueryToken: boolean;
+    /**
+     * 允许浏览器通过 `Sec-WebSocket-Protocol` 携带 token。
+     *
+     * 浏览器 WebSocket API 不能自定义 Authorization Header，因此使用
+     * `openclaw.auth.<base64url(token)>` 子协议传递凭据；服务端只回显
+     * `openclaw.v1`，不会把认证子协议协商为应用协议。
+     */
+    allowProtocolToken: boolean;
   };
+  allowedOrigins: string[];
+  tls: WebsocketTlsConfig;
+  /** 显式接受远程明文 ws；生产环境应优先启用 TLS 或由反向代理终止 TLS。 */
+  allowInsecureRemote: boolean;
 };
 
 /** WebSocket 客户端（连外部 WS）配置 */
@@ -42,10 +67,15 @@ export type WebsocketClientConfig = {
   headers: Record<string, string>;
   token?: string;
   clientId: string;
+  connectTimeoutMs: number;
+  /** 显式接受连接远程明文 ws。 */
+  allowInsecureRemote: boolean;
   reconnect: {
     enabled: boolean;
     initialDelayMs: number;
     maxDelayMs: number;
+    /** 退避随机抖动比例，避免大量实例同时重连形成惊群。 */
+    jitterRatio: number;
   };
 };
 
@@ -55,6 +85,8 @@ export type WebsocketChannelConfig = {
   server: WebsocketServerConfig;
   client: WebsocketClientConfig;
   defaultAgentId?: string;
+  /** 是否信任入站帧声明 agentId；默认由服务端配置决定路由。 */
+  allowFrameAgentId: boolean;
   agentBindings: WebsocketAgentBinding[];
   payload: {
     mode: "jsonTextOrPlain";
@@ -62,6 +94,15 @@ export type WebsocketChannelConfig = {
   };
   limits: {
     maxPayloadBytes: number;
+    maxBufferedBytes: number;
+    maxPendingMessages: number;
+    messagesPerMinute: number;
+    heartbeatIntervalMs: number;
+    heartbeatTimeoutMs: number;
+    /** 单次 WebSocket 写出回调的最长等待时间。 */
+    sendTimeoutMs: number;
+    /** Gateway 停机时等待已接纳 Agent 任务和回复投递的最长时间。 */
+    shutdownTimeoutMs: number;
   };
   session: {
     maxExpirySeconds: number;

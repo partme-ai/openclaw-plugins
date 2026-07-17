@@ -5,7 +5,10 @@ import {
   checkKfSendAllowed,
   initKfSendGuardStore,
   onKfCustomerInbound,
+  peekKfSendGuardState,
   recordKfOutboundSend,
+  reserveKfOutboundSend,
+  rollbackKfSendReservation,
   resetKfSendGuardForTests,
 } from "./kf-send-guard.js";
 
@@ -53,5 +56,40 @@ describe("kf-send-guard", () => {
     if (!result.allowed) {
       expect(result.code).toBe("reply_window_expired");
     }
+  });
+
+  it("并发预占也不会突破单条客户消息 5 条上限", async () => {
+    await onKfCustomerInbound({ openKfId: "wk1", externalUserId: "u1", msgId: "msg-1" });
+
+    const results = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        reserveKfOutboundSend({ openKfId: "wk1", externalUserId: "u1" }),
+      ),
+    );
+
+    expect(results.filter((result) => result.allowed)).toHaveLength(
+      KF_SEND_LIMITS.MAX_REPLIES_PER_CUSTOMER_MSG,
+    );
+    expect((await peekKfSendGuardState("wk1", "u1"))?.replyCount).toBe(
+      KF_SEND_LIMITS.MAX_REPLIES_PER_CUSTOMER_MSG,
+    );
+  });
+
+  it("发送失败可回滚额度，但不会误减新一轮客户消息计数", async () => {
+    await onKfCustomerInbound({ openKfId: "wk1", externalUserId: "u1", msgId: "old" });
+    const reserved = await reserveKfOutboundSend({ openKfId: "wk1", externalUserId: "u1" });
+    expect(reserved.allowed).toBe(true);
+    if (!reserved.allowed) return;
+
+    await rollbackKfSendReservation(reserved.reservation);
+    expect((await peekKfSendGuardState("wk1", "u1"))?.replyCount).toBe(0);
+
+    const staleReservation = await reserveKfOutboundSend({ openKfId: "wk1", externalUserId: "u1" });
+    expect(staleReservation.allowed).toBe(true);
+    if (!staleReservation.allowed) return;
+    await onKfCustomerInbound({ openKfId: "wk1", externalUserId: "u1", msgId: "new" });
+    await reserveKfOutboundSend({ openKfId: "wk1", externalUserId: "u1" });
+    await rollbackKfSendReservation(staleReservation.reservation);
+    expect((await peekKfSendGuardState("wk1", "u1"))?.replyCount).toBe(1);
   });
 });

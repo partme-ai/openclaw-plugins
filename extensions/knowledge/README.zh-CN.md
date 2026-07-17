@@ -1,180 +1,150 @@
-# OpenClaw Knowledge
+# OpenClaw Knowledge 知识库插件
 
-> OpenClaw Knowledge Base RAG Engine — standalone plugin for embedding, vector store, hybrid retrieval, multi-type chunking, and automatic context injection.
+`@partme.ai/openclaw-knowledge` 是适配 OpenClaw `2026.7.1` 的本地 RAG 插件。它既通过
+`before_prompt_build` 自动召回相关知识，也向 Agent 提供 `knowledge_add`、
+`knowledge_query`、`knowledge_update`、`knowledge_delete` 四个受控工具。
 
-[![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--knowledge-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-knowledge)
-[![Node](https://img.shields.io/badge/Node.js-22+-green)](https://nodejs.org)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[English](README.md) | 简体中文
 
-[简体中文](./README.md) | [English](./README.en.md)
+## 工作方式
 
----
+字符图先展示两条主路径以及共同的隔离、资源与错误边界，适合快速定位组件；后面的 Mermaid
+保留可渲染的依赖关系，二者共同维护，不能互相替代。
 
-## Overview
+```text
+可信文本 / Owner 文件                         用户问题
+        │                                      │
+        ▼                                      ▼
+Namespace ACL + realpath + 大小限制        Intent Gate
+        │                                      │
+        ▼                                      ▼
+Parser（可选）→ Chunk → Embedding       Vector / Keyword 双路召回
+        │                                      │
+        └──────────────┐       ┌───────────────┘
+                       ▼       ▼
+                 SQLite + FTS5 / ZVec
+                           │
+                           ▼
+                 Reranker（可选）→ Token 预算
+                           │
+                           ▼
+              before_prompt_build → Agent Prompt
 
-`@partme.ai/openclaw-knowledge` is a pipeline-based RAG (Retrieval-Augmented Generation) engine for OpenClaw. It provides pluggable embedding, vector storage, hybrid retrieval, multi-type chunking, reranking, and automatic context injection via the `before_prompt_build` hook.
-
-Integrates with any OpenClaw channel plugin (wecom, lark, dingtalk, qqbot, weixin) in approximately 10 lines of glue code. Each pipeline stage is **optional** (configured by config) and **fail-safe** (node failure does not block the pipeline).
-
-## Features
-
-- **5 Embedding Providers** — OpenAI / DashScope / ZhipuAI / Baidu Qianfan / Ollama
-- **3 Vector Backends** — `sqlite-vec` (production recommended) / `zvec` (zero-dependency) / `native-zvec`
-- **Hybrid Retrieval** — Vector similarity + FTS5 keyword search with configurable weights (default 0.7:0.3)
-- **Multi-Type Chunking** — Smart paragraph/sentence boundary-aware splitting with configurable overlap
-- **3 Reranker Providers** — Jina / ZhipuAI / Ollama
-- **2 Tokenizer Options** — `tiktoken` / ZhipuAI
-- **Document Parser** — Ollama / ZhipuAI for non-text file parsing
-- **Intent Gate** — `rule` mode (<1ms keyword decision) / `strict` mode for precise gating
-- **CRUD Tools** — `knowledge_add` / `knowledge_query` / `knowledge_update` / `knowledge_delete`
-- **Config Hierarchy** — Global config with per-account overrides (shallow merge, arbitrary field override)
-- **Auto Context Injection** — Automatic RAG context injection via `before_prompt_build` hook
-- **Moderation** — Optional content filtering with configurable rejection message
-
-## Architecture
-
-```
-User Input
-    │
-    ▼
-IntentGate (rule/strict) ─── non-retrieval intent → skip RAG
-    │
-    ▼ (retrieval intent)
-Embedding ─── Tokenizer ─── Chunker
-    │
-    ▼
-VectorStore ─── HybridRetriever ───►──── Reranker (optional)
-    │                                        jina/zhipu/ollama
-    ▼
-before_prompt_build hook
-    │
-    ▼ (context injection)
-Injection → AI Response
+共同边界：sessionKey 摘要隔离 │ 原子替换 │ Provider 超时/重试/响应上限
+          凭据/路径脱敏       │ Gateway stop 关闭 Store
 ```
 
-**Pipeline characteristics:**
-- Each node is **optional** — configure what you need
-- Each node is **fail-safe** — failure in one node does not block the pipeline
-- Nodes are resolved at runtime based on configuration, not compile time
+```mermaid
+flowchart LR
+    DOC["可信文档 / Tool 输入"] --> ACL["Owner + Namespace + 大小校验"]
+    ACL --> TYPE{"纯文本?"}
+    TYPE -->|是| CHUNK["语义切块"]
+    TYPE -->|否且已配置| PARSER["智谱 / Ollama Parser"] --> CHUNK
+    CHUNK --> EMB["Embedding"] --> STORE["SQLite/FTS5 或 ZVec"]
+    USER["用户问题"] --> GATE["Intent Gate"] --> RETRIEVE["Vector / Keyword / Hybrid"]
+    STORE --> RETRIEVE --> BUDGET["Chunk + Token 预算"] --> PROMPT["Agent Prompt"]
+```
 
-## Quick Start
+同一 `sourceId` 的更新使用存储层原子替换；Embedding 或写入失败时保留旧文档。OpenClaw
+2026.7.1 的 Prompt Hook 不提供 `accountId`，因此默认 namespace 由 Hook 与 Tool 都具备的
+稳定 `sessionKey` 做 SHA-256 摘要后派生；原始会话键不会写入路径或表名。非 owner 不能
+查询或修改其它 namespace。
 
-### Installation
+外部 Provider 的配置先经过公共资源边界，非法值不会进入循环或发出网络请求：
+
+```text
+embedding 配置
+      │
+      ▼
+整数范围校验
+  ├─ requestTimeoutMs：1 .. 300000 ms
+  ├─ maxRetries：0 .. 10
+  ├─ maxResponseBytes：1 .. 64 MiB
+  └─ maxBatchSize：1 .. 2048
+      │
+      ├── 非法 ──▶ 启动/首次调用立即失败，fetch=0，batch loop=0
+      │
+      ▼
+按 Provider 硬上限取 min(配置批次, Provider 批次)
+      │
+      ▼
+有限请求 → 响应字节上限 → JSON/数量/索引/维度/有限值校验
+```
+
+```mermaid
+flowchart LR
+    C["Embedding 配置"] --> V{"整数范围是否合法?"}
+    V -->|否| F["Fail fast<br/>不循环、不请求"]
+    V -->|是| B["min 配置批次与 Provider 硬上限"]
+    B --> H["有界 HTTP / SDK 超时"]
+    H --> R["响应大小与 JSON 校验"]
+    R --> E["向量数量、索引、维度、有限值校验"]
+    E --> S["原子写入 Store"]
+```
+
+## 能力范围
+
+- Embedding：OpenAI-compatible、DashScope、智谱、千帆、Ollama；
+- 存储：`sqlite-vec`（默认，Node.js SQLite + FTS5）和 `zvec`（纯 JavaScript）；
+- 检索：vector、keyword、hybrid，可选智谱或 Jina Reranker；
+- 文档解析：智谱支持 PDF/PNG/JPEG，owner 授权的本地文件会在出站前转换为受限 base64；
+  Ollama 仅接收图片，PDF 需先逐页渲染或改用智谱，且不会主动抓取远程 URL；
+- 注入：system/user 位置，受最大块数和 token/字符预算限制；
+- 文件摄取：默认关闭，仅 owner 可用，realpath 必须位于允许根目录；
+- 生命周期：Store 按 namespace + 配置指纹缓存，Gateway stop 时统一关闭或刷新。
+- 并发删除：同 source 的 add/update/delete 保序；namespace clear 使用独占屏障，不能越过在途写入。
+- 错误边界：Provider、Parser、SQLite 和文件系统异常在进入 Hook 日志或 Tool 响应前统一遮蔽凭据、绝对路径和控制字符。
+- 配置边界：Provider 超时、重试、响应大小和 Embedding 批次必须是有界整数；`maxBatchSize=0` 等值会在进入循环前拒绝。
+
+当前不承诺远程 URL 抓取、外部向量数据库和多节点共享索引。PDF/Office/图片等非纯文本
+必须显式配置 `parser.provider`，并在真实 Provider 环境完成格式兼容性验收。
+
+## 安装
 
 ```bash
-npm install @partme.ai/openclaw-knowledge
-# or
-pnpm add @partme.ai/openclaw-knowledge
+openclaw plugins install @partme.ai/openclaw-knowledge@2026.7.1
+openclaw plugins inspect knowledge
+openclaw doctor
 ```
 
-### Integration into a Channel Plugin
-
-```typescript
-import {
-  registerKnowledgeHooks,
-  createKnowledgeAddTool,
-  createKnowledgeQueryTool,
-  createKnowledgeUpdateTool,
-  createKnowledgeDeleteTool,
-} from '@partme.ai/openclaw-knowledge';
-
-export function onRegister(api: PluginApi) {
-  registerKnowledgeHooks(api, 'channels.wecom.knowledge');
-  api.registerTool(createKnowledgeAddTool);
-  api.registerTool(createKnowledgeQueryTool);
-  api.registerTool(createKnowledgeUpdateTool);
-  api.registerTool(createKnowledgeDeleteTool);
-}
-```
-
-### Minimal Configuration
+## 最小配置
 
 ```json
 {
-  "channels": {
-    "wecom": {
+  "plugins": {
+    "entries": {
       "knowledge": {
         "enabled": true,
-        "embedding": { "model": "text-embedding-3-small" },
-        "store": { "provider": "zvec" }
-      }
-    }
-  }
-}
-```
-
-## Configuration Reference
-
-### Global Configuration
-
-```jsonc
-{
-  "channels": {
-    "wecom": {
-      "knowledge": {
-        "enabled": true,                     // Enable knowledge base
-        "intentGate": {
-          "mode": "rule",                    // "rule" | "strict"
-          "triggers": ["什么", "如何", "?"],  // Custom trigger words (optional)
-          "skips": ["闲聊", "你好"]           // Custom skip words (optional)
-        },
-        "embedding": {
-          "provider": "openai",              // "openai" | "dashscope" | "zhipu" | "qianfan" | "ollama"
-          "model": "text-embedding-ada-002",
-          "dimensions": 1536,
-          "baseUrl": "",                     // Optional: custom API endpoint
-          "apiKey": ""                       // Optional: custom API key
-        },
-        "tokenizer": {
-          "provider": "tiktoken",            // "tiktoken" | "zhipu"
-          "model": "o200k_base"
-        },
-        "store": {
-          "provider": "sqlite-vec",          // "sqlite-vec" | "zvec" | "native-zvec"
-          "dbPath": "./data/knowledge.db"
-        },
-        "retrieval": {
-          "strategy": "hybrid",              // "hybrid" | "vector" | "keyword"
-          "topK": 5,
-          "minScore": 0.3,
-          "keywordBoost": true
-        },
-        "reranker": {
-          "provider": "",                    // "jina" | "zhipu" | "ollama" | "" (disabled)
-          "model": "",
-          "topN": 5
-        },
-        "parser": {
-          "provider": "zhipu",               // "zhipu" | "ollama" | "" (disabled)
-          "model": ""
-        },
-        "injection": {
-          "position": "system",              // "system" | "user"
-          "template": "Relevant knowledge:\n\n{context}",
-          "maxChunks": 5,
-          "maxTokens": 2048
-        },
-        "moderation": {
-          "enabled": false,
-          "rejectionMessage": "I can't answer that."
-        }
-      }
-    }
-  }
-}
-```
-
-### Per-Account Override
-
-```jsonc
-{
-  "channels": {
-    "wecom": {
-      "accounts": {
-        "account_001": {
-          "knowledge": {
-            "retrieval": { "topK": 10 },      // Override: use topK=10 for this account
-            "store": { "sources": { "docIds": ["doc_001"] } }  // Replace sources entirely
+        "config": {
+          "enabled": true,
+          "embedding": {
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536
+          },
+          "store": {
+            "provider": "sqlite-vec",
+            "dbPath": "./data/knowledge.db"
+          },
+          "retrieval": {
+            "strategy": "hybrid",
+            "topK": 5,
+            "minScore": 0.3,
+            "vectorWeight": 0.7,
+            "keywordWeight": 0.3
+          },
+          "injection": {
+            "position": "system",
+            "maxChunks": 5,
+            "maxTokens": 2048,
+            "template": "以下是相关知识库内容，请据此回答用户问题：\n\n{context}"
+          },
+          "tools": {
+            "allowFileIngest": false,
+            "allowedFileRoots": [],
+            "maxFileBytes": 10485760,
+            "maxInputChars": 100000,
+            "allowOwnerGlobalNamespaces": true
           }
         }
       }
@@ -183,84 +153,49 @@ export function onRegister(api: PluginApi) {
 }
 ```
 
-### Pipeline Stage Summary
+OpenAI-compatible 模式默认读取 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和
+`OPENAI_EMBEDDING_MODEL`，不要把密钥写入仓库。
 
-| Stage | Enabled by Default | Fail-Safe | Available Providers |
-|-------|-------------------|-----------|-------------------|
-| Embedding | Yes | Yes | openai / dashscope / zhipu / qianfan / ollama |
-| Tokenizer | Yes | Yes | tiktoken / zhipu |
-| Chunker | Yes | Yes | Built-in (3 strategies) |
-| VectorStore | Yes | Yes | sqlite-vec / zvec / native-zvec |
-| HybridRetriever | Yes | Yes | Built-in (configurable weights) |
-| Reranker | No | Yes | jina / zhipu / ollama |
-| Parser | No | Yes | ollama / zhipu |
-| IntentGate | Yes | Yes | rule / strict |
+## 文件摄取
 
-## Supported File Types
+```json
+{
+  "tools": {
+    "allowFileIngest": true,
+    "allowedFileRoots": ["./knowledge-docs"],
+    "maxFileBytes": 10485760
+  }
+}
+```
 
-Files can be indexed via the `knowledge_add` tool or the `indexFile()` API:
+支持 `.md`、`.txt`、`.csv`、`.json`。符号链接的最终 realpath 越界、超大文件和不支持后缀
+都会在读取前拒绝。
 
-| Extension | Description |
-|-----------|-------------|
-| `.md` | Markdown documents |
-| `.txt` | Plain text files |
-| `.csv` | Tabular data |
-| `.json` | JSON data |
-| `.text` | Text files (alias) |
+## 数据与升级
 
-## CRUD Tools
+- SQLite 为每个 namespace 派生带稳定哈希的独立表，避免标点清洗碰撞；
+- ZVec 配置 `dbPath` 后为每个 namespace 派生独立 JSON 文件，并在关闭时原子刷新；
+- 更换 Embedding 模型或 dimensions 后必须从可信源重新索引；
+- 早期仅清洗 namespace 的表不会自动迁移，避免把潜在碰撞数据复制到错误租户；
+- 2026.7.1 会话摘要 namespace 不会自动读取旧 `accountId:mode` 数据；应从可信源重新索引，
+  不做可能跨租户复制的自动迁移；
+- `requestTimeoutMs`、`maxRetries`、`maxBatchSize` 分别控制超时、瞬时错误重试和批量规模。
 
-| Tool Name | Function | Description |
-|-----------|----------|-------------|
-| `knowledge_add` | Add documents | Index file(s) into the knowledge base |
-| `knowledge_query` | Search | Query the knowledge base by semantic similarity |
-| `knowledge_update` | Update | Update existing indexed documents |
-| `knowledge_delete` | Delete | Remove documents from the knowledge base |
-
-## Namespace Strategy
-
-Knowledge data is isolated per namespace in the format `{accountId}:{mode}` (where mode is `bot` or `agent`). This ensures data separation across different accounts and agent modes.
-
-## Development
+## 开发验证
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Build
-pnpm build
-
-# Run tests (107+ tests)
-pnpm test
-
-# Watch mode
-pnpm dev
-
-# Type checking
 pnpm typecheck
+pnpm test
+pnpm build
 ```
 
-## Technical Details
+详细内容：
 
-- **Dynamic imports**: Heavy dependencies (`better-sqlite3`, `@zvec/zvec`) are dynamically imported, so failures don't prevent loading when using other backends.
-- **Store caching**: VectorStore + EmbeddingService pairs are cached in a `Map<string, {store, embedding}>` keyed by namespace. Use `invalidateStoreCache(namespace?)` to force recreation.
-- **Embedding overloads**: `EmbeddingEngine.embed()` uses function overloads — single string returns `number[]`, string array returns `number[][]`.
-- **Config hierarchy**: Field-level shallow merge with `store.sources` wholesale replacement.
+- [架构设计](../../doc/knowledge/OpenClaw-Knowledge-RAG-Architecture_CN.md)
+- [使用指南](../../doc/knowledge/OpenClaw-Knowledge-RAG-Guide_CN.md)
+- [集成说明](../../doc/knowledge/OpenClaw-Knowledge-RAG-Integration_CN.md)
+- [生产化策略](../../doc/knowledge/OpenClaw-Knowledge-RAG-Strategy_CN.md)
+- [安装验收](INSTALL.md)
 
-## License
-
-Licensed under the [MIT License](LICENSE).
-
-## About openclaw-plugins
-
-This plugin is part of [openclaw-plugins](https://github.com/partme-ai/openclaw-plugins) — an enterprise OpenClaw plugin collection developed and maintained by the **PartMe.AI team**, featuring 30+ plugins across IM channels, message queues, AI capabilities, and infrastructure.
-
-Each plugin is published independently on npm under the `@partme.ai` scope:
-
-```bash
-openclaw plugins install @partme.ai/openclaw-knowledge
-```
-
-**PartMe.AI** specializes in AI customer service and enterprise AI agent infrastructure, providing end-to-end solutions from WeChat Work/DingTalk/Feishu/QQ channel integration to RAG knowledge bases, multi-layer memory, and production monitoring.
-
-> Contact: partmeai@gmail.com | [GitHub](https://github.com/partme-ai/openclaw-plugins)
+在真实 Embedding 服务、真实业务数据和隔离账号完成召回质量、ACL、重启恢复与性能验收前，
+该插件应标记为“实现完成、待环境验收”，不能仅凭本地测试宣称生产就绪。

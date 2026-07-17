@@ -1,4 +1,9 @@
 /**
+ * @fileoverview WebSocket Channel 的声明式配置向导工厂。
+ *
+ * 将连接 URL、认证字段和完成步骤映射为 OpenClaw setup adapter/wizard，并保留 URL、双凭据
+ * 与内嵌服务三类通用模板。该层只写入 `channels.web-socket` 配置，不创建网络连接。
+ *
  * @module web-socket/channel-setup-factory
  */
 

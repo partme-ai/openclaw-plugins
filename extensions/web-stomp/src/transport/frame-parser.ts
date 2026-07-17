@@ -27,54 +27,79 @@ const LF = "\n";
  */
 export function parseFrame(data: string): StompFrame | null {
   try {
-    // 移除可能的结尾 NULL byte
-    const cleaned = data.replace(/\0$/, "");
-
-    // 按换行分割
-    const lines = cleaned.split(LF);
-
-    if (lines.length === 0) return null;
-
-    // 第一行是命令
-    const command = lines[0].trim() as StompCommand;
+    const cleaned = data.endsWith(NULL_BYTE) ? data.slice(0, -1) : data;
+    const separator = /\r?\n\r?\n/.exec(cleaned);
+    if (!separator) return null;
+    const headerBlock = cleaned.slice(0, separator.index);
+    const body = cleaned.slice(separator.index + separator[0].length);
+    const lines = headerBlock.split(/\r?\n/);
+    const command = lines[0]?.trim() as StompCommand;
     if (!isValidCommand(command)) return null;
 
-    // 解析头部（直到空行）
     const headers: Record<string, string> = {};
-    let bodyStartIdx = 1;
-
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
-
-      // 空行标志着头部结束、body 开始
-      if (line === "" || line === "\r") {
-        bodyStartIdx = i + 1;
-        break;
-      }
-
-      // 解析 header: value（STOMP 1.2 中第一个冒号分隔 key/value）
       const colonIdx = line.indexOf(":");
-      if (colonIdx > 0) {
-        const key = decodeHeaderValue(line.slice(0, colonIdx));
-        const value = decodeHeaderValue(line.slice(colonIdx + 1));
-        // STOMP 规范：重复 header 以第一个为准
-        if (!(key in headers)) {
-          headers[key] = value;
-        }
+      // 无冒号或空 header 名都属于协议错误，不能静默忽略后继续执行权限相关命令。
+      if (colonIdx <= 0) return null;
+      const key = decodeHeaderValue(line.slice(0, colonIdx));
+      const value = decodeHeaderValue(line.slice(colonIdx + 1));
+      // STOMP 1.2：重复 header 以第一个为准，避免后续值覆盖认证/路由字段。
+      if (!(key in headers)) {
+        headers[key] = value;
       }
     }
 
-    // 剩余部分是 body
-    const body =
-      bodyStartIdx < lines.length
-        ? lines.slice(bodyStartIdx).join(LF)
-        : undefined;
+    const declaredLength = headers["content-length"];
+    if (declaredLength !== undefined) {
+      if (!/^\d+$/.test(declaredLength)) return null;
+      if (Buffer.byteLength(body, "utf8") !== Number(declaredLength)) return null;
+    }
 
     return { command, headers, body: body || undefined };
-  } catch (err) {
-    console.error("[openclaw-web-stomp] Frame parse error:", err);
+  } catch {
+    // 解析失败属于外部协议错误，由 transport 统一计数和响应；这里不得绕过插件日志脱敏边界。
     return null;
   }
+}
+
+/**
+ * 从可能包含半帧或多帧的 WebSocket 文本流中提取完整 STOMP 帧。
+ *
+ * 未声明 `content-length` 时以第一个 NUL 结束；声明后必须按 UTF-8 字节数越过 body，
+ * 因而 body 内的 NUL 不会被误判为帧结束符。未完成的尾帧保留到下一条 WebSocket 消息。
+ */
+export function extractCompleteFrames(buffer: string): { frames: string[]; rest: string } {
+  const frames: string[] = [];
+  let rest = buffer.replace(/^[\r\n]+/, "");
+  while (rest) {
+    const separator = /\r?\n\r?\n/.exec(rest);
+    if (!separator) break;
+    const bodyStart = separator.index + separator[0].length;
+    const headerBlock = rest.slice(0, separator.index);
+    const lengthLine = headerBlock
+      .split(/\r?\n/)
+      .slice(1)
+      .find((line) => line.startsWith("content-length:"));
+    const declared = lengthLine?.slice("content-length:".length);
+
+    if (declared !== undefined && /^\d+$/.test(declared)) {
+      const bodyAndTail = Buffer.from(rest.slice(bodyStart), "utf8");
+      const bodyBytes = Number(declared);
+      if (bodyAndTail.length <= bodyBytes) break;
+      // content-length 后必须紧跟 NUL；不匹配时交给 parseFrame 判错并由服务器关闭连接。
+      const consumedTail = bodyAndTail.subarray(0, bodyBytes + 1).toString("utf8");
+      frames.push(rest.slice(0, bodyStart) + consumedTail);
+      rest = bodyAndTail.subarray(bodyBytes + 1).toString("utf8").replace(/^[\r\n]+/, "");
+      continue;
+    }
+
+    const end = rest.indexOf(NULL_BYTE, bodyStart);
+    if (end < 0) break;
+    frames.push(rest.slice(0, end + 1));
+    rest = rest.slice(end + 1).replace(/^[\r\n]+/, "");
+  }
+  return { frames, rest };
 }
 
 /**
@@ -95,7 +120,7 @@ export function serializeFrame(frame: StompFrame): string {
   }
 
   // 如果有 body，添加 content-length header
-  if (frame.body) {
+  if (frame.body !== undefined && !("content-length" in frame.headers)) {
     const bodyBytes = Buffer.byteLength(frame.body, "utf-8");
     parts.push(`content-length:${bodyBytes}`);
     parts.push(LF);
@@ -105,7 +130,7 @@ export function serializeFrame(frame: StompFrame): string {
   parts.push(LF);
 
   // body
-  if (frame.body) {
+  if (frame.body !== undefined) {
     parts.push(frame.body);
   }
 
@@ -126,7 +151,7 @@ export function buildConnectedFrame(heartbeat: string, session?: string): StompF
   const headers: Record<string, string> = {
     version: "1.2",
     "heart-beat": heartbeat,
-    server: "openclaw-web-stomp/0.1.0",
+    server: "openclaw-web-stomp/2026.7.1",
   };
   if (session) {
     headers.session = session;
@@ -238,10 +263,19 @@ function isValidCommand(cmd: string): cmd is StompCommand {
  * STOMP 1.2 规范：\n -> LF, \c -> :, \\ -> \
  */
 function decodeHeaderValue(value: string): string {
-  return value
-    .replace(/\\n/g, "\n")
-    .replace(/\\c/g, ":")
-    .replace(/\\\\/g, "\\");
+  let decoded = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char !== "\\") {
+      decoded += char;
+      continue;
+    }
+    const escaped = value[++index];
+    const replacement = escaped === "n" ? "\n" : escaped === "r" ? "\r" : escaped === "c" ? ":" : escaped === "\\" ? "\\" : undefined;
+    if (replacement === undefined) throw new Error("Invalid STOMP header escape");
+    decoded += replacement;
+  }
+  return decoded;
 }
 
 /**
@@ -250,6 +284,7 @@ function decodeHeaderValue(value: string): string {
 function encodeHeaderValue(value: string): string {
   return value
     .replace(/\\/g, "\\\\")
+    .replace(/\r/g, "\\r")
     .replace(/\n/g, "\\n")
     .replace(/:/g, "\\c");
 }

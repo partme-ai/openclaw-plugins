@@ -1,4 +1,13 @@
-/** Minimal logger surface used by this plugin (matches OpenClaw PluginLogger). */
+/**
+ * @fileoverview Nacos 插件各层共享的配置、日志和服务发现数据契约。
+ *
+ * 类型在配置解析、SDK 连接、服务注册与 Config Center 同步之间传递，集中定义可避免各模块
+ * 对 OpenClaw 完整配置结构产生耦合。字段注释同时说明 Spring Cloud 对应项和默认语义。
+ *
+ * @module nacos/shared/types
+ */
+
+/** 与 OpenClaw PluginLogger 对齐的最小日志接口。 */
 export type PluginLog = {
   info: (msg: string) => void;
   warn: (msg: string) => void;
@@ -6,11 +15,7 @@ export type PluginLog = {
   debug: (msg: string) => void;
 };
 
-/**
- * @module nacos/shared/types
- *
- * Subset of OpenClaw config used for Gateway port and Hooks path resolution.
- */
+/** Nacos 注册元数据计算所需的 OpenClaw 配置切片。 */
 export type OpenClawConfigSlice = {
   gateway?: { port?: number };
   hooks?: { enabled?: boolean; path?: string };
@@ -65,6 +70,8 @@ export type NacosConfigCenterConfig = {
   pluginConfigIds?: string[];
   /** Skip structural validation before write (dangerous). Default false. */
   skipValidation?: boolean;
+  /** 本地回滚备份最多保留数量；默认 20，范围 1..1000。 */
+  backupRetentionCount?: number;
 };
 
 /** Naming registration can be disabled while keeping Config Center. */
@@ -91,11 +98,13 @@ export type ClusterDiscoveryConfig = {
 };
 
 /**
- * Plugin-owned configuration under `plugins.entries["openclaw-nacos"].config`.
+ * Plugin-owned configuration under `plugins.entries.nacos.config`.
  */
 export type NacosPluginConfig = {
   /** When false, skip entire plugin. Default true. */
   enabled?: boolean;
+  /** 启动连接失败策略；默认 fail，degrade 仅记录健康降级并允许 Gateway 继续启动。 */
+  startupFailurePolicy?: "fail" | "degrade";
   /** Nacos server list, e.g. `127.0.0.1:8848`. */
   serverList: string;
   /**

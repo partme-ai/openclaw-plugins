@@ -9,11 +9,15 @@ const mocks = vi.hoisted(() => ({
     agentId: "main",
     sessionKey: "agent:main:redis-stream:direct:openclaw:agent:demo:in",
   }),
-  publishMessage: vi.fn().mockResolvedValue(undefined),
+  publishMessage: vi.fn().mockResolvedValue(1),
+  publishEntry: vi.fn().mockResolvedValue("1-0"),
 }));
 
 vi.mock("@partme.ai/openclaw-message-sdk/bridge", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@partme.ai/openclaw-message-sdk/bridge")>();
+  const actual =
+    await importOriginal<
+      typeof import("@partme.ai/openclaw-message-sdk/bridge")
+    >();
   return {
     ...actual,
     dispatchChannelMessage: mocks.dispatchChannelMessage,
@@ -23,18 +27,24 @@ vi.mock("@partme.ai/openclaw-message-sdk/bridge", async (importOriginal) => {
 
 vi.mock("../src/transport/publisher.js", () => ({
   publishMessage: mocks.publishMessage,
-  publishEntry: vi.fn(),
+  publishEntry: mocks.publishEntry,
 }));
 
 import { resolveRedisChannelConfig } from "../src/config.js";
 import { handleInboundMessage } from "../src/inbound.js";
 import { setRedisStreamRuntime } from "../src/runtime.js";
-import { getRedisStreamIdempotencyCache } from "../src/shared/wire-helpers.js";
+import { getRedisStreamClaimableDedupe } from "../src/shared/wire-helpers.js";
 import type { RedisChannelConfig, RedisInboundMessage } from "../src/types.js";
 
-const { dispatchChannelMessage, resolveChannelDispatchIdentity, publishMessage } = mocks;
+const {
+  dispatchChannelMessage,
+  resolveChannelDispatchIdentity,
+  publishMessage,
+} = mocks;
 
-function baseConfig(overrides: Partial<RedisChannelConfig> = {}): RedisChannelConfig {
+function baseConfig(
+  overrides: Partial<RedisChannelConfig> = {},
+): RedisChannelConfig {
   return {
     ...resolveRedisChannelConfig({}),
     subscribeChannels: ["openclaw:agent:*:in"],
@@ -50,7 +60,9 @@ function baseConfig(overrides: Partial<RedisChannelConfig> = {}): RedisChannelCo
   };
 }
 
-function makeMessage(overrides: Partial<RedisInboundMessage> = {}): RedisInboundMessage {
+function makeMessage(
+  overrides: Partial<RedisInboundMessage> = {},
+): RedisInboundMessage {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return {
     channel: "openclaw:agent:demo:in",
@@ -63,7 +75,8 @@ function makeMessage(overrides: Partial<RedisInboundMessage> = {}): RedisInbound
 describe("handleInboundMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getRedisStreamIdempotencyCache().clear();
+    publishMessage.mockResolvedValue(1);
+    getRedisStreamClaimableDedupe(baseConfig().idempotency)?.clearMemory();
     setRedisStreamRuntime({ config: {} } as never);
   });
 
@@ -97,6 +110,7 @@ describe("handleInboundMessage", () => {
       channel: "redis-stream",
       text: "bound msg",
       peerId: "openclaw:agent:demo:in",
+      timeoutMs: 120_000,
     });
   });
 
@@ -123,7 +137,29 @@ describe("handleInboundMessage", () => {
       deliver: (p: { wire: string }) => Promise<void>;
     };
     await reply.deliver({ wire: '{"text":"pong"}' });
-    expect(publishMessage).toHaveBeenCalledWith("openclaw:agent:demo:out", '{"text":"pong"}');
+    expect(publishMessage).toHaveBeenCalledWith(
+      "openclaw:agent:demo:out",
+      '{"text":"pong"}',
+    );
+  });
+
+  it("writes replies with XADD in Stream mode", async () => {
+    await handleInboundMessage(
+      makeMessage(),
+      baseConfig({ channelMode: "stream" }),
+    );
+    const reply = dispatchChannelMessage.mock.calls[0][0].reply as {
+      deliver: (p: { wire: string }) => Promise<void>;
+    };
+    await reply.deliver({ wire: '{"text":"durable pong"}' });
+    expect(mocks.publishEntry).toHaveBeenCalledWith(
+      "openclaw:agent:demo:out",
+      expect.objectContaining({
+        text: '{"text":"durable pong"}',
+        agentId: "main",
+      }),
+    );
+    expect(publishMessage).not.toHaveBeenCalled();
   });
 
   it("drops duplicate message ids", async () => {
@@ -133,6 +169,30 @@ describe("handleInboundMessage", () => {
     expect(await handleInboundMessage(msg, config)).toBe(true);
     expect(await handleInboundMessage(msg, config)).toBe(true);
     expect(dispatchChannelMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases an idempotency claim when dispatch fails", async () => {
+    const msg = makeMessage({ message: "retry me" });
+    const config = baseConfig();
+    dispatchChannelMessage.mockRejectedValueOnce(
+      new Error("temporary failure"),
+    );
+
+    expect(await handleInboundMessage(msg, config)).toBe(false);
+    expect(await handleInboundMessage(msg, config)).toBe(true);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not dedupe Pub/Sub messages without a stable delivery id", async () => {
+    const msg = makeMessage({
+      streamEntryId: undefined,
+      message: "legitimate repeated payload",
+    });
+    const config = baseConfig();
+
+    expect(await handleInboundMessage(msg, config)).toBe(true);
+    expect(await handleInboundMessage(msg, config)).toBe(true);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
   });
 
   it("returns false when runtime is missing", async () => {

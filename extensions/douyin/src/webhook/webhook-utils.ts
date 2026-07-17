@@ -7,7 +7,42 @@
  * **关键依赖**：`node:crypto`
  */
 
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
+
+type DouyinWebhookEnvelope = {
+  event?: string;
+  client_key?: string;
+  content?: unknown;
+};
+
+/**
+ * 将原始回调解析为抖音事件信封。
+ * 解析失败返回 `null` 而不抛错，HTTP 层可据此稳定返回 4xx，且验签仍始终使用未修改的原文。
+ */
+export function parseDouyinWebhookEnvelope(body: string): DouyinWebhookEnvelope | null {
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    return parsed && typeof parsed === "object" ? parsed as DouyinWebhookEnvelope : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 兼容 `content` 为对象或 JSON 字符串的两种平台回调形态。
+ * 只接受对象结果，数组、标量和损坏 JSON 都不会进入发送方/文本字段提取逻辑。
+ */
+export function parseDouyinWebhookContent(body: string): Record<string, unknown> | null {
+  const content = parseDouyinWebhookEnvelope(body)?.content;
+  if (content && typeof content === "object") return content as Record<string, unknown>;
+  if (typeof content !== "string") return null;
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 解析开放平台 Webhook URL 验证事件（`verify_webhook`）。
@@ -17,8 +52,10 @@ import { createHash } from "node:crypto";
  */
 export function tryParseVerifyWebhookChallenge(body: string): string | null {
   try {
-    const json = JSON.parse(body) as { event?: string; content?: { challenge?: number | string } };
-    if (json.event !== "verify_webhook" || json.content == null) {
+    const json = parseDouyinWebhookEnvelope(body) as
+      | { event?: string; content?: { challenge?: number | string } }
+      | null;
+    if (json?.event !== "verify_webhook" || json.content == null) {
       return null;
     }
     const c = json.content.challenge;
@@ -45,8 +82,11 @@ export function verifyDouyinSignature(
     return false;
   }
   const payload = secret + rawBody;
-  const hash = createHash("sha1").update(payload, "utf8").digest("hex");
-  return hash === signatureHeader.trim();
+  const hash = createHash("sha1").update(payload, "utf8").digest();
+  const providedHex = signatureHeader.trim().toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(providedHex)) return false;
+  const provided = Buffer.from(providedHex, "hex");
+  return provided.length === hash.length && timingSafeEqual(hash, provided);
 }
 
 /**
@@ -57,8 +97,9 @@ export function verifyDouyinSignature(
  */
 export function extractDouyinSenderId(rawBody: string): string | null {
   try {
-    const json = JSON.parse(rawBody) as Record<string, unknown>;
-    const content = json.content as Record<string, unknown> | undefined;
+    const json = parseDouyinWebhookEnvelope(rawBody) as Record<string, unknown> | null;
+    if (!json) return null;
+    const content = parseDouyinWebhookContent(rawBody) ?? undefined;
     const fromContent =
       content?.from_user_id ?? content?.user_id ?? content?.user_open_id ?? content?.open_id;
     const top = json.from_user_id ?? json.user_open_id ?? json.open_id;
@@ -70,4 +111,14 @@ export function extractDouyinSenderId(rawBody: string): string | null {
     // 非 JSON 时无法解析
   }
   return null;
+}
+
+/** 将 Webhook content 转成适合 Agent 消费的文本。 */
+export function extractDouyinWebhookText(rawBody: string): string {
+  const envelope = parseDouyinWebhookEnvelope(rawBody);
+  const content = parseDouyinWebhookContent(rawBody);
+  if (!content) return rawBody;
+  const text = content.text ?? content.content ?? content.message;
+  if (typeof text === "string" && text.trim()) return text.trim();
+  return JSON.stringify({ event: envelope?.event, content });
 }

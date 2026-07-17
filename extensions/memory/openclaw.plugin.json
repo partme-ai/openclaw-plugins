@@ -1,14 +1,27 @@
 {
   "id": "memory",
+  "name": "Memory",
+  "version": "2026.7.1",
+  "description": "本地分层长期记忆，支持物理会话隔离、保留策略和可选静态加密",
   "kind": "memory",
   "configSchema": {
     "type": "object",
-    "additionalProperties": true,
+    "additionalProperties": false,
     "properties": {
       "enabled": { "type": "boolean", "default": true },
       "dataDir": { "type": "string", "description": "数据存储目录" },
-      "maxSearchResults": { "type": "number", "default": 10 },
-      "retentionDays": { "type": "number", "default": 90 }
+      "maxSearchResults": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
+      "maxSearchBytes": { "type": "integer", "minimum": 1048576, "maximum": 268435456, "default": 16777216, "description": "单次词法搜索最多扫描的 JSONL 字节数" },
+      "maxReadLines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 200, "description": "单次 readFile 最多返回的解码记录行数" },
+      "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 90 },
+      "extractionInterval": { "type": "integer", "minimum": 1, "maximum": 100, "default": 5 },
+      "maxRecordBytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 65536 },
+      "profileScope": { "type": "string", "enum": ["session", "agent"], "default": "session" },
+      "autoRecall": { "type": "boolean", "default": true, "description": "在构建 Agent Prompt 前自动召回相关记忆" },
+      "autoRecallMaxResults": { "type": "integer", "minimum": 1, "maximum": 10, "default": 5 },
+      "autoRecallMaxChars": { "type": "integer", "minimum": 256, "maximum": 16000, "default": 4000 },
+      "autoRecallTimeoutMs": { "type": "integer", "minimum": 50, "maximum": 5000, "default": 1000 },
+      "encryptionKeyEnv": { "type": "string", "description": "可选 AES-256-GCM 密钥环境变量名" }
     }
   },
   "contracts": {

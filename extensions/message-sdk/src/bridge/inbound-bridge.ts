@@ -12,6 +12,7 @@
 import { buildMessage } from "../core/message.js";
 import type { InboundBridgeParams, ReplyBridgeParams, ReplyBridgeResult } from "./types.js";
 import { createReplyHandler } from "./reply-bridge.js";
+import { resolveBridgeRuntimeConfig } from "./runtime-config.js";
 
 /** dispatchInbound 入参（含 reply 配置）/ Dispatch inbound params with reply config */
 export interface DispatchInboundParams extends InboundBridgeParams {
@@ -35,7 +36,7 @@ export interface DispatchInboundResult extends ReplyBridgeResult {
 export async function dispatchInbound(params: DispatchInboundParams): Promise<DispatchInboundResult> {
   const { runtime, channel, accountId, peerId, text, chatType, agentId, unified, extra, reply } =
     params;
-  const cfg = runtime.config;
+  const cfg = await resolveBridgeRuntimeConfig(runtime);
 
   const replyOptions = await runtime.channel.routing.resolveAgentRoute({
     cfg,
@@ -44,17 +45,31 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
     peer: { kind: "direct", id: peerId },
   });
 
+  // OpenClaw's finalized inbound context is a legacy-compatible MsgContext
+  // contract whose canonical fields are PascalCase. Lower-case transport
+  // fields are ignored by finalizeInboundContext and result in an empty agent
+  // body on OpenClaw 2026.7.1.
   const ctx = await runtime.channel.reply.finalizeInboundContext({
-    channel,
-    accountId,
-    from: peerId,
-    text,
-    chatType: chatType ?? "direct",
-    extra: {
-      ...extra,
-      ...(unified?.messageId ? { unifiedMessageId: unified.messageId } : {}),
-      ...(agentId ? { desiredAgentId: agentId } : {}),
-    },
+    Body: text,
+    BodyForAgent: text,
+    RawBody: text,
+    CommandBody: text,
+    From: peerId,
+    To: accountId,
+    SessionKey: reply.sessionKey,
+    AccountId: accountId,
+    ChatType: chatType ?? "direct",
+    SenderId: peerId,
+    Provider: channel,
+    Surface: channel,
+    OriginatingChannel: channel,
+    OriginatingTo: accountId,
+    CommandAuthorized: false,
+    ...(unified?.messageId
+      ? { MessageSid: unified.messageId, MessageSidFull: unified.messageId }
+      : {}),
+    ...(agentId ? { DesiredAgentId: agentId } : {}),
+    ...extra,
   });
 
   const { dispatcher } = createReplyHandler({
@@ -71,6 +86,16 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
     dispatcher,
     replyOptions,
   });
+
+  // OpenClaw's reply dispatcher may still be draining an asynchronous
+  // transport delivery after dispatchReplyFromConfig resolves. Wire/MQ
+  // consumers must not treat the inbound message as complete until that
+  // delivery has settled, otherwise deferred ACK can race the publish confirm.
+  const waitForIdle = (dispatcher as { waitForIdle?: () => Promise<void> } | undefined)
+    ?.waitForIdle;
+  if (typeof waitForIdle === "function") {
+    await waitForIdle.call(dispatcher);
+  }
 
   return { ctx, dispatcher, replyOptions };
 }

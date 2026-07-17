@@ -4,11 +4,14 @@
  * OpenClaw uses a date-based version format: YYYY.M.DD (e.g. 2026.3.22).
  * This module parses that format and validates the running host is within
  * the supported range for this plugin version.
+ *
+ * 中文说明：日期型版本不能直接按普通字符串比较；本模块先剥离预发布后缀，再按年、
+ * 月、日逐项比较，用于启动时给出明确的宿主兼容性诊断。
  */
 
 import { logger } from "../util/logger.js";
 
-export const SUPPORTED_HOST_MIN = "2026.3.22";
+export const SUPPORTED_HOST_MIN = "2026.7.1";
 
 export interface OpenClawVersion {
   year: number;
@@ -71,7 +74,6 @@ export function assertHostCompatibility(hostVersion: string | undefined): void {
   throw new Error(
     `This version of openclaw-weixin requires OpenClaw >=${SUPPORTED_HOST_MIN}, ` +
     `but found ${hostVersion}. ` +
-    `Please upgrade OpenClaw, or install the compatible track for older hosts:\n` +
-    `  npx @tencent-weixin/openclaw-weixin-cli install`,
+      "Please upgrade OpenClaw before enabling this plugin.",
   );
 }

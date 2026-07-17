@@ -1,32 +1,97 @@
-/**
- * STOMP TCP embedded broker E2E adapter.
- */
+/** STOMP TCP embedded broker real Agent E2E adapter. */
 import net from "node:net";
 import { runAdapterTest } from "./_context.mjs";
 
-/**
- * @param {string} host
- * @param {number} port
- * @param {string} destination
- * @param {string} body
- */
-function stompSend(host, port, destination, body) {
-  return new Promise((resolve, reject) => {
-    const socket = net.connect({ host, port }, () => {
-      socket.write("CONNECT\naccept-version:1.2\nhost:localhost\n\n\0");
-      setTimeout(() => {
-        socket.write(`SEND\ndestination:${destination}\ncontent-type:application/json\n\n${body}\0`);
-        setTimeout(() => {
-          socket.write("DISCONNECT\n\n\0");
-          socket.end();
-          resolve(undefined);
-        }, 300);
-      }, 300);
-    });
-    socket.setTimeout(8000);
-    socket.on("error", reject);
-    socket.on("timeout", () => reject(new Error("stomp tcp timeout")));
+function encodeFrame(command, headers = {}, body = "") {
+  const lines = [command, ...Object.entries(headers).map(([key, value]) => `${key}:${value}`)];
+  return `${lines.join("\n")}\n\n${body}\0`;
+}
+
+function unescapeHeader(value) {
+  return value.replace(/\\([cnr\\])/g, (_match, code) => ({
+    c: ":",
+    n: "\n",
+    r: "\r",
+    "\\": "\\",
+  })[code]);
+}
+
+function parseFrame(raw) {
+  const normalized = raw.replace(/^\r?\n+/, "");
+  const separator = normalized.search(/\r?\n\r?\n/);
+  const head = separator >= 0 ? normalized.slice(0, separator) : normalized;
+  const body = separator >= 0 ? normalized.slice(separator).replace(/^\r?\n\r?\n/, "") : "";
+  const [command = "", ...headerLines] = head.split(/\r?\n/);
+  const headers = Object.fromEntries(headerLines.filter(Boolean).map((line) => {
+    const colon = line.indexOf(":");
+    return colon < 0
+      ? [line, ""]
+      : [line.slice(0, colon), unescapeHeader(line.slice(colon + 1))];
+  }));
+  return { command, headers, body };
+}
+
+async function connectStomp(host, port) {
+  const socket = await new Promise((resolve, reject) => {
+    const candidate = net.connect({ host, port }, () => resolve(candidate));
+    candidate.once("error", reject);
   });
+  socket.setTimeout(45_000);
+  let buffer = "";
+  const frames = [];
+  const waiters = [];
+
+  function dispatch(frame) {
+    const index = waiters.findIndex((waiter) => waiter.predicate(frame));
+    if (index < 0) {
+      frames.push(frame);
+      return;
+    }
+    const [waiter] = waiters.splice(index, 1);
+    clearTimeout(waiter.timer);
+    waiter.resolve(frame);
+  }
+
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk) => {
+    buffer += chunk;
+    let end = buffer.indexOf("\0");
+    while (end >= 0) {
+      const raw = buffer.slice(0, end);
+      buffer = buffer.slice(end + 1);
+      if (raw.trim()) dispatch(parseFrame(raw));
+      end = buffer.indexOf("\0");
+    }
+  });
+
+  function waitForFrame(predicate, label, timeoutMs = 45_000) {
+    const existing = frames.findIndex(predicate);
+    if (existing >= 0) return Promise.resolve(frames.splice(existing, 1)[0]);
+    return new Promise((resolve, reject) => {
+      const waiter = { predicate, resolve, reject, timer: undefined };
+      waiter.timer = setTimeout(() => {
+        const index = waiters.indexOf(waiter);
+        if (index >= 0) waiters.splice(index, 1);
+        reject(new Error(`Timed out waiting for STOMP ${label}`));
+      }, timeoutMs);
+      waiter.timer.unref?.();
+      waiters.push(waiter);
+    });
+  }
+
+  socket.on("error", (error) => {
+    for (const waiter of waiters.splice(0)) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+  });
+  socket.on("timeout", () => socket.destroy(new Error("STOMP socket timeout")));
+
+  return {
+    send: (command, headers, body) => socket.write(encodeFrame(command, headers, body)),
+    waitForFrame,
+    close: () => socket.destroy(),
+  };
 }
 
 /** @param {ReturnType<import('./_context.mjs').createTestContext>} ctx */
@@ -36,20 +101,144 @@ export async function testStomp(ctx, results) {
     ctx,
     "stomp",
     async () => {
-      const status = await ctx.gatewayFetch("/stomp-tcp/status");
-      if (!status.ok) throw new Error(`/stomp-tcp/status → ${status.status}`);
+      if (!ctx.modelFixture) throw new Error("STOMP Agent E2E requires the local model fixture");
       await ctx.waitFor(() => ctx.tcpReachable(ctx.ports.stompTcp), {
         label: `stomp-tcp ${ctx.ports.stompTcp}`,
         timeoutMs: 30_000,
       });
-      await stompSend(
-        "127.0.0.1",
-        ctx.ports.stompTcp,
-        "/queue/agent.main.in",
-        JSON.stringify({ ...ctx.pingPayload, text: "e2e stomp ping" }),
-      );
+
+      const client = await connectStomp("127.0.0.1", ctx.ports.stompTcp);
+      try {
+        const connectedPromise = client.waitForFrame((frame) => frame.command === "CONNECTED", "CONNECTED");
+        client.send("CONNECT", {
+          "accept-version": "1.2",
+          host: "localhost",
+          "heart-beat": "0,0",
+          login: "stomp-e2e",
+          passcode: "stomp-e2e-secret",
+        });
+        const connected = await connectedPromise;
+        const sessionId = connected.headers.session;
+        if (!sessionId) throw new Error("STOMP CONNECTED frame did not include a session id");
+        const replyDestination = `/topic/session.stomp-tcp:${sessionId}@main`;
+
+        const subscribed = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "subscribe-ready",
+          "SUBSCRIBE receipt",
+        );
+        client.send("SUBSCRIBE", {
+          id: "agent-reply",
+          destination: replyDestination,
+          ack: "client-individual",
+          "prefetch-count": "1",
+          receipt: "subscribe-ready",
+        });
+        await subscribed;
+
+        const beforeCompletions = ctx.modelFixture.metrics.completions;
+        const messageId = `stomp-e2e-${Date.now()}`;
+        const replyPromise = client.waitForFrame(
+          (frame) => frame.command === "MESSAGE" && frame.headers.destination === replyDestination,
+          "Agent MESSAGE",
+        );
+        const sendReceipt = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "agent-turn-complete",
+          "SEND receipt",
+        );
+        client.send("SEND", {
+          destination: "/queue/agent.main.in",
+          "content-type": "application/json",
+          "message-id": messageId,
+          receipt: "agent-turn-complete",
+        }, JSON.stringify({ ...ctx.pingPayload, text: "Return the STOMP E2E fixture response." }));
+
+        const [message] = await Promise.all([replyPromise, sendReceipt]);
+        const envelope = JSON.parse(message.body);
+        if (envelope?.message?.text !== "openclaw e2e fixture reply") {
+          throw new Error(`Unexpected STOMP reply envelope: ${message.body}`);
+        }
+        if (envelope?.message?.source?.channel !== "stomp-tcp") {
+          throw new Error(`STOMP reply source channel missing: ${message.body}`);
+        }
+        if (envelope?.headers?.replyRoute?.destination !== replyDestination) {
+          throw new Error(`STOMP reply route missing: ${message.body}`);
+        }
+        if (!message.headers.ack) throw new Error("STOMP MESSAGE did not include an ACK id");
+
+        const ackReceipt = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "reply-acked",
+          "ACK receipt",
+        );
+        client.send("ACK", { id: message.headers.ack, receipt: "reply-acked" });
+        await ackReceipt;
+
+        const beginReceipt = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "tx-begun",
+          "BEGIN receipt",
+        );
+        client.send("BEGIN", { transaction: "agent-tx", receipt: "tx-begun" });
+        await beginReceipt;
+        const queuedReceipt = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "tx-send-queued",
+          "transactional SEND receipt",
+        );
+        client.send("SEND", {
+          destination: "/queue/agent.main.in",
+          transaction: "agent-tx",
+          receipt: "tx-send-queued",
+          "message-id": `stomp-tx-e2e-${Date.now()}`,
+        }, JSON.stringify({ ...ctx.pingPayload, text: "Return the transactional STOMP E2E fixture response." }));
+        await queuedReceipt;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (ctx.modelFixture.metrics.completions - beforeCompletions !== 1) {
+          throw new Error("transactional SEND reached Agent before COMMIT");
+        }
+
+        const txReply = client.waitForFrame(
+          (frame) => frame.command === "MESSAGE" && frame.headers.destination === replyDestination,
+          "transactional Agent MESSAGE",
+        );
+        const commitReceipt = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "tx-committed",
+          "COMMIT receipt",
+        );
+        client.send("COMMIT", { transaction: "agent-tx", receipt: "tx-committed" });
+        const [transactionMessage] = await Promise.all([txReply, commitReceipt]);
+        const transactionEnvelope = JSON.parse(transactionMessage.body);
+        if (transactionEnvelope?.message?.text !== "openclaw e2e fixture reply") {
+          throw new Error(`Unexpected transactional STOMP reply: ${transactionMessage.body}`);
+        }
+        if (!transactionMessage.headers.ack) throw new Error("transactional STOMP reply did not include ACK id");
+        const txAckReceipt = client.waitForFrame(
+          (frame) => frame.command === "RECEIPT" && frame.headers["receipt-id"] === "tx-reply-acked",
+          "transactional reply ACK receipt",
+        );
+        client.send("ACK", { id: transactionMessage.headers.ack, receipt: "tx-reply-acked" });
+        await txAckReceipt;
+
+        let status;
+        await ctx.waitFor(async () => {
+          status = await ctx.gatewayFetch("/stomp-tcp/status");
+          const snapshot = status.json?.data?.snapshot;
+          return status.ok
+            && snapshot?.routedInbound > 0
+            && snapshot?.routedOutbound > 0
+            && snapshot?.ackPending === 0
+            && snapshot?.activeTransactions === 0;
+        }, { label: "STOMP ACK and transport statistics", timeoutMs: 10_000 });
+
+        const completionDelta = ctx.modelFixture.metrics.completions - beforeCompletions;
+        if (completionDelta !== 2) {
+          throw new Error(`STOMP model completion count mismatch: expected 2, got ${completionDelta}`);
+        }
+      } finally {
+        client.close();
+      }
     },
-    { service: `embedded:${ctx.ports.stompTcp}`, method: "STOMP SEND + /stomp-tcp/status" },
+    {
+      service: `embedded:${ctx.ports.stompTcp}`,
+      method: "authenticated CONNECT → SEND/ACK → BEGIN/SEND/COMMIT → 2 real Agent Turns",
+    },
     results,
   );
 }

@@ -1,0 +1,40 @@
+{
+  "protocol": "openclaw.v1",
+  "connected": {
+    "type": "connected",
+    "connectionId": "3f021d1a-2179-4f95-a24c-f7175bcb1d04",
+    "version": "1"
+  },
+  "reply": {
+    "version": "1",
+    "message": {
+      "messageId": "web-socket-c419da8e-8606-4b59-84af-98ae8a6c6855",
+      "traceId": "20c80ee3-811a-4eda-bfce-8ac1a3484388",
+      "timestamp": 1784302564929,
+      "source": {
+        "channel": "web-socket",
+        "accountId": "default",
+        "userId": "browser-user",
+        "chatType": "direct",
+        "agentId": "main"
+      },
+      "contentType": "text",
+      "text": "openclaw e2e fixture reply",
+      "media": [],
+      "direction": "outbound"
+    },
+    "headers": {
+      "replyRoute": {
+        "connectionId": "3f021d1a-2179-4f95-a24c-f7175bcb1d04"
+      }
+    },
+    "type": "reply",
+    "sessionKey": "agent:main:main",
+    "messageId": "web-socket-browser-1784302564527"
+  },
+  "accepted": {
+    "type": "accepted",
+    "messageId": "web-socket-browser-1784302564527",
+    "version": "1"
+  }
+}

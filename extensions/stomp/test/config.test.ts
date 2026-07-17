@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { stompTcpChannelFixture } from "../../../test-utils/channel-fixtures.js";
-import { DEFAULT_STOMP_TCP_CONFIG, resolveStompTcpConfig } from "../src/config.js";
+import { DEFAULT_STOMP_TCP_CONFIG, resolveStompTcpConfig, validateStompTcpConfig } from "../src/config.js";
 
 describe("resolveStompTcpConfig", () => {
   it("applies defaults when channels.stomp-tcp is missing", () => {
@@ -74,5 +74,24 @@ describe("resolveStompTcpConfig", () => {
     expect(cfg.defaultAckMode).toBe("client-individual");
     expect(cfg.prefetchCount).toBe(5);
     expect(cfg.maxConnections).toBe(50);
+  });
+
+  it("保留并拒绝显式越界配置，而不是静默截断为最大值", () => {
+    const cfg = resolveStompTcpConfig({
+      channels: {
+        "stomp-tcp": {
+          port: 70_000,
+          defaultAckMode: "invalid",
+          limits: { maxPendingMessages: 0 },
+        },
+      },
+    });
+    expect(cfg.port).toBe(70_000);
+    expect(cfg.maxPendingMessages).toBe(0);
+    expect(validateStompTcpConfig(cfg)).toEqual(expect.arrayContaining([
+      expect.stringContaining("port must be"),
+      expect.stringContaining("maxPendingMessages must be"),
+      expect.stringContaining("defaultAckMode must be"),
+    ]));
   });
 });

@@ -55,10 +55,14 @@
         "inboundKey": { "type": "string", "default": "openclaw:inbound" },
         "outboundKey": { "type": "string", "default": "openclaw:outbound" },
         "consumerGroup": { "type": "string", "default": "openclaw-group" },
-        "consumerName": { "type": "string", "default": "openclaw-consumer-1" },
+        "consumerName": { "type": "string", "default": "" },
         "blockMs": { "type": "number", "default": 5000 },
         "count": { "type": "number", "default": 10 },
-        "createGroup": { "type": "boolean", "default": true }
+        "createGroup": { "type": "boolean", "default": true },
+        "pendingClaimIdleMs": { "type": "number", "default": 120000 },
+        "maxAttempts": { "type": "number", "default": 5 },
+        "deadLetterKey": { "type": "string", "default": "openclaw:inbound:dlq" },
+        "maxLen": { "type": "number", "default": 100000 }
       }
     },
     "payload": {
@@ -88,7 +92,17 @@
       "additionalProperties": false,
       "properties": {
         "reconnectMs": { "type": "number", "default": 3000 },
-        "maxRetries": { "type": "number", "default": 10 }
+        "maxRetries": { "type": "number", "default": 0 },
+        "startupTimeoutMs": { "type": "number", "default": 30000 }
+      }
+    },
+    "idempotency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "ttlMs": { "type": "number", "default": 600000 },
+        "maxEntries": { "type": "number", "default": 10000 }
       }
     }
   }
@@ -369,10 +383,18 @@ dmScope (来自 cfg.session.dmScope):
 |------|--------|------|
 | `stream.blockMs` | 5000 | XREADGROUP 阻塞超时。过短增加空轮询，过长延迟关闭 |
 | `stream.count` | 10 | 每批次最大消息数。过高增加内存，过低降低吞吐 |
-| `connection.reconnectMs` | 3000 | 重连间隔。设置过低会频繁重试 |
-| `connection.maxRetries` | 10 | 最大重连次数。超过后停止重连 |
+| `connection.allowInsecureRemote` | false | 是否允许远程明文 `redis://`；生产应保持 false |
+| `connection.reconnectMs` | 3000 | 指数退避基础间隔 |
+| `connection.reconnectMaxMs` | 30000 | 指数退避上限 |
+| `connection.reconnectJitterRatio` | 0.2 | 双向随机抖动比例 |
+| `connection.maxRetries` | 0 | 最大重连次数；0 表示持续重连 |
+| `connection.startupTimeoutMs` | 30000 | 启动连接超时 |
+| `stream.pendingClaimIdleMs` | 120000 | XAUTOCLAIM 的最小 idle 时间 |
+| `stream.maxAttempts` | 5 | 原子转入 DLQ 前最大投递次数 |
+| `stream.maxLen` | 100000 | 出站与 DLQ Stream 近似长度上限 |
+| `idempotency.maxEntries` | 10000 | 进程内已完成 entry 缓存上限 |
 | 消费错误退避 | min(1000×2^n, 30000)ms | 指数退避，上限 30 秒 |
-| `dedupCache` TTL | 不适用 | Pub/Sub 无幂等去重（Stream 由 ACK 保证） |
+| `idempotency.ttlMs` | 600000 | Stream entry 完成后的进程内幂等窗口；失败时释放 claim |
 
 ---
 
@@ -381,7 +403,7 @@ dmScope (来自 cfg.session.dmScope):
 | 错误 | 原因 | 解决 |
 |------|------|------|
 | `Redis client is not initialized` | 在连接前尝试 publish | 等待 `startRedisServer` 完成 |
-| `max reconnection attempts exceeded` | 重连次数超过 `maxRetries` | 检查 Redis 可用性，增加 `maxRetries` |
+| `max reconnection attempts exceeded` | 非零 `maxRetries` 已耗尽 | 检查 Redis 可用性；需要持续恢复时设为 0 |
 | `No route matched for channel` | 无匹配路由且无 `defaultAgentId` | 配置绑定或 `defaultAgentId` |
 | `Runtime not initialized` | PluginRuntime 未注入 | 检查插件注册流程 |
 | `connect ECONNREFUSED` | Redis 未运行或 URL 错误 | 检查 Redis 状态和 URL |
@@ -395,16 +417,16 @@ index.ts
   ├── openclaw/plugin-sdk/channel-core (defineChannelPluginEntry)
   ├── openclaw/plugin-sdk/core (PluginRuntime, OpenClawPluginApi)
   ├── channel.ts (redisStreamChannel)
-  ├── redis-stream-config.ts (resolveRedisChannelConfig, redactUrl)
+  ├── config.ts (resolveRedisChannelConfig, redactUrl)
   ├── runtime.ts (setRedisStreamRuntime)
   └── session-mapper.ts (getSessionStats)
 
 channel.ts
-  ├── redis-stream-server.ts (startRedisServer, stopRedisServer, getStats)
+  ├── transport/server.ts (startRedisServer, stopRedisServer, getStats)
   ├── publisher.ts (publishMessage, publishEntry)      ← 打破循环依赖
-  └── redis-stream-config.ts (resolveRedisChannelConfig, redactUrl)
+  └── config.ts (resolveRedisChannelConfig, redactUrl)
 
-redis-stream-server.ts
+transport/server.ts
   ├── redis (createClient, RedisClientType)
   ├── inbound.ts (handleInboundMessage)
   ├── topic-router.ts (loadChannelBindings)
@@ -430,7 +452,7 @@ session-mapper.ts
 ```
 
 **关键设计**：
-- `publisher.ts` 作为共享模块，打破 `redis-stream-server.ts` ↔ `inbound.ts` 循环依赖
+- `transport/publisher.ts` 作为共享模块，打破 `transport/server.ts` ↔ `inbound.ts` 循环依赖
 - `logger.ts` 集中所有 `console` 调用，提供注入点供 OpenClaw runtime 替换
 - `dm-scope.ts` 和 `topic-router.ts` 是纯函数模块，方便单元测试
 

@@ -1,10 +1,11 @@
-# openclaw-prometheus Configuration Example — v0.3.1
+# @partme.ai/openclaw-prometheus configuration — OpenClaw 2026.7.1
 
-port: 9090
 path: /metrics
 collectIntervalMs: 15000
 snapshotIntervalMs: 30000
 workloadWindowMs: 300000
+collectorTimeoutMs: 10000
+maxScrapeSeries: 10000
 includeRuntime: true
 
 monitoredProviders:

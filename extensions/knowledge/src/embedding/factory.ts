@@ -36,15 +36,15 @@ export function createEmbeddingService(config?: KnowledgeEmbeddingConfig): Embed
   if (provider) {
     switch (provider) {
       case 'openai':
-        return new OpenAIEmbeddingService(config);
+        return validateService(new OpenAIEmbeddingService(config));
       case 'dashscope':
-        return new DashScopeEmbeddingService(config);
+        return validateService(new DashScopeEmbeddingService(config));
       case 'zhipu':
-        return new ZhipuEmbeddingService(config);
+        return validateService(new ZhipuEmbeddingService(config));
       case 'qianfan':
-        return new QianfanEmbeddingService(config);
+        return validateService(new QianfanEmbeddingService(config));
       case 'ollama':
-        return new OllamaEmbeddingService(config);
+        return validateService(new OllamaEmbeddingService(config));
       default:
         throw new Error(`Unknown embedding provider: ${provider}`);
     }
@@ -52,7 +52,7 @@ export function createEmbeddingService(config?: KnowledgeEmbeddingConfig): Embed
 
   // 无显式 provider 时通过 apiKey 嗅探（兼容旧配置）
   if (config?.apiKey && config.apiKey.trim() !== '') {
-    return new OpenAIEmbeddingService(config);
+    return validateService(new OpenAIEmbeddingService(config));
   }
 
   // 无 provider 也无 apiKey → 抛出错误
@@ -60,4 +60,39 @@ export function createEmbeddingService(config?: KnowledgeEmbeddingConfig): Embed
     'No embedding provider configured. Set "embedding.provider" in your ' +
     'knowledge config to one of: openai, dashscope, zhipu, qianfan, ollama'
   );
+}
+
+function validateService(service: EmbeddingService): EmbeddingService {
+  const validateVector = (vector: number[], label: string): number[] => {
+    if (!Array.isArray(vector) || vector.length !== service.dimensions) {
+      throw new Error(`${label} returned ${Array.isArray(vector) ? vector.length : 'invalid'} dimensions; expected ${service.dimensions}`);
+    }
+    if (vector.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
+      throw new Error(`${label} returned a non-finite vector value`);
+    }
+    return vector;
+  };
+
+  return {
+    dimensions: service.dimensions,
+    modelName: service.modelName,
+    async embed(text: string): Promise<number[]> {
+      return validateVector(await service.embed(text), 'Embedding provider');
+    },
+    async embedBatch(texts: string[]): Promise<number[][]> {
+      const vectors = await service.embedBatch(texts);
+      if (!Array.isArray(vectors) || vectors.length !== texts.length) {
+        throw new Error(`Embedding provider returned ${Array.isArray(vectors) ? vectors.length : 'invalid'} vectors; expected ${texts.length}`);
+      }
+      return vectors.map((vector, index) => validateVector(vector, `Embedding provider result ${index}`));
+    },
+    async health(): Promise<boolean> {
+      try {
+        validateVector(await service.embed('health check'), 'Embedding provider health check');
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
 }

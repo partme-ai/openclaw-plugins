@@ -37,7 +37,7 @@
 - 安装插件：`openclaw plugins install @partme.ai/wecom`
 - 在企业微信后台进入 **安全与管理 -> 管理工具 -> 智能机器人**，创建 **API 模式**机器人，并复制 Bot ID 与 Secret。API 模式表示 OpenClaw 使用官方 Bot API 连接，而不是普通群机器人 Webhook。
 - 复制 Bot ID 和 Secret。
-- 使用 Node.js 22+ 与 OpenClaw 2026.4.12+。
+- 使用 Node.js 22+ 与 OpenClaw 2026.7.1+。
 
 ### 完整 JSON
 
@@ -348,6 +348,7 @@ openclaw pairing approve wecom <配对码>
       "agent": {
         "corpId": "<你的_CORP_ID>",
         "corpSecret": "<你的_CORP_SECRET>",
+        "apiBaseUrl": "https://qyapi.weixin.qq.com",
         "agentId": "<你的_AGENT_ID>",
         "token": "<你的回调_TOKEN>",
         "encodingAESKey": "<你的_43位_ENCODING_AES_KEY>",
@@ -373,6 +374,7 @@ https://<你的_GATEWAY_HOST>/plugins/wecom/agent/default
 |------|------|
 | `agent.corpId` | 企业微信 Corp ID。 |
 | `agent.corpSecret` | 自建应用 Secret。 |
+| `agent.apiBaseUrl` | OpenAPI 基础地址，默认官方地址；覆盖时要求 HTTPS，本机 loopback 可用 HTTP。 |
 | `agent.agentId` | 自建应用 Agent ID。 |
 | `agent.token` | 回调验证 Token。 |
 | `agent.encodingAESKey` | 43 位回调 AES 密钥。 |

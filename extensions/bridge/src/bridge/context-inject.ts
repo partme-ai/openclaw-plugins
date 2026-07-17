@@ -45,7 +45,7 @@ export function registerContextInjection(api: OpenClawPluginApi): void {
   const cfg = (api.pluginConfig ?? {}) as BridgeConfig;
 
   api.on("before_prompt_build", (_event, ctx) => {
-    const channelId = ctx?.channelId;
+    const channelId = ctx?.channel ?? ctx?.messageProvider ?? ctx?.channelId;
     // 无渠道上下文时不注入，避免污染非 Channel 场景（例如本地 CLI）。
     if (!channelId) return;
 

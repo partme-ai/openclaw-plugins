@@ -1,55 +1,47 @@
 /**
- * 内存 Trace 存储与 Span 生命周期管理。
+ * @fileoverview 活动 Trace、Span 与 Tool Call 关联的有界进程内状态机。
+ *
+ * 同时按 sessionKey 和 runId 定位活动 Trace，按 toolCallId 关联子 Span；结束时先固化并导出
+ * 悬挂子 Span，再结束根 Span并清除全部索引。近期 Trace 使用 200 条 LRU 风格上限，TTL 清理
+ * 会把 orphan Span 以 error 状态真正关闭，而不是只删除映射。
  */
-
 import type { Span, SpanKind, SpanStatus, TracingBackend } from "../shared/types.js";
+import { redactTraceText, sanitizeTraceAttributes } from "../shared/redact.js";
 
-/** 单会话 / run 的活跃 trace 上下文 */
+/** 活动 Trace 的轻量索引，同时由 sessionKey 和 runId 指向同一对象。 */
 export interface ActiveTraceContext {
   traceId: string;
   rootSpanId: string;
   spanCount: number;
   sessionKey?: string;
   runId?: string;
+  createdAtMs?: number;
+  lastTouchedAtMs?: number;
 }
 
-/** 最近完成的 trace 缓存（环形缓冲） */
-const recentTraces = new Map<string, Span[]>();
+/** 结束 Span 时可覆盖的计时和最终属性；属性会在导出前复制固化。 */
+export interface EndSpanOptions {
+  endTimeMs?: number;
+  durationMs?: number;
+  attributes?: Record<string, string | number | boolean>;
+}
+
 const MAX_RECENT_TRACES = 200;
-
-/** 活跃 span：spanId → Span */
+const DEFAULT_ACTIVE_TRACE_TTL_MS = 30 * 60_000;
+const recentTraces = new Map<string, Span[]>();
 const activeSpans = new Map<string, Span>();
-
-/** sessionKey → ActiveTraceContext */
 const sessionTraceMap = new Map<string, ActiveTraceContext>();
-
-/** runId → ActiveTraceContext（优先于 sessionKey） */
 const runTraceMap = new Map<string, ActiveTraceContext>();
+const toolSpanMap = new Map<string, { spanId: string; traceId: string }>();
 
-/** toolCallId → spanId */
-const toolSpanMap = new Map<string, string>();
-
-/**
- * 生成随机十六进制 ID。
- *
- * @param bytes - 字节长度（traceId=16, spanId=8）
- * @returns 小写十六进制字符串
- */
+/** 使用 Web Crypto CSPRNG 生成指定字节数的小写十六进制 Trace/Span ID。 */
 export function randomHexId(bytes: number): string {
-  const arr = new Uint8Array(bytes);
-  crypto.getRandomValues(arr);
-  return Array.from(arr)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const array = new Uint8Array(bytes);
+  crypto.getRandomValues(array);
+  return Array.from(array, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * 创建 Span 并登记为活跃。
- *
- * @param name - Span 名称（如 `message.received`、`tool:search`）
- * @param options - traceId、parentSpanId、kind、attributes 等可选字段
- * @returns 新建且已写入 activeSpans 的 Span
- */
+/** 创建活动 Span 并登记到进程内有界生命周期状态机。 */
 export function createSpan(
   name: string,
   options: {
@@ -63,174 +55,189 @@ export function createSpan(
     traceId: options.traceId ?? randomHexId(16),
     spanId: randomHexId(8),
     parentSpanId: options.parentSpanId,
-    name,
+    // Span name 同样会进入查询、文件和 OTLP；第三方工具名可能含凭据、控制字符或超长文本。
+    name: redactTraceText(name),
     kind: options.kind ?? "internal",
     startTimeMs: Date.now(),
-    attributes: options.attributes ?? {},
+    // TraceStore 是所有查询与导出后端的共同上游，在此统一脱敏并复制属性。
+    attributes: sanitizeTraceAttributes(options.attributes),
     status: "unset",
     events: [],
   };
-
   activeSpans.set(span.spanId, span);
   return span;
 }
 
-/**
- * 结束 Span，写入 recentTraces，并可选导出到后端。
- *
- * @param spanId - 待结束的 spanId
- * @param status - 最终状态（ok / error / unset）
- * @param backend - 非空时将 span 导出到追踪后端
- * @returns 已结束的 Span；不存在时 undefined
- */
+/** 在导出前固化计时和属性，避免异步后端看到后续可变状态。 */
 export async function endSpan(
   spanId: string,
   status: SpanStatus,
   backend: TracingBackend | null,
+  options: EndSpanOptions = {},
 ): Promise<Span | undefined> {
   const span = activeSpans.get(spanId);
-  if (!span) {
-    return undefined;
-  }
+  if (!span) return undefined;
 
-  span.endTimeMs = Date.now();
+  const endTimeMs = options.endTimeMs ?? Date.now();
+  if (options.durationMs !== undefined && Number.isFinite(options.durationMs) && options.durationMs >= 0) {
+    span.startTimeMs = Math.max(0, endTimeMs - options.durationMs);
+  }
+  span.endTimeMs = endTimeMs;
   span.status = status;
+  if (options.attributes) Object.assign(span.attributes, sanitizeTraceAttributes(options.attributes));
   activeSpans.delete(spanId);
 
-  const existing = recentTraces.get(span.traceId) ?? [];
-  existing.push(span);
-  recentTraces.set(span.traceId, existing);
-
-  if (recentTraces.size > MAX_RECENT_TRACES) {
-    const oldest = recentTraces.keys().next().value;
-    if (oldest) {
-      recentTraces.delete(oldest);
-    }
+  const completed = cloneSpan(span);
+  const trace = recentTraces.get(span.traceId) ?? [];
+  trace.push(completed);
+  recentTraces.delete(span.traceId);
+  recentTraces.set(span.traceId, trace);
+  while (recentTraces.size > MAX_RECENT_TRACES) {
+    const oldest = recentTraces.keys().next().value as string | undefined;
+    if (!oldest) break;
+    recentTraces.delete(oldest);
   }
-
-  if (backend) {
-    try {
-      await backend.exportSpans([span]);
-    } catch (err) {
-      console.error("[openclaw-tracing] Span export failed:", err);
-    }
-  }
-
-  return span;
+  if (backend) await backend.exportSpans([completed]);
+  return cloneSpan(completed);
 }
 
-/**
- * 注册活跃 trace 上下文。
- *
- * @param ctx - 含 traceId、rootSpanId 及可选 sessionKey/runId 的上下文
- * @returns void
- */
+/** 将同一 Trace 绑定到可用的 sessionKey/runId，并刷新其活动时间。 */
 export function registerActiveTrace(ctx: ActiveTraceContext): void {
-  if (ctx.sessionKey) {
-    sessionTraceMap.set(ctx.sessionKey, ctx);
-  }
-  if (ctx.runId) {
-    runTraceMap.set(ctx.runId, ctx);
-  }
+  const now = Date.now();
+  ctx.createdAtMs ??= now;
+  ctx.lastTouchedAtMs = now;
+  if (ctx.sessionKey) sessionTraceMap.set(ctx.sessionKey, ctx);
+  if (ctx.runId) runTraceMap.set(ctx.runId, ctx);
 }
 
-/**
- * 按 runId 或 sessionKey 查找活跃 trace。
- *
- * @param sessionKey - OpenClaw 会话键（可选）
- * @param runId - Agent run 标识（优先于 sessionKey）
- * @returns 匹配的 ActiveTraceContext；未找到时 undefined
- */
+/** 优先按 runId、其次按 sessionKey 定位活动 Trace，并刷新 TTL 活跃时间。 */
 export function resolveActiveTrace(sessionKey?: string, runId?: string): ActiveTraceContext | undefined {
-  if (runId) {
-    const byRun = runTraceMap.get(runId);
-    if (byRun) {
-      return byRun;
+  const context = (runId ? runTraceMap.get(runId) : undefined)
+    ?? (sessionKey ? sessionTraceMap.get(sessionKey) : undefined);
+  if (context) context.lastTouchedAtMs = Date.now();
+  return context;
+}
+
+/** 在单 Trace 上限内预留一个 Span 名额；超过上限返回 false 以阻止无界增长。 */
+export function incrementSpanCount(active: ActiveTraceContext, maxSpansPerTrace: number): boolean {
+  active.lastTouchedAtMs = Date.now();
+  if (active.spanCount >= maxSpansPerTrace) return false;
+  active.spanCount += 1;
+  return true;
+}
+
+/** 从 session/run 两类索引中原子式移除同一个活动 Trace 上下文。 */
+export function clearActiveTrace(sessionKey?: string, runId?: string): ActiveTraceContext | undefined {
+  const context = resolveActiveTrace(sessionKey, runId);
+  if (!context) return undefined;
+  for (const [key, candidate] of sessionTraceMap) {
+    if (candidate === context) sessionTraceMap.delete(key);
+  }
+  for (const [key, candidate] of runTraceMap) {
+    if (candidate === context) runTraceMap.delete(key);
+  }
+  return context;
+}
+
+/** 将 OpenClaw toolCallId 绑定到对应子 Span，供 after_tool_call 精确收尾。 */
+export function bindToolSpan(toolCallId: string, spanId: string, traceId: string): void {
+  toolSpanMap.set(toolCallId, { spanId, traceId });
+}
+
+/** 一次性取出并删除工具 Span 绑定，避免重复 after hook 二次结束同一 Span。 */
+export function takeToolSpanId(toolCallId: string): string | undefined {
+  const binding = toolSpanMap.get(toolCallId);
+  toolSpanMap.delete(toolCallId);
+  return binding?.spanId;
+}
+
+/** 结束 trace 内仍悬挂的 tool span，再结束 root span并清理所有映射。 */
+export async function finishActiveTrace(
+  sessionKey: string | undefined,
+  runId: string | undefined,
+  rootStatus: SpanStatus,
+  backend: TracingBackend | null,
+  reason?: string,
+): Promise<boolean> {
+  const context = clearActiveTrace(sessionKey, runId);
+  if (!context) return false;
+
+  for (const [toolCallId, binding] of toolSpanMap) {
+    if (binding.traceId === context.traceId) toolSpanMap.delete(toolCallId);
+  }
+  const childIds = Array.from(activeSpans.values())
+    .filter((span) => span.traceId === context.traceId && span.spanId !== context.rootSpanId)
+    .map((span) => span.spanId);
+  let firstExportError: unknown;
+  for (const childId of childIds) {
+    try {
+      await endSpan(childId, "error", backend, {
+        attributes: { "openclaw.incomplete": true, ...(reason ? { "openclaw.end_reason": reason } : {}) },
+      });
+    } catch (error) {
+      firstExportError ??= error;
     }
   }
-  if (sessionKey) {
-    return sessionTraceMap.get(sessionKey);
+  try {
+    await endSpan(context.rootSpanId, rootStatus, backend, {
+      attributes: reason ? { "openclaw.end_reason": reason } : undefined,
+    });
+  } catch (error) {
+    firstExportError ??= error;
   }
-  return undefined;
+  if (firstExportError) throw firstExportError;
+  return true;
 }
 
 /**
- * 递增 trace 内 span 计数；超过上限时返回 false。
+ * Gateway 停止前关闭并导出全部活动 Trace 与无索引孤儿 Span。
  *
- * @param active - 当前活跃 trace 上下文（会被原地修改 spanCount）
- * @param maxSpansPerTrace - 单 trace 允许的最大 span 数
- * @returns 未超限时 true，否则 false
+ * 每个未完成 Span 都标记为 error；单个后端导出失败不会阻止其余 Span 回收，最后再抛出首个
+ * 错误，使调用方仍能执行后端 shutdown，同时保留故障可见性。
  */
-export function incrementSpanCount(active: ActiveTraceContext, maxSpansPerTrace: number): boolean {
-  active.spanCount += 1;
-  return active.spanCount <= maxSpansPerTrace;
-}
-
-/**
- * 清理指定会话 / run 的 trace 映射。
- *
- * @param sessionKey - 要移除的 sessionKey（可选）
- * @param runId - 要移除的 runId（可选）
- * @returns void
- */
-export function clearActiveTrace(sessionKey?: string, runId?: string): void {
-  if (runId) {
-    runTraceMap.delete(runId);
+export async function finishAllActiveTraces(
+  backend: TracingBackend | null,
+  reason = "gateway_shutdown",
+): Promise<number> {
+  const contexts = new Set([...sessionTraceMap.values(), ...runTraceMap.values()]);
+  let finished = 0;
+  let firstExportError: unknown;
+  for (const context of contexts) {
+    try {
+      if (await finishActiveTrace(context.sessionKey, context.runId, "error", backend, reason)) finished += 1;
+    } catch (error) {
+      finished += 1;
+      firstExportError ??= error;
+    }
   }
-  if (sessionKey) {
-    sessionTraceMap.delete(sessionKey);
+  for (const spanId of [...activeSpans.keys()]) {
+    try {
+      await endSpan(spanId, "error", backend, { attributes: { "openclaw.end_reason": reason } });
+    } catch (error) {
+      firstExportError ??= error;
+    }
   }
+  toolSpanMap.clear();
+  if (firstExportError) throw firstExportError;
+  return finished;
 }
 
-/**
- * 绑定 toolCallId 与 spanId。
- *
- * @param toolCallId - OpenClaw tool 调用 ID
- * @param spanId - 对应的 client span ID
- * @returns void
- */
-export function bindToolSpan(toolCallId: string, spanId: string): void {
-  toolSpanMap.set(toolCallId, spanId);
-}
-
-/**
- * 取出并移除 toolCallId 对应的 spanId。
- *
- * @param toolCallId - OpenClaw tool 调用 ID
- * @returns 绑定的 spanId；不存在时 undefined
- */
-export function takeToolSpanId(toolCallId: string): string | undefined {
-  const spanId = toolSpanMap.get(toolCallId);
-  if (spanId) {
-    toolSpanMap.delete(toolCallId);
-  }
-  return spanId;
-}
-
-/**
- * 获取当前内存中活跃 Span 数量。
- *
- * @returns activeSpans Map 的大小
- */
+/** 返回当前尚未结束的 Span 数，用于状态接口和泄漏监控。 */
 export function getActiveSpanCount(): number {
   return activeSpans.size;
 }
 
-/**
- * 获取 recent traces 环形缓冲中的 trace 数量。
- *
- * @returns recentTraces Map 的大小
- */
+/** 返回去重后的活动 Trace 数；同一上下文可能同时存在 session/run 两个索引。 */
+export function getActiveTraceCount(): number {
+  return new Set([...sessionTraceMap.values(), ...runTraceMap.values()]).size;
+}
+
+/** 返回进程内近期 Trace 数；该存储最多保留 200 条。 */
 export function getRecentTraceCount(): number {
   return recentTraces.size;
 }
 
-/**
- * 列出最近 trace 摘要（按插入顺序取尾部 limit 条）。
- *
- * @param limit - 最大返回条数
- * @returns trace 摘要数组（含 spanCount、时间范围、rootSpan 名称）
- */
+/** 按最近写入顺序返回有界 Trace 摘要，不暴露可变的内部 Span 对象。 */
 export function listRecentTraces(limit: number): Array<{
   traceId: string;
   spanCount: number;
@@ -238,63 +245,73 @@ export function listRecentTraces(limit: number): Array<{
   endTimeMs?: number;
   rootSpan: string;
 }> {
-  return Array.from(recentTraces.entries())
-    .slice(-limit)
-    .map(([traceId, spans]) => ({
+  const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, MAX_RECENT_TRACES) : 50;
+  return Array.from(recentTraces.entries()).slice(-safeLimit).map(([traceId, spans]) => {
+    let startTimeMs = Number.POSITIVE_INFINITY;
+    let endTimeMs = 0;
+    let allEnded = true;
+    for (const span of spans) {
+      startTimeMs = Math.min(startTimeMs, span.startTimeMs);
+      if (span.endTimeMs === undefined) allEnded = false;
+      else endTimeMs = Math.max(endTimeMs, span.endTimeMs);
+    }
+    return {
       traceId,
       spanCount: spans.length,
-      startTimeMs: Math.min(...spans.map((s) => s.startTimeMs)),
-      endTimeMs: spans.every((s) => s.endTimeMs) ? Math.max(...spans.map((s) => s.endTimeMs!)) : undefined,
-      rootSpan: spans.find((s) => !s.parentSpanId)?.name ?? "(unknown)",
-    }));
+      startTimeMs,
+      endTimeMs: allEnded ? endTimeMs : undefined,
+      rootSpan: spans.find((span) => !span.parentSpanId)?.name ?? "(unknown)",
+    };
+  });
 }
 
-/**
- * 获取单个 trace 的全部 spans。
- *
- * @param traceId - 目标 trace ID
- * @returns 该 trace 的 Span 数组；不存在时 undefined
- */
+/** 返回指定 Trace 的深复制 Span 列表，防止状态接口调用方修改内部缓存。 */
 export function getTraceSpans(traceId: string): Span[] | undefined {
-  return recentTraces.get(traceId);
+  return recentTraces.get(traceId)?.map(cloneSpan);
 }
 
-/**
- * 清理过期映射，防止内存泄漏。
- *
- * @returns void
- */
-export function cleanupSessionTraces(): void {
-  if (sessionTraceMap.size > 10_000) {
-    const keysToDelete = Array.from(sessionTraceMap.keys()).slice(0, 5_000);
-    for (const key of keysToDelete) {
-      sessionTraceMap.delete(key);
+/** TTL 清理会真正关闭 orphan spans，而不只是丢掉索引。 */
+export async function cleanupSessionTraces(
+  backend: TracingBackend | null,
+  nowMs = Date.now(),
+  ttlMs = DEFAULT_ACTIVE_TRACE_TTL_MS,
+): Promise<number> {
+  const contexts = new Set([...sessionTraceMap.values(), ...runTraceMap.values()]);
+  let cleaned = 0;
+  let firstExportError: unknown;
+  for (const context of contexts) {
+    if (nowMs - (context.lastTouchedAtMs ?? context.createdAtMs ?? nowMs) < ttlMs) continue;
+    try {
+      if (await finishActiveTrace(context.sessionKey, context.runId, "error", backend, "trace_ttl_expired")) {
+        cleaned += 1;
+      }
+    } catch (error) {
+      cleaned += 1;
+      firstExportError ??= error;
     }
   }
-  if (runTraceMap.size > 10_000) {
-    const keysToDelete = Array.from(runTraceMap.keys()).slice(0, 5_000);
-    for (const key of keysToDelete) {
-      runTraceMap.delete(key);
-    }
-  }
-  if (toolSpanMap.size > 20_000) {
-    const keysToDelete = Array.from(toolSpanMap.keys()).slice(0, 10_000);
-    for (const key of keysToDelete) {
-      toolSpanMap.delete(key);
-    }
-  }
+  if (firstExportError) throw firstExportError;
+  return cleaned;
 }
 
-/**
- * Gateway 停止或插件卸载时清空全部内存状态。
- *
- * @returns void
- */
+/** 清空所有活动与近期索引；仅供生命周期最终清理和测试隔离使用。 */
 export function resetTraceStore(): void {
   activeSpans.clear();
+  recentTraces.clear();
   sessionTraceMap.clear();
   runTraceMap.clear();
   toolSpanMap.clear();
+}
+
+function cloneSpan(span: Span): Span {
+  return {
+    ...span,
+    attributes: { ...span.attributes },
+    events: span.events.map((event) => ({
+      ...event,
+      attributes: event.attributes ? { ...event.attributes } : undefined,
+    })),
+  };
 }
 
 export { activeSpans, recentTraces };

@@ -36,6 +36,8 @@ import type {
 export type WeixinApiOptions = {
   baseUrl: string;
   token?: string;
+  /** 当前账号的 SKRouteTag；显式值优先于登录阶段读取的顶层兼容配置。 */
+  routeTag?: string;
   timeoutMs?: number;
   /** Long-poll timeout for getUpdates (server may hold the request up to this). */
   longPollTimeoutMs?: number;
@@ -94,9 +96,44 @@ const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const DEFAULT_API_TIMEOUT_MS = 15_000;
 /** Default timeout for lightweight API requests (getConfig, sendTyping). */
 const DEFAULT_CONFIG_TIMEOUT_MS = 10_000;
+const DEFAULT_GET_TIMEOUT_MS = 15_000;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 function ensureTrailingSlash(url: string): string {
   return url.endsWith("/") ? url : `${url}/`;
+}
+
+async function readBoundedText(response: Response, label: string): Promise<string> {
+  const contentLength = Number(response.headers?.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`${label}: response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+  }
+  if (!response.body) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, "utf-8") > MAX_RESPONSE_BYTES) {
+      throw new Error(`${label}: response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+    }
+    return text;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error(`${label}: response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf-8");
 }
 
 /** X-WECHAT-UIN header: random uint32 -> decimal string -> base64. */
@@ -106,25 +143,25 @@ function randomWechatUin(): string {
 }
 
 /** Build headers shared by both GET and POST requests. */
-function buildCommonHeaders(): Record<string, string> {
+function buildCommonHeaders(explicitRouteTag?: string): Record<string, string> {
   const headers: Record<string, string> = {
     "iLink-App-Id": ILINK_APP_ID,
     "iLink-App-ClientVersion": String(ILINK_APP_CLIENT_VERSION),
   };
-  const routeTag = loadConfigRouteTag();
+  const routeTag = explicitRouteTag?.trim() || loadConfigRouteTag();
   if (routeTag) {
     headers.SKRouteTag = routeTag;
   }
   return headers;
 }
 
-function buildHeaders(opts: { token?: string; body: string }): Record<string, string> {
+function buildHeaders(opts: { token?: string; routeTag?: string; body: string }): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
     "Content-Length": String(Buffer.byteLength(opts.body, "utf-8")),
     "X-WECHAT-UIN": randomWechatUin(),
-    ...buildCommonHeaders(),
+    ...buildCommonHeaders(opts.routeTag),
   };
   if (opts.token?.trim()) {
     headers.Authorization = `Bearer ${opts.token.trim()}`;
@@ -146,35 +183,31 @@ export async function apiGetFetch(params: {
   endpoint: string;
   timeoutMs?: number;
   label: string;
+  routeTag?: string;
 }): Promise<string> {
   const base = ensureTrailingSlash(params.baseUrl);
   const url = new URL(params.endpoint, base);
-  const hdrs = buildCommonHeaders();
+  const hdrs = buildCommonHeaders(params.routeTag);
   logger.debug(`GET ${redactUrl(url.toString())}`);
 
-  const timeoutMs = params.timeoutMs;
-  const controller =
-    timeoutMs != null && timeoutMs > 0 ? new AbortController() : undefined;
-  const t =
-    controller != null && timeoutMs != null
-      ? setTimeout(() => controller.abort(), timeoutMs)
-      : undefined;
+  const timeoutMs = params.timeoutMs ?? DEFAULT_GET_TIMEOUT_MS;
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  t.unref?.();
   try {
     const res = await fetch(url.toString(), {
       method: "GET",
       headers: hdrs,
-      ...(controller ? { signal: controller.signal } : {}),
+      signal: controller.signal,
     });
-    if (t !== undefined) clearTimeout(t);
-    const rawText = await res.text();
-    logger.debug(`${params.label} status=${res.status} raw=${redactBody(rawText)}`);
+    const rawText = await readBoundedText(res, params.label);
+    logger.debug(`${params.label} status=${res.status} responseBytes=${Buffer.byteLength(rawText)}`);
     if (!res.ok) {
-      throw new Error(`${params.label} ${res.status}: ${rawText}`);
+      throw new Error(`${params.label} ${res.status}`);
     }
     return rawText;
-  } catch (err) {
-    if (t !== undefined) clearTimeout(t);
-    throw err;
+  } finally {
+    clearTimeout(t);
   }
 }
 
@@ -187,16 +220,18 @@ async function apiPostFetch(params: {
   endpoint: string;
   body: string;
   token?: string;
+  routeTag?: string;
   timeoutMs: number;
   label: string;
 }): Promise<string> {
   const base = ensureTrailingSlash(params.baseUrl);
   const url = new URL(params.endpoint, base);
-  const hdrs = buildHeaders({ token: params.token, body: params.body });
+  const hdrs = buildHeaders({ token: params.token, routeTag: params.routeTag, body: params.body });
   logger.debug(`POST ${redactUrl(url.toString())} body=${redactBody(params.body)}`);
 
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), params.timeoutMs);
+  t.unref?.();
   try {
     const res = await fetch(url.toString(), {
       method: "POST",
@@ -204,16 +239,14 @@ async function apiPostFetch(params: {
       body: params.body,
       signal: controller.signal,
     });
-    clearTimeout(t);
-    const rawText = await res.text();
-    logger.debug(`${params.label} status=${res.status} raw=${redactBody(rawText)}`);
+    const rawText = await readBoundedText(res, params.label);
+    logger.debug(`${params.label} status=${res.status} responseBytes=${Buffer.byteLength(rawText)}`);
     if (!res.ok) {
-      throw new Error(`${params.label} ${res.status}: ${rawText}`);
+      throw new Error(`${params.label} ${res.status}`);
     }
     return rawText;
-  } catch (err) {
+  } finally {
     clearTimeout(t);
-    throw err;
   }
 }
 
@@ -224,11 +257,7 @@ async function apiPostFetch(params: {
  * with ret=0 so the caller can simply retry. This is normal for long-poll.
  */
 export async function getUpdates(
-  params: GetUpdatesReq & {
-    baseUrl: string;
-    token?: string;
-    timeoutMs?: number;
-  },
+  params: GetUpdatesReq & WeixinApiOptions,
 ): Promise<GetUpdatesResp> {
   const timeout = params.timeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
   try {
@@ -240,6 +269,7 @@ export async function getUpdates(
         base_info: buildBaseInfo(),
       }),
       token: params.token,
+      routeTag: params.routeTag,
       timeoutMs: timeout,
       label: "getUpdates",
     });
@@ -277,6 +307,7 @@ export async function getUploadUrl(
       base_info: buildBaseInfo(),
     }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "getUploadUrl",
   });
@@ -293,6 +324,7 @@ export async function sendMessage(
     endpoint: "ilink/bot/sendmessage",
     body: JSON.stringify({ ...params.body, base_info: buildBaseInfo() }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "sendMessage",
   });
@@ -311,6 +343,7 @@ export async function getConfig(
       base_info: buildBaseInfo(),
     }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "getConfig",
   });
@@ -327,6 +360,7 @@ export async function sendTyping(
     endpoint: "ilink/bot/sendtyping",
     body: JSON.stringify({ ...params.body, base_info: buildBaseInfo() }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "sendTyping",
   });

@@ -66,6 +66,17 @@ function resolveWithinRoot(filePath: string, rootDir?: string): string {
 }
 
 /**
+ * 校验真实路径仍位于真实根目录中。
+ * 仅比较 `path.resolve` 只能拦截字面量 `..`，无法阻止 root 内符号链接指向 root 外部。
+ */
+function assertRealPathWithinRoot(realPath: string, realRoot: string, originalPath: string): void {
+  const relative = path.relative(realRoot, realPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`path escapes root through symlink: ${originalPath}`);
+  }
+}
+
+/**
  * 创建受限本地路径守卫（OpenClaw security-runtime 不可用时的降级实现）。
  *
  * @returns 满足 {@link PathGuardApi} 的本地实现
@@ -74,26 +85,65 @@ function createLocalPathGuard(): PathGuardApi {
   return {
     async readRegularFile(filePath, options) {
       const resolved = resolveWithinRoot(filePath, options?.rootDir);
-      const stat = await fsPromises.stat(resolved);
+      const realPath = await fsPromises.realpath(resolved);
+      if (options?.rootDir?.trim()) {
+        const realRoot = await fsPromises.realpath(path.resolve(options.rootDir));
+        assertRealPathWithinRoot(realPath, realRoot, filePath);
+      }
+      const stat = await fsPromises.stat(realPath);
       if (!stat.isFile()) throw new Error(`not a regular file: ${filePath}`);
       const maxBytes = options?.maxBytes;
       if (maxBytes != null && stat.size > maxBytes) {
         throw new Error(`file too large: ${stat.size} > ${maxBytes}`);
       }
-      return fsPromises.readFile(resolved);
+      const data = await fsPromises.readFile(realPath);
+      if (maxBytes != null && data.length > maxBytes) {
+        throw new Error(`file grew beyond limit: ${data.length} > ${maxBytes}`);
+      }
+      return data;
     },
     statRegularFileSync(filePath, rootDir) {
       const resolved = resolveWithinRoot(filePath, rootDir);
-      const stat = fs.statSync(resolved);
+      const realPath = fs.realpathSync(resolved);
+      if (rootDir?.trim()) {
+        const realRoot = fs.realpathSync(path.resolve(rootDir));
+        assertRealPathWithinRoot(realPath, realRoot, filePath);
+      }
+      const stat = fs.statSync(realPath);
       if (!stat.isFile()) throw new Error(`not a regular file: ${filePath}`);
       return stat;
     },
     async writeExternalFileWithinRoot({ rootDir, relativePath, data }) {
       const root = path.resolve(rootDir);
       const target = resolveWithinRoot(path.join(root, relativePath), root);
+      await fsPromises.mkdir(root, { recursive: true });
       await fsPromises.mkdir(path.dirname(target), { recursive: true });
-      await fsPromises.writeFile(target, data);
-      return target;
+      const realRoot = await fsPromises.realpath(root);
+      const realParent = await fsPromises.realpath(path.dirname(target));
+      assertRealPathWithinRoot(realParent, realRoot, relativePath);
+      const safeTarget = path.join(realParent, path.basename(target));
+      const existing = await fsPromises.lstat(safeTarget).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (existing?.isSymbolicLink()) {
+        throw new Error(`refusing to write through symbolic link: ${relativePath}`);
+      }
+      // 最终文件再由 O_NOFOLLOW 兜底，缩小 lstat 与 open 之间被替换成符号链接的竞态窗口。
+      const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+      const handle = await fsPromises.open(
+        safeTarget,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | noFollow,
+        0o600,
+      );
+      try {
+        await handle.chmod(0o600);
+        await handle.writeFile(data);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      return safeTarget;
     },
     safeEqualSecret(a, b) {
       const ba = Buffer.from(a);

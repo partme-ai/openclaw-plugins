@@ -30,10 +30,11 @@ import type { ChannelLimitsOpenClawConfig } from "@partme.ai/openclaw-message-sd
 
 import { resolveRabbitmqAgentReplyTimeoutMs } from "./config/resolvers.js";
 import {
-  getRabbitmqIdempotencyCache,
+  getRabbitmqClaimableDedupe,
   mapRabbitmqWirePayloadMode,
 } from "./shared/wire-helpers.js";
-import type { InboundEvent } from "./transport/server.js";
+import { logRabbitmq, type InboundEvent } from "./transport/server.js";
+import { redactRabbitmqError } from "./shared/redact.js";
 
 /** @description 单条入站消息的处理结果（接受/拒绝及诊断字段）。 */
 interface InboundResult {
@@ -54,13 +55,13 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
   const cfg = getRabbitmqChannelConfig() ?? DEFAULT_RABBITMQ_CONFIG;
 
   if (!shouldProcessTopic(event.routingKey, config.subscribeTopics)) {
-    console.log(`[openclaw-rabbitmq] Ignored topic not in subscribeTopics: ${event.routingKey}`);
+    logRabbitmq("debug", `[openclaw-rabbitmq] Ignored topic not in subscribeTopics: ${event.routingKey}`);
     return { accepted: false, reason: "topic_not_in_subscribe_topics" };
   }
 
   const route = resolveInboundRoute(event.routingKey, config);
   if (!route) {
-    console.warn(`[openclaw-rabbitmq] No route matched for topic: ${event.routingKey}`);
+    logRabbitmq("warn", `[openclaw-rabbitmq] No route matched for topic: ${event.routingKey}`);
     return { accepted: false, reason: "no_route_matched" };
   }
 
@@ -76,7 +77,6 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
     mode: mapRabbitmqWirePayloadMode(config.payload.mode),
     channel: "rabbitmq",
     idempotencyKey: correlationId,
-    idempotency: getRabbitmqIdempotencyCache(config.idempotency),
   });
   if (!parsed.accepted) {
     event.delivery.ack();
@@ -88,8 +88,12 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
 
   const rt = getRabbitmqRuntime();
   if (!rt) {
-    console.warn("[openclaw-rabbitmq] Runtime not initialized, cannot dispatch message");
-    return { accepted: false, reason: "runtime_not_initialized" };
+    /*
+     * 这里必须抛错，不能只返回 accepted=false：transport 将普通返回视为 handler 已完成，
+     * 随后可能 ACK 原消息。抛错后才会进入 retry/DLQ 或按策略 NACK，保证“没有 Agent
+     * Runtime 就绝不确认消费”。
+     */
+    throw new Error("RabbitMQ runtime is not initialized");
   }
 
   const { agentId, sessionKey } = await resolveChannelDispatchIdentity(rt as unknown as BridgePluginRuntime, {
@@ -108,22 +112,36 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
     updatedAt: Date.now(),
   });
 
-  console.log(
+  logRabbitmq("debug",
     `[openclaw-rabbitmq] Inbound: topic=${event.routingKey}, agent=${agentId}, account=${route.accountId}, source=${route.source}, session=${sessionKey}, bytes=${Buffer.byteLength(text, "utf-8")}`,
   );
 
+  const dedupe = correlationId ? getRabbitmqClaimableDedupe(config.idempotency) : undefined;
+  const claim = dedupe && correlationId ? await dedupe.claim(correlationId) : undefined;
+  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
+    event.delivery.ack();
+    return { accepted: true, routeSource: "idempotency", manualAck: true };
+  }
+
   try {
     await dispatchToRuntime(sessionKey, route.peerId, agentId, text, event, route, replyTopic, config, parsed);
+    if (dedupe && correlationId && claim?.kind === "claimed") {
+      await dedupe.commit(correlationId);
+    }
     return { accepted: true, routeSource: route.source, manualAck: true };
   } catch (error) {
-    console.error(`[openclaw-rabbitmq] Runtime dispatch failed for peer=${route.peerId}:`, error);
+    if (dedupe && correlationId && claim?.kind === "claimed") {
+      dedupe.release(correlationId);
+    }
+    const safeError = redactRabbitmqError(error, config);
+    logRabbitmq("error", `[openclaw-rabbitmq] Runtime dispatch failed for peer=${route.peerId}: ${safeError}`);
     if (!event.delivery.settled) {
       event.delivery.nack({
         requeue: config.consume.requeueOnError,
-        reason: `dispatch_error:${String(error)}`,
+        reason: `dispatch_error:${safeError}`,
       });
     }
-    return { accepted: false, reason: `dispatch_error:${String(error)}`, manualAck: true };
+    return { accepted: false, reason: `dispatch_error:${safeError}`, manualAck: true };
   }
 }
 
@@ -153,8 +171,7 @@ async function dispatchToRuntime(
 ): Promise<void> {
   const rt = getRabbitmqRuntime();
   if (!rt) {
-    console.warn("[openclaw-rabbitmq] Runtime not initialized, cannot dispatch message");
-    return;
+    throw new Error("RabbitMQ runtime is not initialized");
   }
 
   const mode = config.dispatch.mode as ChannelDispatchMode;

@@ -1,46 +1,21 @@
-/**
- * Amap outbound and plugin entry smoke tests.
- */
 import { describe, expect, it, vi } from "vitest";
-
 import { createMockPluginApi } from "../../../test-utils/mock-plugin-api.js";
-import {
-  createManifestSmokeTests,
-  pluginRootFromTestFile,
-} from "../../../test-utils/plugin-manifest.js";
-
-import plugin, { amapChannel } from "../src/index.js";
-import { amapSendText } from "../src/outbound.js";
+import { createManifestSmokeTests, pluginRootFromTestFile } from "../../../test-utils/plugin-manifest.js";
+import plugin from "../src/index.js";
 
 createManifestSmokeTests(pluginRootFromTestFile(import.meta.url), {
   expectedId: "amap",
-  requireChannels: true,
-});
-
-describe("amap outbound", () => {
-  it("sendText stub always returns ok", async () => {
-    const result = await amapSendText({ text: "hello", to: "poi-1" });
-    expect(result.ok).toBe(true);
-  });
+  requireChannels: false,
 });
 
 describe("amap plugin entry", () => {
-  it("exports amap channel plugin id", () => {
-    expect(plugin.id).toBe("amap");
-    expect(amapChannel.id).toBe("amap");
-  });
-
-  it("register registers webhook route and tools in full mode", () => {
+  it("registers only tools when enabled", () => {
     const registerHttpRoute = vi.fn();
-    const api = createMockPluginApi({
-      config: { channels: { amap: { key: "k" } } },
-      registerHttpRoute,
-      registrationMode: "full",
-    });
+    const api = createMockPluginApi({ registerHttpRoute });
+    (api as any).pluginConfig = { enabled: true, key: "test" };
+    (api as any).logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
     plugin.register(api as never);
-    expect(registerHttpRoute).toHaveBeenCalledWith(
-      expect.objectContaining({ path: "/channels/amap/webhook" }),
-    );
-    expect(api.registerTool).toHaveBeenCalled();
+    expect(api.registerTool).toHaveBeenCalledTimes(3);
+    expect(registerHttpRoute).not.toHaveBeenCalled();
   });
 });

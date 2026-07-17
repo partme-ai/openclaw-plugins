@@ -19,6 +19,16 @@ export interface GotifyStreamConfig {
   maxReconnectDelayMs?: number;
   /** 最大重连次数；达到上限后 listener 会停止并上报 lastError。 */
   maxReconnectAttempts?: number;
+  /** 重连延迟抖动比例（0～1），用于打散多实例同步重连。 */
+  reconnectJitterRatio?: number;
+  /** backlog 回放期间最多暂存的实时消息数，防止长时间回放耗尽内存。 */
+  maxBufferedMessages?: number;
+  /** 单条实时消息进入 Agent 管道失败后的最大尝试次数。 */
+  maxDispatchAttempts?: number;
+  /** Agent 派发首次重试等待时间，单位毫秒。 */
+  dispatchRetryDelayMs?: number;
+  /** Agent 派发指数退避最大等待时间，单位毫秒。 */
+  maxDispatchRetryDelayMs?: number;
   /** 入站派发成功后从 Gotify 删除消息；开发/测试可设为 false 便于在 Gotify App 对照 */
   deleteAfterConsume?: boolean;
 }

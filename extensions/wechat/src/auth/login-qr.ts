@@ -7,6 +7,7 @@
 import { randomUUID } from "node:crypto";
 
 import { apiGetFetch } from "../api/api.js";
+import { resolveTrustedQrRedirectBaseUrl, validateTrustedLoginBaseUrl } from "../api/endpoint-policy.js";
 import { logger } from "../util/logger.js";
 import { redactToken } from "../util/redact.js";
 
@@ -83,7 +84,7 @@ async function pollQRStatus(apiBaseUrl: string, qrcode: string): Promise<StatusR
       timeoutMs: QR_LONG_POLL_TIMEOUT_MS,
       label: "pollQRStatus",
     });
-    logger.debug(`pollQRStatus: body=${rawText.substring(0, 200)}`);
+    logger.debug(`pollQRStatus: responseBytes=${Buffer.byteLength(rawText)}`);
     return JSON.parse(rawText) as StatusResponse;
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
@@ -273,7 +274,7 @@ export async function waitForWeixinLogin(opts: {
         case "scaned_but_redirect": {
           const redirectHost = statusResponse.redirect_host;
           if (redirectHost) {
-            const newBaseUrl = `https://${redirectHost}`;
+            const newBaseUrl = resolveTrustedQrRedirectBaseUrl(redirectHost);
             activeLogin.currentApiBaseUrl = newBaseUrl;
             logger.info(`waitForWeixinLogin: IDC redirect, switching polling host to ${redirectHost}`);
           } else {
@@ -302,7 +303,7 @@ export async function waitForWeixinLogin(opts: {
             connected: true,
             botToken: statusResponse.bot_token,
             accountId: statusResponse.ilink_bot_id,
-            baseUrl: statusResponse.baseurl,
+            baseUrl: validateTrustedLoginBaseUrl(statusResponse.baseurl),
             userId: statusResponse.ilink_user_id,
             message: "✅ 与微信连接成功！",
           };

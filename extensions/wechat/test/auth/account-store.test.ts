@@ -104,6 +104,16 @@ describe("saveWeixinAccount", () => {
     saveWeixinAccount("new-acc", { token: "tok" });
     expect(fs.existsSync(accountsDir)).toBe(true);
   });
+
+  it("stores credentials with private permissions", async () => {
+    const { saveWeixinAccount } = await loadModule();
+    saveWeixinAccount("private-acc", { token: "secret" });
+    if (process.platform !== "win32") {
+      const filePath = path.join(tmpDir, "openclaw-weixin", "accounts", "private-acc.json");
+      expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(path.dirname(filePath)).mode & 0o777).toBe(0o700);
+    }
+  });
 });
 
 describe("clearWeixinAccount", () => {

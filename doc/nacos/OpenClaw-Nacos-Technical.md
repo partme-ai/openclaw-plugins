@@ -11,7 +11,7 @@
 | Test | Vitest | 4.x |
 | Nacos SDK | nacos (npm) | 2.6.1 |
 | YAML Parser | yaml | 2.7.0 |
-| OpenClaw SDK | openclaw (peer) | ≥ 2026.4.6 |
+| OpenClaw SDK | openclaw (peer) | ≥ 2026.7.1 |
 
 ## Nacos SDK Integration
 
@@ -114,8 +114,8 @@ Nacos config bodies are parsed based on dataId extension and content:
 Plugin configs follow the naming convention: `{pluginId}-{profile}.json`
 
 Examples:
-- `openclaw-weixin-dev.json`
-- `openclaw-dingtalk-prod.json`
+- `wechat-dev.json`
+- `dingtalk-connector-prod.json`
 - `openclaw-lark-default.json`
 
 The loaded config is merged into `plugins.entries[pluginId].config` in the OpenClaw config tree. Existing plugin config values are preserved and deep-merged with Nacos values.

@@ -14,6 +14,16 @@ export interface MtlsTlsConfig {
   rejectUnauthorized: boolean;
 }
 
+/** mTLS 入口代理监听与上游 Gateway 配置。 */
+export interface MtlsProxyConfig {
+  listenHost: string;
+  listenPort: number;
+  upstreamHost: string;
+  upstreamPort: number;
+  requestTimeoutMs: number;
+  userHeader: string;
+}
+
 /** 单条受保护路径规则（exact 或 prefix 匹配）。 */
 export interface MtlsPathRule {
   path: string;
@@ -32,6 +42,7 @@ export interface MtlsAllowedClient {
 export interface MtlsConfig {
   enabled: boolean;
   tls: MtlsTlsConfig;
+  proxy: MtlsProxyConfig;
   protectedPaths: MtlsPathRule[];
   allowedClients: MtlsAllowedClient[];
   skipPaths: string[];

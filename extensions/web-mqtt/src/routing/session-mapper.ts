@@ -18,6 +18,7 @@ export function upsertSessionContext(
   sessionKey: string,
   params: {
     clientId: string;
+    authenticatedUsername?: string;
     agentId: string;
     accountId: string;
     lastInboundTopic: string;
@@ -28,6 +29,8 @@ export function upsertSessionContext(
   const context: SessionContext = {
     sessionKey,
     clientId: params.clientId,
+    // 兼容旧调用方缺省该字段时保留既有身份；生产入站始终传入 transport 的连接快照。
+    authenticatedUsername: params.authenticatedUsername ?? existing?.authenticatedUsername,
     agentId: params.agentId,
     accountId: params.accountId,
     lastInboundTopic: params.lastInboundTopic,
@@ -54,4 +57,16 @@ export function getSessionContext(sessionKey: string): SessionContext | null {
  */
 export function getSessionStats(): { totalSessions: number } {
   return { totalSessions: sessionContextMap.size };
+}
+
+/** 清理指定 MQTT 客户端的全部 Agent 会话路由。 */
+export function removeSessionContextsByClient(clientId: string): void {
+  for (const [sessionKey, context] of sessionContextMap) {
+    if (context.clientId === clientId) sessionContextMap.delete(sessionKey);
+  }
+}
+
+/** Gateway 停机时清空全部内存会话路由。 */
+export function clearSessionContexts(): void {
+  sessionContextMap.clear();
 }

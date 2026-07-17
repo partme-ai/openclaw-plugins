@@ -66,21 +66,21 @@ describe("isUserActionAllowed", () => {
     ).toBe(true);
   });
 
-  it("allows inbound/outbound when user has no rules", () => {
+  it("denies inbound/outbound when user has no rules", () => {
     expect(
       isUserActionAllowed({
         user: { username: "open" },
         action: "inbound",
         topic: "any/topic",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isUserActionAllowed({
         user: { username: "open" },
         action: "outbound",
         topic: "any/topic",
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("respects accountId scoping on acl rules", () => {

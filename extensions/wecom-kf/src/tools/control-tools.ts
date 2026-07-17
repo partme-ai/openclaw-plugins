@@ -13,7 +13,7 @@
  *
  * 1. **空 content**：execute 返回 `content: []`，OpenClaw 不会将 tool result text 注入 assistant 可见 transcript。
  * 2. **最小 ack**：业务结果摘要仅放在 `details`（如 `{ ok: true, action: "transfer" }`），供 runtime 审计。
- * 3. **完整响应写 audit 日志**：`auditLog()` 将企微 API 原始 JSON 写入 `console.log`（runtime.log），不暴露给模型。
+ * 3. **最小化审计日志**：只记录动作、结果码与结果规模，不写入用户标识、链接或企微原始响应。
  */
 
 import {
@@ -44,10 +44,21 @@ export type ControlToolResult = {
 const AUDIT_PREFIX = "[wecom_kf:audit]";
 
 /**
- * 将完整 API 响应写入 runtime 审计日志（不进 LLM）。
+ * 将最小化结果摘要写入 runtime 审计日志（不进 LLM）。
  */
 function auditLog(action: string, payload: unknown): void {
-    console.log(`${AUDIT_PREFIX} action=${action} payload=${JSON.stringify(payload)}`);
+    const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+    const errcode = typeof record.errcode === "number" ? record.errcode : undefined;
+    const ok = typeof record.ok === "boolean" ? record.ok : errcode === undefined ? undefined : errcode === 0;
+    const count = Object.values(record).reduce<number>((total, value) => {
+        return total + (Array.isArray(value) ? value.length : 0);
+    }, 0);
+    console.log(
+        `${AUDIT_PREFIX} action=${action}` +
+        `${ok === undefined ? "" : ` ok=${String(ok)}`}` +
+        `${errcode === undefined ? "" : ` errcode=${errcode}`}` +
+        `${count > 0 ? ` result_count=${count}` : ""}`,
+    );
 }
 
 /**

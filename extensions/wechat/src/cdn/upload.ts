@@ -8,6 +8,8 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
+
 import { getUploadUrl } from "../api/api.js";
 import type { WeixinApiOptions } from "../api/api.js";
 import { aesEcbPaddedSize } from "./aes-ecb.js";
@@ -16,6 +18,7 @@ import { logger } from "../util/logger.js";
 import { getExtensionFromContentTypeOrUrl } from "../media/mime.js";
 import { tempFileName } from "../util/random.js";
 import { UploadMediaType } from "../api/types.js";
+import { readWeixinLocalMedia } from "../media/path-guard.js";
 
 export type UploadedFileInfo = {
   filekey: string;
@@ -29,27 +32,103 @@ export type UploadedFileInfo = {
   fileSizeCiphertext: number;
 };
 
+const REMOTE_MEDIA_TIMEOUT_MS = 30_000;
+const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
+
+function assertRemoteMediaUrl(rawUrl: string): URL {
+  const url = new URL(rawUrl);
+  if (url.protocol !== "https:") {
+    throw new Error("remote media URL must use HTTPS");
+  }
+  return url;
+}
+
 /**
  * Download a remote media URL (image, video, file) to a local temp file in destDir.
  * Returns the local file path; extension is inferred from Content-Type / URL.
  */
-export async function downloadRemoteImageToTemp(url: string, destDir: string): Promise<string> {
-  logger.debug(`downloadRemoteImageToTemp: fetching url=${url}`);
-  const res = await fetch(url);
-  if (!res.ok) {
-    const msg = `remote media download failed: ${res.status} ${res.statusText} url=${url}`;
-    logger.error(`downloadRemoteImageToTemp: ${msg}`);
-    throw new Error(msg);
+export async function downloadRemoteImageToTemp(
+  url: string,
+  destDir: string,
+): Promise<string> {
+  const safeUrl = assertRemoteMediaUrl(url);
+  logger.debug(`downloadRemoteImageToTemp: fetching host=${safeUrl.host}`);
+  // OpenClaw SSRF Guard 会在 DNS 解析、连接和每次重定向时重新校验目标地址，
+  // 可阻断“公网域名解析到内网 IP”与“302 跳到 metadata/loopback”等绕过方式。
+  const { response: res, release } = await fetchWithSsrFGuard({
+    url: safeUrl.toString(),
+    timeoutMs: REMOTE_MEDIA_TIMEOUT_MS,
+  });
+  try {
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
+      const msg = `remote media download failed: ${res.status} ${res.statusText}`;
+      logger.error(`downloadRemoteImageToTemp: ${msg}`);
+      throw new Error(msg);
+    }
+    const declaredSize = Number(res.headers.get("content-length") ?? "0");
+    if (Number.isFinite(declaredSize) && declaredSize > MAX_MEDIA_BYTES) {
+      await res.body?.cancel().catch(() => {});
+      throw new Error(`remote media exceeds ${MAX_MEDIA_BYTES} bytes`);
+    }
+    let buf: Buffer;
+    if (!res.body) {
+      buf = Buffer.from(await res.arrayBuffer());
+    } else {
+      const reader = res.body.getReader();
+      const chunks: Buffer[] = [];
+      let total = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > MAX_MEDIA_BYTES) {
+            await reader.cancel();
+            throw new Error(`remote media exceeds ${MAX_MEDIA_BYTES} bytes`);
+          }
+          chunks.push(Buffer.from(value));
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      buf = Buffer.concat(chunks);
+    }
+    if (buf.length > MAX_MEDIA_BYTES)
+      throw new Error(`remote media exceeds ${MAX_MEDIA_BYTES} bytes`);
+    logger.debug(`downloadRemoteImageToTemp: downloaded ${buf.length} bytes`);
+    await fs.mkdir(destDir, { recursive: true });
+    const ext = getExtensionFromContentTypeOrUrl(
+      res.headers.get("content-type"),
+      url,
+    );
+    const name = tempFileName("weixin-remote", ext);
+    const filePath = path.join(destDir, name);
+    await fs.writeFile(filePath, buf);
+    logger.debug(`downloadRemoteImageToTemp: saved remote media ext=${ext}`);
+    return filePath;
+  } finally {
+    await release();
   }
-  const buf = Buffer.from(await res.arrayBuffer());
-  logger.debug(`downloadRemoteImageToTemp: downloaded ${buf.length} bytes`);
-  await fs.mkdir(destDir, { recursive: true });
-  const ext = getExtensionFromContentTypeOrUrl(res.headers.get("content-type"), url);
-  const name = tempFileName("weixin-remote", ext);
-  const filePath = path.join(destDir, name);
-  await fs.writeFile(filePath, buf);
-  logger.debug(`downloadRemoteImageToTemp: saved to ${filePath} ext=${ext}`);
-  return filePath;
+}
+
+/**
+ * 在一次回调生命周期内使用远程媒体暂存文件。
+ *
+ * 调用方不接管文件所有权；上传成功、业务发送失败或回调抛错都会进入 `finally` 回收。
+ * 统一封装可避免 channel 主动发送与 Agent 自动回复中的清理语义发生漂移。
+ */
+export async function withRemoteMediaTempFile<T>(params: {
+  url: string;
+  destDir: string;
+  use: (filePath: string) => Promise<T>;
+}): Promise<T> {
+  const filePath = await downloadRemoteImageToTemp(params.url, params.destDir);
+  try {
+    return await params.use(filePath);
+  } finally {
+    await fs.unlink(filePath).catch(() => {});
+  }
 }
 
 /**
@@ -60,21 +139,33 @@ async function uploadMediaToCdn(params: {
   toUserId: string;
   opts: WeixinApiOptions;
   cdnBaseUrl: string;
+  mediaLocalRoots?: readonly string[];
   mediaType: (typeof UploadMediaType)[keyof typeof UploadMediaType];
   label: string;
 }): Promise<UploadedFileInfo> {
-  const { filePath, toUserId, opts, cdnBaseUrl, mediaType, label } = params;
+  const {
+    filePath,
+    toUserId,
+    opts,
+    cdnBaseUrl,
+    mediaLocalRoots,
+    mediaType,
+    label,
+  } = params;
 
-  const plaintext = await fs.readFile(filePath);
+  // 读取必须经过 OpenClaw Path Guard，避免 Agent 被提示注入后把任意系统文件上传给用户。
+  const plaintext = await readWeixinLocalMedia({
+    filePath,
+    customRoots: mediaLocalRoots,
+    maxBytes: MAX_MEDIA_BYTES,
+  });
   const rawsize = plaintext.length;
   const rawfilemd5 = crypto.createHash("md5").update(plaintext).digest("hex");
   const filesize = aesEcbPaddedSize(rawsize);
   const filekey = crypto.randomBytes(16).toString("hex");
   const aeskey = crypto.randomBytes(16);
 
-  logger.debug(
-    `${label}: file=${filePath} rawsize=${rawsize} filesize=${filesize} md5=${rawfilemd5} filekey=${filekey}`,
-  );
+  logger.debug(`${label}: rawsize=${rawsize} filesize=${filesize}`);
 
   const uploadUrlResp = await getUploadUrl({
     ...opts,
@@ -92,20 +183,21 @@ async function uploadMediaToCdn(params: {
   const uploadParam = uploadUrlResp.upload_param;
   if (!uploadFullUrl && !uploadParam) {
     logger.error(
-      `${label}: getUploadUrl returned no upload URL (need upload_full_url or upload_param), resp=${JSON.stringify(uploadUrlResp)}`,
+      `${label}: getUploadUrl returned no upload URL (need upload_full_url or upload_param)`,
     );
     throw new Error(`${label}: getUploadUrl returned no upload URL`);
   }
 
-  const { downloadParam: downloadEncryptedQueryParam } = await uploadBufferToCdn({
-    buf: plaintext,
-    uploadFullUrl: uploadFullUrl || undefined,
-    uploadParam: uploadParam ?? undefined,
-    filekey,
-    cdnBaseUrl,
-    aeskey,
-    label: `${label}[orig filekey=${filekey}]`,
-  });
+  const { downloadParam: downloadEncryptedQueryParam } =
+    await uploadBufferToCdn({
+      buf: plaintext,
+      uploadFullUrl: uploadFullUrl || undefined,
+      uploadParam: uploadParam ?? undefined,
+      filekey,
+      cdnBaseUrl,
+      aeskey,
+      label,
+    });
 
   return {
     filekey,
@@ -122,6 +214,7 @@ export async function uploadFileToWeixin(params: {
   toUserId: string;
   opts: WeixinApiOptions;
   cdnBaseUrl: string;
+  mediaLocalRoots?: readonly string[];
 }): Promise<UploadedFileInfo> {
   return uploadMediaToCdn({
     ...params,
@@ -136,6 +229,7 @@ export async function uploadVideoToWeixin(params: {
   toUserId: string;
   opts: WeixinApiOptions;
   cdnBaseUrl: string;
+  mediaLocalRoots?: readonly string[];
 }): Promise<UploadedFileInfo> {
   return uploadMediaToCdn({
     ...params,
@@ -154,6 +248,7 @@ export async function uploadFileAttachmentToWeixin(params: {
   toUserId: string;
   opts: WeixinApiOptions;
   cdnBaseUrl: string;
+  mediaLocalRoots?: readonly string[];
 }): Promise<UploadedFileInfo> {
   return uploadMediaToCdn({
     ...params,

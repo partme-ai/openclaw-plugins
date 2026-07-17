@@ -6,6 +6,9 @@
  *
  * When enabled, processOneMessage appends a timing summary after each
  * AI reply is delivered to the user.
+ *
+ * 中文说明：这是按机器人账号隔离的运维调试开关，不参与业务路由。状态落盘是为了
+ * Gateway 重启后保持一致；文件缺失或损坏时回退为空状态，不能阻断正常收发消息。
  */
 import fs from "node:fs";
 import path from "node:path";

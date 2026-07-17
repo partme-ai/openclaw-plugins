@@ -1,203 +1,260 @@
-<div align="center">
+# OpenClaw STOMP TCP
 
-# OpenClaw STOMP
+Authenticated STOMP 1.2 over native TCP/TLS for OpenClaw 2026.7.1. This embedded channel accepts bounded STOMP connections, routes `SEND` frames to configured Agents, and returns Agent replies through connection-scoped topics.
 
-**OpenClaw channel plugin — native STOMP TCP bridge with enterprise delivery controls**
+[中文说明](README.zh-CN.md)
 
-![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--stomp-blue)
-![Node](https://img.shields.io/badge/Node.js-22+-green)
-![License](https://img.shields.io/badge/License-MIT-green)
+## Scope
 
-</div>
+- STOMP 1.2 `CONNECT`, `SEND`, `SUBSCRIBE`, `UNSUBSCRIBE`, `ACK`, `NACK`, `BEGIN`, `COMMIT`, `ABORT`, and `DISCONNECT`
+- Plain TCP on loopback and TLS 1.2+ for remote listeners
+- Login/passcode authentication using environment-backed, SHA-256, or SHA-512 credentials
+- Negotiated heartbeats, CONNECT timeout, message rate limits, frame and socket-buffer limits
+- Connection, subscription, inbound queue, prefetch, ACK, durable-state, and per-subscription queue bounds
+- Correct cumulative `client` ACK and individual `client-individual` ACK behavior
+- Bounded connection-local transactions for ordered SEND/ACK/NACK commit and abort
+- Optional process-memory durable subscriptions and NACK requeue
+- Claim/commit/release inbound idempotency; a `message-id` is committed only after the Agent turn and reply delivery succeed
+- Agent allowlists, explicit topic bindings, and connection-scoped reply subscriptions by default
+- OpenClaw Gateway lifecycle integration and a credential-redacted `/stomp-tcp/status` endpoint
 
-[English](./README.md) | [简体中文](./README.zh-CN.md)
+This is an embedded OpenClaw channel, not a durable broker. Durable subscriptions and transaction buffers are process memory only and are lost on Gateway restart. Transactions delay and order connection-local actions, but cannot roll back Agent or external-system side effects. The plugin does not provide persistent storage, dead-letter queues, broker clustering, distributed atomicity, or exactly-once delivery.
 
-## Introduction
+## Architecture
 
-`@partme.ai/openclaw-stomp` is an OpenClaw channel plugin that embeds a native STOMP TCP server (`stomp-tcp`) and bridges STOMP clients to OpenClaw Agents.
+The character diagram highlights the TCP/TLS trust boundary, transaction buffer, and bounded ACK queue. The Mermaid diagram below preserves the full renderable relationship.
 
-Compared with old drafts, this version is fully aligned with OpenClaw channel SDK entrypoints:
-
-- `defineChannelPluginEntry` for full runtime registration
-- `defineSetupPluginEntry` for setup-only lightweight loading
-- `openclaw.setupEntry` in `package.json`
-
-## Core capabilities
-
-- STOMP `CONNECT` / `SEND` / `SUBSCRIBE` / `UNSUBSCRIBE` / `ACK` / `NACK` / `DISCONNECT`
-- STOMP 1.0/1.1/1.2 handshake with `CONNECTED` response
-- ACK mode support: `auto`, `client`, `client-individual`
-- Prefetch control (`prefetch-count`)
-- Durable subscription behavior (`durable:true` + `auto-delete:false`)
-- Multi-topic allowlist (`subscribeTopics`)
-- Explicit `topicPattern -> agentId` binding (`topicBindings`)
-- TLS listener support
-- Status endpoint: `GET /stomp-tcp/status`
-
-## Message flow
-
-1. STOMP client connects and subscribes one or more topics.
-2. Client sends `SEND` to destination.
-3. Plugin resolves route:
-   - First: explicit `topicBindings`
-   - Fallback: destination-derived agent route
-4. Plugin dispatches inbound text to OpenClaw runtime.
-5. Agent reply is published to `replyDestination` (bound topic or session topic).
-6. For `client` / `client-individual`, reply delivery waits for `ACK` under prefetch limits.
-
-## Session isolation (`session.dmScope` compatible)
-
-The plugin does not introduce a custom session-scope setting.  
-It follows OpenClaw native session configuration directly:
-
-- `session.dmScope: "main"`
-- `session.dmScope: "per-peer"`
-- `session.dmScope: "per-channel-peer"`
-- `session.dmScope: "per-account-channel-peer"`
-
-Session-key partitioning is driven only by `session.dmScope`.
-
-## Quick start
-
-### Prerequisites
-
-- OpenClaw `>= 2026.4.x`
-- Node.js `22+`
-
-### Install
-
-```bash
-openclaw plugins install @partme.ai/openclaw-stomp
+```text
+Backend service / device / edge gateway
+        │  STOMP 1.2 TCP/TLS
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│ openclaw-stomp                                               │
+│                                                              │
+│ Listener ──▶ CONNECT auth ──▶ frame parser ──▶ rate/capacity │
+│                                               │              │
+│                          ┌────────────────────┴─────────┐    │
+│                          ▼                              ▼    │
+│                BEGIN / transaction buffer         direct SEND│
+│                          │                              │    │
+│                   COMMIT / ABORT                        │    │
+│                          └──────────────┬───────────────┘    │
+│                                         ▼                    │
+│                         Topic binding + Agent allowlist       │
+│                                         │                    │
+│                              message-sdk → Agent              │
+│                                         │                    │
+│                                         ▼                    │
+│                  subscription queue + prefetch + ACK/NACK     │
+└─────────────────────────────────────────┬────────────────────┘
+                                          ▼
+                              MESSAGE / RECEIPT / ERROR
 ```
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+```mermaid
+flowchart LR
+  Client["STOMP 1.2 Client"] --> Listener["TCP/TLS Listener"]
+  Listener --> Guard["Version · Auth · Limits"]
+  Guard --> Parser["Bounded Frame Parser"]
+  Parser --> Tx["Transaction Buffer"]
+  Tx --> Route["Destination / Agent Router"]
+  Route --> SDK["message-sdk"] --> Agent["OpenClaw Agent"]
+  Agent --> Queue["Subscription Queue<br/>Prefetch · ACK/NACK · Backpressure"] --> Client
+```
 
-### Minimal config example (`openclaw.json`)
+Internal Agent/Runtime failures from both direct `SEND` and transactional `COMMIT` are never returned verbatim. Clients receive the stable `Agent dispatch failed` error while a redacted reason is retained in Gateway logs and channel status.
+
+## Configuration
+
+The default plaintext listener is restricted to `127.0.0.1:61613`. Authentication is required and startup fails until a valid user is configured.
 
 ```json
 {
   "channels": {
     "stomp-tcp": {
+      "enabled": true,
+      "host": "127.0.0.1",
       "port": 61613,
       "tlsPort": 61614,
-      "tls": {
-        "enabled": false
+      "defaultAgentId": "main",
+      "allowedAgentIds": ["support"],
+      "auth": {
+        "required": true,
+        "users": [
+          {
+            "login": "service-a",
+            "passwordEnv": "OPENCLAW_STOMP_TCP_PASSWORD"
+          }
+        ]
       },
-      "maxConnections": 1000,
-      "maxFrameSize": 4194304,
+      "heartbeat": {
+        "serverMs": 10000,
+        "clientMs": 10000
+      },
+      "limits": {
+        "maxConnections": 500,
+        "maxFrameSize": 262144,
+        "maxBufferedBytes": 1048576,
+        "maxSubscriptionsPerConnection": 100,
+        "maxQueueDepthPerSubscription": 1000,
+        "maxPendingMessages": 32,
+        "messagesPerMinute": 120,
+        "connectTimeoutMs": 10000,
+        "shutdownTimeoutMs": 10000,
+        "maxDurableSubscriptions": 1000
+      },
       "defaultAckMode": "auto",
       "prefetchCount": 100,
-      "subscribeTopics": [
-        "devices/*/in",
-        "openclaw/agent/*/in"
-      ],
-      "topicBindings": [
-        {
-          "topicPattern": "devices/*/in",
-          "agentId": "iot-agent",
-          "accountId": "default",
-          "replyTopic": "/topic/devices/reply"
-        }
-      ],
-      "auth": {
-        "required": false
-      }
+      "allowSharedTopics": false,
+      "allowDurableSubscriptions": false
     }
   }
 }
 ```
 
-## Configuration reference
+For a remote TLS-only listener, disable plaintext with `port: 0`:
 
-| Key | Type | Default | Description |
-| --- | --- | --- | --- |
-| `port` | number | `61613` | STOMP TCP listener |
-| `tlsPort` | number | `61614` | STOMP TLS listener (`0` disables TLS port) |
-| `tls.enabled` | boolean | `false` | Enable TLS listener |
-| `tls.certFile` / `tls.keyFile` / `tls.caFile` | string | - | TLS certificate files |
-| `heartbeat.serverMs` / `heartbeat.clientMs` | number | `10000` | Heartbeat negotiation values |
-| `maxConnections` | number | `1000` | TCP max connections |
-| `maxFrameSize` | number | `4194304` | Max frame bytes |
-| `auth.required` | boolean | `true` | Require auth on `CONNECT` |
-| `auth.defaultUser` / `auth.defaultPass` | string | - | Optional default credentials |
-| `subscribeTopics` | string[] | `[]` | Inbound destination allowlist |
-| `topicBindings` | object[] | `[]` | Explicit topic to agent mappings |
-| `defaultAckMode` | enum | `auto` | Default subscription ack mode |
-| `prefetchCount` | number | `100` | Default subscription prefetch |
-
-## Test
-
-### Unit tests
-
-```bash
-npm test
+```json
+{
+  "host": "127.0.0.1",
+  "port": 0,
+  "tlsPort": 61614,
+  "tls": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "keyFile": "/etc/openclaw/tls/stomp.key",
+    "certFile": "/etc/openclaw/tls/stomp.crt",
+    "caFile": "/etc/openclaw/tls/ca.crt",
+    "minVersion": "TLSv1.2",
+    "requestCert": false,
+    "rejectUnauthorized": false
+  }
+}
 ```
 
-### STOMP test client
+Set both client-certificate flags to `true` to require mTLS. `rejectUnauthorized: true` without `requestCert: true` is rejected. Avoid inline `password`; use `passwordEnv` or a precomputed `passwordHash`.
 
-```bash
-npm run test:client
+## Routing and session isolation
+
+Standard destinations:
+
+| Operation | Destination | Meaning |
+|---|---|---|
+| Send | `/queue/agent` | Route to `defaultAgentId` |
+| Send | `/queue/agent.support` | Route to allowlisted Agent `support` |
+| Subscribe | `/topic/session.stomp-tcp:SESSION_ID@support` | Receive this connection's `support` replies |
+
+The `CONNECTED` frame provides `session:SESSION_ID`. With the default `allowSharedTopics: false`, the server rejects every subscription outside that connection's session topics.
+
+Custom enterprise destinations require an explicit binding:
+
+```json
+{
+  "subscribeTopics": ["devices/*/in"],
+  "topicBindings": [
+    {
+      "topicPattern": "devices/*/in",
+      "agentId": "iot-agent",
+      "accountId": "default",
+      "replyTopic": "/topic/devices/reply"
+    }
+  ],
+  "allowSharedTopics": true
+}
 ```
 
-Environment variables:
+`subscribeTopics` is an optional inbound destination allowlist. A custom `replyTopic` is shared, so clients can subscribe to it only when `allowSharedTopics` is explicitly enabled.
 
-- `STOMP_HOST`, `STOMP_PORT`, `STOMP_TIMEOUT_MS`
-- `STOMP_TEST_SUBSCRIBE_TOPICS`
-- `STOMP_TEST_PUBLISH_CASES` (JSON array)
-- `STOMP_TEST_DEST_1`, `STOMP_TEST_DEST_2`
-- `STOMP_TEST_BODY_1`, `STOMP_TEST_BODY_2`
+## Protocol flow
 
-## Status API
+```text
+CONNECT
+accept-version:1.2
+heart-beat:10000,10000
+login:service-a
+passcode:<runtime-secret>
 
-`GET /stomp-tcp/status` returns:
+\0
 
-- connection list
-- version distribution
-- snapshot counters: inbound/outbound routed, dropped messages, pending ACK
+SEND
+destination:/queue/agent.support
+receipt:request-1
+content-type:application/json
 
-## CI and release
+{"text":"Hello"}\0
+```
 
-| Workflow | Trigger | Purpose |
-| --- | --- | --- |
-| `.github/workflows/ci.yml` | push/PR to `main`/`master` | typecheck + build + test + dist artifact |
-| `.github/workflows/release.yml` | tag `v*` / manual dispatch | package + test + npm publish |
+For a non-transactional `SEND`, `RECEIPT` is emitted only after the OpenClaw Agent turn completes and at least one active or in-process durable subscription accepts the reply. A transactional SEND receipt confirms bounded buffering; the COMMIT receipt is the final success signal. A missing reply subscriber produces `ERROR` instead of a false COMMIT receipt. For `ack:client`, ACK is cumulative through the referenced delivery. For `ack:client-individual`, only that delivery is acknowledged.
 
-Release playbook: [RELEASING.md](./RELEASING.md)
+Both the public outbound helper and the Channel adapter throw when no active or in-process durable subscription accepts a delivery. A non-durable slow consumer disconnected by the socket-buffer ceiling is not reported as accepted; a durable delivery counts only because it remains in the bounded process queue. Acceptance is not application-level consumption by the remote client.
 
-## OpenClaw plugin docs
+Durable subscriptions require both `allowDurableSubscriptions: true` and `durable:true` (or `persistent:true`) on `SUBSCRIBE`. Enabling them also requires login authentication so unrelated anonymous clients cannot share the same owner. They survive a TCP reconnect only inside the same Gateway process and authenticated login; they do not survive a process restart.
 
-### Plugins
+Transaction-scoped `SEND`, `ACK`, and `NACK` commands are buffered until `COMMIT`; `ABORT` discards them. `maxPendingMessages` is a hard total across every open transaction on the connection, rather than a separate allowance per transaction. A COMMIT receipt is returned only after all buffered actions complete. The boundary is connection-local and is not a distributed rollback mechanism for Agent side effects.
 
-- https://docs.openclaw.ai/tools/plugin
-- https://docs.openclaw.ai/plugins/community
-- https://docs.openclaw.ai/plugins/bundles
-- https://docs.openclaw.ai/plugins/voice-call
+```text
+Authenticated user ── SUBSCRIBE(durable, id=orders) ──▶ process durable queue
+       │                                                        │
+       │◀── MESSAGE (not ACKed) ─────────────────────────────────┤
+       │ disconnect                                             │ requeue pending
+       ▼                                                        ▼
+offline publish ───────────────────────────────────────▶ bounded queue
+       └── reconnect with same login + id + destination ───────▶ redelivery, then offline messages
+```
 
-### Building plugins
+The character view shows where reconnect-safe deliveries live; the ACK/NACK state diagram in the Chinese guide provides the corresponding state transitions.
 
-- https://docs.openclaw.ai/plugins/building-plugins
-- https://docs.openclaw.ai/plugins/sdk-channel-plugins
-- https://docs.openclaw.ai/plugins/sdk-provider-plugins
-- https://docs.openclaw.ai/plugins/sdk-migration
+## Shutdown drain
 
-### SDK reference
+```text
+Gateway AbortSignal
+       │
+       ▼
+accepting=false ──▶ stop heartbeat / listener admission
+                              │
+                              ▼
+             retain connections/subscriptions; drain queues
+                              │
+                  ┌───────────┴────────────────┐
+                  ▼                            ▼
+       Agent reply remains deliverable   shutdownTimeoutMs
+                  └──────▶ close sockets / clear durable state
+```
 
-- https://docs.openclaw.ai/plugins/sdk-overview
-- https://docs.openclaw.ai/plugins/sdk-entrypoints
-- https://docs.openclaw.ai/plugins/sdk-runtime
-- https://docs.openclaw.ai/plugins/sdk-setup
-- https://docs.openclaw.ai/plugins/sdk-testing
-- https://docs.openclaw.ai/plugins/manifest
-- https://docs.openclaw.ai/plugins/architecture
+```mermaid
+sequenceDiagram
+  participant G as OpenClaw Gateway
+  participant S as STOMP TCP Server
+  participant Q as Per-connection queue
+  participant A as Agent Runtime
+  G->>S: AbortSignal / stopAccount
+  S->>S: accepting=false; stop heartbeat and listener admission
+  S->>Q: await accepted frames
+  Q->>A: finish in-flight Agent turn
+  A-->>Q: success / failure + reply
+  Q->>S: deliver through retained subscription
+  Q-->>S: drained
+  S--xS: close TCP/TLS sockets
+  S-->>G: cleanup complete
+  Note over S,Q: warn and exit within shutdownTimeoutMs on timeout
+```
 
-### RabbitMQ STOMP reference
+Only work already accepted into the serial frame queue is drained. Existing subscriptions remain available during that drain so an in-flight Agent turn can still deliver its reply. Uncommitted transaction actions are discarded with the connection. Hard termination can still leave an unknown outcome, so side-effecting callers must retain business idempotency keys.
 
-- https://www.rabbitmq.com/docs/stomp
+## Operations
 
-## License
+- Expose only TLS to remote networks and apply ingress/firewall controls.
+- Restrict `allowedAgentIds` and custom `topicBindings` to required Agents.
+- Keep shared topics and durable subscriptions disabled unless the business case requires them.
+- Monitor the authenticated `/stomp-tcp/status` endpoint for queues, pending ACKs, dropped messages, and listener state.
+- Load-test slow consumers, queue bounds, heartbeat timeouts, and reconnect storms with production-sized payloads.
 
-MIT
+## Development
 
-## Message Format Guide
+```bash
+pnpm --filter @partme.ai/openclaw-stomp typecheck
+pnpm --filter @partme.ai/openclaw-stomp test
+pnpm --filter @partme.ai/openclaw-stomp build
+```
 
-STOMP uses the shared OpenClaw queue wire contract for inbound parsing and envelope replies. See [OpenClaw Queue Message Format Guide](../../doc/OpenClaw-Queue-Message-Format-Guide.en.md) for standard `MessageEnvelope` payloads, non-standard normalization, fixed envelope replies, and cross-language SDK adapter guidance.
+License: MIT.

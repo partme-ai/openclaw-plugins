@@ -1,138 +1,119 @@
 {
   "id": "web-stomp",
   "name": "web-stomp",
-  "version": "0.1.11",
-  "description": "STOMP 1.0/1.1/1.2 over WebSocket bridge for OpenClaw - enterprise integration",
-  "channels": [
-    "stomp"
-  ],
+  "version": "2026.7.1",
+  "description": "Production STOMP 1.2 over WebSocket/WSS channel for OpenClaw",
+  "main": "dist/index.js",
+  "channels": ["stomp"],
   "commands": [],
   "skills": [],
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "port": {
-        "type": "number",
-        "default": 15674,
-        "description": "WebSocket listener port for STOMP"
-      },
-      "path": {
-        "type": "string",
-        "default": "/ws",
-        "description": "WebSocket endpoint path"
-      },
+      "enabled": { "type": "boolean", "default": true },
+      "wsPort": { "type": "number", "minimum": 1, "maximum": 65535, "default": 15674 },
+      "port": { "type": "number", "minimum": 1, "maximum": 65535, "description": "Deprecated alias for wsPort" },
+      "path": { "type": "string", "default": "/ws" },
+      "host": { "type": "string", "default": "127.0.0.1" },
       "heartbeat": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "serverMs": {
-            "type": "number",
-            "default": 10000,
-            "description": "Server heartbeat interval in ms"
-          },
-          "clientMs": {
-            "type": "number",
-            "default": 10000,
-            "description": "Expected client heartbeat interval in ms"
-          }
+          "serverMs": { "type": "number", "minimum": 0, "maximum": 300000, "default": 10000 },
+          "clientMs": { "type": "number", "minimum": 0, "maximum": 300000, "default": 10000 }
         }
       },
-      "maxFrameSize": {
-        "type": "number",
-        "default": 65536,
-        "description": "Maximum STOMP frame size in bytes"
-      },
-      "prefetchCount": {
-        "type": "number",
-        "default": 10,
-        "description": "Default prefetch count for subscriptions"
-      },
-      "destinations": {
+      "defaultAgentId": { "type": "string", "default": "main" },
+      "allowedAgentIds": { "type": "array", "items": { "type": "string" }, "default": [] },
+      "allowSharedTopics": { "type": "boolean", "default": false },
+      "allowedOrigins": { "type": "array", "items": { "type": "string" }, "default": [] },
+      "maxConnections": { "type": "number", "minimum": 1, "maximum": 100000, "default": 500 },
+      "maxFrameSize": { "type": "number", "minimum": 1, "maximum": 16777216, "default": 262144 },
+      "prefetchCount": { "type": "number", "minimum": 1, "maximum": 100000, "description": "Deprecated alias for limits.maxPendingAcks" },
+      "limits": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "agentPrefix": {
-            "type": "string",
-            "default": "/agent/",
-            "description": "Destination prefix for agent messaging"
-          },
-          "topicPrefix": {
-            "type": "string",
-            "default": "/topic/",
-            "description": "Destination prefix for pub/sub topics"
-          },
-          "queuePrefix": {
-            "type": "string",
-            "default": "/queue/",
-            "description": "Destination prefix for point-to-point queues"
-          }
+          "maxBufferedBytes": { "type": "number", "minimum": 1, "default": 1048576 },
+          "maxSubscriptionsPerConnection": { "type": "number", "minimum": 1, "default": 100 },
+          "maxPendingMessages": { "type": "number", "minimum": 1, "default": 32 },
+          "maxPendingAcks": { "type": "number", "minimum": 1, "default": 100 },
+          "messagesPerMinute": { "type": "number", "minimum": 1, "default": 120 },
+          "connectTimeoutMs": { "type": "number", "minimum": 1, "default": 10000 },
+          "shutdownTimeoutMs": { "type": "number", "minimum": 100, "maximum": 120000, "default": 10000 }
         }
       },
       "auth": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "required": {
-            "type": "boolean",
-            "default": true,
-            "description": "Require STOMP CONNECT authentication"
+          "required": { "type": "boolean", "default": true },
+          "users": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["login"],
+              "properties": {
+                "login": { "type": "string" },
+                "password": { "type": "string" },
+                "passwordEnv": { "type": "string" },
+                "passwordHash": { "type": "string" },
+                "hashAlgorithm": { "type": "string", "enum": ["sha256", "sha512"], "default": "sha256" }
+              }
+            }
           }
+        }
+      },
+      "tls": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "keyFile": { "type": "string" },
+          "certFile": { "type": "string" },
+          "caFile": { "type": "string" },
+          "minVersion": { "type": "string", "enum": ["TLSv1.2", "TLSv1.3"], "default": "TLSv1.2" },
+          "requestCert": { "type": "boolean", "default": false },
+          "rejectUnauthorized": { "type": "boolean", "default": false }
+        }
+      },
+      "ws": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "allowedOrigins": { "type": "array", "items": { "type": "string" }, "default": [] }
         }
       }
     }
   },
   "uiHints": {
-    "port": {
-      "label": "WebSocket Port",
-      "placeholder": "15674"
-    },
-    "path": {
-      "label": "WebSocket Path",
-      "placeholder": "/ws"
-    },
-    "heartbeat.serverMs": {
-      "label": "Server Heartbeat (ms)",
-      "placeholder": "10000"
-    },
-    "heartbeat.clientMs": {
-      "label": "Client Heartbeat (ms)",
-      "placeholder": "10000"
-    },
-    "maxFrameSize": {
-      "label": "Max Frame Size (bytes)",
-      "placeholder": "65536"
-    },
-    "prefetchCount": {
-      "label": "Prefetch Count",
-      "placeholder": "10"
-    },
-    "destinations.agentPrefix": {
-      "label": "Agent Destination Prefix",
-      "placeholder": "/agent/"
-    },
-    "destinations.topicPrefix": {
-      "label": "Topic Destination Prefix",
-      "placeholder": "/topic/"
-    },
-    "destinations.queuePrefix": {
-      "label": "Queue Destination Prefix",
-      "placeholder": "/queue/"
-    },
-    "auth.required": {
-      "label": "Require Authentication",
-      "type": "toggle"
-    }
-  },
-  "capabilities": {
-    "protocolBridge": true,
-    "websocket": true
+    "wsPort": { "label": "WebSocket Port", "placeholder": "15674" },
+    "path": { "label": "WebSocket Path", "placeholder": "/ws" },
+    "host": { "label": "Bind Host", "placeholder": "127.0.0.1" },
+    "defaultAgentId": { "label": "Default Agent ID" },
+    "auth.required": { "label": "Require STOMP Authentication", "type": "toggle" },
+    "tls.enabled": { "label": "Enable WSS", "type": "toggle" },
+    "tls.keyFile": { "label": "TLS Private Key File" },
+    "tls.certFile": { "label": "TLS Certificate File" }
   },
   "channelConfigs": {
     "stomp": {
-      "label": "web-stomp",
-      "description": "STOMP 1.0/1.1/1.2 over WebSocket bridge for OpenClaw - enterprise integration",
+      "label": "STOMP over WebSocket",
+      "description": "STOMP 1.2 over WebSocket/WSS for browser and enterprise clients",
       "schema": {
         "type": "object",
         "additionalProperties": true,
-        "properties": {}
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "host": { "type": "string", "default": "127.0.0.1" },
+          "wsPort": { "type": "number", "default": 15674 },
+          "path": { "type": "string", "default": "/ws" }
+        }
       }
     }
-  }
+  },
+  "capabilities": { "protocolBridge": true, "websocket": true, "wss": true }
 }

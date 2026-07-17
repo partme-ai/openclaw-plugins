@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-rabbitmq",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "RabbitMQ channel plugin for OpenClaw with multi-agent async collaboration and topic subscription support.",
   "type": "module",
   "main": "dist/index.js",
@@ -32,7 +32,7 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md"
+    "README.zh-CN.md"
   ],
   "publishConfig": {
     "access": "public"
@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "amqplib": "^0.10.4",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.5",
@@ -53,10 +53,10 @@
     "tsup": "^8.0.0",
     "tsx": "^4.20.0",
     "typescript": "^5.7.0",
-    "vitest": "^2.1.0"
+    "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -72,6 +72,11 @@
       "id": "rabbitmq",
       "label": "RabbitMQ",
       "blurb": "RabbitMQ channel plugin with multi-agent async collaboration and topic subscription support."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-rabbitmq",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

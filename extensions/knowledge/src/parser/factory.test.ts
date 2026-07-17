@@ -60,9 +60,8 @@ describe('createParserService', () => {
       expect(svc.modelName).toBe('glm-ocr');
     });
 
-    it('无 provider → 默认 OllamaDocParserService', () => {
-      const svc = createParserService();
-      expect(svc.modelName).toBe('glm-ocr');
+    it('无 provider → 拒绝猜测文件出站路径', () => {
+      expect(() => createParserService()).toThrow('provider is required');
     });
   });
 

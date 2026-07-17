@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-web-mqtt",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "Enterprise-grade MQTT over WebSocket channel plugin for OpenClaw",
   "type": "module",
   "main": "dist/index.js",
@@ -27,12 +27,15 @@
   ],
   "author": "PartMe",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0"
+  },
   "files": [
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md",
-    "RELEASING.md"
+    "README.zh-CN.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
@@ -43,9 +46,9 @@
     "directory": "extensions/web-mqtt"
   },
   "dependencies": {
-    "aedes": "^0.51.3",
+    "aedes": "^1.1.1",
     "ws": "^8.18.0",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -57,7 +60,7 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -70,13 +73,18 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "compat": {
-      "pluginApi": ">=2026.3.24-beta.2",
-      "minGatewayVersion": "2026.3.24-beta.2"
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
     },
     "channel": {
       "id": "mqtt-ws",
       "label": "MQTT over WebSocket",
       "blurb": "Enterprise MQTT over WebSocket channel with topic bindings and governance controls."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-web-mqtt",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

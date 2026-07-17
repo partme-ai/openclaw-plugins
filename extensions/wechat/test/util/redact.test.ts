@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { truncate, redactToken, redactBody, redactUrl } from "../../src/util/redact.js";
+import { truncate, redactToken, redactBody, redactUrl, sanitizeLogMessage } from "../../src/util/redact.js";
 
 describe("truncate", () => {
   it("returns empty string for undefined", () => {
@@ -30,12 +30,12 @@ describe("redactToken", () => {
     expect(redactToken("abc", 6)).toBe("****(len=3)");
   });
 
-  it("shows prefix for longer tokens", () => {
-    expect(redactToken("abcdef1234567890")).toBe("abcdef…(len=16)");
+  it("masks longer tokens without exposing a prefix", () => {
+    expect(redactToken("abcdef1234567890")).toBe("****(len=16)");
   });
 
-  it("respects custom prefix length", () => {
-    expect(redactToken("abcdef1234567890", 3)).toBe("abc…(len=16)");
+  it("keeps the legacy parameter compatible without weakening redaction", () => {
+    expect(redactToken("abcdef1234567890", 3)).toBe("****(len=16)");
   });
 });
 
@@ -92,5 +92,38 @@ describe("redactUrl", () => {
   it("handles invalid URLs gracefully", () => {
     const result = redactUrl("not-a-url-but-very-long-" + "x".repeat(100));
     expect(result).toContain("…(len=");
+  });
+});
+
+describe("sanitizeLogMessage", () => {
+  it("redacts identifiers, message previews, paths and URL details", () => {
+    const result = sanitizeLogMessage(
+      'from=user-1 sessionKey=session-1 body="hello world" filePath=/tmp/secret.png url=https://example.com/qrcode/secret?token=x',
+    );
+    expect(result).not.toContain("user-1");
+    expect(result).not.toContain("session-1");
+    expect(result).not.toContain("hello world");
+    expect(result).not.toContain("/tmp/secret.png");
+    expect(result).not.toContain("qrcode/secret");
+    expect(result).toContain("<url:example.com>");
+  });
+
+  it("removes control characters and bounds the result", () => {
+    const result = sanitizeLogMessage(`line1\nline2 ${"x".repeat(100)}`, 20);
+    expect(result).not.toContain("\n");
+    expect(result).toContain("…(len=");
+  });
+
+  it("redacts malformed URL-like values without throwing", () => {
+    expect(sanitizeLogMessage("endpoint=http://%"))
+      .toContain("<url:redacted>");
+  });
+
+  it("redacts bearer and authorization values emitted by network libraries", () => {
+    const result = sanitizeLogMessage(
+      "request failed Authorization: secret-1 Bearer bearer-1 api_key=key-1 password=pass-1",
+    );
+    expect(result).toContain("<redacted>");
+    expect(result).not.toMatch(/secret-1|bearer-1|key-1|pass-1/u);
   });
 });

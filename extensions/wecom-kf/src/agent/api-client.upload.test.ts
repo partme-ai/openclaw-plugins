@@ -6,10 +6,10 @@ const { wecomFetchMock, resolveProxyMock } = vi.hoisted(() => ({
   resolveProxyMock: vi.fn(() => undefined),
 }));
 
-vi.mock("../shared/http.js", () => ({
-  wecomFetch: wecomFetchMock,
-  readResponseBodyAsBuffer: vi.fn(),
-}));
+vi.mock("../shared/http.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../shared/http.js")>();
+  return { ...actual, wecomFetch: wecomFetchMock };
+});
 
 vi.mock("../config/index.js", () => ({
   resolveWecomEgressProxyUrlFromNetwork: resolveProxyMock,
@@ -23,7 +23,7 @@ function createAgent(agentId: number): ResolvedAgentAccount {
     enabled: true,
     configured: true,
     corpId: "corp",
-    corpSecret: "secret",
+    corpSecret: `secret-${agentId}`,
     agentId,
     token: "token",
     encodingAESKey: "aes",

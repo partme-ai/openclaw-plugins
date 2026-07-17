@@ -26,6 +26,7 @@ import { z } from "zod";
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from "../types.js";
 import { normalizeServerUrl } from "./gotify-api.js";
 import { GotifyWebSocketError, GotifyConfigError } from "../shared/errors.js";
+import { redactGotifyError } from "../shared/redact.js";
 
 const GotifyStreamEnvelopeSchema = z.object({
   id: z.union([z.number(), z.string()]),
@@ -58,6 +59,8 @@ export interface GotifyWsListenerDeps {
   }) => void;
   /** 测试用：覆盖连接超时。 */
   connectionTimeoutMs?: number;
+  /** 测试用随机数源；生产默认使用 Math.random 计算重连抖动。 */
+  random?: () => number;
 }
 
 /**
@@ -85,12 +88,16 @@ export function createGotifyWsListener(
 ): GotifyWsListenerController {
   const WebSocketImpl = deps.WebSocketImpl ?? WebSocket;
   const connectionTimeoutMs = deps.connectionTimeoutMs ?? CONNECTION_TIMEOUT_MS;
+  const random = deps.random ?? Math.random;
   let socket: WebSocket | null = null;
   let stopped = false;
   let reconnectDelay = account.inbound.reconnectDelayMs;
   let reconnectTimer: NodeJS.Timeout | null = null;
   let connectionTimeoutTimer: NodeJS.Timeout | null = null;
   let reconnectAttempts = 0;
+  let connected = false;
+  let generation = 0;
+  let startPromise: Promise<void> | null = null;
   const streamUrl =
     account.clientToken && account.serverUrl
       ? `${normalizeServerUrl(account.serverUrl).replace(/^http/i, "ws")}/stream?token=${encodeURIComponent(account.clientToken)}`
@@ -149,16 +156,21 @@ export function createGotifyWsListener(
       throw new GotifyWebSocketError(error, "MAX_RECONNECT_ATTEMPTS");
     }
 
-    socket = new WebSocketImpl(streamUrl) as unknown as WebSocket;
+    const currentGeneration = ++generation;
+    const currentSocket = new WebSocketImpl(streamUrl) as unknown as WebSocket;
+    socket = currentSocket;
 
-    socket.onopen = () => {
+    currentSocket.onopen = () => {
+      if (stopped || currentGeneration !== generation) return;
+      connected = true;
       reconnectDelay = account.inbound.reconnectDelayMs;
       reconnectAttempts = 0;
       deps.onStateChange?.({ running: true, lastError: null });
       settleConnectionGate("resolve");
     };
 
-    socket.onmessage = async (event) => {
+    currentSocket.onmessage = async (event) => {
+      if (stopped || currentGeneration !== generation) return;
       try {
         /*
          * Gotify stream 每帧都是 JSON 消息。先转字符串再做 JSON.parse，
@@ -169,26 +181,36 @@ export function createGotifyWsListener(
         const parsed = GotifyStreamEnvelopeSchema.parse(JSON.parse(raw));
         await deps.onMessage(parsed);
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = redactGotifyError(error, account);
         deps.onStateChange?.({ running: true, lastError: errorMsg });
       }
     };
 
-    socket.onerror = (event) => {
+    currentSocket.onerror = (event) => {
+      if (stopped || currentGeneration !== generation) return;
       const error =
-        event instanceof ErrorEvent ? event.message : "WebSocket error";
+        typeof ErrorEvent !== "undefined" && event instanceof ErrorEvent
+          ? event.message
+          : "WebSocket error";
       deps.onStateChange?.({ running: false, lastError: error });
-      settleConnectionGate(
-        "reject",
-        new GotifyWebSocketError(error, "WEBSOCKET_ERROR"),
-      );
+      if (connectionGate) {
+        stopped = true;
+        settleConnectionGate(
+          "reject",
+          new GotifyWebSocketError(error, "WEBSOCKET_ERROR"),
+        );
+      }
     };
 
-    socket.onclose = (event) => {
+    currentSocket.onclose = (event) => {
+      if (currentGeneration !== generation) return;
+      socket = null;
+      connected = false;
       const wasClean = event?.wasClean ? "clean" : "unclean";
       const reason = event?.reason || `WebSocket closed (${wasClean})`;
       deps.onStateChange?.({ running: false, lastError: reason });
       if (connectionGate) {
+        stopped = true;
         settleConnectionGate(
           "reject",
           new GotifyWebSocketError(reason, "WEBSOCKET_CLOSED"),
@@ -204,10 +226,19 @@ export function createGotifyWsListener(
    * 安排指数退避重连；捕获 connect 同步抛错，避免 uncaught exception。
    */
   const scheduleReconnect = () => {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
+    if (stopped || reconnectTimer) return;
+    if (reconnectAttempts >= account.inbound.maxReconnectAttempts) {
+      const error = "WebSocket reconnect attempts exhausted";
+      deps.onStateChange?.({ running: false, lastError: error });
+      return;
     }
+    const scheduledDelay = computeReconnectDelay(
+      reconnectDelay,
+      account.inbound.reconnectJitterRatio,
+      random,
+    );
     reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
       reconnectAttempts += 1;
       reconnectDelay = Math.min(
         reconnectDelay * 2,
@@ -216,10 +247,11 @@ export function createGotifyWsListener(
       try {
         connect();
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = redactGotifyError(error, account);
         deps.onStateChange?.({ running: false, lastError: errorMsg });
       }
-    }, reconnectDelay);
+    }, scheduledDelay);
+    reconnectTimer.unref?.();
   };
 
   return {
@@ -229,11 +261,14 @@ export function createGotifyWsListener(
      * @returns 首次连接成功或失败后的 Promise；后续重连在后台运行。
      */
     start() {
+      if (connected) return Promise.resolve();
+      if (startPromise) return startPromise;
       stopped = false;
-      return new Promise<void>((resolve, reject) => {
+      startPromise = new Promise<void>((resolve, reject) => {
         connectionGate = { resolve, reject };
         connectionTimeoutTimer = setTimeout(() => {
           if (connectionGate) {
+            stopped = true;
             settleConnectionGate(
               "reject",
               new GotifyWebSocketError(
@@ -244,6 +279,7 @@ export function createGotifyWsListener(
             socket?.close();
           }
         }, connectionTimeoutMs);
+        connectionTimeoutTimer.unref?.();
         try {
           connect();
         } catch (error) {
@@ -254,7 +290,10 @@ export function createGotifyWsListener(
               : new GotifyWebSocketError(String(error), "WEBSOCKET_ERROR"),
           );
         }
+      }).finally(() => {
+        startPromise = null;
       });
+      return startPromise;
     },
     /**
      * 停止 listener。
@@ -263,6 +302,8 @@ export function createGotifyWsListener(
      */
     stop() {
       stopped = true;
+      connected = false;
+      generation += 1;
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -275,4 +316,16 @@ export function createGotifyWsListener(
       deps.onStateChange?.({ running: false, lastError: null });
     },
   };
+}
+
+/**
+ * 对基础重连延迟加入对称抖动；`random=0.5` 时保持原值，便于测试锁定行为。
+ */
+export function computeReconnectDelay(
+  baseDelayMs: number,
+  jitterRatio: number,
+  random: () => number = Math.random,
+): number {
+  const jitter = baseDelayMs * jitterRatio * (random() * 2 - 1);
+  return Math.max(0, Math.round(baseDelayMs + jitter));
 }

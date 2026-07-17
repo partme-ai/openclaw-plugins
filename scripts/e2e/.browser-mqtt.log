@@ -1,2 +1,4 @@
-[13:08:16.496] >> PUB openclaw/agent/demo/in
-[13:08:16.347] mqtt connect ok
+[15:02:58.902] << openclaw/agent/main/out: {"version":"1","message":{"messageId":"mqtt-ws-8747d4f3-8f66-4c38-af24-b92fcc398281","traceId":"ce770b2a-1157-48ad-8517-0f6420fd5f3c","timestamp":1784300578901,"source":{"channel":"mqtt-ws","accountId":"default","userId":"browser-1784300578524","chatType":"direct","agentId":"main"},"contentType":"text","text":"openclaw e2e fixture reply","media":[],"direction":"outbound"},"headers":{"replyRoute":{"topic":"openclaw/agent/main/out"}}}
+[15:02:58.615] >> PUB openclaw/agent/main/in
+[15:02:58.585] >> SUB openclaw/agent/main/out
+[15:02:58.552] mqtt connect ok

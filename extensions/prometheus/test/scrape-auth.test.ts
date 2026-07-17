@@ -12,7 +12,6 @@ function mockRes(): ServerResponse {
 describe("assertScrapeAuthorized", () => {
   it("allows when auth disabled", () => {
     const cfg: ResolvedPrometheusConfig = {
-      port: 9090,
       metricsPath: "/metrics",
       collectIntervalMs: 0,
       snapshotIntervalMs: 30000,
@@ -30,7 +29,6 @@ describe("assertScrapeAuthorized", () => {
 
   it("503 when enabled but no token", () => {
     const cfg: ResolvedPrometheusConfig = {
-      port: 9090,
       metricsPath: "/metrics",
       collectIntervalMs: 0,
       snapshotIntervalMs: 30000,
@@ -49,7 +47,6 @@ describe("assertScrapeAuthorized", () => {
 
   it("401 when token mismatch", () => {
     const cfg: ResolvedPrometheusConfig = {
-      port: 9090,
       metricsPath: "/metrics",
       collectIntervalMs: 0,
       snapshotIntervalMs: 30000,
@@ -68,7 +65,6 @@ describe("assertScrapeAuthorized", () => {
 
   it("allows matching bearer", () => {
     const cfg: ResolvedPrometheusConfig = {
-      port: 9090,
       metricsPath: "/metrics",
       collectIntervalMs: 0,
       snapshotIntervalMs: 30000,

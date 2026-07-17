@@ -16,13 +16,14 @@
  *   node scripts/publish-changed.mjs --tag next          # use next dist-tag
  */
 
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { readdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import {
   materializePkgJsonForPublish,
   readMessageSdkVersion,
 } from "./workspace-deps.mjs";
+import { sortPackagesByDependency } from "./release-topology.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PLUGINS_DIR = resolve(ROOT, "extensions");
@@ -54,24 +55,29 @@ function compareVersions(a, b) {
 // ── Helpers ──
 
 function getPlugins(filterName) {
-  return readdirSync(PLUGINS_DIR, { withFileTypes: true })
+  const packages = readdirSync(PLUGINS_DIR, { withFileTypes: true })
     .filter((d) => d.isDirectory() && !d.name.startsWith("_") && !d.name.startsWith("."))
-    .filter((d) => !filterName || d.name === filterName)
-    .map((d) => ({ dir: d.name, path: resolve(PLUGINS_DIR, d.name) }))
-    .sort((a, b) => a.dir.localeCompare(b.dir));
+    .map((d) => {
+      const path = resolve(PLUGINS_DIR, d.name);
+      return { dir: d.name, path, pkg: readPkg(path) };
+    });
+  return sortPackagesByDependency(packages, filterName);
 }
 
 function readPkg(pluginPath) {
   return JSON.parse(readFileSync(resolve(pluginPath, "package.json"), "utf8"));
 }
 
-function getLatestNpmVersion(packageName) {
+function getLatestNpmVersion(packageName, registry) {
   // Query all versions, pick the semantically highest
   try {
-    const result = execSync(
-      `npm view "${packageName}" versions --json`,
-      { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] }
-    ).trim();
+    const args = ["view", packageName, "versions", "--json"];
+    if (registry) args.push("--registry", registry);
+    const result = execFileSync("npm", args, {
+      encoding: "utf8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
     if (!result) return null;
     const versions = JSON.parse(result);
     const list = Array.isArray(versions) ? versions : [versions];
@@ -89,7 +95,7 @@ function getLatestNpmVersion(packageName) {
     return latest;
   } catch (e) {
     const stderr = e?.stderr?.toString?.() ?? "";
-    if (stderr.includes("E404") || stderr.includes("Not found") || e.status !== 0) return null;
+    if (stderr.includes("E404") || stderr.includes("404 Not Found")) return null;
     throw e;
   }
 }
@@ -130,32 +136,60 @@ if (tag !== "latest" && tag !== "next") {
   console.error(`Invalid tag: "${tag}". Use "latest" or "next".`);
   process.exit(1);
 }
+if (pluginIdx >= 0 && !filterName) {
+  console.error("--plugin requires an extension directory name");
+  process.exit(1);
+}
 
 console.log(dryRun ? "🔍 DRY RUN — no packages will be published\n" : `📦 Publishing changed plugins (tag: ${tag})...\n`);
 
 const plugins = getPlugins(filterName);
+if (filterName && plugins.length === 0) {
+  console.error(`Unknown plugin: ${filterName}`);
+  process.exit(1);
+}
 const results = [];
 const messageSdkVersion = readMessageSdkVersion();
+const failedPackageNames = new Set();
 
-for (const { dir, path: pluginPath } of plugins) {
+console.log("发布拓扑：");
+for (const [index, entry] of plugins.entries()) {
+  const dependencyLabel = entry.internalDependencies.length > 0
+    ? ` ← ${entry.internalDependencies.join(", ")}`
+    : "";
+  console.log(`  ${index + 1}. ${entry.pkg.name}${dependencyLabel}`);
+}
+console.log();
+
+for (const { dir, path: pluginPath, pkg, internalDependencies } of plugins) {
   const pkgPath = resolve(pluginPath, "package.json");
   if (!existsSync(pkgPath)) {
     console.log(`⏭️  ${dir} — no package.json, skipped`);
     continue;
   }
-  const pkg = readPkg(pluginPath);
   if (pkg.private) {
     console.log(`⏭️  ${dir} — private, skipped`);
     continue;
   }
 
-  const npmVersion = getLatestNpmVersion(pkg.name);
+  const blockingDependencies = internalDependencies.filter((name) => failedPackageNames.has(name));
+  if (blockingDependencies.length > 0) {
+    const reason = `workspace dependency publish failed: ${blockingDependencies.join(", ")}`;
+    console.log(`⛔ ${dir} — ${reason}`);
+    results.push({ plugin: dir, status: "blocked", reason });
+    failedPackageNames.add(pkg.name);
+    continue;
+  }
+
+  const registry = pkg.publishConfig?.registry;
+  const npmVersion = getLatestNpmVersion(pkg.name, registry);
   const { reason, publish, action, localParsed } = shouldPublish(pkg.version, npmVersion);
 
   // Prerelease protection: refuse x.y.z-w with tag "latest"
   if (publish && localParsed?.hasRevision && tag === "latest") {
     console.log(`⛔ ${dir} — ${pkg.name}@${pkg.version} is prerelease, refusing --tag latest. Use --tag next.`);
     results.push({ plugin: dir, status: "blocked", reason: "prerelease with tag latest" });
+    failedPackageNames.add(pkg.name);
     continue;
   }
 
@@ -177,14 +211,18 @@ for (const { dir, path: pluginPath } of plugins) {
             `  ↳ workspace → ^${messageSdkVersion} (@partme.ai/openclaw-message-sdk) for npm publish`,
           );
         }
-        execSync(`cd "${pluginPath}" && npm publish --access public --tag ${tag}`, {
+        const publishArgs = ["publish", "--access", "public", "--tag", tag];
+        if (registry) publishArgs.push("--registry", registry);
+        execFileSync("npm", publishArgs, {
+          cwd: pluginPath,
           stdio: "inherit",
           timeout: 120_000,
         });
-        results.push({ plugin: dir, status: "published", version: pkg.version });
+        results.push({ plugin: dir, name: pkg.name, status: "published", version: pkg.version });
       } catch (err) {
         console.error(`❌ ${dir} publish failed: ${err.message}`);
         results.push({ plugin: dir, status: "failed", error: err.message });
+        failedPackageNames.add(pkg.name);
       } finally {
         if (materialized) {
           writeFileSync(pkgPath, originalPkgContent);
@@ -197,7 +235,7 @@ for (const { dir, path: pluginPath } of plugins) {
           `  ↳ would materialize workspace → ^${messageSdkVersion} (@partme.ai/openclaw-message-sdk)`,
         );
       }
-      results.push({ plugin: dir, status: "would-publish", version: pkg.version });
+      results.push({ plugin: dir, name: pkg.name, status: "would-publish", version: pkg.version });
     }
   } else {
     const icon = action === "behind" ? "⚠️" : "✅";
@@ -216,7 +254,7 @@ const failed = results.filter((r) => r.status === "failed");
 console.log(`Total: ${results.length} | Publish: ${published.length} | Skip: ${skipped.length} | Blocked: ${blocked.length} | Failed: ${failed.length}`);
 if (published.length > 0) {
   console.log("\nPublish:");
-  for (const r of published) console.log(`  @partme.ai/${r.plugin}@${r.version}`);
+  for (const r of published) console.log(`  ${r.name}@${r.version}`);
 }
 if (blocked.length > 0) {
   console.log("\nBlocked (use --tag next for prereleases):");

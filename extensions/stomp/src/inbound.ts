@@ -22,7 +22,7 @@ import { STOMP_TCP_CHANNEL_ID } from "./config/resolvers.js";
 import { getStompRuntime } from "./runtime.js";
 import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 import {
-  getStompTcpIdempotencyCache,
+  getStompTcpClaimableDedupe,
 } from "./shared/wire-helpers.js";
 import { publishToDestination } from "./transport/server.js";
 import type { InboundMessage } from "./types.js";
@@ -36,53 +36,63 @@ import type { InboundMessage } from "./types.js";
 export async function dispatchInboundMessage(message: InboundMessage): Promise<void> {
   const runtime = getStompRuntime();
   if (!runtime) {
-    console.warn("[openclaw-stomp] Runtime not initialized, cannot dispatch message");
-    return;
+    throw new Error("STOMP runtime is not initialized");
   }
 
-  const idempotencyCache = getStompTcpIdempotencyCache();
   const parsed = normalizeWireIngress({
     rawPayload: message.rawPayload,
     mode: resolvePayloadMode("jsonTextOrPlain"),
     channel: STOMP_TCP_CHANNEL_ID,
-    idempotencyKey: message.idempotencyKey,
-    idempotency: message.idempotencyKey ? idempotencyCache : undefined,
   });
-  if (!parsed.accepted) {
-    console.log(`[openclaw-stomp] Duplicate inbound dropped: ${message.idempotencyKey}`);
-    return;
+  if (!parsed.text.trim()) {
+    throw new Error("STOMP inbound payload is empty");
   }
+
+  const dedupe = getStompTcpClaimableDedupe();
+  const claim = message.idempotencyKey
+    ? await dedupe.claim(message.idempotencyKey)
+    : undefined;
+  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) return;
 
   const replyDestination = message.replyDestination ?? `/topic/session.${message.peerId}`;
 
-  const { agentId, sessionKey } = await resolveChannelDispatchIdentity(runtime as unknown as BridgePluginRuntime, {
-    channel: STOMP_TCP_CHANNEL_ID,
-    accountId: message.accountId,
-    peerId: message.peerId,
-    agentId: message.agentId,
-  });
+  try {
+    const { agentId, sessionKey } = await resolveChannelDispatchIdentity(runtime as unknown as BridgePluginRuntime, {
+      channel: STOMP_TCP_CHANNEL_ID,
+      accountId: message.accountId,
+      peerId: message.peerId,
+      agentId: message.agentId,
+    });
 
-  await dispatchChannelMessage({
-    mode: "reply-pipeline",
-    runtime: runtime as unknown as BridgePluginRuntime,
-    channel: STOMP_TCP_CHANNEL_ID,
-    accountId: message.accountId,
-    peerId: message.peerId,
-    text: parsed.text,
-    agentId,
-    sessionKey,
-    unified: parsed.unified,
-    extra: {
-      stompDestination: message.destination,
-      stompReplyDestination: replyDestination,
-    },
-    reply: {
-      deliver: async ({ wire }: { wire: string }) => {
-        publishToDestination(replyDestination, wire);
-      },
-      outboundFormat: "envelope",
-      replyRoute: { destination: replyDestination },
+    await dispatchChannelMessage({
+      mode: "reply-pipeline",
+      runtime: runtime as unknown as BridgePluginRuntime,
+      channel: STOMP_TCP_CHANNEL_ID,
+      accountId: message.accountId,
+      peerId: message.peerId,
+      text: parsed.text,
       agentId,
-    },
-  });
+      sessionKey,
+      unified: parsed.unified,
+      extra: {
+        stompDestination: message.destination,
+        stompReplyDestination: replyDestination,
+      },
+      reply: {
+        deliver: async ({ wire }: { wire: string }) => {
+          const delivered = publishToDestination(replyDestination, wire);
+          if (delivered < 1) {
+            throw new Error(`No STOMP subscriber accepted reply destination: ${replyDestination}`);
+          }
+        },
+        outboundFormat: "envelope",
+        replyRoute: { destination: replyDestination },
+        agentId,
+      },
+    });
+    if (message.idempotencyKey) await dedupe.commit(message.idempotencyKey);
+  } catch (error) {
+    if (message.idempotencyKey) dedupe.release(message.idempotencyKey);
+    throw error;
+  }
 }

@@ -6,18 +6,28 @@
  * @module knowledge/parser/zhipu
  */
 import type { DocParserService, KnowledgeParserConfig, ParsedDocument } from '../types.js';
+import { readFile } from 'node:fs/promises';
+import { requestProviderJson } from '../shared/provider-http.js';
 
 /** 默认模型 */
 const DEFAULT_MODEL = 'glm-ocr';
 /** 智谱 Layout Parsing API 端点 */
 const DEFAULT_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4/layout_parsing';
 
+/**
+ * 智谱 Layout Parsing 远程文档解析器。
+ *
+ * 将文件引用提交给外部 OCR 服务，使用统一有界 HTTP 客户端控制超时、重试和
+ * 响应体；对 Markdown、页数、布局元素及边界框做防御性解析后再交给切块器。
+ */
 export class ZhipuDocParserService implements DocParserService {
   readonly modelName: string;
   private baseUrl: string;
   private apiKey: string;
+  private config?: KnowledgeParserConfig;
 
   constructor(config?: KnowledgeParserConfig) {
+    this.config = config;
     this.baseUrl = config?.baseUrl ?? DEFAULT_BASE_URL;
     this.apiKey = config?.apiKey ?? '';
     this.modelName = config?.model ?? DEFAULT_MODEL;
@@ -28,60 +38,55 @@ export class ZhipuDocParserService implements DocParserService {
       throw new Error('Zhipu DocParser requires apiKey');
     }
 
+    const providerFile = await this.prepareProviderFile(file);
     const body: Record<string, unknown> = {
       model: this.modelName,
-      file,
+      file: providerFile,
     };
 
-    const response = await fetch(this.baseUrl, {
+    const data = await requestProviderJson<Record<string, unknown>>(this.baseUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'unknown');
-      throw new Error(`Zhipu DocParser API error: ${response.status} — ${errorText}`);
+    }, {
+      timeoutMs: this.config?.requestTimeoutMs,
+      maxRetries: this.config?.maxRetries,
+      maxResponseBytes: this.config?.maxResponseBytes ?? 16 * 1024 * 1024,
+    }, 'Zhipu', 'DocParser');
+    if (typeof data.md_results !== 'string' || !data.md_results.trim()) {
+      throw new Error('Zhipu DocParser returned empty or invalid markdown');
     }
-
-    const data = (await response.json()) as {
-      model: string;
-      md_results?: string;
-      data_info?: { num_pages: number };
-      layout_details?: {
-        index: number;
-        label: string;
-        content: string;
-        bbox_2d: [number, number, number, number];
-        height: number;
-        width: number;
-      }[][];
-    };
+    const dataInfo = data.data_info && typeof data.data_info === 'object'
+      ? data.data_info as { num_pages?: unknown }
+      : undefined;
 
     const result: ParsedDocument = {
-      text: data.md_results ?? '',
+      text: data.md_results,
       metadata: {
         fileName: this.extractFileName(file),
         mimeType: this.detectMimeType(file),
-        totalPages: data.data_info?.num_pages,
+        totalPages: Number.isSafeInteger(dataInfo?.num_pages) ? dataInfo?.num_pages as number : undefined,
       },
     };
 
     // 解析布局详情（可选）
-    if (data.layout_details) {
+    if (Array.isArray(data.layout_details)) {
       result.layout = {
-        pages: data.layout_details.map((page) => ({
-          width: page[0]?.width ?? 0,
-          height: page[0]?.height ?? 0,
-          elements: page.map((el) => ({
-            type: this.mapLabelToType(el.label),
-            content: el.content,
-            bbox: el.bbox_2d,
+        pages: data.layout_details.filter(Array.isArray).map((page) => {
+          const elements = page.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object');
+          const first = elements[0];
+          return {
+          width: typeof first?.width === 'number' ? first.width : 0,
+          height: typeof first?.height === 'number' ? first.height : 0,
+          elements: elements.filter((element) => typeof element.content === 'string').map((el) => ({
+            type: this.mapLabelToType(typeof el.label === 'string' ? el.label : 'text'),
+            content: el.content as string,
+            bbox: this.validBbox(el.bbox_2d),
           })),
-        })),
+        }; }),
       };
     }
 
@@ -109,6 +114,37 @@ export class ZhipuDocParserService implements DocParserService {
     }
   }
 
+  /**
+   * 把 owner 已授权的本地文件转换为远端 API 可识别的 data URL。
+   *
+   * 智谱 `layout_parsing.file` 只接受 URL 或 base64；直接发送本机路径会在开发机上
+   * 看似配置成功、到远端却必然无法访问。HTTP URL 也拒绝，以免明文文档地址和查询
+   * 参数泄露在链路上；本地文件/data URL 均在出站前执行字节上限。
+   */
+  private async prepareProviderFile(file: string): Promise<string> {
+    if (file.startsWith('data:')) {
+      const match = file.match(/^data:(application\/pdf|image\/(?:png|jpeg));base64,([A-Za-z0-9+/]+={0,2})$/u);
+      if (!match) throw new Error('Zhipu DocParser requires a PDF/PNG/JPEG base64 data URL');
+      this.assertFileSize(Buffer.byteLength(match[2], 'base64'));
+      return file;
+    }
+    if (file.startsWith('https://')) return file;
+    if (file.startsWith('http://')) {
+      throw new Error('Zhipu DocParser only accepts HTTPS remote URLs');
+    }
+
+    const mimeType = this.detectMimeType(file);
+    if (!mimeType) throw new Error('Zhipu DocParser local file must be PDF, PNG, JPG or JPEG');
+    const bytes = await readFile(file);
+    this.assertFileSize(bytes.byteLength);
+    return `data:${mimeType};base64,${bytes.toString('base64')}`;
+  }
+
+  private assertFileSize(bytes: number): void {
+    const maximum = this.config?.maxFileBytes ?? 20 * 1024 * 1024;
+    if (bytes > maximum) throw new Error(`Zhipu DocParser input ${bytes} bytes exceeds maxFileBytes=${maximum}`);
+  }
+
   private detectMimeType(file: string): string | undefined {
     if (file.startsWith('data:')) {
       const match = file.match(/^data:([^;]+);/);
@@ -127,5 +163,11 @@ export class ZhipuDocParserService implements DocParserService {
       case 'formula': return 'formula';
       default: return 'text';
     }
+  }
+
+  private validBbox(value: unknown): [number, number, number, number] {
+    return Array.isArray(value) && value.length === 4 && value.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
+      ? value as [number, number, number, number]
+      : [0, 0, 0, 0];
   }
 }

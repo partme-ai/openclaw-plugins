@@ -1,6 +1,9 @@
 /**
  * Backward-compatible type bridge.
  * Canonical definitions live in `src/types/*`.
+ *
+ * 中文说明：这里只保留旧类型名到规范类型的映射，供历史调用方平滑迁移；不得在此
+ * 增加独立字段，否则新旧协议模型会再次产生漂移。
  */
 export type {
   WecomDmConfig,

@@ -9,7 +9,7 @@ import {
   resolveDouyinTranscriptRoute,
 } from "../src/dispatch/transcript-dispatch.js";
 import { deliverDouyinAgentReplyPayload } from "../src/dispatch/outbound-reply.js";
-import { sendDouyinOutboundStub } from "../src/outbound.js";
+import { sendDouyinOutboundUnsupported } from "../src/outbound.js";
 
 function mockRuntime(overrides: Record<string, unknown> = {}): PluginRuntime {
   const resolveAgentRoute = vi.fn(() => ({
@@ -122,7 +122,7 @@ describe("buildDouyinTranscriptInboundContext", () => {
 });
 
 describe("deliverDouyinAgentReplyPayload", () => {
-  it("accepts text-only agent reply", async () => {
+  it("does not report unsupported text reply as delivered", async () => {
     const logs: string[] = [];
     const result = await deliverDouyinAgentReplyPayload({
       cfg: { channels: {} },
@@ -132,8 +132,9 @@ describe("deliverDouyinAgentReplyPayload", () => {
       log: (msg) => logs.push(msg),
     });
 
-    expect(result.ok).toBe(true);
-    expect(logs.some((l) => l.includes("出站文本"))).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/does not support/);
+    expect(logs.some((l) => l.includes("未发送"))).toBe(true);
   });
 
   it("rejects empty reply without media", async () => {
@@ -146,7 +147,7 @@ describe("deliverDouyinAgentReplyPayload", () => {
     expect(result).toEqual({ ok: false, error: "empty agent reply" });
   });
 
-  it("returns error when local media path does not exist", async () => {
+  it("rejects media without attempting a fake delivery", async () => {
     const result = await deliverDouyinAgentReplyPayload({
       cfg: { channels: {} },
       shopId: "shop-1",
@@ -158,10 +159,8 @@ describe("deliverDouyinAgentReplyPayload", () => {
   });
 });
 
-describe("sendDouyinOutboundStub", () => {
-  it("returns channel result with message id", async () => {
-    const result = await sendDouyinOutboundStub("hello");
-    expect(result.channel).toBe("douyin");
-    expect(result.messageId).toMatch(/^douyin-outbound-stub-/);
+describe("sendDouyinOutboundUnsupported", () => {
+  it("throws instead of returning a fake message id", async () => {
+    await expect(sendDouyinOutboundUnsupported()).rejects.toThrow(/generic outbound messaging is unavailable/);
   });
 });

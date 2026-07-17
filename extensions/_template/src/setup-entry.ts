@@ -4,7 +4,7 @@
  * @see https://docs.openclaw.ai/plugins/sdk-setup#setup-entry
  */
 
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { plugin as templateChannel } from "./channel.js";
 

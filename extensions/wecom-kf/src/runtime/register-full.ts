@@ -8,11 +8,10 @@ import { initKfSendGuardStore } from "../agent/kf-send-guard.js";
 import { wecomPlugin } from "../channel/channel.js";
 import { createKfAccountConfigGetter } from "../config/kf-callback.js";
 import {
-  collectWecomKfRoutePaths,
+  collectWecomKfRouteBindings,
   getWecomKfChannelBlock,
 } from "../config/kf-routes.js";
 import { registerIntelligenceHooks } from "../intelligence/hooks.js";
-import { createWeComMcpTool } from "../mcp/index.js";
 import { setWecomRuntime } from "../runtime/index.js";
 import {
   createWecomKfGetAccountLinkTool,
@@ -20,7 +19,11 @@ import {
   createWecomKfListServicersTool,
   createWecomKfTransferSessionTool,
 } from "../tools/control-tools.js";
-import { createKfCallbackHandler } from "../webhook/callback.js";
+import {
+  createKfCallbackHandler,
+  startKfCallbackProcessing,
+  stopKfCallbackProcessing,
+} from "../webhook/callback.js";
 
 /**
  * 为 wecom-kf 渠道会话注入 MEDIA: 发送说明。
@@ -61,38 +64,43 @@ function registerWecomKfMediaPrompt(api: OpenClawPluginApi): void {
  * @param api - OpenClaw 插件宿主 API。
  */
 export function registerWecomKfFull(api: OpenClawPluginApi): void {
-  void initKfSendGuardStore();
+  api.registerService({
+    id: "wecom-kf-state",
+    start: async () => {
+      startKfCallbackProcessing();
+      await initKfSendGuardStore();
+    },
+    stop: async () => {
+      await stopKfCallbackProcessing();
+    },
+  });
 
   setWecomRuntime(api.runtime);
   api.registerChannel({ plugin: wecomPlugin });
 
   const getOpenClawConfig = (): OpenClawConfig | undefined =>
-    (api.runtime as { config?: OpenClawConfig }).config;
-
-  const kfCallbackHandler = createKfCallbackHandler(createKfAccountConfigGetter(getOpenClawConfig));
-  const handleKfWebhookRequest = async (
-    req: Parameters<typeof kfCallbackHandler>[0],
-    res: Parameters<typeof kfCallbackHandler>[1],
-  ): Promise<boolean> => {
-    await kfCallbackHandler(req, res);
-    return true;
-  };
+    api.runtime.config.current() as OpenClawConfig;
 
   const initialCfg = getOpenClawConfig();
   const kfChannelConfig = getWecomKfChannelBlock(initialCfg);
-  for (const path of collectWecomKfRoutePaths(kfChannelConfig)) {
+  const getAccountConfig = createKfAccountConfigGetter(getOpenClawConfig);
+  for (const binding of collectWecomKfRouteBindings(kfChannelConfig)) {
+    const kfCallbackHandler = createKfCallbackHandler(
+      (openKfId) => openKfId ? getAccountConfig(openKfId) : getAccountConfig(binding.accountId),
+    );
     api.registerHttpRoute({
-      path,
-      handler: handleKfWebhookRequest,
+      path: binding.path,
+      handler: async (req, res) => {
+        await kfCallbackHandler(req, res);
+        return true;
+      },
       auth: "plugin",
-      match: "prefix",
+      match: "exact",
     });
   }
 
   registerIntelligenceHooks(api);
   registerWecomKfMediaPrompt(api);
-
-  api.registerTool(createWeComMcpTool(), { name: "wecom_kf_mcp" });
 
   api.registerTool(
     (ctx) => createWecomKfListServicersTool({ ...ctx, config: getOpenClawConfig() }),

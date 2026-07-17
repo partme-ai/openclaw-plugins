@@ -47,6 +47,11 @@ export async function bootstrapGotify() {
   appForm.append("description", "E2E test app");
   const app = await gotifyApi("POST", "/application", appForm);
 
+  const outboundAppForm = new FormData();
+  outboundAppForm.append("name", "openclaw-e2e-outbound");
+  outboundAppForm.append("description", "OpenClaw outbound E2E app");
+  const outboundApp = await gotifyApi("POST", "/application", outboundAppForm);
+
   const clientForm = new FormData();
   clientForm.append("name", "openclaw-e2e-client");
   const client = await gotifyApi("POST", "/client", clientForm);
@@ -54,6 +59,7 @@ export async function bootstrapGotify() {
   const secrets = {
     serverUrl: GOTIFY_URL,
     appToken: app.token,
+    outboundAppToken: outboundApp.token,
     clientToken: client.token,
     allowedAppId: app.id,
     generatedAt: new Date().toISOString(),
@@ -61,6 +67,6 @@ export async function bootstrapGotify() {
 
   mkdirSync(E2E_DIR, { recursive: true });
   writeFileSync(join(E2E_DIR, ".e2e-secrets.json"), JSON.stringify(secrets, null, 2));
-  console.log("[gotify-bootstrap] tokens written (appId=%s)", app.id);
+  console.log("[gotify-bootstrap] tokens written (inboundAppId=%s, outboundAppId=%s)", app.id, outboundApp.id);
   return secrets;
 }

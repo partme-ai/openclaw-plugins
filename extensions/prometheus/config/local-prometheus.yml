@@ -11,7 +11,7 @@ global:
 
 # 告警规则文件路径（可选）
 rule_files:
-  - './alerts/prometheus.yml'
+  - '../alerts/prometheus.yml'
 
 # 告警管理器配置（可选）
 # alerting:

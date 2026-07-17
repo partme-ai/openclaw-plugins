@@ -39,6 +39,66 @@ type TokenCache = {
 };
 
 const tokenCaches = new Map<string, TokenCache>();
+const MAX_TOKEN_CACHE_ENTRIES = 256;
+const DEFAULT_WECOM_API_BASE_URL = "https://qyapi.weixin.qq.com";
+
+/**
+ * 解析 Agent OpenAPI 基础地址。
+ *
+ * 生产覆盖必须使用 HTTPS；仅允许 localhost/loopback 使用 HTTP，供完全离线的安装态测试
+ * 和本机协议夹具使用。地址只接受 origin，禁止把凭据拼接到带 path/query/userinfo 的 URL。
+ */
+function resolveAgentApiBaseUrl(agent: ResolvedAgentAccount): string {
+    const raw = agent.config.apiBaseUrl?.trim() || DEFAULT_WECOM_API_BASE_URL;
+    let parsed: URL;
+    try {
+        parsed = new URL(raw);
+    } catch {
+        throw new Error("wecom agent apiBaseUrl must be a valid absolute URL");
+    }
+    const isLoopback = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]";
+    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopback)) {
+        throw new Error("wecom agent apiBaseUrl must use HTTPS (HTTP is allowed only for loopback)");
+    }
+    if (parsed.username || parsed.password || parsed.search || parsed.hash || (parsed.pathname !== "/" && parsed.pathname !== "")) {
+        throw new Error("wecom agent apiBaseUrl must contain only scheme, host, and optional port");
+    }
+    return parsed.origin;
+}
+
+/** 将官方端点的 pathname 映射到当前账号的受控 OpenAPI origin。 */
+function agentApiEndpoint(agent: ResolvedAgentAccount, officialEndpoint: string): string {
+    return `${resolveAgentApiBaseUrl(agent)}${new URL(officialEndpoint).pathname}`;
+}
+
+/** Secret 只参与不可逆指纹，既隔离轮换前后缓存，也不把凭据明文留在 Map key/堆快照中。 */
+function tokenCacheKey(agent: ResolvedAgentAccount): string {
+    return crypto
+        .createHash("sha256")
+        .update(`${agent.corpId}\0${agent.corpSecret}\0${String(agent.agentId ?? "na")}\0${resolveAgentApiBaseUrl(agent)}`)
+        .digest("hex");
+}
+
+function trimTokenCache(): void {
+    while (tokenCaches.size > MAX_TOKEN_CACHE_ENTRIES) {
+        const oldest = tokenCaches.keys().next().value as string | undefined;
+        if (!oldest) break;
+        tokenCaches.delete(oldest);
+    }
+}
+
+/** 外部 API 错误只保留有限、单行的错误码与摘要，避免控制字符和超长正文进入日志。 */
+function apiFailure(operation: string, value: { errcode?: number; errmsg?: string }): Error {
+    const code = Number.isFinite(value.errcode) ? String(value.errcode) : "unknown";
+    const message = String(value.errmsg ?? "unknown")
+        .replace(/[\u0000-\u001f\u007f]/g, " ")
+        .slice(0, 256);
+    return new Error(`${operation} failed: ${code} ${message}`);
+}
+
+function rejectedRecipientCount(value: string | undefined): number {
+    return value?.split(/[|,]/).map((entry) => entry.trim()).filter(Boolean).length ?? 0;
+}
 
 /** 规范化上传文件名，避免企微网关拒绝特殊字符或非 ASCII。 */
 function normalizeUploadFilename(filename: string): string {
@@ -95,12 +155,13 @@ function requireAgentId(agent: ResolvedAgentAccount): number {
  * @returns 有效的 AccessToken
  */
 export async function getAccessToken(agent: ResolvedAgentAccount): Promise<string> {
-    const cacheKey = `${agent.corpId}:${String(agent.agentId ?? "na")}`;
+    const cacheKey = tokenCacheKey(agent);
     let cache = tokenCaches.get(cacheKey);
 
     if (!cache) {
         cache = { token: "", expiresAt: 0, refreshPromise: null };
         tokenCaches.set(cacheKey, cache);
+        trimTokenCache();
     }
 
     const now = Date.now();
@@ -115,12 +176,12 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
 
     cache.refreshPromise = (async () => {
         try {
-            const url = `${API_ENDPOINTS.GET_TOKEN}?corpid=${encodeURIComponent(agent.corpId)}&corpsecret=${encodeURIComponent(agent.corpSecret)}`;
+            const url = `${agentApiEndpoint(agent, API_ENDPOINTS.GET_TOKEN)}?corpid=${encodeURIComponent(agent.corpId)}&corpsecret=${encodeURIComponent(agent.corpSecret)}`;
             const res = await wecomFetch(url, undefined, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
             const json = await res.json() as { access_token?: string; expires_in?: number; errcode?: number; errmsg?: string };
 
             if (!json?.access_token) {
-                throw new Error(`gettoken failed: ${json?.errcode} ${json?.errmsg}`);
+                throw apiFailure("gettoken", json);
             }
 
             cache!.token = json.access_token;
@@ -161,8 +222,8 @@ export async function sendText(params: {
 
     const useChat = Boolean(chatId);
     const url = useChat
-        ? `${API_ENDPOINTS.SEND_APPCHAT}?access_token=${encodeURIComponent(token)}`
-        : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`;
+        ? `${agentApiEndpoint(agent, API_ENDPOINTS.SEND_APPCHAT)}?access_token=${encodeURIComponent(token)}`
+        : `${agentApiEndpoint(agent, API_ENDPOINTS.SEND_MESSAGE)}?access_token=${encodeURIComponent(token)}`;
 
     const body = useChat
         ? { chatid: chatId, msgtype: "text", text: { content: cleanText } }
@@ -189,14 +250,14 @@ export async function sendText(params: {
     };
 
     if (json?.errcode !== 0) {
-        throw new Error(`send failed: ${json?.errcode} ${json?.errmsg}`);
+        throw apiFailure("send", json);
     }
 
     if (json?.invaliduser || json?.invalidparty || json?.invalidtag) {
         const details = [
-            json.invaliduser ? `invaliduser=${json.invaliduser}` : "",
-            json.invalidparty ? `invalidparty=${json.invalidparty}` : "",
-            json.invalidtag ? `invalidtag=${json.invalidtag}` : ""
+            json.invaliduser ? `invaliduserCount=${rejectedRecipientCount(json.invaliduser)}` : "",
+            json.invalidparty ? `invalidpartyCount=${rejectedRecipientCount(json.invalidparty)}` : "",
+            json.invalidtag ? `invalidtagCount=${rejectedRecipientCount(json.invalidtag)}` : ""
         ].filter(Boolean).join(", ");
         throw new Error(`send partial failure: ${details}`);
     }
@@ -235,10 +296,7 @@ export async function uploadMedia(params: {
     const token = await getAccessToken(agent);
     const proxyUrl = resolveWecomEgressProxyUrlFromNetwork(agent.network);
     // 添加 debug=1 参数获取更多错误信息
-    const url = `${API_ENDPOINTS.UPLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}&debug=1`;
-
-    // DEBUG: 输出上传信息
-    console.log(`[wecom-upload] Uploading media: type=${type}, filename=${safeFilename}, size=${buffer.length} bytes`);
+    const url = `${agentApiEndpoint(agent, API_ENDPOINTS.UPLOAD_MEDIA)}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}&debug=1`;
 
     const uploadOnce = async (fileContentType: string) => {
         // 手动构造 multipart/form-data 请求体
@@ -253,8 +311,6 @@ export async function uploadMedia(params: {
         const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
         const body = Buffer.concat([header, buffer, footer]);
 
-        console.log(`[wecom-upload] Multipart body size=${body.length}, boundary=${boundary}, fileContentType=${fileContentType}`);
-
         const res = await wecomFetch(url, {
             method: "POST",
             headers: {
@@ -264,7 +320,6 @@ export async function uploadMedia(params: {
             body: body,
         }, { proxyUrl, timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
         const json = await res.json() as { media_id?: string; errcode?: number; errmsg?: string };
-        console.log(`[wecom-upload] Response:`, JSON.stringify(json));
         return json;
     };
 
@@ -273,14 +328,11 @@ export async function uploadMedia(params: {
 
     // 某些文件类型在严格网关/企业微信校验下可能失败，回退到通用类型再试一次。
     if (!json?.media_id && preferredContentType !== "application/octet-stream") {
-        console.warn(
-            `[wecom-upload] Upload failed with ${preferredContentType}, retrying as application/octet-stream: ${json?.errcode} ${json?.errmsg}`,
-        );
         json = await uploadOnce("application/octet-stream");
     }
 
     if (!json?.media_id) {
-        throw new Error(`upload failed: ${json?.errcode} ${json?.errmsg}`);
+        throw apiFailure("upload", json);
     }
     return json.media_id;
 }
@@ -317,8 +369,8 @@ export async function sendMedia(params: {
 
     const useChat = Boolean(chatId);
     const url = useChat
-        ? `${API_ENDPOINTS.SEND_APPCHAT}?access_token=${encodeURIComponent(token)}`
-        : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`;
+        ? `${agentApiEndpoint(agent, API_ENDPOINTS.SEND_APPCHAT)}?access_token=${encodeURIComponent(token)}`
+        : `${agentApiEndpoint(agent, API_ENDPOINTS.SEND_MESSAGE)}?access_token=${encodeURIComponent(token)}`;
 
     const mediaPayload = mediaType === "video"
         ? { media_id: mediaId, title: title ?? "Video", description: description ?? "" }
@@ -349,7 +401,7 @@ export async function sendMedia(params: {
     };
 
     if (json?.errcode !== 0) {
-        throw new Error(`send ${mediaType} failed: ${json?.errcode} ${json?.errmsg}`);
+        throw apiFailure(`send ${mediaType}`, json);
     }
 
     if (json?.invaliduser || json?.invalidparty || json?.invalidtag) {
@@ -377,7 +429,7 @@ export async function downloadMedia(params: {
 }): Promise<{ buffer: Buffer; contentType: string; filename?: string }> {
     const { agent, mediaId } = params;
     const token = await getAccessToken(agent);
-    const url = `${API_ENDPOINTS.DOWNLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&media_id=${encodeURIComponent(mediaId)}`;
+    const url = `${agentApiEndpoint(agent, API_ENDPOINTS.DOWNLOAD_MEDIA)}?access_token=${encodeURIComponent(token)}&media_id=${encodeURIComponent(mediaId)}`;
 
     const res = await wecomFetch(url, undefined, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
 
@@ -408,7 +460,7 @@ export async function downloadMedia(params: {
     // 检查是否返回了错误 JSON
     if (contentType.includes("application/json")) {
         const json = await res.json() as { errcode?: number; errmsg?: string };
-        throw new Error(`download failed: ${json?.errcode} ${json?.errmsg}`);
+        throw apiFailure("download", json);
     }
 
     const buffer = await readResponseBodyAsBuffer(res, params.maxBytes);

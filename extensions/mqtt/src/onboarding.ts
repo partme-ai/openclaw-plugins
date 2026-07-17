@@ -16,5 +16,7 @@ const { setupAdapter, setupWizard } = createEmbeddedBrokerChannelSetup({
   ],
 });
 
+/** 将 CLI 输入转换为 `channels.mqtt` 配置补丁的声明式适配器。 */
 export const mqttSetupAdapter = setupAdapter;
+/** 引导用户启用内嵌 MQTT Broker 的 OpenClaw 配置向导。 */
 export const mqttSetupWizard = setupWizard;

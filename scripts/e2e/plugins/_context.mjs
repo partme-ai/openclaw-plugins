@@ -16,7 +16,7 @@ function readJsonIfExists(path) {
 /**
  * @param {string[]} pluginIds
  */
-export function createTestContext(pluginIds) {
+export function createTestContext(pluginIds, services = {}) {
   const meta = JSON.parse(readFileSync(join(E2E_DIR, ".e2e-config-meta.json"), "utf8"));
   const gotifySecrets = readJsonIfExists(join(E2E_DIR, ".e2e-secrets.json"));
   const installed = JSON.parse(readFileSync(join(STATE_DIR, ".e2e-installed.json"), "utf8"));
@@ -28,6 +28,15 @@ export function createTestContext(pluginIds) {
     gotifySecrets,
     installed,
     pingPayload,
+    modelFixture: services.modelFixture ?? null,
+    openmemSidecar: services.openmemSidecar ?? null,
+    amapProvider: services.amapProvider ?? null,
+    meituanProvider: services.meituanProvider ?? null,
+    rednodeProvider: services.rednodeProvider ?? null,
+    wechatProvider: services.wechatProvider ?? null,
+    wechatIpadProvider: services.wechatIpadProvider ?? null,
+    wecomKfProvider: services.wecomKfProvider ?? null,
+    wecomProvider: services.wecomProvider ?? null,
     ports: E2E_PORTS,
     gatewayFetch,
     tcpReachable,

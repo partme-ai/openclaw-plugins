@@ -1,0 +1,432 @@
+import { createServer, type IncomingMessage } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { WebSocketServer } from "ws";
+import { resolveWechatIpadConfig } from "../src/config.js";
+import {
+  WechatIpadBridge,
+  clearActiveBridge,
+  getActiveBridge,
+  setActiveBridge,
+} from "../src/transport/ipad-bridge.js";
+import { DEFAULT_CONFIG, IpadEventType } from "../src/types.js";
+
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  while (cleanups.length) await cleanups.pop()!();
+  vi.unstubAllGlobals();
+});
+
+describe("WechatIpadBridge integration", () => {
+  it("uses authorization headers, bounded HTTP responses, and managed WS lifecycle", async () => {
+    let upgradeRequest: IncomingMessage | undefined;
+    let apiAuthorization: string | undefined;
+    const httpServer = createServer((request, response) => {
+      apiAuthorization = request.headers.authorization;
+      response.setHeader("Content-Type", "application/json");
+      if (request.url === "/api/status") {
+        response.end(JSON.stringify({ ok: true, data: "x".repeat(2048) }));
+        return;
+      }
+      response.end(JSON.stringify({ ok: true, data: { msgId: "local-1" } }));
+    });
+    const wsServer = new WebSocketServer({ noServer: true });
+    httpServer.on("upgrade", (request, socket, head) => {
+      upgradeRequest = request;
+      wsServer.handleUpgrade(request, socket, head, (client) =>
+        wsServer.emit("connection", client, request),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      httpServer.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (httpServer.address() as AddressInfo).port;
+    cleanups.push(async () => {
+      for (const client of wsServer.clients) client.terminate();
+      await new Promise<void>((resolve) => wsServer.close(() => resolve()));
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    });
+
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const config = resolveWechatIpadConfig({
+      enabled: true,
+      acknowledgeUnofficialProtocolRisk: true,
+      serviceUrl: `ws://127.0.0.1:${port}`,
+      apiUrl: `http://127.0.0.1:${port}`,
+      auth: { token: "top-secret" },
+      message: { allowFrom: ["wxid-1"] },
+      network: {
+        maxResponseBytes: 1024,
+        heartbeatIntervalMs: 60_000,
+        pongTimeoutMs: 10_000,
+      },
+    });
+    const bridge = new WechatIpadBridge(config, logger);
+    cleanups.unshift(() => bridge.stop());
+
+    const eventReceived = vi.fn();
+    bridge.on(IpadEventType.Ready, eventReceived);
+    wsServer.once("connection", (client) => {
+      client.send(
+        JSON.stringify({
+          type: "ready",
+          data: { ready: true },
+          timestamp: Date.now(),
+        }),
+      );
+    });
+    await bridge.start();
+    await vi.waitFor(() =>
+      expect(eventReceived).toHaveBeenCalledWith({ ready: true }),
+    );
+
+    expect(upgradeRequest?.url).toBe("/");
+    expect(upgradeRequest?.headers.authorization).toBe("Bearer top-secret");
+    const sent = await bridge.sendMessage({
+      toWxid: "wxid-1",
+      msgType: "text",
+      content: "hello",
+    });
+    expect(sent).toEqual({ ok: true, data: { msgId: "local-1" } });
+    expect(apiAuthorization).toBe("Bearer top-secret");
+    const oversized = await bridge.getServiceStatus();
+    expect(oversized).toEqual({
+      ok: false,
+      error: "bridge response exceeds 1024 bytes",
+    });
+    expect(bridge.getStatusSummary()).not.toHaveProperty("serviceUrl");
+  });
+
+  it("redacts configured credentials from transport errors", async () => {
+    const config = resolveWechatIpadConfig({
+      enabled: true,
+      acknowledgeUnofficialProtocolRisk: true,
+      auth: { token: "top-secret" },
+      message: { allowFrom: ["wxid-1"] },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "provider https://alice:pass@bridge.test echoed top-secret Authorization: Bearer bearer-1 token=other-secret\n",
+          ),
+        ),
+    );
+    const bridge = new WechatIpadBridge(config, {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    });
+
+    await expect(
+      bridge.sendMessage({
+        toWxid: "wxid-1",
+        msgType: "text",
+        content: "hello",
+      }),
+    ).resolves.toSatisfy(
+      (result: { ok: boolean; error?: string }) =>
+        result.ok === false &&
+        result.error?.includes("[REDACTED]") === true &&
+        !result.error.match(/alice:pass|top-secret|bearer-1|other-secret|\n/u),
+    );
+  });
+
+  it("redacts a business error returned in a successful HTTP envelope", async () => {
+    const config = resolveWechatIpadConfig({
+      enabled: true,
+      acknowledgeUnofficialProtocolRisk: true,
+      auth: { token: "top-secret" },
+      message: { allowFrom: ["wxid-1"] },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ok: false,
+              error:
+                "Authorization: Bearer bearer-1 token=top-secret\nrejected",
+            }),
+          ),
+      ),
+    );
+    const bridge = new WechatIpadBridge(config, {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    });
+
+    const result = await bridge.sendMessage({
+      toWxid: "wxid-1",
+      msgType: "text",
+      content: "hello",
+    });
+    expect(result.error).toContain("[REDACTED]");
+    expect(result.error).not.toMatch(/bearer-1|top-secret|\n/u);
+  });
+
+  it("does not follow HTTP redirects with the bridge bearer token", async () => {
+    const config = resolveWechatIpadConfig({
+      enabled: true,
+      acknowledgeUnofficialProtocolRisk: true,
+      auth: { token: "top-secret" },
+      message: { allowFrom: ["wxid-1"] },
+    });
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { Location: "https://attacker.example/collect" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const bridge = new WechatIpadBridge(config, {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    });
+
+    await expect(bridge.getServiceStatus()).resolves.toEqual({
+      ok: false,
+      error: "bridge HTTP 302",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        redirect: "manual",
+        headers: expect.objectContaining({
+          Authorization: "Bearer top-secret",
+        }),
+      }),
+    );
+  });
+
+  it("rejects malformed events and only promotes a validated login status", async () => {
+    const httpServer = createServer();
+    const wsServer = new WebSocketServer({ noServer: true });
+    httpServer.on("upgrade", (request, socket, head) => {
+      wsServer.handleUpgrade(request, socket, head, (client) =>
+        wsServer.emit("connection", client, request),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      httpServer.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (httpServer.address() as AddressInfo).port;
+    cleanups.push(async () => {
+      for (const client of wsServer.clients) client.terminate();
+      await new Promise<void>((resolve) => wsServer.close(() => resolve()));
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    });
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const bridge = new WechatIpadBridge(
+      resolveWechatIpadConfig({
+        enabled: true,
+        acknowledgeUnofficialProtocolRisk: true,
+        serviceUrl: `ws://127.0.0.1:${port}`,
+        apiUrl: `http://127.0.0.1:${port}`,
+        message: { allowFrom: ["wxid-1"] },
+        network: { heartbeatIntervalMs: 60_000 },
+      }),
+      logger,
+    );
+    cleanups.unshift(() => bridge.stop());
+    wsServer.once("connection", (client) => {
+      client.send("not-json");
+      client.send(
+        JSON.stringify({ type: "unknown", data: {}, timestamp: Date.now() }),
+      );
+      client.send(
+        JSON.stringify({ type: "ready", data: {}, timestamp: "not-a-number" }),
+      );
+      client.send(
+        JSON.stringify({
+          type: "login_status",
+          data: { status: "forged" },
+          timestamp: Date.now(),
+        }),
+      );
+      client.send(
+        JSON.stringify({
+          type: "login_status",
+          data: { status: "logged_in" },
+          timestamp: Date.now(),
+        }),
+      );
+    });
+
+    await bridge.start();
+    await vi.waitFor(() => expect(bridge.getState()).toBe("logged_in"));
+    expect(logger.warn).toHaveBeenCalledTimes(4);
+  });
+
+  it("fails closed for malformed HTTP envelopes and non-2xx responses", async () => {
+    let requests = 0;
+    const server = createServer((_, response) => {
+      requests += 1;
+      response.setHeader("Content-Type", "application/json");
+      if (requests === 1) {
+        response.end(JSON.stringify({ ok: "yes" }));
+      } else if (requests === 2) {
+        response.end(JSON.stringify({ ok: false, error: 42 }));
+      } else {
+        response.statusCode = 503;
+        response.end(JSON.stringify({ ok: false, error: "unavailable" }));
+      }
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (server.address() as AddressInfo).port;
+    cleanups.push(
+      () => new Promise<void>((resolve) => server.close(() => resolve())),
+    );
+    const bridge = new WechatIpadBridge(
+      resolveWechatIpadConfig({
+        enabled: true,
+        acknowledgeUnofficialProtocolRisk: true,
+        serviceUrl: `ws://127.0.0.1:${port}`,
+        apiUrl: `http://127.0.0.1:${port}`,
+        message: { allowFrom: ["wxid-1"] },
+      }),
+      { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    );
+
+    await expect(bridge.getServiceStatus()).resolves.toEqual({
+      ok: false,
+      error: "bridge returned an invalid response envelope",
+    });
+    await expect(
+      bridge.sendMessage({
+        toWxid: "wxid-1",
+        msgType: "text",
+        content: "hello",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: "bridge returned an invalid error field",
+    });
+    await expect(bridge.getServiceStatus()).resolves.toEqual({
+      ok: false,
+      error: "bridge HTTP 503",
+    });
+  });
+
+  it("surfaces initial connection failure without leaving a reconnect timer when disabled", async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (server.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const bridge = new WechatIpadBridge(
+      resolveWechatIpadConfig({
+        enabled: true,
+        acknowledgeUnofficialProtocolRisk: true,
+        serviceUrl: `ws://127.0.0.1:${port}`,
+        apiUrl: `http://127.0.0.1:${port}`,
+        reconnect: { enabled: false },
+        message: { allowFrom: ["wxid-1"] },
+      }),
+      { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    );
+
+    await expect(bridge.start()).rejects.toThrow("bridge connection failed");
+    expect(bridge.getState()).toBe("disconnected");
+    await bridge.stop();
+  });
+
+  it("counts rapid open-close flapping toward the reconnect limit", async () => {
+    const httpServer = createServer();
+    const wsServer = new WebSocketServer({ noServer: true });
+    httpServer.on("upgrade", (request, socket, head) => {
+      wsServer.handleUpgrade(request, socket, head, (client) =>
+        wsServer.emit("connection", client, request),
+      );
+    });
+    wsServer.on("connection", (client) => client.close(1012, "flapping"));
+    await new Promise<void>((resolve) =>
+      httpServer.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (httpServer.address() as AddressInfo).port;
+    cleanups.push(async () => {
+      for (const client of wsServer.clients) {
+        client.terminate();
+      }
+      await new Promise<void>((resolve) => wsServer.close(() => resolve()));
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    });
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const bridge = new WechatIpadBridge(
+      resolveWechatIpadConfig({
+        enabled: true,
+        acknowledgeUnofficialProtocolRisk: true,
+        serviceUrl: `ws://127.0.0.1:${port}`,
+        apiUrl: `http://127.0.0.1:${port}`,
+        reconnect: {
+          initialDelayMs: 100,
+          maxDelayMs: 1000,
+          maxRetries: 2,
+          jitterRatio: 0,
+        },
+        network: { heartbeatIntervalMs: 60_000, stableConnectionMs: 1000 },
+        message: { allowFrom: ["wxid-1"] },
+      }),
+      logger,
+    );
+    cleanups.unshift(() => bridge.stop());
+
+    await bridge.start();
+    await vi.waitFor(
+      () =>
+        expect(logger.error).toHaveBeenCalledWith(
+          "[wechat-ipad] reconnect limit reached",
+        ),
+      { timeout: 2000 },
+    );
+    expect(bridge.getStatusSummary()).toMatchObject({
+      state: "disconnected",
+      reconnectCount: 2,
+    });
+  });
+
+  it("does not let an old lifecycle clear a newer active bridge", () => {
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const first = new WechatIpadBridge(DEFAULT_CONFIG, logger);
+    const second = new WechatIpadBridge(DEFAULT_CONFIG, logger);
+    setActiveBridge(first);
+    setActiveBridge(second);
+
+    expect(clearActiveBridge(first)).toBe(false);
+    expect(getActiveBridge()).toBe(second);
+    expect(clearActiveBridge(second)).toBe(true);
+    expect(getActiveBridge()).toBeNull();
+  });
+});

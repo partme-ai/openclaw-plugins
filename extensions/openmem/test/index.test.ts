@@ -1,174 +1,363 @@
-/**
- * openmem plugin — MemorySearchManager and HTTP bridge tests (mock fetch).
- */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createOpenMemSearchManager } from '../src/index.js'
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-describe('createOpenMemSearchManager', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn())
-  })
+import {
+  createOpenMemSearchManager,
+  normalizeTurn,
+  OpenMemClient,
+  OpenMemCoordinator,
+  OpenMemSearchManager,
+  resolveConfig,
+} from "../src/index.js";
+import type { OpenMemConfig } from "../src/config.js";
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
+function json(body: unknown, status = 200, headers: HeadersInit = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+  });
+}
 
-  it('search calls POST /inspect/search and maps chunks', async () => {
-    const fetchMock = vi.mocked(fetch)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      text: async () => '',
-      json: async () => ({
-        chunks: [{ content: 'OpenMem JSONL storage', score: 0.88, source: 'memory:abc' }],
-      }),
-    } as Response)
+function makeConfig(overrides: Partial<OpenMemConfig> = {}): OpenMemConfig {
+  return resolveConfig({
+    pluginConfig: { retryBaseDelayMs: 0, allowSharedRecall: true, ...overrides },
+  } as never);
+}
 
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
-    const results = await manager.search('JSONL', { maxResults: 5 })
+describe("OpenMem 配置", () => {
+  it("拒绝非 loopback 明文 HTTP", () => {
+    expect(() => resolveConfig({ pluginConfig: { baseUrl: "http://openmem.example.com" } } as never)).toThrow("HTTPS");
+  });
 
-    expect(results).toHaveLength(1)
-    expect(results[0].snippet).toContain('JSONL')
-    expect(results[0].score).toBe(0.88)
-    expect(results[0].source).toBe('memory')
+  it("规范化 URL，并拒绝越界整数而不是静默截断", () => {
+    const config = resolveConfig({ pluginConfig: { baseUrl: "http://127.0.0.1:3317/" } } as never);
+    expect(config.baseUrl).toBe("http://127.0.0.1:3317");
+    expect(config.maxAttempts).toBe(3);
+    expect(config.allowSharedRecall).toBe(false);
+    expect(() => resolveConfig({ pluginConfig: { maxAttempts: 99 } } as never)).toThrow("maxAttempts");
+    expect(() => resolveConfig({ pluginConfig: { timeoutMs: "5000" } } as never)).toThrow("timeoutMs");
+  });
 
-    expect(fetchMock).toHaveBeenCalledOnce()
-    const [url, init] = fetchMock.mock.calls[0]
-    expect(String(url)).toBe('http://127.0.0.1:3317/inspect/search')
-    expect(init?.method).toBe('POST')
-    const body = JSON.parse(String(init?.body))
-    expect(body.query).toBe('JSONL')
-    expect(body.mode).toBe('hybrid')
-  })
+  it("拒绝未知字段、错误布尔类型和 Header 注入", () => {
+    expect(() => resolveConfig({ pluginConfig: { surprise: true } } as never)).toThrow("unknown config field");
+    expect(() => resolveConfig({ pluginConfig: { required: "true" } } as never)).toThrow("required");
+    expect(() => resolveConfig({ pluginConfig: { agentId: 123 } } as never)).toThrow("agentId");
+    expect(() => resolveConfig({ pluginConfig: { authScheme: "Bearer\r\nX-Evil: 1" } } as never)).toThrow("authScheme");
+  });
 
-  it('search throws when API returns error', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: false,
-      status: 503,
-      statusText: 'Unavailable',
-      text: async () => 'down',
-    } as Response)
+  it("配置密钥环境变量但变量缺失时失败", () => {
+    expect(() => resolveConfig({ pluginConfig: { apiKeyEnv: "MISSING_OPENMEM_KEY" } } as never)).toThrow("not set");
+  });
+});
 
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
-    await expect(manager.search('test')).rejects.toThrow(/OpenMem 503/)
-  })
+describe("OpenMemClient", () => {
+  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  afterEach(() => { vi.unstubAllGlobals(); delete process.env.OPENMEM_TEST_KEY; });
 
-  it('search returns empty array when no chunks', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ chunks: [] }),
-    } as Response)
+  it("对安全请求重试 503", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({ error: "down" }, 503)).mockResolvedValueOnce(json({ status: "ok" }));
+    const client = new OpenMemClient(makeConfig());
+    await expect(client.get("/healthz")).resolves.toEqual({ status: "ok" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
 
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317/')
-    const results = await manager.search('missing')
-    expect(results).toEqual([])
-  })
+  it("注入可配置鉴权头且错误不泄露密钥", async () => {
+    process.env.OPENMEM_TEST_KEY = "very-secret-token";
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      "failed\nvery-secret-token\u0000 Bearer proxy-secret sk-anothersecret123",
+      { status: 401 },
+    ));
+    const client = new OpenMemClient(makeConfig({ apiKeyEnv: "OPENMEM_TEST_KEY", maxAttempts: 1 }));
+    const error = await client.get("/healthz").catch((caught: unknown) => caught);
+    const headers = new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers);
+    expect(headers.get("authorization")).toBe("Bearer very-secret-token");
+    expect(String(error)).toContain("[REDACTED]");
+    expect(String(error)).not.toContain("very-secret-token");
+    expect(String(error)).not.toContain("\u0000");
+    expect(String(error)).not.toContain("proxy-secret");
+    expect(String(error)).not.toContain("anothersecret123");
+  });
 
-  it('status reports OpenMem provider', () => {
-    const manager = createOpenMemSearchManager('http://localhost:3317')
-    const st = manager.status()
-    expect(st.provider).toBe('openmem')
-    expect(st.backend).toBe('builtin')
-    expect(st.sources).toContain('memory')
-  })
+  it("限制响应体大小", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({ value: "x".repeat(2_000) }));
+    const client = new OpenMemClient(makeConfig({ maxResponseBytes: 1024, maxAttempts: 1 }));
+    await expect(client.get("/healthz")).rejects.toThrow("exceeds");
+  });
 
-  it('probeEmbeddingAvailability returns not ok', async () => {
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
-    const probe = await manager.probeEmbeddingAvailability()
-    expect(probe.ok).toBe(false)
-    expect(probe.checked).toBe(true)
-  })
+  it("无 Content-Length 时也会流式截断并取消超大响应", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(800));
+        controller.enqueue(new Uint8Array(800));
+      },
+      cancel() { cancelled = true; },
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(stream));
+    const client = new OpenMemClient(makeConfig({ maxResponseBytes: 1024, maxAttempts: 1 }));
+    await expect(client.get("/healthz")).rejects.toThrow("exceeds");
+    expect(cancelled).toBe(true);
+  });
 
-  it('probeVectorAvailability returns false', async () => {
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
-    expect(await manager.probeVectorAvailability()).toBe(false)
-  })
+  it("在发出请求前拒绝超出字节预算的 JSON Body", async () => {
+    const client = new OpenMemClient(makeConfig({ maxRequestBytes: 1024, maxAttempts: 1 }));
+    await expect(client.post("/events/ingest", { content: "界".repeat(500) })).rejects.toThrow("request exceeds");
+    expect(fetch).not.toHaveBeenCalled();
+  });
 
-  it('search honors maxResults option', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ chunks: [] }),
-    } as Response)
+  it("拒绝绝对 URL，避免内部调用点绕过 Sidecar 地址", async () => {
+    const client = new OpenMemClient(makeConfig({ maxAttempts: 1 }));
+    await expect(client.get("https://attacker.example/data")).rejects.toThrow("relative API path");
+    expect(fetch).not.toHaveBeenCalled();
+  });
 
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
-    await manager.search('q', { maxResults: 3 })
+  it("拒绝无效 JSON", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("not-json", { status: 200 }));
+    const client = new OpenMemClient(makeConfig({ maxAttempts: 1 }));
+    await expect(client.get("/healthz")).rejects.toThrow("invalid JSON");
+  });
 
-    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))
-    expect(body.limit).toBe(3)
-  })
+  it("close 会拒绝后续请求", async () => {
+    const client = new OpenMemClient(makeConfig());
+    client.close();
+    await expect(client.get("/healthz")).rejects.toThrow("closed");
+  });
 
-  it('search truncates snippet to 200 characters', async () => {
-    const long = 'x'.repeat(300)
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ chunks: [{ content: long, score: 0.5 }] }),
-    } as Response)
+  it("close 会立即取消重试退避而不是等待定时器", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({ error: "down" }, 503));
+    const client = new OpenMemClient(makeConfig({ retryBaseDelayMs: 5_000, maxAttempts: 3 }));
+    const pending = client.get("/healthz");
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    client.close();
+    // 关闭发生在首次 503 已返回之后，保留该原始故障，但不得再等待或发起第二次请求。
+    await expect(pending).rejects.toThrow("OpenMem 503");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+});
 
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
-    const results = await manager.search('x')
-    expect(results[0].snippet).toHaveLength(200)
-  })
+describe("OpenMemSearchManager 真实 API 契约", () => {
+  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  afterEach(() => vi.unstubAllGlobals());
 
-  it('search maps chunk metadata to MemorySearchResult shape', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        chunks: [{ content: 'payload', score: 0.42, source: 'memory:xyz' }],
-      }),
-    } as Response)
+  it("读取实际 text 字段并保留 source/citation", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({
+      chunks: [{ text: "OpenMem FTS5 storage", score: 0.88, source: "memory:mem-1", recall_type: "knowledge" }],
+      sources: ["memory:mem-1"],
+    }));
+    const manager = createOpenMemSearchManager("http://127.0.0.1:3317");
+    const results = await manager.search("FTS5", { maxResults: 5 });
+    expect(results[0]).toMatchObject({ path: "openmem/memory/mem-1", score: 0.88, snippet: "OpenMem FTS5 storage" });
+    expect(results[0].citation).toBe("openmem/memory/mem-1#L1");
+    const body = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
+    expect(body.mode).toBe("hybrid");
+  });
 
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
-    const results = await manager.search('payload')
-    expect(results[0]).toMatchObject({
-      path: 'openmem/chunk/0',
-      startLine: 1,
-      endLine: 1,
-      score: 0.42,
-      source: 'memory',
-    })
-  })
+  it("跳过不符合 OpenMem Schema 的 chunk", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({ chunks: [{ content: "old wrong field", score: 1 }], sources: [] }));
+    expect(await createOpenMemSearchManager("http://127.0.0.1:3317").search("x")).toEqual([]);
+  });
 
-  it('readFile returns empty text placeholder', async () => {
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
-    const file = await manager.readFile({ relPath: 'records/a.jsonl' })
-    expect(file).toEqual({ text: '', path: 'records/a.jsonl' })
-  })
+  it("拒绝异常长 query 与负分 chunk", async () => {
+    const manager = createOpenMemSearchManager("http://127.0.0.1:3317");
+    await expect(manager.search("x".repeat(4_001))).rejects.toThrow("4000");
+    vi.mocked(fetch).mockResolvedValueOnce(json({
+      chunks: [{ text: "bad", score: -1, source: "memory:m1", recall_type: "knowledge" }],
+      sources: [],
+    }));
+    await expect(manager.search("bad")).resolves.toEqual([]);
+  });
 
-  it('status uses baseUrl as workspaceDir', () => {
-    const manager = createOpenMemSearchManager('http://mem.local:3317/')
-    expect(manager.status().workspaceDir).toBe('http://mem.local:3317/')
-  })
+  it("readFile 优先读取搜索缓存并支持分页", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({
+      chunks: [{ text: "line1\nline2\nline3", score: 1, source: "archive:a1", recall_type: "continuity" }], sources: [],
+    }));
+    const manager = createOpenMemSearchManager("http://127.0.0.1:3317");
+    await manager.search("line");
+    const result = await manager.readFile({ relPath: "openmem/archive/a1", from: 1, lines: 1 });
+    expect(result.text).toBe("line2");
+    expect(result.nextFrom).toBe(2);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
 
-  it('normalizes trailing slash on baseUrl for API calls', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ chunks: [] }),
-    } as Response)
+  it("readFile 可按 source 调用正式详情端点", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({ memory_id: "m1", lossless_restatement: "fact" }));
+    const manager = createOpenMemSearchManager("http://127.0.0.1:3317");
+    const result = await manager.readFile({ relPath: "openmem/memory/m1" });
+    expect(result.text).toContain("lossless_restatement");
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain("/externalized-memories/m1");
+  });
 
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317/')
-    await manager.search('ping')
+  it("健康探测真实调用 /healthz，但诚实报告无 embedding/vector", async () => {
+    vi.mocked(fetch).mockImplementation(async () => json({ status: "ok" }));
+    const manager = createOpenMemSearchManager("http://127.0.0.1:3317");
+    expect((await manager.probeEmbeddingAvailability()).ok).toBe(false);
+    expect(await manager.probeVectorAvailability()).toBe(false);
+    expect(manager.status().fts?.available).toBe(true);
+    expect(manager.status().vector?.enabled).toBe(false);
+  });
 
-    expect(String(vi.mocked(fetch).mock.calls[0][0])).toBe(
-      'http://127.0.0.1:3317/inspect/search',
-    )
-  })
+  it("按字节预算淘汰最旧内容，避免条目数上限掩盖大对象内存占用", async () => {
+    const large = "x".repeat(700_000);
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(json({ chunks: [{ text: large, score: 1, source: "memory:first", recall_type: "knowledge" }], sources: [] }))
+      .mockResolvedValueOnce(json({ chunks: [{ text: large, score: 1, source: "memory:second", recall_type: "knowledge" }], sources: [] }));
+    const config = makeConfig({ maxCacheBytes: 1024 * 1024 });
+    const client = new OpenMemClient(config);
+    const manager = new OpenMemSearchManager(client, new OpenMemCoordinator(client, "main"), config);
+    await manager.search("first");
+    await manager.search("second");
+    expect(manager.status().chunks).toBe(1);
+    expect((manager.status().custom as { cacheBytes: number }).cacheBytes).toBeLessThanOrEqual(config.maxCacheBytes);
+  });
+});
 
-  it('search throws with statusText when error body empty', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: false,
-      status: 502,
-      statusText: 'Bad Gateway',
-      text: async () => '',
-    } as Response)
+describe("OpenMem session 生命周期", () => {
+  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  afterEach(() => vi.unstubAllGlobals());
 
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
-    await expect(manager.search('fail')).rejects.toThrow(/OpenMem 502/)
-  })
+  it("只截取当前轮并支持 OpenClaw 内容块", () => {
+    expect(normalizeTurn([
+      { role: "user", content: "old" }, { role: "assistant", content: "old answer" },
+      { role: "user", content: [{ type: "text", text: "new" }] }, { role: "assistant", content: "answer" },
+    ])).toEqual([{ role: "user", content: "new" }, { role: "assistant", content: "answer" }]);
+  });
 
-  it('probeEmbeddingAvailability includes checkedAtMs timestamp', async () => {
-    const manager = createOpenMemSearchManager('http://127.0.0.1:3317')
-    const probe = await manager.probeEmbeddingAvailability()
-    expect(typeof probe.checkedAtMs).toBe('number')
-  })
-})
+  it("把异常长当前轮限制为 100 条并保留起始 user 与最新回复", () => {
+    const messages = [
+      { role: "user", content: "question" },
+      ...Array.from({ length: 150 }, (_, index) => ({ role: "tool", content: `tool-${index}` })),
+      { role: "assistant", content: "answer" },
+    ];
+    const normalized = normalizeTurn(messages);
+    expect(normalized).toHaveLength(100);
+    expect(normalized[0]?.content).toBe("question");
+    expect(normalized.at(-1)?.content).toBe("answer");
+  });
+
+  it("start → ingest(idempotent eventId) → append → commit", async () => {
+    const calls: Array<{ url: string; body?: any }> = [];
+    let appendNotes: string[] = [];
+    let ingestedEvents: any[] = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, body });
+      if (url.includes("/sessions?status=ACTIVE")) return json({ sessions: [] });
+      if (url.endsWith("/sessions/start")) return json({ session_id: "om-s1", agent_id: "main", thread_id: body.threadId, status: "ACTIVE", updated_at: "2026-07-15" }, 201);
+      if (url.endsWith("/events/ingest")) {
+        ingestedEvents = body.events;
+        return json({ ingested: body.events, skipped: 0 }, 201);
+      }
+      if (url.endsWith("/sessions/om-s1")) return json({ session_id: "om-s1", metadata: { append_notes: appendNotes } });
+      if (url.includes("/events?sessionId=om-s1")) return json({ events: ingestedEvents });
+      if (url.endsWith("/sessions/om-s1/append")) {
+        appendNotes = [body.content.slice(0, 500)];
+        return json({ ok: true });
+      }
+      if (url.endsWith("/sessions/om-s1/commit")) return json({ archive: {} });
+      throw new Error(`unexpected ${url}`);
+    });
+    const coordinator = new OpenMemCoordinator(new OpenMemClient(makeConfig()), "main");
+    await coordinator.ingestTurn({ sessionKey: "openclaw-s1", runId: "run-1", messages: [{ role: "user", content: "hello" }] });
+    await coordinator.endSession("openclaw-s1");
+    const ingest = calls.find((call) => call.url.endsWith("/events/ingest"));
+    expect(ingest?.body.events[0].eventId).toHaveLength(64);
+    expect(ingest?.body.events[0].payload.openclawTurnId).toHaveLength(64);
+    expect(calls.some((call) => call.url.endsWith("/sessions/om-s1/commit"))).toBe(true);
+  });
+
+  it("重启后根据持久事件补齐 ingest 与 append 之间的崩溃窗口", async () => {
+    let threadId = "";
+    let ingestedEvents: any[] = [];
+    let appendAttempts = 0;
+    let appendNotes: string[] = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (url.includes("/sessions?status=ACTIVE")) {
+        return json({ sessions: threadId ? [{ session_id: "recover-s1", agent_id: "main", thread_id: threadId, status: "ACTIVE", updated_at: "2026-07-15" }] : [] });
+      }
+      if (url.endsWith("/sessions/start")) {
+        threadId = body.threadId;
+        return json({ session_id: "recover-s1", agent_id: "main", thread_id: threadId, status: "ACTIVE", updated_at: "2026-07-15" }, 201);
+      }
+      if (url.endsWith("/events/ingest")) {
+        ingestedEvents = body.events;
+        return json({ ingested: body.events, skipped: 0 }, 201);
+      }
+      if (url.includes("/events?sessionId=recover-s1")) return json({ events: ingestedEvents });
+      if (url.endsWith("/sessions/recover-s1")) return json({ session_id: "recover-s1", metadata: { append_notes: appendNotes } });
+      if (url.endsWith("/sessions/recover-s1/append")) {
+        appendAttempts += 1;
+        if (appendAttempts === 1) throw new Error("process terminated before append completed");
+        appendNotes = [body.content.slice(0, 500)];
+        return json({ ok: true });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const config = makeConfig({ maxAttempts: 1 });
+    const first = new OpenMemCoordinator(new OpenMemClient(config), "main");
+    await expect(first.ingestTurn({ sessionKey: "recover", runId: "run-recover", messages: [{ role: "user", content: "durable turn" }] })).rejects.toThrow();
+
+    const restarted = new OpenMemCoordinator(new OpenMemClient(config), "main");
+    await expect(restarted.startSession("recover")).resolves.toBe("recover-s1");
+    expect(appendAttempts).toBe(2);
+    expect(appendNotes[0]).toContain("[openclaw-turn:");
+    expect(appendNotes[0]).toContain("durable turn");
+  });
+
+  it("安全默认优先对同 thread 的最新归档会话做 continuity 召回", async () => {
+    let threadId = "";
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/sessions/start")) {
+        const body = JSON.parse(String(init?.body)); threadId = body.threadId;
+        return json({ session_id: "active", agent_id: "main", thread_id: threadId, status: "ACTIVE", updated_at: "2026-07-15" }, 201);
+      }
+      if (url.includes("/sessions?status=ACTIVE")) return json({ sessions: [] });
+      if (url.includes("/sessions?status=ARCHIVED")) return json({ sessions: [{ session_id: "archived", agent_id: "main", thread_id: threadId, status: "ARCHIVED", updated_at: "2026-07-15" }] });
+      if (url.endsWith("/inspect/search")) {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ mode: "continuity", sessionId: "archived" });
+        return json({ chunks: [{ text: "previous summary", score: 1, source: "archive:a", recall_type: "continuity" }], sources: [] });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const config = makeConfig({ allowSharedRecall: false });
+    const client = new OpenMemClient(config);
+    const coordinator = new OpenMemCoordinator(client, "main");
+    await coordinator.startSession("same-thread");
+    const manager = new OpenMemSearchManager(client, coordinator, config);
+    expect((await manager.search("previous", { sessionKey: "same-thread" }))[0].snippet).toBe("previous summary");
+  });
+
+  it("重启后没有 ACTIVE 会话时回退到同 thread 最新归档", async () => {
+    let threadId = "";
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/sessions?status=ACTIVE")) return json({ sessions: [] });
+      if (url.endsWith("/sessions/start")) {
+        const body = JSON.parse(String(init?.body));
+        threadId = body.threadId;
+        return json({ session_id: "seed", agent_id: "main", thread_id: threadId, status: "ACTIVE", updated_at: "2026-07-15" });
+      }
+      if (url.includes("/sessions?status=ARCHIVED")) {
+        return json({ sessions: [{ session_id: "archived", agent_id: "main", thread_id: threadId, status: "ARCHIVED", updated_at: "2026-07-16" }] });
+      }
+      if (url.endsWith("/inspect/search")) {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ mode: "continuity", sessionId: "archived" });
+        return json({ chunks: [{ text: "archived summary", score: 1, source: "archive:a", recall_type: "continuity" }], sources: [] });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const config = makeConfig({ allowSharedRecall: false });
+    const client = new OpenMemClient(config);
+    // 第一个协调器创建 session 并取得真实 threadId；第二个协调器代表 Gateway 重启后的空缓存。
+    const seeded = new OpenMemCoordinator(client, "main");
+    await seeded.startSession("restart-thread");
+    const restarted = new OpenMemCoordinator(client, "main");
+    const manager = new OpenMemSearchManager(client, restarted, config);
+    expect((await manager.search("archived", { sessionKey: "restart-thread" }))[0].snippet).toBe("archived summary");
+  });
+});

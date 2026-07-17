@@ -2,6 +2,7 @@
  * Prometheus 抓取端点的 Bearer 鉴权（企业部署可选）
  */
 
+import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ResolvedPrometheusConfig } from "./plugin-config.js";
 
@@ -23,17 +24,27 @@ export function assertScrapeAuthorized(
   }
 
   if (!cfg.scrapeBearerToken) {
-    res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
+    res.writeHead(503, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
     res.end(
-      "openclaw-prometheus: scrapeAuth.enabled but no bearer token (set openclaw-prometheus_BEARER_TOKEN or plugins.entries.openclaw-prometheus.config.scrapeAuth.bearerToken for dev only)\n",
+      "prometheus: scrapeAuth.enabled but no bearer token (set OPENCLAW_PROMETHEUS_BEARER_TOKEN or plugins.entries.prometheus.config.scrapeAuth.bearerToken for development only)\n",
     );
     return false;
   }
 
   const auth = req.headers.authorization?.trim() ?? "";
   const expected = `Bearer ${cfg.scrapeBearerToken}`;
-  if (auth !== expected) {
-    res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" });
+  const actualBuffer = Buffer.from(auth);
+  const expectedBuffer = Buffer.from(expected);
+  const authorized = actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+  if (!authorized) {
+    res.writeHead(401, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "WWW-Authenticate": "Bearer",
+    });
     res.end("Unauthorized\n");
     return false;
   }

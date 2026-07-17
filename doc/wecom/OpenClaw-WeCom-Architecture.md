@@ -1,6 +1,6 @@
 # 企业微信（WeCom）插件架构设计
 
-> 文档版本：2026-05-23  
+> 文档版本：2026-07-17
 > 适用范围：`@partme.ai/wecom`（`extensions/wecom`）  
 > 关联代码：`openclaw-plugins/extensions/wecom/src/`
 
@@ -29,6 +29,8 @@ OpenClaw Gateway
 **npm 包**：`@partme.ai/wecom`  
 **渠道 ID**：`wecom`（别名：wechatwork、wework、qywx）  
 **核心依赖**：`@wecom/aibot-node-sdk`（Bot WS）、`@partme.ai/openclaw-message-sdk`（可选桥接）
+
+公网回调与不可信媒体直接依赖已固定在经过当前生产审计的版本：`fast-xml-parser@5.10.1`、`file-type@22.0.1`。升级依赖后仍必须保留本插件自己的时间窗、大小上限和 Path/SSRF Guard；依赖升级不能替代协议层防线。
 
 ---
 
@@ -82,6 +84,30 @@ flowchart TB
   Core -->|sendMessage 兜底| AgentAPI
 
   Entry --> Channel
+```
+
+同一拓扑保留一份字符图，方便直接在终端、源码评审和纯文本工单中阅读：
+
+```text
+┌──────────────────────────── 企业微信平台 ────────────────────────────┐
+│ 用户/群 ── Bot WebSocket ─┐                                        │
+│ 用户/群 ── Bot Webhook ───┼──→ 验签 / 解密 / 去重                   │
+│ 用户    ── Agent Webhook ─┘                                        │
+└──────────────────────────────┬───────────────────────────────────────┘
+                               ▼
+┌──────────────────────── OpenClaw Gateway ───────────────────────────┐
+│ index.ts：注册 Channel、HTTP Route、MCP、提示注入                   │
+│                               │                                     │
+│                               ▼                                     │
+│ channel.ts：账号解析 / 安全策略 / 生命周期 / 出站选择              │
+│                               │                                     │
+│                               ▼                                     │
+│ message-sdk 归一化 → Agent binding / Dynamic Agent → Agent Runtime │
+│                               │                                     │
+│                  ┌────────────┴────────────┐                        │
+│                  ▼                         ▼                        │
+│          Bot WS / Webhook 回复      Agent HTTP API 主动发送/兜底   │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 2.3 连接模式（Bot 子模式）
@@ -274,16 +300,51 @@ sequenceDiagram
 
 ### 4.3 Agent 自建应用（XML）
 
+先用字符图看清公网回调的安全关卡。任一关失败都立即返回，不能进入 Agent Runtime：
+
+```text
+企业微信 Agent 加密 XML
+        │
+        ▼
+时间戳新鲜度（允许偏差 ≤ 5 分钟） ──失败──→ 401 stale_timestamp
+        │
+        ▼
+SHA-1 签名匹配 + AES 解密          ──失败──→ 401 invalid_signature
+        │
+        ▼
+按 path / corpId 匹配 account      ──失败──→ 404 no_target
+        │
+        ▼
+解密 AgentID == 配置 agentId       ──失败──→ 403 agent_id_mismatch
+        │
+        ▼
+msgId 持久化 claim（账号 namespace，TTL 24h）
+        │重复
+        ├──────────────────────────→ 200 success，不再 dispatch
+        │首次
+        ▼
+先返回 200 success → 异步策略校验 / 媒体处理 / OpenClaw Agent Runtime
+```
+
 ```mermaid
 sequenceDiagram
   participant U as 用户
-  participant WH as 企微回调
+  participant WX as 企业微信回调
+  participant WH as agent/webhook.ts
   participant AH as agent/handler
   participant API as agent/api-client
   participant C as OpenClaw Core
 
-  U->>WH: POST 加密 XML
-  WH->>AH: 验签解密 + msgId 去重
+  U->>WX: 发送消息
+  WX->>WH: POST 加密 XML + signature/timestamp/nonce
+  WH->>WH: 五分钟新鲜度 + 签名 + AES 解密 + 账号匹配
+  WH->>AH: verifiedPost（可信明文信封）
+  AH->>AH: AgentID 再校验 + msgId 持久化 claim
+  alt 重复 msgId
+    AH-->>WX: 200 success，不重复 dispatch
+  else 首次消息
+    AH-->>WX: 200 success（先 ACK）
+  end
   AH->>AH: 语音 ASR / 文件下载
   AH->>C: dispatch（无 Bot 流式）
   C->>AH: final 回复
@@ -292,14 +353,51 @@ sequenceDiagram
 ```
 
 - **不支持** Bot 式 `replyStream` 入站流式
-- `rememberAgentMsgId` 防止企微重试导致重复回复（10 分钟 TTL）
+- `claimWecomAgentInboundMsgid` 使用独立账号 namespace、内存 LRU + 磁盘 JSON，24 小时 TTL，可跨 Gateway 重启去重
+- 公网层与业务层均校验 `AgentID`，属于防御纵深；不能只记录 warning 后继续处理
 - 出站文件：`media/upload` + `message/send`
 
-### 4.4 三条路径汇合点
+### 4.4 出站媒体安全边界
+
+Bot WS、Channel 的 Agent fallback、Agent Runtime 回复三条出站路径共用同一规则：
+
+```text
+模型 / Cron / Tool 产生 media URL 或本地路径
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+       HTTP(S)              本地文件
+          │                   │
+     SSRF Guard           允许根目录匹配
+  DNS/IP/重定向约束       realpath 防穿越
+          │                   │
+          └─────────┬─────────┘
+                    ▼
+       media.maxBytes 实际读取上限
+   （不信任 Content-Length；流超限立即 cancel）
+                    │
+                    ▼
+         企业微信 media/upload → message/send
+```
+
+```mermaid
+flowchart LR
+  Source[模型回复 / Cron / Tool] --> Kind{远程 URL?}
+  Kind -->|是| SSRF[OpenClaw SSRF Guard]
+  Kind -->|否| Path[realpath + Path Guard + allowed roots]
+  SSRF --> Limit[流式真实字节上限 media.maxBytes]
+  Path --> Limit
+  Limit --> Upload[WeCom media/upload]
+  Upload --> Send[message/send]
+  SSRF -. 内网/超时/超限 .-> Reject[失败关闭]
+  Path -. 越界/符号链接/超限 .-> Reject
+```
+
+### 4.5 三条路径汇合点
 
 三条入站路径均在构建 **OpenClaw 标准 InboundContext** 后进入同一 **Agent Runtime**；差异仅在 **出站适配层**（WS stream / Webhook StreamState / Agent HTTP）。
 
-### 4.5 入站能力矩阵
+### 4.6 入站能力矩阵
 
 | 能力 | Bot WebSocket | Bot Webhook | Agent XML |
 |------|:-------------:|:-----------:|:---------:|
@@ -407,8 +505,8 @@ sequenceDiagram
 | 组件 | 关系 |
 |------|------|
 | `@partme.ai/openclaw-message-sdk` | 公共 util、transcript 流式、routing、config merge、keyed queue |
-| `openclaw-router` | 通过 `agent_end` 监听 wecom，**无需修改本插件** |
-| `openclaw-knowledge` | 可配置 `channels.wecom.knowledge` 或 router 自动注入 |
+| `openclaw-router` | 通过 `message_received`、`message_sent`、`reply_payload_sending` 观察消息生命周期，**无需修改本插件** |
+| `openclaw-knowledge` | 独立注册 `before_prompt_build` 自动注入；高级库模式可读取 `channels.wecom.knowledge` |
 | `message-sdk` | MQ 桥接场景可选；WeCom 主路径走 OpenClaw ChannelPlugin |
 
 ---
@@ -420,7 +518,6 @@ sequenceDiagram
 | [Configuration](./OpenClaw-WeCom-Configuration.md) | 安装、双模配置、多账号、访问控制 |
 | [Streaming Architecture](./OpenClaw-WeCom-Streaming-Architecture.md) | 流式协议细节、状态机、演进路线 |
 | [Testing](./OpenClaw-WeCom-Testing.md) | 联调、`user:` 前缀、93006 |
-| [Feishu SDK Inventory](./OpenClaw-WeCom-Feishu-SDK-Inventory.md) | plugin-sdk 映射 |
 | [extensions/wecom/README.md](../../extensions/wecom/README.md) | npm 包说明、Cron、构建 |
 
 ---

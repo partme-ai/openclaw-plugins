@@ -1,59 +1,104 @@
-import { describe, it, expect } from "vitest";
-import { createXhsTools } from "../src/tools/tools.js";
-import type { XhsAccountConfig } from "../src/types.js";
+import { describe, expect, it, vi } from "vitest";
+import { createRednodeTool } from "../src/tools/tools.js";
+import type { RednodePluginConfig } from "../src/types.js";
 
-describe("createXhsTools", () => {
-  const config: XhsAccountConfig = { app_key: "test", app_secret: "test" };
+const config: RednodePluginConfig = {
+  enabled: true,
+  appKey: "a",
+  appSecret: "s",
+  environment: "production",
+  apiBaseUrl: "https://ark.xiaohongshu.com",
+  operations: [
+    { name: "items", method: "GET", apiPath: "/ark/open_api/v1/items" },
+    {
+      name: "availability",
+      method: "PUT",
+      apiPath: "/ark/open_api/v1/item/{item_id}/availability",
+    },
+  ],
+  requestTimeoutMs: 1000,
+  maxRequestBytes: 1024,
+  maxResponseBytes: 1024,
+  maxToolResultBytes: 1024,
+  maxRequestsPerMinute: 10,
+  maxConcurrentRequests: 2,
+  getRetryMaxAttempts: 3,
+  retryInitialDelayMs: 100,
+  retryMaxDelayMs: 1000,
+  retryJitterRatio: 0.2,
+  allowCustomApiBaseUrl: false,
+  ownerOnly: true,
+};
 
-  it("returns 6 tools", () => {
-    const tools = createXhsTools(() => config);
-    expect(tools).toHaveLength(6);
+describe("createRednodeTool", () => {
+  it("exposes configured operations and enforces ownerOnly", async () => {
+    const invoke = vi.fn();
+    const tool = createRednodeTool({ senderIsOwner: false } as never, config, {
+      invoke,
+      getOperation: vi.fn(),
+    } as never);
+    expect(
+      (tool.parameters.properties as Record<string, any>).operation.enum,
+    ).toEqual(["items", "availability"]);
+    const response = await tool.execute("call", { operation: "items" });
+    expect(JSON.parse(response.content[0]!.text).error).toContain("owner");
+    expect(invoke).not.toHaveBeenCalled();
   });
 
-  it("every tool has required fields", () => {
-    const tools = createXhsTools(() => config);
-    for (const tool of tools) {
-      expect(tool.name).toBeTruthy();
-      expect(tool.description).toBeTruthy();
-      expect(tool.parameters).toBeDefined();
-      expect(tool.parameters.type).toBe("object");
-      expect(typeof tool.execute).toBe("function");
-    }
+  it("requires explicit confirmation for write operations", async () => {
+    const invoke = vi.fn();
+    const client = {
+      invoke,
+      getOperation: (name: string) =>
+        config.operations.find((item) => item.name === name),
+    };
+    const tool = createRednodeTool(
+      { senderIsOwner: true } as never,
+      config,
+      client as never,
+    );
+    const response = await tool.execute("call", {
+      operation: "availability",
+      path_params: { item_id: "x" },
+      body: { available: false },
+    });
+    expect(JSON.parse(response.content[0]!.text).error).toContain(
+      "confirm=true",
+    );
+    expect(invoke).not.toHaveBeenCalled();
   });
 
-  it("tool names are unique", () => {
-    const tools = createXhsTools(() => config);
-    const names = tools.map((t) => t.name);
-    expect(new Set(names).size).toBe(names.length);
+  it("prevents oversized Ark responses from entering the Agent context", async () => {
+    const tool = createRednodeTool({ senderIsOwner: true } as never, config, {
+      invoke: vi.fn(async () => ({ success: true, data: "内容".repeat(2_000) })),
+      getOperation: (name: string) => config.operations.find((item) => item.name === name),
+    } as never);
+    const response = await tool.execute("call", { operation: "items" });
+    expect(JSON.parse(response.content[0]!.text)).toEqual({
+      success: false,
+      error: "Rednode tool result exceeded maxToolResultBytes",
+    });
   });
 
-  it("all tool names start with xhs_", () => {
-    const tools = createXhsTools(() => config);
-    for (const tool of tools) {
-      expect(tool.name).toMatch(/^xhs_/);
-    }
+  it("normalizes unexpected thrown values without echoing them", async () => {
+    const tool = createRednodeTool({ senderIsOwner: true } as never, config, {
+      invoke: vi.fn(async () => { throw `bad\n${"x".repeat(1_000)}`; }),
+      getOperation: (name: string) => config.operations.find((item) => item.name === name),
+    } as never);
+    const response = await tool.execute("call", { operation: "items" });
+    expect(JSON.parse(response.content[0]!.text).error).toBe("Rednode tool execution failed");
   });
 
-  it("includes store overview aggregator", () => {
-    const tools = createXhsTools(() => config);
-    const overview = tools.find((t) => t.name === "xhs_fetch_store_overview");
-    expect(overview).toBeDefined();
-    expect(overview!.parameters.properties).toHaveProperty("date");
-    expect(overview!.parameters.properties).toHaveProperty("shop_id");
-  });
-
-  it("xhs_item_on_off_shelf requires boolean on_shelf", () => {
-    const tools = createXhsTools(() => config);
-    const shelf = tools.find((t) => t.name === "xhs_item_on_off_shelf");
-    expect(shelf).toBeDefined();
-    expect(shelf!.parameters.properties).toHaveProperty("on_shelf");
-  });
-
-  it("returns error when config is undefined", async () => {
-    const tools = createXhsTools(() => undefined);
-    // The store overview handles missing config explicitly
-    const overview = tools.find((t) => t.name === "xhs_fetch_store_overview")!;
-    const result = (await overview.execute({})) as { error?: string };
-    expect(result.error).toBe("xhs channel not configured");
+  it("redacts credentials again at the final Agent Tool boundary", async () => {
+    const tool = createRednodeTool({ senderIsOwner: true } as never, config, {
+      invoke: vi.fn(async () => {
+        throw new Error(`proxy https://alice:pass@example.test app-key=${config.appKey} app-secret=${config.appSecret} sign=deadbeef Bearer bearer-1`);
+      }),
+      getOperation: (name: string) => config.operations.find((item) => item.name === name),
+    } as never);
+    const response = await tool.execute("call", { operation: "items" });
+    const error = JSON.parse(response.content[0]!.text).error as string;
+    expect(error).toContain("[REDACTED]");
+    expect(error).not.toMatch(/alice:pass|app-key=a|app-secret=s|deadbeef|bearer-1/u);
   });
 });

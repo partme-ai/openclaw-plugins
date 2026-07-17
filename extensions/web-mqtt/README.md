@@ -5,7 +5,7 @@
 **OpenClaw channel plugin — enterprise MQTT over WebSocket with topic governance and agent binding**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--web--mqtt-blue)
-![Node](https://img.shields.io/badge/Node.js-22+-green)
+![Node](https://img.shields.io/badge/Node.js-OpenClaw%20LTS-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 </div>
@@ -22,6 +22,51 @@
 
 It provides a hardened embedded MQTT-over-WebSocket broker for browser and web applications, and routes inbound messages into OpenClaw agent replies.
 
+## Architecture
+
+```text
+┌──────────────────────────── OpenClaw Gateway ────────────────────────────┐
+│  openclaw-web-mqtt                                                      │
+│                                                                         │
+│  Browser ── exact Origin allowlist ─┐                                   │
+│                                    ▼                                   │
+│  Native MQTT client ───────────▶ WS / WSS ──▶ Aedes 1.x Broker         │
+│                                    │          auth / Topic ACL / limits │
+│                                    │                   │               │
+│                                    │                   ▼               │
+│                                    │    auth snapshot + clientId FIFO  │
+│                                    │                   │               │
+│                                    │                   ▼               │
+│                                    └── reply ◀ message-sdk ◀▶ Agent    │
+│                                                                         │
+│  stop: reject new work → terminate sockets → drain Agent work → close  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+The character diagram gives a quick view in terminals and source review. The Mermaid diagram below preserves the same architecture as a rendered, maintainable component graph.
+
+```mermaid
+flowchart LR
+    Browser["Browser / Web application"]
+    Device["Node.js / non-browser MQTT client"]
+    Origin["Exact Origin allowlist"]
+    WSS["WS/WSS + frame and idle limits"]
+    Aedes["Aedes MQTT Broker\nauth + publish/subscribe ACL"]
+    Identity["Connection auth snapshot\nimmune to clientId takeover"]
+    Queue["Per-clientId queue\nFIFO per client / parallel across clients"]
+    Route["Topic allowlist and routing\nBinding first / standard fallback"]
+    SDK["message-sdk\nparse / dedupe / OpenClaw dispatch"]
+    Agent["OpenClaw Agent"]
+    Reply["replyTopic / default out topic"]
+
+    Browser --> Origin --> WSS
+    Device --> WSS
+    WSS --> Aedes --> Identity --> Queue --> Route --> SDK --> Agent
+    Agent --> SDK --> Reply --> Aedes --> WSS
+```
+
+The embedded broker belongs to one OpenClaw Gateway process; it is not a persistent, horizontally scalable MQTT cluster. Use external MQTT infrastructure when you need cross-Gateway session recovery, durable subscriptions, or broker clustering.
+
 ## Core capabilities
 
 - **Multi-topic subscription governance**: `subscribeTopics` allowlist with MQTT wildcards (`+`, `#`)
@@ -36,21 +81,44 @@ It provides a hardened embedded MQTT-over-WebSocket broker for browser and web a
 
 ## Message flow
 
-1. Web MQTT client publishes topic/payload
-2. Plugin checks `subscribeTopics`
-3. Route resolution:
-   - first `topicBindings`
-   - then standard fallback topic
-4. Payload parsing (`jsonTextOrPlain`)
-5. Dispatch to OpenClaw runtime reply pipeline
-6. Publish reply to binding `replyTopic` or derived default out topic
+```text
+Browser       WS/WSS+Aedes       identity + queue     Router        Agent
+   │ CONNECT       │                   │                 │             │
+   ├──────────────▶│ auth + ACL        │                 │             │
+   │ PUBLISH QoS1  │                   │                 │             │
+   ├──────────────▶├── snapshot/FIFO ─▶├── route ──────▶├── turn ────▶│
+   │               │                   │                 │◀── reply ───┤
+   │◀── reply ─────┤◀──────────────────┴─────────────────┤             │
+   │◀── PUBACK ────┤  only after Agent turn and reply delivery         │
+```
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Web MQTT client
+    participant B as WS/WSS + Aedes
+    participant Q as auth snapshot + clientId queue
+    participant R as Topic router
+    participant O as OpenClaw Agent
+    C->>B: CONNECT(username, password, Origin)
+    B-->>C: CONNACK or rejection
+    C->>B: PUBLISH QoS 1
+    B->>B: Topic, size and publish ACL checks
+    B->>Q: snapshot CONNECT user, enqueue by clientId
+    Q->>R: allowlist + binding/fallback route
+    R->>O: dispatchChannelMessage
+    O-->>R: Agent reply
+    R->>B: publish reply topic
+    B-->>C: reply message
+    B-->>C: PUBACK after Agent and reply delivery
+```
 
 ## Quick start
 
 ### Prerequisites
 
-- OpenClaw `>= 2026.4.0`
-- Node.js `22+`
+- OpenClaw `>= 2026.7.1`
+- Node.js `>=22.22.3 <23`, `>=24.15.0 <25`, or `>=25.9.0`
 
 ### Install
 
@@ -58,7 +126,7 @@ It provides a hardened embedded MQTT-over-WebSocket broker for browser and web a
 openclaw plugins install @partme.ai/openclaw-web-mqtt
 ```
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+Requires `@partme.ai/openclaw-message-sdk >= 2026.7.1`.
 
 ### Minimal config (`openclaw.json`)
 
@@ -68,6 +136,7 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
     "mqtt-ws": {
       "port": 15675,
       "path": "/ws",
+      "host": "127.0.0.1",
       "topicPrefix": "openclaw/",
       "subscribeTopics": [
         "openclaw/agent/+/in",
@@ -97,13 +166,16 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
         "enabled": false
       },
       "ws": {
-        "compress": true,
+        "compress": false,
         "idleTimeoutMs": 60000,
-        "maxFrameSize": 262144
+        "maxFrameSize": 262144,
+        "allowedOrigins": ["https://console.example.com"]
       },
       "limits": {
-        "maxPayloadBytes": 1048576,
-        "maxSubscriptionsPerClient": 200
+        "maxPayloadBytes": 262144,
+        "maxSubscriptionsPerClient": 200,
+        "maxPendingMessagesPerClient": 32,
+        "inboundTaskTimeoutMs": 120000
       }
     }
   }
@@ -112,18 +184,66 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
 
 ## Enterprise hardening checklist
 
-- Replace default credentials and enforce dedicated users
-- Enable `tls.enabled` and deploy WSS in production
+| Area | Behavior |
+|---|---|
+| **Delivery** | QoS 0 has no protocol acknowledgement; QoS 1 PUBACK waits for the Agent turn and reply delivery |
+| **Inbound** | Per-`clientId` serialized dispatch with hard pending-depth and task-time limits |
+| **Outbound** | Awaited broker publish; missing session, ACL denial, or no active subscriber fails the delivery |
+| **Isolation** | Server-originated publishes do not re-enter inbound processing; ACL plus topic allowlists apply |
+| **Takeover identity** | The authenticated user is snapshotted per physical connection and message, so a reused `clientId` cannot relabel old queued work or delayed replies |
+
+### Two authorization boundaries
+
+```text
+Client action
+     │
+     ▼
+Aedes publish/subscribe ACL ── denied ──▶ reject + aclDenials
+     │ allowed
+     ▼
+OpenClaw topic/account ACL ─── denied ──▶ drop with safe reason
+     │ allowed
+     ▼
+Bounded queue + Agent deadline ─ failed ─▶ no successful QoS1 ACK
+     │ completed
+     ▼
+Reply publish + PUBACK
+```
+
+```mermaid
+flowchart TD
+    P["Client publish / subscribe"] --> A{"Account topic ACL allows it?"}
+    A -- No --> D1["Reject and increment aclDenials"]
+    A -- Yes --> B{"Inbound topic and account route match?"}
+    B -- No --> D2["Drop with a concrete reason"]
+    B -- Yes --> C{"Queue capacity and Agent deadline available?"}
+    C -- No --> D3["Fail delivery / no successful QoS 1 acknowledgement"]
+    C -- Yes --> R["Publish reply and finish PUBACK"]
+```
+
+Aedes enforces protocol-level publish/subscribe ACLs first. OpenClaw inbound and outbound processing then binds the authenticated identity to the account route again. With authentication enabled, a missing identity fails closed.
+
+Application-level deduplication requires an explicit `idempotencyKey` or `messageId` in the JSON payload. MQTT packet identifiers are legally reusable and are not treated as cross-turn idempotency keys; repeated plain-text payloads remain separate valid messages.
+
+- Bind plain WS to loopback only; non-loopback startup requires both `tls.enabled=true` and `auth.required=true`
+- Use dedicated users and preferably `passwordHash` instead of plaintext passwords
+- Set `ws.allowedOrigins` for every browser application; an unlisted browser Origin is rejected
+- Non-browser MQTT clients normally omit `Origin`; any request that sends it must exactly match a canonical `http/https` allowlist entry
 - Set strict `publishAllow` / `subscribeAllow`
-- Tune `maxPayloadBytes`, `maxFrameSize`, `idleTimeoutMs` by traffic profile
+- Anonymous access requires an explicit `anonymous` user with a fail-closed ACL
+- Tune `maxPayloadBytes`, `maxFrameSize`, `idleTimeoutMs`, `maxPendingMessagesPerClient`, and `inboundTaskTimeoutMs` by traffic profile
 - Use reverse proxy policy and network ACL for perimeter controls
+
+Local protocol and installation gates do not replace browser/device acceptance in the target environment. Before production approval, verify the real certificate chain, reverse proxy upgrade forwarding, Origin policy, reconnect behavior, and expected concurrent browser load.
 
 ## Status and observability
 
 `GET /mqtt-ws/status` (plugin-auth route) exposes:
 
 - connection count
+- rejected connection, authentication failure, and ACL denial counters
 - accepted/dropped inbound counters
+- current active and queued inbound task counts
 - binding-vs-standard route counters
 - outbound publish counters
 - last error summary
@@ -164,8 +284,6 @@ Supported env vars:
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | Push / PR | install, typecheck, build, test, upload artifact |
 | `.github/workflows/release.yml` | tag `v*` / manual | build, test, publish npm (skip existing version) |
-
-Release details: [`RELEASING.md`](./RELEASING.md)
 
 ## RabbitMQ Web MQTT baseline
 

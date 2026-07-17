@@ -1,9 +1,7 @@
 {
   "id": "wechat",
-  "version": "2.1.7",
-  "channels": [
-    "openclaw-weixin"
-  ],
+  "version": "2026.7.1",
+  "channels": ["openclaw-weixin"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -12,11 +10,96 @@
   "channelConfigs": {
     "openclaw-weixin": {
       "label": "openclaw-weixin",
-      "description": "",
+      "description": "Weixin iLink Bot channel configuration",
       "schema": {
         "type": "object",
-        "additionalProperties": true,
-        "properties": {}
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "enabled": { "type": "boolean" },
+          "allowFrom": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+          },
+          "baseUrl": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://"
+          },
+          "cdnBaseUrl": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://"
+          },
+          "allowCustomApiBaseUrl": { "type": "boolean", "default": false },
+          "allowCustomCdnBaseUrl": { "type": "boolean", "default": false },
+          "routeTag": {
+            "anyOf": [
+              { "type": "number" },
+              { "type": "string", "minLength": 1, "maxLength": 128 }
+            ]
+          },
+          "mediaLocalRoots": {
+            "type": "array",
+            "maxItems": 128,
+            "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+          },
+          "channelConfigUpdatedAt": { "type": "string", "format": "date-time" },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+                "enabled": { "type": "boolean" },
+                "allowFrom": {
+                  "type": "array",
+                  "maxItems": 10000,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "baseUrl": {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^https?://"
+                },
+                "cdnBaseUrl": {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^https?://"
+                },
+                "allowCustomApiBaseUrl": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "allowCustomCdnBaseUrl": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "routeTag": {
+                  "anyOf": [
+                    { "type": "number" },
+                    { "type": "string", "minLength": 1, "maxLength": 128 }
+                  ]
+                },
+                "mediaLocalRoots": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }

@@ -1,5 +1,8 @@
 /**
- * Shared AES-128-ECB crypto utilities for CDN upload and download.
+ * 微信 CDN 上传与下载共用的 AES-128-ECB 工具。
+ *
+ * 这里实现的是上游协议指定的兼容算法，不是新业务的通用加密选择；默认 PKCS#7
+ * 填充，并提供密文长度计算以便上传前准确声明分片和 Content-Length。
  */
 import { createCipheriv, createDecipheriv } from "node:crypto";
 

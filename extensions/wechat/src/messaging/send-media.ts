@@ -32,10 +32,17 @@ export async function sendWeixinMediaFile(params: {
   text: string;
   opts: WeixinApiOptions & { contextToken?: string };
   cdnBaseUrl: string;
+  /** 当前账号允许读取的额外本地媒体目录；默认根由 OpenClaw 提供。 */
+  mediaLocalRoots?: readonly string[];
 }): Promise<{ messageId: string }> {
-  const { filePath, to, text, opts, cdnBaseUrl } = params;
+  const { filePath, to, text, opts, cdnBaseUrl, mediaLocalRoots } = params;
   const mime = getMimeFromFilename(filePath);
-  const uploadOpts: WeixinApiOptions = { baseUrl: opts.baseUrl, token: opts.token };
+  const uploadOpts: WeixinApiOptions = {
+    baseUrl: opts.baseUrl,
+    token: opts.token,
+    routeTag: opts.routeTag,
+    timeoutMs: opts.timeoutMs,
+  };
 
   if (mime.startsWith("video/")) {
     logger.info(`[weixin] sendWeixinMediaFile: uploading video filePath=${filePath} to=${to}`);
@@ -44,6 +51,7 @@ export async function sendWeixinMediaFile(params: {
       toUserId: to,
       opts: uploadOpts,
       cdnBaseUrl,
+      mediaLocalRoots,
     });
     logger.info(
       `[weixin] sendWeixinMediaFile: video upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
@@ -58,6 +66,7 @@ export async function sendWeixinMediaFile(params: {
       toUserId: to,
       opts: uploadOpts,
       cdnBaseUrl,
+      mediaLocalRoots,
     });
     logger.info(
       `[weixin] sendWeixinMediaFile: image upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
@@ -76,6 +85,7 @@ export async function sendWeixinMediaFile(params: {
     toUserId: to,
     opts: uploadOpts,
     cdnBaseUrl,
+    mediaLocalRoots,
   });
   logger.info(
     `[weixin] sendWeixinMediaFile: file upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,

@@ -16,6 +16,8 @@ const pendingMessages = new Map<
     connectionId: string;
     destination: string;
     sentAt: number;
+    /** 单调投递序号；`client` 累计 ACK 不能用可能相同的毫秒时间戳判断先后。 */
+    sequence: number;
     ackMode: "client" | "client-individual";
   }
 >();
@@ -49,10 +51,16 @@ export function registerMessage(
     connectionId,
     destination,
     sentAt: Date.now(),
+    sequence: messageIdCounter,
     ackMode,
   });
 
   return messageId;
+}
+
+/** 撤销尚未写入 WebSocket 的待确认消息，避免发送失败后占用 ACK 窗口。 */
+export function discardPendingMessage(messageId: string): void {
+  pendingMessages.delete(messageId);
 }
 
 /**
@@ -62,9 +70,10 @@ export function registerMessage(
  * @param messageId - 被确认的消息 ID
  * @returns 被确认的消息数量
  */
-export function handleAck(messageId: string): number {
+export function handleAck(messageId: string, connectionId?: string): number {
   const msg = pendingMessages.get(messageId);
   if (!msg) return 0;
+  if (connectionId && msg.connectionId !== connectionId) return 0;
 
   if (msg.ackMode === "client-individual") {
     // 仅确认该条消息
@@ -74,7 +83,7 @@ export function handleAck(messageId: string): number {
 
   // client 模式：确认该消息及之前同一订阅的所有消息
   let count = 0;
-  const targetSentAt = msg.sentAt;
+  const targetSequence = msg.sequence;
   const targetSubId = msg.subscriptionId;
   const targetConnId = msg.connectionId;
 
@@ -82,7 +91,7 @@ export function handleAck(messageId: string): number {
     if (
       pending.connectionId === targetConnId &&
       pending.subscriptionId === targetSubId &&
-      pending.sentAt <= targetSentAt
+      pending.sequence <= targetSequence
     ) {
       pendingMessages.delete(id);
       count++;
@@ -100,7 +109,8 @@ export function handleAck(messageId: string): number {
  * @returns 被拒绝消息的元数据，null 表示消息不存在
  */
 export function handleNack(
-  messageId: string
+  messageId: string,
+  connectionId?: string,
 ): {
   subscriptionId: string;
   connectionId: string;
@@ -108,14 +118,37 @@ export function handleNack(
 } | null {
   const msg = pendingMessages.get(messageId);
   if (!msg) return null;
+  if (connectionId && msg.connectionId !== connectionId) return null;
 
-  pendingMessages.delete(messageId);
+  if (msg.ackMode === "client-individual") {
+    pendingMessages.delete(messageId);
+  } else {
+    // STOMP 1.2 的 client 模式是累计确认：NACK 与 ACK 一样，覆盖同一订阅中目标消息及之前消息。
+    for (const [id, pending] of pendingMessages.entries()) {
+      if (
+        pending.connectionId === msg.connectionId &&
+        pending.subscriptionId === msg.subscriptionId &&
+        pending.sequence <= msg.sequence
+      ) {
+        pendingMessages.delete(id);
+      }
+    }
+  }
 
   return {
     subscriptionId: msg.subscriptionId,
     connectionId: msg.connectionId,
     destination: msg.destination,
   };
+}
+
+/** 取消订阅时释放该订阅占用的 ACK 窗口，避免同一连接后续订阅被历史消息阻塞。 */
+export function cleanupSubscription(connectionId: string, subscriptionId: string): void {
+  for (const [id, msg] of pendingMessages.entries()) {
+    if (msg.connectionId === connectionId && msg.subscriptionId === subscriptionId) {
+      pendingMessages.delete(id);
+    }
+  }
 }
 
 /**
@@ -158,4 +191,17 @@ export function getAckStats(): {
     pendingCount: pendingMessages.size,
     oldestPendingMs: oldest,
   };
+}
+
+export function getPendingAckCount(connectionId: string): number {
+  let count = 0;
+  for (const message of pendingMessages.values()) {
+    if (message.connectionId === connectionId) count += 1;
+  }
+  return count;
+}
+
+export function clearAckState(): void {
+  pendingMessages.clear();
+  messageIdCounter = 0;
 }

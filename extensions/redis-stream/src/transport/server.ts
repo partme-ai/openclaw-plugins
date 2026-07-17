@@ -23,6 +23,7 @@ import {
   RedisStreamError,
   RedisTimeoutError,
 } from "../shared/errors.js";
+import { redactRedisError } from "../shared/redact.js";
 
 /** @description Redis 连接与消息读写统计快照。 */
 export type RedisStats = {
@@ -34,12 +35,24 @@ export type RedisStats = {
   messagesWritten: number;
   messagesAcked: number;
   messagesReclaimed: number;
+  messagesFailed: number;
+  messagesDeadLettered: number;
+  lastDisconnectAt: number | null;
+  reconnecting: boolean;
   subscribedChannels: string[];
 };
 
 let client: RedisClientType | null = null;
+let consumerClient: RedisClientType | null = null;
 let subscriberClient: RedisClientType | null = null;
 let running = false;
+let consumeLoopPromise: Promise<void> | null = null;
+/** 中断消费错误退避，保证 Gateway 停止时不会被最长 30 秒 sleep 阻塞。 */
+let consumeAbortController: AbortController | null = null;
+/** 当前实例的停机预算；启动前使用安全默认值，启动后由配置覆盖。 */
+let shutdownTimeoutMs = 10_000;
+/** Pub/Sub 没有 Broker ACK；停机必须等待已接纳任务完成，否则回复会在关闭 publisher 后永久丢失。 */
+const pubSubTasks = new Set<Promise<void>>();
 const stats: RedisStats = {
   connected: false,
   lastConnectAt: null,
@@ -49,6 +62,10 @@ const stats: RedisStats = {
   messagesWritten: 0,
   messagesAcked: 0,
   messagesReclaimed: 0,
+  messagesFailed: 0,
+  messagesDeadLettered: 0,
+  lastDisconnectAt: null,
+  reconnecting: false,
   subscribedChannels: [],
 };
 
@@ -63,53 +80,65 @@ export async function startRedisServer(
 ): Promise<void> {
   // 加载 channel 绑定
   loadChannelBindings(config.channelBindings ?? []);
+  shutdownTimeoutMs = config.connection.shutdownTimeoutMs;
 
   // 主客户端（用于 Stream 操作）
-  client = createClient({
+  const mainClient = createClient({
     url: config.url,
     socket: {
       reconnectStrategy: (retries: number) => {
-        if (retries >= config.connection.maxRetries) {
-          throw new RedisConnectionError(
-            config.url,
-            `max reconnection attempts (${config.connection.maxRetries}) exceeded`,
-          );
+        if (
+          config.connection.maxRetries > 0 &&
+          retries >= config.connection.maxRetries
+        ) {
+          return false;
         }
-        return config.connection.reconnectMs;
+        return computeRedisReconnectDelay(config, retries);
       },
     },
-  });
+  }) as unknown as RedisClientType;
+  client = mainClient;
+  attachClientEvents(mainClient);
 
   try {
-    await client.connect();
-  } catch (error) {
-    throw new RedisConnectionError(
-      config.url,
-      error instanceof Error ? error.message : String(error),
+    await withTimeout(
+      mainClient.connect(),
+      config.connection.startupTimeoutMs,
+      "Redis startup connection",
     );
-  }
-  setPublisherClient(
-    client as unknown as Parameters<typeof setPublisherClient>[0],
-  );
-  running = true;
-  stats.connected = true;
-  stats.lastConnectAt = Date.now();
+    if (config.channelMode === "stream") {
+      consumerClient = mainClient.duplicate();
+      await withTimeout(
+        consumerClient.connect(),
+        config.connection.startupTimeoutMs,
+        "Redis consumer connection",
+      );
+    }
+    setPublisherClient(
+      mainClient as unknown as Parameters<typeof setPublisherClient>[0],
+      config.stream.maxLen,
+    );
+    running = true;
+    consumeAbortController = new AbortController();
+    stats.connected = true;
+    stats.lastConnectAt = Date.now();
+    stats.lastError = null;
 
-  // Stream 消费组
-  if (config.channelMode === "stream" && config.stream.createGroup) {
-    await ensureConsumerGroup(config).catch(() => undefined);
-  }
-
-  // Pub/Sub 订阅
-  if (config.channelMode === "pubsub") {
-    await startPubSub(config);
-  }
-
-  // Stream 消费循环（仅在 stream 模式下）
-  if (config.channelMode === "stream") {
-    consumeLoop(config).catch((err) => {
-      logger.error("Consume loop crashed:", err);
-    });
+    if (config.channelMode === "stream" && config.stream.createGroup) {
+      await ensureConsumerGroup(config);
+    }
+    if (config.channelMode === "pubsub") {
+      await startPubSub(config);
+    }
+    if (config.channelMode === "stream") {
+      consumeLoopPromise = consumeLoop(config).catch((error) => {
+        stats.lastError = redactRedisError(error, config);
+        logger.error(`Consume loop crashed: ${stats.lastError}`);
+      });
+    }
+  } catch (error) {
+    await stopRedisServer();
+    throw new RedisConnectionError(config.url, redactRedisError(error, config));
   }
 }
 
@@ -118,22 +147,77 @@ export async function startRedisServer(
  * @returns 清理完成后 resolve
  */
 export async function stopRedisServer(): Promise<void> {
+  const shutdownDeadline = Date.now() + shutdownTimeoutMs;
   running = false;
+  consumeAbortController?.abort();
+  consumeAbortController = null;
 
-  if (subscriberClient) {
-    await subscriberClient.unsubscribe().catch(() => undefined);
-    await subscriberClient.pUnsubscribe().catch(() => undefined);
-    await subscriberClient.quit().catch(() => undefined);
-  }
+  // 先销毁只负责接收的连接，阻止新消息进入；主客户端仍保持可用，供在途 Agent 回复发布。
+  const activeSubscriber = subscriberClient;
   subscriberClient = null;
+  activeSubscriber?.destroy();
 
-  if (client) {
-    await client.quit().catch(() => undefined);
+  const activeConsumer = consumerClient;
+  consumerClient = null;
+  activeConsumer?.destroy();
+
+  // Stream 当前 entry 与 Pub/Sub 已接纳任务共用一个总停机预算；超时后 Stream 不执行 XACK，
+  // 条目留在 PEL 供下个消费者 XAUTOCLAIM，Pub/Sub 则按其 at-most-once 语义记录可能丢失。
+  const activeConsumeLoop = consumeLoopPromise;
+  const activePubSubTasks = [...pubSubTasks];
+  const drainTasks = [
+    ...(activeConsumeLoop ? [activeConsumeLoop] : []),
+    ...activePubSubTasks,
+  ];
+  const drained = await waitForShutdownDrain(
+    drainTasks,
+    Math.max(0, shutdownDeadline - Date.now()),
+  );
+  if (!drained) {
+    logger.warn(
+      `Shutdown drain timed out after ${shutdownTimeoutMs}ms; ` +
+        `streamLoop=${activeConsumeLoop ? 1 : 0}, pubSubInFlight=${activePubSubTasks.length}; ` +
+        "Stream entries remain pending for reclaim, Pub/Sub outcomes may be unknown",
+    );
   }
-  client = null;
+  consumeLoopPromise = null;
+  pubSubTasks.clear();
   clearPublisherClient();
+
+  const activeClient = client;
+  client = null;
+  if (activeClient) {
+    await closeRedisClient(
+      activeClient,
+      Math.max(0, shutdownDeadline - Date.now()),
+      "Redis main client shutdown",
+    );
+  }
   stats.connected = false;
+  stats.reconnecting = false;
+  stats.lastDisconnectAt = Date.now();
   stats.subscribedChannels = [];
+}
+
+/** 在统一停机预算内等待消费循环和已接纳的 Pub/Sub Agent 任务完成。 */
+async function waitForShutdownDrain(
+  tasks: Array<Promise<unknown>>,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (tasks.length === 0) return true;
+  if (timeoutMs <= 0) return false;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      Promise.allSettled(tasks).then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // ─── Pub/Sub ──────────────────────────────────────────────────────
@@ -148,7 +232,12 @@ async function startPubSub(config: RedisChannelConfig): Promise<void> {
 
   // 创建独立订阅客户端（Pub/Sub 需专用连接）
   subscriberClient = client.duplicate();
-  await subscriberClient.connect();
+  await withTimeout(
+    subscriberClient.connect(),
+    config.connection.startupTimeoutMs,
+    "Redis subscriber connection",
+  );
+  const dispatch = createPubSubDispatcher(config);
 
   const channels = config.subscribeChannels;
 
@@ -157,12 +246,7 @@ async function startPubSub(config: RedisChannelConfig): Promise<void> {
     await subscriberClient.pSubscribe(
       "*",
       (message: string, channel: string) => {
-        stats.messagesRead++;
-        stats.lastReadAt = Date.now();
-        const inbound: RedisInboundMessage = { channel, pattern: "*", message };
-        handleInboundMessage(inbound, config).catch((err) => {
-          logger.error("Inbound handler error:", err);
-        });
+        dispatch({ channel, pattern: "*", message });
       },
     );
     stats.subscribedChannels = ["*"];
@@ -177,12 +261,7 @@ async function startPubSub(config: RedisChannelConfig): Promise<void> {
     await subscriberClient.pSubscribe(
       pattern,
       (message: string, channel: string) => {
-        stats.messagesRead++;
-        stats.lastReadAt = Date.now();
-        const inbound: RedisInboundMessage = { channel, pattern, message };
-        handleInboundMessage(inbound, config).catch((err) => {
-          logger.error("Inbound handler error:", err);
-        });
+        dispatch({ channel, pattern, message });
       },
     );
   }
@@ -192,17 +271,59 @@ async function startPubSub(config: RedisChannelConfig): Promise<void> {
     await subscriberClient.subscribe(
       exact,
       (message: string, channel: string) => {
-        stats.messagesRead++;
-        stats.lastReadAt = Date.now();
-        const inbound: RedisInboundMessage = { channel, message };
-        handleInboundMessage(inbound, config).catch((err) => {
-          logger.error("Inbound handler error:", err);
-        });
+        dispatch({ channel, message });
       },
     );
   }
 
   stats.subscribedChannels = channels;
+}
+
+/**
+ * 构造 Pub/Sub 入站并发闸门。
+ *
+ * Redis Pub/Sub 不具备 Stream 的 PEL、ACK 和服务端背压能力。如果订阅回调直接无限制地
+ * 启动 Agent turn，突发消息会同时占用模型、工具与内存。这里用“正在处理数”设置硬上限；
+ * 超限消息按 Pub/Sub 的 at-most-once 语义拒绝并记录失败，生产环境需要无损消费时应使用
+ * Stream 模式。
+ *
+ * @param config - 含 `connection.maxPubSubInFlight` 的完整配置
+ * @param handler - 入站处理函数，参数用于单元测试注入
+ * @returns Redis 订阅回调可直接调用的同步分发函数；返回 false 表示已因过载拒绝
+ */
+export function createPubSubDispatcher(
+  config: RedisChannelConfig,
+  handler: typeof handleInboundMessage = handleInboundMessage,
+): (inbound: RedisInboundMessage) => boolean {
+  let inFlight = 0;
+  return (inbound) => {
+    stats.messagesRead++;
+    stats.lastReadAt = Date.now();
+    if (inFlight >= config.connection.maxPubSubInFlight) {
+      const message = `Pub/Sub overload: max ${config.connection.maxPubSubInFlight} in-flight messages reached`;
+      stats.messagesFailed++;
+      stats.lastError = message;
+      logger.warn(`${message}; dropping channel=${inbound.channel}`);
+      return false;
+    }
+
+    inFlight++;
+    const task = handler(inbound, config)
+      .then((accepted) => {
+        if (accepted === false) stats.messagesFailed++;
+      })
+      .catch((error) => {
+        stats.messagesFailed++;
+        stats.lastError = redactRedisError(error, config);
+        logger.error(`Inbound handler error: ${stats.lastError}`);
+      })
+      .finally(() => {
+        inFlight--;
+        pubSubTasks.delete(task);
+      });
+    pubSubTasks.add(task);
+    return true;
+  };
 }
 
 /**
@@ -215,12 +336,13 @@ async function startPubSub(config: RedisChannelConfig): Promise<void> {
 export async function publishMessage(
   channel: string,
   message: string,
-): Promise<void> {
+): Promise<number> {
   if (!client) {
     throw new RedisConnectionError("", "Redis client is not initialized");
   }
-  await client.publish(channel, message);
+  const subscriberCount = await client.publish(channel, message);
   stats.messagesWritten++;
+  return subscriberCount;
 }
 
 // ─── Stream 操作 ──────────────────────────────────────────────────
@@ -259,7 +381,13 @@ export async function ackEntry(
   if (!client) {
     throw new RedisConnectionError("", "Redis client is not initialized");
   }
-  await client.xAck(stream, group, id);
+  const acknowledged = await client.xAck(stream, group, id);
+  if (acknowledged < 1) {
+    throw new RedisStreamError(
+      stream,
+      `XACK did not acknowledge entry ${id} in group ${group}`,
+    );
+  }
   stats.messagesAcked++;
 }
 
@@ -272,6 +400,24 @@ export function getStats(): RedisStats {
     ...stats,
     messagesWritten: stats.messagesWritten + getMessagesWritten(),
   };
+}
+
+/**
+ * 计算 node-redis 断线重连等待时间：指数退避限制故障期间请求频率，随机抖动避免副本惊群。
+ * 纯函数保持导出，便于在不建立 Redis 连接的情况下验证边界。
+ */
+export function computeRedisReconnectDelay(
+  config: RedisChannelConfig,
+  retries: number,
+  random: () => number = Math.random,
+): number {
+  const base = Math.min(
+    config.connection.reconnectMs * 2 ** Math.max(0, retries),
+    config.connection.reconnectMaxMs,
+  );
+  const jitter =
+    base * config.connection.reconnectJitterRatio * (random() * 2 - 1);
+  return Math.max(100, Math.round(base + jitter));
 }
 
 /**
@@ -291,6 +437,7 @@ async function ensureConsumerGroup(config: RedisChannelConfig): Promise<void> {
       },
     );
   } catch (error) {
+    if (error instanceof Error && error.message.includes("BUSYGROUP")) return;
     throw new RedisStreamError(
       config.stream.inboundKey,
       error instanceof Error ? error.message : String(error),
@@ -309,7 +456,8 @@ async function ensureConsumerGroup(config: RedisChannelConfig): Promise<void> {
 async function consumeLoop(config: RedisChannelConfig): Promise<void> {
   let consecutiveErrors = 0;
   let pendingClaimCursor = "0-0";
-  while (running && client) {
+  const signal = consumeAbortController?.signal;
+  while (running && consumerClient) {
     try {
       if (config.stream.pendingClaimIdleMs > 0) {
         pendingClaimCursor = await reclaimStalePendingEntries(
@@ -318,7 +466,7 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
         );
       }
 
-      const result = await client
+      const result = await consumerClient
         .xReadGroup(
           config.stream.consumerGroup,
           config.stream.consumerName,
@@ -370,18 +518,21 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
           // 仅在 handler 成功时才 ACK，失败的消息保留在 pending list 供后续重试
           if (accepted !== false) {
             await ackEntry(streamName, config.stream.consumerGroup, id);
+          } else {
+            await handleFailedEntry(streamName, config, id, fieldMap);
           }
         }
       }
     } catch (error) {
+      if (!running || signal?.aborted) break;
       consecutiveErrors++;
-      stats.lastError = error instanceof Error ? error.message : String(error);
+      stats.lastError = redactRedisError(error, config);
       // 指数退避，上限 30 秒，避免 Redis 不可用时频繁重试
       const backoffMs = Math.min(
         1000 * Math.pow(2, Math.min(consecutiveErrors - 1, 5)),
         30000,
       );
-      await sleep(backoffMs);
+      await sleep(backoffMs, signal);
     }
   }
 }
@@ -391,8 +542,18 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
  * @param ms - 等待毫秒数
  * @returns 延迟结束的 Promise
  */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted || ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    timer.unref?.();
+    function done(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
 
 /**
@@ -428,12 +589,12 @@ async function reclaimStalePendingEntries(
   config: RedisChannelConfig,
   startId: string,
 ): Promise<string> {
-  if (!client || config.stream.pendingClaimIdleMs <= 0) {
+  if (!consumerClient || config.stream.pendingClaimIdleMs <= 0) {
     return startId;
   }
 
   try {
-    const claimResult = await client.xAutoClaim(
+    const claimResult = await consumerClient.xAutoClaim(
       config.stream.inboundKey,
       config.stream.consumerGroup,
       config.stream.consumerName,
@@ -461,8 +622,7 @@ async function reclaimStalePendingEntries(
         streamEntryId: String(entry.id),
         fieldAgentId:
           fieldMap.get(config.fieldMapping.agentIdField) || undefined,
-        fieldPeerId:
-          fieldMap.get(config.fieldMapping.peerIdField) || undefined,
+        fieldPeerId: fieldMap.get(config.fieldMapping.peerIdField) || undefined,
         fieldAccountId:
           fieldMap.get(config.fieldMapping.accountIdField) || undefined,
         fieldReplyStream:
@@ -475,15 +635,133 @@ async function reclaimStalePendingEntries(
           config.stream.consumerGroup,
           String(entry.id),
         );
+      } else {
+        await handleFailedEntry(
+          config.stream.inboundKey,
+          config,
+          String(entry.id),
+          fieldMap,
+        );
       }
     }
 
     return nextStartId;
   } catch (error) {
     logger.warn(
-      "XAUTOCLAIM pending reclaim failed:",
-      error instanceof Error ? error.message : String(error),
+      `XAUTOCLAIM pending reclaim failed: ${redactRedisError(error, config)}`,
     );
     return startId;
+  }
+}
+
+async function handleFailedEntry(
+  stream: string,
+  config: RedisChannelConfig,
+  id: string,
+  fields: Map<string, string>,
+): Promise<void> {
+  if (!client)
+    throw new RedisConnectionError("", "Redis client is not initialized");
+  stats.messagesFailed++;
+  const pending = await client.xPendingRange(
+    stream,
+    config.stream.consumerGroup,
+    id,
+    id,
+    1,
+  );
+  const deliveries = Number(pending[0]?.deliveriesCounter ?? 1);
+  if (deliveries < config.stream.maxAttempts) return;
+
+  const args = [
+    "XADD",
+    config.stream.deadLetterKey,
+    ...(config.stream.maxLen > 0
+      ? ["MAXLEN", "~", String(config.stream.maxLen)]
+      : []),
+    "*",
+    ...[...fields.entries()].flatMap(([key, value]) => [key, value]),
+    "_sourceStream",
+    stream,
+    "_sourceId",
+    id,
+    "_consumerGroup",
+    config.stream.consumerGroup,
+    "_deliveryCount",
+    String(deliveries),
+    "_failedAt",
+    new Date().toISOString(),
+  ];
+  await client
+    .multi()
+    .addCommand(args)
+    .xAck(stream, config.stream.consumerGroup, id)
+    .exec();
+  stats.messagesDeadLettered++;
+  stats.messagesAcked++;
+}
+
+function attachClientEvents(activeClient: RedisClientType): void {
+  activeClient.on("error", (error) => {
+    stats.lastError = redactRedisError(error);
+  });
+  activeClient.on("reconnecting", () => {
+    stats.connected = false;
+    stats.reconnecting = true;
+    stats.lastDisconnectAt = Date.now();
+  });
+  activeClient.on("ready", () => {
+    stats.connected = true;
+    stats.reconnecting = false;
+    stats.lastConnectAt = Date.now();
+    stats.lastError = null;
+  });
+  activeClient.on("end", () => {
+    stats.connected = false;
+    stats.reconnecting = false;
+    stats.lastDisconnectAt = Date.now();
+  });
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * 在固定预算内优雅关闭 Redis 连接，超时或异常时强制销毁 socket。
+ * `quit()` 允许 Redis 处理已写入命令；`destroy()` 保证 Gateway 停机不会无限等待网络。
+ */
+async function closeRedisClient(
+  activeClient: RedisClientType,
+  timeoutMs: number,
+  label: string,
+): Promise<void> {
+  if (timeoutMs <= 0) {
+    activeClient.destroy();
+    return;
+  }
+  try {
+    await withTimeout(activeClient.quit(), timeoutMs, label);
+  } catch (error) {
+    stats.lastError = redactRedisError(error);
+    activeClient.destroy();
   }
 }

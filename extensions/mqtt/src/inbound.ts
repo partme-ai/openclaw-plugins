@@ -26,7 +26,11 @@ import {
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
-import { getMqttIdempotencyCache } from "./shared/wire-helpers.js";
+import {
+  buildMqttPacketIdempotencyKey,
+  getMqttIdempotencyCache,
+} from "./shared/wire-helpers.js";
+import { redactMqttError } from "./shared/redact.js";
 
 /** MQTT 入站幂等缓存（messageId / 等价键）。 */
 const idempotencyCache = getMqttIdempotencyCache();
@@ -35,7 +39,7 @@ const idempotencyCache = getMqttIdempotencyCache();
  * 处理 MQTT 入站消息（设备 → Agent）：Topic 过滤、路由、ACL、message-sdk dispatch。
  *
  * @param message - Aedes 解析后的入站 MQTT 消息（含 clientId、topic、payload、qos 等）
- * @returns 完成 dispatch 或 policy 丢弃后 resolve；错误仅记录日志不抛出
+ * @returns 完成 dispatch 或 policy 丢弃后 resolve；运行时 dispatch 失败时向上抛出
  */
 export async function handleInboundMessage(message: MqttInboundMessage): Promise<void> {
   const config = getMqttChannelConfig() ?? DEFAULT_BROKER_CONFIG;
@@ -47,13 +51,13 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
     return;
   }
   if (!shouldProcessTopic(message.topic, config.subscribeTopics)) {
-    console.log(`[openclaw-mqtt] Ignored topic not in subscribeTopics: ${message.topic}`);
+    console.log(`[openclaw-mqtt] Ignored topic not in subscribeTopics: ${redactMqttError(message.topic, config)}`);
     return;
   }
 
   const route = resolveInboundRoute(message.topic);
   if (!route) {
-    console.warn(`[openclaw-mqtt] No route matched for topic: ${message.topic}`);
+    console.warn(`[openclaw-mqtt] No route matched for topic: ${redactMqttError(message.topic, config)}`);
     return;
   }
 
@@ -71,8 +75,10 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
     agentId: route.agentId,
   });
 
-  const idempotencyKey =
-    message.messageId !== undefined ? String(message.messageId) : undefined;
+  const idempotencyKey = buildMqttPacketIdempotencyKey(message);
+  // DUP=false 表示新的应用发布；即使 Broker 已复用 Packet Identifier，也必须接受并刷新占位。
+  // DUP=true 才可能是同一 QoS 报文的重投，此时保留缓存记录用于短路重复 dispatch。
+  if (idempotencyKey && !message.dup) idempotencyCache.forget(idempotencyKey);
   const parsed = normalizeWireIngress({
     rawPayload: message.payload,
     mode: config.payload.mode,
@@ -81,7 +87,7 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
     idempotency: idempotencyKey ? idempotencyCache : undefined,
   });
   if (!parsed.accepted) {
-    console.log(`[openclaw-mqtt] Duplicate inbound dropped: ${message.messageId}`);
+    console.log(`[openclaw-mqtt] Duplicate inbound dropped: ${redactMqttError(message.messageId, config)}`);
     return;
   }
   const text = parsed.text;
@@ -89,17 +95,18 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
   const username = getClientUsername(message.clientId);
   const user = config.auth.users.find((entry) => entry.username === username);
   if (
-    user &&
-    !isUserActionAllowed({
-      user,
-      action: "inbound",
-      topic: message.topic,
-      accountId: route.accountId,
-    })
+    config.auth.enabled &&
+    (!user ||
+      !isUserActionAllowed({
+        user,
+        action: "inbound",
+        topic: message.topic,
+        accountId: route.accountId,
+      }))
   ) {
-    logAuditEvent(config.audit, "warn", "acl_inbound_denied", {
+    logAuditEvent(config.audit, "warn", user ? "acl_inbound_denied" : "acl_inbound_identity_missing", {
       clientId: message.clientId,
-      username,
+      username: username ?? null,
       topic: message.topic,
       accountId: route.accountId,
     });
@@ -114,14 +121,24 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
     replyTopic,
   });
 
-  console.log(
-    `[openclaw-mqtt] Inbound: client=${message.clientId}, topic=${message.topic}, agent=${agentId}, account=${route.accountId}, source=${route.source}, session=${sessionKey}, text=${text.slice(0, 100)}`,
-  );
+  // 消息正文属于业务数据，生产日志只记录长度；路由标识统一经过最终脱敏边界。
+  console.log(redactMqttError(
+    `[openclaw-mqtt] Inbound: client=${message.clientId}, topic=${message.topic}, agent=${agentId}, account=${route.accountId}, source=${route.source}, session=${sessionKey}, textLength=${text.length}`,
+    config,
+  ));
 
   try {
     await dispatchToRuntime(sessionKey, peerId, agentId, text, message, route, replyTopic, parsed.unified);
   } catch (error) {
-    console.error(`[openclaw-mqtt] Runtime dispatch failed for client=${message.clientId}:`, error);
+    // dispatch 失败时释放预占；否则客户端按 QoS 重投会被当成“已处理”并错误 ACK，造成消息丢失。
+    if (idempotencyKey) idempotencyCache.forget(idempotencyKey);
+    console.error(redactMqttError(
+      `[openclaw-mqtt] Runtime dispatch failed for client=${message.clientId}: ${error instanceof Error ? error.message : String(error)}`,
+      config,
+    ));
+    // 必须继续抛出：上层 authorizePublish 只有感知失败，才能拒绝 PUBACK，
+    // 避免客户端认为消息已经被 Agent 成功处理。
+    throw error;
   }
 }
 

@@ -12,16 +12,18 @@ import {
   configureSessionExpiry,
   handleClientDisconnected,
   markClientConnected,
+  resetSessionMappings,
 } from "../routing/session-mapper.js";
 import { loadTopicMappings } from "../routing/topic-router.js";
-import { initQosHandler, stopQosHandler } from "./qos-handler.js";
 import {
   hasLegacyMqttDmScope,
   resolveBrokerConfig,
+  resolveOpenClawDmScope,
   type ResolvedMqttAccount,
 } from "../config.js";
 import { setMqttChannelConfig } from "../state/mqtt-state.js";
 import type { MqttTopicMapping } from "../types.js";
+import { redactMqttError } from "../shared/redact.js";
 
 /**
  * 等待 Gateway 中止信号（账号停止或进程退出）。
@@ -43,6 +45,7 @@ function waitForAbortSignal(abortSignal: AbortSignal): Promise<void> {
  * 长驻监控：启动 MQTT Broker，直到 `abortSignal` 触发后清理资源。
  */
 export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttAccount>): Promise<void> {
+  let resolvedConfig: ReturnType<typeof resolveBrokerConfig> | null = null;
   try {
     const globalConfig = ctx.cfg as unknown as Record<string, unknown>;
     if (hasLegacyMqttDmScope(globalConfig)) {
@@ -51,7 +54,8 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
       );
     }
     const config = resolveBrokerConfig(globalConfig);
-    const dmScope = (globalConfig.session as any)?.dmScope ?? 'per-peer';
+    resolvedConfig = config;
+    const dmScope = resolveOpenClawDmScope(globalConfig);
     setMqttChannelConfig(config, dmScope);
     configureSessionExpiry(
       config.session.maxExpirySeconds,
@@ -65,15 +69,9 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
       loadTopicMappings(config.topicBindings);
     }
 
-    initQosHandler((_topic, _payload, _messageId) => {
-      ctx.log?.info?.("[openclaw-mqtt] QoS retry not yet implemented");
-    });
-
     await startBroker(
       config,
-      (message) => {
-        void handleInboundMessage(message);
-      },
+      (message) => handleInboundMessage(message),
       (clientId) => {
         markClientConnected(clientId);
       },
@@ -91,24 +89,28 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
       port: config.port,
     } as ChannelAccountSnapshot);
 
-    ctx.log?.info?.(`[${ctx.account.accountId}] MQTT broker listening on tcp://0.0.0.0:${config.port}`);
+    ctx.log?.info?.(`[${ctx.account.accountId}] MQTT broker listening on tcp://${config.host}:${config.port}`);
 
     await waitForAbortSignal(ctx.abortSignal);
   } catch (err) {
+    const safeError = redactMqttError(err, resolvedConfig);
     ctx.setStatus({
       accountId: ctx.account.accountId,
       running: false,
-      lastError: String(err),
+      lastError: safeError,
     } as ChannelAccountSnapshot);
     throw err;
   } finally {
-    stopQosHandler();
-    await stopBroker();
-    setMqttChannelConfig(null);
-    ctx.setStatus({
-      accountId: ctx.account.accountId,
-      running: false,
-      lastStopAt: Date.now(),
-    } as ChannelAccountSnapshot);
+    try {
+      await stopBroker();
+    } finally {
+      resetSessionMappings();
+      setMqttChannelConfig(null);
+      ctx.setStatus({
+        accountId: ctx.account.accountId,
+        running: false,
+        lastStopAt: Date.now(),
+      } as ChannelAccountSnapshot);
+    }
   }
 }

@@ -431,7 +431,7 @@ Send standard envelope as STOMP SEND body. Default reply destination is `/topic/
         "inboundKey": "openclaw:inbound",
         "outboundKey": "openclaw:outbound",
         "consumerGroup": "openclaw-group",
-        "consumerName": "openclaw-consumer-1"
+        "consumerName": ""
       }
     }
   }

@@ -21,7 +21,11 @@ export async function douyinFetch(
   opts?: { timeoutMs?: number },
 ): Promise<Response> {
   const proxyUrl = resolveDouyinEgressProxyUrl(cfg ?? {});
-  return undiciFetch(input, init, {
+  return undiciFetch(input, {
+    ...(init ?? {}),
+    // client_secret / access-token 只能发送给代码内固定的抖音 OpenAPI 地址，禁止 3xx 转发凭据。
+    redirect: "manual",
+  }, {
     proxyUrl,
     timeoutMs: opts?.timeoutMs,
     userAgent: USER_AGENT,

@@ -2,7 +2,7 @@
 
 ## 插件入口
 
-所有配置位于 `openclaw.json` 的 `plugins.entries["openclaw-nacos"].config` 下。
+所有配置位于 `openclaw.json` 的 `plugins.entries.nacos.config` 下；`nacos` 是 `openclaw.plugin.json` 声明的 manifest id。
 
 ## 完整 Schema
 
@@ -10,11 +10,12 @@
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           // ── 连接 ────────────────────────────────────
           "serverList": "127.0.0.1:8848",         // 必填：Nacos 服务地址（多个用逗号分隔）
+          "startupFailurePolicy": "fail",          // fail（默认）或 degrade
           "namingServerList": "10.0.0.1:8848",     // 可选：独立 Naming 地址
           "configServerList": "10.0.0.2:8848",     // 可选：独立 Config 地址
           "namespace": "public",                    // 命名空间（租户隔离）
@@ -56,7 +57,7 @@
             "applicationDataId": "application-${profile}.json",
 
             // 按插件配置（自动获取 {pluginId}-{profile}.json）
-            "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+            "pluginConfigIds": ["wechat", "dingtalk-connector"],
 
             // Profile（默认：OPENCLAW_PROFILE → SPRING_PROFILES_ACTIVE → "default"）
             "profile": "dev",
@@ -105,7 +106,8 @@
 | `serverList` | string | **必填** | Nacos 地址，如 `"host1:8848,host2:8848"` |
 | `namingServerList` | string | `serverList` | Naming 客户端独立地址 |
 | `configServerList` | string | `serverList` | Config 客户端独立地址 |
-| `namespace` | string | `"public"` | Nacos 命名空间 |
+| `namespace` | string | `"public"` | Naming 命名空间；Config 会把 public 映射为空 tenant id |
+| `startupFailurePolicy` | string | `"fail"` | `fail` 拒绝失败组件启动；`degrade` 记录降级并继续其他组件 |
 | `username` | string | — | Nacos 认证用户名 |
 | `password` | string | — | Nacos 认证密码 |
 
@@ -165,7 +167,7 @@ nacos.discovery.server-addr > nacos.server-addr
 ### 配置中心命名空间
 
 ```
-configCenter.namespace > 顶层 namespace > "public"
+configCenter.namespace > 顶层 namespace > public（Config API tenant id 为空字符串）
 ```
 
 ### 注册 IP
@@ -186,7 +188,7 @@ configCenter.profile > OPENCLAW_PROFILE 环境变量 > SPRING_PROFILES_ACTIVE �
 
 ```jsonc
 {
-  "openclaw-nacos": {
+  "nacos": {
     "enabled": true,
     "config": {
       "serverList": "127.0.0.1:8848"
@@ -199,7 +201,7 @@ configCenter.profile > OPENCLAW_PROFILE 环境变量 > SPRING_PROFILES_ACTIVE �
 
 ```jsonc
 {
-  "openclaw-nacos": {
+  "nacos": {
     "enabled": true,
     "config": {
       "serverList": "127.0.0.1:8848",
@@ -216,7 +218,7 @@ configCenter.profile > OPENCLAW_PROFILE 环境变量 > SPRING_PROFILES_ACTIVE �
 
 ```jsonc
 {
-  "openclaw-nacos": {
+  "nacos": {
     "enabled": true,
     "config": {
       "serverList": "nacos-prod-1:8848,nacos-prod-2:8848,nacos-prod-3:8848",
@@ -229,7 +231,7 @@ configCenter.profile > OPENCLAW_PROFILE 环境变量 > SPRING_PROFILES_ACTIVE �
       "configCenter": {
         "enabled": true,
         "primaryConfigDataId": "openclaw.json",
-        "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+        "pluginConfigIds": ["wechat", "dingtalk-connector"],
         "profile": "prod"
       }
     }

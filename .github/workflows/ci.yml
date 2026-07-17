@@ -3,10 +3,13 @@ name: CI
 on:
   push:
     branches: [main, feature/*]
-    paths: ["extensions/**", "scripts/**", "doc/OpenClaw-Plugin-Structure-Standard.md", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
+    paths: ["extensions/**", "scripts/**", "doc/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
   pull_request:
     branches: [main]
-    paths: ["extensions/**", "scripts/**", "doc/OpenClaw-Plugin-Structure-Standard.md", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
+    paths: ["extensions/**", "scripts/**", "doc/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
+
+permissions:
+  contents: read
 
 jobs:
   detect:
@@ -33,20 +36,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Structure inventory (warn mode)
-        run: node scripts/check-plugin-structure.mjs
+        run: node scripts/check-plugin-structure.mjs --strict-base --strict-new
 
-      - name: Base Profile gate (strict plugins)
+      - name: Release metadata gate
         run: |
-          for id in amap bridge douyin gotify meituan mqtt rabbitmq redis-stream rednode rocketmq stomp web-mqtt web-stomp wechat wechat-ipad; do
-            node scripts/check-plugin-structure.mjs --plugin "$id" || exit 1
-          done
+          pnpm check-release-readiness
+          pnpm test:release-scripts
 
-      - name: Extended Profile gate (wecom, wecom-kf)
-        run: |
-          node scripts/check-plugin-structure.mjs --plugin wecom --strict-new
-          node scripts/check-plugin-structure.mjs --plugin wecom-kf --strict-new
+      - name: Chinese comments and visual documentation gate
+        run: pnpm check-explanatory-assets
+
+      - name: E2E harness contract tests
+        run: pnpm test:e2e:harness
 
   build-and-test:
     needs: detect
@@ -64,15 +71,19 @@ jobs:
       - uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        working-directory: extensions/${{ matrix.plugin }}
-        run: |
-          npm install --ignore-scripts --legacy-peer-deps 2>&1 || true
-          npm install --save-dev typescript @types/node --ignore-scripts --legacy-peer-deps 2>&1 || true
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace dependency
+        run: pnpm --filter @partme.ai/openclaw-message-sdk build
 
       - name: Type check
-        working-directory: extensions/${{ matrix.plugin }}
-        run: npx tsc --noEmit 2>&1 | head -50 || true
+        run: pnpm --dir extensions/${{ matrix.plugin }} run --if-present typecheck
+
+      - name: Unit tests
+        run: pnpm --dir extensions/${{ matrix.plugin }} run --if-present test
 
       - name: Build
-        working-directory: extensions/${{ matrix.plugin }}
-        run: npx tsup 2>&1 || true
+        run: pnpm --dir extensions/${{ matrix.plugin }} run --if-present build
+
+      - name: Package archive verification
+        run: node scripts/check-package-archives.mjs --plugin "${{ matrix.plugin }}"

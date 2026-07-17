@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-douyin",
-  "version": "2026.5.20",
+  "version": "2026.7.1",
   "description": "OpenClaw 抖音开放平台渠道与运营工具 — 公域 Agent-First 智能运营",
   "type": "module",
   "main": "dist/index.js",
@@ -25,30 +25,21 @@
   "author": "PartMe",
   "license": "MIT",
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   },
   "files": [
     "dist",
     "openclaw.plugin.json",
     "README.md",
     "README.zh-CN.md",
-    "LICENSE",
-    "tsconfig.json",
-    "tsup.config.ts",
-    "vitest.config.ts",
-    ".gitignore"
+    "LICENSE"
   ],
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
-  },
-  "peerDependenciesMeta": {
-    "openclaw": {
-      "optional": true
-    }
+    "openclaw": ">=2026.7.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "openclaw": ">=2026.4.12",
+    "openclaw": "2026.7.1",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
@@ -73,6 +64,11 @@
       "id": "douyin",
       "label": "抖音",
       "blurb": "抖音开放平台 Webhook 渠道与运营工具"
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-douyin",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   }
 }

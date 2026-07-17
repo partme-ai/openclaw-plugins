@@ -2,7 +2,7 @@
  * OpenClaw gateway lifecycle — host process or Docker compose service.
  */
 import { execSync, spawn } from "node:child_process";
-import { existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { COMPOSE_FILE, DOCKER, dockerEnv, dockerOk, useHostGateway } from "./compose.mjs";
 import { E2E_DIR, GATEWAY_HTTP, GATEWAY_PORT, OPENCLAW_BIN, PROFILE, gatewayFetch, tcpReachable, waitFor } from "./utils.mjs";
@@ -12,8 +12,8 @@ async function waitGatewayHttpReady() {
   await waitFor(async () => {
     if (!(await tcpReachable(GATEWAY_PORT))) return false;
     try {
-      const res = await gatewayFetch("/mqtt/status");
-      return res.status > 0;
+      const res = await gatewayFetch("/readyz");
+      return res.ok && res.json?.ready === true;
     } catch {
       return false;
     }
@@ -26,10 +26,23 @@ const LOG_FILE = join(E2E_DIR, "gateway.log");
 /** Stop host gateway if previously started by E2E. */
 export function stopHostGateway() {
   if (!existsSync(PID_FILE)) return;
+  const pid = Number(readFileSync(PID_FILE, "utf8"));
   try {
-    process.kill(Number(readFileSync(PID_FILE, "utf8")), "SIGTERM");
+    process.kill(pid, "SIGTERM");
+    const sleeper = new Int32Array(new SharedArrayBuffer(4));
+    const deadline = performance.now() + 2_000;
+    while (performance.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+        Atomics.wait(sleeper, 0, 0, 50);
+      } catch {
+        break;
+      }
+    }
   } catch {
     /* ignore */
+  } finally {
+    rmSync(PID_FILE, { force: true });
   }
 }
 
@@ -39,7 +52,7 @@ export function stopHostGateway() {
  */
 export function startHostGateway() {
   stopHostGateway();
-  const out = openSync(LOG_FILE, "a");
+  const out = openSync(LOG_FILE, "w");
   const child = spawn(
     OPENCLAW_BIN,
     [

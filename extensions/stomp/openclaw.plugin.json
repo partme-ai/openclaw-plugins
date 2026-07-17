@@ -1,189 +1,125 @@
 {
   "id": "stomp",
-  "name": "stomp",
-  "version": "0.1.11",
-  "description": "Native TCP STOMP 1.0/1.1/1.2 protocol bridge for OpenClaw",
-  "channels": [
-    "stomp-tcp"
-  ],
+  "name": "OpenClaw STOMP TCP",
+  "version": "2026.7.1",
+  "description": "Authenticated STOMP 1.2 over TCP/TLS with bounded in-memory delivery controls",
+  "channels": ["stomp-tcp"],
   "commands": [],
   "skills": [],
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "port": {
-        "type": "number",
-        "default": 61613,
-        "description": "STOMP TCP listener port"
-      },
-      "tlsPort": {
-        "type": "number",
-        "default": 61614,
-        "description": "STOMP TLS listener port (0 to disable)"
-      },
+      "enabled": { "type": "boolean", "default": true },
+      "host": { "type": "string", "default": "127.0.0.1" },
+      "port": { "type": "integer", "minimum": 0, "maximum": 65535, "default": 61613 },
+      "tlsPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 61614 },
       "tls": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "enabled": {
-            "type": "boolean",
-            "default": false
-          },
-          "certFile": {
-            "type": "string"
-          },
-          "keyFile": {
-            "type": "string"
-          }
+          "enabled": { "type": "boolean", "default": false },
+          "host": { "type": "string", "default": "127.0.0.1" },
+          "certFile": { "type": "string" },
+          "keyFile": { "type": "string" },
+          "caFile": { "type": "string" },
+          "minVersion": { "type": "string", "enum": ["TLSv1.2", "TLSv1.3"], "default": "TLSv1.2" },
+          "requestCert": { "type": "boolean", "default": false },
+          "rejectUnauthorized": { "type": "boolean", "default": false }
         }
       },
       "heartbeat": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "serverMs": {
-            "type": "number",
-            "default": 10000
-          },
-          "clientMs": {
-            "type": "number",
-            "default": 10000
-          }
+          "serverMs": { "type": "integer", "minimum": 0, "maximum": 300000, "default": 10000 },
+          "clientMs": { "type": "integer", "minimum": 0, "maximum": 300000, "default": 10000 }
         }
-      },
-      "maxConnections": {
-        "type": "number",
-        "default": 1000
-      },
-      "maxFrameSize": {
-        "type": "number",
-        "default": 65536
       },
       "auth": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "required": {
-            "type": "boolean",
-            "default": true
+          "required": { "type": "boolean", "default": true },
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["login"],
+              "properties": {
+                "login": { "type": "string", "minLength": 1 },
+                "password": { "type": "string" },
+                "passwordEnv": { "type": "string" },
+                "passwordHash": { "type": "string" },
+                "hashAlgorithm": { "type": "string", "enum": ["sha256", "sha512"], "default": "sha256" }
+              }
+            },
+            "default": []
           },
-          "defaultUser": {
-            "type": "string"
-          },
-          "defaultPass": {
-            "type": "string"
-          }
+          "defaultUser": { "type": "string", "description": "Deprecated compatibility field; use auth.users" },
+          "defaultPass": { "type": "string", "description": "Deprecated compatibility field; use auth.users" }
         }
       },
-      "subscribeTopics": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        },
-        "default": []
-      },
+      "defaultAgentId": { "type": "string", "default": "main" },
+      "allowedAgentIds": { "type": "array", "items": { "type": "string" }, "default": [] },
+      "subscribeTopics": { "type": "array", "items": { "type": "string" }, "default": [] },
       "topicBindings": {
         "type": "array",
         "items": {
           "type": "object",
+          "additionalProperties": false,
+          "required": ["topicPattern", "agentId"],
           "properties": {
-            "topicPattern": {
-              "type": "string"
-            },
-            "agentId": {
-              "type": "string"
-            },
-            "accountId": {
-              "type": "string"
-            },
-            "replyTopic": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "topicPattern",
-            "agentId"
-          ]
+            "topicPattern": { "type": "string", "minLength": 1 },
+            "agentId": { "type": "string", "minLength": 1 },
+            "accountId": { "type": "string" },
+            "replyTopic": { "type": "string" }
+          }
         },
         "default": []
       },
-      "defaultAckMode": {
-        "type": "string",
-        "enum": [
-          "auto",
-          "client",
-          "client-individual"
-        ],
-        "default": "auto"
-      },
-      "prefetchCount": {
-        "type": "number",
-        "default": 100
+      "allowSharedTopics": { "type": "boolean", "default": false },
+      "allowDurableSubscriptions": { "type": "boolean", "default": false },
+      "defaultAckMode": { "type": "string", "enum": ["auto", "client", "client-individual"], "default": "auto" },
+      "prefetchCount": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 100 },
+      "maxConnections": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 500 },
+      "maxFrameSize": { "type": "integer", "minimum": 1, "maximum": 16777216, "default": 262144 },
+      "limits": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxConnections": { "type": "integer", "minimum": 1, "maximum": 100000 },
+          "maxFrameSize": { "type": "integer", "minimum": 1, "maximum": 16777216 },
+          "maxBufferedBytes": { "type": "integer", "minimum": 1, "maximum": 67108864, "default": 1048576 },
+          "maxSubscriptionsPerConnection": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 100 },
+          "maxQueueDepthPerSubscription": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 1000 },
+          "maxPendingMessages": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 32 },
+          "messagesPerMinute": { "type": "integer", "minimum": 1, "maximum": 1000000, "default": 120 },
+          "connectTimeoutMs": { "type": "integer", "minimum": 1, "maximum": 120000, "default": 10000 },
+          "shutdownTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000, "default": 10000 },
+          "maxDurableSubscriptions": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 1000 }
+        }
       }
     }
   },
   "uiHints": {
-    "port": {
-      "label": "STOMP TCP Port",
-      "placeholder": "61613"
-    },
-    "tlsPort": {
-      "label": "STOMP TLS Port",
-      "placeholder": "61614"
-    },
-    "tls.enabled": {
-      "label": "Enable TLS",
-      "type": "toggle"
-    },
-    "tls.certFile": {
-      "label": "TLS Certificate",
-      "type": "file"
-    },
-    "tls.keyFile": {
-      "label": "TLS Key",
-      "type": "file"
-    },
-    "maxConnections": {
-      "label": "Max Connections",
-      "placeholder": "1000"
-    },
-    "maxFrameSize": {
-      "label": "Max Frame Size (bytes)",
-      "placeholder": "65536"
-    },
-    "auth.required": {
-      "label": "Require Authentication",
-      "type": "toggle"
-    },
-    "auth.defaultUser": {
-      "label": "Default User"
-    },
-    "auth.defaultPass": {
-      "label": "Default Pass"
-    },
-    "subscribeTopics": {
-      "label": "Subscribe Topics"
-    },
-    "topicBindings": {
-      "label": "Topic Bindings"
-    },
-    "defaultAckMode": {
-      "label": "Default Ack Mode"
-    },
-    "prefetchCount": {
-      "label": "Prefetch Count"
-    }
+    "host": { "label": "Plain TCP Bind Host" },
+    "port": { "label": "Plain TCP Port" },
+    "tlsPort": { "label": "TLS Port" },
+    "tls.enabled": { "label": "Enable TLS", "type": "toggle" },
+    "tls.certFile": { "label": "TLS Certificate", "type": "file" },
+    "tls.keyFile": { "label": "TLS Private Key", "type": "file" },
+    "auth.required": { "label": "Require Authentication", "type": "toggle" },
+    "defaultAgentId": { "label": "Default Agent ID" },
+    "allowedAgentIds": { "label": "Allowed Agent IDs" }
   },
-  "capabilities": {
-    "protocolBridge": true,
-    "tcp": true
-  },
+  "capabilities": { "protocolBridge": true, "tcp": true, "tls": true, "transactions": true },
   "channelConfigs": {
     "stomp-tcp": {
-      "label": "stomp",
-      "description": "Native TCP STOMP 1.0/1.1/1.2 protocol bridge for OpenClaw",
-      "schema": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {}
-      }
+      "label": "STOMP TCP",
+      "description": "Authenticated STOMP 1.2 over TCP/TLS",
+      "schema": { "type": "object", "additionalProperties": true, "properties": {} }
     }
   }
 }

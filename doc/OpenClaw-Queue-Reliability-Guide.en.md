@@ -10,7 +10,7 @@
 |--------|-------|-------|
 | **message-sdk** | Production-ready | `deferred-delivery-ack`, dedup, keyed queues |
 | **rabbitmq** | Enterprise pilot | Deferred ACK after reply; retry+DLX; no publisher confirms |
-| **redis-stream** (stream) | Enterprise pilot | XACK on success; XAUTOCLAIM for stale PEL |
+| **redis-stream** (stream) | Enterprise pilot | XACK after dispatch/reply; XAUTOCLAIM, bounded retries, atomic DLQ |
 | **redis-stream** (pubsub) | Doc constraints | No ACK — at-most-once |
 | **mqtt** | Enterprise pilot | No inbound ACK (MQTT); outbound await; server publish loop skip |
 | **web-mqtt** | Doc constraints | QoS0 only; per-client serial inbound queue |

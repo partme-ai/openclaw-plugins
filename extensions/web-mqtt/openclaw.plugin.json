@@ -1,258 +1,144 @@
 {
   "id": "web-mqtt",
   "name": "web-mqtt",
-  "version": "0.1.9",
+  "version": "2026.7.1",
   "description": "Enterprise MQTT over WebSocket channel plugin for OpenClaw",
-  "channels": [
-    "mqtt-ws"
-  ],
+  "channels": ["mqtt-ws"],
   "commands": [],
   "skills": [],
   "configSchema": {
     "type": "object",
-    "additionalProperties": true,
-    "properties": {
-      "channels": {
-        "type": "object",
-        "properties": {
-          "mqtt-ws": {
-            "type": "object",
-            "properties": {
-              "port": {
-                "type": "number",
-                "default": 15675
-              },
-              "path": {
-                "type": "string",
-                "default": "/ws"
-              },
-              "host": {
-                "type": "string",
-                "default": "0.0.0.0"
-              },
-              "maxConnections": {
-                "type": "number",
-                "default": 5000
-              },
-              "topicPrefix": {
-                "type": "string",
-                "default": "openclaw/"
-              },
-              "subscribeTopics": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "default": []
-              },
-              "topicBindings": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "topicPattern": {
-                      "type": "string"
-                    },
-                    "agentId": {
-                      "type": "string"
-                    },
-                    "accountId": {
-                      "type": "string"
-                    },
-                    "replyTopic": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "topicPattern",
-                    "agentId"
-                  ]
-                },
-                "default": []
-              },
-              "payload": {
-                "type": "object",
-                "properties": {
-                  "mode": {
-                    "type": "string",
-                    "default": "jsonTextOrPlain"
-                  }
-                }
-              },
-              "auth": {
-                "type": "object",
-                "properties": {
-                  "required": {
-                    "type": "boolean",
-                    "default": true
-                  },
-                  "allowAnonymous": {
-                    "type": "boolean",
-                    "default": false
-                  },
-                  "users": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "username": {
-                          "type": "string"
-                        },
-                        "password": {
-                          "type": "string"
-                        },
-                        "passwordHash": {
-                          "type": "string"
-                        },
-                        "hashAlgorithm": {
-                          "type": "string"
-                        },
-                        "publishAllow": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "subscribeAllow": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "aclRules": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "action": {
-                                "type": "string"
-                              },
-                              "topicPattern": {
-                                "type": "string"
-                              },
-                              "effect": {
-                                "type": "string"
-                              },
-                              "accountId": {
-                                "type": "string"
-                              }
-                            }
-                          }
-                        }
-                      }
-                    },
-                    "default": []
-                  }
-                }
-              },
-              "tls": {
-                "type": "object",
-                "properties": {
-                  "enabled": {
-                    "type": "boolean",
-                    "default": false
-                  },
-                  "keyFile": {
-                    "type": "string"
-                  },
-                  "certFile": {
-                    "type": "string"
-                  },
-                  "caFile": {
-                    "type": "string"
-                  },
-                  "minVersion": {
-                    "type": "string",
-                    "default": "TLSv1.2"
-                  },
-                  "requestCert": {
-                    "type": "boolean",
-                    "default": false
-                  },
-                  "rejectUnauthorized": {
-                    "type": "boolean",
-                    "default": false
-                  }
-                }
-              },
-              "ws": {
-                "type": "object",
-                "properties": {
-                  "compress": {
-                    "type": "boolean",
-                    "default": true
-                  },
-                  "idleTimeoutMs": {
-                    "type": "number",
-                    "default": 60000
-                  },
-                  "maxFrameSize": {
-                    "type": "number",
-                    "default": 262144
-                  }
-                }
-              },
-              "limits": {
-                "type": "object",
-                "properties": {
-                  "maxPayloadBytes": {
-                    "type": "number",
-                    "default": 1048576
-                  },
-                  "maxSubscriptionsPerClient": {
-                    "type": "number",
-                    "default": 200
-                  }
-                }
-              },
-              "proxyProtocol": {
-                "type": "boolean",
-                "default": false
-              }
-            }
-          }
-        }
-      }
-    }
+    "additionalProperties": false,
+    "properties": {}
   },
-  "uiHints": {
-    "channels.mqtt-ws.port": {
-      "label": "WebSocket Port",
-      "placeholder": "15675"
-    },
-    "channels.mqtt-ws.path": {
-      "label": "WebSocket Path",
-      "placeholder": "/ws"
-    },
-    "channels.mqtt-ws.maxConnections": {
-      "label": "Max Connections",
-      "placeholder": "5000"
-    },
-    "channels.mqtt-ws.topicPrefix": {
-      "label": "Topic Prefix",
-      "placeholder": "openclaw/"
-    },
-    "channels.mqtt-ws.auth.required": {
-      "label": "Require Authentication",
-      "type": "toggle"
-    },
-    "channels.mqtt-ws.tls.enabled": {
-      "label": "Enable WSS (TLS)",
-      "type": "toggle"
-    }
-  },
+  "uiHints": {},
   "capabilities": {
     "protocolBridge": true,
     "websocket": true
   },
   "channelConfigs": {
     "mqtt-ws": {
-      "label": "web-mqtt",
+      "label": "MQTT over WebSocket",
       "description": "Enterprise MQTT over WebSocket channel plugin for OpenClaw",
       "schema": {
         "type": "object",
-        "additionalProperties": true,
-        "properties": {}
+        "additionalProperties": false,
+        "properties": {
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 15675 },
+          "path": { "type": "string", "pattern": "^/[^?#]*$", "default": "/ws" },
+          "host": { "type": "string", "minLength": 1, "default": "127.0.0.1" },
+          "maxConnections": { "type": "integer", "minimum": 1, "default": 5000 },
+          "topicPrefix": { "type": "string", "minLength": 1, "default": "openclaw/" },
+          "subscribeTopics": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "default": []
+          },
+          "topicBindings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "topicPattern": { "type": "string", "minLength": 1 },
+                "agentId": { "type": "string", "minLength": 1 },
+                "accountId": { "type": "string" },
+                "replyTopic": { "type": "string" }
+              },
+              "required": ["topicPattern", "agentId"]
+            },
+            "default": []
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "mode": { "type": "string", "enum": ["jsonTextOrPlain"], "default": "jsonTextOrPlain" },
+              "outboundFormat": {
+                "type": "string",
+                "enum": ["envelope", "legacyJsonText", "plainText"],
+                "default": "envelope"
+              }
+            }
+          },
+          "auth": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "required": { "type": "boolean", "default": true },
+              "allowAnonymous": { "type": "boolean", "default": false },
+              "users": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "username": { "type": "string", "minLength": 1 },
+                    "password": { "type": "string" },
+                    "passwordHash": { "type": "string" },
+                    "hashAlgorithm": { "type": "string", "enum": ["sha256", "sha512"] },
+                    "publishAllow": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                    "subscribeAllow": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                    "aclRules": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "action": { "type": "string", "enum": ["publish", "subscribe", "inbound", "outbound"] },
+                          "topicPattern": { "type": "string", "minLength": 1 },
+                          "effect": { "type": "string", "enum": ["allow", "deny"] },
+                          "accountId": { "type": "string" }
+                        },
+                        "required": ["action", "topicPattern", "effect"]
+                      }
+                    }
+                  },
+                  "required": ["username"]
+                },
+                "default": []
+              }
+            }
+          },
+          "tls": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean", "default": false },
+              "keyFile": { "type": "string" },
+              "certFile": { "type": "string" },
+              "caFile": { "type": "string" },
+              "minVersion": { "type": "string", "enum": ["TLSv1.2", "TLSv1.3"], "default": "TLSv1.2" },
+              "requestCert": { "type": "boolean", "default": false },
+              "rejectUnauthorized": { "type": "boolean", "default": false }
+            }
+          },
+          "ws": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "compress": { "type": "boolean", "default": false },
+              "idleTimeoutMs": { "type": "integer", "minimum": 1, "default": 60000 },
+              "maxFrameSize": { "type": "integer", "minimum": 1024, "default": 262144 },
+              "allowedOrigins": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "default": []
+              }
+            }
+          },
+          "limits": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxPayloadBytes": { "type": "integer", "minimum": 1, "default": 262144 },
+              "maxSubscriptionsPerClient": { "type": "integer", "minimum": 1, "default": 200 },
+              "maxPendingMessagesPerClient": { "type": "integer", "minimum": 1, "default": 32 },
+              "inboundTaskTimeoutMs": { "type": "integer", "minimum": 1, "default": 120000 }
+            }
+          },
+          "proxyProtocol": { "type": "boolean", "const": false, "default": false }
+        }
       }
     }
   }

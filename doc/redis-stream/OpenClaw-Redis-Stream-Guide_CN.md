@@ -139,13 +139,17 @@ openclaw plugins install --link .
       "channelMode": "stream",
       "defaultAgentId": "main",
       "stream": {
-        "inboundKey": "openclaw:inbound",
-        "outboundKey": "openclaw:outbound",
+        "inboundKey": "openclaw:{agent}:inbound",
+        "outboundKey": "openclaw:{agent}:outbound",
         "consumerGroup": "openclaw-group",
-        "consumerName": "openclaw-consumer-1",
+        "consumerName": "",
         "blockMs": 5000,
         "count": 10,
-        "createGroup": true
+        "createGroup": true,
+        "pendingClaimIdleMs": 120000,
+        "maxAttempts": 5,
+        "deadLetterKey": "openclaw:{agent}:inbound:dlq",
+        "maxLen": 100000
       },
       "fieldMapping": {
         "textField": "text",
@@ -154,7 +158,8 @@ openclaw plugins install --link .
       },
       "connection": {
         "reconnectMs": 3000,
-        "maxRetries": 10
+        "maxRetries": 0,
+        "startupTimeoutMs": 30000
       }
     }
   }
@@ -426,12 +431,23 @@ Error: connect ECONNREFUSED 127.0.0.1:6379
 | `stream.inboundKey` | `string` | `"openclaw:inbound"` | 消费组读取 stream |
 | `stream.outboundKey` | `string` | `"openclaw:outbound"` | 回复写入 stream |
 | `stream.consumerGroup` | `string` | `"openclaw-group"` | 消费组名称 |
-| `stream.consumerName` | `string` | `"openclaw-consumer-1"` | 本实例消费者名称 |
+| `stream.consumerName` | `string` | `""` | 留空时按 hostname + pid 生成唯一消费者名称 |
 | `stream.blockMs` | `number` | `5000` | XREADGROUP 阻塞超时 |
 | `stream.count` | `number` | `10` | 每批次最大消息数 |
 | `stream.createGroup` | `boolean` | `true` | 自动创建消费组 |
-| `connection.reconnectMs` | `number` | `3000` | 重连延迟（毫秒） |
-| `connection.maxRetries` | `number` | `10` | 最大重连次数 |
+| `stream.pendingClaimIdleMs` | `number` | `120000` | 回收超时 PEL；0 表示禁用 |
+| `stream.maxAttempts` | `number` | `5` | 转入死信前最大投递次数 |
+| `stream.deadLetterKey` | `string` | `"openclaw:inbound:dlq"` | 死信 Stream；Cluster 下须与 inboundKey 同槽 |
+| `stream.maxLen` | `number` | `100000` | 出站与死信 Stream 近似长度上限；0 不限制 |
+| `connection.allowInsecureRemote` | `boolean` | `false` | 是否允许远程明文 `redis://`；生产应保持 false |
+| `connection.reconnectMs` | `number` | `3000` | 指数退避基础延迟（毫秒） |
+| `connection.reconnectMaxMs` | `number` | `30000` | 指数退避最大延迟（毫秒） |
+| `connection.reconnectJitterRatio` | `number` | `0.2` | 双向随机抖动比例 |
+| `connection.maxRetries` | `number` | `0` | 最大重连次数；0 表示持续重连 |
+| `connection.startupTimeoutMs` | `number` | `30000` | 启动连接超时 |
+| `idempotency.enabled` | `boolean` | `true` | 启用 Stream entry claim/commit/release |
+| `idempotency.ttlMs` | `number` | `600000` | 已完成 entry 保留窗口 |
+| `idempotency.maxEntries` | `number` | `10000` | 进程内幂等缓存上限 |
 
 ---
 
@@ -442,6 +458,7 @@ Error: connect ECONNREFUSED 127.0.0.1:6379
 - **环境变量**：敏感 URL 优先通过 `REDIS_URL` 环境变量注入
 - **频道白名单**：`subscribeChannels` 作为 topic 级别的 ACL
 - **Redis 安全**：确保 Redis 服务端已配置 `requirepass` 和 `rename-command` 禁用危险命令
+- **可靠性边界**：生产使用 Stream；Pub/Sub 是 at-most-once。原生 Redis Cluster 拓扑发现暂不支持，进程内幂等不等于跨节点 exactly-once
 - **版本更新**：关注 Redis 安全公告（如 CNNVD-202510-401 / CVE-2025-49844），及时更新 Redis 版本
 
 ---

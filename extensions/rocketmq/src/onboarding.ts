@@ -17,5 +17,7 @@ const { setupAdapter, setupWizard } = createUrlChannelSetup({
   ],
 });
 
+/** 将 CLI 输入的 endpoints 写入 RocketMQ 渠道配置的声明式适配器。 */
 export const rockermqSetupAdapter = setupAdapter;
+/** 引导用户配置 RocketMQ NameServer endpoints 的 OpenClaw 配置向导。 */
 export const rockermqSetupWizard = setupWizard;

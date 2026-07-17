@@ -1,197 +1,172 @@
-<div align="center">
-
 # OpenClaw OAuth2
 
-**OAuth 2.0 认证后端 — Sa-Token · JWT · Introspection**
+基于 [`openid-client`](https://github.com/panva/openid-client) 的标准 OAuth2/OIDC Client 鉴权代理。插件在 OpenClaw Gateway 前启动 HTTP/WebSocket 反向代理，完成外部授权、会话管理、Bearer Token 校验，并向 trusted-proxy 注入可信用户信息。
 
-![Version](https://img.shields.io/badge/Version-0.1.0-blue) ![License](https://img.shields.io/badge/License-MIT-green)
+## 支持能力
 
-</div>
+- OAuth2/OIDC Discovery 或显式端点配置
+- Authorization Code + PKCE S256
+- Refresh Token、Token Revocation
+- UserInfo 或 Token Introspection
+- HttpOnly/SameSite/Secure Session Cookie
+- Redis 共享 state/session，支持多实例
+- HTTP 与 WebSocket trusted-proxy 转发
+- 可通过 `requiredScopes` 要求外部 Access Token 必须包含指定 Scope
 
-中文 | [English](README.md)
+插件不包含任何厂商专用实现。Auth0、Keycloak、Azure AD 或其他标准服务都通过同一组配置接入。
 
----
+## 授权与代理架构
 
-> **状态**: 已实现 — OIDC Discovery、JWKS 缓存、JWT RS256 验证、Token Introspection、Scope-Role 映射、全局 Bearer Token 中间件均已完成。
-
-参考 [rabbitmq_auth_backend_oauth2](https://www.rabbitmq.com/docs/oauth2) 设计，适配 [Sa-Token OAuth2](https://sa-token.cc/doc.html#/oauth2/readme)。
-
-## 概述
-
-与 `openclaw` 内置的 OAuth 登录（仅保护管理界面）不同，本插件在 **Gateway 层面** 运作，拦截所有 HTTP 请求，验证 Bearer Token 是否来自受信任的 Sa-Token OAuth2 Server。
-
-核心功能：
-
-- **OIDC Discovery**: 从 `/.well-known/openid-configuration` 自动获取 `jwks_uri`、`issuer` 等配置
-- **JWKS 公钥缓存**: 自动获取并缓存 RS256 公钥，支持定时刷新（默认 1 小时）和 kid 未命中时强制刷新
-- **JWT 本地验证**: 零网络开销的 RS256 签名验证，校验 `exp`、`iss`、`aud`，提取 Sa-Token 自定义 claims
-- **Token Introspection**: 对不透明 UUID Token 的降级验证，调用 `/oauth2/check_token` 端点，短 TTL 缓存（30s）
-- **Scope → Role 映射**: `openclaw:admin` → admin、`openclaw:operator` → operator、`openclaw:viewer` → viewer
-- **全局中间件**: 自动注入 `AuthContext` 到所有请求，供下游插件（如 `openclaw`）使用
-
-## 架构
-
-```
-客户端（Business 后台 / API 调用）
-  │
-  ├── Authorization: Bearer <JWT>          ← 主路径（零网络开销）
-  ├── Authorization: Bearer <UUID Token>   ← 降级路径（一次 HTTP 调用）
-  │
-  ▼
-┌──────────────────────────────────────────────┐
-│  openclaw-oauth2 中间件                  │
-│                                              │
-│  1. 提取 Bearer Token                        │
-│  2. 判断 Token 格式（JWT 3 段 / UUID）        │
-│     ├── JWT → 本地验证（JWKS 公钥 + RS256）   │
-│     │         ├── 成功 → 提取 claims          │
-│     │         └── 失败 → 降级到 Introspection  │
-│     └── UUID → Token Introspection            │
-│               └── POST /oauth2/check_token    │
-│  3. 解析 Sa-Token claims                      │
-│     ├── loginId / tenantId / loginType        │
-│     └── scope → Role 映射                     │
-│  4. 注入 AuthContext → req.authContext         │
-└──────────────────────┬───────────────────────┘
-                       │
-                       ▼
-         （读取 req.authContext 进行权限判断）
+```text
+浏览器 ──▶ OAuth2 代理 ──302──▶ 外部 OAuth2/OIDC Server
+  ▲             │                         │
+  │             │ callback(code + state) ◀┘
+  │             ▼
+  │      PKCE 换 Token / UserInfo ──▶ HttpOnly Session
+  │             │
+  └── HTTP/WS ──┼──▶ Scope / 过期 / 刷新校验
+                │
+                ▼ 覆盖可信身份 Header
+        loopback OpenClaw Gateway（trusted-proxy）
 ```
 
-## 认证策略：JWT 优先 + Introspection 降级
+```mermaid
+sequenceDiagram
+    participant Browser as 浏览器
+    participant Proxy as OAuth2 插件代理
+    participant IdP as 外部 OAuth2/OIDC Server
+    participant Gateway as OpenClaw Gateway
 
-| 步骤 | Token 类型 | 验证方式 | 网络开销 |
-|------|-----------|----------|---------|
-| 1 | JWT（3 段 base64url） | 本地 RS256 签名验证 | **零** |
-| 2 | JWT 验证失败 | 降级到 Introspection | 1 次 HTTP |
-| 3 | UUID 不透明 Token | 直接 Introspection | 1 次 HTTP |
+    Browser->>Proxy: 访问受保护资源
+    Proxy-->>Browser: 302 /auth/oauth2/login
+    Browser->>IdP: Authorization Code + PKCE S256
+    IdP-->>Proxy: callback(code, state)
+    Proxy->>IdP: code + verifier 换取 Token
+    Proxy->>IdP: UserInfo / Introspection（按配置）
+    Proxy-->>Browser: HttpOnly 会话 Cookie
+    Browser->>Proxy: 再次访问 HTTP / WebSocket
+    Proxy->>Proxy: 校验会话、scope、过期与刷新
+    Proxy->>Gateway: 覆盖可信身份 Header 后转发
+    Gateway-->>Browser: 业务响应
+```
 
-## Sa-Token 协议契约
+OAuth2 Server 负责登录、授权和 Token 签发；本插件是标准 Client 与授权拦截代理，不实现账号体系，也不充当 OAuth2 Server。
 
-| 项目 | 约定 |
-|------|------|
-| **Token 格式** | JWT（RS256）优先，支持 UUID 降级 |
-| **Client ID** | `openclaw-gateway` |
-| **Scopes** | `openclaw:admin`、`openclaw:operator`、`openclaw:viewer` |
-| **JWKS 端点** | `{issuerUrl}/.well-known/jwks.json` |
-| **Introspection** | `{issuerUrl}/oauth2/check_token`（RFC 7662） |
-| **自定义 Claims** | `loginId`、`tenantId`、`loginType` |
-
-## 配置
+## Discovery 配置
 
 ```json
 {
-  "plugins": {
-    "openclaw-oauth2": {
-      "issuerUrl": "https://api.example.com",
-      "clientId": "openclaw-gateway",
-      "clientSecret": "your-client-secret",
+  "enabled": true,
+  "issuerUrl": "https://auth.example.com/",
+  "clientId": "openclaw-gateway",
+  "clientSecret": "replace-with-secret",
+  "client": {
+    "discovery": true,
+    "redirectUri": "https://gateway.example.com/auth/oauth2/callback",
+    "scopes": ["openid", "profile", "openclaw:operator"],
+    "requiredScopes": ["openclaw:operator"],
+    "clientAuthMethod": "client_secret_post",
+    "authorizationParameters": {
       "audience": "openclaw-api",
-      "scopeMapping": {
-        "openclaw:admin": "admin",
-        "openclaw:operator": "operator",
-        "openclaw:viewer": "viewer"
-      },
-      "satoken": {
-        "loginIdClaim": "loginId",
-        "tenantIdClaim": "tenantId",
-        "loginTypeClaim": "loginType"
-      },
-      "publicPaths": ["/health", "/auth/oauth2/status"],
-      "jwksRefreshInterval": 3600000,
-      "introspectionCacheTtl": 30000
+      "prompt": "login"
+    },
+    "sessionSecret": "replace-with-at-least-32-random-characters",
+    "secureCookies": true,
+    "userIdField": "sub",
+    "tenantIdField": "tenantId",
+    "sessionStore": {
+      "type": "redis",
+      "redisUrl": "redis://127.0.0.1:6379/0",
+      "keyPrefix": "openclaw:oauth2",
+      "maxEntries": 10000
+    }
+  },
+  "proxy": {
+    "listenHost": "0.0.0.0",
+    "listenPort": 18080,
+    "upstreamHost": "127.0.0.1",
+    "upstreamPort": 18789,
+    "forwardedProto": "https"
+  }
+}
+```
+
+## 显式端点配置
+
+授权服务没有 Discovery 文档时，将 `discovery` 设为 `false`：
+
+```json
+{
+  "enabled": true,
+  "issuerUrl": "https://auth.example.com/",
+  "clientId": "openclaw-gateway",
+  "clientSecret": "replace-with-secret",
+  "client": {
+    "discovery": false,
+    "redirectUri": "https://gateway.example.com/auth/oauth2/callback",
+    "authorizationEndpoint": "https://auth.example.com/oauth2/authorize",
+    "tokenEndpoint": "https://auth.example.com/oauth2/token",
+    "userInfoEndpoint": "https://auth.example.com/oauth2/userinfo",
+    "introspectionEndpoint": "https://auth.example.com/oauth2/introspect",
+    "revokeEndpoint": "https://auth.example.com/oauth2/revoke",
+    "scopes": ["openid", "profile"],
+    "clientAuthMethod": "client_secret_basic",
+    "authorizationParameters": {},
+    "tokenParameters": {},
+    "sessionSecret": "replace-with-at-least-32-random-characters"
+  }
+}
+```
+
+显式模式至少需要 `authorizationEndpoint` 与 `tokenEndpoint`。浏览器登录后的身份可来自 ID Token、UserInfo 或 Introspection；Bearer API 请求需要配置 UserInfo 或 Introspection。
+
+## 本地端点
+
+| 路径 | 用途 |
+|---|---|
+| `GET /auth/oauth2/login` | 创建 state/PKCE transaction 并跳转授权服务 |
+| `GET /auth/oauth2/callback` | 校验 state、交换 token、创建 session |
+| `POST /auth/oauth2/logout` | 删除 session 并尝试 revoke access token，避免 GET logout CSRF |
+| `/auth/oauth2/status` | 转发给 OpenClaw `auth: "gateway"` 路由，不在代理层匿名暴露 |
+| `GET/HEAD /health` | 代理存活与 OAuth2 Client 就绪检查 |
+
+## 安全约束
+
+- OpenClaw 必须保持 loopback 监听，并启用与插件一致的可信代理配置：
+
+```json
+{
+  "gateway": {
+    "port": 18789,
+    "bind": "loopback",
+    "trustedProxies": ["127.0.0.1"],
+    "auth": {
+      "mode": "trusted-proxy",
+      "trustedProxy": {
+        "userHeader": "x-forwarded-user",
+        "allowLoopback": true,
+        "allowUsers": ["allowed-user-id"]
+      }
     }
   }
 }
 ```
 
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `issuerUrl` | string | — | Sa-Token OAuth2 Server 地址（必填） |
-| `clientId` | string | — | OAuth2 Client ID |
-| `clientSecret` | string | — | OAuth2 Client Secret |
-| `audience` | string | — | JWT aud 校验值（可选） |
-| `scopeMapping` | object | 见上 | Scope → Role 映射 |
-| `satoken.loginIdClaim` | string | `loginId` | JWT 中的用户 ID claim |
-| `satoken.tenantIdClaim` | string | `tenantId` | JWT 中的租户 ID claim |
-| `satoken.loginTypeClaim` | string | `loginType` | JWT 中的登录类型 claim |
-| `publicPaths` | string[] | `["/health"]` | 无需认证的路径 |
-| `jwksRefreshInterval` | number | `3600000` | JWKS 刷新间隔（ms，默认 1 小时） |
-| `introspectionCacheTtl` | number | `30000` | Introspection 缓存 TTL（ms，默认 30 秒） |
+- 插件启动前会校验 `auth.mode`、`userHeader`、`allowLoopback`、`trustedProxies` 和 Gateway 端口；不匹配时直接拒绝启动。
+- `proxy.upstreamHost` 只允许 `127.0.0.1` 或 `::1`，避免成为可访问任意目标的开放代理。
+- 非 loopback 的 issuer 和端点必须使用 HTTPS。
+- 生产环境必须启用 `secureCookies`。
+- 先验证每个 transaction 的独立签名 Cookie，再一次性消费 state，避免无 Cookie 请求使合法登录失效。
+- 默认禁止 URL query token。
+- 外部请求携带的 forwarded/user/tenant/scope Header 会在代理前删除；只重建可信用户、租户和转发链。
+- OAuth Scope 不会伪装成 OpenClaw operator scope；`requiredScopes` 只负责代理准入，Gateway 权限由 OpenClaw trusted-proxy 与 `allowUsers` 配置负责。
+- 内存 session store 有 `maxEntries` 上限；多实例生产部署应使用 Redis session store。
 
-## HTTP 端点
-
-| 端点 | 方法 | 说明 |
-|---|---|---|
-| `/auth/oauth2/status` | GET | 插件状态（启用状态、提供商信息） |
-
-## 目录结构
-
-```
-openclaw-oauth2/
-  package.json
-  tsconfig.json
-  tsup.config.ts
-  vitest.config.ts
-  openclaw.plugin.json
-  src/
-    index.ts                    # 入口：初始化 + 注册中间件
-    types.ts                    # 类型定义（AuthContext, SaTokenClaims 等）
-    middleware.ts               # Bearer Token 全局中间件
-    satoken-discovery.ts        # OIDC Discovery + JWKS 获取/缓存
-    satoken-jwt.ts              # JWT RS256 本地验证
-    satoken-introspection.ts    # Token Introspection（UUID 降级）
-    satoken-scope-mapper.ts     # Scope → Role/Permission 映射
-    satoken-scope-mapper.test.ts # Scope 映射单元测试
-    satoken-jwt.test.ts         # JWT 格式检测单元测试
-```
-
-## 实现状态
-
-- [x] 插件骨架和状态端点
-- [x] OIDC Discovery（自动获取 JWKS URI、issuer 等）
-- [x] JWKS 公钥获取、缓存和定时刷新
-- [x] JWT RS256 签名验证
-- [x] Sa-Token Claims 提取（loginId、tenantId、loginType）
-- [x] 不透明 Token Introspection（RFC 7662）
-- [x] Scope → Role/Permission 映射
-- [x] 全局 Bearer Token 中间件
-- [ ] Token 刷新流程（SCRM 后端负责）
-- [ ] 多提供商支持
-
-## 测试
+## 验证
 
 ```bash
-pnpm test            # 运行单元测试
-pnpm test:watch      # 监听模式
-pnpm test:coverage   # 覆盖率报告
+pnpm --dir extensions/oauth2 test
+pnpm --dir extensions/oauth2 typecheck
+pnpm --dir extensions/oauth2 build
+OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins oauth2
 ```
-
-测试覆盖：
-- `satoken-scope-mapper.test.ts` — Scope→Role 映射、优先级、自定义配置（14 个测试）
-- `satoken-jwt.test.ts` — JWT 格式检测（6 个测试）
-
-## 开发
-
-```bash
-pnpm install
-pnpm build
-pnpm dev   # 监听模式
-```
-
-## OpenClaw 生态插件
-
-| 插件 | 说明 |
-|------|------|
-| [openclaw-oauth2](https://github.com/partme-ai/openclaw-oauth2) | OAuth2 认证 |
-| [openclaw-cluster](https://github.com/partme-ai/openclaw-cluster) | 集群协调（发现 / 配置同步 / 会话存储 / 代理） |
-| [openclaw-mqtt](https://github.com/partme-ai/openclaw-mqtt) | MQTT 协议接入 |
-| [openclaw-prometheus](https://github.com/partme-ai/openclaw-prometheus) | Prometheus 指标导出 |
-| [openclaw-stomp](https://github.com/partme-ai/openclaw-stomp) | STOMP 服务端 |
-| [openclaw-tracing](https://github.com/partme-ai/openclaw-tracing) | 链路追踪 |
-| [openclaw-web-mqtt](https://github.com/partme-ai/openclaw-web-mqtt) | WebSocket MQTT |
-| [openclaw-web-stomp](https://github.com/partme-ai/openclaw-web-stomp) | WebSocket STOMP |
-
-## 许可证
-
-MIT

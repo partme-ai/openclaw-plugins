@@ -107,6 +107,8 @@ export interface VectorStore {
   initialize(): Promise<void>;
   /** 写入/更新向量块 */
   upsert(chunks: VectorChunk[]): Promise<void>;
+  /** 原子替换同一 sourceId 的全部块，失败时必须保留旧数据 */
+  replaceBySource(sourceId: string, chunks: VectorChunk[]): Promise<void>;
   /** 批量写入（含自动分片） */
   upsertBatch(chunks: VectorChunk[], batchSize?: number): Promise<void>;
   /** 向量检索 */
@@ -119,6 +121,9 @@ export interface VectorStore {
   keywordSearch?(query: string, topK?: number, sourceId?: string): Promise<ScoredChunk[]>;
   /** 统计信息 */
   stats(): Promise<StoreStats>;
+  /** Optional resource cleanup for local/native backends. */
+  close?(): void | Promise<void>;
+  dispose?(): void | Promise<void>;
 }
 
 /** Embedding 引擎接口
@@ -152,6 +157,7 @@ export const EMBEDDING_PROVIDERS = [
   'qianfan',
   'ollama',
 ] as const;
+/** Embedding 工厂支持的标准 Provider 字面量联合类型。 */
 export type EmbeddingProvider = typeof EMBEDDING_PROVIDERS[number];
 
 /** Embedding 配置 */
@@ -166,10 +172,19 @@ export type KnowledgeEmbeddingConfig = {
   model?: string;
   /** 嵌入维度（仅某些 provider 需要） */
   dimensions?: number;
+  /** 单次远程请求超时，默认 30000ms */
+  requestTimeoutMs?: number;
+  /** 408/429/5xx 与网络错误的最大重试次数，默认 2 */
+  maxRetries?: number;
+  /** 单次请求最大文本数，默认 64 */
+  maxBatchSize?: number;
+  /** 单次响应体最大字节数，默认 8 MiB */
+  maxResponseBytes?: number;
 };
 
 /** @description Tokenizer 后端枚举 — `zhipu`（远程精确）、`tiktoken`（本地估算）。 */
 export const TOKENIZER_PROVIDERS = ['zhipu', 'tiktoken'] as const;
+/** Tokenizer 工厂支持的远程与本地 Provider 字面量联合类型。 */
 export type TokenizerProvider = typeof TOKENIZER_PROVIDERS[number];
 
 /** Tokenizer 配置 */
@@ -182,6 +197,12 @@ export type KnowledgeTokenizerConfig = {
   apiKey?: string;
   /** 模型名称（智谱：glm-4.6 等；tiktoken：o200k_base 等编码名） */
   model?: string;
+  /** 单次远程计数请求超时，默认 30000ms */
+  requestTimeoutMs?: number;
+  /** 408/429/5xx 与网络错误最大重试次数，默认 2 */
+  maxRetries?: number;
+  /** 单次响应体最大字节数，默认 1 MiB */
+  maxResponseBytes?: number;
 };
 
 /** Tokenizer Service 接口 */
@@ -197,7 +218,8 @@ export interface TokenizerService {
 }
 
 /** @description Reranker 后端枚举 — 用于二阶段精排可选节点。 */
-export const RERANKER_PROVIDERS = ['zhipu', 'jina', 'ollama'] as const;
+export const RERANKER_PROVIDERS = ['zhipu', 'jina'] as const;
+/** 二阶段精排工厂支持的 Provider 字面量联合类型。 */
 export type RerankerProvider = typeof RERANKER_PROVIDERS[number];
 
 /** 重排序后的文档 */
@@ -224,6 +246,12 @@ export type KnowledgeRerankerConfig = {
   topN?: number;
   /** 是否返回原始文本（默认 true） */
   returnDocuments?: boolean;
+  /** 单次远程请求超时，默认 30000ms */
+  requestTimeoutMs?: number;
+  /** 408/429/5xx 与网络错误最大重试次数，默认 2 */
+  maxRetries?: number;
+  /** 单次响应体最大字节数，默认 8 MiB */
+  maxResponseBytes?: number;
 };
 
 /** Reranker Service 接口 */
@@ -243,6 +271,7 @@ export interface RerankerService {
 
 /** @description 文档解析（OCR/版式）后端枚举 — 将 PDF/图像等转为可切分 Markdown。 */
 export const PARSER_PROVIDERS = ['zhipu', 'ollama'] as const;
+/** OCR/版式解析工厂支持的 Provider 字面量联合类型。 */
 export type ParserProvider = typeof PARSER_PROVIDERS[number];
 
 /** 文档解析结果 */
@@ -277,7 +306,7 @@ export type ParsedDocument = {
 
 /** DocParser 配置 */
 export type KnowledgeParserConfig = {
-  /** API 提供商（zhipu / ollama / local） */
+  /** API 提供商（zhipu / ollama） */
   provider?: string;
   /** API Base URL（ollama/vLLM 时使用） */
   baseUrl?: string;
@@ -285,6 +314,14 @@ export type KnowledgeParserConfig = {
   apiKey?: string;
   /** 模型名称 */
   model?: string;
+  /** 单次远程请求超时，默认 30000ms */
+  requestTimeoutMs?: number;
+  /** 408/429/5xx 与网络错误最大重试次数，默认 2 */
+  maxRetries?: number;
+  /** 单次响应体最大字节数，默认 16 MiB */
+  maxResponseBytes?: number;
+  /** 本地、data URL 或远程文档最大输入字节数，默认 20 MiB */
+  maxFileBytes?: number;
 };
 
 /** DocParser Service 接口 */
@@ -304,7 +341,7 @@ export interface DocParserService {
 /** 向量存储配置 */
 export type KnowledgeStoreConfig = {
   /** 存储提供者 */
-  provider: 'zvec' | 'sqlite-vec' | 'native-zvec' | 'redis' | 'pinecone' | 'chroma' | 'weaviate' | 'qdrant' | 'milvus' | 'pgvector' | 'elasticsearch' | 'opensearch' | string;
+  provider: 'zvec' | 'sqlite-vec' | string;
   /** 命名空间隔离前缀（自动生成，一般不需要手写） */
   namespace?: string;
 
@@ -375,8 +412,10 @@ export type KnowledgeRetrievalConfig = {
   topK?: number;
   /** 相似度阈值 */
   minScore?: number;
-  /** 是否启用关键词增强 */
-  keywordBoost?: boolean;
+  /** hybrid 模式下的向量分支权重 */
+  vectorWeight?: number;
+  /** hybrid 模式下的关键词分支权重 */
+  keywordWeight?: number;
 };
 
 /** 注入配置 */
@@ -431,6 +470,14 @@ export type KnowledgeConfig = {
   injection?: KnowledgeInjectionConfig;
   /** 过滤配置 */
   moderation?: KnowledgeModerationConfig;
+  /** Agent tool security and resource limits. */
+  tools?: {
+    allowFileIngest?: boolean;
+    allowedFileRoots?: string[];
+    maxFileBytes?: number;
+    maxInputChars?: number;
+    allowOwnerGlobalNamespaces?: boolean;
+  };
 };
 
 /** DeepPartial — 递归可选，用于 account 级覆盖（排除 enabled 字段） */
@@ -444,6 +491,7 @@ export type DeepPartialKnowledgeConfig = {
   retrieval?: DeepPartial<KnowledgeRetrievalConfig>;
   injection?: DeepPartial<KnowledgeInjectionConfig>;
   moderation?: DeepPartial<KnowledgeModerationConfig>;
+  tools?: DeepPartial<NonNullable<KnowledgeConfig['tools']>>;
 };
 
 // ===================================================================
@@ -492,24 +540,25 @@ export type RagContextResult = {
 
 /** `before_prompt_build` 钩子入参 — OpenClaw 渠道/Agent 路由上下文。 */
 export type BeforePromptBuildContext = {
+  /** 当前会话稳定键；Hook 与 Tool 的默认知识隔离事实来源。 */
+  sessionKey?: string;
   /** 触发渠道 ID，例如 `wecom`、`gotify`。 */
-  channelId: string;
+  channelId?: string;
   /** 目标 Agent ID；缺省由宿主路由。 */
   agentId?: string;
-  /** 终端用户标识（若渠道提供）。 */
-  userId?: string;
-  /** 业务账号 ID，用于 knowledge `accounts` 覆盖合并。 */
-  accountId?: string;
+  /** OpenClaw 归一化后的消息 Provider/Channel。 */
+  messageProvider?: string;
+  channel?: string;
   /** 本轮用户消息正文；Intent Gate 与检索 query 来源。 */
   message?: string;
   /** 宿主扩展字段透传。 */
   [key: string]: unknown;
 };
 
-/** `before_prompt_build` 钩子返回值 — 追加 system/user Prompt 片段。 */
+/** `before_prompt_build` 钩子返回值 — 对齐 OpenClaw 2026.7.1 的上下文追加字段。 */
 export type BeforePromptBuildResult = {
-  /** 注入 system 层的 RAG 上下文。 */
-  systemPrompt?: string;
-  /** 注入 user 层的 RAG 上下文（当 injection.position=user）。 */
-  userPrompt?: string;
+  /** 注入 system 层的 RAG 上下文；不覆盖宿主完整 system prompt。 */
+  prependSystemContext?: string;
+  /** 注入当前用户 Prompt 前部的 RAG 上下文（当 injection.position=user）。 */
+  prependContext?: string;
 };

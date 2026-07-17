@@ -4,6 +4,7 @@ import {
   resolveProfile,
   expandDataIdTemplate,
   buildNacosConfigClientOptions,
+  resolveConfigNamespace,
 } from "./nacos-connection.js";
 import type { NacosPluginConfig } from "../shared/types.js";
 
@@ -75,10 +76,11 @@ describe("buildNacosConfigClientOptions", () => {
     expect(opts.namespace).toBe("cc-ns");
   });
 
-  it("defaults namespace to 'public'", () => {
+  it("maps the displayed public namespace to the empty Config tenant id", () => {
     const cfg: NacosPluginConfig = { serverList: "127.0.0.1:8848" };
     const opts = buildNacosConfigClientOptions(cfg) as Record<string, unknown>;
-    expect(opts.namespace).toBe("public");
+    expect(opts.namespace).toBe("");
+    expect(resolveConfigNamespace({ ...cfg, namespace: "public" })).toBe("");
   });
 
   it("omits username/password when not set", () => {

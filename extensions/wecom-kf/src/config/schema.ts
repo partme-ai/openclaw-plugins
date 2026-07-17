@@ -52,9 +52,9 @@ const mediaSchema = z.object({
  * @property egressProxyUrl - 出站 HTTP 代理 (如 "http://127.0.0.1:7890")
  */
 const networkSchema = z.object({
-    timeoutMs: z.number().optional(),
-    retries: z.number().optional(),
-    retryDelayMs: z.number().optional(),
+    timeoutMs: z.number().int().min(1_000).max(120_000).optional(),
+    retries: z.number().int().min(0).max(5).optional(),
+    retryDelayMs: z.number().int().min(0).max(30_000).optional(),
     egressProxyUrl: z.string().optional(),
 }).optional();
 

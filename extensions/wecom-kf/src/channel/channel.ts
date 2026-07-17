@@ -1,3 +1,10 @@
+/**
+ * @fileoverview 企业微信客服（KF）多账号 Channel 契约与 Gateway 生命周期。
+ *
+ * 负责账号解析、配置 Schema、Webhook 路径、目标规范、真实 API 探针和运行状态；消息收发
+ * 分别委托 inbound/outbound 层。当前运行模式仅支持 KF，加工时会检测与其它企微插件的账号
+ * 路由冲突，并对遗留 Bot/Agent 配置给出明确迁移告警。
+ */
 import type {
   ChannelAccountSnapshot,
   ChannelPlugin,
@@ -33,6 +40,54 @@ const meta = {
   order: 86,
   quickstartAllowFrom: true,
 };
+
+/** 与运行时 fail-fast 校验一致的 KF 出站网络配置。 */
+const kfNetworkSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    timeoutMs: { type: "integer", minimum: 1_000, maximum: 120_000 },
+    retries: { type: "integer", minimum: 0, maximum: 5 },
+    retryDelayMs: { type: "integer", minimum: 0, maximum: 30_000 },
+    egressProxyUrl: { type: "string", format: "uri" },
+  },
+} as const;
+
+const kfAccountSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    enabled: { type: "boolean" },
+    name: { type: "string" },
+    webhookPath: { type: "string", pattern: "^/" },
+    apiBaseUrl: { type: "string", format: "uri" },
+    openKfId: { type: "string", minLength: 1 },
+    agentId: { type: "string", minLength: 1 },
+    agentMapping: { type: "object", additionalProperties: { type: "string" } },
+    corpId: { type: "string", minLength: 1 },
+    corpSecret: { type: "string", minLength: 1 },
+    token: { type: "string", minLength: 1 },
+    encodingAESKey: { type: "string", minLength: 43, maxLength: 43 },
+    servicerUserId: { type: "string" },
+    welcomeText: { type: "string" },
+    eventMessages: { type: "object", additionalProperties: true },
+    media: { type: "object", additionalProperties: true },
+    network: kfNetworkSchema,
+    routing: { type: "object", additionalProperties: true },
+    bot: { type: "object", additionalProperties: true },
+    agent: { type: "object", additionalProperties: true },
+  },
+} as const;
+
+const wecomKfConfigSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ...kfAccountSchema.properties,
+    defaultAccount: { type: "string", minLength: 1 },
+    accounts: { type: "object", additionalProperties: kfAccountSchema },
+  },
+} as const;
 
 function normalizeWecomMessagingTarget(raw: string): string | undefined {
   const trimmed = raw.trim();
@@ -72,7 +127,8 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
     },
   },
   capabilities: {
-    chatTypes: ["direct", "group"],
+    // 微信客服是外部客户与客服账号之间的一对一会话，不声明群聊能力。
+    chatTypes: ["direct"],
     media: true,
     reactions: false,
     threads: false,
@@ -81,15 +137,12 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
     blockStreaming: true,
   },
   reload: { configPrefixes: ["channels.wecom-kf"] },
-  // NOTE: We intentionally avoid Zod -> JSON Schema conversion at plugin-load time.
-  // Some OpenClaw runtime environments load plugin modules via jiti in a way that can
-  // surface zod `toJSONSchema()` binding issues (e.g. `this` undefined leading to `_zod` errors).
-  // A permissive schema keeps config UX working while preventing startup failures.
   configSchema: {
-    schema: {
-      type: "object",
-      additionalProperties: true,
-      properties: {},
+    schema: wecomKfConfigSchema,
+    uiHints: {
+      corpSecret: { label: "Corp Secret", sensitive: true },
+      token: { label: "Callback Token", sensitive: true },
+      encodingAESKey: { label: "Encoding AES Key", sensitive: true },
     },
   },
   config: {
@@ -196,13 +249,14 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
       // Backported from research/openclaw-china probeWecomKfAccount
       try {
         const resolved = account as Record<string, unknown>;
-        const agentCfg = resolved.agent as Record<string, unknown> | undefined;
-        const kfCfg = resolved.kf as Record<string, unknown> | undefined;
+        const accountConfig = resolved.config as Record<string, unknown> | undefined;
 
-        const corpId = (kfCfg?.corpId ?? resolved.corpId ?? "") as string;
-        const corpSecret = (kfCfg?.corpSecret ?? resolved.corpSecret ?? "") as string;
-        const token = (kfCfg?.token ?? resolved.token ?? "") as string;
-        const encodingAESKey = (kfCfg?.encodingAESKey ?? resolved.encodingAESKey ?? "") as string;
+        const corpId = (accountConfig?.corpId ?? resolved.corpId ?? "") as string;
+        const corpSecret = (accountConfig?.corpSecret ?? resolved.corpSecret ?? "") as string;
+        const token = (accountConfig?.token ?? resolved.token ?? "") as string;
+            const encodingAESKey = (accountConfig?.encodingAESKey ?? resolved.encodingAESKey ?? "") as string;
+            const apiBaseUrl = accountConfig?.apiBaseUrl as string | undefined;
+            const network = accountConfig?.network as ResolvedWecomAccount["config"]["network"];
 
         // Check if KF is configured
         if (!corpId || !token || !encodingAESKey) {
@@ -227,7 +281,8 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
           corpSecret,
           token: "",
           encodingAESKey: "",
-          config: { corpId, corpSecret, token: "", encodingAESKey: "" },
+          config: { corpId, corpSecret, token: "", encodingAESKey: "", apiBaseUrl },
+          network,
         });
 
         return { ok: true };

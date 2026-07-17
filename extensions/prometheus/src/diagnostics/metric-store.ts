@@ -30,12 +30,14 @@ type GaugeSample = {
   value: number;
 };
 
+/** diagnostics 指标存储的只读式快照容器，按指标种类分离以便稳定渲染。 */
 export type MetricSnapshot = {
   counters: Map<string, CounterSample>;
   gauges: Map<string, GaugeSample>;
   histograms: Map<string, HistogramSample>;
 };
 
+/** diagnostics 事件映射使用的有界 Counter/Gauge/Histogram 存储接口。 */
 export type PrometheusMetricStore = ReturnType<typeof createPrometheusMetricStore>;
 
 const DURATION_BUCKETS_SECONDS = [
@@ -47,6 +49,7 @@ const BYTE_BUCKETS = [
   4294967296, 17179869184,
 ];
 const LOW_CARDINALITY_VALUE_RE = /^[A-Za-z0-9_.:-]{1,120}$/u;
+/** diagnostics 指标的全局 series 硬上限，防止不可信标签耗尽进程内存。 */
 export const MAX_PROMETHEUS_SERIES = 2048;
 const DROPPED_SERIES_COUNTER_NAME = "openclaw_prometheus_series_dropped_total";
 
@@ -690,6 +693,7 @@ export function renderPrometheusMetrics(store: PrometheusMetricStore): string {
   return lines.join("\n");
 }
 
+/** 脱敏并压平采集异常，避免凭据或控制字符进入指标标签和诊断响应。 */
 export function safeDiagnosticHandlerError(err: unknown): string {
   const message = err instanceof Error ? (err.message ?? err.name) : String(err);
   return redactSensitiveText(message)
@@ -698,6 +702,7 @@ export function safeDiagnosticHandlerError(err: unknown): string {
     .slice(0, 500);
 }
 
+/** 仅供单元测试验证事件映射、基数上限和 Prometheus 文本渲染的稳定入口。 */
 export const __test__ = {
   createPrometheusMetricStore,
   recordDiagnosticEvent,

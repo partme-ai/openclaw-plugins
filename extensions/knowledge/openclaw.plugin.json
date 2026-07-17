@@ -1,295 +1,129 @@
 {
   "id": "knowledge",
   "name": "Knowledge RAG",
-  "description": "知识库 RAG 引擎 — 自动检索注入 + AI 自主知识管理",
+  "version": "2026.7.1",
+  "description": "Knowledge RAG engine with bounded retrieval, namespace isolation, and owner-gated file ingestion",
   "main": "dist/index.js",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["tool", "hook"]
+  },
   "channels": [],
   "commands": [],
   "skills": [],
-  "contracts": {
-    "tools": ["knowledge_add", "knowledge_query", "knowledge_update", "knowledge_delete"]
-  },
+  "contracts": { "tools": ["knowledge_add", "knowledge_query", "knowledge_update", "knowledge_delete"] },
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
+    "required": ["enabled"],
     "properties": {
+      "enabled": { "type": "boolean", "default": false },
       "embedding": {
-        "type": "object",
-        "description": "Embedding provider configuration",
+        "type": "object", "additionalProperties": false,
         "properties": {
-          "provider": {
-            "type": "string",
-            "default": "openai",
-            "description": "Embedding provider: openai, dashscope, zhipu, qianfan, ollama"
-          },
-          "apiKey": {
-            "type": "string",
-            "description": "API key for the embedding provider"
-          },
-          "model": {
-            "type": "string",
-            "default": "text-embedding-ada-002",
-            "description": "Embedding model name"
-          },
-          "dimensions": {
-            "type": "number",
-            "default": 1536,
-            "description": "Embedding vector dimensions"
-          },
-          "baseUrl": {
-            "type": "string",
-            "description": "Custom base URL for the embedding provider (ollama: http://localhost:11434)"
-          }
+          "provider": { "type": "string", "enum": ["openai", "dashscope", "zhipu", "qianfan", "ollama"], "default": "openai" },
+          "apiKey": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "model": { "type": "string", "minLength": 1, "maxLength": 256, "default": "text-embedding-ada-002" },
+          "dimensions": { "type": "integer", "minimum": 1, "maximum": 65536, "default": 1536 },
+          "baseUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
+          "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000, "default": 30000 },
+          "maxRetries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+          "maxBatchSize": { "type": "integer", "minimum": 1, "maximum": 2048, "default": 64 },
+          "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 67108864, "default": 8388608 }
         }
       },
       "store": {
-        "type": "object",
-        "description": "Vector store backend configuration",
+        "type": "object", "additionalProperties": false,
         "properties": {
-          "provider": {
-            "type": "string",
-            "default": "sqlite-vec",
-            "description": "Vector store backend: sqlite-vec, zvec, zvec-native"
-          },
-          "dbPath": {
-            "type": "string",
-            "default": "./data/knowledge.db",
-            "description": "Database file path (for sqlite-vec) or JSON file path (for zvec)"
-          },
-          "dimensions": {
-            "type": "number",
-            "default": 1536,
-            "description": "Vector dimensions, must match embedding dimensions"
-          },
-          "namespace": {
-            "type": "string",
-            "default": "default",
-            "description": "Namespace prefix for isolating data within the same database"
-          },
-          "sources": {
-            "type": "object",
-            "description": "Optional source filter configuration",
-            "properties": {
-              "docIds": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "Allowed document IDs (empty = all)"
-              }
-            }
-          }
+          "provider": { "type": "string", "enum": ["sqlite-vec", "zvec"], "default": "sqlite-vec" },
+          "dbPath": { "type": "string", "minLength": 1, "maxLength": 4096, "default": "./data/knowledge.db" }
         }
       },
       "retrieval": {
-        "type": "object",
-        "description": "Retrieval strategy configuration",
+        "type": "object", "additionalProperties": false,
         "properties": {
-          "strategy": {
-            "type": "string",
-            "default": "hybrid",
-            "description": "Retrieval strategy: hybrid, vector, keyword"
-          },
-          "topK": {
-            "type": "number",
-            "default": 5,
-            "description": "Maximum number of results to return"
-          },
-          "minScore": {
-            "type": "number",
-            "default": 0.3,
-            "description": "Minimum relevance score threshold"
-          },
-          "hybridAlpha": {
-            "type": "number",
-            "default": 0.5,
-            "description": "Hybrid search blend ratio (0=keyword only, 1=vector only)"
-          }
-        }
-      },
-      "reranker": {
-        "type": "object",
-        "description": "Reranker configuration (optional)",
-        "properties": {
-          "provider": {
-            "type": "string",
-            "description": "Reranker provider: jina, zhipu, ollama"
-          },
-          "apiKey": {
-            "type": "string",
-            "description": "API key for the reranker provider"
-          },
-          "model": {
-            "type": "string",
-            "description": "Reranker model name"
-          }
-        }
-      },
-      "tokenizer": {
-        "type": "object",
-        "description": "Tokenizer configuration",
-        "properties": {
-          "provider": {
-            "type": "string",
-            "default": "tiktoken",
-            "description": "Tokenizer provider: tiktoken, zhipu"
-          },
-          "maxTokens": {
-            "type": "number",
-            "default": 8191,
-            "description": "Maximum tokens per chunk"
-          }
-        }
-      },
-      "chunker": {
-        "type": "object",
-        "description": "Text chunking configuration",
-        "properties": {
-          "chunkSize": {
-            "type": "number",
-            "default": 500,
-            "description": "Target chunk size in tokens"
-          },
-          "chunkOverlap": {
-            "type": "number",
-            "default": 50,
-            "description": "Overlap between consecutive chunks"
-          },
-          "separators": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "default": [
-              "\\n\\n",
-              "\\n",
-              ".",
-              "!",
-              "?",
-              " ",
-              ""
-            ],
-            "description": "Priority-ordered separators for text splitting"
-          }
+          "strategy": { "type": "string", "enum": ["hybrid", "vector", "keyword"], "default": "hybrid" },
+          "topK": { "type": "integer", "minimum": 1, "maximum": 100, "default": 5 },
+          "minScore": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 },
+          "vectorWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
+          "keywordWeight": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.3 }
         }
       },
       "injection": {
-        "type": "object",
-        "description": "Knowledge injection configuration",
+        "type": "object", "additionalProperties": false,
         "properties": {
-          "position": {
-            "type": "string",
-            "default": "system",
-            "description": "Injection position: system, user"
-          },
-          "maxContextLength": {
-            "type": "number",
-            "default": 2000,
-            "description": "Maximum characters to inject per prompt"
-          },
-          "instruction": {
-            "type": "string",
-            "default": "Use the following knowledge base content to answer the user's question:",
-            "description": "Prefix instruction before injected content"
-          }
+          "position": { "type": "string", "enum": ["system", "user"], "default": "system" },
+          "template": { "type": "string", "minLength": 1, "maxLength": 16384, "default": "以下是相关知识库内容，请据此回答用户问题：\n\n{context}" },
+          "maxChunks": { "type": "integer", "minimum": 1, "maximum": 100, "default": 5 },
+          "maxTokens": { "type": "integer", "minimum": 1, "maximum": 131072, "default": 2048 }
         }
       },
       "intentGate": {
-        "type": "object",
-        "description": "Intent gate configuration for retrieval triggering",
+        "type": "object", "additionalProperties": false,
         "properties": {
-          "mode": {
-            "type": "string",
-            "default": "rule",
-            "description": "Intent gate mode: rule, strict"
-          }
+          "mode": { "type": "string", "enum": ["rule", "strict"], "default": "rule" },
+          "triggers": { "type": "array", "maxItems": 128, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+          "skips": { "type": "array", "maxItems": 128, "items": { "type": "string", "minLength": 1, "maxLength": 128 } }
+        }
+      },
+      "tokenizer": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "provider": { "type": "string", "enum": ["tiktoken", "zhipu"] },
+          "baseUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
+          "apiKey": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000, "default": 30000 },
+          "maxRetries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+          "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 8388608, "default": 1048576 }
+        }
+      },
+      "reranker": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "provider": { "type": "string", "enum": ["jina", "zhipu"] },
+          "baseUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
+          "apiKey": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "topN": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "returnDocuments": { "type": "boolean" },
+          "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000, "default": 30000 },
+          "maxRetries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+          "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 67108864, "default": 8388608 }
         }
       },
       "parser": {
-        "type": "object",
-        "description": "Document parser configuration (optional)",
+        "type": "object", "additionalProperties": false,
         "properties": {
-          "provider": {
-            "type": "string",
-            "description": "Document parser provider: ollama, zhipu"
-          },
-          "apiKey": {
-            "type": "string",
-            "description": "API key for the parser provider"
-          }
+          "provider": { "type": "string", "enum": ["zhipu", "ollama"] },
+          "baseUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
+          "apiKey": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "model": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000, "default": 30000 },
+          "maxRetries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+          "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 67108864, "default": 16777216 },
+          "maxFileBytes": { "type": "integer", "minimum": 1024, "maximum": 1073741824, "default": 20971520 }
         }
       },
-      "enabled": {
-        "type": "boolean",
-        "default": true,
-        "description": "Enable or disable the knowledge base plugin"
+      "tools": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "allowFileIngest": { "type": "boolean", "default": false },
+          "allowedFileRoots": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 4096 }, "default": [] },
+          "maxFileBytes": { "type": "integer", "minimum": 1, "maximum": 1073741824, "default": 10485760 },
+          "maxInputChars": { "type": "integer", "minimum": 1, "maximum": 1000000, "default": 100000 },
+          "allowOwnerGlobalNamespaces": { "type": "boolean", "default": true }
+        }
       }
     }
   },
   "uiHints": {
-    "embedding.provider": {
-      "label": "Embedding Provider",
-      "type": "select",
-      "options": [
-        "openai",
-        "dashscope",
-        "zhipu",
-        "qianfan",
-        "ollama"
-      ]
-    },
-    "embedding.model": {
-      "label": "Embedding Model",
-      "placeholder": "text-embedding-ada-002"
-    },
-    "store.provider": {
-      "label": "Vector Store",
-      "type": "select",
-      "options": [
-        "sqlite-vec",
-        "zvec",
-        "zvec-native"
-      ]
-    },
-    "retrieval.strategy": {
-      "label": "Retrieval Strategy",
-      "type": "select",
-      "options": [
-        "hybrid",
-        "vector",
-        "keyword"
-      ]
-    },
-    "retrieval.topK": {
-      "label": "Top-K Results",
-      "placeholder": "5"
-    },
-    "retrieval.minScore": {
-      "label": "Min Score Threshold",
-      "placeholder": "0.3"
-    },
-    "injection.position": {
-      "label": "Injection Position",
-      "type": "select",
-      "options": [
-        "system",
-        "user"
-      ]
-    },
-    "intentGate.mode": {
-      "label": "Intent Gate Mode",
-      "type": "select",
-      "options": [
-        "rule",
-        "strict"
-      ]
-    },
-    "enabled": {
-      "label": "Enable Knowledge Base",
-      "type": "toggle"
-    }
+    "enabled": { "label": "Enable Knowledge RAG", "type": "toggle" },
+    "embedding.provider": { "label": "Embedding Provider", "type": "select" },
+    "store.provider": { "label": "Vector Store", "type": "select" },
+    "retrieval.strategy": { "label": "Retrieval Strategy", "type": "select" },
+    "tools.allowFileIngest": { "label": "Allow Owner File Ingest", "type": "toggle" }
   },
-  "capabilities": {
-    "knowledgeRAG": true
-  },
+  "capabilities": { "knowledgeRAG": true },
   "channelConfigs": {}
 }

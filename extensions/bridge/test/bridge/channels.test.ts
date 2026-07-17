@@ -8,8 +8,8 @@ import {
 } from "../../src/bridge/channels.js";
 
 describe("ALL_CHANNELS registry", () => {
-  it("has exactly 22 channels registered", () => {
-    expect(ALL_CHANNELS).toHaveLength(22);
+  it("registers stock, external, and repository channels", () => {
+    expect(ALL_CHANNELS).toHaveLength(27);
   });
 
   it("every channel has required fields", () => {
@@ -17,17 +17,17 @@ describe("ALL_CHANNELS registry", () => {
       expect(ch.channelId).toBeTruthy();
       expect(ch.label).toBeTruthy();
       expect(ch.labelCN).toBeTruthy();
-      expect(ch.source).toMatch(/^(external-official|bundled)$/);
+      expect(ch.source).toMatch(/^(external|openclaw-stock|repository)$/);
       expect(ch.contextPreset).toBeTruthy();
     }
   });
 
-  it("3 channels have source external-official", () => {
-    expect(getExternalChannels()).toHaveLength(3);
+  it("seven channels require non-stock plugins", () => {
+    expect(getExternalChannels()).toHaveLength(7);
   });
 
-  it("19 channels have source bundled", () => {
-    expect(getBundledChannels()).toHaveLength(19);
+  it("20 channels are OpenClaw 2026.7.1 stock channels", () => {
+    expect(getBundledChannels()).toHaveLength(20);
   });
 
   it("every channel has a unique channelId", () => {
@@ -70,7 +70,7 @@ describe("getChannelMeta", () => {
   it("returns meta for external channel", () => {
     const meta = getChannelMeta("dingtalk-connector");
     expect(meta).toBeDefined();
-    expect(meta!.source).toBe("external-official");
+    expect(meta!.source).toBe("external");
   });
 
   it("returns undefined for unknown channelId", () => {

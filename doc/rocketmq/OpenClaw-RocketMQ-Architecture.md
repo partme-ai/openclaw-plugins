@@ -6,6 +6,25 @@
 
 ## System Context
 
+```mermaid
+flowchart LR
+    PRODUCER["External Producer<br/>IoT / Business App"] --> BROKER["RocketMQ<br/>NameServer + Proxy + Broker"]
+    BROKER --> CONSUMER["PushConsumer<br/>bounded inbound processing"]
+    CONSUMER --> ROUTER["Topic Router<br/>Agent / session mapping"]
+    ROUTER --> AGENT["OpenClaw Agent"]
+    AGENT --> OUTBOUND["Channel Outbound"]
+    OUTBOUND --> SDK["Producer<br/>message-sdk envelope"]
+    SDK --> BROKER
+    BROKER --> EXTERNAL["External Consumer"]
+
+    classDef external fill:#fff3e0,stroke:#ef6c00,color:#4e2600
+    classDef plugin fill:#e8f5e9,stroke:#2e7d32,color:#123d17
+    classDef runtime fill:#e3f2fd,stroke:#1565c0,color:#0d315c
+    class PRODUCER,BROKER,EXTERNAL external
+    class CONSUMER,ROUTER,OUTBOUND,SDK plugin
+    class AGENT runtime
+```
+
 ```
 ┌──────────────┐     ┌────────────────────┐     ┌──────────────────┐
 │  External     │     │  RocketMQ Broker   │     │  OpenClaw        │
@@ -32,14 +51,14 @@
 src/
 ├── index.ts              Plugin entry (defineChannelPluginEntry)
 ├── channel.ts            Channel lifecycle (config, status, gateway, outbound)
-├── rocketmq-server.ts    Transport layer (Producer + PushConsumer management)
-├── rocketmq-config.ts    Configuration parsing + validation
-├── rocketmq-state.ts     Runtime config singleton
+├── transport/server.ts   Transport layer (Producer + PushConsumer management)
+├── config.ts             Configuration parsing + validation
+├── state/state.ts        Runtime config singleton
 ├── inbound.ts            Inbound message processing + dispatch
 ├── outbound.ts           Outbound message adapter
-├── topic-router.ts       Topic → Agent routing logic
-├── session-mapper.ts     Session ↔ Peer mapping store
-├── mq-tools.ts           mq.publish debug tool registration
+├── routing/topic-router.ts   Topic → Agent routing logic
+├── routing/session-mapper.ts Session ↔ Peer mapping store
+├── shared/wire-helpers.ts    Message SDK + claimable dedupe helpers
 ├── runtime.ts            OpenClaw Runtime reference
 ├── types.ts              Core type definitions
 ├── utils.ts              Text utility functions
@@ -52,20 +71,21 @@ src/
 ### Inbound (External → Agent)
 
 ```
-1. External Producer → RocketMQ Topic (e.g. openclaw-agent-main-in)
+1. External Producer → RocketMQ Topic (e.g. openclaw--agent--main--in)
 2. PushConsumer.messageListener.consume()
 3. InboundEvent { topic, tag, body, keys, messageId }
 4. processInbound()
    ├── shouldProcessTopic()         # Filter: only subscribed topics
    ├── resolveInboundRoute()        # Topic → agentId mapping
    ├── parseInboundText()           # Extract text from payload
-   ├── idempotency check            # Deduplication (if enabled)
+   ├── claim idempotency key        # Reject concurrent/committed duplicates
    ├── resolveAgentRoute()          # OpenClaw core session routing
    └── dispatchToRuntime()
        ├── embedded-agent  → rt.agent.runEmbeddedAgent()
        ├── subagent        → rt.subagent.run() + waitForRun()
        └── reply-pipeline  → rt.channel.reply.dispatchReplyFromConfig()
-5. ConsumeResult.SUCCESS / FAILURE → RocketMQ broker
+5. Commit claim only after dispatch and optional reply publication succeed
+6. ConsumeResult.SUCCESS / FAILURE → RocketMQ broker
 ```
 
 ### Outbound (Agent → External)
@@ -77,7 +97,7 @@ src/
    └── publishMessage()
        ├── Existing Producer (fast path)
        └── One-shot Producer (subagent/child-process fallback)
-3. Producer → RocketMQ Topic (e.g. openclaw-agent-main-out)
+3. Producer → RocketMQ Topic (e.g. openclaw--agent--main--out)
 4. External Consumer receives reply
 ```
 
@@ -85,7 +105,7 @@ src/
 
 ### Transport: PushConsumer vs SimpleConsumer
 
-Uses `PushConsumer` with `messageListener` callback. The listener returns `ConsumeResult.SUCCESS` or `FAILURE` to acknowledge or nack messages. Retry is handled by the RocketMQ broker's consumer group mechanism — no manual retry queue needed.
+Uses `PushConsumer` with `messageListener` callback. The listener returns `ConsumeResult.SUCCESS` or `FAILURE` to acknowledge or nack messages. A configured exponential policy supplies valid invisible durations even when the Node SDK receives an unsupported customized-backoff policy. At exhaustion, the plugin invokes the Broker DLQ forwarding API, so no manual retry queue is needed.
 
 ### One-shot Producer Fallback
 
@@ -94,7 +114,7 @@ In subagent or child-process contexts, the module-level Producer may not be avai
 ### Two-path Routing
 
 1. **Explicit bindings** (`topicBindings[]`): Exact topic + tag match → agentId. Checked first.
-2. **Standard format**: `{topicPrefix}-agent-{agentId}-in[-{peerId}]`. Fallback when no binding matches.
+2. **Standard format**: `{topicPrefix}--agent--{agentId}--in[--{peerId}]`. The `--` delimiter keeps every broker resource within RocketMQ's supported character set and is reserved inside standard-route segments.
 
 ### Session Key Strategy
 
@@ -102,4 +122,21 @@ Session keys are generated by OpenClaw core via `resolveAgentRoute()`, ensuring 
 
 ### Credential Safety
 
-`sessionCredentials.accessSecret` and `securityToken` are masked as `"***"` in all API responses via `buildRockermqConfigSnapshot()`. No credentials appear in logs or health endpoints.
+`sessionCredentials.accessKey`, `accessSecret`, and `securityToken` are masked as `"***"` in all API responses via `buildRockermqConfigSnapshot()`. No credentials appear in logs or health endpoints.
+
+### Delivery Boundary
+
+The plugin returns `FAILURE` for transient dispatch/reply failures so RocketMQ can redeliver, then explicitly forwards an exhausted message through the Consumer Group DLQ API. Permanent routing/payload failures are counted and acknowledged. The deduplication cache is process-local, so deployments requiring cross-node exactly-once semantics must provide a distributed idempotency layer outside this plugin.
+
+```mermaid
+flowchart TD
+    IN["Broker 投递消息"] --> HANDLE["路由 + 幂等 claim + Agent 派发"]
+    HANDLE -->|"成功"| ACK["SUCCESS / ACK"]
+    HANDLE -->|"永久错误"| DROP["记录 dropped"]
+    DROP --> ACK
+    HANDLE -->|"临时错误"| LIMIT{"deliveryAttempt<br/>是否耗尽?"}
+    LIMIT -->|"否"| NACK["FAILURE / Broker 重投"]
+    LIMIT -->|"是"| DLQ["Broker DLQ API"]
+    DLQ -->|"写入成功"| ACK
+    DLQ -->|"写入失败"| NACK
+```

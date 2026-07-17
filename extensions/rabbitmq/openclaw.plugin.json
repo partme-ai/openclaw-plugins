@@ -1,7 +1,10 @@
 {
   "id": "rabbitmq",
-  "version": "2026.5.12",
+  "version": "2026.7.1",
   "description": "RabbitMQ channel plugin for OpenClaw with multi-agent async collaboration and topic subscription support.",
+  "contracts": {
+    "tools": ["mq.publish", "mq.request"]
+  },
   "main": "dist/index.js",
   "channels": [
     "rabbitmq"
@@ -101,7 +104,8 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Optional durable queue name. When omitted, an exclusive auto-generated queue is used."
+            "default": "openclaw.rabbitmq",
+            "description": "Stable queue name shared by Gateway replicas for competing-consumer delivery."
           },
           "durable": {
             "type": "boolean",
@@ -121,6 +125,7 @@
           }
         },
         "default": {
+          "name": "openclaw.rabbitmq",
           "durable": true,
           "exclusive": false,
           "autoDelete": false,
@@ -133,7 +138,7 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": false
+            "default": true
           },
           "delayMs": {
             "type": "number",
@@ -146,41 +151,75 @@
           "queueSuffix": {
             "type": "string",
             "default": ".retry"
+          },
+          "deadLetterSuffix": {
+            "type": "string",
+            "default": ".dlq"
           }
         },
         "default": {
-          "enabled": false,
+          "enabled": true,
           "delayMs": 5000,
           "maxAttempts": 5,
-          "queueSuffix": ".retry"
+          "queueSuffix": ".retry",
+          "deadLetterSuffix": ".dlq"
         }
       },
       "connection": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "allowInsecureRemote": {
+            "type": "boolean",
+            "default": false,
+            "description": "Allow plaintext amqp:// for non-loopback hosts. Keep false in production."
+          },
           "timeoutMs": {
             "type": "number",
+            "minimum": 1,
             "default": 30000
           },
           "heartbeatSeconds": {
             "type": "number",
+            "minimum": 0,
             "default": 30
           },
           "reconnectAttempts": {
             "type": "number",
+            "minimum": 0,
             "default": 5
           },
           "reconnectDelayMs": {
             "type": "number",
+            "minimum": 0,
             "default": 5000
+          },
+          "reconnectMaxDelayMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 60000
+          },
+          "reconnectJitterRatio": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.2
+          },
+          "publishConfirmTimeoutMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 10000
           }
         },
         "default": {
+          "allowInsecureRemote": false,
           "timeoutMs": 30000,
           "heartbeatSeconds": 30,
           "reconnectAttempts": 5,
-          "reconnectDelayMs": 5000
+          "reconnectDelayMs": 5000,
+          "reconnectMaxDelayMs": 60000,
+          "reconnectJitterRatio": 0.2,
+          "publishConfirmTimeoutMs": 10000
         }
       },
       "consume": {
@@ -197,13 +236,20 @@
           },
           "requeueOnError": {
             "type": "boolean",
-            "default": true
+            "default": false
+          },
+          "shutdownTimeoutMs": {
+            "type": "number",
+            "minimum": 100,
+            "maximum": 120000,
+            "default": 30000
           }
         },
         "default": {
           "prefetch": 50,
           "concurrency": 4,
-          "requeueOnError": true
+          "requeueOnError": false,
+          "shutdownTimeoutMs": 30000
         }
       },
       "dispatch": {
@@ -251,7 +297,7 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": false
+            "default": true
           },
           "ttlMs": {
             "type": "number",
@@ -263,7 +309,7 @@
           }
         },
         "default": {
-          "enabled": false,
+          "enabled": true,
           "ttlMs": 600000,
           "maxEntries": 10000
         }

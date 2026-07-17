@@ -36,7 +36,12 @@ describe("rocketmq-config", () => {
         channels: {
           rocketmq: {
             topicBindings: [
-              { topic: "device.status", tag: "iot", agentId: "agent1", accountId: "acc1" },
+              {
+                topic: "device.status",
+                tag: "iot",
+                agentId: "agent1",
+                accountId: "acc1",
+              },
               { topic: "sensor.data", tag: "*", agentId: "agent2" },
             ],
           },
@@ -75,7 +80,9 @@ describe("rocketmq-config", () => {
     });
 
     it("should handle missing nested config gracefully", () => {
-      const result = resolveRockermqConfig({ channels: { rocketmq: null as any } });
+      const result = resolveRockermqConfig({
+        channels: { rocketmq: null as any },
+      });
       expect(result.endpoints).toBe(DEFAULT_ROCKERMQ_CONFIG.endpoints);
     });
 
@@ -93,14 +100,79 @@ describe("rocketmq-config", () => {
 
     it("should parse idempotency config", () => {
       const result = resolveRockermqConfig({
-        channels: { rocketmq: { idempotency: { enabled: true, ttlMs: 10000, maxEntries: 100 } } },
+        channels: {
+          rocketmq: {
+            idempotency: { enabled: true, ttlMs: 10000, maxEntries: 100 },
+          },
+        },
       });
       expect(result.idempotency.enabled).toBe(true);
       expect(result.idempotency.ttlMs).toBe(10000);
       expect(result.idempotency.maxEntries).toBe(100);
     });
 
-    it("should filter out bindings with empty topic or agentId", () => {
+    it("should enable claimable idempotency and bounded startup retries by default", () => {
+      const result = resolveRockermqConfig({});
+      expect(result.idempotency.enabled).toBe(true);
+      expect(result.producer.maxAttempts).toBe(3);
+      expect(result.connection).toEqual({
+        startupAttempts: 6,
+        retryDelayMs: 5000,
+        retryMaxDelayMs: 60_000,
+        retryJitterRatio: 0.2,
+        shutdownTimeoutMs: 10_000,
+      });
+    });
+
+    it("should parse producer and connection retry settings", () => {
+      const result = resolveRockermqConfig({
+        channels: {
+          rocketmq: {
+            producer: { maxAttempts: 5 },
+            connection: {
+              startupAttempts: 9,
+              retryDelayMs: 250,
+              retryMaxDelayMs: 10_000,
+              retryJitterRatio: 0.1,
+              shutdownTimeoutMs: 2500,
+            },
+          },
+        },
+      });
+      expect(result.producer.maxAttempts).toBe(5);
+      expect(result.connection).toEqual({
+        startupAttempts: 9,
+        retryDelayMs: 250,
+        retryMaxDelayMs: 10_000,
+        retryJitterRatio: 0.1,
+        shutdownTimeoutMs: 2500,
+      });
+    });
+
+    it("should parse the consumer retry and DLQ threshold", () => {
+      const result = resolveRockermqConfig({
+        channels: {
+          rocketmq: {
+            consumer: {
+              retry: {
+                maxAttempts: 5,
+                initialDelayMs: 2000,
+                maxDelayMs: 30000,
+                multiplier: 1.5,
+              },
+            },
+          },
+        },
+      });
+      expect(result.consumer.retry).toEqual({
+        maxAttempts: 5,
+        initialDelayMs: 2000,
+        maxDelayMs: 30000,
+        multiplier: 1.5,
+      });
+    });
+
+    it("should preserve invalid bindings so startup validation can fail explicitly", () => {
       const result = resolveRockermqConfig({
         channels: {
           rocketmq: {
@@ -112,9 +184,47 @@ describe("rocketmq-config", () => {
           },
         },
       });
-      expect(result.topicBindings).toHaveLength(1);
-      expect(result.topicBindings[0].topic).toBe("valid.topic");
-      expect(result.topicBindings[0].agentId).toBe("agent2");
+      expect(result.topicBindings).toHaveLength(3);
+      expect(validateRockermqConfig(result)).toEqual(
+        expect.arrayContaining([
+          "RocketMQ topic binding is invalid: ",
+          "RocketMQ topic binding agentId is required for topic: valid.topic",
+          "RocketMQ topic binding is duplicated: valid.topic#*",
+        ]),
+      );
+    });
+
+    it("should not silently replace explicit invalid numeric and enum values", () => {
+      const result = resolveRockermqConfig({
+        channels: {
+          rocketmq: {
+            producer: { maxAttempts: 0 },
+            payload: { mode: "yaml" },
+            dispatch: { mode: "unknown" },
+            connection: { retryJitterRatio: 2 },
+          },
+        },
+      });
+
+      expect(validateRockermqConfig(result)).toEqual(
+        expect.arrayContaining([
+          "RocketMQ producer.maxAttempts must be a positive safe integer",
+          "RocketMQ payload.mode is invalid: yaml",
+          "RocketMQ dispatch.mode is invalid: unknown",
+          "RocketMQ connection.retryJitterRatio must be between 0 and 1",
+        ]),
+      );
+    });
+
+    it("should reject partial ACL credentials instead of falling back to anonymous access", () => {
+      const result = resolveRockermqConfig({
+        channels: {
+          rocketmq: { sessionCredentials: { accessKey: "only-ak" } },
+        },
+      });
+      expect(validateRockermqConfig(result)).toContain(
+        "RocketMQ sessionCredentials requires both accessKey and accessSecret",
+      );
     });
   });
 
@@ -125,7 +235,12 @@ describe("rocketmq-config", () => {
         endpoints: "127.0.0.1:8081",
         topicPrefix: "openclaw",
         topicBindings: [
-          { topic: "device.status", tag: "iot", agentId: "agent1", accountId: "default" },
+          {
+            topic: "device-status",
+            tag: "iot",
+            agentId: "agent1",
+            accountId: "default",
+          },
         ],
       };
       const issues = validateRockermqConfig(config);
@@ -141,15 +256,6 @@ describe("rocketmq-config", () => {
       expect(issues).toContain("RocketMQ endpoints is required");
     });
 
-    it("should report missing producer groupId", () => {
-      const config = {
-        ...DEFAULT_ROCKERMQ_CONFIG,
-        producer: { ...DEFAULT_ROCKERMQ_CONFIG.producer, groupId: "" },
-      };
-      const issues = validateRockermqConfig(config);
-      expect(issues).toContain("RocketMQ producer.groupId is required");
-    });
-
     it("should report missing consumer groupId", () => {
       const config = {
         ...DEFAULT_ROCKERMQ_CONFIG,
@@ -157,6 +263,25 @@ describe("rocketmq-config", () => {
       };
       const issues = validateRockermqConfig(config);
       expect(issues).toContain("RocketMQ consumer.groupId is required");
+    });
+
+    it("should reject broker resource names containing unsupported separators", () => {
+      const config = {
+        ...DEFAULT_ROCKERMQ_CONFIG,
+        topicBindings: [
+          {
+            topic: "device.status",
+            tag: "*",
+            agentId: "agent1",
+            accountId: "default",
+            replyTopic: "device.status.out",
+          },
+        ],
+      };
+      expect(validateRockermqConfig(config)).toEqual([
+        "RocketMQ topic binding is invalid: device.status",
+        "RocketMQ reply topic is invalid: device.status.out",
+      ]);
     });
   });
 
@@ -172,6 +297,7 @@ describe("rocketmq-config", () => {
         },
       };
       const snapshot = buildRockermqConfigSnapshot(config);
+      expect((snapshot.sessionCredentials as any).accessKey).toBe("***");
       expect((snapshot.sessionCredentials as any).accessSecret).toBe("***");
       expect((snapshot.sessionCredentials as any).securityToken).toBe("***");
     });

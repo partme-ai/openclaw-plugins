@@ -1,8 +1,15 @@
 /**
+ * @fileoverview Nacos Config Center 到 OpenClaw 运行配置的拉取、合并与订阅服务。
+ *
+ * 合并顺序为主配置 → shared configs → application config → 各插件 config，随后展开环境变量、
+ * 校验可序列化性、备份当前 openclaw.json，再通过 Runtime `replaceConfig` 原子替换。订阅
+ * 回调采用单飞调度，避免配置连续变更导致并发覆盖；停止时注销全部监听并关闭 SDK 客户端。
+ *
  * @module nacos/runtime/nacos-config-sync
  */
 
-import { copyFileSync, existsSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { NacosConfigClient } from "nacos";
 import { deepMerge } from "../config/merge-deep.js";
@@ -15,27 +22,46 @@ import {
 } from "./nacos-connection.js";
 import { expandEnvPlaceholdersInValue } from "../config/env-expand.js";
 import { parseConfigBody } from "../config/parse-config-content.js";
-import { createNacosSdkLogger, DEFAULT_GROUP, tryCloseNacosClient } from "../shared/shared.js";
+import {
+  createNacosSdkLogger,
+  DEFAULT_GROUP,
+  tryCloseNacosClient,
+} from "../shared/shared.js";
 import type { NacosPluginConfig, PluginLog } from "../shared/types.js";
+
+const DEFAULT_BACKUP_RETENTION_COUNT = 20;
+const NACOS_BACKUP_NAME_PATTERN =
+  /^openclaw-nacos-\d{14}(?:-[0-9a-f]{8})?\.json$/;
 
 export type ConfigSyncDeps = {
   pluginConfig: NacosPluginConfig;
   /** Returns current runtime config snapshot (via `api.runtime.config.current()`). */
-  getCurrentConfig: () => Record<string, unknown> | Promise<Record<string, unknown>>;
+  getCurrentConfig: () =>
+    | Record<string, unknown>
+    | Promise<Record<string, unknown>>;
   /** Replaces config file with the merged result and triggers a reload. */
   replaceConfig: (next: Record<string, unknown>) => Promise<void>;
   stateDir: string;
   logger: PluginLog;
   env: NodeJS.ProcessEnv;
+  /** 每次配置成功写入后更新外部健康状态。 */
+  onApplied?: () => void;
+  /** 后台订阅拉取失败时更新外部健康状态。 */
+  onError?: (error: unknown) => void;
 };
 
 /**
  * Resolves the on-disk config file path for backup (aligns with OpenClaw: `OPENCLAW_CONFIG_PATH` or `stateDir/openclaw.json`).
  */
-export function resolveConfigFileForBackup(env: NodeJS.ProcessEnv, stateDir: string): string {
+export function resolveConfigFileForBackup(
+  env: NodeJS.ProcessEnv,
+  stateDir: string,
+): string {
   const override = env.OPENCLAW_CONFIG_PATH?.trim();
   if (override) {
-    return path.isAbsolute(override) ? override : path.resolve(process.cwd(), override);
+    return path.isAbsolute(override)
+      ? override
+      : path.resolve(process.cwd(), override);
   }
   return path.join(stateDir, "openclaw.json");
 }
@@ -47,6 +73,7 @@ export function backupOpenClawConfig(
   stateDir: string,
   env: NodeJS.ProcessEnv,
   logger: PluginLog,
+  retentionCount = DEFAULT_BACKUP_RETENTION_COUNT,
 ): void {
   const src = resolveConfigFileForBackup(env, stateDir);
   if (!existsSync(src)) {
@@ -54,13 +81,47 @@ export function backupOpenClawConfig(
     return;
   }
   const stamp = formatTimestampYyyyMMddHHmmss();
-  const dest = path.join(stateDir, `openclaw-nacos-${stamp}.json`);
+  // 时间戳只有秒级；追加随机后缀，避免连续回调覆盖同一份回滚证据。
+  const dest = path.join(
+    stateDir,
+    `openclaw-nacos-${stamp}-${randomUUID().slice(0, 8)}.json`,
+  );
   try {
     copyFileSync(src, dest);
     logger.info(`[openclaw-nacos] config backup written: ${dest}`);
+    pruneNacosConfigBackups(stateDir, retentionCount, logger);
   } catch (err) {
     logger.error(`[openclaw-nacos] backup failed: ${String(err)}`);
     throw err;
+  }
+}
+
+/**
+ * 仅清理本插件严格命名的旧备份，按文件名中的固定宽度时间戳保留最新 N 份。
+ *
+ * 同时识别早期不含随机后缀的文件名，升级后也能逐步收敛历史备份；目录中的其他 JSON
+ * 与手工回滚文件永远不会被删除。清理失败只降低磁盘治理能力，不应阻断已经创建的当前备份。
+ */
+export function pruneNacosConfigBackups(
+  stateDir: string,
+  retentionCount: number,
+  logger: PluginLog,
+): void {
+  const keep =
+    Number.isInteger(retentionCount) && retentionCount >= 1
+      ? Math.min(retentionCount, 1000)
+      : DEFAULT_BACKUP_RETENTION_COUNT;
+  try {
+    const backups = readdirSync(stateDir)
+      .filter((name) => NACOS_BACKUP_NAME_PATTERN.test(name))
+      .sort((left, right) => right.localeCompare(left));
+    for (const name of backups.slice(keep)) {
+      unlinkSync(path.join(stateDir, name));
+    }
+  } catch (error) {
+    logger.warn(
+      `[openclaw-nacos] backup retention cleanup failed: ${String(error)}`,
+    );
   }
 }
 
@@ -76,21 +137,33 @@ function validateMergedConfig(
   try {
     JSON.stringify(cfg);
   } catch (err) {
-    throw new Error(`[openclaw-nacos] merged config is not JSON-serializable: ${String(err)}`);
+    throw new Error(
+      `[openclaw-nacos] merged config is not JSON-serializable: ${String(err)}`,
+    );
   }
   if (typeof cfg !== "object" || cfg === null || Array.isArray(cfg)) {
     throw new Error("[openclaw-nacos] merged config must be a plain object");
   }
 }
 
-/**
- * Pulls shared configs, application dataId, and per-plugin configs from Nacos; deep-merges into current config; backs up; writes.
- */
+/** 拉取远程配置，按确定性顺序深度合并，备份当前文件后应用到 OpenClaw Runtime。 */
 export class NacosConfigSyncService {
   private client: NacosConfigClient | null = null;
   private unsubscribeFns: Array<() => void> = [];
   private deps: ConfigSyncDeps | null = null;
   private runningPull: Promise<void> | null = null;
+  /**
+   * 已越过生命周期检查、正在执行宿主配置替换的 Promise。
+   *
+   * Nacos 的 getConfig 可能因网络长期阻塞，stop 不能无界等待整个拉取；但一旦进入
+   * replaceConfigFile，旧实例就必须等写盘结束再退出，否则热重载后可能出现旧代晚写覆盖新代。
+   */
+  private runningApply: Promise<void> | null = null;
+  /** 拉取期间再次收到变更时置位，当前轮完成后至少再执行一轮。 */
+  private pullRequested = false;
+  /** 每次 start/stop 递增；旧代拉取不得在新生命周期内写配置。 */
+  private lifecycleGeneration = 0;
+  private stopping = false;
 
   /**
    * Fetches remote config with an existing client and merges into `loadConfig()` snapshot.
@@ -98,8 +171,16 @@ export class NacosConfigSyncService {
   async pullAndApply(
     deps: ConfigSyncDeps,
     clientOverride?: NacosConfigClient,
+    expectedGeneration?: number,
   ): Promise<void> {
-    const { pluginConfig, getCurrentConfig, replaceConfig, stateDir, logger, env } = deps;
+    const {
+      pluginConfig,
+      getCurrentConfig,
+      replaceConfig,
+      stateDir,
+      logger,
+      env,
+    } = deps;
     const cc = pluginConfig.configCenter;
     if (!cc?.enabled) {
       return;
@@ -122,14 +203,20 @@ export class NacosConfigSyncService {
       if (raw != null && String(raw).trim() !== "") {
         const parsed = parseConfigBody(String(raw), dataId);
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          merged = { ...parsed as Record<string, unknown> };
-          logger.info(`[openclaw-nacos] loaded primary config from ${dataId} (group=${group})`);
+          merged = { ...(parsed as Record<string, unknown>) };
+          logger.info(
+            `[openclaw-nacos] loaded primary config from ${dataId} (group=${group})`,
+          );
         } else {
-          logger.warn(`[openclaw-nacos] primary config ${dataId} is not a valid object; falling back to snapshot`);
+          logger.warn(
+            `[openclaw-nacos] primary config ${dataId} is not a valid object; falling back to snapshot`,
+          );
           merged = { ...snapshot } as Record<string, unknown>;
         }
       } else {
-        logger.warn(`[openclaw-nacos] primary config ${dataId} is empty or not found; using snapshot`);
+        logger.warn(
+          `[openclaw-nacos] primary config ${dataId} is empty or not found; using snapshot`,
+        );
         merged = { ...snapshot } as Record<string, unknown>;
       }
     } else {
@@ -140,7 +227,9 @@ export class NacosConfigSyncService {
       const group = resolveGroupName(sc.group);
       const raw = await client.getConfig(sc.dataId, group);
       if (raw == null || String(raw).trim() === "") {
-        logger.warn(`[openclaw-nacos] empty config for dataId=${sc.dataId} group=${group}`);
+        logger.warn(
+          `[openclaw-nacos] empty config for dataId=${sc.dataId} group=${group}`,
+        );
         continue;
       }
       const parsed = parseConfigBody(String(raw), sc.dataId);
@@ -173,34 +262,71 @@ export class NacosConfigSyncService {
       }
       const parsed = parseConfigBody(String(raw), dataId);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        logger.warn(`[openclaw-nacos] plugin ${pluginId}: expected object in ${dataId}`);
+        logger.warn(
+          `[openclaw-nacos] plugin ${pluginId}: expected object in ${dataId}`,
+        );
         continue;
       }
-      const plugins = (merged.plugins as Record<string, unknown> | undefined) ?? {};
-      const entries = (plugins.entries as Record<string, unknown> | undefined) ?? {};
-      const prevEntry = (entries[pluginId] as Record<string, unknown> | undefined) ?? {};
-      const prevConfig = (prevEntry.config as Record<string, unknown> | undefined) ?? {};
-      const nextConfig = deepMerge(prevConfig, parsed as Record<string, unknown>);
+      const plugins =
+        (merged.plugins as Record<string, unknown> | undefined) ?? {};
+      const entries =
+        (plugins.entries as Record<string, unknown> | undefined) ?? {};
+      const prevEntry =
+        (entries[pluginId] as Record<string, unknown> | undefined) ?? {};
+      const prevConfig =
+        (prevEntry.config as Record<string, unknown> | undefined) ?? {};
+      const nextConfig = deepMerge(
+        prevConfig,
+        parsed as Record<string, unknown>,
+      );
       entries[pluginId] = { ...prevEntry, config: nextConfig };
       plugins.entries = entries;
       merged.plugins = plugins;
     }
 
-    merged = expandEnvPlaceholdersInValue(merged, env) as Record<string, unknown>;
+    merged = expandEnvPlaceholdersInValue(merged, env) as Record<
+      string,
+      unknown
+    >;
 
     validateMergedConfig(merged, cc.skipValidation, logger);
-    backupOpenClawConfig(stateDir, env, logger);
-    await replaceConfig(merged);
-    logger.info("[openclaw-nacos] merged Nacos config applied via replaceConfig");
+    if (
+      expectedGeneration !== undefined &&
+      (this.stopping || expectedGeneration !== this.lifecycleGeneration)
+    ) {
+      logger.debug(
+        "[openclaw-nacos] discard stale config pull after lifecycle change",
+      );
+      return;
+    }
+    const apply = (async () => {
+      backupOpenClawConfig(stateDir, env, logger, cc.backupRetentionCount);
+      await replaceConfig(merged);
+      deps.onApplied?.();
+      logger.info(
+        "[openclaw-nacos] merged Nacos config applied via replaceConfig",
+      );
+    })();
+    this.runningApply = apply;
+    try {
+      await apply;
+    } finally {
+      if (this.runningApply === apply) {
+        this.runningApply = null;
+      }
+    }
   }
 
   /**
    * Creates the client, runs initial pull, and registers subscribers.
    */
   async start(deps: ConfigSyncDeps): Promise<void> {
+    const generation = ++this.lifecycleGeneration;
+    this.stopping = false;
     this.deps = deps;
     const cc = deps.pluginConfig.configCenter;
     if (!cc?.enabled) {
+      this.deps = null;
       return;
     }
 
@@ -211,59 +337,87 @@ export class NacosConfigSyncService {
     } as never);
     this.client = client;
 
-    await this.pullAndApply(deps, client);
+    try {
+      await this.pullAndApply(deps, client, generation);
 
-    const profile = resolveProfile(cc.profile, deps.env);
-    const subscribeOne = (dataId: string, group: string, refresh?: boolean) => {
-      if (refresh === false) {
-        return;
-      }
-      const listener = () => {
-        void this.schedulePull();
-      };
-      try {
-        client.subscribe({ dataId, group }, listener);
+      const profile = resolveProfile(cc.profile, deps.env);
+      const subscribeOne = async (
+        dataId: string,
+        group: string,
+        refresh?: boolean,
+      ) => {
+        if (refresh === false) return;
+        const listener = () => this.schedulePull();
+        await Promise.resolve(client.subscribe({ dataId, group }, listener));
         this.unsubscribeFns.push(() => {
-          try {
-            client.unSubscribe({ dataId, group }, listener);
-          } catch {
-            /* ignore */
-          }
+          client.unSubscribe({ dataId, group }, listener);
         });
-      } catch (err) {
-        deps.logger.warn(`[openclaw-nacos] subscribe failed ${dataId}: ${String(err)}`);
-      }
-    };
+      };
 
-    for (const sc of cc.sharedConfigs ?? []) {
-      subscribeOne(sc.dataId, resolveGroupName(sc.group), sc.refresh);
-    }
-    if (cc.primaryConfigDataId) {
-      const dataId = expandDataIdTemplate(cc.primaryConfigDataId, profile);
-      subscribeOne(dataId, resolveGroupName(cc.primaryConfigGroup), true);
-    }
-    if (cc.applicationDataId) {
-      subscribeOne(expandDataIdTemplate(cc.applicationDataId, profile), DEFAULT_GROUP, true);
-    }
-    for (const pluginId of cc.pluginConfigIds ?? []) {
-      subscribeOne(`${pluginId}-${profile}.json`, DEFAULT_GROUP, true);
+      for (const sc of cc.sharedConfigs ?? []) {
+        await subscribeOne(sc.dataId, resolveGroupName(sc.group), sc.refresh);
+      }
+      if (cc.primaryConfigDataId) {
+        const dataId = expandDataIdTemplate(cc.primaryConfigDataId, profile);
+        await subscribeOne(
+          dataId,
+          resolveGroupName(cc.primaryConfigGroup),
+          true,
+        );
+      }
+      if (cc.applicationDataId) {
+        await subscribeOne(
+          expandDataIdTemplate(cc.applicationDataId, profile),
+          DEFAULT_GROUP,
+          true,
+        );
+      }
+      for (const pluginId of cc.pluginConfigIds ?? []) {
+        await subscribeOne(`${pluginId}-${profile}.json`, DEFAULT_GROUP, true);
+      }
+    } catch (error) {
+      // 初始拉取或任一订阅失败都不能遗留长轮询客户端。
+      await this.stop(deps.logger);
+      throw error;
     }
   }
 
   private schedulePull(): void {
-    if (!this.deps || this.runningPull) {
-      return;
-    }
+    if (!this.deps || this.stopping) return;
+    this.pullRequested = true;
+    if (this.runningPull) return;
+    const generation = this.lifecycleGeneration;
+    const runLogger = this.deps.logger;
+    const runOnError = this.deps.onError;
     this.runningPull = (async () => {
       try {
-        const d = this.deps;
-        if (d && this.client) {
-          await this.pullAndApply(d, this.client);
+        while (
+          this.pullRequested &&
+          !this.stopping &&
+          generation === this.lifecycleGeneration
+        ) {
+          this.pullRequested = false;
+          const d = this.deps;
+          const client = this.client;
+          if (d && client) {
+            await this.pullAndApply(d, client, generation);
+          }
         }
       } catch (err) {
-        this.deps?.logger.error(`[openclaw-nacos] config pull failed: ${String(err)}`);
+        // stop/hot reload 会主动关闭旧客户端，正在进行的 getConfig 随后失败是正常的
+        // 生命周期收尾，不能让旧代错误覆盖新实例或已清空的健康状态。
+        if (!this.stopping && generation === this.lifecycleGeneration) {
+          runOnError?.(err);
+          runLogger.error(
+            `[openclaw-nacos] config pull failed: ${String(err)}`,
+          );
+        }
       } finally {
         this.runningPull = null;
+        // hot reload 可能在旧代拉取结束前启动新代；补触发一次，避免新代事件被旧 Promise 挡住。
+        if (this.pullRequested && this.deps && !this.stopping) {
+          this.schedulePull();
+        }
       }
     })();
   }
@@ -272,6 +426,9 @@ export class NacosConfigSyncService {
    * Stops subscriptions and closes the client.
    */
   async stop(logger: PluginLog): Promise<void> {
+    this.stopping = true;
+    this.lifecycleGeneration += 1;
+    this.pullRequested = false;
     for (const fn of this.unsubscribeFns) {
       try {
         fn();
@@ -284,5 +441,10 @@ export class NacosConfigSyncService {
     this.client = null;
     this.deps = null;
     await tryCloseNacosClient(c, logger, "config");
+    const apply = this.runningApply;
+    if (apply) {
+      // 只排空已经开始的宿主写盘；仍阻塞在远程 getConfig 的拉取会由 generation 检查丢弃。
+      await apply.catch(() => undefined);
+    }
   }
 }

@@ -40,6 +40,12 @@ export type SetupTextInputSpec = {
   required?: boolean;
 };
 
+/**
+ * Web MQTT 声明式渠道向导的描述参数。
+ *
+ * `resolveConfigured` 负责判定现有配置是否完整；输入字段只生成配置补丁，不会在向导中启动
+ * WebSocket 监听器，因此端口占用和 TLS 文件可用性仍由运行阶段校验。
+ */
 export type SimpleChannelSetupParams = {
   channel: string;
   label: string;

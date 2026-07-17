@@ -5,9 +5,9 @@
  */
 
 import {
-  createIdempotencyCache,
+  createClaimableDedupe,
   getGlobalSingleton,
-  type IdempotencyCache,
+  type ClaimableDedupe,
   type PayloadParseMode,
 } from "@partme.ai/openclaw-message-sdk";
 
@@ -28,19 +28,19 @@ export function mapRabbitmqWirePayloadMode(mode: RabbitmqWirePayloadMode): Paylo
 /**
  * 按 idempotency 配置懒创建幂等缓存（配置签名变化时重建 singleton key）。
  */
-export function getRabbitmqIdempotencyCache(params: {
+export function getRabbitmqClaimableDedupe(params: {
   enabled: boolean;
   ttlMs: number;
   maxEntries: number;
-}): IdempotencyCache | undefined {
+}): ClaimableDedupe | undefined {
   if (!params.enabled) {
     return undefined;
   }
   const sig = `${params.ttlMs}:${params.maxEntries}`;
   return getGlobalSingleton(`message-sdk:${RABBITMQ_CHANNEL_ID}:idempotency:${sig}`, () =>
-    createIdempotencyCache({
+    createClaimableDedupe({
       ttlMs: params.ttlMs,
-      maxEntries: params.maxEntries,
+      memoryMaxSize: params.maxEntries,
     }),
   );
 }

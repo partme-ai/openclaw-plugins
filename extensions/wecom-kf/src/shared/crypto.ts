@@ -1,3 +1,9 @@
+/**
+ * 企业微信客服回调的签名验证与 AES 解密实现。
+ *
+ * 签名按官方字段排序后计算 SHA-1，并使用固定长度摘要常量时间比较；密文使用协议指定
+ * 的 AES-256-CBC 与 32 字节 PKCS#7 填充，解密后还必须校验 receiveId，防止跨企业投递。
+ */
 import crypto from "node:crypto";
 
 const WECOM_PKCS7_BLOCK_SIZE = 32;
@@ -34,7 +40,10 @@ export function computeWecomMsgSignature(params: {
 export function verifyWecomSignature(params: {
   token: string; timestamp: string; nonce: string; encrypt: string; signature: string;
 }): boolean {
-  return computeWecomMsgSignature({ token: params.token, timestamp: params.timestamp, nonce: params.nonce, encrypt: params.encrypt }) === params.signature;
+  const expected = computeWecomMsgSignature({ token: params.token, timestamp: params.timestamp, nonce: params.nonce, encrypt: params.encrypt });
+  const signature = params.signature.trim().toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(signature)) return false;
+  return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"));
 }
 
 export function decryptWecomEncrypted(params: {

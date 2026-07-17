@@ -3,7 +3,7 @@
  * 仅导出 ChannelPlugin，不执行 index 中的 registerFull（HTTP、完整注册等）。
  */
 
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { wechatIpadChannel } from "./channel.js";
 

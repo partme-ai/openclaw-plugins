@@ -10,10 +10,11 @@
 
 import { rabbitmqOutbound } from "./outbound.js";
 import { getStats, startRabbitmqServer, stopRabbitmqServer, trackInboundAccepted, trackInboundDropped, trackRoute } from "./transport/server.js";
-import { resolveRabbitmqConfig, validateRabbitmqConfig } from "./config.js";
+import { isRabbitmqConfigured, resolveRabbitmqConfig, validateRabbitmqConfig } from "./config.js";
 import { getRabbitmqChannelConfig, setRabbitmqChannelConfig } from "./state/state.js";
 import { rabbitmqSetupAdapter, rabbitmqSetupWizard } from "./onboarding.js";
 import { processInbound } from "./inbound.js";
+import { redactRabbitmqError } from "./shared/redact.js";
 
 /** @description 单账户场景下的默认 accountId。 */
 export const DEFAULT_ACCOUNT_ID = "default";
@@ -39,24 +40,22 @@ export const rabbitmqChannel = {
   config: {
     listAccountIds: () => [DEFAULT_ACCOUNT_ID],
     resolveAccount: (cfg: Record<string, unknown>) => {
-      const config = resolveRabbitmqConfig(cfg);
       return {
         accountId: DEFAULT_ACCOUNT_ID,
         name: "RabbitMQ",
         enabled: true,
-        configured: Boolean(config.url),
+        configured: isRabbitmqConfigured(cfg),
       };
     },
   },
   status: {
     buildAccountSnapshot: (cfg: Record<string, unknown>) => {
-      const config = resolveRabbitmqConfig(cfg);
       const serviceStats = getStats();
       return {
         accountId: DEFAULT_ACCOUNT_ID,
         name: "RabbitMQ",
         enabled: true,
-        configured: true,
+        configured: isRabbitmqConfigured(cfg),
         webhookPath: "/rabbitmq/status",
         extra: serviceStats,
       };
@@ -72,15 +71,17 @@ export const rabbitmqChannel = {
     startAccount: async ({
       cfg,
       abortSignal,
+      log,
     }: {
       cfg: Record<string, unknown>;
       abortSignal: AbortSignal;
+      log?: { debug?(message: string): void; info?(message: string): void; warn?(message: string): void; error?(message: string): void };
     }) => {
       const config = resolveRabbitmqConfig(cfg ?? {});
       setRabbitmqChannelConfig(config);
       const issues = validateRabbitmqConfig(config);
-      for (const issue of issues) {
-        console.warn(`[openclaw-rabbitmq] config warning: ${issue}`);
+      if (issues.length > 0) {
+        throw new Error(`Invalid RabbitMQ configuration: ${issues.join("; ")}`);
       }
 
       await startRabbitmqServer(config, async (event) => {
@@ -104,7 +105,7 @@ export const rabbitmqChannel = {
             return { ok: false as const, requeue: false, reason: result.reason ?? "drop" };
           }
         } catch (error) {
-          trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
+          trackInboundDropped(`inbound_dispatch_error:${redactRabbitmqError(error, config)}`);
           if (!event.delivery.settled) {
             event.delivery.nack({
               requeue: config.consume.requeueOnError,
@@ -113,13 +114,17 @@ export const rabbitmqChannel = {
           }
           return { ok: true as const, ackMode: "manual" as const };
         }
-      });
+      }, log);
 
-      await new Promise<void>((resolve) => {
-        const onAbort = (): void => resolve();
-        abortSignal.addEventListener("abort", onAbort, { once: true });
-      });
-      await stopRabbitmqServer();
+      try {
+        if (!abortSignal.aborted) {
+          await new Promise<void>((resolve) => {
+            abortSignal.addEventListener("abort", () => resolve(), { once: true });
+          });
+        }
+      } finally {
+        await stopRabbitmqServer();
+      }
     },
   },
   outbound: rabbitmqOutbound,

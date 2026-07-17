@@ -5,9 +5,9 @@
 **OpenClaw plugin — MQTT channel bridge with multi-topic routing and explicit topic bindings**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--mqtt-blue)
-![Node](https://img.shields.io/badge/Node.js-20+-green)
+![Node](https://img.shields.io/badge/Node.js-22.22.3%2B%20%7C%2024.15.0%2B%20%7C%2025.9.0%2B-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![MQTT](https://img.shields.io/badge/MQTT-3.1.1%2F5.0-orange)
+![MQTT](https://img.shields.io/badge/MQTT-3.1%2F3.1.1-orange)
 
 </div>
 
@@ -25,11 +25,35 @@
 - **Controllable Reply Topic**: supports binding-level `replyTopic`, otherwise auto-derives `/out`
 - **Session Context Mapping**: saves agent/account/replyTopic info per session
 - **Enterprise Security**: MQTT over TLS, user-level topic ACL, anonymous access control, payload size limits
+- **Bounded Reliability**: strict FIFO per clientId, parallel clients, queue limits, and hard Agent-task timeouts
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Device["MQTT device / client"]
+    Broker["Embedded Aedes Broker<br/>TCP / TLS"]
+    Auth["Connection authentication<br/>username / password"]
+    TopicACL["Layer 1 ACL<br/>publish / subscribe topics"]
+    Queue["Bounded queue by clientId<br/>per-client FIFO / cross-client parallel"]
+    Router["Topic routing<br/>binding first / standard fallback"]
+    AccountACL["Layer 2 ACL<br/>inbound / outbound + accountId"]
+    SDK["message-sdk Bridge<br/>parse / dedupe / session"]
+    Agent["OpenClaw Agent"]
+    Store[("Broker state<br/>Memory / Redis / MongoDB / LevelDB")]
+
+    Device -->|"CONNECT / PUBLISH"| Broker
+    Broker --> Auth --> TopicACL --> Queue --> Router --> AccountACL --> SDK --> Agent
+    Agent -->|"reply"| SDK --> AccountACL --> Broker -->|"replyTopic"| Device
+    Broker <--> Store
+```
+
+The plugin does not acknowledge a Publish and then run the Agent in an unbounded background task. Aedes completes the publish authorization only after the bounded inbound task finishes; queue overflow, Agent failures, and task timeouts are reported as publish failures.
 
 ### Lifecycle
 
 - Embedded broker starts when Gateway runs `startAccount` for MQTT channel (single account `default` in current release)
-- HTTP `GET /mqtt/status` is registered in `registerFull`, exposing broker stats, config snapshot, and policy hot-reload metadata
+- HTTP `GET /mqtt/status` is registered in `registerFull`, exposing broker stats, a secret-free config summary, and policy metadata
 - Session key granularity follows OpenClaw global `session.dmScope` configuration
 - **`package.json` → `openclaw.setupEntry`** points to `dist/setup-entry.js`, exporting a lightweight entry via `defineSetupPluginEntry`
 
@@ -37,7 +61,7 @@
 
 #### 1. Embedded Broker
 
-Aedes MQTT broker starts in-process with zero external dependencies. Supports MQTT 3.1.1 and MQTT 5.0 protocol versions.
+Aedes starts in-process and supports MQTT 3.1 and MQTT 3.1.1. The current Aedes version does not support MQTT 5.0.
 
 #### 2. Topic Routing
 
@@ -51,16 +75,16 @@ Aedes MQTT broker starts in-process with zero external dependencies. Supports MQ
 |------|---------|
 | Authentication | Username/password, per-user ACL, anonymous access toggle |
 | Transport | TCP (1883) + TLS (8883) with configurable cert/key/CA |
-| QoS | 0 (at most once) with mailbox soft limit, 1 (at least once) with ACK retry |
-| Persistence | Multi-backend: memory, redis (with mqemitter), mongodb, level, nedb |
-| Limits | Configurable max payload bytes, max connections |
+| QoS | Native Aedes MQTT QoS 0/1/2; QoS 0 OpenClaw-dispatch mailbox soft limit |
+| Persistence | memory, redis, mongodb, level (single-Gateway Broker) |
+| Limits | Payload, connections, per-client pending tasks, Agent-task timeout |
 | Sessions | Expiry-based cleanup, persistent across reconnect |
 | Observability | Prometheus metrics (`prom-client`), structured JSON audit logs |
 | Will / Retain | Configurable retain policy, will message allowlist |
 
 ### Scaling
 
-Default single-process in-memory deployment. Enable persistence for multi-Gateway horizontal scaling:
+The embedded Broker is intentionally a single-Gateway deployment. Redis provides session, offline-packet, and retained-packet persistence; it is not a cross-Gateway message bus:
 
 ```json
 {
@@ -71,7 +95,11 @@ Default single-process in-memory deployment. Enable persistence for multi-Gatewa
         "backend": "redis",
         "redis": {
           "host": "redis.example.com",
-          "port": 6379
+          "port": 6379,
+          "db": 0,
+          "password": "replace-with-secret",
+          "keyPrefix": "prod-openclaw-mqtt",
+          "packetTTL": 86400
         }
       }
     }
@@ -79,23 +107,55 @@ Default single-process in-memory deployment. Enable persistence for multi-Gatewa
 }
 ```
 
-Supports multiple persistence backends: memory, redis, mongodb, level, nedb.
+`keyPrefix` must be unique per Gateway/environment to prevent key-space collisions. `packetTTL` is the offline QoS packet TTL in seconds; `0` means unlimited. Do not point multiple Gateway processes at the same persistence prefix. For horizontal scaling, deploy a standalone production MQTT Broker instead of treating embedded Brokers as a cluster.
 
-## Message Flow
+> Migration: the `nedb` backend was removed because its dependency uses `util.isDate`, which is unavailable on the Node.js baseline required by OpenClaw 2026.7.1. Old configurations now fail fast; migrate to local `level` or production `redis`.
 
-1. Device publishes MQTT message
-2. Plugin filters via `subscribeTopics` allowlist
-3. Route decision (`topicBindings` first → standard Topic fallback)
-4. Payload parsing (`JSON.text` → plain text fallback)
-5. Dispatch to OpenClaw runtime
-6. Reply published to `replyTopic` or default `/out`
+## Message Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as MQTT Device
+    participant B as Aedes Broker
+    participant Q as Bounded clientId Queue
+    participant I as Routing and ACL
+    participant A as OpenClaw Agent
+
+    D->>B: CONNECT + credentials
+    B-->>D: CONNACK
+    D->>B: PUBLISH(topic, payload)
+    B->>B: payload / retain / publish ACL checks
+    B->>Q: enqueue(clientId)
+    Q->>I: FIFO for the same clientId
+    I->>I: subscribeTopics → route → account ACL → dedupe
+    I->>A: dispatchChannelMessage
+    A-->>I: Agent reply
+    I->>B: publish(replyTopic)
+    B-->>D: reply message
+    I-->>Q: inbound task completed
+    Q-->>B: authorizePublish completed
+    B-->>D: PUBACK / publish completed
+
+    alt Queue full, Agent failure, or timeout
+        Q-->>B: Error
+        B-->>D: Publish failure / connection error
+    end
+```
+
+### Two ACL Layers
+
+1. Broker `publish` / `subscribe` ACLs restrict the topics a client may access.
+2. OpenClaw `inbound` / `outbound` ACLs restrict messages entering or leaving an `accountId`.
+
+An ACL rule with `accountId` matches only when the caller supplies that exact account. A missing account never degrades into global authorization. The internal direct-publish contract is for trusted Router/Bridge calls only and must not be exposed to external clients.
 
 ## Quick Start
 
 ### Prerequisites
 
-- OpenClaw `>= 2026.4.0`
-- Node.js `20+`
+- OpenClaw `>= 2026.7.1`
+- Node.js `>=22.22.3 <23`, `>=24.15.0 <25`, or `>=25.9.0`
 
 ### Install
 
@@ -103,7 +163,7 @@ Supports multiple persistence backends: memory, redis, mongodb, level, nedb.
 openclaw plugins install @partme.ai/openclaw-mqtt
 ```
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+Requires `@partme.ai/openclaw-message-sdk 2026.7.1`.
 
 ### Minimal Config
 
@@ -112,6 +172,7 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
   "channels": {
     "mqtt": {
       "port": 1883,
+      "host": "127.0.0.1",
       "maxConnections": 1000,
       "subscribeTopics": [
         "devices/+/in",
@@ -159,6 +220,7 @@ Routing priority: `topicBindings` → Standard inbound parsing → Drop
 | Field | Default | Description |
 |-------|---------|-------------|
 | `port` | `1883` | MQTT TCP listener port |
+| `host` | `127.0.0.1` | Listener address; unauthenticated mode is restricted to loopback |
 | `maxConnections` | `1000` | Maximum concurrent connections |
 | `subscribeTopics` | `[]` | Allowed inbound topic patterns |
 | `topicBindings` | `[]` | Explicit topic → agent bindings |
@@ -170,6 +232,8 @@ Routing priority: `topicBindings` → Standard inbound parsing → Drop
 | `auth.enabled` | `false` | Enable client authentication |
 | `auth.allowAnonymous` | `false` | Allow anonymous connections |
 | `auth.users` | `[]` | User list with per-user publish/subscribe ACL |
+
+Binding beyond loopback requires authentication. Authenticated mode rejects an empty user list. Anonymous access requires an explicit `anonymous` user with ACL rules, and unmatched publish/subscribe operations are denied by default.
 
 ### TLS
 
@@ -187,6 +251,9 @@ Routing priority: `topicBindings` → Standard inbound parsing → Drop
 | Field | Default | Description |
 |-------|---------|-------------|
 | `limits.maxPayloadBytes` | `1048576` | Max payload size in bytes |
+| `limits.maxPendingMessagesPerClient` | `32` | Queued or active Agent tasks per clientId |
+| `limits.inboundTaskTimeoutMs` | `120000` | Hard timeout for one MQTT-to-Agent task |
+| `qos0.mailboxSoftLimit` | `200` | QoS 0 soft limit; the effective limit is the smaller queue limit |
 | `session.maxExpirySeconds` | `86400` | Session expiry after disconnect |
 | `session.persistentAcrossReconnect` | `true` | Allow sessions to survive reconnect |
 
@@ -194,8 +261,16 @@ Routing priority: `topicBindings` → Standard inbound parsing → Drop
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `persistence.enabled` | `false` | Enable persistence for horizontal scaling |
-| `persistence.backend` | `"memory"` | Backend: `memory`, `redis`, `mongodb`, `level`, `nedb` |
+| `persistence.enabled` | `false` | Enable Broker-state persistence |
+| `persistence.backend` | `"memory"` | Backend: `memory`, `redis`, `mongodb`, `level` |
+| `persistence.redis.keyPrefix` | `"mqtt"` | Single-Gateway Redis persistence prefix; never share across instances |
+| `persistence.redis.packetTTL` | `0` | Offline QoS packet TTL in seconds; 0 is unlimited |
+| `persistence.mongodb.url` | `mongodb://localhost:27017` | MongoDB connection URL |
+| `persistence.mongodb.dbName` | — | MongoDB database name |
+| `persistence.mongodb.collectionPrefix` | — | Collection prefix |
+| `persistence.level.path` | `./data/aedes-leveldb` | Single-node LevelDB directory |
+
+Use `memory` for development, `level` for local persistence, and `mongodb` or `redis` where a single Gateway Broker already has that infrastructure. None of these backends provides a cross-Gateway MQTT message bus.
 
 ## Testing
 
@@ -230,14 +305,14 @@ openclaw-mqtt/
 ├── src/
 │   ├── index.ts              # defineChannelPluginEntry + registerFull
 │   ├── setup-entry.ts        # defineSetupPluginEntry lightweight entry
-│   ├── mqtt-plugin.ts        # ChannelPlugin definition
-│   ├── gateway-mqtt.ts       # Gateway lifecycle management
+│   ├── runtime/mqtt-plugin.ts # ChannelPlugin definition
+│   ├── transport/gateway-mqtt.ts # Gateway lifecycle management
 │   ├── outbound.ts           # ChannelOutboundAdapter
 │   ├── inbound.ts            # Inbound message handling
-│   ├── broker.ts             # Aedes TCP server
-│   ├── topic-router.ts       # Topic routing
-│   ├── session-mapper.ts     # Session context mapping
-│   ├── mqtt-config.ts        # Config parsing
+│   ├── transport/server.ts   # Aedes TCP/TLS, auth, ACL, inbound queue
+│   ├── routing/topic-router.ts # Topic routing
+│   ├── routing/session-mapper.ts # Session context mapping
+│   ├── config.ts             # Config parsing and security validation
 │   └── runtime.ts            # Runtime
 ├── scripts/
 │   └── test-client.ts       # Integration test client
@@ -250,9 +325,9 @@ openclaw-mqtt/
 
 | Area | Details |
 |------|---------|
-| Runtime | Node.js 20+, ESM |
+| Runtime | OpenClaw-supported Node.js 22 / 24 / 25 lines, ESM |
 | Broker | [Aedes](https://github.com/moscajs/aedes) |
-| Persistence | aedes-persistence-redis, aedes-persistence-mongodb, aedes-persistence-level, aedes-persistence-nedb |
+| Persistence | aedes-persistence-redis, aedes-persistence-mongodb, aedes-persistence-level |
 | Metrics | [prom-client](https://github.com/siimon/prom-client) |
 | Host | OpenClaw plugin API (`defineChannelPluginEntry`, `registerService`) |
 
@@ -260,15 +335,40 @@ openclaw-mqtt/
 
 | Item | Version |
 |------|---------|
-| @partme.ai/openclaw-mqtt | 0.1.13 |
-| Recommended Node | 20+ |
+| @partme.ai/openclaw-mqtt | 2026.7.1 |
+| Recommended Node | 24.15.0+ (supported Node 22 / 25 ranges also work) |
 
 ## Security
 
 - **Never store credentials in config**: use environment variables or secret managers for passwords and API keys
 - **TLS verification**: enable `tls.rejectUnauthorized` in production to prevent MITM attacks
 - **ACL scoping**: use `auth.users[].publishAllow` / `subscribeAllow` to restrict device topics
+- **Account isolation**: use `aclRules[].accountId` for cross-account authorization; matching is exact
 - **Audit logging**: enable `audit.enabled` for structured JSON logs compatible with ELK/SIEM
+- **No message body in runtime logs**: inbound logs expose `textLength`, not the first payload bytes.
+  Topic/client/session values and transport errors cross the OpenClaw 2026.7.1 security runtime plus
+  MQTT-specific password, URI, and Authorization rules before logging.
+
+```text
+MQTT inbound / broker error
+          │
+          ▼
+omit payload body (record textLength only)
+          │
+          ▼
+OpenClaw redaction + configured secret/URI/Bearer rules
+          │
+          ▼
+control cleanup + 500-char limit → Gateway log / audit
+```
+
+```mermaid
+flowchart LR
+    I["MQTT inbound / broker error"] --> B["Body length only"]
+    B --> S["OpenClaw security-runtime"]
+    S --> P["MQTT password / URI / Authorization rules"]
+    P --> L["Single-line 500-char log / audit"]
+```
 
 ## FAQ
 

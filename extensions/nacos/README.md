@@ -4,7 +4,7 @@
 
 **OpenClaw plugin — Nacos Config Center merge and Gateway / Hooks naming registration**
 
-![npm](https://img.shields.io/badge/npm-2026.5.12-blue)
+![npm](https://img.shields.io/badge/npm-2026.7.1-blue)
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Nacos](https://img.shields.io/badge/Nacos-SDK-orange)
@@ -30,7 +30,7 @@
   - **Primary config mode** (`primaryConfigDataId`): Load the **complete** `openclaw.json` from a single Nacos dataId as the source of truth. `sharedConfigs` and `pluginConfigIds` are still layered on top.
   - **Shared configs mode** (`sharedConfigs`): Pull multiple partial configs and deep-merge them with the current runtime config.
 - Supports optional `applicationDataId` and per-plugin `<pluginId>-<profile>.json` via `pluginConfigIds`.
-- Before `runtime.config.replaceConfigFile`, backs up the active config file under `stateDir` as `openclaw-nacos-<yyyyMMddHHmmss>.json`.
+- Before `runtime.config.replaceConfigFile`, backs up the active config as `openclaw-nacos-<yyyyMMddHHmmss>-<random>.json` so same-second writes cannot collide. The newest 20 backups are retained by default; `backupRetentionCount` controls the bounded history.
 - Subscribes to Nacos config changes and **re-applies** on every change (pull → merge → backup → write).
 - Naming and Config share **`serverList` / `username` / `password` / default `namespace`**; Config may override with **`configCenter.namespace`**.
 
@@ -38,7 +38,7 @@
 
 - Discovers peer Gateway nodes registered under the same Nacos service name.
 - Maintains an in-memory peer list that **auto-updates** via Nacos naming subscription.
-- Exposes `GET /nacos/cluster` HTTP endpoint with full peer metadata (IP, port, hooks path, health status).
+- Exposes `GET /nacos/cluster` with peer IP, port, hooks path and health; sensitive metadata keys are redacted.
 - `GET /nacos/health` includes cluster discovery status and peer count.
 
 ### ✨ Highlights
@@ -56,15 +56,16 @@
 #### 3. Backup and write
 
 - Backup source: `OPENCLAW_CONFIG_PATH` if set, else `stateDir/openclaw.json`.
-- Backup file: `stateDir/openclaw-nacos-<yyyyMMddHHmmss>.json` (local 14-digit timestamp).
+- Backup file: `stateDir/openclaw-nacos-<yyyyMMddHHmmss>-<8-char random>.json`.
+- Retention: newest 20 by default; cleanup only matches strict plugin backup names and never removes `openclaw.json` or manual backups.
 
 #### 4. Switches
 
-| **Switch** | **Behavior** |
-| --- | --- |
-| `enabled: false` | Disables the entire plugin |
-| `naming.enabled: false` | Skips naming only; Config Center may still run |
-| `configCenter.enabled: true` | Enables pull, merge, subscribe, and write |
+| **Switch**                        | **Behavior**                                              |
+| --------------------------------- | --------------------------------------------------------- |
+| `enabled: false`                  | Disables the entire plugin                                |
+| `naming.enabled: false`           | Skips naming only; Config Center may still run            |
+| `configCenter.enabled: true`      | Enables pull, merge, subscribe, and write                 |
 | `clusterDiscovery.enabled: false` | Skips peer discovery only; naming registration still runs |
 
 #### 5. Webhook cluster
@@ -93,13 +94,23 @@
                subscribe → re-pull / merge
 ```
 
+```mermaid
+flowchart LR
+    N["Nacos Config"] --> P["Safe JSON/YAML parse"]
+    P --> M["Deterministic deep merge"]
+    M --> E["Environment expansion"]
+    E --> B[("Unique backup<br/>retain newest N")]
+    B --> W["runtime.config.replaceConfigFile<br/>afterWrite: auto"]
+    W --> R["OpenClaw reload plan"]
+```
+
 **Startup order**: OpenClaw loads local `openclaw.json` and starts the Gateway first; this plugin runs **after** that. The first Nacos merge is a **second convergence**. Bootstrapping **only** from Nacos before `loadConfig` requires OpenClaw core support.
 
 ### 📖 Quick start
 
 #### Prerequisites
 
-- [OpenClaw](https://github.com/openclaw/openclaw) **2026.4.6+** (see `peerDependencies` and `openclaw.compat` / `openclaw.build` in `package.json`)
+- [OpenClaw](https://github.com/openclaw/openclaw) **2026.7.1+** (see `peerDependencies` and `openclaw.compat` / `openclaw.build` in `package.json`)
 - **Node.js 22+** ([Building plugins](https://docs.openclaw.ai/plugins/building-plugins) prerequisites; also in `engines`)
 - **Nacos Server** reachable from the Gateway host (compatible with [nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs))
 
@@ -127,7 +138,7 @@ Wire the package into OpenClaw using your version’s plugin discovery rules (`o
 
 #### Spring-style `nacos` block (optional)
 
-You may nest a `nacos` object under `plugins.entries.openclaw-nacos.config` (similar to Spring Boot `application.yml`). The plugin flattens it before validation; **top-level keys win** when both are present. See [README.zh-CN.md](./README.zh-CN.md) for field mapping (`server-addr`, `discovery`, `config`, `shared-configs`, `data-id`).
+You may nest a `nacos` object under `plugins.entries.nacos.config` (similar to Spring Boot `application.yml`). The plugin flattens it before validation; **top-level keys win** when both are present. See [README.zh-CN.md](./README.zh-CN.md) for field mapping (`server-addr`, `discovery`, `config`, `shared-configs`, `data-id`).
 
 #### npm `nacos` 2.x only
 
@@ -153,7 +164,7 @@ Edit your OpenClaw config (often `~/.openclaw/openclaw.json` or `OPENCLAW_CONFIG
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           "serverList": "127.0.0.1:8848",
@@ -163,17 +174,17 @@ Edit your OpenClaw config (often `~/.openclaw/openclaw.json` or `OPENCLAW_CONFIG
           "serviceName": "openclaw-gateway",
           "groupName": "DEFAULT_GROUP",
           "registerIp": "10.0.0.12",
-          "metadata": { "env": "prod" }
-        }
-      }
-    }
+          "metadata": { "env": "prod" },
+        },
+      },
+    },
   },
   "gateway": { "port": 18789 },
   "hooks": {
     "enabled": true,
     "token": "your-secret-token",
-    "path": "/hooks"
-  }
+    "path": "/hooks",
+  },
 }
 ```
 
@@ -185,7 +196,7 @@ Store your **entire** `openclaw.json` as a Nacos config (e.g. dataId `openclaw.j
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           "serverList": "127.0.0.1:8848",
@@ -193,20 +204,21 @@ Store your **entire** `openclaw.json` as a Nacos config (e.g. dataId `openclaw.j
             "enabled": true,
             "primaryConfigDataId": "openclaw.json",
             "primaryConfigGroup": "DEFAULT_GROUP",
-            "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
-            "profile": "dev"
-          }
-        }
-      }
-    }
-  }
+            "pluginConfigIds": ["wechat", "dingtalk-connector"],
+            "profile": "dev",
+          },
+        },
+      },
+    },
+  },
 }
 ```
 
 With this setup:
+
 - The **primary config** (`openclaw.json` in Nacos) replaces the local config snapshot as the base.
-- `openclaw-weixin-dev.json` and `openclaw-dingtalk-dev.json` are loaded into `plugins.entries["openclaw-weixin"].config` etc.
-- Any Nacos config change triggers: pull → merge → **backup** (`openclaw-nacos-yyyyMMddHHmmss.json`) → write.
+- `wechat-dev.json` and `dingtalk-connector-dev.json` are loaded into `plugins.entries["wechat"].config` and `plugins.entries["dingtalk-connector"].config`.
+- Any Nacos config change triggers: pull → validate → merge → **unique backup** (`openclaw-nacos-yyyyMMddHHmmss-xxxxxxxx.json`) → write.
 
 #### 3b. Webhook cluster with peer discovery
 
@@ -214,21 +226,22 @@ With this setup:
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           "serverList": "127.0.0.1:8848",
           "serviceName": "openclaw-gateway",
           "registerIp": "10.0.0.12",
-          "metadata": { "env": "prod", "region": "us-east-1" }
-        }
-      }
-    }
-  }
+          "metadata": { "env": "prod", "region": "us-east-1" },
+        },
+      },
+    },
+  },
 }
 ```
 
 After startup:
+
 - `GET /nacos/cluster` → `{ "peers": [...], "peerCount": 2, "discoveryRunning": true }`
 - `GET /nacos/health` → `{ "status": "ok", "clusterDiscovery": { "running": true } }`
 
@@ -308,47 +321,48 @@ node scripts/publish-changed.mjs --plugin nacos
 
 #### Required
 
-| **Field** | **Description** |
-| --- | --- |
+| **Field**    | **Description**                                         |
+| ------------ | ------------------------------------------------------- |
 | `serverList` | Nacos address, e.g. `host:8848` or comma-separated list |
 
 #### Naming (optional)
 
-| **Field** | **Default** | **Description** |
-| --- | --- | --- |
-| `enabled` | `true` | `false` disables the **entire** plugin |
-| `naming.enabled` | `true` | `false` skips naming only |
-| `namespace` | `public` | Namespace; default for Config if `configCenter.namespace` unset |
-| `username` / `password` | — | Nacos auth (shared by Naming and Config) |
-| `serviceName` | `openclaw-gateway` | Service name |
-| `groupName` | `DEFAULT_GROUP` | Group |
-| `clusterName` | — | Cluster name |
-| `weight` | `1` | Weight |
-| `ephemeral` | `true` | Ephemeral instance |
-| `registerIp` | env / auto | IP registered to Nacos |
-| `metadata` | — | Extra metadata (string map) |
+| **Field**               | **Default**        | **Description**                                                                             |
+| ----------------------- | ------------------ | ------------------------------------------------------------------------------------------- |
+| `enabled`               | `true`             | `false` disables the **entire** plugin                                                      |
+| `naming.enabled`        | `true`             | `false` skips naming only                                                                   |
+| `namespace`             | `public`           | Naming namespace; Config maps the displayed `public` name to Nacos' empty default tenant id |
+| `username` / `password` | —                  | Nacos auth (shared by Naming and Config)                                                    |
+| `serviceName`           | `openclaw-gateway` | Service name                                                                                |
+| `groupName`             | `DEFAULT_GROUP`    | Group                                                                                       |
+| `clusterName`           | —                  | Cluster name                                                                                |
+| `weight`                | `1`                | Weight                                                                                      |
+| `ephemeral`             | `true`             | Ephemeral instance                                                                          |
+| `registerIp`            | env / auto         | IP registered to Nacos                                                                      |
+| `metadata`              | —                  | Extra metadata (string map)                                                                 |
 
 #### Config Center `configCenter` (optional)
 
-| **Field** | **Description** |
-| --- | --- |
-| `configCenter.enabled` | When `true`, enables pull, merge, subscribe, write |
-| `configCenter.namespace` | Config tenant; overrides top-level `namespace` for Config only |
-| `configCenter.sharedConfigs` | Ordered `{ dataId, group?, refresh? }` list, merged in order |
-| `configCenter.applicationDataId` | Optional main dataId (supports `${profile}` in templates) |
-| `configCenter.profile` | Profile for dataIds and `<pluginId>-<profile>.json` |
-| `configCenter.pluginConfigIds` | Plugin IDs; merge into `plugins.entries.<id>.config` |
-| `configCenter.skipValidation` | When `true`, skips extra plugin-side checks (JSON serializable checks still apply) |
+| **Field**                           | **Description**                                                                    |
+| ----------------------------------- | ---------------------------------------------------------------------------------- |
+| `configCenter.enabled`              | When `true`, enables pull, merge, subscribe, write                                 |
+| `configCenter.namespace`            | Config tenant; overrides top-level `namespace` for Config only                     |
+| `configCenter.sharedConfigs`        | Ordered `{ dataId, group?, refresh? }` list, merged in order                       |
+| `configCenter.applicationDataId`    | Optional main dataId (supports `${profile}` in templates)                          |
+| `configCenter.profile`              | Profile for dataIds and `<pluginId>-<profile>.json`                                |
+| `configCenter.pluginConfigIds`      | Plugin IDs; merge into `plugins.entries.<id>.config`                               |
+| `configCenter.skipValidation`       | When `true`, skips extra plugin-side checks (JSON serializable checks still apply) |
+| `configCenter.backupRetentionCount` | Pre-write rollback backups retained; default `20`, range `1..1000`                 |
 
 #### Environment variables
 
-| **Variable** | **Purpose** |
-| --- | --- |
-| `OPENCLAW_GATEWAY_PORT` | Overrides Gateway port resolution |
-| `OPENCLAW_NACOS_REGISTER_IP` | Advertised IP if `registerIp` unset |
-| `OPENCLAW_CONFIG_PATH` | If set, this file is copied before `writeConfigFile` |
-| `OPENCLAW_PROFILE` | Profile (overridden by `configCenter.profile`) |
-| `SPRING_PROFILES_ACTIVE` | Used if `OPENCLAW_PROFILE` unset |
+| **Variable**                 | **Purpose**                                          |
+| ---------------------------- | ---------------------------------------------------- |
+| `OPENCLAW_GATEWAY_PORT`      | Overrides Gateway port resolution                    |
+| `OPENCLAW_NACOS_REGISTER_IP` | Advertised IP if `registerIp` unset                  |
+| `OPENCLAW_CONFIG_PATH`       | If set, this file is copied before `writeConfigFile` |
+| `OPENCLAW_PROFILE`           | Profile (overridden by `configCenter.profile`)       |
+| `SPRING_PROFILES_ACTIVE`     | Used if `OPENCLAW_PROFILE` unset                     |
 
 ### 🔒 Security
 
@@ -363,59 +377,59 @@ node scripts/publish-changed.mjs --plugin nacos
 
 ### 🛠️ Tech stack
 
-| **Area** | **Details** |
-| --- | --- |
-| Runtime | Node.js 22+, ESM |
-| SDK | [`nacos`](https://github.com/nacos-group/nacos-sdk-nodejs) (Naming + Config) |
-| Parsing | `yaml` for YAML config bodies |
-| Host | OpenClaw plugin API (`registerService`, `runtime.config`) |
+| **Area** | **Details**                                                                  |
+| -------- | ---------------------------------------------------------------------------- |
+| Runtime  | Node.js 22+, ESM                                                             |
+| SDK      | [`nacos`](https://github.com/nacos-group/nacos-sdk-nodejs) (Naming + Config) |
+| Parsing  | `yaml` for YAML config bodies                                                |
+| Host     | OpenClaw plugin API (`registerService`, `runtime.config`)                    |
 
 ### 📦 Version
 
-| **Item** | **Version** |
-| --- | --- |
-| @partme.ai/openclaw-nacos | 2026.5.12.2 |
-| Recommended Node | 22+ |
+| **Item**                  | **Version** |
+| ------------------------- | ----------- |
+| @partme.ai/openclaw-nacos | 2026.7.1    |
+| Recommended Node          | 22+         |
 
 ### 🔗 Links
 
-| **Resource** | **URL** |
-| --- | --- |
-| Nacos | [https://nacos.io](https://nacos.io) |
-| nacos-sdk-nodejs | [https://github.com/nacos-group/nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs) |
-| OpenClaw | [https://docs.openclaw.ai](https://docs.openclaw.ai) |
-| OpenClaw (source) | [https://github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) |
-| 中文说明 | [README.zh-CN.md](./README.zh-CN.md) |
+| **Resource**      | **URL**                                                                                            |
+| ----------------- | -------------------------------------------------------------------------------------------------- |
+| Nacos             | [https://nacos.io](https://nacos.io)                                                               |
+| nacos-sdk-nodejs  | [https://github.com/nacos-group/nacos-sdk-nodejs](https://github.com/nacos-group/nacos-sdk-nodejs) |
+| OpenClaw          | [https://docs.openclaw.ai](https://docs.openclaw.ai)                                               |
+| OpenClaw (source) | [https://github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)                       |
+| 中文说明          | [README.zh-CN.md](./README.zh-CN.md)                                                               |
 
 #### OpenClaw plugins (official docs)
 
-| **Topic** | **URL** |
-| --- | --- |
-| Plugins | [https://docs.openclaw.ai/tools/plugin](https://docs.openclaw.ai/tools/plugin) |
-| Community plugins | [https://docs.openclaw.ai/plugins/community](https://docs.openclaw.ai/plugins/community) |
-| Bundles | [https://docs.openclaw.ai/plugins/bundles](https://docs.openclaw.ai/plugins/bundles) |
-| Voice call | [https://docs.openclaw.ai/plugins/voice-call](https://docs.openclaw.ai/plugins/voice-call) |
+| **Topic**         | **URL**                                                                                    |
+| ----------------- | ------------------------------------------------------------------------------------------ |
+| Plugins           | [https://docs.openclaw.ai/tools/plugin](https://docs.openclaw.ai/tools/plugin)             |
+| Community plugins | [https://docs.openclaw.ai/plugins/community](https://docs.openclaw.ai/plugins/community)   |
+| Bundles           | [https://docs.openclaw.ai/plugins/bundles](https://docs.openclaw.ai/plugins/bundles)       |
+| Voice call        | [https://docs.openclaw.ai/plugins/voice-call](https://docs.openclaw.ai/plugins/voice-call) |
 
 #### Building plugins
 
-| **Topic** | **URL** |
-| --- | --- |
-| Building plugins | [https://docs.openclaw.ai/plugins/building-plugins](https://docs.openclaw.ai/plugins/building-plugins) |
-| SDK channel plugins | [https://docs.openclaw.ai/plugins/sdk-channel-plugins](https://docs.openclaw.ai/plugins/sdk-channel-plugins) |
+| **Topic**            | **URL**                                                                                                        |
+| -------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Building plugins     | [https://docs.openclaw.ai/plugins/building-plugins](https://docs.openclaw.ai/plugins/building-plugins)         |
+| SDK channel plugins  | [https://docs.openclaw.ai/plugins/sdk-channel-plugins](https://docs.openclaw.ai/plugins/sdk-channel-plugins)   |
 | SDK provider plugins | [https://docs.openclaw.ai/plugins/sdk-provider-plugins](https://docs.openclaw.ai/plugins/sdk-provider-plugins) |
-| SDK migration | [https://docs.openclaw.ai/plugins/sdk-migration](https://docs.openclaw.ai/plugins/sdk-migration) |
+| SDK migration        | [https://docs.openclaw.ai/plugins/sdk-migration](https://docs.openclaw.ai/plugins/sdk-migration)               |
 
 #### SDK reference
 
-| **Topic** | **URL** |
-| --- | --- |
-| SDK overview | [https://docs.openclaw.ai/plugins/sdk-overview](https://docs.openclaw.ai/plugins/sdk-overview) |
+| **Topic**       | **URL**                                                                                              |
+| --------------- | ---------------------------------------------------------------------------------------------------- |
+| SDK overview    | [https://docs.openclaw.ai/plugins/sdk-overview](https://docs.openclaw.ai/plugins/sdk-overview)       |
 | SDK entrypoints | [https://docs.openclaw.ai/plugins/sdk-entrypoints](https://docs.openclaw.ai/plugins/sdk-entrypoints) |
-| SDK runtime | [https://docs.openclaw.ai/plugins/sdk-runtime](https://docs.openclaw.ai/plugins/sdk-runtime) |
-| SDK setup | [https://docs.openclaw.ai/plugins/sdk-setup](https://docs.openclaw.ai/plugins/sdk-setup) |
-| SDK testing | [https://docs.openclaw.ai/plugins/sdk-testing](https://docs.openclaw.ai/plugins/sdk-testing) |
-| Manifest | [https://docs.openclaw.ai/plugins/manifest](https://docs.openclaw.ai/plugins/manifest) |
-| Architecture | [https://docs.openclaw.ai/plugins/architecture](https://docs.openclaw.ai/plugins/architecture) |
+| SDK runtime     | [https://docs.openclaw.ai/plugins/sdk-runtime](https://docs.openclaw.ai/plugins/sdk-runtime)         |
+| SDK setup       | [https://docs.openclaw.ai/plugins/sdk-setup](https://docs.openclaw.ai/plugins/sdk-setup)             |
+| SDK testing     | [https://docs.openclaw.ai/plugins/sdk-testing](https://docs.openclaw.ai/plugins/sdk-testing)         |
+| Manifest        | [https://docs.openclaw.ai/plugins/manifest](https://docs.openclaw.ai/plugins/manifest)               |
+| Architecture    | [https://docs.openclaw.ai/plugins/architecture](https://docs.openclaw.ai/plugins/architecture)       |
 
 ### 📄 License
 

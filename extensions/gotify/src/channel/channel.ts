@@ -12,7 +12,7 @@
  * ## 关键设计
  * - 自我回显防护：出站消息自动注入 extras.openclaw.outbound 标记，入站时过滤
  * - 幂等去重：60s 窗口，按 accountId:messageId 去重
- * - 消费后删除：入站派发成功 + 出站回复成功 后从 Gotify 服务端删除消息
+ * - 消费后删除：入站派发与回复投递成功后删除原入站消息；保留 Agent 回复供离线客户端读取
  * - 账号级并发锁：同一账号的 API 请求串行执行
  *
  * **模块角色**：Channel Plugin · Core lifecycle & dispatch orchestrator。
@@ -36,6 +36,7 @@ import {
   resolveGotifyAccount,
   listGotifyAccountIds,
   describeGotifyAccountSnapshot,
+  validateGotifyAccount,
   DEFAULT_GOTIFY_ACCOUNT_ID,
 } from "../config.js";
 import { gotifyOutbound } from "../outbound.js";
@@ -72,12 +73,16 @@ import {
 import { checkGotifyInboundAccess } from "../inbound.js";
 import { gotifyConfigSchema } from "../config/channel-config.js";
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from "../types.js";
+import { GotifyConfigError } from "../shared/errors.js";
+import { redactGotifyError } from "../shared/redact.js";
 import { gotifySetupAdapter, gotifySetupWizard } from "../onboarding.js";
 
 /** WebSocket 监听器实例，按账号 ID 索引。 */
 const stopSignals = new Map<string, () => void>();
 const listeners = new Map<string, ReturnType<typeof createGotifyWsListener>>();
 const inboundQueues = new Map<string, Promise<void>>();
+const inboundPendingCounts = new Map<string, number>();
+const inboundAbortControllers = new Map<string, AbortController>();
 
 /** 幂等缓存窗口（毫秒），与 PLUGIN_SPEC 对齐为 60 秒。 */
 const DEDUP_WINDOW_MS = 60_000;
@@ -120,6 +125,8 @@ const gotifyDedup = createIdempotencyCache({
  */
 export function cleanupGotifyChannel(): void {
   gotifyDedup.clear();
+  for (const controller of inboundAbortControllers.values()) controller.abort();
+  inboundAbortControllers.clear();
   for (const resolve of stopSignals.values()) resolve();
   stopSignals.clear();
   for (const listener of listeners.values()) {
@@ -127,6 +134,7 @@ export function cleanupGotifyChannel(): void {
   }
   listeners.clear();
   inboundQueues.clear();
+  inboundPendingCounts.clear();
 }
 
 /**
@@ -136,7 +144,9 @@ export function cleanupGotifyChannel(): void {
  */
 function parsePositiveMessageId(id: number | string | undefined): number {
   const normalized =
-    typeof id === "number" ? Math.trunc(id) : Number.parseInt(String(id ?? ""), 10);
+    typeof id === "number"
+      ? Math.trunc(id)
+      : Number.parseInt(String(id ?? ""), 10);
   return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
 }
 
@@ -147,18 +157,91 @@ function parsePositiveMessageId(id: number | string | undefined): number {
  * @param task - 单条消息的异步派发任务。
  * @returns 排队后的 Promise，在前序任务完成后执行。
  */
-function enqueueInbound(accountId: string, task: () => Promise<void>): Promise<void> {
+function enqueueInbound(
+  accountId: string,
+  maxPending: number,
+  task: () => Promise<void>,
+): Promise<void> {
+  const pending = inboundPendingCounts.get(accountId) ?? 0;
+  if (pending >= maxPending) {
+    throw new GotifyConfigError(
+      "inbound.maxBufferedMessages",
+      `live inbound queue exceeded ${maxPending} messages`,
+    );
+  }
+  inboundPendingCounts.set(accountId, pending + 1);
   const previous = inboundQueues.get(accountId) ?? Promise.resolve();
-  const next = previous
-    .catch(() => undefined)
-    .then(task);
+  const next = previous.catch(() => undefined).then(task);
   const tracked = next.finally(() => {
     if (inboundQueues.get(accountId) === tracked) {
       inboundQueues.delete(accountId);
     }
+    const remaining = Math.max(
+      0,
+      (inboundPendingCounts.get(accountId) ?? 1) - 1,
+    );
+    if (remaining === 0) inboundPendingCounts.delete(accountId);
+    else inboundPendingCounts.set(accountId, remaining);
   });
   inboundQueues.set(accountId, tracked);
   return tracked;
+}
+
+/**
+ * 对单条 Gotify 入站执行有界指数退避。
+ *
+ * Gotify `/stream` 没有 ACK/NACK；回调抛错后服务端不会在当前连接上自动重投。因此必须在
+ * 本地保留同一条消息并重试，成功前不能让账号队列越过它。重试耗尽由调用方 fail-closed
+ * 停止 listener，消息仍保留在 Gotify，下一次账号启动由 backlog replay 接管。
+ */
+export async function runInboundDispatchWithRetry(params: {
+  task: () => Promise<void>;
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  signal?: AbortSignal;
+  onRetry?: (attempt: number, error: unknown, delayMs: number) => void;
+}): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= params.maxAttempts; attempt += 1) {
+    params.signal?.throwIfAborted();
+    try {
+      await params.task();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= params.maxAttempts) break;
+      const delayMs = Math.min(
+        params.initialDelayMs * 2 ** Math.max(0, attempt - 1),
+        params.maxDelayMs,
+      );
+      params.onRetry?.(attempt, error, delayMs);
+      await waitForRetry(delayMs, params.signal);
+    }
+  }
+  throw new Error(
+    `Gotify inbound dispatch exhausted ${params.maxAttempts} attempts: ${redactGotifyError(lastError)}`,
+    { cause: lastError },
+  );
+}
+
+/** 可被 AbortSignal 立即打断的退避等待，确保 stopAccount 不被重试计时器拖住。 */
+function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(done, ms);
+    timer.unref?.();
+    function done(): void {
+      signal?.removeEventListener("abort", aborted);
+      resolve();
+    }
+    function aborted(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", aborted);
+      reject(signal?.reason ?? new Error("Gotify inbound retry aborted"));
+    }
+    signal?.addEventListener("abort", aborted, { once: true });
+  });
 }
 
 const meta = {
@@ -349,6 +432,10 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
      */
     async startAccount(ctx: ChannelGatewayContext<ResolvedGotifyAccount>) {
       const account = ctx.account;
+      const configIssues = validateGotifyAccount(account);
+      if (configIssues.length > 0) {
+        throw new GotifyConfigError("account", configIssues.join("; "));
+      }
       patchAccountSnapshot(account.accountId, {
         running: account.inbound.enabled,
         lastStartAt: Date.now(),
@@ -389,17 +476,95 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
         });
         return;
       }
-      const processInbound = async (message: GotifyStreamEnvelope) => {
-        await enqueueInbound(account.accountId, async () => {
-          await dispatchInboundMessage(ctx, account, message);
+      inboundAbortControllers.get(account.accountId)?.abort();
+      const retryAbortController = new AbortController();
+      inboundAbortControllers.set(account.accountId, retryAbortController);
+      const retrySignal = AbortSignal.any([
+        retryAbortController.signal,
+        ctx.abortSignal,
+      ]);
+      let listener: ReturnType<typeof createGotifyWsListener> | null = null;
+
+      const failClosed = (error: unknown): void => {
+        const errorMsg = redactGotifyError(error, account);
+        retryAbortController.abort(error);
+        if (
+          inboundAbortControllers.get(account.accountId) ===
+          retryAbortController
+        ) {
+          inboundAbortControllers.delete(account.accountId);
+        }
+        listener?.stop();
+        if (listeners.get(account.accountId) === listener) {
+          listeners.delete(account.accountId);
+        }
+        patchAccountSnapshot(account.accountId, {
+          running: false,
+          lastError: errorMsg,
         });
+        ctx.setStatus({
+          accountId: account.accountId,
+          running: false,
+          lastError: errorMsg,
+        });
+        stopSignals.get(account.accountId)?.();
+        stopSignals.delete(account.accountId);
+      };
+
+      const processInbound = async (message: GotifyStreamEnvelope) => {
+        try {
+          await enqueueInbound(
+            account.accountId,
+            account.inbound.maxBufferedMessages,
+            async () => {
+              await runInboundDispatchWithRetry({
+                task: () => dispatchInboundMessage(ctx, account, message),
+                maxAttempts: account.inbound.maxDispatchAttempts,
+                initialDelayMs: account.inbound.dispatchRetryDelayMs,
+                maxDelayMs: account.inbound.maxDispatchRetryDelayMs,
+                signal: retrySignal,
+                onRetry: (attempt, error, delayMs) => {
+                  const reason = redactGotifyError(error, account);
+                  const retryError =
+                    `inbound dispatch retry ${attempt}/${account.inbound.maxDispatchAttempts} ` +
+                    `in ${delayMs}ms: ${reason}`;
+                  patchAccountSnapshot(account.accountId, {
+                    lastError: retryError,
+                  });
+                  ctx.setStatus({
+                    accountId: account.accountId,
+                    lastError: retryError,
+                  });
+                },
+              });
+            },
+          );
+        } catch (error) {
+          // 正常 stop/reload 只负责打断等待，不应覆盖 stopAccount 写入的健康状态。
+          if (retrySignal.aborted) return;
+          failClosed(error);
+          throw error;
+        }
       };
 
       const bufferedMessages: GotifyStreamEnvelope[] = [];
       let buffering = true;
-      const listener = createGotifyWsListener(account, {
+      let bufferOverflowError: GotifyConfigError | null = null;
+      listener = createGotifyWsListener(account, {
         onMessage: async (message) => {
           if (buffering) {
+            if (
+              bufferedMessages.length >= account.inbound.maxBufferedMessages
+            ) {
+              bufferOverflowError = new GotifyConfigError(
+                "inbound.maxBufferedMessages",
+                `live stream buffer exceeded ${account.inbound.maxBufferedMessages} messages during backlog replay`,
+              );
+              // ws-listener 会把 onMessage 异常收敛为状态更新，必须在这里主动停止账号；
+              // 否则 replay 已完成检查后发生的溢出只会记错，连接仍继续接收并扩大丢失窗口。
+              failClosed(bufferOverflowError);
+              throw bufferOverflowError;
+            }
             bufferedMessages.push(message);
             return;
           }
@@ -423,13 +588,21 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
        */
       listeners.get(account.accountId)?.stop();
       listeners.set(account.accountId, listener);
-      await listener.start();
+      try {
+        await listener.start();
+      } catch (error) {
+        failClosed(error);
+        throw error;
+      }
 
       try {
         const replay = await replayBacklogForAccount({
           account,
           dispatch: processInbound,
         });
+        if (bufferOverflowError) {
+          throw bufferOverflowError;
+        }
         patchAccountSnapshot(account.accountId, {
           lastError:
             replay.replayed > 0
@@ -444,8 +617,7 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
               : null,
         });
       } catch (error) {
-        const errorMsg =
-          error instanceof Error ? error.message : String(error);
+        const errorMsg = redactGotifyError(error, account);
         patchAccountSnapshot(account.accountId, {
           running: false,
           lastError: `backlog replay failed: ${errorMsg}`,
@@ -457,6 +629,13 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
         });
         listener.stop();
         listeners.delete(account.accountId);
+        retryAbortController.abort(error);
+        if (
+          inboundAbortControllers.get(account.accountId) ===
+          retryAbortController
+        ) {
+          inboundAbortControllers.delete(account.accountId);
+        }
         return;
       }
 
@@ -480,10 +659,18 @@ export const gotifyChannel: ChannelPlugin<ResolvedGotifyAccount> = {
      * @param ctx - OpenClaw gateway 为该账号构造的停止上下文。
      */
     async stopAccount(ctx: ChannelGatewayContext<ResolvedGotifyAccount>) {
-      stopSignals.get(ctx.account.accountId)?.();
-      stopSignals.delete(ctx.account.accountId);
-      listeners.get(ctx.account.accountId)?.stop();
-      listeners.delete(ctx.account.accountId);
+      const accountId = ctx.account.accountId;
+      // 先停止新帧，再打断尚在退避的重试；已经进入 Agent 的任务允许完成并持久化 cursor。
+      listeners.get(accountId)?.stop();
+      listeners.delete(accountId);
+      inboundAbortControllers.get(accountId)?.abort();
+      inboundAbortControllers.delete(accountId);
+      const activeQueue = inboundQueues.get(accountId);
+      if (activeQueue) await activeQueue.catch(() => undefined);
+      stopSignals.get(accountId)?.();
+      stopSignals.delete(accountId);
+      inboundQueues.delete(accountId);
+      inboundPendingCounts.delete(accountId);
       patchAccountSnapshot(ctx.account.accountId, {
         running: false,
         lastStopAt: Date.now(),
@@ -519,7 +706,7 @@ export async function dispatchInboundMessage(
     patchAccountSnapshot(account.accountId, {
       lastError: "channelRuntime does not expose reply/routing.",
     });
-    return;
+    throw new Error("Gotify channelRuntime does not expose reply/routing");
   }
 
   // ── 跳过 OpenClaw 出站回显，避免 Agent 反馈环 ─────────────────────────────
@@ -566,7 +753,10 @@ export async function dispatchInboundMessage(
       typeof message.appid === "number"
         ? message.appid
         : Number.parseInt(String(message.appid ?? ""), 10);
-    if (!Number.isFinite(incomingAppId) || incomingAppId !== configuredAllowedAppId) {
+    if (
+      !Number.isFinite(incomingAppId) ||
+      incomingAppId !== configuredAllowedAppId
+    ) {
       return;
     }
   }
@@ -631,7 +821,12 @@ export async function dispatchInboundMessage(
        * Gotify stream 只有 appid，没有应用名称。为让 Control UI 显示可读会话名，
        * 在有 clientToken 时按 appid 查询 Application API，并由 gotify-api 缓存结果。
        */
-      resolvedAppName = await resolveApplicationName(account, appId);
+      try {
+        resolvedAppName = await resolveApplicationName(account, appId);
+      } catch {
+        // Application name is presentation metadata; an API lookup failure must not block delivery.
+        resolvedAppName = undefined;
+      }
     }
   }
 
@@ -681,7 +876,7 @@ export async function dispatchInboundMessage(
       : undefined;
 
   const onRecordError = (err: unknown) => {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = redactGotifyError(err, account);
     patchAccountSnapshot(account.accountId, {
       lastError: `recordInboundSession: ${errorMsg}`,
     });
@@ -710,10 +905,8 @@ export async function dispatchInboundMessage(
         accountId: account.accountId,
         lastOutboundAt: Date.now(),
       });
-      // 出站：先完成 POST，再删除，保证手机端能收到完整一轮回复后再清理
-      await deleteConsumedGotifyMessage(account, { id: response.id });
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = redactGotifyError(error, account);
       patchAccountSnapshot(account.accountId, { lastError: errorMsg });
       ctx.setStatus({
         accountId: account.accountId,
@@ -759,28 +952,32 @@ export async function dispatchInboundMessage(
     delivery: {
       deliver: deliverReply,
       onError: (error: unknown) => {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = redactGotifyError(error, account);
         patchAccountSnapshot(account.accountId, { lastError: errorMsg });
       },
     },
   });
 
+  const allowedAppId = account.inbound.allowedAppId;
+  const seenMessageId = parsePositiveMessageId(message.id);
+  if (allowedAppId > 0 && seenMessageId > 0) {
+    /*
+     * Agent 与回复均成功后，先持久化处理游标，再做 best-effort 删除。若进程恰好在两步
+     * 之间崩溃，消息虽仍留在 Gotify，但重启回放会按游标跳过，避免重复触发 Agent。
+     */
+    await writeBacklogCursor(account.accountId, allowedAppId, seenMessageId);
+  }
+
   if (dedupKey) {
     /*
-     * 只有成功派发并完成回复链路后才写入幂等缓存。
-     * 这样短暂失败不会让消息在 60 秒内被永久跳过，便于重连或人工重试。
+     * 只有 Agent、回复和持久游标均成功后才写入进程内幂等缓存。游标写失败不能被缓存
+     * 伪装成处理成功；此时保留原消息并让重试/人工恢复明确处理未知结果。
      */
     gotifyDedup.remember(dedupKey);
   }
 
-  // 入站：在 Agent 回复投递成功后再删除用户消息，避免「先删后答」打断一轮
+  // 入站：在 Agent 回复和持久游标均成功后再删除，避免「先删后答」或删后游标丢失。
   await deleteConsumedGotifyMessage(account, message);
-
-  const allowedAppId = account.inbound.allowedAppId;
-  const seenMessageId = parsePositiveMessageId(message.id);
-  if (allowedAppId > 0 && seenMessageId > 0) {
-    await writeBacklogCursor(account.accountId, allowedAppId, seenMessageId);
-  }
 
   patchAccountSnapshot(account.accountId, {
     lastInboundAt: Date.now(),
@@ -793,7 +990,7 @@ export async function dispatchInboundMessage(
 }
 
 /**
- * 是否应在消息消费后从 Gotify 服务端删除（入站派发成功后、出站回复发送成功后）。
+ * 是否应在消息消费后从 Gotify 服务端删除入站原消息。
  * 仅当 inbound.deleteAfterConsume=false 时保留消息。
  *
  * @param account - 当前 Gotify 账号配置。
@@ -804,7 +1001,7 @@ function shouldDeleteAfterConsume(account: ResolvedGotifyAccount): boolean {
 }
 
 /**
- * 消费成功后从 Gotify 服务端删除消息（入站原消息或出站 Agent 回复）。
+ * 消费成功后从 Gotify 服务端删除入站原消息。
  * 删除失败仅记录 lastError，不影响已完成的派发/发送。
  *
  * @param account - 当前 Gotify 账号配置，必须具备 clientToken 才能删除。
@@ -833,7 +1030,7 @@ async function deleteConsumedGotifyMessage(
   try {
     await deleteMessage(account, messageId);
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorMsg = redactGotifyError(error, account);
     patchAccountSnapshot(account.accountId, {
       lastError: `deleteMessage(${messageId}): ${errorMsg}`,
     });

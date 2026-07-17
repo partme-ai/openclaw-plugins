@@ -12,16 +12,22 @@ import {
   OCRTimeoutError, OCRAuthError, OCRRequestError, OCRResponseParseError, OCRServiceError, OCREmptyResultError,
 } from "./errors.js";
 import type { OCRInput, OCRConfig, OCRResult, OCRBlock } from "./types.js";
+import {
+  requireHttpImageUrl,
+  requireOcrApiKey,
+  resolveOcrTimeout,
+  validateOcrBase64,
+} from "./validation.js";
 
 const PROVIDER = "glm";
-const DEFAULT_MODEL = "glm-4v";
+const DEFAULT_MODEL = "glm-4.5v";
 const DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
 
-function resolveImagePayload(input: OCRInput): string {
-  if (input.base64) return input.base64;
+function resolveImagePayload(input: OCRInput, config: OCRConfig): { value: string; isUrl: boolean } {
+  if (input.base64) return { value: validateOcrBase64(PROVIDER, input.base64, config), isUrl: false };
   if (input.url) {
     // 智谱 Chat API 支持直接传图片 URL
-    return input.url;
+    return { value: requireHttpImageUrl(PROVIDER, input.url), isUrl: true };
   }
   throw new OCRRequestError(PROVIDER, "No image data: provide base64 or url");
 }
@@ -36,28 +42,28 @@ function resolveImagePayload(input: OCRInput): string {
 export async function recognizeGLM(input: OCRInput, config: OCRConfig): Promise<OCRResult> {
   const baseUrl = config.baseUrl || DEFAULT_BASE_URL;
   const model = config.model || DEFAULT_MODEL;
-  const timeoutMs = config.timeoutMs ?? 30000;
+  const timeoutMs = resolveOcrTimeout(config);
+  const apiKey = requireOcrApiKey(PROVIDER, config);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const startMs = Date.now();
 
   try {
-    const imagePayload = resolveImagePayload(input);
-    const isUrl = /^https?:\/\//i.test(imagePayload);
+    const imagePayload = resolveImagePayload(input, config);
 
     const messages = [{
       role: "user" as const,
       content: [
         { type: "text" as const, text: "请识别这张图片中的所有文字，逐行输出。不要添加任何解释。" },
-        isUrl
-          ? { type: "image_url" as const, image_url: { url: imagePayload } }
-          : { type: "image_url" as const, image_url: { url: `data:${input.mimeType ?? "image/png"};base64,${imagePayload}` } },
+        imagePayload.isUrl
+          ? { type: "image_url" as const, image_url: { url: imagePayload.value } }
+          : { type: "image_url" as const, image_url: { url: `data:${input.mimeType ?? "image/png"};base64,${imagePayload.value}` } },
       ],
     }];
 
     const resp = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model, messages, max_tokens: 2000, temperature: 0 }),
       signal: controller.signal,
     });

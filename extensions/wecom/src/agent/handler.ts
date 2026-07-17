@@ -46,6 +46,8 @@ import { processDynamicRouting } from "../config/dynamic-routing.js";
 import { CHANNEL_ID } from "../types/const.js";
 import { resolveWecomMediaMaxBytes } from "../config/wecom-config.js";
 import { claimWecomAgentInboundMsgid } from "../webhook/dedup.js";
+import { downloadGuardedHttpMedia } from "../media/http-media.js";
+import { getExtendedMediaLocalRoots, readGuardedLocalMediaFile } from "../media/media-path-guard.js";
 
 /** HTTP 错误响应末尾的可选帮助文案（当前为空，预留扩展） */
 const ERROR_HELP = "";
@@ -70,35 +72,6 @@ function looksLikeTextFile(buffer: Buffer): boolean {
     }
     // 非可打印字符占比太高，基本可判断为二进制
     return bad / sampleSize <= 0.02;
-}
-
-/**
- * 分析 Buffer 的可打印字符比例，用于日志诊断 file 消息类型。
- *
- * @param buffer - 待分析内容
- */
-function analyzeTextHeuristic(buffer: Buffer): { sampleSize: number; badCount: number; badRatio: number } {
-    const sampleSize = Math.min(buffer.length, 4096);
-    if (sampleSize === 0) return { sampleSize: 0, badCount: 0, badRatio: 0 };
-    let badCount = 0;
-    for (let i = 0; i < sampleSize; i++) {
-        const b = buffer[i]!;
-        const isWhitespace = b === 0x09 || b === 0x0a || b === 0x0d;
-        const isPrintable = b >= 0x20 && b !== 0x7f;
-        if (!isWhitespace && !isPrintable) badCount++;
-    }
-    return { sampleSize, badCount, badRatio: badCount / sampleSize };
-}
-
-/** 将 Buffer 头部字节格式化为十六进制预览字符串（调试用）。 */
-function previewHex(buffer: Buffer, maxBytes = 32): string {
-    const n = Math.min(buffer.length, maxBytes);
-    if (n <= 0) return "";
-    return buffer
-        .subarray(0, n)
-        .toString("hex")
-        .replace(/(..)/g, "$1 ")
-        .trim();
 }
 
 /**
@@ -265,9 +238,12 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
             Number.isFinite(agent.agentId) &&
             inboundAgentId !== agent.agentId
         ) {
-            error?.(
-                `[wecom-agent] inbound: agentId mismatch ignored expectedAgentId=${agent.agentId} actualAgentId=${String(extractAgentId(msg) ?? "")}`,
-            );
+            // 上游路由层已经执行同样校验；这里仍失败关闭，防止其他入口绕过验签路由层。
+            error?.("[wecom-agent] inbound: agentId mismatch rejected");
+            res.statusCode = 403;
+            res.setHeader("Content-Type", "text/plain; charset=utf-8");
+            res.end("agent_id_mismatch");
+            return true;
         }
         const msgType = extractMsgType(msg);
         const fromUser = extractFromUser(msg);
@@ -278,7 +254,7 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
         if (msgId) {
             const claimed = await claimWecomAgentInboundMsgid(agent.accountId, msgId);
             if (!claimed) {
-                log?.(`[wecom-agent] duplicate msgId=${msgId} from=${fromUser} chatId=${chatId ?? "N/A"} type=${msgType}; skipped`);
+                log?.(`[wecom-agent] duplicate inbound skipped (type=${msgType || "unknown"})`);
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "text/plain; charset=utf-8");
                 res.end("success");
@@ -287,8 +263,8 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
         }
         const content = String(extractContent(msg) ?? "");
 
-        const preview = content.length > 100 ? `${content.slice(0, 100)}…` : content;
-        log?.(`[wecom-agent] ${msgType} from=${fromUser} chatId=${chatId ?? "N/A"} msgId=${msgId ?? "N/A"} content=${preview}`);
+        // 消息正文、成员 userid、群 ID 与 msgId 均属于业务数据；默认日志只保留类型和长度。
+        log?.(`[wecom-agent] inbound accepted (type=${msgType || "unknown"}, contentBytes=${Buffer.byteLength(content, "utf8")})`);
 
         // 先返回 success (Agent 模式使用 API 发送回复，不用被动回复)
         res.statusCode = 200;
@@ -313,7 +289,7 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
         });
         if (!decision.shouldProcess) {
             log?.(
-                `[wecom-agent] skip processing: type=${msgType || "unknown"} event=${eventType || "N/A"} from=${fromUser || "N/A"} reason=${decision.reason}`,
+                `[wecom-agent] skip processing: type=${msgType || "unknown"} event=${eventType || "N/A"} reason=${decision.reason}`,
             );
             return true;
         }
@@ -394,7 +370,7 @@ async function processAgentMessage(params: {
             runtime: { log, error } as Parameters<typeof checkGroupPolicy>[0]["runtime"],
         });
         if (!groupPolicyResult.allowed) {
-            log?.(`[wecom-agent] group policy blocked chatId=${peerId} sender=${fromUser}`);
+            log?.("[wecom-agent] group policy blocked inbound message");
             return;
         }
     }
@@ -412,7 +388,7 @@ async function processAgentMessage(params: {
     });
     if (!dmPolicyResult.allowed) {
         log?.(
-            `[wecom-agent] dm policy blocked sender=${fromUser} pairingSent=${String(dmPolicyResult.pairingSent ?? false)}`,
+            `[wecom-agent] dm policy blocked inbound message pairingSent=${String(dmPolicyResult.pairingSent ?? false)}`,
         );
         return;
     }
@@ -427,11 +403,10 @@ async function processAgentMessage(params: {
         const mediaId = extractMediaId(msg);
         if (mediaId) {
             try {
-                log?.(`[wecom-agent] downloading media: ${mediaId} (${msgType})`);
+                log?.(`[wecom-agent] downloading inbound media (type=${msgType})`);
                 const { buffer, contentType, filename: headerFileName } = await downloadMedia({ agent, mediaId, maxBytes: mediaMaxBytes });
                 const xmlFileName = extractFileName(msg);
                 const originalFileName = (xmlFileName || headerFileName || `${mediaId}.bin`).trim();
-                const heuristic = analyzeTextHeuristic(buffer);
 
                 // 推断文件名后缀
                 const extMap: Record<string, string> = {
@@ -451,11 +426,8 @@ async function processAgentMessage(params: {
                 const filename = `${mediaId}.${ext}`;
 
                 log?.(
-                    `[wecom-agent] file meta: msgType=${msgType} mediaId=${mediaId} size=${buffer.length} maxBytes=${mediaMaxBytes} ` +
-                    `contentType=${contentType} normalizedContentType=${normalizedContentType} originalFileName=${originalFileName} ` +
-                    `xmlFileName=${xmlFileName ?? "N/A"} headerFileName=${headerFileName ?? "N/A"} ` +
-                    `textHeuristic(sample=${heuristic.sampleSize}, bad=${heuristic.badCount}, ratio=${heuristic.badRatio.toFixed(4)}) ` +
-                    `headHex="${previewHex(buffer)}"`,
+                    `[wecom-agent] inbound media metadata: type=${msgType} size=${buffer.length} maxBytes=${mediaMaxBytes} ` +
+                    `contentType=${normalizedContentType || "unknown"}`,
                 );
 
                 // 使用 Core SDK 保存媒体文件
@@ -467,7 +439,7 @@ async function processAgentMessage(params: {
                     originalFileName
                 );
 
-                log?.(`[wecom-agent] media saved to: ${saved.path}`);
+                log?.("[wecom-agent] inbound media saved");
                 mediaPath = saved.path;
                 mediaType = normalizedContentType;
 
@@ -479,7 +451,7 @@ async function processAgentMessage(params: {
                             finalContent = content
                                 ? `${content}\n[语音识别]: ${transcript}`
                                 : `[语音识别]: ${transcript}`;
-                            log?.(`[wecom-agent] voice ASR: transcript="${transcript.slice(0, 100)}"`);
+                            log?.(`[wecom-agent] voice ASR completed (chars=${transcript.length})`);
                         }
                     } catch (err) {
                         error?.(`[wecom-agent] voice ASR failed: ${String(err)}`);
@@ -527,7 +499,7 @@ async function processAgentMessage(params: {
                 finalContent = [
                     content,
                     "",
-                    `媒体处理失败：${String(err)}`,
+                    "媒体处理失败，请稍后重试或联系管理员查看服务端日志。",
                     `提示：可在 OpenClaw 配置中提高 channels.wecom.media.maxBytes（当前=${mediaMaxBytes}）`,
                     `例如：openclaw config set channels.wecom.media.maxBytes ${50 * 1024 * 1024}`,
                 ].join("\n");
@@ -592,14 +564,14 @@ async function processAgentMessage(params: {
         rawBody: finalContent,
         senderUserId: fromUser,
     });
-    log?.(`[wecom-agent] authz: dmPolicy=${authz.dmPolicy} shouldCompute=${authz.shouldComputeAuth} sender=${fromUser.toLowerCase()} senderAllowed=${authz.senderAllowed} authorizerConfigured=${authz.authorizerConfigured} commandAuthorized=${String(authz.commandAuthorized)}`);
+    log?.(`[wecom-agent] authz: dmPolicy=${authz.dmPolicy} shouldCompute=${authz.shouldComputeAuth} senderAllowed=${authz.senderAllowed} authorizerConfigured=${authz.authorizerConfigured} commandAuthorized=${String(authz.commandAuthorized)}`);
 
     // 命令门禁：未授权时必须明确回复（Agent 侧用私信提示）
     if (authz.shouldComputeAuth && authz.commandAuthorized !== true) {
         const prompt = buildWecomUnauthorizedCommandPrompt({ senderUserId: fromUser, dmPolicy: authz.dmPolicy, scope: "agent" });
         try {
             await sendText({ agent, toUser: fromUser, chatId: undefined, text: prompt });
-            log?.(`[wecom-agent] unauthorized command: replied via DM to ${fromUser}`);
+            log?.("[wecom-agent] unauthorized command: replied via DM");
         } catch (err: unknown) {
             error?.(`[wecom-agent] unauthorized command reply failed: ${String(err)}`);
         }
@@ -684,7 +656,7 @@ async function processAgentMessage(params: {
                     try {
                         await sendText({ agent, toUser: fromUser, chatId: undefined, text });
                         updateStream(streamState.streamId, { finished: true });
-                        log?.(`[wecom-agent] reply delivered (${info.kind}) to ${fromUser} (textLen=${text.length})`);
+                        log?.(`[wecom-agent] reply delivered (${info.kind}, textLen=${text.length})`);
                     } catch (err: unknown) {
                         updateStream(streamState.streamId, { finished: true, error: String(err) });
                         const message = err instanceof Error ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}` : String(err);
@@ -701,17 +673,27 @@ async function processAgentMessage(params: {
                         let filename: string;
 
                         if (isRemoteUrl) {
-                            const res = await fetch(mediaPath, { signal: AbortSignal.timeout(30_000) });
-                            if (!res.ok) throw new Error(`download failed: ${res.status}`);
-                            buf = Buffer.from(await res.arrayBuffer());
-                            contentType = res.headers.get("content-type") || "application/octet-stream";
+                            // Agent 回复与 Channel fallback 共用 SSRF Guard + 实际流字节上限。
+                            const downloaded = await downloadGuardedHttpMedia({
+                                url: mediaPath,
+                                maxBytes: mediaMaxBytes,
+                                timeoutMs: 30_000,
+                            });
+                            buf = downloaded.buffer;
+                            contentType = downloaded.contentType || "application/octet-stream";
                             filename = new URL(mediaPath).pathname.split("/").pop() || "media";
                         } else {
-                            const fs = await import("node:fs/promises");
                             const pathModule = await import("node:path");
-                            buf = await fs.readFile(mediaPath);
-                            filename = pathModule.basename(mediaPath);
-                            const ext = pathModule.extname(mediaPath).slice(1).toLowerCase();
+                            const expandedPath = mediaPath.replace(/^~(?=\/|$)/, os.homedir());
+                            const local = await readGuardedLocalMediaFile({
+                                filePath: expandedPath,
+                                allowedRoots: await getExtendedMediaLocalRoots(channelAccount.config),
+                                maxBytes: mediaMaxBytes,
+                            });
+                            if (!local.ok) throw new Error(local.rejectReason);
+                            buf = local.buffer;
+                            filename = pathModule.basename(expandedPath);
+                            const ext = pathModule.extname(expandedPath).slice(1).toLowerCase();
                             const MIME_MAP: Record<string, string> = {
                                 jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif",
                                 webp: "image/webp", mp3: "audio/mpeg", wav: "audio/wav", amr: "audio/amr",
@@ -729,7 +711,7 @@ async function processAgentMessage(params: {
                         else if (contentType.startsWith("audio/")) mediaType = "voice";
                         else if (contentType.startsWith("video/")) mediaType = "video";
 
-                        log?.(`[wecom-agent] uploading media: ${filename} (${mediaType}, ${contentType}, ${buf.length} bytes)`);
+                        log?.(`[wecom-agent] uploading media (${mediaType}, ${contentType}, ${buf.length} bytes)`);
 
                         const mediaId = await uploadMedia({ agent, type: mediaType, buffer: buf, filename });
 
@@ -741,13 +723,13 @@ async function processAgentMessage(params: {
                             ...(mediaType === "video" ? { title: filename, description: "" } : {}),
                         });
 
-                        log?.(`[wecom-agent] media sent (${info.kind}) to ${fromUser}: ${filename} (${mediaType})`);
+                        log?.(`[wecom-agent] media sent (${info.kind}, ${mediaType})`);
                     } catch (err: unknown) {
                         const message = err instanceof Error ? `${err.message}${err.cause ? ` (cause: ${String(err.cause)})` : ""}` : String(err);
-                        error?.(`[wecom-agent] media send failed: ${mediaPath}: ${message}`);
+                        error?.(`[wecom-agent] media send failed: ${message}`);
                         // 降级：发文本通知用户
                         try {
-                            await sendText({ agent, toUser: fromUser, chatId: undefined, text: `⚠️ 文件发送失败: ${mediaPath.split("/").pop() || mediaPath}\n${message}` });
+                            await sendText({ agent, toUser: fromUser, chatId: undefined, text: "⚠️ 文件发送失败，请稍后重试。" });
                         } catch { /* ignore */ }
                     }
                 }

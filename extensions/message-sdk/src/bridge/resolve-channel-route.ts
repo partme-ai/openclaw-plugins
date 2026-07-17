@@ -9,6 +9,7 @@
  */
 
 import type { BridgePluginRuntime } from "./types.js";
+import { resolveBridgeRuntimeConfig } from "./runtime-config.js";
 
 /** resolveAgentRoute 返回的路由信息子集 / Agent route subset from OpenClaw */
 export interface ChannelAgentRoute {
@@ -37,8 +38,9 @@ export async function resolveChannelAgentRoute(
   runtime: BridgePluginRuntime,
   params: ResolveChannelAgentRouteParams,
 ): Promise<ChannelAgentRoute> {
+  const cfg = await resolveBridgeRuntimeConfig(runtime);
   const route = await runtime.channel.routing.resolveAgentRoute({
-    cfg: runtime.config,
+    cfg,
     channel: params.channel,
     accountId: params.accountId,
     peer: { kind: params.chatType ?? "direct", id: params.peerId },

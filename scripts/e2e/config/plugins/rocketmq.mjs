@@ -1,5 +1,6 @@
 /** @param {{ e2eTopic: string }} ctx */
 export function rocketmqConfig(ctx) {
+const replyTopic = `${ctx.e2eTopic}-out`;
   return {
     pluginEntry: { rocketmq: { enabled: true } },
     channelEntry: {
@@ -12,7 +13,13 @@ export function rocketmqConfig(ctx) {
           groupId: `openclaw-e2e-consumer-${Date.now()}`,
           subscriptions: [{ topic: ctx.e2eTopic, filterExpression: "*" }],
         },
-        topicBindings: [{ topic: ctx.e2eTopic, tag: "*", agentId: "main", accountId: "default" }],
+        topicBindings: [{
+          topic: ctx.e2eTopic,
+          tag: "*",
+          agentId: "main",
+          accountId: "default",
+          replyTopic,
+        }],
         dispatch: { mode: "reply-pipeline", timeoutMs: 15000, reply: { enabled: true } },
       },
     },

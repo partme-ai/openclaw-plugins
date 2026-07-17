@@ -4,6 +4,7 @@ import {
   hasLegacyMqttDmScope,
   resolveBrokerConfig,
   resolveOpenClawDmScope,
+  validateBrokerConfig,
 } from "../src/config.js";
 
 describe("resolveBrokerConfig", () => {
@@ -45,6 +46,8 @@ describe("resolveBrokerConfig", () => {
           },
           limits: {
             maxPayloadBytes: 4096,
+            maxPendingMessagesPerClient: 16,
+            inboundTaskTimeoutMs: 30_000,
           },
           session: {
             maxExpirySeconds: 3600,
@@ -78,6 +81,8 @@ describe("resolveBrokerConfig", () => {
     expect(r.tls.enabled).toBe(true);
     expect(r.tls.port).toBe(8883);
     expect(r.limits.maxPayloadBytes).toBe(4096);
+    expect(r.limits.maxPendingMessagesPerClient).toBe(16);
+    expect(r.limits.inboundTaskTimeoutMs).toBe(30_000);
     expect(r.session.maxExpirySeconds).toBe(3600);
     expect(r.session.persistentAcrossReconnect).toBe(false);
     expect(r.qos0.mailboxSoftLimit).toBe(128);
@@ -108,11 +113,14 @@ describe("resolveBrokerConfig", () => {
   it("applies defaults when channels.mqtt is missing", () => {
     const r = resolveBrokerConfig({});
     expect(r.port).toBe(1883);
+    expect(r.host).toBe("127.0.0.1");
     expect(r.subscribeTopics).toEqual([]);
     expect(r.topicBindings).toEqual([]);
     expect(r.tls.enabled).toBe(false);
     expect(r.auth.allowAnonymous).toBe(false);
     expect(r.limits.maxPayloadBytes).toBe(1024 * 1024);
+    expect(r.limits.maxPendingMessagesPerClient).toBe(32);
+    expect(r.limits.inboundTaskTimeoutMs).toBe(120_000);
     expect(r.session.maxExpirySeconds).toBe(86400);
     expect(r.session.persistentAcrossReconnect).toBe(true);
     expect(r.qos0.mailboxSoftLimit).toBe(200);
@@ -122,6 +130,41 @@ describe("resolveBrokerConfig", () => {
     expect(r.audit.format).toBe("json");
     expect(r.will.allow).toBe(true);
     expect(r.will.allowedTopicPatterns).toEqual([]);
+  });
+
+  it("rejects an unauthenticated broker exposed beyond loopback", () => {
+    const config = resolveBrokerConfig({ channels: { mqtt: { host: "0.0.0.0" } } });
+    expect(() => validateBrokerConfig(config)).toThrow(/authentication/i);
+  });
+
+  it("requires an explicit ACL-bearing anonymous identity", () => {
+    const config = resolveBrokerConfig({
+      channels: { mqtt: { auth: { enabled: true, allowAnonymous: true, users: [] } } },
+    });
+    expect(() => validateBrokerConfig(config)).toThrow(/anonymous/i);
+  });
+
+  it("rejects invalid listener, runtime limit, credential, and duplicate-user settings", () => {
+    const base = resolveBrokerConfig({});
+    expect(() => validateBrokerConfig({ ...base, port: 65_536 })).toThrow(/port/i);
+    expect(() => validateBrokerConfig({
+      ...base,
+      limits: { ...base.limits, maxPayloadBytes: 0 },
+    })).toThrow(/maxPayloadBytes/i);
+    expect(() => validateBrokerConfig({ ...base, qos0: { mailboxSoftLimit: 0 } })).toThrow(/mailboxSoftLimit/i);
+
+    const authBase = resolveBrokerConfig({ channels: { mqtt: { auth: {
+      enabled: true,
+      users: [{ username: "iot", password: "secret", publishAllow: ["devices/#"] }],
+    } } } });
+    expect(() => validateBrokerConfig({
+      ...authBase,
+      auth: { ...authBase.auth, users: [{ username: "iot", publishAllow: ["devices/#"] }] },
+    })).toThrow(/exactly one/i);
+    expect(() => validateBrokerConfig({
+      ...authBase,
+      auth: { ...authBase.auth, users: [...authBase.auth.users, { ...authBase.auth.users[0]! }] },
+    })).toThrow(/duplicate/i);
   });
 
   it("reads OpenClaw global session.dmScope", () => {
@@ -161,7 +204,7 @@ describe("resolveBrokerConfig", () => {
               port: 6380,
               db: 1,
               keyPrefix: "mqtt:prod",
-              subscriptionTTL: 7200,
+              packetTTL: 7200,
               retainedTTL: 86400,
             },
           },
@@ -176,8 +219,69 @@ describe("resolveBrokerConfig", () => {
     expect(r.persistence.redis?.port).toBe(6380);
     expect(r.persistence.redis?.db).toBe(1);
     expect(r.persistence.redis?.keyPrefix).toBe("mqtt:prod");
-    expect(r.persistence.redis?.subscriptionTTL).toBe(7200);
+    expect(r.persistence.redis?.packetTTL).toBe(7200);
     expect(r.persistence.redis?.retainedTTL).toBe(86400);
+  });
+
+  it("preserves MongoDB and LevelDB backend options", () => {
+    const mongodb = resolveBrokerConfig({
+      channels: {
+        mqtt: {
+          persistence: {
+            enabled: true,
+            backend: "mongodb",
+            mongodb: {
+              url: "mongodb://mongo.example.com:27017",
+              dbName: "openclaw",
+              collectionPrefix: "mqtt_",
+            },
+          },
+        },
+      },
+    });
+    expect(mongodb.persistence.mongodb).toEqual({
+      url: "mongodb://mongo.example.com:27017",
+      dbName: "openclaw",
+      collectionPrefix: "mqtt_",
+      collectionName: undefined,
+    });
+
+    const local = resolveBrokerConfig({
+      channels: {
+        mqtt: {
+          persistence: {
+            enabled: true,
+            backend: "level",
+            level: { path: "/var/lib/openclaw/mqtt-level" },
+          },
+        },
+      },
+    });
+    expect(local.persistence.level?.path).toBe("/var/lib/openclaw/mqtt-level");
+  });
+
+  it("rejects invalid persistence backends and backend-specific options", () => {
+    const base = resolveBrokerConfig({});
+    expect(() => validateBrokerConfig({
+      ...base,
+      persistence: { enabled: true, backend: "unknown" as never },
+    })).toThrow(/unsupported persistence backend/i);
+    expect(() => validateBrokerConfig({
+      ...base,
+      persistence: { enabled: true, backend: "redis", redis: { port: 70_000 } },
+    })).toThrow(/redis\.port/i);
+    expect(() => validateBrokerConfig({
+      ...base,
+      persistence: { enabled: true, backend: "mongodb", mongodb: { url: "https://mongo.example.com" } },
+    })).toThrow(/mongodb\.url/i);
+    expect(() => validateBrokerConfig({
+      ...base,
+      persistence: { enabled: true, backend: "level", level: { path: "   " } },
+    })).toThrow(/level\.path/i);
+    expect(() => validateBrokerConfig({
+      ...base,
+      persistence: { enabled: true, backend: "nedb" as never },
+    })).toThrow(/unsupported persistence backend/i);
   });
 
   it("applies persistence defaults when not configured", () => {
@@ -189,7 +293,7 @@ describe("resolveBrokerConfig", () => {
     expect(r.persistence.redis?.port).toBe(6379);
     expect(r.persistence.redis?.db).toBe(0);
     expect(r.persistence.redis?.keyPrefix).toBe("mqtt");
-    expect(r.persistence.redis?.subscriptionTTL).toBe(3600);
+    expect(r.persistence.redis?.packetTTL).toBe(0);
     expect(r.persistence.redis?.retainedTTL).toBe(0);
   });
 });

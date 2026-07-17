@@ -10,8 +10,10 @@
 
 import amqp from "amqplib";
 import { randomUUID } from "node:crypto";
-import type { ConsumeMessage, ChannelModel, Channel, Options } from "amqplib";
+import { once } from "node:events";
+import type { ConsumeMessage, ChannelModel, Channel, ConfirmChannel, Options } from "amqplib";
 import type { RabbitmqConfig } from "../config.js";
+import { redactRabbitmqError } from "../shared/redact.js";
 
 /** @description 入站 AMQP 消息的投递处置句柄（deferred ack）。 */
 export type InboundDeliveryHandle = {
@@ -52,21 +54,31 @@ export type RabbitmqStats = {
   messagesAcked: number;
   messagesNacked: number;
   messagesRequeued: number;
+  messagesRetried: number;
+  messagesDeadLettered: number;
+  publishConfirmed: number;
+  reconnecting: boolean;
   errors: number;
   inFlight: number;
 };
 
 let connection: ChannelModel | null = null;
 let consumeChannel: Channel | null = null;
-let publishChannel: Channel | null = null;
+let publishChannel: ConfirmChannel | null = null;
 let consumerTag: string | null = null;
 let inboundHandler: InboundHandler | null = null;
 let config: RabbitmqConfig | null = null;
 let stopping = false;
-let retryQueueName: string | null = null;
-let retryRoutingPrefix: string | null = null;
+let retryExchangeName: string | null = null;
+let deadLetterExchangeName: string | null = null;
+let reconnectPromise: Promise<void> | null = null;
 let inboundLimiter: ReturnType<typeof createInboundLimiter> | null = null;
+type TransportLogger = { debug?(message: string): void; info?(message: string): void; warn?(message: string): void; error?(message: string): void };
+const NOOP_LOGGER: TransportLogger = {};
+let transportLogger: TransportLogger = NOOP_LOGGER;
 const pendingDeliveries = new Set<InboundDeliveryHandle>();
+/** 已被 Broker 投递并进入并发限制器的任务；优雅停机必须等待这些任务完成处置。 */
+const inboundTasks = new Set<Promise<void>>();
 let stats: RabbitmqStats = {
   connected: false,
   lastConnectAt: null,
@@ -78,6 +90,10 @@ let stats: RabbitmqStats = {
   messagesAcked: 0,
   messagesNacked: 0,
   messagesRequeued: 0,
+  messagesRetried: 0,
+  messagesDeadLettered: 0,
+  publishConfirmed: 0,
+  reconnecting: false,
   errors: 0,
   inFlight: 0,
 };
@@ -87,10 +103,11 @@ let stats: RabbitmqStats = {
  * @param cfg - 已解析的 RabbitMQ 通道配置
  * @param handler - 入站消息处理器（通常为 processInbound）
  */
-export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundHandler): Promise<void> {
+export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundHandler, logger: TransportLogger = NOOP_LOGGER): Promise<void> {
   config = cfg;
   inboundHandler = handler;
   stopping = false;
+  transportLogger = logger;
   await connectWithRetry();
 }
 
@@ -99,10 +116,7 @@ export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundH
  */
 export async function stopRabbitmqServer(): Promise<void> {
   stopping = true;
-  nackAllPendingDeliveries(false, "server_stop");
   inboundLimiter = null;
-  retryRoutingPrefix = null;
-  retryQueueName = null;
   try {
     if (consumeChannel && consumerTag) {
       await consumeChannel.cancel(consumerTag);
@@ -111,6 +125,31 @@ export async function stopRabbitmqServer(): Promise<void> {
   } finally {
     consumerTag = null;
   }
+  // cancel 后保持 publish channel 与 retry/DLQ exchange 可用，让已接纳 Agent Turn 完成 ACK 或
+  // 可靠转移。若先 NACK 再等待后台 Turn，会导致同一业务副作用在旧 Turn 和 Broker 重投中各执行一次。
+  if (inboundTasks.size > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const drained = await Promise.race([
+      Promise.allSettled([...inboundTasks]).then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), config?.consume.shutdownTimeoutMs ?? 30_000);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (!drained) {
+      transportLogger.warn?.(
+        `[openclaw-rabbitmq] shutdown drain timed out after ${config?.consume.shutdownTimeoutMs ?? 30_000}ms; ` +
+        `${inboundTasks.size} task(s) will be requeued with outcome possibly unknown`,
+      );
+      // 已超时任务仍可能在其内部 Promise 中悬挂；从生命周期跟踪集移除，避免后续重启/停止
+      // 再次等待同一批旧任务。delivery 会在下方统一 NACK，迟到任务因 settled=true 不会重复处置。
+      inboundTasks.clear();
+    }
+  }
+  nackAllPendingDeliveries(true, "server_stop");
+  retryExchangeName = null;
+  deadLetterExchangeName = null;
   try {
     if (consumeChannel) {
       await consumeChannel.close();
@@ -137,6 +176,13 @@ export async function stopRabbitmqServer(): Promise<void> {
   }
   stats.connected = false;
   stats.lastDisconnectAt = Date.now();
+  stats.reconnecting = false;
+  transportLogger = NOOP_LOGGER;
+}
+
+/** 入站编排复用 Channel logger，避免协议代码直接写 console。 */
+export function logRabbitmq(level: "debug" | "warn" | "error", message: string): void {
+  transportLogger[level]?.(message);
 }
 
 /**
@@ -150,15 +196,12 @@ export async function publishMessage(routingKey: string, message: string, opts?:
     throw new Error("RabbitMQ publish channel not initialized");
   }
   const options: Options.Publish = {
-    persistent: opts?.persistent === true,
+    persistent: opts?.persistent !== false,
     correlationId: opts?.correlationId,
     headers: opts?.headers,
     contentType: "application/json",
   };
-  const published = publishChannel.publish(config.exchange, routingKey, Buffer.from(message), options);
-  if (!published) {
-    throw new Error(`RabbitMQ publish backpressure for routingKey=${routingKey}`);
-  }
+  await publishConfirmed(publishChannel, config.exchange, routingKey, Buffer.from(message), options);
   stats.messagesSent++;
 }
 
@@ -178,11 +221,23 @@ export async function requestMessage(params: {
   if (!connection) {
     throw new Error("RabbitMQ connection not initialized");
   }
-  const ch = await connection.createChannel();
+  if (!params.queue.trim()) {
+    throw new Error("mq.request queue is required");
+  }
+  if (!Number.isInteger(params.timeoutMs) || params.timeoutMs <= 0) {
+    throw new Error("mq.request timeoutMs must be a positive integer");
+  }
+  /*
+   * RPC 也使用 ConfirmChannel。普通 Channel 的 sendToQueue 返回 true 只表示写入本地 socket
+   * 缓冲区，并不代表 Broker 已接收；确认发布 + mandatory 可以同时识别 Broker NACK、超时、
+   * 背压以及目标队列不存在，避免工具返回“请求已发送”的假成功。
+   */
+  const ch = await connection.createConfirmChannel();
   const correlationId = params.correlationId ?? randomUUID();
   try {
     const result = await new Promise<string>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("mq.request timeout")), params.timeoutMs);
+      t.unref?.();
       ch.consume(
         "amq.rabbitmq.reply-to",
         (msg: ConsumeMessage | null) => {
@@ -194,11 +249,12 @@ export async function requestMessage(params: {
           resolve(msg.content.toString("utf-8"));
         },
         { noAck: true },
-      ).then(() => {
-        ch.sendToQueue(params.queue, Buffer.from(params.payload), {
+      ).then(async () => {
+        await publishConfirmed(ch, "", params.queue.trim(), Buffer.from(params.payload), {
           correlationId,
           replyTo: "amq.rabbitmq.reply-to",
           contentType: "application/json",
+          persistent: true,
         });
       }).catch((err) => {
         clearTimeout(t);
@@ -226,7 +282,7 @@ export function trackInboundAccepted(): void {
 /** @description 记录入站丢弃原因并递增错误计数。 @param reason - 丢弃原因标识 */
 export function trackInboundDropped(reason: string): void {
   stats.errors++;
-  stats.lastError = `inbound_dropped:${reason}`;
+  stats.lastError = `inbound_dropped:${redactRabbitmqError(reason, config)}`;
 }
 
 /** @description 路由命中来源追踪钩子（binding / standard 等）。 @param source - 路由来源标识 */
@@ -234,7 +290,7 @@ export function trackRoute(source: string): void {
 }
 
 /**
- * @description 带指数退避的重连循环：在 `reconnectAttempts` 耗尽前反复调用 `connectOnce`。
+ * @description 带指数退避和随机抖动的重连循环：在 `reconnectAttempts` 耗尽前反复调用 `connectOnce`。
  * @returns 连接成功时 resolve；全部失败时抛出最后一次错误
  * @throws 配置未设置或所有重连尝试均失败
  */
@@ -254,14 +310,15 @@ async function connectWithRetry(): Promise<void> {
     } catch (err) {
       lastErr = err;
       stats.errors++;
-      stats.lastError = err instanceof Error ? err.message : String(err);
+      stats.lastError = redactRabbitmqError(err, cfg);
+      await teardownTransport();
       if (attempt >= maxAttempts) {
         break;
       }
-      await sleep(cfg.connection.reconnectDelayMs);
+      await sleep(computeReconnectDelay(cfg, attempt - 1));
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  throw new Error(redactRabbitmqError(lastErr, cfg));
 }
 
 /**
@@ -284,11 +341,12 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
   stats.lastError = null;
 
   const consumeCh = await conn.createChannel();
-  const publishCh = await conn.createChannel();
+  const publishCh = await conn.createConfirmChannel();
   consumeChannel = consumeCh;
   publishChannel = publishCh;
 
   await consumeCh.assertExchange(cfg.exchange, cfg.exchangeType, { durable: cfg.exchangeDurable });
+  await publishCh.assertExchange(cfg.exchange, cfg.exchangeType, { durable: cfg.exchangeDurable });
 
   const queueName = cfg.queue.name?.trim() ? cfg.queue.name.trim() : "";
   const queueArgs: Record<string, unknown> = {};
@@ -301,9 +359,20 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
     autoDelete: queueName ? cfg.queue.autoDelete : true,
     arguments: Object.keys(queueArgs).length > 0 ? queueArgs : undefined,
   });
-  retryQueueName = cfg.retry.enabled && queue.queue ? `${queue.queue}${cfg.retry.queueSuffix}` : null;
-  retryRoutingPrefix = retryQueueName ? `${queue.queue}.retry` : null;
-  if (retryQueueName && retryRoutingPrefix) {
+  retryExchangeName = cfg.retry.enabled ? `${cfg.exchange}.retry` : null;
+  deadLetterExchangeName = `${cfg.exchange}.dlx`;
+  await consumeCh.assertExchange(deadLetterExchangeName, "topic", { durable: true });
+  const deadLetterQueueName = `${queue.queue}${cfg.retry.deadLetterSuffix}`;
+  await consumeCh.assertQueue(deadLetterQueueName, {
+    durable: true,
+    exclusive: false,
+    autoDelete: false,
+    arguments: cfg.queue.quorum ? { "x-queue-type": "quorum" } : undefined,
+  });
+  await consumeCh.bindQueue(deadLetterQueueName, deadLetterExchangeName, "#");
+  if (retryExchangeName) {
+    await consumeCh.assertExchange(retryExchangeName, "topic", { durable: true });
+    const retryQueueName = `${queue.queue}${cfg.retry.queueSuffix}`;
     await consumeCh.assertQueue(retryQueueName, {
       durable: cfg.queue.durable,
       exclusive: false,
@@ -314,15 +383,14 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
         "x-dead-letter-exchange": cfg.exchange,
       },
     });
-    await consumeCh.bindQueue(retryQueueName, cfg.exchange, `${retryRoutingPrefix}.#`);
+    for (const pattern of collectSubscribePatterns(cfg)) {
+      await consumeCh.bindQueue(retryQueueName, retryExchangeName, pattern);
+    }
   }
 
   const patterns = collectSubscribePatterns(cfg);
   for (const pattern of patterns) {
     await consumeCh.bindQueue(queue.queue, cfg.exchange, pattern);
-  }
-  if (retryRoutingPrefix) {
-    await consumeCh.bindQueue(queue.queue, cfg.exchange, `${retryRoutingPrefix}.#`);
   }
 
   inboundLimiter = createInboundLimiter(cfg.consume.concurrency);
@@ -334,6 +402,10 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
   const { consumerTag: tag } = await consumeCh.consume(
     queue.queue,
     (msg: ConsumeMessage | null) => {
+      if (msg && stopping) {
+        consumeChannel?.nack(msg, false, true);
+        return;
+      }
       if (!msg || !inboundHandler || !consumeChannel || !config || !inboundLimiter) {
         return;
       }
@@ -351,7 +423,7 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
         fields: { ...msg.fields, routingKey },
         delivery,
       };
-      void limiter(async () => {
+      const task = limiter(async () => {
         stats.inFlight++;
         try {
           const disposition = await handler(event);
@@ -374,29 +446,42 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
           if (delivery.settled) {
             return;
           }
-          const handledByRetry = await maybeRetryMessage(msg, routingKey);
-          if (handledByRetry) {
+          try {
+            if (await maybeRetryMessage(msg, routingKey, delivery)) return;
+          } catch (retryError) {
+            stats.errors++;
+            stats.lastError = redactRabbitmqError(retryError, activeConfig);
+            delivery.nack({ requeue: true, reason: "retry_publish_failed" });
             return;
           }
           const requeue = disposition.requeue ?? activeConfig.consume.requeueOnError;
           delivery.nack({ requeue, reason: disposition.reason });
         } catch (err) {
           stats.errors++;
-          stats.lastError = err instanceof Error ? err.message : String(err);
+          stats.lastError = redactRabbitmqError(err, activeConfig);
           if (delivery.settled) {
             return;
           }
-          const handledByRetry = await maybeRetryMessage(msg, routingKey);
-          if (handledByRetry) {
+          try {
+            if (await maybeRetryMessage(msg, routingKey, delivery)) return;
+          } catch (retryError) {
+            stats.errors++;
+            stats.lastError = redactRabbitmqError(retryError, activeConfig);
+            delivery.nack({ requeue: true, reason: "retry_publish_failed" });
             return;
           }
           const requeue = activeConfig.consume.requeueOnError;
-          delivery.nack({ requeue, reason: err instanceof Error ? err.message : String(err) });
+          delivery.nack({ requeue, reason: redactRabbitmqError(err, activeConfig) });
         } finally {
           pendingDeliveries.delete(delivery);
           stats.inFlight = Math.max(0, stats.inFlight - 1);
         }
+      }).catch((error: unknown) => {
+        stats.errors++;
+        stats.lastError = redactRabbitmqError(error, activeConfig);
       });
+      inboundTasks.add(task);
+      void task.finally(() => inboundTasks.delete(task));
     },
     { noAck: false },
   );
@@ -404,14 +489,16 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
 
   conn.on("error", (err: unknown) => {
     stats.errors++;
-    stats.lastError = err instanceof Error ? err.message : String(err);
+    stats.lastError = redactRabbitmqError(err, cfg);
   });
 
   conn.on("close", () => {
     stats.connected = false;
     stats.lastDisconnectAt = Date.now();
     if (!stopping) {
-      void reconnectAfterClose();
+      reconnectPromise ??= reconnectAfterClose().finally(() => {
+        reconnectPromise = null;
+      });
     }
   });
 }
@@ -425,22 +512,31 @@ async function reconnectAfterClose(): Promise<void> {
   if (!cfg || stopping) {
     return;
   }
-  await teardownTransport();
-  await sleep(cfg.connection.reconnectDelayMs);
-  if (stopping) {
-    return;
+  stats.reconnecting = true;
+  while (!stopping) {
+    await teardownTransport();
+    await sleep(computeReconnectDelay(cfg, 0));
+    if (stopping) return;
+    try {
+      await connectWithRetry();
+      stats.reconnecting = false;
+      return;
+    } catch (error) {
+      stats.errors++;
+      stats.lastError = redactRabbitmqError(error, cfg);
+    }
   }
-  await connectWithRetry().catch(() => {});
+  stats.reconnecting = false;
 }
 
 /**
  * @description 关闭当前 channel/connection 引用，便于重连前清理（不修改 stopping 标志）。
  */
 async function teardownTransport(): Promise<void> {
-  nackAllPendingDeliveries(false, "transport_teardown");
+  nackAllPendingDeliveries(true, "transport_teardown");
   inboundLimiter = null;
-  retryRoutingPrefix = null;
-  retryQueueName = null;
+  retryExchangeName = null;
+  deadLetterExchangeName = null;
   try {
     if (consumeChannel && consumerTag) {
       await consumeChannel.cancel(consumerTag);
@@ -561,41 +657,137 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * 计算单次重连等待时间。
+ *
+ * `failureIndex` 从 0 开始：第一次失败等待基础间隔，随后按 2 的指数增长并受最大值限制；
+ * 最后加入双向随机抖动，避免一批 Gateway 在 RabbitMQ 恢复瞬间同时发起连接。
+ * 导出该纯函数是为了让边界值可被单元测试稳定验证。
+ */
+export function computeReconnectDelay(
+  cfg: RabbitmqConfig,
+  failureIndex: number,
+  random: () => number = Math.random,
+): number {
+  const base = Math.min(
+    cfg.connection.reconnectDelayMs * 2 ** Math.max(0, failureIndex),
+    cfg.connection.reconnectMaxDelayMs,
+  );
+  const jitter = base * cfg.connection.reconnectJitterRatio * (random() * 2 - 1);
+  return Math.max(0, Math.round(base + jitter));
+}
+
+/**
  * @description 将失败消息投递到 retry 队列（带 `x-attempt` 头），未超 maxAttempts 时 ACK 原消息。
  * @param msg - 原始 AMQP 消费消息
  * @returns 是否已由 retry 队列接管（true 时调用方无需再 nack）
  */
-async function maybeRetryMessage(msg: ConsumeMessage, routingKey: string): Promise<boolean> {
+async function maybeRetryMessage(
+  msg: ConsumeMessage,
+  routingKey: string,
+  delivery: InboundDeliveryHandle,
+): Promise<boolean> {
   const cfg = config;
-  if (!cfg || !consumeChannel || !retryQueueName || !retryRoutingPrefix || !cfg.retry.enabled) {
+  if (!cfg || !cfg.retry.enabled || !publishChannel || !deadLetterExchangeName) {
     return false;
   }
   const raw = (msg.properties.headers as Record<string, unknown> | undefined)?.["x-attempt"];
-  const attempt =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number.parseInt(raw, 10)
-        : 0;
-  if (attempt >= cfg.retry.maxAttempts) {
-    return false;
+  /* 外部 header 不可信：只接受非负整数，避免 NaN/负数绕过最大重试次数。 */
+  const parsedAttempt = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : 0;
+  const attempt = Number.isSafeInteger(parsedAttempt) && parsedAttempt >= 0 ? parsedAttempt : 0;
+  const originalRoutingKey = resolveInboundRoutingKey(msg);
+  if (attempt >= cfg.retry.maxAttempts || !retryExchangeName) {
+    await publishConfirmed(
+      publishChannel,
+      deadLetterExchangeName,
+      originalRoutingKey || routingKey,
+      msg.content,
+      {
+        correlationId: msg.properties.correlationId,
+        messageId: msg.properties.messageId,
+        contentType: msg.properties.contentType ?? "application/json",
+        headers: {
+          ...(typeof msg.properties.headers === "object" && msg.properties.headers ? msg.properties.headers : {}),
+          "x-final-attempt": attempt,
+          "x-original-routing-key": originalRoutingKey || routingKey,
+        },
+        persistent: true,
+      },
+    );
+    delivery.ack();
+    stats.messagesDeadLettered++;
+    return true;
   }
   const nextAttempt = attempt + 1;
-  const originalRoutingKey = resolveInboundRoutingKey(msg);
   const headers = {
     ...(typeof msg.properties.headers === "object" && msg.properties.headers ? msg.properties.headers : {}),
     "x-attempt": nextAttempt,
     "x-original-routing-key": originalRoutingKey || routingKey,
   };
-  consumeChannel.publish(cfg.exchange, `${retryRoutingPrefix}.${routingKey}`, msg.content, {
+  await publishConfirmed(publishChannel, retryExchangeName, originalRoutingKey || routingKey, msg.content, {
     correlationId: msg.properties.correlationId,
+    messageId: msg.properties.messageId,
     contentType: msg.properties.contentType ?? "application/json",
     headers,
     persistent: true,
   });
-  consumeChannel.ack(msg);
-  stats.messagesAcked++;
+  delivery.ack();
+  stats.messagesRetried++;
   return true;
+}
+
+async function publishConfirmed(
+  channel: ConfirmChannel,
+  exchange: string,
+  routingKey: string,
+  content: Buffer,
+  options: Options.Publish,
+): Promise<void> {
+  const timeoutMs = config?.connection.publishConfirmTimeoutMs ?? 10000;
+  const publishId = randomUUID();
+  let timer: NodeJS.Timeout | undefined;
+  let writable = true;
+  const confirmation = new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => {
+      if (timer) clearTimeout(timer);
+      channel.off("return", onReturned);
+    };
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onReturned = (returned: ConsumeMessage): void => {
+      if (returned.properties.headers?.["x-openclaw-publish-id"] !== publishId) return;
+      finish(new Error(`RabbitMQ message was unroutable for routingKey=${routingKey}`));
+    };
+    channel.on("return", onReturned);
+    timer = setTimeout(
+      () => finish(new Error(`RabbitMQ publish confirm timeout for routingKey=${routingKey}`)),
+      timeoutMs,
+    );
+    timer.unref?.();
+    writable = channel.publish(exchange, routingKey, content, {
+      ...options,
+      mandatory: true,
+      headers: {
+        ...(options.headers ?? {}),
+        "x-openclaw-publish-id": publishId,
+      },
+    }, (error) => {
+      if (error) {
+        finish(error);
+        return;
+      }
+      /* RabbitMQ 会在同一消息的 publisher confirm 之前发送 basic.return；延后一拍再成功收口。 */
+      setImmediate(() => finish());
+    });
+  });
+  const drained = writable ? Promise.resolve() : once(channel, "drain").then(() => undefined);
+  await Promise.all([confirmation, drained]);
+  stats.publishConfirmed++;
 }
 
 /**
@@ -631,7 +823,7 @@ function createInboundDeliveryHandle(
         stats.messagesRequeued++;
       }
       if (options?.reason) {
-        stats.lastError = `inbound_nack:${options.reason}`;
+        stats.lastError = `inbound_nack:${redactRabbitmqError(options.reason, activeConfig)}`;
       }
     },
   };

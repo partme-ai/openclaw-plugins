@@ -2,7 +2,7 @@
  * 抖音渠道插件定义 — `ChannelPlugin` 装配层。
  *
  * **架构角色**：将抖音业务配置、Gateway 生命周期、Webhook 路由、DM 安全策略
- * 与出站占位整合为 OpenClaw 标准 `createChatChannelPlugin` 实例。
+ * 与显式不支持的通用出站契约整合为 OpenClaw 标准 `createChatChannelPlugin` 实例。
  *
  * **关键依赖**：`openclaw/plugin-sdk/*`、`./config`、`./inbound`、`./onboarding`、`./outbound`
  */
@@ -10,7 +10,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/account-resolution";
 import { createHybridChannelConfigAdapter } from "openclaw/plugin-sdk/channel-config-helpers";
 import { waitUntilAbort } from "openclaw/plugin-sdk/channel-lifecycle";
-import { sendDouyinOutboundStub } from "./outbound.js";
+import { sendDouyinOutboundUnsupported } from "./outbound.js";
 import { createChatChannelPlugin, type ChannelPlugin } from "openclaw/plugin-sdk/core";
 import { createEmptyChannelDirectoryAdapter } from "openclaw/plugin-sdk/directory-runtime";
 import { registerPluginHttpRoute } from "openclaw/plugin-sdk/webhook-ingress";
@@ -18,12 +18,37 @@ import {
   listDouyinAccountIds,
   resolveDefaultDouyinAccountId,
   resolveDouyinAccount,
+  resolveDouyinWebhookInboxConfig,
 } from "./config.js";
 import { createDouyinPluginHttpHandler } from "./inbound.js";
+import { dispatchDouyinWebhookInbound } from "./dispatch/dispatch-inbound.js";
+import {
+  DouyinWebhookInbox,
+  type DouyinWebhookInboxStatus,
+} from "./dispatch/webhook-inbox.js";
+import { getDouyinRuntime } from "./runtime.js";
 import { douyinSetupAdapter, douyinSetupWizard } from "./onboarding.js";
 import type { ResolvedDouyinAccount } from "./types.js";
 
 const CHANNEL_ID = "douyin";
+/** 当前账号生命周期拥有的 Inbox；状态输出只暴露计数，不包含消息正文和发送者。 */
+const activeInboxes = new Map<string, DouyinWebhookInbox>();
+
+/** 返回所有活动账号的脱敏可靠投递摘要。 */
+export function getDouyinWebhookInboxStatus(): Record<string, DouyinWebhookInboxStatus> {
+  return Object.fromEntries(
+    [...activeInboxes.entries()].map(([accountId, inbox]) => [accountId, inbox.status()]),
+  );
+}
+
+/** 管理员按账号把有界数量的 DLQ 事件重新放回持久 Inbox。 */
+export async function replayDouyinWebhookDeadLetters(
+  accountId: string,
+  limit: number,
+): Promise<number | null> {
+  const inbox = activeInboxes.get(accountId);
+  return inbox ? inbox.replayDeadLetters(limit) : null;
+}
 
 const douyinHybridConfig = createHybridChannelConfigAdapter<ResolvedDouyinAccount>({
   sectionKey: CHANNEL_ID,
@@ -33,9 +58,12 @@ const douyinHybridConfig = createHybridChannelConfigAdapter<ResolvedDouyinAccoun
   clearBaseFields: [
     "app_key",
     "app_secret",
+    "account_id",
+    "poi_id",
     "shop_id",
     "webhook_path",
     "callback_url",
+    "request_timeout_ms",
     "dmPolicy",
     "allowFrom",
     "enabled",
@@ -133,24 +161,53 @@ export function createDouyinChannelPlugin(): ChannelPlugin<ResolvedDouyinAccount
             );
           }
 
-          const handler = createDouyinPluginHttpHandler({ account, log });
-          // plugin 鉴权：由 OpenClaw Gateway 校验插件身份后再转发至 handler
-          const unregister = registerPluginHttpRoute({
-            path: account.webhook_path,
-            auth: "plugin",
-            pluginId: CHANNEL_ID,
-            accountId: account.accountId,
-            replaceExisting: true,
-            log: (m: string) => log?.info?.(m),
-            handler,
-          });
-
-          log?.info?.(`[douyin] registered HTTP ${account.webhook_path} (account ${account.accountId})`);
-
-          return waitUntilAbort(abortSignal, () => {
-            unregister();
+          const inbox = new DouyinWebhookInbox(
+            account.accountId,
+            resolveDouyinWebhookInboxConfig(account),
+            async (item) => {
+              const runtime = getDouyinRuntime();
+              // 每次重试重新读取配置快照，使恢复任务使用当前 bindings、策略和 Agent 路由。
+              const cfg = runtime.config.loadConfig() as Record<string, unknown>;
+              return dispatchDouyinWebhookInbound({
+                runtime,
+                cfg,
+                account,
+                rawBody: item.rawBody,
+                text: item.text,
+                peerId: item.peerId,
+                messageId: item.messageId,
+                log,
+              });
+            },
+            log,
+          );
+          await inbox.start();
+          activeInboxes.set(account.accountId, inbox);
+          let unregister: (() => void) | undefined;
+          try {
+            const handler = createDouyinPluginHttpHandler({ account, inbox, log });
+            // plugin 鉴权：由 OpenClaw Gateway 校验插件身份后再转发至 handler
+            unregister = registerPluginHttpRoute({
+              path: account.webhook_path,
+              auth: "plugin",
+              pluginId: CHANNEL_ID,
+              accountId: account.accountId,
+              replaceExisting: false,
+              log: (m: string) => log?.info?.(m),
+              handler,
+            });
+            log?.info?.(
+              `[douyin] registered durable HTTP ${account.webhook_path} (account ${account.accountId})`,
+            );
+            await waitUntilAbort(abortSignal);
+          } finally {
+            unregister?.();
+            await inbox.stop();
+            if (activeInboxes.get(account.accountId) === inbox) {
+              activeInboxes.delete(account.accountId);
+            }
             log?.info?.(`[douyin] stopped account ${account.accountId}`);
-          });
+          }
         },
         stopAccount: async (ctx: DouyinGatewayCtx) => {
           ctx.log?.info?.(`[douyin] stopAccount ${ctx.accountId}`);
@@ -160,7 +217,7 @@ export function createDouyinChannelPlugin(): ChannelPlugin<ResolvedDouyinAccount
         messageToolHints: () => [
           "",
           "### 抖音渠道",
-          "- 入站来自开放平台 Webhook；出站直连发消息需走抖店/OpenAPI，本插件出站为占位。",
+          "- 入站来自生活服务 Webhook；该协议不提供对称私信，业务操作请使用抖音 OpenAPI 工具。",
         ],
       },
     },
@@ -177,7 +234,7 @@ export function createDouyinChannelPlugin(): ChannelPlugin<ResolvedDouyinAccount
     outbound: {
       deliveryMode: "gateway",
       textChunkLimit: 4000,
-      sendText: async () => sendDouyinOutboundStub(),
+      sendText: async () => sendDouyinOutboundUnsupported(),
     },
   }) as ChannelPlugin<ResolvedDouyinAccount>;
 }

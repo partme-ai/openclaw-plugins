@@ -52,6 +52,7 @@ export function formatPrometheus(
 
   // ─── 2. 按 definition 顺序输出 ───
   let pi = 0; // parts index
+  const emittedSampleNames = new Set<string>();
 
   for (let di = 0; di < definitions.length; di++) {
     const def = definitions[di];
@@ -61,11 +62,17 @@ export function formatPrometheus(
     parts[pi++] = `# TYPE ${def.name} ${def.type}`;
 
     // samples for this definition
-    const indices = bucketStart.get(def.name);
-    if (indices) {
-      for (let j = 0; j < indices.length; j++) {
-        const sample = samples[indices[j]];
-        parts[pi++] = formatSampleLine(sample);
+    const sampleNames = def.type === "histogram"
+      ? [def.name, `${def.name}_bucket`, `${def.name}_sum`, `${def.name}_count`]
+      : [def.name];
+    for (const sampleName of sampleNames) {
+      const indices = bucketStart.get(sampleName);
+      if (indices) {
+        emittedSampleNames.add(sampleName);
+        for (let j = 0; j < indices.length; j++) {
+          const sample = samples[indices[j]];
+          parts[pi++] = formatSampleLine(sample);
+        }
       }
     }
 
@@ -79,7 +86,7 @@ export function formatPrometheus(
   }
 
   for (const [name, indices] of bucketStart) {
-    if (defNameSet.has(name)) continue;
+    if (defNameSet.has(name) || emittedSampleNames.has(name)) continue;
     parts[pi++] = `# HELP ${name} (auto-discovered)`;
     parts[pi++] = `# TYPE ${name} gauge`;
     for (let j = 0; j < indices.length; j++) {
@@ -96,6 +103,8 @@ export function formatPrometheus(
  * 格式化单个样本为 Prometheus 行（热路径，内联优化）
  */
 function formatSampleLine(sample: MetricSample): string {
+  const value = formatMetricValue(sample.value);
+  const timestamp = sample.timestamp !== undefined ? ` ${sample.timestamp}` : "";
   const labels = sample.labels;
   if (labels && Object.keys(labels).length > 0) {
     const labelParts: string[] = [];
@@ -103,7 +112,15 @@ function formatSampleLine(sample: MetricSample): string {
     for (let i = 0; i < keys.length; i++) {
       labelParts.push(`${keys[i]}="${escapeLabel(labels[keys[i]])}"`);
     }
-    return `${sample.name}{${labelParts.join(",")}} ${sample.value}${sample.timestamp ? ` ${sample.timestamp}` : ""}`;
+    return `${sample.name}{${labelParts.join(",")}} ${value}${timestamp}`;
   }
-  return `${sample.name} ${sample.value}${sample.timestamp ? ` ${sample.timestamp}` : ""}`;
+  return `${sample.name} ${value}${timestamp}`;
+}
+
+/** Prometheus 文本格式使用 `+Inf/-Inf`，不能直接输出 JavaScript 的 `Infinity`。 */
+function formatMetricValue(value: number): string {
+  if (Number.isNaN(value)) return "NaN";
+  if (value === Number.POSITIVE_INFINITY) return "+Inf";
+  if (value === Number.NEGATIVE_INFINITY) return "-Inf";
+  return String(value);
 }

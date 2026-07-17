@@ -9,7 +9,7 @@
  * @packageDocumentation
  */
 
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { gotifyChannel } from "./channel.js";
 import { setGotifyRuntime } from "./runtime.js";
@@ -56,7 +56,10 @@ export {
   mapOutboundToGotify,
 } from "./dispatch/routing/message-mapper.js";
 export { createGotifyWsListener } from "./transport/server.js";
-export { bootstrapGotifyAccount, doctorGotifyAccount } from "./runtime/bootstrap.js";
+export {
+  bootstrapGotifyAccount,
+  doctorGotifyAccount,
+} from "./runtime/bootstrap.js";
 export { runConfigWizard } from "./config/config-wizard.js";
 
 /**
@@ -65,14 +68,15 @@ export { runConfigWizard } from "./config/config-wizard.js";
  * @description 在宿主加载时：绑定 `gotify` id、人类可读名称、渠道实现、runtime setter
  * 以及 `registerFull` HTTP 扩展注册器。
  */
-const gotifyEntry: ReturnType<typeof defineChannelPluginEntry> = defineChannelPluginEntry({
-  id: "gotify",
-  name: "Gotify",
-  description:
-    "OpenClaw Gotify channel plugin — REST delivery + WebSocket stream with multi-account session isolation.",
-  plugin: gotifyChannel,
-  setRuntime: setGotifyRuntime,
-  registerFull: registerGotifyFull,
-});
+const gotifyEntry: ReturnType<typeof defineChannelPluginEntry> =
+  defineChannelPluginEntry({
+    id: "gotify",
+    name: "Gotify",
+    description:
+      "OpenClaw Gotify channel plugin — REST delivery + WebSocket stream with multi-account session isolation.",
+    plugin: gotifyChannel,
+    setRuntime: setGotifyRuntime,
+    registerFull: registerGotifyFull,
+  });
 
 export default gotifyEntry;

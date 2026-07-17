@@ -1,10 +1,11 @@
 /**
+ * @fileoverview Spring Cloud 风格 Nacos 配置到插件内部扁平配置的兼容层。
+ *
+ * 支持 application.yml 常见的 kebab-case/camelCase 字段、discovery/config 分离地址和
+ * shared-configs；转换结果交给 `parseNacosPluginConfig` 做最终校验。显式插件顶层字段始终
+ * 优先于嵌套 `nacos.*`，且转换不会修改调用方原始对象。
+ *
  * @module nacos/config/spring-normalize
- *
- * Maps Spring Cloud / application.yml style `nacos` blocks into the flat
- * {@link NacosPluginConfig} shape consumed by {@link parseNacosPluginConfig}.
- *
- * Top-level keys on the plugin config win over nested `nacos.*` when both are set.
  */
 
 import { deepMerge } from "./merge-deep.js";

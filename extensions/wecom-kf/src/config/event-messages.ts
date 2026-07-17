@@ -5,7 +5,9 @@
  */
 
 import type { EventMessagesConfig } from "../types/index.js";
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { getWecomRuntime } from "../runtime/index.js";
+import { resolveKfAccountByOpenKfId } from "./accounts.js";
 
 /** 内置默认事件消息配置 */
 const DEFAULT_EVENT_MESSAGES: EventMessagesConfig = {
@@ -46,7 +48,7 @@ export async function getEventMessagesConfig(
 ): Promise<EventMessagesConfig> {
   try {
     const runtime = getWecomRuntime();
-    const cfg = runtime.config;
+    const cfg = runtime.config.current();
     const channelCfg = (cfg as unknown as Record<string, Record<string, unknown>>).channels?.[
       "wecom-kf"
     ] as Record<string, unknown> | undefined;
@@ -58,11 +60,10 @@ export async function getEventMessagesConfig(
     const channelEventMessages = channelCfg.eventMessages as
       | EventMessagesConfig
       | undefined;
-    const accounts = channelCfg.accounts as
-      | Record<string, Record<string, unknown>>
-      | undefined;
-    const accountCfg = accounts?.[openKfId];
-    const accountEventMessages = accountCfg?.eventMessages as
+    const accountEventMessages = resolveKfAccountByOpenKfId({
+      cfg: cfg as OpenClawConfig,
+      openKfId,
+    })?.config.eventMessages as
       | EventMessagesConfig
       | undefined;
 

@@ -28,32 +28,51 @@ import { healthCheck } from "../transport/gotify-api.js";
  * @returns `void`
  */
 export function registerGotifyFull(api: OpenClawPluginApi): void {
+  const writeJson = (
+    res: ServerResponse,
+    status: number,
+    body: unknown,
+  ): void => {
+    res.writeHead(status, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    res.end(JSON.stringify(body));
+  };
+  const allowGet = (req: IncomingMessage, res: ServerResponse): boolean => {
+    if ((req.method ?? "GET") === "GET") return true;
+    res.setHeader("Allow", "GET");
+    writeJson(res, 405, { ok: false, error: "Method Not Allowed" });
+    return false;
+  };
+
   api.registerHttpRoute({
     path: "/gotify/status",
     auth: "plugin",
-    match: "prefix",
-    handler: async (_req: IncomingMessage, res: ServerResponse) => {
-      const cfg = (api.runtime as Record<string, unknown> | undefined)?.config as
-        | { current?: () => Record<string, unknown> }
-        | undefined;
+    match: "exact",
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      if (!allowGet(req, res)) return;
+      const cfg = (api.runtime as Record<string, unknown> | undefined)
+        ?.config as { current?: () => Record<string, unknown> } | undefined;
       const config = cfg?.current?.() ?? {};
       const accounts = listGotifyAccountIds(config).map((accountId) => ({
-        ...describeGotifyAccountSnapshot(resolveGotifyAccount(config, accountId)),
+        ...describeGotifyAccountSnapshot(
+          resolveGotifyAccount(config, accountId),
+        ),
         runtime: getAccountSnapshot(accountId),
       }));
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, data: { accounts } }));
+      writeJson(res, 200, { ok: true, data: { accounts } });
     },
   });
 
   api.registerHttpRoute({
     path: "/gotify/health",
     auth: "plugin",
-    match: "prefix",
-    handler: async (_req: IncomingMessage, res: ServerResponse) => {
-      const cfg = (api.runtime as Record<string, unknown> | undefined)?.config as
-        | { current?: () => Record<string, unknown> }
-        | undefined;
+    match: "exact",
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      if (!allowGet(req, res)) return;
+      const cfg = (api.runtime as Record<string, unknown> | undefined)
+        ?.config as { current?: () => Record<string, unknown> } | undefined;
       const config = cfg?.current?.() ?? {};
       const accounts = listGotifyAccountIds(config);
       const results = await Promise.all(
@@ -66,27 +85,29 @@ export function registerGotifyFull(api: OpenClawPluginApi): void {
         }),
       );
       const allOk = results.every((r) => r.ok);
-      res.writeHead(allOk ? 200 : 503, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: allOk, data: { accounts: results } }));
+      writeJson(res, allOk ? 200 : 503, {
+        ok: allOk,
+        data: { accounts: results },
+      });
     },
   });
 
   api.registerHttpRoute({
     path: "/gotify/doctor",
     auth: "plugin",
-    match: "prefix",
-    handler: async (_req: IncomingMessage, res: ServerResponse) => {
-      const cfg = (api.runtime as Record<string, unknown> | undefined)?.config as
-        | { current?: () => Record<string, unknown> }
-        | undefined;
+    match: "exact",
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      if (!allowGet(req, res)) return;
+      const cfg = (api.runtime as Record<string, unknown> | undefined)
+        ?.config as { current?: () => Record<string, unknown> } | undefined;
       const config = cfg?.current?.() ?? {};
       const reports = await Promise.all(
         listGotifyAccountIds(config).map(async (accountId) =>
           doctorGotifyAccount(resolveGotifyAccount(config, accountId)),
         ),
       );
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: reports.every((r) => r.ok), data: reports }));
+      const ok = reports.every((report) => report.ok);
+      writeJson(res, ok ? 200 : 503, { ok, data: reports });
     },
   });
 }

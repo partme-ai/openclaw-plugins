@@ -37,7 +37,7 @@ Use this when you want the shortest path to a WeCom smart robot DM conversation.
 - Install the plugin: `openclaw plugins install @partme.ai/wecom`
 - In WeCom admin, go to **Security and Management -> Management Tools -> Smart Robot**, create a robot in **API mode**, then copy the generated Bot ID and Secret. API mode means OpenClaw connects with the official Bot API instead of a group webhook URL.
 - Copy the Bot ID and Secret from WeCom admin.
-- Use Node.js 22+ and OpenClaw 2026.4.12+.
+- Use Node.js 22+ and OpenClaw 2026.7.1+.
 
 ### Complete JSON
 
@@ -349,6 +349,7 @@ Use this when you need a WeCom self-built app, proactive push, scheduled deliver
       "agent": {
         "corpId": "<YOUR_CORP_ID>",
         "corpSecret": "<YOUR_CORP_SECRET>",
+        "apiBaseUrl": "https://qyapi.weixin.qq.com",
         "agentId": "<YOUR_AGENT_ID>",
         "token": "<YOUR_CALLBACK_TOKEN>",
         "encodingAESKey": "<YOUR_43_CHAR_ENCODING_AES_KEY>",
@@ -374,6 +375,7 @@ https://<GATEWAY_HOST>/plugins/wecom/agent/default
 |-------|-------------|
 | `agent.corpId` | WeCom Corp ID. |
 | `agent.corpSecret` | Self-built app secret. |
+| `agent.apiBaseUrl` | OpenAPI base URL; defaults to the official origin. Overrides require HTTPS, except loopback HTTP for local fixtures. |
 | `agent.agentId` | Self-built app Agent ID. |
 | `agent.token` | Callback verification token. |
 | `agent.encodingAESKey` | 43-character callback AES key. |

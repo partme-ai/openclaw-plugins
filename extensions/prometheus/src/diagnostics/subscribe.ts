@@ -63,6 +63,7 @@ function warnIfDuplicateDiagnosticsExporter(logger: RuntimeLogger, config: unkno
   );
 }
 
+/** OpenClaw 内部 diagnostics 总线的最小桥接契约，用于订阅可信事件并支持测试替身。 */
 export type InternalDiagnosticsBridge = {
   emit: (event: Record<string, unknown>) => void;
   onEvent: (

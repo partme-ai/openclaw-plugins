@@ -1,7 +1,7 @@
 /**
  * @module tts/openai
  *
- * OpenAI TTS 语音合成 — tts-1 / tts-1-hd，6 种内置语音。
+ * OpenAI TTS 语音合成 — 对齐 `/audio/speech` 的模型、语音、格式与 speed 契约。
  *
  * **参考**：llm-study/llm-text-to-speech/openai/
  *
@@ -18,24 +18,89 @@ const DEFAULT_MODEL = "tts-1";
 const DEFAULT_VOICE = "alloy";
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
-const VALID_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] as const;
+const VALID_VOICES = [
+  "alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer",
+  "verse", "marin", "cedar",
+] as const;
 const VALID_FORMATS = ["mp3", "opus", "aac", "flac", "wav", "pcm"] as const;
 
 type VoiceName = (typeof VALID_VOICES)[number];
 type OutputFormat = (typeof VALID_FORMATS)[number];
 
 function resolveVoice(voice?: string): VoiceName {
-  if (voice && VALID_VOICES.includes(voice as VoiceName)) {
-    return voice as VoiceName;
-  }
-  return DEFAULT_VOICE;
+  if (!voice) return DEFAULT_VOICE;
+  if (VALID_VOICES.includes(voice as VoiceName)) return voice as VoiceName;
+  throw new TTSRequestError(PROVIDER, `Unsupported OpenAI voice: ${voice}`);
 }
 
 function resolveFormat(format?: string): OutputFormat {
-  if (format && VALID_FORMATS.includes(format as OutputFormat)) {
-    return format as OutputFormat;
+  if (!format) return "mp3";
+  if (VALID_FORMATS.includes(format as OutputFormat)) return format as OutputFormat;
+  throw new TTSRequestError(PROVIDER, `Unsupported OpenAI response format: ${format}`);
+}
+
+function resolveSpeed(rate?: string): number {
+  if (!rate?.trim()) return 1;
+  const normalized = rate.trim().replace(/%$/, "");
+  if (!/^[+-]?\d+(?:\.\d+)?$/.test(normalized)) {
+    throw new TTSRequestError(PROVIDER, `Invalid OpenAI speech rate: ${rate}`);
   }
-  return "mp3";
+  const speed = 1 + Number(normalized) / 100;
+  if (!Number.isFinite(speed) || speed < 0.25 || speed > 4) {
+    throw new TTSRequestError(PROVIDER, `OpenAI speech speed must be between 0.25 and 4.0: ${speed}`);
+  }
+  return speed;
+}
+
+/** 流式读取音频并在累计过程中执行上限，避免超大响应先完整分配内存。 */
+async function readAudioWithLimit(response: Response, maxBytes: number): Promise<Buffer> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new TTSRequestError(PROVIDER, `OpenAI TTS response exceeds maxAudioBytes=${maxBytes}`);
+  }
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new TTSRequestError(PROVIDER, `OpenAI TTS response exceeds maxAudioBytes=${maxBytes}`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total);
+}
+
+/** 错误响应只保留 4 KiB 诊断片段，防止异常正文绕过正常音频上限。 */
+async function readErrorSnippet(response: Response, maxBytes = 4096): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value).subarray(0, maxBytes - total);
+      chunks.push(chunk);
+      total += chunk.length;
+      if (chunk.length < value.byteLength || total >= maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total).toString("utf8");
 }
 
 /**
@@ -61,7 +126,15 @@ export async function synthesizeOpenAI(
   text: string,
   config: TTSConfig,
 ): Promise<TTSResult> {
-  const maxLen = config.maxTextLength ?? 4096;
+  if (typeof text !== "string" || !text.trim()) {
+    throw new TTSRequestError(PROVIDER, "OpenAI TTS text must be non-empty");
+  }
+  const configuredMaxLen = config.maxTextLength ?? 4096;
+  if (!Number.isSafeInteger(configuredMaxLen) || configuredMaxLen <= 0) {
+    throw new RangeError("OpenAI TTS maxTextLength must be a positive safe integer");
+  }
+  // OpenAI 官方上限固定为 4096；本地配置只能进一步收紧，不能放宽服务端契约。
+  const maxLen = Math.min(configuredMaxLen, 4096);
   if (text.length > maxLen) {
     throw new TTSRequestError(PROVIDER, `Text too long: ${text.length} > ${maxLen} chars`);
   }
@@ -70,7 +143,18 @@ export async function synthesizeOpenAI(
   const model = config.model || DEFAULT_MODEL;
   const voice = resolveVoice(config.voice);
   const format = resolveFormat(config.outputFormat);
+  const speed = resolveSpeed(config.rate);
   const timeoutMs = config.timeoutMs ?? 30000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("OpenAI TTS timeoutMs must be a positive safe integer");
+  }
+  const maxAudioBytes = config.maxAudioBytes ?? 25 * 1024 * 1024;
+  if (!Number.isSafeInteger(maxAudioBytes) || maxAudioBytes <= 0) {
+    throw new RangeError("OpenAI TTS maxAudioBytes must be a positive safe integer");
+  }
+  if (typeof config.apiKey !== "string" || !config.apiKey.trim()) {
+    throw new TTSAuthError(PROVIDER, "OpenAI TTS apiKey is required");
+  }
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const startMs = Date.now();
@@ -80,27 +164,27 @@ export async function synthesizeOpenAI(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
+        Authorization: `Bearer ${config.apiKey.trim()}`,
       },
       body: JSON.stringify({
         model,
         input: text,
         voice,
         response_format: format,
-        speed: config.rate ? 1 + parseInt(config.rate) / 100 : 1,
+        speed,
       }),
       signal: controller.signal,
     });
 
     if (!resp.ok) {
-      const errText = await resp.text().catch(() => "");
+      const errText = await readErrorSnippet(resp).catch(() => "");
       if (resp.status === 401 || resp.status === 403) {
         throw new TTSAuthError(PROVIDER, `OpenAI auth failed: ${errText}`, resp.status);
       }
       throw new TTSRequestError(PROVIDER, `OpenAI TTS failed: HTTP ${resp.status} ${errText}`, resp.status);
     }
 
-    const audio = Buffer.from(await resp.arrayBuffer());
+    const audio = await readAudioWithLimit(resp, maxAudioBytes);
     if (audio.length === 0) throw new TTSEmptyResultError(PROVIDER);
 
     return {

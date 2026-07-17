@@ -37,10 +37,10 @@ export interface MqttTopicBinding {
  * MQTT Channel 配置（channels.mqtt）
  */
 export interface MqttChannelConfig {
+  /** TCP 监听地址；默认仅 loopback */
+  host?: string;
   /** TCP 监听端口 */
   port: number;
-  /** WebSocket 监听端口（兼容字段，当前不启用） */
-  wsPort: number;
   /** 最大连接数 */
   maxConnections: number;
   /** 认证配置 */
@@ -73,10 +73,10 @@ export interface MqttChannelConfig {
  * MQTT Broker 配置
  */
 export interface MqttBrokerConfig {
+  /** TCP 监听地址；默认仅 loopback */
+  host?: string;
   /** TCP 端口，默认 1883 */
   port: number;
-  /** WebSocket 端口，默认 8883 */
-  wsPort: number;
   /** 最大连接数，默认 1000 */
   maxConnections: number;
   /** 认证配置 */
@@ -141,6 +141,10 @@ export interface MqttTlsConfig {
 export interface MqttLimitsConfig {
   /** 单条消息最大字节数（超出后拒绝） */
   maxPayloadBytes: number;
+  /** 单个 clientId 等待或正在执行的 Agent 入站任务上限。 */
+  maxPendingMessagesPerClient: number;
+  /** 单次 Agent 入站任务硬超时（毫秒）。 */
+  inboundTaskTimeoutMs: number;
 }
 
 /**
@@ -198,7 +202,7 @@ export interface MqttWillPolicyConfig {
 /**
  * 持久化后端类型
  */
-export type MqttPersistenceBackend = "memory" | "redis" | "mongodb" | "level" | "nedb";
+export type MqttPersistenceBackend = "memory" | "redis" | "mongodb" | "level";
 
 /**
  * 持久化配置（支持多种后端）
@@ -216,21 +220,21 @@ export interface MqttPersistenceConfig {
     db?: number;
     password?: string;
     keyPrefix?: string;
-    subscriptionTTL?: number;
+    /** 离线 QoS 消息 TTL（秒，0 表示不限制） */
+    packetTTL?: number;
     retainedTTL?: number;
   };
   /** MongoDB 配置 */
   mongodb?: {
     url?: string;
     dbName?: string;
+    /** MongoDB collection 名称前缀，例如 `openclaw_mqtt_`。 */
+    collectionPrefix?: string;
+    /** @deprecated 使用 collectionPrefix；保留用于旧配置迁移。 */
     collectionName?: string;
   };
   /** LevelDB 配置 */
   level?: {
-    path?: string;
-  };
-  /** NeDB 配置 */
-  nedb?: {
     path?: string;
   };
 }
@@ -381,18 +385,4 @@ export interface MqttSessionContext {
   accountId: string;
   /** 最近更新时间（毫秒时间戳） */
   updatedAt?: number;
-}
-
-/**
- * Last Will 配置（设备断线通知）
- */
-export interface MqttWillConfig {
-  /** Topic */
-  topic: string;
-  /** 内容 */
-  payload: string;
-  /** QoS */
-  qos: 0 | 1;
-  /** Retain */
-  retain: boolean;
 }

@@ -8,7 +8,7 @@
  * @module setup-entry
  */
 
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { rabbitmqChannel } from "./channel.js";
 

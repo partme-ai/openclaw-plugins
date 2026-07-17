@@ -4,7 +4,7 @@
 > 它遵循 OpenClaw 插件规范与通道契约，将 Gotify 自托管推送服务接入 OpenClaw 的统一消息平面，实现**出站通知、入站指令、自动化配置与双向交互**。
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](#)
-[![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-Plugin_2026.3.24--beta.2-green.svg)](#)
+[![OpenClaw Plugin](https://img.shields.io/badge/OpenClaw-Plugin_2026.7.1-green.svg)](#)
 [![Gotify](https://img.shields.io/badge/Gotify-API_v1-orange.svg)](#)
 
 ---
@@ -917,7 +917,7 @@ bootstrapGotifyAccount(account):
 
 ```typescript
 export default defineChannelPluginEntry({
-  id: 'openclaw-gotify',
+  id: 'gotify',
   name: 'Gotify',
   description: 'OpenClaw Gotify channel plugin with REST delivery and WebSocket stream support.',
   plugin: gotifyChannel,

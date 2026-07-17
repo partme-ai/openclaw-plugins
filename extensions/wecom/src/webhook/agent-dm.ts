@@ -14,7 +14,6 @@
  * **关键导出**：`agentDmText`、`agentDmMedia`
  */
 
-import { fetchWithSsrFGuard } from "../runtime/runtime-api.js";
 import { sendText as sendAgentText, uploadMedia, sendMedia as sendAgentMedia } from "../agent/api-client.js";
 import {
   getExtendedMediaLocalRoots,
@@ -22,6 +21,7 @@ import {
 } from "../media/media-path-guard.js";
 import { resolveWecomMediaMaxBytes } from "./inbound-helpers.js";
 import type { WecomWebhookTarget } from "./types.js";
+import { downloadGuardedHttpMedia } from "../media/http-media.js";
 
 /**
  * 通过 Agent 私信发送文本（超长自动分块 20KB）。
@@ -82,18 +82,13 @@ export async function agentDmMedia(params: {
 
   const looksLikeUrl = /^https?:\/\//i.test(mediaUrlOrPath);
   if (looksLikeUrl) {
-    const { response: res, release } = await fetchWithSsrFGuard({
+    const downloaded = await downloadGuardedHttpMedia({
       url: mediaUrlOrPath,
+      maxBytes: resolveWecomMediaMaxBytes(target.config),
       timeoutMs: 30_000,
     });
-    try {
-      if (!res.ok) throw new Error(`media download failed: ${res.status}`);
-      buffer = Buffer.from(await res.arrayBuffer());
-      inferredContentType =
-        inferredContentType || res.headers.get("content-type") || "application/octet-stream";
-    } finally {
-      await release();
-    }
+    buffer = downloaded.buffer;
+    inferredContentType = inferredContentType || downloaded.contentType || "application/octet-stream";
   } else {
     const mediaLocalRoots = await getExtendedMediaLocalRoots(target.account.config);
     const maxBytes = resolveWecomMediaMaxBytes(target.config);

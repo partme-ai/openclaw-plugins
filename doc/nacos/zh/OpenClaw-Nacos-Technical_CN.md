@@ -11,7 +11,7 @@
 | 测试 | Vitest | 4.x |
 | Nacos SDK | nacos (npm) | 2.6.1 |
 | YAML 解析 | yaml | 2.7.0 |
-| OpenClaw SDK | openclaw (peer) | ≥ 2026.4.6 |
+| OpenClaw SDK | openclaw (peer) | ≥ 2026.7.1 |
 
 ## Nacos SDK 集成
 
@@ -114,8 +114,8 @@ Nacos 配置正文根据 dataId 扩展名和内容进行解析：
 插件配置遵循命名约定：`{pluginId}-{profile}.json`
 
 示例：
-- `openclaw-weixin-dev.json`
-- `openclaw-dingtalk-prod.json`
+- `wechat-dev.json`
+- `dingtalk-connector-prod.json`
 - `openclaw-lark-default.json`
 
 加载的配置合并到 OpenClaw 配置树中的 `plugins.entries[pluginId].config`。已有的插件配置值会被保留并与 Nacos 中的值深度合并。

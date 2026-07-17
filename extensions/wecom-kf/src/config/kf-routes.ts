@@ -17,6 +17,11 @@ export const DEFAULT_KF_WEBHOOK_PATH = "/wecom-kf";
 /** 默认企微 OpenAPI 域名 */
 export const DEFAULT_API_BASE_URL = "https://qyapi.weixin.qq.com";
 
+export type WecomKfRouteBinding = {
+    path: string;
+    accountId: string;
+};
+
 /**
  * 规范化 HTTP 路径：补上前导 `/`，空值回退 fallback。
  */
@@ -32,21 +37,35 @@ export function normalizeRoutePath(path: string | undefined, fallback: string): 
  * 包含：顶层 `webhookPath`、各账号 `accounts.*.webhookPath`、以及内置兼容别名。
  */
 export function collectWecomKfRoutePaths(config: WecomKfConfig | undefined): string[] {
-    const routes = new Set<string>([
-        normalizeRoutePath(config?.webhookPath, DEFAULT_KF_WEBHOOK_PATH),
-        WEBHOOK_PATHS.KF,
-        WEBHOOK_PATHS.KF_PLUGIN,
-        "/plugins/wecom-kf",
-        DEFAULT_KF_WEBHOOK_PATH,
-    ]);
+    return collectWecomKfRouteBindings(config).map((binding) => binding.path);
+}
 
-    for (const accountConfig of Object.values(config?.accounts ?? {})) {
-        const customPath = accountConfig?.webhookPath?.trim();
-        if (!customPath) continue;
-        routes.add(normalizeRoutePath(customPath, DEFAULT_KF_WEBHOOK_PATH));
+/**
+ * 收集回调路径与账号的确定性绑定。验签发生在 XML 解密前，因此多账号必须先由路径选择 Token/AESKey。
+ */
+export function collectWecomKfRouteBindings(config: WecomKfConfig | undefined): WecomKfRouteBinding[] {
+    const defaultAccountId = config?.defaultAccount?.trim() || "default";
+    const bindings = new Map<string, string>();
+    const add = (path: string, accountId: string): void => {
+        const normalized = normalizeRoutePath(path, DEFAULT_KF_WEBHOOK_PATH);
+        const existing = bindings.get(normalized);
+        if (existing && existing !== accountId) {
+            throw new Error(`wecom-kf webhook path ${normalized} is assigned to both ${existing} and ${accountId}`);
+        }
+        bindings.set(normalized, accountId);
+    };
+
+    add(normalizeRoutePath(config?.webhookPath, DEFAULT_KF_WEBHOOK_PATH), defaultAccountId);
+    add(WEBHOOK_PATHS.KF, defaultAccountId);
+    add(WEBHOOK_PATHS.KF_PLUGIN, defaultAccountId);
+    add("/plugins/wecom-kf", defaultAccountId);
+    add(DEFAULT_KF_WEBHOOK_PATH, defaultAccountId);
+
+    for (const [accountId, accountConfig] of Object.entries(config?.accounts ?? {})) {
+        add(resolveKfAccountWebhookPath({ accountId, webhookPath: accountConfig?.webhookPath }), accountId);
     }
 
-    return [...routes];
+    return [...bindings].map(([path, accountId]) => ({ path, accountId }));
 }
 
 /**
@@ -54,7 +73,24 @@ export function collectWecomKfRoutePaths(config: WecomKfConfig | undefined): str
  */
 export function resolveApiBaseUrl(config?: { apiBaseUrl?: string }): string {
     const raw = (config?.apiBaseUrl ?? "").trim();
-    return raw ? raw.replace(/\/+$/, "") : DEFAULT_API_BASE_URL;
+    if (!raw) return DEFAULT_API_BASE_URL;
+    let parsed: URL;
+    try {
+        parsed = new URL(raw);
+    } catch {
+        throw new Error("wecom-kf apiBaseUrl must be an absolute HTTPS URL");
+    }
+    const loopbackHost = parsed.hostname === "localhost" ||
+        parsed.hostname === "127.0.0.1" ||
+        parsed.hostname === "[::1]";
+    // 生产代理必须使用 HTTPS；仅对白名单 loopback 放行 HTTP，支持本地沙箱、离线联调和安装态 E2E。
+    if ((parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopbackHost)) ||
+        parsed.username || parsed.password) {
+        throw new Error("wecom-kf apiBaseUrl must use HTTPS (HTTP is allowed only for loopback) without embedded credentials");
+    }
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.toString().replace(/\/+$/, "");
 }
 
 /**

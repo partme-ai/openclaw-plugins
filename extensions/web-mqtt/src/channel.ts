@@ -3,7 +3,14 @@
  * 负责账户状态、gateway 生命周期与 outbound 回包逻辑。
  */
 
-import { publishOutboundText } from "./outbound.js";
+import { parseDirectTarget, publishDirectText, publishOutboundText } from "./outbound.js";
+import type { ChannelOutboundContext } from "openclaw/plugin-sdk/channel-contract";
+import type {
+  ChannelAccountSnapshot,
+  ChannelGatewayContext,
+  ChannelPlugin,
+  OpenClawConfig,
+} from "openclaw/plugin-sdk";
 import {
   getStats,
   startWebMqttServer,
@@ -15,19 +22,25 @@ import {
 import { resolveWebMqttConfig, validateWebMqttConfig } from "./config.js";
 import { getWebMqttChannelConfig, setWebMqttChannelConfig } from "./state/mqtt-state.js";
 import { processInbound } from "./inbound.js";
-import { webMqttSetupAdapter, webMqttSetupWizard } from "./onboarding.js";
+import { isWebMqttConfigured } from "./state/configured.js";
 
 /**
  * 单账户场景的 accountId。
  */
 export const DEFAULT_ACCOUNT_ID = "default";
 
+type ResolvedWebMqttAccount = {
+  accountId: typeof DEFAULT_ACCOUNT_ID;
+  name: string;
+  enabled: boolean;
+  configured: boolean;
+};
+
 /**
  * 导出的 channel plugin。
  */
-export const mqttWsChannel = {
+export const mqttWsChannel: ChannelPlugin<ResolvedWebMqttAccount> = {
   id: "mqtt-ws",
-  name: "MQTT over WebSocket",
   meta: {
     id: "mqtt-ws",
     label: "MQTT over WebSocket",
@@ -38,29 +51,45 @@ export const mqttWsChannel = {
     order: 89,
   },
   capabilities: { chatTypes: ["direct"] as const },
-  setupWizard: webMqttSetupWizard,
-  setup: webMqttSetupAdapter,
+  reload: { configPrefixes: ["channels.mqtt-ws"] },
   config: {
-    listAccountIds: () => [DEFAULT_ACCOUNT_ID],
+    listAccountIds: (cfg: Record<string, unknown>) =>
+      isWebMqttConfigured(cfg as unknown as OpenClawConfig) ? [DEFAULT_ACCOUNT_ID] : [],
     resolveAccount: (cfg: Record<string, unknown>) => {
       const config = resolveWebMqttConfig(cfg);
+      const configured = isWebMqttConfigured(cfg as unknown as OpenClawConfig);
+      const section = ((cfg.channels as Record<string, unknown> | undefined)?.["mqtt-ws"] ?? {}) as {
+        enabled?: boolean;
+      };
       return {
         accountId: DEFAULT_ACCOUNT_ID,
         name: "MQTT over WebSocket",
-        enabled: true,
-        configured: Boolean(config.port && config.path),
+        enabled: section.enabled !== false,
+        configured,
       };
     },
+    defaultAccountId: () => DEFAULT_ACCOUNT_ID,
+    isConfigured: (account: { configured: boolean }) => account.configured,
+    unconfiguredReason: () => "channels.mqtt-ws requires explicit port and path configuration",
   },
   status: {
-    buildAccountSnapshot: (cfg: Record<string, unknown>) => {
-      const config = resolveWebMqttConfig(cfg);
+    buildAccountSnapshot: ({
+      account,
+      cfg,
+      runtime,
+    }: {
+      account: ResolvedWebMqttAccount;
+      cfg: OpenClawConfig;
+      runtime?: ChannelAccountSnapshot;
+    }) => {
+      const config = resolveWebMqttConfig(cfg as unknown as Record<string, unknown>);
       const serviceStats = getStats();
       return {
-        accountId: DEFAULT_ACCOUNT_ID,
-        name: "MQTT over WebSocket",
-        enabled: true,
-        configured: true,
+        ...runtime,
+        accountId: account.accountId,
+        name: account.name,
+        enabled: account.enabled,
+        configured: account.configured,
         webhookPath: "/mqtt-ws/status",
         port: config.port,
         extra: serviceStats,
@@ -73,18 +102,11 @@ export const mqttWsChannel = {
      * @param root0.cfg - 完整网关配置（OpenClaw 2026.5+ ChannelGatewayContext）。
      * @param root0.abortSignal - 停止信号。
      */
-    startAccount: async ({
-      cfg,
-      abortSignal,
-    }: {
-      cfg: Record<string, unknown>;
-      abortSignal: AbortSignal;
-    }) => {
-      const config = resolveWebMqttConfig(cfg ?? {});
-      setWebMqttChannelConfig(config);
+    startAccount: async ({ cfg, abortSignal, log }: ChannelGatewayContext<ResolvedWebMqttAccount>) => {
+      const config = resolveWebMqttConfig(cfg as unknown as Record<string, unknown>);
       const issues = validateWebMqttConfig(config);
       for (const issue of issues) {
-        console.warn(`[openclaw-web-mqtt] config warning: ${issue}`);
+        log?.warn(`[openclaw-web-mqtt] config warning: ${issue}`);
       }
 
       await startWebMqttServer(config, async (event) => {
@@ -95,20 +117,33 @@ export const mqttWsChannel = {
         } else {
           trackInboundDropped(result.reason ?? "unknown_drop_reason");
         }
+        return result;
       });
-
-      await new Promise<void>((resolve) => {
-        const onAbort = (): void => resolve();
-        abortSignal.addEventListener("abort", onAbort, { once: true });
-      });
-      await stopWebMqttServer();
+      setWebMqttChannelConfig(config);
+      try {
+        if (!abortSignal.aborted) {
+          await new Promise<void>((resolve) => {
+            abortSignal.addEventListener("abort", () => resolve(), { once: true });
+          });
+        }
+      } finally {
+        await stopWebMqttServer();
+        setWebMqttChannelConfig(null);
+      }
     },
   },
   outbound: {
     deliveryMode: "direct" as const,
-    sendText: async (sessionKey: string, text: string): Promise<void> => {
+    sendText: async (ctx: ChannelOutboundContext) => {
       const config = getWebMqttChannelConfig() ?? resolveWebMqttConfig({});
-      await publishOutboundText(sessionKey, text, config.topicPrefix);
+      const directTarget = parseDirectTarget(ctx.to);
+      if (directTarget) {
+        if (!ctx.deliveryQueueId) throw new Error("[openclaw-web-mqtt] Explicit direct delivery requires deliveryQueueId");
+        await publishDirectText(directTarget, ctx.text);
+        return { channel: "mqtt-ws", messageId: ctx.deliveryQueueId };
+      }
+      await publishOutboundText(ctx.to, ctx.text, config.topicPrefix);
+      return { channel: "mqtt-ws", messageId: ctx.to };
     },
   },
 };

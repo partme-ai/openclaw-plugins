@@ -1,3 +1,9 @@
+/**
+ * @fileoverview OpenClaw 模型供应商认证状态的 Prometheus 采集器。
+ *
+ * 通过 Gateway `models.authStatus` RPC 获取凭据状态、到期时间和用量窗口，只输出经过标签
+ * 清洗的供应商名称及数值状态，不暴露 Token、Profile 内容或其它认证秘密。
+ */
 import type {
   MetricCollector,
   MetricDefinition,
@@ -12,6 +18,7 @@ import { sanitizeLabel } from "../shared/label-sanitize.js";
 const PREFIX = "openclaw_model_auth";
 const PROVIDER_STATUSES = ["ok", "expiring", "expired", "missing", "static"] as const;
 
+/** 将模型认证快照转换为低基数 one-hot 状态及到期/额度指标。 */
 export class ModelAuthCollector implements MetricCollector {
   name = "model-auth";
 
@@ -164,4 +171,3 @@ function appendUsageWindowSamples(
     }
   }
 }
-

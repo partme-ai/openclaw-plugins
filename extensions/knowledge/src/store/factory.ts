@@ -3,17 +3,18 @@
  *
  * @description
  * 当前内置：
- * - `sqlite-vec` — better-sqlite3 持久化 + FTS5（默认生产推荐）；
+ * - `sqlite-vec` — Node.js 内置 SQLite 持久化 + FTS5（默认生产推荐）；
  * - `zvec` — 纯 JS 内存引擎（开发/演示）；
- * - `native-zvec` — `@zvec/zvec` 原生 HNSW（可选重依赖）。
  *
  * **模块角色**：Knowledge Plugin · Vector storage adapter registry。
- * **关键依赖**：`zvec.js`（静态）、`sqlite-vec`/`native-zvec`（动态 import）。
+ * **关键依赖**：`zvec.js`（静态）、`sqlite-vec`（动态 import）。
  *
  * @module knowledge/store/factory
  */
 
 import type { VectorStore, KnowledgeStoreConfig } from '../types.js';
+import { createHash } from 'node:crypto';
+import { basename, dirname, extname, join } from 'node:path';
 import { ZVecStore } from './zvec.js';
 // 注意：SqliteVecStore / NativeZVecStore 是动态 import，仅在使用时加载
 
@@ -36,16 +37,16 @@ export async function createVectorStore(
       const store = new ZVecStore({
         namespace,
         dimensions,
-        dbPath: config.dbPath,
+        dbPath: config.dbPath ? namespaceDataPath(config.dbPath, namespace) : undefined,
       });
       await store.initialize();
       return store;
     }
 
     case 'sqlite-vec': {
-      // 动态导入以避免启动时强依赖 better-sqlite3
+      // 动态导入以减少未启用插件时的 node:sqlite 初始化成本
       const { SqliteVecStore } = await import('./sqlite-vec.js');
-      const dbPath = config.dbPath ?? `./data/wecom-kb-${namespace}.db`;
+      const dbPath = config.dbPath ?? './data/knowledge.db';
       const store = new SqliteVecStore({
         dbPath,
         namespace,
@@ -55,29 +56,25 @@ export async function createVectorStore(
       return store;
     }
 
-    case 'native-zvec': {
-      // 动态导入以避免启动时强依赖 @zvec/zvec
-      const { NativeZVecStore } = await import('./native-zvec.js');
-      const store = new NativeZVecStore({
-        namespace,
-        dimensions,
-        dataDir: config.extra?.dataDir as string | undefined,
-        indexType: (config.extra?.indexType as 'hnsw' | 'flat') ?? 'hnsw',
-        hnswM: (config.extra?.hnswM as number) ?? 16,
-        hnswEfConstruction: (config.extra?.hnswEfConstruction as number) ?? 200,
-        hnswEf: (config.extra?.hnswEf as number) ?? 100,
-      });
-      await store.initialize();
-      return store;
-    }
-
     default:
       throw new Error(
         `Unsupported vector store provider: "${provider}". ` +
-        `Supported: zvec, sqlite-vec, native-zvec. ` +
-        `For external databases (redis, pinecone, etc.), see future releases.`
+        'Supported: zvec, sqlite-vec.'
       );
   }
+}
+
+/**
+ * 为命名空间派生互不冲突的持久化文件路径。
+ *
+ * namespace 仅参与 SHA-256 摘要，不直接拼入文件名，既隔离租户数据，也避免路径
+ * 分隔符、超长账号名或业务标识泄漏到宿主文件系统。
+ */
+export function namespaceDataPath(dbPath: string, namespace: string): string {
+  const extension = extname(dbPath);
+  const stem = basename(dbPath, extension);
+  const suffix = createHash('sha256').update(namespace).digest('hex').slice(0, 12);
+  return join(dirname(dbPath), `${stem}-${suffix}${extension || '.json'}`);
 }
 
 /**
@@ -90,6 +87,6 @@ export function getDefaultStoreConfig(namespace: string): KnowledgeStoreConfig {
   return {
     provider: 'sqlite-vec',
     namespace,
-    dbPath: `./data/wecom-kb-${namespace}.db`,
+    dbPath: './data/knowledge.db',
   };
 }

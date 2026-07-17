@@ -7,13 +7,15 @@ export function stompConfig(_ctx) {
     channelEntry: {
       "stomp-tcp": {
         port: E2E_PORTS.stompTcp,
-        auth: { required: false },
+        auth: {
+          required: true,
+          users: [{ login: "stomp-e2e", password: "stomp-e2e-secret" }],
+        },
         subscribeTopics: ["/topic/#", "/queue/#"],
         topicBindings: [
           {
             topicPattern: "/queue/agent.main.in",
             agentId: "main",
-            replyTopic: "/topic/session.main.out",
           },
         ],
       },

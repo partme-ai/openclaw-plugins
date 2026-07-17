@@ -23,12 +23,16 @@ describe("openclaw-mqtt E2E 功能验证", () => {
   beforeAll(async () => {
     const config = {
       port: BROKER_PORT,
-      wsPort: 0,
       maxConnections: 100,
       auth: {
         enabled: true,
         allowAnonymous: true,
         users: [
+          {
+            username: "anonymous",
+            publishAllow: ["openclaw/agent/+/in", "devices/#"],
+            subscribeAllow: ["openclaw/agent/+/out", "devices/#"],
+          },
           {
             username: "iot-device",
             password: "device-pass",
@@ -57,7 +61,11 @@ describe("openclaw-mqtt E2E 功能验证", () => {
         ],
       },
       tls: { enabled: false, port: 0 },
-      limits: { maxPayloadBytes: 64 * 1024 }, // 64KB
+      limits: {
+        maxPayloadBytes: 64 * 1024, // 64KB
+        maxPendingMessagesPerClient: 32,
+        inboundTaskTimeoutMs: 120_000,
+      },
       session: { maxExpirySeconds: 3600, persistentAcrossReconnect: true },
       qos0: { mailboxSoftLimit: 500 },
       retain: { allowInboundRetain: true, outboundRetain: false },
@@ -359,7 +367,7 @@ describe("openclaw-mqtt E2E 功能验证", () => {
       data: {
         broker: stats,
         sessions: { activeSessions: 0, uniqueClients: 0, contextBoundSessions: 0, pendingExpiryClients: 0, delayedExpiryCount: 0 },
-        qos: { pendingCount: 0, oldestPendingMs: null },
+        qos: { handledBy: "aedes", levels: [0, 1, 2] },
         clients,
         config: null,
         policy: {
@@ -385,6 +393,6 @@ describe("openclaw-mqtt E2E 功能验证", () => {
     console.log(`  broker.qos0InflightClients: ${statusResponse.data.broker.qos0InflightClients}`);
     console.log(`  clients: ${statusResponse.data.clients.length} 个`);
     console.log(`  sessions.activeSessions: ${statusResponse.data.sessions.activeSessions}`);
-    console.log(`  qos.pendingCount: ${statusResponse.data.qos.pendingCount}`);
+    console.log(`  qos.handledBy: ${statusResponse.data.qos.handledBy}`);
   });
 });

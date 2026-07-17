@@ -65,6 +65,22 @@ function resolveSignatureParam(query: Record<string, string>): string {
   return query.msg_signature ?? query.msgsignature ?? query.signature ?? "";
 }
 
+/** Bot 与 Agent 回调统一使用五分钟防重放窗口。 */
+const MAX_CALLBACK_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+function isFreshCallbackTimestamp(timestamp: string, now = Date.now()): boolean {
+  if (!/^\d{10,13}$/.test(timestamp)) return false;
+  const numeric = Number(timestamp);
+  if (!Number.isSafeInteger(numeric)) return false;
+  const timestampMs = timestamp.length === 13 ? numeric : numeric * 1000;
+  return Math.abs(now - timestampMs) <= MAX_CALLBACK_CLOCK_SKEW_MS;
+}
+
+/** 清理控制字符并截断不可信 HTTP 元数据，防止诊断日志被注入或无限放大。 */
+function safeLogValue(value: string, maxLength = 256): string {
+  return value.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, maxLength);
+}
+
 
 /**
  * 判断入站消息是否应该被处理（对齐原版 shouldProcessBotInboundMessage）
@@ -222,6 +238,30 @@ type MatchResult =
   | { status: "not_found"; candidateAccountIds: string[] }
   | { status: "conflict"; candidateAccountIds: string[] };
 
+/** 坏账号的 Token/AES 配置只使该候选失败，不能让同一路径其他账号收到 500。 */
+function targetSignatureMatches(
+  target: WecomWebhookTarget,
+  signature: string,
+  timestamp: string,
+  nonce: string,
+  encrypt: string,
+): boolean {
+  if (!target.account.token) return false;
+  try {
+    const wc = new WecomCrypto(
+      target.account.token,
+      target.account.encodingAESKey,
+      target.account.receiveId,
+    );
+    return wc.verifySignature(signature, timestamp, nonce, encrypt);
+  } catch {
+    target.runtime.error?.(
+      `[webhook] signature verifier unavailable account=${target.account.accountId}`,
+    );
+    return false;
+  }
+}
+
 /**
  * 从已注册的 Target 中匹配签名
  *
@@ -250,15 +290,8 @@ function findMatchingTarget(
     const byAccountId = pathTargets.find(
       (t) => t.account.accountId === pathAccountId,
     );
-    if (byAccountId?.account?.token) {
-      const wc = new WecomCrypto(byAccountId.account.token, byAccountId.account.encodingAESKey, byAccountId.account.receiveId);
-      const ok = wc.verifySignature(
-        signature,
-        timestamp,
-        nonce,
-        encrypt,
-        );
-      if (ok) return { status: "matched", target: byAccountId };
+    if (byAccountId && targetSignatureMatches(byAccountId, signature, timestamp, nonce, encrypt)) {
+      return { status: "matched", target: byAccountId };
     }
   }
 
@@ -268,18 +301,8 @@ function findMatchingTarget(
     : getRegisteredTargets();
 
   // filter 语义：收集所有签名匹配的 Target
-  const signatureMatches = candidates.filter(
-    (target) => {
-      if (!target?.account?.token) return false;
-      const wc = new WecomCrypto(target.account.token, target.account.encodingAESKey, target.account.receiveId);
-      return wc.verifySignature(
-        signature,
-        timestamp,
-        nonce,
-        encrypt,
-      );
-    }
-  );
+  const signatureMatches = candidates.filter((target) =>
+    targetSignatureMatches(target, signature, timestamp, nonce, encrypt));
 
   // 按 accountId 去重（同一 account 注册多条路径时，不应被误判为冲突）
   const uniqueMatches = deduplicateByAccountId(signatureMatches);
@@ -319,7 +342,7 @@ export async function handleWecomWebhookRequest(
   const url = req.url ?? "/";
   const method = (req.method ?? "GET").toUpperCase();
   const remote = req.socket?.remoteAddress ?? "unknown";
-  const ua = String(req.headers["user-agent"] ?? "");
+  const ua = safeLogValue(String(req.headers["user-agent"] ?? ""));
   const cl = String(req.headers["content-length"] ?? "");
   const query = parseQuery(url);
   const hasTimestamp = Boolean(query.timestamp);
@@ -328,7 +351,7 @@ export async function handleWecomWebhookRequest(
   const signature = resolveSignatureParam(query);
   const hasSig = Boolean(signature);
   console.log(
-    `[wecom] inbound(http): reqId=${reqId} path=${url.split("?")[0]} method=${method} remote=${remote} ua=${ua ? `"${ua}"` : "N/A"} contentLength=${cl || "N/A"} query={timestamp:${hasTimestamp},nonce:${hasNonce},echostr:${hasEchostr},signature:${hasSig}}`,
+    `[wecom] inbound(http): reqId=${reqId} path=${safeLogValue(url.split("?")[0] ?? "/")} method=${method} remote=${safeLogValue(remote)} ua=${ua ? `"${ua}"` : "N/A"} contentLength=${safeLogValue(cl) || "N/A"} query={timestamp:${hasTimestamp},nonce:${hasNonce},echostr:${hasEchostr},signature:${hasSig}}`,
   );
 
   if (!hasActiveTargets()) {
@@ -344,6 +367,10 @@ export async function handleWecomWebhookRequest(
     const msgSignature = resolveSignatureParam(query);
     if (!msgSignature || !timestamp || !nonce || !echostr) {
       sendText(res, 400, "missing required query parameters");
+      return true;
+    }
+    if (!isFreshCallbackTimestamp(timestamp)) {
+      sendJson(res, 401, { error: "stale_timestamp" });
       return true;
     }
 
@@ -376,6 +403,10 @@ export async function handleWecomWebhookRequest(
     const msgSignature = resolveSignatureParam(query);
     if (!msgSignature || !timestamp || !nonce) {
       sendJson(res, 400, { error: "missing required query parameters" });
+      return true;
+    }
+    if (!isFreshCallbackTimestamp(timestamp)) {
+      sendJson(res, 401, { error: "stale_timestamp" });
       return true;
     }
 
@@ -454,6 +485,8 @@ export async function handleWecomWebhookRequest(
         target.runtime.error?.(
           `[webhook] aibotid_mismatch: accountId=${target.account.accountId} expected=${Array.from(expectedBotIds).join(",")} actual=${inboundAibotId || "N/A"}`,
         );
+        sendJson(res, 403, { error: "aibotid_mismatch" });
+        return true;
       }
     }
 

@@ -1,7 +1,9 @@
 {
   "id": "wecom",
+  "version": "2026.7.1",
   "channels": ["wecom"],
   "skills": ["./skills"],
+  "contracts": { "tools": ["wecom_mcp"] },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -13,8 +15,86 @@
       "description": "企业微信智能机器人与自建应用双模式接入，支持 WebSocket 长连接、Webhook 回调和 Agent HTTP API",
       "schema": {
         "type": "object",
-        "additionalProperties": true,
-        "properties": {}
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "defaultAccount": { "type": "string", "minLength": 1 },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "description": "账号级字段与顶层 WeCom 配置相同，并覆盖顶层默认值"
+            }
+          },
+          "name": { "type": "string" },
+          "connectionMode": { "type": "string", "enum": ["websocket", "webhook"] },
+          "websocketUrl": { "type": "string", "pattern": "^wss://" },
+          "botId": { "type": "string" },
+          "secret": { "type": "string" },
+          "token": { "type": "string" },
+          "encodingAESKey": { "type": "string", "minLength": 43, "maxLength": 43 },
+          "receiveId": { "type": "string" },
+          "allowFrom": { "type": "array", "items": { "type": ["string", "number"] } },
+          "dmPolicy": { "type": "string", "enum": ["open", "allowlist", "pairing", "disabled"] },
+          "groupPolicy": { "type": "string", "enum": ["open", "allowlist", "disabled"] },
+          "groupAllowFrom": { "type": "array", "items": { "type": ["string", "number"] } },
+          "groups": { "type": "object", "additionalProperties": { "type": "object" } },
+          "sendThinkingMessage": { "type": "boolean" },
+          "streaming": {
+            "oneOf": [
+              { "type": "boolean" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": { "type": "boolean" },
+                  "status": { "type": "boolean" },
+                  "content": { "type": "boolean" }
+                }
+              }
+            ]
+          },
+          "footer": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "status": { "type": "boolean" },
+              "elapsed": { "type": "boolean" }
+            }
+          },
+          "mediaLocalRoots": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "agent": { "type": "object" },
+          "network": { "type": "object" },
+          "media": { "type": "object" },
+          "dynamicAgents": { "type": "object" },
+          "bot": { "type": "object" },
+          "streamPlaceholderContent": { "type": "string" },
+          "welcomeText": { "type": "string" },
+          "streamPlaceholderText": { "type": "string" },
+          "thinkingText": { "type": "string" },
+          "receivedText": { "type": "string" },
+          "toolStatusText": { "type": "string" },
+          "readingText": { "type": "string" },
+          "generatingText": { "type": "string" },
+          "compactionText": { "type": "string" },
+          "emptyReplyText": { "type": "string" },
+          "finishFooterText": { "type": "string" },
+          "cardSentText": { "type": "string" },
+          "mediaSentText": { "type": "string" },
+          "mediaParseFailedText": { "type": "string" },
+          "mediaDeliveredText": { "type": "string" },
+          "processedCompleteText": { "type": "string" },
+          "timeoutText": { "type": "string" },
+          "dispatchErrorText": { "type": "string" },
+          "mediaErrorNoAccessText": { "type": "string" },
+          "mediaErrorReasonText": { "type": "string" },
+          "mediaErrorGenericText": { "type": "string" },
+          "queuedText": { "type": "string" },
+          "mergedQueuedText": { "type": "string" },
+          "mergedDoneText": { "type": "string" },
+          "sessionResetText": { "type": "string" },
+          "sessionNewText": { "type": "string" }
+        }
       },
       "uiHints": {
         "enabled": { "label": "启用企业微信通道", "type": "toggle" }

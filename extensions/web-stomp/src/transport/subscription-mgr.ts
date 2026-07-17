@@ -26,8 +26,9 @@ const connectionIndex = new Map<string, Set<string>>();
 export function addSubscription(
   connectionId: string,
   subscription: Omit<StompSubscription, "connectionId">
-): void {
+): boolean {
   const key = buildSubscriptionKey(connectionId, subscription.id);
+  if (subscriptions.has(key)) return false;
 
   const fullSub: StompSubscription = {
     ...subscription,
@@ -48,9 +49,8 @@ export function addSubscription(
   }
   connectionIndex.get(connectionId)!.add(key);
 
-  console.log(
-    `[openclaw-web-stomp] Subscription added: ${key} -> ${subscription.destination}`
-  );
+  // destination 含会话标识；不逐条输出订阅日志，避免高频连接制造日志洪泛和身份泄露。
+  return true;
 }
 
 /**
@@ -87,7 +87,6 @@ export function removeSubscription(
   }
 
   subscriptions.delete(key);
-  console.log(`[openclaw-web-stomp] Subscription removed: ${key}`);
 }
 
 /**
@@ -116,9 +115,6 @@ export function removeAllSubscriptions(connectionId: string): void {
   }
 
   connectionIndex.delete(connectionId);
-  console.log(
-    `[openclaw-web-stomp] All subscriptions removed for connection: ${connectionId}`
-  );
 }
 
 /**
@@ -160,6 +156,16 @@ export function getConnectionSubscriptions(
     if (sub) result.push(sub);
   }
   return result;
+}
+
+export function hasSubscription(connectionId: string, subscriptionId: string): boolean {
+  return subscriptions.has(buildSubscriptionKey(connectionId, subscriptionId));
+}
+
+export function clearSubscriptions(): void {
+  subscriptions.clear();
+  destinationIndex.clear();
+  connectionIndex.clear();
 }
 
 /**

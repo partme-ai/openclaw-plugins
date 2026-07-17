@@ -8,10 +8,16 @@
  * **关键依赖**：`../types`
  */
 
+import { createHash } from "node:crypto";
+
+import type { ChannelLimitsOpenClawConfig } from "../runtime/runtime-api.js";
 import type { DouyinAccountConfig } from "../types.js";
 import { douyinFetch, readResponseBodyAsBuffer } from "../shared/http.js";
 
 const CLIENT_TOKEN_URL = "https://open.douyin.com/oauth/client_token/";
+const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
+/** 多账号及热更新场景下的凭据指纹缓存上限，避免废弃配置长期占用内存。 */
+const MAX_TOKEN_CACHE_ENTRIES = 256;
 
 /** 开放平台 client_token 接口响应体（节选） */
 interface ClientTokenResponse {
@@ -19,7 +25,32 @@ interface ClientTokenResponse {
     access_token?: string;
     expires_in?: number;
     error_code?: number;
+    description?: string;
   };
+  message?: string;
+}
+
+type TokenCacheEntry = { token: string; expiresAt: number };
+const tokenCache = new Map<string, TokenCacheEntry>();
+const tokenRequests = new Map<string, Promise<string>>();
+
+/** Map 插入顺序作为 LRU 顺序；命中后移到末尾，写入时淘汰最久未使用项。 */
+function touchTokenCache(key: string, entry: TokenCacheEntry): void {
+  tokenCache.delete(key);
+  tokenCache.set(key, entry);
+  while (tokenCache.size > MAX_TOKEN_CACHE_ENTRIES) {
+    const oldest = tokenCache.keys().next().value as string | undefined;
+    if (oldest === undefined) {
+      break;
+    }
+    tokenCache.delete(oldest);
+  }
+}
+
+function cacheKey(config: DouyinAccountConfig): string {
+  return createHash("sha256")
+    .update(`${config.app_key}\0${config.app_secret}`)
+    .digest("hex");
 }
 
 /**
@@ -28,10 +59,22 @@ interface ClientTokenResponse {
  * @param config 渠道配置；缺少凭据时直接返回 null
  * @returns access_token 字符串；网络错误或接口失败时返回 null（不抛异常）
  */
-export async function getClientToken(config: DouyinAccountConfig | undefined): Promise<string | null> {
+export async function getClientToken(
+  config: DouyinAccountConfig | undefined,
+  rootConfig?: ChannelLimitsOpenClawConfig,
+): Promise<string | null> {
   if (!config?.app_key || !config?.app_secret) return null;
-  try {
-    const res = await douyinFetch(undefined, CLIENT_TOKEN_URL, {
+  const key = cacheKey(config);
+  const cached = tokenCache.get(key);
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    touchTokenCache(key, cached);
+    return cached.token;
+  }
+  const pending = tokenRequests.get(key);
+  if (pending) return pending;
+
+  const request = (async (): Promise<string> => {
+    const res = await douyinFetch(rootConfig, CLIENT_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -39,11 +82,51 @@ export async function getClientToken(config: DouyinAccountConfig | undefined): P
         client_key: config.app_key,
         client_secret: config.app_secret,
       }),
-    });
-    const json = JSON.parse((await readResponseBodyAsBuffer(res)).toString("utf8")) as ClientTokenResponse;
+    }, { timeoutMs: config.request_timeout_ms ?? 10_000 });
+    let json: ClientTokenResponse;
+    try {
+      json = JSON.parse(
+        (await readResponseBodyAsBuffer(res, MAX_JSON_RESPONSE_BYTES)).toString("utf8"),
+      ) as ClientTokenResponse;
+    } catch (error) {
+      throw new Error(
+        `[douyin] client_token returned invalid or oversized JSON (HTTP ${res.status})`,
+        { cause: error },
+      );
+    }
     const token = json.data?.access_token;
-    return token ?? null;
-  } catch {
-    return null;
+    if (!res.ok || !token || json.data?.error_code !== 0) {
+      throw new Error(
+        `[douyin] client_token failed (${res.status}/${json.data?.error_code ?? "unknown"}): ${json.data?.description ?? json.message ?? "unknown error"}`,
+      );
+    }
+    touchTokenCache(key, {
+      token,
+      expiresAt: Date.now() + Math.max(60, json.data?.expires_in ?? 7200) * 1000,
+    });
+    return token;
+  })();
+  tokenRequests.set(key, request);
+  try {
+    return await request;
+  } finally {
+    tokenRequests.delete(key);
   }
+}
+
+/** 仅供测试和配置热更新时主动清理本地 token 缓存。 */
+export function clearClientTokenCache(): void {
+  tokenCache.clear();
+  tokenRequests.clear();
+}
+
+/**
+ * 仅清除指定 app_key/app_secret 对应的 client_token。
+ * OpenAPI 返回 token 失效业务码时调用，使下一次尝试重新换取凭据而不影响其它账号。
+ */
+export function invalidateClientToken(config: DouyinAccountConfig): void {
+  if (!config.app_key || !config.app_secret) return;
+  const key = cacheKey(config);
+  tokenCache.delete(key);
+  tokenRequests.delete(key);
 }

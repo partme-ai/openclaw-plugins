@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
     agentId: "main",
     sessionKey: "agent:main:stomp:direct:peer-1",
   }),
-  publishToDestination: vi.fn(),
+  publishToDestination: vi.fn().mockReturnValue(1),
 }));
 
 vi.mock("@partme.ai/openclaw-message-sdk/bridge", async (importOriginal) => {
@@ -47,6 +47,7 @@ function makeRuntime() {
 describe("dispatchInboundStomp", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    publishToDestination.mockReturnValue(1);
     setWebStompRuntime(makeRuntime());
   });
 
@@ -79,6 +80,20 @@ describe("dispatchInboundStomp", () => {
     expect(publishToDestination).toHaveBeenCalledWith("/topic/session.peer-2", '{"text":"pong"}');
   });
 
+  it("rejects the Agent turn when no subscriber accepts the reply", async () => {
+    publishToDestination.mockReturnValue(0);
+    await dispatchInboundStomp({
+      peerId: "peer-no-subscriber",
+      destination: "/queue/in",
+      rawPayload: "ping",
+    });
+
+    const reply = dispatchChannelMessage.mock.calls[0][0].reply as {
+      deliver: (p: { wire: string }) => Promise<void>;
+    };
+    await expect(reply.deliver({ wire: "reply" })).rejects.toThrow(/No Web STOMP subscriber/);
+  });
+
   it("drops duplicate idempotency keys", async () => {
     const key = `web-stomp-dedup-${Date.now()}`;
     await dispatchInboundStomp({
@@ -95,6 +110,29 @@ describe("dispatchInboundStomp", () => {
     });
 
     expect(dispatchChannelMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases an idempotency claim after Agent dispatch fails", async () => {
+    const key = `web-stomp-retry-${Date.now()}`;
+    dispatchChannelMessage.mockRejectedValueOnce(new Error("temporary Agent failure"));
+    const message = {
+      peerId: "peer-retry",
+      destination: "/queue/in",
+      rawPayload: "retry me",
+      idempotencyKey: key,
+    };
+
+    await expect(dispatchInboundStomp(message)).rejects.toThrow("temporary Agent failure");
+    await dispatchInboundStomp(message);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects empty payloads", async () => {
+    await expect(dispatchInboundStomp({
+      peerId: "peer-empty",
+      destination: "/queue/in",
+      rawPayload: "   ",
+    })).rejects.toThrow(/payload is empty/);
   });
 
   it("uses agentId hint when resolving identity", async () => {

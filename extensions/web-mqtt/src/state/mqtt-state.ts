@@ -10,7 +10,7 @@ let currentConfig: WebMqttConfig | null = null;
 /**
  * 更新配置快照。
  */
-export function setWebMqttChannelConfig(config: WebMqttConfig): void {
+export function setWebMqttChannelConfig(config: WebMqttConfig | null): void {
   currentConfig = config;
 }
 

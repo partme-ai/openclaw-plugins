@@ -1,36 +1,34 @@
 /**
- * @fileoverview Bridge 插件进程内单例：缓存 `OpenClawPluginApi`。
+ * Bridge 当前 OpenClaw Runtime 的进程内引用。
  *
- * @description
- * Bridge 作为 Hook 插件不暴露标准 Channel runtime；此处仅保留可注入的 API 句柄，
- * 供后续扩展（例如其他模块需读取 logger、配置）时复用，无需重复遍历宿主注册表。
- *
- * @module runtime
+ * 仅在完整插件注册后写入，供诊断与扩展组件读取；停止或测试结束必须清空，避免热重载
+ * 后继续持有旧 logger/runtime。该引用不是跨进程状态，也不能作为健康事实来源。
  */
-
-/**
- * Bridge 插件运行时占位（hook 插件无 Channel runtime，保留 Base Profile 入口）。
- */
-
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
-let bridgeApi: OpenClawPluginApi | null = null;
+/** Bridge 扩展组件实际需要的最小宿主能力，避免传播完整 Plugin API。 */
+export type BridgeRuntime = Pick<OpenClawPluginApi, "runtime" | "logger">;
 
-/**
- * @description 在 `register()` 生命周期早期注入宿主 API 引用，供本包其他模块只读获取。
- * @param api - 当前插件实例绑定的 OpenClaw 插件 API。
- * @returns void
- * @throws 不抛出。
- */
-export function setBridgeRuntime(api: OpenClawPluginApi): void {
-  bridgeApi = api;
+let currentRuntime: BridgeRuntime | null = null;
+
+/** 从完整 OpenClaw Plugin API 提取不带注册副作用的最小运行时视图。 */
+export function bridgeRuntime(api: OpenClawPluginApi): BridgeRuntime {
+  return { runtime: api.runtime, logger: api.logger };
 }
 
-/**
- * @description 返回已存储的 API；若尚未调用 `setBridgeRuntime` 则返回 `null`。
- * @returns 已注入的 `OpenClawPluginApi`，或 `null`。
- * @throws 不抛出。
- */
-export function getBridgeRuntime(): OpenClawPluginApi | null {
-  return bridgeApi;
+/** 保存 full registration 的进程内运行时，供诊断和扩展组件读取。 */
+export function setBridgeRuntime(api: OpenClawPluginApi): BridgeRuntime {
+  const value = bridgeRuntime(api);
+  currentRuntime = value;
+  return value;
+}
+
+/** 返回当前 full registration 运行时；尚未注册或已停止时返回 `null`。 */
+export function getBridgeRuntime(): BridgeRuntime | null {
+  return currentRuntime;
+}
+
+/** 在显式停止、热重载或测试清理时释放进程内宿主引用。 */
+export function clearBridgeRuntime(): void {
+  currentRuntime = null;
 }

@@ -1,24 +1,25 @@
 {
   "id": "mqtt",
   "name": "mqtt",
-  "version": "0.1.13",
-  "description": "MQTT 3.1.1/5.0 protocol bridge for OpenClaw - IoT device integration via embedded Aedes MQTT broker",
+  "version": "2026.7.1",
+  "description": "MQTT 3.1/3.1.1 protocol bridge for OpenClaw - IoT device integration via embedded Aedes MQTT broker",
   "main": "dist/index.js",
   "channels": ["mqtt"],
   "commands": [],
   "skills": [],
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
+      "host": {
+        "type": "string",
+        "default": "127.0.0.1",
+        "description": "MQTT TCP/TLS listener host"
+      },
       "port": {
         "type": "number",
         "default": 1883,
         "description": "MQTT TCP listener port"
-      },
-      "tlsPort": {
-        "type": "number",
-        "default": 8883,
-        "description": "MQTT TLS listener port (0 to disable)"
       },
       "tls": {
         "type": "object",
@@ -27,6 +28,11 @@
             "type": "boolean",
             "default": false,
             "description": "Enable TLS for MQTT connections"
+          },
+          "port": {
+            "type": "number",
+            "default": 8883,
+            "description": "MQTT TLS listener port"
           },
           "certFile": {
             "type": "string",
@@ -80,7 +86,21 @@
                 "passwordHash": { "type": "string" },
                 "hashAlgorithm": { "type": "string", "enum": ["sha256", "sha512"] },
                 "publishAllow": { "type": "array", "items": { "type": "string" } },
-                "subscribeAllow": { "type": "array", "items": { "type": "string" } }
+                "subscribeAllow": { "type": "array", "items": { "type": "string" } },
+                "aclRules": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": { "type": "string", "enum": ["publish", "subscribe", "inbound", "outbound"] },
+                      "topicPattern": { "type": "string", "minLength": 1 },
+                      "effect": { "type": "string", "enum": ["allow", "deny"] },
+                      "accountId": { "type": "string" }
+                    },
+                    "required": ["action", "topicPattern", "effect"]
+                  }
+                }
               },
               "required": ["username"]
             },
@@ -118,6 +138,12 @@
             "enum": ["jsonTextOrPlain"],
             "default": "jsonTextOrPlain",
             "description": "Payload parsing mode: extract JSON.text field, fallback to raw text"
+          },
+          "outboundFormat": {
+            "type": "string",
+            "enum": ["envelope", "legacyJsonText", "plainText"],
+            "default": "envelope",
+            "description": "Outbound MQTT payload wire format"
           }
         }
       },
@@ -126,8 +152,21 @@
         "properties": {
           "maxPayloadBytes": {
             "type": "number",
+            "minimum": 1,
             "default": 1048576,
             "description": "Maximum payload size in bytes (default 1MB)"
+          },
+          "maxPendingMessagesPerClient": {
+            "type": "number",
+            "minimum": 1,
+            "default": 32,
+            "description": "Maximum queued or active Agent turns per MQTT client"
+          },
+          "inboundTaskTimeoutMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 120000,
+            "description": "Hard timeout for one MQTT-to-Agent inbound task"
           }
         }
       },
@@ -209,11 +248,11 @@
           "enabled": {
             "type": "boolean",
             "default": false,
-            "description": "Enable multi-backend persistence for horizontal scaling"
+            "description": "Enable single-Gateway broker state persistence; Redis does not provide cross-Gateway clustering"
           },
           "backend": {
             "type": "string",
-            "enum": ["memory", "redis", "mongodb", "level", "nedb"],
+            "enum": ["memory", "redis", "mongodb", "level"],
             "default": "memory",
             "description": "Persistence backend type"
           },
@@ -226,8 +265,32 @@
               "db": { "type": "number", "default": 0 },
               "password": { "type": "string" },
               "keyPrefix": { "type": "string", "default": "mqtt" },
-              "subscriptionTTL": { "type": "number", "default": 3600 },
-              "retainedTTL": { "type": "number", "default": 0 }
+              "packetTTL": {
+                "type": "number",
+                "minimum": 0,
+                "default": 0,
+                "description": "离线 QoS 消息 TTL（秒，0 表示不限制）"
+              },
+              "retainedTTL": {
+                "type": "number",
+                "minimum": 0,
+                "default": 0,
+                "description": "兼容旧配置；未设置 packetTTL 时作为离线消息 TTL"
+              }
+            }
+          },
+          "mongodb": {
+            "type": "object",
+            "properties": {
+              "url": { "type": "string", "default": "mongodb://localhost:27017" },
+              "dbName": { "type": "string" },
+              "collectionPrefix": { "type": "string" }
+            }
+          },
+          "level": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "default": "./data/aedes-leveldb" }
             }
           }
         }
@@ -236,7 +299,8 @@
   },
   "uiHints": {
     "port": { "label": "MQTT Port", "placeholder": "1883" },
-    "tlsPort": { "label": "MQTT TLS Port", "placeholder": "8883" },
+    "host": { "label": "MQTT Listen Host", "placeholder": "127.0.0.1" },
+    "tls.port": { "label": "MQTT TLS Port", "placeholder": "8883" },
     "tls.enabled": { "label": "Enable TLS", "type": "toggle" },
     "tls.certFile": { "label": "TLS Certificate", "type": "file" },
     "tls.keyFile": { "label": "TLS Key", "type": "file" },

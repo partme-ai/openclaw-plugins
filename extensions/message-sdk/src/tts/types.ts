@@ -23,6 +23,7 @@
  * @property outputFormat - 输出格式（默认 mp3）
  * @property timeoutMs - 超时毫秒
  * @property maxTextLength - 最大输入字符数（默认 4096）
+ * @property maxAudioBytes - 最大响应音频字节数（远程 provider 默认 25 MiB）
  */
 export interface TTSConfig {
   /** API 端点 URL（远程模式） */
@@ -40,11 +41,13 @@ export interface TTSConfig {
   /** 音调 (-100 到 +100, 默认 0) */
   pitch?: string;
   /** 输出格式 (mp3/wav/ogg, 默认 mp3) */
-  outputFormat?: "mp3" | "wav" | "ogg" | "opus" | "aac" | "flac";
+  outputFormat?: "mp3" | "wav" | "ogg" | "opus" | "aac" | "flac" | "pcm";
   /** 超时时间（毫秒），默认 30000 */
   timeoutMs?: number;
   /** 最大文本长度（字符），默认 4096 */
   maxTextLength?: number;
+  /** 最大响应音频大小（字节），默认 25 MiB */
+  maxAudioBytes?: number;
 }
 
 // ============================================================================

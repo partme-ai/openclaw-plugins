@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/wecom",
-  "version": "2026.6.1",
+  "version": "2026.7.1",
   "type": "module",
   "description": "OpenClaw WeCom (WeChat Work) intelligent bot channel plugin",
   "main": "./dist/index.js",
@@ -9,6 +9,7 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest --config vitest.config.ts run",
+    "test:coverage": "vitest --config vitest.config.ts run --coverage",
     "prepublishOnly": "pnpm build",
     "clean": "rm -rf dist",
     "pack-dry": "node scripts/pack-dry.mjs"
@@ -47,14 +48,15 @@
     "install": {
       "npmSpec": "@partme.ai/wecom",
       "localPath": "extensions/wecom",
-      "defaultChoice": "npm"
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1",
     "@wecom/aibot-node-sdk": "^1.0.6",
-    "fast-xml-parser": "5.3.4",
-    "file-type": "^18.7.0",
+    "fast-xml-parser": "5.10.1",
+    "file-type": "22.0.1",
     "undici": "^7.20.0",
     "zod": "^4.3.6"
   },
@@ -62,7 +64,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {

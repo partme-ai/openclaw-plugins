@@ -113,4 +113,32 @@ describe("wecom-kf dispatch", () => {
 
     expect(dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
   });
+
+  it("does not expose external_userid when DM policy rejects an inbound message", async () => {
+    const log = vi.fn();
+    const dispatchReplyWithBufferedBlockDispatcher = vi.fn(async () => undefined);
+    const restrictedCfg = {
+      ...cfg,
+      channels: {
+        "wecom-kf": {
+          ...(cfg.channels?.["wecom-kf"] as Record<string, unknown>),
+          dmPolicy: "disabled",
+        },
+      },
+    } as OpenClawConfig;
+
+    await dispatchKfMessage({
+      cfg: restrictedCfg,
+      accountConfig: {
+        ...createAccountConfig(),
+        agent: { dm: { policy: "disabled" } },
+      },
+      msg: createTextMessage(),
+      core: createRuntime(dispatchReplyWithBufferedBlockDispatcher),
+      log,
+    });
+
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("reason=dm_policy"));
+    expect(log.mock.calls.flat().join(" ")).not.toContain("wx-user-1");
+  });
 });

@@ -1,102 +1,74 @@
-/**
- * 美团渠道插件类型定义。
- *
- * **架构角色**：描述 `channels.meituan` 配置、Channel 契约、Plugin API 与工具形态，
- * 与《美团开放平台对接规格》对齐。
- */
-
-import type { IncomingMessage, ServerResponse } from "node:http";
-
-/** 美团渠道账号/单店铺配置（openclaw.json → channels.meituan） */
-export interface MeituanAccountConfig {
-  /** 开放平台应用 key */
-  app_key: string;
-  /** 开放平台应用 secret，用于 OpenAPI 签名与 Webhook 验签 */
-  app_secret: string;
-  /** 开放平台配置的回调 URL（文档字段，运行时可选） */
-  callback_url?: string;
-  /** 门店 id，Webhook 无 shop_id 时的 peer 回退 */
-  shop_id?: string;
-  /** Webhook 专用签名密钥；缺省时使用 app_secret */
-  webhook_secret?: string;
-}
-
-/** 入站发布参数：供运行时将 Webhook 事件写入 Session / 驱动 Agent */
-export interface PublishInboundParams {
-  channel: string;
-  sessionId: string;
-  shopId: string;
-  content: string;
-}
-
-/** 插件级 Logger（借鉴 zeroclaw/openclaw，可选注入，便于与主工程日志统一） */
-export interface PluginLogger {
-  info?: (msg: string, ...args: unknown[]) => void;
-  warn?: (msg: string, ...args: unknown[]) => void;
-  error?: (msg: string, ...args: unknown[]) => void;
-  debug?: (msg: string, ...args: unknown[]) => void;
-}
-
-/** 插件 API（与 OpenClaw 宿主约定一致） */
-export interface PluginApi {
-  runtime: {
-    /** 宿主加载的全局配置（含 channels） */
-    config: Record<string, unknown>;
-    /** 可选：轻量入站写入 Session；bridge 不可用时的回退路径 */
-    channel?: {
-      publishInbound?: (params: PublishInboundParams) => void | Promise<void>;
-    };
-  };
-  /** `plugins.entries.<pluginId>.config` 覆盖层 */
-  pluginConfig?: Record<string, unknown>;
-  /** 带 `[plugin:id]` 前缀的 logger */
-  logger?: PluginLogger;
-  registerChannel: (options: { plugin: ChannelDefinition }) => void;
-  registerHttpRoute: (params: { path: string; handler: HttpHandler }) => void;
-  registerTool?: (tool: ToolDefinition, opts?: { optional?: boolean }) => void;
-  onReady?: (callback: () => Promise<void>) => void;
-}
-
-/** HTTP 路由 handler 签名 */
-export type HttpHandler = (
-  req: IncomingMessage,
-  res: ServerResponse
-) => Promise<void> | void;
-
-/** 渠道定义（与 OpenClaw Channel 注册契约一致） */
-export interface ChannelDefinition {
-  id: string;
-  meta: { id: string; label: string; blurb: string; aliases: string[] };
-  capabilities: { chatTypes: Array<"direct" | "group"> };
-  config: {
-    listAccountIds: (cfg: Record<string, unknown>) => string[];
-    resolveAccount: (
-      cfg: Record<string, unknown>,
-      accountId?: string
-    ) => MeituanAccountConfig;
-  };
-  outbound: {
-    deliveryMode: "direct";
-    sendText: (params: SendTextParams) => Promise<{ ok: boolean }>;
-  };
-  setupWizard?: unknown;
-  setup?: unknown;
-}
-
-/** 出站 sendText 参数 */
-export interface SendTextParams {
-  /** 待发送文本 */
-  text: string;
-  /** 目标 peer（如 shopId / userId） */
-  to: string;
-  /** 当前账号配置 */
-  account: MeituanAccountConfig;
-}
-
-/** 工具定义（与 OpenClaw registerTool 约定一致） */
-export interface ToolDefinition {
+/** 管理员从已审批美团业务文档复制并加入白名单的单个 MTOp operation。 */
+export type MeituanOperation = {
   name: string;
-  description: string;
-  parameters?: Record<string, unknown>;
-  execute?: (params: Record<string, unknown>) => Promise<unknown> | unknown;
-}
+  description?: string;
+  apiPath: string;
+  businessId: number;
+  requiresAuth: boolean;
+  /** `write` 操作必须在每次工具调用中显式 `confirm=true`；缺省按 write 处理。 */
+  riskLevel: "read" | "write";
+  /** 当前 operation 接受的平台标准成功码，默认仅 `OP_SUCCESS`。 */
+  successCodes: string[];
+  /** write operation 的顶层业务幂等字段，例如 orderId；read operation 不应配置。 */
+  idempotencyBizField?: string;
+};
+
+/** OpenClaw 受信任 agentAccountId 到门店授权 Token 的绑定，Agent 参数无法选择或覆盖。 */
+export type MeituanAccountCredential = {
+  accountId: string;
+  appAuthToken: string;
+};
+
+/** 经过运行时严格校验、可直接交给 MeituanClient 的插件配置。 */
+export type MeituanPluginConfig = {
+  enabled: true;
+  developerId: string;
+  signKey: string;
+  appAuthToken?: string;
+  accounts: MeituanAccountCredential[];
+  requireAccountBinding: boolean;
+  /** 仅供已解析运行时使用；false 表示受信任账号未命中强制凭据绑定。 */
+  accountBindingMatched: boolean;
+  apiBaseUrl: string;
+  version: string;
+  operations: MeituanOperation[];
+  requestTimeoutMs: number;
+  maxRequestBytes: number;
+  maxResponseBytes: number;
+  /** Tool Result 独立上限，防止合法的大响应挤占模型上下文和会话存储。 */
+  maxToolResultBytes: number;
+  maxRequestsPerMinute: number;
+  maxConcurrentRequests: number;
+  /** read operation 的总尝试次数；write 始终固定为 1。 */
+  readRetryMaxAttempts: number;
+  retryInitialDelayMs: number;
+  retryMaxDelayMs: number;
+  retryJitterRatio: number;
+  requireWriteIdempotency: boolean;
+  idempotencyTtlMs: number;
+  maxIdempotencyEntries: number;
+  allowCustomApiBaseUrl: boolean;
+  ownerOnly: boolean;
+};
+
+/** 美团 MTOp 标准响应；具体 data 结构由 operation 对应业务文档决定。 */
+export type MeituanApiResponse = Record<string, unknown>;
+
+/** 单个账号客户端的低敏进程内状态，不包含业务参数、门店标识或任何凭据。 */
+export type MeituanClientStatus = {
+  activeRequests: number;
+  maxConcurrentRequests: number;
+  requestsInCurrentWindow: number;
+  maxRequestsPerMinute: number;
+  idempotencyEntries: number;
+  maxIdempotencyEntries: number;
+  attemptsTotal: number;
+  successfulInvocationsTotal: number;
+  failedInvocationsTotal: number;
+  concurrencyRejectedTotal: number;
+  rateLimitRejectedTotal: number;
+  duplicateWriteRejectedTotal: number;
+  lastSuccessAt: number | null;
+  lastErrorAt: number | null;
+  lastError: string | null;
+};

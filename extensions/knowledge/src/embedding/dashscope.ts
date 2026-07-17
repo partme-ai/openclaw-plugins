@@ -7,6 +7,7 @@
  * @module knowledge/embedding/dashscope
  */
 import type { EmbeddingService, KnowledgeEmbeddingConfig } from '../types.js';
+import { inEmbeddingBatches, postEmbeddingJson, validateEmbeddingData } from './http.js';
 
 /** 默认模型 — text-embedding-v4 (Qwen3-Embedding 系列) */
 const DEFAULT_MODEL = 'text-embedding-v4';
@@ -26,8 +27,10 @@ export class DashScopeEmbeddingService implements EmbeddingService {
   readonly modelName: string;
   private baseUrl: string;
   private apiKey: string;
+  private config?: KnowledgeEmbeddingConfig;
 
   constructor(config?: KnowledgeEmbeddingConfig) {
+    this.config = config;
     this.baseUrl = config?.baseUrl ?? DEFAULT_BASE_URL;
     this.apiKey = config?.apiKey ?? '';
     this.modelName = config?.model ?? DEFAULT_MODEL;
@@ -41,12 +44,13 @@ export class DashScopeEmbeddingService implements EmbeddingService {
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
+    return inEmbeddingBatches(texts, this.config, async (batch) => {
 
     // 遵循 OpenAI 兼容格式，文档示例：
     //   client.embeddings.create({ model, input, dimensions, encoding_format })
     const body: Record<string, unknown> = {
       model: this.modelName,
-      input: texts,
+      input: batch,
       encoding_format: 'float',
     };
 
@@ -56,33 +60,16 @@ export class DashScopeEmbeddingService implements EmbeddingService {
     }
 
     const url = `${this.baseUrl.replace(/\/+$/, '')}/embeddings`;
-    const response = await fetch(url, {
+    const data = await postEmbeddingJson<{ data?: unknown }>(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
       },
       body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'unknown');
-      throw new Error(`DashScope Embedding API error: ${response.status} — ${errorText}`);
-    }
-
-    const data = (await response.json()) as {
-      data: { embedding: number[]; index: number }[];
-      model?: string;
-      usage?: { prompt_tokens: number; total_tokens: number };
-    };
-
-    if (!data.data) {
-      throw new Error('DashScope Embedding API returned unexpected response format: missing data');
-    }
-
-    // 按 index 排序确保顺序与输入一致
-    const sorted = data.data.sort((a, b) => a.index - b.index);
-    return sorted.map((item) => item.embedding);
+    }, this.config, 'DashScope');
+    return validateEmbeddingData(data.data, batch.length, this.dimensions, 'DashScope');
+    }, this.providerMaximumBatchSize());
   }
 
   async health(): Promise<boolean> {
@@ -92,5 +79,12 @@ export class DashScopeEmbeddingService implements EmbeddingService {
     } catch {
       return false;
     }
+  }
+
+  /** 百炼不同模型族的同步批次硬上限不同，不能统一使用 Knowledge 默认的 64。 */
+  private providerMaximumBatchSize(): number {
+    if (this.modelName === 'qwen3.7-text-embedding') return 20;
+    if (this.modelName === 'text-embedding-v1' || this.modelName === 'text-embedding-v2') return 25;
+    return 10;
   }
 }

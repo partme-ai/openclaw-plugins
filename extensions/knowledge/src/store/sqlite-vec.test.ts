@@ -1,50 +1,36 @@
 /**
  * SqliteVecStore 测试 — 完整覆盖 + FTS5 全文搜索
  *
- * 由于 better-sqlite3 需要原生编译，测试模拟整个数据库操作。
- * 集成测试需在有 native modules 的环境中运行。
+ * 单元测试模拟 Node.js 内置 node:sqlite；另有真实 SQLite 冒烟测试覆盖持久化。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SqliteVecStore } from './sqlite-vec.js';
-import type Database from 'better-sqlite3';
 
 // ---------------------------------------------------------------------------
-// 模拟 better-sqlite3
+// 模拟 SQLite 运行时加载边界；真实 node:sqlite 由 integration test 覆盖
 // ---------------------------------------------------------------------------
 const mockStmtRun = vi.fn();
 const mockStmtAll = vi.fn();
 const mockStmtGet = vi.fn();
 const mockPrepare = vi.fn();
 
-// 模拟事务函数
-type TransactionFn<T extends (...args: any[]) => any> = T & { readonly: boolean };
-let mockTransactionFn: ReturnType<typeof vi.fn>;
-
-const mockPragma = vi.fn();
 const mockExec = vi.fn();
 const mockClose = vi.fn();
 
 let mockDbInstance: any;
 
-function createMockDatabase(path: string): Database.Database {
+function createMockDatabase(path: string) {
   return {
-    pragma: mockPragma,
     exec: mockExec,
     prepare: mockPrepare,
     close: mockClose,
-    transaction: mockTransactionFn,
-    memory: false,
-    readonly: false,
-    name: path,
-    open: true,
-    inTransaction: false,
-  } as unknown as Database.Database;
+    location: path,
+  };
 }
 
-// 模拟 better-sqlite3 模块 — 使用 function 关键字确保可被 new 调用
-vi.mock('better-sqlite3', () => {
+vi.mock('./sqlite-runtime.js', () => {
   return {
-    default: vi.fn(function (this: any, path: string) {
+    DatabaseSync: vi.fn(function (this: any, path: string) {
       mockDbInstance = createMockDatabase(path);
       return mockDbInstance;
     }),
@@ -77,22 +63,6 @@ describe('SqliteVecStore', () => {
       return { run: mockStmtRun, all: mockStmtAll, get: mockStmtGet };
     });
 
-    // 伪造事务：直接执行回调
-    mockTransactionFn = vi.fn((fn: Function) => {
-      const wrapped = (...args: any[]) => {
-        mockExec('BEGIN');
-        try {
-          fn(...args);
-          mockExec('COMMIT');
-        } catch (e) {
-          mockExec('ROLLBACK');
-          throw e;
-        }
-      };
-      wrapped.readonly = false;
-      return wrapped;
-    });
-
     store = new SqliteVecStore({
       dbPath: '/tmp/test-kb.sqlite',
       namespace: 'test-ns',
@@ -118,7 +88,7 @@ describe('SqliteVecStore', () => {
     it('creates database and tables', async () => {
       await store.initialize();
 
-      expect(mockPragma).toHaveBeenCalledWith('journal_mode = WAL');
+      expect(mockExec).toHaveBeenCalledWith('PRAGMA journal_mode = WAL');
       // 建表 SQL 应包含 CREATE TABLE
       expect(mockExec).toHaveBeenCalledWith(
         expect.stringContaining('CREATE TABLE IF NOT EXISTS vec_test_ns')
@@ -140,27 +110,13 @@ describe('SqliteVecStore', () => {
       await store.initialize();
 
       expect(mockExec).toHaveBeenCalledWith(
-        expect.stringContaining('CREATE INDEX IF NOT EXISTS idx_vec_test_ns_source_id')
+        expect.stringMatching(/CREATE INDEX IF NOT EXISTS idx_vec_test_ns_[a-f0-9]{12}_source_id/)
       );
     });
 
-    it('throws if better-sqlite3 not installed', async () => {
-      // 由于 vi.mock 已模拟 better-sqlite3，initialize 会走 mock 路径
-      // 此测试需要单独验证：当 dynamic import 失败时抛出正确的错误
-      // 在 mock 环境下，import('better-sqlite3') 始终返回 mock 版本
-      // 因此这个测试在 mock 环境下预期为：不抛出 better-sqlite3 错误
-      // 为了绕过 mock，直接测试 SqliteVecStore 的 import 逻辑
-      const mockImport = vi.fn(() => Promise.reject(new Error('MODULE_NOT_FOUND')));
-      const { SqliteVecStore: Svs } = await import('../store/sqlite-vec.js');
-      const badStore = new Svs({
-        dbPath: '/tmp/bad.sqlite',
-        namespace: 'bad',
-        dimensions: 128,
-      });
-      // 模拟 import 行为 — 由于无法动态覆盖 vi.mock，此测试在 mock 环境中
-      // 验证 store 初始化不会失败（因为 better-sqlite3 已 mock）
-      const result = await badStore.initialize();
-      expect(result).toBeUndefined();
+    it('sets a bounded busy timeout', async () => {
+      await store.initialize();
+      expect(mockExec).toHaveBeenCalledWith('PRAGMA busy_timeout = 5000');
     });
   });
 
@@ -191,7 +147,7 @@ describe('SqliteVecStore', () => {
 
       // FTS5 同步 INSERT
       expect(mockPrepare).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT OR REPLACE INTO fts_test_ns')
+        expect.stringContaining('INSERT INTO fts_test_ns')
       );
     });
   });
@@ -327,7 +283,7 @@ describe('SqliteVecStore', () => {
       await store.keywordSearch('test query', 5, 'src-1');
 
       expect(mockPrepare).toHaveBeenCalledWith(
-        expect.stringContaining('WHERE fts_test_ns MATCH ?')
+        expect.stringMatching(/WHERE fts_test_ns_[a-f0-9]{12} MATCH \?/)
       );
       expect(mockPrepare).toHaveBeenCalledWith(
         expect.stringContaining('AND source_id = ?')
@@ -355,7 +311,7 @@ describe('SqliteVecStore', () => {
       await store.deleteBySource('src-1');
 
       // 应有事务包裹
-      expect(mockExec).toHaveBeenCalledWith('BEGIN');
+      expect(mockExec).toHaveBeenCalledWith('BEGIN IMMEDIATE');
 
       // 应从 FTS 删除
       expect(mockPrepare).toHaveBeenCalledWith(
@@ -380,7 +336,7 @@ describe('SqliteVecStore', () => {
     it('clears both FTS and vector tables in a transaction', async () => {
       await store.clear();
 
-      expect(mockExec).toHaveBeenCalledWith('BEGIN');
+      expect(mockExec).toHaveBeenCalledWith('BEGIN IMMEDIATE');
       expect(mockExec).toHaveBeenCalledWith(expect.stringContaining('DELETE FROM fts_test_ns'));
       expect(mockExec).toHaveBeenCalledWith(expect.stringContaining('DELETE FROM vec_test_ns'));
       expect(mockExec).toHaveBeenCalledWith('COMMIT');

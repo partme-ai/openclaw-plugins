@@ -11,7 +11,7 @@
  * STOMP setup 冷路径 — Channel 定义导出。
  */
 
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { stompTcpChannel } from "./channel.js";
 

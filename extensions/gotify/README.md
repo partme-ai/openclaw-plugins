@@ -6,7 +6,7 @@
 ![Node](https://img.shields.io/badge/Node.js-22+-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-[English](./README.en.md) | [简体中文](./README.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ## Introduction
 
@@ -27,17 +27,34 @@
 
 ## Architecture
 
-```text
-OpenClaw agent reply
-  -> gotify outbound adapter
-  -> Gotify POST /message
-  -> Gotify server fan-out
+The character diagram highlights how real-time frames, backlog replay, and the durable cursor cooperate without a Broker ACK. The Mermaid diagram below remains the complete renderable view.
 
-Gotify /stream
-  -> WebSocket listener
-  -> dmScope session key resolution
-  -> OpenClaw reply runtime pipeline
-  -> Gotify POST /message (reply)
+```text
+External Application ──POST /message──▶ Gotify Server
+                                           │
+                    ┌──────────────────────┴─────────────────────┐
+                    │ /stream live frames                       │ REST backlog
+                    ▼                                           ▼
+           bounded handoff / ordered queue             paged message-id replay
+                    └──────────────────────┬─────────────────────┘
+                                           ▼
+                              policy + dedupe + Agent Turn
+                                           │
+                 success: persist cursor → optional delete source
+                 failure: ordered retry → fail closed when exhausted
+
+stop: close WebSocket → abort retry waits → drain admitted turns → exit
+```
+
+```mermaid
+flowchart LR
+    APP["External Application"] -->|"POST /message"| G["Gotify Server"]
+    G -->|"WebSocket /stream"| W["Listener<br/>validation + jittered reconnect"]
+    G -->|"REST backlog"| R["Bounded replay<br/>monotonic cursor"]
+    W --> Q["Per-account ordered queue"]
+    R --> Q
+    Q --> A["OpenClaw 2026.7.1 Agent"]
+    A -->|"single POST /message"| G
 ```
 
 ## Gotify API Notes
@@ -69,7 +86,7 @@ User API is not required for normal send/receive workflows. Keep runtime least-p
 
 ### Prerequisites
 
-- OpenClaw `>= 2026.4.0`
+- OpenClaw `>= 2026.7.1`
 - Node.js `22+`
 - A running Gotify server
 
@@ -79,7 +96,7 @@ User API is not required for normal send/receive workflows. Keep runtime least-p
 openclaw plugins install @partme.ai/openclaw-gotify
 ```
 
-Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
+Requires `@partme.ai/openclaw-message-sdk >= 2026.6.1` and OpenClaw `>= 2026.7.1`.
 
 ### Minimal Config
 
@@ -130,7 +147,8 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
           "dmPolicy": "open",
           "allowFrom": ["*"],
           "inbound": {
-            "enabled": true
+            "enabled": true,
+            "allowedAppId": 1
           }
         },
         "e2e": {
@@ -174,6 +192,38 @@ When `inbound.enabled=true`, `openclaw-gotify` now requires `inbound.allowedAppI
 6. switch to normal live `/stream` handling
 
 This design avoids sending a whole backlog batch to the agent at once. Each historical message is dispatched as an individual inbound turn.
+
+The live buffer is capped by `inbound.maxBufferedMessages` (default `1000`). Reconnect
+uses `inbound.reconnectJitterRatio` (default `0.2`) to avoid synchronized reconnect storms.
+The same cap also bounds the normal live dispatch queue. A transient Agent/response failure is
+retried in message order up to `inbound.maxDispatchAttempts` with exponential backoff. When the
+limit is exhausted, the listener stops fail-closed and leaves the message in Gotify so the next
+account start can recover it through backlog replay.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Streaming
+    Streaming --> OrderedQueue: valid /stream message
+    OrderedQueue --> AgentTurn: queue capacity available
+    OrderedQueue --> FailedClosed: maxBufferedMessages exceeded
+    AgentTurn --> PersistCursor: Agent and reply succeed
+    AgentTurn --> RetryDelay: dispatch fails and attempts remain
+    RetryDelay --> AgentTurn: exponential backoff
+    AgentTurn --> FailedClosed: maxDispatchAttempts exhausted
+    PersistCursor --> DeleteInbound: cursor fsync path succeeds
+    DeleteInbound --> Streaming: best-effort DELETE complete
+    FailedClosed --> BacklogReplay: operator or host restarts account
+    BacklogReplay --> Streaming: ordered recovery succeeds
+```
+
+The cursor file is treated as durable acknowledgment state: only a missing file means a first
+start. Corruption, permission errors, or other I/O failures stop replay instead of silently
+resetting the cursor to zero and duplicating historical Agent turns.
+Because Gotify does not expose an idempotency key for `POST /message`, message delivery is
+not blindly retried by default; an unknown timeout outcome must not create duplicate notifications.
+The per-account REST lock covers the full HTTP task, shutdown drains already admitted Agent turns
+after closing the WebSocket intake, and all status/doctor errors redact configured tokens and token
+query parameters.
 
 For local end-to-end tests, the simulated external sender may use a second Gotify Application token such as `GOTIFY_SENDER_APP_TOKEN`. That sender token is a test harness concern and is not part of the plugin's runtime config shape.
 
@@ -226,10 +276,10 @@ Covered areas:
 
 ## GitHub Actions
 
-| Workflow | Trigger | Purpose |
-| --- | --- | --- |
-| `ci.yml` | Push / PR to `main` or `master` | Install, typecheck, build, test, upload `dist` |
-| `release.yml` | Push tag `v*` | Build, test, package, publish to npm, create GitHub release |
+| Workflow      | Trigger                         | Purpose                                                     |
+| ------------- | ------------------------------- | ----------------------------------------------------------- |
+| `ci.yml`      | Push / PR to `main` or `master` | Install, typecheck, build, test, upload `dist`              |
+| `release.yml` | Push tag `v*`                   | Build, test, package, publish to npm, create GitHub release |
 
 ## Project Structure
 

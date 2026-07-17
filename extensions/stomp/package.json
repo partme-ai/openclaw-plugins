@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-stomp",
-  "version": "2026.5.25-2",
+  "version": "2026.7.1",
   "description": "OpenClaw STOMP channel plugin — native TCP STOMP with topic bindings, ACK/NACK and enterprise delivery controls",
   "type": "module",
   "main": "dist/index.js",
@@ -27,11 +27,15 @@
   ],
   "author": "PartMe",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "files": [
     "dist",
     "openclaw.plugin.json",
     "README.md",
-    "README_CN.md"
+    "README.zh-CN.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
@@ -41,20 +45,16 @@
     "url": "https://github.com/partme-ai/openclaw-plugins.git",
     "directory": "extensions/stomp"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.6",
     "tsup": "^8.0.0",
     "tsx": "^4.20.6",
     "typescript": "^5.7.0",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.6"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.12"
+    "openclaw": ">=2026.7.1"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -67,13 +67,18 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "compat": {
-      "pluginApi": ">=2026.3.24-beta.2",
-      "minGatewayVersion": "2026.3.24-beta.2"
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
     },
     "channel": {
       "id": "stomp-tcp",
       "label": "STOMP TCP",
-      "blurb": "Native TCP STOMP channel bridge with topic binding and enterprise delivery controls."
+      "blurb": "Authenticated STOMP 1.2 over TCP/TLS with bounded in-memory delivery controls."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-stomp",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {
@@ -83,6 +88,6 @@
     }
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.6.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   }
 }

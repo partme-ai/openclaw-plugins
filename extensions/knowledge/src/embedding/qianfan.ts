@@ -6,6 +6,7 @@
  * @module knowledge/embedding/qianfan
  */
 import type { EmbeddingService, KnowledgeEmbeddingConfig } from '../types.js';
+import { inEmbeddingBatches, postEmbeddingJson, validateEmbeddingData } from './http.js';
 
 /** 默认模型 */
 const DEFAULT_MODEL = 'embedding-v1';
@@ -14,13 +15,21 @@ const DEFAULT_DIMENSIONS = 384;
 /** 千帆 OpenAI 兼容端点 */
 const DEFAULT_BASE_URL = 'https://qianfan.baidubce.com/v2';
 
+/**
+ * 百度千帆 OpenAI 兼容 Embedding 客户端。
+ *
+ * 使用 Bearer 凭据访问 `/v2/embeddings`，并复用统一的超时、有限重试、响应大小
+ * 和向量完整性校验。调用方只接收与输入顺序一致的可信向量数组。
+ */
 export class QianfanEmbeddingService implements EmbeddingService {
   readonly dimensions: number;
   readonly modelName: string;
   private baseUrl: string;
   private apiKey: string;
+  private config?: KnowledgeEmbeddingConfig;
 
   constructor(config?: KnowledgeEmbeddingConfig) {
+    this.config = config;
     this.baseUrl = config?.baseUrl ?? DEFAULT_BASE_URL;
     this.apiKey = config?.apiKey ?? '';
     this.modelName = config?.model ?? DEFAULT_MODEL;
@@ -39,43 +48,27 @@ export class QianfanEmbeddingService implements EmbeddingService {
       throw new Error('Qianfan Embedding requires apiKey (BCE IAM token)');
     }
 
+    return inEmbeddingBatches(texts, this.config, async (batch) => {
     // 遵循千帆 OpenAI 兼容格式:
     //   curl 'https://qianfan.baidubce.com/v2/embeddings' \
     //     -H 'Authorization: Bearer <token>' \
     //     -d '{ "model": "embedding-v1", "input": ["text"] }'
     const body: Record<string, unknown> = {
       model: this.modelName,
-      input: texts,
+      input: batch,
     };
 
     const url = `${this.baseUrl.replace(/\/+$/, '')}/embeddings`;
-    const response = await fetch(url, {
+    const data = await postEmbeddingJson<{ data?: unknown }>(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'unknown');
-      throw new Error(`Qianfan Embedding API error: ${response.status} — ${errorText}`);
-    }
-
-    const data = (await response.json()) as {
-      data: { object: string; embedding: number[]; index: number }[];
-      model?: string;
-      usage?: { prompt_tokens: number; total_tokens: number };
-    };
-
-    if (!data.data) {
-      throw new Error('Qianfan Embedding API returned unexpected response format: missing data');
-    }
-
-    // 按 index 排序确保顺序与输入一致
-    const sorted = data.data.sort((a, b) => a.index - b.index);
-    return sorted.map((item) => item.embedding);
+    }, this.config, 'Qianfan');
+    return validateEmbeddingData(data.data, batch.length, this.dimensions, 'Qianfan');
+    }, this.modelName === 'tao-8k' ? 1 : 16);
   }
 
   async health(): Promise<boolean> {
