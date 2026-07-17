@@ -330,6 +330,10 @@ export type ResolvedWeixinAccount = {
   name?: string;
   /** 可选静态私聊白名单；会与扫码配对文件合并。 */
   allowFrom: string[];
+  /** 每个账号独立透传到 iLink API 的 SKRouteTag。 */
+  routeTag?: string;
+  /** 在 OpenClaw 默认媒体根之外额外开放的可信本地目录。 */
+  mediaLocalRoots: string[];
 };
 
 type WeixinAccountConfig = {
@@ -342,6 +346,7 @@ type WeixinAccountConfig = {
   allowCustomCdnBaseUrl?: boolean;
   /** Optional SKRouteTag source; read from openclaw.json when `accountId` is passed to `loadConfigRouteTag`. */
   routeTag?: number | string;
+  mediaLocalRoots?: string[];
 };
 
 type WeixinSectionConfig = WeixinAccountConfig & {
@@ -382,6 +387,7 @@ export function resolveWeixinAccount(
     accountCfg.cdnBaseUrl?.trim() || CDN_BASE_URL,
     accountCfg.allowCustomCdnBaseUrl === true,
   );
+  const routeTag = accountCfg.routeTag == null ? undefined : String(accountCfg.routeTag).trim() || undefined;
 
   return {
     accountId: id,
@@ -392,5 +398,7 @@ export function resolveWeixinAccount(
     configured: Boolean(token),
     name: accountCfg.name?.trim() || undefined,
     allowFrom: [...new Set((accountCfg.allowFrom ?? []).map((id) => id.trim()).filter(Boolean))],
+    routeTag,
+    mediaLocalRoots: [...new Set((accountCfg.mediaLocalRoots ?? []).map((root) => root.trim()).filter(Boolean))],
   };
 }

@@ -4,6 +4,7 @@ import {
   validateTrustedLoginBaseUrl,
   validateWeixinApiBaseUrl,
   validateWeixinCdnBaseUrl,
+  validateWeixinCdnUploadUrl,
 } from "../../src/api/endpoint-policy.js";
 
 describe("Weixin credential endpoint policy", () => {
@@ -30,5 +31,23 @@ describe("Weixin credential endpoint policy", () => {
     expect(() => resolveTrustedQrRedirectBaseUrl("attacker.example.com")).toThrow("not an official");
     expect(validateTrustedLoginBaseUrl(undefined)).toBe("https://ilinkai.weixin.qq.com");
     expect(() => validateTrustedLoginBaseUrl("https://attacker.example.com")).toThrow("official iLink host");
+  });
+
+  it("binds server-supplied CDN upload URLs to the configured origin and upload path", () => {
+    expect(
+      validateWeixinCdnUploadUrl(
+        "https://cdn.example/c2c/upload?encrypted_query_param=x",
+        "https://cdn.example/c2c",
+      ),
+    ).toBe("https://cdn.example/c2c/upload?encrypted_query_param=x");
+    expect(() =>
+      validateWeixinCdnUploadUrl(
+        "https://attacker.example/c2c/upload?encrypted_query_param=x",
+        "https://cdn.example/c2c",
+      ),
+    ).toThrow("configured CDN origin");
+    expect(() =>
+      validateWeixinCdnUploadUrl("https://cdn.example/other", "https://cdn.example/c2c"),
+    ).toThrow("configured CDN upload path");
   });
 });

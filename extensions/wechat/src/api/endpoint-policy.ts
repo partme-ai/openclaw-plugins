@@ -64,6 +64,29 @@ export function validateWeixinCdnBaseUrl(
 }
 
 /**
+ * 校验 `getUploadUrl` 返回的完整上传地址。
+ *
+ * 该 URL 携带一次性上传凭据且 POST body 是加密媒体，必须与管理员已确认的
+ * `cdnBaseUrl` 保持同源并落在同一路径前缀；否则恶意或异常 API 响应可以把凭据和
+ * 数据转发到第三方主机。上传请求同时禁用重定向，避免校验后再跳出可信 Origin。
+ */
+export function validateWeixinCdnUploadUrl(value: string, cdnBaseUrl: string): string {
+  const base = new URL(cdnBaseUrl);
+  const upload = new URL(value);
+  if (upload.username || upload.password || upload.hash) {
+    throw new Error("weixin CDN upload URL must not contain credentials or fragment");
+  }
+  if (upload.origin !== base.origin) {
+    throw new Error("weixin CDN upload URL must use the configured CDN origin");
+  }
+  const prefix = base.pathname.replace(/\/$/u, "");
+  if (upload.pathname !== `${prefix}/upload`) {
+    throw new Error("weixin CDN upload URL must use the configured CDN upload path");
+  }
+  return upload.toString();
+}
+
+/**
  * 二维码状态只能跳转到腾讯控制的 `weixin.qq.com` 主机；这里不接受自定义代理确认，
  * 因为该值来自远端响应而非管理员配置。
  */

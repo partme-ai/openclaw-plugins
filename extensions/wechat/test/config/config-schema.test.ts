@@ -33,6 +33,16 @@ describe("WeixinConfigSchema", () => {
     expect(result.enabled).toBe(false);
   });
 
+  it("normalizes account routeTag and mediaLocalRoots", () => {
+    const result = WeixinConfigSchema.parse({
+      accounts: {
+        acc1: { routeTag: " shard-a ", mediaLocalRoots: [" /data/weixin-media "] },
+      },
+    });
+    expect(result.accounts?.acc1?.routeTag).toBe("shard-a");
+    expect(result.accounts?.acc1?.mediaLocalRoots).toEqual(["/data/weixin-media"]);
+  });
+
   it("parses and bounds the static allowFrom list", () => {
     const result = WeixinConfigSchema.parse({ allowFrom: [" user-a ", "user-b"] });
     expect(result.allowFrom).toEqual(["user-a", "user-b"]);

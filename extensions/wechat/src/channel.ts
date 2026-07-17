@@ -15,6 +15,7 @@
  * **关键导出**：`weixinPlugin`
  */
 
+import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
@@ -145,6 +146,7 @@ async function sendWeixinOutbound(params: {
   const result = await sendMessageWeixin({ to: params.to, text: filteredText, opts: {
     baseUrl: account.baseUrl,
     token: account.token,
+    routeTag: account.routeTag,
     contextToken: params.contextToken,
   }});
   return { channel: "openclaw-weixin", messageId: result.messageId };
@@ -238,23 +240,31 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
 
       if (mediaUrl && (isLocalFilePath(mediaUrl) || isRemoteUrl(mediaUrl))) {
         let filePath: string;
+        let temporaryRemoteFile = false;
         if (isLocalFilePath(mediaUrl)) {
           filePath = resolveLocalPath(mediaUrl);
           aLog.debug(`sendMedia: uploading local file ${filePath}`);
         } else {
           aLog.debug(`sendMedia: downloading remote mediaUrl=${mediaUrl.slice(0, 80)}...`);
           filePath = await downloadRemoteImageToTemp(mediaUrl, MEDIA_OUTBOUND_TEMP_DIR);
+          temporaryRemoteFile = true;
           aLog.debug(`sendMedia: remote image downloaded to ${filePath}`);
         }
         const contextToken = getContextToken(account.accountId, ctx.to);
-        const result = await sendWeixinMediaFile({
-          filePath,
-          to: ctx.to,
-          text: ctx.text ?? "",
-          opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
-          cdnBaseUrl: account.cdnBaseUrl,
-        });
-        return { channel: "openclaw-weixin", messageId: result.messageId };
+        try {
+          const result = await sendWeixinMediaFile({
+            filePath,
+            to: ctx.to,
+            text: ctx.text ?? "",
+            opts: { baseUrl: account.baseUrl, token: account.token, routeTag: account.routeTag, contextToken },
+            cdnBaseUrl: account.cdnBaseUrl,
+            mediaLocalRoots: account.mediaLocalRoots,
+          });
+          return { channel: "openclaw-weixin", messageId: result.messageId };
+        } finally {
+          // 下载型媒体是一次性暂存；成功、上传失败和发送失败都必须回收。
+          if (temporaryRemoteFile) await fs.unlink(filePath).catch(() => {});
+        }
       }
 
       const result = await sendWeixinOutbound({
@@ -413,8 +423,10 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
         baseUrl: account.baseUrl,
         cdnBaseUrl: account.cdnBaseUrl,
         token: account.token,
+        routeTag: account.routeTag,
         accountId: account.accountId,
         allowFrom: account.allowFrom,
+        mediaLocalRoots: account.mediaLocalRoots,
         config: ctx.cfg,
         runtime: ctx.runtime,
         abortSignal: ctx.abortSignal,

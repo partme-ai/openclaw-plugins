@@ -109,11 +109,84 @@ stateDiagram-v2
 ## 生产边界与验证
 
 - 后端 API、扫码登录和 CDN 上传均属于真实环境依赖，本地单元测试不能替代账号验收。
-- 媒体下载和上传必须限制大小、类型、超时和临时文件生命周期。
+- 远程媒体通过 OpenClaw SSRF Guard 下载：DNS 解析、连接目标和重定向都会校验，响应流最多读取 100 MiB；上传/发送结束后，无论成功失败都会删除插件创建的临时文件。
+- 本地媒体默认只能读取 OpenClaw 的 media、workspace、canvas、sandbox 等受管目录；额外目录必须显式写入当前账号的 `mediaLocalRoots`，Path Guard 会拒绝目录穿越、符号链接逃逸、特殊文件和超过 100 MiB 的文件。
+- `getUploadUrl` 返回的 `upload_full_url` 必须与已配置 `cdnBaseUrl` 同源且路径固定为 `/upload`；上传禁用 HTTP 重定向，单次 30 秒，4xx 不重试，网络/5xx 最多重试 3 次并指数退避。
 - 长轮询需要验证断网恢复、凭据失效、重复消息和 Gateway 重启后的恢复行为。
 - 默认只允许官方 iLink API 与 CDN 地址。自定义 HTTPS 代理必须分别显式设置 `allowCustomApiBaseUrl=true` / `allowCustomCdnBaseUrl=true`；二维码响应中的 `redirect_host` 不读取这些开关，只接受腾讯控制的 `weixin.qq.com` 域名，防止远端响应把 Bot Token 引向任意主机。
 - Bot Token、`context_token` 和 `get_updates_buf` 使用 0700 目录、0600 文件和同目录原子替换；API 请求无论成功失败都会清除超时定时器。
 - `context_token` 和 typing 配置缓存有固定容量上限；账号日志使用不可逆指纹，二维码、Token 和用户标识不再暴露任何前缀；日志出口统一清除 Bearer/Authorization、用户 ID、会话键、正文、文件路径和 URL 细节。
+
+### 媒体安全链路
+
+字符图保留“输入从哪里来、在哪一层被拦截、何时清理”的整体视角；紧随其后的 Mermaid 展开判断分支，二者不可相互替代。
+
+```text
+Agent / message tool / MEDIA:
+              │
+       ┌──────┴────────┐
+       │               │
+       ▼               ▼
+   本地文件路径       HTTPS 远程 URL
+       │               │
+       ▼               ▼
+mediaLocalRoots    OpenClaw SSRF Guard
+ + realpath        DNS / IP / redirect / timeout
+ + fs-safe              │
+ + 100 MiB              ▼
+       │           有界流读取 → 一次性临时文件
+       └──────┬────────┘
+              ▼
+       AES-128-ECB 加密
+              │
+              ▼
+ getUploadUrl → 同源 upload URL 校验
+              │
+              ▼
+ CDN POST（30s、4xx 不重试、5xx/网络最多 3 次）
+              │
+              ▼
+ sendMessage ── finally 删除远程临时文件
+```
+
+```mermaid
+flowchart TD
+    I["Agent 媒体输出"] --> K{"输入类型"}
+    K -->|"本地路径"| L["默认根 + 账号 mediaLocalRoots"]
+    L --> G{"Path Guard<br/>realpath / symlink / regular file / 100 MiB"}
+    G -->|"拒绝"| X["停止发送并记录脱敏错误"]
+    G -->|"允许"| B["读取 Buffer"]
+    K -->|"HTTPS URL"| S["OpenClaw SSRF Guard"]
+    S -->|"私网、重绑定或危险重定向"| X
+    S -->|"允许"| R["有界读取并写入一次性临时文件"]
+    R --> B
+    B --> E["AES-128-ECB 加密"]
+    E --> U["getUploadUrl"]
+    U --> O{"与 cdnBaseUrl 同源且为 /upload?"}
+    O -->|"否"| X
+    O -->|"是"| P["禁重定向 CDN POST"]
+    P --> M["sendMessage"]
+    M --> F["finally 回收远程临时文件"]
+```
+
+账号级配置示例：
+
+```json
+{
+  "channels": {
+    "openclaw-weixin": {
+      "accounts": {
+        "your-account-id": {
+          "routeTag": "shard-a",
+          "mediaLocalRoots": ["/data/openclaw/weixin-media"]
+        }
+      }
+    }
+  }
+}
+```
+
+`routeTag` 会随当前账号进入 `getUpdates`、`getConfig`、`sendTyping`、`getUploadUrl` 和 `sendMessage` 的 `SKRouteTag` 请求头；多账号不能共用首次启动时缓存的顶层值。
 
 ```mermaid
 flowchart TD

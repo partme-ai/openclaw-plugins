@@ -32,7 +32,7 @@ export class WeixinConfigManager {
   private cache = new Map<string, ConfigCacheEntry>();
 
   constructor(
-    private apiOpts: { baseUrl: string; token?: string },
+    private apiOpts: { baseUrl: string; token?: string; routeTag?: string },
     private log: (msg: string) => void,
     private maxEntries = DEFAULT_CONFIG_CACHE_MAX_ENTRIES,
   ) {
@@ -75,6 +75,7 @@ export class WeixinConfigManager {
         const resp = await getConfig({
           baseUrl: this.apiOpts.baseUrl,
           token: this.apiOpts.token,
+          routeTag: this.apiOpts.routeTag,
           ilinkUserId: normalizedUserId,
           contextToken,
         });

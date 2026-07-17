@@ -49,6 +49,8 @@ export type MonitorWeixinOpts = {
   baseUrl: string;
   cdnBaseUrl: string;
   token?: string;
+  routeTag?: string;
+  mediaLocalRoots?: readonly string[];
   accountId: string;
   /** When non-empty, only messages whose from_user_id is in this list are processed. */
   allowFrom?: string[];
@@ -69,6 +71,8 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     baseUrl,
     cdnBaseUrl,
     token,
+    routeTag,
+    mediaLocalRoots,
     accountId,
     config,
     abortSignal,
@@ -110,7 +114,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
     aLog.info(`No previous get_updates_buf found, starting fresh`);
   }
 
-  const configManager = new WeixinConfigManager({ baseUrl, token }, log);
+  const configManager = new WeixinConfigManager({ baseUrl, token, routeTag }, log);
 
   let nextTimeoutMs = longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
   let consecutiveFailures = 0;
@@ -121,6 +125,7 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
       const resp = await getUpdates({
         baseUrl,
         token,
+        routeTag,
         get_updates_buf: getUpdatesBuf,
         timeoutMs: nextTimeoutMs,
       });
@@ -196,6 +201,8 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
           baseUrl,
           cdnBaseUrl,
           token,
+          routeTag,
+          mediaLocalRoots,
           allowFrom: opts.allowFrom,
           // processOneMessage 在 DM 鉴权通过后才调用，避免未授权用户消耗 getConfig 配额。
           resolveTypingTicket: async (userId, contextToken) =>

@@ -93,6 +93,13 @@ describe("getUpdates", () => {
     const [url] = mockFetch.mock.calls[0];
     expect(url).toContain("https://api.example.com/ilink/bot/getupdates");
   });
+
+  it("propagates the current account routeTag into SKRouteTag", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse({ ret: 0 }));
+    await getUpdates({ baseUrl: "https://api.example.com", routeTag: " account-route " });
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect((options.headers as Record<string, string>).SKRouteTag).toBe("account-route");
+  });
 });
 
 describe("HTTP response safety", () => {

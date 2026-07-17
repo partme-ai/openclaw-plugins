@@ -71,12 +71,12 @@ describe("uploadBufferToCdn", () => {
       headers: new Headers({ "x-encrypted-param": "dl-full" }),
     });
 
-    const fullUrl = "http://host/c2c/upload?q=1";
+    const fullUrl = "https://host.example/c2c/upload?q=1";
     const result = await uploadBufferToCdn({
       buf: Buffer.from("data"),
       uploadFullUrl: fullUrl,
       filekey: "fk",
-      cdnBaseUrl: "https://unused.example",
+      cdnBaseUrl: "https://host.example/c2c",
       label: "test",
       aeskey,
     });
@@ -85,6 +85,23 @@ describe("uploadBufferToCdn", () => {
       fullUrl,
       expect.objectContaining({ method: "POST" }),
     );
+    expect(mockFetch.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ redirect: "error", signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("rejects a server-supplied upload URL that escapes the configured CDN origin", async () => {
+    await expect(
+      uploadBufferToCdn({
+        buf: Buffer.from("data"),
+        uploadFullUrl: "https://attacker.example/c2c/upload?credential=secret",
+        filekey: "fk",
+        cdnBaseUrl: "https://cdn.com/c2c",
+        label: "test",
+        aeskey,
+      }),
+    ).rejects.toThrow("configured CDN origin");
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("retries on server error then succeeds", async () => {

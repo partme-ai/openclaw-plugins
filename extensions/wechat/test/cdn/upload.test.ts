@@ -84,6 +84,7 @@ describe("uploadFileToWeixin", () => {
         toUserId: "user1",
         opts: { baseUrl: "https://api.com", token: "tok" },
         cdnBaseUrl: "https://cdn.com",
+        mediaLocalRoots: [tmpDir],
       });
 
       expect(result.filekey).toBeDefined();
@@ -101,7 +102,7 @@ describe("uploadFileToWeixin", () => {
       const filePath = path.join(tmpDir, "test.png");
       await fs.writeFile(filePath, "fake-image-data");
 
-      const fullUrl = "http://cdn.example/c2c/upload?encrypted_query_param=x&filekey=y";
+      const fullUrl = "https://cdn.example/c2c/upload?encrypted_query_param=x&filekey=y";
       mockGetUploadUrl.mockResolvedValueOnce({ upload_full_url: fullUrl });
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -113,7 +114,8 @@ describe("uploadFileToWeixin", () => {
         filePath,
         toUserId: "user1",
         opts: { baseUrl: "https://api.com", token: "tok" },
-        cdnBaseUrl: "https://ignored-cdn.com",
+        cdnBaseUrl: "https://cdn.example/c2c",
+        mediaLocalRoots: [tmpDir],
       });
 
       expect(result.downloadEncryptedQueryParam).toBe("dl-full");
@@ -139,6 +141,7 @@ describe("uploadFileToWeixin", () => {
           toUserId: "user1",
           opts: { baseUrl: "https://api.com" },
           cdnBaseUrl: "https://cdn.com",
+          mediaLocalRoots: [tmpDir],
         }),
       ).rejects.toThrow("no upload URL");
     } finally {
@@ -171,6 +174,7 @@ describe("uploadFileToWeixin", () => {
         toUserId: "user1",
         opts: { baseUrl: "https://api.com" },
         cdnBaseUrl: "https://cdn.com",
+        mediaLocalRoots: [tmpDir],
       });
       expect(result.downloadEncryptedQueryParam).toBe("dl-retry");
       expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -199,6 +203,7 @@ describe("uploadFileToWeixin", () => {
           toUserId: "user1",
           opts: { baseUrl: "https://api.com" },
           cdnBaseUrl: "https://cdn.com",
+          mediaLocalRoots: [tmpDir],
         }),
       ).rejects.toThrow("client error");
       expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -229,6 +234,7 @@ describe("uploadFileToWeixin", () => {
           toUserId: "user1",
           opts: { baseUrl: "https://api.com" },
           cdnBaseUrl: "https://cdn.com",
+          mediaLocalRoots: [tmpDir],
         }),
       ).rejects.toThrow("x-encrypted-param");
     } finally {
@@ -256,6 +262,7 @@ describe("uploadVideoToWeixin", () => {
         toUserId: "user1",
         opts: { baseUrl: "https://api.com" },
         cdnBaseUrl: "https://cdn.com",
+        mediaLocalRoots: [tmpDir],
       });
 
       expect(result.filekey).toBeDefined();
@@ -286,6 +293,7 @@ describe("uploadFileAttachmentToWeixin", () => {
         toUserId: "user1",
         opts: { baseUrl: "https://api.com" },
         cdnBaseUrl: "https://cdn.com",
+        mediaLocalRoots: [tmpDir],
       });
       expect(result.filekey).toBeDefined();
       expect(result.downloadEncryptedQueryParam).toBe("dl");

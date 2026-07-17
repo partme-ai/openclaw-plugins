@@ -14,6 +14,7 @@
  * **关键导出**：`processOneMessage`、`ProcessMessageDeps`
  */
 
+import fs from "node:fs/promises";
 import path from "node:path";
 
 import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-runtime";
@@ -58,6 +59,8 @@ export type ProcessMessageDeps = {
   baseUrl: string;
   cdnBaseUrl: string;
   token?: string;
+  routeTag?: string;
+  mediaLocalRoots?: readonly string[];
   /** 静态白名单与扫码配对名单合并；空数组不代表放行所有人。 */
   allowFrom?: string[];
   /** 鉴权通过后才获取 typing ticket，防止陌生发送者放大远端 getConfig 请求。 */
@@ -156,6 +159,7 @@ export async function processOneMessage(
       contextToken: full.context_token,
       baseUrl: deps.baseUrl,
       token: deps.token,
+      routeTag: deps.routeTag,
       accountId: deps.accountId,
       log: deps.log,
       errLog: deps.errLog,
@@ -356,6 +360,7 @@ export async function processOneMessage(
         try {
           if (mediaUrl) {
             let filePath: string;
+            let temporaryRemoteFile = false;
             if (!mediaUrl.includes("://") || mediaUrl.startsWith("file://")) {
               // Local path: absolute, relative, or file:// URL
               if (mediaUrl.startsWith("file://")) {
@@ -370,6 +375,7 @@ export async function processOneMessage(
             } else if (mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://")) {
               logger.debug(`outbound: downloading remote mediaUrl=${mediaUrl.slice(0, 80)}...`);
               filePath = await downloadRemoteImageToTemp(mediaUrl, MEDIA_OUTBOUND_TEMP_DIR);
+              temporaryRemoteFile = true;
               logger.debug(`outbound: remote image downloaded to filePath=${filePath}`);
             } else {
               logger.warn(
@@ -383,19 +389,26 @@ export async function processOneMessage(
               logger.info(`outbound: text sent to=${ctx.To}`);
               return;
             }
-            await sendWeixinMediaFile({
-              filePath,
-              to: ctx.To,
-              text,
-              opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken },
-              cdnBaseUrl: deps.cdnBaseUrl,
-            });
+            try {
+              await sendWeixinMediaFile({
+                filePath,
+                to: ctx.To,
+                text,
+                opts: { baseUrl: deps.baseUrl, token: deps.token, routeTag: deps.routeTag, contextToken },
+                cdnBaseUrl: deps.cdnBaseUrl,
+                mediaLocalRoots: deps.mediaLocalRoots,
+              });
+            } finally {
+              // 仅删除本插件创建的远程下载暂存文件；用户提供的本地文件绝不能误删。
+              if (temporaryRemoteFile) await fs.unlink(filePath).catch(() => {});
+            }
             logger.info(`outbound: media sent OK to=${ctx.To}`);
           } else {
             logger.debug(`outbound: sending text message to=${ctx.To}`);
             await sendMessageWeixin({ to: ctx.To, text, opts: {
               baseUrl: deps.baseUrl,
-              token: deps.token,
+                token: deps.token,
+                routeTag: deps.routeTag,
               contextToken,
             }});
             logger.info(`outbound: text sent OK to=${ctx.To}`);
@@ -427,7 +440,8 @@ export async function processOneMessage(
           contextToken,
           message: notice,
           baseUrl: deps.baseUrl,
-          token: deps.token,
+              token: deps.token,
+              routeTag: deps.routeTag,
           errLog: deps.errLog,
         });
       },

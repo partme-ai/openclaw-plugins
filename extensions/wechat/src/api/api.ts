@@ -36,6 +36,8 @@ import type {
 export type WeixinApiOptions = {
   baseUrl: string;
   token?: string;
+  /** 当前账号的 SKRouteTag；显式值优先于登录阶段读取的顶层兼容配置。 */
+  routeTag?: string;
   timeoutMs?: number;
   /** Long-poll timeout for getUpdates (server may hold the request up to this). */
   longPollTimeoutMs?: number;
@@ -141,25 +143,25 @@ function randomWechatUin(): string {
 }
 
 /** Build headers shared by both GET and POST requests. */
-function buildCommonHeaders(): Record<string, string> {
+function buildCommonHeaders(explicitRouteTag?: string): Record<string, string> {
   const headers: Record<string, string> = {
     "iLink-App-Id": ILINK_APP_ID,
     "iLink-App-ClientVersion": String(ILINK_APP_CLIENT_VERSION),
   };
-  const routeTag = loadConfigRouteTag();
+  const routeTag = explicitRouteTag?.trim() || loadConfigRouteTag();
   if (routeTag) {
     headers.SKRouteTag = routeTag;
   }
   return headers;
 }
 
-function buildHeaders(opts: { token?: string; body: string }): Record<string, string> {
+function buildHeaders(opts: { token?: string; routeTag?: string; body: string }): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
     "Content-Length": String(Buffer.byteLength(opts.body, "utf-8")),
     "X-WECHAT-UIN": randomWechatUin(),
-    ...buildCommonHeaders(),
+    ...buildCommonHeaders(opts.routeTag),
   };
   if (opts.token?.trim()) {
     headers.Authorization = `Bearer ${opts.token.trim()}`;
@@ -181,10 +183,11 @@ export async function apiGetFetch(params: {
   endpoint: string;
   timeoutMs?: number;
   label: string;
+  routeTag?: string;
 }): Promise<string> {
   const base = ensureTrailingSlash(params.baseUrl);
   const url = new URL(params.endpoint, base);
-  const hdrs = buildCommonHeaders();
+  const hdrs = buildCommonHeaders(params.routeTag);
   logger.debug(`GET ${redactUrl(url.toString())}`);
 
   const timeoutMs = params.timeoutMs ?? DEFAULT_GET_TIMEOUT_MS;
@@ -217,12 +220,13 @@ async function apiPostFetch(params: {
   endpoint: string;
   body: string;
   token?: string;
+  routeTag?: string;
   timeoutMs: number;
   label: string;
 }): Promise<string> {
   const base = ensureTrailingSlash(params.baseUrl);
   const url = new URL(params.endpoint, base);
-  const hdrs = buildHeaders({ token: params.token, body: params.body });
+  const hdrs = buildHeaders({ token: params.token, routeTag: params.routeTag, body: params.body });
   logger.debug(`POST ${redactUrl(url.toString())} body=${redactBody(params.body)}`);
 
   const controller = new AbortController();
@@ -253,11 +257,7 @@ async function apiPostFetch(params: {
  * with ret=0 so the caller can simply retry. This is normal for long-poll.
  */
 export async function getUpdates(
-  params: GetUpdatesReq & {
-    baseUrl: string;
-    token?: string;
-    timeoutMs?: number;
-  },
+  params: GetUpdatesReq & WeixinApiOptions,
 ): Promise<GetUpdatesResp> {
   const timeout = params.timeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
   try {
@@ -269,6 +269,7 @@ export async function getUpdates(
         base_info: buildBaseInfo(),
       }),
       token: params.token,
+      routeTag: params.routeTag,
       timeoutMs: timeout,
       label: "getUpdates",
     });
@@ -306,6 +307,7 @@ export async function getUploadUrl(
       base_info: buildBaseInfo(),
     }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "getUploadUrl",
   });
@@ -322,6 +324,7 @@ export async function sendMessage(
     endpoint: "ilink/bot/sendmessage",
     body: JSON.stringify({ ...params.body, base_info: buildBaseInfo() }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "sendMessage",
   });
@@ -340,6 +343,7 @@ export async function getConfig(
       base_info: buildBaseInfo(),
     }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "getConfig",
   });
@@ -356,6 +360,7 @@ export async function sendTyping(
     endpoint: "ilink/bot/sendtyping",
     body: JSON.stringify({ ...params.body, base_info: buildBaseInfo() }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "sendTyping",
   });

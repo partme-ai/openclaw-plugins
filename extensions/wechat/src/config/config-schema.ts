@@ -21,7 +21,8 @@ const accountShape = {
   cdnBaseUrl: z.url().default(CDN_BASE_URL),
   allowCustomApiBaseUrl: z.boolean().default(false),
   allowCustomCdnBaseUrl: z.boolean().default(false),
-  routeTag: z.number().optional(),
+  routeTag: z.union([z.number().safe(), z.string().trim().min(1).max(128)]).optional(),
+  mediaLocalRoots: z.array(z.string().trim().min(1).max(4096)).max(128).default([]),
 };
 
 function enforceEndpointPolicy(

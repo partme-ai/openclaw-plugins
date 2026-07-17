@@ -8,6 +8,8 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
+
 import { getUploadUrl } from "../api/api.js";
 import type { WeixinApiOptions } from "../api/api.js";
 import { aesEcbPaddedSize } from "./aes-ecb.js";
@@ -16,6 +18,7 @@ import { logger } from "../util/logger.js";
 import { getExtensionFromContentTypeOrUrl } from "../media/mime.js";
 import { tempFileName } from "../util/random.js";
 import { UploadMediaType } from "../api/types.js";
+import { readWeixinLocalMedia } from "../media/path-guard.js";
 
 export type UploadedFileInfo = {
   filekey: string;
@@ -32,16 +35,9 @@ export type UploadedFileInfo = {
 const REMOTE_MEDIA_TIMEOUT_MS = 30_000;
 const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
 
-function assertSafeRemoteMediaUrl(rawUrl: string): URL {
+function assertRemoteMediaUrl(rawUrl: string): URL {
   const url = new URL(rawUrl);
   if (url.protocol !== "https:") throw new Error("remote media URL must use HTTPS");
-  const host = url.hostname.toLowerCase();
-  if (
-    host === "localhost" || host === "::1" || /^127\./.test(host) || /^10\./.test(host) ||
-    /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
-  ) {
-    throw new Error("remote media URL must not target a local or private address");
-  }
   return url;
 }
 
@@ -50,13 +46,15 @@ function assertSafeRemoteMediaUrl(rawUrl: string): URL {
  * Returns the local file path; extension is inferred from Content-Type / URL.
  */
 export async function downloadRemoteImageToTemp(url: string, destDir: string): Promise<string> {
-  const safeUrl = assertSafeRemoteMediaUrl(url);
+  const safeUrl = assertRemoteMediaUrl(url);
   logger.debug(`downloadRemoteImageToTemp: fetching host=${safeUrl.host}`);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REMOTE_MEDIA_TIMEOUT_MS);
-  timeout.unref?.();
+  // OpenClaw SSRF Guard 会在 DNS 解析、连接和每次重定向时重新校验目标地址，
+  // 可阻断“公网域名解析到内网 IP”与“302 跳到 metadata/loopback”等绕过方式。
+  const { response: res, release } = await fetchWithSsrFGuard({
+    url: safeUrl.toString(),
+    timeoutMs: REMOTE_MEDIA_TIMEOUT_MS,
+  });
   try {
-    const res = await fetch(safeUrl, { signal: controller.signal });
     if (!res.ok) {
       await res.body?.cancel().catch(() => {});
       const msg = `remote media download failed: ${res.status} ${res.statusText}`;
@@ -101,7 +99,7 @@ export async function downloadRemoteImageToTemp(url: string, destDir: string): P
     logger.debug(`downloadRemoteImageToTemp: saved remote media ext=${ext}`);
     return filePath;
   } finally {
-    clearTimeout(timeout);
+    await release();
   }
 }
 
@@ -113,15 +111,18 @@ async function uploadMediaToCdn(params: {
   toUserId: string;
   opts: WeixinApiOptions;
   cdnBaseUrl: string;
+  mediaLocalRoots?: readonly string[];
   mediaType: (typeof UploadMediaType)[keyof typeof UploadMediaType];
   label: string;
 }): Promise<UploadedFileInfo> {
-  const { filePath, toUserId, opts, cdnBaseUrl, mediaType, label } = params;
+  const { filePath, toUserId, opts, cdnBaseUrl, mediaLocalRoots, mediaType, label } = params;
 
-  const stat = await fs.stat(filePath);
-  if (!stat.isFile()) throw new Error(`${label}: media path is not a regular file`);
-  if (stat.size > MAX_MEDIA_BYTES) throw new Error(`${label}: media exceeds ${MAX_MEDIA_BYTES} bytes`);
-  const plaintext = await fs.readFile(filePath);
+  // 读取必须经过 OpenClaw Path Guard，避免 Agent 被提示注入后把任意系统文件上传给用户。
+  const plaintext = await readWeixinLocalMedia({
+    filePath,
+    customRoots: mediaLocalRoots,
+    maxBytes: MAX_MEDIA_BYTES,
+  });
   const rawsize = plaintext.length;
   const rawfilemd5 = crypto.createHash("md5").update(plaintext).digest("hex");
   const filesize = aesEcbPaddedSize(rawsize);
@@ -176,6 +177,7 @@ export async function uploadFileToWeixin(params: {
   toUserId: string;
   opts: WeixinApiOptions;
   cdnBaseUrl: string;
+  mediaLocalRoots?: readonly string[];
 }): Promise<UploadedFileInfo> {
   return uploadMediaToCdn({
     ...params,
@@ -190,6 +192,7 @@ export async function uploadVideoToWeixin(params: {
   toUserId: string;
   opts: WeixinApiOptions;
   cdnBaseUrl: string;
+  mediaLocalRoots?: readonly string[];
 }): Promise<UploadedFileInfo> {
   return uploadMediaToCdn({
     ...params,
@@ -208,6 +211,7 @@ export async function uploadFileAttachmentToWeixin(params: {
   toUserId: string;
   opts: WeixinApiOptions;
   cdnBaseUrl: string;
+  mediaLocalRoots?: readonly string[];
 }): Promise<UploadedFileInfo> {
   return uploadMediaToCdn({
     ...params,
