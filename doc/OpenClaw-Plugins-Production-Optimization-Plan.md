@@ -683,21 +683,27 @@ Tracing 的 File/OTLP 缓冲仍是进程内 best-effort，不是持久 Outbox �
 - Webhook-only 账号在 `isConfigured`、账号描述与状态快照中使用同一判定，修复“可运行但状态显示未配置”。
 - 多账号 Bot WS 共用的 MessageState TTL 清理器改为按 accountId 引用计数，单个账号退出不会停止其他在线账号的过期状态回收。
 - Agent Webhook 注册返回精确注销器；配置热重载时，旧生命周期迟到的 abort 只能移除自己的 target，不会误删新实例。
-- Agent 媒体兜底不再使用裸 `fetch` 和无界 `arrayBuffer`：远程 URL 经过 OpenClaw SSRF Guard 并流式实施字节上限，本地文件经过白名单 Path Guard，两条路径共享 `media.maxBytes`。
+- Bot 与 Agent Webhook 均拒绝超过五分钟时间窗的已签名回调；单个坏账号的 AES/密钥配置不会拖垮同路径其他账号；解密后的 `aibotid` / `AgentID` 不匹配时失败关闭。
+- Agent 媒体兜底和 Agent Runtime 回复不再使用裸 `fetch`、无界 `arrayBuffer` 或任意 `fs.readFile`：远程 URL 经过 OpenClaw SSRF Guard 并流式实施真实字节上限，本地文件经过白名单 Path Guard，所有路径共享 `media.maxBytes`。
+- Agent API token 缓存以 corpId/corpSecret/agentId 的 SHA-256 指纹隔离，支持密钥轮换、并发 single-flight 和容量上限；平台错误与部分失败只输出脱敏摘要和数量。
 - `send` / `sendAttachment` Tool 不再在 Bot WS 离线或媒体上传失败时伪造成功 messageId；只有收到真实投递结果才返回成功，可选 caption 会实际发送。
-- WS 认证后获取 MCP 配置的轮询增加 60 秒上限、`unref` 与停止清理；Agent-only 生命周期处理启动前已 abort 的边界。
+- WS 认证后获取 MCP 配置的轮询增加 60 秒上限、`unref` 与停止清理；Agent-only 与 Bot WS 均处理启动前已 abort 的边界，避免幽灵连接。
+- 默认日志不再记录消息正文、成员/群聊/msgId、媒体路径或文件内容十六进制；MCP 参数/结果只在显式 debug 时输出且有长度上限。
+- 将公网 XML 解析依赖 `fast-xml-parser` 从 5.3.4 升到 5.10.1，将不可信媒体识别依赖 `file-type` 从 18.7.0 升到 22.0.1，消除最终生产依赖审计中的 critical/high/moderate 漏洞；同时移除仓库根 `package.json` 中把 scoped 包名错误拆成对象的非法依赖，恢复根级 `pnpm install`。
 - Nacos 与 WeCom 文档保留原字符架构/数据流图，同时增加 Mermaid；后续插件遵循“字符速览 + Mermaid 架构/时序 + 原理说明 + 配置代码”，不以一种图例替换另一种。
 
 本地门禁（2026-07-17，阶段性）：
 
-- `pnpm --dir extensions/wecom test:coverage`：32 个测试文件、396 个测试通过；语句 27.56%、分支 23.37%、函数 30.04%、行 28.11%。现有测试数量较多但入口、Channel 生命周期、Agent/Webhook、媒体与 MCP 拦截器覆盖不足，不能用“396 项通过”推导生产就绪。
+- `pnpm --dir extensions/wecom test:coverage`：38 个测试文件、417 个测试通过；语句 35.39%、分支 28.04%、函数 38.52%、行 36.10%。新增 Bot WS abort 生命周期、Bot/Agent Webhook 重放与账号隔离、Agent handler 二次失败关闭、Agent API token/脱敏、SSRF Guard 与真实流字节上限契约。覆盖率已明显提升，但 `channel.ts`、Agent 完整 dispatch、Webhook Gateway 和 MCP 拦截器仍不足，不能据此认定生产就绪。
 - `typecheck`、ESM/DTS 构建、`--strict-new` 结构检查与 `npm pack --dry-run --json` 已通过；归档 `partme.ai-wecom-2026.7.1.tgz` 为 87 个文件。
-- 最终 tarball 与 message-sdk tarball 实体化安装到隔离目录后，OpenClaw `2026.7.1 (2d2ddc4)` 显示 WeCom `Status: loaded`、`Version: 2026.7.1`；Webhook-only 配置通过严格 Schema 校验，Gateway 进入 ready，`wecom_mcp` 契约告警消失，SIGINT 时注销 Target 并 clean shutdown。
+- 变更后的最终 tarball 与 message-sdk tarball 实体化安装到 `/tmp/wecom-audit-final2.YoxVfv/candidate/package` 后，生产依赖审计 critical/high/moderate 为 0；全新 `wecom-audit-final` profile 中 OpenClaw 2026.7.1 显示 WeCom `Status: loaded`、`Version: 2026.7.1` 且无插件诊断，Webhook-only 配置通过严格 Schema 校验，Gateway 在 19791 端口进入 ready，SIGINT 时注销 Target 并于 273ms 内 clean shutdown。
 
-用户已在上一版本环境验证过 WeCom。本轮仍需补齐 2026.7.1 最终 tarball 安装态 E2E、Bot WS/Webhook/Agent 三路径的失败注入与生命周期测试，并在真实企业微信租户复验回调、主动发送、媒体、流式、断线重连、可信 IP/代理、多账号与凭据轮换后，才能完成生产验收。
+用户已在上一版本环境验证过 WeCom。本轮仍需重跑变更后的 2026.7.1 最终 tarball 安装态 E2E，并在真实企业微信租户复验 Bot WS、Bot Webhook、Agent 回调、主动发送、媒体、流式、断线重连、可信 IP/代理、多账号与凭据轮换；同时还需对 Channel 主入口、Agent 完整 dispatch 和 MCP 拦截器继续补覆盖。完成这些前，WeCom 是“2026.7.1 本地候选”，不是生产验收完成。
 
 ## WeCom KF 当前交付
 
+- 公网 XML 解析依赖从 `fast-xml-parser@4.x` 升到 5.10.1，消除最终生产依赖审计中的 moderate XML 注入公告；Token 缓存增加 256 指纹上限，外部错误移除控制字符并限长。
+- 默认日志不再打印 `fail_msgid`、动态 Agent 派生 ID、欢迎语平台原始 `errmsg`；保留事件类型与 errcode 供运维聚合。
 - 对齐 OpenClaw 2026.7.1 `runtime.config.current()` 契约，修复回调、系统事件和事件文案仍把配置 facade 当成配置对象的问题；测试 mock 同步改为宿主真实形态。
 - 账号探测从解析后的 `account.config` 读取 KF 凭据；事件文案按 `open_kfid` 反查账号键，避免多账号覆盖失效。
 - `eventMessages` 已同步进入顶层、账号快捷字段和嵌套 `kf` 的配置类型，消除运行时已支持但 DTS 契约缺失的漂移；控制面结果统计显式使用数值归约，确保全仓严格类型检查通过。
@@ -716,7 +722,8 @@ Tracing 的 File/OTLP 缓冲仍是进程内 best-effort，不是持久 Outbox �
 
 本地门禁（2026-07-17）：
 
-- `pnpm --dir extensions/wecom-kf test:coverage`：35 个测试文件、161 个测试通过；语句覆盖率 58.39%、分支 42.47%、函数 59.59%、行 60.32%。核心回调达到 86.24% 语句覆盖，但 ASR、语音转码、probe、onboarding 和部分 API/媒体分支仍需真实环境与后续专项补测。
+- `pnpm --dir extensions/wecom-kf test:coverage`：35 个测试文件、162 个测试通过；语句覆盖率 58.42%、分支 42.50%、函数 59.77%、行 60.37%。核心回调达到 86.24% 语句覆盖，但 ASR、语音转码、probe、onboarding 和部分 API/媒体分支仍需真实环境与后续专项补测。
+- 变更后的 tarball 实体化安装到 `/tmp/wecom-kf-audit-final.mPLo5F/candidate/package`，生产依赖审计 critical/high/moderate 为 0；仅剩 OpenClaw peer 开发链中未实际进入 KF runtime 的 Windows esbuild dev-server low 公告。
 - `typecheck`、构建、`--strict-new` 结构检查和 `git diff --check` 全部通过；结构检查 0 error、0 warning，CodeGraph 已同步。
 - 组装 message-sdk 与 wecom-kf 两个本地 tarball 到无 workspace symlink 的实体依赖目录后，OpenClaw `2026.7.1 (2d2ddc4)` 显示 `Status: loaded`、`Version: 2026.7.1`；隔离配置校验通过，Gateway 日志显示只加载 `wecom-kf` 并进入 ready。
 - 从最终 tarball 重跑安装态 E2E 已通过：独立夹具生成企业微信格式 AES-CBC/SHA-1 回调，完成 `gettoken → sync_msg → Agent Turn → send_msg`，重启 Gateway 后恢复 cursor，并对相同 `msgid` 保持模型与出站各一次。归档：`scripts/e2e/reports/2026-07-17T03-31-21.763Z-wecom-kf-86137240-e63c-43b4-ae51-61ab8ecae7ee.json`。

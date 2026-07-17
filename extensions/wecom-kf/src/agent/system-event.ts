@@ -150,7 +150,7 @@ async function handleEnterSession(params: {
     });
     if (result.errcode !== 0) {
       console.error(
-        `[wecom_kf] Welcome send failed: ${result.errmsg} (errcode=${result.errcode})`,
+        `[wecom_kf] Welcome send failed (errcode=${result.errcode})`,
       );
       trackAccountStatePatch(params.openKfId, {
         lastError: `welcome_send_failed:${result.errcode}`,
@@ -252,8 +252,8 @@ export async function handleSystemEvent(
   }
 
   if (fields.eventType === "msg_send_fail") {
-    const failDetail = `fail_msgid=${fields.failMsgId ?? "unknown"} fail_type=${fields.failType ?? "unknown"}`;
-    console.warn(`[wecom_kf] msg_send_fail: ${failDetail}`);
+    // fail_msgid 可关联真实会话消息，不写入默认日志；错误类型已足够用于运维聚合。
+    console.warn(`[wecom_kf] msg_send_fail: fail_type=${fields.failType ?? "unknown"}`);
     if (openKfId) {
       trackAccountStatePatch(openKfId, { lastError: `msg_send_fail:${fields.failType ?? "unknown"}` });
     }

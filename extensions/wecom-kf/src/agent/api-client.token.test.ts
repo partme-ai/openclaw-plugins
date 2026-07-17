@@ -62,4 +62,19 @@ describe("getAccessToken", () => {
     expect(await getAccessToken(afterRotation)).toBe("new-token");
     expect(wecomFetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("外部 token 错误移除控制字符并限制长度", async () => {
+    const agent = createAgent("sanitized-error", "error-secret");
+    wecomFetchMock.mockResolvedValue(new Response(JSON.stringify({
+      errcode: 40013,
+      errmsg: `bad\nheader\u0000${"x".repeat(400)}`,
+    })));
+
+    const error = await getAccessToken(agent).catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toMatch(/^gettoken failed: 40013 bad header /);
+    expect(message).not.toMatch(/[\n\u0000]/);
+    expect(message.length).toBeLessThanOrEqual(256 + "gettoken failed: 40013 ".length);
+  });
 });

@@ -42,7 +42,25 @@ type TokenCache = {
 };
 
 const tokenCaches = new Map<string, TokenCache>();
+/** 防止动态企业/私有网关配置持续产生新指纹，最终让 token 缓存无界增长。 */
+const MAX_TOKEN_CACHE_ENTRIES = 256;
 const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+/** 外部平台错误只保留单行有限摘要，避免控制字符或超长响应污染 Gateway 日志。 */
+function apiFailure(prefix: string, errcode: unknown, errmsg: unknown): Error {
+    const safeMessage = String(errmsg ?? "unknown")
+        .replace(/[\u0000-\u001f\u007f]/g, " ")
+        .slice(0, 256);
+    return new Error(`${prefix}: ${String(errcode ?? "unknown")} ${safeMessage}`);
+}
+
+function trimTokenCaches(): void {
+    while (tokenCaches.size > MAX_TOKEN_CACHE_ENTRIES) {
+        const oldest = tokenCaches.keys().next().value as string | undefined;
+        if (!oldest) return;
+        tokenCaches.delete(oldest);
+    }
+}
 
 /**
  * 生成不暴露凭据明文的 token 缓存键。
@@ -123,6 +141,7 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
     if (!cache) {
         cache = { token: "", expiresAt: 0, refreshPromise: null };
         tokenCaches.set(cacheKey, cache);
+        trimTokenCaches();
     }
 
     const now = Date.now();
@@ -145,7 +164,7 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
             const json = await readJsonResponse<{ access_token?: string; expires_in?: number; errcode?: number; errmsg?: string }>(res);
 
             if (!json?.access_token) {
-                throw new Error(`gettoken failed: ${json?.errcode} ${json?.errmsg}`);
+                throw apiFailure("gettoken failed", json?.errcode, json?.errmsg);
             }
 
             cache!.token = json.access_token;
@@ -214,13 +233,13 @@ export async function uploadMedia(params: {
     // 某些文件类型在严格网关/企业微信校验下可能失败，回退到通用类型再试一次。
     if (!json?.media_id && preferredContentType !== "application/octet-stream") {
         console.warn(
-            `[wecom-upload] Upload failed with ${preferredContentType}, retrying as application/octet-stream: ${json?.errcode} ${json?.errmsg}`,
+            `[wecom-upload] Upload failed with ${preferredContentType}, retrying as application/octet-stream (errcode=${String(json?.errcode ?? "unknown")})`,
         );
         json = await uploadOnce("application/octet-stream");
     }
 
     if (!json?.media_id) {
-        throw new Error(`upload failed: ${json?.errcode} ${json?.errmsg}`);
+        throw apiFailure("upload failed", json?.errcode, json?.errmsg);
     }
     return json.media_id;
 }
@@ -270,7 +289,7 @@ export async function downloadMedia(params: {
     // 检查是否返回了错误 JSON
     if (contentType.includes("application/json")) {
         const json = await readJsonResponse<{ errcode?: number; errmsg?: string }>(res);
-        throw new Error(`download failed: ${json?.errcode} ${json?.errmsg}`);
+        throw apiFailure("download failed", json?.errcode, json?.errmsg);
     }
 
     const buffer = await readResponseBodyAsBuffer(res, params.maxBytes);

@@ -13,7 +13,7 @@
 
 - [ ] OpenClaw Gateway 已启动：`openclaw gateway restart`
 - [ ] 插件已安装：`openclaw plugins install @partme.ai/wecom-kf@latest --dangerously-force-unsafe-install`
-- [ ] 依赖版本对齐（monorepo 当前）：
+- [ ] 依赖版本对齐（monorepo 当前，公网 XML 解析器为 `fast-xml-parser@5.10.1`）：
   - `@partme.ai/wecom-kf`：与 workspace 同步
   - `@partme.ai/openclaw-message-sdk`：workspace 版本
   - `openclaw` peer：`>=2026.7.1`

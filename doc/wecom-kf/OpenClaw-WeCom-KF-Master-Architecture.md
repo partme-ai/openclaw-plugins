@@ -633,6 +633,29 @@ flowchart LR
 返回 200 再直接退出，就会丢失企微认为“已送达”的事件。因此插件在正常运行时先 ACK
 后按账号串行同步，在停机阶段先停止接收新任务并等待已 ACK 的任务排空。
 
+字符速览保留协议处理的先后关系，便于终端排障时快速对照：
+
+```text
+企业微信加密回调
+        │
+        ▼
+时间窗 + SHA-1 验签 + AES 解密
+        │
+        ▼
+按 webhookPath / open_kfid 解析账号
+        │
+        ├── Gateway stopping ──→ 503（不 ACK，等待企微重试）
+        │
+        ▼
+账号级 sync 队列入队 ──→ 立即 200 success
+        │
+        ▼
+sync_msg(cursor) 分页拉取 → msgid claim → Agent dispatch
+        │
+        ▼
+成功推进 cursor；失败保留旧 cursor 并允许重试
+```
+
 ```mermaid
 sequenceDiagram
   participant WW as 企业微信
@@ -685,7 +708,26 @@ flowchart TD
 
 access_token 缓存键由 `corpId + corpSecret + apiBaseUrl` 计算 SHA-256 指纹，不保存或输出
 凭据明文。相同凭据的多个 KF 账号共享并发刷新 Promise；Secret 轮换、切换私有化 API
-基址或收到 token 失效业务码时，会进入新的缓存代际并重新获取 token。
+基址或收到 token 失效业务码时，会进入新的缓存代际并重新获取 token。缓存最多保留 256
+个指纹，避免动态企业配置让进程内 Map 无界增长。
+
+### 11.5 XML 与日志安全边界
+
+公网回调使用 `fast-xml-parser@5.10.1`；该升级用于消除旧版 XML 注入公告，但不能替代
+插件自身的验签、时间窗、正文上限和事件白名单。运维日志只记录 `errcode`、事件类型、
+数量和状态，不记录 `fail_msgid`、外部联系人 ID、动态 Agent ID、平台原始 `errmsg` 或凭据。
+
+```mermaid
+flowchart LR
+  Callback[加密 XML 回调] --> Fresh[时间戳新鲜度]
+  Fresh --> Sign[签名校验]
+  Sign --> Decrypt[AES 解密]
+  Decrypt --> Parse[fast-xml-parser 5.10.1]
+  Parse --> Allow{允许的事件?}
+  Allow -->|是| Queue[账号级 sync 队列]
+  Allow -->|否| Reject[拒绝或仅记录脱敏摘要]
+  Queue --> Audit[日志仅保留类型/errcode/数量]
+```
 
 ---
 

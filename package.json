@@ -47,10 +47,5 @@
   "workspaces": [
     "extensions/*",
     "test-utils"
-  ],
-  "dependencies": {
-    "@partme": {
-      "ai/openclaw-message-sdk": "file:"
-    }
-  }
+  ]
 }
