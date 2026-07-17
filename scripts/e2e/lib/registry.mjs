@@ -111,7 +111,6 @@ export const PLUGIN_REGISTRY = [
   },
   {
     id: "wechat",
-    manifestId: "openclaw-weixin",
     category: "webhook-platform",
     filter: "@partme.ai/weixin",
     dir: "extensions/wechat",

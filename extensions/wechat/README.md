@@ -38,7 +38,7 @@
 
 ```bash
 openclaw plugins install "@partme.ai/weixin"
-openclaw config set plugins.entries.openclaw-weixin.enabled true
+openclaw config set plugins.entries.wechat.enabled true
 openclaw gateway restart
 ```
 
@@ -60,7 +60,7 @@ openclaw --version
 
 ```bash
 openclaw plugins install "@partme.ai/weixin"
-openclaw config set plugins.entries.openclaw-weixin.enabled true
+openclaw config set plugins.entries.wechat.enabled true
 ```
 
 3. 扫码登录：
@@ -280,7 +280,7 @@ openclaw --version
 确认插件已启用并重启 Gateway：
 
 ```bash
-openclaw config set plugins.entries.openclaw-weixin.enabled true
+openclaw config set plugins.entries.wechat.enabled true
 openclaw gateway restart
 openclaw channels status --probe
 ```

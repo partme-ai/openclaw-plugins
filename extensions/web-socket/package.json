@@ -74,6 +74,11 @@
       "id": "web-socket",
       "label": "WebSocket",
       "blurb": "Native WebSocket channel with JSON message frames for apps and integrations."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-web-socket",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

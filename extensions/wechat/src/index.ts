@@ -26,7 +26,7 @@ import { setWeixinRuntime } from "./runtime.js";
 export { weixinPlugin } from "./channel.js";
 
 export default {
-  id: "openclaw-weixin",
+  id: "wechat",
   name: "Weixin",
   description: "Weixin channel (getUpdates long-poll + sendMessage)",
   // OpenClaw 2026.7.1 bundles Zod declarations in its published SDK; align the

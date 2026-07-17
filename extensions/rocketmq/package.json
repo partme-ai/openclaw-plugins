@@ -50,6 +50,11 @@
       "id": "rocketmq",
       "label": "RocketMQ",
       "blurb": "RocketMQ channel plugin with producer and push-consumer support."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-rocketmq",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "dependencies": {

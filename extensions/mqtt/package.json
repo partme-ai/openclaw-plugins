@@ -80,6 +80,11 @@
       "id": "mqtt",
       "label": "MQTT",
       "blurb": "MQTT protocol bridge for IoT and device integration via embedded Aedes."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-mqtt",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

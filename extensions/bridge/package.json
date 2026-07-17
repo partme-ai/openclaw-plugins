@@ -52,7 +52,12 @@
     "extensions": [
       "./dist/index.js"
     ],
-    "setupEntry": "./dist/setup-entry.js"
+    "setupEntry": "./dist/setup-entry.js",
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-bridge",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
+    }
   },
   "peerDependencies": {
     "openclaw": ">=2026.7.1"

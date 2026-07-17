@@ -72,6 +72,11 @@
       "id": "rabbitmq",
       "label": "RabbitMQ",
       "blurb": "RabbitMQ channel plugin with multi-agent async collaboration and topic subscription support."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-rabbitmq",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

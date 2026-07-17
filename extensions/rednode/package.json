@@ -69,7 +69,9 @@
     "extensions": [
       "./dist/index.js"
     ],
-    "capabilities": ["tools"],
+    "capabilities": [
+      "tools"
+    ],
     "compat": {
       "pluginApi": ">=2026.7.1",
       "minGatewayVersion": "2026.7.1"
@@ -77,6 +79,11 @@
     "build": {
       "openclawVersion": "2026.7.1",
       "pluginSdkVersion": "2026.7.1"
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-rednode",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   }
 }

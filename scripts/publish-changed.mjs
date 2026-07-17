@@ -23,6 +23,7 @@ import {
   materializePkgJsonForPublish,
   readMessageSdkVersion,
 } from "./workspace-deps.mjs";
+import { sortPackagesByDependency } from "./release-topology.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PLUGINS_DIR = resolve(ROOT, "extensions");
@@ -54,15 +55,13 @@ function compareVersions(a, b) {
 // ── Helpers ──
 
 function getPlugins(filterName) {
-  return readdirSync(PLUGINS_DIR, { withFileTypes: true })
+  const packages = readdirSync(PLUGINS_DIR, { withFileTypes: true })
     .filter((d) => d.isDirectory() && !d.name.startsWith("_") && !d.name.startsWith("."))
-    .filter((d) => !filterName || d.name === filterName)
-    .map((d) => ({ dir: d.name, path: resolve(PLUGINS_DIR, d.name) }))
-    .sort((a, b) => {
-      if (a.dir === "message-sdk") return -1;
-      if (b.dir === "message-sdk") return 1;
-      return a.dir.localeCompare(b.dir);
+    .map((d) => {
+      const path = resolve(PLUGINS_DIR, d.name);
+      return { dir: d.name, path, pkg: readPkg(path) };
     });
+  return sortPackagesByDependency(packages, filterName);
 }
 
 function readPkg(pluginPath) {
@@ -151,25 +150,34 @@ if (filterName && plugins.length === 0) {
 }
 const results = [];
 const messageSdkVersion = readMessageSdkVersion();
-let messageSdkPublishFailed = false;
+const failedPackageNames = new Set();
 
-for (const { dir, path: pluginPath } of plugins) {
+console.log("发布拓扑：");
+for (const [index, entry] of plugins.entries()) {
+  const dependencyLabel = entry.internalDependencies.length > 0
+    ? ` ← ${entry.internalDependencies.join(", ")}`
+    : "";
+  console.log(`  ${index + 1}. ${entry.pkg.name}${dependencyLabel}`);
+}
+console.log();
+
+for (const { dir, path: pluginPath, pkg, internalDependencies } of plugins) {
   const pkgPath = resolve(pluginPath, "package.json");
   if (!existsSync(pkgPath)) {
     console.log(`⏭️  ${dir} — no package.json, skipped`);
     continue;
   }
-  const pkg = readPkg(pluginPath);
   if (pkg.private) {
     console.log(`⏭️  ${dir} — private, skipped`);
     continue;
   }
 
-  const consumesMessageSdk = ["dependencies", "devDependencies", "peerDependencies"]
-    .some((section) => pkg[section]?.["@partme.ai/openclaw-message-sdk"]);
-  if (consumesMessageSdk && messageSdkPublishFailed) {
-    console.log(`⛔ ${dir} — message-sdk ${messageSdkVersion} publish failed; consumer publication blocked`);
-    results.push({ plugin: dir, status: "blocked", reason: `message-sdk ${messageSdkVersion} publish failed` });
+  const blockingDependencies = internalDependencies.filter((name) => failedPackageNames.has(name));
+  if (blockingDependencies.length > 0) {
+    const reason = `workspace dependency publish failed: ${blockingDependencies.join(", ")}`;
+    console.log(`⛔ ${dir} — ${reason}`);
+    results.push({ plugin: dir, status: "blocked", reason });
+    failedPackageNames.add(pkg.name);
     continue;
   }
 
@@ -181,6 +189,7 @@ for (const { dir, path: pluginPath } of plugins) {
   if (publish && localParsed?.hasRevision && tag === "latest") {
     console.log(`⛔ ${dir} — ${pkg.name}@${pkg.version} is prerelease, refusing --tag latest. Use --tag next.`);
     results.push({ plugin: dir, status: "blocked", reason: "prerelease with tag latest" });
+    failedPackageNames.add(pkg.name);
     continue;
   }
 
@@ -213,7 +222,7 @@ for (const { dir, path: pluginPath } of plugins) {
       } catch (err) {
         console.error(`❌ ${dir} publish failed: ${err.message}`);
         results.push({ plugin: dir, status: "failed", error: err.message });
-        if (dir === "message-sdk") messageSdkPublishFailed = true;
+        failedPackageNames.add(pkg.name);
       } finally {
         if (materialized) {
           writeFileSync(pkgPath, originalPkgContent);

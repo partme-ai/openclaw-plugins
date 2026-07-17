@@ -28,7 +28,7 @@ Install:
 
 ```bash
 openclaw plugins install "@partme.ai/weixin"
-openclaw config set plugins.entries.openclaw-weixin.enabled true
+openclaw config set plugins.entries.wechat.enabled true
 openclaw gateway restart
 ```
 
@@ -43,7 +43,7 @@ openclaw plugins update @partme.ai/weixin
 ```bash
 openclaw --version
 openclaw plugins install "@partme.ai/weixin"
-openclaw config set plugins.entries.openclaw-weixin.enabled true
+openclaw config set plugins.entries.wechat.enabled true
 openclaw channels login --channel openclaw-weixin
 openclaw gateway restart
 openclaw channels status --probe
@@ -51,7 +51,7 @@ openclaw channels status --probe
 
 The terminal shows a QR code. Scan it with WeChat and confirm authorization. The plugin saves credentials locally after login.
 
-> Both the plugin ID and channel ID are `openclaw-weixin`; `extensions/wechat` is only the historical workspace directory name.
+> The plugin ID is `wechat`; the external channel ID remains `openclaw-weixin`. They belong to different naming layers.
 
 ## Multi-Account Sessions
 
@@ -171,7 +171,7 @@ pnpm test
 | Symptom                         | Fix                                                                              |
 | ------------------------------- | -------------------------------------------------------------------------------- |
 | `requires OpenClaw >=2026.7.1`  | Upgrade OpenClaw before enabling this plugin                                     |
-| Channel is OK but not connected | Ensure `plugins.entries.openclaw-weixin.enabled` is `true`, then restart Gateway |
+| Channel is OK but not connected | Ensure `plugins.entries.wechat.enabled` is `true`, then restart Gateway |
 | Multiple accounts share context | Set `session.dmScope` to `per-account-channel-peer`                              |
 | Login session expired           | Run `openclaw channels login --channel openclaw-weixin` again                    |
 

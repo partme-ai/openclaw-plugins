@@ -65,6 +65,11 @@
       "id": "redis-stream",
       "label": "Redis Stream",
       "blurb": "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-redis-stream",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "repository": {

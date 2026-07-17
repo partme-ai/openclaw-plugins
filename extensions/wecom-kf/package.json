@@ -71,7 +71,8 @@
     "install": {
       "npmSpec": "@partme.ai/wecom-kf",
       "localPath": "extensions/wecom-kf",
-      "defaultChoice": "npm"
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "devDependencies": {

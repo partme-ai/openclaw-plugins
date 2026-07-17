@@ -74,6 +74,11 @@
       "id": "stomp-tcp",
       "label": "STOMP TCP",
       "blurb": "Authenticated STOMP 1.2 over TCP/TLS with bounded in-memory delivery controls."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-stomp",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

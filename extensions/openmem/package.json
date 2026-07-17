@@ -12,7 +12,12 @@
     "README.zh-CN.md",
     "LICENSE"
   ],
-  "keywords": ["openclaw", "openclaw-plugin", "openmem", "memory"],
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "openmem",
+    "memory"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -34,6 +39,16 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-openmem",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/partme-ai/openclaw-plugins.git",
+    "directory": "extensions/openmem"
   }
 }

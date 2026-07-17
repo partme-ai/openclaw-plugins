@@ -48,7 +48,8 @@
     "install": {
       "npmSpec": "@partme.ai/wecom",
       "localPath": "extensions/wecom",
-      "defaultChoice": "npm"
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "dependencies": {

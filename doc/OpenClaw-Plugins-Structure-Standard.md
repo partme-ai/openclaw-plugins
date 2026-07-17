@@ -145,7 +145,7 @@ extensions/<plugin-id>/
 | `package.json#openclaw.extensions[]` | MUST | 指向 `./dist/index.js`（或等价编译产物） |
 | `package.json#openclaw.setupEntry` | MUST | 指向 `./dist/setup-entry.js`；MUST NOT 复用运行时入口 |
 | `package.json#openclaw.channel` | SHOULD | Channel 元数据（id、label、install） |
-| Manifest `id` | MUST | 与目录名 `<plugin-id>` 一致，kebab-case；历史目录 `wechat` 显式映射到 OpenClaw 外部规范 ID `openclaw-weixin` |
+| Manifest `id` | MUST | 与目录名 `<plugin-id>` 一致，使用短 kebab-case ID；外部 Channel ID 不得反向污染插件 ID |
 | 插件根目录 `*.ts`（运行时） | MUST NOT | 除 `tsup.config.ts`、`vitest.config.ts` 外，运行时代码 MUST 在 `src/` |
 | `dist/`、`node_modules/` | MUST NOT | 提交仓库或作为架构文档依据 |
 | `*.tgz` | MUST NOT | 提交插件包 |
@@ -260,7 +260,9 @@ Base Profile 必须先成立。Extended Profile 在 Base 之上叠加语义子�
 
 | 对象 | 规则 | 示例 |
 |------|------|------|
-| 插件目录 / Manifest `id` | kebab-case，二者 MUST 一致；仅 `wechat` → `openclaw-weixin` 为登记的兼容例外 | `wecom-kf` |
+| 插件目录 / Manifest `id` | kebab-case，二者 MUST 一致，不允许兼容例外 | `wecom-kf` |
+| npm 包名 | 默认 `@partme.ai/openclaw-<plugin-id>`；独立品牌包在命名契约中显式登记 | `@partme.ai/openclaw-nacos` |
+| 历史插件 ID | 只用于升级迁移，不得继续作为 canonical ID | `openclaw-nacos` → `nacos` |
 | `src/` 子目录 | kebab-case | `dispatch/` |
 | 源文件 | kebab-case | `inbound-media.ts` |
 | Channel id | kebab-case | `wecom-kf` |

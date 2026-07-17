@@ -80,6 +80,11 @@
       "id": "mqtt-ws",
       "label": "MQTT over WebSocket",
       "blurb": "Enterprise MQTT over WebSocket channel with topic bindings and governance controls."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-web-mqtt",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

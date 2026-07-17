@@ -64,6 +64,11 @@
       "id": "douyin",
       "label": "抖音",
       "blurb": "抖音开放平台 Webhook 渠道与运营工具"
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-douyin",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   }
 }

@@ -1,7 +1,7 @@
 /**
  * @module config/config-parse
  *
- * 将 `plugins.entries.openclaw-nacos.config` 归一化为 {@link NacosPluginConfig}。
+ * 将 `plugins.entries.nacos.config` 归一化为 {@link NacosPluginConfig}。
  * 支持 Spring Cloud Nacos 风格扁平化与 configCenter / naming 子段解析。
  */
 

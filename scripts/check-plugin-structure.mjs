@@ -942,10 +942,9 @@ function checkManifestAndPackage(pluginDir, pluginId, profile, issues, flags) {
   const pkgPath = join(pluginDir, "package.json");
 
   const manifest = readJson(manifestPath);
-  // _template keeps TEMPLATE_NAME placeholders until new-plugin.mjs materializes a real id
-  // `wechat` keeps the historical workspace directory while using the canonical
-  // OpenClaw external plugin/channel id required by channel setup-entry.
-  const expectedManifestId = pluginId === "wechat" ? "openclaw-weixin" : pluginId;
+  // _template keeps TEMPLATE_NAME placeholders until new-plugin.mjs materializes a real id.
+  // Real extensions use the directory id as canonical manifest id; Channel id is a separate layer.
+  const expectedManifestId = pluginId;
   if (
     isChannelProfile(profile) &&
     pluginId !== BASE_TEMPLATE_ID &&

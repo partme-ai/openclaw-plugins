@@ -76,6 +76,11 @@
       "id": "stomp",
       "label": "STOMP over WebSocket",
       "blurb": "STOMP over WebSocket for Spring and web clients."
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-web-stomp",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "exports": {

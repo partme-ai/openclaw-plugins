@@ -52,7 +52,12 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-oauth2",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
+    }
   },
   "exports": {
     ".": {

@@ -60,7 +60,7 @@ sequenceDiagram
 
 ```bash
 openclaw plugins install "@partme.ai/weixin"
-openclaw config set plugins.entries.openclaw-weixin.enabled true
+openclaw config set plugins.entries.wechat.enabled true
 openclaw config set session.dmScope per-account-channel-peer
 openclaw channels login --channel openclaw-weixin
 openclaw gateway restart

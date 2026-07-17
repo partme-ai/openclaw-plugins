@@ -74,6 +74,11 @@
     "build": {
       "openclawVersion": "2026.7.1",
       "pluginSdkVersion": "2026.7.1"
+    },
+    "install": {
+      "npmSpec": "@partme.ai/openclaw-knowledge",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "bugs": {

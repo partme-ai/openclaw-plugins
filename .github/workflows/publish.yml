@@ -11,6 +11,13 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -28,6 +35,7 @@ jobs:
       - name: Release gates
         run: |
           pnpm check-release-readiness
+          pnpm test:release-scripts
           node scripts/check-plugin-structure.mjs --strict-base --strict-new
           pnpm check-explanatory-assets
           pnpm test:e2e:harness
@@ -37,14 +45,17 @@ jobs:
           pnpm check-package-archives
 
       - name: Publish
+        shell: bash
         run: |
-          ARGS=""
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            ARGS="--dry-run"
+          args=()
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
           fi
-          if [ -n "${{ inputs.plugin }}" ]; then
-            ARGS="$ARGS --plugin ${{ inputs.plugin }}"
+          if [ -n "$PLUGIN" ]; then
+            args+=(--plugin "$PLUGIN")
           fi
-          node scripts/publish-changed.mjs $ARGS
+          node scripts/publish-changed.mjs "${args[@]}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PLUGIN: ${{ inputs.plugin }}

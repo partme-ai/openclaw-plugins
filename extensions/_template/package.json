@@ -50,9 +50,10 @@
       "order": 90
     },
     "install": {
-      "npmSpec": "@partme.ai/TEMPLATE_NAME",
+      "npmSpec": "@partme.ai/openclaw-TEMPLATE_NAME",
       "localPath": "plugins/TEMPLATE_NAME",
-      "defaultChoice": "npm"
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.7.1"
     }
   },
   "peerDependencies": {

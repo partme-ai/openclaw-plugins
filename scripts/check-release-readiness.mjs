@@ -5,10 +5,17 @@ import { basename, join, resolve } from "node:path";
 
 import { readMessageSdkVersion, workspaceSpecifier } from "./workspace-deps.mjs";
 import { EXTENSION_INVENTORY, PLUGIN_REGISTRY } from "./e2e/lib/registry.mjs";
+import {
+  LEGACY_PLUGIN_IDS,
+  expectedPackageName,
+  isKebabCase,
+} from "./plugin-naming.mjs";
+import { checkRuntimePluginIds } from "./runtime-plugin-id-contract.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const EXTENSIONS = join(ROOT, "extensions");
 const TARGET_OPENCLAW_RANGE = ">=2026.7.1";
+const TARGET_RELEASE_VERSION = "2026.7.1";
 const SDK_PACKAGE = "@partme.ai/openclaw-message-sdk";
 const SDK_VERSION = readMessageSdkVersion();
 const SDK_WORKSPACE_SPEC = workspaceSpecifier(SDK_VERSION);
@@ -65,6 +72,14 @@ for (const pluginDir of pluginDirs) {
   const inventoryEntry = EXTENSION_INVENTORY.find((entry) => entry.id === id);
 
   if (!pkg.name || !pkg.version) fail(packagePath, "name and version are required");
+  if (!isKebabCase(id)) fail(pluginDir, `directory id must be kebab-case, got ${id}`);
+  const expectedNpmName = expectedPackageName(id);
+  if (pkg.name !== expectedNpmName) {
+    fail(packagePath, `package name must follow layered naming policy: ${expectedNpmName}`);
+  }
+  if (pkg.version !== TARGET_RELEASE_VERSION) {
+    fail(packagePath, `version must be ${TARGET_RELEASE_VERSION} for this release, got ${pkg.version}`);
+  }
   if (inventoryEntry && inventoryEntry.filter !== pkg.name) {
     fail(packagePath, `inventory filter ${inventoryEntry.filter} must match package name ${pkg.name}`);
   }
@@ -74,6 +89,15 @@ for (const pluginDir of pluginDirs) {
   }
   if (id !== "message-sdk" && (!Array.isArray(pkg.openclaw?.extensions) || pkg.openclaw.extensions.length === 0)) {
     fail(packagePath, "openclaw.extensions must declare at least one runtime entry");
+  }
+  if (id !== "message-sdk" && pkg.openclaw?.install?.npmSpec !== pkg.name) {
+    fail(packagePath, `openclaw.install.npmSpec must match package name ${pkg.name}`);
+  }
+  if (id !== "message-sdk" && pkg.openclaw?.install?.minHostVersion !== TARGET_OPENCLAW_RANGE) {
+    fail(packagePath, `openclaw.install.minHostVersion must be ${TARGET_OPENCLAW_RANGE}`);
+  }
+  if (pkg.repository?.directory !== `extensions/${id}`) {
+    fail(packagePath, `repository.directory must be extensions/${id}`);
   }
   if (pkg.pnpm !== undefined) fail(packagePath, "package-level pnpm configuration is ignored; move it to the workspace root");
   if (typeof pkg.scripts?.lint === "string" && /(?:^|\s)--fix(?:\s|$)/.test(pkg.scripts.lint)) {
@@ -88,12 +112,22 @@ for (const pluginDir of pluginDirs) {
   } else {
     const manifest = readJson(manifestPath);
     if (manifest) {
-      const expectedManifestId = id === "wechat" ? "openclaw-weixin" : id;
-      if (manifest.id !== expectedManifestId) {
-        fail(manifestPath, `id must match expected plugin id ${expectedManifestId}`);
+      if (manifest.id !== id) {
+        fail(manifestPath, `id must match extension directory ${id}`);
       }
       if (manifest.version !== pkg.version) {
         fail(manifestPath, `version ${String(manifest.version)} must match package version ${pkg.version}`);
+      }
+      if (Array.isArray(manifest.channels)) {
+        for (const channelId of manifest.channels) {
+          if (typeof channelId !== "string" || !isKebabCase(channelId)) {
+            fail(manifestPath, `channel id must be kebab-case, got ${String(channelId)}`);
+          }
+        }
+        const declaredChannelId = pkg.openclaw?.channel?.id;
+        if (declaredChannelId && !manifest.channels.includes(declaredChannelId)) {
+          fail(packagePath, `openclaw.channel.id ${declaredChannelId} must appear in manifest.channels`);
+        }
       }
     }
   }
@@ -114,6 +148,20 @@ for (const pluginDir of pluginDirs) {
   }
 }
 
+for (const [id, legacyIds] of Object.entries(LEGACY_PLUGIN_IDS)) {
+  if (!pluginIds.includes(id)) fail(join(ROOT, "scripts/plugin-naming.mjs"), `legacy id owner does not exist: ${id}`);
+  for (const legacyId of legacyIds) {
+    if (!legacyId || legacyId === id) {
+      fail(join(ROOT, "scripts/plugin-naming.mjs"), `invalid legacy id mapping ${legacyId} → ${id}`);
+    }
+  }
+}
+
+const runtimeIdContract = checkRuntimePluginIds();
+for (const failure of runtimeIdContract.failures) {
+  fail(join(ROOT, "extensions"), `runtime plugin id mismatch: ${failure}`);
+}
+
 if (errors.length > 0) {
   console.error(`Release readiness failed with ${errors.length} issue(s):`);
   for (const error of errors) console.error(`- ${error}`);
@@ -122,5 +170,6 @@ if (errors.length > 0) {
 
 console.log(
   `Release readiness passed for ${pluginDirs.length} extensions ` +
-  `(OpenClaw ${TARGET_OPENCLAW_RANGE}, message-sdk ${SDK_VERSION}).`,
+  `(${runtimeIdContract.checked} runtime IDs, release ${TARGET_RELEASE_VERSION}, ` +
+  `OpenClaw ${TARGET_OPENCLAW_RANGE}, message-sdk ${SDK_VERSION}).`,
 );
