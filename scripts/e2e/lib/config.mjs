@@ -19,7 +19,7 @@ function readInstalledPlugins() {
 
 /**
  * @param {string[]|undefined} pluginIds
- * @param {{ gotifySecrets?: Record<string, unknown> }} [opts]
+ * @param {{ gotifySecrets?: Record<string, unknown>; installSeed?: boolean }} [opts]
  */
 export function generateOpenClawConfig(pluginIds, opts = {}) {
   const ids = resolvePlugins(pluginIds);
@@ -81,7 +81,9 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
       },
       entries: fragments.pluginEntries,
     },
-    channels: fragments.channelEntries,
+    // 安装种子阶段插件尚未注册，OpenClaw 2026.7.1 会把部分未知 channel id
+    // 视为硬错误。插件 entry 仍保留所需配置，待所有候选包完成 link 后再写入完整 channels。
+    channels: opts.installSeed ? {} : fragments.channelEntries,
     ...(ids.some((id) =>
       id === "mqtt" || id === "tracing" || id === "rabbitmq" || id === "redis-stream" || id === "rocketmq" || id === "gotify" || id === "stomp" || id === "web-stomp" || id === "web-mqtt" || id === "web-socket" || id === "memory" || id === "openmem" || id === "knowledge" || id === "douyin" || id === "amap" || id === "meituan" || id === "rednode" || id === "wechat" || id === "wechat-ipad" || id === "wecom" || id === "wecom-kf" || id === "bridge"
     ) ? {

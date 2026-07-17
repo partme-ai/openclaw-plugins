@@ -20,6 +20,7 @@
     "check-plugin-structure:strict": "node scripts/check-plugin-structure.mjs --strict-base",
     "check-release-readiness": "node scripts/check-release-readiness.mjs",
     "check-package-archives": "node scripts/check-package-archives.mjs",
+    "check-e2e-evidence": "node scripts/check-e2e-evidence.mjs",
     "check-code-comments": "node scripts/check-code-comments.mjs",
     "check-code-comments:strict": "node scripts/check-code-comments.mjs --strict",
     "check-code-comments:public-api": "node scripts/check-code-comments.mjs --public-api",

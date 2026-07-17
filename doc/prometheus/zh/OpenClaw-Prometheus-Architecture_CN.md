@@ -113,6 +113,9 @@ CollectorRunner ──同一采集器仍在执行──▶ 复用 in-flight Prom
 标签脱敏与清洗 → 最终 series 上限 → Prometheus Formatter → 200 text/plain
 ```
 
+Bearer 配置在 Gateway 注册路由前校验原始字符串。禁止 C0/DEL 控制字符，避免前后换行先被
+`trim()` 移除后意外成为合法密钥，也避免制表符或 NUL 进入 HTTP 请求头与诊断链路。
+
 ```mermaid
 sequenceDiagram
     autonumber

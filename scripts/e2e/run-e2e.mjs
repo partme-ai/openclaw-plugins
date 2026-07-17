@@ -23,6 +23,7 @@ import {
   useHostGateway,
 } from "./lib/compose.mjs";
 import { generateOpenClawConfig } from "./lib/config.mjs";
+import { sourceFingerprint } from "./lib/evidence.mjs";
 import { startOpenAiModelFixture } from "./helpers/openai-model-fixture.mjs";
 import { startOpenMemSidecar } from "./helpers/openmem-sidecar.mjs";
 import { startAmapProvider } from "./helpers/amap-provider.mjs";
@@ -205,6 +206,10 @@ async function main() {
     e2e: [],
     browser: [],
     commits: execSync("git rev-parse HEAD", { cwd: REPO_ROOT, encoding: "utf8" }).trim(),
+    // 指纹绑定“本次打包实测的源码”和报告，避免工作区变化后继续复用历史 PASS。
+    sourceFingerprints: Object.fromEntries(
+      pluginIds.map((id) => [id, sourceFingerprint(id)]),
+    ),
   });
 
   console.log("=== OpenClaw Plugin E2E ===");
@@ -238,7 +243,10 @@ async function main() {
     // with required config fields (for example RabbitMQ `url`) can be linked
     // into a freshly reset profile. The config is regenerated after install to
     // add the newly packed paths to `plugins.load.paths`.
-    generateOpenClawConfig(pluginIds, { gotifySecrets: report.gotify });
+    generateOpenClawConfig(pluginIds, {
+      gotifySecrets: report.gotify,
+      installSeed: true,
+    });
     report.installed = installPlugins(pluginIds);
   }
 
