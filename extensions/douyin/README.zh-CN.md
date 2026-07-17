@@ -16,6 +16,19 @@
 
 ## 运行架构
 
+```text
+抖音生活服务平台
+        │ 签名 Webhook                         ▲ 官方 OpenAPI
+        ▼                                      │
+原始报文验签 / client_key / 快速 ACK            │
+        │                                      │
+        ▼                                      │
+DM 与命令策略 ──▶ 持久 Msg-Id 去重 ──▶ OpenClaw Agent
+                                              │
+                                              ▼
+                          订单查询 / 评价回复 Tool ──▶ Token 缓存
+```
+
 ```mermaid
 flowchart LR
     Platform["抖音生活服务平台"]

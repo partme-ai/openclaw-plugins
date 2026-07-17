@@ -52,6 +52,20 @@ Reports:
          └─ Playwright browser tests (web-mqtt / web-stomp via test-web/)
 ```
 
+同一架构的 Mermaid 版本用于渲染和节点追踪；字符图用于终端、日志和快速扫读，两者都保留：
+
+```mermaid
+flowchart LR
+    R["run-e2e.mjs<br/>编排器"] --> D["Docker Compose<br/>真实依赖服务"]
+    R --> P["构建 / 打包 / 安装<br/>最终 tarball"]
+    P --> C["生成 openclaw.json<br/>初始化测试数据"]
+    C --> G["OpenClaw Gateway<br/>容器或 Host"]
+    G --> A["插件 E2E Adapter<br/>协议与 Agent Turn"]
+    A --> B["Playwright / Chromium<br/>浏览器闭环"]
+    A --> E["脱敏报告与归档<br/>源码指纹证据"]
+    B --> E
+```
+
 ## Directory layout
 
 | Path | Purpose |
@@ -79,7 +93,7 @@ Reports:
 
 See `scripts/e2e/lib/registry.mjs` → `EXTENSION_INVENTORY` for the full matrix:
 
-- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (23 plugins today; 14 external/security/platform/capability scenarios are explicit and isolated)
+- **e2eAdapter: true** — has `scripts/e2e/plugins/<id>.mjs` (27 runtime plugins today; external/security/platform/capability scenarios are explicit and isolated)
 - **e2eAdapter: false** — unit tests (+ optional `testing/` standard suite); no Docker e2e yet
 - **dockerRequired: true** — rabbitmq, redis-stream, rocketmq, gotify, tracing (OpenTelemetry Collector)
 
@@ -115,9 +129,10 @@ Redis Stream adapter 同样执行真实 Agent Turn：向 consumer-group 入站 S
 | rocketmq | rocketmq-namesrv, broker, init（合法入站/回复 Topic）, proxy；正式 tarball 完成 Producer → Agent → reply Topic → ACK，模型仅调用一次 |
 | gotify | gotify；正式 tarball 完成 REST → WebSocket → Agent → retained reply，并验证成功后删除入站与模型单次调用 |
 
-### Unit-only extensions (representative)
+### Unit-only extension
 
-wecom, nacos, bridge, message-sdk, …
+`message-sdk` 是共享开发库，不是可独立加载的运行时插件；其发布门禁由 package exports、消费者契约、
+OpenClaw 运行时契约和完整单元测试覆盖。其余 27 个运行时插件均有安装态 E2E adapter。
 
 ## Shared test utilities
 
@@ -143,7 +158,7 @@ wecom, nacos, bridge, message-sdk, …
 Future categories (extensible via `lib/registry.mjs` + adapter registration):
 
 - **Web/browser** — Playwright against plugin UI or `test-web/`
-- **Webhook/platform** — douyin、wechat、wechat-ipad、wecom-kf 已有安装态 adapter；wecom 仍需真实/沙箱平台 adapter
+- **Webhook/platform** — douyin、wechat、wechat-ipad、wecom-kf、wecom 均有安装态 adapter；真实平台凭据与生产环境验收仍需独立执行
 
 ## OpenClaw in Docker vs host
 

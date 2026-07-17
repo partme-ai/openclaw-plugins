@@ -28,6 +28,17 @@ mTLS（Mutual TLS）是一种安全机制，在这种机制下，客户端和服
 
 ### 架构
 
+```text
+外部客户端
+    │ HTTPS / WSS + 客户端证书
+    ▼
+mTLS 代理 ──▶ CA 链 / 指纹 / Subject / 路径策略
+    │                    │
+    │                    └── 拒绝 ──▶ 4xx / TLS 失败
+    ▼ 仅注入代理生成的可信身份 Header
+loopback OpenClaw Gateway（trusted-proxy）
+```
+
 ```mermaid
 flowchart LR
     Client["客户端<br/>携带 X.509 客户端证书"]

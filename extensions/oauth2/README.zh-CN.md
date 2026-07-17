@@ -17,6 +17,19 @@
 
 ## 授权与代理架构
 
+```text
+浏览器 ──▶ OAuth2 代理 ──302──▶ 外部 OAuth2/OIDC Server
+  ▲             │                         │
+  │             │ callback(code + state) ◀┘
+  │             ▼
+  │      PKCE 换 Token / UserInfo ──▶ HttpOnly Session
+  │             │
+  └── HTTP/WS ──┼──▶ Scope / 过期 / 刷新校验
+                │
+                ▼ 覆盖可信身份 Header
+        loopback OpenClaw Gateway（trusted-proxy）
+```
+
 ```mermaid
 sequenceDiagram
     participant Browser as 浏览器

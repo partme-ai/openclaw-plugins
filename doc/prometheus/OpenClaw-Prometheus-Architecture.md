@@ -16,6 +16,17 @@
 
 ## 运行结构
 
+```text
+OpenClaw diagnostics ──▶ 有界诊断存储 ──┐
+Gateway operator RPC ──▶ 13 个采集器 ───┼──▶ Single-flight 快照缓存
+公共 hooks / events ──▶ 有界运行注册表 ─┘             │
+                                                       ▼
+                                            Series 基数与隐私护栏
+                                                       │
+                                                       ▼
+                               Gateway /metrics 精确路由 ──▶ Prometheus
+```
+
 ```mermaid
 flowchart LR
     DIAG["OpenClaw diagnostics"] --> DS["Bounded diagnostic store"]

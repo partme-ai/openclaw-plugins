@@ -4,6 +4,18 @@
 
 Knowledge 是 OpenClaw 基础设施插件，不是 channel。它通过 `before_prompt_build` 自动召回知识，也向 Agent 暴露四个 CRUD 工具。
 
+```text
+知识写入：knowledge_* Tool ──▶ Namespace ACL ──▶ 切块 / Embedding ──▶ 隔离存储
+                                                               │
+用户消息 ──▶ Intent Gate ──▶ Vector + Keyword 混合召回 ◀────────┘
+                                  │
+                                  ▼
+                         Rerank + 注入额度
+                                  │
+                                  ▼
+                     before_prompt_build ──▶ Agent
+```
+
 ```mermaid
 flowchart LR
   U["用户消息"] --> G["Intent Gate"]

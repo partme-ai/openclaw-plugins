@@ -11,6 +11,19 @@
 
 ## 0. 设计约束与边界
 
+```text
+OpenClaw Agent
+      │ 仅允许显式启用的 wecom_kf_* Tool
+      ▼
+Tool 参数校验 ──▶ 账号 / open_kfid 上下文 ──▶ KF 官方管理 API
+      │                                              │
+      ├── 资源发现：接待人员 / 账号 / 链接            │
+      └── 有副作用：会话转接（单次执行，不盲重试） ◀──┘
+                                                     │
+                                                     ▼
+                              结构化摘要 / 审计结果，不注入原始全量响应
+```
+
 | 约束 | 说明 |
 |------|------|
 | **独立于 wecom** | `wecom-kf` 与 `wecom` / `wecom-cs` 分插件；共用 `@partme.ai/openclaw-message-sdk` 的 ingress、reply、dedup 等能力 |

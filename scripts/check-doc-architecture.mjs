@@ -4,8 +4,9 @@
  * 中文文档可理解性门禁。
  *
  * 防止架构说明再次被压缩成跳转链接或纯文字短文，也防止插件中文 README 在重写时只留下
- * 宣传性描述：架构文档和中文 README 都必须有 Mermaid；README 还必须保留可复制的配置、
- * 命令或调用示例。门禁只检查资产是否存在，图与代码是否符合当前实现仍由评审和 E2E 负责。
+ * 宣传性描述：架构文档和中文 README 都必须同时有字符速览图与 Mermaid；README 还必须保留
+ * 可复制的配置、命令或调用示例。门禁只检查资产是否存在，图与代码是否符合当前实现仍由评审
+ * 和 E2E 负责。
  */
 
 import fs from "node:fs";
@@ -55,6 +56,32 @@ function fencedLanguages(source) {
   );
 }
 
+/**
+ * 字符图必须放在无语言或 text 围栏中，并包含常用连线字符。
+ * 只检查独立图块，避免把目录树或代码中的单个横线误判为架构速览图。
+ */
+function hasCharacterDiagram(source) {
+  const blocks = [];
+  let language = null;
+  let body = [];
+  for (const line of source.split(/\r?\n/u)) {
+    const fence = line.match(/^```([^\s`]*)\s*$/u);
+    if (fence && language === null) {
+      language = (fence[1] ?? "").toLowerCase();
+      body = [];
+      continue;
+    }
+    if (fence && language !== null) {
+      if (language === "" || language === "text") blocks.push(body.join("\n"));
+      language = null;
+      body = [];
+      continue;
+    }
+    if (language !== null) body.push(line);
+  }
+  return blocks.some((block) => /[┌┐└┘│─▼▲▶◀]/u.test(block));
+}
+
 const documents = SEARCH_ROOTS.flatMap(walk).filter(isArchitectureDocument).sort();
 const pluginReadmes = walk(path.join(ROOT, "extensions")).filter(isPluginChineseReadme).sort();
 const problems = [];
@@ -67,6 +94,7 @@ for (const file of [...documents, ...pluginReadmes]) {
   const fenceCount = [...source.matchAll(/^```/gmu)].length;
 
   if (lines < MIN_LINES) problems.push(`${relative}: 只有 ${lines} 行，原理说明过短`);
+  if (!hasCharacterDiagram(source)) problems.push(`${relative}: 缺少字符架构/流程速览图`);
   if (mermaidBlocks.length === 0) problems.push(`${relative}: 缺少 Mermaid 架构/流程图`);
   if (mermaidBlocks.some((match) => !match[1]?.trim())) problems.push(`${relative}: 存在空 Mermaid 图块`);
   if (fenceCount % 2 !== 0) problems.push(`${relative}: Markdown 代码围栏未闭合`);
@@ -80,7 +108,7 @@ for (const file of [...documents, ...pluginReadmes]) {
 
 console.log(
   `中文文档审计：${documents.length} 个架构文档 + ${pluginReadmes.length} 个插件 README，` +
-    `最低 ${MIN_LINES} 行，必须包含 Mermaid；README 必须包含代码示例。`,
+    `最低 ${MIN_LINES} 行，必须同时包含字符图与 Mermaid；README 必须包含代码示例。`,
 );
 if (problems.length > 0) {
   for (const problem of problems) console.error(`- ${problem}`);

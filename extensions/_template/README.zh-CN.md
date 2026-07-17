@@ -10,6 +10,15 @@ TEMPLATE_LABEL（`@partme.ai/openclaw-TEMPLATE_NAME`）是 [OpenClaw](https://gi
 
 ## 默认运行链路
 
+```text
+外部平台 / 协议
+       │ 入站事件
+       ▼
+Transport ──▶ 校验 / 路由 / 幂等 ──▶ message-sdk ──▶ OpenClaw Agent
+       ▲                                                    │
+       └──────────────────── 出站确认 / 回复 ◀──────────────┘
+```
+
 ```mermaid
 flowchart LR
     Transport["transport/server.ts<br/>接收并校验外部事件"]
