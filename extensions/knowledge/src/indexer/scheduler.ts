@@ -19,6 +19,7 @@ import type { EmbeddingService, VectorStore, ScoredChunk, DocParserService, Know
 import { createParserService } from '../parser/factory.js';
 import { chunkText } from './chunker.js';
 import type { ChunkerConfig } from './chunker.js';
+import { safeKnowledgeError } from '../shared/safe-error.js';
 
 /** 单文档索引结果摘要。 */
 export type IndexResult = {
@@ -222,9 +223,8 @@ export async function loadDocument(
       // Tool/Hook 日志边界记录 sourceId。这里仅返回解析文本，避免路径泄露到 stdout。
       return result.text;
     } catch (err) {
-      throw new Error(
-        `Parser failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`
-      );
+      // filePath 已由受控摄取边界校验，这里仍不能把宿主路径或 Provider 凭据带回 Tool。
+      throw new Error(`Parser failed: ${safeKnowledgeError(err)}`);
     }
   }
 
@@ -285,7 +285,7 @@ export async function indexDocument(
         chunksAdded: 0,
         sourceId,
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: safeKnowledgeError(error, '文档索引失败'),
       };
     }
   });

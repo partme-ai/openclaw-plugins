@@ -126,7 +126,7 @@ export async function indexFile(
       chunksAdded: 0,
       sourceId: options.sourceId,
       success: false,
-      error: `无法读取文件: ${filePath}`,
+      error: '无法读取文件',
     };
   }
 

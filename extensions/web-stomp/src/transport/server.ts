@@ -15,6 +15,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { assertValidStompWsConfig } from "../config.js";
 import { isSendable, isSubscribable, parseDestination } from "../routing/destination-router.js";
 import type { StompConnectionInfo, StompFrame, StompServerConfig } from "../types.js";
+import { redactWebStompError } from "../shared/redact.js";
 import {
   cleanupConnection,
   clearAckState,
@@ -74,6 +75,10 @@ let activeConfig: StompServerConfig | null = null;
 let onInboundMessage: StompInboundCallback | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let running = false;
+let accepting = false;
+type TransportLogger = { error(message: string): void; warn?(message: string): void; info?(message: string): void };
+const NOOP_LOGGER: TransportLogger = { error: () => undefined };
+let transportLogger: TransportLogger = NOOP_LOGGER;
 const states = new Map<string, ConnectionState>();
 const stats = {
   rejectedConnections: 0,
@@ -141,6 +146,34 @@ function sendRaw(connectionId: string, payload: string): boolean {
 
 function sendFrame(connectionId: string, frame: StompFrame): boolean {
   return sendRaw(connectionId, serializeFrame(frame));
+}
+
+/** 等待 `ws.send` 回调，只有数据真正交给底层套接字后才报告投递成功。 */
+async function sendFrameConfirmed(connectionId: string, frame: StompFrame): Promise<boolean> {
+  const state = states.get(connectionId);
+  const config = activeConfig;
+  if (!state || !config || state.ws.readyState !== WebSocket.OPEN) return false;
+  const payload = serializeFrame(frame);
+  if (state.ws.bufferedAmount + Buffer.byteLength(payload, "utf8") > config.maxBufferedBytes) {
+    state.ws.close(1013, "Outbound backpressure limit exceeded");
+    return false;
+  }
+  return new Promise<boolean>((resolve) => {
+    try {
+      state.ws.send(payload, (error) => {
+        if (error) {
+          state.ws.terminate();
+          resolve(false);
+          return;
+        }
+        state.lastOutboundAt = Date.now();
+        state.info.lastActiveAt = new Date().toISOString();
+        resolve(true);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 function failProtocol(connectionId: string, message: string, receiptId?: string, close = false): void {
@@ -222,13 +255,19 @@ async function handleSend(connectionId: string, frame: StompFrame, config: Stomp
     state.info.peerId = peerId;
   }
   if (!onInboundMessage) throw new Error("Web STOMP inbound handler is not initialized");
-  await onInboundMessage({
-    agentId,
-    peerId,
-    destination,
-    rawPayload: body,
-    idempotencyKey: frame.headers["message-id"] || frame.headers.receipt || createHash("sha256").update(`${connectionId}\0${destination}\0${body}`).digest("hex"),
-  });
+  try {
+    await onInboundMessage({
+      agentId,
+      peerId,
+      destination,
+      rawPayload: body,
+      idempotencyKey: frame.headers["message-id"] || frame.headers.receipt || createHash("sha256").update(`${connectionId}\0${destination}\0${body}`).digest("hex"),
+    });
+  } catch (error) {
+    // 内部 Runtime 错误只写脱敏日志；外部 STOMP 客户端不能获得堆栈、凭据或基础设施地址。
+    transportLogger.error(`[openclaw-web-stomp] Agent dispatch failed connection=${connectionId}: ${redactWebStompError(error)}`);
+    throw new Error("Agent dispatch failed");
+  }
 }
 
 function handleSubscribe(connectionId: string, frame: StompFrame, config: StompServerConfig): void {
@@ -305,6 +344,10 @@ async function handleFrame(connectionId: string, frame: StompFrame, config: Stom
 function enqueueFrame(connectionId: string, frame: StompFrame, config: StompServerConfig): void {
   const state = states.get(connectionId);
   if (!state) return;
+  if (!accepting) {
+    state.ws.close(1012, "Server restarting");
+    return;
+  }
   const now = Date.now();
   if (now - state.windowStartedAt >= 60_000) {
     state.windowStartedAt = now;
@@ -323,7 +366,10 @@ function enqueueFrame(connectionId: string, frame: StompFrame, config: StompServ
   state.pending += 1;
   state.queue = state.queue
     .then(() => handleFrame(connectionId, frame, config))
-    .catch((error: unknown) => failProtocol(connectionId, `Frame processing failed: ${String(error)}`))
+    .catch((error: unknown) => {
+      transportLogger.error(`[openclaw-web-stomp] frame processing failed connection=${connectionId}: ${redactWebStompError(error)}`);
+      failProtocol(connectionId, "Frame processing failed");
+    })
     .finally(() => { state.pending -= 1; });
 }
 
@@ -386,7 +432,7 @@ function attachConnection(ws: WebSocket, req: IncomingMessage, config: StompServ
   });
   ws.on("close", () => cleanup(connectionId));
   ws.on("error", (error) => {
-    console.error(`[openclaw-web-stomp] WebSocket error ${connectionId}:`, error);
+    transportLogger.error(`[openclaw-web-stomp] WebSocket error connection=${connectionId}: ${redactWebStompError(error)}`);
     cleanup(connectionId);
   });
 }
@@ -412,7 +458,11 @@ async function createListener(config: StompServerConfig): Promise<HttpServer | H
   }, handler);
 }
 
-export async function startStompServer(config: StompServerConfig, messageHandler: StompInboundCallback): Promise<void> {
+export async function startStompServer(
+  config: StompServerConfig,
+  messageHandler: StompInboundCallback,
+  logger: TransportLogger = NOOP_LOGGER,
+): Promise<void> {
   if (running) return;
   assertValidStompWsConfig(config);
   const nextListener = await createListener(config);
@@ -421,6 +471,8 @@ export async function startStompServer(config: StompServerConfig, messageHandler
   wss = nextWss;
   activeConfig = config;
   onInboundMessage = messageHandler;
+  transportLogger = logger;
+  accepting = true;
   Object.keys(stats).forEach((key) => { stats[key as keyof typeof stats] = 0; });
 
   nextListener.on("upgrade", (req, socket, head) => {
@@ -447,7 +499,9 @@ export async function startStompServer(config: StompServerConfig, messageHandler
     nextListener.once("error", onError);
     nextListener.listen(config.wsPort, config.host, () => {
       nextListener.off("error", onError);
-      nextListener.on("error", (error) => console.error("[openclaw-web-stomp] Listener error:", error));
+      nextListener.on("error", (error) => {
+        transportLogger.error(`[openclaw-web-stomp] Listener error: ${redactWebStompError(error)}`);
+      });
       resolve();
     });
   }).catch(async (error) => {
@@ -456,6 +510,8 @@ export async function startStompServer(config: StompServerConfig, messageHandler
     wss = null;
     activeConfig = null;
     onInboundMessage = null;
+    accepting = false;
+    transportLogger = NOOP_LOGGER;
     throw error;
   });
 
@@ -477,12 +533,33 @@ export async function startStompServer(config: StompServerConfig, messageHandler
 }
 
 export async function stopStompServer(): Promise<void> {
+  accepting = false;
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
+  const config = activeConfig;
+  const logger = transportLogger;
+  const pendingQueues = [...states.values()].map((state) => state.queue.catch(() => undefined));
   for (const [connectionId, state] of states) {
     sendFrame(connectionId, buildErrorFrame("Server shutting down"));
     state.ws.terminate();
     cleanup(connectionId);
+  }
+  if (pendingQueues.length > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const drained = await Promise.race([
+      Promise.all(pendingQueues).then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), config?.shutdownTimeoutMs ?? 10_000);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (!drained) {
+      logger.warn?.(
+        `[openclaw-web-stomp] shutdown drain timed out after ${config?.shutdownTimeoutMs ?? 10_000}ms; ` +
+        `${pendingQueues.length} connection queue(s) may still be completing`,
+      );
+    }
   }
   states.clear();
   clearSubscriptions();
@@ -496,9 +573,10 @@ export async function stopStompServer(): Promise<void> {
   running = false;
   await new Promise<void>((resolve) => closingWss ? closingWss.close(() => resolve()) : resolve());
   await new Promise<void>((resolve) => closingListener ? closingListener.close(() => resolve()) : resolve());
+  transportLogger = NOOP_LOGGER;
 }
 
-export function publishToDestination(destination: string, body: string): number {
+export async function publishToDestination(destination: string, body: string): Promise<number> {
   const config = activeConfig;
   if (!config) return 0;
   let delivered = 0;
@@ -511,7 +589,7 @@ export function publishToDestination(destination: string, body: string): number 
       continue;
     }
     const messageId = registerMessage(subscription.id, subscription.connectionId, destination, subscription.ack);
-    const sent = sendFrame(subscription.connectionId, buildMessageFrame(
+    const sent = await sendFrameConfirmed(subscription.connectionId, buildMessageFrame(
       subscription.id,
       destination,
       messageId,

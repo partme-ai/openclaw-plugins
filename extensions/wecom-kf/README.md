@@ -193,6 +193,57 @@ openclaw channels status --probe
 
 ## 消息与转人工流程
 
+字符图保留给终端、源码注释和 Markdown 原文阅读；下面已有的 Mermaid 时序图与状态图继续保留，不互相替代。
+
+多账号部署时，URL 路径决定唯一账号。`OpenKfId` 解密后只做一致性校验，不再用于切换凭据：
+
+```text
+POST /wecom-kf/sales                    POST /wecom-kf/support
+          │                                       │
+          ▼                                       ▼
+绑定 accounts.sales                       绑定 accounts.support
+token / AES key / corpId                  token / AES key / corpId
+          │                                       │
+          └──────────────┬────────────────────────┘
+                         ▼
+              时间窗 → 验签 → AES 解密
+                         │
+                         ▼
+             解密事件 OpenKfId == 路径绑定值？
+                    ┌────┴────┐
+                  否│         │是
+                    ▼         ▼
+             400，不快速 ACK   账号串行队列 → 200 success
+
+禁止：用 sales 路径的签名携带 support 的 OpenKfId，再切换到 support 的 corpSecret
+```
+
+```mermaid
+flowchart TD
+    R["精确回调路径<br/>/wecom-kf/accountId"] --> B["绑定唯一 account 配置"]
+    B --> V["时间窗 + SHA-1 验签 + AES 解密"]
+    V --> M{"事件 OpenKfId<br/>等于路径绑定值?"}
+    M -->|否| X["HTTP 400<br/>不入队、不调用其他账号凭据"]
+    M -->|是| Q["以绑定 OpenKfId 进入账号串行队列"]
+    Q --> A["HTTP 200 success<br/>后台 sync_msg"]
+```
+
+```text
+微信客户
+   │
+   ▼
+企业微信客服 ── 加密回调 ──▶ 验签/解密/快速 ACK
+   ▲                              │
+   │                              ▼
+   │                       账号串行 sync_msg
+   │                       cursor + msgid claim
+   │                              │
+   │                              ▼
+   └── send_msg / transfer ◀── Agent / 系统事件
+
+失败：release msgid，不推进当前页 cursor；停机：新回调返回 503，旧队列 drain
+```
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -223,7 +274,7 @@ sequenceDiagram
 ```
 
 `msgid` 只有在 Agent/事件处理成功后才提交去重；失败会释放占用并保留当前页游标，后续回调可重试。
-后台 `sync_msg` 失败会在同一账号串行队列中执行有界指数退避；全部尝试失败才记录错误，等待平台下一次回调继续。
+后台 `sync_msg` 失败以及账号映射、Runtime、`open_kfid`、`corpSecret` 尚未就绪，都会在同一账号串行队列中执行有界指数退避；全部尝试失败才记录错误，等待平台下一次回调继续。
 同一客服账号的回调按顺序拉取，状态目录为 `0700`，游标与去重文件采用原子替换并以 `0600` 权限保存。首次启动不会自动跳过历史消息；
 企业微信 `sync_msg` 仍只覆盖平台允许拉取的时间窗口。
 

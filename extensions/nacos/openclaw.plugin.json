@@ -8,7 +8,11 @@
     "onStartup": true
   },
   "contracts": {
-    "services": ["openclaw-nacos-config", "openclaw-nacos-naming", "openclaw-nacos-cluster"]
+    "services": [
+      "openclaw-nacos-config",
+      "openclaw-nacos-naming",
+      "openclaw-nacos-cluster"
+    ]
   },
   "setup": {
     "configMigrations": [],
@@ -112,7 +116,14 @@
             "type": "array",
             "items": { "type": "string" }
           },
-          "skipValidation": { "type": "boolean" }
+          "skipValidation": { "type": "boolean" },
+          "backupRetentionCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 20,
+            "description": "Maximum number of local pre-write rollback backups retained."
+          }
         }
       },
       "serviceName": { "type": "string" },

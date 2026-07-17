@@ -288,9 +288,11 @@ flowchart LR
 
 所有 Provider 共享以下约束：
 
-- `requestTimeoutMs` 控制单次远程请求；
-- `maxRetries` 只针对网络、408、429 和 5xx 等瞬时错误；
-- `maxBatchSize` 控制每次请求文本数；
+- `requestTimeoutMs` 是 1..300000 的整数，控制单次远程请求；
+- `maxRetries` 是 0..10 的整数，只针对网络、408、429 和 5xx 等瞬时错误；
+- `maxResponseBytes` 是 1..64 MiB 的整数，正文流超过上限立即取消；
+- `maxBatchSize` 是 1..2048 的整数，并与 Provider 官方硬上限取较小值；
+- 上述配置在循环和网络调用前校验；尤其禁止 `maxBatchSize=0`，避免 offset 永不前进；
 - 返回向量数量、数值有限性和 dimensions 必须完整匹配；
 - Reranker 返回的文档正文不受信任，只使用经过校验的索引和 0-1 分数；
 - Parser 输出必须包含非空 Markdown，响应体和本地输入文件都有字节上限；

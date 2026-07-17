@@ -6,6 +6,36 @@ STOMP 1.2 over WebSocket/WSS for OpenClaw 2026.7.1. The plugin accepts authentic
 
 ## Architecture
 
+The character diagram highlights the browser trust boundary, per-connection isolation, and bounded ACK window. The Mermaid diagram below preserves the full renderable component relationship.
+
+```text
+Browser / Spring STOMP client
+        │  WS/WSS Upgrade
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│ openclaw-web-stomp                                           │
+│                                                              │
+│ path + Origin + capacity ──▶ CONNECT auth ──▶ heartbeat/rate │
+│                                                  │           │
+│                                                  ▼           │
+│                                   per-connection frame queue │
+│                                                  │           │
+│                   ┌──────────────────────────────┴───────┐   │
+│                   ▼                                      ▼   │
+│       SEND /queue/agent.{id}              own-session SUBSCRIBE│
+│                   │                                      │   │
+│                   ▼                                      │   │
+│       message-sdk → OpenClaw Agent                       │   │
+│                   │                                      │   │
+│                   └────────── Agent reply ───────────────┘   │
+│                                          │                   │
+│                                          ▼                   │
+│                              MESSAGE + bounded ACK window     │
+└──────────────────────────────────────────┬───────────────────┘
+                                           ▼
+                                     ACK / NACK / RECEIPT
+```
+
 ```mermaid
 flowchart LR
     Client["Browser / Spring STOMP client"] --> Guard["Path + Origin + capacity"]
@@ -20,6 +50,8 @@ flowchart LR
 ```
 
 This is an in-process STOMP access layer for one OpenClaw Gateway. Each connection owns its session id, serial frame queue, subscriptions, and ACK window; disconnect and shutdown remove all of them.
+
+Internal Agent/Runtime failures are never returned verbatim to clients. A stable `Agent dispatch failed` protocol error is exposed while the redacted reason is retained in Gateway logs and channel status, preventing URL credentials, Authorization values, or tokens from leaking through STOMP `ERROR` frames.
 
 ## Scope
 
@@ -70,7 +102,8 @@ The safe default binds `127.0.0.1:15674`, requires authentication, and refuses t
         "maxPendingMessages": 32,
         "maxPendingAcks": 100,
         "messagesPerMinute": 120,
-        "connectTimeoutMs": 10000
+        "connectTimeoutMs": 10000,
+        "shutdownTimeoutMs": 10000
       },
       "ws": {
         "allowedOrigins": ["https://console.example.com"]
@@ -168,6 +201,26 @@ A `RECEIPT` for `SEND` is emitted only after OpenClaw accepts the inbound dispat
 
 ## Failure and backpressure
 
+The character view makes the delivery boundary explicit: an Agent reply is successful only after the WebSocket send callback confirms that the frame reached the socket layer.
+
+```text
+Agent reply wire
+      │
+      ▼
+Find session subscription
+      ├── none / ACK window full ─────────▶ delivery failed
+      ▼
+Register pending ACK (non-auto)
+      ▼
+Check bufferedAmount + frame bytes
+      ├── over limit ─▶ close 1013 + discard pending ACK
+      ▼
+Await ws.send callback
+      ├── error ──────▶ terminate + discard pending ACK
+      ▼
+Confirmed delivery ──▶ finish Agent reply pipeline
+```
+
 ```mermaid
 flowchart TD
     F["Incoming STOMP frame"] --> V{"Protocol, auth, rate and destination valid?"}
@@ -179,6 +232,42 @@ flowchart TD
     P -- No --> C2["Close 1013 or fail delivery"]
     P -- Yes --> M["Send MESSAGE / RECEIPT"]
 ```
+
+## Shutdown drain
+
+```text
+Gateway AbortSignal
+       │
+       ▼
+Reject new frames ──▶ stop heartbeat ──▶ close WebSockets
+                                                │
+                                                ▼
+                                   await accepted Agent turns
+                                                │
+                              ┌─────────────────┴──────────────┐
+                              ▼                                ▼
+                           drained                    shutdownTimeoutMs
+                              └────────▶ clear subscriptions / ACK / listener
+```
+
+```mermaid
+sequenceDiagram
+    participant G as OpenClaw Gateway
+    participant S as Web STOMP Server
+    participant Q as Per-connection queue
+    participant A as Agent Runtime
+    G->>S: AbortSignal / stopAccount
+    S->>S: accepting=false; stop heartbeat
+    S--xS: close WebSockets and reject new frames
+    S->>Q: await captured queues
+    Q->>A: finish accepted Agent turns
+    A-->>Q: success / failure
+    Q-->>S: drained
+    S-->>G: cleanup complete
+    Note over S,Q: warn and exit within shutdownTimeoutMs on timeout
+```
+
+The bounded drain prevents routine Gateway shutdown from clearing runtime state underneath an accepted `SEND`. A hard kill can still leave an unknown outcome, so callers should retain idempotency keys.
 
 ## Operations
 

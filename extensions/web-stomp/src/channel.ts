@@ -25,6 +25,7 @@ import {
 import { dispatchInboundStomp } from "./inbound.js";
 import { stompWsSetupAdapter, stompWsSetupWizard } from "./onboarding.js";
 import { buildSessionDestination } from "./routing/destination-router.js";
+import { redactWebStompError } from "./shared/redact.js";
 import { getStompServerStats, publishToDestination, startStompServer, stopStompServer } from "./transport/server.js";
 import type { ResolvedWebStompAccount } from "./types.js";
 
@@ -53,7 +54,7 @@ function normalizeTarget(raw: string): string | undefined {
 async function monitor(ctx: ChannelGatewayContext<ResolvedWebStompAccount>): Promise<void> {
   const config = resolveStompWsConfig(ctx.cfg as unknown as Record<string, unknown>);
   try {
-    await startStompServer(config, (message) => dispatchInboundStomp(message));
+    await startStompServer(config, (message) => dispatchInboundStomp(message), ctx.log);
     ctx.setStatus({
       accountId: ctx.account.accountId,
       configured: true,
@@ -64,7 +65,7 @@ async function monitor(ctx: ChannelGatewayContext<ResolvedWebStompAccount>): Pro
     } as ChannelAccountSnapshot);
     await waitForAbort(ctx.abortSignal);
   } catch (error) {
-    ctx.setStatus({ accountId: ctx.account.accountId, running: false, lastError: String(error) } as ChannelAccountSnapshot);
+    ctx.setStatus({ accountId: ctx.account.accountId, running: false, lastError: redactWebStompError(error) } as ChannelAccountSnapshot);
     throw error;
   } finally {
     await stopStompServer();
@@ -120,7 +121,7 @@ export const stompChannel: ChannelPlugin<ResolvedWebStompAccount> = {
     sanitizeText: ({ text }) => sanitizeForPlainText(text),
     sendText: async (ctx: ChannelOutboundContext) => {
       const destination = ctx.to.startsWith("/topic/") ? ctx.to : buildSessionDestination(ctx.to);
-      const delivered = publishToDestination(destination, ctx.text);
+      const delivered = await publishToDestination(destination, ctx.text);
       if (delivered < 1) {
         throw new Error(`No Web STOMP subscriber accepted destination: ${destination}`);
       }

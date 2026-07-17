@@ -31,6 +31,7 @@ const configSchema = {
     timeoutMs: { type: "integer" as const, minimum: 100, maximum: 120000, default: 5000 },
     maxAttempts: { type: "integer" as const, minimum: 1, maximum: 5, default: 3 },
     retryBaseDelayMs: { type: "integer" as const, minimum: 0, maximum: 5000, default: 100 },
+    maxRequestBytes: { type: "integer" as const, minimum: 1024, maximum: 8388608, default: 2097152 },
     maxResponseBytes: { type: "integer" as const, minimum: 1024, maximum: 16777216, default: 2097152 },
     maxCacheBytes: { type: "integer" as const, minimum: 1048576, maximum: 67108864, default: 8388608 },
     allowSharedRecall: { type: "boolean" as const, default: false },
@@ -49,7 +50,7 @@ function createSearchTool(manager: OpenMemSearchManager, context: OpenClawPlugin
       type: "object" as const,
       additionalProperties: false,
       properties: {
-        query: { type: "string" as const, minLength: 1 },
+        query: { type: "string" as const, minLength: 1, maxLength: 4000 },
         limit: { type: "number" as const, minimum: 1, maximum: limit },
       },
       required: ["query"],
@@ -57,6 +58,7 @@ function createSearchTool(manager: OpenMemSearchManager, context: OpenClawPlugin
     async execute(_id: string, params: Record<string, unknown>) {
       const query = typeof params.query === "string" ? params.query.trim() : "";
       if (!query) throw new Error("query must not be empty");
+      if (query.length > 4_000) throw new Error("query must not exceed 4000 characters");
       const requested = typeof params.limit === "number" ? Math.floor(params.limit) : limit;
       const results = await manager.search(query, {
         maxResults: Math.min(Math.max(requested, 1), limit),
@@ -139,7 +141,11 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       if (!event.success || (context.agentId?.trim() || "main") !== config.agentId) return;
       const messages = normalizeTurn(event.messages);
       if (messages.length === 0) return;
-      const sessionKey = context.sessionKey ?? context.sessionId ?? "unknown";
+      const sessionKey = context.sessionKey ?? context.sessionId;
+      if (!sessionKey?.trim()) {
+        api.logger.warn("[openmem] ingest skipped: trusted session key is unavailable");
+        return;
+      }
       try {
         await coordinator.ingestTurn({
           sessionKey,

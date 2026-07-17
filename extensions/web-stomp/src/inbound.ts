@@ -83,7 +83,7 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
     reply: {
       deliver: async ({ wire }: { wire: string }) => {
         const { publishToDestination } = await import("./transport/server.js");
-        const delivered = publishToDestination(replyDestination, wire);
+        const delivered = await publishToDestination(replyDestination, wire);
         if (delivered < 1) {
           throw new Error(`No Web STOMP subscriber accepted reply destination: ${replyDestination}`);
         }

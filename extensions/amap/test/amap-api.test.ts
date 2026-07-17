@@ -29,6 +29,18 @@ describe("AmapClient", () => {
     await expect(new AmapClient(config).get("/v5/place/detail", { id: "x" })).rejects.toThrow("maxResponseBytes");
   });
 
+  it("供应商错误即使回显请求凭据也必须脱敏", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      status: "0",
+      info: "api_key=secret-key Authorization: Bearer leaked-token\nhttps://user:pass@example.test",
+      infocode: "10001",
+    }))));
+
+    const rejection = new AmapClient(config).get("/v5/place/detail", { id: "x" });
+    await expect(rejection).rejects.toThrow(/api_key=\[REDACTED\]/u);
+    await expect(rejection).rejects.not.toThrow(/secret-key|leaked-token|user:pass|\n/u);
+  });
+
   it("rejects malformed envelopes instead of treating a missing status as success", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ pois: [] }))));
     await expect(new AmapClient(config).get("/v5/place/text", { keywords: "咖啡" })).rejects.toThrow("rejected");

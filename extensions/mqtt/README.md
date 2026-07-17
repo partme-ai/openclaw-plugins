@@ -345,6 +345,30 @@ openclaw-mqtt/
 - **ACL scoping**: use `auth.users[].publishAllow` / `subscribeAllow` to restrict device topics
 - **Account isolation**: use `aclRules[].accountId` for cross-account authorization; matching is exact
 - **Audit logging**: enable `audit.enabled` for structured JSON logs compatible with ELK/SIEM
+- **No message body in runtime logs**: inbound logs expose `textLength`, not the first payload bytes.
+  Topic/client/session values and transport errors cross the OpenClaw 2026.7.1 security runtime plus
+  MQTT-specific password, URI, and Authorization rules before logging.
+
+```text
+MQTT inbound / broker error
+          │
+          ▼
+omit payload body (record textLength only)
+          │
+          ▼
+OpenClaw redaction + configured secret/URI/Bearer rules
+          │
+          ▼
+control cleanup + 500-char limit → Gateway log / audit
+```
+
+```mermaid
+flowchart LR
+    I["MQTT inbound / broker error"] --> B["Body length only"]
+    B --> S["OpenClaw security-runtime"]
+    S --> P["MQTT password / URI / Authorization rules"]
+    P --> L["Single-line 500-char log / audit"]
+```
 
 ## FAQ
 

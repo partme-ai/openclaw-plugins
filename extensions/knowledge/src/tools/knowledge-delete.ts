@@ -17,6 +17,7 @@ type AgentToolResult<T = unknown> = {
 import { getOrCreateStore } from '../runtime/hooks.js';
 import { withSourceWriteLock, withStoreExclusiveWriteLock } from '../indexer/scheduler.js';
 import { authorizeNamespace, validateSourceId } from './policy.js';
+import { safeKnowledgeError } from '../shared/safe-error.js';
 
 // ===================================================================
 // 类型定义
@@ -145,7 +146,7 @@ export function createKnowledgeDeleteTool(ctx: OpenClawPluginToolContext, config
 
         return failedResult(`未知操作类型: ${String(p.action)}，支持 delete_by_source、clear`);
       } catch (err) {
-        return failedResult(`删除失败: ${err instanceof Error ? err.message : String(err)}`);
+        return failedResult(`删除失败: ${safeKnowledgeError(err)}`);
       }
     },
   };

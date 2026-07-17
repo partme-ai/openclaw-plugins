@@ -221,6 +221,40 @@ describe("embedded WebSocket transport", () => {
     await new Promise<void>((resolve) => external.close(() => resolve()));
   });
 
+  it("client mode sends accepted only after its Agent handler completes", async () => {
+    const port = await freePort();
+    const external = new WebSocketServer({ host: "127.0.0.1", port });
+    await new Promise<void>((resolve) => external.once("listening", () => resolve()));
+    let release!: () => void;
+    const accepted = new Promise<Record<string, unknown>>((resolve) => {
+      external.once("connection", (socket) => {
+        socket.on("message", (data) => {
+          const frame = JSON.parse(data.toString()) as Record<string, unknown>;
+          if (frame.type === "accepted") resolve(frame);
+        });
+        socket.send(JSON.stringify({ version: "1", type: "message", text: "wait", messageId: "client-m-1" }));
+      });
+    });
+    await startWebSocketClient({
+      ...DEFAULT_WEBSOCKET_CONFIG,
+      mode: "client",
+      client: {
+        ...DEFAULT_WEBSOCKET_CONFIG.client,
+        url: `ws://127.0.0.1:${port}/bridge`,
+        reconnect: { ...DEFAULT_WEBSOCKET_CONFIG.client.reconnect, enabled: false },
+      },
+      limits: { ...DEFAULT_WEBSOCKET_CONFIG.limits, heartbeatIntervalMs: 60_000 },
+    }, () => new Promise<void>((resolve) => { release = resolve; }));
+    let settled = false;
+    void accepted.then(() => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+    release();
+    await expect(accepted).resolves.toMatchObject({ version: "1", type: "accepted", messageId: "client-m-1" });
+    await stopWebSocketClient();
+    await new Promise<void>((resolve) => external.close(() => resolve()));
+  });
+
   it("client mode applies the configured inbound rate limit", async () => {
     const port = await freePort();
     const external = new WebSocketServer({ host: "127.0.0.1", port });

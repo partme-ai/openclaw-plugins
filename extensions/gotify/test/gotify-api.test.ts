@@ -160,10 +160,14 @@ describe("Message API", () => {
   });
 
   it("serializes requests per account", async () => {
-    const order: string[] = [];
-    const fetchImpl = vi.fn().mockImplementation(() => {
-      order.push("req");
-      return Promise.resolve({ ok: true, json: async () => ({ id: 1 }) });
+    let active = 0;
+    let maxActive = 0;
+    const fetchImpl = vi.fn().mockImplementation(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return { ok: true, json: async () => ({ id: 1 }) };
     }) as unknown as typeof fetch;
 
     await Promise.all([
@@ -172,6 +176,7 @@ describe("Message API", () => {
       sendGotifyMessage(account, { message: "c" }, { fetchImpl }),
     ]);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(maxActive).toBe(1);
   });
 
   it("does not blindly retry non-idempotent message POST on 5xx", async () => {

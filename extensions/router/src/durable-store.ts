@@ -11,6 +11,7 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/prom
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 
+import { redactRouterError } from "./redact.js";
 import type { RouteDeliveryTask, RouterConfig } from "./types.js";
 
 /** 已持久化投递状态变更的脱敏审计记录，不保存消息正文。 */
@@ -48,7 +49,7 @@ type LeaseOwner = {
  */
 export class CommittedPersistenceError extends Error {
   constructor(cause: unknown) {
-    super(`[router] state rename committed but directory fsync failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+    super(`[router] state rename committed but directory fsync failed: ${redactRouterError(cause)}`);
     this.name = "CommittedPersistenceError";
   }
 }
@@ -398,7 +399,7 @@ export class DurableRouteStore {
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
       void this.renewLease().catch((error: unknown) => {
-        this.leaseError = new Error(`[router] writer lease heartbeat failed: ${error instanceof Error ? error.message : String(error)}`);
+        this.leaseError = new Error(`[router] writer lease heartbeat failed: ${redactRouterError(error)}`);
       });
     }, this.config.delivery.lockHeartbeatMs);
     this.heartbeatTimer.unref();

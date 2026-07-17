@@ -6,6 +6,38 @@
 
 ## 两条独立链路
 
+字符图先区分“提示词约束”和“消息镜像”两条互不阻塞的链路；下方 Mermaid 继续保留完整、可渲染的组件关系：
+
+```text
+已安装的来源 Channel
+        │
+        ├── before_prompt_build ──▶ 平台上下文约束 ──▶ Agent Prompt
+        │
+        ├── message_received ─────┐
+        │                         │
+        └── 平台真实发送 ──▶ message_sent(success=true)
+                                  │
+                                  ▼
+                         UnifiedMessage 归一化
+                                  │
+                                  ▼
+                      有界内存队列（同会话保序）
+                                  │
+                     ┌────────────┴────────────┐
+                     ▼                         ▼
+              Adapter 确认成功          超时 / 失败重试
+                                               │
+                                               ▼
+                                      达到上限后记录失败
+                                  │
+                                  ▼
+                     MQ Channel Outbound Adapter
+                                  │
+                                  ▼
+                    MQTT / RabbitMQ / Redis Stream /
+                         RocketMQ / STOMP
+```
+
 ```mermaid
 flowchart LR
     IM["已安装的 IM Channel"] --> H1["before_prompt_build"]
@@ -97,6 +129,8 @@ flowchart TD
 ```
 
 Bridge 是 best-effort/at-least-once 的观测镜像：Hook 不等待 Broker；后台 Service 以 `maxInFlight`、`maxBufferedMessages` 和 `shutdownTimeoutMs` 控制并发、内存与停机时长。不同 `traceId` 可并发，同一会话保持顺序。Broker 超时后结果可能未知，下游必须按 `messageId` 或 `deliveryQueueId` 幂等。需要跨重启 Outbox、DLQ、审计和人工回放时，应使用 `@partme.ai/openclaw-router`。
+
+来源 Channel 的失败原因和目标 MQ adapter 异常在写入 Gateway 日志前统一脱敏 URL 用户信息、Authorization、Token/Secret，并清理控制字符、限制诊断长度。
 
 ## 验证
 

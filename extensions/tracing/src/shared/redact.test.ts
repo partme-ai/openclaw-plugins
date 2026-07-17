@@ -9,6 +9,11 @@ describe("tracing sensitive data boundary", () => {
     expect(value.length).toBeLessThanOrEqual(500);
   });
 
+  it("ESM 运行时真实调用 OpenClaw security-runtime", () => {
+    const secret = "AKIAABCDEFGHIJKLMNOP";
+    expect(redactTraceText(`collector error ${secret}`)).not.toContain(secret);
+  });
+
   it("replaces business identifiers with stable in-process correlation tokens", () => {
     const first = sanitizeTraceAttributes({
       "openclaw.session_key": "customer@example.com",

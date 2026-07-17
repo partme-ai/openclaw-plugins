@@ -88,6 +88,18 @@ flowchart TB
 
 `accepted` 不是“Socket 已收到字节”，而是“Agent 处理和回复投递链路已经完成”。处理失败、连接消失或慢消费者触发背压时不会产生假成功。
 
+```text
+调用方          WS 传输层         单连接有界队列       OpenClaw       Agent
+  │ message(m-1)    │                  │                  │             │
+  ├────────────────▶├── 入队 ────────▶├── dispatch ─────▶├── Turn ────▶│
+  │                 │                  │                  │◀── 回复 ────┤
+  │◀── reply ───────┤◀─────────────────┴──────────────────┤             │
+  │◀── accepted ────┤  仅在 Agent 与回复投递均完成后发送                 │
+  │                 │  失败：release(m-1) + error，不发送 accepted       │
+```
+
+字符时序图突出成功确认点；下面的 Mermaid 保留 server/client 共用的完整参与者与处理顺序。
+
 ```mermaid
 sequenceDiagram
   autonumber
@@ -231,6 +243,18 @@ const socket = new WebSocket(
 
 ## 路由优先级
 
+```text
+入站 message
+    │
+    ├─ connectionId 精确/前缀绑定 ─────▶ 配置绑定 Agent
+    │
+    ├─ allowFrameAgentId=true ─────────▶ 帧内 Agent
+    │
+    ├─ defaultAgentId 已配置 ──────────▶ 默认 Agent
+    │
+    └─ 均未命中 ───────────────────────▶ error / 不进入 Agent
+```
+
 ```mermaid
 flowchart TD
   In["入站 message"] --> Exact{"connectionId 精确绑定?"}
@@ -257,6 +281,9 @@ flowchart TD
 - `messageId`：对入站消息做幂等去重。
 - 停机时先拒绝新帧、关闭 Server/Client，再等待已接纳的 Agent 任务排空，最后清理连接与会话映射。
 - 日志与 Gateway `lastError` 在落盘或暴露前统一遮蔽 URL 凭据、Bearer Token 和认证 Header。
+- 状态与日志中的 Client URL 只保留 scheme、host、port 和 path，移除 userinfo、query 与 fragment。
+- 帧内 `agentId`、`messageId`、`peerId` 最长 256 字符，并在进入路由、Session 和幂等状态前拒绝控制字符。
+- `server` 与 `client` 两种模式都只在 Agent 和回复投递完成后发送 `accepted`，外部网关可使用同一提交语义。
 - client 握手完成前对端关闭也会明确失败，不会让 Gateway 启动或停机 Promise 悬空。
 - 公共 Outbound Adapter 遇到离线连接、上下文缺失或背压失败时抛错，使 Router Outbox 能重试/DLQ；不会用占位 `messageId` 冒充成功。
 

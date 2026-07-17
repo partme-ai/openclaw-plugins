@@ -35,6 +35,11 @@ describe("parseClientFrame", () => {
   it("returns ping for ping frame", () => {
     expect(parseClientFrame(JSON.stringify({ type: "ping" }))).toBe("ping");
   });
+
+  it("rejects oversized or control-character routing identifiers", () => {
+    expect(parseClientFrame(JSON.stringify({ type: "message", text: "hello", peerId: "x".repeat(257) }))).toBeNull();
+    expect(parseClientFrame(JSON.stringify({ type: "message", text: "hello", messageId: "bad\nvalue" }))).toBeNull();
+  });
 });
 
 describe("serialize frames", () => {

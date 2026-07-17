@@ -7,6 +7,7 @@
 import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk/plugin-entry";
 import { MeituanClient } from "../meituan/meituan-api.js";
 import type { MeituanPluginConfig } from "../types.js";
+import { safeMeituanError } from "../shared/safe-error.js";
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -96,7 +97,7 @@ export function createMeituanTool(
       } catch (error) {
         return result({
           success: false,
-          error: safeErrorMessage(error),
+          error: safeErrorMessage(error, config),
         });
       }
     },
@@ -142,11 +143,12 @@ function requiredOperation(value: unknown, allowed: string[]): string {
   return value;
 }
 
-function safeErrorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : "Meituan tool execution failed";
-  return raw
-    .replace(/[\u0000-\u001f\u007f]/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, 512) || "Meituan tool execution failed";
+function safeErrorMessage(error: unknown, config: MeituanPluginConfig): string {
+  // Tool 是最后一道 Agent 可见边界；即使未来替换 Client 或测试注入异常，也要再次脱敏。
+  return safeMeituanError(
+    error instanceof Error ? error : undefined,
+    [config.signKey, config.appAuthToken, config.developerId],
+    512,
+    "Meituan tool execution failed",
+  );
 }

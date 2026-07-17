@@ -6,6 +6,7 @@
  * Gateway 生命周期内关联排障，又不会向外部 Collector 暴露原始业务 ID。
  */
 import { createHmac, randomBytes } from "node:crypto";
+import { redactSensitiveText as redactOpenClawSensitiveText } from "openclaw/plugin-sdk/security-runtime";
 
 const identifierKey = randomBytes(32);
 const IDENTIFIER_ATTRIBUTES = new Set([
@@ -15,21 +16,21 @@ const IDENTIFIER_ATTRIBUTES = new Set([
   "openclaw.tool_call_id",
 ]);
 
-/** SDK 与插件规则取并集，避免 SDK 未覆盖任意 Bearer/sk-* 形态时发生泄漏。 */
+/**
+ * SDK 与插件规则取并集，避免 SDK 未覆盖任意 Bearer/sk-* 形态时发生泄漏。
+ *
+ * Tracing 以 ESM 发布，必须静态导入 security-runtime；CommonJS `require()` 在真实 Gateway
+ * 中不存在，会让旧实现看似有 SDK 兜底、实际永远只执行本地正则。
+ */
 export function redactTraceText(value: string): string {
-  let redacted = value;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require("openclaw/plugin-sdk/security-runtime") as {
-      redactSensitiveText?: (text: string) => string;
-    };
-    if (typeof mod.redactSensitiveText === "function") redacted = mod.redactSensitiveText(value);
-  } catch {
-    // optional peer in isolated unit tests
-  }
+  const redacted = redactOpenClawSensitiveText(value, { mode: "tools" });
   return redacted
-    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/\b(Bearer|Basic|Bot)\s+[^\s,;]+/gi, "$1 [REDACTED]")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "sk-[REDACTED]")
+    .replace(
+      /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)\b\s*([:=])\s*([^\s,;&]+)/gi,
+      "$1$2[REDACTED]",
+    )
     .replace(/[\u0000-\u001f\u007f]/g, "_")
     .slice(0, 500);
 }

@@ -25,7 +25,7 @@ import {
 import { setWebsocketChannelConfig } from "../state/web-socket-state.js";
 import { startWebSocketClient, stopWebSocketClient } from "./client.js";
 import { startWebSocketServer, stopWebSocketServer } from "./server.js";
-import { redactWebSocketError } from "../shared/redact.js";
+import { redactWebSocketError, sanitizeWebSocketUrl } from "../shared/redact.js";
 
 /**
  * 等待 Gateway abort 信号。
@@ -74,9 +74,10 @@ export async function monitorWebSocketChannel(
         inboundHandler,
         markConnectionConnected,
         handleConnectionDisconnected,
+        ctx.log,
       );
       ctx.log?.info?.(
-        `[${ctx.account.accountId}] WebSocket client connecting to ${config.client.url}`,
+        `[${ctx.account.accountId}] WebSocket client connecting to ${sanitizeWebSocketUrl(config.client.url) ?? "invalid-url"}`,
       );
     }
 
@@ -86,6 +87,7 @@ export async function monitorWebSocketChannel(
         inboundHandler,
         markConnectionConnected,
         removeConnectionSessions,
+        ctx.log,
       );
       ctx.log?.info?.(
         `[${ctx.account.accountId}] WebSocket server ws://${config.server.host}:${config.server.wsPort}${config.server.path}`,
@@ -109,7 +111,7 @@ export async function monitorWebSocketChannel(
       // 状态会被管理接口读取，不能把 URL 凭据、Bearer Token 或自定义认证 Header 原样暴露。
       lastError: redactWebSocketError(err, resolvedConfig ?? undefined),
     } as ChannelAccountSnapshot);
-    throw err;
+    throw new Error(redactWebSocketError(err, resolvedConfig ?? undefined));
   } finally {
     await stopWebSocketClient();
     await stopWebSocketServer();

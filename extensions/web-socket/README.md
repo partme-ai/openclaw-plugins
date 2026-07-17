@@ -19,6 +19,26 @@ Production WebSocket channel for OpenClaw 2026.7.1+. It uses [`ws`](https://gith
 | `client` | **客户端模式**：OpenClaw 作为 WS 客户端连到**外部** WS 服务，在外部网关里与终端用户通信 |
 | `both` | **双模式**：同时启动内置服务 + 连外部 WS（例如本地调试 + 生产桥接） |
 
+```text
+┌──────────────────────────── OpenClaw Gateway ────────────────────────────┐
+│  openclaw-web-socket                                                    │
+│                                                                         │
+│  Browser/App ─▶ Upgrade gate ─▶ Server transport ─┐                    │
+│                  Path · Origin · Token · capacity │                    │
+│                                                   ▼                    │
+│  External WS gateway ◀──── Client transport ─▶ bounded per-socket FIFO │
+│                         auth · reconnect          │                    │
+│                                                   ▼                    │
+│                         route → session → message-sdk → Agent           │
+│                                                   │                    │
+│  Browser/App or external gateway ◀── reply + accepted ─────────────────┘│
+│                                                                         │
+│  stop: reject new frames → close sockets → drain accepted Agent tasks  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+The character view is intended for terminals and source review. The Mermaid graph below keeps the same server/client directions renderable and maintainable.
+
 ```mermaid
 flowchart LR
   subgraph server_mode [server 模式]
@@ -84,6 +104,37 @@ After the Agent pipeline and reply delivery complete, the server emits:
 If dispatch or reply delivery fails, the `messageId` claim is released so the same message can be retried. Only a completed pipeline commits the dedupe record.
 
 All structured outbound frames carry `version: "1"`. Explicit unsupported versions are rejected; unversioned JSON and plain text remain compatible with 0.1.x clients.
+
+### Message completion path
+
+```text
+Caller        WS transport       bounded queue       OpenClaw       Agent
+  │ message(m-1)   │                  │                  │             │
+  ├───────────────▶├── enqueue ──────▶├── dispatch ─────▶├── turn ────▶│
+  │                │                  │                  │◀── reply ───┤
+  │◀── reply ──────┤◀─────────────────┴──────────────────┤             │
+  │◀── accepted ───┤  only after Agent + reply delivery                 │
+  │                │  failure: release(m-1) + error, no accepted        │
+```
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Caller / external gateway
+  participant W as WebSocket transport
+  participant Q as Per-connection queue
+  participant O as OpenClaw Runtime
+  participant A as Agent
+  C->>W: message(version=1, messageId=m-1)
+  W->>Q: validate + claim + enqueue
+  Q->>O: dispatchChannelMessage
+  O->>A: Agent Turn
+  A-->>O: reply
+  O-->>W: reply pipeline completed
+  W-->>C: reply(version=1)
+  W-->>C: accepted(version=1, messageId=m-1)
+  Note over C,W: server and client modes use the same completion rule
+```
 
 ### Browser authentication
 
@@ -179,6 +230,8 @@ The server negotiates only `openclaw.v1`; the authentication protocol is never e
 - 远程客户端默认只接受 `wss://`。确需远程 `ws://` 时，在 `client.allowInsecureRemote` 中显式确认。
 - 原生客户端使用 `Authorization: Bearer`；浏览器使用认证子协议。`auth.allowQueryToken` 仅用于旧客户端，因为 URL 可能进入代理和访问日志。
 - `/web-socket/status` 由 OpenClaw 插件认证保护，并对 token 和自定义 client headers 脱敏。
+- Client URL exposed by status/logging is reduced to scheme, host, port, and path; userinfo, query, and fragment are removed.
+- `agentId`, `messageId`, and `peerId` are bounded to 256 characters and reject control characters before they enter routing, session, or dedupe state.
 
 ## Build
 

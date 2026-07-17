@@ -11,7 +11,7 @@ describe("normalizeTracingConfig", () => {
     expect(config.sampleRate).toBe(0.5);
     expect(config.backend).toBe("otlp");
     expect(config.maxBufferedSpans).toBe(10_000);
-    expect(config.maxActiveTraces).toBe(10_000);
+    expect(config.maxActiveTraces).toBe(1_000);
     expect(config.shutdownTimeoutMs).toBe(15_000);
   });
 
@@ -24,6 +24,7 @@ describe("normalizeTracingConfig", () => {
     [{ otlpEndpoint: "https://secret@example.com" }, "must not contain credentials"],
     [{ unknown: true }, "unknown tracing config field"],
     [{ maxActiveTraces: 0 }, "maxActiveTraces"],
+    [{ maxActiveTraces: 1_001, maxSpansPerTrace: 100 }, "must not exceed 100000"],
     [{ shutdownTimeoutMs: 10 }, "shutdownTimeoutMs"],
     [{ otlpHeaders: { Authorization: "Bearer ok\r\nInjected: yes" } }, "single-line"],
     [{ otlpHeaders: { Host: "collector.example" } }, "unsupported header name"],

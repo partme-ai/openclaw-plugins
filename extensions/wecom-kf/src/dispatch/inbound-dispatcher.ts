@@ -31,6 +31,7 @@ import {
   resolveWecomCommandAuthorization,
 } from "../shared/command-auth.js";
 import type { KfMessage, WecomAccountConfig } from "../types/index.js";
+import { toSafeErrorSummary } from "../shared/safe-log.js";
 
 function createLogger(opts: { log?: (message: string) => void; error?: (message: string) => void }) {
   return {
@@ -90,14 +91,15 @@ export async function dispatchKfMessage(params: {
     error: params.error,
   });
   if (!dmResult.allowed) {
-    logger.info(`skip sender=${externalUserId} reason=dm_policy`);
+    // external_userid 属于用户标识，策略审计只记录拒绝原因，避免写入常规运行日志。
+    logger.info("skip inbound reason=dm_policy");
     return;
   }
 
   const sessionState = await getKfSessionServiceState(openKfId, externalUserId);
   if (isKfAgentReplyBlocked(sessionState?.serviceState)) {
     logger.info(
-      `skip sender=${externalUserId} reason=service_state_${sessionState?.serviceState ?? "unknown"} ` +
+      `skip inbound reason=service_state_${sessionState?.serviceState ?? "unknown"} ` +
         `(human/closed session — Agent auto-reply disabled)`,
     );
     return;
@@ -134,7 +136,7 @@ export async function dispatchKfMessage(params: {
           openKfId,
         });
       } catch (err) {
-        logger.error(`unauthorized command reply failed: ${String(err)}`);
+        logger.error(`unauthorized command reply failed: ${toSafeErrorSummary(err)}`);
       }
     }
     return;
@@ -173,7 +175,7 @@ export async function dispatchKfMessage(params: {
       text: rawText,
     });
   } catch (error) {
-    logger.warn(`dialogue inbound transition failed (non-blocking): ${String(error)}`);
+    logger.warn(`dialogue inbound transition failed (non-blocking): ${toSafeErrorSummary(error)}`);
   }
 
   const result = await dispatchKfTranscriptTurn({
@@ -208,7 +210,7 @@ export async function dispatchKfMessage(params: {
           openKfId,
         });
       } catch (err) {
-        logger.error(`timeout reply failed: ${String(err)}`);
+        logger.error(`timeout reply failed: ${toSafeErrorSummary(err)}`);
       }
     }
     return;
@@ -227,7 +229,7 @@ export async function dispatchKfMessage(params: {
       userId: externalUserId,
     });
   } catch (error) {
-    logger.warn(`dialogue outbound transition failed (non-blocking): ${String(error)}`);
+    logger.warn(`dialogue outbound transition failed (non-blocking): ${toSafeErrorSummary(error)}`);
   }
 }
 

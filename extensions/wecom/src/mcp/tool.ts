@@ -42,6 +42,8 @@ interface CreateWeComMcpToolOptions {
   chatId?: string;
   /** 当前会话的聊天类型：single（单聊）或 group（群聊） */
   chatType?: "single" | "group";
+  /** 当前账号显式配置的本地媒体白名单目录。 */
+  mediaLocalRoots?: readonly string[];
 }
 
 // ============================================================================
@@ -54,14 +56,19 @@ const textResult = (data: unknown) => ({
   details: data,
 });
 
-const normalizeOptionalString = (value: string | undefined): string | undefined => {
+const normalizeOptionalString = (
+  value: string | undefined,
+): string | undefined => {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 };
 
 /** 调试日志也设置硬上限，避免误开开关后把大文档或完整表格写入日志。 */
 const truncateDebugValue = (value: unknown, maxChars = 500): string => {
-  const serialized = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
+  const serialized =
+    typeof value === "string"
+      ? value
+      : (JSON.stringify(value) ?? String(value));
   return serialized.length > maxChars
     ? `${serialized.slice(0, maxChars)}...(truncated)`
     : serialized;
@@ -84,10 +91,10 @@ const errorResult = (err: unknown) => {
 // ============================================================================
 
 const handleList = async (ctx: CallContext): Promise<unknown> => {
-  const result = await sendJsonRpc(ctx.category, "tools/list", undefined, {
+  const result = (await sendJsonRpc(ctx.category, "tools/list", undefined, {
     requesterUserId: ctx.requesterUserId,
     accountId: ctx.accountId,
-  }) as { tools?: McpToolInfo[] } | undefined;
+  })) as { tools?: McpToolInfo[] } | undefined;
 
   const tools = result?.tools ?? [];
   if (tools.length === 0) {
@@ -102,7 +109,9 @@ const handleList = async (ctx: CallContext): Promise<unknown> => {
       description: t.description ?? "",
       // 清洗 inputSchema，内联 $ref/$defs 引用并移除 Gemini 不支持的关键词，
       // 避免 Gemini 模型解析 function response 时报 400 错误
-      inputSchema: t.inputSchema ? cleanSchemaForGemini(t.inputSchema) : undefined,
+      inputSchema: t.inputSchema
+        ? cleanSchemaForGemini(t.inputSchema)
+        : undefined,
     })),
   };
 };
@@ -119,30 +128,41 @@ const handleCall = async (ctx: CallContext): Promise<unknown> => {
     const argsText = JSON.stringify(args);
     mcpDebugLog(
       `[mcp] handleCall ${category}/${method} 入参: ${argsText.slice(0, 500)}` +
-      (argsText.length > 500 ? "...(truncated)" : ""),
+        (argsText.length > 500 ? "...(truncated)" : ""),
     );
   }
 
   // 1. 收集拦截器的 beforeCall 配置（如超时时间、替换 args）
   const { options, args: resolvedArgs } = await resolveBeforeCall(ctx);
   const finalArgs = resolvedArgs ?? args;
-  const requestOptions = { ...options, ...(requesterUserId ? { requesterUserId } : {}), ...(accountId ? { accountId } : {}) };
+  const requestOptions = {
+    ...options,
+    ...(requesterUserId ? { requesterUserId } : {}),
+    ...(accountId ? { accountId } : {}),
+  };
 
   if (resolvedArgs && isWeComMcpDebugEnabled()) {
     mcpDebugLog(
       `[mcp] handleCall ${category}/${method} 拦截器替换 args: ${JSON.stringify(resolvedArgs).slice(0, 500)}` +
-      (JSON.stringify(resolvedArgs).length > 500 ? "...(truncated)" : ""),
+        (JSON.stringify(resolvedArgs).length > 500 ? "...(truncated)" : ""),
     );
   }
   if (options && isWeComMcpDebugEnabled()) {
-    mcpDebugLog(`[mcp] handleCall ${category}/${method} 拦截器选项: ${JSON.stringify(options)}`);
+    mcpDebugLog(
+      `[mcp] handleCall ${category}/${method} 拦截器选项: ${JSON.stringify(options)}`,
+    );
   }
 
   // 2. 执行 MCP 调用
-  const result = await sendJsonRpc(category, "tools/call", {
-    name: method,
-    arguments: finalArgs,
-  }, requestOptions);
+  const result = await sendJsonRpc(
+    category,
+    "tools/call",
+    {
+      name: method,
+      arguments: finalArgs,
+    },
+    requestOptions,
+  );
 
   const rpcDone = performance.now();
   const rpcMs = (rpcDone - callStart).toFixed(1);
@@ -151,7 +171,7 @@ const handleCall = async (ctx: CallContext): Promise<unknown> => {
     const resultStr = JSON.stringify(result);
     mcpDebugLog(
       `[mcp] handleCall ${category}/${method} MCP 响应 (${rpcMs}ms): ${resultStr.slice(0, 800)}` +
-      (resultStr.length > 800 ? "...(truncated)" : ""),
+        (resultStr.length > 800 ? "...(truncated)" : ""),
     );
   }
 
@@ -167,12 +187,12 @@ const handleCall = async (ctx: CallContext): Promise<unknown> => {
       const finalStr = JSON.stringify(finalResult);
       mcpDebugLog(
         `[mcp] handleCall ${category}/${method} afterCall 变换后 (${interceptMs}ms): ${finalStr.slice(0, 500)}` +
-        (finalStr.length > 500 ? "...(truncated)" : ""),
+          (finalStr.length > 500 ? "...(truncated)" : ""),
       );
     }
     mcpDebugLog(
       `[mcp] handleCall ${category}/${method} 总耗时: ${totalMs}ms` +
-      ` (MCP请求: ${rpcMs}ms, 拦截处理: ${interceptMs}ms)`,
+        ` (MCP请求: ${rpcMs}ms, 拦截处理: ${interceptMs}ms)`,
     );
   } else {
     mcpDebugLog(`[mcp] handleCall ${category}/${method} 耗时: ${rpcMs}ms`);
@@ -188,7 +208,9 @@ const handleCall = async (ctx: CallContext): Promise<unknown> => {
 /**
  * 解析 args 参数：支持 JSON 字符串或直接的对象
  */
-const parseArgs = (args: string | Record<string, unknown> | undefined): Record<string, unknown> => {
+const parseArgs = (
+  args: string | Record<string, unknown> | undefined,
+): Record<string, unknown> => {
   if (!args) return {};
   if (typeof args === "object") return args;
   try {
@@ -212,6 +234,9 @@ export function createWeComMcpTool(options: CreateWeComMcpToolOptions = {}) {
   const accountId = normalizeOptionalString(options.accountId);
   const chatId = normalizeOptionalString(options.chatId);
   const chatType = options.chatType;
+  const mediaLocalRoots = options.mediaLocalRoots
+    ?.map((root) => root.trim())
+    .filter((root) => root.length > 0);
 
   return {
     name: "wecom_mcp",
@@ -240,7 +265,8 @@ export function createWeComMcpTool(options: CreateWeComMcpToolOptions = {}) {
         },
         category: {
           type: "string",
-          description: "MCP 品类名称，如 doc、contact 等，对应 mcpConfig 中的 key",
+          description:
+            "MCP 品类名称，如 doc、contact 等，对应 mcpConfig 中的 key",
         },
         method: {
           type: "string",
@@ -248,7 +274,8 @@ export function createWeComMcpTool(options: CreateWeComMcpToolOptions = {}) {
         },
         args: {
           type: ["string", "object"],
-          description: "调用 MCP 方法的参数，可以是 JSON 字符串或对象（action=call 时使用，默认 {}）",
+          description:
+            "调用 MCP 方法的参数，可以是 JSON 字符串或对象（action=call 时使用，默认 {}）",
         },
       },
       required: ["action", "category"],
@@ -257,10 +284,10 @@ export function createWeComMcpTool(options: CreateWeComMcpToolOptions = {}) {
       const p = params as WeComToolsParams;
       mcpDebugLog(
         `[mcp] execute: action=${p.action}, category=${p.category}` +
-        (p.method ? `, method=${p.method}` : "") +
-        (p.args && isWeComMcpDebugEnabled()
-          ? `, args=${truncateDebugValue(p.args)}`
-          : ""),
+          (p.method ? `, method=${p.method}` : "") +
+          (p.args && isWeComMcpDebugEnabled()
+            ? `, args=${truncateDebugValue(p.args)}`
+            : ""),
       );
       try {
         let result: ReturnType<typeof textResult>;
@@ -272,6 +299,7 @@ export function createWeComMcpTool(options: CreateWeComMcpToolOptions = {}) {
           accountId,
           chatId,
           chatType,
+          mediaLocalRoots,
         };
         switch (p.action) {
           case "list":
@@ -279,7 +307,9 @@ export function createWeComMcpTool(options: CreateWeComMcpToolOptions = {}) {
             break;
           case "call": {
             if (!p.method) {
-              result = textResult({ error: "action 为 call 时必须提供 method 参数" });
+              result = textResult({
+                error: "action 为 call 时必须提供 method 参数",
+              });
               break;
             }
             ctx.args = parseArgs(p.args);
@@ -287,19 +317,22 @@ export function createWeComMcpTool(options: CreateWeComMcpToolOptions = {}) {
             break;
           }
           default:
-            result = textResult({ error: `未知操作类型: ${String(p.action)}，支持 list 和 call` });
+            result = textResult({
+              error: `未知操作类型: ${String(p.action)}，支持 list 和 call`,
+            });
         }
         mcpDebugLog(
           `[mcp] execute: action=${p.action}, category=${p.category}` +
-          (p.method ? `, method=${p.method}` : "") +
-          ` → 响应长度=${result.content[0].text.length} chars`,
+            (p.method ? `, method=${p.method}` : "") +
+            ` → 响应长度=${result.content[0].text.length} chars`,
         );
         return result;
       } catch (err) {
-        console.error(
-          `[mcp] execute: action=${p.action}, category=${p.category}` +
-          (p.method ? `, method=${p.method}` : "") +
-          ` → 异常: ${err instanceof Error ? err.message : JSON.stringify(err)}`,
+        // Tool 错误会作为结构化结果返回给当前 Agent；默认不把参数、路径或平台响应写控制台。
+        mcpDebugLog(
+          `[mcp] execute failed: action=${p.action}, category=${p.category}` +
+            (p.method ? `, method=${p.method}` : "") +
+            `, error=${truncateDebugValue(err instanceof Error ? err.message : err)}`,
         );
         return errorResult(err);
       }

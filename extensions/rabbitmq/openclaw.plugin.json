@@ -237,12 +237,19 @@
           "requeueOnError": {
             "type": "boolean",
             "default": false
+          },
+          "shutdownTimeoutMs": {
+            "type": "number",
+            "minimum": 100,
+            "maximum": 120000,
+            "default": 30000
           }
         },
         "default": {
           "prefetch": 50,
           "concurrency": 4,
-          "requeueOnError": false
+          "requeueOnError": false,
+          "shutdownTimeoutMs": 30000
         }
       },
       "dispatch": {

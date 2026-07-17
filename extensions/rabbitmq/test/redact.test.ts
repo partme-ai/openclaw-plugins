@@ -23,4 +23,9 @@ describe("redactRabbitmqError", () => {
     expect(result).not.toMatch(/[\u0000-\u001f\u007f]/u);
     expect(result.length).toBe(500);
   });
+
+  it("ESM 运行时复用 OpenClaw 官方云凭据脱敏规则", () => {
+    const secret = `AKIA${"A".repeat(16)}`;
+    expect(redactRabbitmqError(`connect failed ${secret}`)).not.toContain(secret);
+  });
 });

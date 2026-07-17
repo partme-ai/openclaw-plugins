@@ -68,6 +68,8 @@ export type RabbitmqConfig = {
     prefetch: number;
     concurrency: number;
     requeueOnError: boolean;
+    /** 取消消费后等待已接纳 Agent Turn 完成 ACK/retry/DLQ 的最长时间。 */
+    shutdownTimeoutMs: number;
   };
   dispatch: {
     mode: DispatchMode;
@@ -123,6 +125,7 @@ export const DEFAULT_RABBITMQ_CONFIG: RabbitmqConfig = {
     prefetch: 50,
     concurrency: 4,
     requeueOnError: false,
+    shutdownTimeoutMs: 30_000,
   },
   dispatch: {
     mode: "embedded-agent",
@@ -284,6 +287,10 @@ export function resolveRabbitmqConfig(cfg: Record<string, unknown> | undefined |
           ? DEFAULT_RABBITMQ_CONFIG.consume.concurrency
           : typeof consume.concurrency === "number" ? consume.concurrency : Number.NaN,
       requeueOnError: consume.requeueOnError === true,
+      shutdownTimeoutMs:
+        consume.shutdownTimeoutMs === undefined
+          ? DEFAULT_RABBITMQ_CONFIG.consume.shutdownTimeoutMs
+          : typeof consume.shutdownTimeoutMs === "number" ? consume.shutdownTimeoutMs : Number.NaN,
     },
     dispatch: {
       mode: dispatchMode,
@@ -368,6 +375,7 @@ export function validateRabbitmqConfig(config: RabbitmqConfig): string[] {
   requireInteger(config.connection.publishConfirmTimeoutMs, 1, "connection.publishConfirmTimeoutMs");
   requireInteger(config.consume.prefetch, 0, "consume.prefetch");
   requireInteger(config.consume.concurrency, 1, "consume.concurrency");
+  requireInteger(config.consume.shutdownTimeoutMs, 100, "consume.shutdownTimeoutMs");
   requireInteger(config.dispatch.timeoutMs, 1, "dispatch.timeoutMs");
   requireInteger(config.idempotency.ttlMs, 1, "idempotency.ttlMs");
   requireInteger(config.idempotency.maxEntries, 1, "idempotency.maxEntries");

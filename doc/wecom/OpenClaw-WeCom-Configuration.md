@@ -349,6 +349,7 @@ Use this when you need a WeCom self-built app, proactive push, scheduled deliver
       "agent": {
         "corpId": "<YOUR_CORP_ID>",
         "corpSecret": "<YOUR_CORP_SECRET>",
+        "apiBaseUrl": "https://qyapi.weixin.qq.com",
         "agentId": "<YOUR_AGENT_ID>",
         "token": "<YOUR_CALLBACK_TOKEN>",
         "encodingAESKey": "<YOUR_43_CHAR_ENCODING_AES_KEY>",
@@ -374,6 +375,7 @@ https://<GATEWAY_HOST>/plugins/wecom/agent/default
 |-------|-------------|
 | `agent.corpId` | WeCom Corp ID. |
 | `agent.corpSecret` | Self-built app secret. |
+| `agent.apiBaseUrl` | OpenAPI base URL; defaults to the official origin. Overrides require HTTPS, except loopback HTTP for local fixtures. |
 | `agent.agentId` | Self-built app Agent ID. |
 | `agent.token` | Callback verification token. |
 | `agent.encodingAESKey` | 43-character callback AES key. |

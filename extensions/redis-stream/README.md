@@ -46,6 +46,24 @@ It uses the official [node-redis](https://github.com/redis/node-redis) client an
 
 ### Dual-mode architecture
 
+The character view gives a fast reliability overview; the Mermaid view below preserves the renderable component graph:
+
+```text
+┌────────────────────────────── Redis ───────────────────────────────────────┐
+│ Pub/Sub: PUBLISH → SUBSCRIBE ───────────────┐  at-most-once               │
+│ Stream:  XADD → Consumer Group → PEL ───────┤  at-least-once              │
+│                  ▲             └─ max attempts → DLQ + XACK (MULTI)       │
+│                  └──────────── XAUTOCLAIM ───┘                             │
+└──────────────────────────────────────────────┬────────────────────────────┘
+                                               ▼
+┌──────────────────────── openclaw-redis-stream ────────────────────────────┐
+│ filter → route → claimable dedupe → bounded Agent turn → PUBLISH / XADD  │
+│ stop: halt intake → drain accepted work → clear publisher → close Redis  │
+└──────────────────────────────────────────────┬────────────────────────────┘
+                                               ▼
+                                  OpenClaw Runtime / Agent
+```
+
 ```mermaid
 flowchart LR
     E["External system"] --> M{"channelMode"}
@@ -63,6 +81,35 @@ flowchart LR
     XS --> PEL["PEL"]
     PEL -->|"XAUTOCLAIM"| G
     PEL -->|"maxAttempts"| DLQ["dead-letter stream"]
+```
+
+### Bounded Gateway shutdown
+
+```text
+Gateway abort
+      │
+      ├── destroy Subscriber / Consumer (stop intake)
+      ▼
+drain active Stream work + accepted Pub/Sub tasks (one shutdownTimeoutMs budget)
+      │
+      ├── drained ──→ clear publisher ──→ QUIT main client
+      └── timeout
+           ├── Stream: no XACK; keep entry in PEL for XAUTOCLAIM
+           ├── Pub/Sub: warn that the outcome is unknown
+           └── clear publisher ──→ DESTROY main client
+```
+
+```mermaid
+flowchart TD
+    A["Gateway abort"] --> S["Destroy Subscriber / Consumer<br/>stop new intake"]
+    S --> W["Drain active Stream work<br/>and accepted Pub/Sub tasks"]
+    W -->|"completed in budget"| C["Clear publisher"]
+    C --> Q["QUIT main client"]
+    W -->|"shutdownTimeoutMs reached"| T["Emit observable timeout warning"]
+    T --> P["Stream: no XACK<br/>entry remains in PEL"]
+    T --> U["Pub/Sub: outcome unknown"]
+    P --> D["Clear publisher / DESTROY main client"]
+    U --> D
 ```
 
 Pub/Sub and Stream deliberately expose different delivery guarantees. Pub/Sub overload is bounded by
@@ -231,7 +278,7 @@ When `channelMode` is `stream`, the stream entry values are mapped to internal f
 | `connection.maxRetries`           | `number`  | `0`     | Max reconnect attempts; `0` retries indefinitely                                           |
 | `connection.maxPubSubInFlight`    | `number`  | `32`    | Maximum concurrent Pub/Sub messages admitted into the Agent pipeline; overload is rejected |
 | `connection.startupTimeoutMs`     | `number`  | `30000` | Connection startup timeout                                                                 |
-| `connection.shutdownTimeoutMs`    | `number`  | `10000` | Graceful Redis client shutdown timeout before the socket is destroyed                      |
+| `connection.shutdownTimeoutMs`    | `number`  | `10000` | Total accepted-work drain and main-client shutdown budget; destroys the socket on timeout  |
 
 ### Agent Pipeline
 
@@ -258,7 +305,7 @@ When `channelMode` is `stream`, the stream entry values are mapped to internal f
 - Pub/Sub mode is intentionally at-most-once: it has no ACK, replay, dead letter, or overload recovery. Use Stream mode for production workflows that cannot lose messages.
 - Pub/Sub processing is capped by `maxPubSubInFlight`. Messages received beyond the cap are rejected and counted as failures instead of creating unbounded Agent turns.
 - `PUBLISH` replies/outbound messages fail when Redis reports zero active subscribers; command execution alone is not reported as successful delivery.
-- Subscriber startup and client shutdown are time-bounded. Shutdown first stops new intake, drains accepted Stream and Pub/Sub Agent tasks, and then closes the publisher and main clients. A socket is destroyed after `shutdownTimeoutMs` so Gateway termination cannot hang indefinitely.
+- `shutdownTimeoutMs` is one shared budget for accepted-work drain and main-client close. On timeout, Stream work is left unacknowledged in the PEL for reclaim, Pub/Sub reports an unknown outcome, and the socket is destroyed so Gateway termination stays bounded.
 - Idempotency is process-local and prevents duplicate work within one plugin process; it does not provide cross-node exactly-once semantics.
 
 ### Environment Variables

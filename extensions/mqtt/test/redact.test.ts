@@ -31,4 +31,9 @@ describe("redactMqttError", () => {
     expect(safe).not.toContain("\n");
     expect(safe).toContain("[REDACTED]");
   });
+
+  it("ESM 运行时真实调用 OpenClaw security-runtime", () => {
+    const secret = "AKIAABCDEFGHIJKLMNOP";
+    expect(redactMqttError(`broker error ${secret}`)).not.toContain(secret);
+  });
 });

@@ -49,4 +49,14 @@ describe("createAmapTools", () => {
     const payload = JSON.parse((await tool.execute("call", { keywords: "咖啡" })).content[0]!.text);
     expect(payload).toEqual({ success: false, error: "AMap tool result exceeded maxToolResultBytes" });
   });
+
+  it("does not expose credentials from a client failure to the Agent", async () => {
+    const get = vi.fn(async () => {
+      throw new Error("failed https://alice:pass@example.test?key=test Authorization: Bearer token-1\nnext");
+    });
+    const tool = createAmapTools({ senderIsOwner: true } as never, config, { get } as never)[0]!;
+    const payload = JSON.parse((await tool.execute("call", { keywords: "咖啡" })).content[0]!.text);
+    expect(payload.error).toContain("[REDACTED]");
+    expect(payload.error).not.toMatch(/alice:pass|\btest\b|token-1|\n/u);
+  });
 });

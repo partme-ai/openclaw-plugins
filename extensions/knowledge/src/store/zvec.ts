@@ -14,6 +14,7 @@ import { dirname } from 'node:path';
 import type { VectorStore, VectorChunk, VectorChunkMetadata, SearchOptions, ScoredChunk, StoreStats } from '../types.js';
 import { cosineSimilarity } from './math.js';
 import { assertVector } from './vector-validation.js';
+import { safeKnowledgeError } from '../shared/safe-error.js';
 
 /** ZVec 配置 */
 export type ZVecConfig = {
@@ -251,7 +252,8 @@ export class ZVecStore implements VectorStore {
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       this.flush().catch((err) => {
-        console.error('[ZVec] Auto-save failed:', err);
+        // 定时器没有上层 await 调用者；必须留下诊断，但不能输出包含持久化路径的原始 Error。
+        console.error(`[knowledge] ZVec auto-save failed: ${safeKnowledgeError(err)}`);
       });
     }, this.config.autoSaveIntervalMs);
     this.saveTimer.unref?.();

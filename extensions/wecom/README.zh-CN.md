@@ -6,6 +6,20 @@
 
 ## 三种接入模式
 
+```text
+企业微信用户
+   │
+   ├── Bot WebSocket ──┐
+   ├── Bot Webhook ────┼──▶ 验签 / 解密 / 去重 / 访问策略
+   └── Agent Webhook ──┘                │
+                                        ▼
+                              OpenClaw Agent Runtime
+                                        │
+                         ┌──────────────┼──────────────┐
+                         ▼              ▼              ▼
+                    Bot WS 回复    Webhook 回复    Agent HTTP API
+```
+
 ```mermaid
 flowchart LR
     U["企业微信用户"] --> WS["智能机器人<br/>WebSocket 长连接"]
@@ -55,6 +69,42 @@ openclaw channels status --probe
 - 多账号配置应保证凭据、媒体目录、去重状态和回复路由相互隔离。
 - Bot 回复和 Agent HTTP 降级必须保留明确优先级，避免同一消息被双重回复。
 - 媒体本地路径必须落在 `mediaLocalRoots` 白名单内，并受大小和超时限制。
+- `wecom_mcp` 的 JSON 与 SSE 响应统一限制为 32 MiB；即使服务端不提供 `Content-Length`，也会按流式实际字节计数并在越界时取消读取。
+- 智能表格 `image_path` / `file_path` 不是任意文件读取能力：必须通过 Path Guard、默认根/stateDir/账号级 `mediaLocalRoots` 白名单和符号链接边界，单次最多 20 个文件、单文件 10 MiB、总计 20 MiB。
+- MCP 文件参数与本地绝对路径默认不写控制台；只有显式开启 MCP debug 时输出有界诊断。
+
+```text
+wecom_mcp call
+      │
+      ▼
+Interceptor beforeCall
+      ├── 普通参数 ───────────────────────────────┐
+      └── image_path / file_path                  │
+              │                                   │
+              ▼                                   │
+        Path Guard + mediaLocalRoots              │
+              │                                   │
+              ▼                                   │
+        有界读取与上传，替换为 image_url/file_id  │
+              └───────────────────────────────────┤
+                                                  ▼
+                                  MCP HTTP / SSE（最大 32 MiB）
+                                                  │
+                                                  ▼
+                                      Interceptor afterCall
+```
+
+```mermaid
+flowchart LR
+    T["wecom_mcp call"] --> B["beforeCall 拦截器"]
+    B --> G{"包含本地文件路径?"}
+    G -->|"是"| P["Path Guard<br/>mediaLocalRoots / symlink / size"]
+    G -->|"否"| H["MCP HTTP / SSE"]
+    P --> U["上传并替换标准字段"] --> H
+    H --> L{"响应 <= 32 MiB?"}
+    L -->|"否"| X["取消流并失败关闭"]
+    L -->|"是"| A["afterCall 拦截器"]
+```
 
 ## 验证
 
@@ -69,3 +119,22 @@ pnpm --filter @partme.ai/wecom build
 ```
 
 生产回归应分别覆盖启用的接入模式：签名错误、密文错误、重复回调、断线重连、主动发送、媒体、群白名单、流式回复中断和 Gateway 重启。
+
+`agent.apiBaseUrl` 默认是 `https://qyapi.weixin.qq.com`。覆盖地址要求 HTTPS；只有
+`localhost` / loopback 可以使用明文 HTTP，供本机协议夹具和完全离线 E2E 使用。
+
+```text
+加密 XML 回调 ──AES/SHA1──> OpenClaw Gateway ──Agent Turn──> 本地模型夹具
+       │                                                   │
+       └── MsgId 持久化去重 <── 进程内重放 / Gateway 重启 ──┘
+                                                           │
+                                                           ▼
+                                      WeCom API 客户端 ──> 本地 OpenAPI 夹具
+```
+
+```mermaid
+flowchart LR
+  Callback["加密 XML 回调"] -->|"AES/SHA1"| Gateway["OpenClaw Gateway"]
+  Gateway --> Turn["Agent Turn"] --> Model["本地模型夹具"] --> Client["WeCom API 客户端"] --> Api["本地 OpenAPI 夹具"]
+  Callback --> Dedup["MsgId 持久化去重"] --> Stop["进程内/重启后重放短路"]
+```

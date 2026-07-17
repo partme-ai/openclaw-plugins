@@ -18,6 +18,39 @@
 
 ## 运行架构
 
+字符图先把“接收事件”和“可靠投递”两个阶段分开，便于快速理解崩溃恢复与成功确认发生在哪里；下方 Mermaid 保留可渲染的完整关系：
+
+```text
+OpenClaw Hooks
+message_received / message_sent / reply_payload_sending
+        │
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│ openclaw-router                                              │
+│                                                              │
+│  规则匹配 ──▶ 模板展开 ──▶ hop 循环保护 ──▶ 稳定幂等键        │
+│                                      │                       │
+│                                      ▼                       │
+│                         ┌────────────────────────┐           │
+│                         │ 持久 Outbox            │           │
+│                         │ 原子批量写 + fsync     │           │
+│                         └───────────┬────────────┘           │
+│                                     ▼                        │
+│                         有界并发 Worker                       │
+│                    ┌────────┴─────────┐                      │
+│                    ▼                  ▼                      │
+│            成功确认后提交幂等键   失败：退避重试              │
+│                                       │                      │
+│                                       ▼                      │
+│                                  持久 DLQ                    │
+└───────────────────────────────────────┬──────────────────────┘
+                                        ▼
+                         Channel Outbound Adapter
+                                        │
+                                        ▼
+                              目标 IM / MQ / Gotify
+```
+
 ```mermaid
 flowchart LR
     Hooks["OpenClaw 官方 Hooks<br/>message_received / message_sent / reply_payload_sending"]
@@ -36,6 +69,7 @@ flowchart LR
 ```
 
 Outbox 是投递事实的唯一来源：只有目标 adapter 确认成功后才删除 pending 并提交幂等记录；因此 Gateway 崩溃重启不会把“已入队”误当成“已送达”。
+adapter 异常在进入日志、状态、审计和持久 DLQ 前统一脱敏 URL 用户信息、认证头与常见 Token/Secret 字段。
 
 ## 特性
 

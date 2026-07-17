@@ -16,6 +16,31 @@ Security properties:
 - `/wechat-ipad/status` uses exact routing plus OpenClaw Gateway authentication and returns sanitized state only.
 - Managed start/stop lifecycle, instance-owned hot-reload cleanup, bounded exponential reconnect with jitter, and persistent message deduplication are included. Readiness requires a validated `login_status=logged_in`, not merely an open socket.
 
+The text diagram is retained for terminals and raw Markdown; the Mermaid diagram is retained for rendered component relationships.
+
+```text
+┌──────────────────────────┐       ┌────────────────────────────────────┐
+│ External iPad bridge     │       │ OpenClaw Gateway 2026.7.1         │
+│ protocol / login state   │──WS──▶│ WechatIpadBridge                   │
+│                          │◀HTTP──│ auth/validation/heartbeat/reconnect│
+└────────────┬─────────────┘       │        │                           │
+             ▼                     │ bounded queue → policy/dedupe      │
+        WeChat network             │        ▼                           │
+                                   │      Agent → outbound pipeline     │
+                                   └────────────────────────────────────┘
+```
+
+```mermaid
+flowchart LR
+    W["WeChat network"] <--> S["External iPad bridge<br/>protocol and login state"]
+    S -->|"WebSocket events"| B["WechatIpadBridge<br/>auth, validation, heartbeat, reconnect"]
+    B --> Q["Bounded serial queue"] --> P["Ingress policy + persistent dedupe"] --> A["OpenClaw Agent"]
+    A --> O["Outbound pipeline"] --> B
+    B -->|"HTTP API"| S
+```
+
+Transport and HTTP business errors are sanitized at the shared bridge boundary: URL userinfo, Bearer/Authorization/token fields, configured credentials, control characters, and overlong diagnostics do not pass through to logs or channel errors.
+
 See [README.md](./README.md) for the complete configuration and external bridge contract.
 
 Verification:

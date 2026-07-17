@@ -5,6 +5,39 @@
 - 通过官方 `before_prompt_build` Hook，为已配置的 IM 渠道追加平台交互约束。
 - 通过官方 `message_received`、`message_sent` Hook 观察真实收发结果，再经公共 channel outbound adapter 将 `UnifiedMessage` 镜像到 MQ。
 
+字符图先展示 Hook 主链与后台镜像的边界；下方 Mermaid 保留同一架构的可渲染视图：
+
+```text
+Source Channel
+      │
+      ├── before_prompt_build ──▶ platform context ──▶ Agent Prompt
+      │
+      ├── message_received ─────┐
+      │                         │
+      └── actual send ──▶ message_sent(success=true)
+                                │
+                                ▼
+                       UnifiedMessage normalize
+                                │
+                                ▼
+                     bounded in-memory queue
+                       (ordered per traceId)
+                                │
+                    ┌───────────┴───────────┐
+                    ▼                       ▼
+             adapter confirmed        timeout / retry
+                                             │
+                                             ▼
+                                    exhausted: log failure
+                                │
+                                ▼
+                     Channel Outbound Adapter
+                                │
+                                ▼
+                    MQTT / RabbitMQ / Redis Stream /
+                         RocketMQ / STOMP
+```
+
 ```mermaid
 flowchart LR
     SRC["来源 Channel"] -->|"入站已进入 OpenClaw"| IN["message_received"]
@@ -117,6 +150,7 @@ Bridge 只对实际安装、运行、在配置中启用且正确发出官方消�
 - 进程崩溃会丢失尚未完成的内存任务，因此 Bridge 本身是 best-effort/at-least-once 观测镜像，不提供持久 Outbox。
 - 需要跨重启恢复、DLQ、审计和运维回放时，应使用 `@partme.ai/openclaw-router` 的持久投递链路。
 - Broker 超时后的实际结果可能未知，下游应按 `messageId`/`deliveryQueueId` 实现幂等。
+- 来源 Channel 与目标 MQ adapter 的错误在进入 Gateway 日志前会脱敏 URL 用户信息、Authorization、Token/Secret，并清理控制字符、限制诊断长度。
 
 ```mermaid
 stateDiagram-v2

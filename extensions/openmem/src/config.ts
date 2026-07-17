@@ -21,6 +21,7 @@ export interface OpenMemConfig {
   timeoutMs: number;
   maxAttempts: number;
   retryBaseDelayMs: number;
+  maxRequestBytes: number;
   maxResponseBytes: number;
   maxCacheBytes: number;
   allowSharedRecall: boolean;
@@ -38,6 +39,7 @@ const DEFAULTS: OpenMemConfig = {
   timeoutMs: 5_000,
   maxAttempts: 3,
   retryBaseDelayMs: 100,
+  maxRequestBytes: 2 * 1024 * 1024,
   maxResponseBytes: 2 * 1024 * 1024,
   maxCacheBytes: 8 * 1024 * 1024,
   allowSharedRecall: false,
@@ -47,7 +49,7 @@ const DEFAULTS: OpenMemConfig = {
 
 const CONFIG_KEYS = new Set([
   "enabled", "required", "baseUrl", "agentId", "maxSearchResults", "timeoutMs",
-  "maxAttempts", "retryBaseDelayMs", "maxResponseBytes", "maxCacheBytes",
+  "maxAttempts", "retryBaseDelayMs", "maxRequestBytes", "maxResponseBytes", "maxCacheBytes",
   "allowSharedRecall", "apiKeyEnv", "authHeader", "authScheme",
 ]);
 
@@ -116,6 +118,7 @@ export function resolveConfig(api: Pick<OpenClawPluginApi, "pluginConfig">): Ope
     timeoutMs: integer("timeoutMs", raw.timeoutMs, DEFAULTS.timeoutMs, 100, 120_000),
     maxAttempts: integer("maxAttempts", raw.maxAttempts, DEFAULTS.maxAttempts, 1, 5),
     retryBaseDelayMs: integer("retryBaseDelayMs", raw.retryBaseDelayMs, DEFAULTS.retryBaseDelayMs, 0, 5_000),
+    maxRequestBytes: integer("maxRequestBytes", raw.maxRequestBytes, DEFAULTS.maxRequestBytes, 1024, 8 * 1024 * 1024),
     maxResponseBytes: integer("maxResponseBytes", raw.maxResponseBytes, DEFAULTS.maxResponseBytes, 1024, 16 * 1024 * 1024),
     maxCacheBytes: integer("maxCacheBytes", raw.maxCacheBytes, DEFAULTS.maxCacheBytes, 1024 * 1024, 64 * 1024 * 1024),
     allowSharedRecall: boolean("allowSharedRecall", raw.allowSharedRecall, DEFAULTS.allowSharedRecall),

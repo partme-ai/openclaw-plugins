@@ -33,11 +33,7 @@
     "openclaw.plugin.json",
     "README.md",
     "README.zh-CN.md",
-    "LICENSE",
-    "tsconfig.json",
-    "tsup.config.ts",
-    "vitest.config.ts",
-    ".gitignore"
+    "LICENSE"
   ],
   "devDependencies": {
     "@types/node": "^22.0.0",

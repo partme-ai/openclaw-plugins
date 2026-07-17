@@ -122,6 +122,17 @@ describe("openmem OpenClaw 2026.7.1 contract", () => {
     expect(ingest?.body.events[0].eventId).toHaveLength(64);
   });
 
+  it("agent_end 缺少可信 sessionKey 时拒绝写入共享 unknown 会话", async () => {
+    const api = createApi();
+    registerPlugin(api);
+    await api.hooks.get("agent_end")?.(
+      { success: true, runId: "run-missing-session", messages: [{ role: "user", content: "private" }] },
+      { agentId: "main" },
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("session key is unavailable"));
+  });
+
   it("service stop 关闭客户端，后续 sync 失败", async () => {
     vi.mocked(fetch).mockResolvedValue(json({ status: "ok" }));
     const api = createApi();

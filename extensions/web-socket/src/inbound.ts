@@ -58,9 +58,6 @@ export async function handleInboundMessage(message: WebsocketInboundMessage): Pr
     message.frameAgentId,
   );
   if (!route) {
-    console.warn(
-      `[openclaw-web-socket] No agent route for connection=${message.connectionId}`,
-    );
     throw new Error("No agent route: set defaultAgentId or agentBindings");
   }
 
@@ -88,7 +85,6 @@ export async function handleInboundMessage(message: WebsocketInboundMessage): Pr
   const idempotencyKey = message.messageId?.trim();
   const claim = idempotencyKey ? await inboundDedupe.claim(idempotencyKey) : undefined;
   if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
-    console.log(`[openclaw-web-socket] Duplicate inbound dropped: ${message.messageId}`);
     return;
   }
 
@@ -99,10 +95,6 @@ export async function handleInboundMessage(message: WebsocketInboundMessage): Pr
   });
 
   const text = parsed.text;
-  console.log(
-    `[openclaw-web-socket] Inbound: connection=${message.connectionId}, peer=${peerId}, agent=${agentId}, session=${sessionKey}, source=${route.source}`,
-  );
-
   try {
     await dispatchToRuntime(
       sessionKey,

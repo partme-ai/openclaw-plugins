@@ -22,6 +22,35 @@
 
 ## 架构总览
 
+字符图先展示 TCP/TLS 信任边界、事务缓冲和 ACK 队列；下方 Mermaid 保留完整可渲染关系：
+
+```text
+后端服务 / 设备 / 边缘网关
+        │  STOMP 1.2 TCP/TLS
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│ openclaw-stomp                                               │
+│                                                              │
+│ Listener ──▶ CONNECT 认证 ──▶ 增量帧解析 ──▶ 速率/容量闸门   │
+│                                              │               │
+│                           ┌──────────────────┴──────────┐    │
+│                           ▼                             ▼    │
+│                BEGIN / 事务动作缓冲            直接 SEND     │
+│                           │                             │    │
+│                    COMMIT / ABORT                       │    │
+│                           └──────────────┬──────────────┘    │
+│                                          ▼                   │
+│                         Topic Binding + Agent 白名单          │
+│                                          │                   │
+│                              message-sdk → Agent              │
+│                                          │                   │
+│                                          ▼                   │
+│                    订阅队列 + prefetch + ACK/NACK + 背压      │
+└──────────────────────────────────────────┬───────────────────┘
+                                           ▼
+                               MESSAGE / RECEIPT / ERROR
+```
+
 ```mermaid
 flowchart LR
   subgraph Clients["STOMP 1.2 调用方"]
@@ -49,7 +78,25 @@ flowchart LR
   Agent --> Runtime --> SDK --> Session --> Queue --> Listener
 ```
 
+普通 `SEND` 和事务 `COMMIT` 中的 Agent/Runtime 内部异常不会原样返回客户端：协议只暴露稳定的 `Agent dispatch failed`，脱敏原因进入 Gateway 日志与 Channel 状态，避免 TLS 地址、Authorization、passcode 或 Token 泄露。
+
 ### 有界资源与故障边界
+
+```text
+完整 STOMP 帧
+      │
+      ▼
+CONNECT / 认证 / 速率 / 帧大小
+      ├── 失败 ──────────────▶ ERROR / 断开
+      ▼
+是否携带 transaction?
+      ├── 否 ────────────────▶ 立即执行 Agent Turn
+      ▼ 是
+连接级事务动作总量硬上限（不是每事务各自一份上限）
+      │
+      ├── COMMIT ────────────▶ 按序执行 Agent Turn
+      └── ABORT ─────────────▶ 丢弃未执行动作
+```
 
 ```mermaid
 flowchart TD
@@ -104,6 +151,7 @@ flowchart TD
         "maxPendingMessages": 32,
         "messagesPerMinute": 120,
         "connectTimeoutMs": 10000,
+        "shutdownTimeoutMs": 10000,
         "maxDurableSubscriptions": 1000
       },
       "defaultAckMode": "auto",
@@ -191,6 +239,15 @@ content-type:application/json
 
 ### 事务时序
 
+```text
+BEGIN(tx-1) ──▶ SEND(tx-1) ──▶ 有界动作缓冲 ──▶ COMMIT(tx-1)
+                      │                                  │
+                      │ 此时不触发 Agent                 ▼
+                      │                         按序执行 Agent Turn
+                      │                                  │
+                      └──────── ABORT 时丢弃 ◀───────────┘
+```
+
 ```mermaid
 sequenceDiagram
   autonumber
@@ -212,7 +269,7 @@ sequenceDiagram
 
 事务范围只覆盖当前 TCP 连接内的动作排序和延迟执行。Agent 或外部系统已经产生的副作用无法做分布式回滚；COMMIT 中途失败时服务端返回 `ERROR`，并禁止重复 COMMIT 造成已执行动作再次运行。
 
-持久订阅需要同时配置 `allowDurableSubscriptions: true`，并在 `SUBSCRIBE` 帧中携带 `durable:true` 或 `persistent:true`。它只在同一 Gateway 进程和认证 login 下跨 TCP 重连保留，不能跨进程重启。
+持久订阅需要同时配置 `allowDurableSubscriptions: true`，并在 `SUBSCRIBE` 帧中携带 `durable:true` 或 `persistent:true`。启用持久订阅时强制要求 login/passcode 认证，避免所有匿名客户端共享 `anonymous` 所有者；它只在同一 Gateway 进程和认证 login 下跨 TCP 重连保留，不能跨进程重启。
 
 ### ACK、NACK 与重连状态
 
@@ -233,6 +290,42 @@ stateDiagram-v2
 
 `publishOutboundMessage` 和正式 Channel Adapter 都要求至少一个活动或进程内 durable 订阅接受消息；零订阅时抛错，让 Router/调用方决定重试或 DLQ，不会返回伪成功。这里的“接受”表示进入有界队列或写入 Socket，不代表远端业务已经消费；需要端到端消费确认应使用专业 Broker。
 
+### Gateway 停机排空
+
+```text
+AbortSignal
+    │
+    ▼
+accepting=false ──▶ 停止心跳 ──▶ 关闭 TCP/TLS 连接
+                                      │
+                                      ▼
+                         等待已入队 processing Promise
+                                      │
+                      ┌───────────────┴────────────────┐
+                      ▼                                ▼
+                    drained                  shutdownTimeoutMs
+                      └────────▶ 清理 durable / Listener / Runtime
+```
+
+```mermaid
+sequenceDiagram
+  participant G as OpenClaw Gateway
+  participant S as STOMP TCP Server
+  participant Q as 每连接 processing 队列
+  participant A as Agent Runtime
+  G->>S: AbortSignal / stopAccount
+  S->>S: accepting=false，停止心跳
+  S--xS: 关闭 TCP/TLS 连接
+  S->>Q: 等待已接收帧
+  Q->>A: 完成在途 Agent Turn
+  A-->>Q: success / failure
+  Q-->>S: drained
+  S-->>G: 清理完成
+  Note over S,Q: 超过 shutdownTimeoutMs 时告警并有界退出
+```
+
+排空只等待已经进入协议串行队列的工作；尚未 COMMIT 的事务动作会随连接关闭丢弃。强杀仍可能产生结果未知窗口，因此有副作用的客户端必须提供业务幂等键。
+
 ## 生产运维
 
 - 远程网络只暴露 TLS，并配置入口层和防火墙访问控制。
@@ -249,6 +342,6 @@ pnpm --filter @partme.ai/openclaw-stomp test
 pnpm --filter @partme.ai/openclaw-stomp build
 ```
 
-2026-07-17 本地门禁：10 个测试文件、48 个测试通过，typecheck/build 通过；覆盖 TCP/TLS、累计 ACK、NACK 重投、事务、durable 订阅和零订阅失败语义。
+2026-07-17 本地门禁：11 个测试文件、53 个测试通过，typecheck 通过；覆盖 TCP/TLS、累计 ACK、NACK 重投、事务动作总量、durable 身份隔离、官方 ESM 脱敏、停机排空和零订阅失败语义。最终 build、覆盖率、tarball 与 OpenClaw 2026.7.1 E2E 见生产优化计划。
 
 许可证：MIT。

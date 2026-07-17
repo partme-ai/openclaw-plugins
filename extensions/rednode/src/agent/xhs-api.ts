@@ -6,6 +6,7 @@
  * 拼入 URL 或错误信息。
  */
 import { createHash } from "node:crypto";
+import { safeRednodeError } from "../shared/safe-error.js";
 import type {
   RednodeApiResponse,
   RednodeOperation,
@@ -244,19 +245,12 @@ function toRequestError(
   );
 }
 
-/** 清洗不可信平台/网络错误，避免控制字符和超长文本进入 Agent 上下文或日志。 */
+/** 清洗不可信平台/网络错误；除真实配置值外，也遮蔽常见认证字段和 URL 用户信息。 */
 function safeExternalMessage(
   value: unknown,
   config: RednodePluginConfig,
 ): string {
-  let normalized = String(value ?? "unknown error")
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  for (const secret of [config.appKey, config.appSecret]) {
-    if (secret) normalized = normalized.replaceAll(secret, "[REDACTED]");
-  }
-  return (normalized || "unknown error").slice(0, 300);
+  return safeRednodeError(value, [config.appKey, config.appSecret]);
 }
 
 function resolvePath(

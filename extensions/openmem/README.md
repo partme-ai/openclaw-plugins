@@ -10,11 +10,43 @@ Production-oriented OpenMem REST bridge for OpenClaw 2026.7.1.
 - Current-turn ingestion with deterministic event IDs for idempotent retries.
 - Crash recovery that rebuilds missing working-memory projections from persisted events and deterministic turn markers.
 - `MemorySearchManager` automatic recall and the `openmem_search` tool.
-- Request timeouts, bounded retries, streaming response-size limits, JSON/schema validation, health checks, and shutdown cancellation.
+- Request-size limits, timeouts, jittered bounded retries, streaming response-size limits, JSON/schema validation, health checks, and shutdown cancellation.
 - LRU source cache bounded by both entry count and `maxCacheBytes`.
 - Optional environment-backed auth headers for a protecting reverse proxy.
 
 OpenMem currently performs FTS5 plus character n-gram reranking. It does not currently expose embedding/vector recall, and this plugin reports that capability accurately.
+
+## Runtime architecture
+
+```text
+OpenClaw hooks / Memory Host / openmem_search
+                    │
+                    ▼
+        Agent + session continuity boundary
+                    │
+          ┌─────────┴──────────┐
+          ▼                    ▼
+ stable events/ingest     continuity search
+          │                    │
+          ▼                    ▼
+ marked working append    bounded source LRU
+          │                    │
+          └─────────┬──────────┘
+                    ▼
+       OpenMem REST Sidecar (fixed endpoint)
+```
+
+```mermaid
+flowchart LR
+    Hooks["session_start / agent_end / session_end"] --> Scope["Agent + session scope"]
+    Tool["Memory Host / openmem_search"] --> Scope
+    Scope --> Events["stable events/ingest"]
+    Events --> Append["turnId-marked working append"]
+    Scope --> Recall["continuity recall<br/>or explicit shared hybrid"]
+    Recall --> Cache["bounded source LRU"]
+    Append --> Sidecar["OpenMem REST Sidecar"]
+    Cache --> Sidecar
+```
 
 ## Write recovery model
 
@@ -58,6 +90,7 @@ Only enable `allowSharedRecall` when the sidecar belongs to one trusted user/dom
           "timeoutMs": 5000,
           "maxAttempts": 3,
           "retryBaseDelayMs": 100,
+          "maxRequestBytes": 2097152,
           "maxResponseBytes": 2097152,
           "maxCacheBytes": 8388608,
           "allowSharedRecall": false,
@@ -72,6 +105,31 @@ Only enable `allowSharedRecall` when the sidecar belongs to one trusted user/dom
 ```
 
 `required: true` makes an unavailable sidecar fail Gateway startup. API keys are never accepted inline; `apiKeyEnv` names the environment variable to read.
+
+`maxRequestBytes` and `maxResponseBytes` default to 2 MiB. A turn is capped at 100 messages (16,000 characters each), a search query at 4,000 characters, and a missing trusted session key fails closed instead of writing into a shared fallback thread.
+
+### HTTP safety boundary
+
+```text
+Hook / Search → bounded JSON body → fixed Sidecar URL → auth + timeout/cancel
+                                                   │
+                  jittered retry ◀── safe 408/425/429/5xx only
+                                                   │
+                                                   ▼
+                         bounded response stream → JSON/schema → redaction
+```
+
+```mermaid
+flowchart LR
+    Call["Hook / Search"] --> Body["JSON request byte limit"]
+    Body --> URL["fixed origin and path prefix"]
+    URL --> Fetch["auth + timeout + lifecycle cancel"]
+    Fetch --> Stream["streaming response byte limit"]
+    Stream --> Schema["JSON / schema checks"]
+    Fetch -->|"retrySafe transient failure"| Retry["jittered exponential backoff"]
+    Retry --> Fetch
+    Schema --> Safe["official + local redaction"]
+```
 
 ## OpenMem server boundary
 

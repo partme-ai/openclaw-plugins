@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const replyMock = vi.hoisted(() => vi.fn());
-const generateReqIdMock = vi.hoisted(() => vi.fn((prefix: string) => `${prefix}-id`));
+const generateReqIdMock = vi.hoisted(() =>
+  vi.fn((prefix: string) => `${prefix}-id`),
+);
 const fetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@wecom/aibot-node-sdk", () => ({
@@ -42,15 +44,22 @@ vi.mock("./debug-log.js", () => ({
   },
 }));
 
-import { WECOM_USERID_HEADER, clearCategoryCache, sendJsonRpc } from "./transport.js";
+import {
+  WECOM_USERID_HEADER,
+  clearCategoryCache,
+  sendJsonRpc,
+} from "./transport.js";
 
 function createJsonRpcResponse(result: unknown) {
-  return new Response(JSON.stringify({ jsonrpc: "2.0", id: "rpc-id", result }), {
-    status: 200,
-    headers: {
-      "content-type": "application/json",
+  return new Response(
+    JSON.stringify({ jsonrpc: "2.0", id: "rpc-id", result }),
+    {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+      },
     },
-  });
+  );
 }
 
 describe("sendJsonRpc requester userid header", () => {
@@ -64,7 +73,9 @@ describe("sendJsonRpc requester userid header", () => {
       body: { url: "https://mcp.example.com" },
     });
 
-    fetchMock.mockImplementation(async () => createJsonRpcResponse({ tools: [] }));
+    fetchMock.mockImplementation(async () =>
+      createJsonRpcResponse({ tools: [] }),
+    );
   });
 
   afterEach(() => {
@@ -79,8 +90,9 @@ describe("sendJsonRpc requester userid header", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
-    const seenHeaders = fetchMock.mock.calls.map(([, init]) =>
-      (init as { headers?: Record<string, string> } | undefined)?.headers,
+    const seenHeaders = fetchMock.mock.calls.map(
+      ([, init]) =>
+        (init as { headers?: Record<string, string> } | undefined)?.headers,
     );
 
     expect(seenHeaders[0]?.[WECOM_USERID_HEADER]).toBe("wecom-user-1");
@@ -92,8 +104,9 @@ describe("sendJsonRpc requester userid header", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
-    const seenHeaders = fetchMock.mock.calls.map(([, init]) =>
-      (init as { headers?: Record<string, string> } | undefined)?.headers,
+    const seenHeaders = fetchMock.mock.calls.map(
+      ([, init]) =>
+        (init as { headers?: Record<string, string> } | undefined)?.headers,
     );
 
     expect(seenHeaders[0]?.[WECOM_USERID_HEADER]).toBeUndefined();
@@ -120,5 +133,41 @@ describe("sendJsonRpc requester userid header", () => {
     });
 
     expect(mcpDebugLogMock).toHaveBeenCalled();
+  });
+
+  it("rejects an oversized JSON response before buffering it", async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonRpcResponse({ initialized: true }))
+      .mockResolvedValueOnce(
+        new Response('{"jsonrpc":"2.0"}', {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "content-length": String(40 * 1024 * 1024),
+          },
+        }),
+      );
+
+    await expect(sendJsonRpc("contact", "tools/list")).rejects.toThrow(
+      "MCP response exceeds",
+    );
+  });
+
+  it("applies the same response limit to SSE", async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonRpcResponse({ initialized: true }))
+      .mockResolvedValueOnce(
+        new Response('data: {"jsonrpc":"2.0"}\n\n', {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "content-length": String(40 * 1024 * 1024),
+          },
+        }),
+      );
+
+    await expect(sendJsonRpc("doc", "tools/list")).rejects.toThrow(
+      "MCP response exceeds",
+    );
   });
 });

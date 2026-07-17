@@ -26,6 +26,7 @@ import { testRednode } from "./rednode.mjs";
 import { testWechat } from "./wechat.mjs";
 import { testWechatIpad } from "./wechat-ipad.mjs";
 import { testWecomKf } from "./wecom-kf.mjs";
+import { testWecom } from "./wecom.mjs";
 import { testBridge } from "./bridge.mjs";
 import { testNacos } from "./nacos.mjs";
 import { resolvePlugins } from "../lib/registry.mjs";
@@ -56,6 +57,7 @@ const ADAPTERS = {
   wechat: testWechat,
   "wechat-ipad": testWechatIpad,
   "wecom-kf": testWecomKf,
+  wecom: testWecom,
   bridge: testBridge,
   nacos: testNacos,
 };

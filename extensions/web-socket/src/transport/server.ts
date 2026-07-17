@@ -23,6 +23,8 @@ import {
 } from "./connection-hub.js";
 import { redactWebSocketError } from "../shared/redact.js";
 
+type WebSocketErrorLog = { error: (message: string) => void };
+
 export type WebsocketInboundCallback = (ctx: {
   connectionId: string;
   rawPayload: string;
@@ -140,9 +142,15 @@ export async function startWebSocketServer(
   messageHandler: WebsocketInboundCallback,
   onConnect?: (connectionId: string) => void,
   onDisconnect?: (connectionId: string) => void,
+  log?: WebSocketErrorLog,
 ): Promise<void> {
   if (serverRunning) return;
-  const nextHttpServer = await createListener(config);
+  let nextHttpServer: HttpServer | HttpsServer;
+  try {
+    nextHttpServer = await createListener(config);
+  } catch (error) {
+    throw new Error(redactWebSocketError(error, config));
+  }
   return new Promise((resolve, reject) => {
     activeConfig = config;
     const serverCfg = config.server;
@@ -230,14 +238,14 @@ export async function startWebSocketServer(
             sendToConnection(connectionId, serializeAcceptedFrame(parsed.messageId), config.limits.maxBufferedBytes);
           })
           .catch((error: unknown) => {
-            console.error(`[openclaw-web-socket] Inbound handler failed ${connectionId}: ${redactWebSocketError(error, config)}`);
+            log?.error(`[openclaw-web-socket] Inbound handler failed ${connectionId}: ${redactWebSocketError(error, config)}`);
             sendToConnection(connectionId, serializeErrorFrame("Message processing failed"), config.limits.maxBufferedBytes);
           })
           .finally(() => { pending -= 1; }));
       });
       ws.on("close", cleanup);
       ws.on("error", (error) => {
-        console.error(`[openclaw-web-socket] Server socket error ${connectionId}: ${redactWebSocketError(error, config)}`);
+        log?.error(`[openclaw-web-socket] Server socket error ${connectionId}: ${redactWebSocketError(error, config)}`);
         cleanup();
       });
     });
@@ -247,12 +255,12 @@ export async function startWebSocketServer(
       httpServer = null;
       wss = null;
       nextWss.close();
-      reject(error);
+      reject(new Error(redactWebSocketError(error, config)));
     };
     nextHttpServer.once("error", onStartupError);
     nextHttpServer.listen(serverCfg.wsPort, serverCfg.host, () => {
       nextHttpServer.off("error", onStartupError);
-      nextHttpServer.on("error", (error) => console.error(`[openclaw-web-socket] HTTP server error: ${redactWebSocketError(error, config)}`));
+      nextHttpServer.on("error", (error) => log?.error(`[openclaw-web-socket] HTTP server error: ${redactWebSocketError(error, config)}`));
       serverRunning = true;
       heartbeatTimer = setInterval(() => {
         const now = Date.now();

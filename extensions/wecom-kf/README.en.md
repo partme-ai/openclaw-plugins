@@ -26,6 +26,23 @@
 - Recommended per-account/channel/peer session isolation.
 - Optional Agent templates and transfer-to-human skills.
 
+The text diagram is retained for terminals and raw Markdown; the rendered Mermaid sequence and state diagrams remain in the message-flow section.
+
+```text
+WeChat customer
+      │
+      ▼
+WeCom KF ── encrypted callback ──▶ verify/decrypt/fast ACK
+      ▲                                  │
+      │                                  ▼
+      │                         serialized sync_msg
+      │                         cursor + msgid claim
+      │                                  │
+      └── send_msg / transfer ◀── Agent or system event
+
+Failure: release msgid and retain the page cursor; shutdown: 503 then drain
+```
+
 ## Install and Update
 
 ```bash

@@ -6,6 +6,36 @@
 
 ## 架构总览
 
+字符图先突出浏览器边界、每连接隔离和 ACK 窗口；下方 Mermaid 保留完整可渲染的组件关系：
+
+```text
+浏览器 / Spring STOMP Client
+        │  WS/WSS Upgrade
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│ openclaw-web-stomp                                           │
+│                                                              │
+│ 路径 + Origin + 容量 ──▶ CONNECT 认证 ──▶ 心跳 / 速率限制    │
+│                                              │               │
+│                                              ▼               │
+│                                每连接串行帧队列               │
+│                                              │               │
+│                    ┌─────────────────────────┴──────────┐    │
+│                    ▼                                    ▼    │
+│       SEND /queue/agent.{id}              SUBSCRIBE 当前会话 │
+│                    │                                    │    │
+│                    ▼                                    │    │
+│       message-sdk → OpenClaw Agent                      │    │
+│                    │                                    │    │
+│                    └──────── Agent Reply ───────────────┘    │
+│                                         │                    │
+│                                         ▼                    │
+│                         MESSAGE + 有界 pending ACK 窗口       │
+└─────────────────────────────────────────┬────────────────────┘
+                                          ▼
+                                    ACK / NACK / RECEIPT
+```
+
 ```mermaid
 flowchart LR
     Browser["浏览器 / Spring STOMP 客户端"]
@@ -23,6 +53,8 @@ flowchart LR
 ```
 
 插件在单个 OpenClaw Gateway 进程内提供轻量 STOMP 接入层。每条 WebSocket 连接拥有独立会话 ID、串行帧队列、订阅集合和 ACK 窗口；连接断开或 Gateway 关闭时全部清理，不会把旧订阅泄漏给重连后的新会话。
+
+Agent/Runtime 内部异常不会原样返回客户端：外部只收到稳定的 `Agent dispatch failed`，脱敏后的原因进入 Gateway 日志与 Channel 状态，避免 URL 凭据、Authorization 或 Token 泄露到 STOMP `ERROR` 帧。
 
 ## 能力边界
 
@@ -73,7 +105,8 @@ flowchart LR
         "maxPendingMessages": 32,
         "maxPendingAcks": 100,
         "messagesPerMinute": 120,
-        "connectTimeoutMs": 10000
+        "connectTimeoutMs": 10000,
+        "shutdownTimeoutMs": 10000
       },
       "ws": {
         "allowedOrigins": ["https://console.example.com"]
@@ -171,6 +204,33 @@ client.activate();
 
 ## 失败与背压语义
 
+字符图强调“Agent 已生成回复”并不等于“客户端已收到”：插件必须等到 `ws.send` 回调成功，才把本次 reply 计为已投递。
+
+```text
+Agent 回复 wire
+      │
+      ▼
+查找当前 session Subscription
+      │
+      ├── 无订阅 / ACK 窗口已满 ───────▶ 投递失败
+      │
+      ▼
+登记 pending ACK（非 auto）
+      │
+      ▼
+检查 bufferedAmount + 帧字节数
+      │
+      ├── 超限 ──▶ 1013 关闭 + 撤销 pending ACK
+      │
+      ▼
+等待 ws.send callback
+      │
+      ├── error ─▶ terminate + 撤销 pending ACK
+      │
+      ▼
+确认投递成功 ──▶ Agent reply pipeline 完成
+```
+
 ```mermaid
 flowchart TD
     F["收到 STOMP 帧"] --> V{"协议、认证、速率与 Destination 合法？"}
@@ -202,6 +262,43 @@ stateDiagram-v2
 
 `NACK` 的 `Dropped` 是本插件的明确边界：只释放内存 ACK 状态，不自动重投。需要重投/DLQ 时应使用真正的 Broker。
 
+## 停机排空
+
+```text
+Gateway AbortSignal
+       │
+       ▼
+停止接受新帧 ──▶ 停止心跳 ──▶ 关闭所有 WebSocket
+                                      │
+                                      ▼
+                         等待已入队 Agent Turn 完成
+                                      │
+                     ┌────────────────┴───────────────┐
+                     ▼                                ▼
+              全部完成                         shutdownTimeoutMs
+                     │                                │
+                     └──────────▶ 清理订阅 / ACK / Listener
+```
+
+```mermaid
+sequenceDiagram
+    participant G as OpenClaw Gateway
+    participant S as Web STOMP Server
+    participant Q as 每连接串行队列
+    participant A as Agent Runtime
+    G->>S: AbortSignal / stopAccount
+    S->>S: accepting=false，停止心跳
+    S--xS: 关闭 WS，阻止新帧
+    S->>Q: 等待快照中的队列
+    Q->>A: 完成已接收 Agent Turn
+    A-->>Q: success / failure
+    Q-->>S: drained
+    S-->>G: 清理完成
+    Note over S,Q: 超过 shutdownTimeoutMs 时告警并有界退出
+```
+
+停机不会在已接收的 `SEND` 仍处于 Agent 管道时立刻清空 Runtime 引用。`shutdownTimeoutMs` 是排空上限；超时会写入脱敏告警，结果可能未知，业务侧仍应使用幂等键处理极端强杀窗口。
+
 ## 生产运维
 
 - 收紧 `allowedAgentIds`；客户端无法访问不在名单中的 Agent。
@@ -218,6 +315,6 @@ pnpm --filter @partme.ai/openclaw-web-stomp test
 pnpm --filter @partme.ai/openclaw-web-stomp build
 ```
 
-2026-07-17 本地门禁：12 个测试文件、74 个测试通过，typecheck/build 通过；其中包含同一毫秒多条投递的累计 ACK 顺序回归。
+2026-07-17 本地门禁：13 个测试文件、77 个测试通过，typecheck 通过；覆盖同一毫秒多条投递的累计 ACK 顺序、官方 ESM 脱敏、WebSocket 写出确认和停机排空回归。最终 build、覆盖率、tarball 与 OpenClaw 2026.7.1 E2E 结果见生产优化计划。
 
 许可证：MIT。

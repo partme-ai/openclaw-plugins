@@ -15,6 +15,15 @@ import type {
 import { redactTraceText } from "../shared/redact.js";
 
 const BATCH_SIZE = 50;
+/** Collector 的成功响应只允许携带很小的 partialSuccess 元数据，禁止无界读取响应体。 */
+const MAX_RESPONSE_BYTES = 64 * 1024;
+
+class OtlpExportError extends Error {
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+    this.name = "OtlpExportError";
+  }
+}
 
 /** OTLP/HTTP JSON 后端；支持有界缓冲、串行发送、超时和重试。 */
 export class OtlpBackend implements TracingBackend {
@@ -97,19 +106,27 @@ export class OtlpBackend implements TracingBackend {
       let lastError: unknown;
       for (let attempt = 1; attempt <= this.retryAttempts; attempt += 1) {
         try {
-          await this.send(spans);
+          const partial = await this.send(spans);
           this.inFlightSpans = 0;
           this.status = {
             ...this.status,
-            healthy: true,
+            healthy: partial.rejectedSpans === 0,
             bufferedSpans: this.buffer.length,
+            droppedSpans: this.status.droppedSpans + partial.rejectedSpans,
             lastExportAt: Date.now(),
-            lastError: undefined,
+            lastError: partial.rejectedSpans > 0
+              ? redactTraceText(
+                `OTLP partial success rejected ${partial.rejectedSpans} spans` +
+                (partial.errorMessage ? `: ${partial.errorMessage}` : ""),
+              )
+              : undefined,
           };
+          // partialSuccess 表示同批其它 Span 已被接受；重发整批会复制已接受数据，只记录拒绝数。
           lastError = undefined;
           break;
         } catch (error) {
           lastError = error;
+          if (error instanceof OtlpExportError && !error.retryable) break;
           if (attempt < this.retryAttempts) {
             await delay(Math.min(250 * 2 ** (attempt - 1), 2_000));
           }
@@ -129,7 +146,7 @@ export class OtlpBackend implements TracingBackend {
     }
   }
 
-  private async send(spans: Span[]): Promise<void> {
+  private async send(spans: Span[]): Promise<{ rejectedSpans: number; errorMessage?: string }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     timeout.unref?.();
@@ -142,18 +159,16 @@ export class OtlpBackend implements TracingBackend {
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw new Error(`OTLP HTTP ${response.status}: ${response.statusText}`);
+        const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+        throw new OtlpExportError(`OTLP HTTP ${response.status}: ${response.statusText}`, retryable);
       }
-      const responseText = await response.text();
+      const responseText = await readResponseTextBounded(response, MAX_RESPONSE_BYTES);
       if (responseText) {
         try {
           const payload = JSON.parse(responseText) as { partialSuccess?: { rejectedSpans?: number; errorMessage?: string } };
           const rejected = payload.partialSuccess?.rejectedSpans ?? 0;
           if (rejected > 0) {
-            throw new Error(
-              `OTLP partial success rejected ${rejected} spans` +
-              (payload.partialSuccess?.errorMessage ? `: ${payload.partialSuccess.errorMessage}` : ""),
-            );
+            return { rejectedSpans: rejected, errorMessage: payload.partialSuccess?.errorMessage };
           }
         } catch (error) {
           if (error instanceof SyntaxError) {
@@ -163,6 +178,7 @@ export class OtlpBackend implements TracingBackend {
           }
         }
       }
+      return { rejectedSpans: 0 };
     } finally {
       clearTimeout(timeout);
     }
@@ -217,6 +233,40 @@ export class OtlpBackend implements TracingBackend {
       })),
     };
   }
+}
+
+/** 按真实流量限制 Collector 响应，不能只信任可伪造或缺失的 Content-Length。 */
+async function readResponseTextBounded(response: Response, maximumBytes: number): Promise<string> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maximumBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new OtlpExportError(`OTLP response exceeds ${maximumBytes} bytes`, false);
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximumBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new OtlpExportError(`OTLP response exceeds ${maximumBytes} bytes`, false);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(joined);
 }
 
 function toOtlpAttributes(attributes: Record<string, string | number | boolean>) {

@@ -30,6 +30,7 @@ import { retrieveContext } from '../indexer/scheduler.js';
 import { hybridSearch } from '../retriever/hybrid.js';
 import { mergeKnowledgeConfig, validateKnowledgeConfig } from '../config/config.js';
 import { resolveConversationNamespace } from './namespace.js';
+import { safeKnowledgeError } from '../shared/safe-error.js';
 
 // ===================================================================
 // 运行时状态
@@ -327,7 +328,7 @@ async function handleBeforePromptBuild(
           .map((rd) => chunkMap.get(rd.text))
           .filter((c): c is NonNullable<typeof c> => c !== undefined);
       } catch (err) {
-        logger.warn(`[knowledge] reranker failed; using original order: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn(`[knowledge] reranker failed; using original order: ${safeKnowledgeError(err)}`);
         // reranker 失败不阻断，使用原始排序
         chunks = chunks.slice(0, topK);
       }
@@ -352,7 +353,7 @@ async function handleBeforePromptBuild(
         const maxTokens = injection.maxTokens ?? 2048;
         contextText = await tokenizer.truncate(contextText, maxTokens);
       } catch (err) {
-        logger.warn(`[knowledge] tokenizer truncation failed; using original context: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn(`[knowledge] tokenizer truncation failed; using original context: ${safeKnowledgeError(err)}`);
         // 截断失败不阻断
       }
     } else {
@@ -374,7 +375,7 @@ async function handleBeforePromptBuild(
 
     return { prependSystemContext: injectedContext };
   } catch (error) {
-    logger.error(`[knowledge] before_prompt_build failed: ${error instanceof Error ? error.message : String(error)}`);
+    logger.error(`[knowledge] before_prompt_build failed: ${safeKnowledgeError(error)}`);
     return undefined;
   }
 }

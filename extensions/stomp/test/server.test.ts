@@ -67,6 +67,36 @@ beforeEach(async () => {
 afterEach(async () => { await stopStompTcpServer(); });
 
 describe("stomp TCP server", () => {
+  it("does not expose internal Agent errors through SEND or transaction COMMIT", async () => {
+    const logger = { error: vi.fn() };
+    const secret = "stomp-production-secret";
+    const inbound = vi.fn().mockRejectedValue(new Error(
+      `Agent unavailable tls://user:password@internal?access_token=${secret}`,
+    ));
+    await startStompTcpServer(config, inbound, logger);
+    const client = await connectClient(config);
+    await stompConnect(client);
+
+    const sendError = readUntil(client, "Agent dispatch failed");
+    client.write(frame("SEND", { destination: "/queue/agent", receipt: "send-secret" }, "direct"));
+    const directResponse = await sendError;
+    expect(directResponse).not.toMatch(/stomp-production-secret|user:password|Agent unavailable/);
+    expect(directResponse).not.toContain("RECEIPT\nreceipt-id:send-secret");
+
+    client.write(frame("BEGIN", { transaction: "tx-secret" }));
+    client.write(frame("SEND", { destination: "/queue/agent", transaction: "tx-secret" }, "transactional"));
+    const commitError = readUntil(client, "Agent dispatch failed");
+    client.write(frame("COMMIT", { transaction: "tx-secret", receipt: "commit-secret" }));
+    const commitResponse = await commitError;
+    expect(commitResponse).not.toMatch(/stomp-production-secret|user:password|Agent unavailable/);
+    expect(commitResponse).not.toContain("RECEIPT\nreceipt-id:commit-secret");
+
+    const logs = JSON.stringify(logger.error.mock.calls);
+    expect(logs).not.toMatch(/stomp-production-secret|user:password/);
+    expect(logs).toContain("[REDACTED]");
+    client.destroy();
+  });
+
   it("routes SEND through an explicit topic binding", async () => {
     const inbound = vi.fn<(message: InboundMessage) => Promise<void>>().mockResolvedValue(undefined);
     config = {
@@ -181,6 +211,46 @@ describe("stomp TCP server", () => {
     await aborted;
     expect(inbound).toHaveBeenCalledTimes(1);
     client.destroy();
+  });
+
+  it("按连接限制全部事务动作总数，避免多事务平方级膨胀", async () => {
+    config = { ...config, maxPendingMessages: 2 };
+    await startStompTcpServer(config, vi.fn());
+    const client = await connectClient(config);
+    await stompConnect(client);
+    for (const [command, headers, body, receipt] of [
+      ["BEGIN", { transaction: "tx-a", receipt: "begin-a" }, "", "begin-a"],
+      ["BEGIN", { transaction: "tx-b", receipt: "begin-b" }, "", "begin-b"],
+      ["SEND", { destination: "/queue/agent", transaction: "tx-a", receipt: "send-a" }, "one", "send-a"],
+      ["SEND", { destination: "/queue/agent", transaction: "tx-b", receipt: "send-b" }, "two", "send-b"],
+    ] as const) {
+      const acknowledged = readUntil(client, `receipt-id:${receipt}`);
+      client.write(frame(command, headers, body));
+      await acknowledged;
+    }
+    const rejected = readUntil(client, "Connection transaction action limit exceeded");
+    client.write(frame("SEND", { destination: "/queue/agent", transaction: "tx-a" }, "three"));
+    await expect(rejected).resolves.toContain("ERROR");
+    client.destroy();
+  });
+
+  it("停机时等待已经进入 Agent 管道的帧完成", async () => {
+    let release!: () => void;
+    const inbound = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    config.shutdownTimeoutMs = 1_000;
+    await startStompTcpServer(config, inbound);
+    const client = await connectClient(config);
+    await stompConnect(client);
+    client.write(frame("SEND", { destination: "/queue/agent" }, "drain-me"));
+    await vi.waitFor(() => expect(inbound).toHaveBeenCalledTimes(1));
+
+    let stopped = false;
+    const stopping = stopStompTcpServer().then(() => { stopped = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    expect(stopped).toBe(true);
   });
 
   it("defers transactional ACK until COMMIT releases prefetch", async () => {

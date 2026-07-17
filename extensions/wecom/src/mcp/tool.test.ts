@@ -28,7 +28,9 @@ describe("createWeComMcpTool", () => {
     runAfterCallMock.mockReset();
     isWeComMcpDebugEnabledMock.mockReturnValue(false);
     resolveBeforeCallMock.mockResolvedValue({});
-    runAfterCallMock.mockImplementation(async (_ctx: unknown, result: unknown) => result);
+    runAfterCallMock.mockImplementation(
+      async (_ctx: unknown, result: unknown) => result,
+    );
   });
 
   it("passes trusted requester userid to tools/list requests", async () => {
@@ -96,5 +98,43 @@ describe("createWeComMcpTool", () => {
     const joined = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(joined).not.toContain('"big"');
     expect(joined).toBe("");
+  });
+
+  it("passes normalized mediaLocalRoots into the interceptor context", async () => {
+    sendJsonRpcMock.mockResolvedValue({ ok: true });
+    resolveBeforeCallMock.mockResolvedValue({
+      options: {},
+      args: { replaced: true },
+    });
+
+    const tool = createWeComMcpTool({
+      mediaLocalRoots: [" /data/wecom ", "", "  "],
+    });
+    await tool.execute("tool-call-roots", {
+      action: "call",
+      category: "doc",
+      method: "smartsheet_add_records",
+      args: { records: [] },
+    });
+
+    expect(resolveBeforeCallMock).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaLocalRoots: ["/data/wecom"] }),
+    );
+  });
+
+  it("returns a structured error without writing default console errors", async () => {
+    sendJsonRpcMock.mockRejectedValue(new Error("platform secret detail"));
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const tool = createWeComMcpTool();
+
+    const result = await tool.execute("tool-call-error", {
+      action: "list",
+      category: "doc",
+    });
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(result.content[0].text).toContain("platform secret detail");
   });
 });

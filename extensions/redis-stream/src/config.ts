@@ -151,7 +151,8 @@ export const RedisStreamConfigSchema = z
       context.addIssue({
         code: "custom",
         path: ["stream", "pendingClaimIdleMs"],
-        message: "must be greater than network.agentReplyTimeoutMs to prevent reclaiming an active Agent turn",
+        message:
+          "must be greater than network.agentReplyTimeoutMs to prevent reclaiming an active Agent turn",
       });
     }
   });
@@ -309,7 +310,13 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
         maxRetries: { type: "number", minimum: 0, default: 0 },
         maxPubSubInFlight: { type: "number", minimum: 1, default: 32 },
         startupTimeoutMs: { type: "number", minimum: 1, default: 30000 },
-        shutdownTimeoutMs: { type: "number", minimum: 1, default: 10000 },
+        shutdownTimeoutMs: {
+          type: "number",
+          minimum: 1,
+          default: 10000,
+          description:
+            "Total accepted-work drain and main-client shutdown budget; Stream entries remain pending on timeout",
+        },
       },
       default: {
         allowInsecureRemote: false,

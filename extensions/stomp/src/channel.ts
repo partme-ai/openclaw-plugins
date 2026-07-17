@@ -19,6 +19,7 @@ import {
 } from "./config.js";
 import { dispatchInboundMessage } from "./inbound.js";
 import { stompTcpSetupAdapter, stompTcpSetupWizard } from "./onboarding.js";
+import { redactStompTcpError } from "./shared/redact.js";
 import { getStatusSnapshot, publishToDestination, startStompTcpServer, stopStompTcpServer } from "./transport/server.js";
 import type { ResolvedStompTcpAccount } from "./types.js";
 
@@ -35,7 +36,7 @@ function normalizeTarget(raw: string): string | undefined {
 async function monitor(ctx: ChannelGatewayContext<ResolvedStompTcpAccount>): Promise<void> {
   const config = resolveStompTcpConfig(ctx.cfg as unknown as Record<string, unknown>);
   try {
-    await startStompTcpServer(config, dispatchInboundMessage);
+    await startStompTcpServer(config, dispatchInboundMessage, ctx.log);
     ctx.setStatus({
       accountId: ctx.account.accountId,
       configured: true,
@@ -46,7 +47,7 @@ async function monitor(ctx: ChannelGatewayContext<ResolvedStompTcpAccount>): Pro
     } as ChannelAccountSnapshot);
     await waitForAbort(ctx.abortSignal);
   } catch (error) {
-    ctx.setStatus({ accountId: ctx.account.accountId, running: false, lastError: String(error) } as ChannelAccountSnapshot);
+    ctx.setStatus({ accountId: ctx.account.accountId, running: false, lastError: redactStompTcpError(error) } as ChannelAccountSnapshot);
     throw error;
   } finally {
     await stopStompTcpServer();

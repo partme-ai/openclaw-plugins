@@ -10,6 +10,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { CommittedPersistenceError, DurableRouteStore, type RouteAuditEntry } from "./durable-store.js";
+import { redactRouterError } from "./redact.js";
 import type { PublishInboundParams, RouteAction, RouteDeliveryTask, RouterConfig } from "./types.js";
 
 /**
@@ -45,7 +46,7 @@ type EnqueueParams = {
 };
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return redactRouterError(error);
 }
 
 /** 根据事件、规则和动作组成稳定 SHA-256 投递幂等键。 */
@@ -194,19 +195,21 @@ export class ReliableRouteDispatcher {
       this.counters.delivered += 1;
       if (this.config.audit.logToConsole) this.api.logger.info(`[router] delivered task=${task.id} rule=${task.ruleId} target=${task.payload.channel}`);
     } catch (error) {
-      this.lastError = errorMessage(error);
+      // 同一份脱敏文本同时进入状态、持久 DLQ/审计和日志，避免不同出口遗漏凭据。
+      const diagnostic = errorMessage(error);
+      this.lastError = diagnostic;
       this.lastErrorAt = Date.now();
       if (error instanceof Error && error.name === "RouterDeliveryTimeoutError") this.counters.unknownOutcomes += 1;
       const attempts = task.attempts + 1;
       const dead = attempts >= this.config.delivery.maxAttempts;
       const nextAttemptAt = dead ? null : Date.now() + this.retryDelay(attempts);
-      const outcome = await this.store.markFailed(task, errorMessage(error), nextAttemptAt);
+      const outcome = await this.store.markFailed(task, diagnostic, nextAttemptAt);
       if (outcome === "dead-letter") {
         this.counters.deadLetters += 1;
-        this.api.logger.error(`[router] delivery exhausted task=${task.id} rule=${task.ruleId}: ${errorMessage(error)}`);
+        this.api.logger.error(`[router] delivery exhausted task=${task.id} rule=${task.ruleId}: ${diagnostic}`);
       } else {
         this.counters.retries += 1;
-        this.api.logger.warn(`[router] delivery ${outcome === "blocked" ? "blocked by full DLQ" : `retry ${attempts}/${this.config.delivery.maxAttempts}`} task=${task.id}: ${errorMessage(error)}`);
+        this.api.logger.warn(`[router] delivery ${outcome === "blocked" ? "blocked by full DLQ" : `retry ${attempts}/${this.config.delivery.maxAttempts}`} task=${task.id}: ${diagnostic}`);
       }
     } finally {
       this.inflight -= 1;

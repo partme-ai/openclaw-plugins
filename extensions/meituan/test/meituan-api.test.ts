@@ -186,6 +186,18 @@ describe("MeituanClient", () => {
     ).rejects.toThrow("complete form payload");
   });
 
+  it("does not expose credentials echoed by a proxy network error", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error(
+        `proxy https://alice:pass@example.test appAuthToken=${config.appAuthToken} ` +
+        `signKey=${config.signKey} DeveloperId=${config.developerId}\nAuthorization: Bearer bearer-1`,
+      );
+    }));
+    const rejection = new MeituanClient(config).invoke("receipt_query", {});
+    await expect(rejection).rejects.toThrow("[REDACTED]");
+    await expect(rejection).rejects.not.toThrow(/alice:pass|auth-secret|sign-secret|123456|bearer-1|\n/u);
+  });
+
   it("does not disclose appAuthToken to operations that do not require auth", async () => {
     const fetchMock = vi.fn(
       async () => new Response(JSON.stringify({ code: "OP_SUCCESS" })),

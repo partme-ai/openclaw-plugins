@@ -51,7 +51,6 @@ export const webSocketOutbound: ChannelOutboundAdapter = {
       throw new Error(`WebSocket outbound delivery failed: ${connectionId}`);
     }
 
-    console.log(`[openclaw-web-socket] Reply sent to ${connectionId}`);
     return { channel: "web-socket", messageId: sessionKey };
   },
 };

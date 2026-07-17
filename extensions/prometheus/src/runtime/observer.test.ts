@@ -6,7 +6,12 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import type { ResolvedPrometheusConfig } from "../config/plugin-config.js";
-import { refreshRuntimeSnapshots, stopPluginObservers } from "./observer.js";
+import {
+  refreshRuntimeSnapshots,
+  refreshSliMetrics,
+  registerPluginObservers,
+  stopPluginObservers,
+} from "./observer.js";
 import { getRuntimeStore, initializeRuntimeStore } from "./store.js";
 
 const config: ResolvedPrometheusConfig = {
@@ -70,6 +75,55 @@ describe("refreshRuntimeSnapshots", () => {
 
     expect(getRuntimeStore().providerSnapshots).toEqual([]);
     expect(newApi.runtime.modelAuth.resolveApiKeyForProvider).not.toHaveBeenCalled();
+    stopPluginObservers();
+  });
+});
+
+describe("Prometheus hook label guardrails", () => {
+  it("按全部 tool 标签系列计算真实错误率", () => {
+    initializeRuntimeStore(apiWithResolver(async () => ({})) as never, config);
+    const registry = getRuntimeStore().registry;
+    registry.inc("openclaw_tool_calls_total", 3, {
+      help: "calls",
+      type: "counter",
+      labels: { tool: "search" },
+    });
+    registry.inc("openclaw_tool_calls_total", 1, {
+      help: "calls",
+      type: "counter",
+      labels: { tool: "browser" },
+    });
+    registry.inc("openclaw_tool_call_failures_total", 2, {
+      help: "failures",
+      type: "counter",
+      labels: { tool: "search" },
+    });
+
+    refreshSliMetrics();
+
+    expect(registry.getSampleValue("openclaw_sli_tool_error_ratio")).toBe(0.5);
+    stopPluginObservers();
+  });
+
+  it("动态工具名超过预算后聚合到 other", () => {
+    const hooks = new Map<string, (...args: any[]) => void>();
+    const api = {
+      ...apiWithResolver(async () => ({})),
+      on: (name: string, listener: (...args: any[]) => void) => {
+        hooks.set(name, listener);
+        return () => hooks.delete(name);
+      },
+    };
+    initializeRuntimeStore(api as never, config);
+    registerPluginObservers(api as never);
+
+    for (let index = 0; index < 70; index += 1) {
+      hooks.get("before_tool_call")?.({ toolName: `dynamic-tool-${index}` });
+    }
+
+    const samples = getRuntimeStore().registry.getSamplesByName("openclaw_tool_calls_total");
+    expect(samples).toHaveLength(65);
+    expect(samples.find((sample) => sample.labels?.tool === "other")?.value).toBe(6);
     stopPluginObservers();
   });
 });

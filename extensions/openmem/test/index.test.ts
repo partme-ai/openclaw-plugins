@@ -98,6 +98,12 @@ describe("OpenMemClient", () => {
     expect(cancelled).toBe(true);
   });
 
+  it("在发出请求前拒绝超出字节预算的 JSON Body", async () => {
+    const client = new OpenMemClient(makeConfig({ maxRequestBytes: 1024, maxAttempts: 1 }));
+    await expect(client.post("/events/ingest", { content: "界".repeat(500) })).rejects.toThrow("request exceeds");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("拒绝绝对 URL，避免内部调用点绕过 Sidecar 地址", async () => {
     const client = new OpenMemClient(makeConfig({ maxAttempts: 1 }));
     await expect(client.get("https://attacker.example/data")).rejects.toThrow("relative API path");
@@ -148,6 +154,16 @@ describe("OpenMemSearchManager 真实 API 契约", () => {
   it("跳过不符合 OpenMem Schema 的 chunk", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(json({ chunks: [{ content: "old wrong field", score: 1 }], sources: [] }));
     expect(await createOpenMemSearchManager("http://127.0.0.1:3317").search("x")).toEqual([]);
+  });
+
+  it("拒绝异常长 query 与负分 chunk", async () => {
+    const manager = createOpenMemSearchManager("http://127.0.0.1:3317");
+    await expect(manager.search("x".repeat(4_001))).rejects.toThrow("4000");
+    vi.mocked(fetch).mockResolvedValueOnce(json({
+      chunks: [{ text: "bad", score: -1, source: "memory:m1", recall_type: "knowledge" }],
+      sources: [],
+    }));
+    await expect(manager.search("bad")).resolves.toEqual([]);
   });
 
   it("readFile 优先读取搜索缓存并支持分页", async () => {
@@ -203,6 +219,18 @@ describe("OpenMem session 生命周期", () => {
       { role: "user", content: "old" }, { role: "assistant", content: "old answer" },
       { role: "user", content: [{ type: "text", text: "new" }] }, { role: "assistant", content: "answer" },
     ])).toEqual([{ role: "user", content: "new" }, { role: "assistant", content: "answer" }]);
+  });
+
+  it("把异常长当前轮限制为 100 条并保留起始 user 与最新回复", () => {
+    const messages = [
+      { role: "user", content: "question" },
+      ...Array.from({ length: 150 }, (_, index) => ({ role: "tool", content: `tool-${index}` })),
+      { role: "assistant", content: "answer" },
+    ];
+    const normalized = normalizeTurn(messages);
+    expect(normalized).toHaveLength(100);
+    expect(normalized[0]?.content).toBe("question");
+    expect(normalized.at(-1)?.content).toBe("answer");
   });
 
   it("start → ingest(idempotent eventId) → append → commit", async () => {

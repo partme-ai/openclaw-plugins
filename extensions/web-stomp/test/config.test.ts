@@ -68,6 +68,12 @@ describe("web-stomp config", () => {
               { login: "hashed", passwordHash: "deadbeef", hashAlgorithm: "sha512" },
             ],
           },
+          tls: {
+            enabled: true,
+            keyFile: "/private/stomp.key",
+            certFile: "/private/stomp.crt",
+            caFile: "/private/ca.crt",
+          },
         },
       },
     });
@@ -75,6 +81,7 @@ describe("web-stomp config", () => {
 
     expect(serialized).not.toContain("never-return-this");
     expect(serialized).not.toContain("deadbeef");
+    expect(serialized).not.toContain("/private/");
     expect(serialized).toContain("credentialConfigured");
     expect(serialized).toContain("sha512");
   });

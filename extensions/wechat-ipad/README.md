@@ -6,6 +6,21 @@
 
 ## 架构与职责边界
 
+下面的字符图保留给终端、源码注释和 Markdown 原文阅读；后续 Mermaid 架构、时序与状态图继续保留，不互相替代。
+
+```text
+┌──────────────────────────┐       ┌────────────────────────────────────┐
+│ 外部 iPad 协议服务       │       │ OpenClaw Gateway 2026.7.1         │
+│ MMTLS / Protobuf / 登录态│──WS──▶│ WechatIpadBridge                   │
+│                          │◀HTTP──│ 鉴权/校验/心跳/重连/错误脱敏      │
+└────────────┬─────────────┘       │        │                           │
+             ▼                     │        ▼                           │
+          微信网络                 │ 有界队列 → 准入/命令/去重 → Agent │
+                                   │                         │          │
+                                   │                出站管道 ┘          │
+                                   └────────────────────────────────────┘
+```
+
 ```mermaid
 flowchart LR
     WX["微信网络"] <--> IPAD["外部 iPad 协议服务<br/>MMTLS / Protobuf / 登录态"]
@@ -81,7 +96,7 @@ stateDiagram-v2
 
 - 远程服务强制使用 `wss://` 和 `https://`；仅回环地址允许 `ws://`、`http://`。
 - 远程服务必须提供 Token；WebSocket 与 HTTP API 默认必须同主机，拆分部署需显式确认 `allowSplitBridgeHosts=true`。
-- Token 使用 WebSocket/HTTP `Authorization: Bearer ...`，不会进入 URL、状态输出或日志。
+- Token 使用 WebSocket/HTTP `Authorization: Bearer ...`，不会进入 URL、状态输出或日志；网络异常和 HTTP 业务错误在所有上层出口统一脱敏。
 - 配置可使用 `auth.token`，也可通过 `WECHAT_IPAD_BRIDGE_TOKEN` 注入。
 - 状态端点为精确匹配并强制 OpenClaw Gateway 认证，只返回脱敏连接状态。
 - 群消息默认关闭；开启后必须配置 `groupWhitelist`，除非再次显式设置 `allowAllGroups=true`。

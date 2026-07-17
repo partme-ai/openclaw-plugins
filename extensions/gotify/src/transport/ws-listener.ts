@@ -26,6 +26,7 @@ import { z } from "zod";
 import type { GotifyStreamEnvelope, ResolvedGotifyAccount } from "../types.js";
 import { normalizeServerUrl } from "./gotify-api.js";
 import { GotifyWebSocketError, GotifyConfigError } from "../shared/errors.js";
+import { redactGotifyError } from "../shared/redact.js";
 
 const GotifyStreamEnvelopeSchema = z.object({
   id: z.union([z.number(), z.string()]),
@@ -180,7 +181,7 @@ export function createGotifyWsListener(
         const parsed = GotifyStreamEnvelopeSchema.parse(JSON.parse(raw));
         await deps.onMessage(parsed);
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = redactGotifyError(error, account);
         deps.onStateChange?.({ running: true, lastError: errorMsg });
       }
     };
@@ -246,7 +247,7 @@ export function createGotifyWsListener(
       try {
         connect();
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = redactGotifyError(error, account);
         deps.onStateChange?.({ running: false, lastError: errorMsg });
       }
     }, scheduledDelay);

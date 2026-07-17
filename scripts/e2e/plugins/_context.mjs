@@ -36,6 +36,7 @@ export function createTestContext(pluginIds, services = {}) {
     wechatProvider: services.wechatProvider ?? null,
     wechatIpadProvider: services.wechatIpadProvider ?? null,
     wecomKfProvider: services.wecomKfProvider ?? null,
+    wecomProvider: services.wecomProvider ?? null,
     ports: E2E_PORTS,
     gatewayFetch,
     tcpReachable,

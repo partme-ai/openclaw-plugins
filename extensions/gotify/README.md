@@ -27,6 +27,25 @@
 
 ## Architecture
 
+The character diagram highlights how real-time frames, backlog replay, and the durable cursor cooperate without a Broker ACK. The Mermaid diagram below remains the complete renderable view.
+
+```text
+External Application ──POST /message──▶ Gotify Server
+                                           │
+                    ┌──────────────────────┴─────────────────────┐
+                    │ /stream live frames                       │ REST backlog
+                    ▼                                           ▼
+           bounded handoff / ordered queue             paged message-id replay
+                    └──────────────────────┬─────────────────────┘
+                                           ▼
+                              policy + dedupe + Agent Turn
+                                           │
+                 success: persist cursor → optional delete source
+                 failure: ordered retry → fail closed when exhausted
+
+stop: close WebSocket → abort retry waits → drain admitted turns → exit
+```
+
 ```mermaid
 flowchart LR
     APP["External Application"] -->|"POST /message"| G["Gotify Server"]
@@ -202,6 +221,9 @@ start. Corruption, permission errors, or other I/O failures stop replay instead 
 resetting the cursor to zero and duplicating historical Agent turns.
 Because Gotify does not expose an idempotency key for `POST /message`, message delivery is
 not blindly retried by default; an unknown timeout outcome must not create duplicate notifications.
+The per-account REST lock covers the full HTTP task, shutdown drains already admitted Agent turns
+after closing the WebSocket intake, and all status/doctor errors redact configured tokens and token
+query parameters.
 
 For local end-to-end tests, the simulated external sender may use a second Gotify Application token such as `GOTIFY_SENDER_APP_TOKEN`. That sender token is a test harness concern and is not part of the plugin's runtime config shape.
 

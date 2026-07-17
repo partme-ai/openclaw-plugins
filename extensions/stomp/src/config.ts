@@ -37,6 +37,7 @@ export const DEFAULT_STOMP_TCP_CONFIG: StompTcpConfig = {
   maxPendingMessages: 32,
   messagesPerMinute: 120,
   connectTimeoutMs: 10_000,
+  shutdownTimeoutMs: 10_000,
   maxDurableSubscriptions: 1_000,
   auth: { required: true, users: [] },
   subscribeTopics: [],
@@ -137,6 +138,7 @@ export function resolveStompTcpConfig(globalConfig: Record<string, unknown>): St
     maxPendingMessages: boundedInt(limits.maxPendingMessages, DEFAULT_STOMP_TCP_CONFIG.maxPendingMessages, 1, 10_000),
     messagesPerMinute: boundedInt(limits.messagesPerMinute, DEFAULT_STOMP_TCP_CONFIG.messagesPerMinute, 1, 1_000_000),
     connectTimeoutMs: boundedInt(limits.connectTimeoutMs, DEFAULT_STOMP_TCP_CONFIG.connectTimeoutMs, 1, 120_000),
+    shutdownTimeoutMs: boundedInt(limits.shutdownTimeoutMs, DEFAULT_STOMP_TCP_CONFIG.shutdownTimeoutMs, 100, 120_000),
     maxDurableSubscriptions: boundedInt(limits.maxDurableSubscriptions, DEFAULT_STOMP_TCP_CONFIG.maxDurableSubscriptions, 1, 100_000),
     auth: { required: auth.required !== false, users: authUsers(auth.users, auth) },
     subscribeTopics: strings(raw.subscribeTopics),
@@ -176,6 +178,7 @@ export function validateStompTcpConfig(config: StompTcpConfig): string[] {
   validateInteger(issues, "maxPendingMessages", config.maxPendingMessages, 1, 10_000);
   validateInteger(issues, "messagesPerMinute", config.messagesPerMinute, 1, 1_000_000);
   validateInteger(issues, "connectTimeoutMs", config.connectTimeoutMs, 1, 120_000);
+  validateInteger(issues, "shutdownTimeoutMs", config.shutdownTimeoutMs, 100, 120_000);
   validateInteger(issues, "maxDurableSubscriptions", config.maxDurableSubscriptions, 1, 100_000);
   validateInteger(issues, "prefetchCount", config.prefetchCount, 1, 100_000);
   if (!(["auto", "client", "client-individual"] as string[]).includes(config.defaultAckMode)) {
@@ -192,12 +195,25 @@ export function validateStompTcpConfig(config: StompTcpConfig): string[] {
     issues.push("a non-loopback TLS listener requires login authentication or verified client certificates");
   }
   if (config.auth.required && config.auth.users.length === 0) issues.push("auth.required=true requires at least one auth.users entry");
+  if (config.allowDurableSubscriptions && !config.auth.required) {
+    issues.push("allowDurableSubscriptions=true requires authentication to isolate durable owners");
+  }
   const logins = new Set<string>();
   for (const user of config.auth.users) {
     if (logins.has(user.login)) issues.push(`duplicate auth user: ${user.login}`);
     logins.add(user.login);
+    if (/\p{C}/u.test(user.login)) issues.push(`auth user login contains control characters: ${user.login}`);
+    const credentialCount = [user.password, user.passwordEnv, user.passwordHash]
+      .filter((value) => value !== undefined).length;
+    if (credentialCount !== 1) issues.push(`auth user ${user.login} must configure exactly one credential source`);
     const password = user.passwordEnv ? process.env[user.passwordEnv] : user.password;
     if (!password && !user.passwordHash) issues.push(`auth user ${user.login} has no password, passwordEnv value, or passwordHash`);
+    if (user.passwordHash) {
+      const expectedLength = user.hashAlgorithm === "sha512" ? 128 : 64;
+      if (!new RegExp(`^[a-fA-F0-9]{${expectedLength}}$`).test(user.passwordHash)) {
+        issues.push(`auth user ${user.login} has an invalid ${user.hashAlgorithm ?? "sha256"} passwordHash`);
+      }
+    }
   }
   if (config.tls.rejectUnauthorized && !config.tls.requestCert) issues.push("tls.rejectUnauthorized=true requires tls.requestCert=true");
   if (config.port === 0 && !config.tls.enabled) issues.push("at least one TCP or TLS listener must be enabled");
@@ -211,7 +227,28 @@ export function assertValidStompTcpConfig(config: StompTcpConfig): void {
 
 export function buildStompTcpConfigSnapshot(config: StompTcpConfig): Record<string, unknown> {
   return {
-    ...config,
+    host: config.host,
+    port: config.port,
+    tlsPort: config.tlsPort,
+    heartbeat: { ...config.heartbeat },
+    maxConnections: config.maxConnections,
+    maxFrameSize: config.maxFrameSize,
+    maxBufferedBytes: config.maxBufferedBytes,
+    maxSubscriptionsPerConnection: config.maxSubscriptionsPerConnection,
+    maxQueueDepthPerSubscription: config.maxQueueDepthPerSubscription,
+    maxPendingMessages: config.maxPendingMessages,
+    messagesPerMinute: config.messagesPerMinute,
+    connectTimeoutMs: config.connectTimeoutMs,
+    shutdownTimeoutMs: config.shutdownTimeoutMs,
+    maxDurableSubscriptions: config.maxDurableSubscriptions,
+    subscribeTopics: [...config.subscribeTopics],
+    topicBindings: config.topicBindings.map((binding) => ({ ...binding })),
+    defaultAgentId: config.defaultAgentId,
+    allowedAgentIds: [...config.allowedAgentIds],
+    allowSharedTopics: config.allowSharedTopics,
+    allowDurableSubscriptions: config.allowDurableSubscriptions,
+    defaultAckMode: config.defaultAckMode,
+    prefetchCount: config.prefetchCount,
     auth: {
       required: config.auth.required,
       users: config.auth.users.map((user) => ({
@@ -220,6 +257,16 @@ export function buildStompTcpConfigSnapshot(config: StompTcpConfig): Record<stri
         passwordEnv: user.passwordEnv ?? null,
         hashAlgorithm: user.hashAlgorithm ?? "sha256",
       })),
+    },
+    tls: {
+      enabled: config.tls.enabled,
+      host: config.tls.host,
+      minVersion: config.tls.minVersion,
+      requestCert: config.tls.requestCert,
+      rejectUnauthorized: config.tls.rejectUnauthorized,
+      keyConfigured: Boolean(config.tls.keyFile),
+      certificateConfigured: Boolean(config.tls.certFile),
+      caConfigured: Boolean(config.tls.caFile),
     },
   };
 }

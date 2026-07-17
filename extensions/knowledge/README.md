@@ -4,6 +4,55 @@
 
 同一 `sourceId` 的重建使用存储层原子替换，并对并发写入按调用顺序串行；SQLite 会在同一事务中更新向量与 FTS，失败时保留旧文档。
 
+## 架构总览
+
+```text
+可信文本 / Owner 文件                         用户问题
+        │                                      │
+        ▼                                      ▼
+Namespace ACL + realpath + 大小限制        Intent Gate
+        │                                      │
+        ▼                                      ▼
+Parser（可选）→ Chunk → Embedding       Vector / Keyword 双路召回
+        │                                      │
+        └──────────────┐       ┌───────────────┘
+                       ▼       ▼
+                 SQLite + FTS5 / ZVec
+                           │
+                           ▼
+                 Reranker（可选）→ Token 预算
+                           │
+                           ▼
+              before_prompt_build → Agent Prompt
+
+共同边界：sessionKey 摘要隔离 │ 原子替换 │ Provider 超时/重试/响应上限
+          凭据/路径脱敏       │ Gateway stop 关闭 Store
+```
+
+Provider 资源配置在调用前 fail-fast：`requestTimeoutMs=1..300000`、`maxRetries=0..10`、
+`maxResponseBytes=1..64MiB`、`maxBatchSize=1..2048`。非法值不会进入批处理循环，也不会
+发出网络请求；实际批次继续受各 Provider 更小的官方硬上限约束。
+
+```mermaid
+flowchart LR
+    C["Provider 配置"] --> V{"有界整数校验"}
+    V -->|非法| F["Fail fast<br/>0 loop / 0 fetch"]
+    V -->|合法| B["min 配置批次与供应商上限"]
+    B --> H["超时 + 有限重试 + 响应上限"]
+    H --> D["契约校验"] --> S["原子写入"]
+```
+
+```mermaid
+flowchart LR
+    DOC["可信文档 / Tool 输入"] --> ACL["Owner + Namespace + 大小校验"]
+    ACL --> TYPE{"纯文本?"}
+    TYPE -->|是| CHUNK["语义切块"]
+    TYPE -->|否且已配置| PARSER["智谱 / Ollama Parser"] --> CHUNK
+    CHUNK --> EMB["Embedding"] --> STORE["SQLite/FTS5 或 ZVec"]
+    USER["用户问题"] --> GATE["Intent Gate"] --> RETRIEVE["Vector / Keyword / Hybrid"]
+    STORE --> RETRIEVE --> BUDGET["Reranker + Chunk/Token 预算"] --> PROMPT["Agent Prompt"]
+```
+
 ## 当前能力边界
 
 - Embedding：OpenAI-compatible、DashScope、智谱、千帆、Ollama。
@@ -14,6 +63,7 @@
 - 注入：按块数及 token/字符上限约束，可注入 system 或 user prompt。
 - 隔离：默认 namespace 由 OpenClaw `sessionKey` 的 SHA-256 摘要派生；Hook 与 Tool 使用同一解析器，非 owner 不能跨 namespace。
 - 文件摄取：默认关闭；仅 owner 可用，并且文件 realpath 必须位于允许根目录内。
+- 错误边界：Provider、Parser、SQLite 和文件系统异常在进入 Hook 日志或 Tool 响应前统一遮蔽凭据、绝对路径和控制字符。
 
 本插件当前不承诺远程 URL 抓取、外部向量数据库或多节点共享索引。PDF/Office/图片等格式必须显式配置 `parser.provider`，并在真实 Provider 环境验收。
 

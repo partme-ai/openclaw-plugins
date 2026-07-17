@@ -14,6 +14,7 @@ import * as tls from "node:tls";
 import { matchTopic as matchTopicShared } from "@partme.ai/openclaw-message-sdk/transport";
 
 import { assertValidStompTcpConfig } from "../config.js";
+import { redactStompTcpError } from "../shared/redact.js";
 import type {
   InboundHandler,
   InboundMessage,
@@ -63,6 +64,8 @@ type ConnectionState = {
   subscriptions: Map<string, ActiveSubscription>;
   /** STOMP 本地事务缓冲；只保证本连接内命令有序提交，不承诺跨 Agent/外部系统原子回滚。 */
   transactions: Map<string, TransactionAction[]>;
+  /** 所有未提交事务动作的连接级总量；防止事务数 × 单事务动作数形成平方级占用。 */
+  transactionActionCount: number;
   buffer: Buffer;
   processing: Promise<void>;
   pendingFrames: number;
@@ -93,6 +96,10 @@ let tlsServer: tls.Server | null = null;
 let activeConfig: StompTcpConfig | null = null;
 let inboundHandler: InboundHandler | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let accepting = false;
+type TransportLogger = { error(message: string): void; warn?(message: string): void; info?(message: string): void };
+const NOOP_LOGGER: TransportLogger = { error: () => undefined };
+let transportLogger: TransportLogger = NOOP_LOGGER;
 const connections = new Map<string, ConnectionState>();
 const durableSubscriptions = new Map<string, DurableSubscription>();
 
@@ -218,7 +225,8 @@ function sendRaw(state: ConnectionState, payload: string): boolean {
   const bytes = Buffer.byteLength(payload, "utf8");
   if (state.socket.writableLength + bytes > config.maxBufferedBytes) {
     stats.droppedOutbound += 1;
-    state.socket.destroy(new Error("STOMP outbound backpressure limit exceeded"));
+    // 策略性断开已有 dropped 指标，不制造可由客户端放大的 Socket error 日志。
+    state.socket.destroy();
     return false;
   }
   state.socket.write(payload);
@@ -401,8 +409,11 @@ function enqueueTransactionAction(
 ): void {
   const actions = state.transactions.get(id);
   if (!actions) throw new Error(`Unknown transaction: ${id}`);
-  if (actions.length >= config.maxPendingMessages) throw new Error(`Transaction action limit exceeded: ${id}`);
+  if (state.transactionActionCount >= config.maxPendingMessages) {
+    throw new Error("Connection transaction action limit exceeded");
+  }
   actions.push(action);
+  state.transactionActionCount += 1;
 }
 
 /** 完成 SEND 的路由和 Agent dispatch；事务与非事务路径复用同一成功语义。 */
@@ -414,12 +425,18 @@ async function dispatchSend(state: ConnectionState, frame: StompFrame, config: S
   }
   const route = resolveInboundRoute(destination, state, config);
   if (!inboundHandler) throw new Error("STOMP inbound handler is not initialized");
-  await inboundHandler({
-    ...route,
-    rawPayload: frame.body,
-    // 只有调用方明确提供 message-id 才启用幂等；正文相同的两条合法消息不能被永久合并。
-    idempotencyKey: frame.headers["message-id"]?.trim() || undefined,
-  });
+  try {
+    await inboundHandler({
+      ...route,
+      rawPayload: frame.body,
+      // 只有调用方明确提供 message-id 才启用幂等；正文相同的两条合法消息不能被永久合并。
+      idempotencyKey: frame.headers["message-id"]?.trim() || undefined,
+    });
+  } catch (error) {
+    // 普通 SEND 与事务 COMMIT 都经过这里：内部异常只写脱敏日志，协议层返回稳定错误。
+    transportLogger.error(`[openclaw-stomp] Agent dispatch failed connection=${state.id}: ${redactStompTcpError(error)}`);
+    throw new Error("Agent dispatch failed");
+  }
   stats.routedInbound += 1;
 }
 
@@ -500,12 +517,15 @@ async function handleFrame(state: ConnectionState, frame: StompFrame, config: St
         if (!actions) throw new Error(`Unknown transaction: ${id}`);
         // 提交前先移除，防止 action 抛错后重复 COMMIT 导致已完成的 Agent 副作用再次执行。
         state.transactions.delete(id);
+        state.transactionActionCount = Math.max(0, state.transactionActionCount - actions.length);
         for (const action of actions) await action.execute();
         break;
       }
       case "ABORT": {
         const id = transactionId(frame);
-        if (!state.transactions.delete(id)) throw new Error(`Unknown transaction: ${id}`);
+        const actions = state.transactions.get(id);
+        if (!actions || !state.transactions.delete(id)) throw new Error(`Unknown transaction: ${id}`);
+        state.transactionActionCount = Math.max(0, state.transactionActionCount - actions.length);
         break;
       }
       case "DISCONNECT":
@@ -533,29 +553,43 @@ function cleanup(state: ConnectionState): void {
   }
   state.subscriptions.clear();
   state.transactions.clear();
+  state.transactionActionCount = 0;
   connections.delete(state.id);
   stats.totalConnections = connections.size;
 }
 
 function enqueueFrame(state: ConnectionState, frame: StompFrame, config: StompTcpConfig): void {
+  if (!accepting) {
+    state.socket.destroy();
+    return;
+  }
   const now = Date.now();
   if (now - state.windowStartedAt >= 60_000) { state.windowStartedAt = now; state.windowMessages = 0; }
   if (++state.windowMessages > config.messagesPerMinute) {
-    state.socket.destroy(new Error("STOMP message rate limit exceeded"));
+    stats.droppedInbound += 1;
+    state.socket.destroy();
     return;
   }
   if (state.pendingFrames >= config.maxPendingMessages) {
-    state.socket.destroy(new Error("STOMP inbound queue full"));
+    stats.droppedInbound += 1;
+    state.socket.destroy();
     return;
   }
   state.pendingFrames += 1;
   state.processing = state.processing
     .then(() => handleFrame(state, frame, config))
-    .catch((error: unknown) => failProtocol(state, `Frame processing failed: ${String(error)}`))
+    .catch((error: unknown) => {
+      transportLogger.error(`[openclaw-stomp] frame processing failed connection=${state.id}: ${redactStompTcpError(error)}`);
+      failProtocol(state, "Frame processing failed");
+    })
     .finally(() => { state.pendingFrames -= 1; });
 }
 
 function handleConnection(socket: net.Socket, secure: boolean, config: StompTcpConfig): void {
+  if (!accepting) {
+    socket.destroy();
+    return;
+  }
   if (connections.size >= config.maxConnections) {
     socket.end(buildFrame("ERROR", { message: "STOMP connection limit exceeded" }, "STOMP connection limit exceeded"));
     return;
@@ -575,6 +609,7 @@ function handleConnection(socket: net.Socket, secure: boolean, config: StompTcpC
     connectedAt: new Date(now).toISOString(),
     subscriptions: new Map(),
     transactions: new Map(),
+    transactionActionCount: 0,
     buffer: Buffer.alloc(0),
     processing: Promise.resolve(),
     pendingFrames: 0,
@@ -591,6 +626,10 @@ function handleConnection(socket: net.Socket, secure: boolean, config: StompTcpC
   stats.totalConnections = connections.size;
 
   socket.on("data", (chunk) => {
+    if (!accepting) {
+      socket.destroy();
+      return;
+    }
     state.lastInboundAt = Date.now();
     state.buffer = Buffer.concat([state.buffer, chunk]);
     while (state.buffer[0] === 10 || (state.buffer[0] === 13 && state.buffer[1] === 10)) {
@@ -625,7 +664,7 @@ function handleConnection(socket: net.Socket, secure: boolean, config: StompTcpC
   });
   socket.on("close", () => cleanup(state));
   socket.on("error", (error) => {
-    console.error(`[openclaw-stomp] connection ${state.id} error:`, error.message);
+    transportLogger.error(`[openclaw-stomp] connection error id=${state.id}: ${redactStompTcpError(error)}`);
     cleanup(state);
   });
 }
@@ -636,7 +675,9 @@ async function listen(server: net.Server, port: number, host: string): Promise<v
     server.once("error", onError);
     server.listen(port, host, () => {
       server.off("error", onError);
-      server.on("error", (error) => console.error("[openclaw-stomp] listener error:", error));
+      server.on("error", (error) => {
+        transportLogger.error(`[openclaw-stomp] listener error: ${redactStompTcpError(error)}`);
+      });
       resolve();
     });
   });
@@ -648,11 +689,17 @@ async function closeServer(server: net.Server | tls.Server | null): Promise<void
 }
 
 /** 校验配置并启动 TCP/TLS 监听器与全局心跳维护任务。 */
-export async function startStompTcpServer(config: StompTcpConfig, onInbound: InboundHandler): Promise<void> {
+export async function startStompTcpServer(
+  config: StompTcpConfig,
+  onInbound: InboundHandler,
+  logger?: TransportLogger,
+): Promise<void> {
   if (stats.running) return;
   assertValidStompTcpConfig(config);
   activeConfig = config;
   inboundHandler = onInbound;
+  transportLogger = logger ?? NOOP_LOGGER;
+  accepting = true;
   try {
     if (config.port > 0) {
       tcpServer = net.createServer((socket) => handleConnection(socket, false, config));
@@ -681,6 +728,8 @@ export async function startStompTcpServer(config: StompTcpConfig, onInbound: Inb
     tlsServer = null;
     activeConfig = null;
     inboundHandler = null;
+    accepting = false;
+    transportLogger = NOOP_LOGGER;
     throw error;
   }
   stats.running = true;
@@ -691,7 +740,7 @@ export async function startStompTcpServer(config: StompTcpConfig, onInbound: Inb
     for (const state of connections.values()) {
       if (!state.connected) continue;
       if (state.incomingHeartbeatMs > 0 && now - state.lastInboundAt > state.incomingHeartbeatMs * 2) {
-        state.socket.destroy(new Error("STOMP heartbeat timeout"));
+        state.socket.destroy();
       } else if (state.outgoingHeartbeatMs > 0 && now - state.lastOutboundAt >= state.outgoingHeartbeatMs) {
         sendRaw(state, "\n");
       }
@@ -702,12 +751,33 @@ export async function startStompTcpServer(config: StompTcpConfig, onInbound: Inb
 
 /** 幂等关闭所有连接、监听器、心跳和进程内 durable subscription。 */
 export async function stopStompTcpServer(): Promise<void> {
+  accepting = false;
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
+  const config = activeConfig;
+  const logger = transportLogger;
+  const pendingProcessing = [...connections.values()].map((state) => state.processing.catch(() => undefined));
   for (const state of connections.values()) {
     sendFrame(state, "ERROR", { message: "Server shutting down" }, "Server shutting down");
     state.socket.destroy();
     cleanup(state);
+  }
+  if (pendingProcessing.length > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const drained = await Promise.race([
+      Promise.all(pendingProcessing).then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), config?.shutdownTimeoutMs ?? 10_000);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (!drained) {
+      logger.warn?.(
+        `[openclaw-stomp] shutdown drain timed out after ${config?.shutdownTimeoutMs ?? 10_000}ms; ` +
+        `${pendingProcessing.length} connection queue(s) may still be completing`,
+      );
+    }
   }
   connections.clear();
   await Promise.all([closeServer(tlsServer), closeServer(tcpServer)]);
@@ -716,6 +786,7 @@ export async function stopStompTcpServer(): Promise<void> {
   activeConfig = null;
   inboundHandler = null;
   durableSubscriptions.clear();
+  transportLogger = NOOP_LOGGER;
   Object.assign(stats, {
     running: false,
     totalConnections: 0,

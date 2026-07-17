@@ -30,12 +30,12 @@ describe("redactToken", () => {
     expect(redactToken("abc", 6)).toBe("****(len=3)");
   });
 
-  it("shows prefix for longer tokens", () => {
-    expect(redactToken("abcdef1234567890")).toBe("abcdef…(len=16)");
+  it("masks longer tokens without exposing a prefix", () => {
+    expect(redactToken("abcdef1234567890")).toBe("****(len=16)");
   });
 
-  it("respects custom prefix length", () => {
-    expect(redactToken("abcdef1234567890", 3)).toBe("abc…(len=16)");
+  it("keeps the legacy parameter compatible without weakening redaction", () => {
+    expect(redactToken("abcdef1234567890", 3)).toBe("****(len=16)");
   });
 });
 
@@ -117,5 +117,13 @@ describe("sanitizeLogMessage", () => {
   it("redacts malformed URL-like values without throwing", () => {
     expect(sanitizeLogMessage("endpoint=http://%"))
       .toContain("<url:redacted>");
+  });
+
+  it("redacts bearer and authorization values emitted by network libraries", () => {
+    const result = sanitizeLogMessage(
+      "request failed Authorization: secret-1 Bearer bearer-1 api_key=key-1 password=pass-1",
+    );
+    expect(result).toContain("<redacted>");
+    expect(result).not.toMatch(/secret-1|bearer-1|key-1|pass-1/u);
   });
 });

@@ -19,10 +19,18 @@
  * MCP Server 不需要感知 image_path / file_path 的存在。
  */
 
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { sendJsonRpc } from "../transport.js";
-import type { CallInterceptor, CallContext, BeforeCallOptions } from "./types.js";
+import type {
+  CallInterceptor,
+  CallContext,
+  BeforeCallOptions,
+} from "./types.js";
+import {
+  getExtendedMediaLocalRoots,
+  readGuardedLocalMediaFile,
+} from "../../media/media-path-guard.js";
+import { mcpDebugLog } from "../debug-log.js";
 
 // ============================================================================
 // 常量
@@ -32,6 +40,8 @@ import type { CallInterceptor, CallContext, BeforeCallOptions } from "./types.js
 const MAX_SINGLE_FILE_SIZE = 10 * 1024 * 1024;
 /** 所有文件总大小上限：20MB */
 const MAX_TOTAL_FILE_SIZE = 20 * 1024 * 1024;
+/** 单次 Tool 调用最多展开 20 个上传，避免大量零字节文件形成请求风暴。 */
+const MAX_UPLOAD_FILES = 20;
 
 /** 上传请求超时时间（毫秒）：单次上传最大 10MB base64，给足时间 */
 const UPLOAD_TIMEOUT_MS = 60_000;
@@ -67,6 +77,7 @@ interface FileUploadTask {
 }
 
 type UploadTask = ImageUploadTask | FileUploadTask;
+type PreparedUploadTask = UploadTask & { buffer: Buffer };
 
 // ============================================================================
 // 内部辅助函数
@@ -124,43 +135,45 @@ function collectUploadTasks(records: Record<string, unknown>[]): UploadTask[] {
  * - 单文件 > 10MB → 报错
  * - 所有文件累计 > 20MB → 报错
  */
-async function validateFileSizes(tasks: UploadTask[]): Promise<void> {
+async function prepareUploadTasks(
+  tasks: UploadTask[],
+  mediaLocalRoots: readonly string[] | undefined,
+): Promise<PreparedUploadTask[]> {
+  if (tasks.length > MAX_UPLOAD_FILES) {
+    throw new Error(`${LOG_TAG} 单次最多上传 ${MAX_UPLOAD_FILES} 个文件`);
+  }
+  const allowedRoots = await getExtendedMediaLocalRoots({
+    mediaLocalRoots: [...(mediaLocalRoots ?? [])],
+  });
   let totalSize = 0;
+  const prepared: PreparedUploadTask[] = [];
 
-  for (let i = 0; i < tasks.length; i++) {
-    const task = tasks[i];
-    let stat: Awaited<ReturnType<typeof fs.stat>>;
-    try {
-      stat = await fs.stat(task.filePath);
-    } catch (err) {
+  for (const task of tasks) {
+    const read = await readGuardedLocalMediaFile({
+      filePath: task.filePath,
+      allowedRoots,
+      maxBytes: MAX_SINGLE_FILE_SIZE,
+    });
+    if (!read.ok) {
       throw new Error(
-        `${LOG_TAG} 无法访问文件 "${task.filePath}": ${err instanceof Error ? err.message : String(err)}`,
+        `${LOG_TAG} 拒绝读取文件 "${path.basename(task.filePath)}": ${read.rejectReason}`,
       );
     }
-
-    if (!stat.isFile()) {
-      throw new Error(`${LOG_TAG} "${task.filePath}" 不是一个文件`);
-    }
-
-    if (stat.size > MAX_SINGLE_FILE_SIZE) {
-      throw new Error(
-        `${LOG_TAG} 文件 "${task.filePath}" 大小 ${(stat.size / 1024 / 1024).toFixed(1)}MB 超过单文件上限 10MB`,
-      );
-    }
-
-    totalSize += stat.size;
+    totalSize += read.buffer.length;
     if (totalSize > MAX_TOTAL_FILE_SIZE) {
       throw new Error(
-        `${LOG_TAG} 累计文件大小 ${(totalSize / 1024 / 1024).toFixed(1)}MB 超过总上限 20MB（在文件 "${task.filePath}" 处超出）`,
+        `${LOG_TAG} 累计文件大小超过总上限 20MB（在文件 "${path.basename(task.filePath)}" 处超出）`,
       );
     }
+    prepared.push({ ...task, buffer: read.buffer });
   }
 
   if (totalSize > 0) {
-    console.log(
+    mcpDebugLog(
       `${LOG_TAG} 文件大小校验通过，共 ${tasks.length} 个文件，总计 ${(totalSize / 1024 / 1024).toFixed(2)}MB`,
     );
   }
+  return prepared;
 }
 
 /**
@@ -169,30 +182,37 @@ async function validateFileSizes(tasks: UploadTask[]): Promise<void> {
  * 读取本地文件 → base64 → 调用 upload_doc_image → 替换 cellValue
  */
 async function executeImageUpload(
-  task: ImageUploadTask,
+  task: ImageUploadTask & { buffer: Buffer },
   docLocator: Record<string, unknown>,
 ): Promise<void> {
-  const buffer = await fs.readFile(task.filePath);
+  const buffer = task.buffer;
   const base64Content = buffer.toString("base64");
   const fileName = path.basename(task.filePath);
 
-  console.log(
-    `${LOG_TAG} 上传图片: "${task.filePath}" (${(buffer.length / 1024).toFixed(0)}KB)`,
+  mcpDebugLog(
+    `${LOG_TAG} 上传图片 "${fileName}" (${(buffer.length / 1024).toFixed(0)}KB)`,
   );
 
-  const result = await sendJsonRpc("doc", "tools/call", {
-    name: "upload_doc_image",
-    arguments: {
-      ...docLocator,
-      base64_content: base64Content,
+  const result = (await sendJsonRpc(
+    "doc",
+    "tools/call",
+    {
+      name: "upload_doc_image",
+      arguments: {
+        ...docLocator,
+        base64_content: base64Content,
+      },
     },
-  }, { timeoutMs: UPLOAD_TIMEOUT_MS }) as { content?: Array<{ type: string; text?: string }> };
+    { timeoutMs: UPLOAD_TIMEOUT_MS },
+  )) as { content?: Array<{ type: string; text?: string }> };
 
   // 从 MCP result 中提取业务响应
   const bizData = extractBizData(result, "upload_doc_image");
   const imageUrl = bizData.url as string | undefined;
   if (!imageUrl) {
-    throw new Error(`${LOG_TAG} upload_doc_image 未返回 url，文件: "${task.filePath}"`);
+    throw new Error(
+      `${LOG_TAG} upload_doc_image 未返回 url，文件: "${task.filePath}"`,
+    );
   }
 
   // 替换 cellValue：设置 image_url + title，移除 image_path
@@ -200,9 +220,7 @@ async function executeImageUpload(
   task.cellValue.title = task.title || fileName;
   delete task.cellValue.image_path;
 
-  console.log(
-    `${LOG_TAG} 图片上传成功: "${task.filePath}" → image_url="${imageUrl}"`,
-  );
+  mcpDebugLog(`${LOG_TAG} 图片 "${fileName}" 上传成功`);
 }
 
 /**
@@ -210,37 +228,44 @@ async function executeImageUpload(
  *
  * 读取本地文件 → base64 → 调用 upload_doc_file → 替换 cellValue
  */
-async function executeFileUpload(task: FileUploadTask): Promise<void> {
-  const buffer = await fs.readFile(task.filePath);
+async function executeFileUpload(
+  task: FileUploadTask & { buffer: Buffer },
+): Promise<void> {
+  const buffer = task.buffer;
   const base64Content = buffer.toString("base64");
   const fileName = path.basename(task.filePath);
 
-  console.log(
-    `${LOG_TAG} 上传文件: "${task.filePath}" (${(buffer.length / 1024).toFixed(0)}KB)`,
+  mcpDebugLog(
+    `${LOG_TAG} 上传文件 "${fileName}" (${(buffer.length / 1024).toFixed(0)}KB)`,
   );
 
-  const result = await sendJsonRpc("doc", "tools/call", {
-    name: "upload_doc_file",
-    arguments: {
-      file_name: fileName,
-      file_base64_content: base64Content,
+  const result = (await sendJsonRpc(
+    "doc",
+    "tools/call",
+    {
+      name: "upload_doc_file",
+      arguments: {
+        file_name: fileName,
+        file_base64_content: base64Content,
+      },
     },
-  }, { timeoutMs: UPLOAD_TIMEOUT_MS }) as { content?: Array<{ type: string; text?: string }> };
+    { timeoutMs: UPLOAD_TIMEOUT_MS },
+  )) as { content?: Array<{ type: string; text?: string }> };
 
   // 从 MCP result 中提取业务响应
   const bizData = extractBizData(result, "upload_doc_file");
   const fileId = bizData.fileid as string | undefined;
   if (!fileId) {
-    throw new Error(`${LOG_TAG} upload_doc_file 未返回 fileid，文件: "${task.filePath}"`);
+    throw new Error(
+      `${LOG_TAG} upload_doc_file 未返回 fileid，文件: "${task.filePath}"`,
+    );
   }
 
   // 替换 cellValue：设置 file_id，移除 file_path
   task.cellValue.file_id = fileId;
   delete task.cellValue.file_path;
 
-  console.log(
-    `${LOG_TAG} 文件上传成功: "${task.filePath}" → file_id="${fileId}"`,
-  );
+  mcpDebugLog(`${LOG_TAG} 文件 "${fileName}" 上传成功`);
 }
 
 /**
@@ -254,21 +279,28 @@ function extractBizData(
 ): Record<string, unknown> {
   const content = (result as Record<string, unknown>)?.content;
   if (!Array.isArray(content)) {
-    throw new Error(`${LOG_TAG} ${interfaceName} 响应格式异常：缺少 content 数组`);
+    throw new Error(
+      `${LOG_TAG} ${interfaceName} 响应格式异常：缺少 content 数组`,
+    );
   }
 
   const textItem = content.find(
-    (c: Record<string, unknown>) => c.type === "text" && typeof c.text === "string",
+    (c: Record<string, unknown>) =>
+      c.type === "text" && typeof c.text === "string",
   ) as { type: string; text: string } | undefined;
   if (!textItem) {
-    throw new Error(`${LOG_TAG} ${interfaceName} 响应格式异常：content 中无 text 类型条目`);
+    throw new Error(
+      `${LOG_TAG} ${interfaceName} 响应格式异常：content 中无 text 类型条目`,
+    );
   }
 
   let bizData: Record<string, unknown>;
   try {
     bizData = JSON.parse(textItem.text) as Record<string, unknown>;
   } catch {
-    throw new Error(`${LOG_TAG} ${interfaceName} 响应非 JSON: ${textItem.text.slice(0, 200)}`);
+    throw new Error(
+      `${LOG_TAG} ${interfaceName} 响应非 JSON: ${textItem.text.slice(0, 200)}`,
+    );
   }
 
   if (bizData.errcode !== 0) {
@@ -283,14 +315,18 @@ function extractBizData(
 /**
  * 从 args 中提取文档定位参数（docid 或 url），用于 upload_doc_image
  */
-function extractDocLocator(args: Record<string, unknown>): Record<string, unknown> {
+function extractDocLocator(
+  args: Record<string, unknown>,
+): Record<string, unknown> {
   if (typeof args.docid === "string" && args.docid) {
     return { docid: args.docid };
   }
   if (typeof args.url === "string" && args.url) {
     return { url: args.url };
   }
-  throw new Error(`${LOG_TAG} args 中缺少 docid 或 url，无法调用 upload_doc_image`);
+  throw new Error(
+    `${LOG_TAG} args 中缺少 docid 或 url，无法调用 upload_doc_image`,
+  );
 }
 
 // ============================================================================
@@ -303,7 +339,8 @@ export const smartsheetUploadInterceptor: CallInterceptor = {
   /** 对 doc 品类的 smartsheet_add_records / smartsheet_update_records 生效 */
   match: (ctx: CallContext) =>
     ctx.category === "doc" &&
-    (ctx.method === "smartsheet_add_records" || ctx.method === "smartsheet_update_records"),
+    (ctx.method === "smartsheet_add_records" ||
+      ctx.method === "smartsheet_update_records"),
 
   /** 扫描 records 中的 image_path / file_path，上传后替换为 image_url / file_id */
   beforeCall(ctx: CallContext) {
@@ -318,7 +355,7 @@ export const smartsheetUploadInterceptor: CallInterceptor = {
       return undefined;
     }
 
-    console.log(`${LOG_TAG} 检测到 ${tasks.length} 个本地文件待上传`);
+    mcpDebugLog(`${LOG_TAG} 检测到 ${tasks.length} 个本地文件待上传`);
 
     // 异步执行上传流程
     return resolveUploads(ctx, tasks);
@@ -333,7 +370,7 @@ async function resolveUploads(
   tasks: UploadTask[],
 ): Promise<BeforeCallOptions> {
   // 阶段 1：文件大小校验
-  await validateFileSizes(tasks);
+  const preparedTasks = await prepareUploadTasks(tasks, ctx.mediaLocalRoots);
 
   // 提取文档定位参数（仅图片上传需要）
   const hasImageTasks = tasks.some((t) => t.kind === "image");
@@ -347,7 +384,7 @@ async function resolveUploads(
   const uploadStart = performance.now();
 
   await Promise.all(
-    tasks.map((task) => {
+    preparedTasks.map((task) => {
       if (task.kind === "image") {
         return executeImageUpload(task, docLocator);
       }
@@ -356,7 +393,7 @@ async function resolveUploads(
   );
 
   const uploadMs = (performance.now() - uploadStart).toFixed(1);
-  console.log(
+  mcpDebugLog(
     `${LOG_TAG} 全部上传完成，共 ${tasks.length} 个文件，耗时 ${uploadMs}ms`,
   );
 

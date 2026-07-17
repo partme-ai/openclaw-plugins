@@ -31,6 +31,7 @@ import { startRednodeProvider } from "./helpers/rednode-provider.mjs";
 import { startWechatProvider } from "./helpers/wechat-provider.mjs";
 import { startWechatIpadProvider } from "./helpers/wechat-ipad-provider.mjs";
 import { startWecomKfProvider } from "./helpers/wecom-kf-provider.mjs";
+import { startWecomProvider } from "./helpers/wecom-provider.mjs";
 import { prepareWechatState } from "./helpers/wechat-state.mjs";
 import { ensureGatewayRunning, gatewayLogTail, stopHostGateway } from "./lib/gateway.mjs";
 import { installPlugins } from "./lib/install.mjs";
@@ -57,6 +58,7 @@ let activeRednodeProvider = null;
 let activeWechatProvider = null;
 let activeWechatIpadProvider = null;
 let activeWecomKfProvider = null;
+let activeWecomProvider = null;
 
 /**
  * @param {string[]} argv
@@ -185,7 +187,7 @@ async function main() {
 
   const pluginIds = resolvePlugins(opts.plugins);
   const needsModelFixture = pluginIds.some((id) =>
-    id === "mqtt" || id === "tracing" || id === "rabbitmq" || id === "redis-stream" || id === "rocketmq" || id === "gotify" || id === "stomp" || id === "web-stomp" || id === "web-mqtt" || id === "web-socket" || id === "memory" || id === "openmem" || id === "knowledge" || id === "douyin" || id === "amap" || id === "meituan" || id === "rednode" || id === "wechat" || id === "wechat-ipad" || id === "wecom-kf" || id === "bridge"
+    id === "mqtt" || id === "tracing" || id === "rabbitmq" || id === "redis-stream" || id === "rocketmq" || id === "gotify" || id === "stomp" || id === "web-stomp" || id === "web-mqtt" || id === "web-socket" || id === "memory" || id === "openmem" || id === "knowledge" || id === "douyin" || id === "amap" || id === "meituan" || id === "rednode" || id === "wechat" || id === "wechat-ipad" || id === "wecom" || id === "wecom-kf" || id === "bridge"
   );
   if ((needsModelFixture || pluginIds.some((id) => id === "oauth2" || id === "web-socket" || id === "openmem")) && !useHostGateway()) {
     process.env.OPENCLAW_E2E_HOST_GATEWAY = "1";
@@ -240,7 +242,7 @@ async function main() {
     report.installed = installPlugins(pluginIds);
   }
 
-  if (report.docker?.ok || pluginIds.some((id) => ["mqtt", "stomp", "web-mqtt", "web-stomp", "web-socket", "mtls", "oauth2", "tracing", "prometheus", "memory", "openmem", "knowledge", "douyin", "amap", "meituan", "rednode", "wechat", "wechat-ipad", "wecom-kf", "bridge", "nacos"].includes(id))) {
+  if (report.docker?.ok || pluginIds.some((id) => ["mqtt", "stomp", "web-mqtt", "web-stomp", "web-socket", "mtls", "oauth2", "tracing", "prometheus", "memory", "openmem", "knowledge", "douyin", "amap", "meituan", "rednode", "wechat", "wechat-ipad", "wecom", "wecom-kf", "bridge", "nacos"].includes(id))) {
     if (pluginIds.includes("gotify") && !report.gotify) {
       const secretsPath = join(E2E_DIR, ".e2e-secrets.json");
       if (existsSync(secretsPath)) {
@@ -286,10 +288,14 @@ async function main() {
     ? await startWecomKfProvider(E2E_PORTS.wecomKfProvider)
     : null;
   activeWecomKfProvider = wecomKfProvider;
+  const wecomProvider = pluginIds.includes("wecom")
+    ? await startWecomProvider(E2E_PORTS.wecomProvider)
+    : null;
+  activeWecomProvider = wecomProvider;
 
   report.gateway = await ensureGatewayRunning();
 
-  report.e2e = await runPluginTests(pluginIds, { modelFixture, openmemSidecar, amapProvider, meituanProvider, rednodeProvider, wechatProvider, wechatIpadProvider, wecomKfProvider });
+  report.e2e = await runPluginTests(pluginIds, { modelFixture, openmemSidecar, amapProvider, meituanProvider, rednodeProvider, wechatProvider, wechatIpadProvider, wecomKfProvider, wecomProvider });
 
   if (!opts.skipBrowser && pluginIds.some((id) => id === "web-mqtt" || id === "web-stomp" || id === "web-socket")) {
     await runBrowserTests(pluginIds);
@@ -312,6 +318,8 @@ async function main() {
   activeWechatIpadProvider = null;
   await wecomKfProvider?.close();
   activeWecomKfProvider = null;
+  await wecomProvider?.close();
+  activeWecomProvider = null;
 
   try {
     report.pluginsList = execSync(`${OPENCLAW_BIN} --profile ${PROFILE} plugins list`, { encoding: "utf8" });
@@ -352,6 +360,7 @@ main().catch(async (err) => {
   await activeWechatProvider?.close().catch(() => {});
     await activeWechatIpadProvider?.close().catch(() => {});
     await activeWecomKfProvider?.close().catch(() => {});
+    await activeWecomProvider?.close().catch(() => {});
   if (!process.argv.includes("--keep-services")) {
     try {
       stopHostGateway();

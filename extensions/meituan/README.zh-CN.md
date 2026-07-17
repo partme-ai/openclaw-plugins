@@ -17,6 +17,32 @@ OpenClaw 2026.7.1 的美团技术服务合作中心 MTOp OpenAPI capability。�
 
 ## 运行架构
 
+```text
+Owner / OpenClaw Agent
+          │ operation + biz + confirm?
+          ▼
+meituan_openapi_invoke
+          │
+          ├─ ownerOnly / Operation 白名单 / read-write 风险门
+          ├─ 受信任 agentAccountId → 单一门店 Token
+          └─ write 必须 confirm=true
+                         │
+                         ▼
+             biz JSON + MTOp Form 大小上限
+                         │
+                         ▼
+              SHA-1 签名 → 单账号限流窗口
+                         │ 单次 POST，不自动重试
+                         ▼
+               美团 MTOp OpenAPI
+                         │
+                         ▼
+       响应流上限 → successCodes → 凭据/控制字符脱敏
+                         │
+                         ▼
+              Tool Result 上限 → Agent
+```
+
 ```mermaid
 flowchart LR
     O["Owner / OpenClaw Agent"] --> T["meituan_openapi_invoke"]
@@ -40,6 +66,9 @@ flowchart LR
 Agent 只能选择管理员预先配置的 operation 并提交 `biz`，不能控制 URL、`businessId`、
 `developerId`、Token 或签名密钥。默认只允许官方 Origin；可信 HTTPS 代理必须通过
 `allowCustomApiBaseUrl=true` 明确授权。
+
+`confirm=true` 只是阻止模型误触写操作的技术门槛，不等同于业务审批、资金风控或人工复核。
+退款、核销、发货等高风险 operation 仍应由上层审批工作流生成一次性授权，或根本不向通用 Agent 开放。
 
 ## 多门店凭据绑定
 
@@ -186,7 +215,7 @@ operation 配置：
 }
 ```
 
-`biz` 的字段必须以该 API 的官方文档为准。工具返回通过 `successCodes` 校验的美团 JSON 响应，但不会返回 `signKey` 或 `appAuthToken`。平台和网络错误会移除控制字符、替换真实凭据并限制长度。
+`biz` 的字段必须以该 API 的官方文档为准。工具返回通过 `successCodes` 校验的美团 JSON 响应，但不会返回 `signKey` 或 `appAuthToken`。平台、代理和 Tool 异常会统一遮蔽 URL 用户信息、Authorization、DeveloperId、真实 Token/SignKey 及控制字符，并限制长度。
 
 ## 上线前验证
 

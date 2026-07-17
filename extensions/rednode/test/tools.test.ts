@@ -87,4 +87,17 @@ describe("createRednodeTool", () => {
     const response = await tool.execute("call", { operation: "items" });
     expect(JSON.parse(response.content[0]!.text).error).toBe("Rednode tool execution failed");
   });
+
+  it("redacts credentials again at the final Agent Tool boundary", async () => {
+    const tool = createRednodeTool({ senderIsOwner: true } as never, config, {
+      invoke: vi.fn(async () => {
+        throw new Error(`proxy https://alice:pass@example.test app-key=${config.appKey} app-secret=${config.appSecret} sign=deadbeef Bearer bearer-1`);
+      }),
+      getOperation: (name: string) => config.operations.find((item) => item.name === name),
+    } as never);
+    const response = await tool.execute("call", { operation: "items" });
+    const error = JSON.parse(response.content[0]!.text).error as string;
+    expect(error).toContain("[REDACTED]");
+    expect(error).not.toMatch(/alice:pass|app-key=a|app-secret=s|deadbeef|bearer-1/u);
+  });
 });

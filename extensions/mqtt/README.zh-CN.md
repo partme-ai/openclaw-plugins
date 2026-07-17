@@ -397,6 +397,29 @@ openclaw-mqtt/
 - **ACL 范围控制**：使用 `auth.users[].publishAllow` / `subscribeAllow` 限制设备 topic
 - **账号隔离**：需要跨账号授权时使用 `aclRules[].accountId`，规则只精确匹配指定账号
 - **审计日志**：启用 `audit.enabled` 输出结构化 JSON 日志，兼容 ELK/SIEM
+- **业务正文不进运行日志**：入站日志仅记录 `textLength`，不再打印前 100 字符；Topic、Client、
+  Session 与底层异常先经过 OpenClaw 2026.7.1 `security-runtime` 和插件凭据规则。
+
+```text
+MQTT 入站 / Broker 错误
+          │
+          ▼
+不记录 payload 正文（仅 textLength）
+          │
+          ▼
+OpenClaw 官方脱敏 + 配置密码/URI/Bearer 规则
+          │
+          ▼
+控制字符清理 + 500 字符上限 → Gateway 日志 / Audit
+```
+
+```mermaid
+flowchart LR
+    I["MQTT 入站 / Broker 错误"] --> B["正文只记录长度"]
+    B --> S["OpenClaw security-runtime"]
+    S --> P["MQTT 配置密码 / URI / Authorization 规则"]
+    P --> L["单行 500 字符日志 / Audit"]
+```
 
 ## 常见问题
 
@@ -419,7 +442,7 @@ openclaw-mqtt/
 | 项 | 行为 |
 |----|------|
 | **分级** | 可企业试点 |
-| **入站 ACK** | MQTT 协议无 consumer ACK；dispatch 失败仅日志 |
+| **入站 ACK** | QoS 1/2 仅在 OpenClaw dispatch 成功后允许 Aedes 完成协议确认；失败释放幂等预占并拒绝确认，交由客户端重投 |
 | **出站 reply** | `publishMessage` await Aedes 回调 |
 | **自消费** | broker 侧 publish（`client==null`）不触发入站 |
 | **背压** | QoS0 OpenClaw 分发 mailbox 软限制；QoS 1/2 的协议确认与重投由 Aedes/MQTT 客户端负责 |

@@ -30,6 +30,21 @@ export type ParsedClientMessageFrame = {
   peerId?: string;
 };
 
+const MAX_ROUTING_IDENTIFIER_LENGTH = 256;
+
+/** 帧内路由标识会进入 Session/日志/幂等键，必须拒绝控制字符与异常长值。 */
+function parseOptionalIdentifier(value: unknown): string | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (
+    !normalized ||
+    normalized.length > MAX_ROUTING_IDENTIFIER_LENGTH ||
+    /[\u0000-\u001f\u007f]/u.test(normalized)
+  ) return null;
+  return normalized;
+}
+
 /**
  * 解析客户端 JSON 文本帧；非 message/ping 或非法 JSON 返回 null。
  *
@@ -74,18 +89,15 @@ export function parseClientFrame(
   if (!text.trim()) {
     return null;
   }
+  const agentId = parseOptionalIdentifier(obj.agentId);
+  const messageId = parseOptionalIdentifier(obj.messageId);
+  const peerId = parseOptionalIdentifier(obj.peerId ?? obj.userId ?? obj.from);
+  if (agentId === null || messageId === null || peerId === null) return null;
   return {
     text: text.trim(),
-    agentId: typeof obj.agentId === "string" ? obj.agentId.trim() : undefined,
-    messageId: typeof obj.messageId === "string" ? obj.messageId.trim() : undefined,
-    peerId:
-      typeof obj.peerId === "string"
-        ? obj.peerId.trim()
-        : typeof obj.userId === "string"
-          ? obj.userId.trim()
-          : typeof obj.from === "string"
-            ? obj.from.trim()
-            : undefined,
+    agentId,
+    messageId,
+    peerId,
   };
 }
 

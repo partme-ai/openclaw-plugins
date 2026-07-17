@@ -40,7 +40,8 @@
           "maxPendingMessages": { "type": "number", "minimum": 1, "default": 32 },
           "maxPendingAcks": { "type": "number", "minimum": 1, "default": 100 },
           "messagesPerMinute": { "type": "number", "minimum": 1, "default": 120 },
-          "connectTimeoutMs": { "type": "number", "minimum": 1, "default": 10000 }
+          "connectTimeoutMs": { "type": "number", "minimum": 1, "default": 10000 },
+          "shutdownTimeoutMs": { "type": "number", "minimum": 100, "maximum": 120000, "default": 10000 }
         }
       },
       "auth": {

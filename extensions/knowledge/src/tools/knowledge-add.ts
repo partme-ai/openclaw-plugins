@@ -21,6 +21,7 @@ import { getOrCreateStore } from '../runtime/hooks.js';
 import { indexDocument, withSourceWriteLock } from '../indexer/scheduler.js';
 import { chunkText } from '../indexer/chunker.js';
 import { authorizeFilePath, authorizeNamespace, defaultNamespace, validateSourceId, validateTextSize } from './policy.js';
+import { safeKnowledgeError } from '../shared/safe-error.js';
 
 // ===================================================================
 // 类型定义
@@ -139,7 +140,7 @@ async function handleStoreFile(
     const maxFileBytes = config.tools?.maxFileBytes ?? 10 * 1024 * 1024;
     if (fileStat.size > maxFileBytes) return failedResult(`文件超过最大大小 ${maxFileBytes} bytes`);
   } catch (err) {
-    return failedResult(`无法读取文件: ${filePath}（${err instanceof Error ? err.message : String(err)}）`);
+    return failedResult(`无法读取文件：${safeKnowledgeError(err)}`);
   }
 
   const ext = extname(filePath).toLowerCase();
@@ -301,7 +302,7 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext, config: K
         try {
           return await handleStoreText(content, access.namespace, source.sourceId, ctx, config);
         } catch (err) {
-          return failedResult(`存储失败: ${err instanceof Error ? err.message : String(err)}`);
+          return failedResult(`存储失败: ${safeKnowledgeError(err)}`);
         }
       }
 
@@ -320,7 +321,7 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext, config: K
         try {
           return await handleStoreFile(fileAccess.filePath, access.namespace, source.sourceId, ctx, config);
         } catch (err) {
-          return failedResult(`存储失败: ${err instanceof Error ? err.message : String(err)}`);
+          return failedResult(`存储失败: ${safeKnowledgeError(err)}`);
         }
       }
 
@@ -348,7 +349,7 @@ export function createKnowledgeAddTool(ctx: OpenClawPluginToolContext, config: K
         try {
           return await handleStoreSummary(topic, text, access.namespace, source.sourceId, ctx, config);
         } catch (err) {
-          return failedResult(`存储失败: ${err instanceof Error ? err.message : String(err)}`);
+          return failedResult(`存储失败: ${safeKnowledgeError(err)}`);
         }
       }
 

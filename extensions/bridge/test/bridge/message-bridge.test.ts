@@ -348,6 +348,27 @@ describe("registerMessageBridge — OpenClaw 2026.7.1 public outbound contract",
     expect(sendText.mock.calls[0]?.[0].deliveryQueueId).toBe(sendText.mock.calls[1]?.[0].deliveryQueueId);
   });
 
+  it("脱敏来源 Channel 与目标 MQ adapter 的失败日志", async () => {
+    const { api, hooks, sendText } = createBridgeHarness({
+      delivery: { maxAttempts: 1, retryDelayMs: 1, publishTimeoutMs: 100, maxPayloadBytes: 10_000 },
+    });
+    const secret = "bridge-production-secret";
+    hooks.get("message_sent")?.(
+      { to: "room-1", content: "failed", success: false, error: `Authorization: Bearer ${secret}` },
+      { channelId: "discord", sessionKey: "session-1" },
+    );
+    sendText.mockRejectedValueOnce(new Error(`mqtt://user:password@broker.local?access_token=${secret}`));
+    hooks.get("message_received")?.(
+      { content: "mirror", messageId: "source-secret" },
+      { channelId: "discord", sessionKey: "session-1" },
+    );
+    await vi.waitFor(() => expect(api.logger.error).toHaveBeenCalledWith(expect.stringContaining("delivery failed")));
+
+    const logs = JSON.stringify({ warn: api.logger.warn.mock.calls, error: api.logger.error.mock.calls });
+    expect(logs).not.toMatch(/bridge-production-secret|user:password/);
+    expect(logs).toContain("[REDACTED]");
+  });
+
   it("fails fast for unsupported source or MQ channels", () => {
     expect(() => createBridgeHarness({ channels: { unknown: { mqChannel: "mqtt" } } })).toThrow("unsupported source channel");
     expect(() => createBridgeHarness({ channels: { discord: { mqChannel: "not-a-broker" } } })).toThrow("unsupported mqChannel");

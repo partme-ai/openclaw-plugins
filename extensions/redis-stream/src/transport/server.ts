@@ -138,10 +138,7 @@ export async function startRedisServer(
     }
   } catch (error) {
     await stopRedisServer();
-    throw new RedisConnectionError(
-      config.url,
-      redactRedisError(error, config),
-    );
+    throw new RedisConnectionError(config.url, redactRedisError(error, config));
   }
 }
 
@@ -150,29 +147,41 @@ export async function startRedisServer(
  * @returns 清理完成后 resolve
  */
 export async function stopRedisServer(): Promise<void> {
+  const shutdownDeadline = Date.now() + shutdownTimeoutMs;
   running = false;
   consumeAbortController?.abort();
   consumeAbortController = null;
 
-  // 先关闭订阅连接，阻止 Pub/Sub 新消息继续进入；主客户端仍保持可用，供在途 Agent 回复发布。
+  // 先销毁只负责接收的连接，阻止新消息进入；主客户端仍保持可用，供在途 Agent 回复发布。
   const activeSubscriber = subscriberClient;
   subscriberClient = null;
-  if (activeSubscriber) {
-    await closeRedisClient(
-      activeSubscriber,
-      shutdownTimeoutMs,
-      "Redis subscriber shutdown",
-    );
-  }
+  activeSubscriber?.destroy();
 
   const activeConsumer = consumerClient;
   consumerClient = null;
   activeConsumer?.destroy();
-  if (consumeLoopPromise) {
-    await consumeLoopPromise.catch(() => undefined);
-    consumeLoopPromise = null;
+
+  // Stream 当前 entry 与 Pub/Sub 已接纳任务共用一个总停机预算；超时后 Stream 不执行 XACK，
+  // 条目留在 PEL 供下个消费者 XAUTOCLAIM，Pub/Sub 则按其 at-most-once 语义记录可能丢失。
+  const activeConsumeLoop = consumeLoopPromise;
+  const activePubSubTasks = [...pubSubTasks];
+  const drainTasks = [
+    ...(activeConsumeLoop ? [activeConsumeLoop] : []),
+    ...activePubSubTasks,
+  ];
+  const drained = await waitForShutdownDrain(
+    drainTasks,
+    Math.max(0, shutdownDeadline - Date.now()),
+  );
+  if (!drained) {
+    logger.warn(
+      `Shutdown drain timed out after ${shutdownTimeoutMs}ms; ` +
+        `streamLoop=${activeConsumeLoop ? 1 : 0}, pubSubInFlight=${activePubSubTasks.length}; ` +
+        "Stream entries remain pending for reclaim, Pub/Sub outcomes may be unknown",
+    );
   }
-  await Promise.allSettled([...pubSubTasks]);
+  consumeLoopPromise = null;
+  pubSubTasks.clear();
   clearPublisherClient();
 
   const activeClient = client;
@@ -180,7 +189,7 @@ export async function stopRedisServer(): Promise<void> {
   if (activeClient) {
     await closeRedisClient(
       activeClient,
-      shutdownTimeoutMs,
+      Math.max(0, shutdownDeadline - Date.now()),
       "Redis main client shutdown",
     );
   }
@@ -188,6 +197,27 @@ export async function stopRedisServer(): Promise<void> {
   stats.reconnecting = false;
   stats.lastDisconnectAt = Date.now();
   stats.subscribedChannels = [];
+}
+
+/** 在统一停机预算内等待消费循环和已接纳的 Pub/Sub Agent 任务完成。 */
+async function waitForShutdownDrain(
+  tasks: Array<Promise<unknown>>,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (tasks.length === 0) return true;
+  if (timeoutMs <= 0) return false;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      Promise.allSettled(tasks).then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // ─── Pub/Sub ──────────────────────────────────────────────────────
@@ -617,7 +647,9 @@ async function reclaimStalePendingEntries(
 
     return nextStartId;
   } catch (error) {
-    logger.warn(`XAUTOCLAIM pending reclaim failed: ${redactRedisError(error, config)}`);
+    logger.warn(
+      `XAUTOCLAIM pending reclaim failed: ${redactRedisError(error, config)}`,
+    );
     return startId;
   }
 }
@@ -722,6 +754,10 @@ async function closeRedisClient(
   timeoutMs: number,
   label: string,
 ): Promise<void> {
+  if (timeoutMs <= 0) {
+    activeClient.destroy();
+    return;
+  }
   try {
     await withTimeout(activeClient.quit(), timeoutMs, label);
   } catch (error) {

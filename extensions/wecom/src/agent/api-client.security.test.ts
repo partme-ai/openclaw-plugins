@@ -40,6 +40,21 @@ function apiResponse(value: unknown): Response {
 beforeEach(() => wecomFetch.mockReset());
 
 describe("Agent API 凭据缓存与错误脱敏", () => {
+  it("自定义 OpenAPI 地址仅允许 HTTPS 或 loopback HTTP", async () => {
+    const local = agent("local-api");
+    local.config.apiBaseUrl = "http://127.0.0.1:19098";
+    wecomFetch.mockResolvedValueOnce(apiResponse({ access_token: "local-token", expires_in: 7200 }));
+
+    await expect(getAccessToken(local)).resolves.toBe("local-token");
+    expect(wecomFetch.mock.calls[0]?.[0]).toBe(
+      "http://127.0.0.1:19098/cgi-bin/gettoken?corpid=corp-local-api&corpsecret=secret-local-api",
+    );
+
+    const unsafe = agent("unsafe-api");
+    unsafe.config.apiBaseUrl = "http://example.com";
+    await expect(getAccessToken(unsafe)).rejects.toThrow("must use HTTPS");
+  });
+
   it("同一凭据的并发刷新使用 single-flight", async () => {
     const current = agent("single-flight");
     wecomFetch.mockResolvedValue(apiResponse({ access_token: "token-1", expires_in: 7200 }));

@@ -66,7 +66,10 @@ export class OpenMemClient {
         lastError = error;
         const retryable = error instanceof OpenMemHttpError && error.retryable;
         if (!retryable || attempt >= attempts || signal.aborted) throw error;
-        await this.delay(this.config.retryBaseDelayMs * 2 ** (attempt - 1), signal);
+        const baseDelay = this.config.retryBaseDelayMs * 2 ** (attempt - 1);
+        // 对称抖动打散多 Gateway 同时恢复；最大 20%，且不会产生负延迟。
+        const jitteredDelay = Math.max(0, Math.round(baseDelay * (0.8 + Math.random() * 0.4)));
+        await this.delay(jitteredDelay, signal);
       }
     }
     throw lastError;
@@ -86,6 +89,10 @@ export class OpenMemClient {
       const url = this.resolveUrl(pathName);
       const headers: Record<string, string> = { Accept: "application/json" };
       if (options.body !== undefined) headers["Content-Type"] = "application/json";
+      const requestBody = options.body === undefined ? undefined : JSON.stringify(options.body);
+      if (requestBody !== undefined && Buffer.byteLength(requestBody, "utf8") > this.config.maxRequestBytes) {
+        throw new OpenMemHttpError(`OpenMem request exceeds ${this.config.maxRequestBytes} bytes`);
+      }
       if (this.config.apiKeyEnv) {
         const secret = process.env[this.config.apiKeyEnv] as string;
         headers[this.config.authHeader] = this.config.authScheme ? `${this.config.authScheme} ${secret}` : secret;
@@ -93,7 +100,7 @@ export class OpenMemClient {
       const response = await fetch(url, {
         method: options.method,
         headers,
-        ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+        ...(requestBody !== undefined ? { body: requestBody } : {}),
         signal: controller.signal,
       });
       const declared = Number(response.headers.get("content-length"));

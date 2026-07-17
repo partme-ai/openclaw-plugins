@@ -25,6 +25,7 @@ export const DEFAULT_STOMP_WS_CONFIG: StompServerConfig = {
   maxPendingAcks: 100,
   messagesPerMinute: 120,
   connectTimeoutMs: 10_000,
+  shutdownTimeoutMs: 10_000,
   allowedOrigins: [],
   allowSharedTopics: false,
   defaultAgentId: "main",
@@ -115,6 +116,7 @@ export function resolveStompWsConfig(globalConfig: Record<string, unknown>): Sto
     maxPendingAcks: configuredNumber(limits.maxPendingAcks ?? raw.prefetchCount, DEFAULT_STOMP_WS_CONFIG.maxPendingAcks),
     messagesPerMinute: configuredNumber(limits.messagesPerMinute, DEFAULT_STOMP_WS_CONFIG.messagesPerMinute),
     connectTimeoutMs: configuredNumber(limits.connectTimeoutMs, DEFAULT_STOMP_WS_CONFIG.connectTimeoutMs),
+    shutdownTimeoutMs: configuredNumber(limits.shutdownTimeoutMs, DEFAULT_STOMP_WS_CONFIG.shutdownTimeoutMs),
     allowedOrigins: origins(ws.allowedOrigins ?? raw.allowedOrigins),
     allowSharedTopics: raw.allowSharedTopics === true,
     defaultAgentId: typeof raw.defaultAgentId === "string" && raw.defaultAgentId.trim()
@@ -156,6 +158,7 @@ export function validateStompWsConfig(config: StompServerConfig): string[] {
     ["maxPendingAcks", 1, 100_000],
     ["messagesPerMinute", 1, 1_000_000],
     ["connectTimeoutMs", 1, 120_000],
+    ["shutdownTimeoutMs", 100, 120_000],
   ];
   for (const [key, min, max] of integerRanges) {
     const value = config[key];
@@ -213,7 +216,24 @@ export function assertValidStompWsConfig(config: StompServerConfig): void {
 
 export function buildStompConfigSnapshot(config: StompServerConfig): Record<string, unknown> {
   return {
-    ...config,
+    wsPort: config.wsPort,
+    path: config.path,
+    host: config.host,
+    heartbeatIncoming: config.heartbeatIncoming,
+    heartbeatOutgoing: config.heartbeatOutgoing,
+    maxConnections: config.maxConnections,
+    maxFrameSize: config.maxFrameSize,
+    maxBufferedBytes: config.maxBufferedBytes,
+    maxSubscriptionsPerConnection: config.maxSubscriptionsPerConnection,
+    maxPendingMessages: config.maxPendingMessages,
+    maxPendingAcks: config.maxPendingAcks,
+    messagesPerMinute: config.messagesPerMinute,
+    connectTimeoutMs: config.connectTimeoutMs,
+    shutdownTimeoutMs: config.shutdownTimeoutMs,
+    allowedOrigins: [...config.allowedOrigins],
+    allowSharedTopics: config.allowSharedTopics,
+    defaultAgentId: config.defaultAgentId,
+    allowedAgentIds: [...config.allowedAgentIds],
     auth: {
       required: config.auth.required,
       users: config.auth.users.map((user) => ({
@@ -222,6 +242,15 @@ export function buildStompConfigSnapshot(config: StompServerConfig): Record<stri
         passwordEnv: user.passwordEnv ?? null,
         hashAlgorithm: user.hashAlgorithm ?? "sha256",
       })),
+    },
+    tls: {
+      enabled: config.tls.enabled,
+      minVersion: config.tls.minVersion,
+      requestCert: config.tls.requestCert,
+      rejectUnauthorized: config.tls.rejectUnauthorized,
+      keyConfigured: Boolean(config.tls.keyFile),
+      certificateConfigured: Boolean(config.tls.certFile),
+      caConfigured: Boolean(config.tls.caFile),
     },
   };
 }

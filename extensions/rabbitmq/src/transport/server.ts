@@ -73,6 +73,9 @@ let retryExchangeName: string | null = null;
 let deadLetterExchangeName: string | null = null;
 let reconnectPromise: Promise<void> | null = null;
 let inboundLimiter: ReturnType<typeof createInboundLimiter> | null = null;
+type TransportLogger = { debug?(message: string): void; info?(message: string): void; warn?(message: string): void; error?(message: string): void };
+const NOOP_LOGGER: TransportLogger = {};
+let transportLogger: TransportLogger = NOOP_LOGGER;
 const pendingDeliveries = new Set<InboundDeliveryHandle>();
 /** 已被 Broker 投递并进入并发限制器的任务；优雅停机必须等待这些任务完成处置。 */
 const inboundTasks = new Set<Promise<void>>();
@@ -100,10 +103,11 @@ let stats: RabbitmqStats = {
  * @param cfg - 已解析的 RabbitMQ 通道配置
  * @param handler - 入站消息处理器（通常为 processInbound）
  */
-export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundHandler): Promise<void> {
+export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundHandler, logger: TransportLogger = NOOP_LOGGER): Promise<void> {
   config = cfg;
   inboundHandler = handler;
   stopping = false;
+  transportLogger = logger;
   await connectWithRetry();
 }
 
@@ -123,7 +127,26 @@ export async function stopRabbitmqServer(): Promise<void> {
   }
   // cancel 后保持 publish channel 与 retry/DLQ exchange 可用，让已接纳 Agent Turn 完成 ACK 或
   // 可靠转移。若先 NACK 再等待后台 Turn，会导致同一业务副作用在旧 Turn 和 Broker 重投中各执行一次。
-  await Promise.allSettled([...inboundTasks]);
+  if (inboundTasks.size > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const drained = await Promise.race([
+      Promise.allSettled([...inboundTasks]).then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), config?.consume.shutdownTimeoutMs ?? 30_000);
+        timer.unref();
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (!drained) {
+      transportLogger.warn?.(
+        `[openclaw-rabbitmq] shutdown drain timed out after ${config?.consume.shutdownTimeoutMs ?? 30_000}ms; ` +
+        `${inboundTasks.size} task(s) will be requeued with outcome possibly unknown`,
+      );
+      // 已超时任务仍可能在其内部 Promise 中悬挂；从生命周期跟踪集移除，避免后续重启/停止
+      // 再次等待同一批旧任务。delivery 会在下方统一 NACK，迟到任务因 settled=true 不会重复处置。
+      inboundTasks.clear();
+    }
+  }
   nackAllPendingDeliveries(true, "server_stop");
   retryExchangeName = null;
   deadLetterExchangeName = null;
@@ -154,6 +177,12 @@ export async function stopRabbitmqServer(): Promise<void> {
   stats.connected = false;
   stats.lastDisconnectAt = Date.now();
   stats.reconnecting = false;
+  transportLogger = NOOP_LOGGER;
+}
+
+/** 入站编排复用 Channel logger，避免协议代码直接写 console。 */
+export function logRabbitmq(level: "debug" | "warn" | "error", message: string): void {
+  transportLogger[level]?.(message);
 }
 
 /**

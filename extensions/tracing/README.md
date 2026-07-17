@@ -22,6 +22,24 @@ Collector and route it to SkyWalking when that integration is required.
 
 ## Architecture
 
+```text
+message_received ─▶ root span ─────────────────────────────┐
+                        │                                  │
+before_tool_call ─▶ child span ─▶ after_tool_call          │
+                        │                                  │
+final reply / agent_end / session_end ─▶ close trace ◀────┘
+                                             │
+                                             ▼
+                    redact secrets + correlate IDs by HMAC
+                                             │
+                    ┌────────────────────────┼───────────────────┐
+                    ▼                        ▼                   ▼
+              OpenClaw Log          bounded JSONL        bounded OTLP
+                                                               │
+                                                               ▼
+                                                    OpenTelemetry Collector
+```
+
 ```mermaid
 flowchart LR
     H["OpenClaw lifecycle hooks"] --> I["Shared initialization latch<br/>fail-open on observer failure"]
@@ -63,7 +81,7 @@ The manifest ID is `tracing`. Canonical plugin configuration belongs under
           },
           "sampleRate": 0.25,
           "maxSpansPerTrace": 100,
-          "maxActiveTraces": 10000,
+          "maxActiveTraces": 1000,
           "maxBufferedSpans": 10000,
           "flushIntervalMs": 5000,
           "exportTimeoutMs": 10000,
@@ -86,7 +104,7 @@ URL. Configuration is validated again at runtime; invalid values fail startup.
 | `backend` | `log` | `log`, `file`, or `otlp` |
 | `sampleRate` | `1` | Deterministic value from `0` through `1` |
 | `maxSpansPerTrace` | `100` | Includes the root span |
-| `maxActiveTraces` | `10000` | Concurrent active-trace limit; new traces are skipped and reported at capacity |
+| `maxActiveTraces` | `1000` | Concurrent active-trace limit; multiplied by `maxSpansPerTrace` must not exceed 100000 |
 | `maxBufferedSpans` | `10000` | Oldest spans are dropped on overflow and health becomes degraded |
 | `flushIntervalMs` | `5000` | File and OTLP flush interval |
 | `traceDir` | `./traces` | File backend directory |
@@ -118,6 +136,11 @@ last-export, and last-error diagnostics.
   fail open, so the observer cannot reject the message or tool path.
 - File and OTLP hooks only append to bounded memory. Disk writes, 50-span HTTP batches, and retries
   run in serialized background flushes instead of blocking threshold-crossing business requests.
+- OTLP retries only network failures, 408/429, and 5xx responses. Permanent 4xx failures stop the
+  current attempt immediately. A `partialSuccess` response is not resent as a whole batch because
+  doing so would duplicate spans the Collector already accepted; rejected spans are counted as dropped.
+- Collector success-response bodies are stream-limited to 64 KiB. The active-memory configuration
+  also enforces `maxActiveTraces * maxSpansPerTrace <= 100000`.
 - State changes are serialized per session, and tool bindings use `traceId + toolCallId` to prevent
   collisions between concurrent runs.
 - Missing tool completion, early session end, superseding messages, and a
@@ -132,6 +155,9 @@ last-export, and last-error diagnostics.
   outcomes can be ambiguous.
 - `captureMessageBody` is disabled by default. Enabling it requires a data
   classification, access-control, and retention review.
+- OpenClaw 2026.7.1 `security-runtime` is statically imported in the ESM bundle. Span names,
+  attributes, backend errors, and query results share the same credential/control-character/length
+  boundary before they reach memory, files, logs, or OTLP.
 - `otlpHeaders` may contain credentials. Values are not returned by the plugin, but the OpenClaw
   configuration file still requires least-privilege filesystem protection.
 - The HTTP query cache contains only the 200 most recently completed traces and
@@ -146,5 +172,5 @@ pnpm build
 npm pack --dry-run
 ```
 
-The package and manifest version are `2026.7.1`; OpenClaw `>=2026.7.1` is a
-required peer dependency.
+The package and manifest version are `2026.7.1`; OpenClaw `>=2026.7.1` and
+Node.js `>=22` are required.

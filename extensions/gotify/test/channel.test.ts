@@ -822,4 +822,93 @@ describe("Gotify gateway fail-closed lifecycle", () => {
       }),
     );
   });
+
+  it("waits for an accepted Agent turn before stopAccount resolves", async () => {
+    const account = resolveGotifyAccount(
+      {
+        channels: {
+          gotify: {
+            serverUrl: "https://push.example.com",
+            appToken: "app-token",
+            clientToken: "client-token",
+            allowFrom: ["*"],
+            inbound: { enabled: true, allowedAppId: 42 },
+          },
+        },
+      },
+      "default",
+    );
+    let signalStarted!: () => void;
+    let releaseTurn!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+    const dispatch = vi.fn().mockImplementation(async () => {
+      signalStarted();
+      await gate;
+    });
+    const ctx = makeCtx({ dispatchReplyWithBufferedBlockDispatcher: dispatch });
+    ctx.account = account;
+    const running = gotifyChannel.gateway!.startAccount(ctx as never);
+    await vi.waitFor(() => expect(listenerMocks.replay).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const inbound = listenerMocks.deps!.onMessage({
+      id: 901,
+      appid: 42,
+      message: "finish before stop",
+    });
+    await started;
+    let stopped = false;
+    const stopping = gotifyChannel.gateway!.stopAccount!(ctx as never).then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(stopped).toBe(false);
+    releaseTurn();
+    await inbound;
+    await stopping;
+    await running;
+    expect(stopped).toBe(true);
+  });
+
+  it("fails closed when the live handoff buffer overflows during replay", async () => {
+    let finishReplay!: () => void;
+    listenerMocks.replay.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        finishReplay = () => resolve({ replayed: 0, lastSeenMessageId: 0 });
+      }),
+    );
+    const account = resolveGotifyAccount(
+      {
+        channels: {
+          gotify: {
+            serverUrl: "https://push.example.com",
+            appToken: "app-token",
+            clientToken: "client-token",
+            allowFrom: ["*"],
+            inbound: {
+              enabled: true,
+              allowedAppId: 42,
+              maxBufferedMessages: 1,
+            },
+          },
+        },
+      },
+      "default",
+    );
+    const ctx = makeCtx();
+    ctx.account = account;
+    const running = gotifyChannel.gateway!.startAccount(ctx as never);
+    await vi.waitFor(() => expect(listenerMocks.replay).toHaveBeenCalledOnce());
+    await listenerMocks.deps!.onMessage({ id: 910, appid: 42, message: "one" });
+    await expect(
+      listenerMocks.deps!.onMessage({ id: 911, appid: 42, message: "overflow" }),
+    ).rejects.toThrow("live stream buffer exceeded 1");
+    expect(listenerMocks.stop).toHaveBeenCalled();
+    expect(ctx.setStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ running: false }),
+    );
+    finishReplay();
+    await running;
+  });
 });

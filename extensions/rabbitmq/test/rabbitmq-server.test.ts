@@ -139,6 +139,27 @@ describe("rabbitmq-server", () => {
     expect(consumeCh.close).toHaveBeenCalled();
   });
 
+  it("停机排空超时后 NACK 在途投递并有界退出", async () => {
+    ({ startRabbitmqServer, stopRabbitmqServer } = await import("../src/transport/server.js"));
+    let signalStarted!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const logger = { warn: vi.fn() };
+    await startRabbitmqServer({
+      ...DEFAULT_RABBITMQ_CONFIG,
+      consume: { ...DEFAULT_RABBITMQ_CONFIG.consume, shutdownTimeoutMs: 100 },
+    }, async () => {
+      signalStarted();
+      await new Promise<void>(() => undefined);
+      return { ok: true as const };
+    }, logger);
+    consumeCb?.(sampleMsg());
+    await started;
+
+    await expect(stopRabbitmqServer()).resolves.toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("shutdown drain timed out"));
+    expect(consumeCh.nack).toHaveBeenCalledWith(expect.anything(), false, true);
+  });
+
   it("defers ack until delivery.ack() in manual mode", async () => {
     ({ startRabbitmqServer, stopRabbitmqServer } = await import("../src/transport/server.js"));
     let ackedDuringHandler = false;

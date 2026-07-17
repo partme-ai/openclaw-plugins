@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { copyFileSync, existsSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 
 // --- Mocks ---
 const mockGetConfig = vi.fn();
@@ -25,11 +25,15 @@ vi.mock("node:fs", async (importOriginal) => {
     ...actual,
     copyFileSync: vi.fn(),
     existsSync: vi.fn(() => true),
+    readdirSync: vi.fn(() => []),
+    unlinkSync: vi.fn(),
   };
 });
 
 const mockCopyFileSync = vi.mocked(copyFileSync);
 const mockExistsSync = vi.mocked(existsSync);
+const mockReaddirSync = vi.mocked(readdirSync);
+const mockUnlinkSync = vi.mocked(unlinkSync);
 
 describe("NacosConfigSyncService", () => {
   let logger: ReturnType<typeof vi.fn>[];
@@ -55,7 +59,9 @@ describe("NacosConfigSyncService", () => {
         serverList: "127.0.0.1:8848",
         configCenter: {
           enabled: true,
-          sharedConfigs: [{ dataId: "base.yml", group: "DEFAULT_GROUP", refresh: true }],
+          sharedConfigs: [
+            { dataId: "base.yml", group: "DEFAULT_GROUP", refresh: true },
+          ],
         },
       },
       getCurrentConfig: vi.fn().mockResolvedValue({ existingKey: "val" }),
@@ -73,14 +79,22 @@ describe("NacosConfigSyncService", () => {
   describe("pullAndApply", () => {
     it("returns early when configCenter disabled", async () => {
       const svc = new NacosConfigSyncService();
-      const deps = { ...testDeps, pluginConfig: { ...testDeps.pluginConfig, configCenter: { enabled: false } } };
+      const deps = {
+        ...testDeps,
+        pluginConfig: {
+          ...testDeps.pluginConfig,
+          configCenter: { enabled: false },
+        },
+      };
       await svc.pullAndApply(deps);
       expect(mockGetConfig).not.toHaveBeenCalled();
     });
 
     it("throws when client not initialized", async () => {
       const svc = new NacosConfigSyncService();
-      await expect(svc.pullAndApply(testDeps)).rejects.toThrow("NacosConfigClient not initialized");
+      await expect(svc.pullAndApply(testDeps)).rejects.toThrow(
+        "NacosConfigClient not initialized",
+      );
     });
 
     it("pulls shared configs, merges, and replaces config", async () => {
@@ -154,7 +168,8 @@ describe("NacosConfigSyncService", () => {
 
     it("applies applicationDataId config", async () => {
       mockGetConfig.mockImplementation((dataId: string) => {
-        if (dataId === "application-dev.json") return Promise.resolve('{"appKey": "appVal"}');
+        if (dataId === "application-dev.json")
+          return Promise.resolve('{"appKey": "appVal"}');
         return Promise.resolve(null);
       });
 
@@ -183,7 +198,8 @@ describe("NacosConfigSyncService", () => {
 
     it("merges per-plugin configs into plugins.entries", async () => {
       mockGetConfig.mockImplementation((dataId: string) => {
-        if (dataId === "my-plugin-dev.json") return Promise.resolve('{"apiKey": "sk-xxx"}');
+        if (dataId === "my-plugin-dev.json")
+          return Promise.resolve('{"apiKey": "sk-xxx"}');
         return Promise.resolve(null);
       });
 
@@ -237,7 +253,10 @@ describe("NacosConfigSyncService", () => {
     it("does nothing when configCenter disabled", async () => {
       const deps = {
         ...testDeps,
-        pluginConfig: { ...testDeps.pluginConfig, configCenter: { enabled: false } },
+        pluginConfig: {
+          ...testDeps.pluginConfig,
+          configCenter: { enabled: false },
+        },
       };
       const svc = new NacosConfigSyncService();
       await svc.start(deps);
@@ -285,7 +304,9 @@ describe("NacosConfigSyncService", () => {
       finishFirst('{"intermediate":true}');
 
       await vi.waitFor(() => expect(mockGetConfig).toHaveBeenCalledTimes(2));
-      await vi.waitFor(() => expect(testDeps.replaceConfig).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() =>
+        expect(testDeps.replaceConfig).toHaveBeenCalledTimes(2),
+      );
       expect(testDeps.replaceConfig).toHaveBeenLastCalledWith(
         expect.objectContaining({ latest: true }),
       );
@@ -319,9 +340,12 @@ describe("NacosConfigSyncService", () => {
 
       let rejectPull!: (error: Error) => void;
       mockGetConfig.mockReset();
-      mockGetConfig.mockImplementationOnce(() => new Promise<string>((_resolve, reject) => {
-        rejectPull = reject;
-      }));
+      mockGetConfig.mockImplementationOnce(
+        () =>
+          new Promise<string>((_resolve, reject) => {
+            rejectPull = reject;
+          }),
+      );
       listener();
       await vi.waitFor(() => expect(mockGetConfig).toHaveBeenCalledOnce());
 
@@ -331,12 +355,49 @@ describe("NacosConfigSyncService", () => {
 
       expect(onError).not.toHaveBeenCalled();
     });
+
+    it("等待已经进入 OpenClaw 写盘阶段的订阅拉取完成后再停止", async () => {
+      mockGetConfig.mockResolvedValue('{"key":"initial"}');
+      const svc = new NacosConfigSyncService();
+      await svc.start(testDeps);
+      const listener = mockSubscribe.mock.calls[0][1] as () => void;
+
+      let finishReplace!: () => void;
+      const replaceInFlight = new Promise<void>((resolve) => {
+        finishReplace = resolve;
+      });
+      mockGetConfig.mockResolvedValue('{"key":"updated"}');
+      (testDeps.replaceConfig as ReturnType<typeof vi.fn>)
+        .mockClear()
+        .mockImplementationOnce(() => replaceInFlight);
+
+      listener();
+      await vi.waitFor(() =>
+        expect(testDeps.replaceConfig).toHaveBeenCalledOnce(),
+      );
+
+      let stopResolved = false;
+      const stopping = svc
+        .stop(logger as unknown as import("./types.js").PluginLog)
+        .then(() => {
+          stopResolved = true;
+        });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(stopResolved).toBe(false);
+
+      finishReplace();
+      await stopping;
+      expect(stopResolved).toBe(true);
+    });
   });
 
   describe("primaryConfigDataId", () => {
     it("replaces base config with primary dataId content", async () => {
       mockGetConfig.mockImplementation((dataId: string) => {
-        if (dataId === "openclaw.json") return Promise.resolve('{"gateway":{"port":9090},"hooks":{"enabled":true}}');
+        if (dataId === "openclaw.json")
+          return Promise.resolve(
+            '{"gateway":{"port":9090},"hooks":{"enabled":true}}',
+          );
         return Promise.resolve(null);
       });
 
@@ -364,7 +425,8 @@ describe("NacosConfigSyncService", () => {
         }),
       );
       // existingKey from getCurrentConfig should NOT be present (replaced, not merged)
-      const callArg = (deps.replaceConfig as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const callArg = (deps.replaceConfig as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as Record<string, unknown>;
       expect(callArg.existingKey).toBeUndefined();
     });
 
@@ -380,7 +442,9 @@ describe("NacosConfigSyncService", () => {
           ...testDeps.pluginConfig,
           configCenter: {
             ...testDeps.pluginConfig.configCenter!,
-            sharedConfigs: [{ dataId: "extra.yml", group: "DEFAULT_GROUP", refresh: true }],
+            sharedConfigs: [
+              { dataId: "extra.yml", group: "DEFAULT_GROUP", refresh: true },
+            ],
             primaryConfigDataId: "openclaw.json",
           },
         },
@@ -402,8 +466,10 @@ describe("NacosConfigSyncService", () => {
 
     it("layers sharedConfigs on top of primary config", async () => {
       mockGetConfig.mockImplementation((dataId: string) => {
-        if (dataId === "primary.json") return Promise.resolve('{"base":"primary","override":"fromPrimary"}');
-        if (dataId === "overlay.yml") return Promise.resolve('{"overlay":"fromOverlay"}');
+        if (dataId === "primary.json")
+          return Promise.resolve('{"base":"primary","override":"fromPrimary"}');
+        if (dataId === "overlay.yml")
+          return Promise.resolve('{"overlay":"fromOverlay"}');
         return Promise.resolve(null);
       });
 
@@ -414,7 +480,9 @@ describe("NacosConfigSyncService", () => {
           configCenter: {
             ...testDeps.pluginConfig.configCenter!,
             primaryConfigDataId: "primary.json",
-            sharedConfigs: [{ dataId: "overlay.yml", group: "DEFAULT_GROUP", refresh: true }],
+            sharedConfigs: [
+              { dataId: "overlay.yml", group: "DEFAULT_GROUP", refresh: true },
+            ],
           },
         },
       };
@@ -424,7 +492,8 @@ describe("NacosConfigSyncService", () => {
       svc["client"] = client as never;
 
       await svc.pullAndApply(deps);
-      const callArg = (deps.replaceConfig as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      const callArg = (deps.replaceConfig as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as Record<string, unknown>;
       expect(callArg).toMatchObject({
         base: "primary",
         overlay: "fromOverlay",
@@ -458,13 +527,18 @@ describe("NacosConfigSyncService", () => {
 
   describe("backupOpenClawConfig", () => {
     it("copies config file to backup destination", async () => {
-      const { backupOpenClawConfig, resolveConfigFileForBackup } = await import("./nacos-config-sync.js");
+      const { backupOpenClawConfig, resolveConfigFileForBackup } =
+        await import("./nacos-config-sync.js");
       const stateDir = "/tmp/test-state";
 
       mockExistsSync.mockReturnValue(true);
       mockCopyFileSync.mockImplementation(() => undefined);
 
-      backupOpenClawConfig(stateDir, {}, logger as unknown as import("./types.js").PluginLog);
+      backupOpenClawConfig(
+        stateDir,
+        {},
+        logger as unknown as import("./types.js").PluginLog,
+      );
 
       expect(mockCopyFileSync).toHaveBeenCalledWith(
         expect.stringContaining(stateDir),
@@ -474,19 +548,75 @@ describe("NacosConfigSyncService", () => {
 
     it("同一秒连续备份也使用不同文件名", async () => {
       const { backupOpenClawConfig } = await import("./nacos-config-sync.js");
-      backupOpenClawConfig("/tmp/test-state", {}, logger as unknown as import("./types.js").PluginLog);
-      backupOpenClawConfig("/tmp/test-state", {}, logger as unknown as import("./types.js").PluginLog);
+      backupOpenClawConfig(
+        "/tmp/test-state",
+        {},
+        logger as unknown as import("./types.js").PluginLog,
+      );
+      backupOpenClawConfig(
+        "/tmp/test-state",
+        {},
+        logger as unknown as import("./types.js").PluginLog,
+      );
 
       const firstDestination = mockCopyFileSync.mock.calls[0][1];
       const secondDestination = mockCopyFileSync.mock.calls[1][1];
       expect(firstDestination).not.toBe(secondDestination);
     });
 
+    it("只删除超出保留数量的 Nacos 备份", async () => {
+      const { backupOpenClawConfig } = await import("./nacos-config-sync.js");
+      mockReaddirSync.mockReturnValue([
+        "openclaw-nacos-20260717120003-aaaaaaaa.json",
+        "openclaw-nacos-20260717120002-bbbbbbbb.json",
+        "openclaw-nacos-20260717120001.json",
+        "openclaw.json",
+        "openclaw-nacos-manual.json",
+      ] as never);
+
+      backupOpenClawConfig(
+        "/tmp/test-state",
+        {},
+        logger as unknown as import("./types.js").PluginLog,
+        2,
+      );
+
+      expect(mockUnlinkSync).toHaveBeenCalledOnce();
+      expect(mockUnlinkSync).toHaveBeenCalledWith(
+        "/tmp/test-state/openclaw-nacos-20260717120001.json",
+      );
+    });
+
+    it("备份清理失败不会覆盖当前备份成功结果", async () => {
+      const { backupOpenClawConfig } = await import("./nacos-config-sync.js");
+      mockReaddirSync.mockImplementationOnce(() => {
+        throw new Error("directory unavailable");
+      });
+
+      expect(() =>
+        backupOpenClawConfig(
+          "/tmp/test-state",
+          {},
+          logger as unknown as import("./types.js").PluginLog,
+        ),
+      ).not.toThrow();
+      expect(mockCopyFileSync).toHaveBeenCalledOnce();
+      expect(
+        (logger as unknown as { warn: ReturnType<typeof vi.fn> }).warn,
+      ).toHaveBeenCalledWith(
+        expect.stringContaining("backup retention cleanup failed"),
+      );
+    });
+
     it("skips backup when source file not found", async () => {
       const { backupOpenClawConfig } = await import("./nacos-config-sync.js");
       mockExistsSync.mockReturnValue(false);
 
-      backupOpenClawConfig("/tmp", {}, logger as unknown as import("./types.js").PluginLog);
+      backupOpenClawConfig(
+        "/tmp",
+        {},
+        logger as unknown as import("./types.js").PluginLog,
+      );
       expect(mockCopyFileSync).not.toHaveBeenCalled();
     });
   });

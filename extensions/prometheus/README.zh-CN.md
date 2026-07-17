@@ -128,6 +128,43 @@ sequenceDiagram
 鉴权快照同样使用 single-flight：并发 `/health` 与定时刷新只执行一次真实探测；插件停止或
 热重载后，旧代际迟到的探测结果会被丢弃，不会写入新 RuntimeStore。
 
+### 标签隐私与基数边界
+
+```text
+hook / RPC / diagnostics 标签
+              │
+              ▼
+OpenClaw security-runtime 脱敏（ESM 静态导入）
+              │
+              ▼
+插件凭据规则 + 控制字符清理 + 128 字符上限
+              │
+              ▼
+动态标签族预算（64 个值；超限 → other）
+              │
+              ▼
+Runtime Store 上限 → 最终 scrape 上限 → 响应
+```
+
+```mermaid
+flowchart TD
+    I["Hook / RPC / diagnostics 标签"] --> S["OpenClaw security-runtime<br/>凭据脱敏"]
+    S --> P["插件规则<br/>Bearer / Basic / Bot / key / token / password"]
+    P --> C["控制字符清理<br/>最长 128 字符"]
+    C --> D{"动态标签族<br/>是否在 64 个值预算内？"}
+    D -->|"是"| V["保留规范化值"]
+    D -->|"否"| O["聚合为 other"]
+    V --> R["Runtime series 上限"]
+    O --> R
+    R --> F["最终 scrape series 上限"]
+```
+
+工具名、渠道名仍保留可观测价值，但第三方扩展不能借自由文本制造无限系列：每个动态标签族
+在单次插件代际内最多保留 64 个规范化值，后续值统一聚合为 `other`；session、agent、
+subagent 状态则使用固定桶。工具错误率 SLI 会跨全部 `tool` 标签系列求和，不再错误查询一个
+实际不存在的“无标签 counter”。官方脱敏器使用 ESM 静态导入，真实 Gateway 不会再因
+`require` 不存在而静默跳过。
+
 ## 端点说明
 
 | 路径                          | 格式            | 说明                                              |
@@ -204,7 +241,39 @@ openclaw plugins install @partme.ai/openclaw-prometheus
 
 在 Gateway 环境设置 `OPENCLAW_PROMETHEUS_BEARER_TOKEN`，配置中 `scrapeAuth.enabled: true`，Prometheus 使用 `bearer_token_file` 指向同一密钥文件。
 启用鉴权但启动时没有解析到 Token 会直接拒绝插件配置，不会等到首次抓取才返回 503。
-运行时还会拒绝 Schema 外字段和错误类型，避免拼错配置后静默采用默认值。
+运行时还会拒绝 Schema 外字段和错误类型，避免拼错配置后静默采用默认值。Token 必须先按
+原始字符串检查再规范化；换行、Tab、NUL、DEL 等控制字符不会被 `trim()` 静默吃掉。
+
+```text
+环境变量原始值 / 开发配置原始值
+                │
+                ▼
+类型 + 非空 + 长度 ≤ 4096 + C0/DEL 控制字符检查
+                │
+          ┌─────┴─────┐
+        非法           合法
+          │             │
+          ▼             ▼
+Gateway 启动失败     trim 后保存内存
+                        │
+                        ▼
+GET /metrics Authorization: Bearer ...
+                        │
+                        ▼
+                  常量时间比较
+                  ├─ 失败 → 401
+                  └─ 成功 → CollectCache
+```
+
+```mermaid
+flowchart LR
+    R["原始 Token"] --> V{"类型、长度、控制字符<br/>是否合法?"}
+    V -->|否| F["配置失败<br/>Gateway 不带病启动"]
+    V -->|是| N["规范化并仅保留内存"]
+    N --> C["Bearer 常量时间比较"]
+    C -->|失败| U["401 Unauthorized"]
+    C -->|成功| S["single-flight scrape"]
+```
 
 ### 命令行探测
 

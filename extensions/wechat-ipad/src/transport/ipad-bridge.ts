@@ -25,6 +25,7 @@
  * 输入，必须先通过类型、事件名称和大小校验，才能交给上层事件处理器。
  */
 import WebSocket from "ws";
+import { safeWechatIpadError } from "../shared/safe-error.js";
 import type {
   BridgeState,
   IpadApiResponse,
@@ -58,10 +59,6 @@ const LOGIN_STATUSES = new Set<WxLoginPayload["status"]>([
 function unref(timer: Timer): Timer {
   timer.unref?.();
   return timer;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function readJsonLimited(response: Response, maxBytes: number): Promise<unknown> {
@@ -159,12 +156,9 @@ export class WechatIpadBridge {
     private readonly random: () => number = Math.random,
   ) {}
 
-  /** 删除异常文本中可能由底层网络库回显的真实 Bearer Token，并限制日志/错误体长度。 */
+  /** 遮蔽外部错误中的认证字段、URL 用户信息和真实 Token，并限制日志/错误体长度。 */
   private sanitizeError(error: unknown): string {
-    let message = errorMessage(error);
-    const token = this.config.auth.token;
-    if (token) message = message.split(token).join("[REDACTED]");
-    return message.length > 1000 ? `${message.slice(0, 1000)}…` : message;
+    return safeWechatIpadError(error, [this.config.auth.token]);
   }
 
   /** 启动首次连接；`required` 等启动策略由调用本方法的插件服务层决定。 */
@@ -248,7 +242,11 @@ export class WechatIpadBridge {
       });
       const payload = await readJsonLimited(response, this.config.network.maxResponseBytes);
       if (!response.ok) throw new Error(`bridge HTTP ${response.status}`);
-      return normalizeApiResponse(payload);
+      const normalized = normalizeApiResponse(payload);
+      // HTTP 200 的业务失败也来自不可信外部服务，不能绕过 catch 路径直接回显 Token。
+      return normalized.error === undefined
+        ? normalized
+        : { ...normalized, error: this.sanitizeError(normalized.error) };
     } catch (error) {
       const message = controller.signal.aborted ? "bridge request timed out" : this.sanitizeError(error);
       return { ok: false, error: message };

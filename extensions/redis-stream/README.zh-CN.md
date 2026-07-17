@@ -132,6 +132,39 @@ sequenceDiagram
     end
 ```
 
+### Gateway 有界停机
+
+字符图先说明超时后的可靠性差异；Mermaid 再展示同一状态决策。两种图都保留，便于快速扫读和渲染阅读：
+
+```text
+Gateway abort
+      │
+      ├── destroy Subscriber / Consumer（停止新接收）
+      │
+      ▼
+等待 Stream 当前处理 + Pub/Sub 已接纳任务（总预算 shutdownTimeoutMs）
+      │
+      ├── 已排空 ──→ 清 publisher ──→ QUIT 主连接
+      │
+      └── 超时
+           ├── Stream：不 XACK，entry 留在 PEL，供 XAUTOCLAIM
+           ├── Pub/Sub：记录 outcome unknown 告警
+           └── 清 publisher ──→ DESTROY 主连接，Gateway 有界退出
+```
+
+```mermaid
+flowchart TD
+    A["Gateway abort"] --> S["销毁 Subscriber / Consumer<br/>停止新接收"]
+    S --> W["等待 Stream 当前处理<br/>与 Pub/Sub 已接纳任务"]
+    W -->|"预算内完成"| C["清除 publisher"]
+    C --> Q["QUIT 主连接"]
+    W -->|"达到 shutdownTimeoutMs"| T["记录停机超时告警"]
+    T --> P["Stream 不 XACK<br/>entry 保留在 PEL"]
+    T --> U["Pub/Sub outcome unknown"]
+    P --> D["清 publisher / DESTROY 主连接"]
+    U --> D
+```
+
 1. 通过 Pub/Sub 或 `XREADGROUP` 接收 Redis 消息
 2. 白名单检查：如果 `subscribeChannels` 非空，仅处理匹配的 channel
 3. 路由解析：先查 `channelBindings`（显式匹配），回退到标准 `openclaw:agent:<agentId>:in` 格式
@@ -245,19 +278,19 @@ Channel 模式支持 `*` 通配符（glob 风格，以冒号分隔）。独立�
 
 ### Stream 设置（channelMode = "stream"）
 
-| 字段                        | 类型      | 默认值                   | 说明                                          |
-| --------------------------- | --------- | ------------------------ | --------------------------------------------- |
-| `stream.inboundKey`         | `string`  | `"openclaw:inbound"`     | 消费组读取的 stream 键                        |
-| `stream.outboundKey`        | `string`  | `"openclaw:outbound"`    | 回复写入的 stream 键                          |
-| `stream.consumerGroup`      | `string`  | `"openclaw-group"`       | 消费者组名称                                  |
-| `stream.consumerName`       | `string`  | `""`                     | 唯一消费者名；空值按主机名 + 进程 ID 自动生成 |
-| `stream.blockMs`            | `number`  | `5000`                   | `XREADGROUP` 阻塞超时                         |
-| `stream.count`              | `number`  | `10`                     | 每批次最大消息数                              |
-| `stream.createGroup`        | `boolean` | `true`                   | 自动创建消费者组                              |
+| 字段                        | 类型      | 默认值                   | 说明                                                         |
+| --------------------------- | --------- | ------------------------ | ------------------------------------------------------------ |
+| `stream.inboundKey`         | `string`  | `"openclaw:inbound"`     | 消费组读取的 stream 键                                       |
+| `stream.outboundKey`        | `string`  | `"openclaw:outbound"`    | 回复写入的 stream 键                                         |
+| `stream.consumerGroup`      | `string`  | `"openclaw-group"`       | 消费者组名称                                                 |
+| `stream.consumerName`       | `string`  | `""`                     | 唯一消费者名；空值按主机名 + 进程 ID 自动生成                |
+| `stream.blockMs`            | `number`  | `5000`                   | `XREADGROUP` 阻塞超时                                        |
+| `stream.count`              | `number`  | `10`                     | 每批次最大消息数                                             |
+| `stream.createGroup`        | `boolean` | `true`                   | 自动创建消费者组                                             |
 | `stream.pendingClaimIdleMs` | `number`  | `180000`                 | XAUTOCLAIM 回收 idle PEL 条目；必须大于 Agent 超时（0=禁用） |
-| `stream.maxAttempts`        | `number`  | `5`                      | 转入死信前的最大投递次数                      |
-| `stream.deadLetterKey`      | `string`  | `"openclaw:inbound:dlq"` | 死信 Stream 键                                |
-| `stream.maxLen`             | `number`  | `100000`                 | 出站与死信 Stream 近似长度上限；0 表示不限制  |
+| `stream.maxAttempts`        | `number`  | `5`                      | 转入死信前的最大投递次数                                     |
+| `stream.deadLetterKey`      | `string`  | `"openclaw:inbound:dlq"` | 死信 Stream 键                                               |
+| `stream.maxLen`             | `number`  | `100000`                 | 出站与死信 Stream 近似长度上限；0 表示不限制                 |
 
 ### 负载解析
 
@@ -276,12 +309,12 @@ Channel 模式支持 `*` 通配符（glob 风格，以冒号分隔）。独立�
 | `connection.maxRetries`           | `number`  | `0`     | 最大重连次数；0 表示持续重连                                         |
 | `connection.maxPubSubInFlight`    | `number`  | `32`    | 允许同时进入 Agent 管道的 Pub/Sub 消息上限；超限消息被拒绝并计入失败 |
 | `connection.startupTimeoutMs`     | `number`  | `30000` | 启动连接超时                                                         |
-| `connection.shutdownTimeoutMs`    | `number`  | `10000` | Redis 客户端优雅退出预算；超时后强制销毁 socket                      |
+| `connection.shutdownTimeoutMs`    | `number`  | `10000` | 已接纳任务排空与主连接关闭的总停机预算；超时后强制销毁 socket        |
 
 ### Agent 执行边界
 
-| 字段                          | 类型     | 默认值   | 说明 |
-| ----------------------------- | -------- | -------- | ---- |
+| 字段                          | 类型     | 默认值   | 说明                                                                          |
+| ----------------------------- | -------- | -------- | ----------------------------------------------------------------------------- |
 | `network.agentReplyTimeoutMs` | `number` | `120000` | Agent Turn 与 Redis 回复写入的总超时；Stream 的 `pendingClaimIdleMs` 必须更长 |
 
 ### 幂等设置
@@ -305,7 +338,7 @@ Channel 模式支持 `*` 通配符（glob 风格，以冒号分隔）。独立�
 - Pub/Sub 同时处理数由 `maxPubSubInFlight` 限制，超限消息会被明确拒绝并计入失败，避免突发流量无限创建 Agent turn。
 - Pub/Sub 回复或主动出站时，Redis 返回订阅者数量为 0 会抛出投递失败，不能把“命令执行完成”伪装成“消息已送达”。
 - 停机先关闭订阅/阻塞读取入口，再排空已接纳的 Stream 与 Pub/Sub Agent 任务，最后清除 publisher 并关闭主连接；避免人为制造回复失败或丢失。
-- 订阅连接启动和客户端退出都有时间预算；超过 `shutdownTimeoutMs` 会销毁 socket，避免 Gateway 停机无限挂起。
+- `shutdownTimeoutMs` 是排空与主连接关闭共享的总预算；超时后 Stream 条目不 ACK、保留在 PEL，Pub/Sub 记录结果未知，并强制销毁 socket，避免 Gateway 无限挂起。
 - 幂等状态仅在当前插件进程内生效，不能宣称跨节点 exactly-once。
 
 ### 环境变量

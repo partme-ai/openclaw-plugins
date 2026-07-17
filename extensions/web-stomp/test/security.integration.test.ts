@@ -210,7 +210,7 @@ describe("web-stomp production transport", () => {
     // 握手与订阅完成后再收紧，精确验证业务 MESSAGE 的背压分支。
     config.maxBufferedBytes = 1;
     const closed = new Promise<number>((resolve) => ws.once("close", resolve));
-    expect(publishToDestination(destination, "larger-than-one-byte")).toBe(0);
+    await expect(publishToDestination(destination, "larger-than-one-byte")).resolves.toBe(0);
     await closed;
     expect(getStompServerStats().droppedOutbound).toBe(1);
   });
@@ -241,7 +241,7 @@ describe("web-stomp production transport", () => {
     second.send(frame("SUBSCRIBE", { id: "reply", destination: secondDestination, receipt: "sub-ready" }));
     await subscribed;
     const message = waitMessage(second, "after-reconnect");
-    expect(publishToDestination(secondDestination, "after-reconnect")).toBe(1);
+    await expect(publishToDestination(secondDestination, "after-reconnect")).resolves.toBe(1);
     await expect(message).resolves.toContain("MESSAGE");
     second.close();
   });

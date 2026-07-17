@@ -25,6 +25,7 @@ import { rednodeConfig } from "./rednode.mjs";
 import { wechatConfig } from "./wechat.mjs";
 import { wechatIpadConfig } from "./wechat-ipad.mjs";
 import { wecomKfConfig } from "./wecom-kf.mjs";
+import { wecomConfig } from "./wecom.mjs";
 import { bridgeConfig } from "./bridge.mjs";
 import { nacosConfig } from "./nacos.mjs";
 
@@ -54,6 +55,7 @@ const BUILDERS = {
   wechat: wechatConfig,
   "wechat-ipad": wechatIpadConfig,
   "wecom-kf": wecomKfConfig,
+  wecom: wecomConfig,
   bridge: bridgeConfig,
   nacos: nacosConfig,
 };

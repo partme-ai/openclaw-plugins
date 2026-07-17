@@ -15,7 +15,7 @@ import type {
 import { chunkText } from "openclaw/plugin-sdk/reply-runtime";
 import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
 
-import { publishMessage } from "./transport/server.js";
+import { logRabbitmq, publishMessage } from "./transport/server.js";
 import { DEFAULT_RABBITMQ_CONFIG } from "./config.js";
 import { getRabbitmqChannelConfig } from "./state/state.js";
 import { getPeerIdBySession, getSessionContext } from "./routing/session-mapper.js";
@@ -68,7 +68,7 @@ export const rabbitmqOutbound: ChannelOutboundAdapter = {
 
     await publishMessage(outTopic, ctx.text);
 
-    console.log(`[openclaw-rabbitmq] Reply published to ${outTopic} for peer ${peerId}`);
+    logRabbitmq("debug", `[openclaw-rabbitmq] Reply published to ${outTopic} for peer ${peerId}`);
     return { channel: "rabbitmq", messageId: sessionKey };
   },
 };

@@ -105,6 +105,35 @@ describe("ReliableRouteDispatcher", () => {
     await dispatcher.stop();
   });
 
+  it("脱敏状态、日志、持久 DLQ 与审计中的目标 adapter 凭据", async () => {
+    const directory = await stateDir();
+    const resolved = config({ maxAttempts: 1 });
+    const pluginApi = api() as { logger: { error: ReturnType<typeof vi.fn> } };
+    const secret = "router-production-secret";
+    const publish = vi.fn().mockRejectedValue(new Error(
+      `POST https://user:password@target.example/send?access_token=${secret} Authorization: Bearer ${secret}`,
+    ));
+    const dispatcher = new ReliableRouteDispatcher(pluginApi as never, resolved, new DurableRouteStore(directory, resolved), publish);
+    await dispatcher.start();
+    await dispatcher.enqueue({
+      dedupeKey: "redacted-failure",
+      ruleId: "redaction-rule",
+      actionType: "forward",
+      payload: { channel: "gotify", content: "hello" },
+    });
+    await waitFor(async () => (await dispatcher.deadLetters(10)).length === 1);
+
+    const evidence = JSON.stringify({
+      status: await dispatcher.status(),
+      deadLetters: await dispatcher.deadLetters(10),
+      audit: await dispatcher.auditEntries(10),
+      logs: pluginApi.logger.error.mock.calls,
+    });
+    expect(evidence).not.toMatch(/router-production-secret|user:password/);
+    expect(evidence).toContain("[REDACTED]");
+    await dispatcher.stop();
+  });
+
   it("replays dead letters on operator request", async () => {
     const directory = await stateDir();
     const resolved = config({ maxAttempts: 1 });

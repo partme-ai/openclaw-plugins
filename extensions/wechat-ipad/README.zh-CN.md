@@ -8,6 +8,23 @@
 
 ## 架构与职责边界
 
+字符图用于在终端、源码评审和 Markdown 原文中快速理解完整链路；后面的 Mermaid 图继续用于渲染组件关系，两种图示都保留。
+
+```text
+┌──────────────────────────┐       ┌────────────────────────────────────┐
+│ 外部 iPad 协议服务       │       │ OpenClaw Gateway 2026.7.1         │
+│ MMTLS / Protobuf / 登录态│       │                                    │
+│                          │──WS──▶│ WechatIpadBridge                   │
+│                          │       │ 鉴权/校验/心跳/重连/响应与错误边界 │
+│                          │◀HTTP──│        │                           │
+└────────────┬─────────────┘       │        ▼                           │
+             │                     │ 有界串行队列 → 准入/命令/持久去重  │
+             ▼                     │        │                           │
+          微信网络                 │        ▼                           │
+                                   │      Agent → 出站管道              │
+                                   └────────────────────────────────────┘
+```
+
 ```mermaid
 flowchart LR
     WX["微信网络"] <--> S["外部 iPad 协议服务<br/>登录态 / MMTLS / Protobuf"]
@@ -57,7 +74,7 @@ flowchart LR
 }
 ```
 
-生产地址强制使用 `wss://` 和 `https://`，并且必须配置 Token；本机回环测试才允许明文协议和无 Token。WebSocket 与 HTTP API 默认必须属于同一主机，确需拆分时要显式设置 `allowSplitBridgeHosts=true`，避免把同一 Bearer Token 误发给错误主机。Token 不写入 URL、日志或状态响应。
+生产地址强制使用 `wss://` 和 `https://`，并且必须配置 Token；本机回环测试才允许明文协议和无 Token。WebSocket 与 HTTP API 默认必须属于同一主机，确需拆分时要显式设置 `allowSplitBridgeHosts=true`，避免把同一 Bearer Token 误发给错误主机。Token 不写入 URL、日志或状态响应；网络异常与 HTTP 业务错误都会统一遮蔽 URL 用户信息、Bearer/Authorization/token 字段和真实配置值。
 
 ## 入站授权与背压
 

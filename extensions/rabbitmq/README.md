@@ -174,7 +174,8 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.5.22`.
       "consume": {
         "prefetch": 50,
         "concurrency": 4,
-        "requeueOnError": false
+        "requeueOnError": false,
+        "shutdownTimeoutMs": 30000
       },
       "idempotency": {
         "enabled": true
@@ -495,6 +496,39 @@ Official docs for plugins, the SDK, and this channel's building blocks:
 ## ❓ FAQ
 
 ## Production reliability
+
+```text
+Gateway stop
+     │
+     ▼
+stopping=true ──▶ basic.cancel ──▶ reject new deliveries
+                                           │
+                                           ▼
+                              await Agent + publish confirms
+                                           │
+                      ┌────────────────────┴───────────────┐
+                      ▼                                    ▼
+             ACK / retry / DLQ done          consume.shutdownTimeoutMs
+                      └────▶ NACK unsettled deliveries ◀───┘
+                                           │
+                                           ▼
+                                  close channels/connection
+```
+
+```mermaid
+sequenceDiagram
+    participant G as Gateway
+    participant C as RabbitMQ Consumer
+    participant A as Agent Runtime
+    participant B as Broker
+    G->>C: stopping=true; basic.cancel
+    C->>A: drain accepted turns
+    A->>B: confirmed reply / retry / DLQ publish
+    B-->>C: publisher confirm
+    C-->>B: ACK original delivery
+    Note over C,A: timeout warns and NACKs remaining deliveries for requeue
+    C-->>G: close channels and connection
+```
 
 - Outbound replies, retries, and dead-letter transfers use RabbitMQ Publisher Confirms and persistent messages. The original delivery is ACKed only after the broker confirms the next durable hop.
 - Failed deliveries go through a dedicated `<exchange>.retry` exchange and TTL queue. After `maxAttempts`, they are confirmed into `<exchange>.dlx` and `<queue>.dlq`.

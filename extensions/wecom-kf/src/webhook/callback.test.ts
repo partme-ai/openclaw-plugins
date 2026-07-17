@@ -398,6 +398,38 @@ describe("createKfCallbackHandler", () => {
     expect(commitInboundMock).toHaveBeenCalledWith("kf_001", "msg-1");
   });
 
+  it("拒绝使用当前路径签名跨账号触发其他 OpenKfId", async () => {
+    const otherAccount: WecomAccountConfig = {
+      ...accountConfig,
+      openKfId: "kf_002",
+      corpSecret: "other-secret",
+    };
+    const getBoundAccountConfig = (openKfId?: string) =>
+      openKfId === "kf_002" ? otherAccount : accountConfig;
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_002]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: xml,
+    });
+    const timestamp = "1710000004";
+    const nonce = "nonce-cross-account";
+    const signature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const res = mockResponse();
+
+    await createKfCallbackHandler(getBoundAccountConfig, handlerOptions)(
+      makePostReq({ msg_signature: signature, timestamp, nonce }, wrapEncryptedXml(encrypt)),
+      res,
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toBe("invalid callback");
+    expect(syncKfMessagesMock).not.toHaveBeenCalled();
+  });
+
   it("派发失败时释放 msgid，且不推进当前页游标", async () => {
     dispatchKfMessageMock.mockRejectedValueOnce(new Error("dispatch failed"));
     syncKfMessagesMock.mockResolvedValueOnce({
@@ -475,6 +507,38 @@ describe("createKfCallbackHandler", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe("success");
     await vi.waitFor(() => expect(syncKfMessagesMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("快速 ACK 后 Runtime 尚未就绪时进入有界重试而不是假成功", async () => {
+    getWecomRuntimeMock.mockImplementation(() => {
+      throw new Error("runtime starting");
+    });
+    const xml = buildEventXml(
+      "kf_msg_or_event",
+      "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>",
+    );
+    const encrypt = encryptWecomPlaintext({
+      encodingAESKey: ENCODING_AES_KEY,
+      receiveId: CORP_ID,
+      plaintext: xml,
+    });
+    const timestamp = "1710000004";
+    const nonce = "nonce-runtime-starting";
+    const signature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt });
+    const res = mockResponse();
+
+    await createKfCallbackHandler(getAccountConfig, {
+      ...handlerOptions,
+      syncRetryAttempts: 2,
+    })(makePostReq({ msg_signature: signature, timestamp, nonce }, wrapEncryptedXml(encrypt)), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe("success");
+    await vi.waitFor(() => expect(getWecomRuntimeMock).toHaveBeenCalledTimes(2));
+    expect(syncKfMessagesMock).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("background sync failed: Runtime not available for sync_msg"),
+    ));
   });
 
   it("拒绝失控的后台同步重试参数", () => {

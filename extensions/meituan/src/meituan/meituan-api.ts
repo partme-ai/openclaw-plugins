@@ -11,6 +11,7 @@ import type {
   MeituanOperation,
   MeituanPluginConfig,
 } from "../types.js";
+import { safeMeituanError } from "../shared/safe-error.js";
 
 /** 美团调用失败的统一错误，`code` 保存经过校验的平台业务错误码。 */
 export class MeituanApiError extends Error {
@@ -215,21 +216,18 @@ async function readBoundedBody(
 }
 
 function safeErrorMessage(error: unknown, config: MeituanPluginConfig): string {
-  if (!(error instanceof Error)) return "unknown network error";
-  return safeExternalText(error.message, config).replaceAll(
-    /(signKey|appAuthToken|sign)=?[^\s&,]*/gi,
-    "$1=[REDACTED]",
+  return safeMeituanError(
+    error,
+    [config.signKey, config.appAuthToken, config.developerId],
+    300,
+    "unknown network error",
   );
 }
 
 /** 清洗平台/网络返回的不可信文本，并额外替换当前真实凭据值。 */
 function safeExternalText(value: unknown, config: MeituanPluginConfig): string {
-  let text = String(value ?? "unknown error")
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  for (const secret of [config.signKey, config.appAuthToken]) {
-    if (secret) text = text.replaceAll(secret, "[REDACTED]");
-  }
-  return (text || "unknown error").slice(0, 300);
+  return safeMeituanError(
+    value,
+    [config.signKey, config.appAuthToken, config.developerId],
+  );
 }

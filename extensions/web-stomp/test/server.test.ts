@@ -107,8 +107,14 @@ describe("web-stomp server integration", () => {
     ws.close();
   });
 
-  it("returns ERROR instead of SEND receipt when Agent dispatch fails", async () => {
-    await startStompServer(baseConfig, vi.fn().mockRejectedValue(new Error("Agent unavailable")));
+  it("returns a stable ERROR without exposing internal Agent failure details", async () => {
+    const logger = { error: vi.fn() };
+    const secret = "runtime-production-secret";
+    await startStompServer(
+      baseConfig,
+      vi.fn().mockRejectedValue(new Error(`Agent unavailable Authorization: Bearer ${secret}`)),
+      logger,
+    );
     const ws = await connectWs();
     ws.send(frame("CONNECT", { "accept-version": "1.2" }));
     await readUntil(ws, "CONNECTED");
@@ -117,9 +123,12 @@ describe("web-stomp server integration", () => {
       destination: "/queue/agent.demo",
       receipt: "must-not-succeed",
     }, "hello"));
-    const response = await readUntil(ws, "Agent unavailable");
+    const response = await readUntil(ws, "Agent dispatch failed");
     expect(response).toContain("ERROR");
     expect(response).not.toContain("RECEIPT\nreceipt-id:must-not-succeed");
+    expect(response).not.toContain(secret);
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(secret);
+    expect(JSON.stringify(logger.error.mock.calls)).toContain("[REDACTED]");
     ws.close();
   });
 
@@ -141,12 +150,32 @@ describe("web-stomp server integration", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    publishToDestination(destination, "reply-body");
+    await publishToDestination(destination, "reply-body");
     const delivery = await readUntil(ws, "reply-body");
     expect(delivery).toContain("MESSAGE");
     expect(delivery).toMatch(/\back:/);
 
     ws.close();
+  });
+
+  it("停机时等待已经进入 Agent 管道的帧完成", async () => {
+    let release!: () => void;
+    const handler = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    baseConfig.shutdownTimeoutMs = 1_000;
+    await startStompServer(baseConfig, handler);
+    const ws = await connectWs();
+    ws.send(frame("CONNECT", { "accept-version": "1.2" }));
+    await readUntil(ws, "CONNECTED");
+    ws.send(frame("SEND", { destination: "/queue/agent.demo" }, "drain-me"));
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+
+    let stopped = false;
+    const stopping = stopStompServer().then(() => { stopped = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    expect(stopped).toBe(true);
   });
 
   it("should parse multiple STOMP frames in one WebSocket message", async () => {

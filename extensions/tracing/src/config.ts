@@ -15,7 +15,7 @@ const DEFAULT_CONFIG: TracingConfig = {
   traceDir: "./traces",
   traceRetentionDays: 7,
   maxSpansPerTrace: 100,
-  maxActiveTraces: 10_000,
+  maxActiveTraces: 1_000,
   maxBufferedSpans: 10_000,
   flushIntervalMs: 5_000,
   exportTimeoutMs: 10_000,
@@ -26,6 +26,8 @@ const DEFAULT_CONFIG: TracingConfig = {
 
 const CONFIG_KEYS = new Set<keyof TracingConfig>(Object.keys(DEFAULT_CONFIG) as Array<keyof TracingConfig>);
 const HTTP_HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+/** 活动 Trace 与单 Trace Span 上限的乘积预算，防止两个合法大值组合成无界内存风险。 */
+const MAX_ACTIVE_SPAN_BUDGET = 100_000;
 
 function assertBoolean(value: unknown, key: string): boolean {
   if (typeof value !== "boolean") {
@@ -170,6 +172,12 @@ export function normalizeTracingConfig(
       max: 300_000,
       integer: true,
     });
+  }
+
+  if (config.maxActiveTraces * config.maxSpansPerTrace > MAX_ACTIVE_SPAN_BUDGET) {
+    throw new Error(
+      `maxActiveTraces * maxSpansPerTrace must not exceed ${MAX_ACTIVE_SPAN_BUDGET}`,
+    );
   }
 
   config.otlpEndpoint = normalizeOtlpEndpoint(config.otlpEndpoint);

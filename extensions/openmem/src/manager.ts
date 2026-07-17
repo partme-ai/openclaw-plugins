@@ -40,6 +40,7 @@ export class OpenMemSearchManager implements MemorySearchManager {
   }): Promise<MemorySearchResult[]> {
     const trimmed = query.trim();
     if (!trimmed) return [];
+    if (trimmed.length > 4_000) throw new Error("OpenMem search query exceeds 4000 characters");
     const limit = Math.min(Math.max(opts?.maxResults ?? this.config.maxSearchResults, 1), this.config.maxSearchResults);
     const sessionId = opts?.sessionKey ? await this.coordinator.recallSessionId(opts.sessionKey) : undefined;
     if (!this.config.allowSharedRecall && !sessionId) return [];
@@ -151,7 +152,7 @@ export class OpenMemSearchManager implements MemorySearchManager {
     if (!value || typeof value !== "object") return false;
     const chunk = value as Partial<SearchChunk>;
     return typeof chunk.text === "string" && chunk.text.trim().length > 0 &&
-      typeof chunk.score === "number" && Number.isFinite(chunk.score) &&
+      typeof chunk.score === "number" && Number.isFinite(chunk.score) && chunk.score >= 0 &&
       typeof chunk.source === "string" && chunk.source.length > 0 && chunk.source.length <= 2_048 &&
       (chunk.recall_type === "continuity" || chunk.recall_type === "knowledge");
   }

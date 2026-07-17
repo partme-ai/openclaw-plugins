@@ -1,18 +1,18 @@
-[18:05:08.523] << MESSAGE
+[09:05:50.477] << MESSAGE
 subscription:browser-sub-1
 message-id:msg-2
-destination:/topic/session.stomp\cf06cb7f6-7727-40d8-8625-edef88d11fb3@main
+destination:/topic/session.stomp\c4a2a7ab9-e8af-463a-a394-264f5cb0c29a@main
 content-type:text/plain
 ack:msg-2
 content-length:503
 
-{"version":"1","message":{"messageId":"stomp-d5246b53-3aee-4f24-b351-c09f5d13094e","traceId":"1427e10b-e98b-4410-a602-ea3c4505125a","timestamp":1784225108522,"source":{"channel":"stomp","accountId":"default","userId":"stomp:f06cb7f6-7727-40d8-8625-edef88d11fb3@main","chatType":"direct","agentId":"main"},"contentType":"text","text":"openclaw e2e fixture reply","media":[],"direction":"outbound"},"headers":{"replyRoute":{"destination":"/topic/session.stomp:f06cb7f6-7727-40d8-8625-edef88d11fb3@main"}}}\0
-[18:05:08.305] >> SEND /queue/agent.main
-[18:05:08.272] >> SUBSCRIBE /topic/session.stomp:f06cb7f6-7727-40d8-8625-edef88d11fb3@main
-[18:05:08.240] << CONNECTED
+{"version":"1","message":{"messageId":"stomp-46fd8e86-a0e5-4a22-90c6-3f4dc6e390e2","traceId":"679bfae8-a52a-4039-95a9-d7ce8cd5113a","timestamp":1784279150476,"source":{"channel":"stomp","accountId":"default","userId":"stomp:4a2a7ab9-e8af-463a-a394-264f5cb0c29a@main","chatType":"direct","agentId":"main"},"contentType":"text","text":"openclaw e2e fixture reply","media":[],"direction":"outbound"},"headers":{"replyRoute":{"destination":"/topic/session.stomp:4a2a7ab9-e8af-463a-a394-264f5cb0c29a@main"}}}\0
+[09:05:50.102] >> SEND /queue/agent.main
+[09:05:50.068] >> SUBSCRIBE /topic/session.stomp:4a2a7ab9-e8af-463a-a394-264f5cb0c29a@main
+[09:05:50.031] << CONNECTED
 version:1.2
 heart-beat:10000,10000
 server:openclaw-web-stomp/2026.7.1
-session:f06cb7f6-7727-40d8-8625-edef88d11fb3
+session:4a2a7ab9-e8af-463a-a394-264f5cb0c29a
 
 \0

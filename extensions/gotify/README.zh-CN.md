@@ -214,6 +214,29 @@ Agent 回复不会被自动删除，在线或离线 Gotify Client 都可以继�
 
 ## 🏗️ 消息处理流程
 
+字符图先展示 Gotify 没有 Broker ACK 时，实时流、历史回放和本地持久游标如何共同保证恢复；下方 Mermaid 继续保留完整可渲染关系：
+
+```text
+外部 Application ──POST /message──▶ Gotify Server
+                                      │
+                 ┌────────────────────┴────────────────────┐
+                 │ /stream 实时帧                         │ REST backlog
+                 ▼                                        ▼
+       启动期有界缓冲 / 实时顺序队列              分页扫描 + messageId 升序
+                 └────────────────────┬────────────────────┘
+                                      ▼
+                       allowedAppId + DM Policy + 幂等
+                                      ▼
+                           OpenClaw Agent Turn + 回复
+                                      │
+                ┌─────────────────────┴─────────────────────┐
+                │ 成功：先原子推进 cursor，再可选删除原消息 │
+                │ 失败：顺序重试；耗尽后 fail-closed        │
+                └─────────────────────┬─────────────────────┘
+                                      ▼
+                stop：关 WS → 中断退避 → 排空已接纳 Turn → 退出
+```
+
 ```mermaid
 flowchart LR
     EXT["业务系统 / 外部 Application"] -->|"POST /message"| GOTIFY["Gotify Server"]
@@ -254,6 +277,10 @@ Gotify `/stream` 没有 Broker 式 ACK/NACK。实时派发失败时，插件会�
 `maxDispatchAttempts` 后账号进入 fail-closed，消息仍留在 Gotify；下次启动由 backlog
 回放恢复。游标文件只有 `ENOENT` 会被视为首次启动，JSON 损坏、权限或 IO 错误都会停止
 回放，避免静默归零后把整段历史再次交给 Agent。
+
+- 同一账号的 REST 请求由完整任务生命周期锁串行化；锁在 HTTP 请求结束后才释放，而不是仅在任务入队后释放。
+- 停机先关闭 WebSocket 入口并打断尚在退避的重试，再等待已经进入 Agent 的任务完成游标持久化，最后结束账号生命周期。
+- 日志、健康状态和 doctor 报告会屏蔽 App/Client Token、`token` 查询参数及认证请求头。
 
 ## 💬 一来一回对话（Gotify + Control UI）
 

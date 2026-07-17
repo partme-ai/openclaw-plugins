@@ -6,7 +6,7 @@
  * 会把 orphan Span 以 error 状态真正关闭，而不是只删除映射。
  */
 import type { Span, SpanKind, SpanStatus, TracingBackend } from "../shared/types.js";
-import { sanitizeTraceAttributes } from "../shared/redact.js";
+import { redactTraceText, sanitizeTraceAttributes } from "../shared/redact.js";
 
 /** 活动 Trace 的轻量索引，同时由 sessionKey 和 runId 指向同一对象。 */
 export interface ActiveTraceContext {
@@ -55,7 +55,8 @@ export function createSpan(
     traceId: options.traceId ?? randomHexId(16),
     spanId: randomHexId(8),
     parentSpanId: options.parentSpanId,
-    name,
+    // Span name 同样会进入查询、文件和 OTLP；第三方工具名可能含凭据、控制字符或超长文本。
+    name: redactTraceText(name),
     kind: options.kind ?? "internal",
     startTimeMs: Date.now(),
     // TraceStore 是所有查询与导出后端的共同上游，在此统一脱敏并复制属性。

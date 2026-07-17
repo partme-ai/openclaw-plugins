@@ -4,14 +4,22 @@ import { createClient } from "redis";
 
 import { resolveRedisChannelConfig } from "../src/config.js";
 import { setRedisStreamRuntime } from "../src/runtime.js";
-import { getStats, startRedisServer, stopRedisServer } from "../src/transport/server.js";
+import {
+  getStats,
+  startRedisServer,
+  stopRedisServer,
+} from "../src/transport/server.js";
+import { logger } from "../src/shared/logger.js";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 
 function reachable(url: string): Promise<boolean> {
   const parsed = new URL(url);
   return new Promise((resolve) => {
-    const socket = net.connect({ host: parsed.hostname, port: Number(parsed.port || 6379) });
+    const socket = net.connect({
+      host: parsed.hostname,
+      port: Number(parsed.port || 6379),
+    });
     const finish = (ok: boolean): void => {
       socket.removeAllListeners();
       socket.destroy();
@@ -52,7 +60,10 @@ function configFor(suffix: string, overrides: Record<string, unknown> = {}) {
   });
 }
 
-async function waitUntil(predicate: () => Promise<boolean>, timeoutMs = 5000): Promise<void> {
+async function waitUntil(
+  predicate: () => Promise<boolean>,
+  timeoutMs = 5000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) return;
@@ -66,6 +77,7 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
 
   afterEach(async () => {
     await stopRedisServer();
+    logger.resetLoggers();
     setRedisStreamRuntime(null as never);
     if (keys.size > 0) {
       const cleanup = createClient({ url: REDIS_URL });
@@ -79,17 +91,32 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
   it("XREADGROUP dispatches, XADDs the durable reply, and ACKs", async () => {
     const suffix = `success-${Date.now()}`;
     const config = configFor(suffix);
-    keys.add(config.stream.inboundKey).add(config.stream.outboundKey).add(config.stream.deadLetterKey);
+    keys
+      .add(config.stream.inboundKey)
+      .add(config.stream.outboundKey)
+      .add(config.stream.deadLetterKey);
     setRedisStreamRuntime({
       config: {},
       channel: {
         routing: {
-          resolveAgentRoute: async () => ({ agentId: "main", sessionKey: `agent:main:direct:${suffix}` }),
+          resolveAgentRoute: async () => ({
+            agentId: "main",
+            sessionKey: `agent:main:direct:${suffix}`,
+          }),
         },
         reply: {
-          finalizeInboundContext: async (params: Record<string, unknown>) => params,
-          createReplyDispatcherWithTyping: ({ deliver }: { deliver: (value: { text: string }) => Promise<void> }) => ({ deliver }),
-          dispatchReplyFromConfig: async ({ dispatcher }: { dispatcher: { deliver: (value: { text: string }) => Promise<void> } }) => {
+          finalizeInboundContext: async (params: Record<string, unknown>) =>
+            params,
+          createReplyDispatcherWithTyping: ({
+            deliver,
+          }: {
+            deliver: (value: { text: string }) => Promise<void>;
+          }) => ({ deliver }),
+          dispatchReplyFromConfig: async ({
+            dispatcher,
+          }: {
+            dispatcher: { deliver: (value: { text: string }) => Promise<void> };
+          }) => {
             await dispatcher.deliver({ text: "live redis reply" });
           },
         },
@@ -106,8 +133,13 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
       replyStream: config.stream.outboundKey,
     });
 
-    await waitUntil(async () => (await producer.xLen(config.stream.outboundKey)) === 1);
-    const pending = await producer.xPending(config.stream.inboundKey, config.stream.consumerGroup);
+    await waitUntil(
+      async () => (await producer.xLen(config.stream.outboundKey)) === 1,
+    );
+    const pending = await producer.xPending(
+      config.stream.inboundKey,
+      config.stream.consumerGroup,
+    );
     const replies = await producer.xRange(config.stream.outboundKey, "-", "+");
     expect(pending.pending).toBe(0);
     expect(replies[0]?.message.text).toContain("live redis reply");
@@ -119,7 +151,10 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
   it("reclaims failures and atomically moves exhausted entries to the DLQ", async () => {
     const suffix = `dlq-${Date.now()}`;
     const config = configFor(suffix);
-    keys.add(config.stream.inboundKey).add(config.stream.outboundKey).add(config.stream.deadLetterKey);
+    keys
+      .add(config.stream.inboundKey)
+      .add(config.stream.outboundKey)
+      .add(config.stream.deadLetterKey);
     setRedisStreamRuntime(null as never);
 
     await startRedisServer(config);
@@ -130,9 +165,18 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
       agentId: "main",
     });
 
-    await waitUntil(async () => (await producer.xLen(config.stream.deadLetterKey)) === 1);
-    const pending = await producer.xPending(config.stream.inboundKey, config.stream.consumerGroup);
-    const deadLetters = await producer.xRange(config.stream.deadLetterKey, "-", "+");
+    await waitUntil(
+      async () => (await producer.xLen(config.stream.deadLetterKey)) === 1,
+    );
+    const pending = await producer.xPending(
+      config.stream.inboundKey,
+      config.stream.consumerGroup,
+    );
+    const deadLetters = await producer.xRange(
+      config.stream.deadLetterKey,
+      "-",
+      "+",
+    );
     expect(pending.pending).toBe(0);
     expect(deadLetters[0]?.message._sourceId).toBe(sourceId);
     expect(deadLetters[0]?.message._deliveryCount).toBe("2");
@@ -145,8 +189,12 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
     const inboundChannel = `openclaw:it:${suffix}:in`;
     let signalStarted!: () => void;
     let releaseTask!: () => void;
-    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
-    const gate = new Promise<void>((resolve) => { releaseTask = resolve; });
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      releaseTask = resolve;
+    });
     const config = resolveRedisChannelConfig({
       channels: {
         "redis-stream": {
@@ -162,11 +210,17 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
       config: {},
       channel: {
         routing: {
-          resolveAgentRoute: async () => ({ agentId: "main", sessionKey: `agent:main:direct:${suffix}` }),
+          resolveAgentRoute: async () => ({
+            agentId: "main",
+            sessionKey: `agent:main:direct:${suffix}`,
+          }),
         },
         reply: {
-          finalizeInboundContext: async (params: Record<string, unknown>) => params,
-          createReplyDispatcherWithTyping: () => ({ deliver: async () => undefined }),
+          finalizeInboundContext: async (params: Record<string, unknown>) =>
+            params,
+          createReplyDispatcherWithTyping: () => ({
+            deliver: async () => undefined,
+          }),
           dispatchReplyFromConfig: async () => {
             signalStarted();
             await gate;
@@ -181,12 +235,80 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
     await started;
 
     let stopped = false;
-    const stopping = stopRedisServer().then(() => { stopped = true; });
+    const stopping = stopRedisServer().then(() => {
+      stopped = true;
+    });
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(stopped).toBe(false);
     releaseTask();
     await stopping;
     expect(stopped).toBe(true);
+    await producer.quit();
+  });
+
+  it("bounds Pub/Sub shutdown and reports an unknown in-flight outcome", async () => {
+    const suffix = `pubsub-timeout-${Date.now()}`;
+    const inboundChannel = `openclaw:it:${suffix}:in`;
+    let signalStarted!: () => void;
+    let releaseTask!: () => void;
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      releaseTask = resolve;
+    });
+    const warnings: string[] = [];
+    logger.setLoggers({ warn: (message) => warnings.push(message) });
+    const config = resolveRedisChannelConfig({
+      channels: {
+        "redis-stream": {
+          url: REDIS_URL,
+          channelMode: "pubsub",
+          defaultAgentId: "main",
+          subscribeChannels: [inboundChannel],
+          connection: { shutdownTimeoutMs: 50 },
+          network: { agentReplyTimeoutMs: 2_000 },
+        },
+      },
+    });
+    setRedisStreamRuntime({
+      config: {},
+      channel: {
+        routing: {
+          resolveAgentRoute: async () => ({
+            agentId: "main",
+            sessionKey: `agent:main:direct:${suffix}`,
+          }),
+        },
+        reply: {
+          finalizeInboundContext: async (params: Record<string, unknown>) =>
+            params,
+          createReplyDispatcherWithTyping: () => ({
+            deliver: async () => undefined,
+          }),
+          dispatchReplyFromConfig: async () => {
+            signalStarted();
+            await gate;
+          },
+        },
+      },
+    } as never);
+    await startRedisServer(config);
+    const producer = createClient({ url: REDIS_URL });
+    await producer.connect();
+    await producer.publish(inboundChannel, "force bounded shutdown");
+    await started;
+
+    const startedAt = Date.now();
+    await stopRedisServer();
+    const elapsedMs = Date.now() - startedAt;
+    expect(elapsedMs).toBeLessThan(1_000);
+    expect(
+      warnings.some((message) => message.includes("Shutdown drain timed out")),
+    ).toBe(true);
+
+    // 释放测试任务，避免把刻意制造的悬挂 Promise 带到下一个用例。
+    releaseTask();
     await producer.quit();
   });
 });

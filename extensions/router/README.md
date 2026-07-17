@@ -16,6 +16,60 @@
 
 **Pure configuration-driven** — no channel plugin code modification needed. All routing rules are defined in JSON config.
 
+## Runtime Architecture
+
+The character diagram separates event acceptance from reliable delivery for quick operational reading. The Mermaid diagram below preserves the same relationship in a renderable form.
+
+```text
+OpenClaw Hooks
+message_received / message_sent / reply_payload_sending
+        │
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│ openclaw-router                                              │
+│                                                              │
+│ rule match ──▶ template ──▶ hop guard ──▶ stable dedupe key   │
+│                                            │                 │
+│                                            ▼                 │
+│                              ┌────────────────────────┐      │
+│                              │ durable Outbox         │      │
+│                              │ atomic batch + fsync   │      │
+│                              └───────────┬────────────┘      │
+│                                          ▼                   │
+│                              bounded-concurrency worker       │
+│                         ┌────────────────┴──────────────┐     │
+│                         ▼                               ▼     │
+│              confirmed: commit dedupe         failure: retry │
+│                                                         │    │
+│                                                         ▼    │
+│                                                    durable DLQ│
+└──────────────────────────────────────────┬───────────────────┘
+                                           ▼
+                              Channel Outbound Adapter
+                                           │
+                                           ▼
+                                  target IM / MQ / Gotify
+```
+
+```mermaid
+flowchart LR
+    Hooks["OpenClaw official Hooks<br/>message_received / message_sent / reply_payload_sending"]
+    Match["Rule match and template expansion<br/>stable dedupe key + hop trace"]
+    Outbox[("Durable Outbox<br/>atomic batch enqueue")]
+    Worker["Reliable delivery worker<br/>exponential backoff + jitter"]
+    Adapter["OpenClaw Channel<br/>Outbound Adapter"]
+    Target["Target IM / MQ plugin"]
+    Dedupe[("Committed dedupe record")]
+    DLQ[("Durable DLQ")]
+
+    Hooks --> Match --> Outbox --> Worker --> Adapter --> Target
+    Target -->|"confirmed"| Dedupe
+    Target -->|"retryable failure"| Worker
+    Worker -->|"attempts exhausted"| DLQ
+```
+
+The Outbox is the delivery source of truth. A pending task is removed and its dedupe key committed only after the target adapter confirms success. Adapter errors are redacted before they enter logs, status, audit records, or the persisted DLQ.
+
 ## Features
 
 - **Durable outbox** — Pending deliveries survive Gateway restarts

@@ -34,7 +34,7 @@ export function createAmapTools(
       try {
         return boundedResult({ success: true, data: await handler(asObject(params)) }, config.maxToolResultBytes);
       } catch (error) {
-        return result({ success: false, error: safeErrorMessage(error) });
+        return result({ success: false, error: safeErrorMessage(error, config.key) });
       }
     };
 
@@ -179,9 +179,16 @@ function paginationParams(params: Record<string, unknown>): { page_size?: number
   return { page_size: pageSize, page_num: pageNum };
 }
 
-function safeErrorMessage(error: unknown): string {
+function safeErrorMessage(error: unknown, configuredKey: string): string {
   const raw = error instanceof Error ? error.message : "AMap tool execution failed";
-  return raw.replace(/[\u0000-\u001F\u007F]/gu, " ").trim().slice(0, 512) || "AMap tool execution failed";
+  const sanitized = raw
+    .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/giu, "$1[REDACTED]@")
+    .replace(/(bearer\s+)[^\s,;"']+/giu, "$1[REDACTED]")
+    .replace(/((?:authorization|api[_-]?key|access[_-]?token|key)\s*[=:]\s*)[^\s,;"']+/giu, "$1[REDACTED]");
+  return (configuredKey ? sanitized.split(configuredKey).join("[REDACTED]") : sanitized)
+    .replace(/[\u0000-\u001F\u007F\u2028\u2029]/gu, " ")
+    .trim()
+    .slice(0, 512) || "AMap tool execution failed";
 }
 
 function coordinates(value: unknown): string {

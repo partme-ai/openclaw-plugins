@@ -71,9 +71,11 @@ export const rabbitmqChannel = {
     startAccount: async ({
       cfg,
       abortSignal,
+      log,
     }: {
       cfg: Record<string, unknown>;
       abortSignal: AbortSignal;
+      log?: { debug?(message: string): void; info?(message: string): void; warn?(message: string): void; error?(message: string): void };
     }) => {
       const config = resolveRabbitmqConfig(cfg ?? {});
       setRabbitmqChannelConfig(config);
@@ -112,7 +114,7 @@ export const rabbitmqChannel = {
           }
           return { ok: true as const, ackMode: "manual" as const };
         }
-      });
+      }, log);
 
       try {
         if (!abortSignal.aborted) {

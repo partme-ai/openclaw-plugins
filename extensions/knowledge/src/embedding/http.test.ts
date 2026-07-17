@@ -17,6 +17,13 @@ describe('embedding HTTP guardrails', () => {
     expect(result).toEqual(['A', 'B', 'C', 'D', 'E']);
   });
 
+  it.each([0, -1, 1.5, 2_049])('rejects maxBatchSize=%s before entering the batching loop', async (maxBatchSize) => {
+    const operation = vi.fn(async (batch: string[]) => batch);
+
+    await expect(inEmbeddingBatches(['a'], { maxBatchSize }, operation)).rejects.toThrow('maxBatchSize');
+    expect(operation).not.toHaveBeenCalled();
+  });
+
   it('retries a transient server error and returns JSON', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response('temporary', { status: 503 }))

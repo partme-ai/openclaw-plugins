@@ -348,6 +348,7 @@ openclaw pairing approve wecom <配对码>
       "agent": {
         "corpId": "<你的_CORP_ID>",
         "corpSecret": "<你的_CORP_SECRET>",
+        "apiBaseUrl": "https://qyapi.weixin.qq.com",
         "agentId": "<你的_AGENT_ID>",
         "token": "<你的回调_TOKEN>",
         "encodingAESKey": "<你的_43位_ENCODING_AES_KEY>",
@@ -373,6 +374,7 @@ https://<你的_GATEWAY_HOST>/plugins/wecom/agent/default
 |------|------|
 | `agent.corpId` | 企业微信 Corp ID。 |
 | `agent.corpSecret` | 自建应用 Secret。 |
+| `agent.apiBaseUrl` | OpenAPI 基础地址，默认官方地址；覆盖时要求 HTTPS，本机 loopback 可用 HTTP。 |
 | `agent.agentId` | 自建应用 Agent ID。 |
 | `agent.token` | 回调验证 Token。 |
 | `agent.encodingAESKey` | 43 位回调 AES 密钥。 |

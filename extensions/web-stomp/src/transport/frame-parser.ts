@@ -57,8 +57,8 @@ export function parseFrame(data: string): StompFrame | null {
     }
 
     return { command, headers, body: body || undefined };
-  } catch (err) {
-    console.error("[openclaw-web-stomp] Frame parse error:", err);
+  } catch {
+    // 解析失败属于外部协议错误，由 transport 统一计数和响应；这里不得绕过插件日志脱敏边界。
     return null;
   }
 }

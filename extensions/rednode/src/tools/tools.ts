@@ -6,6 +6,7 @@
  */
 import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk/plugin-entry";
 import { RednodeClient } from "../agent/xhs-api.js";
+import { safeRednodeError } from "../shared/safe-error.js";
 import type { RednodePluginConfig } from "../types.js";
 
 type ToolResult = {
@@ -85,7 +86,8 @@ export function createRednodeTool(
       } catch (error) {
         return result({
           success: false,
-          error: safeErrorMessage(error),
+          // Tool 是进入模型上下文前的最后一道边界；即使未来客户端抛出新错误，也再次脱敏。
+          error: safeErrorMessage(error, config),
         });
       }
     },
@@ -125,11 +127,11 @@ function readOperation(value: unknown, allowed: string[]): string {
     throw new Error(`operation must be one of: ${allowed.join(", ")}`);
   return value;
 }
-function safeErrorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : "Rednode tool execution failed";
-  return raw
-    .replace(/[\u0000-\u001f\u007f]/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, 512) || "Rednode tool execution failed";
+function safeErrorMessage(error: unknown, config: RednodePluginConfig): string {
+  return safeRednodeError(
+    error instanceof Error ? error : undefined,
+    [config.appKey, config.appSecret],
+    512,
+    "Rednode tool execution failed",
+  );
 }

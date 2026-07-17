@@ -10,7 +10,9 @@ describe("redactRedisError", () => {
       url: "rediss://alice:secret@redis.example:6380",
     };
     const result = redactRedisError(
-      new Error("connect rediss://alice:secret@redis.example:6380 via redis://bob:password@backup.example"),
+      new Error(
+        "connect rediss://alice:secret@redis.example:6380 via redis://bob:password@backup.example",
+      ),
       config,
     );
     expect(result).not.toContain("alice");
@@ -24,5 +26,14 @@ describe("redactRedisError", () => {
     const result = redactRedisError(`bad\nline\u0000${"x".repeat(700)}`);
     expect(result).not.toMatch(/[\u0000-\u001f\u007f]/u);
     expect(result.length).toBe(500);
+  });
+
+  it("applies the OpenClaw security runtime to common cloud credentials", () => {
+    const result = redactRedisError(
+      "Authorization: Bearer top-secret-token sk-abcdefghijklmnop",
+    );
+    expect(result).not.toContain("top-secret-token");
+    expect(result).not.toContain("abcdefghijklmnop");
+    expect(result).toContain("[REDACTED]");
   });
 });

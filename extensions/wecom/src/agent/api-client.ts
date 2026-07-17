@@ -40,12 +40,42 @@ type TokenCache = {
 
 const tokenCaches = new Map<string, TokenCache>();
 const MAX_TOKEN_CACHE_ENTRIES = 256;
+const DEFAULT_WECOM_API_BASE_URL = "https://qyapi.weixin.qq.com";
+
+/**
+ * 解析 Agent OpenAPI 基础地址。
+ *
+ * 生产覆盖必须使用 HTTPS；仅允许 localhost/loopback 使用 HTTP，供完全离线的安装态测试
+ * 和本机协议夹具使用。地址只接受 origin，禁止把凭据拼接到带 path/query/userinfo 的 URL。
+ */
+function resolveAgentApiBaseUrl(agent: ResolvedAgentAccount): string {
+    const raw = agent.config.apiBaseUrl?.trim() || DEFAULT_WECOM_API_BASE_URL;
+    let parsed: URL;
+    try {
+        parsed = new URL(raw);
+    } catch {
+        throw new Error("wecom agent apiBaseUrl must be a valid absolute URL");
+    }
+    const isLoopback = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]";
+    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopback)) {
+        throw new Error("wecom agent apiBaseUrl must use HTTPS (HTTP is allowed only for loopback)");
+    }
+    if (parsed.username || parsed.password || parsed.search || parsed.hash || (parsed.pathname !== "/" && parsed.pathname !== "")) {
+        throw new Error("wecom agent apiBaseUrl must contain only scheme, host, and optional port");
+    }
+    return parsed.origin;
+}
+
+/** 将官方端点的 pathname 映射到当前账号的受控 OpenAPI origin。 */
+function agentApiEndpoint(agent: ResolvedAgentAccount, officialEndpoint: string): string {
+    return `${resolveAgentApiBaseUrl(agent)}${new URL(officialEndpoint).pathname}`;
+}
 
 /** Secret 只参与不可逆指纹，既隔离轮换前后缓存，也不把凭据明文留在 Map key/堆快照中。 */
 function tokenCacheKey(agent: ResolvedAgentAccount): string {
     return crypto
         .createHash("sha256")
-        .update(`${agent.corpId}\0${agent.corpSecret}\0${String(agent.agentId ?? "na")}`)
+        .update(`${agent.corpId}\0${agent.corpSecret}\0${String(agent.agentId ?? "na")}\0${resolveAgentApiBaseUrl(agent)}`)
         .digest("hex");
 }
 
@@ -146,7 +176,7 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
 
     cache.refreshPromise = (async () => {
         try {
-            const url = `${API_ENDPOINTS.GET_TOKEN}?corpid=${encodeURIComponent(agent.corpId)}&corpsecret=${encodeURIComponent(agent.corpSecret)}`;
+            const url = `${agentApiEndpoint(agent, API_ENDPOINTS.GET_TOKEN)}?corpid=${encodeURIComponent(agent.corpId)}&corpsecret=${encodeURIComponent(agent.corpSecret)}`;
             const res = await wecomFetch(url, undefined, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
             const json = await res.json() as { access_token?: string; expires_in?: number; errcode?: number; errmsg?: string };
 
@@ -192,8 +222,8 @@ export async function sendText(params: {
 
     const useChat = Boolean(chatId);
     const url = useChat
-        ? `${API_ENDPOINTS.SEND_APPCHAT}?access_token=${encodeURIComponent(token)}`
-        : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`;
+        ? `${agentApiEndpoint(agent, API_ENDPOINTS.SEND_APPCHAT)}?access_token=${encodeURIComponent(token)}`
+        : `${agentApiEndpoint(agent, API_ENDPOINTS.SEND_MESSAGE)}?access_token=${encodeURIComponent(token)}`;
 
     const body = useChat
         ? { chatid: chatId, msgtype: "text", text: { content: cleanText } }
@@ -266,7 +296,7 @@ export async function uploadMedia(params: {
     const token = await getAccessToken(agent);
     const proxyUrl = resolveWecomEgressProxyUrlFromNetwork(agent.network);
     // 添加 debug=1 参数获取更多错误信息
-    const url = `${API_ENDPOINTS.UPLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}&debug=1`;
+    const url = `${agentApiEndpoint(agent, API_ENDPOINTS.UPLOAD_MEDIA)}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}&debug=1`;
 
     const uploadOnce = async (fileContentType: string) => {
         // 手动构造 multipart/form-data 请求体
@@ -339,8 +369,8 @@ export async function sendMedia(params: {
 
     const useChat = Boolean(chatId);
     const url = useChat
-        ? `${API_ENDPOINTS.SEND_APPCHAT}?access_token=${encodeURIComponent(token)}`
-        : `${API_ENDPOINTS.SEND_MESSAGE}?access_token=${encodeURIComponent(token)}`;
+        ? `${agentApiEndpoint(agent, API_ENDPOINTS.SEND_APPCHAT)}?access_token=${encodeURIComponent(token)}`
+        : `${agentApiEndpoint(agent, API_ENDPOINTS.SEND_MESSAGE)}?access_token=${encodeURIComponent(token)}`;
 
     const mediaPayload = mediaType === "video"
         ? { media_id: mediaId, title: title ?? "Video", description: description ?? "" }
@@ -399,7 +429,7 @@ export async function downloadMedia(params: {
 }): Promise<{ buffer: Buffer; contentType: string; filename?: string }> {
     const { agent, mediaId } = params;
     const token = await getAccessToken(agent);
-    const url = `${API_ENDPOINTS.DOWNLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&media_id=${encodeURIComponent(mediaId)}`;
+    const url = `${agentApiEndpoint(agent, API_ENDPOINTS.DOWNLOAD_MEDIA)}?access_token=${encodeURIComponent(token)}&media_id=${encodeURIComponent(mediaId)}`;
 
     const res = await wecomFetch(url, undefined, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
 

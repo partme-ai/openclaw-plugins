@@ -642,7 +642,12 @@ flowchart LR
 时间窗 + SHA-1 验签 + AES 解密
         │
         ▼
-按 webhookPath / open_kfid 解析账号
+按 webhookPath 绑定唯一账号
+        │
+        ▼
+解密 OpenKfId 与绑定账号一致性校验
+        │
+        ├── 不一致 ─────────────→ 400（不入队、不切换账号凭据）
         │
         ├── Gateway stopping ──→ 503（不 ACK，等待企微重试）
         │
@@ -665,16 +670,22 @@ sequenceDiagram
   participant GW as OpenClaw Runtime
 
   WW->>HTTP: 加密 kf_msg_or_event
-  HTTP->>HTTP: 验签、解密、识别账号
-  alt 服务正常运行
-    HTTP->>Q: enqueue(accountId)
-    HTTP-->>WW: 200 success（快速 ACK）
-    Q->>API: 按 cursor 拉取分页
-    API-->>Q: msg_list + next_cursor
-    Q->>GW: 去重后分发消息
-  else 正在停止
-    HTTP-->>WW: 503 service stopping
-    Note over WW,HTTP: 不 ACK，交由企微稍后重试
+  HTTP->>HTTP: 路径绑定账号，使用其凭据验签、解密
+  HTTP->>HTTP: 校验事件 OpenKfId 等于绑定值
+  alt OpenKfId 不一致
+    HTTP-->>WW: 400 invalid callback
+    Note over HTTP: 不允许按事件字段切换到其他账号凭据
+  else 身份一致
+    alt 服务正常运行
+      HTTP->>Q: enqueue(accountId)
+      HTTP-->>WW: 200 success（快速 ACK）
+      Q->>API: 按 cursor 拉取分页
+      API-->>Q: msg_list + next_cursor
+      Q->>GW: 去重后分发消息
+    else 正在停止
+      HTTP-->>WW: 503 service stopping
+      Note over WW,HTTP: 不 ACK，交由企微稍后重试
+    end
   end
   Note over HTTP,Q: stop 等待已 ACK 队列完成，超时才失败退出
 ```
@@ -716,6 +727,9 @@ access_token 缓存键由 `corpId + corpSecret + apiBaseUrl` 计算 SHA-256 指�
 公网回调使用 `fast-xml-parser@5.10.1`；该升级用于消除旧版 XML 注入公告，但不能替代
 插件自身的验签、时间窗、正文上限和事件白名单。运维日志只记录 `errcode`、事件类型、
 数量和状态，不记录 `fail_msgid`、外部联系人 ID、动态 Agent ID、平台原始 `errmsg` 或凭据。
+多账号回调由精确 URL 路径绑定账号；解密事件的 `OpenKfId` 必须等于绑定账号值，否则在
+快速 ACK 前返回 400。第三方异常进入日志前移除 URL 用户信息、查询参数、常见凭据、控制
+字符并限制为 512 字符，避免密钥泄露、日志注入和异常响应放大。
 
 ```mermaid
 flowchart LR
@@ -723,9 +737,11 @@ flowchart LR
   Fresh --> Sign[签名校验]
   Sign --> Decrypt[AES 解密]
   Decrypt --> Parse[fast-xml-parser 5.10.1]
-  Parse --> Allow{允许的事件?}
+  Parse --> Bound{OpenKfId 等于<br/>路径绑定账号?}
+  Bound -->|否| RejectAccount[400 拒绝，不入队]
+  Bound -->|是| Allow{允许的事件?}
   Allow -->|是| Queue[账号级 sync 队列]
-  Allow -->|否| Reject[拒绝或仅记录脱敏摘要]
+  Allow -->|否| RejectEvent[拒绝或仅记录脱敏摘要]
   Queue --> Audit[日志仅保留类型/errcode/数量]
 ```
 

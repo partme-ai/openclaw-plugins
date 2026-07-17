@@ -23,6 +23,8 @@ export default defineConfig({
     "text/index": "src/text/index.ts",
     "transport/index": "src/transport/index.ts",
     "transport/metrics": "src/transport/metrics.ts",
+    "types/index": "src/types/index.ts",
+    "lifecycle/index": "src/lifecycle/index.ts",
   },
   format: ["esm"],
   target: "es2022",

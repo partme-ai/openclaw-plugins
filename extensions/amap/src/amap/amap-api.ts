@@ -73,7 +73,7 @@ export class AmapClient {
             await retryDelay(attempt);
             continue;
           }
-          throw new AmapApiError(`AMap API rejected the request: ${sanitizeProviderInfo(envelope.info)}`, code);
+          throw new AmapApiError(`AMap API rejected the request: ${sanitizeProviderInfo(envelope.info, this.config.key)}`, code);
         }
         return envelope;
       } catch (error) {
@@ -96,14 +96,29 @@ export class AmapClient {
   }
 }
 
-function sanitizeProviderInfo(value: unknown): string {
+function sanitizeProviderInfo(value: unknown, configuredKey: string): string {
   if (typeof value !== "string") return "unknown error";
-  const sanitized = value.replace(/[\u0000-\u001F\u007F]/gu, " ").trim();
+  // 高德通常只返回错误常量，但安全边界不能依赖供应商永远不回显请求 URL 或 Key。
+  // 先遮蔽结构化凭据，再移除配置中的实际 Key，最后压平控制字符防止日志注入。
+  const sanitized = redactLiteral(
+    value
+      .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/giu, "$1[REDACTED]@")
+      .replace(/(bearer\s+)[^\s,;"']+/giu, "$1[REDACTED]")
+      .replace(/((?:authorization|api[_-]?key|access[_-]?token|key)\s*[=:]\s*)[^\s,;"']+/giu, "$1[REDACTED]"),
+    configuredKey,
+  ).replace(/[\u0000-\u001F\u007F\u2028\u2029]/gu, " ").trim();
   return sanitized.slice(0, 256) || "unknown error";
 }
 
 async function retryDelay(attempt: number): Promise<void> {
-  await delay(Math.min(250 * 2 ** attempt, 1_000));
+  const base = Math.min(250 * 2 ** attempt, 1_000);
+  // 多 Gateway 同时收到 429/网关忙时，固定退避会让下一轮再次同步撞击上游。
+  const jittered = Math.round(base * (0.8 + Math.random() * 0.4));
+  await delay(jittered);
+}
+
+function redactLiteral(value: string, secret: string): string {
+  return secret ? value.split(secret).join("[REDACTED]") : value;
 }
 
 async function readBoundedBody(response: Response, maxBytes: number): Promise<string> {

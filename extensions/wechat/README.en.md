@@ -103,6 +103,23 @@ Media messages use CDN parameters and AES-128-ECB encryption. See `src/api/types
 
 ## Inbound transaction boundary
 
+The text diagram is retained for terminals and raw Markdown; the Mermaid flow remains below for rendered relationships.
+
+```text
+WeChat user
+    │
+    ▼
+iLink API ◀── getUpdates + durable cursor ── Monitor
+    ▲                                         │
+    │                                         ▼
+    │                              authorization + message dedupe
+    │                                         │
+    │                                         ▼
+    └── sendMessage / CDN ◀── outbound ◀── OpenClaw Agent
+
+Success: commit the cursor after the full batch; failure: retain and replay
+```
+
 ```mermaid
 flowchart LR
     P["getUpdates batch"] --> A["DM and command authorization"]
@@ -114,7 +131,7 @@ flowchart LR
     W -->|failure| R["Keep cursor and retry with at-least-once semantics"]
 ```
 
-`allowFrom` is an optional static allowlist merged with the QR pairing store. Runtime caches and private context-token state are bounded, and log output redacts identifiers, sessions, content previews, paths, and URL details.
+`allowFrom` is an optional static allowlist merged with the QR pairing store. Runtime caches and private context-token state are bounded. QR values, tokens, and user identifiers expose no prefix in logs, while the final log boundary also redacts Bearer/Authorization values, identifiers, sessions, content previews, paths, and URL details.
 
 ## Verification and Development
 

@@ -46,6 +46,8 @@ export interface StompServerConfig {
   maxPendingAcks: number;
   messagesPerMinute: number;
   connectTimeoutMs: number;
+  /** 停止监听后等待已接收入站帧完成 Agent 分发的最长时间。 */
+  shutdownTimeoutMs: number;
   allowedOrigins: string[];
   /** 是否允许跨连接共享 Topic；默认关闭以隔离会话回复。 */
   allowSharedTopics: boolean;

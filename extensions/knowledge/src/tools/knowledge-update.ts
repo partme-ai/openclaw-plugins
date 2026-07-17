@@ -20,6 +20,7 @@ import { getOrCreateStore } from '../runtime/hooks.js';
 import { indexDocument, withSourceWriteLock } from '../indexer/scheduler.js';
 import { chunkText } from '../indexer/chunker.js';
 import { authorizeFilePath, authorizeNamespace, defaultNamespace, validateSourceId, validateTextSize } from './policy.js';
+import { safeKnowledgeError } from '../shared/safe-error.js';
 
 // ===================================================================
 // 类型定义
@@ -187,7 +188,7 @@ export function createKnowledgeUpdateTool(ctx: OpenClawPluginToolContext, config
               if (fileStat.size === 0) return failedResult(`文件为空: ${fileAccess.filePath}`);
               if (fileStat.size > fileAccess.maxFileBytes) return failedResult(`文件超过最大大小 ${fileAccess.maxFileBytes} bytes`);
             } catch (err) {
-              return failedResult(`无法读取文件: ${fileAccess.filePath}（${err instanceof Error ? err.message : String(err)}）`);
+              return failedResult(`无法读取文件：${safeKnowledgeError(err)}`);
             }
             const ext = extname(fileAccess.filePath).toLowerCase();
             const supportedExts = new Set(['.md', '.txt', '.csv', '.json']);
@@ -240,7 +241,7 @@ export function createKnowledgeUpdateTool(ctx: OpenClawPluginToolContext, config
             return failedResult(`未知更新类型: ${String(p.updateType)}，支持 text、file、summary`);
         }
       } catch (err) {
-        return failedResult(`更新失败: ${err instanceof Error ? err.message : String(err)}`);
+        return failedResult(`更新失败: ${safeKnowledgeError(err)}`);
       }
     },
   };

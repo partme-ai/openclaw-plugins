@@ -85,13 +85,37 @@ describe("WechatIpadBridge integration", () => {
       auth: { token: "top-secret" },
       message: { allowFrom: ["wxid-1"] },
     });
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("provider echoed top-secret")));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error(
+      "provider https://alice:pass@bridge.test echoed top-secret Authorization: Bearer bearer-1 token=other-secret\n",
+    )));
     const bridge = new WechatIpadBridge(config, {
       debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
     });
 
     await expect(bridge.sendMessage({ toWxid: "wxid-1", msgType: "text", content: "hello" }))
-      .resolves.toEqual({ ok: false, error: "provider echoed [REDACTED]" });
+      .resolves.toSatisfy((result: { ok: boolean; error?: string }) =>
+        result.ok === false && result.error?.includes("[REDACTED]") === true &&
+        !result.error.match(/alice:pass|top-secret|bearer-1|other-secret|\n/u));
+  });
+
+  it("redacts a business error returned in a successful HTTP envelope", async () => {
+    const config = resolveWechatIpadConfig({
+      enabled: true,
+      acknowledgeUnofficialProtocolRisk: true,
+      auth: { token: "top-secret" },
+      message: { allowFrom: ["wxid-1"] },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      ok: false,
+      error: "Authorization: Bearer bearer-1 token=top-secret\nrejected",
+    }))));
+    const bridge = new WechatIpadBridge(config, {
+      debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+    });
+
+    const result = await bridge.sendMessage({ toWxid: "wxid-1", msgType: "text", content: "hello" });
+    expect(result.error).toContain("[REDACTED]");
+    expect(result.error).not.toMatch(/bearer-1|top-secret|\n/u);
   });
 
   it("rejects malformed events and only promotes a validated login status", async () => {

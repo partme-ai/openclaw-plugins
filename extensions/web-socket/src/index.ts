@@ -19,6 +19,7 @@ import {
 import { getAllConnectionInfo } from "./transport/connection-hub.js";
 import { getClientStats } from "./transport/client.js";
 import { getConnectedClients, getServerStats } from "./transport/server.js";
+import { buildWebSocketStatusConfig } from "./shared/status-snapshot.js";
 
 export { webSocketPlugin } from "./runtime/web-socket-plugin.js";
 export { resolveWebsocketConfig } from "./config.js";
@@ -66,13 +67,7 @@ export default defineChannelPluginEntry({
               sessions: sessionStats,
               serverClients,
               connections: allConnections,
-              config: config
-                ? {
-                    ...config,
-                    server: { ...config.server, auth: { enabled: config.server.auth.enabled } },
-                    client: { ...config.client, token: config.client.token ? "[redacted]" : undefined, headers: {} },
-                  }
-                : null,
+              config: config ? buildWebSocketStatusConfig(config) : null,
               policy: policyMeta,
             },
           }),
@@ -82,7 +77,6 @@ export default defineChannelPluginEntry({
       match: "exact",
     });
 
-    console.log("[openclaw-web-socket] Plugin registered — WebSocket channel ready");
-    console.log("[openclaw-web-socket] Endpoints: /web-socket/status");
+    api.logger.info("[openclaw-web-socket] Plugin registered — endpoint: /web-socket/status");
   },
 });

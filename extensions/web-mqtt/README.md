@@ -24,6 +24,27 @@ It provides a hardened embedded MQTT-over-WebSocket broker for browser and web a
 
 ## Architecture
 
+```text
+┌──────────────────────────── OpenClaw Gateway ────────────────────────────┐
+│  openclaw-web-mqtt                                                      │
+│                                                                         │
+│  Browser ── exact Origin allowlist ─┐                                   │
+│                                    ▼                                   │
+│  Native MQTT client ───────────▶ WS / WSS ──▶ Aedes 1.x Broker         │
+│                                    │          auth / Topic ACL / limits │
+│                                    │                   │               │
+│                                    │                   ▼               │
+│                                    │       bounded clientId FIFO       │
+│                                    │                   │               │
+│                                    │                   ▼               │
+│                                    └── reply ◀ message-sdk ◀▶ Agent    │
+│                                                                         │
+│  stop: reject new work → terminate sockets → drain Agent work → close  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+The character diagram gives a quick view in terminals and source review. The Mermaid diagram below preserves the same architecture as a rendered, maintainable component graph.
+
 ```mermaid
 flowchart LR
     Browser["Browser / Web application"]
@@ -58,6 +79,17 @@ The embedded broker belongs to one OpenClaw Gateway process; it is not a persist
   - route metrics and drop reason visibility
 
 ## Message flow
+
+```text
+Browser       WS/WSS+Aedes       clientId queue       Router        Agent
+   │ CONNECT       │                   │                 │             │
+   ├──────────────▶│ auth + ACL        │                 │             │
+   │ PUBLISH QoS1  │                   │                 │             │
+   ├──────────────▶├── bounded FIFO ──▶├── route ──────▶├── turn ────▶│
+   │               │                   │                 │◀── reply ───┤
+   │◀── reply ─────┤◀──────────────────┴─────────────────┤             │
+   │◀── PUBACK ────┤  only after Agent turn and reply delivery         │
+```
 
 ```mermaid
 sequenceDiagram
@@ -159,6 +191,22 @@ Requires `@partme.ai/openclaw-message-sdk >= 2026.7.1`.
 | **Isolation** | Server-originated publishes do not re-enter inbound processing; ACL plus topic allowlists apply |
 
 ### Two authorization boundaries
+
+```text
+Client action
+     │
+     ▼
+Aedes publish/subscribe ACL ── denied ──▶ reject + aclDenials
+     │ allowed
+     ▼
+OpenClaw topic/account ACL ─── denied ──▶ drop with safe reason
+     │ allowed
+     ▼
+Bounded queue + Agent deadline ─ failed ─▶ no successful QoS1 ACK
+     │ completed
+     ▼
+Reply publish + PUBACK
+```
 
 ```mermaid
 flowchart TD

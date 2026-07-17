@@ -198,6 +198,7 @@ describe('rabbitmq-config', () => {
             exchangeType: 'invalid',
             retry: { maxAttempts: -1 },
             connection: { reconnectJitterRatio: 2 },
+            consume: { shutdownTimeoutMs: 0 },
           },
         },
       });
@@ -205,6 +206,7 @@ describe('rabbitmq-config', () => {
       expect(issues).toContain('RabbitMQ exchangeType must be topic, direct, fanout, or headers');
       expect(issues).toContain('retry.maxAttempts must be an integer >= 0');
       expect(issues).toContain('connection.reconnectJitterRatio must be between 0 and 1');
+      expect(issues).toContain('consume.shutdownTimeoutMs must be an integer >= 100');
     });
   });
 

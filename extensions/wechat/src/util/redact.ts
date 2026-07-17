@@ -5,7 +5,6 @@
  */
 
 const DEFAULT_BODY_MAX_LEN = 200;
-const DEFAULT_TOKEN_PREFIX_LEN = 6;
 
 /**
  * Truncate a string, appending a length indicator when trimmed.
@@ -18,13 +17,15 @@ export function truncate(s: string | undefined, max: number): string {
 }
 
 /**
- * Redact a token/secret: show only the first few chars + total length.
+ * Redact a token/secret completely, retaining only its length for diagnostics.
+ *
+ * The historical implementation exposed a prefix. QR values, Bot Token and iLink user identifiers
+ * are bearer-like credentials or stable identifiers, so even a prefix is unnecessary disclosure.
  * Returns `"(none)"` when absent.
  */
-export function redactToken(token: string | undefined, prefixLen = DEFAULT_TOKEN_PREFIX_LEN): string {
+export function redactToken(token: string | undefined, _legacyPrefixLen?: number): string {
   if (!token) return "(none)";
-  if (token.length <= prefixLen) return `****(len=${token.length})`;
-  return `${token.slice(0, prefixLen)}…(len=${token.length})`;
+  return `****(len=${token.length})`;
 }
 
 /** Field names whose values should be masked in logged JSON bodies. */
@@ -68,7 +69,10 @@ export function redactUrl(rawUrl: string): string {
  */
 export function sanitizeLogMessage(message: string, maxLen = 1_000): string {
   const withoutControls = message.replace(/[\r\n\t\0]/g, " ");
-  const redactedQuoted = withoutControls.replace(
+  const redactedAuthorization = withoutControls
+    .replace(/(bearer\s+)[^\s,;"']+/giu, "$1<redacted>")
+    .replace(/((?:authorization|api[_-]?key|password|secret)\s*[:=]\s*)[^\s,;"']+/giu, "$1<redacted>");
+  const redactedQuoted = redactedAuthorization.replace(
     /\b(body|text|args|preview)=("[^"]*"|'[^']*')/gi,
     "$1=<redacted>",
   );

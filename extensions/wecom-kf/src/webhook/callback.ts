@@ -27,6 +27,7 @@ import {
 import { resolveKfAgentAccount } from "../tools/call-context.js";
 import { getWecomRuntime } from "../runtime/index.js";
 import type { KfMessage } from "../types/index.js";
+import { toSafeErrorSummary } from "../shared/safe-log.js";
 
 /** Account state tracking — updates via channel setStatus */
 const accountStatePatches = new Map<string, Record<string, unknown>>();
@@ -119,7 +120,7 @@ function enqueueAccountSync(key: string, task: () => Promise<void>): boolean {
   accountSyncQueues.set(key, next);
   void next
     .catch((error: unknown) => {
-      console.error(`[wecom_kf] background sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`[wecom_kf] background sync failed: ${toSafeErrorSummary(error)}`);
     })
     .finally(() => {
       if (accountSyncQueues.get(key) === next) accountSyncQueues.delete(key);
@@ -221,9 +222,16 @@ export function createKfCallbackHandler(
       const eventData = parsed.data as Record<string, unknown> | undefined;
 
       if (eventData?.Event === "kf_msg_or_event") {
-        const queueKey = (eventData.OpenKfId as string | undefined)?.trim() || "default";
+        const boundOpenKfId = defaultConfig.openKfId?.trim();
+        const eventOpenKfId = (eventData.OpenKfId as string | undefined)?.trim();
+        if (!boundOpenKfId || !eventOpenKfId || eventOpenKfId !== boundOpenKfId) {
+          // 回调路径已经绑定账号，解密后的 OpenKfId 只能用于一致性校验，不能再次切换账号。
+          // 否则持有 A 账号回调 Token 的请求可伪造 B 的 OpenKfId，越权触发 B 的 corpSecret。
+          throw new Error("callback open_kfid does not match the route-bound account");
+        }
+        const queueKey = boundOpenKfId;
         const accepted = enqueueAccountSync(queueKey, () => retryAccountSync(
-          () => processKfEvent(eventData, getAccountConfig),
+          () => processKfEvent(eventData, defaultConfig),
           syncRetryAttempts,
           syncRetryDelayMs,
         ));
@@ -245,7 +253,7 @@ export function createKfCallbackHandler(
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("success");
     } catch (error) {
-      console.warn(`[wecom_kf] rejected callback: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`[wecom_kf] rejected callback: ${toSafeErrorSummary(error)}`);
       res.writeHead(400, { "Content-Type": "text/plain" });
       res.end("invalid callback");
     }
@@ -277,21 +285,14 @@ function assertFreshCallbackTimestamp(
  */
 async function processKfEvent(
   eventData: Record<string, unknown>,
-  getAccountConfig: (openKfId?: string) => WecomAccountConfig | undefined,
+  accountConfig: WecomAccountConfig,
 ): Promise<void> {
   const callbackToken = eventData.Token as string | undefined;
   const openKfId = (eventData.OpenKfId as string | undefined)?.trim();
 
-  const accountConfig = getAccountConfig(openKfId) ?? getAccountConfig();
-  if (!accountConfig) {
-    console.error(`[wecom_kf] No config found for ${openKfId ? "callback account" : "default account"}`);
-    return;
-  }
-
-  const effectiveOpenKfId = openKfId || accountConfig.openKfId?.trim() || "";
+  const effectiveOpenKfId = accountConfig.openKfId?.trim() || "";
   if (!effectiveOpenKfId) {
-    console.warn("[wecom_kf] cannot pull messages without open_kfid");
-    return;
+    throw new Error("cannot pull messages without open_kfid");
   }
 
   let runtime;
@@ -300,16 +301,15 @@ async function processKfEvent(
     runtime = getWecomRuntime();
     cfg = runtime.config.current() as OpenClawConfig;
   } catch {
-    console.error("[wecom_kf] Runtime not available for sync_msg");
-    return;
+    // Service 初始化与回调可能短暂竞态；进入有界重试，不能吞掉已经快速 ACK 的通知。
+    throw new Error("Runtime not available for sync_msg");
   }
 
   const agent = resolveKfAgentAccount(cfg, effectiveOpenKfId);
   if (!agent) {
-    console.warn(
-      "[wecom_kf] cannot pull messages before corpSecret is configured; finish callback verification, then configure corpSecret",
+    throw new Error(
+      "cannot pull messages before corpSecret is configured; finish callback verification, then configure corpSecret",
     );
-    return;
   }
 
   const kfResolved = resolveKfAccountByOpenKfId({ cfg, openKfId: effectiveOpenKfId });

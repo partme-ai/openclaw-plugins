@@ -4,6 +4,30 @@
 
 ## 调用架构
 
+```text
+用户地点问题
+     │
+     ▼
+OpenClaw Agent
+     │ 结构化 Tool Call
+     ▼
+AMap Tool 参数边界 ── ownerOnly / 坐标 / POI 类型 / 200 条分页上限
+     │
+     ▼
+AmapClient ── 固定三条 GET 白名单 / 每次尝试计入限流
+     │
+     ├── 429、5xx、瞬时业务错误 → 指数退避 + 双向抖动 → 有限重试
+     │
+     ▼
+https://restapi.amap.com（Key 仅在传输层）
+     │
+     ▼
+响应流字节上限 → JSON/status 信封校验 → 错误凭据脱敏
+     │
+     ▼
+Tool Result 字节上限 → Agent transcript
+```
+
 ```mermaid
 flowchart LR
     User["用户地点问题"] --> Agent["OpenClaw Agent"]

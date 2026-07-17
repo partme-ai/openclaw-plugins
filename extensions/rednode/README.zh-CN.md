@@ -11,6 +11,32 @@ OpenClaw 2026.7.1 的小红书 Ark Open API capability。它不是小红书私�
 
 ## 运行架构
 
+下面的字符图用于在终端、代码评审和 Markdown 原文中快速看清安全边界；后续 Mermaid 图继续表达可渲染的组件关系，两者都保留。
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│                    OpenClaw Gateway 2026.7.1                       │
+├────────────────────────────────────────────────────────────────────┤
+│  Owner / Agent                                                     │
+│       │ operation + path_params + query + body                     │
+│       ▼                                                            │
+│  rednode_ark_invoke                                                │
+│       │ ownerOnly → operation 白名单 → POST/PUT confirm=true       │
+│       ▼                                                            │
+│  RednodeClient                                                     │
+│       │ 路径/参数/请求大小校验 → timestamp/app-key/sign → 本地限流 │
+│       │ GET: 网络/500/502 有界重试；POST/PUT: 始终只执行一次        │
+│       ▼                                                            │
+│  响应流上限 → success:Boolean → 双层错误脱敏 → Tool Result 上限    │
+└──────────────────────────────┬─────────────────────────────────────┘
+                               │ HTTPS（生产）/ 官方沙箱 HTTP
+                               ▼
+                  ┌────────────────────────────┐
+                  │ 小红书 Ark Open API        │
+                  │ production / sandbox       │
+                  └────────────────────────────┘
+```
+
 ```mermaid
 flowchart LR
     U["Owner / OpenClaw Agent"] --> T["rednode_ark_invoke"]
@@ -29,7 +55,7 @@ flowchart LR
     R --> U
 ```
 
-凭据只进入 `app-key` Header 和本地 MD5 签名计算，不写入 URL 或错误信息。默认只允许当前环境对应的官方 Host；如部署可信 HTTPS 代理，必须显式设置 `allowCustomApiBaseUrl=true`。
+凭据只进入 `app-key` Header 和本地 MD5 签名计算，不写入 URL 或错误信息。客户端和 Tool 最终出口都会遮蔽 URL 用户信息、Bearer、认证字段、签名字段以及真实 AppKey/AppSecret。默认只允许当前环境对应的官方 Host；如部署可信 HTTPS 代理，必须显式设置 `allowCustomApiBaseUrl=true`。
 
 ## 真实协议
 
@@ -38,6 +64,7 @@ flowchart LR
 - `timestamp`、`app-key`、`sign` 放在 Header，Body 使用 JSON。
 - 签名：API 路径 + 按名称排序的 query/Header 参数 + app-secret，再计算 MD5。
 - 支持官方文档使用的 GET、POST、PUT；写操作必须传 `confirm: true`。
+- `confirm=true` 只是防止 Agent 偶然触发写请求的技术门槛，不代表小红书平台审核、内容合规、业务审批或人工复核；上下架、发货等高风险操作仍须由上层审批工作流控制。
 - 官方响应约定包含 200、401、403、500/502。插件只对 GET 的网络异常和 500/502 做有界重试；401/403 以及所有 POST/PUT 都不会自动重试。
 - HTTP 200 也必须包含 Boolean 类型的 `success`；缺失或字符串形式会作为畸形信封失败，不能产生假成功。
 

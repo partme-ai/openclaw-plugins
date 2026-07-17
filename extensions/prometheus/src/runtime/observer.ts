@@ -10,6 +10,7 @@
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { MetricSample } from "../types.js";
+import { sanitizeLabel } from "../shared/label-sanitize.js";
 import { getRuntimeStore, listObservedChannelAccounts, rememberObservedChannelAccount, setSnapshotState } from "./store.js";
 
 const PROVIDER_STATUSES = ["ok", "missing", "error"] as const;
@@ -20,6 +21,27 @@ const HTTP_LATENCY_MAX_SAMPLES = 1000;
 let runtimeDisposers: Array<() => void> = [];
 let snapshotRefreshPromise: Promise<void> | null = null;
 let observerGeneration = 0;
+
+/**
+ * Hook 中的 tool/channel 等字段来自运行时扩展，不能假设天然低基数。
+ *
+ * 每个标签族只保留有限个已见值，超过预算统一折叠为 `other`。这道防线位于 Registry 的
+ * 4096 series 总上限之前，避免单个动态 tool 名称族先耗尽整个 exporter 的系列预算。
+ */
+const DYNAMIC_LABEL_VALUE_LIMIT = 64;
+const dynamicLabelValues = new Map<string, Set<string>>();
+
+function boundedDynamicLabel(family: string, value: unknown): string {
+  const normalized = typeof value === "string" && value.trim()
+    ? sanitizeLabel(value)
+    : "unknown";
+  const observed = dynamicLabelValues.get(family) ?? new Set<string>();
+  if (!dynamicLabelValues.has(family)) dynamicLabelValues.set(family, observed);
+  if (observed.has(normalized)) return normalized;
+  if (observed.size >= DYNAMIC_LABEL_VALUE_LIMIT) return "other";
+  observed.add(normalized);
+  return normalized;
+}
 
 /**
  * @description 注册全部 Plugin SDK 观测 hooks 与 runtime 事件监听器。
@@ -48,6 +70,7 @@ export function stopPluginObservers(): void {
     }
   }
   HTTP_LATENCY_SAMPLES.length = 0;
+  dynamicLabelValues.clear();
 }
 
 /** @description 注册 gateway / session 生命周期 hooks。 */
@@ -86,7 +109,7 @@ function registerLifecycleHooks(api: OpenClawPluginApi): void {
     registry.inc("openclaw_sessions_ended_total", 1, {
       help: "Session ends observed through plugin hooks",
       type: "counter",
-      labels: { reason: event.reason ?? "unknown" },
+      labels: { reason: normalizeSessionEndReason(event.reason) },
     });
     registry.dec("openclaw_sessions_active_estimated", 1, {
       help: "Estimated active sessions observed by the plugin",
@@ -98,7 +121,7 @@ function registerLifecycleHooks(api: OpenClawPluginApi): void {
 function registerMessageHooks(api: OpenClawPluginApi): void {
   api.on("message_received", (_event, ctx) => {
     const { registry } = getRuntimeStore();
-    const channelId = stringOr(ctx.channelId, "unknown");
+    const channelId = boundedDynamicLabel("channel", stringOr(ctx.channelId, "unknown"));
     const accountId = optionalString(ctx.accountId);
     rememberObservedChannelAccount(channelId, accountId);
     registry.inc("openclaw_session_messages_received_total", 1, {
@@ -117,7 +140,7 @@ function registerMessageHooks(api: OpenClawPluginApi): void {
 
   api.on("message_sent", (event, ctx) => {
     const { registry } = getRuntimeStore();
-    const channelId = stringOr(ctx.channelId, "unknown");
+    const channelId = boundedDynamicLabel("channel", stringOr(ctx.channelId, "unknown"));
     const accountId = optionalString(ctx.accountId);
     rememberObservedChannelAccount(channelId, accountId);
     registry.inc("openclaw_session_messages_sent_total", 1, {
@@ -148,7 +171,7 @@ function registerToolHooks(api: OpenClawPluginApi): void {
     registry.inc("openclaw_tool_calls_total", 1, {
       help: "Tool calls observed through plugin hooks",
       type: "counter",
-      labels: { tool: event.toolName },
+      labels: { tool: boundedDynamicLabel("tool", event.toolName) },
     });
     registry.inc("openclaw_inflight_operations", 1, {
       help: "Estimated in-flight operations tracked by the plugin",
@@ -166,13 +189,13 @@ function registerToolHooks(api: OpenClawPluginApi): void {
       registry.inc("openclaw_tool_call_failures_total", 1, {
         help: "Tool call failures observed through plugin hooks",
         type: "counter",
-        labels: { tool: event.toolName },
+        labels: { tool: boundedDynamicLabel("tool", event.toolName) },
       });
     }
     if (typeof event.durationMs === "number") {
       registry.observeHistogram("openclaw_tool_call_duration_seconds", event.durationMs / 1000, {
         help: "Observed tool call duration",
-        labels: { tool: event.toolName },
+        labels: { tool: boundedDynamicLabel("tool", event.toolName) },
       });
     }
   });
@@ -186,13 +209,13 @@ function registerRuntimeEventListeners(api: OpenClawPluginApi): void {
       registry.inc("openclaw_agent_events_total", 1, {
         help: "Agent runtime events observed through api.runtime.events.onAgentEvent",
         type: "counter",
-        labels: { stream: event.stream },
+        labels: { stream: normalizeAgentStream(event.stream) },
       });
 
       if (event.stream === "item") {
-        const kind = typeof event.data.kind === "string" ? event.data.kind : "unknown";
-        const phase = typeof event.data.phase === "string" ? event.data.phase : "unknown";
-        const status = typeof event.data.status === "string" ? event.data.status : "unknown";
+        const kind = boundedDynamicLabel("agent-item-kind", event.data.kind);
+        const phase = boundedDynamicLabel("agent-item-phase", event.data.phase);
+        const status = boundedDynamicLabel("agent-item-status", event.data.status);
         registry.inc("openclaw_agent_item_events_total", 1, {
           help: "Agent item events grouped by kind/status/phase",
           type: "counter",
@@ -251,6 +274,22 @@ function normalizeSessionResetReason(reason: unknown): string {
     return trimmed;
   }
   return trimmed.length > 0 ? "other" : "unknown";
+}
+
+/** 会话结束原因只保留 OpenClaw 稳定枚举，未知自由文本聚合到 other。 */
+function normalizeSessionEndReason(reason: unknown): string {
+  if (typeof reason !== "string" || !reason.trim()) return "unknown";
+  const normalized = reason.trim();
+  return new Set(["completed", "cancelled", "error", "timeout", "shutdown", "reset"])
+    .has(normalized) ? normalized : "other";
+}
+
+/** Agent 事件 stream 使用固定桶，防止第三方运行时注入任意系列。 */
+function normalizeAgentStream(stream: unknown): string {
+  if (typeof stream !== "string" || !stream.trim()) return "unknown";
+  const normalized = stream.trim();
+  return new Set(["lifecycle", "assistant", "tool", "item", "error"])
+    .has(normalized) ? normalized : "other";
 }
 
 /**
@@ -332,7 +371,7 @@ function registerSupplementaryPluginHooks(api: OpenClawPluginApi): void {
   });
   api.on("tool_result_persist", (event) => {
     incHookInvocation("tool_result_persist");
-    const tool = typeof event?.toolName === "string" ? event.toolName : "unknown";
+    const tool = boundedDynamicLabel("tool", event?.toolName);
     const { registry } = getRuntimeStore();
     registry.inc("openclaw_tool_result_persist_total", 1, {
       help: "Tool results persisted (tool_result_persist hook)",
@@ -352,7 +391,7 @@ function registerSupplementaryPluginHooks(api: OpenClawPluginApi): void {
   api.on("subagent_ended", (event) => {
     incHookInvocation("subagent_ended");
     const { registry } = getRuntimeStore();
-    const outcome = typeof event?.outcome === "string" ? event.outcome : "unknown";
+    const outcome = normalizeSubagentOutcome(event?.outcome);
     registry.inc("openclaw_agent_subagent_ended_total", 1, {
       help: "Subagent ended events by outcome",
       type: "counter",
@@ -368,6 +407,14 @@ function registerSupplementaryPluginHooks(api: OpenClawPluginApi): void {
   api.on("before_install", () => {
     incHookInvocation("before_install");
   });
+}
+
+/** 子代理结果属于稳定状态枚举，异常扩展值统一落到 other。 */
+function normalizeSubagentOutcome(outcome: unknown): string {
+  if (typeof outcome !== "string" || !outcome.trim()) return "unknown";
+  const normalized = outcome.trim();
+  return new Set(["ok", "success", "error", "failed", "cancelled", "timeout"])
+    .has(normalized) ? normalized : "other";
 }
 
 /**
@@ -629,8 +676,9 @@ export function refreshSliMetrics(): void {
   });
 
   // SLI 2: 工具调用错误率
-  const toolFails = registry.getSampleValue("openclaw_tool_call_failures_total");
-  const toolTotal = registry.getSampleValue("openclaw_tool_calls_total");
+  // 工具指标带 `tool` 标签，按无标签 key 查询永远只能得到 0；必须跨全部工具系列求和。
+  const toolFails = sumAllSamples(registry.getSamplesByName("openclaw_tool_call_failures_total"));
+  const toolTotal = sumAllSamples(registry.getSamplesByName("openclaw_tool_calls_total"));
   registry.set("openclaw_sli_tool_error_ratio", toolTotal > 0 ? toolFails / toolTotal : 0, {
     help: "Tool call error ratio (0~1). Source: openclaw_tool_call_failures_total / openclaw_tool_calls_total.",
   });
@@ -641,6 +689,11 @@ export function refreshSliMetrics(): void {
   registry.set("openclaw_sli_channel_health_ratio", channelTotal > 0 ? channelLinked / channelTotal : 1, {
     help: "Channel health ratio (0~1). Source: openclaw_channel_linked_total / openclaw_channel_total (RPC).",
   });
+}
+
+/** 对同一指标族的所有标签系列求和。 */
+function sumAllSamples(samples: Array<{ value: number }>): number {
+  return samples.reduce((sum, sample) => sum + sample.value, 0);
 }
 
 /**

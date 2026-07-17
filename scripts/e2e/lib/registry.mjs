@@ -26,7 +26,7 @@ export const EXTENSION_INVENTORY = [
   { id: "rocketmq", filter: "@partme.ai/openclaw-rocketmq", dir: "extensions/rocketmq", type: "channel", category: "external-broker", e2eAdapter: true, dockerRequired: true, dockerServices: ["rocketmq-namesrv", "rocketmq-broker", "rocketmq-proxy"] },
   { id: "gotify", filter: "@partme.ai/openclaw-gotify", dir: "extensions/gotify", type: "channel", category: "external-broker", e2eAdapter: true, dockerRequired: true, dockerServices: ["gotify"] },
   { id: "redis-stream", filter: "@partme.ai/openclaw-redis-stream", dir: "extensions/redis-stream", type: "channel", category: "external-broker", e2eAdapter: true, dockerRequired: true, dockerServices: ["redis"] },
-  { id: "wecom", filter: "@partme.ai/wecom", dir: "extensions/wecom", type: "channel", category: "webhook-platform", e2eAdapter: false, dockerRequired: false, dockerServices: [] },
+  { id: "wecom", filter: "@partme.ai/wecom", dir: "extensions/wecom", type: "channel", category: "webhook-platform", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
   { id: "wecom-kf", filter: "@partme.ai/wecom-kf", dir: "extensions/wecom-kf", type: "channel", category: "webhook-platform", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
   { id: "wechat", filter: "@partme.ai/weixin", dir: "extensions/wechat", type: "channel", category: "webhook-platform", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
   { id: "wechat-ipad", filter: "@partme.ai/wechat-ipad", dir: "extensions/wechat-ipad", type: "channel", category: "webhook-platform", e2eAdapter: true, dockerRequired: false, dockerServices: [] },
@@ -50,6 +50,18 @@ export const EXTENSION_INVENTORY = [
 /** E2E-capable queue/channel plugins (subset of EXTENSION_INVENTORY). */
 /** @type {import('./registry.mjs').PluginDefinition[]} */
 export const PLUGIN_REGISTRY = [
+  {
+    id: "wecom",
+    category: "webhook-platform",
+    filter: "@partme.ai/wecom",
+    dir: "extensions/wecom",
+    extDir: "wecom-candidate",
+    channels: ["wecom"],
+    dockerServices: [],
+    needsGotify: false,
+    browserTest: false,
+    isolated: true,
+  },
   {
     id: "nacos",
     category: "infra",

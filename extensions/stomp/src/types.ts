@@ -39,6 +39,8 @@ export interface StompTcpConfig {
   maxPendingMessages: number;
   messagesPerMinute: number;
   connectTimeoutMs: number;
+  /** 停机时等待已接收帧完成 Agent 分发的最长时间。 */
+  shutdownTimeoutMs: number;
   maxDurableSubscriptions: number;
   auth: { required: boolean; users: StompAuthUser[] };
   subscribeTopics: string[];

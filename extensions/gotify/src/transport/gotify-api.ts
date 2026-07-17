@@ -28,6 +28,7 @@ import {
   GotifyTimeoutError,
   GotifyConfigError,
 } from "../shared/errors.js";
+import { redactGotifyError } from "../shared/redact.js";
 
 /**
  * Gotify API 调用的 fetch 行为选项。
@@ -114,15 +115,19 @@ async function withAccountLock<T>(
   accountId: string,
   task: () => Promise<T>,
 ): Promise<T> {
-  const prev = accountLocks.get(accountId);
-  const lock: Promise<void> = (prev ?? Promise.resolve()).then(() => undefined);
-  accountLocks.set(accountId, lock);
+  const previous = accountLocks.get(accountId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  // tail 同时包含前序任务和当前任务的完成门闩；后续请求必须等待整个 task，而非只等入队。
+  const tail = previous.catch(() => undefined).then(() => current);
+  accountLocks.set(accountId, tail);
 
   try {
-    await lock;
+    await previous.catch(() => undefined);
     return await task();
   } finally {
-    if (accountLocks.get(accountId) === lock) {
+    release();
+    if (accountLocks.get(accountId) === tail) {
       accountLocks.delete(accountId);
     }
   }
@@ -174,7 +179,7 @@ async function fetchWithRetry(
       }
       const body = await safeReadText(response);
       throw new GotifyApiError(
-        `Gotify API failed (${response.status}): ${body}`,
+        `Gotify API failed (${response.status}): ${redactGotifyError(body)}`,
         response.status,
       );
     } catch (error) {
@@ -190,9 +195,9 @@ async function fetchWithRetry(
     }
   }
   if (lastError instanceof Error) {
-    throw new GotifyConnectionError(lastError.message);
+    throw new GotifyConnectionError(redactGotifyError(lastError));
   }
-  throw new GotifyConnectionError(String(lastError));
+  throw new GotifyConnectionError(redactGotifyError(lastError));
 }
 
 /**
@@ -826,7 +831,11 @@ export async function healthCheck(
     );
     return { ok: true, latencyMs: Date.now() - start };
   } catch (error) {
-    return { ok: false, latencyMs: Date.now() - start, error: String(error) };
+    return {
+      ok: false,
+      latencyMs: Date.now() - start,
+      error: redactGotifyError(error, account),
+    };
   }
 }
 
@@ -873,13 +882,13 @@ export async function runGotifyDoctor(
       await listApplications(account, options);
       applicationsChecked = true;
     } catch (error) {
-      errors.push(`Application API: ${String(error)}`);
+      errors.push(`Application API: ${redactGotifyError(error, account)}`);
     }
     try {
       await listClients(account, options);
       clientsChecked = true;
     } catch (error) {
-      errors.push(`Client API: ${String(error)}`);
+      errors.push(`Client API: ${redactGotifyError(error, account)}`);
     }
   }
 
@@ -956,7 +965,7 @@ export async function probeGotifyAccount(
         healthOk: true,
         clientTokenValid: false,
         appTokenValid,
-        error: String(error),
+        error: redactGotifyError(error, account),
       };
     }
   }

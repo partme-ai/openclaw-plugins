@@ -119,10 +119,19 @@ export async function testNacos(ctx, results) {
         const health = await safeGatewayHealth(ctx);
         return health?.json?.status === "ok" && health.json?.errors?.configSync === null;
       }, { label: "Nacos config recovery", timeoutMs: 60_000 });
+
+      const retainedBackups = readdirSync(STATE_DIR).filter((name) =>
+        /^openclaw-nacos-\d{14}-[0-9a-f]{8}\.json$/u.test(name),
+      );
+      if (retainedBackups.length < 1 || retainedBackups.length > 2) {
+        throw new Error(
+          `Nacos backup retention expected 1..2 files, found ${retainedBackups.length}`,
+        );
+      }
     },
     {
       service: `Nacos 2.5.1 on 127.0.0.1:${ctx.ports.nacosHttp}`,
-      method: "tarball install + Naming registration + self discovery + Config subscribe/backup/fail-closed/recovery",
+      method: "tarball install + Naming registration + self discovery + Config subscribe/bounded backup/fail-closed/recovery",
     },
     results,
   );

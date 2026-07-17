@@ -67,8 +67,8 @@
         "type": "integer",
         "minimum": 1,
         "maximum": 1000000,
-        "default": 10000,
-        "description": "Maximum concurrently active traces"
+        "default": 1000,
+        "description": "Maximum concurrently active traces; multiplied by maxSpansPerTrace must not exceed 100000"
       },
       "maxBufferedSpans": {
         "type": "integer",

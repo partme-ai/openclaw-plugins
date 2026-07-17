@@ -127,6 +127,25 @@ sequenceDiagram
 
 ### 停机时未决投递
 
+```text
+Gateway stop
+     │
+     ▼
+stopping=true ──▶ basic.cancel ──▶ 拒绝新 delivery
+                                      │
+                                      ▼
+                         等待 Agent Turn + publish confirm
+                                      │
+                 ┌────────────────────┴──────────────────┐
+                 ▼                                       ▼
+        ACK / Retry / DLQ 完成                 consume.shutdownTimeoutMs
+                 │                                       │
+                 └────────▶ NACK 未决 delivery(requeue) ─┘
+                                      │
+                                      ▼
+                             关闭 Channel / Connection
+```
+
 ```mermaid
 sequenceDiagram
     participant G as Gateway stop
@@ -143,7 +162,9 @@ sequenceDiagram
 ```
 
 停机顺序先阻止新消费，再等待已接纳任务完成，最后只重新入队仍未处置的极端竞态投递。不能在
-Agent Turn 仍运行时先 NACK，否则旧 Turn 的外部副作用与 Broker 重投可能重复执行。
+Agent Turn 仍运行时先 NACK，否则旧 Turn 的外部副作用与 Broker 重投可能重复执行。排空超过
+`consume.shutdownTimeoutMs` 时会告警、有界退出并重新入队未决 delivery；迟到任务看到 delivery
+已 settle 后不会重复 ACK/NACK，但其外部结果可能未知，业务侧仍需幂等。
 
 1. 设备向主题交换机发布 RabbitMQ 消息。
 2. 插件从订阅的队列接收消息。
@@ -279,7 +300,8 @@ openclaw plugins install @partme.ai/openclaw-rabbitmq
       "consume": {
         "prefetch": 50,
         "concurrency": 4,
-        "requeueOnError": false
+        "requeueOnError": false,
+        "shutdownTimeoutMs": 30000
       },
       "idempotency": {
         "enabled": true

@@ -10,6 +10,7 @@ import { OpenMemClient } from "./client.js";
 
 const MAX_ACTIVE_SESSIONS = 10_000;
 const RECOVERY_EVENT_LIMIT = 1_000;
+const MAX_TURN_MESSAGES = 100;
 
 type RecoverableEvent = {
   content?: unknown;
@@ -68,7 +69,10 @@ export function normalizeTurn(messages: unknown[]): TurnMessage[] {
       break;
     }
   }
-  return lastUser >= 0 ? normalized.slice(lastUser) : normalized.slice(-1);
+  const currentTurn = lastUser >= 0 ? normalized.slice(lastUser) : normalized.slice(-1);
+  if (currentTurn.length <= MAX_TURN_MESSAGES) return currentTurn;
+  // 保留当前轮起始 user 与最新回复尾部，避免异常历史携带数千条工具消息放大请求体。
+  return [currentTurn[0]!, ...currentTurn.slice(-(MAX_TURN_MESSAGES - 1))];
 }
 
 /**

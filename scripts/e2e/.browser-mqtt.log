@@ -1,4 +1,4 @@
-[06:05:28.528] << openclaw/agent/main/out: {"version":"1","message":{"messageId":"mqtt-ws-d12917e7-dcab-47f6-a517-5bf74f46db4f","traceId":"b3df605d-9220-44ea-9423-0ddf0b35799e","timestamp":1784268328527,"source":{"channel":"mqtt-ws","accountId":"default","userId":"browser-1784268328146","chatType":"direct","agentId":"main"},"contentType":"text","text":"openclaw e2e fixture reply","media":[],"direction":"outbound"},"headers":{"replyRoute":{"topic":"openclaw/agent/main/out"}}}
-[06:05:28.237] >> PUB openclaw/agent/main/in
-[06:05:28.205] >> SUB openclaw/agent/main/out
-[06:05:28.174] mqtt connect ok
+[08:39:21.189] << openclaw/agent/main/out: {"version":"1","message":{"messageId":"mqtt-ws-6b8bc9a6-d69e-4184-bd3c-512b6a69af1d","traceId":"e1d9e500-dd83-4df7-89c3-208993a2dae6","timestamp":1784277561188,"source":{"channel":"mqtt-ws","accountId":"default","userId":"browser-1784277560896","chatType":"direct","agentId":"main"},"contentType":"text","text":"openclaw e2e fixture reply","media":[],"direction":"outbound"},"headers":{"replyRoute":{"topic":"openclaw/agent/main/out"}}}
+[08:39:20.988] >> PUB openclaw/agent/main/in
+[08:39:20.956] >> SUB openclaw/agent/main/out
+[08:39:20.923] mqtt connect ok

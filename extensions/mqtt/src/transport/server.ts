@@ -232,7 +232,7 @@ export async function startBroker(
             res();
           });
           tcpServer.on("error", (err) => {
-            console.error("[openclaw-mqtt] TCP server error:", err);
+            console.error(`[openclaw-mqtt] TCP server error: ${redactMqttError(err, config)}`);
             rej(err);
           });
         }),
@@ -259,7 +259,7 @@ export async function startBroker(
               res();
             });
             tlsServer.on("error", (err) => {
-              console.error("[openclaw-mqtt] TLS server error:", err);
+              console.error(`[openclaw-mqtt] TLS server error: ${redactMqttError(err, config)}`);
               rej(err);
             });
           } catch (err) {
@@ -380,7 +380,10 @@ export async function publishMessage(
       },
       (err: Error | undefined) => {
         if (err) {
-          console.error(`[openclaw-mqtt] Publish error on topic ${topic}:`, err);
+          console.error(redactMqttError(
+            `[openclaw-mqtt] Publish error on topic ${topic}: ${err.message}`,
+            activeBrokerConfig,
+          ));
           logAuditEvent(activeBrokerConfig?.audit, "error", "outbound_publish_failed", {
             topic,
             error: redactMqttError(err, activeBrokerConfig),

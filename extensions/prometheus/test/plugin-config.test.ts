@@ -67,7 +67,18 @@ describe("resolvePrometheusConfig", () => {
     expect(() => resolvePrometheusConfig(
       { scrapeAuth: { enabled: true } },
       { OPENCLAW_PROMETHEUS_BEARER_TOKEN: "bad\nvalue" } as NodeJS.ProcessEnv,
-    )).toThrow(/single-line/);
+    )).toThrow(/control characters/);
+    expect(() => resolvePrometheusConfig(
+      { scrapeAuth: { enabled: true } },
+      { OPENCLAW_PROMETHEUS_BEARER_TOKEN: "\nsecret\n" } as NodeJS.ProcessEnv,
+    )).toThrow(/control characters/);
+    expect(() => resolvePrometheusConfig(
+      { scrapeAuth: { enabled: true } },
+      { OPENCLAW_PROMETHEUS_BEARER_TOKEN: "bad\tvalue" } as NodeJS.ProcessEnv,
+    )).toThrow(/control characters/);
+    expect(() => resolvePrometheusConfig({
+      scrapeAuth: { enabled: true, bearerToken: "bad\u0000value" },
+    })).toThrow(/control characters/);
   });
 
   it("normalizes paths and de-duplicates providers", () => {

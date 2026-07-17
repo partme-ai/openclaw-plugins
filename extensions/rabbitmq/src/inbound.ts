@@ -33,7 +33,7 @@ import {
   getRabbitmqClaimableDedupe,
   mapRabbitmqWirePayloadMode,
 } from "./shared/wire-helpers.js";
-import type { InboundEvent } from "./transport/server.js";
+import { logRabbitmq, type InboundEvent } from "./transport/server.js";
 import { redactRabbitmqError } from "./shared/redact.js";
 
 /** @description 单条入站消息的处理结果（接受/拒绝及诊断字段）。 */
@@ -55,13 +55,13 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
   const cfg = getRabbitmqChannelConfig() ?? DEFAULT_RABBITMQ_CONFIG;
 
   if (!shouldProcessTopic(event.routingKey, config.subscribeTopics)) {
-    console.log(`[openclaw-rabbitmq] Ignored topic not in subscribeTopics: ${event.routingKey}`);
+    logRabbitmq("debug", `[openclaw-rabbitmq] Ignored topic not in subscribeTopics: ${event.routingKey}`);
     return { accepted: false, reason: "topic_not_in_subscribe_topics" };
   }
 
   const route = resolveInboundRoute(event.routingKey, config);
   if (!route) {
-    console.warn(`[openclaw-rabbitmq] No route matched for topic: ${event.routingKey}`);
+    logRabbitmq("warn", `[openclaw-rabbitmq] No route matched for topic: ${event.routingKey}`);
     return { accepted: false, reason: "no_route_matched" };
   }
 
@@ -112,7 +112,7 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
     updatedAt: Date.now(),
   });
 
-  console.log(
+  logRabbitmq("debug",
     `[openclaw-rabbitmq] Inbound: topic=${event.routingKey}, agent=${agentId}, account=${route.accountId}, source=${route.source}, session=${sessionKey}, bytes=${Buffer.byteLength(text, "utf-8")}`,
   );
 
@@ -134,7 +134,7 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
       dedupe.release(correlationId);
     }
     const safeError = redactRabbitmqError(error, config);
-    console.error(`[openclaw-rabbitmq] Runtime dispatch failed for peer=${route.peerId}: ${safeError}`);
+    logRabbitmq("error", `[openclaw-rabbitmq] Runtime dispatch failed for peer=${route.peerId}: ${safeError}`);
     if (!event.delivery.settled) {
       event.delivery.nack({
         requeue: config.consume.requeueOnError,

@@ -36,6 +36,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { clearBridgeRuntime } from "../runtime.js";
 import { getChannelMeta } from "./channels.js";
+import { redactBridgeError } from "./redact.js";
 
 // ── 已知的合法 MQ 渠道 ──
 
@@ -592,7 +593,8 @@ class BridgeDeliveryDispatcher {
         signal: this.abortController.signal,
       });
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      // 外部 adapter 的异常只能以脱敏摘要进入 Gateway 日志。
+      const reason = redactBridgeError(error);
       this.api.logger.error(
         `[openclaw-bridge] delivery failed messageId=${job.message.messageId} ` +
         `channel=${job.sourceChannel} direction=${job.direction}: ${reason}`,
@@ -682,7 +684,7 @@ export function registerMessageBridge(api: OpenClawPluginApi): void {
     // `message_sent` 位于公共 outbound delivery 之后，只有 success=true 才代表平台已接受该消息。
     if (!event.success) {
       api.logger.warn(
-        `[openclaw-bridge] source delivery failed; skip outbound mirror channel=${channelId} error=${event.error ?? "unknown"}`,
+        `[openclaw-bridge] source delivery failed; skip outbound mirror channel=${channelId} error=${redactBridgeError(event.error ?? "unknown")}`,
       );
       return;
     }

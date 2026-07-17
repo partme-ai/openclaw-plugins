@@ -87,7 +87,7 @@ openclaw plugins install @partme.ai/openclaw-tracing
           },
           "sampleRate": 0.25,
           "maxSpansPerTrace": 100,
-          "maxActiveTraces": 10000,
+          "maxActiveTraces": 1000,
           "maxBufferedSpans": 10000,
           "flushIntervalMs": 5000,
           "exportTimeoutMs": 10000,
@@ -110,7 +110,7 @@ openclaw plugins install @partme.ai/openclaw-tracing
 | `backend` | `log` | `log`、`file` 或 `otlp` |
 | `sampleRate` | `1` | `0..1` 的确定性采样率 |
 | `maxSpansPerTrace` | `100` | 包含 root span |
-| `maxActiveTraces` | `10000` | 同时活动的 Trace 总上限；达到上限后跳过新 Trace 并告警 |
+| `maxActiveTraces` | `1000` | 同时活动的 Trace 总上限；与 `maxSpansPerTrace` 的乘积不得超过 100000 |
 | `maxBufferedSpans` | `10000` | 溢出时丢弃最旧 span，并将健康状态置为 degraded |
 | `flushIntervalMs` | `5000` | File/OTLP 刷新间隔 |
 | `traceDir` | `./traces` | File 后端目录 |
@@ -140,6 +140,11 @@ openclaw plugins install @partme.ai/openclaw-tracing
   fail-open，不阻断消息和工具调用。
 - File/OTLP 的 Hook 路径只进入有界内存缓冲；刷盘、HTTP 批次和重试在后台串行执行，
   不会让临界批次的业务请求等待 Collector 或磁盘。
+- OTLP 只重试网络错误、408/429 和 5xx；400/401 等永久错误立即停止本批尝试。
+  `partialSuccess` 不能整批重发，否则会复制 Collector 已接受的 Span；插件将拒绝数计入
+  `droppedSpans`。Collector 成功响应按真实流量限制为 64 KiB，不使用无界 `response.text()`。
+- 活动内存配置额外校验 `maxActiveTraces * maxSpansPerTrace <= 100000`，避免两个分别合法的
+  大值组合成不可控的 Span 上限。
 - 同一会话的 Trace 状态变更串行；工具绑定使用 `traceId + toolCallId`，避免并发会话复用
   toolCallId 时串线。
 - 工具回调缺失、会话提前结束、新消息覆盖旧 trace，以及活跃 trace 超过 30 分钟时，
@@ -150,8 +155,9 @@ openclaw plugins install @partme.ai/openclaw-tracing
 - File/OTLP 缓冲位于进程内，不是持久 Outbox，也不提供 exactly-once。进程崩溃可能
   丢失尚未刷出的 span，OTLP 请求超时也可能产生结果未知窗口。
 - `captureMessageBody` 默认关闭；开启前必须完成数据分级、访问控制和保留期评审。
-- Span 写入 TraceStore 前统一执行安全处理：Bearer、`sk-*` 等凭据使用 OpenClaw SDK 与插件
-  规则联合脱敏；控制字符清理且字符串最多 500 字符；session/run/message/tool-call 标识替换为
+- Span 写入 TraceStore 前统一执行安全处理：ESM 包静态导入 OpenClaw 2026.7.1
+  `security-runtime`，Bearer、Basic、Bot、`sk-*`、key/token/password 等凭据使用 SDK 与插件
+  规则联合脱敏；Span 名称与属性都清理控制字符且字符串最多 500 字符；session/run/message/tool-call 标识替换为
   Gateway 单次生命周期内稳定、跨重启不可关联的 HMAC 令牌。状态查询、Log、File 与 OTLP 因而
   共享同一安全边界，不依赖每个后端重复实现。
 - `otlpHeaders` 可能包含鉴权秘密；插件不会回显，但配置文件本身仍必须使用最小权限保护。
@@ -173,6 +179,27 @@ stateDiagram-v2
     停机排空 --> [*]: 完成或达到总超时
 ```
 
+### OTLP 响应决策
+
+```text
+发送 ≤ 50 Span
+      │
+      ├─ 2xx 无拒绝 ─────────────▶ 成功移除本批
+      ├─ 2xx partialSuccess ─────▶ 不整批重发；拒绝数计入 dropped
+      ├─ 网络/408/429/5xx ───────▶ 有界退避重试
+      └─ 其它 4xx / 响应 >64KiB ─▶ 立即失败并保留缓冲
+```
+
+```mermaid
+flowchart TD
+    S["发送最多 50 个 Span"] --> R{"Collector 响应"}
+    R -->|"2xx，无拒绝"| OK["成功移除本批"]
+    R -->|"2xx partialSuccess"| P["保留已接受结果<br/>拒绝数计入 droppedSpans"]
+    R -->|"网络 / 408 / 429 / 5xx"| B["有界指数退避"]
+    B --> S
+    R -->|"其它 4xx / 响应超 64 KiB"| F["停止重试<br/>批次回到有界缓冲"]
+```
+
 ## 验证
 
 ```bash
@@ -182,4 +209,4 @@ pnpm build
 npm pack --dry-run
 ```
 
-包与清单版本均为 `2026.7.1`，并要求 OpenClaw `>=2026.7.1`。
+包与清单版本均为 `2026.7.1`，并要求 OpenClaw `>=2026.7.1`、Node.js `>=22`。

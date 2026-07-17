@@ -7,11 +7,13 @@
  */
 import WebSocket from "ws";
 
-import { parseClientFrame, serializeErrorFrame, serializePongFrame } from "./protocol.js";
+import { parseClientFrame, serializeAcceptedFrame, serializeErrorFrame, serializePongFrame } from "./protocol.js";
 import type { WebsocketChannelConfig, WebsocketConnectionInfo } from "../types.js";
 import { registerConnection, sendToConnection, touchConnection, unregisterConnection } from "./connection-hub.js";
 import type { WebsocketInboundCallback } from "./server.js";
-import { redactWebSocketError } from "../shared/redact.js";
+import { redactWebSocketError, sanitizeWebSocketUrl } from "../shared/redact.js";
+
+type WebSocketErrorLog = { error: (message: string) => void };
 
 export const WS_CLIENT_CONNECTION_PREFIX = "client:";
 
@@ -68,6 +70,7 @@ function connectOnce(
   config: WebsocketChannelConfig,
   onConnect?: (connectionId: string) => void,
   onDisconnect?: (connectionId: string) => void,
+  log?: WebSocketErrorLog,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const url = config.client.url?.trim();
@@ -113,7 +116,7 @@ function connectOnce(
       clientConnectionId = connectionId;
       reconnectAttempt = 0;
       const now = new Date().toISOString();
-      clientInfo = { connectionId, connectedAt: now, lastActiveAt: now, remoteAddress: url };
+      clientInfo = { connectionId, connectedAt: now, lastActiveAt: now, remoteAddress: sanitizeWebSocketUrl(url) ?? undefined };
       registerConnection(connectionId, ws, clientInfo);
       onConnect?.(connectionId);
       heartbeatTimer = setInterval(() => {
@@ -169,16 +172,25 @@ function connectOnce(
       // 在入队时固定处理器引用。stop 会清空全局处理器以拒绝新消息，但已接纳消息不能因此静默丢失。
       const handler = onInboundMessage;
       queue = trackInboundTask(queue
-        .then(() => handler?.({ connectionId, rawPayload: raw, frameAgentId: parsed.agentId, messageId: parsed.messageId, peerId: parsed.peerId }))
+        .then(async () => {
+          if (!handler) throw new Error("WebSocket inbound handler is unavailable");
+          await handler({ connectionId, rawPayload: raw, frameAgentId: parsed.agentId, messageId: parsed.messageId, peerId: parsed.peerId });
+          const delivered = sendToConnection(
+            connectionId,
+            serializeAcceptedFrame(parsed.messageId),
+            config.limits.maxBufferedBytes,
+          );
+          if (!delivered) throw new Error("WebSocket accepted acknowledgement delivery failed");
+        })
         .catch((error: unknown) => {
-          console.error(`[openclaw-web-socket] Client inbound handler failed ${connectionId}: ${redactWebSocketError(error, config)}`);
+          log?.error(`[openclaw-web-socket] Client inbound handler failed ${connectionId}: ${redactWebSocketError(error, config)}`);
           sendToConnection(connectionId, serializeErrorFrame("Message processing failed"), config.limits.maxBufferedBytes);
         })
         .finally(() => { pending -= 1; }));
     });
     ws.once("error", (error) => {
       if (!opened) reject(error);
-      else console.error(`[openclaw-web-socket] Client socket error ${connectionId}: ${redactWebSocketError(error, config)}`);
+      else log?.error(`[openclaw-web-socket] Client socket error ${connectionId}: ${redactWebSocketError(error, config)}`);
     });
     ws.once("close", () => {
       cleanup();
@@ -195,6 +207,7 @@ export async function startWebSocketClient(
   messageHandler: WebsocketInboundCallback,
   onConnect?: (connectionId: string) => void,
   onDisconnect?: (connectionId: string) => void,
+  log?: WebSocketErrorLog,
 ): Promise<void> {
   if (clientRunning) return;
   abortConnect = false;
@@ -202,14 +215,14 @@ export async function startWebSocketClient(
   onInboundMessage = messageHandler;
   activeClientConfig = config;
   try {
-    await connectOnce(config, onConnect, onDisconnect);
+    await connectOnce(config, onConnect, onDisconnect, log);
   } catch (error) {
     if (config.client.reconnect.enabled && !abortConnect) {
       scheduleReconnect(config, onConnect, onDisconnect);
       return;
     }
     clientRunning = false;
-    throw error;
+    throw new Error(redactWebSocketError(error, config));
   }
 }
 
@@ -242,7 +255,7 @@ export async function stopWebSocketClient(): Promise<void> {
 }
 
 export function getClientStats(): { running: boolean; connected: boolean; url: string | null; connectionId: string | null } {
-  return { running: clientRunning, connected: clientSocket?.readyState === WebSocket.OPEN, url: activeClientConfig?.client.url ?? null, connectionId: clientConnectionId };
+  return { running: clientRunning, connected: clientSocket?.readyState === WebSocket.OPEN, url: sanitizeWebSocketUrl(activeClientConfig?.client.url), connectionId: clientConnectionId };
 }
 
 export function getClientConnectionInfo(): WebsocketConnectionInfo | null {

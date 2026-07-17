@@ -54,6 +54,7 @@ const ROOT_KEYS = new Set([
   "scrapeAuth",
 ]);
 const SCRAPE_AUTH_KEYS = new Set(["enabled", "bearerToken"]);
+const TOKEN_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
 
 /**
  * 将用户配置合并为带默认值的解析结果。
@@ -96,23 +97,15 @@ export function resolvePrometheusConfig(
   const includeRuntime = c.includeRuntime !== false;
   const monitoredProviders = readProviders(c.monitoredProviders);
   const scrapeAuthEnabled = c.scrapeAuth?.enabled === true;
-  const fromEnv = env[ENV_BEARER]?.trim() || env[LEGACY_ENV_BEARER]?.trim();
-  const fromConfig =
-    typeof c.scrapeAuth?.bearerToken === "string" ? c.scrapeAuth.bearerToken.trim() : "";
+  // 必须先检查原始字符串再 trim；否则 "\nsecret\n" 会被清洗成合法 token，违背启动即失败边界。
+  const fromEnv = readBearerToken(env[ENV_BEARER], ENV_BEARER, true)
+    ?? readBearerToken(env[LEGACY_ENV_BEARER], LEGACY_ENV_BEARER, true);
+  const fromConfig = readBearerToken(
+    c.scrapeAuth?.bearerToken,
+    "scrapeAuth.bearerToken",
+    false,
+  );
   const scrapeBearerToken = fromEnv || fromConfig || undefined;
-  if (c.scrapeAuth?.bearerToken !== undefined) {
-    if (
-      typeof c.scrapeAuth.bearerToken !== "string" ||
-      c.scrapeAuth.bearerToken.trim().length === 0 ||
-      c.scrapeAuth.bearerToken.length > 4_096 ||
-      /[\r\n]/.test(c.scrapeAuth.bearerToken)
-    ) {
-      throw new Error("prometheus.scrapeAuth.bearerToken must be a non-empty single-line string up to 4096 characters");
-    }
-  }
-  if (scrapeBearerToken && (scrapeBearerToken.length > 4_096 || /[\r\n]/.test(scrapeBearerToken))) {
-    throw new Error(`prometheus ${ENV_BEARER} must be a single-line token up to 4096 characters`);
-  }
   if (scrapeAuthEnabled && !scrapeBearerToken) {
     throw new Error(
       `prometheus.scrapeAuth.enabled requires ${ENV_BEARER} or scrapeAuth.bearerToken`,
@@ -132,6 +125,22 @@ export function resolvePrometheusConfig(
     collectorTimeoutMs: readInteger(c.collectorTimeoutMs, "collectorTimeoutMs", 100, 60_000, 10_000),
     maxScrapeSeries: readInteger(c.maxScrapeSeries, "maxScrapeSeries", 100, 50_000, 10_000),
   };
+}
+
+/** 读取 Bearer Token；所有 C0/DEL 控制字符都在规范化前拒绝，防止请求头和日志注入。 */
+function readBearerToken(value: unknown, name: string, allowMissing: boolean): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`prometheus ${name} must be a string`);
+  }
+  if (value.trim().length === 0) {
+    if (allowMissing) return undefined;
+    throw new Error(`prometheus.${name} must be a non-empty token`);
+  }
+  if (value.length > 4_096 || TOKEN_CONTROL_CHARACTER_PATTERN.test(value)) {
+    throw new Error(`prometheus ${name} must not contain control characters and must be at most 4096 characters`);
+  }
+  return value.trim();
 }
 
 function readPath(value: unknown): string {

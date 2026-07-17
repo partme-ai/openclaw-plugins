@@ -199,12 +199,15 @@ describe("RednodeClient", () => {
 
   it("redacts configured credentials from network and business errors", async () => {
     const networkClient = new RednodeClient(config, {
-      fetch: vi.fn(async () => { throw new Error(`failed ${config.appKey} ${config.appSecret}`); }),
+      fetch: vi.fn(async () => {
+        throw new Error(`failed https://alice:pass@proxy.test ${config.appKey} ${config.appSecret} app-secret=other-secret sign=deadbeef Bearer bearer-1`);
+      }),
       sleep: vi.fn(async () => undefined),
     });
     await expect(networkClient.invoke({ operation: "availability", pathParams: { item_id: "1" }, body: {} }))
       .rejects.toSatisfy((error: Error) =>
         error.message.includes("[REDACTED]") &&
+        !error.message.match(/alice:pass|other-secret|deadbeef|bearer-1/u) &&
         !error.message.includes(config.appSecret),
       );
 

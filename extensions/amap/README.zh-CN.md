@@ -6,6 +6,30 @@
 
 ## 架构与调用链
 
+```text
+用户地点问题
+     │
+     ▼
+OpenClaw Agent
+     │ 结构化 Tool Call
+     ▼
+AMap Tool 参数边界 ── ownerOnly / 坐标 / POI 类型 / 200 条分页上限
+     │
+     ▼
+AmapClient ── 固定三条 GET 白名单 / 每次尝试计入限流
+     │
+     ├── 429、5xx、瞬时业务错误 → 指数退避 + 双向抖动 → 有限重试
+     │
+     ▼
+https://restapi.amap.com（Key 仅在传输层）
+     │
+     ▼
+响应流字节上限 → JSON/status 信封校验 → 错误凭据脱敏
+     │
+     ▼
+Tool Result 字节上限 → Agent transcript
+```
+
 ```mermaid
 flowchart LR
     U["用户提出地点问题"] --> A["OpenClaw Agent"]
@@ -60,7 +84,8 @@ flowchart LR
 
 - 工具入口会校验关键词、六位 POI 类型码、最多 10 个 POI ID、经纬度范围，以及“同一检索条件最多 200 条”的组合分页边界。
 - `maxResponseBytes` 限制供应商响应，保护进程内存；更小的 `maxToolResultBytes` 限制 Tool Result，避免大批 POI 挤占模型上下文和会话存储。
-- 429、5xx、网络错误，以及官方错误码中的分钟/QPS 限流和网关忙只做有限重试；日配额、Key、权限和参数错误快速失败。
+- 429、5xx、网络错误，以及官方错误码中的分钟/QPS 限流和网关忙只做带双向抖动的有限指数退避；日配额、Key、权限和参数错误快速失败。
+- 供应商业务错误和 Tool 异常在返回 Agent 前遮蔽 URL 用户信息、Authorization、API Key、实际配置 Key 与控制字符。
 - 每次真实 HTTP 尝试（包括重试）都计入进程内限流，重试不能绕过本地配额。
 - `ownerOnly=true` 可把高德 Key 的消耗限制给所有者调用。
 - 三个路径虽是固定白名单，Origin 也必须锁定官方主机；“任意 HTTPS 都安全”是不成立的。

@@ -102,6 +102,23 @@ openclaw gateway restart
 
 本插件通过 HTTP JSON API 与后端网关通信。所有接口均为 `POST`，请求和响应均为 JSON。
 
+字符图用于在终端和 Markdown 原文中快速查看事务边界；下面已有的 Mermaid 架构图与时序图继续保留。
+
+```text
+微信用户
+   │
+   ▼
+iLink API ◀── getUpdates + 持久游标 ── Monitor
+   ▲                                     │
+   │                                     ▼
+   │                           鉴权 → 持久 message_id 去重
+   │                                     │
+   │                                     ▼
+   └── sendMessage / CDN ◀── 出站管道 ◀── Agent
+
+成功：整批完成后原子提交游标；失败：保留游标并至少一次重放
+```
+
 ```mermaid
 flowchart LR
     W["微信用户"] --> P["iLink getUpdates 长轮询"]
@@ -225,7 +242,7 @@ node scripts/e2e/run-e2e.mjs --plugins wechat --skip-browser
 
 API/CDN 凭据目标默认锁定官方地址；自定义可信 HTTPS 代理需要分别开启 `allowCustomApiBaseUrl` 或 `allowCustomCdnBaseUrl`。QR 返回的 IDC 跳转不接受自定义信任，只允许 `weixin.qq.com` 域名。Token、上下文 Token 与长轮询游标采用私有权限和原子写入。
 
-运行日志只保留账号的不可逆短指纹，并在最终写入出口再次清除用户 ID、会话键、正文预览、文件路径和 URL 细节。`context_token` 与 `getConfig` 缓存均为有界存储，避免长期运行时由变化的发送者标识造成内存或状态文件无限增长。
+运行日志只保留账号的不可逆短指纹；二维码、Token 和用户标识不展示前缀，并在最终写入出口再次清除 Bearer/Authorization、用户 ID、会话键、正文预览、文件路径和 URL 细节。`context_token` 与 `getConfig` 缓存均为有界存储，避免长期运行时由变化的发送者标识造成内存或状态文件无限增长。
 
 ## 常见问题
 

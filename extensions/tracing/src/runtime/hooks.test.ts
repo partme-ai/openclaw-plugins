@@ -361,4 +361,16 @@ describe("trace-store getTraceSpans", () => {
     expect(exported[0]?.status).toBe("error");
     expect(exported[0]?.attributes["openclaw.end_reason"]).toBe("gateway_shutdown");
   });
+
+  it("Span 名称在进入查询与后端前统一脱敏并限制长度", async () => {
+    const backend = createMockBackend();
+    const created = createSpan(`tool:Bearer private-token\n${"x".repeat(600)}`);
+
+    await finishAllActiveTraces(backend, "test_cleanup");
+
+    const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
+    expect(created.name).not.toContain("private-token");
+    expect(created.name).not.toContain("\n");
+    expect(exported[0]?.name.length).toBeLessThanOrEqual(500);
+  });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_WEBSOCKET_CONFIG } from "../src/config.js";
-import { redactWebSocketError } from "../src/shared/redact.js";
+import { redactWebSocketError, sanitizeWebSocketUrl } from "../src/shared/redact.js";
 
 describe("redactWebSocketError", () => {
   it("masks configured credentials, URL userinfo and Bearer tokens", () => {
@@ -35,5 +35,11 @@ describe("redactWebSocketError", () => {
     const result = redactWebSocketError(`bad\nline\u0000${"x".repeat(700)}`);
     expect(result).not.toMatch(/[\u0000-\u001f\u007f]/u);
     expect(result.length).toBe(500);
+  });
+
+  it("uses the OpenClaw ESM redactor and strips URL credentials from status values", () => {
+    expect(redactWebSocketError("socket AKIAABCDEFGHIJKLMNOP")).not.toContain("AKIAABCDEFGHIJKLMNOP");
+    expect(sanitizeWebSocketUrl("wss://alice:secret@example.com/bridge?token=leaked#debug"))
+      .toBe("wss://example.com/bridge");
   });
 });

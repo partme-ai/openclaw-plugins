@@ -128,6 +128,20 @@ describe("createMeituanTool", () => {
     expect(error).toBe("Meituan tool execution failed");
   });
 
+  it("redacts credentials again at the Agent-visible Tool boundary", async () => {
+    const tool = createMeituanTool({ senderIsOwner: true } as never, config, {
+      invoke: vi.fn(async () => {
+        throw new Error(`appAuthToken=${config.appAuthToken} signKey=${config.signKey} DeveloperId=${config.developerId}\nnext`);
+      }),
+      getOperation: (name: string) =>
+        config.operations.find((operation) => operation.name === name),
+    } as never);
+    const response = await tool.execute("call", { operation: "query", biz: {} });
+    const error = JSON.parse(response.content[0]!.text).error as string;
+    expect(error).toContain("[REDACTED]");
+    expect(error).not.toMatch(/\btoken\b|\bsecret\b|\b123\b|\n/u);
+  });
+
   it("fails closed before network access when the trusted account has no credential binding", async () => {
     const invoke = vi.fn();
     const boundConfig = {

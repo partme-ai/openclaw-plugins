@@ -27,6 +27,8 @@ export interface CallContext {
   chatType?: "single" | "group";
   /** 当前会话可信的企业微信 userid */
   requesterUserId?: string;
+  /** 账号配置允许 MCP 文件拦截器读取的额外本地目录；默认根与 stateDir 由 Path Guard 补齐。 */
+  mediaLocalRoots?: readonly string[];
 }
 
 /**
@@ -63,7 +65,9 @@ export interface CallInterceptor {
    * 如 smartpage_create 需要从本地文件读取请求体替换 args。
    * 返回的选项会与其他拦截器的结果合并（timeoutMs 取最大值，args 后者覆盖前者）。
    */
-  beforeCall?(ctx: CallContext): BeforeCallOptions | Promise<BeforeCallOptions> | undefined;
+  beforeCall?(
+    ctx: CallContext,
+  ): BeforeCallOptions | Promise<BeforeCallOptions> | undefined;
 
   /**
    * 在 sendJsonRpc 返回后处理/变换结果（可选）

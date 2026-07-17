@@ -14,6 +14,32 @@ Meituan MTOp OpenAPI capability for OpenClaw 2026.7.1. This package is not a cha
 - Separate upstream-response and Agent Tool-result size limits.
 - No automatic POST retry, which prevents accidental duplicate write operations.
 
+```text
+Owner / OpenClaw Agent
+          │ operation + biz + confirm?
+          ▼
+meituan_openapi_invoke
+          │
+          ├─ ownerOnly / operation allowlist / read-write risk gate
+          ├─ trusted agentAccountId → one shop token
+          └─ write requires confirm=true
+                         │
+                         ▼
+             bounded biz JSON + MTOp form
+                         │
+                         ▼
+              SHA-1 signature → account rate limit
+                         │ one POST, no automatic retry
+                         ▼
+               Meituan MTOp OpenAPI
+                         │
+                         ▼
+ bounded response → successCodes → credential/error redaction
+                         │
+                         ▼
+              bounded Tool Result → Agent
+```
+
 ```mermaid
 flowchart LR
     A["Owner / OpenClaw Agent"] --> T["meituan_openapi_invoke"]
@@ -27,6 +53,8 @@ flowchart LR
 ```
 
 Every MTOp invocation is a single POST. The plugin does not retry network, HTTP, or business failures because the operation may be non-idempotent and the platform does not provide a generic idempotency key. Unknown config fields fail closed, every security boolean is type-strict, oversized response streams are cancelled, and a non-official remote origin requires explicit `allowCustomApiBaseUrl=true` acknowledgement.
+
+`confirm=true` is a technical guard against accidental model invocation, not a substitute for business approval, financial controls, or human review. Refund, redemption, fulfilment, and similar high-risk operations should remain behind an upstream approval workflow or should not be exposed to a general Agent.
 
 When `accounts` are configured, credentials are selected only from the runtime-trusted `agentAccountId`; the model cannot provide an account selector. `requireAccountBinding` defaults to true in this mode. Operations with `requiresAuth=false` never receive a shop token.
 

@@ -1,34 +1,41 @@
 /**
  * 轻量级 logger —— 统一日志前缀，避免各模块散落 console 语句。
  *
- * 当 OpenClaw runtime 可用时可通过 setLogger 替换实现，
- * 否则退回到带前缀的 console 方法。
+ * Gateway 启动账户时通过 `setLoggers` 注入宿主日志器。默认实现必须静默，避免插件在
+ * 注册早期或单元测试中绕过 OpenClaw 的结构化日志、脱敏和采集链路直接写控制台。
  */
 
 const PREFIX = "[openclaw-redis-stream]";
 
 type LogFn = (message: string, ...args: unknown[]) => void;
 
-let _info: LogFn = (msg, ...args) => console.log(`${PREFIX} ${msg}`, ...args);
-let _warn: LogFn = (msg, ...args) => console.warn(`${PREFIX} ${msg}`, ...args);
-let _error: LogFn = (msg, ...args) =>
-  console.error(`${PREFIX} ${msg}`, ...args);
+const noop: LogFn = () => undefined;
+let _info: LogFn = noop;
+let _warn: LogFn = noop;
+let _error: LogFn = noop;
 
 export const logger = {
   info(msg: string, ...args: unknown[]): void {
-    _info(msg, ...args);
+    _info(`${PREFIX} ${msg}`, ...args);
   },
   warn(msg: string, ...args: unknown[]): void {
-    _warn(msg, ...args);
+    _warn(`${PREFIX} ${msg}`, ...args);
   },
   error(msg: string, ...args: unknown[]): void {
-    _error(msg, ...args);
+    _error(`${PREFIX} ${msg}`, ...args);
   },
 
   /** 替换为自定义 logger（如 OpenClaw rt.log） */
   setLoggers(opts: { info?: LogFn; warn?: LogFn; error?: LogFn }): void {
-    if (opts.info) _info = opts.info;
-    if (opts.warn) _warn = opts.warn;
-    if (opts.error) _error = opts.error;
+    _info = opts.info ?? noop;
+    _warn = opts.warn ?? noop;
+    _error = opts.error ?? noop;
+  },
+
+  /** 清除旧 Gateway 实例的日志引用，避免热重载后继续写入已停止的宿主。 */
+  resetLoggers(): void {
+    _info = noop;
+    _warn = noop;
+    _error = noop;
   },
 };

@@ -63,6 +63,7 @@ export const E2E_PORTS = {
   wechatProvider: Number(process.env.E2E_WECHAT_PROVIDER_PORT ?? 19095),
   wechatIpadProvider: Number(process.env.E2E_WECHAT_IPAD_PROVIDER_PORT ?? 19096),
   wecomKfProvider: Number(process.env.E2E_WECOM_KF_PROVIDER_PORT ?? 19097),
+  wecomProvider: Number(process.env.E2E_WECOM_PROVIDER_PORT ?? 19098),
   openmem: Number(process.env.E2E_OPENMEM_PORT ?? 13317),
   otlpHttp: Number(process.env.E2E_OTLP_HTTP_PORT ?? 14318),
   nacosHttp: Number(process.env.E2E_NACOS_HTTP_PORT ?? 18848),

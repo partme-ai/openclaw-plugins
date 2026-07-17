@@ -24,6 +24,7 @@ export function nacosConfig() {
           metadata: { e2eRevision: "local" },
           configCenter: {
             enabled: true,
+            backupRetentionCount: 2,
             sharedConfigs: [{ dataId: NACOS_E2E_DATA_ID, refresh: true }],
           },
           clusterDiscovery: { enabled: true },

@@ -2,27 +2,43 @@
 
 ## 分层职责
 
-| 层级 | 职责 | 位置 |
-|------|------|------|
-| **传输层** | 连接、订阅、发布、ACK、平台协议 | 各 `extensions/{mqtt,rabbitmq,...}` |
-| **消息层** | 统一模型、解析/序列化、入栈/出栈、OpenClaw 桥接 | `@partme.ai/openclaw-message-sdk` |
-| **智能体层** | 路由、会话、LLM（不变） | OpenClaw Gateway |
+| 层级         | 职责                                            | 位置                                |
+| ------------ | ----------------------------------------------- | ----------------------------------- |
+| **传输层**   | 连接、订阅、发布、ACK、平台协议                 | 各 `extensions/{mqtt,rabbitmq,...}` |
+| **消息层**   | 统一模型、解析/序列化、入栈/出栈、OpenClaw 桥接 | `@partme.ai/openclaw-message-sdk`   |
+| **智能体层** | 路由、会话、LLM（不变）                         | OpenClaw Gateway                    |
 
 通道插件**只做**：连接生命周期、收到原始 payload 后交给 SDK、从 SDK 取出线载荷再 publish。
 
 message-sdk**承担**：`UnifiedMessage`、`MessageEnvelope`、`parseTransportPayload` / `serializeForTransport`、幂等去重、可选入栈/出栈，以及 **Wire / Transcript 双路径 dispatch** 与 `bridge` 子路径中的 `dispatchInbound` / `createReplyHandler`。
 
+```text
+外部协议 / Channel Plugin
+        │ 原始 payload
+        ▼
+message-sdk：parse → UnifiedMessage → dedupe / queue
+        │
+        ├── Wire：MQ/STOMP/MQTT → reply envelope → 协议 deliver
+        │
+        └── Transcript：IM → OpenClaw turn → 人类可读 deliver
+        │
+        ▼
+OpenClaw Agent / Hook Runtime
+
+发布门禁：23 exports → 消费者真实 import → OpenClaw 2026.7.1 符号 → tarball
+```
+
 ## 双路径决策（Wire vs Transcript）
 
 > **采用方案 A：Wire 与 Transcript 长期共存。**
 
-| 维度 | Wire 路径 | Transcript 路径 |
-|------|-----------|-----------------|
-| **代表插件** | mqtt, rabbitmq, redis-stream, rocketmq, stomp, web-mqtt, web-stomp | gotify, wecom, feishu |
-| **SDK 入口** | `dispatchWireMessage` → `dispatchInbound` | `dispatchTranscriptTurn` → `turn.runAssembled` |
-| **入站** | `ingress/` + `parseTransportPayload` | `ingress/normalize` + 渠道 adapter |
-| **出站** | `serializeForTransport` → JSON 信封 | 渠道 deliver 回调（人类可读） |
-| **Control UI** | 无 transcript 保证 | 必须有 user/agent 轮次 |
+| 维度           | Wire 路径                                                          | Transcript 路径                                |
+| -------------- | ------------------------------------------------------------------ | ---------------------------------------------- |
+| **代表插件**   | mqtt, rabbitmq, redis-stream, rocketmq, stomp, web-mqtt, web-stomp | gotify, wecom, feishu                          |
+| **SDK 入口**   | `dispatchWireMessage` → `dispatchInbound`                          | `dispatchTranscriptTurn` → `turn.runAssembled` |
+| **入站**       | `ingress/` + `parseTransportPayload`                               | `ingress/normalize` + 渠道 adapter             |
+| **出站**       | `serializeForTransport` → JSON 信封                                | 渠道 deliver 回调（人类可读）                  |
+| **Control UI** | 无 transcript 保证                                                 | 必须有 user/agent 轮次                         |
 
 MQ 插件**不**迁移至 Transcript 路径；IM 插件**不**降级为 Wire。统一层为 `UnifiedMessage`、dedup、`reply/`、`ingress/`，而非单一 dispatch 入口。
 
@@ -44,7 +60,7 @@ flowchart LR
 ```json
 {
   "version": "1",
-  "message": { },
+  "message": {},
   "headers": {
     "correlationId": "...",
     "idempotencyKey": "...",
@@ -98,11 +114,11 @@ sequenceDiagram
 
 ### Dispatch Mode 矩阵（Wire MQ）
 
-| mode | SDK 入口 | OpenClaw 调用 | 典型插件 |
-|------|----------|---------------|----------|
-| `reply-pipeline` | `dispatchWireMessage` | `dispatchInbound` + reply pipeline | mqtt, redis-stream, stomp |
-| `embedded-agent` | `dispatchEmbeddedAgentMessage` | `agent.runEmbeddedAgent` | rabbitmq, rocketmq（默认） |
-| `subagent` | `dispatchSubagentMessage` | `subagent.run` + `waitForRun` | rabbitmq, rocketmq |
+| mode             | SDK 入口                       | OpenClaw 调用                      | 典型插件                   |
+| ---------------- | ------------------------------ | ---------------------------------- | -------------------------- |
+| `reply-pipeline` | `dispatchWireMessage`          | `dispatchInbound` + reply pipeline | mqtt, redis-stream, stomp  |
+| `embedded-agent` | `dispatchEmbeddedAgentMessage` | `agent.runEmbeddedAgent`           | rabbitmq, rocketmq（默认） |
+| `subagent`       | `dispatchSubagentMessage`      | `subagent.run` + `waitForRun`      | rabbitmq, rocketmq         |
 
 MQ 类插件标准路径应使用 **`dispatchChannelMessage`**（或按 mode 直接调用子 facade），避免各插件复制 dispatch 逻辑。
 
@@ -175,11 +191,11 @@ flowchart TB
   Outbound --> RoundRobin[跨会话轮询投递]
 ```
 
-| 机制 | 有界资源 | 失败语义 |
-|------|----------|----------|
-| `InboundMessageQueue` | `maxSize` | `duplicate` 可确认；`full` 必须重试或反压；`onPush` 失败回滚条目与幂等键 |
-| `createKeyedRunQueue` | `maxPendingTasks`、`maxKeys` | 超时通知调用方并触发 AbortSignal，但同 key 等待底层任务真实 settle 后才继续 |
-| `OutboundMessageQueue` | `maxSize` | 新消息拒绝并触发 `onOverflow`；默认 pop 跨 session 轮询、session 内 FIFO |
+| 机制                   | 有界资源                     | 失败语义                                                                    |
+| ---------------------- | ---------------------------- | --------------------------------------------------------------------------- |
+| `InboundMessageQueue`  | `maxSize`                    | `duplicate` 可确认；`full` 必须重试或反压；`onPush` 失败回滚条目与幂等键    |
+| `createKeyedRunQueue`  | `maxPendingTasks`、`maxKeys` | 超时通知调用方并触发 AbortSignal，但同 key 等待底层任务真实 settle 后才继续 |
+| `OutboundMessageQueue` | `maxSize`                    | 新消息拒绝并触发 `onOverflow`；默认 pop 跨 session 轮询、session 内 FIFO    |
 
 这些结构只保证单进程内的顺序与容量边界。进程崩溃恢复、Broker ACK、DLQ 和跨实例 exactly-once 不属于 SDK 内存队列职责，应由渠道插件和外部 Broker 提供。
 
@@ -221,27 +237,27 @@ src/
 
 子路径：`@partme.ai/openclaw-message-sdk/transcript`
 
-| 模块 | 说明 | WeCom 使用 |
-|------|------|-----------|
-| `streaming-config` | Feishu 式 `streaming` / `footer` 解析、`buildStreamBubbleText` | `streaming-config.ts` 薄封装 |
-| `templates` | `resolveChannelTemplates`、错误/超时摘要 | `templates.ts` 薄封装 + 中文默认值 |
-| `finish-stream` | `resolveStreamFinishText` 关流非空兜底 | `finish-thinking.ts` |
-| `reply-dispatcher-factory` | `createTranscriptReplyDispatcherHooks` | `webhook/reply-pipeline.ts` |
+| 模块                       | 说明                                                           | WeCom 使用                         |
+| -------------------------- | -------------------------------------------------------------- | ---------------------------------- |
+| `streaming-config`         | Feishu 式 `streaming` / `footer` 解析、`buildStreamBubbleText` | `streaming-config.ts` 薄封装       |
+| `templates`                | `resolveChannelTemplates`、错误/超时摘要                       | `templates.ts` 薄封装 + 中文默认值 |
+| `finish-stream`            | `resolveStreamFinishText` 关流非空兜底                         | `finish-thinking.ts`               |
+| `reply-dispatcher-factory` | `createTranscriptReplyDispatcherHooks`                         | `webhook/reply-pipeline.ts`        |
 
 WeCom 已对齐 `createKeyedRunQueue`（`chat-queue.ts` 薄封装，替代自研 Map），以及 `StreamSessionStore` / `ActiveReplyStore`（`webhook/state.ts` 薄封装）。
 
 ### WeCom P1 下沉（ingress / util / routing / config / text）
 
-| WeCom 模块 | SDK 目标 | 插件形态 |
-|------------|----------|----------|
-| `dm-policy.ts` | `ingress/dm-policy.ts` | 薄封装 + `sendPairingReply` 注入 |
-| `group-policy.ts` | `ingress/group-policy.ts` | 薄封装（`channelId=wecom`） |
-| `state-manager` MessageState TTL | `util/ttl-map-store.ts` | `createTtlMapStore` |
-| `reqid-store.ts` | `util/ttl-map-store.ts` | `createReqIdStore` re-export |
-| `state-manager` SessionChatInfo | `routing/session-peer-cache.ts` | `createSessionPeerCache` |
-| `utils` media/timeout/proxy | `config/resolve-channel-limits.ts` | 参数化 `channelId` 薄封装 |
-| `state-dir-resolve.ts` | `openclaw/state-dir.ts` | Gotify 同步 |
-| `agent/markdown-strip.ts` | `text/strip-markdown.ts` | re-export |
+| WeCom 模块                       | SDK 目标                           | 插件形态                         |
+| -------------------------------- | ---------------------------------- | -------------------------------- |
+| `dm-policy.ts`                   | `ingress/dm-policy.ts`             | 薄封装 + `sendPairingReply` 注入 |
+| `group-policy.ts`                | `ingress/group-policy.ts`          | 薄封装（`channelId=wecom`）      |
+| `state-manager` MessageState TTL | `util/ttl-map-store.ts`            | `createTtlMapStore`              |
+| `reqid-store.ts`                 | `util/ttl-map-store.ts`            | `createReqIdStore` re-export     |
+| `state-manager` SessionChatInfo  | `routing/session-peer-cache.ts`    | `createSessionPeerCache`         |
+| `utils` media/timeout/proxy      | `config/resolve-channel-limits.ts` | 参数化 `channelId` 薄封装        |
+| `state-dir-resolve.ts`           | `openclaw/state-dir.ts`            | Gotify 同步                      |
+| `agent/markdown-strip.ts`        | `text/strip-markdown.ts`           | re-export                        |
 
 ## 插件接入检查清单
 

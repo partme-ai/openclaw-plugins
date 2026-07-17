@@ -19,6 +19,7 @@ export const DEFAULT_EMBEDDING_TIMEOUT_MS = DEFAULT_PROVIDER_TIMEOUT_MS;
 export const DEFAULT_EMBEDDING_MAX_RETRIES = DEFAULT_PROVIDER_MAX_RETRIES;
 /** Embedding 单次批处理默认最大文本数量。 */
 export const DEFAULT_EMBEDDING_BATCH_SIZE = 64;
+const MAX_EMBEDDING_BATCH_SIZE = 2_048;
 
 /** 通过 Knowledge 共用有界 HTTP 层执行 Embedding JSON POST。 */
 export async function postEmbeddingJson<T>(
@@ -43,12 +44,22 @@ export async function inEmbeddingBatches<T>(
 ): Promise<T[]> {
   // maxBatchSize 是调用方期望值，不能突破 Provider 的硬上限。取最小值可让同一份
   // Knowledge 配置安全迁移到不同供应商，而不会把默认 64 条直接发给只接受 10/16 条的接口。
-  const batchSize = Math.min(config?.maxBatchSize ?? DEFAULT_EMBEDDING_BATCH_SIZE, providerMaximumBatchSize);
+  const configuredBatchSize = config?.maxBatchSize ?? DEFAULT_EMBEDDING_BATCH_SIZE;
+  assertBatchSize(configuredBatchSize, 'maxBatchSize');
+  assertBatchSize(providerMaximumBatchSize, 'providerMaximumBatchSize');
+  const batchSize = Math.min(configuredBatchSize, providerMaximumBatchSize);
   const results: T[] = [];
   for (let offset = 0; offset < texts.length; offset += batchSize) {
     results.push(...await operation(texts.slice(offset, offset + batchSize)));
   }
   return results;
+}
+
+/** 批次必须能让 offset 单调前进；零或负数会造成永不结束的同步循环。 */
+function assertBatchSize(value: number, name: string): void {
+  if (!Number.isInteger(value) || value < 1 || value > MAX_EMBEDDING_BATCH_SIZE) {
+    throw new Error(`Knowledge embedding ${name} must be an integer between 1 and ${MAX_EMBEDDING_BATCH_SIZE}`);
+  }
 }
 
 /** 校验 Provider 返回数量、索引唯一性、顺序、维度和有限数值。 */

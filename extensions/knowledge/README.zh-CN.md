@@ -8,6 +8,32 @@
 
 ## 工作方式
 
+字符图先展示两条主路径以及共同的隔离、资源与错误边界，适合快速定位组件；后面的 Mermaid
+保留可渲染的依赖关系，二者共同维护，不能互相替代。
+
+```text
+可信文本 / Owner 文件                         用户问题
+        │                                      │
+        ▼                                      ▼
+Namespace ACL + realpath + 大小限制        Intent Gate
+        │                                      │
+        ▼                                      ▼
+Parser（可选）→ Chunk → Embedding       Vector / Keyword 双路召回
+        │                                      │
+        └──────────────┐       ┌───────────────┘
+                       ▼       ▼
+                 SQLite + FTS5 / ZVec
+                           │
+                           ▼
+                 Reranker（可选）→ Token 预算
+                           │
+                           ▼
+              before_prompt_build → Agent Prompt
+
+共同边界：sessionKey 摘要隔离 │ 原子替换 │ Provider 超时/重试/响应上限
+          凭据/路径脱敏       │ Gateway stop 关闭 Store
+```
+
 ```mermaid
 flowchart LR
     DOC["可信文档 / Tool 输入"] --> ACL["Owner + Namespace + 大小校验"]
@@ -24,6 +50,38 @@ flowchart LR
 稳定 `sessionKey` 做 SHA-256 摘要后派生；原始会话键不会写入路径或表名。非 owner 不能
 查询或修改其它 namespace。
 
+外部 Provider 的配置先经过公共资源边界，非法值不会进入循环或发出网络请求：
+
+```text
+embedding 配置
+      │
+      ▼
+整数范围校验
+  ├─ requestTimeoutMs：1 .. 300000 ms
+  ├─ maxRetries：0 .. 10
+  ├─ maxResponseBytes：1 .. 64 MiB
+  └─ maxBatchSize：1 .. 2048
+      │
+      ├── 非法 ──▶ 启动/首次调用立即失败，fetch=0，batch loop=0
+      │
+      ▼
+按 Provider 硬上限取 min(配置批次, Provider 批次)
+      │
+      ▼
+有限请求 → 响应字节上限 → JSON/数量/索引/维度/有限值校验
+```
+
+```mermaid
+flowchart LR
+    C["Embedding 配置"] --> V{"整数范围是否合法?"}
+    V -->|否| F["Fail fast<br/>不循环、不请求"]
+    V -->|是| B["min 配置批次与 Provider 硬上限"]
+    B --> H["有界 HTTP / SDK 超时"]
+    H --> R["响应大小与 JSON 校验"]
+    R --> E["向量数量、索引、维度、有限值校验"]
+    E --> S["原子写入 Store"]
+```
+
 ## 能力范围
 
 - Embedding：OpenAI-compatible、DashScope、智谱、千帆、Ollama；
@@ -35,6 +93,8 @@ flowchart LR
 - 文件摄取：默认关闭，仅 owner 可用，realpath 必须位于允许根目录；
 - 生命周期：Store 按 namespace + 配置指纹缓存，Gateway stop 时统一关闭或刷新。
 - 并发删除：同 source 的 add/update/delete 保序；namespace clear 使用独占屏障，不能越过在途写入。
+- 错误边界：Provider、Parser、SQLite 和文件系统异常在进入 Hook 日志或 Tool 响应前统一遮蔽凭据、绝对路径和控制字符。
+- 配置边界：Provider 超时、重试、响应大小和 Embedding 批次必须是有界整数；`maxBatchSize=0` 等值会在进入循环前拒绝。
 
 当前不承诺远程 URL 抓取、外部向量数据库和多节点共享索引。PDF/Office/图片等非纯文本
 必须显式配置 `parser.provider`，并在真实 Provider 环境完成格式兼容性验收。

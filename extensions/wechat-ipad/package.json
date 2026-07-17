@@ -25,10 +25,7 @@
     "README.md",
     "README.en.md",
     "README.zh-CN.md",
-    "LICENSE",
-    "tsconfig.json",
-    "tsup.config.ts",
-    "vitest.config.ts"
+    "LICENSE"
   ],
   "publishConfig": { "access": "public" },
   "dependencies": { "ws": "^8.18.0" },

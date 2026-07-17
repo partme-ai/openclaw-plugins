@@ -15,4 +15,9 @@ describe("redactWebMqttError", () => {
     expect(safe).not.toContain("\n");
     expect(safe).toContain("[REDACTED]");
   });
+
+  it("ESM 运行时真实调用 OpenClaw security-runtime", () => {
+    const secret = "AKIAABCDEFGHIJKLMNOP";
+    expect(redactWebMqttError(`websocket error ${secret}`)).not.toContain(secret);
+  });
 });

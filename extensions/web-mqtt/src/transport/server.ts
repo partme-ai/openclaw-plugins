@@ -1,6 +1,19 @@
 /**
  * WebSocket MQTT 服务实现。
- * 内嵌 Aedes broker，提供企业级连接治理、基础鉴权与可观测统计。
+ *
+ * 浏览器 / MQTT.js
+ *       │ WebSocket Upgrade（Origin、连接数、帧大小）
+ *       ▼
+ * HTTP(S) + ws ──▶ Aedes（认证、Topic ACL、QoS 确认）
+ *                       │
+ *                       ▼
+ *              clientId 有界串行队列
+ *                       │
+ *                       ▼
+ *              OpenClaw Agent 入站处理
+ *
+ * 这里的 Aedes 是单 Gateway 进程内接入 broker，不提供跨实例会话恢复或持久订阅。
+ * QoS 1 的成功确认会等待 Agent Turn 与回复发布完成；停机则先拒绝新任务，再排空队列。
  */
 
 import { Aedes } from "aedes";
@@ -122,7 +135,7 @@ export async function startWebMqttServer(config: WebMqttConfig, onInbound: Inbou
     stats.brokerReady = true;
   } catch (error) {
     await stopWebMqttServer().catch(() => undefined);
-    throw error;
+    throw new Error(redactWebMqttError(error, config));
   }
 }
 
@@ -134,6 +147,7 @@ export async function stopWebMqttServer(): Promise<void> {
   const activeServer = server;
   const activeBroker = broker;
   const queue = inboundQueue;
+  const stoppingConfig = currentConfig;
   wss = null;
   server = null;
   broker = null;
@@ -165,7 +179,7 @@ export async function stopWebMqttServer(): Promise<void> {
   pendingClients.clear();
   clearSessionContexts();
   const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-  if (failure) throw failure.reason;
+  if (failure) throw new Error(redactWebMqttError(failure.reason, stoppingConfig));
 }
 
 /**
@@ -221,8 +235,9 @@ export async function publishToTopic(topic: string, payload: string): Promise<nu
       },
       (err?: Error | null) => {
         if (err) {
-          stats.lastError = redactWebMqttError(err, currentConfig);
-          reject(err);
+          const safeError = redactWebMqttError(err, currentConfig);
+          stats.lastError = safeError;
+          reject(new Error(safeError));
           return;
         }
         resolve();
@@ -245,7 +260,8 @@ export function trackInboundAccepted(): void {
  */
 export function trackInboundDropped(reason: string): void {
   stats.droppedMessages += 1;
-  stats.lastError = reason;
+  // reason 可能来自第三方 dispatch 错误；状态端点是公开边界，必须再次统一脱敏。
+  stats.lastError = redactWebMqttError(reason, currentConfig);
 }
 
 /**
@@ -286,7 +302,7 @@ function configureAuthGuards(config: WebMqttConfig, onInbound: InboundHandler): 
     const finish = (success: boolean, error: Error | null = null): void => {
       if (!success) {
         stats.authFailures += 1;
-        stats.lastError = error?.message ?? "authentication_failed";
+        stats.lastError = redactWebMqttError(error?.message ?? "authentication_failed", config);
       }
       done(error, success);
     };

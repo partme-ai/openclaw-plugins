@@ -7,6 +7,25 @@ afterEach(() => {
 });
 
 describe('requestProviderJson', () => {
+  it.each([
+    [{ timeoutMs: 0 }, 'timeoutMs'],
+    [{ maxRetries: -1 }, 'maxRetries'],
+    [{ maxRetries: 1.5 }, 'maxRetries'],
+    [{ maxResponseBytes: 0 }, 'maxResponseBytes'],
+  ])('在网络调用前拒绝非法资源边界 %o', async (options, field) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(requestProviderJson(
+      'https://provider.example/v1/test',
+      { method: 'GET' },
+      options,
+      'Fixture',
+      'Probe',
+    )).rejects.toThrow(field);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('仅对 429 与 5xx 做有限退避重试', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn()

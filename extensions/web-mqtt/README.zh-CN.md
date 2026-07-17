@@ -82,6 +82,19 @@ flowchart LR
 
 ## 消息处理流程
 
+```text
+浏览器         WS/WSS+Aedes       clientId 队列       Topic 路由      Agent
+  │ CONNECT         │                   │                 │             │
+  ├────────────────▶│ 认证 + ACL        │                 │             │
+  │ PUBLISH QoS1    │                   │                 │             │
+  ├────────────────▶├── 有界 FIFO ────▶├── 路由 ───────▶├── Turn ────▶│
+  │                 │                   │                 │◀── 回复 ────┤
+  │◀── 回复消息 ────┤◀──────────────────┴─────────────────┤             │
+  │◀── PUBACK ──────┤  仅在 Agent Turn 与回复投递完成后确认             │
+```
+
+字符时序图先展示“确认点在哪里”；下面的 Mermaid 继续保留参与者、校验顺序和可渲染的完整时序。
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -201,6 +214,22 @@ MQTT over WebSocket 传输与 ACL 留在本插件；下列能力通过 **薄封�
 | **隔离** | server publish 不触发入站；ACL + topic 白名单 |
 
 ### 两层授权边界
+
+```text
+客户端动作
+    │
+    ▼
+Aedes Publish/Subscribe ACL ── 拒绝 ──▶ 拒绝请求 + aclDenials
+    │ 允许
+    ▼
+OpenClaw Topic/账号 ACL ─────── 拒绝 ──▶ 丢弃并记录脱敏原因
+    │ 允许
+    ▼
+有界队列 + Agent 时限 ───────── 失败 ──▶ QoS1 不返回成功确认
+    │ 完成
+    ▼
+回复发布 + PUBACK
+```
 
 ```mermaid
 flowchart TD

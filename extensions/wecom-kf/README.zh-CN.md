@@ -6,6 +6,50 @@
 
 ## 核心消息链路
 
+字符图用于终端、源码评审和 Markdown 原文快速看清“通知与真实消息拉取分离”的关键语义；后面的 Mermaid 时序、流程与路由图继续完整保留。
+
+多账号回调遵循“路径绑定账号，事件只校验身份”。这条边界防止一个账号的回调凭据越权触发另一个账号：
+
+```text
+/wecom-kf/sales ──▶ accounts.sales ──▶ 用 sales Token/AESKey 验签解密
+                                              │
+                                              ▼
+                                  OpenKfId == sales.openKfId？
+                                      ┌───────┴───────┐
+                                    否│               │是
+                                      ▼               ▼
+                               400，拒绝且不入队   快速 200 + sales 队列
+
+路径绑定的账号是最终安全主体；解密后的 OpenKfId 不能重新选择 corpSecret。
+```
+
+```mermaid
+flowchart LR
+    P["精确回调路径"] --> A["绑定账号凭据"]
+    A --> D["验签与 AES 解密"]
+    D --> C{"OpenKfId 一致?"}
+    C -->|否| R["400 拒绝"]
+    C -->|是| Q["绑定账号串行队列"]
+    Q --> S["sync_msg"]
+```
+
+```text
+微信客户
+   │ 咨询
+   ▼
+企业微信客服 ── 加密通知 ──▶ Callback（验签/解密/快速 ACK）
+   ▲                              │
+   │                              ▼
+   │                    账号串行 sync_msg + 持久 cursor
+   │                              │
+   │                              ▼
+   │                    msgid claim → Agent / 系统事件
+   │                              │
+   └── send_msg / transfer ───────┘
+
+后台前置条件或处理失败：抛错 → 有界重试 → 不提交当前页 cursor
+```
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -76,15 +120,17 @@ openclaw gateway restart
 openclaw channels status --probe
 ```
 
-回调地址为 `https://<GATEWAY_HOST>/wecom/kefu`。正常运行时快速返回 200，耗时处理在确认后按账号异步执行；Gateway 停机时先拒绝新回调并返回 503，再等待已经确认的同步队列排空，避免“企微认为已送达、进程却尚未处理”的消息丢失。
+回调地址为 `https://<GATEWAY_HOST>/wecom/kefu`。正常运行时快速返回 200，耗时处理在确认后按账号异步执行；账号映射、`open_kfid`、Runtime 或 `corpSecret` 尚未就绪时会进入有界重试，不会把未处理通知误判为成功。Gateway 停机时先拒绝新回调并返回 503，再等待已经确认的同步队列排空，避免“企微认为已送达、进程却尚未处理”的消息丢失。
 
 ## 生产边界
 
 - 回调必须验签、解密、限制请求体，并对消息 ID 和游标做幂等处理。
+- 多账号回调路径必须唯一绑定账号；解密事件的 `OpenKfId` 与绑定值不一致时在 ACK 前拒绝，不能据此切换账号凭据。
 - `send_msg` 在调用 API 前按会话原子预占 48 小时窗口内的 5 条回复额度；失败时回滚，避免并发请求突破上限。
 - access_token 缓存按 `corpId + corpSecret + apiBaseUrl` 的不可逆指纹隔离，凭据轮换或切换私有化网关后不会继续复用旧 token。
 - 本地媒体读取必须经过白名单、真实路径、符号链接逃逸与大小限制检查。
 - `corpSecret`、Token、EncodingAESKey 属于敏感配置，不应写入日志或状态接口。
+- 外部联系人 ID 不进入常规策略日志；第三方异常先清除 URL 凭据、查询参数、控制字符并截断后再记录。
 - 转人工是控制面动作，工具结果不应混入用户可见的 LLM transcript。
 - 必须验证游标恢复、企业微信重试、Gateway 重启和人工接管后的消息归属。
 

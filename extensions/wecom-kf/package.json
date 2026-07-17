@@ -40,7 +40,8 @@
     "README.md",
     "README.en.md",
     "README.zh-CN.md",
-    "skills"
+    "skills",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public",

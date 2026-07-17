@@ -140,18 +140,45 @@ describe("OtlpBackend", () => {
     expect(batchSizes).toEqual([50, 50, 20]);
   });
 
-  it("OTLP partialSuccess 拒绝 Span 时按失败批次重试", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        partialSuccess: { rejectedSpans: 1, errorMessage: "invalid attribute" },
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+  it("OTLP partialSuccess 只计入拒绝数，不重发已被接受的同批 Span", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      partialSuccess: { rejectedSpans: 1, errorMessage: "invalid attribute" },
+    }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const backend = new OtlpBackend(logger);
     await backend.init({ ...config, backend: "otlp", exportRetryAttempts: 2 });
     await backend.exportSpans([span("partial")]);
     await backend.shutdown();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(backend.getStatus()).toMatchObject({ healthy: true, bufferedSpans: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(backend.getStatus()).toMatchObject({
+      healthy: false,
+      bufferedSpans: 0,
+      droppedSpans: 1,
+    });
+  });
+
+  it("400 等永久 HTTP 错误不执行指数重试", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 400, statusText: "Bad Request" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const backend = new OtlpBackend(logger);
+    await backend.init({ ...config, backend: "otlp", exportRetryAttempts: 3 });
+    await backend.exportSpans([span("bad-request")]);
+
+    await expect(backend.shutdown()).rejects.toThrow("OTLP HTTP 400");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("拒绝读取超过 64 KiB 的 Collector 成功响应", async () => {
+    const fetchMock = vi.fn(async () => new Response("x", {
+      status: 200,
+      headers: { "content-length": String(64 * 1024 + 1) },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const backend = new OtlpBackend(logger);
+    await backend.init({ ...config, backend: "otlp", exportRetryAttempts: 3 });
+    await backend.exportSpans([span("oversized-response")]);
+
+    await expect(backend.shutdown()).rejects.toThrow("response exceeds");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

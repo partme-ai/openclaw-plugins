@@ -18,6 +18,7 @@ type AgentToolResult<T = unknown> = {
 import { getOrCreateStore } from '../runtime/hooks.js';
 import { hybridSearch } from '../retriever/hybrid.js';
 import { authorizeNamespace, validateSourceId, validateTextSize } from './policy.js';
+import { safeKnowledgeError } from '../shared/safe-error.js';
 
 // ===================================================================
 // 类型定义
@@ -187,7 +188,7 @@ export function createKnowledgeQueryTool(ctx: OpenClawPluginToolContext, config:
           results: items,
         });
       } catch (err) {
-        return failedResult(`检索失败: ${err instanceof Error ? err.message : String(err)}`);
+        return failedResult(`检索失败: ${safeKnowledgeError(err)}`);
       }
     },
   };

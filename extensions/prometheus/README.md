@@ -45,6 +45,24 @@ Metrics come from two layers:
 
 ### Runtime architecture
 
+```text
+diagnostics       Gateway RPC       hooks/events       Node.js runtime
+     │                 │                 │                    │
+     └─────────────────┴────────┬────────┴────────────────────┘
+                                ▼
+                 CollectorRunner (parallel/timeout/isolation)
+                                │
+                                ▼
+                 CollectCache (single-flight + success TTL)
+                                │
+                                ▼
+           redact labels → series caps → Prometheus/JSON
+                                │
+             ┌──────────────────┼──────────────────┐
+             ▼                  ▼                  ▼
+          /metrics           /health            /debug
+```
+
 ```mermaid
 flowchart LR
     P["Prometheus / Grafana Agent"] -->|"GET /metrics + Bearer Token"| G["OpenClaw Gateway HTTP Registry"]
@@ -65,6 +83,16 @@ flowchart LR
 The plugin only registers Gateway routes; it does not open another listener. The Gateway or reverse proxy owns TLS, network ACLs, and token rotation. The plugin owns request authentication, collector isolation, low-cardinality output, and response limits.
 
 ### Concurrent scrape and failure isolation
+
+```text
+Prometheus A ─┐
+              ├─ concurrent scrape ─▶ CollectCache ─▶ one collectAll run
+Prometheus B ─┘                                      │
+                                                    ├─ success: samples
+                                                    └─ failure: diagnostics
+                                                               │
+                           both requests reuse result ◀─────────┘
+```
 
 ```mermaid
 sequenceDiagram
@@ -95,6 +123,42 @@ During overload, exporter health and collector-failure signals are retained firs
 bucket/sum/count samples for one label set are retained or dropped atomically, so truncation does not
 publish a misleading partial distribution. Provider-auth snapshots are also single-flight: concurrent
 health requests share one real probe, and late results from an old plugin generation are discarded.
+
+### Label privacy and cardinality boundaries
+
+```text
+hook / RPC / diagnostics label
+              │
+              ▼
+OpenClaw security-runtime redaction (ESM static import)
+              │
+              ▼
+exporter credential rules + control-character cleanup + 128-char limit
+              │
+              ▼
+dynamic family budget (64 values; overflow → other)
+              │
+              ▼
+runtime store cap → final scrape cap → response
+```
+
+```mermaid
+flowchart TD
+    I["Hook / RPC / diagnostics label"] --> S["OpenClaw security-runtime<br/>credential redaction"]
+    S --> P["Exporter rules<br/>Bearer / Basic / Bot / key / token / password"]
+    P --> C["Control-character cleanup<br/>128-character limit"]
+    C --> D{"Dynamic label family<br/>within 64 values?"}
+    D -->|"yes"| V["Retain normalized value"]
+    D -->|"no"| O["Aggregate as other"]
+    V --> R["Runtime series cap"]
+    O --> R
+    R --> F["Final scrape series cap"]
+```
+
+Tool and channel names remain useful labels, but an extension cannot create unbounded series: each
+dynamic label family retains at most 64 normalized values per plugin generation and aggregates later
+values as `other`. Session/agent/subagent state fields use fixed buckets. The tool-error SLI sums all
+`tool` label series, rather than querying a non-existent unlabeled counter.
 
 ## Endpoints
 
@@ -184,6 +248,19 @@ scrape_configs:
 Set `scrapeAuth.enabled: true` and store the same secret in `OPENCLAW_PROMETHEUS_BEARER_TOKEN` on the Gateway host.
 Enabling authentication without a token rejects plugin startup. Runtime validation also rejects unknown
 fields and wrong types instead of silently applying defaults to misspelled configuration.
+The raw token is validated before trimming: C0/DEL control characters (including newline, tab and NUL)
+fail plugin configuration instead of being silently normalized. Authorized requests are compared in
+constant time; failures return 401 before collection.
+
+```mermaid
+flowchart LR
+    R["Raw env/config token"] --> V{"Type, length and<br/>control characters valid?"}
+    V -->|No| F["Fail configuration"]
+    V -->|Yes| N["Normalize in memory"]
+    N --> C["Constant-time Bearer comparison"]
+    C -->|401| U["Unauthorized"]
+    C -->|OK| S["single-flight scrape"]
+```
 
 Ready-to-use scrape, deployment, and alert examples are shipped in [`config/`](config/), [`deploy/`](deploy/), and [`alerts/prometheus.yml`](alerts/prometheus.yml). The cardinality alert fires when any exporter guard actually drops series rather than relying on an unreachable static threshold.
 

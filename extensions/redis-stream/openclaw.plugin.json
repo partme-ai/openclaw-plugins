@@ -169,7 +169,8 @@
           "shutdownTimeoutMs": {
             "type": "number",
             "minimum": 1,
-            "default": 10000
+            "default": 10000,
+            "description": "Total accepted-work drain and main-client shutdown budget; in-flight Stream entries remain pending on timeout."
           }
         },
         "default": {

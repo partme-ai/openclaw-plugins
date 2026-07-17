@@ -8,6 +8,25 @@
 
 ## 消息链路
 
+字符图用于终端、源码评审和 Markdown 原文快速阅读；后面的 Mermaid 时序图继续保留，用于展示可渲染的交互细节。
+
+```text
+微信用户
+   │ 消息
+   ▼
+iLink API ◀── getUpdates(持久游标) ── openclaw-weixin Monitor
+   ▲                                      │
+   │                                      ▼
+   │                         DM/命令鉴权 → message_id 去重
+   │                                      │
+   │                                      ▼
+   │                                OpenClaw Agent
+   │                                      │
+   └── sendMessage / CDN 媒体上传 ◀── 出站回复管道
+
+批内任一已授权消息失败：不提交 get_updates_buf，退避后至少一次重放
+```
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -94,7 +113,7 @@ stateDiagram-v2
 - 长轮询需要验证断网恢复、凭据失效、重复消息和 Gateway 重启后的恢复行为。
 - 默认只允许官方 iLink API 与 CDN 地址。自定义 HTTPS 代理必须分别显式设置 `allowCustomApiBaseUrl=true` / `allowCustomCdnBaseUrl=true`；二维码响应中的 `redirect_host` 不读取这些开关，只接受腾讯控制的 `weixin.qq.com` 域名，防止远端响应把 Bot Token 引向任意主机。
 - Bot Token、`context_token` 和 `get_updates_buf` 使用 0700 目录、0600 文件和同目录原子替换；API 请求无论成功失败都会清除超时定时器。
-- `context_token` 和 typing 配置缓存有固定容量上限；账号日志使用不可逆指纹，日志出口统一清除用户 ID、会话键、正文、文件路径和 URL 细节。
+- `context_token` 和 typing 配置缓存有固定容量上限；账号日志使用不可逆指纹，二维码、Token 和用户标识不再暴露任何前缀；日志出口统一清除 Bearer/Authorization、用户 ID、会话键、正文、文件路径和 URL 细节。
 
 ```mermaid
 flowchart TD

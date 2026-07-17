@@ -102,11 +102,11 @@ export const mqttWsChannel: ChannelPlugin<ResolvedWebMqttAccount> = {
      * @param root0.cfg - 完整网关配置（OpenClaw 2026.5+ ChannelGatewayContext）。
      * @param root0.abortSignal - 停止信号。
      */
-    startAccount: async ({ cfg, abortSignal }: ChannelGatewayContext<ResolvedWebMqttAccount>) => {
+    startAccount: async ({ cfg, abortSignal, log }: ChannelGatewayContext<ResolvedWebMqttAccount>) => {
       const config = resolveWebMqttConfig(cfg as unknown as Record<string, unknown>);
       const issues = validateWebMqttConfig(config);
       for (const issue of issues) {
-        console.warn(`[openclaw-web-mqtt] config warning: ${issue}`);
+        log?.warn(`[openclaw-web-mqtt] config warning: ${issue}`);
       }
 
       await startWebMqttServer(config, async (event) => {

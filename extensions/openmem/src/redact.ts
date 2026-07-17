@@ -4,21 +4,22 @@
  * Sidecar/反向代理错误正文不可信，除当前 apiKey 外仍可能包含 Bearer、sk-* 或控制字符；
  * 因此所有公开错误都先经过 SDK 与本地规则联合清洗，并限制为 500 字符。
  */
+import { redactSensitiveText as redactOpenClawSensitiveText } from "openclaw/plugin-sdk/security-runtime";
+
 export function redactOpenMemError(value: unknown, explicitSecret?: string): string {
-  let redacted = value instanceof Error ? value.message : String(value);
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require("openclaw/plugin-sdk/security-runtime") as {
-      redactSensitiveText?: (text: string) => string;
-    };
-    if (typeof mod.redactSensitiveText === "function") redacted = mod.redactSensitiveText(redacted);
-  } catch {
-    // isolated unit tests can run without the optional OpenClaw security module
-  }
+  // OpenMem 以 ESM 发布，静态导入才能保证正式 Gateway 真实执行 OpenClaw 官方脱敏器。
+  let redacted = redactOpenClawSensitiveText(
+    value instanceof Error ? value.message : String(value),
+    { mode: "tools" },
+  );
   if (explicitSecret) redacted = redacted.split(explicitSecret).join("[REDACTED]");
   return redacted
-    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/\b(Bearer|Basic|Bot)\s+[^\s,;]+/giu, "$1 [REDACTED]")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "sk-[REDACTED]")
+    .replace(
+      /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)\b\s*([:=])\s*([^\s,;&]+)/giu,
+      "$1$2[REDACTED]",
+    )
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
     .slice(0, 500);
 }

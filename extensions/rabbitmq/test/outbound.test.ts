@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/transport/server.js", () => ({ publishMessage: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../src/transport/server.js", () => ({
+  publishMessage: vi.fn().mockResolvedValue(undefined),
+  logRabbitmq: vi.fn(),
+}));
 
 import { rabbitmqOutbound } from "../src/outbound.js";
 import { publishMessage } from "../src/transport/server.js";

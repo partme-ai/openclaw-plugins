@@ -11,7 +11,7 @@ OpenClaw 2026.7.1 的 OpenMem REST 记忆桥接插件。
 - 崩溃恢复：把事件日志作为事实源，用确定性 `turnId` 标记补齐尚未投影到 working memory 的轮次。
 - `session_end`：提交 session，触发 OpenMem archive 和 externalized memory 生成。
 - 自动/主动召回：实现 `MemorySearchManager` 和 `openmem_search`。
-- 完整 HTTP 保护：请求超时、有限指数退避、流式响应体上限、JSON/Schema 校验、关闭时取消请求。
+- 完整 HTTP 保护：请求体硬上限、请求超时、带抖动的有限指数退避、流式响应体上限、JSON/Schema 校验、关闭时取消请求。
 - 有界来源缓存：同时限制 1000 个条目和 `maxCacheBytes` 总字节数，按 LRU 淘汰。
 - 可选鉴权 Header：密钥只从环境变量读取，适合接入鉴权反向代理。
 
@@ -109,6 +109,33 @@ flowchart LR
     REDACT --> OBS["日志与 Memory Host health"]
 ```
 
+### 单次 HTTP 请求边界
+
+```text
+Hook / Search Tool
+       │ JSON.stringify + maxRequestBytes
+       ▼
+固定 Sidecar Origin/Path ──▶ Auth Header ──▶ fetch(timeout + AbortSignal)
+       │                                           │
+       │ 408/425/429/5xx（仅 retrySafe）            ▼
+       └──── 带抖动指数退避 ◀────────────── 流式 maxResponseBytes
+                                                   │
+                                                   ▼
+                                      JSON / Schema 校验 → 脱敏错误
+```
+
+```mermaid
+flowchart LR
+    CALL["Hook / Search"] --> BODY["JSON 序列化<br/>请求体字节上限"]
+    BODY --> URL["固定 Sidecar Origin + Path"]
+    URL --> FETCH["Auth Header + timeout + cancel"]
+    FETCH --> RESP["响应流字节上限"]
+    RESP --> VALIDATE["JSON / Schema 校验"]
+    FETCH -->|"retrySafe + 408/425/429/5xx"| BACKOFF["带抖动指数退避"]
+    BACKOFF --> FETCH
+    VALIDATE --> SAFE["官方 + 本地错误脱敏"]
+```
+
 ```mermaid
 flowchart LR
     A["当前 OpenClaw sessionKey"] --> B["SHA-256 派生 threadId"]
@@ -146,6 +173,7 @@ OpenMem 当前 keyword/hybrid 搜索是 sidecar 全局范围，没有 tenant fil
           "timeoutMs": 5000,
           "maxAttempts": 3,
           "retryBaseDelayMs": 100,
+          "maxRequestBytes": 2097152,
           "maxResponseBytes": 2097152,
           "maxCacheBytes": 8388608,
           "allowSharedRecall": false,
@@ -169,6 +197,7 @@ OpenMem 当前 keyword/hybrid 搜索是 sidecar 全局范围，没有 tenant fil
 | `timeoutMs` | `5000` | 单次 HTTP 请求超时 |
 | `maxAttempts` | `3` | 幂等请求最大尝试次数 |
 | `retryBaseDelayMs` | `100` | 指数退避基础延迟 |
+| `maxRequestBytes` | `2097152` | 单个 JSON 请求体上限，最大 8 MiB |
 | `maxResponseBytes` | `2097152` | 单个响应体上限 |
 | `maxCacheBytes` | `8388608` | 搜索来源缓存总字节上限，最大 64 MiB |
 | `allowSharedRecall` | `false` | 是否允许 sidecar 全局 hybrid recall |
@@ -204,3 +233,5 @@ tarball 安装 → Gateway Agent Turn → session/start → events/ingest → wo
 ```
 
 写入仍不是 Sidecar 内部的单事务：插件通过持久事件、`turnId` 标记和恢复对账补偿最近 1000 条事件，已经覆盖 Gateway 在 ingest 与 append 之间退出的常见故障；极长 ACTIVE session 超出恢复窗口时，仍需要 OpenMem 提供事务批接口或原生幂等 append 才能给出严格原子性保证。完成鉴权隔离和 Sidecar 故障演练之前，不标记为完全生产就绪。
+
+当 `agent_end` 没有可信 `sessionKey/sessionId` 时，插件会跳过写入并告警，不再把不同对话合并进共享的 `unknown` 线程。单轮最多摄取 100 条消息，每条最多 16,000 字符；搜索 query 最长 4,000 字符。

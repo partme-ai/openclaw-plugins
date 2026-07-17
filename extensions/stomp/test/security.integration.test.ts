@@ -92,6 +92,15 @@ describe("STOMP TCP production security", () => {
     expect(validateStompTcpConfig({ ...config, tls: { ...config.tls, enabled: true } })).toContainEqual(expect.stringContaining("keyFile"));
     expect(validateStompTcpConfig({
       ...config,
+      auth: { required: false, users: [] },
+      allowDurableSubscriptions: true,
+    })).toContainEqual(expect.stringContaining("durable owners"));
+    expect(validateStompTcpConfig({
+      ...config,
+      auth: { required: true, users: [{ login: "ambiguous", password: "one", passwordEnv: "OTHER" }] },
+    })).toContainEqual(expect.stringContaining("exactly one credential"));
+    expect(validateStompTcpConfig({
+      ...config,
       port: 0,
       auth: { required: false, users: [] },
       tls: { ...config.tls, enabled: true, host: "0.0.0.0", keyFile: "/key", certFile: "/cert" },
@@ -101,6 +110,7 @@ describe("STOMP TCP production security", () => {
   it("redacts plaintext and hashed credentials from status snapshots", () => {
     const snapshot = buildStompTcpConfigSnapshot({
       ...config,
+      tls: { ...config.tls, keyFile: "/private/stomp.key", certFile: "/private/stomp.crt" },
       auth: { required: true, users: [
         { login: "plain", password: "do-not-return" },
         { login: "hash", passwordHash: "deadbeef", hashAlgorithm: "sha512" },
@@ -109,6 +119,7 @@ describe("STOMP TCP production security", () => {
     const serialized = JSON.stringify(snapshot);
     expect(serialized).not.toContain("do-not-return");
     expect(serialized).not.toContain("deadbeef");
+    expect(serialized).not.toContain("/private/");
     expect(serialized).toContain("credentialConfigured");
   });
 

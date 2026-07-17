@@ -6,11 +6,16 @@
  * 导致内存膨胀或秘密进入日志。
  */
 
+import { safeKnowledgeError } from './safe-error.js';
+
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 /** 外部 Provider 默认最多重试两次，仅覆盖临时性网络或服务端故障。 */
 export const DEFAULT_PROVIDER_MAX_RETRIES = 2;
 /** 默认响应体上限 8 MiB，防止异常服务无限返回导致进程内存膨胀。 */
 export const DEFAULT_PROVIDER_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_PROVIDER_TIMEOUT_MS = 300_000;
+const MAX_PROVIDER_RETRIES = 10;
+const MAX_PROVIDER_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 /** 外部 Provider HTTP 调用的资源边界配置。 */
 export type ProviderHttpOptions = {
@@ -30,6 +35,9 @@ export async function requestProviderJson<T>(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
   const maxRetries = options?.maxRetries ?? DEFAULT_PROVIDER_MAX_RETRIES;
   const maxResponseBytes = options?.maxResponseBytes ?? DEFAULT_PROVIDER_MAX_RESPONSE_BYTES;
+  assertIntegerInRange(timeoutMs, 1, MAX_PROVIDER_TIMEOUT_MS, 'timeoutMs');
+  assertIntegerInRange(maxRetries, 0, MAX_PROVIDER_RETRIES, 'maxRetries');
+  assertIntegerInRange(maxResponseBytes, 1, MAX_PROVIDER_RESPONSE_BYTES, 'maxResponseBytes');
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -79,6 +87,7 @@ export async function withProviderTimeout<T>(
   provider: string,
   operation: string,
 ): Promise<T> {
+  assertIntegerInRange(timeoutMs, 1, MAX_PROVIDER_TIMEOUT_MS, 'timeoutMs');
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -93,6 +102,13 @@ export async function withProviderTimeout<T>(
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+/** 错误配置必须在发起网络请求前失败，避免负重试或零超时形成难以诊断的运行态。 */
+function assertIntegerInRange(value: number, minimum: number, maximum: number, name: string): void {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`Knowledge provider ${name} must be an integer between ${minimum} and ${maximum}`);
   }
 }
 
@@ -155,15 +171,11 @@ function normalizeError(error: unknown, provider: string, operation: string, tim
   if (error instanceof Error && error.name === "AbortError") {
     return new Error(`${provider} ${operation} request timed out after ${timeoutMs}ms`);
   }
-  return error instanceof Error ? error : new Error(`${provider} ${operation} request failed: ${String(error)}`);
+  return new Error(`${provider} ${operation} request failed: ${safeKnowledgeError(error)}`);
 }
 
 function safeErrorText(value: string): string {
-  return value
-    .replace(/(bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
-    .replace(/((?:api[_-]?key|client[_-]?secret|access[_-]?token)\s*[=:]\s*)[^\s,;]+/gi, "$1[REDACTED]")
-    .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/gu, " ")
-    .slice(0, 2_048);
+  return safeKnowledgeError(value).slice(0, 2_048);
 }
 
 function delay(milliseconds: number): Promise<void> {

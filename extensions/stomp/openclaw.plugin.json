@@ -97,6 +97,7 @@
           "maxPendingMessages": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 32 },
           "messagesPerMinute": { "type": "integer", "minimum": 1, "maximum": 1000000, "default": 120 },
           "connectTimeoutMs": { "type": "integer", "minimum": 1, "maximum": 120000, "default": 10000 },
+          "shutdownTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000, "default": 10000 },
           "maxDurableSubscriptions": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 1000 }
         }
       }

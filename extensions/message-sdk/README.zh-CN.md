@@ -14,7 +14,7 @@
 - **文件工具** — MIME/扩展名映射、文件分类
 - **AI 能力模块** — ASR 语音识别、OCR 文字识别、TTS 语音合成（按需引入）
 
-SDK 的必选运行时依赖只有 `undici`；`prom-client` 与 OpenClaw 集成属于按能力加载的可选 peer。TypeScript 消费者使用编译后的声明文件，并显式获取 Node 类型 peer。
+SDK 的直接运行时依赖只有 `undici`；它作为 OpenClaw 插件运行时共享库，要求 `openclaw >= 2026.7.1` peer，`prom-client` 仅在指标能力启用时可选。纯设备端或异构系统应使用仓库顶层 `sdk/typescript`，不要把插件运行时包当成无 OpenClaw 依赖的通用协议包。TypeScript 消费者使用编译后的声明文件，并显式获取 Node 类型 peer。
 
 ### 核心设计原则
 
@@ -23,7 +23,7 @@ SDK 的必选运行时依赖只有 `undici`；`prom-client` 与 OpenClaw 集成�
 - 内容类型支持 `text` / `markdown` / `mixed` 三种
 - `traceId` 全链路追踪，贯穿消息生成 → 传输 → 投递
 - 所有类型从主入口统一导入，也可按子路径按需导入
-- 21 个公开运行时入口全部指向编译后的 `dist/*.js`，发布包不会直接执行 `src/*.ts`
+- 23 个公开运行时入口全部指向编译后的 `dist/*.js`，发布包不会携带或直接执行 `src/*.ts`
 
 ### 队列可靠性边界
 
@@ -34,6 +34,27 @@ SDK 的必选运行时依赖只有 `undici`；`prom-client` 与 OpenClaw 集成�
 - 两种队列都是进程内缓冲，不替代持久化 Broker。
 
 ## 组件与消息流
+
+字符图用于快速看清 SDK 与传输插件、OpenClaw 的职责边界；下方 Mermaid 保留完整可渲染消息流：
+
+```text
+┌────────────── 渠道插件 / Broker ──────────────┐
+│ 连接 · 订阅 · 发布 · ACK/NACK · TLS/鉴权      │
+└──────────────────────┬────────────────────────┘
+                       ▼
+┌────────────── openclaw-message-sdk ────────────┐
+│ parse → UnifiedMessage → dedupe → keyed queue  │
+│                 │                              │
+│                 ├─ Wire Dispatch ──────────┐   │
+│                 └─ Transcript Dispatch ────┤   │
+│                                            ▼   │
+│ reply → serialize / media guard → deliver 回调 │
+└──────────────────────┬────────────────────────┘
+                       ▼
+              OpenClaw 2026.7.1 Agent
+
+边界：SDK 不拥有 Broker 持久化、跨进程 exactly-once 或渠道凭据生命周期
+```
 
 ```mermaid
 flowchart LR
@@ -55,6 +76,33 @@ flowchart LR
 ```
 
 SDK 统一消息结构和可复用的进程内机制，但不拥有 Broker ACK、持久化、跨进程幂等或渠道鉴权；这些可靠性边界仍由具体插件实现。
+
+### 发布契约门禁
+
+```text
+23 个 package exports
+        │
+        ├─ verify:package ───→ JS/DTS 均存在且可 import
+        ├─ verify:consumers ─→ 82 个生产源码 / 15 子路径 / 138 命名符号
+        ├─ verify:openclaw ──→ OpenClaw >= 2026.7.1 + 5 个 Hook Runtime 符号
+        └─ benchmark ────────→ Envelope / Queue 数量级退化保护
+                                │
+                                ▼
+                     prepack / prepublishOnly
+```
+
+```mermaid
+flowchart LR
+    B["tsup 构建<br/>23 个 JS + DTS 入口"] --> P["verify:package<br/>入口存在且可加载"]
+    P --> C["verify:consumers<br/>扫描真实插件 import"]
+    C --> O["verify:openclaw<br/>版本 + Hook Runtime"]
+    O --> R["最终发布包<br/>dist + 中英文 README + 架构文档"]
+    M["benchmark<br/>Envelope / Queue"] -.-> R
+    C -->|"缺子路径、运行时或类型符号"| F["发布失败"]
+    O -->|"OpenClaw 契约漂移"| F
+```
+
+`verify:consumers` 不使用手工维护的符号清单，而是从其他插件的生产 TypeScript 源码提取实际 import；因此新增消费者或改用新子路径后，下一次打包会自动把它纳入契约。`benchmark` 是保守的本机/CI 微基准，不替代真实 Broker、媒体和 Agent 压测。
 
 ### 同会话超时为什么不能立即放行下一项
 
@@ -116,7 +164,7 @@ const json = serializeMessage(msg);
 const parsed = parseMessage(json);
 if (parsed) {
   console.log(parsed.source.channel); // "wecom"
-  console.log(parsed.traceId);        // "lj8xk-abc12345"
+  console.log(parsed.traceId); // "lj8xk-abc12345"
 }
 ```
 
@@ -124,10 +172,10 @@ if (parsed) {
 
 ## 双路径 Dispatch（Wire vs Transcript）
 
-| 路径 | SDK 入口 | 适用插件 |
-|------|----------|----------|
-| **Wire** | `dispatchWireMessage` / `bridge.dispatchInbound` | mqtt, rabbitmq, redis-stream, … |
-| **Transcript** | `dispatchTranscriptTurn` | gotify, wecom, feishu |
+| 路径           | SDK 入口                                         | 适用插件                        |
+| -------------- | ------------------------------------------------ | ------------------------------- |
+| **Wire**       | `dispatchWireMessage` / `bridge.dispatchInbound` | mqtt, rabbitmq, redis-stream, … |
+| **Transcript** | `dispatchTranscriptTurn`                         | gotify, wecom, feishu           |
 
 ```typescript
 import {
@@ -138,12 +186,27 @@ import {
 } from "@partme.ai/openclaw-message-sdk";
 
 // MQ：Wire 路径（入站推荐 normalizeWireIngress + dispatchWireMessage）
-const ingress = normalizeWireIngress({ rawPayload, mode: "jsonTextOrPlain", channel: "mqtt" });
+const ingress = normalizeWireIngress({
+  rawPayload,
+  mode: "jsonTextOrPlain",
+  channel: "mqtt",
+});
 if (!ingress.accepted) return;
-await dispatchWireMessage({ runtime, channel: "mqtt", text: ingress.text, unified: ingress.unified, /* ... */ reply: { deliver } });
+await dispatchWireMessage({
+  runtime,
+  channel: "mqtt",
+  text: ingress.text,
+  unified: ingress.unified,
+  /* ... */ reply: { deliver },
+});
 
 // IM：渠道插件先在本地解析平台事件，再走 Transcript 路径（保证 Control UI transcript）
-await dispatchTranscriptTurn({ channelRuntime, cfg, channel: "gotify", /* ... */ delivery: { deliver } });
+await dispatchTranscriptTurn({
+  channelRuntime,
+  cfg,
+  channel: "gotify",
+  /* ... */ delivery: { deliver },
+});
 ```
 
 ### deferred-delivery-ack（MQ 延迟 ACK）
@@ -187,24 +250,24 @@ Gotify reference 实现见 `@partme.ai/openclaw-gotify` 的 `channel.ts`。
 
 ```typescript
 interface UnifiedMessage {
-  messageId: string;           // 消息唯一 ID，格式: {channel}-{ts36}-{random6}
-  traceId: string;             // 全链路追踪 ID，格式: {ts36}-{random8}
-  timestamp: number;           // Unix 毫秒时间戳
+  messageId: string; // 消息唯一 ID，格式: {channel}-{ts36}-{random6}
+  traceId: string; // 全链路追踪 ID，格式: {ts36}-{random8}
+  timestamp: number; // Unix 毫秒时间戳
   source: {
-    channel: string;           // 来源渠道 (wecom, dingtalk, feishu...)
-    accountId: string;         // 账号标识
-    userId: string;            // 用户标识
+    channel: string; // 来源渠道 (wecom, dingtalk, feishu...)
+    accountId: string; // 账号标识
+    userId: string; // 用户标识
     chatType: "direct" | "group";
   };
   target?: {
-    channels: string[];        // 目标渠道列表
-    routingRule?: string;      // 路由规则名
+    channels: string[]; // 目标渠道列表
+    routingRule?: string; // 路由规则名
   };
   contentType: "text" | "markdown" | "mixed";
-  text: string;                // 纯文本内容（所有渠道通用）
-  markdown?: string;           // Markdown 内容（Markdown 渠道优先取用）
-  media: MediaReference[];     // 媒体引用列表
-  replyToMessageId?: string;   // 被回复消息的 ID
+  text: string; // 纯文本内容（所有渠道通用）
+  markdown?: string; // Markdown 内容（Markdown 渠道优先取用）
+  media: MediaReference[]; // 媒体引用列表
+  replyToMessageId?: string; // 被回复消息的 ID
   metadata?: Record<string, unknown>; // 扩展元数据
   direction: "inbound" | "outbound";
 }
@@ -212,34 +275,34 @@ interface UnifiedMessage {
 
 **消息构造器**
 
-| 函数 | 说明 |
-|------|------|
-| `buildMessage(params)` | 通用构造器，自动判定 `contentType` |
-| `buildTextMessage(channel, accountId, userId, text, chatType?)` | 快捷纯文本消息 |
-| `buildMediaMessage(channel, accountId, userId, text, media, chatType?)` | 快捷媒体消息 |
+| 函数                                                                    | 说明                               |
+| ----------------------------------------------------------------------- | ---------------------------------- |
+| `buildMessage(params)`                                                  | 通用构造器，自动判定 `contentType` |
+| `buildTextMessage(channel, accountId, userId, text, chatType?)`         | 快捷纯文本消息                     |
+| `buildMediaMessage(channel, accountId, userId, text, media, chatType?)` | 快捷媒体消息                       |
 
 **序列化**
 
-| 函数 | 说明 |
-|------|------|
-| `serializeMessage(msg)` | 序列化为 JSON 字符串 |
-| `deserializeMessage(json)` | 反序列化（无校验） |
-| `parseMessage(input)` | 安全反序列化，含基本字段校验，失败返回 `null` |
-| `parseMessageAny(input)` | 从 `string/Buffer/Uint8Array/object` 解析，自动检测格式 |
+| 函数                       | 说明                                                    |
+| -------------------------- | ------------------------------------------------------- |
+| `serializeMessage(msg)`    | 序列化为 JSON 字符串                                    |
+| `deserializeMessage(json)` | 反序列化（无校验）                                      |
+| `parseMessage(input)`      | 安全反序列化，含基本字段校验，失败返回 `null`           |
+| `parseMessageAny(input)`   | 从 `string/Buffer/Uint8Array/object` 解析，自动检测格式 |
 
 **文本提取** — 从 UnifiedMessage 提取文本供不同能力等级的渠道使用：
 
-| 函数 | 说明 |
-|------|------|
-| `extractPlainText(msg)` | 纯文本提取，Markdown 降级为纯文本，媒体替换为 `[图片]` 占位符 |
-| `extractMarkdown(msg)` | Markdown 提取，媒体替换为 `![name](url)` 或 📎 链接 |
-| `parseMediaFromText(text)` | 从文本中解析媒体引用（Markdown 图片 / MEDIA: / 裸露 URL） |
+| 函数                       | 说明                                                          |
+| -------------------------- | ------------------------------------------------------------- |
+| `extractPlainText(msg)`    | 纯文本提取，Markdown 降级为纯文本，媒体替换为 `[图片]` 占位符 |
+| `extractMarkdown(msg)`     | Markdown 提取，媒体替换为 `![name](url)` 或 📎 链接           |
+| `parseMediaFromText(text)` | 从文本中解析媒体引用（Markdown 图片 / MEDIA: / 裸露 URL）     |
 
 **ID 生成**
 
 ```typescript
-const traceId = generateTraceId();           // "lj8xk-abc12345"
-const msgId = generateMessageId("wecom");    // "wecom-lj8xk-x7y9z1"
+const traceId = generateTraceId(); // "lj8xk-abc12345"
+const msgId = generateMessageId("wecom"); // "wecom-lj8xk-x7y9z1"
 ```
 
 ---
@@ -252,10 +315,10 @@ interface MediaReference {
   kind: "image" | "video" | "audio" | "document" | "archive" | "other";
   mimeType: string;
   fileName?: string;
-  sizeBytes?: number;          // 文件大小（字节）
-  base64?: string;             // 小图可内联 base64
+  sizeBytes?: number; // 文件大小（字节）
+  base64?: string; // 小图可内联 base64
   thumbnailUrl?: string;
-  durationSeconds?: number;    // 音视频时长
+  durationSeconds?: number; // 音视频时长
   width?: number;
   height?: number;
 }
@@ -265,30 +328,38 @@ interface MediaReference {
 
 ```typescript
 // 通用媒体引用，自动检测 kind
-const ref = createMediaRef("https://cdn.example.com/data.pdf", "report.pdf", 2048000);
+const ref = createMediaRef(
+  "https://cdn.example.com/data.pdf",
+  "report.pdf",
+  2048000,
+);
 
 // 图片专用（允许 base64 内联）
-const img = createImageRef("https://cdn.example.com/img.png", undefined, "photo.png");
+const img = createImageRef(
+  "https://cdn.example.com/img.png",
+  undefined,
+  "photo.png",
+);
 ```
 
 **类型检测**
 
 ```typescript
-detectMediaKind("report.pdf");         // "document"
-detectMediaKind("photo.jpg");          // "image"
-detectMediaKind("song.mp3");           // "audio"
-detectMediaKind("archive.zip");        // "archive"
+detectMediaKind("report.pdf"); // "document"
+detectMediaKind("photo.jpg"); // "image"
+detectMediaKind("song.mp3"); // "audio"
+detectMediaKind("archive.zip"); // "archive"
 detectMediaKindFromMime("image/webp"); // "image"
 ```
 
 **预定义扩展名集合**
 
 ```typescript
-IMAGE_EXTENSIONS    // Set: png, jpg, jpeg, gif, webp, bmp, svg, ico, tiff, heic, heif
-VIDEO_EXTENSIONS    // Set: mp4, mov, avi, mkv, webm, flv, wmv, m4v
-AUDIO_EXTENSIONS    // Set: mp3, wav, ogg, m4a, amr, flac, aac, opus, wma
-DOCUMENT_EXTENSIONS // Set: pdf, doc, docx, xls, xlsx, ppt, pptx, txt, csv, md, rtf, odt, ods
-ARCHIVE_EXTENSIONS  // Set: zip, rar, 7z, tar, gz, tgz, bz2
+IMAGE_EXTENSIONS; // Set: png, jpg, jpeg, gif, webp, bmp, svg, ico, tiff, heic, heif
+VIDEO_EXTENSIONS; // Set: mp4, mov, avi, mkv, webm, flv, wmv, m4v
+AUDIO_EXTENSIONS; // Set: mp3, wav, ogg, m4a, amr, flac, aac, opus, wma
+DOCUMENT_EXTENSIONS; // Set: pdf, doc, docx, xls, xlsx, ppt, pptx, txt, csv, md, rtf, odt, ods
+ARCHIVE_EXTENSIONS; // Set: zip, rar, 7z, tar, gz, tgz, bz2
 ```
 
 ---
@@ -303,14 +374,14 @@ import { extractMediaFromText } from "@partme.ai/openclaw-message-sdk";
 const result = extractMediaFromText(
   "这是处理后的图片 ![](/tmp/photo.png)\n\n另外这个 PDF: [下载报告](/tmp/report.pdf)",
   {
-    removeFromText: true,    // 提取后从文本中移除媒体引用
-    checkExists: true,       // 仅提取磁盘上确实存在的文件
-    parseMediaLines: true,   // 解析 MEDIA: 指令行
+    removeFromText: true, // 提取后从文本中移除媒体引用
+    checkExists: true, // 仅提取磁盘上确实存在的文件
+    parseMediaLines: true, // 解析 MEDIA: 指令行
     parseMarkdownImages: true,
     parseHtmlImages: true,
-    parseBarePaths: true,    // 裸露路径: /tmp/abc.png
+    parseBarePaths: true, // 裸露路径: /tmp/abc.png
     parseMarkdownLinks: true, // Markdown 文件链接
-  }
+  },
 );
 
 // result.images  → [{ source: "/tmp/photo.png", type: "image", ... }]
@@ -333,12 +404,12 @@ const { text, files } = extractFilesFromText(text, options);
 
 ```typescript
 import {
-  isHttpUrl,           // (value: string) => boolean
-  isLocalReference,    // 检测是否为本地路径引用
-  normalizeLocalPath,  // 标准化本地路径：MEDIA:/~/file:// → 绝对路径
-  isImagePath,         // (path: string) => boolean
-  isNonImageFilePath,  // (path: string) => boolean
-  getExtension,        // (path: string) => string  (no dot)
+  isHttpUrl, // (value: string) => boolean
+  isLocalReference, // 检测是否为本地路径引用
+  normalizeLocalPath, // 标准化本地路径：MEDIA:/~/file:// → 绝对路径
+  isImagePath, // (path: string) => boolean
+  isNonImageFilePath, // (path: string) => boolean
+  getExtension, // (path: string) => string  (no dot)
   detectMediaTypeFromPath, // → "image" | "audio" | "video" | "file"
   type ExtractedMedia,
   type MediaParseResult,
@@ -351,34 +422,37 @@ import {
 ### 4. HTTP 客户端
 
 ```typescript
-import { httpPost, httpGet, withRetry, HttpError, TimeoutError } from "@partme.ai/openclaw-message-sdk";
+import {
+  httpPost,
+  httpGet,
+  withRetry,
+  HttpError,
+  TimeoutError,
+} from "@partme.ai/openclaw-message-sdk";
 
 // POST JSON，默认 30s 超时
-const data = await httpPost<{ token: string }>(
-  "https://api.example.com/auth",
-  { appId: "xxx", secret: "yyy" }
-);
+const data = await httpPost<{ token: string }>("https://api.example.com/auth", {
+  appId: "xxx",
+  secret: "yyy",
+});
 
 // GET JSON
 const users = await httpGet<{ id: string; name: string }[]>(
   "https://api.example.com/users",
-  { headers: { Authorization: "Bearer token" } }
+  { headers: { Authorization: "Bearer token" } },
 );
 
 // 带重试（指数退避）
-const result = await withRetry(
-  () => fetchUnstableApi(),
-  {
-    maxRetries: 5,
-    initialDelay: 500,     // 起始 500ms
-    maxDelay: 10000,        // 上限 10s
-    backoffMultiplier: 2,   // 每次翻倍: 500 → 1000 → 2000 → 4000 → 8000
-    shouldRetry: (err, attempt) => {
-      // 默认：网络错误 + 5xx 状态码
-      return defaultShouldRetry(err) && attempt <= 3;
-    },
-  }
-);
+const result = await withRetry(() => fetchUnstableApi(), {
+  maxRetries: 5,
+  initialDelay: 500, // 起始 500ms
+  maxDelay: 10000, // 上限 10s
+  backoffMultiplier: 2, // 每次翻倍: 500 → 1000 → 2000 → 4000 → 8000
+  shouldRetry: (err, attempt) => {
+    // 默认：网络错误 + 5xx 状态码
+    return defaultShouldRetry(err) && attempt <= 3;
+  },
+});
 ```
 
 ---
@@ -386,16 +460,19 @@ const result = await withRetry(
 ### 5. 文件工具（file-utils）
 
 ```typescript
-import { resolveFileCategory, resolveExtension } from "@partme.ai/openclaw-message-sdk";
+import {
+  resolveFileCategory,
+  resolveExtension,
+} from "@partme.ai/openclaw-message-sdk";
 
 // MIME + 文件名 → 分类
-resolveFileCategory("image/png");                     // "image"
+resolveFileCategory("image/png"); // "image"
 resolveFileCategory("application/pdf", "report.pdf"); // "document"
-resolveFileCategory("application/zip");               // "archive"
+resolveFileCategory("application/zip"); // "archive"
 
 // MIME / 文件名 → 扩展名
-resolveExtension("image/png");                        // ".png"
-resolveExtension("application/zip", "backup.zip");    // ".zip"
+resolveExtension("image/png"); // ".png"
+resolveExtension("application/zip", "backup.zip"); // ".zip"
 ```
 
 ---
@@ -403,8 +480,8 @@ resolveExtension("application/zip", "backup.zip");    // ".zip"
 ### 6. ASR — 语音识别
 
 ```typescript
-import { 
-  transcribeTencentFlash,  // 腾讯云 Flash ASR（极速版）
+import {
+  transcribeTencentFlash, // 腾讯云 Flash ASR（极速版）
   ASRError,
   ASRTimeoutError,
   ASRAuthError,
@@ -442,8 +519,8 @@ ASRError (基类)
 
 ```typescript
 import {
-  recognizeGLM,          // 智谱 AI GLM-4.5V
-  recognizePaddleOCR,    // 百度 PP-OCRv4 (自部署)
+  recognizeGLM, // 智谱 AI GLM-4.5V
+  recognizePaddleOCR, // 百度 PP-OCRv4 (自部署)
   type OCRInput,
   type OCRConfig,
   type OCRResult,
@@ -472,8 +549,8 @@ const result: OCRResult = await recognizeGLM(input, config);
 
 ```typescript
 interface OCRResult {
-  text: string;           // 完整文本
-  blocks: OCRBlock[];     // 块 → 行 → 词 层级
+  text: string; // 完整文本
+  blocks: OCRBlock[]; // 块 → 行 → 词 层级
   provider: string;
   model: string;
   elapsedMs: number;
@@ -488,7 +565,11 @@ interface OCRResult {
 提供两个可执行实现：OpenAI 走官方 HTTP API；Edge TTS 调用本机安装的 Python CLI。
 
 ```typescript
-import { synthesizeEdgeTTS, synthesizeOpenAI, EDGE_TTS_VOICES } from "@partme.ai/openclaw-message-sdk";
+import {
+  synthesizeEdgeTTS,
+  synthesizeOpenAI,
+  EDGE_TTS_VOICES,
+} from "@partme.ai/openclaw-message-sdk";
 
 // Microsoft Edge TTS（需要先执行：pip install edge-tts）
 const result = await synthesizeEdgeTTS("你好，我是AI助手", {
@@ -511,12 +592,12 @@ const result2 = await synthesizeOpenAI("Welcome to OpenClaw", {
 
 以下导出只是 provider 元数据，不包含可执行的合成函数：
 
-| 提供商 | 特点 |
-|--------|------|
-| `CHAT_TTS_PROVIDER` | 2noise/ChatTTS，自然对话风格 |
+| 提供商               | 特点                             |
+| -------------------- | -------------------------------- |
+| `CHAT_TTS_PROVIDER`  | 2noise/ChatTTS，自然对话风格     |
 | `MARS5_TTS_PROVIDER` | CAMB.AI，语音克隆（5s 参考音频） |
-| `QWEN_TTS_PROVIDER` | 阿里 Qwen3-TTS，声音设计 |
-| `PYTTSX3_PROVIDER` | 完全离线，系统语音引擎 |
+| `QWEN_TTS_PROVIDER`  | 阿里 Qwen3-TTS，声音设计         |
+| `PYTTSX3_PROVIDER`   | 完全离线，系统语音引擎           |
 
 OpenAI 输入受官方 4096 字符硬上限约束，音频响应以有界流读取；未知 voice/format 和非法 speed 会明确报错，不再静默回退。Edge TTS 使用 `execFile` 参数边界，读取前检查输出大小，并在所有结果下删除整个临时目录。
 
@@ -526,9 +607,9 @@ OpenAI 输入受官方 4096 字符硬上限约束，音频响应以有界流读�
 
 ```typescript
 import {
-  MessageParseError,    // 消息解析失败（基类：Error）
-  HttpError,            // HTTP 请求错误（status + body）
-  TimeoutError,         // 请求超时（timeoutMs）
+  MessageParseError, // 消息解析失败（基类：Error）
+  HttpError, // HTTP 请求错误（status + body）
+  TimeoutError, // 请求超时（timeoutMs）
   // ASR 错误（见 §6）
   // OCR 错误（ocr/errors.ts）
   // TTS 错误（tts/errors.ts）
@@ -562,7 +643,10 @@ import { resolveFileCategory } from "@partme.ai/openclaw-message-sdk/file";
 各渠道插件（wecom, dingtalk, feishu, gotify, mqtt 等）使用 SDK 的标准模式：
 
 ```typescript
-import { buildMessage, extractMediaFromText } from "@partme.ai/openclaw-message-sdk";
+import {
+  buildMessage,
+  extractMediaFromText,
+} from "@partme.ai/openclaw-message-sdk";
 
 // 1. 入站：提取 AI 回复中的媒体指令
 const { text, images, files } = extractMediaFromText(aiReply, {
@@ -603,7 +687,9 @@ src/asr/
 import { ASRError, ASRAuthError } from "./errors.js";
 
 export async function transcribeMyProvider(
-  audio: Buffer, fileName: string, config: MyConfig
+  audio: Buffer,
+  fileName: string,
+  config: MyConfig,
 ): Promise<{ text: string; elapsedMs: number }> {
   // 实现识别逻辑
 }

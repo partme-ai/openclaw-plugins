@@ -70,6 +70,8 @@ export type NacosConfigCenterConfig = {
   pluginConfigIds?: string[];
   /** Skip structural validation before write (dangerous). Default false. */
   skipValidation?: boolean;
+  /** 本地回滚备份最多保留数量；默认 20，范围 1..1000。 */
+  backupRetentionCount?: number;
 };
 
 /** Naming registration can be disabled while keeping Config Center. */

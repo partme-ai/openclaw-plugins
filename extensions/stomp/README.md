@@ -22,6 +22,35 @@ This is an embedded OpenClaw channel, not a durable broker. Durable subscription
 
 ## Architecture
 
+The character diagram highlights the TCP/TLS trust boundary, transaction buffer, and bounded ACK queue. The Mermaid diagram below preserves the full renderable relationship.
+
+```text
+Backend service / device / edge gateway
+        │  STOMP 1.2 TCP/TLS
+        ▼
+┌──────────────────────────────────────────────────────────────┐
+│ openclaw-stomp                                               │
+│                                                              │
+│ Listener ──▶ CONNECT auth ──▶ frame parser ──▶ rate/capacity │
+│                                               │              │
+│                          ┌────────────────────┴─────────┐    │
+│                          ▼                              ▼    │
+│                BEGIN / transaction buffer         direct SEND│
+│                          │                              │    │
+│                   COMMIT / ABORT                        │    │
+│                          └──────────────┬───────────────┘    │
+│                                         ▼                    │
+│                         Topic binding + Agent allowlist       │
+│                                         │                    │
+│                              message-sdk → Agent              │
+│                                         │                    │
+│                                         ▼                    │
+│                  subscription queue + prefetch + ACK/NACK     │
+└─────────────────────────────────────────┬────────────────────┘
+                                          ▼
+                              MESSAGE / RECEIPT / ERROR
+```
+
 ```mermaid
 flowchart LR
   Client["STOMP 1.2 Client"] --> Listener["TCP/TLS Listener"]
@@ -32,6 +61,8 @@ flowchart LR
   Route --> SDK["message-sdk"] --> Agent["OpenClaw Agent"]
   Agent --> Queue["Subscription Queue<br/>Prefetch · ACK/NACK · Backpressure"] --> Client
 ```
+
+Internal Agent/Runtime failures from both direct `SEND` and transactional `COMMIT` are never returned verbatim. Clients receive the stable `Agent dispatch failed` error while a redacted reason is retained in Gateway logs and channel status.
 
 ## Configuration
 
@@ -69,6 +100,7 @@ The default plaintext listener is restricted to `127.0.0.1:61613`. Authenticatio
         "maxPendingMessages": 32,
         "messagesPerMinute": 120,
         "connectTimeoutMs": 10000,
+        "shutdownTimeoutMs": 10000,
         "maxDurableSubscriptions": 1000
       },
       "defaultAckMode": "auto",
@@ -156,9 +188,45 @@ For a non-transactional `SEND`, `RECEIPT` is emitted only after the OpenClaw Age
 
 Both the public outbound helper and the Channel adapter throw when no active or in-process durable subscription accepts a delivery. “Accepted” means queued or written to the socket, not application-level consumption by the remote client.
 
-Durable subscriptions require both `allowDurableSubscriptions: true` and `durable:true` (or `persistent:true`) on `SUBSCRIBE`. They survive a TCP reconnect only inside the same Gateway process and authenticated login; they do not survive a process restart.
+Durable subscriptions require both `allowDurableSubscriptions: true` and `durable:true` (or `persistent:true`) on `SUBSCRIBE`. Enabling them also requires login authentication so unrelated anonymous clients cannot share the same owner. They survive a TCP reconnect only inside the same Gateway process and authenticated login; they do not survive a process restart.
 
-Transaction-scoped `SEND`, `ACK`, and `NACK` commands are buffered until `COMMIT`; `ABORT` discards them. A COMMIT receipt is returned only after all buffered actions complete. The boundary is connection-local and is not a distributed rollback mechanism for Agent side effects.
+Transaction-scoped `SEND`, `ACK`, and `NACK` commands are buffered until `COMMIT`; `ABORT` discards them. `maxPendingMessages` is a hard total across every open transaction on the connection, rather than a separate allowance per transaction. A COMMIT receipt is returned only after all buffered actions complete. The boundary is connection-local and is not a distributed rollback mechanism for Agent side effects.
+
+## Shutdown drain
+
+```text
+Gateway AbortSignal
+       │
+       ▼
+accepting=false ──▶ stop heartbeat ──▶ close TCP/TLS sockets
+                                             │
+                                             ▼
+                                  await accepted frame queues
+                                             │
+                         ┌───────────────────┴──────────────┐
+                         ▼                                  ▼
+                      drained                      shutdownTimeoutMs
+                         └────────▶ clear durable state / listeners
+```
+
+```mermaid
+sequenceDiagram
+  participant G as OpenClaw Gateway
+  participant S as STOMP TCP Server
+  participant Q as Per-connection queue
+  participant A as Agent Runtime
+  G->>S: AbortSignal / stopAccount
+  S->>S: accepting=false; stop heartbeat
+  S--xS: close TCP/TLS sockets
+  S->>Q: await accepted frames
+  Q->>A: finish in-flight Agent turn
+  A-->>Q: success / failure
+  Q-->>S: drained
+  S-->>G: cleanup complete
+  Note over S,Q: warn and exit within shutdownTimeoutMs on timeout
+```
+
+Only work already accepted into the serial frame queue is drained. Uncommitted transaction actions are discarded with the connection. Hard termination can still leave an unknown outcome, so side-effecting callers must retain business idempotency keys.
 
 ## Operations
 

@@ -7,19 +7,15 @@
  */
 
 import type { MqttBrokerConfig } from "../types.js";
+import { redactSensitiveText as redactOpenClawSensitiveText } from "openclaw/plugin-sdk/security-runtime";
 
 /** 将不可信错误压缩为单行、有限长度且不包含已配置凭据的诊断摘要。 */
 export function redactMqttError(value: unknown, config?: MqttBrokerConfig | null): string {
-  let redacted = value instanceof Error ? value.message : String(value);
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require("openclaw/plugin-sdk/security-runtime") as {
-      redactSensitiveText?: (text: string) => string;
-    };
-    if (typeof mod.redactSensitiveText === "function") redacted = mod.redactSensitiveText(redacted);
-  } catch {
-    // 独立单测和打包检查不一定安装 OpenClaw；本地规则仍会继续执行。
-  }
+  // MQTT 以 ESM 发布，静态导入 peer runtime 才能保证真实 Gateway 会执行官方脱敏器。
+  let redacted = redactOpenClawSensitiveText(
+    value instanceof Error ? value.message : String(value),
+    { mode: "tools" },
+  );
 
   const secrets = [
     config?.persistence?.redis?.password,
@@ -29,8 +25,12 @@ export function redactMqttError(value: unknown, config?: MqttBrokerConfig | null
 
   return redacted
     .replace(/(mongodb(?:\+srv)?:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/giu, "$1[REDACTED]@")
-    .replace(/Bearer\s+\S+/giu, "Bearer [REDACTED]")
+    .replace(/\b(Bearer|Basic|Bot)\s+[^\s,;]+/giu, "$1 [REDACTED]")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/gu, "sk-[REDACTED]")
+    .replace(
+      /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)\b\s*([:=])\s*([^\s,;&]+)/giu,
+      "$1$2[REDACTED]",
+    )
     .replace(/[\u0000-\u001f\u007f]+/gu, " ")
     .slice(0, 500);
 }
