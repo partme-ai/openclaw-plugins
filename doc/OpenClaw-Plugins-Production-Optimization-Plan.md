@@ -53,23 +53,75 @@
 
 ## 当前自动化安装态矩阵
 
-2026-07-16 使用 OpenClaw 2026.7.1 隔离 profile，将本仓库 tarball 与本地 `message-sdk@2026.7.1` 安装到真实插件目录后，以下 9 个协议/路由适配器在同一 Gateway 组合运行中全部通过：
+2026-07-17 已对 27 个运行时插件完成当前工作区的统一安装态复验；共享
+`message-sdk` 不作为独立 Gateway 插件运行，由发布包导出、消费者契约和 OpenClaw
+运行时符号门禁覆盖。每个运行时插件均从最终 tarball 安装到隔离的 OpenClaw
+2026.7.1 profile，再执行真实协议、Agent Turn、外部服务夹具或安全边界验证。
 
-| 适配器       | 自动化证据                                                                                                           |
-| ------------ | -------------------------------------------------------------------------------------------------------------------- |
-| router       | 持久 Outbox 恢复，经公开 channel outbound adapter 投递到 Gotify                                                      |
-| mqtt         | `/mqtt/status` 与真实 MQTT publish                                                                                   |
-| rabbitmq     | AMQP publish、健康端点、Docker Broker 集成；manifest 工具契约覆盖 `mq.publish` / `mq.request`                        |
-| rocketmq     | Topic 初始化、Producer send、健康端点；一次性 Producer 子进程隔离上游 SDK 关闭缺陷                                   |
-| redis-stream | `XADD`、`XREADGROUP`、`XACK` 与健康端点                                                                              |
-| gotify       | REST publish、WebSocket inbound 与健康端点                                                                           |
-| stomp        | STOMP 1.2 TCP `SEND` 与状态端点                                                                                      |
-| web-mqtt     | WebSocket MQTT QoS 1 publish、真实 Agent 回复、状态端点，以及真实 Chromium 连接/订阅/发布/回复                       |
-| web-stomp    | WebSocket STOMP CONNECT、会话隔离订阅、SEND、真实 Agent 回复、MESSAGE、ACK/RECEIPT，以及真实 Chromium 连接/订阅/发送 |
+字符速览图（保留用于终端、代码审查和纯文本阅读）：
 
-该矩阵还覆盖 Node 24 并行插件加载、Gateway 启停清理、浏览器 Origin 白名单和浏览器失败的非零退出传播。它证明上述 9 项的本地安装态与协议链路，不等同于正式生产环境验收。其余 19 个扩展按各自章节的本地门禁与外部前置条件验收；其中 `nacos`、`wecom` 的真实环境证据来自用户上一版本验证，仍需补 2026.7.1 回归。正式域名/TLS、真实平台账号、HA/故障切换、容量压测和长稳运行未完成前，不统一标记为“生产就绪”。
+```text
+当前源码/锁文件/清单/E2E 适配器
+                │
+                ▼ SHA-256 sourceFingerprint
+        构建 → pack → 解包安装
+                │
+                ▼
+       OpenClaw 2026.7.1 Gateway
+                │
+      ┌─────────┼──────────┬──────────────┐
+      ▼         ▼          ▼              ▼
+  消息/Broker  Web/浏览器  Webhook/Tool   Infra/Memory
+  Agent Turn   Chromium    签名/去重      鉴权/持久化
+      └─────────┴──────────┴──────────────┘
+                │
+                ▼
+       脱敏 PASS 归档 + 源码指纹
+                │
+                ▼
+  pnpm check-e2e-evidence（27/27 才通过）
+```
 
-此外，`web-socket` 作为第 12 个 E2E adapter 在隔离的 host Gateway 场景单独通过。E2E 安装器现在会把解包后的本地 tarball 通过 OpenClaw `plugins install --link` 写入 2026.7.1 的 installed-plugin index，避免尚未发布到 npm 的插件被启动迁移误判为缺失并触发在线修复。
+同一关系的 Mermaid 图（便于文档渲染和按节点追踪）：
+
+```mermaid
+flowchart TD
+    A["当前源码、锁文件、清单、E2E 适配器"] --> B["计算 sourceFingerprint"]
+    B --> C["构建、pack、解包安装"]
+    C --> D["OpenClaw 2026.7.1 Gateway"]
+    D --> E["消息与 Broker：真实 Agent Turn"]
+    D --> F["Web：协议闭环与 Chromium"]
+    D --> G["Webhook 与 Tool：签名、去重、结果回传"]
+    D --> H["Infra 与 Memory：鉴权、导出、持久化、重启恢复"]
+    E --> I["脱敏 PASS 归档"]
+    F --> I
+    G --> I
+    H --> I
+    I --> J{"指纹、版本、PASS、浏览器证据均匹配？"}
+    J -->|"是"| K["当前本地发布候选通过"]
+    J -->|"否"| L["证据过期或失败，阻断验收"]
+```
+
+| 类别 | 插件 | 当前安装态证据 |
+| ---- | ---- | -------------- |
+| 消息与 Broker | `mqtt`、`stomp`、`rabbitmq`、`rocketmq`、`redis-stream`、`gotify` | 真实协议收发、Agent Turn、回复以及 ACK/PEL/确认语义通过 |
+| Web | `web-mqtt`、`web-stomp`、`web-socket` | 服务端协议闭环和真实 Chromium 鉴权、发送、Agent 回复均通过 |
+| 企业与内容渠道 | `wecom`、`wecom-kf`、`wechat`、`wechat-ipad`、`douyin` | 签名/加密回调、真实 Agent Turn、出站与进程内/重启去重通过 |
+| Tool/能力 | `amap`、`meituan`、`rednode`、`knowledge` | 真实 Agent Tool Call 或 RAG 注入、签名/白名单/持久检索通过 |
+| 基础设施 | `bridge`、`router`、`nacos`、`mtls`、`oauth2`、`tracing`、`prometheus` | Hook/Outbox、配置与注册、鉴权、OTLP、指标抓取闭环通过 |
+| 记忆 | `memory`、`openmem` | 落盘/Sidecar、Gateway 重启、跨轮次或跨会话召回通过 |
+
+E2E 报告现在记录每个插件的 `sourceFingerprints`。`pnpm check-e2e-evidence`
+逐插件查找最新 PASS，并同时要求安装版本为 2026.7.1；`browserTest=true` 的插件还必须存在
+同一报告内的 Chromium PASS。源码、message-sdk、锁文件或统一 E2E Harness 变化后，旧报告
+立即失效，不能再冒充当前候选物的证明。E2E 安装器通过 `plugins install --link` 写入
+2026.7.1 installed-plugin index；安装种子阶段暂不写入尚未注册的 channel，完成全部 link 后
+再生成完整配置，避免多插件冷启动被未知 channel id 阻断。
+
+该结果证明 27 个运行时插件均达到“当前本地发布候选”标准，不等于全部完成真实生产验收。
+`nacos`、`wecom` 的上一版本真实环境证据由用户确认；其他插件仍需按各章节完成正式域名/TLS、
+真实平台账号或服务、HA/故障切换、容量压测、备份恢复和长稳运行。完成对应环境验收前，
+不能笼统宣称整个仓库已生产就绪。
 
 ## Message SDK 当前交付
 

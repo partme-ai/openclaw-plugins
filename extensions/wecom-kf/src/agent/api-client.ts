@@ -8,7 +8,7 @@ import path from "node:path";
 import { API_ENDPOINTS, KF_MEDIA_MAX_BYTES, LIMITS } from "../types/constants.js";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import { splitUtf8TextByMaxBytes } from "@partme.ai/openclaw-message-sdk/util";
-import { readResponseBodyAsBuffer, wecomFetch } from "../shared/http.js";
+import { readResponseBodyAsBuffer, wecomFetch, type WecomHttpOptions } from "../shared/http.js";
 import { resolveWecomEgressProxyUrlFromNetwork } from "../config/index.js";
 import { resolveApiBaseUrl } from "../config/kf-routes.js";
 import { reserveKfOutboundSend, rollbackKfSendReservation } from "./kf-send-guard.js";
@@ -45,6 +45,37 @@ const tokenCaches = new Map<string, TokenCache>();
 /** 防止动态企业/私有网关配置持续产生新指纹，最终让 token 缓存无界增长。 */
 const MAX_TOKEN_CACHE_ENTRIES = 256;
 const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+/**
+ * 把渠道/账号 network 配置收敛成实际 HTTP 参数。
+ *
+ * retries 表示“首次请求失败后的额外次数”；只有调用方显式声明 retrySafe 时才生效，避免
+ * send_msg 在响应丢失场景被重复发送。配置即使绕过 JSON Schema，也必须在运行时 fail-fast。
+ */
+export function resolveAgentHttpOptions(
+    agent: ResolvedAgentAccount,
+    retrySafe = false,
+): WecomHttpOptions {
+    const timeoutMs = agent.network?.timeoutMs ?? LIMITS.REQUEST_TIMEOUT_MS;
+    const retries = agent.network?.retries ?? 0;
+    const retryDelayMs = agent.network?.retryDelayMs ?? 500;
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 120_000) {
+        throw new Error("wecom-kf network.timeoutMs must be an integer between 1000 and 120000");
+    }
+    if (!Number.isInteger(retries) || retries < 0 || retries > 5) {
+        throw new Error("wecom-kf network.retries must be an integer between 0 and 5");
+    }
+    if (!Number.isInteger(retryDelayMs) || retryDelayMs < 0 || retryDelayMs > 30_000) {
+        throw new Error("wecom-kf network.retryDelayMs must be an integer between 0 and 30000");
+    }
+    return {
+        proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network),
+        timeoutMs,
+        retrySafe,
+        retries: retrySafe ? retries : 0,
+        retryDelayMs,
+    };
+}
 
 /** 外部平台错误只保留单行有限摘要，避免控制字符或超长响应污染 Gateway 日志。 */
 function apiFailure(prefix: string, errcode: unknown, errmsg: unknown): Error {
@@ -160,7 +191,7 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
                 agent,
                 `${API_ENDPOINTS.GET_TOKEN}?corpid=${encodeURIComponent(agent.corpId)}&corpsecret=${encodeURIComponent(agent.corpSecret)}`,
             );
-            const res = await wecomFetch(url, undefined, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
+            const res = await wecomFetch(url, undefined, resolveAgentHttpOptions(agent, true));
             const json = await readJsonResponse<{ access_token?: string; expires_in?: number; errcode?: number; errmsg?: string }>(res);
 
             if (!json?.access_token) {
@@ -198,7 +229,6 @@ export async function uploadMedia(params: {
     const { agent, type, buffer, filename } = params;
     const safeFilename = normalizeUploadFilename(filename);
     const token = await getAccessToken(agent);
-    const proxyUrl = resolveWecomEgressProxyUrlFromNetwork(agent.network);
     // 添加 debug=1 参数获取更多错误信息
     const url = buildAgentApiUrl(agent, `${API_ENDPOINTS.UPLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}`);
 
@@ -222,7 +252,7 @@ export async function uploadMedia(params: {
                 "Content-Length": String(body.length),
             },
             body: body,
-        }, { proxyUrl, timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
+        }, resolveAgentHttpOptions(agent));
         const json = await readJsonResponse<{ media_id?: string; errcode?: number; errmsg?: string }>(res);
         return json;
     };
@@ -260,7 +290,7 @@ export async function downloadMedia(params: {
     const token = await getAccessToken(agent);
     const url = buildAgentApiUrl(agent, `${API_ENDPOINTS.DOWNLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&media_id=${encodeURIComponent(mediaId)}`);
 
-    const res = await wecomFetch(url, undefined, { proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network), timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
+    const res = await wecomFetch(url, undefined, resolveAgentHttpOptions(agent, true));
 
     if (!res.ok) {
         throw new Error(`download failed: ${res.status}`);
@@ -309,6 +339,7 @@ async function callAuthenticatedJson<T extends { errcode?: number; errmsg?: stri
   agent: ResolvedAgentAccount,
   buildPath: (accessToken: string) => string,
   init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> } = {},
+  options: { retrySafe?: boolean } = {},
 ): Promise<T> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const accessToken = await getAccessToken(agent);
@@ -319,7 +350,7 @@ async function callAuthenticatedJson<T extends { errcode?: number; errmsg?: stri
         "Content-Type": "application/json",
         ...(init.headers ?? {}),
       },
-    }, { timeoutMs: LIMITS.REQUEST_TIMEOUT_MS, proxyUrl: resolveWecomEgressProxyUrlFromNetwork(agent.network) });
+    }, resolveAgentHttpOptions(agent, options.retrySafe === true));
     const data = await readJsonResponse<T>(res);
 
     if (
@@ -448,6 +479,7 @@ export async function syncKfMessages(
         agent,
         (accessToken) => `${API_ENDPOINTS.KF_SYNC_MSG}?access_token=${encodeURIComponent(accessToken)}`,
         { method: "POST", body: JSON.stringify(body) },
+        { retrySafe: true },
     );
 
     return parseKfSyncMsgResponse(data);
@@ -604,6 +636,7 @@ export async function listKfServicers(params: {
         params.agent,
         (accessToken) => `${API_ENDPOINTS.KF_SERVICER_LIST}?access_token=${encodeURIComponent(accessToken)}`,
         { method: "POST", body: JSON.stringify(body) },
+        { retrySafe: true },
     );
 }
 
@@ -625,6 +658,7 @@ export async function listKfAccounts(params: {
         params.agent,
         (accessToken) => `${API_ENDPOINTS.KF_ACCOUNT_LIST}?access_token=${encodeURIComponent(accessToken)}`,
         { method: "POST", body: JSON.stringify(body) },
+        { retrySafe: true },
     );
 }
 

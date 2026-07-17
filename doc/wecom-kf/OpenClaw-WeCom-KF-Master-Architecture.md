@@ -1,11 +1,14 @@
 # OpenClaw WeCom KF 主架构（KF-only）
 
-> 文档版本：2026-05-24  
+> 文档版本：2026-07-17
 > 适用范围：`@partme.ai/wecom-kf`（`extensions/wecom-kf`）  
 > 关联文档：[Tools 架构](./OpenClaw-WeCom-KF-Tools-Architecture.md)  
 > 官方 API：[94638 概述](https://developer.work.weixin.qq.com/document/path/94638) · [94670 接收消息](https://developer.work.weixin.qq.com/document/path/94670) · [94677 发送消息](https://developer.work.weixin.qq.com/document/path/94677) · [95122 事件响应消息](https://developer.work.weixin.qq.com/document/path/95122) · [95159 客户基础信息](https://developer.work.weixin.qq.com/document/path/95159) · [97712 回调通知](https://developer.work.weixin.qq.com/document/path/97712) · [94645/94661/94665/94669 管理 API](https://developer.work.weixin.qq.com/document/path/94645)
 
-**本文档为 KF-only 主架构设计交付物，不含业务实现代码。** 目标：将 `wecom-kf` 收敛为 **纯微信客服渠道插件**，与 `wecom` / `wecom-cs`（Bot / Agent / monitor）彻底解耦，并给出可执行的迁移与分阶段路线图。
+**本文档同时记录 KF-only 目标架构与当前实现边界。** 当前插件已经完成独立 Channel、加密回调、
+`sync_msg`、持久游标/去重、出站回复、事件处理和 Control Tools；仍保留少量旧类型/文件名用于升级
+兼容，不代表继续支持普通 WeCom Bot/Agent 协议。涉及“目标目录”的章节是后续收敛方向，不能
+当作当前源码清单。
 
 ---
 
@@ -160,6 +163,45 @@ sequenceDiagram
   T->>ICS: 可选消费 msg_code → send_msg_on_event
   Note over A: session JSONL 不含 servicer_list / url 全文
 ```
+
+### 2.4 出站网络与重试边界
+
+渠道级 `network` 与账号级覆盖在解析阶段合并，所有回调同步、Control Tool、主动 outbound 和探针
+最终都通过 `ResolvedAgentAccount.network` 使用同一固定出口与超时。自动重试按“是否存在业务
+副作用”分类，不能只按 HTTP 方法判断，因为企微多个只读接口也使用 POST。
+
+```text
+channels.wecom-kf.network ──┐
+                            ├──▶ 账号合并 ──▶ ResolvedAgentAccount.network
+accounts.<id>.network ──────┘                         │
+                                                     ▼
+                                         ProxyAgent + timeoutMs
+                                                     │
+                         ┌───────────────────────────┴────────────────────────┐
+                         ▼                                                    ▼
+            gettoken / sync_msg / download / list              send / transfer / upload / link
+                  429、5xx、网络错误有限重试                       单次调用，防止重复业务副作用
+                         └───────────────────────────┬────────────────────────┘
+                                                     ▼
+                                access_token / corpsecret / 代理密码脱敏日志
+```
+
+```mermaid
+flowchart TD
+    C["渠道级 network"] --> M["账号配置合并"]
+    A["账号级 network"] --> M
+    M --> R["ResolvedAgentAccount.network"]
+    R --> H["固定出口代理与超时"]
+    H --> D{"请求是否可安全重试?"}
+    D -->|"读或同步，无业务副作用"| Y["429、5xx、网络错误有限指数退避"]
+    D -->|"发送、转接、上传、创建链接"| N["不自动重试"]
+    Y --> L["凭据脱敏日志"]
+    N --> L
+```
+
+该边界避免了两类相反风险：网络抖动导致 `sync_msg` 长期滞留，以及响应丢失后重复发送客服消息。
+配置范围由 Channel JSON Schema 与运行时双重校验：`timeoutMs=1000..120000`、`retries=0..5`、
+`retryDelayMs=0..30000`。
 
 ---
 

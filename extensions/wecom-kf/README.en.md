@@ -127,6 +127,12 @@ Minimal JSON:
       "corpSecret": "<YOUR_CORP_SECRET>",
       "token": "<YOUR_CALLBACK_TOKEN>",
       "encodingAESKey": "<YOUR_43_CHAR_ENCODING_AES_KEY>",
+      "network": {
+        "timeoutMs": 15000,
+        "retries": 2,
+        "retryDelayMs": 500,
+        "egressProxyUrl": "http://127.0.0.1:3128"
+      },
       "eventMessages": {
         "welcome": {
           "enabled": true,
@@ -152,17 +158,18 @@ Minimal JSON:
           ]
         }
       },
-      "humanTransfer": {
-        "enabled": true,
-        "keywords": ["human agent", "manual support"],
-        "waitTimeout": 300
-      }
+      "welcomeText": "Hello, I am your AI customer service assistant."
     }
   }
 }
 ```
 
 Never commit real `corpSecret`, `token`, or `encodingAESKey` values.
+
+`network` controls the fixed egress proxy, timeout, and bounded transient retries. Account-level
+`accounts.*.network` overrides channel defaults. Retries apply only to token, sync, download, and
+list operations; send, transfer, upload, and contact-link creation remain single-attempt to avoid
+duplicate side effects. Sensitive URL query values and proxy credentials are redacted before logging.
 
 ## Message and Handoff Flow
 
@@ -196,7 +203,7 @@ skip message history within WeCom's available `sync_msg` window.
 | Sync messages | `kf/sync_msg` | Pulls messages within 3 days |
 | Send message | `kf/send_msg` | Up to 5 replies within 48h after the customer message |
 | Event message | `kf/send_msg_on_event` | Welcome, queue, ending, satisfaction messages |
-| Session state | `kf/service_state/get` | Reads current service state |
+| Session state | `session_status_change` | Persists state from sync events; no `service_state/get` Tool yet |
 | Transfer | `kf/service_state/trans` | Transfers, queues, or ends sessions |
 | Account list | `kf/account/list` | Discovers KF accounts |
 | Servicer list | `kf/servicer/list` | Finds available human agents |
@@ -217,8 +224,6 @@ pnpm typecheck
 pnpm test
 pnpm test:coverage
 ```
-
-In chat, `/kf-status` returns KF account connection status and online servicer counts.
 
 ## Troubleshooting
 

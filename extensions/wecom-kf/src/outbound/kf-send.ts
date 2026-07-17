@@ -80,7 +80,10 @@ export function resolveKfOutboundContext(params: {
       corpSecret,
       token: kfConfig.token ?? "",
       encodingAESKey: kfConfig.encodingAESKey ?? "",
+      apiBaseUrl: kfConfig.apiBaseUrl,
     },
+    // 主动 channel outbound 不经过 call-context，同样必须透传固定出口和超时策略。
+    network: kfConfig.network,
   };
 
   return { agent, openKfId, externalUserId };
@@ -283,7 +286,9 @@ export function resolveKfOutboundByOpenKfId(params: {
         corpSecret,
         token: resolved.config.token ?? "",
         encodingAESKey: resolved.config.encodingAESKey ?? "",
+        apiBaseUrl: resolved.config.apiBaseUrl,
       },
+      network: resolved.config.network,
     },
     openKfId,
     externalUserId,

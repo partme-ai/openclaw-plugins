@@ -43,6 +43,7 @@ describe("wecomOutbound", () => {
           openKfId: "wk123",
           token: "token",
           encodingAESKey: "aes",
+          network: { timeoutMs: 20_000, retries: 2, retryDelayMs: 750 },
         },
       },
     };
@@ -55,6 +56,11 @@ describe("wecomOutbound", () => {
     } as any);
 
     expect(api.sendKfMediaMessage).toHaveBeenCalled();
+    expect(api.sendKfMediaMessage).toHaveBeenCalledWith(expect.objectContaining({
+      agent: expect.objectContaining({
+        network: { timeoutMs: 20_000, retries: 2, retryDelayMs: 750 },
+      }),
+    }));
     expect(result.channel).toBe("wecom-kf");
     expect(result.messageId).toBe("kf-media-1");
   });
@@ -73,6 +79,8 @@ describe("wecomOutbound", () => {
           openKfId: "wk123",
           token: "token",
           encodingAESKey: "aes",
+          apiBaseUrl: "https://wecom-proxy.example.test",
+          network: { timeoutMs: 18_000 },
         },
       },
     };
@@ -84,6 +92,12 @@ describe("wecomOutbound", () => {
     } as any);
 
     expect(api.sendKfTextMessage).toHaveBeenCalled();
+    expect(api.sendKfTextMessage).toHaveBeenCalledWith(expect.objectContaining({
+      agent: expect.objectContaining({
+        network: { timeoutMs: 18_000 },
+        config: expect.objectContaining({ apiBaseUrl: "https://wecom-proxy.example.test" }),
+      }),
+    }));
     expect(result.channel).toBe("wecom-kf");
     expect(result.messageId).toBe("kf-99");
   });

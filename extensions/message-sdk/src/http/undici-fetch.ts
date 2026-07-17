@@ -15,6 +15,34 @@ const proxyDispatchers = new Map<string, ProxyDispatcher>();
 
 type ProxyDispatcher = Dispatcher;
 
+const SENSITIVE_QUERY_PARAM = /^(?:access[_-]?token|refresh[_-]?token|corpsecret|client[_-]?secret|api[_-]?key|password|passwd|secret|signature|sign)$/i;
+
+/**
+ * 生成可安全写入日志的 URL。
+ *
+ * 企业微信等平台把 access_token/corpsecret 放在 query 中；网络异常发生在真正发出请求之前或
+ * 期间，底层错误日志也绝不能复述这些凭据。无法按 URL 解析时再做一次保守的文本替换，避免
+ * 非标准代理地址绕过脱敏。
+ */
+export function redactHttpUrlForLog(input: string | URL): string {
+  const raw = input.toString();
+  try {
+    const parsed = new URL(raw);
+    if (parsed.username) parsed.username = "[REDACTED]";
+    if (parsed.password) parsed.password = "[REDACTED]";
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (SENSITIVE_QUERY_PARAM.test(key)) parsed.searchParams.set(key, "[REDACTED]");
+    }
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return raw.replace(
+      /([?&](?:access[_-]?token|refresh[_-]?token|corpsecret|client[_-]?secret|api[_-]?key|password|passwd|secret|signature|sign)=)[^&#\s]*/gi,
+      "$1[REDACTED]",
+    );
+  }
+}
+
 /**
  * 缓存并复用 ProxyAgent，避免重复创建连接池。
  */
@@ -86,7 +114,7 @@ export async function undiciFetch(
     if (err instanceof Error && err.name === "TypeError" && err.message === "fetch failed") {
       const cause = (err as Error & { cause?: unknown }).cause;
       console.error(
-        `[undici-fetch] fetch failed: ${input} (proxy: ${proxyUrl || "none"})${cause ? ` - cause: ${String(cause)}` : ""}`,
+        `[undici-fetch] fetch failed: ${redactHttpUrlForLog(input)} (proxy: ${proxyUrl ? redactHttpUrlForLog(proxyUrl) : "none"})${cause ? ` - cause: ${redactHttpUrlForLog(String(cause))}` : ""}`,
       );
     }
     throw err;

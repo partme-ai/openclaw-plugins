@@ -154,6 +154,8 @@ export type WecomKfAccountConfig = {
     webhookPath?: string;
     /** 企微 OpenAPI 基础 URL（默认 https://qyapi.weixin.qq.com） */
     apiBaseUrl?: string;
+    /** 账号级网络策略；省略时继承 channels.wecom-kf.network。 */
+    network?: WecomNetworkConfig;
     /** Legacy wecom-cs bot/agent 子配置（历史路径，与 KF 字段可共存） */
     bot?: WecomBotConfig;
     agent?: WecomAgentConfig;
@@ -212,6 +214,8 @@ export type WecomAccountConfig = {
     webhookPath?: string;
     /** 企微 OpenAPI 基础 URL */
     apiBaseUrl?: string;
+    /** 合并后的账号级网络策略。 */
+    network?: WecomNetworkConfig;
     bot?: WecomBotConfig;
     agent?: WecomAgentConfig;
     /** KF 客服模式配置（嵌套写法，与顶层 KF 字段二选一） */

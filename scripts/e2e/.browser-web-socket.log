@@ -3,14 +3,14 @@
   "connected": {
     "version": "1",
     "type": "connected",
-    "connectionId": "5582304a-4498-4ba0-a044-201bdbb8d6b5"
+    "connectionId": "619f5270-78b8-4133-b682-73f9d28b2fec"
   },
   "reply": {
     "version": "1",
     "message": {
-      "messageId": "web-socket-548239a3-b8e2-4b1b-8743-7a553c1b8f8e",
-      "traceId": "525c3096-03be-4b02-b485-909f827934f3",
-      "timestamp": 1784278130580,
+      "messageId": "web-socket-b001a447-353a-48ab-a004-6fc0dec91116",
+      "traceId": "e34744a8-aa08-4bf8-9a14-538a5059e824",
+      "timestamp": 1784289858989,
       "source": {
         "channel": "web-socket",
         "accountId": "default",
@@ -25,16 +25,16 @@
     },
     "headers": {
       "replyRoute": {
-        "connectionId": "5582304a-4498-4ba0-a044-201bdbb8d6b5"
+        "connectionId": "619f5270-78b8-4133-b682-73f9d28b2fec"
       }
     },
     "type": "reply",
     "sessionKey": "agent:main:main",
-    "messageId": "web-socket-browser-1784278130399"
+    "messageId": "web-socket-browser-1784289858790"
   },
   "accepted": {
     "version": "1",
     "type": "accepted",
-    "messageId": "web-socket-browser-1784278130399"
+    "messageId": "web-socket-browser-1784289858790"
   }
 }

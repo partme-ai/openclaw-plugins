@@ -160,11 +160,17 @@ describe("wecomPlugin account probe", () => {
           corpSecret: "secret",
           token: "callback-token",
           encodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+          apiBaseUrl: "https://wecom-proxy.example.test",
+          network: { timeoutMs: 20_000, retries: 2 },
         },
       },
     } as never);
     expect(result).toEqual({ ok: true });
-    expect(tokenSpy).toHaveBeenCalledWith(expect.objectContaining({ corpId: "ww-corp" }));
+    expect(tokenSpy).toHaveBeenCalledWith(expect.objectContaining({
+      corpId: "ww-corp",
+      network: { timeoutMs: 20_000, retries: 2 },
+      config: expect.objectContaining({ apiBaseUrl: "https://wecom-proxy.example.test" }),
+    }));
     tokenSpy.mockRestore();
   });
 });

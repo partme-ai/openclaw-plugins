@@ -320,6 +320,7 @@ function resolveMatrixAccounts(wecomKf: WecomKfConfig): Record<string, ResolvedW
                 corpSecret: entry.corpSecret,
                 token: entry.token,
                 encodingAESKey: entry.encodingAESKey,
+                network: entry.network ?? wecomKf.network,
             };
             resolved[accountId] = toResolvedAccount({
                 accountId,

@@ -10,7 +10,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { sourceFingerprint } from "./e2e/lib/evidence.mjs";
-import { EXTENSION_INVENTORY } from "./e2e/lib/registry.mjs";
+import { EXTENSION_INVENTORY, findPlugin } from "./e2e/lib/registry.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const REPORTS_DIR = join(ROOT, "scripts/e2e/reports");
@@ -23,6 +23,7 @@ for (const extension of EXTENSION_INVENTORY.filter((entry) => entry.e2eAdapter))
   const expected = sourceFingerprint(extension.id, { repoRoot: ROOT });
   const evidence = reports.find((report) =>
     report.e2e?.some((result) => result.plugin === extension.id && result.result === "PASS") &&
+    browserEvidencePassed(report, extension.id) &&
     report.sourceFingerprints?.[extension.id] === expected &&
     installedVersion(report, extension.id) === TARGET_VERSION,
   );
@@ -39,6 +40,8 @@ for (const extension of EXTENSION_INVENTORY.filter((entry) => entry.e2eAdapter))
     failures.push(`${extension.id}: latest PASS uses legacy report without source fingerprint`);
   } else if (installedVersion(latestPass, extension.id) !== TARGET_VERSION) {
     failures.push(`${extension.id}: latest matching source was not installed as ${TARGET_VERSION}`);
+  } else if (!browserEvidencePassed(latestPass, extension.id)) {
+    failures.push(`${extension.id}: browser adapter has no PASS evidence for the current source`);
   } else {
     failures.push(`${extension.id}: source or E2E inputs changed after the latest PASS`);
   }
@@ -75,3 +78,7 @@ function installedVersion(report, pluginId) {
   return item?.version;
 }
 
+function browserEvidencePassed(report, pluginId) {
+  if (!findPlugin(pluginId).browserTest) return true;
+  return report.browser?.some((result) => result.plugin === pluginId && result.result === "PASS") === true;
+}

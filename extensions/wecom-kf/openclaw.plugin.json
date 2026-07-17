@@ -46,11 +46,18 @@
           "openKfId": { "type": "string" },
           "agentId": { "type": "string" },
           "accounts": { "type": "object", "additionalProperties": true },
-          "session": { "type": "object", "additionalProperties": true },
           "eventMessages": { "type": "object", "additionalProperties": true },
-          "humanTransfer": { "type": "object", "additionalProperties": true },
           "media": { "type": "object", "additionalProperties": true },
-          "network": { "type": "object", "additionalProperties": true },
+          "network": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 120000 },
+              "retries": { "type": "integer", "minimum": 0, "maximum": 5 },
+              "retryDelayMs": { "type": "integer", "minimum": 0, "maximum": 30000 },
+              "egressProxyUrl": { "type": "string", "format": "uri" }
+            }
+          },
           "routing": { "type": "object", "additionalProperties": true },
           "agentMapping": { "type": "object", "additionalProperties": { "type": "string" } },
           "servicerUserId": { "type": "string" },

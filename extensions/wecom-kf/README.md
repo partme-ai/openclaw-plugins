@@ -132,9 +132,11 @@ openclaw channels status --probe
       "corpSecret": "<YOUR_CORP_SECRET>",
       "token": "<YOUR_CALLBACK_TOKEN>",
       "encodingAESKey": "<YOUR_43_CHAR_ENCODING_AES_KEY>",
-      "session": {
-        "dmScope": "per-account-channel-peer",
-        "idleResetMinutes": 2880
+      "network": {
+        "timeoutMs": 15000,
+        "retries": 2,
+        "retryDelayMs": 500,
+        "egressProxyUrl": "http://127.0.0.1:3128"
       },
       "eventMessages": {
         "welcome": {
@@ -161,11 +163,6 @@ openclaw channels status --probe
           ]
         }
       },
-      "humanTransfer": {
-        "enabled": true,
-        "keywords": ["转人工", "人工客服", "人工"],
-        "waitTimeout": 300
-      },
       "accounts": {
         "kf_presale_001": {
           "openKfId": "kf_presale_001",
@@ -190,6 +187,40 @@ openclaw channels status --probe
 `/wecom-kf/<accountId>`；每个 URL 会在解密前选择该账号的 `token` 与 `encodingAESKey`。两个账号不能复用同一路径。
 
 所有密钥均使用占位符，不要提交真实 `corpSecret`、`token` 或 `encodingAESKey`。
+
+`network` 可配置渠道级固定出口、超时和瞬态重试，账号级 `accounts.*.network` 可覆盖它。为避免
+重复回复，自动重试只用于 token 获取、`sync_msg`、媒体下载和列表查询等读/同步请求；
+`send_msg`、事件消息、转接、上传和创建客服链接不会盲重试。`retries` 表示首次请求之后的额外
+次数，范围 `0..5`；`timeoutMs` 范围 `1000..120000`，`retryDelayMs` 范围 `0..30000`。
+
+```text
+channels.wecom-kf.network ──┐
+                            ├─ merge ─▶ ResolvedAgentAccount.network
+accounts.<id>.network ──────┘                    │
+                                                 ▼
+                                  固定出口代理 + 请求超时
+                                                 │
+                           ┌─────────────────────┴────────────────────┐
+                           ▼                                          ▼
+                  token/sync/download/list                  send/transfer/upload/link
+                     瞬态错误可重试                           禁止自动重试，避免重复副作用
+                           └─────────────────────┬────────────────────┘
+                                                 ▼
+                                日志 URL 对凭据统一脱敏
+```
+
+```mermaid
+flowchart TD
+    C["渠道级 network"] --> M["账号配置合并"]
+    A["账号级 network 覆盖"] --> M
+    M --> R["ResolvedAgentAccount.network"]
+    R --> P["固定出口代理与 timeoutMs"]
+    P --> Q{"请求是否可安全重试?"}
+    Q -->|"token、sync、download、list"| S["429、5xx、网络失败有限退避"]
+    Q -->|"send、transfer、upload、link"| N["单次调用，交由业务幂等与人工判断"]
+    S --> L["日志 URL 脱敏"]
+    N --> L
+```
 
 ## 消息与转人工流程
 
@@ -305,7 +336,7 @@ stateDiagram-v2
 | 同步消息 | `kf/sync_msg` | 拉取 3 天内消息 |
 | 发送消息 | `kf/send_msg` | 客户最后消息后 48 小时内，最多 5 条 |
 | 事件消息 | `kf/send_msg_on_event` | 欢迎、排队、结束、满意度等 |
-| 会话状态 | `kf/service_state/get` | 查询当前会话状态 |
+| 会话状态 | `session_status_change` | 从同步事件持久化本地状态；当前未开放 `service_state/get` Tool |
 | 转接会话 | `kf/service_state/trans` | 转人工、排队、结束会话 |
 | 账号列表 | `kf/account/list` | 发现客服账号 |
 | 接待人员 | `kf/servicer/list` | 查询人工客服可用性 |
@@ -344,12 +375,6 @@ pnpm typecheck
 OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins wecom-kf --skip-browser
 ```
 
-会话中可用命令：
-
-| 命令 | 说明 |
-|------|------|
-| `/kf-status` | 返回客服账号连接状态与在线接待人员数量 |
-
 ## Agent 模板与技能
 
 插件提供可选 Agent 工作区模板与技能资产：
@@ -370,7 +395,7 @@ pnpm test
 pnpm test:coverage
 ```
 
-当前自动化证据：34 个测试文件、160 个测试通过；安装态 E2E 已覆盖 tarball 安装、企业微信格式 AES 回调、
+当前自动化证据：37 个测试文件、171 个测试通过；安装态 E2E 已覆盖 tarball 安装、企业微信格式 AES 回调、
 `gettoken`、`sync_msg`、真实 Agent Turn、`send_msg`，以及 Gateway 重启后的 cursor 恢复和 `msgid` 持久防重。
 本地 OpenAPI 夹具允许 `http://localhost` / `127.0.0.1`；非 loopback 地址仍强制 HTTPS。
 

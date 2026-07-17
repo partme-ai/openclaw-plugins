@@ -41,6 +41,18 @@ const meta = {
   quickstartAllowFrom: true,
 };
 
+/** 与运行时 fail-fast 校验一致的 KF 出站网络配置。 */
+const kfNetworkSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    timeoutMs: { type: "integer", minimum: 1_000, maximum: 120_000 },
+    retries: { type: "integer", minimum: 0, maximum: 5 },
+    retryDelayMs: { type: "integer", minimum: 0, maximum: 30_000 },
+    egressProxyUrl: { type: "string", format: "uri" },
+  },
+} as const;
+
 const kfAccountSchema = {
   type: "object",
   additionalProperties: false,
@@ -59,9 +71,8 @@ const kfAccountSchema = {
     servicerUserId: { type: "string" },
     welcomeText: { type: "string" },
     eventMessages: { type: "object", additionalProperties: true },
-    humanTransfer: { type: "object", additionalProperties: true },
     media: { type: "object", additionalProperties: true },
-    network: { type: "object", additionalProperties: true },
+    network: kfNetworkSchema,
     routing: { type: "object", additionalProperties: true },
     bot: { type: "object", additionalProperties: true },
     agent: { type: "object", additionalProperties: true },
@@ -75,17 +86,6 @@ const wecomKfConfigSchema = {
     ...kfAccountSchema.properties,
     defaultAccount: { type: "string", minLength: 1 },
     accounts: { type: "object", additionalProperties: kfAccountSchema },
-    session: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        dmScope: {
-          type: "string",
-          enum: ["per-peer", "per-channel-peer", "per-account-channel-peer"],
-        },
-        idleResetMinutes: { type: "number", minimum: 1 },
-      },
-    },
   },
 } as const;
 
@@ -127,7 +127,8 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
     },
   },
   capabilities: {
-    chatTypes: ["direct", "group"],
+    // 微信客服是外部客户与客服账号之间的一对一会话，不声明群聊能力。
+    chatTypes: ["direct"],
     media: true,
     reactions: false,
     threads: false,
@@ -253,7 +254,9 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
         const corpId = (accountConfig?.corpId ?? resolved.corpId ?? "") as string;
         const corpSecret = (accountConfig?.corpSecret ?? resolved.corpSecret ?? "") as string;
         const token = (accountConfig?.token ?? resolved.token ?? "") as string;
-        const encodingAESKey = (accountConfig?.encodingAESKey ?? resolved.encodingAESKey ?? "") as string;
+            const encodingAESKey = (accountConfig?.encodingAESKey ?? resolved.encodingAESKey ?? "") as string;
+            const apiBaseUrl = accountConfig?.apiBaseUrl as string | undefined;
+            const network = accountConfig?.network as ResolvedWecomAccount["config"]["network"];
 
         // Check if KF is configured
         if (!corpId || !token || !encodingAESKey) {
@@ -278,7 +281,8 @@ export const wecomPlugin: ChannelPlugin<ResolvedWecomAccount> & Record<string, u
           corpSecret,
           token: "",
           encodingAESKey: "",
-          config: { corpId, corpSecret, token: "", encodingAESKey: "" },
+          config: { corpId, corpSecret, token: "", encodingAESKey: "", apiBaseUrl },
+          network,
         });
 
         return { ok: true };

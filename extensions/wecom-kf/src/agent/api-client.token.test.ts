@@ -13,7 +13,7 @@ vi.mock("../config/index.js", () => ({
   resolveWecomEgressProxyUrlFromNetwork: vi.fn(() => undefined),
 }));
 
-import { getAccessToken } from "./api-client.js";
+import { getAccessToken, resolveAgentHttpOptions } from "./api-client.js";
 
 function createAgent(accountId: string, corpSecret: string): ResolvedAgentAccount {
   return {
@@ -39,6 +39,28 @@ beforeEach(() => {
 });
 
 describe("getAccessToken", () => {
+  it("把 network 超时与安全重试配置传到 token 请求", async () => {
+    const agent = createAgent("network-a", "network-secret");
+    agent.network = { timeoutMs: 20_000, retries: 2, retryDelayMs: 750 };
+    wecomFetchMock.mockResolvedValue(tokenResponse("network-token"));
+
+    await expect(getAccessToken(agent)).resolves.toBe("network-token");
+    expect(wecomFetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/gettoken?"),
+      undefined,
+      expect.objectContaining({ timeoutMs: 20_000, retrySafe: true, retries: 2, retryDelayMs: 750 }),
+    );
+  });
+
+  it("写请求关闭重试，并拒绝越界 network 配置", () => {
+    const agent = createAgent("network-b", "network-secret");
+    agent.network = { timeoutMs: 15_000, retries: 3, retryDelayMs: 500 };
+    expect(resolveAgentHttpOptions(agent, false)).toMatchObject({ retrySafe: false, retries: 0 });
+
+    agent.network.timeoutMs = 999;
+    expect(() => resolveAgentHttpOptions(agent, true)).toThrow("network.timeoutMs");
+  });
+
   it("相同企业凭据的并发请求共享一次刷新", async () => {
     const first = createAgent("shared-a", "same-secret");
     const second = createAgent("shared-b", "same-secret");

@@ -10,6 +10,12 @@ const testCfg = {
     channels: {
         "wecom-kf": {
             defaultAccount: "default",
+            network: {
+                timeoutMs: 20_000,
+                retries: 2,
+                retryDelayMs: 750,
+                egressProxyUrl: "http://proxy.example.test:3128",
+            },
             accounts: {
                 default: {
                     openKfId: "wk_default",
@@ -78,5 +84,11 @@ describe("resolveKfAgentAccount", () => {
         expect(agent?.corpId).toBe("ww_test");
         expect(agent?.corpSecret).toBe("secret_test");
         expect(agent?.accountId).toBe("default");
+        expect(agent?.network).toEqual({
+            timeoutMs: 20_000,
+            retries: 2,
+            retryDelayMs: 750,
+            egressProxyUrl: "http://proxy.example.test:3128",
+        });
     });
 });

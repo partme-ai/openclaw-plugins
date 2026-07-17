@@ -122,6 +122,40 @@ openclaw channels status --probe
 
 回调地址为 `https://<GATEWAY_HOST>/wecom/kefu`。正常运行时快速返回 200，耗时处理在确认后按账号异步执行；账号映射、`open_kfid`、Runtime 或 `corpSecret` 尚未就绪时会进入有界重试，不会把未处理通知误判为成功。Gateway 停机时先拒绝新回调并返回 503，再等待已经确认的同步队列排空，避免“企微认为已送达、进程却尚未处理”的消息丢失。
 
+## 出站网络策略
+
+渠道级 `channels.wecom-kf.network` 可配置 `egressProxyUrl`、`timeoutMs`、`retries` 和
+`retryDelayMs`，账号级 `accounts.*.network` 可覆盖。只有 token、`sync_msg`、媒体下载和列表
+查询允许对 429、5xx、网络失败做有限重试；发送、转接、上传和创建客服链接保持单次调用，避免
+响应丢失时产生重复业务副作用。
+
+```text
+渠道 network + 账号 network
+            │ 合并
+            ▼
+固定出口代理 / 超时 / 重试预算
+            │
+      ┌─────┴──────────────┐
+      ▼                    ▼
+读与同步请求            写与副作用请求
+有限指数退避            不自动重试
+      └─────┬──────────────┘
+            ▼
+access_token、corpsecret、代理密码写日志前统一脱敏
+```
+
+```mermaid
+flowchart LR
+    C["渠道 network"] --> M["账号合并"]
+    A["账号 network"] --> M
+    M --> H["代理与超时"]
+    H --> D{"安全重试?"}
+    D -->|"读/同步"| R["有限退避"]
+    D -->|"业务写"| O["单次调用"]
+    R --> L["凭据脱敏日志"]
+    O --> L
+```
+
 ## 生产边界
 
 - 回调必须验签、解密、限制请求体，并对消息 ID 和游标做幂等处理。
