@@ -26,6 +26,8 @@ export function meituanConfig() {
           maxResponseBytes: 65_536,
           maxToolResultBytes: 32_768,
           maxRequestsPerMinute: 10,
+          maxConcurrentRequests: 2,
+          readRetryMaxAttempts: 2,
           ownerOnly: false,
         },
       },

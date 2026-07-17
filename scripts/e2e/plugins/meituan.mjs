@@ -43,7 +43,7 @@ export async function testMeituan(ctx, results) {
         throw new Error("Meituan Agent Turn did not perform exactly one tool-call round trip");
       }
       if (provider.metrics.requests !== 1) {
-        throw new Error(`Meituan POST must not be retried: ${provider.metrics.requests} requests`);
+        throw new Error(`Meituan successful read should use one POST: ${provider.metrics.requests} requests`);
       }
       const request = provider.metrics.lastRequest;
       const fields = request?.fields ?? {};
@@ -64,7 +64,7 @@ export async function testMeituan(ctx, results) {
     },
     {
       service: "local Meituan MTOp signature fixture + OpenAI-compatible tool-call fixture",
-      method: "tarball install + real Agent tool call + signed form + no POST retry + result transcript",
+      method: "tarball install + real Agent tool call + signed form + successful read + result transcript",
     },
     results,
   );

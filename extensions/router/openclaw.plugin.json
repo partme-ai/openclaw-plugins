@@ -76,6 +76,19 @@
         "additionalProperties": false,
         "properties": {
           "stateDir": { "type": "string", "minLength": 1 },
+          "stateEncryptionKeyEnv": {
+            "type": "string",
+            "pattern": "^[A-Z_][A-Z0-9_]{0,127}$",
+            "description": "Environment variable containing the current 32-byte Base64 or 64-character hex AES-256-GCM state key"
+          },
+          "statePreviousEncryptionKeyEnvs": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]{0,127}$" },
+            "default": [],
+            "description": "Previous state-key environment variables accepted only for online key rotation"
+          },
           "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 100, "default": 5 },
           "initialDelayMs": { "type": "integer", "minimum": 10, "maximum": 3600000, "default": 500 },
           "maxDelayMs": { "type": "integer", "minimum": 10, "maximum": 86400000, "default": 30000 },

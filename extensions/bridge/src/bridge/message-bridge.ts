@@ -104,6 +104,7 @@ export interface UnifiedMessage {
   media: Array<{ url: string; kind: string; mimeType: string; fileName?: string }>;
   /** @description 扩展元数据（含 sessionKey、bridge 标识、direction 等）。 */
   metadata?: Record<string, unknown>;
+  media?: UnifiedMessage["media"];
   /** @description 相对 Agent 的方向：用户入站或助手出站。 */
   direction: "inbound" | "outbound";
 }
@@ -227,7 +228,7 @@ export function buildMessage(params: {
     },
     contentType: "text",
     text: params.text ?? "",
-    media: [],
+    media: params.media ?? [],
     metadata: params.metadata,
     direction,
   };
@@ -247,6 +248,13 @@ export interface BridgeChannelConfig {
   topicPrefix?: string;
   /** @description 是否允许把 Bridge 上下文注入 Prompt；默认开启。 */
   contextInjection?: boolean;
+  /**
+   * @description 是否把宿主提供的远程媒体 URL 写入 MQ 信封；默认关闭。
+   *
+   * URL 可能含短期签名或对象存储查询参数，因此 Bridge 默认只保留媒体数量、类型和 MIME，
+   * 不复制地址。只有下游确实需要拉取媒体且 MQ ACL/留存策略满足要求时才应显式开启。
+   */
+  includeMediaUrls?: boolean;
 }
 
 /** @description Bridge 插件配置根：`channels` 键为 channelId。 */
@@ -281,6 +289,82 @@ function extractText(content: unknown): string | undefined {
     return text ? [text] : [];
   });
   return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
+/** 把未知值收窄为普通对象；Hook 元数据缺失或类型异常时返回空对象。 */
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+/**
+ * 从 OpenClaw 2026.7.1 `message_received.metadata` 提取远程媒体引用。
+ *
+ * 宿主同时提供 `mediaUrl/mediaUrls` 与 `mediaType/mediaTypes`。本函数最多处理 16 个条目，
+ * 只接受 HTTP(S) URL，并拒绝带 `user:password@host` 的地址。默认配置下 URL 用空串占位，
+ * 让信封仍能表达媒体类型而不把带签名的下载地址扩散到 MQ。
+ */
+function extractInboundMedia(
+  metadataValue: unknown,
+  includeUrls: boolean,
+): { media: UnifiedMessage["media"]; count: number; urlsIncluded: boolean } {
+  const metadata = asRecord(metadataValue);
+  const rawUrls = Array.isArray(metadata.mediaUrls)
+    ? metadata.mediaUrls
+    : metadata.mediaUrl !== undefined
+      ? [metadata.mediaUrl]
+      : [];
+  const rawTypes = Array.isArray(metadata.mediaTypes)
+    ? metadata.mediaTypes
+    : metadata.mediaType !== undefined
+      ? [metadata.mediaType]
+      : [];
+  const count = Math.min(16, Math.max(rawUrls.length, rawTypes.length));
+  const media: UnifiedMessage["media"] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const mimeType = readString(rawTypes[index]) ?? "application/octet-stream";
+    const kind = mimeType.startsWith("image/")
+      ? "image"
+      : mimeType.startsWith("audio/")
+        ? "audio"
+        : mimeType.startsWith("video/")
+          ? "video"
+          : "file";
+    let url = "";
+    if (includeUrls) {
+      const candidate = readString(rawUrls[index]);
+      if (candidate && candidate.length <= 4_096) {
+        try {
+          const parsed = new URL(candidate);
+          if ((parsed.protocol === "https:" || parsed.protocol === "http:") && !parsed.username && !parsed.password) {
+            url = parsed.toString();
+          }
+        } catch {
+          // 不合法或非 HTTP(S) 的引用不进入跨系统 MQ 信封；媒体计数仍会保留。
+        }
+      }
+    }
+    media.push({ url, kind, mimeType });
+  }
+
+  return { media, count, urlsIncluded: includeUrls && media.some((item) => item.url.length > 0) };
+}
+
+/**
+ * 依据宿主仍保留在 Hook 元数据中的群组字段推断会话类型。
+ * OpenClaw 2026.7.1 的 `PluginHookMessageContext` 不直接暴露 `isGroup`，因此无法确定时保持
+ * 历史兼容的 `direct`，但 Discord/Slack/群聊类事件会通过 guild/channel/group 元数据识别。
+ */
+function inferInboundChatType(metadataValue: unknown): "direct" | "group" {
+  const metadata = asRecord(metadataValue);
+  return metadata.isGroup === true
+    || readString(metadata.groupId) !== undefined
+    || readString(metadata.guildId) !== undefined
+    || readString(metadata.channelName) !== undefined
+    ? "group"
+    : "direct";
 }
 
 function resolveMqChannel(value: string | undefined): string {
@@ -329,9 +413,9 @@ export function validateBridgeConfig(config: BridgeConfig): void {
       throw new Error(`[openclaw-bridge] channels.${channelId} must be an object`);
     }
     const channelUnknown = Object.keys(channel).filter((key) =>
-      !["enabled", "forwardToMq", "mqChannel", "mqAccountId", "topicPrefix", "contextInjection"].includes(key));
+      !["enabled", "forwardToMq", "mqChannel", "mqAccountId", "topicPrefix", "contextInjection", "includeMediaUrls"].includes(key));
     if (channelUnknown.length > 0) throw new Error(`[openclaw-bridge] channels.${channelId} has unknown field: ${channelUnknown.join(", ")}`);
-    for (const name of ["enabled", "forwardToMq", "contextInjection"] as const) {
+    for (const name of ["enabled", "forwardToMq", "contextInjection", "includeMediaUrls"] as const) {
       if (channel[name] !== undefined && typeof channel[name] !== "boolean") {
         throw new Error(`[openclaw-bridge] channels.${channelId}.${name} must be a boolean`);
       }
@@ -497,8 +581,9 @@ class BridgeDeliveryDispatcher {
 
   /**
    * 显式 Service 生命周期和 Hook Runtime 的惰性启动共用此入口。
-   * OpenClaw 2026.7.1 会为消息 Hook 创建独立插件 Runtime，该 Runtime 不会启动 registerService；
-   * 因此 start 必须幂等，并允许首次 Hook 入队时启动当前实例的投递器。
+   * Gateway 在 Channel 启动完成后才启动插件 Service，因此 Channel 刚连通到 Service.start 之间存在
+   * 很短的事件窗口；直接调用 Hook 的测试也不会经过 Service 生命周期。start 必须幂等，并允许
+   * 首次 Hook 入队时惰性启动同一个投递器实例。
    */
   start(): void {
     if (this.accepting) return;
@@ -657,7 +742,9 @@ export function registerMessageBridge(api: OpenClawPluginApi): void {
     const channelConfig = config.channels?.[channelId];
     if (!channelConfig || channelConfig.enabled === false || channelConfig.forwardToMq === false) return;
     const text = extractText(event.content);
-    if (!text) return;
+    const media = extractInboundMedia(event.metadata, channelConfig.includeMediaUrls === true);
+    // 媒体消息可能没有文本；只有正文和媒体都不存在时才跳过空事件。
+    if (!text && media.count === 0) return;
     const sessionKey = ctx.sessionKey ?? event.sessionKey ?? ctx.conversationId ?? "";
     const accountId = ctx.accountId ?? "default";
     const identity = ctx.messageId ?? event.messageId ?? ctx.runId ?? event.runId ?? randomUUID();
@@ -667,11 +754,23 @@ export function registerMessageBridge(api: OpenClawPluginApi): void {
       agentId: "default",
       sessionKey,
       userId: ctx.senderId ?? event.senderId ?? event.from ?? "unknown",
-      text,
+      chatType: inferInboundChatType(event.metadata),
+      text: text ?? "",
+      media: media.media,
       messageId: stableMessageId("inbound", channelId, `${accountId}:${sessionKey}:${identity}`),
       traceId: readString(event.traceId) ?? deriveTraceId(channelId, accountId, "default", sessionKey),
       timestamp: event.timestamp,
-      metadata: { sessionKey, runId: ctx.runId ?? event.runId, sourceChannel: channelId, bridge: "openclaw-bridge", direction: "inbound" },
+      metadata: {
+        sessionKey,
+        runId: ctx.runId ?? event.runId,
+        sourceChannel: channelId,
+        bridge: "openclaw-bridge",
+        direction: "inbound",
+        ...(media.count > 0 ? {
+          mediaCount: media.count,
+          mediaUrlsIncluded: media.urlsIncluded,
+        } : {}),
+      },
     });
     dispatcher.enqueue({ channelConfig, sourceChannel: channelId, direction: "inbound", message });
   });

@@ -13,6 +13,7 @@ describe("resolveRouterConfig", () => {
       rules: [],
       audit: { enabled: true, logToConsole: false, maxEntries: 5_000 },
       delivery: {
+        statePreviousEncryptionKeyEnvs: [],
         maxAttempts: 5,
         initialDelayMs: 500,
         maxDelayMs: 30_000,
@@ -75,5 +76,31 @@ describe("resolveRouterConfig", () => {
     expect(() => resolveRouterConfig(api({
       rules: [{ id: "r", actions: [{ type: "forward", target: "mqtt", topc: "events" }] }],
     }))).toThrow(/unknown field.*topc/);
+  });
+
+  it("validates state encryption key environment references and rotation order", () => {
+    expect(resolveRouterConfig(api({
+      delivery: {
+        stateEncryptionKeyEnv: "ROUTER_STATE_KEY",
+        statePreviousEncryptionKeyEnvs: ["ROUTER_STATE_KEY_OLD"],
+      },
+    })).delivery).toMatchObject({
+      stateEncryptionKeyEnv: "ROUTER_STATE_KEY",
+      statePreviousEncryptionKeyEnvs: ["ROUTER_STATE_KEY_OLD"],
+    });
+    expect(() => resolveRouterConfig(api({
+      delivery: { stateEncryptionKeyEnv: "not-valid" },
+    }))).toThrow("environment variable name");
+    expect(() => resolveRouterConfig(api({
+      delivery: {
+        stateEncryptionKeyEnv: "ROUTER_STATE_KEY",
+        statePreviousEncryptionKeyEnvs: ["ROUTER_STATE_KEY"],
+      },
+    }))).toThrow("must not also be a previous key");
+    expect(() => resolveRouterConfig(api({
+      delivery: {
+        statePreviousEncryptionKeyEnvs: ["OLD_KEY", "OLD_KEY"],
+      },
+    }))).toThrow("must not contain duplicates");
   });
 });

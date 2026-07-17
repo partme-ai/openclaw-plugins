@@ -33,7 +33,7 @@ message_received / message_sent / reply_payload_sending
 │                                            ▼                 │
 │                              ┌────────────────────────┐      │
 │                              │ durable Outbox         │      │
-│                              │ atomic batch + fsync   │      │
+│                              │ optional AES-GCM+fsync │      │
 │                              └───────────┬────────────┘      │
 │                                          ▼                   │
 │                              bounded-concurrency worker       │
@@ -55,7 +55,7 @@ message_received / message_sent / reply_payload_sending
 flowchart LR
     Hooks["OpenClaw official Hooks<br/>message_received / message_sent / reply_payload_sending"]
     Match["Rule match and template expansion<br/>stable dedupe key + hop trace"]
-    Outbox[("Durable Outbox<br/>atomic batch enqueue")]
+    Outbox[("Durable Outbox<br/>optional AES-256-GCM + atomic enqueue")]
     Worker["Reliable delivery worker<br/>exponential backoff + jitter"]
     Adapter["OpenClaw Channel<br/>Outbound Adapter"]
     Target["Target IM / MQ plugin"]
@@ -81,6 +81,7 @@ The Outbox is the delivery source of truth. A pending task is removed and its de
 - **IM to MQ Forwarding** — Forward user messages and agent replies to message queue channels
 - **MQ to IM Replying** — Route agent replies back to specific IM channels and accounts
 - **Audit Logging** — Bounded persisted audit trail plus optional console logging
+- **Encryption at rest** — Optional AES-256-GCM state encryption with environment-only keys and previous-key rotation
 - **Operations API** — Authenticated status, DLQ inspection, and DLQ replay routes
 - **Pure Configuration** — No code changes needed in channel plugins
 
@@ -164,6 +165,8 @@ openclaw plugins install @partme.ai/openclaw-router
             "maxEntries": 5000
           },
           "delivery": {
+            "stateEncryptionKeyEnv": "OPENCLAW_ROUTER_STATE_KEY",
+            "statePreviousEncryptionKeyEnvs": [],
             "maxAttempts": 5,
             "initialDelayMs": 500,
             "maxDelayMs": 30000,
@@ -239,6 +242,37 @@ Default topics:
 | `delivery.lockHeartbeatMs` | `5000` | Active-writer lease heartbeat |
 | `delivery.lockTimeoutMs` | `30000` | Stale remote-writer lease timeout |
 | `delivery.stateDir` | `<OpenClaw state>/router` | Optional state directory override |
+| `delivery.stateEncryptionKeyEnv` | none | Environment variable containing the current AES-256-GCM state key |
+| `delivery.statePreviousEncryptionKeyEnvs` | `[]` | Previous key environment variables accepted during rotation, up to four |
+
+### State encryption and rotation
+
+The Outbox and DLQ contain message bodies and delivery targets. For sensitive production traffic, generate a 32-byte key and expose only its environment variable name in configuration:
+
+```bash
+export OPENCLAW_ROUTER_STATE_KEY="$(openssl rand -base64 32)"
+```
+
+```text
+openclaw.json ── environment variable name only
+       │
+       ▼
+Gateway environment ── 32-byte key ── AES-256-GCM
+                                          │
+                                          ▼
+ delivery-state.json = keyId + IV + AuthTag + Ciphertext
+```
+
+```mermaid
+flowchart LR
+    C["openclaw.json<br/>environment name only"] --> E["Gateway environment<br/>current key"]
+    E --> G["AES-256-GCM<br/>AAD + random IV"] --> S[("Encrypted state<br/>ciphertext + AuthTag + keyId")]
+    O["Previous key environment"] --> R{"Read old state"}
+    R -->|authenticated| W["Atomically rewrite with current key"] --> S
+    R -->|missing or invalid key| F["Fail closed on startup"]
+```
+
+For rotation, retain the old environment name in `statePreviousEncryptionKeyEnvs`, point `stateEncryptionKeyEnv` at the new key, and restart. The authenticated old state is immediately rewritten with the current primary key. Remove the previous key only after that rewrite succeeds.
 
 Operational routes use OpenClaw plugin authentication and exact matching:
 
@@ -284,6 +318,8 @@ Operational routes use OpenClaw plugin authentication and exact matching:
 - The file-backed state enforces one active writer with a cross-process lease; a second Router using the same state directory fails startup. Keep exactly one active Router globally. Active-active multi-Gateway routing requires strict upstream partitioning or an external transactional store/leader; separate state directories alone do not prevent duplicate routing.
 - A lock created by another hostname is never auto-stolen. After verifying that the remote Router is stopped, an operator must remove a genuinely orphaned `.writer.lock` manually.
 - Delivery is intentionally at-least-once: a process crash or timeout after the target accepts a message but before the success marker is persisted can cause redelivery. Timeout abort is best-effort because not every adapter honors `AbortSignal`; `/router/status` counts these as `unknownOutcomes`. Router passes its stable delivery ID as the outbound adapter `deliveryQueueId`; downstream channel/broker adapters should preserve equivalent idempotency when available. Direct broker topics use the explicit `openclaw-direct-topic:v1:` target contract, so ordinary OpenClaw durable replies carrying a `deliveryQueueId` still use their session mapper, reply topic and ACL path. If state rename succeeds but directory fsync fails, Router keeps the delivery committed, sets `durabilityUncertain=true`, and reports unhealthy until restart rather than enqueueing a duplicate retry.
+- `storeErrors` counts storage and scheduler failures, while `deliveredKeys` reports persisted dedupe keys still inside their TTL. Transient failures trigger bounded wake-up recovery; while the store is unreadable, health returns an unhealthy last-known low-sensitivity snapshot instead of reporting success. Repeated identical storage logs are throttled to 30 seconds.
+- Without `stateEncryptionKeyEnv`, the backward-compatible state format is `0600` plaintext JSON and should not be used for sensitive conversations on shared disks or unencrypted backups.
 
 ## Development
 

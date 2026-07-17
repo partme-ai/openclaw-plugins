@@ -5,7 +5,13 @@
  * 提交；进程/主机 lease 与心跳阻止多个 Gateway 同时写同一目录。存储同时执行载荷大小、
  * pending/DLQ 容量和去重 TTL 约束，并能识别“rename 已提交但目录持久性不确定”的结果。
  */
-import { randomUUID } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  randomUUID,
+} from "node:crypto";
 import { Buffer } from "node:buffer";
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
@@ -32,6 +38,22 @@ type RouterState = {
   deadLetters: RouteDeliveryTask[];
   audit: RouteAuditEntry[];
 };
+
+type StateEncryptionKey = { id: string; value: Buffer };
+
+type EncryptedRouterState = {
+  format: "openclaw-router-state";
+  version: 1;
+  encryption: {
+    algorithm: "aes-256-gcm";
+    keyId: string;
+    iv: string;
+    authTag: string;
+  };
+  ciphertext: string;
+};
+
+const STATE_AAD = Buffer.from("openclaw-router-state:v1", "utf8");
 
 type LeaseOwner = {
   token: string;
@@ -85,8 +107,7 @@ function assertTask(value: unknown, location: string): asserts value is RouteDel
   }
 }
 
-function parseState(raw: string): RouterState {
-  const value: unknown = JSON.parse(raw);
+function parseStateValue(value: unknown): RouterState {
   if (!isRecord(value) || value.version !== 1 || !isRecord(value.pending) || !isRecord(value.delivered) ||
     !Array.isArray(value.deadLetters) || !Array.isArray(value.audit)) {
     throw new Error("[router] unsupported or invalid delivery-state.json schema");
@@ -99,6 +120,99 @@ function parseState(raw: string): RouterState {
   return value as RouterState;
 }
 
+/**
+ * 解析 32 字节状态密钥。只返回环境变量名相关错误，绝不把真实密钥带入异常或日志。
+ */
+function readEncryptionKey(environmentName: string): StateEncryptionKey {
+  const encoded = process.env[environmentName]?.trim() ?? "";
+  let value: Buffer;
+  if (/^[a-f0-9]{64}$/iu.test(encoded)) {
+    value = Buffer.from(encoded, "hex");
+  } else if (/^[A-Za-z0-9+/]{43}=$/u.test(encoded)) {
+    value = Buffer.from(encoded, "base64");
+  } else {
+    throw new Error(
+      `[router] ${environmentName} must contain a 32-byte Base64 or 64-character hex key`,
+    );
+  }
+  if (value.length !== 32) {
+    throw new Error(`[router] ${environmentName} must decode to exactly 32 bytes`);
+  }
+  return {
+    id: createHash("sha256").update(value).digest("hex").slice(0, 16),
+    value,
+  };
+}
+
+function resolveEncryptionKeys(config: RouterConfig): StateEncryptionKey[] {
+  const names = [
+    config.delivery.stateEncryptionKeyEnv,
+    ...config.delivery.statePreviousEncryptionKeyEnvs,
+  ].filter((name): name is string => Boolean(name));
+  return names.map(readEncryptionKey);
+}
+
+function isEncryptedState(value: unknown): value is EncryptedRouterState {
+  if (!isRecord(value) || value.format !== "openclaw-router-state" || value.version !== 1 ||
+    !isRecord(value.encryption) || value.encryption.algorithm !== "aes-256-gcm") return false;
+  return typeof value.encryption.keyId === "string" && typeof value.encryption.iv === "string" &&
+    typeof value.encryption.authTag === "string" && typeof value.ciphertext === "string";
+}
+
+/** 解码明文或 AES-GCM 状态，并标记是否需要用当前主密钥重写。 */
+function decodeState(raw: string, keys: StateEncryptionKey[]): { state: RouterState; needsRewrite: boolean } {
+  const value: unknown = JSON.parse(raw);
+  if (!isEncryptedState(value)) {
+    return { state: parseStateValue(value), needsRewrite: keys.length > 0 };
+  }
+  if (keys.length === 0) {
+    throw new Error("[router] encrypted delivery state requires stateEncryptionKeyEnv");
+  }
+  const key = keys.find((candidate) => candidate.id === value.encryption.keyId);
+  if (!key) {
+    throw new Error("[router] no configured state encryption key matches the persisted keyId");
+  }
+  try {
+    const iv = Buffer.from(value.encryption.iv, "base64");
+    const authTag = Buffer.from(value.encryption.authTag, "base64");
+    const ciphertext = Buffer.from(value.ciphertext, "base64");
+    if (iv.length !== 12 || authTag.length !== 16 || ciphertext.length === 0) {
+      throw new Error("invalid encrypted envelope lengths");
+    }
+    const decipher = createDecipheriv("aes-256-gcm", key.value, iv);
+    decipher.setAAD(STATE_AAD);
+    decipher.setAuthTag(authTag);
+    const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return {
+      state: parseStateValue(JSON.parse(plaintext.toString("utf8")) as unknown),
+      needsRewrite: key.id !== keys[0]?.id,
+    };
+  } catch {
+    throw new Error("[router] failed to authenticate or decrypt delivery state");
+  }
+}
+
+function encodeState(state: RouterState, key: StateEncryptionKey | undefined): string {
+  const plaintext = Buffer.from(JSON.stringify(state), "utf8");
+  if (!key) return `${plaintext.toString("utf8")}\n`;
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key.value, iv);
+  cipher.setAAD(STATE_AAD);
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const envelope: EncryptedRouterState = {
+    format: "openclaw-router-state",
+    version: 1,
+    encryption: {
+      algorithm: "aes-256-gcm",
+      keyId: key.id,
+      iv: iv.toString("base64"),
+      authTag: cipher.getAuthTag().toString("base64"),
+    },
+    ciphertext: ciphertext.toString("base64"),
+  };
+  return `${JSON.stringify(envelope)}\n`;
+}
+
 /** 为可靠投递器提供串行、原子、单写者的磁盘状态机。 */
 export class DurableRouteStore {
   private readonly filePath: string;
@@ -106,6 +220,7 @@ export class DurableRouteStore {
   private readonly leaseDir: string;
   private readonly leaseOwnerPath: string;
   private readonly leaseOwner: LeaseOwner;
+  private readonly encryptionKeys: StateEncryptionKey[];
   private state: RouterState = EMPTY_STATE();
   private initialized = false;
   private operation: Promise<unknown> = Promise.resolve();
@@ -117,6 +232,7 @@ export class DurableRouteStore {
     this.filePath = join(stateDir, "delivery-state.json");
     this.leaseDir = join(stateDir, ".writer.lock");
     this.leaseOwnerPath = join(this.leaseDir, "owner.json");
+    this.encryptionKeys = resolveEncryptionKeys(config);
     const now = Date.now();
     this.leaseOwner = { token: randomUUID(), pid: process.pid, hostname: hostname(), startedAt: now, heartbeatAt: now };
   }
@@ -129,7 +245,9 @@ export class DurableRouteStore {
       await this.acquireLease();
       try {
         try {
-          this.state = parseState(await readFile(this.filePath, "utf8"));
+          const decoded = decodeState(await readFile(this.filePath, "utf8"), this.encryptionKeys);
+          this.state = decoded.state;
+          if (decoded.needsRewrite) await this.persist(this.state);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
@@ -332,7 +450,7 @@ export class DurableRouteStore {
     const temporary = `${this.filePath}.tmp-${process.pid}-${randomUUID()}`;
     const handle = await open(temporary, "wx", 0o600);
     try {
-      await handle.writeFile(`${JSON.stringify(state)}\n`, "utf8");
+      await handle.writeFile(encodeState(state, this.encryptionKeys[0]), "utf8");
       await handle.sync();
     } finally {
       await handle.close();

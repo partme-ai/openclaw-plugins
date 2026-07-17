@@ -33,7 +33,7 @@ message_received / message_sent / reply_payload_sending
 │                                      ▼                       │
 │                         ┌────────────────────────┐           │
 │                         │ 持久 Outbox            │           │
-│                         │ 原子批量写 + fsync     │           │
+│                         │ AES-GCM(可选)+原子 fsync│          │
 │                         └───────────┬────────────┘           │
 │                                     ▼                        │
 │                         有界并发 Worker                       │
@@ -55,7 +55,7 @@ message_received / message_sent / reply_payload_sending
 flowchart LR
     Hooks["OpenClaw 官方 Hooks<br/>message_received / message_sent / reply_payload_sending"]
     Match["规则匹配与模板展开<br/>稳定幂等键 + hop trace"]
-    Outbox[("持久 Outbox<br/>原子批量入队")]
+    Outbox[("持久 Outbox<br/>可选 AES-256-GCM + 原子批量入队")]
     Worker["可靠投递 Worker<br/>指数退避 + 抖动"]
     Adapter["OpenClaw Channel<br/>Outbound Adapter"]
     Target["目标 IM / MQ 插件"]
@@ -83,6 +83,7 @@ adapter 异常在进入日志、状态、审计和持久 DLQ 前统一脱敏 URL
 - **IM 到 MQ 转发** — 将用户消息和 Agent 回复转发到 MQ 渠道
 - **MQ 到 IM 回复** — 将 Agent 回复路由回指定 IM 渠道和账号
 - **审计日志** — 有界持久审计记录与可选控制台日志
+- **静态加密** — 可选 AES-256-GCM 状态加密，密钥只从环境变量读取，支持旧密钥平滑轮换
 - **运维 API** — 认证的状态、DLQ 查询和 DLQ 重放接口
 - **纯配置驱动** — 无需修改渠道插件代码
 - **轻量级** — 零外部依赖，基于 typed plugin hooks
@@ -167,6 +168,8 @@ openclaw plugins install @partme.ai/openclaw-router
             "maxEntries": 5000
           },
           "delivery": {
+            "stateEncryptionKeyEnv": "OPENCLAW_ROUTER_STATE_KEY",
+            "statePreviousEncryptionKeyEnvs": [],
             "maxAttempts": 5,
             "initialDelayMs": 500,
             "maxDelayMs": 30000,
@@ -242,6 +245,41 @@ openclaw plugins install @partme.ai/openclaw-router
 | `delivery.lockHeartbeatMs` | `5000` | 活跃写实例租约心跳间隔 |
 | `delivery.lockTimeoutMs` | `30000` | 远端失效写租约超时 |
 | `delivery.stateDir` | `<OpenClaw state>/router` | 可选状态目录 |
+| `delivery.stateEncryptionKeyEnv` | 无 | 当前 AES-256-GCM 状态密钥的环境变量名 |
+| `delivery.statePreviousEncryptionKeyEnvs` | `[]` | 轮换期间允许读取旧状态的密钥环境变量名，最多 4 个 |
+
+### 状态加密与密钥轮换
+
+Outbox、DLQ 会保存消息正文和收件目标。生产环境处理敏感会话时建议启用状态加密；真实密钥不得写入 `openclaw.json`，只配置环境变量名：
+
+```bash
+export OPENCLAW_ROUTER_STATE_KEY="$(openssl rand -base64 32)"
+```
+
+```text
+openclaw.json
+stateEncryptionKeyEnv = OPENCLAW_ROUTER_STATE_KEY
+        │ 仅保存环境变量名
+        ▼
+Gateway 环境 ──▶ 32 字节主密钥 ──▶ AES-256-GCM
+                                      │
+                                      ▼
+ delivery-state.json = keyId + IV + AuthTag + Ciphertext
+                                      │
+               明文消息正文/收件目标不写入状态文件
+```
+
+```mermaid
+flowchart LR
+    C["openclaw.json<br/>仅保存环境变量名"] --> E["Gateway 环境<br/>当前主密钥"]
+    E --> G["AES-256-GCM<br/>AAD + 随机 IV"]
+    G --> S[("delivery-state.json<br/>密文 + AuthTag + keyId")]
+    O["旧密钥环境变量"] --> R{"读取旧状态"}
+    R -->|认证解密成功| W["下一次提交自动使用当前主密钥重写"] --> S
+    R -->|无匹配密钥或认证失败| F["启动失败关闭"]
+```
+
+轮换顺序：先把旧环境变量名加入 `statePreviousEncryptionKeyEnvs`，再把 `stateEncryptionKeyEnv` 指向新密钥并重启；Router 读取旧密文后会立即用新主密钥原子重写。确认重写完成后，再移除旧密钥。不能直接删除仍在使用的旧密钥，否则插件会因无法认证状态文件而拒绝启动。
 
 运维接口均使用 OpenClaw 插件鉴权并精确匹配：
 
@@ -287,6 +325,8 @@ openclaw plugins install @partme.ai/openclaw-router
 - 文件状态目录通过跨进程租约强制单写；第二个 Router 使用相同目录时会启动失败。全局应只运行一个 active Router；多 Gateway 主动-主动必须严格分区，或使用外部事务存储/Leader，单纯分开状态目录不能阻止重复路由。
 - 不会自动抢占其他 hostname 创建的锁。确认远端 Router 已停止后，运维人员才可手动删除真正遗留的 `.writer.lock`。
 - 投递语义是 at-least-once：目标已接收、成功标记尚未落盘，或投递超时但目标稍后成功时，恢复/重试可能再次投递。超时取消是 best-effort，并非所有 adapter 都遵循 `AbortSignal`；`/router/status` 会计入 `unknownOutcomes`。Router 会把稳定投递 ID 传入 outbound adapter 的 `deliveryQueueId`，下游渠道或 Broker 支持时也应保持等价幂等语义。Broker 直达 Topic 使用显式的 `openclaw-direct-topic:v1:` target 契约，因此普通 OpenClaw durable reply 即使也携带 `deliveryQueueId`，仍会走 session mapper、replyTopic 和 ACL。若状态 rename 已成功但目录 fsync 失败，Router 保持该任务已投递、不生成重复重试，并设置 `durabilityUncertain=true`、保持 health 失败直至重启。
+- `storeErrors` 记录状态库/后台调度故障次数，`deliveredKeys` 展示 TTL 内的持久幂等键数量。瞬时故障会通过恢复定时器重新唤醒 pending；状态库不可读时 `/router/health` 返回不健康和最后一次低敏快照，而不是把异常误报为正常。重复存储错误日志按 30 秒节流。
+- 未配置状态加密时继续使用兼容的 `0600` 明文 JSON。该模式不适合把敏感会话长期留在共享磁盘或未加密备份中。
 
 ## 开发
 

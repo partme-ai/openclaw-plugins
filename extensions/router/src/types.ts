@@ -43,6 +43,10 @@ export interface RouterConfig {
   };
   delivery: {
     stateDir?: string;
+    /** 当前状态加密密钥的环境变量名；值必须是 32 字节 Base64 或 64 位十六进制。 */
+    stateEncryptionKeyEnv?: string;
+    /** 密钥轮换期间只用于读取旧状态的环境变量名；下一次提交会改用当前密钥。 */
+    statePreviousEncryptionKeyEnvs: string[];
     maxAttempts: number;
     initialDelayMs: number;
     maxDelayMs: number;

@@ -9,7 +9,12 @@ import { createHash, randomUUID } from "node:crypto";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
-import { CommittedPersistenceError, DurableRouteStore, type RouteAuditEntry } from "./durable-store.js";
+import {
+  CommittedPersistenceError,
+  DurableRouteStore,
+  type RouteAuditEntry,
+  type RouteStoreSnapshot,
+} from "./durable-store.js";
 import { redactRouterError } from "./redact.js";
 import type { PublishInboundParams, RouteAction, RouteDeliveryTask, RouterConfig } from "./types.js";
 
@@ -27,6 +32,8 @@ export type ReliableDispatcherStatus = {
   retries: number;
   deadLetters: number;
   pending: number;
+  /** 当前仍在 TTL 内的持久成功幂等键数量。 */
+  deliveredKeys: number;
   oldestPendingAt: number | null;
   nextAttemptAt: number | null;
   inflight: number;
@@ -34,6 +41,8 @@ export type ReliableDispatcherStatus = {
   lastError: string | null;
   lastErrorAt: number | null;
   unknownOutcomes: number;
+  /** 状态库读取、写入或调度失败的累计次数；成功恢复后健康度可以重新变绿。 */
+  storeErrors: number;
   durabilityUncertain: boolean;
 };
 
@@ -59,11 +68,29 @@ export class ReliableRouteDispatcher {
   private running = false;
   private drainPromise: Promise<void> | null = null;
   private retryTimer: NodeJS.Timeout | undefined;
-  private counters = { accepted: 0, duplicates: 0, delivered: 0, retries: 0, deadLetters: 0, unknownOutcomes: 0 };
+  private counters = {
+    accepted: 0,
+    duplicates: 0,
+    delivered: 0,
+    retries: 0,
+    deadLetters: 0,
+    unknownOutcomes: 0,
+    storeErrors: 0,
+  };
   private inflight = 0;
   private lastError: string | null = null;
   private lastErrorAt: number | null = null;
   private durabilityUncertain = false;
+  private lastStoreErrorLogAt = 0;
+  private lastStoreDiagnostic: string | null = null;
+  /** 状态库短暂不可读时仍返回最后一次低敏容量快照，而不是让健康端点自身崩溃。 */
+  private lastSnapshot: RouteStoreSnapshot = {
+    pending: 0,
+    deliveredKeys: 0,
+    deadLetters: 0,
+    oldestPendingAt: null,
+    nextAttemptAt: null,
+  };
 
   constructor(
     private readonly api: OpenClawPluginApi,
@@ -74,7 +101,11 @@ export class ReliableRouteDispatcher {
 
   async start(): Promise<void> {
     await this.store.initialize();
-    if (!this.publish) throw new Error("[router] Gateway send capability is unavailable");
+    if (!this.publish) {
+      // 初始化已经持有 writer lease；启动失败必须释放，否则同目录后续实例无法接管。
+      await this.store.close();
+      throw new Error("[router] Gateway send capability is unavailable");
+    }
     this.running = true;
     this.wake();
   }
@@ -83,8 +114,12 @@ export class ReliableRouteDispatcher {
     this.running = false;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
-    await this.drainPromise;
-    await this.store.close();
+    try {
+      await this.drainPromise;
+    } finally {
+      // 无论后台 drain 是否异常，服务停止都必须释放 heartbeat、文件句柄和 writer lease。
+      await this.store.close();
+    }
   }
 
   async enqueue(params: EnqueueParams): Promise<"enqueued" | "duplicate"> {
@@ -125,17 +160,28 @@ export class ReliableRouteDispatcher {
   }
 
   async status(): Promise<ReliableDispatcherStatus> {
-    const snapshot = await this.store.snapshot();
-    if (!this.durabilityUncertain && snapshot.pending === 0 && snapshot.deadLetters === 0 && this.inflight === 0) {
-      this.lastError = null;
-      this.lastErrorAt = null;
+    let snapshot = this.lastSnapshot;
+    let storeAvailable = true;
+    try {
+      snapshot = await this.store.snapshot();
+      this.lastSnapshot = snapshot;
+    } catch (error) {
+      storeAvailable = false;
+      this.recordStoreFailure(error, "status snapshot");
     }
-    const healthy = this.running && snapshot.deadLetters === 0 && this.lastError === null && !this.durabilityUncertain;
+    if (!this.durabilityUncertain && snapshot.pending === 0 && snapshot.deadLetters === 0 && this.inflight === 0) {
+      if (storeAvailable) {
+        this.lastError = null;
+        this.lastErrorAt = null;
+      }
+    }
+    const healthy = this.running && storeAvailable && snapshot.deadLetters === 0 && this.lastError === null && !this.durabilityUncertain;
     return {
       running: this.running,
       ...this.counters,
       deadLetters: snapshot.deadLetters,
       pending: snapshot.pending,
+      deliveredKeys: snapshot.deliveredKeys,
       oldestPendingAt: snapshot.oldestPendingAt,
       nextAttemptAt: snapshot.nextAttemptAt,
       inflight: this.inflight,
@@ -156,13 +202,15 @@ export class ReliableRouteDispatcher {
 
   private wake(): void {
     if (!this.running || this.drainPromise) return;
-    this.drainPromise = this.runDrain().finally(() => {
-      this.drainPromise = null;
-      if (this.running) void this.scheduleNext();
-    });
-    void this.drainPromise.catch((error: unknown) => {
-      this.api.logger.error(`[router] background delivery drain failed: ${errorMessage(error)}`);
-    });
+    // 把后台异常收敛为状态并继续调度，避免 rejected Promise 让 stop() 跳过 store.close()。
+    this.drainPromise = this.runDrain()
+      .catch((error: unknown) => {
+        this.recordStoreFailure(error, "background delivery drain");
+      })
+      .finally(() => {
+        this.drainPromise = null;
+        if (this.running) this.scheduleNextSafely();
+      });
   }
 
   private async runDrain(): Promise<void> {
@@ -257,5 +305,39 @@ export class ReliableRouteDispatcher {
       this.wake();
     }, delay);
     this.retryTimer.unref();
+  }
+
+  /**
+   * 调度快照失败时设置一个有界恢复定时器。没有这个兜底，瞬时磁盘错误后即使状态库恢复，
+   * pending 任务也要等到下一条新消息入队才会再次被唤醒。
+   */
+  private scheduleNextSafely(): void {
+    void this.scheduleNext().catch((error: unknown) => {
+      this.recordStoreFailure(error, "retry scheduling");
+      if (!this.running || this.retryTimer) return;
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = undefined;
+        this.wake();
+      }, Math.max(100, this.config.delivery.initialDelayMs));
+      this.retryTimer.unref();
+    });
+  }
+
+  /** 统一记录状态库故障；错误先脱敏，再进入状态与日志。 */
+  private recordStoreFailure(error: unknown, phase: string): void {
+    const diagnostic = errorMessage(error);
+    const now = Date.now();
+    this.counters.storeErrors += 1;
+    this.lastError = diagnostic;
+    this.lastErrorAt = now;
+    // 健康探针可能高频调用；相同磁盘故障最多每 30 秒写一次日志，避免故障期间日志风暴。
+    if (
+      diagnostic !== this.lastStoreDiagnostic ||
+      now - this.lastStoreErrorLogAt >= 30_000
+    ) {
+      this.api.logger.error(`[router] ${phase} failed: ${diagnostic}`);
+      this.lastStoreDiagnostic = diagnostic;
+      this.lastStoreErrorLogAt = now;
+    }
   }
 }

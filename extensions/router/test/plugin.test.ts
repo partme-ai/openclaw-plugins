@@ -16,7 +16,11 @@ async function harness() {
   const directory = await mkdtemp(join(tmpdir(), "openclaw-router-plugin-"));
   directories.push(directory);
   const hooks = new Map<string, (event: unknown, ctx: unknown) => Promise<void>>();
-  const routes = new Map<string, { handler: (req: any, res: any) => Promise<void> }>();
+  const routes = new Map<string, {
+    auth?: string;
+    match?: string;
+    handler: (req: any, res: any) => Promise<void>;
+  }>();
   let service: { start: () => Promise<void>; stop: () => Promise<void> } | undefined;
   const sendText = vi.fn().mockResolvedValue({ channel: "rabbitmq", messageId: "sent" });
   const api = {
@@ -39,7 +43,7 @@ async function harness() {
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     registerService(value: typeof service) { service = value; },
     on(name: string, handler: (event: unknown, ctx: unknown) => Promise<void>) { hooks.set(name, handler); },
-    registerHttpRoute(route: { path: string; handler: (req: any, res: any) => Promise<void> }) { routes.set(route.path, route); },
+    registerHttpRoute(route: { path: string; auth?: string; match?: string; handler: (req: any, res: any) => Promise<void> }) { routes.set(route.path, route); },
   };
   plugin.register(api as never);
   if (!service) throw new Error("service missing");
@@ -121,6 +125,10 @@ describe("router plugin", () => {
 
   it("exposes authenticated exact status route with GET-only semantics", async () => {
     const { routes, service } = await harness();
+    expect([...routes.values()]).toHaveLength(5);
+    for (const registered of routes.values()) {
+      expect(registered).toMatchObject({ auth: "plugin", match: "exact" });
+    }
     const route = routes.get("/router/status") as any;
     const response = { status: 0, headers: {}, body: "", setHeader: vi.fn(), writeHead(status: number, headers: object) { this.status = status; this.headers = headers; }, end(body: string) { this.body = body; } };
     await route.handler({ method: "GET" }, response);

@@ -17,6 +17,7 @@ const DEFAULTS: RouterConfig = {
   rules: [],
   audit: { enabled: true, logToConsole: false, maxEntries: 5_000 },
   delivery: {
+    statePreviousEncryptionKeyEnvs: [],
     maxAttempts: 5,
     initialDelayMs: 500,
     maxDelayMs: 30_000,
@@ -129,7 +130,8 @@ export function resolveRouterConfig(api: OpenClawPluginApi): RouterConfig {
   const delivery = isRecord(raw.delivery) ? raw.delivery : {};
   assertKnownKeys(audit, ["enabled", "logToConsole", "maxEntries"], "audit");
   assertKnownKeys(delivery, [
-    "stateDir", "maxAttempts", "initialDelayMs", "maxDelayMs", "backoffMultiplier", "jitter",
+    "stateDir", "stateEncryptionKeyEnv", "statePreviousEncryptionKeyEnvs",
+    "maxAttempts", "initialDelayMs", "maxDelayMs", "backoffMultiplier", "jitter",
     "dedupeTtlMs", "maxDeliveredKeys", "maxDeadLetters", "maxPendingTasks", "maxPayloadBytes",
     "maxHops", "publishTimeoutMs", "concurrency", "lockHeartbeatMs", "lockTimeoutMs",
   ], "delivery");
@@ -137,6 +139,20 @@ export function resolveRouterConfig(api: OpenClawPluginApi): RouterConfig {
   if (audit.logToConsole !== undefined && typeof audit.logToConsole !== "boolean") throw new Error("[router] audit.logToConsole must be a boolean");
   if (delivery.stateDir !== undefined && (typeof delivery.stateDir !== "string" || !delivery.stateDir.trim())) {
     throw new Error("[router] delivery.stateDir must be a non-empty string");
+  }
+  const stateEncryptionKeyEnv = environmentVariableName(
+    delivery.stateEncryptionKeyEnv,
+    "delivery.stateEncryptionKeyEnv",
+  );
+  const statePreviousEncryptionKeyEnvs = environmentVariableNames(
+    delivery.statePreviousEncryptionKeyEnvs,
+    "delivery.statePreviousEncryptionKeyEnvs",
+  );
+  if (
+    stateEncryptionKeyEnv &&
+    statePreviousEncryptionKeyEnvs.includes(stateEncryptionKeyEnv)
+  ) {
+    throw new Error("[router] current state encryption key must not also be a previous key");
   }
   const rules = Array.isArray(raw.rules) ? raw.rules.map(resolveRule) : [];
   if (rules.length > 1_000) throw new Error("[router] rules must contain at most 1000 entries");
@@ -158,6 +174,8 @@ export function resolveRouterConfig(api: OpenClawPluginApi): RouterConfig {
     },
     delivery: {
       ...(typeof delivery.stateDir === "string" && delivery.stateDir.trim() ? { stateDir: delivery.stateDir.trim() } : {}),
+      ...(stateEncryptionKeyEnv ? { stateEncryptionKeyEnv } : {}),
+      statePreviousEncryptionKeyEnvs,
       maxAttempts: Math.floor(finiteNumber(delivery.maxAttempts, DEFAULTS.delivery.maxAttempts, 1, 100, "delivery.maxAttempts")),
       initialDelayMs,
       maxDelayMs,
@@ -175,6 +193,29 @@ export function resolveRouterConfig(api: OpenClawPluginApi): RouterConfig {
       lockTimeoutMs,
     },
   };
+}
+
+/** 密钥只通过环境变量引用，避免真实 key 进入 openclaw.json、日志或状态接口。 */
+function environmentVariableName(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !/^[A-Z_][A-Z0-9_]{0,127}$/u.test(value.trim())) {
+    throw new Error(`[router] ${field} must be an environment variable name`);
+  }
+  return value.trim();
+}
+
+function environmentVariableNames(value: unknown, field: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 4) {
+    throw new Error(`[router] ${field} must be an array with at most 4 entries`);
+  }
+  const names = value.map((item, index) =>
+    environmentVariableName(item, `${field}[${index}]`) as string,
+  );
+  if (new Set(names).size !== names.length) {
+    throw new Error(`[router] ${field} must not contain duplicates`);
+  }
+  return names;
 }
 
 /** 解析持久化投递状态的绝对目录。 */

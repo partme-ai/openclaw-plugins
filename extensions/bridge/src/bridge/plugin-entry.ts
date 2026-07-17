@@ -52,6 +52,7 @@ const plugin = {
             mqAccountId: { type: "string" },
             topicPrefix: { type: "string", minLength: 1 },
             contextInjection: { type: "boolean", default: true },
+            includeMediaUrls: { type: "boolean", default: false },
           },
           additionalProperties: false,
         },

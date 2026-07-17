@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +16,7 @@ function config(overrides: Partial<RouterConfig["delivery"]> = {}): RouterConfig
     rules: [],
     audit: { enabled: true, logToConsole: false, maxEntries: 100 },
     delivery: {
+      statePreviousEncryptionKeyEnvs: [],
       maxAttempts: 3,
       initialDelayMs: 10,
       maxDelayMs: 20,
@@ -58,6 +59,8 @@ async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 1_000): Pr
 }
 
 afterEach(async () => {
+  delete process.env.ROUTER_TEST_STATE_KEY;
+  delete process.env.ROUTER_TEST_OLD_STATE_KEY;
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -77,7 +80,12 @@ describe("ReliableRouteDispatcher", () => {
     await expect(dispatcher.enqueue(request)).resolves.toBe("enqueued");
     await expect(dispatcher.enqueue(request)).resolves.toBe("duplicate");
     expect(publish).toHaveBeenCalledTimes(1);
-    expect(await dispatcher.status()).toMatchObject({ pending: 0, delivered: 1, duplicates: 1 });
+    expect(await dispatcher.status()).toMatchObject({
+      pending: 0,
+      delivered: 1,
+      deliveredKeys: 1,
+      duplicates: 1,
+    });
     await dispatcher.stop();
 
     const restarted = new ReliableRouteDispatcher(api(), resolved, new DurableRouteStore(directory, resolved), publish);
@@ -240,5 +248,180 @@ describe("ReliableRouteDispatcher", () => {
     const store = new DurableRouteStore(directory, config({ lockTimeoutMs: 500 }));
     await expect(store.initialize()).resolves.toBeUndefined();
     await store.close();
+  });
+
+  it("releases the writer lease when startup cannot publish", async () => {
+    const directory = await stateDir();
+    const resolved = config();
+    const failed = new ReliableRouteDispatcher(
+      api(),
+      resolved,
+      new DurableRouteStore(directory, resolved),
+      undefined,
+    );
+    await expect(failed.start()).rejects.toThrow("send capability is unavailable");
+
+    const replacement = new DurableRouteStore(directory, resolved);
+    await expect(replacement.initialize()).resolves.toBeUndefined();
+    await replacement.close();
+  });
+
+  it("recovers pending work after a transient background store read failure", async () => {
+    const directory = await stateDir();
+    const resolved = config();
+    const seed = new DurableRouteStore(directory, resolved);
+    await seed.enqueue({
+      id: "recover-after-read-error",
+      dedupeKey: "recover-after-read-error",
+      ruleId: "r",
+      actionType: "forward",
+      payload: { channel: "mqtt", content: "hello" },
+      attempts: 0,
+      createdAt: Date.now(),
+      nextAttemptAt: Date.now(),
+    });
+    await seed.close();
+
+    const store = new DurableRouteStore(directory, resolved);
+    const originalDue = store.due.bind(store);
+    vi.spyOn(store, "due")
+      .mockRejectedValueOnce(new Error("temporary state read failure"))
+      .mockImplementation(originalDue);
+    const publish = vi.fn().mockResolvedValue(undefined);
+    const dispatcher = new ReliableRouteDispatcher(api(), resolved, store, publish);
+    await dispatcher.start();
+    await waitFor(async () => (await dispatcher.status()).delivered === 1);
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(await dispatcher.status()).toMatchObject({
+      pending: 0,
+      healthy: true,
+      storeErrors: 1,
+    });
+    await dispatcher.stop();
+  });
+
+  it("returns an unhealthy low-sensitivity status when the store snapshot is unavailable", async () => {
+    const directory = await stateDir();
+    const resolved = config();
+    const store = new DurableRouteStore(directory, resolved);
+    const dispatcher = new ReliableRouteDispatcher(
+      api(),
+      resolved,
+      store,
+      vi.fn().mockResolvedValue(undefined),
+    );
+    await dispatcher.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    vi.spyOn(store, "snapshot").mockRejectedValueOnce(
+      new Error("disk failed Authorization: Bearer should-not-leak"),
+    );
+    await expect(dispatcher.status()).resolves.toMatchObject({
+      healthy: false,
+      storeErrors: 1,
+      lastError: expect.stringContaining("[REDACTED]"),
+    });
+    await expect(dispatcher.status()).resolves.toMatchObject({
+      healthy: true,
+      storeErrors: 1,
+      lastError: null,
+    });
+    await dispatcher.stop();
+  });
+
+  it("throttles repeated identical storage errors from health polling", async () => {
+    const directory = await stateDir();
+    const resolved = config();
+    const store = new DurableRouteStore(directory, resolved);
+    const pluginApi = api() as { logger: { error: ReturnType<typeof vi.fn> } };
+    const dispatcher = new ReliableRouteDispatcher(
+      pluginApi as never,
+      resolved,
+      store,
+      vi.fn().mockResolvedValue(undefined),
+    );
+    await dispatcher.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    vi.spyOn(store, "snapshot").mockRejectedValue(new Error("same disk failure"));
+    await dispatcher.status();
+    await expect(dispatcher.status()).resolves.toMatchObject({
+      healthy: false,
+      storeErrors: 2,
+    });
+    expect(pluginApi.logger.error).toHaveBeenCalledTimes(1);
+    await dispatcher.stop();
+  });
+
+  it("encrypts message state at rest and rotates from a previous key", async () => {
+    const directory = await stateDir();
+    const oldKey = Buffer.alloc(32, 1).toString("base64");
+    const newKey = Buffer.alloc(32, 2).toString("base64");
+    process.env.ROUTER_TEST_STATE_KEY = oldKey;
+    const oldConfig = config({
+      stateEncryptionKeyEnv: "ROUTER_TEST_STATE_KEY",
+      statePreviousEncryptionKeyEnvs: [],
+    });
+    const first = new DurableRouteStore(directory, oldConfig);
+    await first.enqueue({
+      id: "encrypted-task",
+      dedupeKey: "encrypted-task",
+      ruleId: "r",
+      actionType: "reply-via",
+      payload: { channel: "wecom", to: "sensitive-recipient", content: "sensitive-message-body" },
+      attempts: 0,
+      createdAt: Date.now(),
+      nextAttemptAt: Date.now(),
+    });
+    await first.close();
+    const encrypted = await readFile(join(directory, "delivery-state.json"), "utf8");
+    expect(encrypted).toContain('"algorithm":"aes-256-gcm"');
+    expect(encrypted).not.toMatch(/sensitive-message-body|sensitive-recipient/u);
+
+    process.env.ROUTER_TEST_OLD_STATE_KEY = oldKey;
+    process.env.ROUTER_TEST_STATE_KEY = newKey;
+    const rotatedConfig = config({
+      stateEncryptionKeyEnv: "ROUTER_TEST_STATE_KEY",
+      statePreviousEncryptionKeyEnvs: ["ROUTER_TEST_OLD_STATE_KEY"],
+    });
+    const rotated = new DurableRouteStore(directory, rotatedConfig);
+    await rotated.initialize();
+    expect(await rotated.snapshot()).toMatchObject({ pending: 1 });
+    await rotated.close();
+
+    delete process.env.ROUTER_TEST_OLD_STATE_KEY;
+    const currentOnly = new DurableRouteStore(
+      directory,
+      config({
+        stateEncryptionKeyEnv: "ROUTER_TEST_STATE_KEY",
+        statePreviousEncryptionKeyEnvs: [],
+      }),
+    );
+    await expect(currentOnly.initialize()).resolves.toBeUndefined();
+    expect(await currentOnly.snapshot()).toMatchObject({ pending: 1 });
+    await currentOnly.close();
+  });
+
+  it("fails closed when encrypted state has no matching key", async () => {
+    const directory = await stateDir();
+    process.env.ROUTER_TEST_STATE_KEY = Buffer.alloc(32, 3).toString("base64");
+    const encryptedConfig = config({
+      stateEncryptionKeyEnv: "ROUTER_TEST_STATE_KEY",
+      statePreviousEncryptionKeyEnvs: [],
+    });
+    const first = new DurableRouteStore(directory, encryptedConfig);
+    await first.enqueue({
+      id: "encrypted-task",
+      dedupeKey: "encrypted-task",
+      ruleId: "r",
+      actionType: "forward",
+      payload: { channel: "mqtt", content: "secret" },
+      attempts: 0,
+      createdAt: Date.now(),
+      nextAttemptAt: Date.now(),
+    });
+    await first.close();
+
+    process.env.ROUTER_TEST_STATE_KEY = Buffer.alloc(32, 4).toString("base64");
+    const wrongKey = new DurableRouteStore(directory, encryptedConfig);
+    await expect(wrongKey.initialize()).rejects.toThrow("no configured state encryption key");
   });
 });
