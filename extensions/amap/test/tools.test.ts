@@ -4,7 +4,8 @@ import type { AmapPluginConfig } from "../src/types.js";
 
 const config: AmapPluginConfig = {
   enabled: true, key: "test", apiBaseUrl: "https://restapi.amap.com", requestTimeoutMs: 1000,
-  retryAttempts: 0, maxResponseBytes: 1024, maxToolResultBytes: 1024, maxRequestsPerMinute: 10, ownerOnly: false,
+  retryAttempts: 0, maxResponseBytes: 1024, maxToolResultBytes: 1024, maxRequestsPerMinute: 10,
+  maxConcurrentRequests: 8, ownerOnly: false,
 };
 
 describe("createAmapTools", () => {

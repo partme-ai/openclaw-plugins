@@ -25,7 +25,7 @@ describe("meituan plugin entry", () => {
       enabled: true,
       developerId: "123",
       signKey: "key",
-      operations: [{ name: "query", apiPath: "/query", businessId: 1, requiresAuth: false }],
+      operations: [{ name: "query", apiPath: "/query", businessId: 1, requiresAuth: false, riskLevel: "read" }],
     };
     (api as any).logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
     plugin.register(api as never);

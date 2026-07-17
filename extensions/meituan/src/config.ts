@@ -29,6 +29,14 @@ const CONFIG_KEYS = new Set([
   "maxResponseBytes",
   "maxToolResultBytes",
   "maxRequestsPerMinute",
+  "maxConcurrentRequests",
+  "readRetryMaxAttempts",
+  "retryInitialDelayMs",
+  "retryMaxDelayMs",
+  "retryJitterRatio",
+  "requireWriteIdempotency",
+  "idempotencyTtlMs",
+  "maxIdempotencyEntries",
   "allowCustomApiBaseUrl",
   "ownerOnly",
 ]);
@@ -41,6 +49,7 @@ const OPERATION_KEYS = new Set([
   "requiresAuth",
   "riskLevel",
   "successCodes",
+  "idempotencyBizField",
 ]);
 
 /**
@@ -79,7 +88,9 @@ export function resolveMeituanConfig(
   assertOptionalBoolean(config.allowCustomApiBaseUrl, "allowCustomApiBaseUrl");
   assertOptionalBoolean(config.ownerOnly, "ownerOnly");
   assertOptionalBoolean(config.requireAccountBinding, "requireAccountBinding");
+  assertOptionalBoolean(config.requireWriteIdempotency, "requireWriteIdempotency");
   const allowCustomApiBaseUrl = config.allowCustomApiBaseUrl === true;
+  const requireWriteIdempotency = config.requireWriteIdempotency !== false;
   const version = readString(config.version, "version", 16, false) || "2";
   if (!/^[A-Za-z0-9._-]{1,16}$/.test(version)) {
     throw new Error("meituan.version contains unsupported characters");
@@ -104,6 +115,21 @@ export function resolveMeituanConfig(
     throw new Error("meituan.maxToolResultBytes must not exceed maxResponseBytes");
   }
 
+  const retryInitialDelayMs = readInteger(
+    config.retryInitialDelayMs,
+    "retryInitialDelayMs",
+    0,
+    10_000,
+    250,
+  );
+  const retryMaxDelayMs = readInteger(
+    config.retryMaxDelayMs,
+    "retryMaxDelayMs",
+    retryInitialDelayMs,
+    60_000,
+    2_000,
+  );
+
   return {
     enabled: true,
     developerId,
@@ -121,7 +147,7 @@ export function resolveMeituanConfig(
       allowCustomApiBaseUrl,
     ),
     version,
-    operations: readOperations(config.operations),
+    operations: readOperations(config.operations, requireWriteIdempotency),
     requestTimeoutMs: readInteger(
       config.requestTimeoutMs,
       "requestTimeoutMs",
@@ -144,6 +170,44 @@ export function resolveMeituanConfig(
       1,
       10_000,
       60,
+    ),
+    maxConcurrentRequests: readInteger(
+      config.maxConcurrentRequests,
+      "maxConcurrentRequests",
+      1,
+      128,
+      8,
+    ),
+    readRetryMaxAttempts: readInteger(
+      config.readRetryMaxAttempts,
+      "readRetryMaxAttempts",
+      1,
+      4,
+      2,
+    ),
+    retryInitialDelayMs,
+    retryMaxDelayMs,
+    retryJitterRatio: readNumber(
+      config.retryJitterRatio,
+      "retryJitterRatio",
+      0,
+      1,
+      0.2,
+    ),
+    requireWriteIdempotency,
+    idempotencyTtlMs: readInteger(
+      config.idempotencyTtlMs,
+      "idempotencyTtlMs",
+      60_000,
+      604_800_000,
+      86_400_000,
+    ),
+    maxIdempotencyEntries: readInteger(
+      config.maxIdempotencyEntries,
+      "maxIdempotencyEntries",
+      1,
+      100_000,
+      10_000,
     ),
     allowCustomApiBaseUrl,
     ownerOnly: config.ownerOnly !== false,
@@ -211,7 +275,10 @@ function readAccounts(
   });
 }
 
-function readOperations(value: unknown): MeituanOperation[] {
+function readOperations(
+  value: unknown,
+  requireWriteIdempotency: boolean,
+): MeituanOperation[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > 100) {
     throw new Error(
       "meituan.operations must contain between 1 and 100 operations",
@@ -261,6 +328,35 @@ function readOperations(value: unknown): MeituanOperation[] {
       operation.requiresAuth,
       `operations[${index}].requiresAuth`,
     );
+    const idempotencyBizField =
+      readString(
+        operation.idempotencyBizField,
+        `operations[${index}].idempotencyBizField`,
+        128,
+        false,
+      ) || undefined;
+    if (
+      idempotencyBizField &&
+      !/^[A-Za-z_][A-Za-z0-9_-]{0,127}$/u.test(idempotencyBizField)
+    ) {
+      throw new Error(
+        `meituan.operations[${index}].idempotencyBizField must name one top-level biz field`,
+      );
+    }
+    if (riskLevel === "read" && idempotencyBizField) {
+      throw new Error(
+        `meituan.operations[${index}].idempotencyBizField is only valid for write operations`,
+      );
+    }
+    if (
+      riskLevel === "write" &&
+      requireWriteIdempotency &&
+      !idempotencyBizField
+    ) {
+      throw new Error(
+        `meituan.operations[${index}] write operation requires idempotencyBizField`,
+      );
+    }
     return {
       name,
       apiPath,
@@ -275,6 +371,7 @@ function readOperations(value: unknown): MeituanOperation[] {
       requiresAuth: operation.requiresAuth !== false,
       riskLevel,
       successCodes: readSuccessCodes(operation.successCodes, index),
+      idempotencyBizField,
     };
   });
 }
@@ -370,6 +467,20 @@ function readInteger(
     );
   }
   return value as number;
+}
+
+function readNumber(
+  value: unknown,
+  name: string,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`meituan.${name} must be a number between ${min} and ${max}`);
+  }
+  return value;
 }
 
 function validateApiPath(value: string): string {

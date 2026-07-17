@@ -10,11 +10,22 @@ describe("resolveAmapConfig", () => {
     expect(resolveAmapConfig({ enabled: true }, { AMAP_WEB_SERVICE_KEY: "env-key" })?.key).toBe("env-key");
   });
 
+  it("reads the optional signature private key without requiring it", () => {
+    const unsigned = resolveAmapConfig({ enabled: true, key: "key" }, {});
+    const signed = resolveAmapConfig(
+      { enabled: true, key: "key" },
+      { AMAP_WEB_SERVICE_PRIVATE_KEY: "private" },
+    );
+    expect(unsigned?.privateKey).toBeUndefined();
+    expect(signed?.privateKey).toBe("private");
+  });
+
   it("rejects unsafe base URLs and invalid bounds", () => {
     expect(() => resolveAmapConfig({ enabled: true, key: "k", apiBaseUrl: "http://example.com" }, {})).toThrow("HTTPS");
     expect(() => resolveAmapConfig({ enabled: true, key: "k", apiBaseUrl: "https://metadata.internal" }, {})).toThrow("official");
     expect(() => resolveAmapConfig({ enabled: true, key: "k", apiBaseUrl: "https://restapi.amap.com:8443" }, {})).toThrow("custom port");
     expect(() => resolveAmapConfig({ enabled: true, key: "k", retryAttempts: 4 }, {})).toThrow("retryAttempts");
+    expect(() => resolveAmapConfig({ enabled: true, key: "k", maxConcurrentRequests: 0 }, {})).toThrow("maxConcurrentRequests");
     expect(() => resolveAmapConfig({ enabled: true, key: "k", maxResponseBytes: 1024, maxToolResultBytes: 2048 }, {})).toThrow("must not exceed");
   });
 
@@ -28,9 +39,14 @@ describe("resolveAmapConfig", () => {
     expect(() => resolveAmapConfig({ enabled: "true" }, {})).toThrow("enabled");
     expect(() => resolveAmapConfig({ enabled: true }, { AMAP_WEB_SERVICE_KEY: "x".repeat(257) })).toThrow("256");
     expect(() => resolveAmapConfig({ enabled: true, key: "unsafe\nkey" }, {})).toThrow("control characters");
+    expect(() => resolveAmapConfig({ enabled: true, key: "k", privateKey: "unsafe\nprivate" }, {})).toThrow("control characters");
   });
 
   it("when response bytes are reduced, derives a compatible tool-result limit", () => {
     expect(resolveAmapConfig({ enabled: true, key: "k", maxResponseBytes: 65_536 }, {})?.maxToolResultBytes).toBe(65_536);
+  });
+
+  it("uses a bounded default concurrency", () => {
+    expect(resolveAmapConfig({ enabled: true, key: "k" }, {})?.maxConcurrentRequests).toBe(8);
   });
 });

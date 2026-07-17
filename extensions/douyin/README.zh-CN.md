@@ -59,6 +59,8 @@ flowchart LR
 
 Webhook 入站与 OpenAPI 业务动作是两条不同链路：前者先持久接管、再异步派发，后者按接口幂等属性决定是否允许重试。Inbox 文件位于 OpenClaw state 目录，目录权限 0700、文件权限 0600；消息成功或被策略终止后会从 Inbox 删除。
 
+这里的“派发失败”特指 OpenClaw 消息管道返回 `error`、`timed_out`、`skipped`，或插件在调用管道前后抛出异常。若 OpenClaw 已把一次 Agent Turn（包括内部模型错误处理）归类为 `completed`，插件没有可靠协议判断它是否应再次执行，Inbox 会按终态删除，避免把可能已经产生副作用的任务盲目重放。
+
 ## Webhook 确认与去重时序
 
 ```mermaid

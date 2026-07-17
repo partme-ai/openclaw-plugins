@@ -21,6 +21,7 @@ const config: RednodePluginConfig = {
   maxResponseBytes: 1024,
   maxToolResultBytes: 1024,
   maxRequestsPerMinute: 10,
+  maxConcurrentRequests: 2,
   getRetryMaxAttempts: 3,
   retryInitialDelayMs: 100,
   retryMaxDelayMs: 1000,

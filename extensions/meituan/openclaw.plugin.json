@@ -102,6 +102,11 @@
                 "pattern": "^[A-Za-z0-9._-]{1,64}$"
               },
               "default": ["OP_SUCCESS"]
+            },
+            "idempotencyBizField": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,127}$",
+              "description": "Required by default for write operations; names the top-level biz field used for bounded local duplicate suppression"
             }
           }
         }
@@ -135,6 +140,54 @@
         "minimum": 1,
         "maximum": 10000,
         "default": 60
+      },
+      "maxConcurrentRequests": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 128,
+        "default": 8
+      },
+      "readRetryMaxAttempts": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 4,
+        "default": 2,
+        "description": "Total attempts for read operations; write operations are always attempted once"
+      },
+      "retryInitialDelayMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10000,
+        "default": 250
+      },
+      "retryMaxDelayMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 60000,
+        "default": 2000
+      },
+      "retryJitterRatio": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.2
+      },
+      "requireWriteIdempotency": {
+        "type": "boolean",
+        "default": true,
+        "description": "Require every write operation to declare idempotencyBizField"
+      },
+      "idempotencyTtlMs": {
+        "type": "integer",
+        "minimum": 60000,
+        "maximum": 604800000,
+        "default": 86400000
+      },
+      "maxIdempotencyEntries": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100000,
+        "default": 10000
       },
       "allowCustomApiBaseUrl": {
         "type": "boolean",

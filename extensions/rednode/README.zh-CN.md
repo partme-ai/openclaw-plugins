@@ -24,7 +24,8 @@ OpenClaw 2026.7.1 的小红书 Ark Open API capability。它不是小红书私�
 │       │ ownerOnly → operation 白名单 → POST/PUT confirm=true       │
 │       ▼                                                            │
 │  RednodeClient                                                     │
-│       │ 路径/参数/请求大小校验 → timestamp/app-key/sign → 本地限流 │
+│       │ 路径/参数/请求大小 → 并发闸门 → 本地限流 → 签名          │
+│       │ 禁止 3xx 跟随；认证 Header 只发往配置可信 Origin         │
 │       │ GET: 网络/500/502 有界重试；POST/PUT: 始终只执行一次        │
 │       ▼                                                            │
 │  响应流上限 → success:Boolean → 双层错误脱敏 → Tool Result 上限    │
@@ -48,14 +49,15 @@ flowchart LR
     X -->|否| D
     X -->|是| S["Ark 路径 + Query + Header 签名"]
     C -->|GET| S
-    S --> L["单进程滑动窗口限流"]
+    S --> Q["并发上限<br/>快速失败，不无界排队"]
+    Q --> L["单进程滑动窗口限流"]
     L --> A["小红书 Ark Open API"]
     A --> B["maxResponseBytes + 严格 success:Boolean"]
     B --> R["maxToolResultBytes<br/>模型上下文边界"]
     R --> U
 ```
 
-凭据只进入 `app-key` Header 和本地 MD5 签名计算，不写入 URL 或错误信息。客户端和 Tool 最终出口都会遮蔽 URL 用户信息、Bearer、认证字段、签名字段以及真实 AppKey/AppSecret。默认只允许当前环境对应的官方 Host；如部署可信 HTTPS 代理，必须显式设置 `allowCustomApiBaseUrl=true`。
+凭据只进入 `app-key` Header 和本地 MD5 签名计算，不写入 URL 或错误信息。客户端强制 `redirect: manual`，因此带有 `app-key`、`timestamp`、`sign` 的请求不会被 Fetch 自动转发到 3xx 目标。客户端和 Tool 最终出口都会遮蔽 URL 用户信息、Bearer、认证字段、签名字段以及真实 AppKey/AppSecret。默认只允许当前环境对应的官方 Host；如部署可信 HTTPS 代理，必须显式设置 `allowCustomApiBaseUrl=true`。
 
 ## 真实协议
 
@@ -158,6 +160,7 @@ flowchart TD
 | ----------------------- | --------: | --------------------------------------------------- |
 | `ownerOnly`             |    `true` | 只允许命令 Owner 调用工具                           |
 | `maxRequestsPerMinute`  |      `60` | 单 Gateway 进程的真实 HTTP 尝试上限，GET 重试也计数 |
+| `maxConcurrentRequests` |       `8` | 同时执行的 Ark 调用上限；达到上限立即失败，不无界排队 |
 | `requestTimeoutMs`      |   `30000` | 每次 HTTP 尝试的超时                                |
 | `maxRequestBytes`       |   `65536` | 请求 URL 或 JSON Body 的独立大小上限                |
 | `maxResponseBytes`      | `2097152` | 流式读取响应时的硬上限                              |
@@ -171,6 +174,8 @@ flowchart TD
 也可通过 `XHS_APP_KEY`、`XHS_APP_SECRET` 注入凭据。插件默认关闭、默认 owner-only，不接受 Agent 自由输入 URL。
 
 插件只注册 `rednode_ark_invoke`。查询参数放 `query`，路径占位参数放 `path_params`，JSON 请求体放 `body`。本地限流仅针对单进程，多 Gateway 需在上游集中限流。
+
+`RednodeClient.status()` 提供同一执行进程内的低敏计数，适合嵌入式诊断和测试，但插件不把它伪装成 Gateway 全局状态接口：OpenClaw CLI Agent 可能在独立进程执行 Tool，Gateway 内存无法代表其他进程。生产多进程/多 Gateway 指标必须接入共享指标后端；全局配额应由可信出口代理或集中限流服务控制。
 
 配置解析会拒绝非对象根配置、顶层和 operation 中的未知字段，并严格校验 `enabled`、`ownerOnly`、`allowCustomApiBaseUrl` 的布尔类型，避免字符串形式的安全开关被静默解释成默认值。凭据和参数拒绝控制字符，路径/查询拒绝 `NaN`、无穷数等非有限值。远程自定义 Origin 默认拒绝；回环地址仅用于本地契约测试。响应超过上限时会立即取消流，避免继续下载无用数据占用连接和内存。
 

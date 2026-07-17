@@ -7,7 +7,7 @@ import plugin from "../src/index.js";
 createManifestSmokeTests(pluginRootFromTestFile(import.meta.url), { expectedId: "rednode", requireChannels: false });
 
 describe("rednode plugin", () => {
-  it("declares and registers one tool without channel or routes", () => {
+  it("declares and registers one tool without channel or misleading process-local routes", () => {
     const manifest = JSON.parse(readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"));
     expect(manifest.contracts.tools).toEqual(["rednode_ark_invoke"]);
     const registerHttpRoute = vi.fn();

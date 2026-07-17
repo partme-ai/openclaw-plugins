@@ -18,6 +18,7 @@ describe("resolveRednodeConfig", () => {
       expect.objectContaining({
         apiBaseUrl: "https://ark.xiaohongshu.com",
         ownerOnly: true,
+        maxConcurrentRequests: 8,
       }),
     );
   });
@@ -127,6 +128,9 @@ describe("resolveRednodeConfig", () => {
     expect(() =>
       resolveRednodeConfig({ ...base, retryJitterRatio: 2 }, {}),
     ).toThrow("retryJitterRatio");
+    expect(() =>
+      resolveRednodeConfig({ ...base, maxConcurrentRequests: 0 }, {}),
+    ).toThrow("maxConcurrentRequests");
     expect(() =>
       resolveRednodeConfig(
         {

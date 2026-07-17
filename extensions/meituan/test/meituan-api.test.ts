@@ -31,6 +31,14 @@ const config: MeituanPluginConfig = {
   maxResponseBytes: 1024,
   maxToolResultBytes: 1024,
   maxRequestsPerMinute: 2,
+  maxConcurrentRequests: 8,
+  readRetryMaxAttempts: 2,
+  retryInitialDelayMs: 0,
+  retryMaxDelayMs: 0,
+  retryJitterRatio: 0,
+  requireWriteIdempotency: true,
+  idempotencyTtlMs: 60_000,
+  maxIdempotencyEntries: 100,
   allowCustomApiBaseUrl: false,
   ownerOnly: false,
 };
@@ -67,6 +75,7 @@ describe("MeituanClient", () => {
     expect((init?.headers as Record<string, string>)["DeveloperId"]).toBe(
       "123456",
     );
+    expect(init?.redirect).toBe("manual");
   });
 
   it("completes a real local HTTP form round trip", async () => {
@@ -166,7 +175,7 @@ describe("MeituanClient", () => {
     ).rejects.toThrow("missing a string code");
   });
 
-  it("checks the complete encoded form size and never retries POST", async () => {
+  it("checks the complete encoded form size and retries only read transport failures", async () => {
     const fetchMock = vi.fn(async () => {
       throw new Error("temporary failure");
     });
@@ -174,7 +183,7 @@ describe("MeituanClient", () => {
     await expect(
       new MeituanClient(config).invoke("receipt_query", {}),
     ).rejects.toThrow("temporary failure");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     const oversized = {
       ...config,
@@ -184,6 +193,108 @@ describe("MeituanClient", () => {
     await expect(
       new MeituanClient(oversized).invoke("receipt_query", {}),
     ).rejects.toThrow("complete form payload");
+  });
+
+  it("retries temporary read HTTP statuses but never retries a write operation", async () => {
+    const readFetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("busy", { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: "OP_SUCCESS" })),
+      );
+    const readClient = new MeituanClient(config, {
+      fetch: readFetch,
+      sleep: async () => undefined,
+    });
+    await expect(readClient.invoke("receipt_query", {})).resolves.toEqual({
+      code: "OP_SUCCESS",
+    });
+    expect(readFetch).toHaveBeenCalledTimes(2);
+
+    const writeOperation = {
+      ...config.operations[0]!,
+      name: "refund",
+      riskLevel: "write" as const,
+      idempotencyBizField: "orderId",
+    };
+    const writeFetch = vi.fn(async () => new Response("busy", { status: 503 }));
+    const writeClient = new MeituanClient(
+      { ...config, operations: [writeOperation] },
+      { fetch: writeFetch },
+    );
+    await expect(writeClient.invoke("refund", { orderId: "order-1" })).rejects.toThrow(
+      "HTTP 503",
+    );
+    expect(writeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses duplicate writes with a bounded TTL ledger", async () => {
+    let now = 1_000;
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ code: "OP_SUCCESS" })),
+    );
+    const writeOperation = {
+      ...config.operations[0]!,
+      name: "refund",
+      riskLevel: "write" as const,
+      idempotencyBizField: "orderId",
+    };
+    const client = new MeituanClient(
+      { ...config, operations: [writeOperation], maxIdempotencyEntries: 1 },
+      { fetch: fetchMock, now: () => now },
+    );
+    await client.invoke("refund", { orderId: "order-1" });
+    await expect(client.invoke("refund", { orderId: "order-1" })).rejects.toThrow(
+      "duplicate write",
+    );
+    await expect(client.invoke("refund", { orderId: "order-2" })).rejects.toThrow(
+      "ledger is full",
+    );
+    expect(client.status()).toEqual(
+      expect.objectContaining({
+        idempotencyEntries: 1,
+        duplicateWriteRejectedTotal: 1,
+      }),
+    );
+
+    now += 60_001;
+    await client.invoke("refund", { orderId: "order-2" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires a valid write idempotency value and fails fast at the concurrency cap", async () => {
+    const writeOperation = {
+      ...config.operations[0]!,
+      name: "refund",
+      riskLevel: "write" as const,
+      idempotencyBizField: "orderId",
+    };
+    const writeClient = new MeituanClient({ ...config, operations: [writeOperation] });
+    await expect(writeClient.invoke("refund", {})).rejects.toThrow("biz.orderId");
+
+    let release: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchMock = vi.fn(async () => {
+      await pending;
+      return new Response(JSON.stringify({ code: "OP_SUCCESS" }));
+    });
+    const readClient = new MeituanClient(
+      { ...config, maxConcurrentRequests: 1 },
+      { fetch: fetchMock },
+    );
+    const first = readClient.invoke("receipt_query", {});
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await expect(readClient.invoke("receipt_query", {})).rejects.toThrow(
+      "concurrent request limit",
+    );
+    expect(readClient.status()).toEqual(
+      expect.objectContaining({ activeRequests: 1, concurrencyRejectedTotal: 1 }),
+    );
+    release?.();
+    await first;
+    expect(readClient.status().activeRequests).toBe(0);
   });
 
   it("does not expose credentials echoed by a proxy network error", async () => {

@@ -40,6 +40,8 @@ flowchart LR
 
 If Inbox persistence or capacity checks fail, the handler returns 503 rather than acknowledging data it has not durably accepted. State is stored with 0700 directory and 0600 file permissions and is removed after terminal processing. `GET /douyin/status` exposes sanitized queue counts; authenticated administrators can replay dead letters with `POST /douyin/replay-dead-letters?account=default&limit=100`.
 
+Retryable dispatch failure means the OpenClaw message pipeline returned `error`, `timed_out`, or `skipped`, or the plugin call itself threw. If OpenClaw classifies an Agent Turn—including its internal model-error handling—as `completed`, the Inbox treats it as terminal because blindly replaying a possibly side-effecting turn would be unsafe.
+
 ## Configuration
 
 ```jsonc

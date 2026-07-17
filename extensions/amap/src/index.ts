@@ -28,8 +28,8 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
   },
 });
 
-export { AmapClient, AmapApiError } from "./amap/amap-api.js";
+export { AmapClient, AmapApiError, signAmapRequest } from "./amap/amap-api.js";
 export { resolveAmapConfig } from "./config.js";
 export { createAmapTools, AMAP_TOOL_NAMES } from "./tools/tools.js";
-export type { AmapPluginConfig, AmapApiResponse } from "./types.js";
+export type { AmapPluginConfig, AmapApiResponse, AmapClientStatus } from "./types.js";
 export default plugin;

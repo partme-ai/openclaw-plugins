@@ -8,8 +8,9 @@ import type { AmapPluginConfig } from "./types.js";
 
 const DEFAULT_BASE_URL = "https://restapi.amap.com";
 const CONFIG_KEYS = new Set([
-  "enabled", "key", "apiBaseUrl", "requestTimeoutMs", "retryAttempts",
-  "maxResponseBytes", "maxToolResultBytes", "maxRequestsPerMinute", "ownerOnly",
+  "enabled", "key", "privateKey", "apiBaseUrl", "requestTimeoutMs", "retryAttempts",
+  "maxResponseBytes", "maxToolResultBytes", "maxRequestsPerMinute", "maxConcurrentRequests",
+  "ownerOnly",
 ]);
 
 /**
@@ -37,6 +38,15 @@ export function resolveAmapConfig(
   const key = configuredKey || environmentKey;
   if (!key) throw new Error("amap.key is required (or set AMAP_WEB_SERVICE_KEY)");
   if (/[\u0000-\u001F\u007F]/u.test(key)) throw new Error("amap.key must not contain control characters");
+  const configuredPrivateKey = readString(config.privateKey, "privateKey", 512, false);
+  const environmentPrivateKey = env.AMAP_WEB_SERVICE_PRIVATE_KEY?.trim() ?? "";
+  if (environmentPrivateKey.length > 512) {
+    throw new Error("AMAP_WEB_SERVICE_PRIVATE_KEY must not exceed 512 characters");
+  }
+  const privateKey = configuredPrivateKey || environmentPrivateKey || undefined;
+  if (privateKey && /[\u0000-\u001F\u007F]/u.test(privateKey)) {
+    throw new Error("amap.privateKey must not contain control characters");
+  }
   const apiBaseUrl = validateBaseUrl(readString(config.apiBaseUrl, "apiBaseUrl", 2048, false) || DEFAULT_BASE_URL);
   const maxResponseBytes = readInteger(config.maxResponseBytes, "maxResponseBytes", 1_024, 5_242_880, 1_048_576);
   // 调小上游响应上限时，未显式配置的 Tool 上限随之收紧，避免安全默认值反而令旧配置无法启动。
@@ -53,12 +63,14 @@ export function resolveAmapConfig(
   return {
     enabled: true,
     key,
+    privateKey,
     apiBaseUrl,
     requestTimeoutMs: readInteger(config.requestTimeoutMs, "requestTimeoutMs", 500, 30_000, 8_000),
     retryAttempts: readInteger(config.retryAttempts, "retryAttempts", 0, 3, 1),
     maxResponseBytes,
     maxToolResultBytes,
     maxRequestsPerMinute: readInteger(config.maxRequestsPerMinute, "maxRequestsPerMinute", 1, 10_000, 120),
+    maxConcurrentRequests: readInteger(config.maxConcurrentRequests, "maxConcurrentRequests", 1, 128, 8),
     ownerOnly: config.ownerOnly === true,
   };
 }

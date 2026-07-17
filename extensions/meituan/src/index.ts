@@ -41,5 +41,11 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 export { bindMeituanAccount, resolveMeituanConfig } from "./config.js";
 export { MeituanApiError, MeituanClient, signMeituanParams };
 export { createMeituanTool, MEITUAN_TOOL_NAME } from "./tools/tools.js";
-export type { MeituanAccountCredential, MeituanApiResponse, MeituanOperation, MeituanPluginConfig } from "./types.js";
+export type {
+  MeituanAccountCredential,
+  MeituanApiResponse,
+  MeituanClientStatus,
+  MeituanOperation,
+  MeituanPluginConfig,
+} from "./types.js";
 export default plugin;

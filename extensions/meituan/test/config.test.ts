@@ -5,6 +5,7 @@ const operation = {
   name: "receipt_query",
   apiPath: "/api/receipt/query",
   businessId: 7,
+  idempotencyBizField: "requestId",
 };
 
 describe("resolveMeituanConfig", () => {
@@ -37,6 +38,19 @@ describe("resolveMeituanConfig", () => {
       expect.objectContaining({
         riskLevel: "write",
         successCodes: ["OP_SUCCESS"],
+        idempotencyBizField: "requestId",
+      }),
+    );
+    expect(config).toEqual(
+      expect.objectContaining({
+        maxConcurrentRequests: 8,
+        readRetryMaxAttempts: 2,
+        retryInitialDelayMs: 250,
+        retryMaxDelayMs: 2_000,
+        retryJitterRatio: 0.2,
+        requireWriteIdempotency: true,
+        idempotencyTtlMs: 86_400_000,
+        maxIdempotencyEntries: 10_000,
       }),
     );
   });
@@ -145,6 +159,64 @@ describe("resolveMeituanConfig", () => {
         {},
       ),
     ).toThrow("boolean");
+  });
+
+  it("requires a top-level idempotency field for writes by default", () => {
+    const base = { enabled: true, developerId: "123", signKey: "key" };
+    const withoutIdempotency = {
+      name: "refund",
+      apiPath: "/api/refund",
+      businessId: 8,
+      riskLevel: "write",
+    };
+    expect(() =>
+      resolveMeituanConfig({ ...base, operations: [withoutIdempotency] }, {}),
+    ).toThrow("requires idempotencyBizField");
+    expect(() =>
+      resolveMeituanConfig(
+        {
+          ...base,
+          operations: [
+            { ...operation, riskLevel: "read", idempotencyBizField: "requestId" },
+          ],
+        },
+        {},
+      ),
+    ).toThrow("only valid for write");
+    expect(
+      resolveMeituanConfig(
+        {
+          ...base,
+          requireWriteIdempotency: false,
+          operations: [withoutIdempotency],
+        },
+        {},
+      )?.operations[0]?.riskLevel,
+    ).toBe("write");
+  });
+
+  it("validates retry, concurrency and idempotency capacity boundaries", () => {
+    const base = {
+      enabled: true,
+      developerId: "123",
+      signKey: "key",
+      operations: [operation],
+    };
+    expect(() => resolveMeituanConfig({ ...base, maxConcurrentRequests: 0 }, {})).toThrow(
+      "maxConcurrentRequests",
+    );
+    expect(() =>
+      resolveMeituanConfig(
+        { ...base, retryInitialDelayMs: 500, retryMaxDelayMs: 100 },
+        {},
+      ),
+    ).toThrow("retryMaxDelayMs");
+    expect(() => resolveMeituanConfig({ ...base, retryJitterRatio: 1.1 }, {})).toThrow(
+      "retryJitterRatio",
+    );
+    expect(() => resolveMeituanConfig({ ...base, maxIdempotencyEntries: 0 }, {})).toThrow(
+      "maxIdempotencyEntries",
+    );
   });
 
   it("validates secret hygiene and derives a compatible Tool result limit", () => {

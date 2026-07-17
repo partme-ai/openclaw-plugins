@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { safeRednodeError } from "../shared/safe-error.js";
 import type {
   RednodeApiResponse,
+  RednodeClientStatus,
   RednodeOperation,
   RednodePluginConfig,
 } from "../types.js";
@@ -46,6 +47,15 @@ export class RednodeClient {
   private readonly operations = new Map<string, RednodeOperation>();
   private readonly requestTimestamps: number[] = [];
   private readonly dependencies: RednodeClientDependencies;
+  private activeRequests = 0;
+  private attemptsTotal = 0;
+  private successfulInvocationsTotal = 0;
+  private failedInvocationsTotal = 0;
+  private concurrencyRejectedTotal = 0;
+  private rateLimitRejectedTotal = 0;
+  private lastSuccessAt: number | null = null;
+  private lastErrorAt: number | null = null;
+  private lastError: string | null = null;
 
   constructor(
     private readonly config: RednodePluginConfig,
@@ -58,6 +68,25 @@ export class RednodeClient {
 
   getOperation(name: string): RednodeOperation | undefined {
     return this.operations.get(name);
+  }
+
+  /** 返回不含请求参数、业务响应和凭据的低敏运行状态。 */
+  status(): RednodeClientStatus {
+    this.pruneRateLimitWindow(this.dependencies.now());
+    return {
+      activeRequests: this.activeRequests,
+      maxConcurrentRequests: this.config.maxConcurrentRequests,
+      requestsInCurrentWindow: this.requestTimestamps.length,
+      maxRequestsPerMinute: this.config.maxRequestsPerMinute,
+      attemptsTotal: this.attemptsTotal,
+      successfulInvocationsTotal: this.successfulInvocationsTotal,
+      failedInvocationsTotal: this.failedInvocationsTotal,
+      concurrencyRejectedTotal: this.concurrencyRejectedTotal,
+      rateLimitRejectedTotal: this.rateLimitRejectedTotal,
+      lastSuccessAt: this.lastSuccessAt,
+      lastErrorAt: this.lastErrorAt,
+      lastError: this.lastError,
+    };
   }
 
   async invoke(params: {
@@ -90,36 +119,51 @@ export class RednodeClient {
       throw new RednodeApiError("Rednode request URL exceeded maxRequestBytes");
     }
 
-    const response = await this.request(operation, url, bodyJson);
-    const text = await readBoundedBody(response, this.config.maxResponseBytes);
-    if (!response.ok)
-      throw new RednodeApiError(`Rednode API HTTP ${response.status}`);
-    let parsed: unknown;
+    this.acquireNetworkSlot();
     try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new RednodeApiError("Rednode API returned invalid JSON");
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      throw new RednodeApiError(
-        "Rednode API returned an invalid response object",
+      const response = await this.request(operation, url, bodyJson);
+      const text = await readBoundedBody(response, this.config.maxResponseBytes);
+      if (!response.ok)
+        throw new RednodeApiError(`Rednode API HTTP ${response.status}`);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new RednodeApiError("Rednode API returned invalid JSON");
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        throw new RednodeApiError(
+          "Rednode API returned an invalid response object",
+        );
+      const result = parsed as RednodeApiResponse;
+      // Ark 官方信封明确要求 Boolean；缺失或字符串值不能被静默当作成功。
+      if (typeof result.success !== "boolean") {
+        throw new RednodeApiError("Rednode API response is missing a boolean success field");
+      }
+      if (!result.success) {
+        const errorCode =
+          typeof result.error_code === "string" || typeof result.error_code === "number"
+            ? result.error_code
+            : undefined;
+        throw new RednodeApiError(
+          `Rednode API rejected the request: ${safeExternalMessage(result.error_msg, this.config)}`,
+          errorCode,
+        );
+      }
+      this.successfulInvocationsTotal += 1;
+      this.lastSuccessAt = this.dependencies.now();
+      return result;
+    } catch (error) {
+      this.failedInvocationsTotal += 1;
+      this.lastErrorAt = this.dependencies.now();
+      this.lastError = safeExternalMessage(
+        error instanceof Error ? error.message : undefined,
+        this.config,
       );
-    const result = parsed as RednodeApiResponse;
-    // Ark 官方信封明确要求 Boolean；缺失或字符串值不能被静默当作成功。
-    if (typeof result.success !== "boolean") {
-      throw new RednodeApiError("Rednode API response is missing a boolean success field");
+      throw error;
+    } finally {
+      this.activeRequests -= 1;
     }
-    if (!result.success) {
-      const errorCode =
-        typeof result.error_code === "string" || typeof result.error_code === "number"
-          ? result.error_code
-          : undefined;
-      throw new RednodeApiError(
-        `Rednode API rejected the request: ${safeExternalMessage(result.error_msg, this.config)}`,
-        errorCode,
-      );
-    }
-    return result;
   }
 
   /**
@@ -137,6 +181,7 @@ export class RednodeClient {
 
     for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
       this.consumeRateLimit(this.dependencies.now());
+      this.attemptsTotal += 1;
       const timestamp = String(Math.floor(this.dependencies.now() / 1_000));
       const signatureParams = Object.fromEntries(url.searchParams.entries());
       const sign = signRednodeRequest(
@@ -158,6 +203,8 @@ export class RednodeClient {
           },
           body: bodyJson,
           signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+          // app-key/timestamp/sign 只允许发送到配置可信 Origin，禁止 3xx 自动转发认证 Header。
+          redirect: "manual",
         });
         if (
           operation.method === "GET" &&
@@ -198,15 +245,31 @@ export class RednodeClient {
 
   /** 单进程滑动窗口限流；每次真实 HTTP 尝试（包括 GET 重试）都计入配额。 */
   private consumeRateLimit(now = Date.now()): void {
+    this.pruneRateLimitWindow(now);
+    if (this.requestTimestamps.length >= this.config.maxRequestsPerMinute) {
+      this.rateLimitRejectedTotal += 1;
+      throw new RednodeApiError("Rednode local request rate limit exceeded");
+    }
+    this.requestTimestamps.push(now);
+  }
+
+  /** 并发达到上限时快速失败，不创建无界等待 Promise。 */
+  private acquireNetworkSlot(): void {
+    if (this.activeRequests >= this.config.maxConcurrentRequests) {
+      this.concurrencyRejectedTotal += 1;
+      throw new RednodeApiError("Rednode local concurrent request limit exceeded");
+    }
+    this.activeRequests += 1;
+  }
+
+  private pruneRateLimitWindow(now: number): void {
     const cutoff = now - 60_000;
     while (
       this.requestTimestamps[0] !== undefined &&
       this.requestTimestamps[0] <= cutoff
-    )
+    ) {
       this.requestTimestamps.shift();
-    if (this.requestTimestamps.length >= this.config.maxRequestsPerMinute)
-      throw new RednodeApiError("Rednode local request rate limit exceeded");
-    this.requestTimestamps.push(now);
+    }
   }
 }
 

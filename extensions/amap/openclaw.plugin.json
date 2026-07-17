@@ -17,18 +17,21 @@
     "properties": {
       "enabled": { "type": "boolean", "default": false },
       "key": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "privateKey": { "type": "string", "minLength": 1, "maxLength": 512 },
       "apiBaseUrl": { "type": "string", "format": "uri", "maxLength": 2048, "default": "https://restapi.amap.com" },
       "requestTimeoutMs": { "type": "integer", "minimum": 500, "maximum": 30000, "default": 8000 },
       "retryAttempts": { "type": "integer", "minimum": 0, "maximum": 3, "default": 1 },
       "maxResponseBytes": { "type": "integer", "minimum": 1024, "maximum": 5242880, "default": 1048576 },
       "maxToolResultBytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 262144 },
       "maxRequestsPerMinute": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 120 },
+      "maxConcurrentRequests": { "type": "integer", "minimum": 1, "maximum": 128, "default": 8 },
       "ownerOnly": { "type": "boolean", "default": false }
     }
   },
   "uiHints": {
     "enabled": { "label": "Enable AMap tools", "type": "toggle" },
     "key": { "label": "Web Service API Key", "sensitive": true },
+    "privateKey": { "label": "Digital-signature private key", "sensitive": true },
     "ownerOnly": { "label": "Owner only", "type": "toggle" }
   },
   "capabilities": { "amapWebService": true },

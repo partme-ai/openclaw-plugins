@@ -5,9 +5,12 @@
  * 持久 Inbox 故障留存/重启恢复 → `Msg-Id` 并发防重与持久防重。测试不伪造抖音 OpenAPI 写操作。
  */
 import { createHash } from "node:crypto";
+import { readFile, readdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { DOUYIN_E2E_CONFIG } from "../config/plugins/douyin.mjs";
-import { ensureGatewayRunning } from "../lib/gateway.mjs";
+import { ensureGatewayRunning, stopHostGateway } from "../lib/gateway.mjs";
+import { GATEWAY_PORT, STATE_DIR } from "../lib/utils.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 const WEBHOOK_PATH = DOUYIN_E2E_CONFIG.webhook_path;
@@ -92,7 +95,11 @@ export async function testDouyin(ctx, results) {
 
       // 重启 Gateway 后再次重放，证明防重来自状态目录中的持久层，而非进程内 Map。
       await ensureGatewayRunning();
-      const postRestartDuplicate = await postWebhook(ctx, eventBody, headers);
+      let postRestartDuplicate;
+      await ctx.waitFor(async () => {
+        postRestartDuplicate = await postWebhook(ctx, eventBody, headers);
+        return postRestartDuplicate.status !== 404;
+      }, { timeoutMs: 30_000, intervalMs: 100, label: "Douyin Webhook route ready after restart" });
       if (postRestartDuplicate.status !== 200) {
         throw new Error(`post-restart duplicate ACK failed: ${postRestartDuplicate.status}`);
       }
@@ -101,30 +108,46 @@ export async function testDouyin(ctx, results) {
         throw new Error("post-restart duplicate Msg-Id bypassed persistent deduplication");
       }
 
-      // 注入模型失败，验证 Webhook 仍在持久提交后快速 ACK，并且失败任务留在 Inbox 而非丢失。
+      // 在 Gateway 完全停止后写入一条合法 pending 状态，模拟“进程在持久 ACK 后退出”的恢复边界。
+      // ACK 前原子落盘顺序由插件单测覆盖；这里验证发布包中新进程能从真实 stateDir 加载并消费。
       const recoveryId = `douyin-e2e-recovery-${Date.now()}`;
       const recoveryBody = JSON.stringify({
         event: "life_service.message",
         client_key: DOUYIN_E2E_CONFIG.app_key,
         content: { from_user_id: "douyin-e2e-recovery-user", text: "验证持久 Inbox 重启恢复" },
       });
-      ctx.modelFixture.controls.failNextCompletions = 10;
-      const recoveryAccepted = await postWebhook(ctx, recoveryBody, {
-        "x-douyin-signature": sign(recoveryBody),
-        "msg-id": recoveryId,
-      });
-      if (recoveryAccepted.status !== 200) {
-        throw new Error(`recovery webhook was not durably acknowledged: ${recoveryAccepted.status}`);
+      stopHostGateway();
+      await ctx.waitFor(
+        async () => !(await ctx.tcpReachable(GATEWAY_PORT)),
+        { timeoutMs: 30_000, intervalMs: 100, label: "Douyin Gateway stopped before Inbox fixture write" },
+      );
+      const inboxDir = join(STATE_DIR, "douyin", "inbox");
+      const inboxFiles = (await readdir(inboxDir)).filter((name) => name.endsWith(".json"));
+      if (inboxFiles.length !== 1) {
+        throw new Error(`expected one Douyin Inbox state file, found ${inboxFiles.length}`);
       }
-      await ctx.waitFor(async () => {
-        const status = await ctx.gatewayFetch("/douyin/status");
-        return status.status === 200 && status.json?.inboxes?.default?.pending === 1;
-      }, { timeoutMs: 30_000, intervalMs: 100, label: "Douyin durable Inbox pending state" });
+      const inboxPath = join(inboxDir, inboxFiles[0]);
+      const inboxState = JSON.parse(await readFile(inboxPath, "utf8"));
+      const now = Date.now();
+      inboxState.pending[recoveryId] = {
+        messageId: recoveryId,
+        rawBody: recoveryBody,
+        text: "验证持久 Inbox 重启恢复",
+        peerId: "douyin-e2e-recovery-user",
+        attempts: 1,
+        createdAt: now,
+        nextAttemptAt: now,
+        lastError: "simulated process interruption",
+      };
+      await writeFile(inboxPath, `${JSON.stringify(inboxState, null, 2)}\n`, { mode: 0o600 });
 
-      // 清除故障并重启 Gateway；新进程必须从 stateDir 恢复 pending 事件并完成一次 Agent Turn。
-      ctx.modelFixture.controls.failNextCompletions = 0;
+      // 新进程必须从 stateDir 恢复 pending 事件并完成一次 Agent Turn。
       const beforeRecovery = ctx.modelFixture.metrics.completions;
       await ensureGatewayRunning();
+      await ctx.waitFor(async () => {
+        const status = await ctx.gatewayFetch("/douyin/status");
+        return status.status === 200;
+      }, { timeoutMs: 30_000, intervalMs: 100, label: "Douyin status route ready for Inbox recovery" });
       await waitForCompletions(ctx, beforeRecovery + 1, "Douyin Inbox restart recovery");
       await ctx.waitFor(async () => {
         const status = await ctx.gatewayFetch("/douyin/status");

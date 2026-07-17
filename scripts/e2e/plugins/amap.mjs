@@ -1,11 +1,24 @@
 /** AMap capability 的正式 tarball → Agent Tool → 本地协议夹具闭环。 */
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 
 import { OPENCLAW_BIN, PROFILE } from "../lib/utils.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 const execFileAsync = promisify(execFile);
+
+/** 独立实现官方签名算法，避免复用插件函数形成同源假阳性。 */
+function expectedSignature(query) {
+  const canonical = Object.entries(query)
+    .filter(([name]) => name !== "sig")
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([name, value]) => `${name}=${value}`)
+    .join("&");
+  return createHash("md5")
+    .update(`${canonical}amap-e2e-private-key`, "utf8")
+    .digest("hex");
+}
 
 async function runAgent() {
   const { stdout, stderr } = await execFileAsync(
@@ -50,7 +63,9 @@ export async function testAmap(ctx, results) {
         provider.metrics.lastRequest?.pathname !== "/v5/place/text" ||
         query.key !== "amap-e2e-web-service-key" ||
         query.keywords !== "咖啡" ||
-        query.output !== "JSON"
+        query.output !== "JSON" ||
+        typeof query.sig !== "string" ||
+        query.sig !== expectedSignature(query)
       ) {
         throw new Error("AMap tool did not forward the bounded path and configured parameters");
       }
@@ -61,7 +76,7 @@ export async function testAmap(ctx, results) {
     },
     {
       service: "local AMap v5 protocol fixture + OpenAI-compatible tool-call fixture",
-      method: "tarball install + real Agent tool call + safe GET retry + result transcript",
+      method: "tarball install + real Agent tool call + independent MD5 signature + safe GET retry + result transcript",
     },
     results,
   );

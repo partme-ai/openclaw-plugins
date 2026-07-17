@@ -21,6 +21,7 @@ const config: RednodePluginConfig = {
   maxResponseBytes: 1024,
   maxToolResultBytes: 1024,
   maxRequestsPerMinute: 10,
+  maxConcurrentRequests: 2,
   getRetryMaxAttempts: 3,
   retryInitialDelayMs: 100,
   retryMaxDelayMs: 1000,
@@ -68,6 +69,7 @@ describe("RednodeClient", () => {
       /^[a-f0-9]{32}$/,
     );
     expect(init?.body).toBe(JSON.stringify({ available: false }));
+    expect(init?.redirect).toBe("manual");
   });
 
   it("rejects unknown operations, missing path values and business errors", async () => {
@@ -239,5 +241,38 @@ describe("RednodeClient", () => {
       "response exceeded",
     );
     expect(cancelled).toBe(true);
+  });
+
+  it("fails fast at the concurrency cap and exposes only sanitized runtime counters", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const fetchMock = vi.fn(async () => {
+      await blocked;
+      return new Response(JSON.stringify({ success: true, data: {} }));
+    });
+    const client = new RednodeClient(
+      { ...config, maxConcurrentRequests: 1 },
+      { fetch: fetchMock },
+    );
+
+    const first = client.invoke({ operation: "items" });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await expect(client.invoke({ operation: "items" })).rejects.toThrow(
+      "concurrent request limit",
+    );
+    expect(client.status()).toEqual(expect.objectContaining({
+      activeRequests: 1,
+      attemptsTotal: 1,
+      concurrencyRejectedTotal: 1,
+    }));
+
+    release();
+    await expect(first).resolves.toEqual({ success: true, data: {} });
+    expect(client.status()).toEqual(expect.objectContaining({
+      activeRequests: 0,
+      successfulInvocationsTotal: 1,
+      failedInvocationsTotal: 0,
+      lastError: null,
+    }));
   });
 });

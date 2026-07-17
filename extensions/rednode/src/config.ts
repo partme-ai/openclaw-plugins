@@ -28,6 +28,7 @@ const CONFIG_KEYS = new Set([
   "maxResponseBytes",
   "maxToolResultBytes",
   "maxRequestsPerMinute",
+  "maxConcurrentRequests",
   "getRetryMaxAttempts",
   "retryInitialDelayMs",
   "retryMaxDelayMs",
@@ -143,6 +144,13 @@ export function resolveRednodeConfig(
       1,
       10_000,
       60,
+    ),
+    maxConcurrentRequests: readInteger(
+      config.maxConcurrentRequests,
+      "maxConcurrentRequests",
+      1,
+      128,
+      8,
     ),
     getRetryMaxAttempts: readInteger(
       config.getRetryMaxAttempts,

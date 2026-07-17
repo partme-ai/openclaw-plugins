@@ -26,5 +26,5 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 export { RednodeApiError, RednodeClient, signRednodeRequest };
 export { resolveRednodeConfig } from "./config.js";
 export { createRednodeTool, REDNODE_TOOL_NAME } from "./tools/tools.js";
-export type { RednodeApiResponse, RednodeOperation, RednodePluginConfig } from "./types.js";
+export type { RednodeApiResponse, RednodeClientStatus, RednodeOperation, RednodePluginConfig } from "./types.js";
 export default plugin;
