@@ -106,6 +106,10 @@ export type RedisChannelConfig = {
     /** Gateway 停止时等待 Redis 客户端优雅退出的最长时间。 */
     shutdownTimeoutMs: number;
   };
+  network: {
+    /** 单次 Agent Turn（含回复写入 Redis）的最大等待时间。 */
+    agentReplyTimeoutMs: number;
+  };
   idempotency: {
     enabled: boolean;
     ttlMs: number;

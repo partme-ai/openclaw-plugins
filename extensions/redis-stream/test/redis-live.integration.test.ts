@@ -33,6 +33,7 @@ function configFor(suffix: string, overrides: Record<string, unknown> = {}) {
         url: REDIS_URL,
         channelMode: "stream",
         defaultAgentId: "main",
+        network: { agentReplyTimeoutMs: 25 },
         stream: {
           inboundKey: `openclaw:it:${suffix}:in`,
           outboundKey: `openclaw:it:${suffix}:out`,
@@ -136,6 +137,56 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
     expect(deadLetters[0]?.message._sourceId).toBe(sourceId);
     expect(deadLetters[0]?.message._deliveryCount).toBe("2");
     expect(getStats().messagesDeadLettered).toBeGreaterThan(0);
+    await producer.quit();
+  });
+
+  it("waits for an accepted Pub/Sub Agent task before shutting down the publisher", async () => {
+    const suffix = `pubsub-drain-${Date.now()}`;
+    const inboundChannel = `openclaw:it:${suffix}:in`;
+    let signalStarted!: () => void;
+    let releaseTask!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseTask = resolve; });
+    const config = resolveRedisChannelConfig({
+      channels: {
+        "redis-stream": {
+          url: REDIS_URL,
+          channelMode: "pubsub",
+          defaultAgentId: "main",
+          subscribeChannels: [inboundChannel],
+          network: { agentReplyTimeoutMs: 2_000 },
+        },
+      },
+    });
+    setRedisStreamRuntime({
+      config: {},
+      channel: {
+        routing: {
+          resolveAgentRoute: async () => ({ agentId: "main", sessionKey: `agent:main:direct:${suffix}` }),
+        },
+        reply: {
+          finalizeInboundContext: async (params: Record<string, unknown>) => params,
+          createReplyDispatcherWithTyping: () => ({ deliver: async () => undefined }),
+          dispatchReplyFromConfig: async () => {
+            signalStarted();
+            await gate;
+          },
+        },
+      },
+    } as never);
+    await startRedisServer(config);
+    const producer = createClient({ url: REDIS_URL });
+    await producer.connect();
+    await producer.publish(inboundChannel, "wait for shutdown drain");
+    await started;
+
+    let stopped = false;
+    const stopping = stopRedisServer().then(() => { stopped = true; });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(stopped).toBe(false);
+    releaseTask();
+    await stopping;
+    expect(stopped).toBe(true);
     await producer.quit();
   });
 });

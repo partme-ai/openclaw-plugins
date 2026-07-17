@@ -23,6 +23,7 @@ import {
   RedisStreamError,
   RedisTimeoutError,
 } from "../shared/errors.js";
+import { redactRedisError } from "../shared/redact.js";
 
 /** @description Redis 连接与消息读写统计快照。 */
 export type RedisStats = {
@@ -50,6 +51,8 @@ let consumeLoopPromise: Promise<void> | null = null;
 let consumeAbortController: AbortController | null = null;
 /** 当前实例的停机预算；启动前使用安全默认值，启动后由配置覆盖。 */
 let shutdownTimeoutMs = 10_000;
+/** Pub/Sub 没有 Broker ACK；停机必须等待已接纳任务完成，否则回复会在关闭 publisher 后永久丢失。 */
+const pubSubTasks = new Set<Promise<void>>();
 const stats: RedisStats = {
   connected: false,
   lastConnectAt: null,
@@ -129,16 +132,15 @@ export async function startRedisServer(
     }
     if (config.channelMode === "stream") {
       consumeLoopPromise = consumeLoop(config).catch((error) => {
-        stats.lastError =
-          error instanceof Error ? error.message : String(error);
-        logger.error("Consume loop crashed:", error);
+        stats.lastError = redactRedisError(error, config);
+        logger.error(`Consume loop crashed: ${stats.lastError}`);
       });
     }
   } catch (error) {
     await stopRedisServer();
     throw new RedisConnectionError(
       config.url,
-      error instanceof Error ? error.message : String(error),
+      redactRedisError(error, config),
     );
   }
 }
@@ -151,16 +153,8 @@ export async function stopRedisServer(): Promise<void> {
   running = false;
   consumeAbortController?.abort();
   consumeAbortController = null;
-  clearPublisherClient();
 
-  const activeConsumer = consumerClient;
-  consumerClient = null;
-  activeConsumer?.destroy();
-  if (consumeLoopPromise) {
-    await consumeLoopPromise.catch(() => undefined);
-    consumeLoopPromise = null;
-  }
-
+  // 先关闭订阅连接，阻止 Pub/Sub 新消息继续进入；主客户端仍保持可用，供在途 Agent 回复发布。
   const activeSubscriber = subscriberClient;
   subscriberClient = null;
   if (activeSubscriber) {
@@ -170,6 +164,16 @@ export async function stopRedisServer(): Promise<void> {
       "Redis subscriber shutdown",
     );
   }
+
+  const activeConsumer = consumerClient;
+  consumerClient = null;
+  activeConsumer?.destroy();
+  if (consumeLoopPromise) {
+    await consumeLoopPromise.catch(() => undefined);
+    consumeLoopPromise = null;
+  }
+  await Promise.allSettled([...pubSubTasks]);
+  clearPublisherClient();
 
   const activeClient = client;
   client = null;
@@ -274,19 +278,20 @@ export function createPubSubDispatcher(
     }
 
     inFlight++;
-    void handler(inbound, config)
+    const task = handler(inbound, config)
       .then((accepted) => {
         if (accepted === false) stats.messagesFailed++;
       })
       .catch((error) => {
         stats.messagesFailed++;
-        stats.lastError =
-          error instanceof Error ? error.message : String(error);
-        logger.error("Inbound handler error:", error);
+        stats.lastError = redactRedisError(error, config);
+        logger.error(`Inbound handler error: ${stats.lastError}`);
       })
       .finally(() => {
         inFlight--;
+        pubSubTasks.delete(task);
       });
+    pubSubTasks.add(task);
     return true;
   };
 }
@@ -491,7 +496,7 @@ async function consumeLoop(config: RedisChannelConfig): Promise<void> {
     } catch (error) {
       if (!running || signal?.aborted) break;
       consecutiveErrors++;
-      stats.lastError = error instanceof Error ? error.message : String(error);
+      stats.lastError = redactRedisError(error, config);
       // 指数退避，上限 30 秒，避免 Redis 不可用时频繁重试
       const backoffMs = Math.min(
         1000 * Math.pow(2, Math.min(consecutiveErrors - 1, 5)),
@@ -612,10 +617,7 @@ async function reclaimStalePendingEntries(
 
     return nextStartId;
   } catch (error) {
-    logger.warn(
-      "XAUTOCLAIM pending reclaim failed:",
-      error instanceof Error ? error.message : String(error),
-    );
+    logger.warn(`XAUTOCLAIM pending reclaim failed: ${redactRedisError(error, config)}`);
     return startId;
   }
 }
@@ -669,7 +671,7 @@ async function handleFailedEntry(
 
 function attachClientEvents(activeClient: RedisClientType): void {
   activeClient.on("error", (error) => {
-    stats.lastError = error instanceof Error ? error.message : String(error);
+    stats.lastError = redactRedisError(error);
   });
   activeClient.on("reconnecting", () => {
     stats.connected = false;
@@ -723,7 +725,7 @@ async function closeRedisClient(
   try {
     await withTimeout(activeClient.quit(), timeoutMs, label);
   } catch (error) {
-    stats.lastError = error instanceof Error ? error.message : String(error);
+    stats.lastError = redactRedisError(error);
     activeClient.destroy();
   }
 }

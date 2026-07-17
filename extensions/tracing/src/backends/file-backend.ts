@@ -14,6 +14,7 @@ import type {
   TracingConfig,
   TracingLogger,
 } from "../shared/types.js";
+import { redactTraceText } from "../shared/redact.js";
 
 const FLUSH_BATCH_SIZE = 100;
 
@@ -158,5 +159,5 @@ export class FileBackend implements TracingBackend {
 }
 
 function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return redactTraceText(error instanceof Error ? error.message : String(error));
 }

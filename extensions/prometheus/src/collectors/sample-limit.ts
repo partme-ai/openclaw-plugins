@@ -1,8 +1,25 @@
 import type { MetricDefinition, MetricSample } from "../types.js";
+import { sanitizeLabel } from "../shared/label-sanitize.js";
 
 /** 单次 scrape 因最终系列上限而被省略的原始系列数量。 */
 export const SCRAPE_DROPPED_SERIES_NAME =
   "openclaw_metrics_scrape_series_dropped";
+
+/**
+ * 最终响应前复制并清理所有标签。
+ *
+ * Runtime Registry 已有同样防线，但 RPC collector 样本不会经过 Registry；这里作为统一出口，
+ * 确保任何采集器遗漏局部 sanitize 时也不会把凭据、控制字符或超长值导出给 Prometheus。
+ */
+export function sanitizeScrapeSamples(samples: MetricSample[]): MetricSample[] {
+  return samples.map((sample) => {
+    if (!sample.labels) return sample;
+    const labels = Object.fromEntries(
+      Object.entries(sample.labels).map(([key, value]) => [key, sanitizeLabel(value)]),
+    );
+    return { ...sample, labels };
+  });
+}
 
 /**
  * 对最终 Prometheus 响应实施硬系列上限。

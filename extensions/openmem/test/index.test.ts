@@ -62,7 +62,10 @@ describe("OpenMemClient", () => {
 
   it("注入可配置鉴权头且错误不泄露密钥", async () => {
     process.env.OPENMEM_TEST_KEY = "very-secret-token";
-    vi.mocked(fetch).mockResolvedValueOnce(new Response("failed\nvery-secret-token\u0000", { status: 401 }));
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      "failed\nvery-secret-token\u0000 Bearer proxy-secret sk-anothersecret123",
+      { status: 401 },
+    ));
     const client = new OpenMemClient(makeConfig({ apiKeyEnv: "OPENMEM_TEST_KEY", maxAttempts: 1 }));
     const error = await client.get("/healthz").catch((caught: unknown) => caught);
     const headers = new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers);
@@ -70,6 +73,8 @@ describe("OpenMemClient", () => {
     expect(String(error)).toContain("[REDACTED]");
     expect(String(error)).not.toContain("very-secret-token");
     expect(String(error)).not.toContain("\u0000");
+    expect(String(error)).not.toContain("proxy-secret");
+    expect(String(error)).not.toContain("anothersecret123");
   });
 
   it("限制响应体大小", async () => {
@@ -109,6 +114,17 @@ describe("OpenMemClient", () => {
     const client = new OpenMemClient(makeConfig());
     client.close();
     await expect(client.get("/healthz")).rejects.toThrow("closed");
+  });
+
+  it("close 会立即取消重试退避而不是等待定时器", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(json({ error: "down" }, 503));
+    const client = new OpenMemClient(makeConfig({ retryBaseDelayMs: 5_000, maxAttempts: 3 }));
+    const pending = client.get("/healthz");
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    client.close();
+    // 关闭发生在首次 503 已返回之后，保留该原始故障，但不得再等待或发起第二次请求。
+    await expect(pending).rejects.toThrow("OpenMem 503");
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });
 

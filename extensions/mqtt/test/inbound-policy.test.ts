@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   logAuditEvent: vi.fn(),
   getClientUsername: vi.fn<() => string | undefined>(),
   getMqttChannelConfig: vi.fn(),
+  forgetIdempotency: vi.fn(),
 }));
 
 vi.mock("../src/runtime.js", () => ({ getMqttRuntime: () => ({}) }));
@@ -27,7 +28,8 @@ vi.mock("../src/transport/acl.js", () => ({
   isUserActionAllowed: vi.fn(() => true),
 }));
 vi.mock("../src/shared/wire-helpers.js", () => ({
-  getMqttIdempotencyCache: () => ({}),
+  getMqttIdempotencyCache: () => ({ forget: mocks.forgetIdempotency }),
+  buildMqttPacketIdempotencyKey: () => "device-1:packet-7",
 }));
 vi.mock("@partme.ai/openclaw-message-sdk/bridge", () => ({
   normalizeWireIngress: () => ({
@@ -84,6 +86,7 @@ function config(authEnabled: boolean) {
 describe("MQTT inbound authenticated identity policy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.dispatchChannelMessage.mockResolvedValue(undefined);
     resetSessionMappings();
     mocks.getClientUsername.mockReturnValue(undefined);
   });
@@ -105,5 +108,16 @@ describe("MQTT inbound authenticated identity policy", () => {
     mocks.getMqttChannelConfig.mockReturnValue(config(false));
     await handleInboundMessage(message);
     expect(mocks.dispatchChannelMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the dedupe reservation when Agent dispatch fails", async () => {
+    mocks.getMqttChannelConfig.mockReturnValue(config(false));
+    mocks.dispatchChannelMessage.mockRejectedValueOnce(new Error("agent unavailable"));
+
+    await expect(handleInboundMessage({ ...message, messageId: 7 })).rejects.toThrow("agent unavailable");
+
+    // 一次用于 DUP=false 新报文刷新旧编号，一次用于失败回滚，允许 QoS 重投再次处理。
+    expect(mocks.forgetIdempotency).toHaveBeenCalledTimes(2);
+    expect(mocks.forgetIdempotency).toHaveBeenLastCalledWith("device-1:packet-7");
   });
 });

@@ -133,4 +133,24 @@ describe("openmem OpenClaw 2026.7.1 contract", () => {
     const { manager } = await runtime.getMemorySearchManager({ agentId: "main" });
     await expect(manager.sync()).rejects.toThrow("closed");
   });
+
+  it("service stop 取消并排空已经进入会话串行队列的 Hook", async () => {
+    vi.mocked(fetch).mockImplementation((_input, init) => new Promise((_resolve, reject) => {
+      const signal = init?.signal;
+      if (signal?.aborted) reject(signal.reason);
+      else signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }));
+    const api = createApi({ maxAttempts: 1, timeoutMs: 120_000 });
+    registerPlugin(api);
+    const hook = api.hooks.get("agent_end")!;
+    const pendingHook = hook(
+      { success: true, runId: "shutdown-run", messages: [{ role: "user", content: "pending" }] },
+      { agentId: "main", sessionKey: "shutdown-session" },
+    );
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    const service = api.registerService.mock.calls[0][0];
+    await expect(service.stop()).resolves.toBeUndefined();
+    await expect(pendingHook).resolves.toBeUndefined();
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("ingest failed"));
+  });
 });

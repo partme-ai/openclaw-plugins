@@ -45,6 +45,24 @@
 
 ### 运行架构
 
+```text
+diagnostics       Gateway RPC       hooks/events       Node.js runtime
+     │                 │                 │                    │
+     └─────────────────┴────────┬────────┴────────────────────┘
+                                ▼
+                 CollectorRunner（并行/超时/故障隔离）
+                                │
+                                ▼
+                 CollectCache（并发单飞 + 成功结果 TTL）
+                                │
+                                ▼
+          标签脱敏/清洗 → series 上限 → Prometheus/JSON
+                                │
+             ┌──────────────────┼──────────────────┐
+             ▼                  ▼                  ▼
+          /metrics           /health            /debug
+```
+
 ```mermaid
 flowchart LR
     P["Prometheus / Grafana Agent"] -->|"GET /metrics + Bearer Token"| G["OpenClaw Gateway HTTP Registry"]
@@ -66,6 +84,16 @@ flowchart LR
 Gateway 或反向代理统一管理；插件内部负责请求鉴权、采集隔离、低基数和响应上限。
 
 ### 并发抓取与失败隔离
+
+```text
+Prometheus A ─┐
+              ├─并发 scrape──▶ CollectCache ──▶ 只启动一轮 collectAll
+Prometheus B ─┘                                      │
+                                                    ├─成功采集器：输出样本
+                                                    └─失败/超时：记录诊断
+                                                               │
+                        两个请求复用同一结果 ◀──────────────────┘
+```
 
 ```mermaid
 sequenceDiagram

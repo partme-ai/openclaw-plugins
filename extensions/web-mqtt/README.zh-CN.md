@@ -24,6 +24,29 @@
 
 ## 架构总览
 
+```text
+┌──────────────────────────── OpenClaw Gateway ────────────────────────────┐
+│  openclaw-web-mqtt                                                      │
+│                                                                         │
+│  Browser ──Origin 白名单──┐                                             │
+│                           ▼                                             │
+│  Native Client ───────▶ WS / WSS ──▶ Aedes 1.x Broker                  │
+│                           │              │ 认证 / Topic ACL / 帧上限      │
+│                           │              ▼                              │
+│                           │     clientId 有界 FIFO 队列                  │
+│                           │              │                              │
+│                           │              ▼                              │
+│                           │     Topic 路由 + account ACL                 │
+│                           │              │                              │
+│                           │              ▼                              │
+│                           └── reply ◀ message-sdk ◀▶ OpenClaw Agent     │
+│                                                                         │
+│  stop：拒绝新任务 → terminate WebSocket → 排空 Agent 任务 → 关闭服务    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+字符图用于快速识别浏览器安全边界和停机顺序；下面的 Mermaid 保留可渲染、可维护的同一架构视图。
+
 ```mermaid
 flowchart LR
     Browser["浏览器 / Web 应用"]

@@ -248,7 +248,7 @@
           "enabled": {
             "type": "boolean",
             "default": false,
-            "description": "Enable broker state persistence; Redis is required for horizontal scaling"
+            "description": "Enable single-Gateway broker state persistence; Redis does not provide cross-Gateway clustering"
           },
           "backend": {
             "type": "string",

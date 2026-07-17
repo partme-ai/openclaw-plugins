@@ -51,6 +51,31 @@
 
 ### 运行架构
 
+先用字符图定位 Broker、插件和 Agent 的边界；下方 Mermaid 继续保留可渲染的组件关系：
+
+```text
+┌────────────────────────────── RabbitMQ Broker ──────────────────────────────┐
+│                                                                             │
+│  业务 Producer → Topic Exchange → 主队列 ───────────────┐                  │
+│                                   │                      │                  │
+│                                   │失败                  │成功回复          │
+│                    Retry Exchange / Queue             Confirm Channel       │
+│                         │ TTL + DLX                      │ mandatory          │
+│                         └──────────────┐                 │ persistent         │
+│                                        │                 │                  │
+│                    Dead-letter Exchange / DLQ            │                  │
+└────────────────────────────────────────┼─────────────────┼──────────────────┘
+                                         ▼                 ▲
+┌──────────────────────────── openclaw-rabbitmq ───────────┴──────────────────┐
+│  cancel 新投递 → 并发限制器 → Topic 路由 → 两阶段幂等 → Agent Turn          │
+│                         │                              │                    │
+│                         └─ 停机排空已接纳任务 ─────────┘                    │
+│  只有 Agent 与回复 confirm 成功才 ACK；失败由 retry/DLQ confirm 后接管      │
+└────────────────────────────────────────┬────────────────────────────────────┘
+                                         ▼
+                              OpenClaw Runtime / Agent
+```
+
 ```mermaid
 flowchart LR
     P["业务生产者 / IoT 设备"] -->|"publish routing key"| EX["RabbitMQ Topic Exchange"]
@@ -111,13 +136,14 @@ sequenceDiagram
     G->>C: 标记 stopping
     G->>B: basic.cancel(consumerTag)
     Note over C,B: cancel 生效前到达的新 delivery 立即 NACK(requeue=true)
-    G->>C: 遍历 pending deliveries
-    C->>B: NACK(requeue=true, reason=server_stop)
+    G->>C: 等待已接纳 Agent Turn 与回复 Confirm 排空
+    A-->>C: 完成后 ACK，或可靠转移到 Retry/DLQ
+    G->>C: 对极端竞态中仍未处置的 delivery 执行 NACK(requeue=true)
     G->>C: 关闭 consume/publish channel 与 connection
-    A-->>C: 若稍后结束，delivery 已 settled，不会重复 ACK
 ```
 
-停机顺序先阻止新消费，再重新入队已跟踪投递；这避免“先清 pending、cancel 前又收到新消息”形成未跟踪的 Agent Turn。
+停机顺序先阻止新消费，再等待已接纳任务完成，最后只重新入队仍未处置的极端竞态投递。不能在
+Agent Turn 仍运行时先 NACK，否则旧 Turn 的外部副作用与 Broker 重投可能重复执行。
 
 1. 设备向主题交换机发布 RabbitMQ 消息。
 2. 插件从订阅的队列接收消息。

@@ -31,4 +31,22 @@ describe("MetricsRegistry", () => {
       value: 2,
     });
   });
+
+  it("copies, redacts and bounds labels at the registry boundary", () => {
+    const registry = new MetricsRegistry();
+    const labels = {
+      provider: `Bearer top-secret-token\n${"x".repeat(200)}`,
+    };
+    registry.set("secured_metric", 1, { help: "secured", labels });
+    labels.provider = "mutated-after-set";
+
+    const sample = registry.snapshotSamples().find((entry) => entry.name === "secured_metric");
+    expect(sample?.labels?.provider).not.toContain("top-secret-token");
+    expect(sample?.labels?.provider).not.toContain("\n");
+    expect(sample?.labels?.provider.length).toBeLessThanOrEqual(128);
+    expect(sample?.labels?.provider).not.toBe("mutated-after-set");
+    expect(registry.getSampleValue("secured_metric", {
+      provider: `Bearer top-secret-token\n${"x".repeat(200)}`,
+    })).toBe(1);
+  });
 });

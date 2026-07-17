@@ -27,6 +27,7 @@ import {
   getRedisStreamClaimableDedupe,
   mapRedisStreamWirePayloadMode,
 } from "./shared/wire-helpers.js";
+import { redactRedisError } from "./shared/redact.js";
 
 /**
  * @description 处理 Redis channel 入站消息（Pub/Sub 或 Stream 消费回调）。
@@ -116,7 +117,7 @@ export async function handleInboundMessage(
     logger.info(
       `Inbound: channel=${channel}, agent=${route.agentId}, ` +
         `account=${route.accountId}, source=${route.source}, ` +
-        `text=${text.slice(0, 100)}`,
+        `bytes=${Buffer.byteLength(text, "utf8")}`,
     );
 
     const { agentId, sessionKey } = await resolveChannelDispatchIdentity(
@@ -139,6 +140,7 @@ export async function handleInboundMessage(
       agentId,
       sessionKey,
       unified: parsed.unified,
+      timeoutMs: config.network.agentReplyTimeoutMs,
       extra: {
         channel,
         matchedPattern: route.matchedPattern,
@@ -179,7 +181,7 @@ export async function handleInboundMessage(
     if (dedupe && messageId && claim?.kind === "claimed") {
       dedupe.release(messageId);
     }
-    logger.error(`Runtime dispatch failed for channel=${channel}:`, error);
+    logger.error(`Runtime dispatch failed for channel=${channel}: ${redactRedisError(error, config)}`);
     return false;
   }
 }

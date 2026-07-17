@@ -13,6 +13,7 @@
 | `openclaw_metrics_http_requests_total` | counter | 插件 HTTP 请求数 |
 | `openclaw_metrics_http_request_duration_seconds_*` | histogram | 插件 HTTP 延迟 |
 | `openclaw_prometheus_series_dropped_total` | counter | diagnostics store 超过 2048 series 后丢弃数 |
+| `openclaw_observed_channel_accounts_dropped_total` | counter | activity 已观测渠道/账号集合超过 512 项后的丢弃数 |
 | `openclaw_runtime_metric_series_dropped_total` | counter | runtime registry 超过 4096 series 后丢弃数 |
 
 累计错误不等于当前不健康；健康端点依据 `collector_success` 的最近状态判断。

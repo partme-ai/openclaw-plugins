@@ -14,11 +14,9 @@
 import { createServer, type Server as TcpServer } from "node:net";
 import { readFileSync } from "node:fs";
 import { createServer as createTlsServer, type Server as TlsServer } from "node:tls";
-import { createBroker } from "aedes";
+import { Aedes } from "aedes";
 import type { Client, PublishPacket, Subscription } from "aedes";
 import { Redis } from "ioredis";
-import type { RedisOptions } from "ioredis";
-import MQEmitterRedis from "mqemitter-redis";
 import RedisPersistence from "aedes-persistence-redis";
 import MongoDbPersistence from "aedes-persistence-mongodb";
 import LevelPersistence from "aedes-persistence-level";
@@ -37,6 +35,7 @@ import {
 } from "@partme.ai/openclaw-message-sdk/queue";
 import { isUserActionAllowed, aclTopicMatches } from "./acl.js";
 import { validateBrokerConfig } from "../config.js";
+import { redactMqttError } from "../shared/redact.js";
 import {
   updateConnectionMetrics,
   updateMessageMetrics,
@@ -47,15 +46,7 @@ import {
   updateAclDenials,
 } from "../shared/metrics.js";
 
-type AedesBroker = NonNullable<ReturnType<typeof createBroker>>;
-type MQEmitterRedisFactory = {
-  (options?: RedisOptions): unknown;
-  MQEmitterRedisPrefix: new (
-    prefix: string,
-    options?: RedisOptions,
-  ) => unknown;
-};
-
+type AedesBroker = Aedes;
 /** Aedes 实例 */
 let aedesInstance: AedesBroker | null = null;
 
@@ -68,7 +59,6 @@ let qos0DropCount = 0;
 
 /** Redis clients */
 let redisClient: Redis | null = null;
-let mqEmitter: unknown = null;
 /** 同一 clientId 串行、不同客户端并行的 Agent 入站任务队列。 */
 let inboundQueue: KeyedRunQueue | null = null;
 
@@ -102,14 +92,13 @@ export async function startBroker(
       onError: (error, clientId) => {
         logAuditEvent(config.audit, "error", "inbound_handler_failed", {
           clientId,
-          error: error instanceof Error ? error.message : String(error),
+          error: redactMqttError(error, config),
         });
       },
     });
 
     // 创建持久化和集群配置（支持多种后端）
     let persistence: unknown = undefined;
-    let emitter: unknown = undefined;
 
     // 检查是否启用了持久化
     const persistenceEnabled = config.persistence?.enabled ?? false;
@@ -134,13 +123,6 @@ export async function startBroker(
           };
           redisClient = new Redis(redisOptions);
           await redisClient.ping();
-
-          // mqemitter-redis owns two dedicated Pub/Sub connections. Its API accepts
-          // ioredis options directly (not an existing `redis` client). Prefixing
-          // topics isolates independent OpenClaw clusters sharing one Redis.
-          const PrefixEmitter = (MQEmitterRedis as unknown as MQEmitterRedisFactory).MQEmitterRedisPrefix;
-          mqEmitter = new PrefixEmitter(`${keyPrefix}:mq:`, redisOptions);
-          emitter = mqEmitter;
 
           // 创建 Redis persistence
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -181,9 +163,8 @@ export async function startBroker(
       }
     }
 
-    aedesInstance = createBroker({
+    aedesInstance = new Aedes({
       persistence,
-      mq: emitter,
     });
 
     aedesInstance.preConnect = (client, _packet, callback) => {
@@ -236,6 +217,10 @@ export async function startBroker(
     aedesInstance.on("connectionError", (client: Client) => {
       pendingClients.delete(client);
     });
+
+    // Aedes 1.x 将持久化 setup 与 Broker 就绪改为显式异步生命周期；必须先 listen()
+    // 再开放 TCP/TLS 端口，否则客户端能建立 socket 却永远收不到 CONNACK。
+    await aedesInstance.listen();
 
     const startTasks: Array<Promise<void>> = [];
     if (config.port > 0) {
@@ -306,12 +291,20 @@ export async function stopBroker(): Promise<void> {
   tlsServer = null;
   redisClient = null;
   aedesInstance = null;
-  mqEmitter = null;
   inboundQueue = null;
 
-  // 先停用队列，避免关闭 Broker 的窗口期继续接收新的 Agent 任务。
-  // 已经开始执行的任务仍由其自身超时策略收口，不在这里强制中断业务逻辑。
+  // 先停用队列，避免关闭 Broker 的窗口期继续接收新的 Agent 任务；随后等待底层任务链
+  // 真实结束，确保 Gateway stop 返回后不再残留 Agent dispatch 或迟到的 PUBACK 回调。
   queue?.deactivate();
+  const drainQueue = queue?.drain() ?? Promise.resolve();
+
+  // net.Server.close() 只是不再 accept，新旧 MQTT socket 不主动结束就会让 Gateway stop
+  // 无限等待。先销毁已认证和认证中的连接，Aedes 会据此完成 clientDisconnect 清理。
+  const closeClientSocket = (client: Client): void => {
+    (client.conn as { destroy?: () => void } | undefined)?.destroy?.();
+  };
+  for (const { client } of connectedClients.values()) closeClientSocket(client);
+  for (const client of pendingClients) closeClientSocket(client);
 
   const closeNetServer = (server: TcpServer | TlsServer | null): Promise<void> =>
     new Promise((resolve, reject) => {
@@ -338,6 +331,7 @@ export async function stopBroker(): Promise<void> {
     closeNetServer(tls),
     closeAedes,
     closeRedis,
+    drainQueue,
   ]);
   const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (failure) throw failure.reason;
@@ -389,7 +383,7 @@ export async function publishMessage(
           console.error(`[openclaw-mqtt] Publish error on topic ${topic}:`, err);
           logAuditEvent(activeBrokerConfig?.audit, "error", "outbound_publish_failed", {
             topic,
-            error: String(err),
+            error: redactMqttError(err, activeBrokerConfig),
           });
           reject(err);
           return;

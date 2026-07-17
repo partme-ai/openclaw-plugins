@@ -92,10 +92,28 @@ describe("resolveRedisChannelConfig", () => {
         },
       },
     });
-    expect(config.stream.pendingClaimIdleMs).toBe(120_000);
+    expect(config.stream.pendingClaimIdleMs).toBe(180_000);
     expect(config.stream.maxAttempts).toBe(5);
     expect(config.stream.deadLetterKey).toBe("openclaw:inbound:dlq");
     expect(config.stream.maxLen).toBe(100_000);
+  });
+
+  it("reads the Agent timeout and rejects a reclaim lease that can expire mid-turn", () => {
+    const config = resolveRedisChannelConfig({
+      channels: {
+        "redis-stream": {
+          channelMode: "stream",
+          stream: { pendingClaimIdleMs: 20_000 },
+          network: { agentReplyTimeoutMs: 30_000 },
+        },
+      },
+    });
+    expect(config.network.agentReplyTimeoutMs).toBe(30_000);
+    expect(safeParseRedisStreamConfig(config).success).toBe(false);
+    expect(safeParseRedisStreamConfig({
+      ...config,
+      stream: { ...config.stream, pendingClaimIdleMs: 45_000 },
+    }).success).toBe(true);
   });
 
   it("defaults to pubsub for invalid channelMode", () => {

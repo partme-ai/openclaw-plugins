@@ -76,7 +76,7 @@ Aedes starts in-process and supports MQTT 3.1 and MQTT 3.1.1. The current Aedes 
 | Authentication | Username/password, per-user ACL, anonymous access toggle |
 | Transport | TCP (1883) + TLS (8883) with configurable cert/key/CA |
 | QoS | Native Aedes MQTT QoS 0/1/2; QoS 0 OpenClaw-dispatch mailbox soft limit |
-| Persistence | memory, redis (with mqemitter), mongodb, level |
+| Persistence | memory, redis, mongodb, level (single-Gateway Broker) |
 | Limits | Payload, connections, per-client pending tasks, Agent-task timeout |
 | Sessions | Expiry-based cleanup, persistent across reconnect |
 | Observability | Prometheus metrics (`prom-client`), structured JSON audit logs |
@@ -84,7 +84,7 @@ Aedes starts in-process and supports MQTT 3.1 and MQTT 3.1.1. The current Aedes 
 
 ### Scaling
 
-The default is a single-process in-memory deployment. Multi-Gateway horizontal scaling requires the Redis backend, which provides both Aedes persistence and namespaced MQEmitter Pub/Sub:
+The embedded Broker is intentionally a single-Gateway deployment. Redis provides session, offline-packet, and retained-packet persistence; it is not a cross-Gateway message bus:
 
 ```json
 {
@@ -107,7 +107,7 @@ The default is a single-process in-memory deployment. Multi-Gateway horizontal s
 }
 ```
 
-`keyPrefix` must be unique per environment/cluster to prevent message crossover on a shared Redis. `packetTTL` is the offline QoS packet TTL in seconds; `0` means unlimited. Memory, MongoDB, and LevelDB are single-node backends and do not provide Redis MQEmitter's cross-node message bus.
+`keyPrefix` must be unique per Gateway/environment to prevent key-space collisions. `packetTTL` is the offline QoS packet TTL in seconds; `0` means unlimited. Do not point multiple Gateway processes at the same persistence prefix. For horizontal scaling, deploy a standalone production MQTT Broker instead of treating embedded Brokers as a cluster.
 
 > Migration: the `nedb` backend was removed because its dependency uses `util.isDate`, which is unavailable on the Node.js baseline required by OpenClaw 2026.7.1. Old configurations now fail fast; migrate to local `level` or production `redis`.
 
@@ -263,14 +263,14 @@ Binding beyond loopback requires authentication. Authenticated mode rejects an e
 |-------|---------|-------------|
 | `persistence.enabled` | `false` | Enable Broker-state persistence |
 | `persistence.backend` | `"memory"` | Backend: `memory`, `redis`, `mongodb`, `level` |
-| `persistence.redis.keyPrefix` | `"mqtt"` | Redis and MQEmitter cluster-isolation prefix |
+| `persistence.redis.keyPrefix` | `"mqtt"` | Single-Gateway Redis persistence prefix; never share across instances |
 | `persistence.redis.packetTTL` | `0` | Offline QoS packet TTL in seconds; 0 is unlimited |
 | `persistence.mongodb.url` | `mongodb://localhost:27017` | MongoDB connection URL |
 | `persistence.mongodb.dbName` | — | MongoDB database name |
 | `persistence.mongodb.collectionPrefix` | — | Collection prefix |
 | `persistence.level.path` | `./data/aedes-leveldb` | Single-node LevelDB directory |
 
-Use `memory` for development, `level` for local single-node persistence, and `mongodb` where a single Broker already has MongoDB infrastructure. Only `redis` provides both persistence and the MQEmitter bus required for multiple Gateway nodes.
+Use `memory` for development, `level` for local persistence, and `mongodb` or `redis` where a single Gateway Broker already has that infrastructure. None of these backends provides a cross-Gateway MQTT message bus.
 
 ## Testing
 

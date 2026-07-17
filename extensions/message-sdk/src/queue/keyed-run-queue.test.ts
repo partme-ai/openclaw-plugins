@@ -209,6 +209,26 @@ describe("createKeyedRunQueue", () => {
     await runningExpectation;
   });
 
+  it("drains the underlying task after deactivation", async () => {
+    const queue = createKeyedRunQueue();
+    const released = deferred<void>();
+    const taskFinished = vi.fn();
+    const running = queue.enqueue("chat-1", async ({ lifecycleSignal }) => {
+      lifecycleSignal?.addEventListener("abort", () => released.resolve(undefined), { once: true });
+      await released.promise;
+      taskFinished();
+    });
+    await Promise.resolve();
+
+    const runningExpectation = expect(running).rejects.toMatchObject({ name: "AbortError" });
+    queue.deactivate();
+    await queue.drain();
+
+    await runningExpectation;
+    expect(taskFinished).toHaveBeenCalledOnce();
+    expect(queue.snapshot()).toMatchObject({ activeCount: 0, queuedCount: 0 });
+  });
+
   it("bounds the total pending tasks and reports overflow", async () => {
     const gate = deferred<void>();
     const onOverflow = vi.fn();

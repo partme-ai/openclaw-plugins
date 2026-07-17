@@ -11,6 +11,7 @@ import { parseClientFrame, serializeErrorFrame, serializePongFrame } from "./pro
 import type { WebsocketChannelConfig, WebsocketConnectionInfo } from "../types.js";
 import { registerConnection, sendToConnection, touchConnection, unregisterConnection } from "./connection-hub.js";
 import type { WebsocketInboundCallback } from "./server.js";
+import { redactWebSocketError } from "../shared/redact.js";
 
 export const WS_CLIENT_CONNECTION_PREFIX = "client:";
 
@@ -24,6 +25,14 @@ let reconnectAttempt = 0;
 let onInboundMessage: WebsocketInboundCallback | null = null;
 let activeClientConfig: WebsocketChannelConfig | null = null;
 let abortConnect = false;
+/** 已被传输层接纳、但尚未完成的 Agent 入站任务；停机时必须全部排空。 */
+const inboundTasks = new Set<Promise<void>>();
+
+function trackInboundTask(task: Promise<void>): Promise<void> {
+  inboundTasks.add(task);
+  void task.finally(() => inboundTasks.delete(task));
+  return task;
+}
 
 function buildClientHeaders(config: WebsocketChannelConfig): Record<string, string> {
   const headers = { ...config.client.headers };
@@ -157,17 +166,19 @@ function connectOnce(
         return;
       }
       pending += 1;
-      queue = queue
-        .then(() => onInboundMessage?.({ connectionId, rawPayload: raw, frameAgentId: parsed.agentId, messageId: parsed.messageId, peerId: parsed.peerId }))
+      // 在入队时固定处理器引用。stop 会清空全局处理器以拒绝新消息，但已接纳消息不能因此静默丢失。
+      const handler = onInboundMessage;
+      queue = trackInboundTask(queue
+        .then(() => handler?.({ connectionId, rawPayload: raw, frameAgentId: parsed.agentId, messageId: parsed.messageId, peerId: parsed.peerId }))
         .catch((error: unknown) => {
-          console.error(`[openclaw-web-socket] Client inbound handler failed ${connectionId}:`, error);
+          console.error(`[openclaw-web-socket] Client inbound handler failed ${connectionId}: ${redactWebSocketError(error, config)}`);
           sendToConnection(connectionId, serializeErrorFrame("Message processing failed"), config.limits.maxBufferedBytes);
         })
-        .finally(() => { pending -= 1; });
+        .finally(() => { pending -= 1; }));
     });
     ws.once("error", (error) => {
       if (!opened) reject(error);
-      else console.error(`[openclaw-web-socket] Client socket error ${connectionId}:`, error);
+      else console.error(`[openclaw-web-socket] Client socket error ${connectionId}: ${redactWebSocketError(error, config)}`);
     });
     ws.once("close", () => {
       cleanup();
@@ -226,6 +237,8 @@ export async function stopWebSocketClient(): Promise<void> {
   clientConnectionId = null;
   clientInfo = null;
   reconnectAttempt = 0;
+  // Socket 关闭只会停止接收新帧；已进入 Agent 管道的任务仍需自然完成，避免热重载期间丢消息。
+  await Promise.allSettled([...inboundTasks]);
 }
 
 export function getClientStats(): { running: boolean; connected: boolean; url: string | null; connectionId: string | null } {

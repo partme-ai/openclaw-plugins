@@ -8,6 +8,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { TracingBackend, TracingConfig } from "../shared/types.js";
 import { TracingSampler } from "./sampler.js";
+import { redactTraceText } from "../shared/redact.js";
 import {
   bindToolSpan,
   createSpan,
@@ -60,7 +61,7 @@ function readTraceId(value: unknown): string | undefined {
 
 function logHookError(api: OpenClawPluginApi, operation: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  api.logger.error(`[tracing] ${operation} failed: ${message}`);
+  api.logger.error(`[tracing] ${operation} failed: ${redactTraceText(message)}`);
 }
 
 /**

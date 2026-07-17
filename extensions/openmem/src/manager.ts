@@ -15,6 +15,7 @@ import type {
 import { OpenMemClient } from "./client.js";
 import type { OpenMemConfig } from "./config.js";
 import { OpenMemCoordinator } from "./coordinator.js";
+import { redactOpenMemError } from "./redact.js";
 
 type SearchChunk = { text: string; score: number; source: string; recall_type: "continuity" | "knowledge" };
 type SearchResponse = { chunks: SearchChunk[]; sources: string[] };
@@ -141,7 +142,7 @@ export class OpenMemSearchManager implements MemorySearchManager {
       if (data?.status !== "ok") throw new Error("unexpected health response");
       this.lastHealth = { ok: true, checkedAt: Date.now() };
     } catch (error) {
-      this.lastHealth = { ok: false, checkedAt: Date.now(), error: String(error) };
+      this.lastHealth = { ok: false, checkedAt: Date.now(), error: redactOpenMemError(error) };
       throw error;
     }
   }

@@ -31,6 +31,8 @@ const configSchema = {
     enabled: { type: "boolean" as const, default: true },
     dataDir: { type: "string" as const, default: "~/.openclaw/state/memory" },
     maxSearchResults: { type: "integer" as const, minimum: 1, maximum: 100, default: 10 },
+    maxSearchBytes: { type: "integer" as const, minimum: 1048576, maximum: 268435456, default: 16777216 },
+    maxReadLines: { type: "integer" as const, minimum: 1, maximum: 2000, default: 200 },
     retentionDays: { type: "integer" as const, minimum: 1, maximum: 3650, default: 90 },
     extractionInterval: { type: "integer" as const, minimum: 1, maximum: 100, default: 5 },
     maxRecordBytes: { type: "integer" as const, minimum: 1024, maximum: 1048576, default: 65536 },

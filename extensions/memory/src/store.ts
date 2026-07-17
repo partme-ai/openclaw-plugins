@@ -14,7 +14,9 @@ import {
   randomBytes,
 } from "node:crypto";
 import * as fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import * as path from "node:path";
+import { createInterface } from "node:readline";
 
 import type {
   MemoryEmbeddingProbeResult,
@@ -266,8 +268,15 @@ export class MemoryStore {
     },
   ): Promise<MemorySearchResult[]> {
     this.ensureReady();
+    if (opts?.maxResults !== undefined && (!Number.isInteger(opts.maxResults) || opts.maxResults < 1)) {
+      throw new Error("[memory] maxResults must be a positive integer");
+    }
+    if (opts?.minScore !== undefined && (!Number.isFinite(opts.minScore) || opts.minScore < 0)) {
+      throw new Error("[memory] minScore must be a finite non-negative number");
+    }
     const maxResults = Math.min(
       Math.max(opts?.maxResults ?? this.config.maxSearchResults, 1),
+      this.config.maxSearchResults,
       100,
     );
     const minScore = Math.max(opts?.minScore ?? 0, 0);
@@ -293,6 +302,7 @@ export class MemoryStore {
     }
 
     const results: MemorySearchResult[] = [];
+    let remainingBytes = this.config.maxSearchBytes;
     for (const searchRoot of searchRoots) {
       const files = (await this.safeReadDir(searchRoot.dir))
         .filter((entry) => entry.isFile() && DATE_FILE_PATTERN.test(entry.name))
@@ -301,13 +311,16 @@ export class MemoryStore {
         .reverse()
         .slice(0, Math.min(this.config.retentionDays, 365));
       for (const file of files) {
+        if (remainingBytes <= 0) break;
         opts?.signal?.throwIfAborted();
         const relPath = `${searchRoot.relDir}/${file}`;
         const absolutePath = path.join(searchRoot.dir, file);
         this.knownFiles.add(absolutePath);
-        const records = await this.readDecodedLines(absolutePath, opts?.signal);
-        records.forEach((record, index) => {
-          if (index % 256 === 0) opts?.signal?.throwIfAborted();
+        const scanned = await this.scanDecodedLines(
+          absolutePath,
+          remainingBytes,
+          opts?.signal,
+          (record, lineNumber) => {
           if (!this.isMemoryRecord(record)) return;
           const profileMayCrossSession =
             record.level === "L3" && this.config.profileScope === "agent";
@@ -316,15 +329,17 @@ export class MemoryStore {
           if (score <= 0 || score < minScore) return;
           results.push({
             path: relPath,
-            startLine: index + 1,
-            endLine: index + 1,
+            startLine: lineNumber,
+            endLine: lineNumber,
             score,
             textScore: score,
             snippet: `[${record.level}/${record.type}] ${record.content}`.slice(0, 500),
             source: "memory",
-            citation: `${relPath}#L${index + 1}`,
+            citation: `${relPath}#L${lineNumber}`,
           });
-        });
+          },
+        );
+        remainingBytes -= scanned;
       }
     }
     return results.sort((left, right) => right.score - left.score).slice(0, maxResults);
@@ -347,19 +362,22 @@ export class MemoryStore {
     if (!realFile.startsWith(`${realRoot}${path.sep}`)) {
       throw new Error("[memory] refusing to follow a memory symlink outside the agent directory");
     }
-    const decoded = await this.readDecodedLines(filePath);
-    const start = Math.max(0, from ?? 0);
-    const selected = decoded.slice(
-      start,
-      lines == null ? decoded.length : start + Math.max(0, lines),
-    );
+    if (from !== undefined && (!Number.isInteger(from) || from < 0)) {
+      throw new Error("[memory] from must be a non-negative integer");
+    }
+    if (lines !== undefined && (!Number.isInteger(lines) || lines < 1)) {
+      throw new Error("[memory] lines must be a positive integer");
+    }
+    const start = from ?? 0;
+    const limit = Math.min(lines ?? this.config.maxReadLines, this.config.maxReadLines);
+    const { selected, hasMore } = await this.readDecodedRange(filePath, start, limit);
     return {
       text: selected.map((item) => JSON.stringify(item)).join("\n") + (selected.length ? "\n" : ""),
       path: relPath,
       from: start,
       lines: selected.length,
-      truncated: start + selected.length < decoded.length,
-      ...(start + selected.length < decoded.length
+      truncated: hasMore,
+      ...(hasMore
         ? { nextFrom: start + selected.length }
         : {}),
     };
@@ -384,6 +402,8 @@ export class MemoryStore {
             : "agent+physical-session",
         profileScope: this.config.profileScope,
         pendingWrites: this.queues.size,
+        maxSearchBytes: this.config.maxSearchBytes,
+        maxReadLines: this.config.maxReadLines,
       },
     };
   }
@@ -499,6 +519,64 @@ export class MemoryStore {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
+  }
+
+  /**
+   * 逐行扫描搜索文件并实施跨文件共享的字节预算；任何单日文件都不会再被整体读入内存。
+   * 返回实际消费字节数，调用方据此把同一预算延续到后续层级和日期文件。
+   */
+  private async scanDecodedLines(
+    filePath: string,
+    byteBudget: number,
+    signal: AbortSignal | undefined,
+    visit: (value: unknown, lineNumber: number) => boolean | void,
+  ): Promise<number> {
+    const stream = createReadStream(filePath, { encoding: "utf8", signal });
+    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    let consumed = 0;
+    let lineNumber = 0;
+    try {
+      for await (const line of lines) {
+        signal?.throwIfAborted();
+        lineNumber += 1;
+        const bytes = Buffer.byteLength(line, "utf8") + 1;
+        if (consumed + bytes > byteBudget) break;
+        consumed += bytes;
+        if (!line.trim()) continue;
+        try {
+          if (visit(this.codec.decode(line), lineNumber) === false) break;
+        } catch (error) {
+          throw new Error(
+            `[memory] cannot decode ${filePath}:${lineNumber}; data is corrupt or the encryption key is wrong`,
+            { cause: error },
+          );
+        }
+      }
+      return consumed;
+    } finally {
+      lines.close();
+      stream.destroy();
+    }
+  }
+
+  /** 只流式读取调用方请求的窗口及一条探测记录，避免 readFile 为分页请求加载整个日文件。 */
+  private async readDecodedRange(filePath: string, from: number, limit: number): Promise<{
+    selected: unknown[];
+    hasMore: boolean;
+  }> {
+    const selected: unknown[] = [];
+    let hasMore = false;
+    await this.scanDecodedLines(filePath, Number.MAX_SAFE_INTEGER, undefined, (value, lineNumber) => {
+      const index = lineNumber - 1;
+      if (index < from) return;
+      if (selected.length < limit) {
+        selected.push(value);
+        return true;
+      }
+      hasMore = true;
+      return false;
+    });
+    return { selected, hasMore };
   }
 
   private async loadOrCreateIsolationKey(): Promise<Buffer> {

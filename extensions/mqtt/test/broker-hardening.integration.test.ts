@@ -223,6 +223,37 @@ describe.sequential("MQTT broker production hardening", () => {
     await Promise.all([clientA.endAsync(), clientB.endAsync()]);
   });
 
+  it("waits for an active inbound task before broker shutdown completes", async () => {
+    const port = await freePort();
+    let releaseTask: (() => void) | undefined;
+    const taskGate = new Promise<void>((resolve) => { releaseTask = resolve; });
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    await startBroker(config(port), async () => {
+      markStarted?.();
+      await taskGate;
+    });
+    const client = await connect(port, { clientId: "shutdown-drain", clean: true });
+    client.on("error", () => undefined);
+    const publish = new Promise<void>((resolve) => {
+      client.publish("shutdown/drain", "work", { qos: 1 }, () => resolve());
+    });
+    await started;
+
+    let stopped = false;
+    const stopping = stopBroker().then(() => { stopped = true; });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(stopped).toBe(false);
+
+    releaseTask?.();
+    await stopping;
+    // Broker 主动断开 socket 时 mqtt.js 不保证 publish callback 再触发；这里只需避免
+    // Promise rejection，并以 stopBroker 是否完成作为停机收敛断言。
+    void publish;
+    expect(stopped).toBe(true);
+    client.end(true);
+  });
+
   it("accepts a real MQTT-over-TLS connection and a QoS 2 publish", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openclaw-mqtt-tls-"));
     const certFile = join(directory, "server.pem");

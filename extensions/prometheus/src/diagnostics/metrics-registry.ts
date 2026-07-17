@@ -6,6 +6,7 @@
  * 失效，热路径查询避免全量排序和 JSON 序列化。
  */
 import type { MetricDefinition, MetricSample, MetricType } from "../types.js";
+import { sanitizeLabel } from "../shared/label-sanitize.js";
 
 type LabelValues = Record<string, string>;
 /** 插件运行期动态指标的 series 硬上限；超限样本会被计入专用丢弃计数。 */
@@ -30,11 +31,13 @@ function sampleKey(name: string, labels: LabelValues | undefined): string {
 }
 
 /** 轻量 label 排序（原地排序 keys，返回排序后对象） */
-function sortedLabels(labels: LabelValues | undefined): LabelValues | undefined {
+function normalizeLabels(labels: LabelValues | undefined): LabelValues | undefined {
   if (!labels || Object.keys(labels).length === 0) return undefined;
-  // 直接返回原始对象，不要转换为字符串
-  // 标签排序由 sampleKey() 处理
-  return labels;
+  const normalized: LabelValues = {};
+  for (const key of Object.keys(labels).sort()) {
+    normalized[key] = sanitizeLabel(labels[key]);
+  }
+  return normalized;
 }
 
 // ─────────── Registry ───────────
@@ -82,7 +85,9 @@ export class MetricsRegistry {
       timestamp?: number;
     },
   ): void {
-    const key = sampleKey(name, options.labels);
+    // 拷贝并规范化，防止调用方在 set() 后修改原对象导致 sample key 与导出标签不一致。
+    const normalizedLabels = normalizeLabels(options.labels);
+    const key = sampleKey(name, normalizedLabels);
     if (!this.samples.has(key) && this.samples.size >= MAX_RUNTIME_METRIC_SERIES) {
       this.droppedSeries += 1;
       this.invalidateCache();
@@ -92,13 +97,12 @@ export class MetricsRegistry {
       name,
       help: options.help,
       type: options.type ?? "gauge",
-      labels: options.labels ? Object.keys(options.labels).sort() : undefined,
+      labels: normalizedLabels ? Object.keys(normalizedLabels) : undefined,
     });
-    const sl = sortedLabels(options.labels);
     this.samples.set(key, {
       name,
       value,
-      ...(sl ? { labels: sl } : {}),
+      ...(normalizedLabels ? { labels: normalizedLabels } : {}),
       ...(typeof options.timestamp === "number" ? { timestamp: options.timestamp } : {}),
     });
     this.invalidateCache();
@@ -113,7 +117,7 @@ export class MetricsRegistry {
       labels?: LabelValues;
     },
   ): void {
-    const key = sampleKey(name, options.labels);
+    const key = sampleKey(name, normalizeLabels(options.labels));
     const current = this.samples.get(key)?.value ?? 0;
     this.set(name, current + by, options);
   }
@@ -127,7 +131,7 @@ export class MetricsRegistry {
       labels?: LabelValues;
     },
   ): void {
-    const key = sampleKey(name, options.labels);
+    const key = sampleKey(name, normalizeLabels(options.labels));
     const current = this.samples.get(key)?.value ?? 0;
     this.set(name, Math.max(0, current - by), options);
   }
@@ -269,7 +273,7 @@ export class MetricsRegistry {
    * 用于 SLI 计算等场景，避免 snapshotSamples() 的全量排序开销。
    */
   getSampleValue(name: string, labels?: LabelValues): number {
-    const key = sampleKey(name, labels);
+    const key = sampleKey(name, normalizeLabels(labels));
     return this.samples.get(key)?.value ?? 0;
   }
 

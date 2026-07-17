@@ -34,6 +34,7 @@ import {
   mapRabbitmqWirePayloadMode,
 } from "./shared/wire-helpers.js";
 import type { InboundEvent } from "./transport/server.js";
+import { redactRabbitmqError } from "./shared/redact.js";
 
 /** @description 单条入站消息的处理结果（接受/拒绝及诊断字段）。 */
 interface InboundResult {
@@ -132,14 +133,15 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
     if (dedupe && correlationId && claim?.kind === "claimed") {
       dedupe.release(correlationId);
     }
-    console.error(`[openclaw-rabbitmq] Runtime dispatch failed for peer=${route.peerId}:`, error);
+    const safeError = redactRabbitmqError(error, config);
+    console.error(`[openclaw-rabbitmq] Runtime dispatch failed for peer=${route.peerId}: ${safeError}`);
     if (!event.delivery.settled) {
       event.delivery.nack({
         requeue: config.consume.requeueOnError,
-        reason: `dispatch_error:${String(error)}`,
+        reason: `dispatch_error:${safeError}`,
       });
     }
-    return { accepted: false, reason: `dispatch_error:${String(error)}`, manualAck: true };
+    return { accepted: false, reason: `dispatch_error:${safeError}`, manualAck: true };
   }
 }
 

@@ -83,6 +83,11 @@ export class OpenMemCoordinator {
 
   constructor(private readonly client: OpenMemClient, private readonly agentId: string) {}
 
+  /** 等待所有已进入会话串行队列的操作收敛；客户端关闭后在途网络与退避会被立即取消。 */
+  async drain(): Promise<void> {
+    await Promise.allSettled([...this.sessionOperations.values()]);
+  }
+
   async startSession(sessionKey: string, channel?: string): Promise<string> {
     return this.withSessionLock(sessionKey, () => this.ensureActive(sessionKey, channel));
   }

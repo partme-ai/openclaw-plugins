@@ -6,6 +6,7 @@
  * 保证 OpenClaw 插件停止后不再有后台网络活动。
  */
 import type { OpenMemConfig } from "./config.js";
+import { redactOpenMemError } from "./redact.js";
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
@@ -25,6 +26,8 @@ export class OpenMemHttpError extends Error {
 /** 封装 OpenMem REST 调用、有限重试和生命周期取消的客户端。 */
 export class OpenMemClient {
   private readonly controllers = new Set<AbortController>();
+  /** 同时取消 fetch 与重试退避；只中止 fetch 不足以保证 stop 后没有后台任务。 */
+  private readonly lifecycleController = new AbortController();
   private closed = false;
 
   constructor(readonly config: OpenMemConfig) {}
@@ -39,6 +42,7 @@ export class OpenMemClient {
 
   close(): void {
     this.closed = true;
+    this.lifecycleController.abort(new Error("OpenMem client closed"));
     for (const controller of this.controllers) controller.abort(new Error("OpenMem client closed"));
     this.controllers.clear();
   }
@@ -48,16 +52,21 @@ export class OpenMemClient {
     options: { method: "GET" | "POST"; body?: unknown; retrySafe?: boolean; signal?: AbortSignal },
   ): Promise<T> {
     if (this.closed) throw new OpenMemHttpError("OpenMem client is closed");
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, this.lifecycleController.signal])
+      : this.lifecycleController.signal;
+    const effectiveOptions = { ...options, signal };
     const attempts = options.retrySafe ? this.config.maxAttempts : 1;
     let lastError: unknown;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
-        return await this.requestOnce<T>(pathName, options);
+        if (this.closed) throw new OpenMemHttpError("OpenMem client is closed");
+        return await this.requestOnce<T>(pathName, effectiveOptions);
       } catch (error) {
         lastError = error;
         const retryable = error instanceof OpenMemHttpError && error.retryable;
-        if (!retryable || attempt >= attempts || options.signal?.aborted) throw error;
-        await this.delay(this.config.retryBaseDelayMs * 2 ** (attempt - 1), options.signal);
+        if (!retryable || attempt >= attempts || signal.aborted) throw error;
+        await this.delay(this.config.retryBaseDelayMs * 2 ** (attempt - 1), signal);
       }
     }
     throw lastError;
@@ -185,11 +194,7 @@ export class OpenMemClient {
 
   /** 清理控制字符并遮蔽当前 API Key，避免远端错误正文污染日志或泄露凭据。 */
   private safeDetail(value: string): string {
-    let sanitized = value.replace(/[\u0000-\u001f\u007f]+/g, " ");
-    if (this.config.apiKeyEnv) {
-      const secret = process.env[this.config.apiKeyEnv];
-      if (secret) sanitized = sanitized.split(secret).join("[REDACTED]");
-    }
-    return sanitized.slice(0, 500);
+    const secret = this.config.apiKeyEnv ? process.env[this.config.apiKeyEnv] : undefined;
+    return redactOpenMemError(value, secret);
   }
 }

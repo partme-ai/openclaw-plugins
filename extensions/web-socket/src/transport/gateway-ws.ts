@@ -25,6 +25,7 @@ import {
 import { setWebsocketChannelConfig } from "../state/web-socket-state.js";
 import { startWebSocketClient, stopWebSocketClient } from "./client.js";
 import { startWebSocketServer, stopWebSocketServer } from "./server.js";
+import { redactWebSocketError } from "../shared/redact.js";
 
 /**
  * 等待 Gateway abort 信号。
@@ -51,9 +52,11 @@ const inboundHandler = (message: Parameters<typeof handleInboundMessage>[0]) =>
 export async function monitorWebSocketChannel(
   ctx: ChannelGatewayContext<ResolvedWebsocketAccount>,
 ): Promise<void> {
+  let resolvedConfig: ReturnType<typeof resolveWebsocketConfig> | null = null;
   try {
     const globalConfig = ctx.cfg as unknown as Record<string, unknown>;
     const config = resolveWebsocketConfig(globalConfig);
+    resolvedConfig = config;
     validateWebsocketConfig(config);
     const dmScope = resolveOpenClawDmScope(globalConfig);
     setWebsocketChannelConfig(config, dmScope);
@@ -103,7 +106,8 @@ export async function monitorWebSocketChannel(
     ctx.setStatus({
       accountId: ctx.account.accountId,
       running: false,
-      lastError: String(err),
+      // 状态会被管理接口读取，不能把 URL 凭据、Bearer Token 或自定义认证 Header 原样暴露。
+      lastError: redactWebSocketError(err, resolvedConfig ?? undefined),
     } as ChannelAccountSnapshot);
     throw err;
   } finally {

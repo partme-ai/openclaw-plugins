@@ -12,6 +12,7 @@ import type {
   TracingConfig,
   TracingLogger,
 } from "../shared/types.js";
+import { redactTraceText } from "../shared/redact.js";
 
 const BATCH_SIZE = 50;
 
@@ -251,5 +252,5 @@ function toUnixNano(timeMs: number): string {
 }
 
 function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return redactTraceText(error instanceof Error ? error.message : String(error));
 }

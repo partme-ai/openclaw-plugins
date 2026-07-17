@@ -112,6 +112,33 @@ describe("rabbitmq-server", () => {
     expect(consumeCh.nack).toHaveBeenCalledTimes(0);
   });
 
+  it("drains an accepted Agent task before closing channels on stop", async () => {
+    ({ startRabbitmqServer, stopRabbitmqServer } = await import("../src/transport/server.js"));
+    let signalStarted!: () => void;
+    let releaseTask!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseTask = resolve; });
+    await startRabbitmqServer(DEFAULT_RABBITMQ_CONFIG, async () => {
+      signalStarted();
+      await gate;
+      return { ok: true as const };
+    });
+    consumeCb?.(sampleMsg());
+    await started;
+
+    let stopped = false;
+    const stopping = stopRabbitmqServer().then(() => { stopped = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(consumeCh.cancel).toHaveBeenCalledWith("ctag");
+    expect(stopped).toBe(false);
+    expect(consumeCh.nack).not.toHaveBeenCalled();
+
+    releaseTask();
+    await stopping;
+    expect(consumeCh.ack).toHaveBeenCalledTimes(1);
+    expect(consumeCh.close).toHaveBeenCalled();
+  });
+
   it("defers ack until delivery.ack() in manual mode", async () => {
     ({ startRabbitmqServer, stopRabbitmqServer } = await import("../src/transport/server.js"));
     let ackedDuringHandler = false;

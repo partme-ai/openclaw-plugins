@@ -26,7 +26,10 @@ import {
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
-import { getMqttIdempotencyCache } from "./shared/wire-helpers.js";
+import {
+  buildMqttPacketIdempotencyKey,
+  getMqttIdempotencyCache,
+} from "./shared/wire-helpers.js";
 
 /** MQTT 入站幂等缓存（messageId / 等价键）。 */
 const idempotencyCache = getMqttIdempotencyCache();
@@ -71,8 +74,10 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
     agentId: route.agentId,
   });
 
-  const idempotencyKey =
-    message.messageId !== undefined ? String(message.messageId) : undefined;
+  const idempotencyKey = buildMqttPacketIdempotencyKey(message);
+  // DUP=false 表示新的应用发布；即使 Broker 已复用 Packet Identifier，也必须接受并刷新占位。
+  // DUP=true 才可能是同一 QoS 报文的重投，此时保留缓存记录用于短路重复 dispatch。
+  if (idempotencyKey && !message.dup) idempotencyCache.forget(idempotencyKey);
   const parsed = normalizeWireIngress({
     rawPayload: message.payload,
     mode: config.payload.mode,
@@ -122,6 +127,8 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
   try {
     await dispatchToRuntime(sessionKey, peerId, agentId, text, message, route, replyTopic, parsed.unified);
   } catch (error) {
+    // dispatch 失败时释放预占；否则客户端按 QoS 重投会被当成“已处理”并错误 ACK，造成消息丢失。
+    if (idempotencyKey) idempotencyCache.forget(idempotencyKey);
     console.error(`[openclaw-mqtt] Runtime dispatch failed for client=${message.clientId}:`, error);
     // 必须继续抛出：上层 authorizePublish 只有感知失败，才能拒绝 PUBACK，
     // 避免客户端认为消息已经被 Agent 成功处理。

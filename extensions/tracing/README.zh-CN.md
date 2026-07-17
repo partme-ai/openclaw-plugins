@@ -21,6 +21,24 @@ OpenTelemetry Collector，再由 Collector 转发到 SkyWalking。
 
 ## 追踪架构
 
+```text
+message_received ──▶ root span ─────────────────────────────┐
+                         │                                  │
+before_tool_call ──▶ child span ──▶ after_tool_call         │
+                         │                                  │
+reply final / agent_end / session_end ──▶ 结束 Trace ◀─────┘
+                                              │
+                                              ▼
+                      属性脱敏 + 业务 ID 不可逆关联令牌
+                                              │
+                     ┌────────────────────────┼───────────────────────┐
+                     ▼                        ▼                       ▼
+                 OpenClaw Log          JSONL 有界缓冲          OTLP 有界缓冲
+                                                               │
+                                                               ▼
+                                                     OpenTelemetry Collector
+```
+
 ```mermaid
 flowchart LR
     Hooks["OpenClaw Hooks<br/>消息 / 工具 / Agent / Session"]
@@ -28,13 +46,14 @@ flowchart LR
     Trace["Trace 生命周期<br/>消息 root span"]
     Tool["工具 child span<br/>before → after"]
     Guard["确定性采样<br/>活动 Trace / 单 Trace Span 上限<br/>会话内状态变更串行"]
+    Privacy["统一隐私边界<br/>凭据脱敏 / ID 关联令牌 / 500 字符"]
     Backend{"导出后端"}
     Log["OpenClaw Logger"]
     File[("有界 JSONL 内存缓冲<br/>后台分批刷盘与保留清理")]
     Otlp["有界 OTLP/HTTP 内存缓冲<br/>后台 50 Span 分批 / 超时 / 重试"]
     Collector["OpenTelemetry Collector<br/>可继续转发 SkyWalking"]
 
-    Hooks --> Init --> Trace --> Tool --> Guard --> Backend
+    Hooks --> Init --> Trace --> Tool --> Guard --> Privacy --> Backend
     Backend --> Log
     Backend --> File
     Backend --> Otlp --> Collector
@@ -131,6 +150,10 @@ openclaw plugins install @partme.ai/openclaw-tracing
 - File/OTLP 缓冲位于进程内，不是持久 Outbox，也不提供 exactly-once。进程崩溃可能
   丢失尚未刷出的 span，OTLP 请求超时也可能产生结果未知窗口。
 - `captureMessageBody` 默认关闭；开启前必须完成数据分级、访问控制和保留期评审。
+- Span 写入 TraceStore 前统一执行安全处理：Bearer、`sk-*` 等凭据使用 OpenClaw SDK 与插件
+  规则联合脱敏；控制字符清理且字符串最多 500 字符；session/run/message/tool-call 标识替换为
+  Gateway 单次生命周期内稳定、跨重启不可关联的 HMAC 令牌。状态查询、Log、File 与 OTLP 因而
+  共享同一安全边界，不依赖每个后端重复实现。
 - `otlpHeaders` 可能包含鉴权秘密；插件不会回显，但配置文件本身仍必须使用最小权限保护。
 - HTTP 查询只保留最近完成的 200 个 trace，Gateway 关闭时清空。
 

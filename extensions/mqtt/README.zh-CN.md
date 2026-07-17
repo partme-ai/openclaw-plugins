@@ -29,6 +29,34 @@
 
 ## 架构总览
 
+先用字符图看清运行边界与主数据流；下方 Mermaid 保留相同结构，便于渲染、维护和继续扩展：
+
+```text
+┌──────────────────────────── OpenClaw Gateway ────────────────────────────┐
+│                                                                         │
+│  openclaw-mqtt                                                         │
+│                                                                         │
+│  ┌───────────────┐   ┌────────────────┐   ┌─────────────────────────┐  │
+│  │ Aedes Broker  │──▶│ 认证 + Topic ACL│──▶│ clientId 有界串行队列   │  │
+│  │ TCP / TLS     │   │ 连接数/载荷/Retain│  │ 跨设备并行 + 停机排空   │  │
+│  └───────┬───────┘   └────────────────┘   └────────────┬────────────┘  │
+│          │                                             │               │
+│          │             ┌───────────────────────────────▼────────────┐  │
+│          │             │ Topic 路由 → account ACL → message-sdk    │  │
+│          │             │ Packet 幂等 → Session 映射 → Agent Reply  │  │
+│          │             └───────────────────────────────┬────────────┘  │
+│          │                                             │               │
+│          └──────────── replyTopic ◀────────────────────┘               │
+│                                                                         │
+│  状态持久化：Memory / Redis / MongoDB / LevelDB                         │
+└──────────────────────────────────┬──────────────────────────────────────┘
+                                   │ MQTT 3.1 / 3.1.1
+                                   ▼
+                         ┌─────────────────────┐
+                         │ 设备、网关、IoT 客户端│
+                         └─────────────────────┘
+```
+
 ```mermaid
 flowchart LR
     Device["MQTT 设备 / 客户端"]
@@ -49,6 +77,8 @@ flowchart LR
 ```
 
 这不是“收到 MQTT 包就立即返回成功”的旁路桥接。客户端 Publish 进入有界队列后，只有 Agent 入站处理完成，Aedes 才完成本次发布确认；队列已满、处理失败或超时都会反馈为发布失败。
+
+QoS Packet Identifier 的去重范围是 `clientId + topic + messageId + payload SHA-256`，不会让不同设备的相同编号互相冲突。`DUP=false` 的新发布会刷新已复用编号；Agent dispatch 失败会释放幂等预占，使客户端的 QoS 重投可以再次进入处理链。Gateway 停止时先拒绝新任务并断开 MQTT socket，再等待已经开始的任务链真实结束。
 
 ### 生命周期
 
@@ -76,15 +106,15 @@ Aedes MQTT broker 随进程启动，支持 MQTT 3.1 和 MQTT 3.1.1。当前 Aede
 | 认证 | 用户名/密码、每用户 ACL、匿名访问开关 |
 | 传输 | TCP（1883）+ TLS（8883），可配置 cert/key/CA |
 | QoS | Aedes 原生处理 MQTT QoS 0/1/2；QoS 0 的 OpenClaw 分发链路带 mailbox 软限制 |
-| 持久化 | memory、redis（含 mqemitter）、mongodb、level |
+| 持久化 | memory、redis、mongodb、level（均为单 Gateway Broker） |
 | 限制 | 最大 payload、最大连接数、单客户端待处理任务数、Agent 任务超时 |
 | 会话 | 基于过期时间的清理，支持跨重连保留 |
 | 可观测性 | Prometheus 指标（`prom-client`）、结构化 JSON 审计日志 |
 | Will / Retain | 可配置 retain 策略、will 消息白名单 |
 
-### 水平扩展
+### 部署边界
 
-默认单进程内存运行。多 Gateway 水平扩展必须使用 Redis 后端；它同时提供 Aedes 持久化与带集群前缀的 MQEmitter Pub/Sub：
+当前插件定位为单 Gateway 内嵌 Broker。Redis 后端只提供会话、离线消息和 retained packet 持久化，不再声明跨 Gateway 消息总线能力：
 
 ```json
 {
@@ -107,7 +137,7 @@ Aedes MQTT broker 随进程启动，支持 MQTT 3.1 和 MQTT 3.1.1。当前 Aede
 }
 ```
 
-`keyPrefix` 必须按环境/集群唯一，避免共享 Redis 时消息串流。`packetTTL` 是离线 QoS 消息保留秒数，`0` 表示不限制。memory、mongodb、level 可作为单节点后端，但不提供 Redis MQEmitter 的跨节点消息总线。
+`keyPrefix` 必须按环境唯一，避免共享 Redis 时键空间冲突。`packetTTL` 是离线 QoS 消息保留秒数，`0` 表示不限制。不要让多个 Gateway 同时使用同一 MQTT persistence keyPrefix；需要水平扩展时，应部署独立的生产 MQTT Broker，再由专门的外部 Broker client 渠道接入，而不是把多个内嵌 Broker 伪装成一个集群。
 
 > 迁移说明：`nedb` 后端已移除。其依赖使用了 Node.js 新版本已删除的 `util.isDate`，与 OpenClaw 2026.7.1 的 Node 基线不兼容。旧配置会在启动时明确失败，请迁移到本地 `level` 或生产集群使用的 `redis`。
 
@@ -285,14 +315,14 @@ openclaw plugins install @partme.ai/openclaw-mqtt
 |------|--------|------|
 | `persistence.enabled` | `false` | 启用 Broker 状态持久化 |
 | `persistence.backend` | `"memory"` | 后端类型：`memory`、`redis`、`mongodb`、`level` |
-| `persistence.redis.keyPrefix` | `"mqtt"` | Redis 与 MQEmitter 的集群隔离前缀 |
+| `persistence.redis.keyPrefix` | `"mqtt"` | 单 Gateway Redis 持久化键前缀；不同实例不得共享 |
 | `persistence.redis.packetTTL` | `0` | 离线 QoS 包 TTL（秒，0 为不限制） |
 | `persistence.mongodb.url` | `mongodb://localhost:27017` | MongoDB 地址 |
 | `persistence.mongodb.dbName` | — | MongoDB 数据库名 |
 | `persistence.mongodb.collectionPrefix` | — | collection 前缀 |
 | `persistence.level.path` | `./data/aedes-leveldb` | 单节点 LevelDB 数据目录 |
 
-后端选择原则：`memory` 用于开发；`level` 用于单节点本地持久化；`mongodb` 用于已有 MongoDB 基础设施的单节点 Broker；只有 `redis` 同时提供持久化和跨 Gateway 的 MQEmitter 消息总线。
+后端选择原则：`memory` 用于开发；`level` 用于本地持久化；`mongodb`/`redis` 用于已有基础设施的单 Gateway Broker。所有后端都不提供跨 Gateway MQTT 消息总线。
 
 ## 测试
 

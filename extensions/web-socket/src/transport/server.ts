@@ -21,6 +21,7 @@ import {
   touchConnection,
   unregisterConnection,
 } from "./connection-hub.js";
+import { redactWebSocketError } from "../shared/redact.js";
 
 export type WebsocketInboundCallback = (ctx: {
   connectionId: string;
@@ -40,6 +41,14 @@ let serverRunning = false;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 const serverConnections = new Map<string, WebSocket>();
 const awaitingPong = new Map<string, number>();
+/** stop 时必须等待的服务端 Agent 入站任务；连接断开不等于业务任务已经结束。 */
+const inboundTasks = new Set<Promise<void>>();
+
+function trackInboundTask(task: Promise<void>): Promise<void> {
+  inboundTasks.add(task);
+  void task.finally(() => inboundTasks.delete(task)).catch(() => undefined);
+  return task;
+}
 
 function tokenDigest(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();
@@ -215,20 +224,20 @@ export async function startWebSocketServer(
           return;
         }
         pending += 1;
-        queue = queue
+        queue = trackInboundTask(queue
           .then(() => messageHandler({ connectionId, rawPayload: raw, frameAgentId: parsed.agentId, messageId: parsed.messageId, peerId: parsed.peerId }))
           .then(() => {
             sendToConnection(connectionId, serializeAcceptedFrame(parsed.messageId), config.limits.maxBufferedBytes);
           })
           .catch((error: unknown) => {
-            console.error(`[openclaw-web-socket] Inbound handler failed ${connectionId}:`, error);
+            console.error(`[openclaw-web-socket] Inbound handler failed ${connectionId}: ${redactWebSocketError(error, config)}`);
             sendToConnection(connectionId, serializeErrorFrame("Message processing failed"), config.limits.maxBufferedBytes);
           })
-          .finally(() => { pending -= 1; });
+          .finally(() => { pending -= 1; }));
       });
       ws.on("close", cleanup);
       ws.on("error", (error) => {
-        console.error(`[openclaw-web-socket] Server socket error ${connectionId}:`, error);
+        console.error(`[openclaw-web-socket] Server socket error ${connectionId}: ${redactWebSocketError(error, config)}`);
         cleanup();
       });
     });
@@ -243,7 +252,7 @@ export async function startWebSocketServer(
     nextHttpServer.once("error", onStartupError);
     nextHttpServer.listen(serverCfg.wsPort, serverCfg.host, () => {
       nextHttpServer.off("error", onStartupError);
-      nextHttpServer.on("error", (error) => console.error("[openclaw-web-socket] HTTP server error:", error));
+      nextHttpServer.on("error", (error) => console.error(`[openclaw-web-socket] HTTP server error: ${redactWebSocketError(error, config)}`));
       serverRunning = true;
       heartbeatTimer = setInterval(() => {
         const now = Date.now();
@@ -275,14 +284,18 @@ export async function stopWebSocketServer(): Promise<void> {
   }
   serverConnections.clear();
   awaitingPong.clear();
+  const drainingTasks = Promise.allSettled([...inboundTasks]);
   const closingWss = wss;
   const closingHttp = httpServer;
   wss = null;
   httpServer = null;
   activeConfig = null;
   serverRunning = false;
-  await new Promise<void>((resolve) => closingWss ? closingWss.close(() => resolve()) : resolve());
-  await new Promise<void>((resolve) => closingHttp ? closingHttp.close(() => resolve()) : resolve());
+  await Promise.all([
+    new Promise<void>((resolve) => closingWss ? closingWss.close(() => resolve()) : resolve()),
+    new Promise<void>((resolve) => closingHttp ? closingHttp.close(() => resolve()) : resolve()),
+    drainingTasks,
+  ]);
 }
 
 export function getServerStats(): { running: boolean; connectionCount: number; wsPort: number | null; path: string | null; secure: boolean } {

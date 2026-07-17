@@ -14,6 +14,7 @@ import { isRabbitmqConfigured, resolveRabbitmqConfig, validateRabbitmqConfig } f
 import { getRabbitmqChannelConfig, setRabbitmqChannelConfig } from "./state/state.js";
 import { rabbitmqSetupAdapter, rabbitmqSetupWizard } from "./onboarding.js";
 import { processInbound } from "./inbound.js";
+import { redactRabbitmqError } from "./shared/redact.js";
 
 /** @description 单账户场景下的默认 accountId。 */
 export const DEFAULT_ACCOUNT_ID = "default";
@@ -102,7 +103,7 @@ export const rabbitmqChannel = {
             return { ok: false as const, requeue: false, reason: result.reason ?? "drop" };
           }
         } catch (error) {
-          trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
+          trackInboundDropped(`inbound_dispatch_error:${redactRabbitmqError(error, config)}`);
           if (!event.delivery.settled) {
             event.delivery.nack({
               requeue: config.consume.requeueOnError,

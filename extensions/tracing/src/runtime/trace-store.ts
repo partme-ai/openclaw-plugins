@@ -6,6 +6,7 @@
  * 会把 orphan Span 以 error 状态真正关闭，而不是只删除映射。
  */
 import type { Span, SpanKind, SpanStatus, TracingBackend } from "../shared/types.js";
+import { sanitizeTraceAttributes } from "../shared/redact.js";
 
 /** 活动 Trace 的轻量索引，同时由 sessionKey 和 runId 指向同一对象。 */
 export interface ActiveTraceContext {
@@ -57,7 +58,8 @@ export function createSpan(
     name,
     kind: options.kind ?? "internal",
     startTimeMs: Date.now(),
-    attributes: { ...options.attributes },
+    // TraceStore 是所有查询与导出后端的共同上游，在此统一脱敏并复制属性。
+    attributes: sanitizeTraceAttributes(options.attributes),
     status: "unset",
     events: [],
   };
@@ -81,7 +83,7 @@ export async function endSpan(
   }
   span.endTimeMs = endTimeMs;
   span.status = status;
-  if (options.attributes) Object.assign(span.attributes, options.attributes);
+  if (options.attributes) Object.assign(span.attributes, sanitizeTraceAttributes(options.attributes));
   activeSpans.delete(spanId);
 
   const completed = cloneSpan(span);

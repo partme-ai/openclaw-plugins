@@ -11,6 +11,8 @@
       "enabled": { "type": "boolean", "default": true },
       "dataDir": { "type": "string", "description": "数据存储目录" },
       "maxSearchResults": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 },
+      "maxSearchBytes": { "type": "integer", "minimum": 1048576, "maximum": 268435456, "default": 16777216, "description": "单次词法搜索最多扫描的 JSONL 字节数" },
+      "maxReadLines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 200, "description": "单次 readFile 最多返回的解码记录行数" },
       "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 90 },
       "extractionInterval": { "type": "integer", "minimum": 1, "maximum": 100, "default": 5 },
       "maxRecordBytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 65536 },

@@ -35,6 +35,7 @@ import type {
   TracingConfig,
   TracingLogger,
 } from "./shared/types.js";
+import { redactTraceText } from "./shared/redact.js";
 
 const PLUGIN_ID = "tracing";
 const SUPPORTED_BACKENDS: TracingConfig["backend"][] = ["log", "file", "otlp"];
@@ -256,7 +257,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return redactTraceText(error instanceof Error ? error.message : String(error));
 }
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({

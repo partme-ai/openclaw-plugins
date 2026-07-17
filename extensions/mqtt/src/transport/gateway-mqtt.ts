@@ -23,6 +23,7 @@ import {
 } from "../config.js";
 import { setMqttChannelConfig } from "../state/mqtt-state.js";
 import type { MqttTopicMapping } from "../types.js";
+import { redactMqttError } from "../shared/redact.js";
 
 /**
  * 等待 Gateway 中止信号（账号停止或进程退出）。
@@ -44,6 +45,7 @@ function waitForAbortSignal(abortSignal: AbortSignal): Promise<void> {
  * 长驻监控：启动 MQTT Broker，直到 `abortSignal` 触发后清理资源。
  */
 export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttAccount>): Promise<void> {
+  let resolvedConfig: ReturnType<typeof resolveBrokerConfig> | null = null;
   try {
     const globalConfig = ctx.cfg as unknown as Record<string, unknown>;
     if (hasLegacyMqttDmScope(globalConfig)) {
@@ -52,6 +54,7 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
       );
     }
     const config = resolveBrokerConfig(globalConfig);
+    resolvedConfig = config;
     const dmScope = resolveOpenClawDmScope(globalConfig);
     setMqttChannelConfig(config, dmScope);
     configureSessionExpiry(
@@ -90,10 +93,11 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
 
     await waitForAbortSignal(ctx.abortSignal);
   } catch (err) {
+    const safeError = redactMqttError(err, resolvedConfig);
     ctx.setStatus({
       accountId: ctx.account.accountId,
       running: false,
-      lastError: String(err),
+      lastError: safeError,
     } as ChannelAccountSnapshot);
     throw err;
   } finally {

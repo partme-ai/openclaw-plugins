@@ -17,6 +17,10 @@ export interface MemoryConfig {
   enabled: boolean;
   dataDir: string;
   maxSearchResults: number;
+  /** 单次词法搜索最多顺序读取的 JSONL 字节数，防止历史文件拖垮 Agent Hook。 */
+  maxSearchBytes: number;
+  /** Memory Host 单次 readFile 最多返回的解码记录行数。 */
+  maxReadLines: number;
   retentionDays: number;
   extractionInterval: number;
   maxRecordBytes: number;
@@ -32,6 +36,8 @@ const DEFAULTS: MemoryConfig = {
   enabled: true,
   dataDir: "~/.openclaw/state/memory",
   maxSearchResults: 10,
+  maxSearchBytes: 16 * 1024 * 1024,
+  maxReadLines: 200,
   retentionDays: 90,
   extractionInterval: 5,
   maxRecordBytes: 64 * 1024,
@@ -103,6 +109,14 @@ export function resolveConfig(api: Pick<OpenClawPluginApi, "pluginConfig">): Mem
     enabled: raw.enabled !== false,
     dataDir,
     maxSearchResults: boundedInteger(raw.maxSearchResults, "maxSearchResults", DEFAULTS.maxSearchResults, 1, 100),
+    maxSearchBytes: boundedInteger(
+      raw.maxSearchBytes,
+      "maxSearchBytes",
+      DEFAULTS.maxSearchBytes,
+      1024 * 1024,
+      256 * 1024 * 1024,
+    ),
+    maxReadLines: boundedInteger(raw.maxReadLines, "maxReadLines", DEFAULTS.maxReadLines, 1, 2_000),
     retentionDays: boundedInteger(raw.retentionDays, "retentionDays", DEFAULTS.retentionDays, 1, 3650),
     extractionInterval: boundedInteger(raw.extractionInterval, "extractionInterval", DEFAULTS.extractionInterval, 1, 100),
     maxRecordBytes: boundedInteger(raw.maxRecordBytes, "maxRecordBytes", DEFAULTS.maxRecordBytes, 1024, 1024 * 1024),

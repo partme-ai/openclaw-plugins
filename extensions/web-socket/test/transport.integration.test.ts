@@ -137,6 +137,31 @@ describe("embedded WebSocket transport", () => {
     ws.close();
   });
 
+  it("server stop waits for an accepted Agent task to finish", async () => {
+    const port = await freePort();
+    let signalStarted!: () => void;
+    let releaseTask!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const taskGate = new Promise<void>((resolve) => { releaseTask = resolve; });
+    await startWebSocketServer(config(port), async () => {
+      signalStarted();
+      await taskGate;
+    });
+    const ws = await open(`ws://127.0.0.1:${port}/openclaw/ws`, {
+      headers: { Authorization: "Bearer test-secret" },
+    });
+    ws.send(JSON.stringify({ version: "1", type: "message", text: "drain-me", messageId: "drain-server-1" }));
+    await started;
+
+    let stopped = false;
+    const stopping = stopWebSocketServer().then(() => { stopped = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+    releaseTask();
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+
   it("accepts a real WSS connection", async () => {
     const port = await freePort();
     const certDir = mkdtempSync(join(tmpdir(), "openclaw-web-socket-"));
@@ -226,6 +251,42 @@ describe("embedded WebSocket transport", () => {
     await expect(closed).resolves.toBe(1008);
     expect(observed).toEqual(["first"]);
     await stopWebSocketClient();
+    await new Promise<void>((resolve) => external.close(() => resolve()));
+  });
+
+  it("client stop preserves and drains a message accepted before shutdown", async () => {
+    const port = await freePort();
+    const external = new WebSocketServer({ host: "127.0.0.1", port });
+    await new Promise<void>((resolve) => external.once("listening", () => resolve()));
+    external.once("connection", (socket) => {
+      socket.send(JSON.stringify({ version: "1", type: "message", text: "drain-me", messageId: "drain-client-1" }));
+    });
+    let signalStarted!: () => void;
+    let releaseTask!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const taskGate = new Promise<void>((resolve) => { releaseTask = resolve; });
+    await startWebSocketClient({
+      ...DEFAULT_WEBSOCKET_CONFIG,
+      mode: "client",
+      client: {
+        ...DEFAULT_WEBSOCKET_CONFIG.client,
+        url: `ws://127.0.0.1:${port}/bridge`,
+        reconnect: { ...DEFAULT_WEBSOCKET_CONFIG.client.reconnect, enabled: false },
+      },
+      limits: { ...DEFAULT_WEBSOCKET_CONFIG.limits, heartbeatIntervalMs: 60_000 },
+    }, async () => {
+      signalStarted();
+      await taskGate;
+    });
+    await started;
+
+    let stopped = false;
+    const stopping = stopWebSocketClient().then(() => { stopped = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+    releaseTask();
+    await stopping;
+    expect(stopped).toBe(true);
     await new Promise<void>((resolve) => external.close(() => resolve()));
   });
 });

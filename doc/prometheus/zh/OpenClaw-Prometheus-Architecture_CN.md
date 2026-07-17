@@ -11,6 +11,31 @@ Channel，也不会另开 HTTP 监听端口。它汇聚内部 diagnostics、Gate
 插件不读取对话正文，不注册需要 `hooks.allowConversationAccess` 的受保护 Hook。TLS 终止、
 公网访问控制和网络限流由 Gateway 或其前置反向代理负责。
 
+下面的字符图用于快速建立整体心智模型；后面的 Mermaid 图用于准确表达组件关系。两种图示
+分别服务于“快速阅读”和“持续维护”，文档会同时保留。
+
+```text
+OpenClaw diagnostics      Gateway RPC        Hooks / runtime       Node.js process
+         │                    │                    │                      │
+         ▼                    ▼                    ▼                      ▼
+┌────────────────┐   ┌────────────────┐   ┌────────────────┐   ┌────────────────┐
+│ MetricStore    │   │ 13 Collectors  │   │ MetricsRegistry│   │ Runtime采样器  │
+│ 上限 2048      │   │ 超时/故障隔离  │   │ 上限 4096      │   │ CPU/内存/事件环│
+└───────┬────────┘   └───────┬────────┘   └───────┬────────┘   └───────┬────────┘
+        └────────────────────┴────────────┬───────┴────────────────────┘
+                                          ▼
+                              ┌────────────────────────┐
+                              │ CollectCache           │
+                              │ 并发单飞 + 成功结果 TTL│
+                              └────────────┬───────────┘
+                                           ▼
+                              ┌────────────────────────┐
+                              │ 脱敏/标签清洗/系列上限 │
+                              └────────────┬───────────┘
+                                           ▼
+                    /metrics ─ /detailed ─ /health ─ /debug
+```
+
 ```mermaid
 flowchart LR
     subgraph SOURCE["OpenClaw 数据源"]
@@ -67,6 +92,26 @@ Hooks/runtime 事件写入 `MetricsRegistry`。三条链路最后统一成 `Metr
 因此 Prometheus 文本、JSON 明细和健康诊断使用同一份采集结果。
 
 ## 3. 抓取时序
+
+```text
+Prometheus
+    │ GET /metrics + Bearer（可选）
+    ▼
+Gateway Route ──鉴权失败──▶ 401 / 密钥缺失──▶ 503
+    │
+    ▼
+CollectCache ──命中──▶ 返回最近一次成功 Bundle
+    │ 未命中
+    ▼
+CollectorRunner ──同一采集器仍在执行──▶ 复用 in-flight Promise
+    │
+    ├── diagnostics/runtime store
+    ├── Gateway RPC
+    └── Node.js runtime
+    │ Promise.allSettled + 单项超时
+    ▼
+标签脱敏与清洗 → 最终 series 上限 → Prometheus Formatter → 200 text/plain
+```
 
 ```mermaid
 sequenceDiagram
@@ -156,14 +201,38 @@ stateDiagram-v2
 
 ## 6. 基数、隐私与资源边界
 
+```text
+diagnostics 事件 ──▶ MetricStore（2048）──────────┐
+                                                    │
+hooks/runtime ─────▶ MetricsRegistry（4096）────────┼──▶ Collector 合并
+                                                    │
+Gateway RPC ────────────────────────────────────────┘
+                                                        │
+                                                        ▼
+                                标签脱敏 + 控制字符清理 + 最长 128 字符
+                                                        │
+                                                        ▼
+                                maxScrapeSeries 最终响应硬上限
+                                                        │
+                           ┌────────────────────────────┴─────────────────┐
+                           ▼                                              ▼
+                    保留的完整系列                                dropped 指标
+
+activity 渠道/账号集合 ──▶ 独立 Map 上限 512 ──超限──▶
+                           openclaw_observed_channel_accounts_dropped_total
+```
+
 ```mermaid
 flowchart TD
-    INPUT["动态事件 / RPC 数据"] --> LABEL["标签清洗与允许维度"]
+    INPUT["动态事件 / RPC 数据"] --> LABEL["标签脱敏 + 控制字符清理<br/>最长 128 字符"]
     LABEL --> DSTORE{"diagnostics series<br/>< 2048?"}
     DSTORE -- 否 --> DDROP["diagnostics dropped counter"]
     DSTORE -- 是 --> RSTORE{"runtime series<br/>< 4096?"}
     RSTORE -- 否 --> RDROP["runtime dropped counter"]
     RSTORE -- 是 --> MERGE["Collector 合并"]
+    ACCOUNT["activity 渠道/账号"] --> AMAP{"observed Map<br/>< 512?"}
+    AMAP -- 否 --> ADROP["observed accounts<br/>dropped counter"]
+    AMAP -- 是 --> MERGE
     MERGE --> FINAL{"总样本数<br/>< maxScrapeSeries?"}
     FINAL -- 否 --> TRUNCATE["确定性截断 + exporter 指标"]
     FINAL -- 是 --> OUTPUT["输出"]
@@ -173,8 +242,11 @@ flowchart TD
   `openclaw_prometheus_series_dropped_total`；
 - runtime registry 最多 4096 个 series；超限计入
   `openclaw_runtime_metric_series_dropped_total`；
+- activity 刷新使用的已观测渠道/账号 Map 独立限制为 512 项，超限计入
+  `openclaw_observed_channel_accounts_dropped_total`；
 - 不导出自由文本消息、对话正文、Token、Profile 详情和未经清洗的异常；
-- provider、model、channel、tool 等动态标签经过格式和长度清洗；
+- provider、model、channel、tool 等动态标签统一经过 SDK 与插件规则联合脱敏、控制字符清理，
+  并截断至 128 字符；最终 scrape 出口会再次清洗，覆盖不经过 Registry 的 RPC 样本；
 - `/debug` 与 collector 诊断中的错误先脱敏再返回；
 - 启用 `scrapeAuth` 时生产密钥应从 `OPENCLAW_PROMETHEUS_BEARER_TOKEN` 注入。
 

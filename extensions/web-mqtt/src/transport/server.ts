@@ -3,7 +3,7 @@
  * 内嵌 Aedes broker，提供企业级连接治理、基础鉴权与可观测统计。
  */
 
-import { createBroker } from "aedes";
+import { Aedes } from "aedes";
 import type { Client, Subscription, PublishPacket } from "aedes";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
@@ -22,8 +22,9 @@ import type { InboundHandler, WebMqttConfig, WebMqttServiceStats } from "../type
 import { isUserActionAllowed } from "./acl.js";
 import { validateWebMqttConfig } from "../config.js";
 import { clearSessionContexts, removeSessionContextsByClient } from "../routing/session-mapper.js";
+import { redactWebMqttError } from "../shared/redact.js";
 
-type AedesBroker = NonNullable<ReturnType<typeof createBroker>>;
+type AedesBroker = Aedes;
 
 let broker: AedesBroker | null = null;
 let server: HttpServer | HttpsServer | null = null;
@@ -63,16 +64,19 @@ export async function startWebMqttServer(config: WebMqttConfig, onInbound: Inbou
     inboundQueue = createKeyedRunQueue({
       taskTimeoutMs: config.limits.inboundTaskTimeoutMs,
       onError: (error, clientId) => {
-        trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
-        stats.lastError = `[${clientId}] ${String(error)}`;
+        const safeError = redactWebMqttError(error, config);
+        trackInboundDropped(`inbound_dispatch_error:${safeError}`);
+        stats.lastError = `[${clientId}] ${safeError}`;
       },
     });
-    broker = createBroker({ heartbeatInterval: 30000 });
+    broker = new Aedes({ heartbeatInterval: 30000 });
     broker.preConnect = (_client, _packet, done) => {
       done(null, true);
     };
     bindBrokerEventHandlers();
     configureAuthGuards(config, onInbound);
+    // Aedes 1.x 需要显式完成持久化 setup 后才可接受连接，否则 WebSocket 已建立但无 CONNACK。
+    await broker.listen();
 
     server = createWebServer(config);
     // Upgrade 前的普通 HTTP 请求只用于握手，限制慢 Header/长请求占用连接资源。
@@ -136,6 +140,7 @@ export async function stopWebMqttServer(): Promise<void> {
   inboundQueue = null;
   currentConfig = null;
   queue?.deactivate();
+  const drainQueue = queue?.drain() ?? Promise.resolve();
   activeWss?.clients.forEach((client) => client.terminate());
 
   const closeWss = new Promise<void>((resolve) => {
@@ -146,11 +151,12 @@ export async function stopWebMqttServer(): Promise<void> {
     if (!activeServer) return resolve();
     activeServer.close((error) => (error ? reject(error) : resolve()));
   });
-  const closeBroker = new Promise<void>((resolve, reject) => {
+  const closeBroker = new Promise<void>((resolve) => {
     if (!activeBroker) return resolve();
-    activeBroker.close((error?: Error) => (error ? reject(error) : resolve()));
+    activeBroker.close(() => resolve());
   });
-  const results = await Promise.allSettled([closeWss, closeServer, closeBroker]);
+  // WebSocket/HTTP/Aedes 关闭与已开始的 Agent 任务同时收敛；stop 返回后不留后台 dispatch。
+  const results = await Promise.allSettled([closeWss, closeServer, closeBroker, drainQueue]);
   stats.connectedClients = 0;
   stats.brokerReady = false;
   connectedClients.clear();
@@ -215,7 +221,7 @@ export async function publishToTopic(topic: string, payload: string): Promise<nu
       },
       (err?: Error | null) => {
         if (err) {
-          stats.lastError = String(err);
+          stats.lastError = redactWebMqttError(err, currentConfig);
           reject(err);
           return;
         }

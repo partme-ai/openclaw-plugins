@@ -22,6 +22,8 @@ function config(dataDir: string, overrides: Partial<MemoryConfig> = {}): MemoryC
     enabled: true,
     dataDir,
     maxSearchResults: 10,
+    maxSearchBytes: 16 * 1024 * 1024,
+    maxReadLines: 200,
     retentionDays: 90,
     extractionInterval: 5,
     maxRecordBytes: 64 * 1024,
@@ -104,6 +106,8 @@ describe("配置校验", () => {
     expect(() => resolveConfig({ pluginConfig: { retentionDays: 1.5 } } as never)).toThrow("retentionDays");
     expect(() => resolveConfig({ pluginConfig: { maxSearchResults: 101 } } as never)).toThrow("maxSearchResults");
     expect(() => resolveConfig({ pluginConfig: { enabled: "false" } } as never)).toThrow("enabled");
+    expect(() => resolveConfig({ pluginConfig: { maxSearchBytes: 1024 } } as never)).toThrow("maxSearchBytes");
+    expect(() => resolveConfig({ pluginConfig: { maxReadLines: 0 } } as never)).toThrow("maxReadLines");
   });
 
   it("加密密钥至少要求 32 字节", () => {
@@ -146,6 +150,25 @@ describe("MemoryStore", () => {
     const results = await store.createSearchManager("agent-a").search("Python 开发", { sessionKey: "s1" });
     expect(results[0]?.snippet).toContain("Python");
     expect(results[0]?.citation).toMatch(/sessions\/[a-f0-9]{32}\/memories\/.*#L1/);
+  });
+
+  it("管理员 maxSearchResults 不能被调用方参数绕过", async () => {
+    await store.close();
+    store = new MemoryStore(config(dataDir, { maxSearchResults: 2 }));
+    await store.initialize();
+    await Promise.all(Array.from({ length: 5 }, (_, index) =>
+      append("agent-a", "s1", `limited-${index}`, `共同检索词 条目${index}`)));
+    const results = await store.createSearchManager("agent-a").search("共同检索词", {
+      sessionKey: "s1",
+      maxResults: 100,
+    });
+    expect(results).toHaveLength(2);
+  });
+
+  it("拒绝非法搜索数值而不是静默产生异常语义", async () => {
+    const manager = store.createSearchManager("agent-a");
+    await expect(manager.search("query", { maxResults: Number.NaN })).rejects.toThrow("maxResults");
+    await expect(manager.search("query", { minScore: Number.NaN })).rejects.toThrow("minScore");
   });
 
   it("不同 Agent 物理隔离", async () => {
@@ -238,6 +261,46 @@ describe("MemoryStore", () => {
     });
     expect(result.text).toContain("第二页内容");
     expect(result.lines).toBe(1);
+  });
+
+  it("readFile 受管理员行数上限约束并严格校验分页参数", async () => {
+    await store.close();
+    store = new MemoryStore(config(dataDir, { maxReadLines: 1 }));
+    await store.initialize();
+    await append("agent-a", "s1", "page-1", "分页边界第一条");
+    await append("agent-a", "s1", "page-2", "分页边界第二条");
+    const manager = store.createSearchManager("agent-a");
+    const [result] = await manager.search("分页边界", { sessionKey: "s1" });
+    const page = await manager.readFile({ relPath: result!.path, lines: 100 });
+    expect(page.lines).toBe(1);
+    expect(page.truncated).toBe(true);
+    expect(page.nextFrom).toBe(1);
+    await expect(manager.readFile({ relPath: result!.path, from: -1 })).rejects.toThrow("from");
+    await expect(manager.readFile({ relPath: result!.path, lines: 0 })).rejects.toThrow("lines");
+  });
+
+  it("词法搜索遵守跨文件共享的字节预算", async () => {
+    await store.close();
+    store = new MemoryStore(config(dataDir, {
+      maxSearchBytes: 1024 * 1024,
+      maxSearchResults: 100,
+      maxRecordBytes: 64 * 1024,
+    }));
+    await store.initialize();
+    const records = Array.from({ length: 140 }, (_, index) => ({
+      id: `budget-${index}`,
+      level: "L1" as const,
+      type: "episodic" as const,
+      content: `${"x".repeat(8_000)} ${index === 139 ? "budget-tail-marker" : "普通记录"}`,
+      keywords: index === 139 ? ["budget-tail-marker"] : ["普通记录"],
+      agentId: "agent-a",
+      sessionKey: "s1",
+      createdAt: new Date().toISOString(),
+    }));
+    await store.appendRecords(records);
+    expect(await store.createSearchManager("agent-a").search("budget-tail-marker", {
+      sessionKey: "s1",
+    })).toEqual([]);
   });
 
   it("retentionDays 自动清理过期文件", async () => {

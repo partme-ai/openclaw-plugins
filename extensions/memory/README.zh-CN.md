@@ -18,6 +18,25 @@
 
 ## 架构
 
+```text
+成功 agent_end
+      │
+      ├── L0 当前轮对话 ───────────────────────────────┐
+      ├── L1 用户事件                                  │
+      ├── L2 周期场景                                  │
+      └── L3 明确偏好/身份                             │
+                                                       ▼
+                         Agent ─▶ HMAC Session ─▶ 按日 JSONL
+                                              （可选 AES-256-GCM）
+                                                       │
+                                                       ▼
+当前用户输入 ─▶ 流式词法扫描 ─▶ topK ─▶ 不可信记忆标记 ─▶ Prompt
+                  │
+                  ├── maxSearchBytes 跨文件预算
+                  ├── maxSearchResults 管理员上限
+                  └── AbortSignal / 超时
+```
+
 ```mermaid
 flowchart TB
     Turn["agent_end<br/>当前轮成功对话"]
@@ -27,7 +46,7 @@ flowchart TB
     L2["L2 场景归纳<br/>按周期生成"]
     L3["L3 用户画像<br/>明确偏好/身份/长期指令"]
     Store[("Agent/Session 物理分区<br/>按日 JSONL，可选 AES-256-GCM")]
-    Search["MemorySearchManager<br/>词法评分 + 有界扫描"]
+    Search["MemorySearchManager<br/>流式词法评分 + 字节预算"]
     Recall["before_prompt_build<br/>超时 + 数量/字符上限 + 不可信标记"]
     Context["OpenClaw 上下文注入"]
 
@@ -60,7 +79,7 @@ sequenceDiagram
 
     U->>H: query + agentId + sessionKey
     H->>M: search(query, AbortSignal)
-    M->>F: 仅读取当前会话 L1-L3<br/>可选读取 Agent 级 L3
+    M->>F: 逐行扫描当前会话 L1-L3<br/>共享 maxSearchBytes 预算
     alt 在 autoRecallTimeoutMs 内完成
         F-->>M: 词法评分结果
         M-->>H: topK + citation
@@ -68,7 +87,7 @@ sequenceDiagram
         H-->>P: prependContext
     else 超时或磁盘故障
         H->>M: abort
-        M->>F: 中止 fs.readFile/后续扫描
+        M->>F: 中止当前 stream/后续扫描
         H-->>P: 不注入，继续当前回复
     end
 ```
@@ -96,6 +115,7 @@ stateDiagram-v2
 - **自动召回** — 框架自动调用 `MemorySearchManager.search()` 注入相关记忆到上下文
 - **关键词搜索** — 纯关键词匹配 + 评分（零外部 API 调用）
 - **有界时间窗口** — 最多扫描保留期内最近 365 个按日文件
+- **有界读取资源** — 搜索在所有层级和日期间共享字节预算；来源分页只流式读取请求窗口
 - **`memory_search` 工具** — Agent 可在对话中主动搜索用户记忆
 - **保留管理** — 启动时和每日自动删除超过保留期的文件
 - **有界运行状态** — `runId` 热去重缓存最多 50,000 条，重启后仍从最近按日文件核对
@@ -152,6 +172,8 @@ openclaw plugins install @partme.ai/openclaw-memory
         "config": {
           "dataDir": "~/.openclaw/state/memory",   // 数据存储目录
           "maxSearchResults": 10,                   // 每次搜索最大结果数（默认 10）
+          "maxSearchBytes": 16777216,               // 单次搜索跨文件扫描字节预算（默认 16 MiB）
+          "maxReadLines": 200,                      // readFile 单次最多返回 200 条
           "retentionDays": 90,                      // 数据保留天数（默认 90）
           "extractionInterval": 5,                  // L2 场景归纳周期
           "maxRecordBytes": 65536,                  // 任意单条记录最大字节数
@@ -175,6 +197,8 @@ openclaw plugins install @partme.ai/openclaw-memory
 | `enabled` | boolean | `true` | 启用记忆插件 |
 | `dataDir` | string | `~/.openclaw/state/memory` | 数据存储目录 |
 | `maxSearchResults` | number | `10` | 每次搜索返回的最大结果数 |
+| `maxSearchBytes` | integer | `16777216` | 单次搜索在所有层级和日期文件间共享的扫描字节预算 |
+| `maxReadLines` | integer | `200` | Memory Host 单次来源读取最多返回的解码记录数 |
 | `retentionDays` | number | `90` | 数据保留天数，启动时及每日自动清理 |
 | `extractionInterval` | number | `5` | 每多少轮生成一次 L2 场景记录 |
 | `maxRecordBytes` | integer | `65536` | 任意单条记录上限，防止异常大消息耗尽磁盘 |

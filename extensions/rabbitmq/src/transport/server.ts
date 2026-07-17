@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { ConsumeMessage, ChannelModel, Channel, ConfirmChannel, Options } from "amqplib";
 import type { RabbitmqConfig } from "../config.js";
+import { redactRabbitmqError } from "../shared/redact.js";
 
 /** @description 入站 AMQP 消息的投递处置句柄（deferred ack）。 */
 export type InboundDeliveryHandle = {
@@ -73,6 +74,8 @@ let deadLetterExchangeName: string | null = null;
 let reconnectPromise: Promise<void> | null = null;
 let inboundLimiter: ReturnType<typeof createInboundLimiter> | null = null;
 const pendingDeliveries = new Set<InboundDeliveryHandle>();
+/** 已被 Broker 投递并进入并发限制器的任务；优雅停机必须等待这些任务完成处置。 */
+const inboundTasks = new Set<Promise<void>>();
 let stats: RabbitmqStats = {
   connected: false,
   lastConnectAt: null,
@@ -110,8 +113,6 @@ export async function startRabbitmqServer(cfg: RabbitmqConfig, handler: InboundH
 export async function stopRabbitmqServer(): Promise<void> {
   stopping = true;
   inboundLimiter = null;
-  retryExchangeName = null;
-  deadLetterExchangeName = null;
   try {
     if (consumeChannel && consumerTag) {
       await consumeChannel.cancel(consumerTag);
@@ -120,9 +121,12 @@ export async function stopRabbitmqServer(): Promise<void> {
   } finally {
     consumerTag = null;
   }
-  // 先 cancel 阻止新 delivery，再统一 NACK 已跟踪消息；消费回调也检查 stopping，覆盖 cancel
-  // 生效前的竞态窗口，避免停机过程中又启动新的 Agent Turn。
+  // cancel 后保持 publish channel 与 retry/DLQ exchange 可用，让已接纳 Agent Turn 完成 ACK 或
+  // 可靠转移。若先 NACK 再等待后台 Turn，会导致同一业务副作用在旧 Turn 和 Broker 重投中各执行一次。
+  await Promise.allSettled([...inboundTasks]);
   nackAllPendingDeliveries(true, "server_stop");
+  retryExchangeName = null;
+  deadLetterExchangeName = null;
   try {
     if (consumeChannel) {
       await consumeChannel.close();
@@ -249,7 +253,7 @@ export function trackInboundAccepted(): void {
 /** @description 记录入站丢弃原因并递增错误计数。 @param reason - 丢弃原因标识 */
 export function trackInboundDropped(reason: string): void {
   stats.errors++;
-  stats.lastError = `inbound_dropped:${reason}`;
+  stats.lastError = `inbound_dropped:${redactRabbitmqError(reason, config)}`;
 }
 
 /** @description 路由命中来源追踪钩子（binding / standard 等）。 @param source - 路由来源标识 */
@@ -277,7 +281,7 @@ async function connectWithRetry(): Promise<void> {
     } catch (err) {
       lastErr = err;
       stats.errors++;
-      stats.lastError = err instanceof Error ? err.message : String(err);
+      stats.lastError = redactRabbitmqError(err, cfg);
       await teardownTransport();
       if (attempt >= maxAttempts) {
         break;
@@ -285,7 +289,7 @@ async function connectWithRetry(): Promise<void> {
       await sleep(computeReconnectDelay(cfg, attempt - 1));
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  throw new Error(redactRabbitmqError(lastErr, cfg));
 }
 
 /**
@@ -390,7 +394,7 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
         fields: { ...msg.fields, routingKey },
         delivery,
       };
-      void limiter(async () => {
+      const task = limiter(async () => {
         stats.inFlight++;
         try {
           const disposition = await handler(event);
@@ -417,7 +421,7 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
             if (await maybeRetryMessage(msg, routingKey, delivery)) return;
           } catch (retryError) {
             stats.errors++;
-            stats.lastError = retryError instanceof Error ? retryError.message : String(retryError);
+            stats.lastError = redactRabbitmqError(retryError, activeConfig);
             delivery.nack({ requeue: true, reason: "retry_publish_failed" });
             return;
           }
@@ -425,7 +429,7 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
           delivery.nack({ requeue, reason: disposition.reason });
         } catch (err) {
           stats.errors++;
-          stats.lastError = err instanceof Error ? err.message : String(err);
+          stats.lastError = redactRabbitmqError(err, activeConfig);
           if (delivery.settled) {
             return;
           }
@@ -433,17 +437,22 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
             if (await maybeRetryMessage(msg, routingKey, delivery)) return;
           } catch (retryError) {
             stats.errors++;
-            stats.lastError = retryError instanceof Error ? retryError.message : String(retryError);
+            stats.lastError = redactRabbitmqError(retryError, activeConfig);
             delivery.nack({ requeue: true, reason: "retry_publish_failed" });
             return;
           }
           const requeue = activeConfig.consume.requeueOnError;
-          delivery.nack({ requeue, reason: err instanceof Error ? err.message : String(err) });
+          delivery.nack({ requeue, reason: redactRabbitmqError(err, activeConfig) });
         } finally {
           pendingDeliveries.delete(delivery);
           stats.inFlight = Math.max(0, stats.inFlight - 1);
         }
+      }).catch((error: unknown) => {
+        stats.errors++;
+        stats.lastError = redactRabbitmqError(error, activeConfig);
       });
+      inboundTasks.add(task);
+      void task.finally(() => inboundTasks.delete(task));
     },
     { noAck: false },
   );
@@ -451,7 +460,7 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
 
   conn.on("error", (err: unknown) => {
     stats.errors++;
-    stats.lastError = err instanceof Error ? err.message : String(err);
+    stats.lastError = redactRabbitmqError(err, cfg);
   });
 
   conn.on("close", () => {
@@ -485,7 +494,7 @@ async function reconnectAfterClose(): Promise<void> {
       return;
     } catch (error) {
       stats.errors++;
-      stats.lastError = error instanceof Error ? error.message : String(error);
+      stats.lastError = redactRabbitmqError(error, cfg);
     }
   }
   stats.reconnecting = false;
@@ -785,7 +794,7 @@ function createInboundDeliveryHandle(
         stats.messagesRequeued++;
       }
       if (options?.reason) {
-        stats.lastError = `inbound_nack:${options.reason}`;
+        stats.lastError = `inbound_nack:${redactRabbitmqError(options.reason, activeConfig)}`;
       }
     },
   };

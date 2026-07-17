@@ -9,7 +9,8 @@ export function redisStreamConfig() {
       deadLetterKey: "openclaw-e2e:dlq",
       consumerGroup: "openclaw-e2e",
       consumerName: `gateway-${process.pid}`,
-      pendingClaimIdleMs: 1000,
+      // 必须长于 Agent 回复超时，防止 E2E 中仍在执行的 Turn 被其他消费者提前回收。
+      pendingClaimIdleMs: 180000,
       maxAttempts: 3,
     },
   };

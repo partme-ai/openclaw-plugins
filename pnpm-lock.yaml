@@ -250,26 +250,23 @@ importers:
         specifier: workspace:^2026.7.1
         version: link:../message-sdk
       aedes:
-        specifier: ^0.51.3
-        version: 0.51.3
+        specifier: ^1.1.1
+        version: 1.1.1(aedes-persistence-level@9.1.3)(aedes-persistence-mongodb@9.4.2(gcp-metadata@8.1.2)(socks@2.8.9))(aedes-persistence-redis@11.2.2)
       aedes-persistence-level:
         specifier: ^9.1.3
         version: 9.1.3
       aedes-persistence-mongodb:
-        specifier: ^9.4.1
+        specifier: ^9.4.2
         version: 9.4.2(gcp-metadata@8.1.2)(socks@2.8.9)
       aedes-persistence-redis:
-        specifier: ^9.0.2
-        version: 9.0.2
+        specifier: ^11.2.2
+        version: 11.2.2
       ioredis:
         specifier: ^5.10.1
         version: 5.10.1
       level:
         specifier: ^10.0.0
         version: 10.0.0
-      mqemitter-redis:
-        specifier: ^5.1.0
-        version: 5.1.0
       openclaw:
         specifier: '>=2026.7.1'
         version: 2026.7.1(@aws-sdk/credential-provider-node@3.972.43)(@opentelemetry/api@1.9.1)(@smithy/signature-v4@5.4.3)
@@ -423,7 +420,7 @@ importers:
         version: 22.19.19
       '@vitest/coverage-v8':
         specifier: ^4.1.4
-        version: 4.1.6(vitest@2.1.9(@types/node@22.19.19))
+        version: 4.1.6(vitest@4.1.6)
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
@@ -434,8 +431,8 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
       vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.19)
+        specifier: ^4.0.18
+        version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
 
   extensions/redis-stream:
     dependencies:
@@ -595,8 +592,8 @@ importers:
         specifier: workspace:^2026.7.1
         version: link:../message-sdk
       aedes:
-        specifier: ^0.51.3
-        version: 0.51.3
+        specifier: ^1.1.1
+        version: 1.1.1(aedes-persistence-level@9.1.3)(aedes-persistence-mongodb@9.4.2(gcp-metadata@8.1.2)(socks@2.8.9))(aedes-persistence-redis@11.2.2)
       openclaw:
         specifier: '>=2026.7.1'
         version: 2026.7.1(@aws-sdk/credential-provider-node@3.972.43)(@opentelemetry/api@1.9.1)(@smithy/signature-v4@5.4.3)
@@ -2241,10 +2238,6 @@ packages:
     resolution: {integrity: sha512-4B/qKCfeE/ODUaAUpSwfzazo5x29WD4r3vXiWsB7I2mSDAihwEqKO+g8GELZUQSSAo5e1XTYh3ZVfLyxBc12nA==}
     engines: {node: '>= 10.0.0'}
 
-  aedes-cached-persistence@9.0.0:
-    resolution: {integrity: sha512-HyeBVC9pm5T3TCqivhsMwLDaynTNchCI8SY8EdDr/rsEt+occfk/AGScdh0h/hqIP4f/Dwz18gZk5GuBZUU1Yg==}
-    engines: {node: '>=14'}
-
   aedes-packet@3.0.0:
     resolution: {integrity: sha512-swASey0BxGs4/npZGWoiVDmnEyPvVFIRY6l2LVKL4rbiW8IhcIGDLfnb20Qo8U20itXlitAKPQ3MVTEbOGG5ZA==}
     engines: {node: '>=14'}
@@ -2257,20 +2250,28 @@ packages:
     resolution: {integrity: sha512-qv2T36sRwh6KUhlmwrb9ylmL0UR2IR+0OkDavk2h+PdsTkVRTqpl166pRAqo5PGGEmKgSmJfLUAXdF9FpAxLZQ==}
     engines: {node: '>=20.0.0'}
 
-  aedes-persistence-redis@9.0.2:
-    resolution: {integrity: sha512-XmPS+qy8Gl0lB4DuaQFEqjq0AB5rr+ukMsGknwm/FZQHBUaiDAdjtv36Yscrmyrx+MOVO0lHM5wDal+E5nLLyw==}
+  aedes-persistence-redis@11.2.2:
+    resolution: {integrity: sha512-kJRHG6FiykSdkniWJYDNYW892buif3D8iu5FrkgXsVuoF7A7rX3I1n4w6BV4Ocvz8thFaKBjWe3EAtOzOdEPIA==}
+    engines: {node: '>=20'}
 
   aedes-persistence@10.2.2:
     resolution: {integrity: sha512-lbiViUGXxOyUakU01xvD758LGOLJ8T7PzpT3q2q8enMSMFSigy0dYQc0b7bgHcz96AYJjEraQSfVpXH7L546TA==}
     engines: {node: '>=20'}
 
-  aedes-persistence@9.1.2:
-    resolution: {integrity: sha512-2Wlr5pwIK0eQOkiTwb8ZF6C20s8UPUlnsJ4kXYePZ3JlQl0NbBA176mzM8wY294BJ5wybpNc9P5XEQxqadRNcQ==}
-    engines: {node: '>=14'}
-
-  aedes@0.51.3:
-    resolution: {integrity: sha512-aQfiI9w3RbqnowNCdcGMmCtxBFXN9bhJFcuZm24U5/NU06V3MCl42jWK2GUnu8rOypR2Ahi/aEcgq3w7CMcycg==}
-    engines: {node: '>=16'}
+  aedes@1.1.1:
+    resolution: {integrity: sha512-kmKFRgQrjGyv9HuVqpNGM/aPD2K4bf20aF1UbrxEvh3j8BJ1OD0rHi3E3u3xfrgc3ydj2+9UiPdW0sHiP6d+Sg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      aedes-persistence-level: ^9.1.2
+      aedes-persistence-mongodb: ^9.3.1
+      aedes-persistence-redis: ^11.2.1
+    peerDependenciesMeta:
+      aedes-persistence-level:
+        optional: true
+      aedes-persistence-mongodb:
+        optional: true
+      aedes-persistence-redis:
+        optional: true
 
   agent-base@6.0.2:
     resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
@@ -2987,10 +2988,6 @@ packages:
   fast-string-width@3.0.2:
     resolution: {integrity: sha512-gX8LrtNEI5hq8DVUfRQMbr5lpaS4nMIWV+7XEbXk2b8kiQIizgnlr12B4dA3ZEx3308ze0O4Q1R+cHts8kyUJg==}
 
-  fast-unique-numbers@8.0.13:
-    resolution: {integrity: sha512-7OnTFAVPefgw2eBJ1xj2PGGR9FwYzSUso9decayHgCDX4sJkHLdcsYTytTg+tYv+wKF3U8gJuSBz2jJpQV4u/g==}
-    engines: {node: '>=16.1.0'}
-
   fast-unique-numbers@9.0.27:
     resolution: {integrity: sha512-nDA9ADeINN8SA2u2wCtU+siWFTTDqQR37XvgPIDDmboWQeExz7X0mImxuaN+kJddliIqy2FpVRmnvRZ+j8i1/A==}
     engines: {node: '>=18.2.0'}
@@ -3012,15 +3009,8 @@ packages:
     resolution: {integrity: sha512-C0AaNuC+mscy6vrAQKAc/rMq+zAPHodfHGZu4sGVehvAQt/JLG1O5zEcYcXSY5zSqr4YVgxsB+pHXTq0i7eDlg==}
     hasBin: true
 
-  fastfall@1.5.1:
-    resolution: {integrity: sha512-KH6p+Z8AKPXnmA7+Iz2Lh8ARCMr+8WNPVludm1LGkZoD2MjY6LVnRMtTKhkdzI+jr0RzQWXKzKyBJm1zoHEL4Q==}
-    engines: {node: '>=0.10.0'}
-
   fastparallel@2.4.1:
     resolution: {integrity: sha512-qUmhxPgNHmvRjZKBFUNI0oZuuH9OlSIOXmJ98lhKPxMZZ7zS/Fi0wRHOihDSz0R1YiIOjxzOY4bq65YTcdBi2Q==}
-
-  fastseries@2.0.0:
-    resolution: {integrity: sha512-XBU9RXeoYc2/VnvMhplAxEmZLfIk7cvTBu+xwoBuTI8pL19E03cmca17QQycKIdxgwCeFA/a4u27gv1h3ya5LQ==}
 
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
@@ -3258,9 +3248,6 @@ packages:
   humanize-ms@1.2.1:
     resolution: {integrity: sha512-Fl70vYtsAFb/C06PTS9dZBo7ihau+Tu/DNCk/OyHhea07S+aeMWpFFkUaXRa8fI+ScZbEI8dfSxwY7gxZ9SAVQ==}
 
-  hyperid@3.3.0:
-    resolution: {integrity: sha512-7qhCVT4MJIoEsNcbhglhdmBKb09QtcmJNiIQGq7js/Khf5FtQQ9bzcAuloeqBeee7XD7JqDeve9KNlQya5tSGQ==}
-
   iconv-lite@0.4.24:
     resolution: {integrity: sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA==}
     engines: {node: '>=0.10.0'}
@@ -3304,9 +3291,6 @@ packages:
 
   int64-buffer@0.1.10:
     resolution: {integrity: sha512-v7cSY1J8ydZ0GyjUHqF+1bshJ6cnEVLo9EnjB8p+4HDRPZc9N5jjmvUV7NvEsqQOKyH0pmIBFWXVQbiS0+OBbA==}
-
-  ioredis-auto-pipeline@1.0.2:
-    resolution: {integrity: sha512-Axp07oVqbUAArCuIjlfXfME0/te/R7x43zfeGEpY1UTJjWdTUIw/h+K/LfIkRGCv8aCB4bCypHft8AQZ+1Z7zw==}
 
   ioredis@5.10.1:
     resolution: {integrity: sha512-HuEDBTI70aYdx1v6U97SbNx9F1+svQKBDo30o0b9fw055LMepzpOOd0Ccg9Q6tbqmBSJaMuY0fB7yw9/vjBYCA==}
@@ -3659,16 +3643,9 @@ packages:
       socks:
         optional: true
 
-  mqemitter-redis@5.1.0:
-    resolution: {integrity: sha512-gT/oFTawvc1z/+WzSy0JZVyuOLoCgPxR27/n7zYKFGirDGwZU5HBlbf8bUmOdfTfimqB1vetl4eJ7Rd0c1HJrg==}
-
-  mqemitter@4.5.0:
-    resolution: {integrity: sha512-Mp/zytFeIv6piJQkEKnncHcP4R/ErJc5C7dfonkhkNUT2LA/nTayrfNxbipp3M5iCJUTQSUtzfQAQA3XVcKz6w==}
-    engines: {node: '>=10'}
-
-  mqemitter@6.0.2:
-    resolution: {integrity: sha512-8RGlznQx/Nb1xC3xKUFXHWov7pn7JdH++YVwlr6SLT6k3ft1h+ImGqZdVudbdKruFckIq9wheq9s4hgCivJDow==}
-    engines: {node: '>=16'}
+  mqemitter@7.1.0:
+    resolution: {integrity: sha512-GnBDNz3lxmllW201ne0mrmdy5tPOTnc79jjVcsfUa2LG2pUGeyGWVeiae6ZysfC/64XrYOqCKRAQYrB7pGyBVQ==}
+    engines: {node: '>=20'}
 
   mqtt-packet@7.1.2:
     resolution: {integrity: sha512-FFZbcZ2omsf4c5TxEQfcX9hI+JzDpDKPT46OmeIBpVA7+t32ey25UNqlqNXTmeZOr5BLsSIERpQQLsFWJS94SQ==}
@@ -3690,9 +3667,6 @@ packages:
   msgpack-lite@0.1.26:
     resolution: {integrity: sha512-SZ2IxeqZ1oRFGo0xFGbvBJWMp3yLIY9rlIJyxy8CGrwZn1f0ZK4r6jV/AM1r0FZMDUkWkglOk/eeKIL9g77Nxw==}
     hasBin: true
-
-  multistream@4.1.0:
-    resolution: {integrity: sha512-J1XDiAmmNpRCBfIWJv+n0ymC4ABcf/Pl+5YvC5B/D2f/2+8PtHvCNxMPKiQcZyi922Hq69J2YOpb1pTywfifyw==}
 
   mz-modules@2.1.0:
     resolution: {integrity: sha512-sjk8lcRW3vrVYnZ+W+67L/2rL+jbO5K/N6PFGIcLWTiYytNr22Ah9FDXFs+AQntTM1boZcoHi5qS+CV1seuPog==}
@@ -4054,14 +4028,6 @@ packages:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
 
-  qlobber@5.0.3:
-    resolution: {integrity: sha512-wW4GTZPePyh0RgOsM18oDyOUlXfurVRgoNyJfS+y7VWPyd0GYhQp5T2tycZFZjonH+hngxIfklGJhTP/ghidgQ==}
-    engines: {node: '>= 8'}
-
-  qlobber@7.0.1:
-    resolution: {integrity: sha512-FsFg9lMuMEFNKmTO9nV7tlyPhx8BmskPPjH2akWycuYVTtWaVwhW5yCHLJQ6Q+3mvw5cFX2vMfW2l9z2SiYAbg==}
-    engines: {node: '>= 14'}
-
   qlobber@8.0.1:
     resolution: {integrity: sha512-O+Wd1chXj5YE1DwmD+ae0bXiSLehmnS3czlC1R9FL/Nt/3q8uMS1bIHmg2lJfCoiimCxClWM8AAuJrF0EvNiog==}
     engines: {node: '>= 16'}
@@ -4149,9 +4115,6 @@ packages:
   resolve-from@5.0.0:
     resolution: {integrity: sha512-qYg9KP24dD5qka9J47d0aVky0N+b4fTU89LN9iDnjB5waksiC49rvMB0PrUJQGoTmH50XPiqOvAjDfaijGxYZw==}
     engines: {node: '>=8'}
-
-  retimer@4.0.0:
-    resolution: {integrity: sha512-fZIVtvbOsQsxNSDhpdPOX4lx5Ss2ni+S72AUBitARpFhtA3UzrAjQ6gDtypB2/+l7L+1VQgAgpvAKY66mElH0w==}
 
   retry@0.12.0:
     resolution: {integrity: sha512-9LkiTwjUh6rT555DtE9rTX+BKByPfrMzEAtnlEtdEwr3Nkffwiihqe2bWADg+OQRjt9gl6ICdmB/ZFDCGAtSow==}
@@ -4432,14 +4395,8 @@ packages:
   thenify@3.3.1:
     resolution: {integrity: sha512-RVZSIV5IG10Hk3enotrhvz0T9em6cyHBLkH/YAZuKqd8hRkKhSfCGIcP2KUY0EPxndzANBmNllzWPwak+bheSw==}
 
-  through2@4.0.2:
-    resolution: {integrity: sha512-iOqSav00cVxEEICeD7TjLB1sueEL+81Wpzp2bY17uZjZN0pWZPuo4suZ/61VujxmqSGFfgOcNuTZ85QJwNZQpw==}
-
   through@2.3.8:
     resolution: {integrity: sha512-w89qg7PI8wAdvX60bMDP+bFoD5Dvhm9oLheFp5O4a2QF0cSBGsBX4qZmadPMvVqlLJBBci+WqGGOAPvcDeNSVg==}
-
-  throughv@1.0.4:
-    resolution: {integrity: sha512-sbtnSX5BC0IEbDNl4K4IRtea0ujic9uRlZPFzkQ8R9Z/F1NXM4mMWk9VwbI9tIltvxD7vnFJY5L4jDyb6xVsAA==}
 
   tiktoken@1.0.22:
     resolution: {integrity: sha512-PKvy1rVF1RibfF3JlXBSP0Jrcw2uq3yXdgcEXtKTYn3QJ/cBRBHDnrJ5jHky+MENZ6DIPwNUGWpkVx+7joCpNA==}
@@ -4481,10 +4438,6 @@ packages:
   tinyspy@4.0.4:
     resolution: {integrity: sha512-azl+t0z7pw/z958Gy9svOTuzqIk6xq+NSheJzn5MMWtWTFywIacg2wUlzKFGtt3cthx0r2SxMK0yzJOR0IES7Q==}
     engines: {node: '>=14.0.0'}
-
-  to-fast-properties@3.0.1:
-    resolution: {integrity: sha512-/wtNi1tW1F3nf0OL6AqVxGw9Tr1ET70InMhJuVxPwFdGqparF0nQ4UWGLf2DsoI2bFDtthlBnALncZpUzOnsUw==}
-    engines: {node: '>=8'}
 
   toidentifier@1.0.1:
     resolution: {integrity: sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==}
@@ -4652,21 +4605,8 @@ packages:
     resolution: {integrity: sha512-lDbOVde5UAKgtxrSyZNhqrTA7f7anba6DTqbsDWgUFk6PZlmr7djqPYw0FnL5a6TbJvRt38VmYqt07zVLzXG2A==}
     engines: {node: '>= 16.0.0'}
 
-  uuid-parse@1.1.0:
-    resolution: {integrity: sha512-OdmXxA8rDsQ7YpNVbKSJkNzTw2I+S5WsbMDnCtIWSQaosNAcWtFuI/YK1TjzUI6nbkgiqEyh8gWngfcv8Asd9A==}
-
-  uuid@10.0.0:
-    resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
-    hasBin: true
-
   uuid@3.4.0:
     resolution: {integrity: sha512-HjSDRw6gZE5JMggctHBcjVak08+KEVhSIiDzFnT9S9aegmp85S/bReBVTb4QTFaRNptJ9kuYaNhnbNEOkbKb/A==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
-    hasBin: true
-
-  uuid@8.3.2:
-    resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
     deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
@@ -4902,20 +4842,11 @@ packages:
   worker-factory@7.0.49:
     resolution: {integrity: sha512-lW7tpgy6aUv2dFsQhv1yv+XFzdkCf/leoKRTGMPVK5/die6RrUjqgJHJf556qO+ZfytNG6wPXc17E8zzsOLUDw==}
 
-  worker-timers-broker@6.1.8:
-    resolution: {integrity: sha512-FUCJu9jlK3A8WqLTKXM9E6kAmI/dR1vAJ8dHYLMisLNB/n3GuaFIjJ7pn16ZcD1zCOf7P6H62lWIEBi+yz/zQQ==}
-
   worker-timers-broker@8.0.16:
     resolution: {integrity: sha512-JyP3AvUGyPGbBGW7XiUewm2+0pN/aYo1QpVf5kdXAfkDZcN3p7NbWrG6XnyDEpDIvfHk/+LCnOW/NsuiU9riYA==}
 
-  worker-timers-worker@7.0.71:
-    resolution: {integrity: sha512-ks/5YKwZsto1c2vmljroppOKCivB/ma97g9y77MAAz2TBBjPPgpoOiS1qYQKIgvGTr2QYPT3XhJWIB6Rj2MVPQ==}
-
   worker-timers-worker@9.0.14:
     resolution: {integrity: sha512-/qF06C60sXmSLfUl7WglvrDIbspmPOM8UrG63Dnn4bi2x4/DfqHS/+dxF5B+MdHnYO5tVuZYLHdAodrKdabTIg==}
-
-  worker-timers@7.1.8:
-    resolution: {integrity: sha512-R54psRKYVLuzff7c1OTFcq/4Hue5Vlz4bFtNEIarpSiCYhpifHU3aIQI29S84o1j87ePCYqbmEJPqwBTf+3sfw==}
 
   worker-timers@8.0.31:
     resolution: {integrity: sha512-ngkq5S6JuZyztom8tDgBzorLo9byhBMko/sXfgiUD945AuzKGg1GCgDMCC3NaYkicLpGKXutONM36wEX8UbBCA==}
@@ -6353,20 +6284,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@vitest/coverage-v8@4.1.6(vitest@2.1.9(@types/node@22.19.19))':
-    dependencies:
-      '@bcoe/v8-coverage': 1.0.2
-      '@vitest/utils': 4.1.6
-      ast-v8-to-istanbul: 1.0.0
-      istanbul-lib-coverage: 3.2.2
-      istanbul-lib-report: 3.0.1
-      istanbul-reports: 3.2.0
-      magicast: 0.5.3
-      obug: 2.1.1
-      std-env: 4.1.0
-      tinyrainbow: 3.1.0
-      vitest: 2.1.9(@types/node@22.19.19)
-
   '@vitest/coverage-v8@4.1.6(vitest@4.1.6)':
     dependencies:
       '@bcoe/v8-coverage': 1.0.2
@@ -6379,7 +6296,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
+      vitest: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@25.9.1)(@vitest/coverage-v8@4.1.6)(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(tsx@4.22.3)(yaml@2.9.0))
 
   '@vitest/expect@2.1.9':
     dependencies:
@@ -6549,15 +6466,6 @@ snapshots:
 
   address@1.2.2: {}
 
-  aedes-cached-persistence@9.0.0:
-    dependencies:
-      aedes-persistence: 9.1.2
-      fastparallel: 2.4.1
-      multistream: 4.1.0
-      qlobber: 7.0.1
-    transitivePeerDependencies:
-      - supports-color
-
   aedes-packet@3.0.0:
     dependencies:
       mqtt-packet: 7.1.2
@@ -6589,16 +6497,13 @@ snapshots:
       - socks
       - supports-color
 
-  aedes-persistence-redis@9.0.2:
+  aedes-persistence-redis@11.2.2:
     dependencies:
-      aedes-cached-persistence: 9.0.0
+      aedes-persistence: 10.2.2
       hashlru: 2.3.0
       ioredis: 5.10.1
       msgpack-lite: 0.1.26
-      pump: 3.0.4
-      qlobber: 7.0.1
-      through2: 4.0.2
-      throughv: 1.0.4
+      qlobber: 8.0.1
     transitivePeerDependencies:
       - supports-color
 
@@ -6609,27 +6514,16 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  aedes-persistence@9.1.2:
+  aedes@1.1.1(aedes-persistence-level@9.1.3)(aedes-persistence-mongodb@9.4.2(gcp-metadata@8.1.2)(socks@2.8.9))(aedes-persistence-redis@11.2.2):
     dependencies:
       aedes-packet: 3.0.0
-      qlobber: 7.0.1
-    transitivePeerDependencies:
-      - supports-color
-
-  aedes@0.51.3:
-    dependencies:
-      aedes-packet: 3.0.0
-      aedes-persistence: 9.1.2
-      end-of-stream: 1.4.5
-      fastfall: 1.5.1
-      fastparallel: 2.4.1
-      fastseries: 2.0.0
-      hyperid: 3.3.0
-      mqemitter: 6.0.2
+      aedes-persistence: 10.2.2
+      mqemitter: 7.1.0
       mqtt-packet: 9.0.2
-      retimer: 4.0.0
-      reusify: 1.1.0
-      uuid: 10.0.0
+    optionalDependencies:
+      aedes-persistence-level: 9.1.3
+      aedes-persistence-mongodb: 9.4.2(gcp-metadata@8.1.2)(socks@2.8.9)
+      aedes-persistence-redis: 11.2.2
     transitivePeerDependencies:
       - supports-color
 
@@ -7465,11 +7359,6 @@ snapshots:
     dependencies:
       fast-string-truncated-width: 3.0.3
 
-  fast-unique-numbers@8.0.13:
-    dependencies:
-      '@babel/runtime': 7.29.2
-      tslib: 2.8.1
-
   fast-unique-numbers@9.0.27:
     dependencies:
       '@babel/runtime': 7.29.2
@@ -7503,16 +7392,10 @@ snapshots:
       strnum: 2.4.1
     optional: true
 
-  fastfall@1.5.1:
-    dependencies:
-      reusify: 1.1.0
-
   fastparallel@2.4.1:
     dependencies:
       reusify: 1.1.0
       xtend: 4.0.2
-
-  fastseries@2.0.0: {}
 
   fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
@@ -7791,12 +7674,6 @@ snapshots:
     dependencies:
       ms: 2.1.3
 
-  hyperid@3.3.0:
-    dependencies:
-      buffer: 5.7.1
-      uuid: 8.3.2
-      uuid-parse: 1.1.0
-
   iconv-lite@0.4.24:
     dependencies:
       safer-buffer: 2.1.2
@@ -7832,10 +7709,6 @@ snapshots:
   inherits@2.0.4: {}
 
   int64-buffer@0.1.10: {}
-
-  ioredis-auto-pipeline@1.0.2:
-    dependencies:
-      to-fast-properties: 3.0.1
 
   ioredis@5.10.1:
     dependencies:
@@ -8043,7 +7916,8 @@ snapshots:
 
   lru-cache@11.5.0: {}
 
-  lru-cache@7.18.3: {}
+  lru-cache@7.18.3:
+    optional: true
 
   magic-string@0.30.21:
     dependencies:
@@ -8140,24 +8014,7 @@ snapshots:
       gcp-metadata: 8.1.2
       socks: 2.8.9
 
-  mqemitter-redis@5.1.0:
-    dependencies:
-      hyperid: 3.3.0
-      inherits: 2.0.4
-      ioredis: 5.10.1
-      ioredis-auto-pipeline: 1.0.2
-      lru-cache: 7.18.3
-      mqemitter: 4.5.0
-      msgpack-lite: 0.1.26
-    transitivePeerDependencies:
-      - supports-color
-
-  mqemitter@4.5.0:
-    dependencies:
-      fastparallel: 2.4.1
-      qlobber: 5.0.3
-
-  mqemitter@6.0.2:
+  mqemitter@7.1.0:
     dependencies:
       fastparallel: 2.4.1
       qlobber: 8.0.1
@@ -8211,11 +8068,6 @@ snapshots:
       ieee754: 1.2.1
       int64-buffer: 0.1.10
       isarray: 1.0.0
-
-  multistream@4.1.0:
-    dependencies:
-      once: 1.4.0
-      readable-stream: 3.6.2
 
   mz-modules@2.1.0:
     dependencies:
@@ -8648,10 +8500,6 @@ snapshots:
 
   punycode@2.3.1: {}
 
-  qlobber@5.0.3: {}
-
-  qlobber@7.0.1: {}
-
   qlobber@8.0.1: {}
 
   qrcode-terminal@0.12.0: {}
@@ -8739,10 +8587,6 @@ snapshots:
   resolve-from@4.0.0: {}
 
   resolve-from@5.0.0: {}
-
-  retimer@4.0.0:
-    dependencies:
-      worker-timers: 7.1.8
 
   retry@0.12.0: {}
 
@@ -9079,17 +8923,7 @@ snapshots:
     dependencies:
       any-promise: 1.3.0
 
-  through2@4.0.2:
-    dependencies:
-      readable-stream: 3.6.2
-
   through@2.3.8: {}
-
-  throughv@1.0.4:
-    dependencies:
-      fastparallel: 2.4.1
-      inherits: 2.0.4
-      readable-stream: 2.3.8
 
   tiktoken@1.0.22: {}
 
@@ -9115,8 +8949,6 @@ snapshots:
   tinyspy@3.0.2: {}
 
   tinyspy@4.0.4: {}
-
-  to-fast-properties@3.0.1: {}
 
   toidentifier@1.0.1: {}
 
@@ -9325,13 +9157,7 @@ snapshots:
       unescape: 1.0.1
       ylru: 2.0.0
 
-  uuid-parse@1.1.0: {}
-
-  uuid@10.0.0: {}
-
   uuid@3.4.0: {}
-
-  uuid@8.3.2: {}
 
   vary@1.1.2: {}
 
@@ -9600,13 +9426,6 @@ snapshots:
       fast-unique-numbers: 9.0.27
       tslib: 2.8.1
 
-  worker-timers-broker@6.1.8:
-    dependencies:
-      '@babel/runtime': 7.29.2
-      fast-unique-numbers: 8.0.13
-      tslib: 2.8.1
-      worker-timers-worker: 7.0.71
-
   worker-timers-broker@8.0.16:
     dependencies:
       '@babel/runtime': 7.29.2
@@ -9615,23 +9434,11 @@ snapshots:
       tslib: 2.8.1
       worker-timers-worker: 9.0.14
 
-  worker-timers-worker@7.0.71:
-    dependencies:
-      '@babel/runtime': 7.29.2
-      tslib: 2.8.1
-
   worker-timers-worker@9.0.14:
     dependencies:
       '@babel/runtime': 7.29.2
       tslib: 2.8.1
       worker-factory: 7.0.49
-
-  worker-timers@7.1.8:
-    dependencies:
-      '@babel/runtime': 7.29.2
-      tslib: 2.8.1
-      worker-timers-broker: 6.1.8
-      worker-timers-worker: 7.0.71
 
   worker-timers@8.0.31:
     dependencies:

@@ -72,6 +72,8 @@ export type KeyedRunQueue = {
   enqueue: <T>(key: string, task: KeyedRunQueueTask<T>) => Promise<T>;
   /** 停止接收新任务，并向运行中的任务广播取消信号。 */
   deactivate: () => void;
+  /** 等待停用时已经存在的任务链真实结束；调用方应先执行 deactivate()。 */
+  drain: () => Promise<void>;
   /** O(1) 判断 key 是否存在运行中或排队中的任务链。 */
   has: (key: string) => boolean;
   pendingKeys: () => string[];
@@ -317,6 +319,11 @@ export function createKeyedRunQueue(options: KeyedRunQueueOptions = {}): KeyedRu
     },
 
     deactivate,
+
+    async drain() {
+      // 复制当前 tail：deactivate 后不会再接收新任务，因此快照覆盖全部待收敛工作。
+      await Promise.allSettled([...tails.values()]);
+    },
 
     has(rawKey: string) {
       return tails.has(normalizeQueueKey(rawKey));

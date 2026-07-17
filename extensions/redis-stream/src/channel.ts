@@ -25,6 +25,7 @@ import {
   redisStreamSetupAdapter,
   redisStreamSetupWizard,
 } from "./onboarding.js";
+import { redactRedisError } from "./shared/redact.js";
 
 /** @description 默认单账户 ID。 */
 export const DEFAULT_ACCOUNT_ID = "default";
@@ -128,7 +129,7 @@ export const redisStreamChannel: ChannelPlugin<ResolvedRedisStreamAccount> = {
           accountId,
           running: false,
           configured: true,
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: redactRedisError(error, account.config),
         });
         throw error;
       }
@@ -152,7 +153,7 @@ export const redisStreamChannel: ChannelPlugin<ResolvedRedisStreamAccount> = {
           accountId,
           running: false,
           configured: true,
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: redactRedisError(error),
         });
         throw error;
       }

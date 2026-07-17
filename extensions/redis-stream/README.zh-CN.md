@@ -46,6 +46,29 @@
 
 ### 双模式运行架构
 
+先用字符图快速区分“实时但不可恢复”的 Pub/Sub 与“有 PEL/ACK”的 Stream；下方 Mermaid
+继续保留完整可渲染关系：
+
+```text
+┌────────────────────────────── Redis ───────────────────────────────────────┐
+│                                                                           │
+│  Pub/Sub：PUBLISH → SUBSCRIBE ───────────────┐  at-most-once              │
+│                                              │                            │
+│  Stream：XADD → Consumer Group → PEL ────────┤  at-least-once             │
+│                 ▲              │              │                            │
+│                 │ XAUTOCLAIM   └─ 超限 → DLQ + XACK（MULTI）              │
+│                 └─────────────────────────────┘                            │
+└──────────────────────────────────────────────┬────────────────────────────┘
+                                               ▼
+┌──────────────────────── openclaw-redis-stream ────────────────────────────┐
+│ 白名单 → 路由 → 两阶段幂等 → 有界 Agent Turn → 回复 PUBLISH / XADD        │
+│                                                                           │
+│ stop：停止订阅/读取 → 排空已接纳任务 → 清 publisher → 关闭主连接           │
+└──────────────────────────────────────────────┬────────────────────────────┘
+                                               ▼
+                                  OpenClaw Runtime / Agent
+```
+
 ```mermaid
 flowchart LR
     E["外部系统"] --> M{"channelMode"}
@@ -231,7 +254,7 @@ Channel 模式支持 `*` 通配符（glob 风格，以冒号分隔）。独立�
 | `stream.blockMs`            | `number`  | `5000`                   | `XREADGROUP` 阻塞超时                         |
 | `stream.count`              | `number`  | `10`                     | 每批次最大消息数                              |
 | `stream.createGroup`        | `boolean` | `true`                   | 自动创建消费者组                              |
-| `stream.pendingClaimIdleMs` | `number`  | `120000`                 | XAUTOCLAIM 回收 idle PEL 条目（0=禁用）       |
+| `stream.pendingClaimIdleMs` | `number`  | `180000`                 | XAUTOCLAIM 回收 idle PEL 条目；必须大于 Agent 超时（0=禁用） |
 | `stream.maxAttempts`        | `number`  | `5`                      | 转入死信前的最大投递次数                      |
 | `stream.deadLetterKey`      | `string`  | `"openclaw:inbound:dlq"` | 死信 Stream 键                                |
 | `stream.maxLen`             | `number`  | `100000`                 | 出站与死信 Stream 近似长度上限；0 表示不限制  |
@@ -255,6 +278,12 @@ Channel 模式支持 `*` 通配符（glob 风格，以冒号分隔）。独立�
 | `connection.startupTimeoutMs`     | `number`  | `30000` | 启动连接超时                                                         |
 | `connection.shutdownTimeoutMs`    | `number`  | `10000` | Redis 客户端优雅退出预算；超时后强制销毁 socket                      |
 
+### Agent 执行边界
+
+| 字段                          | 类型     | 默认值   | 说明 |
+| ----------------------------- | -------- | -------- | ---- |
+| `network.agentReplyTimeoutMs` | `number` | `120000` | Agent Turn 与 Redis 回复写入的总超时；Stream 的 `pendingClaimIdleMs` 必须更长 |
+
 ### 幂等设置
 
 | 字段                     | 类型      | 默认值   | 说明                         |
@@ -265,7 +294,7 @@ Channel 模式支持 `*` 通配符（glob 风格，以冒号分隔）。独立�
 
 ## 可靠性与部署边界
 
-- Stream 消息仅在 Agent 派发与回复发送均成功后 ACK；失败条目留在 PEL，并在 `pendingClaimIdleMs` 后被回收。
+- Stream 消息仅在 Agent 派发与回复发送均成功后 ACK；失败条目留在 PEL，并在 `pendingClaimIdleMs` 后被回收。配置强制 reclaim idle 大于 Agent 超时，避免活跃 Turn 被其他消费者抢走后并发重复执行。
 - 达到 `maxAttempts` 后，原始消息与失败元数据在同一个 Redis 事务中写入 `deadLetterKey` 并 ACK。
 - 每个 Gateway 副本必须使用不同的 `consumerName`；留空会按主机名和进程 ID 自动生成。
 - Redis Cluster 环境中，`inboundKey` 与 `deadLetterKey` 必须使用相同 hash tag，例如 `openclaw:{agent}:inbound` 和 `openclaw:{agent}:inbound:dlq`，否则原子死信事务会跨槽失败。
@@ -275,6 +304,7 @@ Channel 模式支持 `*` 通配符（glob 风格，以冒号分隔）。独立�
 - Pub/Sub 是明确的 at-most-once 模式，不具备 ACK、回放、死信或过载恢复。不能丢消息的生产流程应使用 Stream 模式。
 - Pub/Sub 同时处理数由 `maxPubSubInFlight` 限制，超限消息会被明确拒绝并计入失败，避免突发流量无限创建 Agent turn。
 - Pub/Sub 回复或主动出站时，Redis 返回订阅者数量为 0 会抛出投递失败，不能把“命令执行完成”伪装成“消息已送达”。
+- 停机先关闭订阅/阻塞读取入口，再排空已接纳的 Stream 与 Pub/Sub Agent 任务，最后清除 publisher 并关闭主连接；避免人为制造回复失败或丢失。
 - 订阅连接启动和客户端退出都有时间预算；超过 `shutdownTimeoutMs` 会销毁 socket，避免 Gateway 停机无限挂起。
 - 幂等状态仅在当前插件进程内生效，不能宣称跨节点 exactly-once。
 

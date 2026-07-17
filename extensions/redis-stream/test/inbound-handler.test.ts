@@ -110,6 +110,7 @@ describe("handleInboundMessage", () => {
       channel: "redis-stream",
       text: "bound msg",
       peerId: "openclaw:agent:demo:in",
+      timeoutMs: 120_000,
     });
   });
 

@@ -48,7 +48,7 @@ import { resolvePrometheusConfig } from "./config.js";
 import { assertScrapeAuthorized } from "./transport/server.js";
 import { CollectCache } from "./collectors/collect-cache.js";
 import { CollectorRunner } from "./collectors/collector-runner.js";
-import { limitScrapeSamples } from "./collectors/sample-limit.js";
+import { limitScrapeSamples, sanitizeScrapeSamples } from "./collectors/sample-limit.js";
 import { PLUGIN_VERSION } from "./shared/version.js";
 import {
   initializeRuntimeStore,
@@ -311,6 +311,7 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
     let definitions = [...bundle.definitions];
     let samples = [...bundle.samples];
     appendMetaSamples(definitions, samples, scrapeSeconds);
+    samples = sanitizeScrapeSamples(samples);
     ({ definitions, samples } = limitScrapeSamples(definitions, samples, cfg.maxScrapeSeries));
     return { definitions, samples, diagnostics: bundle.diagnostics };
   }

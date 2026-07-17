@@ -21,7 +21,7 @@
 |    5 | douyin       | 清除 TODO 占位，实现真实开放平台 API                                 | 已完成代码与协议测试，待环境验收                                    |
 |    6 | memory       | 实现保留策略、异步存储与真实能力分层                                 | 已完成真实 Gateway 跨重启 E2E，待压力/备份恢复验收                   |
 |    7 | openmem      | 可靠 HTTP、Memory Host、事件投影恢复与真实 Sidecar E2E                | 条件上线候选，待受保护网络和故障演练                                |
-|    8 | web-socket   | 鉴权、背压、心跳、结构补全与 E2E                                     | 已完成代码与真实连接测试，待环境验收                                |
+|    8 | web-socket   | 鉴权、背压、心跳、结构补全与 E2E                                     | 已完成 2026.7.1 tarball Agent/Chromium E2E，待环境验收               |
 |    9 | web-stomp    | WSS、认证、会话隔离、背压、资源限制与生命周期                        | 已完成代码、真实 WSS 与 tarball Agent E2E，待环境验收               |
 |   10 | stomp        | TCP/TLS、认证、ACK、会话隔离、有界队列与生命周期                     | 已完成代码与真实 TLS 测试，待环境验收                               |
 |   11 | rabbitmq     | Confirm、重试/DLQ、可靠 ACK 与真实 Broker 验证                       | 已完成代码与本地 RabbitMQ E2E，待环境验收                           |
@@ -295,6 +295,7 @@
 - Agent 工具使用 OpenClaw 可信 `agentId`/`sessionKey` 上下文；缺少 sessionKey 时 fail-closed，拒绝目录穿越和旧版可枚举路径，且禁止读取 L0 原始对话。
 - 可通过 `encryptionKeyEnv` 启用 AES-256-GCM 逐行静态加密；密钥值至少 32 字节，缺失或错误时启动失败，不再把解密失败静默表现为空记忆。
 - `maxRecordBytes` 同时约束 L0 和批量 L1/L2/L3；配置数值要求合法整数，不再静默夹逼或截断。
+- `maxSearchResults` 现在是不可被 Memory Host 调用参数绕过的管理员硬上限；词法搜索改为逐行流式解析，并以 `maxSearchBytes` 在层级和日期文件之间共享扫描预算。`readFile` 只读取指定窗口和一条截断探针，单次最多返回 `maxReadLines` 条，非法分页参数直接拒绝。
 - 首次启动自动把旧版按日混合目录拆分进会话目录，并保留 `.legacy-backup`；重启后 status 会重新发现磁盘文件。
 - OpenClaw 2026.7.1 对非内置 `agent_end` 强制显式信任：配置必须包含 `plugins.entries.memory.hooks.allowConversationAccess=true`。插件在缺失时会明确告警，避免 `loaded` 但不产生新记忆的假健康状态。
 - 修复真实 Agent Harness scoped runtime 不执行 `registerService.start()` 导致 `agent_end` 报 `store is not initialized`：Service、Hook、Tool、Memory Host 共用单飞惰性初始化屏障。
@@ -304,11 +305,12 @@
 
 本地门禁（2026-07-17）：
 
-- `pnpm --dir extensions/memory test`：1 个测试文件、32 个测试通过，覆盖物理会话隔离、scoped runtime 惰性初始化、跨会话 L3 召回、错误密钥、记录上限、重启状态和旧目录迁移。
+- `pnpm --dir extensions/memory test`：1 个测试文件、36 个测试通过，覆盖物理会话隔离、scoped runtime 惰性初始化、跨会话 L3 召回、错误密钥、记录/搜索/分页上限、流式字节预算、重启状态和旧目录迁移；覆盖率为 statements 82.75%、branches 70.96%、functions 82.90%、lines 87.65%。
 - `pnpm --filter @partme.ai/openclaw-memory typecheck`：通过。
 - `pnpm --dir extensions/memory build`：通过。
 - 统一 E2E `OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins memory --skip-browser` 已通过：构建、打包、隔离安装、真实 Agent Turn、L0-L3 落盘、0600 权限、Gateway 重启、CLI L3 查询及不同 session 的 Prompt 自动注入均为 PASS。
 - 2026-07-17 从最终工作树重新执行并生成独立脱敏归档报告；报告带 runId、插件集合和毫秒时间戳，不会被后续隔离插件运行覆盖。
+- 本轮流式搜索与读取边界修改后再次从最终 tarball 安装到 OpenClaw 2026.7.1，真实 Agent Turn、L0-L3 落盘、Gateway 重启、CLI 搜索和跨 session L3 自动注入全部 PASS；新归档为 `scripts/e2e/reports/2026-07-17T05-31-51.659Z-memory-5c496e47-bcdb-4322-9a5d-7d1e2ecbb7ad.json`。
 
 环境验收还需验证群聊 session 的共享边界、备份恢复、90 天清理及大文件/高并发磁盘压力。当前静态加密不支持在线密钥轮换，轮换前应离线导出或重加密旧数据；完成这些验收前不标记为生产就绪。
 
@@ -326,14 +328,16 @@
 - 能力探测如实声明当前 OpenMem 是 FTS5 + 字符 n-gram 重排，不是 embedding/vector 搜索。
 - `/events/ingest` 作为持久事实源；事件携带稳定 turnId/序号/总数，working-memory append 以前置 turnId 标记避免重复。
 - 恢复 ACTIVE session 与 commit 前会从最近 1000 条事件重建完整轮次，补偿 ingest 成功、append 前进程退出的窗口；同一 sessionKey 的 start/ingest/commit 串行执行。
+- `client.close()` 现在使用生命周期 AbortController 同时取消在途 fetch 和重试退避；Service stop 会等待 coordinator 的全部 session 串行链收敛后再清空 manager 缓存，避免 Gateway 停止后残留后台网络任务。
+- Sidecar/代理错误进入 Hook 日志和 Memory Host health 前统一执行 SDK 与插件规则联合脱敏，遮蔽 API Key、Bearer、`sk-*`，清理控制字符并限制为 500 字符。
 
 本地门禁（2026-07-17）：
 
-- `pnpm --filter @partme.ai/openclaw-openmem test`：3 个测试文件、32 个测试通过。
+- `pnpm --filter @partme.ai/openclaw-openmem test`：3 个测试文件、34 个测试通过；覆盖率为 statements 81.76%、branches 74.14%、functions 85.54%、lines 90.93%。
 - `pnpm --filter @partme.ai/openclaw-openmem typecheck`：通过。
 - `pnpm --filter @partme.ai/openclaw-openmem build`：通过。
 - 统一 E2E `OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins openmem --skip-browser`：PASS。它编译并启动工作区真实 OpenMem Server，打包安装 `openmem@2026.7.1`，完成 Agent Turn、事件摄取、working memory、shutdown drain 提交、archive、Gateway 重启及下一轮 continuity Prompt 注入。
-- 2026-07-17 从最终工作树重新执行并生成独立脱敏归档报告；OpenMem fixture 构建、插件安装与 Gateway 重启证据可单独追溯。
+- 2026-07-17 从最终工作树重新执行并生成独立脱敏归档报告：`scripts/e2e/reports/2026-07-17T05-39-02.285Z-openmem-d5085bf2-b227-4730-a2e4-ea5a747ce40f.json`；OpenMem fixture 构建、插件安装与 Gateway 重启证据可单独追溯。
 
 环境验收仍有外部前置条件：当前 OpenMem Server 没有内置请求鉴权，且 `app.listen(PORT)` 未显式绑定 loopback。生产环境必须使用容器/防火墙网络隔离或鉴权反向代理。插件已用持久事件和 turnId 对账补偿常见双写崩溃窗口，但超过最近 1000 条恢复窗口的极长 ACTIVE session 要获得严格原子性，仍需 Sidecar 事务批接口或原生幂等 append。完成受保护网络和 Sidecar 故障演练前，OpenMem 只能标记为条件上线候选。
 
@@ -349,9 +353,13 @@
 - `/mqtt/status` 改为 exact 路由并仅输出脱敏配置摘要，不再泄露 MQTT/Redis 密码、证书路径或持久化端点。
 - 删除未实现的 `wsPort` 与未使用的 `ws` 依赖；浏览器 WebSocket MQTT 由独立 `web-mqtt` 插件承担。
 - TCP、TLS、Aedes、Redis 的启动失败回滚与异步关闭均等待资源真正释放。
-- Redis 持久化使用正确的 `conn` / `packetTTL` 契约；MQEmitter 使用独立 Pub/Sub 连接和集群前缀，避免共享 Redis 时跨环境串消息。
+- MQTT Packet Identifier 改为按 `clientId + topic + messageId + payload 摘要` 作用域去重；`DUP=false` 新报文可安全复用编号，Agent dispatch 失败会释放幂等预占，避免 QoS 重投被误判成功而丢消息。
+- Broker 停止时先停用并排空按客户端任务队列，主动销毁已认证及认证中 socket，再关闭 TCP/TLS/Aedes/Redis，避免在线设备使 Gateway stop 永久等待或留下后台 Agent 任务。
+- Gateway 状态和审计错误统一脱敏：遮蔽 MQTT 用户口令/哈希、Redis 密码、MongoDB URI userinfo、Bearer 与 `sk-*`，同时移除控制字符并限制诊断长度。
+- Redis 持久化使用正确的 `conn` / `packetTTL` 契约；按已确定的“放弃 cluster”边界移除 `mqemitter-redis` 跨 Gateway 总线，只保留单 Gateway 的 Redis 状态持久化，并禁止多个 Gateway 共享同一 keyPrefix。
 - 插件清单补齐 `host`、`tls.port`、`packetTTL` 并拒绝未知根配置。
 - 文档按 Aedes 真实能力修正为 MQTT 3.1/3.1.1；MQTT 5.0 当前不支持。
+- 升级到 `aedes@1.1.1` 与 `aedes-persistence-redis@11.2.2`，适配 Aedes 1.x 显式异步 `listen()` 生命周期；移除仍携带 `hyperid -> uuid@8` 安全公告链的 `mqemitter-redis`。
 
 本地门禁（2026-07-15 至 2026-07-16）：
 
@@ -359,9 +367,12 @@
 - `pnpm --dir extensions/mqtt typecheck`：通过。
 - `pnpm --dir extensions/mqtt build`：通过。
 - 2026-07-16 回归：11 个测试文件、65 个测试通过，1 个 Redis 条件测试因本轮未提供 Redis 而跳过；新增真实 OpenSSL TLS + QoS2、同 clientId 接管、发布前拒绝、启动回滚、异步异常与状态脱敏覆盖。
+- 2026-07-17 回归：14 个测试文件中 13 个通过、1 个 Redis 条件文件跳过，共 83 项中 82 项通过、1 项跳过；最终覆盖率为 statements 62.32%、branches 58.78%、functions 51.74%、lines 62.62%。新增 Packet Identifier 跨客户端隔离、失败回滚、错误脱敏、在线连接停机与 Agent 任务排空覆盖。
 - `pnpm pack` 产物已由 OpenClaw `2026.7.1 (2d2ddc4)` 从 `.tgz` 安装；`plugins info mqtt` 显示 `Status: loaded`、`Version: 2026.7.1`，Doctor 插件统计 `Errors: 0`。
+- 本轮最终 tarball 再次安装到 OpenClaw 2026.7.1，真实执行 MQTT QoS 1 publish → Agent Turn → reply Topic 订阅回包并 PASS；升级 Aedes 并移除 cluster 总线后的最终脱敏归档为 `scripts/e2e/reports/2026-07-17T05-59-39.658Z-mqtt-b322a865-c2da-4529-9be8-3dfa681359f7.json`。
+- 最终安装态 `npm audit --omit=dev`：75 个生产依赖，0 漏洞；升级前由 Aedes/MQEmitter 的旧 UUID 链带来的 4 个中危项已清零。
 
-环境验收还需在两台 Gateway 进程上验证 Redis 跨节点 QoS/订阅传播、TLS 设备证书、断网重连、Redis 故障恢复、连接上限和高负载背压。
+环境验收还需验证 TLS 设备证书、断网重连、Redis 故障恢复、连接上限和高负载背压。当前内嵌 Broker 明确不支持多 Gateway 集群；需要水平扩展时应使用独立生产 MQTT Broker。
 
 ## Web-MQTT 当前交付
 
@@ -380,6 +391,9 @@
 - 默认关闭 WebSocket 压缩，降低不可信载荷的压缩资源消耗；帧上限与 MQTT payload 上限保持一致。
 - WSS 缺少 key/cert、未实现的 PROXY Protocol、错误的网络暴露配置均启动 fail-fast。
 - 启动失败回滚、WebSocket client terminate、HTTP(S)/Aedes 关闭均等待完成。
+- 升级到 `aedes@1.1.1` 并适配显式异步 `listen()`，消除旧 Aedes 的 `hyperid -> uuid@8` 安全公告链。
+- 停机在 terminate WebSocket 后同时等待 HTTP(S)、Aedes 与已开始的按客户端 Agent 任务链收敛，避免 stop 返回后残留 dispatch。
+- 队列及 Aedes 错误进入状态前统一遮蔽用户口令/哈希、Bearer、`sk-*` 和控制字符，并限制诊断长度。
 - 未显式配置 `channels.mqtt-ws.port/path` 时不再自动声明默认账号；已 abort 的 Gateway 生命周期不会永久挂起。
 - `/mqtt-ws/status` 使用 exact 路由，只输出用户数量和 TLS 状态等脱敏摘要，不暴露用户名、密码或证书路径。
 - manifest 的插件配置 schema 与 `channelConfigs.mqtt-ws.schema` 已分离，OpenClaw 可在插件运行前正确校验渠道配置。
@@ -392,8 +406,11 @@
 - `pnpm --dir extensions/web-mqtt build`：通过。
 - 2026-07-16 回归：14 个测试文件、63 个测试通过；新增发布前超限拒绝、同 clientId 接管、TLS 启动失败回收、预中止生命周期、账号显式配置与深度状态脱敏覆盖。
 - 2026-07-17 回归：14 个测试文件、69 个测试通过；新增 QoS 1 deferred PUBACK、应用级 claimable idempotency、失败释放、合法重复正文、零订阅者拒绝、断连会话清理与队列资源上限覆盖。
+- 本轮 Aedes 1.x、停机排空与错误脱敏回归：15 个测试文件、81 个测试通过；覆盖率为 statements 73.41%、branches 65.81%、functions 67.10%、lines 75.78%。
 - OpenClaw 2026.7.1 隔离 profile 安装本地 tarball 后，真实执行 `WS MQTT QoS 1 publish → Agent Turn → subscribed reply`；回复信封/路由正确，模型调用恰好 1 次，入出站统计有效。
 - 真实 Chromium 完成 connect、subscribe、publish 与 Agent reply 闭环；浏览器测试运行期间模型 fixture 保持存活，并只运行本次选中的 Web 插件。
+- Aedes 1.x 最终 tarball 再次安装到 OpenClaw 2026.7.1；Node WS MQTT 与真实 Chromium 两条 Agent reply 链路均 PASS，脱敏归档为 `scripts/e2e/reports/2026-07-17T06-05-32.930Z-web-mqtt-37322ab2-9b02-48f5-80b5-2845fe67e9eb.json`。
+- 最终安装态 `npm audit --omit=dev`：37 个生产依赖，0 漏洞；发布包包含 17 个预期文件。
 - 最终 `.tgz` 已由 OpenClaw `2026.7.1 (2d2ddc4)` 安装；`plugins info web-mqtt` 显示 `Status: loaded`、`Version: 2026.7.1`。OpenClaw 对 `channels.mqtt-ws.port=70000` 按插件渠道 schema 正确拒绝。
 
 环境验收仍需验证目标浏览器的真实 Origin、生产证书链、反向代理 Upgrade 配置、断网重连和预期并发负载，因此当前结论仍是“代码与本地协议门禁完成，待环境验收”。
@@ -413,17 +430,21 @@
 - 出站检查 `bufferedAmount` 与 UTF-8 帧大小，慢客户端超过上限时快速断开。
 - 服务端和客户端均增加 WebSocket ping/pong 心跳、pong 超时；客户端增加握手超时和受控指数退避。
 - 客户端在握手完成前收到 close 时会拒绝启动 Promise，避免 Gateway 生命周期永久悬空。
-- 连接清理实现幂等，停机主动 terminate 存量 socket 并等待 HTTP/WebSocket Server 关闭；移除插件级全局 `SIGTERM` 监听。
+- 连接清理实现幂等，停机主动 terminate 存量 socket 并等待 HTTP/WebSocket Server 关闭；Server/Client 还会排空已接纳的 Agent 任务，避免热重载丢消息；移除插件级全局 `SIGTERM` 监听。
+- Client 在入站消息入队时固定处理器引用；即使停机随后清空全局 handler，已经通过容量闸门的消息仍会执行完成，不会静默变成空操作。
+- Socket、入站处理器和 Gateway 状态错误统一遮蔽 URL userinfo、Bearer Token、服务端 Token、客户端 Token 与自定义认证 Header，并移除控制字符、限制错误长度。
 - 状态接口继续由 OpenClaw 插件认证保护，并对 token 和客户端 headers 脱敏；路由改为 exact、GET-only、`no-store`，非 GET 返回 405。
-- 补齐 LICENSE、中文 README、发布文件和真实 WebSocket transport 集成测试。
+- 补齐 LICENSE、中文 README、发布文件和真实 WebSocket transport 集成测试；中文架构文档同时保留字符总览图与 Mermaid 架构、时序和状态图。
 
-本地门禁（2026-07-15 至 2026-07-16）：
+本地门禁（2026-07-17）：
 
-- `pnpm --filter @partme.ai/openclaw-web-socket test`：6 个测试文件、31 个测试通过，包含真实 HTTP upgrade 鉴权、Origin/query token 拒绝、客户端 Bearer header、异步消息顺序、两阶段去重失败重试、client 限流、离线出站失败语义与带活跃连接停机。
+- `pnpm --filter @partme.ai/openclaw-web-socket test`：7 个测试文件、35 个测试通过，包含真实 HTTP upgrade 鉴权、Origin/query token 拒绝、客户端 Bearer header、异步消息顺序、Server/Client 停机排空、错误脱敏、两阶段去重失败重试、client 限流和离线出站失败语义。
+- `pnpm --filter @partme.ai/openclaw-web-socket test:coverage`：statements 68.71%、branches 56.58%、functions 67.91%、lines 70.15%；传输层 statements 72.06%，统一脱敏模块 statements/lines 100%。
 - `pnpm --filter @partme.ai/openclaw-web-socket typecheck`：通过。
 - `pnpm --filter @partme.ai/openclaw-web-socket build`：通过。
-- 最终 `0.1.0.tgz` 与本地 `message-sdk@2026.7.1` 安装到 OpenClaw 2026.7.1 隔离 profile；宿主 installed-plugin index 注册、Gateway 启动和 Channel 生命周期通过。
-- 新增统一 E2E adapter：匿名握手 401、Query Token 401、非法 Origin 403、Bearer + 合法 Origin 连接成功；`connected`、`ping/pong`、非法帧错误响应、活动连接状态、状态脱敏和 POST 405 全部通过。
+- 发布包 dry-run 包含 14 个预期文件；最终 `web-socket@2026.7.1` 与本地 `message-sdk@2026.7.1` tarball 安装到 OpenClaw 2026.7.1 隔离 profile，宿主 installed-plugin index 注册、Gateway 启动和 Channel 生命周期通过。
+- 最终 tarball 生产依赖安装后执行 `npm audit --omit=dev`：0 漏洞。
+- 统一 E2E adapter 完成 Bearer/浏览器子协议鉴权、版本化消息、真实 Agent Turn、reply 与 `accepted`；真实 Chromium 同样完成子协议鉴权和 Agent 回复闭环。最新脱敏归档为 `scripts/e2e/reports/2026-07-17T06-16-13.453Z-web-socket-5a94be29-6bb9-4f89-8eca-341bf241e4ac.json`。
 
 环境验收还需使用正式 TLS 反向代理和真实浏览器验证 `wss://`、Origin 转发、token 轮换、断线重连、连接洪峰、慢客户端及长时间心跳稳定性。
 
@@ -489,21 +510,25 @@
 - 重试流量进入独立 `<exchange>.retry`，避免重试消息被主 Exchange 的宽泛 binding 提前消费；TTL 到期后按原 routing key 回流。
 - 重试耗尽进入独立 `<exchange>.dlx` / `<queue>.dlq`，不再无限热 requeue；重试发布失败时原消息重新入队。
 - 幂等默认开启，并从“接收即记录”改为 claim/commit/release，处理或回复失败会释放 claim；无稳定 messageId/correlationId 时不误判相同正文。
-- 停止与连接恢复会重新入队所有未 settle 投递；意外断开使用单一后台重连循环，按指数退避加双向抖动持续恢复，降低多副本惊群。
-- 停机先 `basic.cancel` 阻断新消费，再 NACK 已跟踪投递；cancel 生效前到达的新 delivery 由 stopping 门禁立即 requeue，关闭竞态窗口。
+- 意外断开会重新入队未 settle 投递，并使用单一后台重连循环按指数退避加双向抖动持续恢复，降低多副本惊群。
+- 正常停机先 `basic.cancel` 阻断新消费，保持 Confirm Channel 与 retry/DLQ 可用并排空已接纳 Agent Turn，最后才 NACK 极端竞态中仍未 settle 的投递；修复“先 NACK、旧 Turn 仍产生副作用、Broker 重投再执行”的重复处理窗口。
+- amqplib、Agent dispatch、retry publish 与 NACK 诊断统一遮蔽当前/任意 AMQP URL userinfo，移除控制字符并限制错误长度，状态接口不再保存第三方原始异常。
 - Channel Outbound 缺少 peer/session 映射时明确抛错，不再返回 `no-peer` / `no-session-context` 占位 ID 让 Router Outbox 误确认。
 - 配置校验 fail-fast，拒绝非法 AMQP 协议、不安全的 quorum queue 组合和显式错误数值/枚举；远程 Broker 默认强制 `amqps://`，仅显式风险确认后允许明文。
 - Runtime 未初始化会进入失败重试路径，禁止普通返回导致 transport 误 ACK；不可信 `x-attempt` 只接受非负安全整数。
 - Message SDK 在 `dispatchReplyFromConfig()` 返回后继续等待 OpenClaw reply dispatcher `waitForIdle()`；消除 Agent 已完成但异步 publish confirm 尚未落定时 deferred ACK 抢先 NACK 的竞态。
 - 包版本和清单对齐到 2026.7.1，修复中文 README 打包文件名并删除仓库中的旧 `.tgz`。
+- 中文 README 同时保留字符总览图与 Mermaid 架构、ACK 时序和停机时序；Vitest 与覆盖率 Provider 统一升级到 4.x，`test:coverage` 不再因版本错配而不可执行。
 
 本地门禁（2026-07-17）：
 
 - `pnpm --dir extensions/message-sdk test`：56 个测试文件、396 个测试通过；新增 reply dispatcher 排空等待回归测试。
-- `pnpm --dir extensions/rabbitmq test`：11 个测试文件、117 个通过；包含显式配置探测、mandatory 不可路由、confirm、RPC、退避抖动、retry、DLQ、deferred ACK、claimable idempotency 和真实 Broker 测试。
-- OpenClaw 2026.7.1 隔离 profile 从最终 tarball 干净安装：RabbitMQ confirm 入站 → OpenClaw Agent Turn → 本地 OpenAI-compatible 模型 → confirmed reply → deferred ACK 全链路通过；模型调用恰好一次，reply envelope/routing key 与 received/sent/confirmed/acked 统计均通过。
+- `pnpm --dir extensions/rabbitmq test`：真实 Broker 启用时 12 个测试文件、121 个通过；包含显式配置探测、mandatory 不可路由、confirm、RPC、退避抖动、retry、DLQ、deferred ACK、停机排空、错误脱敏、claimable idempotency 和真实 Broker 测试。
+- `pnpm --dir extensions/rabbitmq test:coverage`：statements 67.92%、branches 56.69%、functions 58.01%、lines 68.69%；传输层 statements 70.39%，脱敏模块 lines 92.3%。
+- OpenClaw 2026.7.1 隔离 profile 从最终 tarball 干净安装：RabbitMQ confirm 入站 → OpenClaw Agent Turn → 本地 OpenAI-compatible 模型 → confirmed reply → deferred ACK 全链路通过；模型调用恰好一次，reply envelope/routing key 与 received/sent/confirmed/acked 统计均通过。最新脱敏归档为 `scripts/e2e/reports/2026-07-17T06-25-11.824Z-rabbitmq-8ce2c743-f079-47d1-a1d2-dc7287cb2a12.json`。
 - `pnpm --dir extensions/rabbitmq typecheck`、Node 22 目标构建、CodeGraph 同步：通过。
-- 中文 README 新增运行架构图和 ACK/retry/DLQ 时序图；关键代码补充“为何确认、何时 ACK、为何抛错”的设计注释。
+- 最终安装态 8 个生产包执行 `npm audit --omit=dev`：0 漏洞；发布包包含 18 个预期文件。
+- 中文 README 新增字符架构图并保留 Mermaid ACK/retry/DLQ/停机时序图；关键代码补充“为何确认、何时 ACK、为何抛错”的设计注释。
 
 环境验收还需在正式 RabbitMQ 集群验证 TLS/凭据轮换、quorum queue、节点故障、网络分区、镜像升级、积压恢复、重连风暴和跨实例业务幂等。当前进程内幂等不能宣称跨节点 exactly-once。
 
@@ -521,14 +546,19 @@
 - 配置拒绝非 `redis://` / `rediss://` URL 和未知字段，URL 用户名、密码均脱敏；包与清单版本对齐 OpenClaw 2026.7.1。
 - 远程 Redis 默认强制 `rediss://`，仅回环地址允许默认明文；错误对象在构造边界再次脱敏，避免连接失败日志泄露 ACL 用户名和密码。
 - node-redis 重连改为有上限的指数退避和双向抖动；消费循环错误退避可由 Gateway 停止信号立即中断，避免停机最长额外等待 30 秒。
+- Agent Turn 增加显式 `network.agentReplyTimeoutMs`；Stream 的 PEL 回收租约默认提升到 180 秒，且配置强制 `pendingClaimIdleMs` 大于 Agent 超时，避免慢请求仍在执行时被其他消费者 `XAUTOCLAIM` 后重复处理。
+- 停机顺序调整为“停止新订阅/读取 → 排空已接纳的 Stream 与 Pub/Sub Agent 任务 → 清除 publisher → 关闭主连接”，避免关闭发布连接人为制造在途回复丢失。
+- 入站日志不再输出消息正文，只记录 UTF-8 字节数；运行状态、消费循环、回收与客户端错误统一经过 Redis URL/用户名/密码脱敏。
 - E2E 注册表与 Docker Compose 已接入 Redis 7；主场景使用本地 OpenAI-compatible fixture 真实覆盖消费组读取、OpenClaw Agent Turn、reply Stream、XACK 与空 PEL，故障场景继续覆盖 PEL 回收和 DLQ。
 
 本地门禁（2026-07-17）：
 
-- `pnpm --dir extensions/redis-stream test`：14 个测试文件、107 个测试通过、2 个环境测试跳过，包含真实 Redis consumer-group、PEL reclaim、DLQ、Pub/Sub 并发闸门、零订阅者失败语义、凭据脱敏、TLS 边界与重连退避契约。
-- OpenClaw 2026.7.1 隔离 profile 从 tarball 安装：真实 `XADD → XREADGROUP → Agent → 本地模型 → reply Stream → XACK` 通过；回复信封/路由正确、模型调用恰好一次、最终 PEL 为 0。失败 `XAUTOCLAIM → DLQ → XACK` 闭环也由真实 Redis 测试覆盖。
+- `pnpm --dir extensions/redis-stream test`：无 Redis 时 14 个测试文件、110 个测试通过、3 个环境测试跳过；真实 Redis 启用时 15 个测试文件、113 个测试全部通过，新增 Pub/Sub 已接纳任务停机排空、Agent 超时/PEL 租约约束和凭据脱敏回归。
+- `pnpm --dir extensions/redis-stream test:coverage`：statements 49.58%、branches 55.73%、functions 50.72%、lines 50%；核心配置、入站、出站与路由覆盖较高，Redis 客户端事件和故障分支仍是下一阶段覆盖率缺口。
+- OpenClaw 2026.7.1 隔离 profile 从最终 tarball 安装：真实 `XADD → XREADGROUP → Agent → 本地模型 → reply Stream → XACK` 通过；回复信封/路由正确、模型调用恰好一次、最终 PEL 为 0。归档为 `scripts/e2e/reports/2026-07-17T06-39-21.776Z-redis-stream-514b8fdc-efc8-4686-9dae-22529fcfa695.json`；失败 `XAUTOCLAIM → DLQ → XACK` 闭环也由真实 Redis 测试覆盖。
 - `pnpm --dir extensions/redis-stream typecheck`、`build`、`npm pack --dry-run --json`：通过。
-- 中文 README 新增双模式运行架构图和 PEL/reclaim/DLQ 时序图；长篇架构文档保留原有原理与样例，并同步更新重连状态图和当前实现代码。
+- 最终安装态 11 个生产包执行 `npm audit --omit=dev`：0 漏洞；发布包包含 14 个预期文件。
+- 中文 README 同时保留字符双模式架构图与 Mermaid PEL/reclaim/DLQ 时序图；长篇架构文档保留原有原理与样例，并同步更新 Agent 超时、回收租约和停机排空语义。
 
 环境验收还需在正式 Redis HA 环境验证 TLS/ACL、主从切换、网络分区、积压恢复、重连风暴和跨实例业务幂等。原生 Redis Cluster 拓扑发现当前不支持；若通过代理接入 Cluster，入站与 DLQ key 必须使用相同 hash tag。进程内幂等不能宣称跨节点 exactly-once。
 
@@ -537,6 +567,7 @@
 - 处理器抛异常与显式 `reconsume=true` 已统一进入同一最大尝试/DLQ 状态机，修复异常路径绕过非 FIFO 毒消息耗尽判断的问题。
 - 普通出站缺少 session context 时明确失败，不再返回 `no-session-context` 占位成功结果。
 - Producer、Consumer 与 one-shot Producer 停机均增加时间预算；超时进入诊断统计且不阻塞 Gateway 退出。
+- 停机增加显式在途任务集合：拒绝新投递并关闭 Consumer 后，按 Agent dispatch 预算排空已接纳 Turn，最后才关闭回复 Producer，避免依赖 SDK 隐含 shutdown 语义截断回复。
 
 - 只有 Agent 派发与可选回复发布成功后才返回 ACK；临时失败返回 `ConsumeResult.FAILURE`，幂等 claim 会释放，Broker 再投可重新处理。
 - 幂等默认开启并改为 claim/commit/release；进程内并发重复和已完成重复被 ACK，不把失败消息提前标记为完成。
@@ -548,17 +579,20 @@
 - Producer 增加默认 4 MiB 单消息上限，超限载荷在创建连接前拒绝；one-shot Producer 的 shutdown 次生异常不再覆盖 Broker send 结果。
 - ACK/NACK/requeued/dropped/DLQ 统计与实际 Broker 返回值对齐：永久丢弃计 dropped+ACK，DLQ 成功后才计 ACK，DLQ 失败继续 NACK。
 - 健康与状态使用精确路由和 `no-store`，永久不可路由消息单独计为 dropped，不污染连接健康；ACL 三项凭据全部脱敏。
+- SDK、Proxy 与 Agent 第三方错误统一经过 AccessKey/AccessSecret/SecurityToken 脱敏和控制字符清理；Broker reason 与 dropped 指标只保留低基数原因码。
 - 插件 ID、清单与包版本统一为 `rocketmq` / 2026.7.1，移除不存在的 `mq.publish` 契约、旧 `.tgz` 和过时文档。
 - E2E Compose 增加 Broker/NameServer 就绪控制、Topic/Consumer Group 初始化和异常墙钟防护。
 - 修复点号标准 Topic 与 RocketMQ Broker 命名约束不兼容的问题：标准路由改为 `{prefix}--agent--<agentId>--in|out[--<peerId>]`，显式 Topic、回复 Topic、订阅与 Consumer Group 在启动前校验合法字符。
 
 本地门禁（2026-07-17）：
 
-- `pnpm --dir extensions/rocketmq test`：8 个测试文件，85 个通过、2 个条件跳过；新增覆盖异常耗尽转 DLQ、停机超时、缺失会话出站失败、严格配置、部分凭证、指数退避抖动、永久丢弃统计和出站载荷上限。
+- `pnpm --dir extensions/rocketmq test`：8 个测试文件，87 个通过、2 个条件跳过；新增覆盖异常耗尽转 DLQ、停机超时与在途 Agent 排空、错误凭据脱敏、缺失会话出站失败、严格配置、指数退避抖动、永久丢弃统计和出站载荷上限。
+- `pnpm --dir extensions/rocketmq test:coverage`：statements 85.44%、branches 73.5%、functions 89.85%、lines 85.99%；传输层 statements 82.21%，脱敏模块 lines 100%。
 - `apache/rocketmq:5.3.2` Namesrv + Broker + Proxy：真实 NACK、再次投递 ACK、耗尽后 Broker DLQ 转发及 DLQ 消费两条测试通过。
-- OpenClaw 2026.7.1 隔离 profile 从正式 tarball 安装：真实 `Producer → PushConsumer → Agent → 本地模型 → reply Topic → ACK` 通过；回复信封/路由正确、模型调用恰好一次，最终 `received/sent/acked > 0` 且 `inFlight=0`。
-- `pnpm --dir extensions/rocketmq typecheck`、`build`、`npm pack --dry-run`：通过，双语 README 与 2026.7.1 清单均进入包。
-- `scripts/check-plugin-structure.mjs --strict-base`：全仓 0 error / 0 warning；README 与技术文档补充运行架构、消费/DLQ 时序和连接状态 Mermaid 图。
+- OpenClaw 2026.7.1 隔离 profile 从正式 tarball 安装：真实 `Producer → PushConsumer → Agent → 本地模型 → reply Topic → ACK` 通过；回复信封/路由正确、模型调用恰好一次，最终 `received/sent/acked > 0` 且 `inFlight=0`。归档为 `scripts/e2e/reports/2026-07-17T06-48-11.912Z-rocketmq-ded599ae-16fe-4141-8a04-b780ecdd436d.json`。
+- `pnpm --dir extensions/rocketmq typecheck`、`build`、`npm pack --dry-run`：通过，发布包 18 个文件，双语 README 与 2026.7.1 清单均进入包。
+- 最终安装态 58 个生产包执行 `npm audit --omit=dev`：0 漏洞；`protobufjs` 安装脚本需在正式发布策略中显式 allow/deny 审核。
+- README 同时保留字符运行/停机总览图与 Mermaid 消费/DLQ 时序和连接状态图，不以文字段落替代架构可视化。
 
 环境验收还需在正式 RocketMQ 集群验证 ACL/TLS、Consumer Group 策略对齐、Broker/Proxy 故障、网络分区、再均衡、积压恢复和跨实例业务幂等。进程内幂等不能宣称跨节点 exactly-once；`consumer.retry.maxAttempts` 应与服务端 Consumer Group 策略保持一致。
 
@@ -646,14 +680,16 @@ Bridge 的重试仍是进程内 best-effort/at-least-once。进程退出会丢�
 - File/OTLP Hook 只写有界内存缓冲，阈值刷新转为后台任务，不再让临界业务 Hook 等待磁盘或 Collector；单轮 flush 只处理开始时的快照，File 每批 100 条、OTLP 每批 50 个 Span，避免持续流量和超大请求。
 - OTLP 具备 endpoint 规范化、无 URL 凭据约束、可配置鉴权头、请求超时、有限重试、`partialSuccess.rejectedSpans` 检测与正确 float 属性编码；File 具备按日文件和默认 7 天保留期。Gateway 关闭增加总 `shutdownTimeoutMs`，防止异常文件系统或后端无限拖住停止。
 - `/tracing/status`、`/tracing/traces`、`/tracing/trace` 使用插件鉴权、GET-only、no-store；后端故障时 status 返回 503，并公开缓冲、丢弃量、最近导出与错误摘要。
+- TraceStore 增加统一隐私出口：SDK 与插件规则联合脱敏 Bearer/`sk-*`，清理控制字符并限制字符串为 500 字符；session/run/message/tool-call 标识使用进程级随机 HMAC 令牌替代。内存查询、Log、File 与 OTLP 共享相同安全结果，错误日志和 backend status 同样脱敏。
 - 配置 Schema 与运行时双重 fail-fast 校验，未知字段不再静默忽略；采样率、活动 trace/span/缓冲容量、保留期、flush、导出/停机超时和重试均有明确范围。消息正文捕获保持默认关闭，最多截取 500 字符，OTLP 鉴权头不经日志或状态接口回显。
 
 本地门禁（2026-07-17）：
 
-- `pnpm --dir extensions/tracing test`：5 个测试文件、47 个测试通过，覆盖 Hook 生命周期、并发初始化、fail-open、活动容量、跨 Trace toolCallId 隔离、final reply 与 `agent_end` 兜底、orphan 清理、配置拒绝、OTLP 鉴权头/有界批次/partial success/浮点属性、后台非阻塞导出、缓冲溢出、File JSONL 和认证路由。
+- `pnpm --dir extensions/tracing test`：6 个测试文件、49 个测试通过，覆盖 Hook 生命周期、并发初始化、fail-open、活动容量、跨 Trace toolCallId 隔离、final reply 与 `agent_end` 兜底、orphan 清理、配置拒绝、OTLP 鉴权头/有界批次/partial success/浮点属性、后台非阻塞导出、缓冲溢出、File JSONL、认证路由，以及凭据脱敏、长度限制和业务 ID 关联令牌。覆盖率为 statements 79.28%、branches 62.32%、functions 81.95%、lines 82.53%。
 - `typecheck`、构建、结构检查和 pack 均通过，结构检查 0 issue；子目录冗余 lockfile 与伪 SkyWalking 依赖已从发布面删除。
 - OpenClaw 2026.7.1 隔离 state 中，Tracing + MQTT 真实 Agent Turn 已打通：MQTT 入站、OpenAI-compatible 本地模型请求、MQTT 回复、`agent_end` trace 关闭、OTLP/HTTP 导出至 OpenTelemetry Collector Contrib 0.128.0 均通过；Collector 收到 `message.received` 与 `openclaw.channel`，状态接口确认 `activeSpans=0`、已完成 trace 被保留且后端缓冲清空。
 - 2026-07-17 从最终 tarball 重跑 `tracing,mqtt` 安装态 E2E：两项均 PASS；脱敏归档为 `scripts/e2e/reports/2026-07-17T01-24-15.955Z-tracing+mqtt-96bd2deb-0492-493c-952a-6c17b02e3bb8.json`。
+- 本轮中央隐私边界修改后再次从最终 tarball 重跑 `tracing,mqtt`：真实 Agent Turn、MQTT 回复与 OTLP/HTTP Collector 导出均 PASS；新归档为 `scripts/e2e/reports/2026-07-17T05-24-35.809Z-tracing+mqtt-81530ec3-a147-4ef9-aaf2-013d3d770733.json`。
 
 Tracing 的 File/OTLP 缓冲仍是进程内 best-effort，不是持久 Outbox 或 exactly-once。进程崩溃会丢失尚未 flush 的 span，OTLP 超时存在结果未知窗口。正式环境还需验证 Collector 认证/TLS、HA、长时间故障恢复、容量/负载告警、敏感数据策略和目标 APM 的 trace 呈现。
 
@@ -766,16 +802,17 @@ Tracing 的 File/OTLP 缓冲仍是进程内 best-effort，不是持久 Outbox �
 - `collectorTimeoutMs` 为每个 collector 设置 100-60000ms 等待边界；已超时但尚未结束的底层调用会被复用，不会在后续 scrape 中重复创建永久悬挂任务。单个 collector 失败只影响自身 success/diagnostic，不阻断其他指标。
 - `maxScrapeSeries` 对最终响应实施 100-50000 系列硬上限，并以 `openclaw_metrics_scrape_series_dropped` 暴露本次省略数；过载时优先保留 exporter/collector 健康信号，Histogram 同一标签组的 bucket/sum/count 原子保留或丢弃，不再产生残缺分布。diagnostics 与 runtime store 原有 2048/4096 独立上限继续生效。
 - 修复 diagnostics 指标被通用 collector 和原始文本块重复输出的问题；通用 formatter 现在能在一个 histogram HELP/TYPE 下正确输出 `_bucket/_sum/_count`，不会把子系列错误标记为 auto-discovered gauge。
-- 渠道指标不再输出自由文本 `channel_label`，channel id/type 统一清洗；collector 与 RPC 原始错误经 OpenClaw 脱敏、控制字符清理和长度限制后才进入 JSON 健康/调试响应。
+- 渠道指标不再输出自由文本 `channel_label`，channel id/type 统一清洗；collector 与 RPC 原始错误经 OpenClaw 脱敏、控制字符清理和长度限制后才进入 JSON 健康/调试响应。Runtime Registry 现在拷贝调用方标签，避免写入后修改造成 series key 与导出值不一致；最终 scrape 出口再次统一脱敏 RPC 样本。SDK 与插件的 Bearer/sk-* 脱敏规则取并集，不再因 SDK 存在而跳过本地兜底。
+- activity 刷新的已观测渠道/账号 Map 增加独立 512 项硬上限，避免它绕开 2048/4096 series 上限无界增长；超限计入 `openclaw_observed_channel_accounts_dropped_total`。
 - Bearer Token 使用常量时间比较；全部 HTTP 路由保持 exact、GET-only、`no-store`，参数校验不会先于鉴权暴露端点差异。未授权抓取返回 401；配置启用鉴权但缺少 token、Token 含控制字符、Schema 外字段或错误类型现在启动即失败，不再静默采用默认值或等首次抓取才 503。
 - Provider 快照刷新增加 single-flight 和运行代际校验：并发 health/定时刷新只触发一次真实鉴权探测，停止或热重载后的迟到结果不能污染新 RuntimeStore。Prometheus 文本格式补齐 `+Inf/-Inf/NaN` 和零时间戳语义。
 - 发布包修正运维文件清单：删除不存在的 `grafana` 目录声明，实际包含 alerts/config/deploy。高基数告警改为监控三层 dropped-series 指标，不再使用受 4096 上限约束、永远达不到 100000 的无效阈值；Prometheus health JSON 不再被错误配置成 scrape target。
 - Health、Plugin Runtime、CollectorRunner 与最终系列截断边界补充中文设计注释，明确“超时不等于取消”、悬挂任务复用、错误上抛和多层基数保护的原因。
-- 双语 README 新增运行架构图和并发 scrape/逐采集器故障隔离时序图，直观说明 Gateway 路由、single-flight、RPC/diagnostics/hooks 数据源与最终系列上限。
+- 中文 README 与架构文档同时保留字符速览图和 Mermaid 架构/时序图，直观说明 Gateway 路由、single-flight、RPC/diagnostics/hooks 数据源、标签安全边界与最终系列上限。
 
 本地门禁（2026-07-17）：
 
-- `pnpm --dir extensions/prometheus test`：11 个测试文件、45 个测试通过；覆盖百路并发 single-flight、Provider 快照合并与热重载代际隔离、永久悬挂 collector 超时/复用、健康信号优先与 Histogram 原子截断、Prometheus 特殊浮点、Health RPC、严格配置/鉴权、运行时 registry 上限与 OpenClaw 注册链路。
+- `pnpm --dir extensions/prometheus test`：12 个测试文件、49 个测试通过；覆盖百路并发 single-flight、Provider 快照合并与热重载代际隔离、永久悬挂 collector 超时/复用、健康信号优先与 Histogram 原子截断、Prometheus 特殊浮点、Health RPC、严格配置/鉴权、运行时 registry/observed-account 上限、标签不可变/脱敏和 OpenClaw 注册链路。覆盖率为 statements 37.95%、branches 34.72%、functions 41.19%、lines 37.34%，剩余主要缺口是 Gateway RPC Collector 和入口编排的更深集成路径。
 - `typecheck`、DTS/ESM 构建、结构检查、`git diff --check` 和 `npm pack --dry-run` 全部通过；归档含 14 个预期文件及完整运维样例。
 - OpenClaw `2026.7.1 (2d2ddc4)` 隔离 profile 从最终 tarball 安装并启动 Gateway：只加载 prometheus，13 个 collector 全部 success，`openclaw_up=1`，build info 版本为 2026.7.1，`/metrics/health` 返回 200/healthy 且 RPC initialized；无 Token `/metrics` 返回 401。
 - 对运行中的 Gateway 发起 100 路、并发度 25 的真实 HTTP scrape：全部成功，Gateway 日志只出现一组底层 RPC，验证 single-flight 在真实宿主生效；diagnostics HELP 实际只输出一次。
@@ -783,5 +820,6 @@ Tracing 的 File/OTLP 缓冲仍是进程内 best-effort，不是持久 Outbox �
 - Prometheus 已进入统一 `scripts/e2e` 注册表并标记为 isolated infra adapter；2026-07-17 从空 profile 冷启动执行构建、45 项单测、DTS/ESM 打包、tarball 解包安装和真实 Gateway 路由，Bearer 401/200、`openclaw_up`、2026.7.1 build info、health/RPC、POST 405、exact 子路径隔离与 25 路并发抓取全部 PASS，并生成独立脱敏归档报告。
 - E2E 报告机制不再只有会被覆盖的 `e2e-report.json`：保留 latest 的同时，每次运行写入 `reports/<timestamp>-<plugins>-<runId>.json`，Node 测试锁定双写、脱敏和连续运行不覆盖语义；正式 CI 可直接上传该目录作为逐插件验收证据。
 - 2026-07-17 从最终 tarball 重跑独立安装态 E2E：Bearer 401/200、健康状态、精确 GET 路由、25 路并发 scrape 和缓冲复用全部 PASS；归档为 `scripts/e2e/reports/2026-07-17T01-25-54.005Z-prometheus-7211f2ae-5ae8-424e-8f7b-7a394bb3b210.json`。
+- 本轮标签与基数防线修改后再次从空 profile 构建、打包、安装并运行 OpenClaw 2026.7.1 E2E，Bearer、health/RPC、精确 GET 路由与并发抓取全部 PASS；新归档为 `scripts/e2e/reports/2026-07-17T05-18-57.628Z-prometheus-cf8e96f6-7e7f-4ef0-bc91-d1d200209cd4.json`。最终包 14 个预期文件，生产依赖审计 moderate/high/critical 均为 0。
 
 正式环境仍需在真实 Prometheus/Grafana/Alertmanager 环境验证 TLS/反向代理、Token 轮换、Prometheus HA 双副本抓取、长时间高频 scrape、Gateway RPC 故障、指标保留成本、告警路由和业务阈值。当前 collector 超时无法取消 OpenClaw GatewayClient 已发出的底层 RPC，只能阻止 scrape 等待和重复创建；若宿主未来提供 AbortSignal，应进一步传递取消信号。

@@ -38,7 +38,7 @@ const StreamConfigSchema = z
     blockMs: z.number().int().positive().default(5000),
     count: z.number().int().positive().default(10),
     createGroup: z.boolean().default(true),
-    pendingClaimIdleMs: z.number().int().nonnegative().default(120_000),
+    pendingClaimIdleMs: z.number().int().nonnegative().default(180_000),
     maxAttempts: z.number().int().positive().default(5),
     deadLetterKey: z.string().min(1).default("openclaw:inbound:dlq"),
     maxLen: z.number().int().nonnegative().default(100_000),
@@ -87,6 +87,12 @@ const RedisConnectionConfigSchema = z
     "connection.reconnectMaxMs must be >= connection.reconnectMs",
   );
 
+const RedisNetworkConfigSchema = z
+  .object({
+    agentReplyTimeoutMs: z.number().int().positive().default(120_000),
+  })
+  .strict();
+
 const RedisIdempotencyConfigSchema = z
   .object({
     enabled: z.boolean().default(true),
@@ -116,6 +122,7 @@ export const RedisStreamConfigSchema = z
     payload: RedisPayloadConfigSchema,
     fieldMapping: RedisFieldMappingSchema,
     connection: RedisConnectionConfigSchema,
+    network: RedisNetworkConfigSchema,
     idempotency: RedisIdempotencyConfigSchema,
   })
   .strict()
@@ -134,6 +141,17 @@ export const RedisStreamConfigSchema = z
         path: ["url"],
         message:
           "Remote Redis must use rediss:// unless connection.allowInsecureRemote=true",
+      });
+    }
+    if (
+      value.channelMode === "stream" &&
+      value.stream.pendingClaimIdleMs > 0 &&
+      value.stream.pendingClaimIdleMs <= value.network.agentReplyTimeoutMs
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["stream", "pendingClaimIdleMs"],
+        message: "must be greater than network.agentReplyTimeoutMs to prevent reclaiming an active Agent turn",
       });
     }
   });
@@ -222,9 +240,9 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
         createGroup: { type: "boolean", default: true },
         pendingClaimIdleMs: {
           type: "number",
-          default: 120000,
+          default: 180000,
           description:
-            "XAUTOCLAIM min-idle ms for stale PEL entries; 0 disables reclaim",
+            "XAUTOCLAIM min-idle ms for stale PEL entries; must exceed the Agent reply timeout; 0 disables reclaim",
         },
         maxAttempts: { type: "number", minimum: 1, default: 5 },
         deadLetterKey: { type: "string", default: "openclaw:inbound:dlq" },
@@ -238,7 +256,7 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
         blockMs: 5000,
         count: 10,
         createGroup: true,
-        pendingClaimIdleMs: 120000,
+        pendingClaimIdleMs: 180000,
         maxAttempts: 5,
         deadLetterKey: "openclaw:inbound:dlq",
         maxLen: 100000,
@@ -303,6 +321,14 @@ export const RedisStreamConfigJsonSchema: Record<string, unknown> = {
         startupTimeoutMs: 30000,
         shutdownTimeoutMs: 10000,
       },
+    },
+    network: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        agentReplyTimeoutMs: { type: "number", minimum: 1, default: 120000 },
+      },
+      default: { agentReplyTimeoutMs: 120000 },
     },
     idempotency: {
       type: "object",
@@ -372,7 +398,7 @@ export const DEFAULT_REDIS_CHANNEL_CONFIG: RedisChannelConfig = {
     blockMs: 5000,
     count: 10,
     createGroup: true,
-    pendingClaimIdleMs: 120_000,
+    pendingClaimIdleMs: 180_000,
     maxAttempts: 5,
     deadLetterKey: "openclaw:inbound:dlq",
     maxLen: 100_000,
@@ -398,6 +424,9 @@ export const DEFAULT_REDIS_CHANNEL_CONFIG: RedisChannelConfig = {
     maxPubSubInFlight: 32,
     startupTimeoutMs: 30_000,
     shutdownTimeoutMs: 10_000,
+  },
+  network: {
+    agentReplyTimeoutMs: 120_000,
   },
   idempotency: {
     enabled: true,
@@ -427,6 +456,8 @@ export function resolveRedisChannelConfig(
     (redisChannel.connection as Record<string, unknown> | undefined) ?? {};
   const idempotency =
     (redisChannel.idempotency as Record<string, unknown> | undefined) ?? {};
+  const network =
+    (redisChannel.network as Record<string, unknown> | undefined) ?? {};
 
   const rawBindings = (
     Array.isArray(redisChannel.channelBindings)
@@ -578,6 +609,13 @@ export function resolveRedisChannelConfig(
         connection.shutdownTimeoutMs > 0
           ? Math.floor(connection.shutdownTimeoutMs)
           : DEFAULT_REDIS_CHANNEL_CONFIG.connection.shutdownTimeoutMs,
+    },
+    network: {
+      agentReplyTimeoutMs:
+        typeof network.agentReplyTimeoutMs === "number" &&
+        network.agentReplyTimeoutMs > 0
+          ? Math.floor(network.agentReplyTimeoutMs)
+          : DEFAULT_REDIS_CHANNEL_CONFIG.network.agentReplyTimeoutMs,
     },
     idempotency: {
       enabled: idempotency.enabled !== false,

@@ -209,7 +209,7 @@ When `channelMode` is `stream`, the stream entry values are mapped to internal f
 | `stream.blockMs`            | `number`  | `5000`                   | `XREADGROUP` block timeout                                            |
 | `stream.count`              | `number`  | `10`                     | Max messages per batch                                                |
 | `stream.createGroup`        | `boolean` | `true`                   | Auto-create consumer group                                            |
-| `stream.pendingClaimIdleMs` | `number`  | `120000`                 | Reclaim stale PEL entries with `XAUTOCLAIM`; `0` disables reclaim     |
+| `stream.pendingClaimIdleMs` | `number`  | `180000`                 | Reclaim stale PEL entries; must exceed Agent timeout; `0` disables it |
 | `stream.maxAttempts`        | `number`  | `5`                      | Delivery attempts before dead-lettering                               |
 | `stream.deadLetterKey`      | `string`  | `"openclaw:inbound:dlq"` | Dead-letter Stream key                                                |
 | `stream.maxLen`             | `number`  | `100000`                 | Approximate max length for outbound and DLQ streams; `0` is unlimited |
@@ -233,6 +233,12 @@ When `channelMode` is `stream`, the stream entry values are mapped to internal f
 | `connection.startupTimeoutMs`     | `number`  | `30000` | Connection startup timeout                                                                 |
 | `connection.shutdownTimeoutMs`    | `number`  | `10000` | Graceful Redis client shutdown timeout before the socket is destroyed                      |
 
+### Agent Pipeline
+
+| Field                         | Type     | Default  | Description                                                                 |
+| ----------------------------- | -------- | -------- | --------------------------------------------------------------------------- |
+| `network.agentReplyTimeoutMs` | `number` | `120000` | Total Agent-turn/reply timeout; Stream reclaim idle must be greater than it |
+
 ### Idempotency
 
 | Field                    | Type      | Default  | Description                            |
@@ -243,7 +249,7 @@ When `channelMode` is `stream`, the stream entry values are mapped to internal f
 
 ## Reliability and Deployment Notes
 
-- Stream entries are ACKed only after Agent dispatch and reply delivery complete. Failed entries remain in the PEL and are reclaimed after `pendingClaimIdleMs`.
+- Stream entries are ACKed only after Agent dispatch and reply delivery complete. Failed entries remain in the PEL and are reclaimed after `pendingClaimIdleMs`. Configuration rejects a reclaim idle value shorter than or equal to the Agent timeout, preventing another consumer from reclaiming an active turn.
 - Remote Redis endpoints require `rediss://` by default. Plaintext remote connections require explicit `connection.allowInsecureRemote=true` acknowledgement.
 - At `maxAttempts`, the original entry and failure metadata are appended to `deadLetterKey`, then ACKed in the same Redis transaction.
 - Every Gateway replica needs a unique `consumerName`; leaving it empty generates one from hostname and process ID.
@@ -252,7 +258,7 @@ When `channelMode` is `stream`, the stream entry values are mapped to internal f
 - Pub/Sub mode is intentionally at-most-once: it has no ACK, replay, dead letter, or overload recovery. Use Stream mode for production workflows that cannot lose messages.
 - Pub/Sub processing is capped by `maxPubSubInFlight`. Messages received beyond the cap are rejected and counted as failures instead of creating unbounded Agent turns.
 - `PUBLISH` replies/outbound messages fail when Redis reports zero active subscribers; command execution alone is not reported as successful delivery.
-- Subscriber startup and client shutdown are time-bounded. Shutdown destroys the socket after `shutdownTimeoutMs` so Gateway termination cannot hang indefinitely.
+- Subscriber startup and client shutdown are time-bounded. Shutdown first stops new intake, drains accepted Stream and Pub/Sub Agent tasks, and then closes the publisher and main clients. A socket is destroyed after `shutdownTimeoutMs` so Gateway termination cannot hang indefinitely.
 - Idempotency is process-local and prevents duplicate work within one plugin process; it does not provide cross-node exactly-once semantics.
 
 ### Environment Variables

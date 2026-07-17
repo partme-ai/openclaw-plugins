@@ -3,6 +3,7 @@ import { CollectCache } from "../src/collectors/collect-cache.js";
 import { CollectorRunner } from "../src/collectors/collector-runner.js";
 import {
   limitScrapeSamples,
+  sanitizeScrapeSamples,
   SCRAPE_DROPPED_SERIES_NAME,
 } from "../src/collectors/sample-limit.js";
 import type { MetricCollector } from "../src/types.js";
@@ -117,5 +118,20 @@ describe("Prometheus collection guardrails", () => {
     ], 4);
     expect(limited.samples.filter((sample) => sample.name.startsWith("request_duration"))).toHaveLength(0);
     expect(limited.samples.at(-1)?.name).toBe(SCRAPE_DROPPED_SERIES_NAME);
+  });
+
+  it("sanitizes labels from RPC collectors without mutating the cached bundle", () => {
+    const samples = [{
+      name: "rpc_metric",
+      value: 1,
+      labels: { provider: "Bearer private-token\nline", long: "x".repeat(200) },
+    }];
+
+    const sanitized = sanitizeScrapeSamples(samples);
+
+    expect(sanitized[0]?.labels?.provider).not.toContain("private-token");
+    expect(sanitized[0]?.labels?.provider).not.toContain("\n");
+    expect(sanitized[0]?.labels?.long).toHaveLength(128);
+    expect(samples[0]?.labels?.provider).toContain("private-token");
   });
 });

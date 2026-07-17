@@ -19,6 +19,24 @@ OpenClaw 2026.7.1 的 OpenMem REST 记忆桥接插件。
 
 ## 运行架构与记忆生命周期
 
+```text
+OpenClaw session_start
+        │
+        ▼
+创建/恢复 ACTIVE session
+        │
+agent_end 当前轮
+        ├──▶ events/ingest（稳定 eventId，可安全重试）
+        │             │
+        │             ▼
+        └──▶ 检查 turnId ──未投影──▶ working-memory append（不盲目重试）
+                              │
+                              └─崩溃──▶ 下次恢复/commit 从事件日志重建
+
+search ──▶ continuity（安全默认）/ hybrid（显式共享）──▶ 有界 LRU 来源缓存
+session_end ──▶ 恢复未投影轮次 ──▶ commit ──▶ archive/externalize
+```
+
 ```mermaid
 sequenceDiagram
     participant Host as OpenClaw Memory Host
@@ -62,6 +80,34 @@ flowchart TD
 ```
 
 同一个 `sessionKey` 的 start、ingest、commit 还会在插件内串行执行，避免 `agent_end` 与 `session_end` 交叉导致“先归档、后追加”；不同会话互不阻塞。
+
+### 停止与错误安全边界
+
+```text
+Gateway stop
+    │
+    ├── client.close() ──▶ Abort fetch
+    │                 └──▶ Abort retry backoff
+    │
+    ├── coordinator.drain() ──▶ 等待各 session 串行链释放
+    └── manager.close() ──▶ 清空来源 LRU 缓存
+
+Sidecar/Proxy Error ──▶ SDK 脱敏 + Bearer/sk-* 兜底 + 控制字符清理
+                                      │
+                                      └──▶ 最长 500 字符后进入日志/health
+```
+
+```mermaid
+flowchart LR
+    STOP["Gateway stop"] --> CANCEL["Client lifecycle AbortController"]
+    CANCEL --> FETCH["取消在途 fetch"]
+    CANCEL --> RETRY["取消指数退避 timer"]
+    FETCH --> DRAIN["Coordinator drain<br/>按 session 等待串行链"]
+    RETRY --> DRAIN
+    DRAIN --> CACHE["Manager close<br/>清空有界来源缓存"]
+    ERROR["Sidecar / Proxy error"] --> REDACT["SDK + 本地规则脱敏<br/>控制字符清理 / 500 字符"]
+    REDACT --> OBS["日志与 Memory Host health"]
+```
 
 ```mermaid
 flowchart LR
@@ -149,7 +195,7 @@ pnpm --filter @partme.ai/openclaw-openmem build
 OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins openmem --skip-browser
 ```
 
-2026-07-17 本地门禁：3 个测试文件、32 个测试通过，typecheck/build 通过。统一 E2E 使用工作区真实 OpenMem Server，完成：
+2026-07-17 本地门禁：3 个测试文件、34 个测试通过，typecheck/build 通过。统一 E2E 使用工作区真实 OpenMem Server，完成：
 
 ```text
 tarball 安装 → Gateway Agent Turn → session/start → events/ingest → working-memory

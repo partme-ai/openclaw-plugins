@@ -80,7 +80,7 @@
           "pendingClaimIdleMs": {
             "type": "number",
             "minimum": 0,
-            "default": 120000
+            "default": 180000
           },
           "maxAttempts": { "type": "number", "minimum": 1, "default": 5 },
           "deadLetterKey": {
@@ -97,7 +97,7 @@
           "blockMs": 5000,
           "count": 10,
           "createGroup": true,
-          "pendingClaimIdleMs": 120000,
+          "pendingClaimIdleMs": 180000,
           "maxAttempts": 5,
           "deadLetterKey": "openclaw:inbound:dlq",
           "maxLen": 100000
@@ -182,6 +182,19 @@
           "startupTimeoutMs": 30000,
           "shutdownTimeoutMs": 10000
         }
+      },
+      "network": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "agentReplyTimeoutMs": {
+            "type": "number",
+            "minimum": 1,
+            "default": 120000,
+            "description": "Maximum Agent turn and Redis reply delivery time."
+          }
+        },
+        "default": { "agentReplyTimeoutMs": 120000 }
       },
       "idempotency": {
         "type": "object",

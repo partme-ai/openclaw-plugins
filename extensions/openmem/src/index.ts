@@ -17,6 +17,7 @@ import { OpenMemClient } from "./client.js";
 import { resolveConfig } from "./config.js";
 import { normalizeTurn, OpenMemCoordinator } from "./coordinator.js";
 import { OpenMemSearchManager } from "./manager.js";
+import { redactOpenMemError } from "./redact.js";
 
 const configSchema = {
   type: "object" as const,
@@ -99,11 +100,13 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
           logger.info(`[openmem] connected to ${config.baseUrl}`);
         } catch (error) {
           if (config.required) throw error;
-          logger.warn(`[openmem] sidecar unavailable at startup: ${String(error)}`);
+          logger.warn(`[openmem] sidecar unavailable at startup: ${redactOpenMemError(error)}`);
         }
       },
       stop: async () => {
+        // 先广播取消，再等待 session 串行链释放，避免 stop 返回后仍残留退避定时器或 Hook。
         client.close();
+        await coordinator.drain();
         await manager.close();
       },
     });
@@ -129,7 +132,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       if ((context.agentId?.trim() || "main") !== config.agentId) return;
       const sessionKey = event.sessionKey ?? context.sessionKey ?? event.sessionId;
       try { await coordinator.startSession(sessionKey); }
-      catch (error) { api.logger.warn(`[openmem] session start failed: ${String(error)}`); }
+      catch (error) { api.logger.warn(`[openmem] session start failed: ${redactOpenMemError(error)}`); }
     });
 
     api.on("agent_end", async (event, context) => {
@@ -145,7 +148,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
           ...(context.channel ? { channel: context.channel } : {}),
         });
       } catch (error) {
-        api.logger.warn(`[openmem] ingest failed: ${String(error)}`);
+        api.logger.warn(`[openmem] ingest failed: ${redactOpenMemError(error)}`);
       }
     });
 
@@ -153,7 +156,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       if ((context.agentId?.trim() || "main") !== config.agentId) return;
       const sessionKey = event.sessionKey ?? context.sessionKey ?? event.sessionId;
       try { await coordinator.endSession(sessionKey); }
-      catch (error) { api.logger.warn(`[openmem] session commit failed: ${String(error)}`); }
+      catch (error) { api.logger.warn(`[openmem] session commit failed: ${redactOpenMemError(error)}`); }
     });
 
     api.logger.info(

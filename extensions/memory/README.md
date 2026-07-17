@@ -92,6 +92,8 @@ openclaw plugins install @partme.ai/openclaw-memory
         "config": {
           "dataDir": "~/.openclaw/state/memory",   // Data storage directory
           "maxSearchResults": 10,                   // Max results per search (default: 10)
+          "maxSearchBytes": 16777216,               // Cross-file scan budget per search (16 MiB)
+          "maxReadLines": 200,                      // Maximum decoded records per readFile call
           "retentionDays": 90,                      // Data retention period (default: 90 days)
           "extractionInterval": 5,                  // L2 extraction interval
           "maxRecordBytes": 65536,                 // Maximum size of every record
@@ -111,6 +113,8 @@ openclaw plugins install @partme.ai/openclaw-memory
 | `enabled` | boolean | `true` | Enable the memory plugin |
 | `dataDir` | string | `~/.openclaw/state/memory` | Data storage directory |
 | `maxSearchResults` | number | `10` | Maximum results returned per search |
+| `maxSearchBytes` | integer | `16777216` | Shared byte budget across all files scanned by one search |
+| `maxReadLines` | integer | `200` | Maximum decoded records returned by one source read |
 | `retentionDays` | number | `90` | Retention period; cleanup runs at startup and daily |
 | `extractionInterval` | number | `5` | Turns between L2 scenario records |
 | `maxRecordBytes` | integer | `65536` | Maximum size of every record |
