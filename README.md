@@ -102,7 +102,7 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 | 层级 | 分类 | 数量 | 代表包 | 核心能力 |
 |------|------|------|--------|----------|
 | L1 | **IM（自建）** | 6 | wecom、wechat、wecom-kf、wechat-ipad、douyin、gotify | Bot/Webhook/Agent · 媒体 · 去重 · Skills |
-| L1 | **跨渠道观测桥** | 1 + 27 来源预设 | openclaw-bridge | 上下文注入 · `message_received`/`message_sent` · UnifiedMessage MQ 镜像 |
+| L1 | **跨渠道观测桥** | 1 + 27 来源预设 | bridge | 上下文注入 · `message_received`/`message_sent` · UnifiedMessage MQ 镜像 |
 | L1 | **消息队列** | 8 | mqtt、web-mqtt、web-socket、stomp、web-stomp、rabbitmq、redis-stream、rocketmq | topicBindings · Wire 分发 · 幂等 · 多协议接入 |
 | L2 | **AI 能力** | 5 | knowledge、memory、router、openmem、message-sdk | RAG · L0–L3 记忆 · 路由规则 · OpenMem HTTP 桥 · 统一线格式 |
 | L2–L4 | **基础设施** | 5 | nacos、prometheus、tracing、oauth2、mtls | 配置中心 · 指标 · OTel · 认证 · mTLS |
@@ -120,7 +120,7 @@ OpenClaw Gateway 以 AI Agent 为枢纽。本仓库将 **IM 渠道**、**消息�
 | **业务系统 ↔ Agent** | mqtt / rabbitmq + message-sdk Wire 路径 |
 | **配置中心与节点发现** | nacos |
 | **生产可观测** | prometheus + tracing |
-| **全渠道接入且不 fork 上游** | openclaw-bridge + 官方钉钉 / 飞书 / QQ 连接器 |
+| **全渠道接入且不 fork 上游** | bridge + 官方钉钉 / 飞书 / QQ 连接器 |
 | **本地优先外部记忆** | openmem + OpenMem 侧车（端口 3317） |
 | **移动端推送告警** | gotify + prometheus / 自定义发布者 |
 
@@ -501,10 +501,8 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # 预发布
 | 项 | 当前 |
 |----|------|
 | OpenClaw peer 依赖 | >= 2026.7.1 |
-| message-sdk | 2026.6.1 |
-| openclaw-nacos | 2026.5.24 |
-| openclaw-gotify | 2026.7.1 |
-| 本轮已优化（router / bridge / tracing） | 2026.7.1 |
+| message-sdk | 2026.7.1 |
+| 28 个 npm 模块 | 2026.7.1 |
 | 版本策略 | `YYYY.M.D`（活跃）· semver（稳定）· 预发布 `--tag next` |
 
 npm 已发布版本：[@partme.ai on npm](https://www.npmjs.com/search?q=%40partme.ai)。

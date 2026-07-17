@@ -83,7 +83,7 @@ function makePluginConfig(overrides: Record<string, unknown> = {}) {
       primaryConfigDataId: "openclaw.json",
       primaryConfigGroup: "DEFAULT_GROUP",
       profile: "dev",
-      pluginConfigIds: ["openclaw-weixin", "openclaw-dingtalk"],
+      pluginConfigIds: ["wechat", "dingtalk-connector"],
     },
     metadata: { env: "prod", region: "us-east-1" },
     ...overrides,
@@ -133,7 +133,7 @@ describe("openclaw-nacos Functional Tests", () => {
       expect(result.config.metadata).toEqual({ env: "prod", region: "us-east-1" });
       expect(result.config.configCenter?.enabled).toBe(true);
       expect(result.config.configCenter?.primaryConfigDataId).toBe("openclaw.json");
-      expect(result.config.configCenter?.pluginConfigIds).toEqual(["openclaw-weixin", "openclaw-dingtalk"]);
+      expect(result.config.configCenter?.pluginConfigIds).toEqual(["wechat", "dingtalk-connector"]);
     });
 
     it("parses Spring-style nacos block", () => {
@@ -375,10 +375,10 @@ describe("openclaw-nacos Functional Tests", () => {
         if (dataId === "openclaw.json") {
           return JSON.stringify({ plugins: { entries: {} } });
         }
-        if (dataId === "openclaw-weixin-dev.json") {
+        if (dataId === "wechat-dev.json") {
           return JSON.stringify({ appId: "wx123", appSecret: "***" });
         }
-        if (dataId === "openclaw-dingtalk-dev.json") {
+        if (dataId === "dingtalk-connector-dev.json") {
           return JSON.stringify({ appKey: "ding456" });
         }
         return null;
@@ -398,16 +398,16 @@ describe("openclaw-nacos Functional Tests", () => {
       await service.pullAndApply(deps, mockConfigClient as unknown as ReturnType<typeof NacosConfigClient>);
 
       // Verify per-plugin configs were fetched
-      expect(mockConfigClient.getConfig).toHaveBeenCalledWith("openclaw-weixin-dev.json", "DEFAULT_GROUP");
-      expect(mockConfigClient.getConfig).toHaveBeenCalledWith("openclaw-dingtalk-dev.json", "DEFAULT_GROUP");
+      expect(mockConfigClient.getConfig).toHaveBeenCalledWith("wechat-dev.json", "DEFAULT_GROUP");
+      expect(mockConfigClient.getConfig).toHaveBeenCalledWith("dingtalk-connector-dev.json", "DEFAULT_GROUP");
 
       // Verify plugin configs were merged into plugins.entries
       const merged = replaceConfig.mock.calls[0][0] as Record<string, unknown>;
       const plugins = merged.plugins as Record<string, unknown>;
       const entries = plugins.entries as Record<string, Record<string, unknown>>;
 
-      expect(entries["openclaw-weixin"].config).toMatchObject({ appId: "wx123", appSecret: "***" });
-      expect(entries["openclaw-dingtalk"].config).toMatchObject({ appKey: "ding456" });
+      expect(entries.wechat.config).toMatchObject({ appId: "wx123", appSecret: "***" });
+      expect(entries["dingtalk-connector"].config).toMatchObject({ appKey: "ding456" });
     });
   });
 

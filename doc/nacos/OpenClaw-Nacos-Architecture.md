@@ -224,4 +224,4 @@ Every Nacos-triggered config write is preceded by a uniquely named backup. This 
 
 ### Plugin Config IDs with Profile Support
 
-Per-plugin config follows the convention `{pluginId}-{profile}.json` (e.g., `openclaw-weixin-dev.json`). The profile is resolved from plugin config → `OPENCLAW_PROFILE` → `SPRING_PROFILES_ACTIVE` → `"default"`.
+Per-plugin config follows the convention `{pluginId}-{profile}.json` (e.g., `wechat-dev.json`). The profile is resolved from plugin config → `OPENCLAW_PROFILE` → `SPRING_PROFILES_ACTIVE` → `"default"`.

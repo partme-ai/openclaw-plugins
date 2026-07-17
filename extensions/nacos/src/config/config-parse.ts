@@ -115,7 +115,7 @@ function parseConfigCenter(raw: unknown): NacosConfigCenterConfig | undefined {
 }
 
 /**
- * Normalizes `plugins.entries["openclaw-nacos"].config` into a {@link NacosPluginConfig}.
+ * Normalizes `plugins.entries.nacos.config` into a {@link NacosPluginConfig}.
  */
 export function parseNacosPluginConfig(raw: unknown): ParsePluginConfigResult {
   if (raw === undefined || raw === null) {

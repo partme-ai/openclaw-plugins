@@ -98,7 +98,7 @@ export type ClusterDiscoveryConfig = {
 };
 
 /**
- * Plugin-owned configuration under `plugins.entries["openclaw-nacos"].config`.
+ * Plugin-owned configuration under `plugins.entries.nacos.config`.
  */
 export type NacosPluginConfig = {
   /** When false, skip entire plugin. Default true. */

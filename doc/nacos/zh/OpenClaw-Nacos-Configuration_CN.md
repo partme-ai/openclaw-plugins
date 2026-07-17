@@ -57,7 +57,7 @@
             "applicationDataId": "application-${profile}.json",
 
             // 按插件配置（自动获取 {pluginId}-{profile}.json）
-            "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+            "pluginConfigIds": ["wechat", "dingtalk-connector"],
 
             // Profile（默认：OPENCLAW_PROFILE → SPRING_PROFILES_ACTIVE → "default"）
             "profile": "dev",
@@ -231,7 +231,7 @@ configCenter.profile > OPENCLAW_PROFILE 环境变量 > SPRING_PROFILES_ACTIVE �
       "configCenter": {
         "enabled": true,
         "primaryConfigDataId": "openclaw.json",
-        "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+        "pluginConfigIds": ["wechat", "dingtalk-connector"],
         "profile": "prod"
       }
     }

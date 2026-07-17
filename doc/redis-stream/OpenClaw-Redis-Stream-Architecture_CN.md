@@ -666,7 +666,7 @@ logger.error("Dispatch failed:", err) // 代替 console.error
 
 ```typescript
 export default defineChannelPluginEntry({
-  id: "openclaw-redis-stream",
+  id: "redis-stream",
   name: "Redis Stream",
   description: "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
   plugin: redisStreamChannel,

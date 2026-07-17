@@ -276,4 +276,4 @@ Gateway 启动
 
 ### 插件配置 ID 支持 Profile
 
-按插件配置遵循约定 `{pluginId}-{profile}.json`（如 `openclaw-weixin-dev.json`）。Profile 从插件配置 → `OPENCLAW_PROFILE` → `SPRING_PROFILES_ACTIVE` → `"default"` 依次解析。
+按插件配置遵循约定 `{pluginId}-{profile}.json`（如 `wechat-dev.json`）。Profile 从插件配置 → `OPENCLAW_PROFILE` → `SPRING_PROFILES_ACTIVE` → `"default"` 依次解析。

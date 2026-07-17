@@ -102,21 +102,21 @@ curl "http://127.0.0.1:8848/nacos/v1/ns/instance/list?serviceName=openclaw-gatew
 
 **Nacos 配置列表**：
 ```
-openclaw-weixin-dev.json     →  { "appId": "dev-app", ... }
-openclaw-weixin-prod.json    →  { "appId": "prod-app", ... }
-openclaw-dingtalk-dev.json   →  { "appKey": "dev-key", ... }
+wechat-dev.json              →  { "appId": "dev-app", ... }
+wechat-prod.json             →  { "appId": "prod-app", ... }
+dingtalk-connector-dev.json  →  { "appKey": "dev-key", ... }
 ```
 
 **插件配置**：
 ```jsonc
 "configCenter": {
   "enabled": true,
-  "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+  "pluginConfigIds": ["wechat", "dingtalk-connector"],
   "profile": "dev"
 }
 ```
 
-配置自动合并到 `plugins.entries["openclaw-weixin"].config`。
+配置自动合并到 `plugins.entries["wechat"].config` 和 `plugins.entries["dingtalk-connector"].config`。
 
 ### 场景 3：Webhook 集群服务发现
 

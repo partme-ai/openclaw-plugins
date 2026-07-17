@@ -917,7 +917,7 @@ bootstrapGotifyAccount(account):
 
 ```typescript
 export default defineChannelPluginEntry({
-  id: 'openclaw-gotify',
+  id: 'gotify',
   name: 'Gotify',
   description: 'OpenClaw Gotify channel plugin with REST delivery and WebSocket stream support.',
   plugin: gotifyChannel,

@@ -332,7 +332,7 @@ E2E 报告现在记录每个插件的 `sourceFingerprints`。`pnpm check-e2e-evi
 
 ## WeChat 当前交付
 
-- 包、插件/Channel ID 和版本对齐为 `@partme.ai/weixin`、`openclaw-weixin`、`2026.7.1`，安装元数据不再指向上游包；仓库保留历史目录名 `extensions/wechat`，结构检查器为该外部规范 ID 设置显式映射。
+- npm 包、插件 ID、Channel ID 和版本分别为 `@partme.ai/weixin`、`wechat`、`openclaw-weixin`、`2026.7.1`；安装元数据不再指向上游包，配置写入 `plugins.entries.wechat`。
 - `get_updates_buf` 改为整批消息全部处理成功后才持久化；失败时不推进游标，保证至少一次语义，避免批次中途故障造成后续消息永久跳过。
 - 成功处理的 `message_id` 以 7 天/10000 条有界 JSONL 追加日志持久化，批次重放与进程重启时跳过已完成消息；压缩采用同目录临时文件原子替换，文件权限限制为 0600，避免每条消息重写整个去重集合。
 - 服务端长轮询超时限制在 1–60 秒；普通 GET 默认 15 秒超时；修复成功响应未清除超时定时器的问题，全部请求路径现在都在 `finally` 释放定时器。

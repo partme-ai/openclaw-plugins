@@ -57,7 +57,7 @@ All configuration lives under `plugins.entries.nacos.config` in `openclaw.json`.
             "applicationDataId": "application-${profile}.json",
 
             // Per-plugin configs (auto-fetch {pluginId}-{profile}.json)
-            "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+            "pluginConfigIds": ["wechat", "dingtalk-connector"],
 
             // Profile (default: OPENCLAW_PROFILE → SPRING_PROFILES_ACTIVE → "default")
             "profile": "dev",
@@ -227,7 +227,7 @@ configCenter.profile > OPENCLAW_PROFILE env > SPRING_PROFILES_ACTIVE env > "defa
       "configCenter": {
         "enabled": true,
         "primaryConfigDataId": "openclaw.json",
-        "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+        "pluginConfigIds": ["wechat", "dingtalk-connector"],
         "profile": "prod"
       }
     }

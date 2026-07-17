@@ -102,21 +102,21 @@ Manage plugin-specific configs per environment (dev/staging/prod).
 
 **Nacos Configs**:
 ```
-openclaw-weixin-dev.json     →  { "appId": "dev-app", ... }
-openclaw-weixin-prod.json    →  { "appId": "prod-app", ... }
-openclaw-dingtalk-dev.json   →  { "appKey": "dev-key", ... }
+wechat-dev.json              →  { "appId": "dev-app", ... }
+wechat-prod.json             →  { "appId": "prod-app", ... }
+dingtalk-connector-dev.json  →  { "appKey": "dev-key", ... }
 ```
 
 **Plugin Config**:
 ```jsonc
 "configCenter": {
   "enabled": true,
-  "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+  "pluginConfigIds": ["wechat", "dingtalk-connector"],
   "profile": "dev"
 }
 ```
 
-Configs are auto-merged into `plugins.entries["openclaw-weixin"].config`.
+Configs are auto-merged into `plugins.entries["wechat"].config` and `plugins.entries["dingtalk-connector"].config`.
 
 ### Use Case 3: Webhook Cluster with Service Discovery
 

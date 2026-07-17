@@ -204,7 +204,7 @@ Store your **entire** `openclaw.json` as a Nacos config (e.g. dataId `openclaw.j
             "enabled": true,
             "primaryConfigDataId": "openclaw.json",
             "primaryConfigGroup": "DEFAULT_GROUP",
-            "pluginConfigIds": ["openclaw-weixin", "openclaw-dingtalk"],
+            "pluginConfigIds": ["wechat", "dingtalk-connector"],
             "profile": "dev",
           },
         },
@@ -217,7 +217,7 @@ Store your **entire** `openclaw.json` as a Nacos config (e.g. dataId `openclaw.j
 With this setup:
 
 - The **primary config** (`openclaw.json` in Nacos) replaces the local config snapshot as the base.
-- `openclaw-weixin-dev.json` and `openclaw-dingtalk-dev.json` are loaded into `plugins.entries["openclaw-weixin"].config` etc.
+- `wechat-dev.json` and `dingtalk-connector-dev.json` are loaded into `plugins.entries["wechat"].config` and `plugins.entries["dingtalk-connector"].config`.
 - Any Nacos config change triggers: pull → validate → merge → **unique backup** (`openclaw-nacos-yyyyMMddHHmmss-xxxxxxxx.json`) → write.
 
 #### 3b. Webhook cluster with peer discovery

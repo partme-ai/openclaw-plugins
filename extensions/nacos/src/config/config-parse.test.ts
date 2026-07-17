@@ -39,7 +39,7 @@ describe("parseNacosPluginConfig", () => {
       configCenter: {
         enabled: true,
         sharedConfigs: [{ dataId: "base.json", group: "DEFAULT_GROUP" }],
-        pluginConfigIds: ["openclaw-weixin"],
+        pluginConfigIds: ["wechat"],
         profile: "dev",
       },
     });
@@ -50,7 +50,7 @@ describe("parseNacosPluginConfig", () => {
         "base.json",
       );
       expect(r.config.configCenter?.pluginConfigIds).toEqual([
-        "openclaw-weixin",
+        "wechat",
       ]);
       expect(r.config.configCenter?.profile).toBe("dev");
     }
