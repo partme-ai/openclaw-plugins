@@ -3,10 +3,13 @@ name: CI
 on:
   push:
     branches: [main, feature/*]
-    paths: ["extensions/**", "scripts/**", "doc/**", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
+    paths: ["extensions/**", "scripts/**", "doc/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
   pull_request:
     branches: [main]
-    paths: ["extensions/**", "scripts/**", "doc/**", "package.json", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
+    paths: ["extensions/**", "scripts/**", "doc/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.base.json", ".github/workflows/**"]
+
+permissions:
+  contents: read
 
 jobs:
   detect:
@@ -33,12 +36,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Structure inventory (warn mode)
         run: node scripts/check-plugin-structure.mjs --strict-base --strict-new
 
       - name: Release metadata gate
-        run: node scripts/check-release-readiness.mjs
+        run: |
+          pnpm check-release-readiness
+          pnpm test:release-scripts
 
       - name: Chinese comments and visual documentation gate
         run: pnpm check-explanatory-assets
@@ -63,6 +72,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace dependency
+        run: pnpm --filter @partme.ai/openclaw-message-sdk build
 
       - name: Type check
         run: pnpm --dir extensions/${{ matrix.plugin }} run --if-present typecheck

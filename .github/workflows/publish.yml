@@ -39,9 +39,10 @@ jobs:
           node scripts/check-plugin-structure.mjs --strict-base --strict-new
           pnpm check-explanatory-assets
           pnpm test:e2e:harness
+          # 干净 runner 上消费者的类型声明来自 message-sdk/dist，必须先按工作区依赖构建。
+          pnpm build
           pnpm typecheck
           pnpm test:unit
-          pnpm build
           pnpm check-package-archives
 
       - name: Publish
