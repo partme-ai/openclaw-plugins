@@ -7,13 +7,15 @@ OpenClaw 2026.7.1 的美团技术服务合作中心 MTOp OpenAPI capability。�
 - 按官方 `MtOpJavaSDK` 通用请求协议发送 `application/x-www-form-urlencoded` POST。
 - 自动构造 `biz`、`businessId`、`developerId`、`timestamp`、`charset`、`version`、`appAuthToken` 和 SHA-1 `sign`。
 - 只允许调用 `operations` 中显式配置的路径，不接受 Agent 自由输入 URL。
-- 默认只允许消息 owner 调用，带本地每分钟限流、请求超时、请求/响应体上限。
+- 默认只允许消息 owner 调用，带本地并发/每分钟限流、请求超时、请求/响应体上限。
 - operation 必须区分 `read` / `write`；缺省按 `write` 处理，写操作每次都要求 `confirm=true`。
-- MTOp 通用协议全部使用 POST，因此不自动重试，避免查询之外的核销、退款等操作被重复执行。
+- MTOp 传输虽然全部使用 POST，但按业务风险处理：`read` 只对网络异常和 HTTP 408/429/5xx 有界重试；`write` 始终只发送一次。
+- 写 operation 默认必须声明 `idempotencyBizField`；客户端按该顶层 `biz` 字段做有界 TTL 去重，结果未知时也保留占位。
 - 响应必须包含当前 operation 允许的标准成功码，默认只接受 `OP_SUCCESS`。
 - 多门店凭据按 OpenClaw 运行时受信任的 `agentAccountId` 绑定，Agent Tool 参数不能选择或覆盖账号。
 - `requiresAuth=false` 的 operation 永远不携带 `appAuthToken`；响应还要经过独立 Tool Result 上限后才进入模型上下文。
 - 配置根必须是对象，所有安全布尔字段严格拒绝字符串/数字真值；响应超限会立即取消读取流。
+- 3xx 自动跳转关闭，签名表单和门店 Token 不会被 Fetch 自动转发到另一个 Origin。
 
 ## 运行架构
 
@@ -25,14 +27,18 @@ meituan_openapi_invoke
           │
           ├─ ownerOnly / Operation 白名单 / read-write 风险门
           ├─ 受信任 agentAccountId → 单一门店 Token
-          └─ write 必须 confirm=true
+          └─ write 必须 confirm=true + 有效业务幂等值
                          │
                          ▼
              biz JSON + MTOp Form 大小上限
                          │
                          ▼
-              SHA-1 签名 → 单账号限流窗口
-                         │ 单次 POST，不自动重试
+       并发槽 → SHA-1 签名 → 单账号限流/幂等窗口
+                         │
+              ┌──────────┴──────────┐
+              │ read 临时故障重试   │ write 单次发送
+              │ 最多 N 次、退避抖动 │ 结果未知仍占位
+              └──────────┬──────────┘
                          ▼
                美团 MTOp OpenAPI
                          │
@@ -53,11 +59,14 @@ flowchart LR
     W --> R{"riskLevel"}
     R -->|write| C{"confirm=true?"}
     C -->|否| D
-    C -->|是| F["构造完整 MTOp Form"]
+    C -->|是| I["校验 biz.idempotencyBizField<br/>进程内 TTL 去重"]
+    I --> F["构造完整 MTOp Form"]
     R -->|read| F
     F --> S["SHA-1 签名 + 完整表单大小限制"]
-    S --> L["单进程滑动窗口限流"]
-    L --> M["美团 MTOp OpenAPI"]
+    S --> L["并发上限 + 单进程滑动窗口限流"]
+    L --> Q{"业务风险"}
+    Q -->|read 临时故障| P["指数退避后有界重试"] --> M["美团 MTOp OpenAPI"]
+    Q -->|write 或首次 read| M
     M --> V["maxResponseBytes + successCodes 校验"]
     V --> X["maxToolResultBytes<br/>模型上下文边界"]
     X --> O
@@ -69,6 +78,9 @@ Agent 只能选择管理员预先配置的 operation 并提交 `biz`，不能控
 
 `confirm=true` 只是阻止模型误触写操作的技术门槛，不等同于业务审批、资金风控或人工复核。
 退款、核销、发货等高风险 operation 仍应由上层审批工作流生成一次性授权，或根本不向通用 Agent 开放。
+
+进程内幂等账本只解决同一 Gateway 进程、同一门店客户端的短期重复调用，不是分布式事务。
+多 Gateway 或财务写入场景仍必须在业务服务/共享存储中使用唯一请求号、唯一索引或服务端幂等接口。
 
 ## 多门店凭据绑定
 
@@ -102,11 +114,19 @@ sequenceDiagram
         T-->>A: 拒绝，不发送请求
     else 允许执行
         T->>C: invoke(operation, biz)
-        C->>C: 鉴权 + Form 上限 + SHA-1 签名 + 限流
-        C->>M: 单次 POST
-        alt 网络超时或 HTTP/业务失败
+        C->>C: 鉴权 + Form 上限 + 并发/频率边界
+        C->>C: write 校验并占用业务幂等键
+        C->>M: POST（redirect=manual）
+        alt read 遇网络异常或 408/429/5xx
+            M-->>C: 临时失败
+            C->>C: 指数退避 + 抖动
+            C->>M: 重新生成时间戳/签名后重试（最多 N 次）
+        else write 失败或结果未知
             M-->>C: 失败或结果未知
-            Note over C,M: 不自动重试，避免非幂等业务重复执行
+            Note over C,M: 永不自动重试，幂等占位保留到 TTL
+        else 业务错误码
+            M-->>C: code 未命中 successCodes
+            Note over C,M: 业务失败不重试
             C-->>T: 清洗并脱敏的错误
         else code 命中 successCodes
             M-->>C: 有界 JSON
@@ -176,7 +196,14 @@ openclaw plugins install @partme.ai/openclaw-meituan
 | ----------------------- | --------: | --------------------------------------------------- |
 | `ownerOnly`             |    `true` | 仅允许消息 Owner 使用工具                           |
 | `maxRequestsPerMinute`  |      `60` | 单 Gateway 的真实 POST 请求上限                     |
-| `requestTimeoutMs`      |   `10000` | 单次 POST 超时；失败不自动重试                      |
+| `maxConcurrentRequests` |       `8` | 单账号客户端同时占用 HTTP 连接的上限，超限快速失败  |
+| `requestTimeoutMs`      |   `10000` | 每次真实 POST 尝试的超时                            |
+| `readRetryMaxAttempts`  |       `2` | read 的总尝试次数；write 固定为 1                   |
+| `retryInitialDelayMs`   |     `250` | read 重试初始退避                                   |
+| `retryMaxDelayMs`       |    `2000` | read 重试最大退避                                   |
+| `retryJitterRatio`      |     `0.2` | 退避双向抖动比例                                    |
+| `idempotencyTtlMs`      | `86400000` | 写请求进程内幂等占位时长                            |
+| `maxIdempotencyEntries` |   `10000` | 单账号客户端幂等占位容量，满时失败关闭              |
 | `maxRequestBytes`       |   `65536` | `biz` JSON 和最终 URL-encoded Form 的硬上限         |
 | `maxResponseBytes`      | `1048576` | 流式读取响应的硬上限                                |
 | `maxToolResultBytes`    |  `262144` | 进入模型上下文与会话存储的 Tool Result 上限         |
@@ -190,6 +217,7 @@ operation 配置：
 | `requiresAuth` |           `true` | 调用前必须存在 `appAuthToken`                              |
 | `riskLevel`    |          `write` | `write` 每次要求 `confirm=true`；只读接口应显式标为 `read` |
 | `successCodes` | `["OP_SUCCESS"]` | 该业务文档声明的标准成功码白名单                           |
+| `idempotencyBizField` | 无 | write 默认必填，例如 `orderId`；必须指向顶层 biz 字段 |
 
 ## Agent 工具
 
@@ -215,6 +243,8 @@ operation 配置：
 }
 ```
 
+对应 operation 配置还必须包含 `"idempotencyBizField": "orderId"`。若遗留接口确实没有稳定业务请求号，只有显式设置 `requireWriteIdempotency=false` 才能加载；这会降低防重复保护，不建议用于退款、核销等生产写操作。
+
 `biz` 的字段必须以该 API 的官方文档为准。工具返回通过 `successCodes` 校验的美团 JSON 响应，但不会返回 `signKey` 或 `appAuthToken`。平台、代理和 Tool 异常会统一遮蔽 URL 用户信息、Authorization、DeveloperId、真实 Token/SignKey 及控制字符，并限制长度。
 
 ## 上线前验证
@@ -223,7 +253,7 @@ operation 配置：
 2. 从后台/官方文档复制每个 API 的路径、`businessId` 和业务参数，不要猜测。
 3. 完成门店授权并配置有效 `appAuthToken`；需要鉴权的接口缺少令牌会直接拒绝。
 4. 先用只读接口验证 `OP_SUCCESS`、traceId、限流和超时，再开放核销/退款等写操作。
-5. 多 Gateway 部署时在上游网关增加集中限流；插件内限流仅约束单进程。
+5. 多 Gateway 部署时增加共享限流与共享幂等账本；插件内限流、状态和幂等占位都仅约束单进程。
 
 本地安装态闭环：
 
@@ -235,7 +265,7 @@ pnpm --filter @partme.ai/openclaw-meituan build
 OPENCLAW_E2E_HOST_GATEWAY=1 pnpm test:e2e -- --plugins meituan --skip-browser
 ```
 
-独立 E2E 从正式 tarball 安装插件，由真实 Agent 发起 `meituan_openapi_invoke`，本地 MTOp 夹具独立重算 SHA-1 并校验完整 Form、Header、白名单路径和单次 POST，最后确认门店 Tool Result 回到模型 transcript。
+独立 E2E 从正式 tarball 安装插件，由真实 Agent 发起只读 `meituan_openapi_invoke`，本地 MTOp 夹具独立重算 SHA-1 并校验完整 Form、Header、白名单路径和成功路径单次 POST，最后确认门店 Tool Result 回到模型 transcript。只读故障重试、写操作不重试和幂等去重由单元契约测试覆盖。
 
 配置解析会拒绝顶层和 operation 中的未知字段，避免安全配置拼写错误后静默回退。
 自定义远程 Origin 默认拒绝；回环地址仅用于本地 HTTP 表单契约测试。
