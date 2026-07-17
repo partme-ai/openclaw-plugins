@@ -27,6 +27,15 @@ export type DouyinChannelConfig = {
     egressProxyUrl?: string;
     agentReplyTimeoutMs?: number;
   };
+  /** Webhook 先持久化后确认的 Inbox、重试和死信容量。 */
+  webhookDelivery?: {
+    maxPending?: number;
+    maxAttempts?: number;
+    initialDelayMs?: number;
+    maxDelayMs?: number;
+    maxDeadLetters?: number;
+    maxStateBytes?: number;
+  };
   media?: { maxBytes?: number };
   dmPolicy?: "open" | "allowlist" | "pairing" | "disabled";
   allowFrom?: Array<string | number>;

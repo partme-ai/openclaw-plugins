@@ -6,14 +6,13 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getDouyinRuntime } from "./runtime.js";
 import type { ResolvedDouyinAccount } from "./types.js";
 import {
   readRequestBodyWithLimit,
   isRequestBodyLimitError,
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,
 } from "./runtime/runtime-api.js";
-import { dispatchDouyinWebhookInbound } from "./dispatch/dispatch-inbound.js";
+import type { DouyinWebhookInboxItem } from "./dispatch/webhook-inbox.js";
 import {
   extractDouyinSenderId,
   extractDouyinWebhookText,
@@ -30,6 +29,13 @@ export type DouyinGatewayLog = {
   debug?: (message: string) => void;
 };
 
+/** HTTP 层只依赖“持久接管”能力；后台如何派发与重试由账号级 Inbox 管理。 */
+export type DouyinWebhookInboxWriter = {
+  enqueue: (
+    item: Omit<DouyinWebhookInboxItem, "attempts" | "createdAt" | "nextAttemptAt">,
+  ) => Promise<"enqueued" | "duplicate">;
+};
+
 function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -39,6 +45,7 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
  */
 export function createDouyinPluginHttpHandler(params: {
   account: ResolvedDouyinAccount;
+  inbox: DouyinWebhookInboxWriter;
   log?: DouyinGatewayLog;
 }): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
   const { account, log } = params;
@@ -88,36 +95,20 @@ export function createDouyinPluginHttpHandler(params: {
         res.end("missing Msg-Id");
         return true;
       }
-      const runtime = getDouyinRuntime();
-      // `runtime.config` 是宿主提供的配置服务，不是可直接传给路由器的
-      // `openclaw.json` 快照。必须在收到事件时调用 loadConfig()，这样既能拿到
-      // 当前热更新后的 bindings/session/channel 配置，也不会把服务方法误当配置字段。
-      const cfg = runtime.config.loadConfig() as Record<string, unknown>;
       const peerId =
         extractDouyinSenderId(body) ?? `anonymous:${account.shop_id ?? account.accountId}`;
 
-      const dispatch = dispatchDouyinWebhookInbound({
-        runtime,
-        cfg,
-        account,
+      // 只有原子落盘成功后才向平台确认。此处不等待 Agent；Gateway 崩溃后由 Inbox 重启恢复。
+      const accepted = await params.inbox.enqueue({
+        messageId: msgIdHeader.trim(),
         rawBody: body,
         text: extractDouyinWebhookText(body),
         peerId,
-        messageId: msgIdHeader,
-        log,
       });
 
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("success");
-      void dispatch.then((result) => {
-        if (result === "skipped") {
-          log?.warn?.("[douyin] inbound skipped: no transcript runtime available");
-        } else if (result === "blocked") {
-          log?.warn?.(`[douyin] inbound blocked by account ${account.accountId} access policy`);
-        }
-      }).catch((error: unknown) => {
-        log?.error?.(`[douyin] webhook dispatch failed: ${String(error)}`);
-      });
+      log?.debug?.(`[douyin] webhook inbox ${accepted}: account=${account.accountId}`);
       return true;
     } catch (e) {
       if (isRequestBodyLimitError(e)) {
@@ -126,8 +117,9 @@ export function createDouyinPluginHttpHandler(params: {
         return true;
       }
       log?.error?.(`[douyin] webhook: ${String(e)}`);
-      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("error");
+      // 验签后但持久接管失败必须返回 503，明确要求平台稍后重投，不能误报已接收。
+      res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("temporarily unavailable");
       return true;
     }
   };

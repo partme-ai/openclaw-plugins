@@ -7,7 +7,10 @@
  * - 会话映射与插件配置
  */
 
-import type { OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
+import type {
+  OpenClawPluginApi,
+  PluginRuntime,
+} from "openclaw/plugin-sdk/core";
 
 /** OpenClaw 注入插件注册阶段的 API 类型。 */
 export type PluginApi = OpenClawPluginApi;
@@ -15,7 +18,10 @@ export type PluginApi = OpenClawPluginApi;
 export type GatewayRuntime = PluginRuntime;
 
 /** 桥接层使用的最小日志接口，避免 transport 依赖完整插件 API。 */
-export type PluginLogger = Pick<OpenClawPluginApi["logger"], "debug" | "info" | "warn" | "error">;
+export type PluginLogger = Pick<
+  OpenClawPluginApi["logger"],
+  "debug" | "info" | "warn" | "error"
+>;
 
 // ─────────────────── iPad 协议服务类型 ───────────────────
 
@@ -33,12 +39,12 @@ export type BridgeState =
  * 微信登录状态
  */
 export type WxLoginStatus =
-  | "waiting_scan"    // 等待扫码
-  | "scanned"         // 已扫码，等待确认
-  | "confirmed"       // 已确认登录
-  | "logged_in"       // 登录成功
-  | "logged_out"      // 已退出
-  | "token_expired";  // Token 过期
+  | "waiting_scan" // 等待扫码
+  | "scanned" // 已扫码，等待确认
+  | "confirmed" // 已确认登录
+  | "logged_in" // 登录成功
+  | "logged_out" // 已退出
+  | "token_expired"; // Token 过期
 
 /**
  * 微信消息类型（协议服务推送的原始类型码）
@@ -238,6 +244,8 @@ export interface WechatIpadConfig {
     maxEventBytes: number;
     heartbeatIntervalMs: number;
     pongTimeoutMs: number;
+    /** 连接持续到该时长后才清零连续重连计数，防止“刚连上就断开”绕过 maxRetries。 */
+    stableConnectionMs: number;
   };
   /** 消息处理配置 */
   message: {
@@ -280,6 +288,7 @@ export const DEFAULT_CONFIG: WechatIpadConfig = {
     maxEventBytes: 1024 * 1024,
     heartbeatIntervalMs: 30_000,
     pongTimeoutMs: 10_000,
+    stableConnectionMs: 60_000,
   },
   message: {
     dmPolicy: "allowlist",

@@ -14,6 +14,46 @@ import {
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/account-resolution";
 import type { DouyinChannelConfig, ResolvedDouyinAccount } from "./types.js";
+import type { DouyinWebhookInboxConfig } from "./dispatch/webhook-inbox.js";
+
+const DEFAULT_WEBHOOK_INBOX_CONFIG: DouyinWebhookInboxConfig = {
+  maxPending: 1000,
+  maxAttempts: 5,
+  initialDelayMs: 1000,
+  maxDelayMs: 60_000,
+  maxDeadLetters: 100,
+  maxStateBytes: 32 * 1024 * 1024,
+};
+
+function boundedInteger(
+  value: unknown,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  name: string,
+): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || (resolved as number) < minimum ||
+      (resolved as number) > maximum) {
+    throw new Error(`[douyin] ${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return resolved as number;
+}
+
+/** 解析账号级持久 Inbox 配置；运行时再次做范围校验，不能只依赖 manifest UI Schema。 */
+export function resolveDouyinWebhookInboxConfig(
+  account: ResolvedDouyinAccount,
+): DouyinWebhookInboxConfig {
+  const value = account.config.webhookDelivery ?? {};
+  return {
+    maxPending: boundedInteger(value.maxPending, DEFAULT_WEBHOOK_INBOX_CONFIG.maxPending, 1, 100_000, "webhookDelivery.maxPending"),
+    maxAttempts: boundedInteger(value.maxAttempts, DEFAULT_WEBHOOK_INBOX_CONFIG.maxAttempts, 1, 100, "webhookDelivery.maxAttempts"),
+    initialDelayMs: boundedInteger(value.initialDelayMs, DEFAULT_WEBHOOK_INBOX_CONFIG.initialDelayMs, 100, 300_000, "webhookDelivery.initialDelayMs"),
+    maxDelayMs: boundedInteger(value.maxDelayMs, DEFAULT_WEBHOOK_INBOX_CONFIG.maxDelayMs, 1000, 3_600_000, "webhookDelivery.maxDelayMs"),
+    maxDeadLetters: boundedInteger(value.maxDeadLetters, DEFAULT_WEBHOOK_INBOX_CONFIG.maxDeadLetters, 1, 10_000, "webhookDelivery.maxDeadLetters"),
+    maxStateBytes: boundedInteger(value.maxStateBytes, DEFAULT_WEBHOOK_INBOX_CONFIG.maxStateBytes, 1_048_576, 1_073_741_824, "webhookDelivery.maxStateBytes"),
+  };
+}
 
 /** 读取 channels.douyin 原始配置节 */
 function getChannelSection(cfg: OpenClawConfig): DouyinChannelConfig {

@@ -6,16 +6,7 @@ import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-const dispatchDouyinWebhookInboundMock = vi.hoisted(() => vi.fn());
-const getDouyinRuntimeMock = vi.hoisted(() => vi.fn());
-
-vi.mock("../src/dispatch/dispatch-inbound.js", () => ({
-  dispatchDouyinWebhookInbound: dispatchDouyinWebhookInboundMock,
-}));
-
-vi.mock("../src/runtime.js", () => ({
-  getDouyinRuntime: getDouyinRuntimeMock,
-}));
+const inboxEnqueueMock = vi.hoisted(() => vi.fn());
 
 import { createDouyinPluginHttpHandler } from "../src/inbound.js";
 import type { ResolvedDouyinAccount } from "../src/types.js";
@@ -63,15 +54,14 @@ function signBody(secret: string, body: string): string {
 
 describe("createDouyinPluginHttpHandler", () => {
   beforeEach(() => {
-    dispatchDouyinWebhookInboundMock.mockReset();
-    dispatchDouyinWebhookInboundMock.mockResolvedValue("dispatched");
-    getDouyinRuntimeMock.mockReturnValue({
-      config: { loadConfig: vi.fn(() => ({ channels: { douyin: { enabled: true } } })) },
-    });
+    inboxEnqueueMock.mockReset().mockResolvedValue("enqueued");
   });
 
+  const createHandler = (log?: { warn?: ReturnType<typeof vi.fn> }) =>
+    createDouyinPluginHttpHandler({ account, inbox: { enqueue: inboxEnqueueMock }, log });
+
   it("rejects unsupported HTTP methods with 405", async () => {
-    const handler = createDouyinPluginHttpHandler({ account });
+    const handler = createHandler();
     const req = { method: "PUT", headers: {} } as IncomingMessage;
     const res = mockResponse();
 
@@ -82,18 +72,18 @@ describe("createDouyinPluginHttpHandler", () => {
   });
 
   it("returns signed verify_webhook challenge as JSON", async () => {
-    const handler = createDouyinPluginHttpHandler({ account });
+    const handler = createHandler();
     const body = JSON.stringify({ event: "verify_webhook", content: { challenge: 98765 } });
     const res = mockResponse();
 
     await handler(makePostReq(body, { "x-douyin-signature": signBody(account.app_secret, body) }), res);
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe('{"challenge":98765}');
-    expect(dispatchDouyinWebhookInboundMock).not.toHaveBeenCalled();
+    expect(inboxEnqueueMock).not.toHaveBeenCalled();
   });
 
   it("returns 401 when signature invalid", async () => {
-    const handler = createDouyinPluginHttpHandler({ account });
+    const handler = createHandler();
     const body = JSON.stringify({ content: { from_user_id: "u1", text: "hi" } });
     const res = mockResponse();
 
@@ -107,7 +97,7 @@ describe("createDouyinPluginHttpHandler", () => {
   });
 
   it("dispatches signed webhook and returns success", async () => {
-    const handler = createDouyinPluginHttpHandler({ account, log: { warn: vi.fn() } });
+    const handler = createHandler({ warn: vi.fn() });
     const body = JSON.stringify({ content: { from_user_id: "user-99", text: "hello" } });
     const signature = signBody(account.app_secret, body);
     const res = mockResponse();
@@ -119,18 +109,17 @@ describe("createDouyinPluginHttpHandler", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe("success");
-    expect(dispatchDouyinWebhookInboundMock).toHaveBeenCalledWith(
+    expect(inboxEnqueueMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        cfg: { channels: { douyin: { enabled: true } } },
         peerId: "user-99",
         messageId: "msg-signed-1",
       }),
     );
   });
 
-  it("acknowledges a valid webhook without waiting for Agent dispatch", async () => {
-    dispatchDouyinWebhookInboundMock.mockReturnValue(new Promise(() => undefined));
-    const handler = createDouyinPluginHttpHandler({ account });
+  it("returns 503 instead of acknowledging when durable inbox persistence fails", async () => {
+    inboxEnqueueMock.mockRejectedValue(new Error("disk unavailable"));
+    const handler = createHandler();
     const body = JSON.stringify({ content: { from_user_id: "user-slow", text: "hello" } });
     const res = mockResponse();
 
@@ -139,19 +128,19 @@ describe("createDouyinPluginHttpHandler", () => {
       "msg-id": "msg-slow-1",
     }), res);
 
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toBe("success");
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toBe("temporarily unavailable");
   });
 
   it("uses anonymous peer when sender id missing", async () => {
-    const handler = createDouyinPluginHttpHandler({ account });
+    const handler = createHandler();
     const body = JSON.stringify({ content: { text: "anon" } });
     const signature = signBody(account.app_secret, body);
     const res = mockResponse();
 
     await handler(makePostReq(body, { "x-douyin-signature": signature, "msg-id": "anon-1" }), res);
 
-    expect(dispatchDouyinWebhookInboundMock).toHaveBeenCalledWith(
+    expect(inboxEnqueueMock).toHaveBeenCalledWith(
       expect.objectContaining({
         peerId: "anonymous:shop-1",
       }),
@@ -159,7 +148,7 @@ describe("createDouyinPluginHttpHandler", () => {
   });
 
   it("rejects a signed event without Msg-Id", async () => {
-    const handler = createDouyinPluginHttpHandler({ account });
+    const handler = createHandler();
     const body = JSON.stringify({ content: "{\"text\":\"hello\"}" });
     const res = mockResponse();
     await handler(makePostReq(body, { "x-douyin-signature": signBody(account.app_secret, body) }), res);
@@ -168,7 +157,7 @@ describe("createDouyinPluginHttpHandler", () => {
   });
 
   it("returns 413 when body exceeds limit", async () => {
-    const handler = createDouyinPluginHttpHandler({ account });
+    const handler = createHandler();
     const big = "x".repeat(2 * 1024 * 1024);
     const req = new EventEmitter() as IncomingMessage & EventEmitter & { destroy?: () => void };
     req.method = "POST";

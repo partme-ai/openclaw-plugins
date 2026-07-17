@@ -14,7 +14,6 @@
  * **关键导出**：`processOneMessage`、`ProcessMessageDeps`
  */
 
-import fs from "node:fs/promises";
 import path from "node:path";
 
 import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-runtime";
@@ -30,7 +29,7 @@ import type { WeixinMessage } from "../api/types.js";
 import { MessageItemType, TypingStatus } from "../api/types.js";
 import { loadWeixinAccount } from "../auth/accounts.js";
 import { readFrameworkAllowFromList } from "../auth/pairing.js";
-import { downloadRemoteImageToTemp } from "../cdn/upload.js";
+import { withRemoteMediaTempFile } from "../cdn/upload.js";
 import { downloadMediaFromItem } from "../media/media-download.js";
 import { logger } from "../util/logger.js";
 import { sanitizeLogMessage } from "../util/redact.js";
@@ -49,7 +48,10 @@ import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
 import { handleSlashCommand } from "./slash-commands.js";
 
-const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
+const MEDIA_OUTBOUND_TEMP_DIR = path.join(
+  resolvePreferredOpenClawTmpDir(),
+  "weixin/media/outbound-temp",
+);
 
 /** Dependencies for processOneMessage, injected by the monitor loop. */
 export type ProcessMessageDeps = {
@@ -64,13 +66,18 @@ export type ProcessMessageDeps = {
   /** 静态白名单与扫码配对名单合并；空数组不代表放行所有人。 */
   allowFrom?: string[];
   /** 鉴权通过后才获取 typing ticket，防止陌生发送者放大远端 getConfig 请求。 */
-  resolveTypingTicket?: (userId: string, contextToken?: string) => Promise<string | undefined>;
+  resolveTypingTicket?: (
+    userId: string,
+    contextToken?: string,
+  ) => Promise<string | undefined>;
   log: (msg: string) => void;
   errLog: (m: string) => void;
 };
 
 /** Extract text body from item_list (for slash command detection). */
-function extractTextBody(itemList?: import("../api/types.js").MessageItem[]): string {
+function extractTextBody(
+  itemList?: import("../api/types.js").MessageItem[],
+): string {
   if (!itemList?.length) return "";
   for (const item of itemList) {
     if (item.type === MessageItemType.TEXT && item.text_item?.text != null) {
@@ -123,7 +130,9 @@ export async function processOneMessage(
   // --- Framework DM / command authorization ---
   // 鉴权必须是第一个有副作用步骤：未授权消息不得触发 slash、媒体下载、
   // getConfig、会话落盘或 Agent 调用。
-  const configuredAllowFrom = [...new Set((deps.allowFrom ?? []).map((id) => id.trim()).filter(Boolean))];
+  const configuredAllowFrom = [
+    ...new Set((deps.allowFrom ?? []).map((id) => id.trim()).filter(Boolean)),
+  ];
   const { senderAllowedForCommands, commandAuthorized } =
     await resolveSenderCommandAuthorizationWithRuntime({
       cfg: deps.config,
@@ -138,7 +147,13 @@ export async function processOneMessage(
       readAllowFromStore: async () => {
         const paired = readFrameworkAllowFromList(deps.accountId);
         const linkedUserId = loadWeixinAccount(deps.accountId)?.userId?.trim();
-        return [...new Set([...configuredAllowFrom, ...paired, ...(linkedUserId ? [linkedUserId] : [])])];
+        return [
+          ...new Set([
+            ...configuredAllowFrom,
+            ...paired,
+            ...(linkedUserId ? [linkedUserId] : []),
+          ]),
+        ];
       },
       runtime: deps.channelRuntime.commands,
     });
@@ -154,18 +169,25 @@ export async function processOneMessage(
   }
 
   if (textBody.startsWith("/") && commandAuthorized) {
-    const slashResult = await handleSlashCommand(textBody, {
-      to: senderId,
-      contextToken: full.context_token,
-      baseUrl: deps.baseUrl,
-      token: deps.token,
-      routeTag: deps.routeTag,
-      accountId: deps.accountId,
-      log: deps.log,
-      errLog: deps.errLog,
-    }, receivedAt, full.create_time_ms);
+    const slashResult = await handleSlashCommand(
+      textBody,
+      {
+        to: senderId,
+        contextToken: full.context_token,
+        baseUrl: deps.baseUrl,
+        token: deps.token,
+        routeTag: deps.routeTag,
+        accountId: deps.accountId,
+        log: deps.log,
+        errLog: deps.errLog,
+      },
+      receivedAt,
+      full.create_time_ms,
+    );
     if (slashResult.handled) {
-      logger.info(`[weixin] authorized slash command handled, skipping AI pipeline`);
+      logger.info(
+        `[weixin] authorized slash command handled, skipping AI pipeline`,
+      );
       return;
     }
   }
@@ -174,17 +196,25 @@ export async function processOneMessage(
 
   // Find the first downloadable media item (priority: IMAGE > VIDEO > FILE > VOICE).
   // When none found in the main item_list, fall back to media referenced via a quoted message.
-  const hasDownloadableMedia = (m?: { encrypt_query_param?: string; full_url?: string }) =>
-    m?.encrypt_query_param || m?.full_url;
+  const hasDownloadableMedia = (m?: {
+    encrypt_query_param?: string;
+    full_url?: string;
+  }) => m?.encrypt_query_param || m?.full_url;
   const mainMediaItem =
     full.item_list?.find(
-      (i) => i.type === MessageItemType.IMAGE && hasDownloadableMedia(i.image_item?.media),
+      (i) =>
+        i.type === MessageItemType.IMAGE &&
+        hasDownloadableMedia(i.image_item?.media),
     ) ??
     full.item_list?.find(
-      (i) => i.type === MessageItemType.VIDEO && hasDownloadableMedia(i.video_item?.media),
+      (i) =>
+        i.type === MessageItemType.VIDEO &&
+        hasDownloadableMedia(i.video_item?.media),
     ) ??
     full.item_list?.find(
-      (i) => i.type === MessageItemType.FILE && hasDownloadableMedia(i.file_item?.media),
+      (i) =>
+        i.type === MessageItemType.FILE &&
+        hasDownloadableMedia(i.file_item?.media),
     ) ??
     full.item_list?.find(
       (i) =>
@@ -217,9 +247,10 @@ export async function processOneMessage(
   const mediaDownloadMs = Date.now() - mediaDownloadStart;
 
   if (debug) {
-    debugTrace.push(mediaItem
-      ? `│ mediaDownload: type=${mediaItem.type} cost=${mediaDownloadMs}ms`
-      : "│ mediaDownload: none",
+    debugTrace.push(
+      mediaItem
+        ? `│ mediaDownload: type=${mediaItem.type} cost=${mediaDownloadMs}ms`
+        : "│ mediaDownload: none",
     );
   }
 
@@ -265,11 +296,16 @@ export async function processOneMessage(
   // the correct session (matching the dmScope from config) instead of falling back
   // to agent:main:main.
   ctx.SessionKey = route.sessionKey;
-  const storePath = deps.channelRuntime.session.resolveStorePath(deps.config.session?.store, {
-    agentId: route.agentId,
-  });
+  const storePath = deps.channelRuntime.session.resolveStorePath(
+    deps.config.session?.store,
+    {
+      agentId: route.agentId,
+    },
+  );
   const finalized = deps.channelRuntime.reply.finalizeInboundContext(
-    ctx as Parameters<typeof deps.channelRuntime.reply.finalizeInboundContext>[0],
+    ctx as Parameters<
+      typeof deps.channelRuntime.reply.finalizeInboundContext
+    >[0],
   );
 
   logger.info(
@@ -279,7 +315,9 @@ export async function processOneMessage(
   await deps.channelRuntime.session.recordInboundSession({
     storePath,
     sessionKey: route.sessionKey,
-    ctx: finalized as Parameters<typeof deps.channelRuntime.session.recordInboundSession>[0]["ctx"],
+    ctx: finalized as Parameters<
+      typeof deps.channelRuntime.session.recordInboundSession
+    >[0]["ctx"],
     updateLastRoute: {
       sessionKey: route.mainSessionKey,
       channel: "openclaw-weixin",
@@ -296,9 +334,15 @@ export async function processOneMessage(
   if (contextToken) {
     setContextToken(deps.accountId, full.from_user_id ?? "", contextToken);
   }
-  const humanDelay = deps.channelRuntime.reply.resolveHumanDelayConfig(deps.config, route.agentId);
+  const humanDelay = deps.channelRuntime.reply.resolveHumanDelayConfig(
+    deps.config,
+    route.agentId,
+  );
 
-  const typingTicket = await deps.resolveTypingTicket?.(senderId, full.context_token);
+  const typingTicket = await deps.resolveTypingTicket?.(
+    senderId,
+    full.context_token,
+  );
   const hasTypingTicket = Boolean(typingTicket);
   const typingCallbacks = createTypingCallbacks({
     start: hasTypingTicket
@@ -306,6 +350,7 @@ export async function processOneMessage(
           sendTyping({
             baseUrl: deps.baseUrl,
             token: deps.token,
+            routeTag: deps.routeTag,
             body: {
               ilink_user_id: ctx.To,
               typing_ticket: typingTicket!,
@@ -318,6 +363,7 @@ export async function processOneMessage(
           sendTyping({
             baseUrl: deps.baseUrl,
             token: deps.token,
+            routeTag: deps.routeTag,
             body: {
               ilink_user_id: ctx.To,
               typing_ticket: typingTicket!,
@@ -325,13 +371,24 @@ export async function processOneMessage(
             },
           })
       : async () => {},
-    onStartError: (err) => deps.log(sanitizeLogMessage(`[weixin] typing send error: ${String(err)}`)),
-    onStopError: (err) => deps.log(sanitizeLogMessage(`[weixin] typing cancel error: ${String(err)}`)),
+    onStartError: (err) =>
+      deps.log(
+        sanitizeLogMessage(`[weixin] typing send error: ${String(err)}`),
+      ),
+    onStopError: (err) =>
+      deps.log(
+        sanitizeLogMessage(`[weixin] typing cancel error: ${String(err)}`),
+      ),
     keepaliveIntervalMs: 5000,
   });
 
   /** Delivery records populated synchronously at deliver() entry, safe to read in finally. */
-  const debugDeliveries: Array<{ textLen: number; media: string; preview: string; ts: number }> = [];
+  const debugDeliveries: Array<{
+    textLen: number;
+    media: string;
+    preview: string;
+    ts: number;
+  }> = [];
 
   const { dispatcher, replyOptions, markDispatchIdle } =
     deps.channelRuntime.reply.createReplyDispatcherWithTyping({
@@ -359,58 +416,72 @@ export async function processOneMessage(
 
         try {
           if (mediaUrl) {
-            let filePath: string;
-            let temporaryRemoteFile = false;
-            if (!mediaUrl.includes("://") || mediaUrl.startsWith("file://")) {
-              // Local path: absolute, relative, or file:// URL
-              if (mediaUrl.startsWith("file://")) {
-                filePath = new URL(mediaUrl).pathname;
-              } else if (!path.isAbsolute(mediaUrl)) {
-                filePath = path.resolve(mediaUrl);
-                logger.debug(`outbound: resolved relative path ${mediaUrl} -> ${filePath}`);
-              } else {
-                filePath = mediaUrl;
-              }
-              logger.debug(`outbound: local file path resolved filePath=${filePath}`);
-            } else if (mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://")) {
-              logger.debug(`outbound: downloading remote mediaUrl=${mediaUrl.slice(0, 80)}...`);
-              filePath = await downloadRemoteImageToTemp(mediaUrl, MEDIA_OUTBOUND_TEMP_DIR);
-              temporaryRemoteFile = true;
-              logger.debug(`outbound: remote image downloaded to filePath=${filePath}`);
-            } else {
-              logger.warn(
-                `outbound: unrecognized mediaUrl scheme, sending text only mediaUrl=${mediaUrl.slice(0, 80)}`,
-              );
-              await sendMessageWeixin({ to: ctx.To, text, opts: {
-                baseUrl: deps.baseUrl,
-                token: deps.token,
-                contextToken,
-              }});
-              logger.info(`outbound: text sent to=${ctx.To}`);
-              return;
-            }
-            try {
+            const sendFile = async (filePath: string) => {
               await sendWeixinMediaFile({
                 filePath,
                 to: ctx.To,
                 text,
-                opts: { baseUrl: deps.baseUrl, token: deps.token, routeTag: deps.routeTag, contextToken },
+                opts: {
+                  baseUrl: deps.baseUrl,
+                  token: deps.token,
+                  routeTag: deps.routeTag,
+                  contextToken,
+                },
                 cdnBaseUrl: deps.cdnBaseUrl,
                 mediaLocalRoots: deps.mediaLocalRoots,
               });
-            } finally {
-              // 仅删除本插件创建的远程下载暂存文件；用户提供的本地文件绝不能误删。
-              if (temporaryRemoteFile) await fs.unlink(filePath).catch(() => {});
+            };
+            if (!mediaUrl.includes("://") || mediaUrl.startsWith("file://")) {
+              // Local path: absolute, relative, or file:// URL
+              const filePath = mediaUrl.startsWith("file://")
+                ? new URL(mediaUrl).pathname
+                : path.resolve(mediaUrl);
+              logger.debug(
+                `outbound: local file path resolved filePath=${filePath}`,
+              );
+              await sendFile(filePath);
+            } else if (
+              mediaUrl.startsWith("http://") ||
+              mediaUrl.startsWith("https://")
+            ) {
+              logger.debug(
+                `outbound: downloading guarded remote media host=${new URL(mediaUrl).host}`,
+              );
+              await withRemoteMediaTempFile({
+                url: mediaUrl,
+                destDir: MEDIA_OUTBOUND_TEMP_DIR,
+                use: sendFile,
+              });
+            } else {
+              logger.warn(
+                `outbound: unrecognized mediaUrl scheme, sending text only mediaUrl=${mediaUrl.slice(0, 80)}`,
+              );
+              await sendMessageWeixin({
+                to: ctx.To,
+                text,
+                opts: {
+                  baseUrl: deps.baseUrl,
+                  token: deps.token,
+                  routeTag: deps.routeTag,
+                  contextToken,
+                },
+              });
+              logger.info(`outbound: text sent to=${ctx.To}`);
+              return;
             }
             logger.info(`outbound: media sent OK to=${ctx.To}`);
           } else {
             logger.debug(`outbound: sending text message to=${ctx.To}`);
-            await sendMessageWeixin({ to: ctx.To, text, opts: {
-              baseUrl: deps.baseUrl,
+            await sendMessageWeixin({
+              to: ctx.To,
+              text,
+              opts: {
+                baseUrl: deps.baseUrl,
                 token: deps.token,
                 routeTag: deps.routeTag,
-              contextToken,
-            }});
+                contextToken,
+              },
+            });
             logger.info(`outbound: text sent OK to=${ctx.To}`);
           }
         } catch (err) {
@@ -421,10 +492,15 @@ export async function processOneMessage(
         }
       },
       onError: (err, info) => {
-        deps.errLog(sanitizeLogMessage(`weixin reply ${info.kind}: ${String(err)}`));
+        deps.errLog(
+          sanitizeLogMessage(`weixin reply ${info.kind}: ${String(err)}`),
+        );
         const errMsg = err instanceof Error ? err.message : String(err);
         let notice: string;
-        if (errMsg.includes("remote media download failed") || errMsg.includes("fetch")) {
+        if (
+          errMsg.includes("remote media download failed") ||
+          errMsg.includes("fetch")
+        ) {
           notice = `⚠️ 媒体文件下载失败，请检查链接是否可访问。`;
         } else if (
           errMsg.includes("getUploadUrl") ||
@@ -440,14 +516,16 @@ export async function processOneMessage(
           contextToken,
           message: notice,
           baseUrl: deps.baseUrl,
-              token: deps.token,
-              routeTag: deps.routeTag,
+          token: deps.token,
+          routeTag: deps.routeTag,
           errLog: deps.errLog,
         });
       },
     });
 
-  logger.debug(`dispatchReplyFromConfig: starting agentId=${route.agentId ?? "(none)"}`);
+  logger.debug(
+    `dispatchReplyFromConfig: starting agentId=${route.agentId ?? "(none)"}`,
+  );
   try {
     await deps.channelRuntime.reply.withReplyDispatcher({
       dispatcher,
@@ -459,7 +537,9 @@ export async function processOneMessage(
           replyOptions: { ...replyOptions, disableBlockStreaming: true },
         }),
     });
-    logger.debug(`dispatchReplyFromConfig: done agentId=${route.agentId ?? "(none)"}`);
+    logger.debug(
+      `dispatchReplyFromConfig: done agentId=${route.agentId ?? "(none)"}`,
+    );
   } catch (err) {
     logger.error(
       `dispatchReplyFromConfig: error agentId=${route.agentId ?? "(none)"} err=${String(err)}`,
@@ -478,7 +558,10 @@ export async function processOneMessage(
       const platformDelay = eventTs > 0 ? `${receivedAt - eventTs}ms` : "N/A";
       const inboundProcessMs = (debugTs.preDispatch ?? receivedAt) - receivedAt;
       const aiMs = dispatchDoneAt - (debugTs.preDispatch ?? receivedAt);
-      const totalTime = eventTs > 0 ? `${dispatchDoneAt - eventTs}ms` : `${dispatchDoneAt - receivedAt}ms`;
+      const totalTime =
+        eventTs > 0
+          ? `${dispatchDoneAt - eventTs}ms`
+          : `${dispatchDoneAt - receivedAt}ms`;
 
       if (debugDeliveries.length > 0) {
         debugTrace.push("── 回复 ──");
@@ -510,7 +593,12 @@ export async function processOneMessage(
         await sendMessageWeixin({
           to: ctx.To,
           text: timingText,
-          opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken },
+          opts: {
+            baseUrl: deps.baseUrl,
+            token: deps.token,
+            routeTag: deps.routeTag,
+            contextToken,
+          },
         });
         logger.info(`debug-timing: sent OK`);
       } catch (debugErr) {

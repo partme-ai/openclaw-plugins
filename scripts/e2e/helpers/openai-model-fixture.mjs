@@ -15,6 +15,8 @@ function writeJson(response, status, body) {
 }
 
 export async function startOpenAiModelFixture(port) {
+  /** 各插件可在隔离 E2E 中注入有限故障；默认值不改变正常模型夹具行为。 */
+  const controls = { failNextCompletions: 0 };
   const metrics = {
     models: 0,
     completions: 0,
@@ -36,6 +38,10 @@ export async function startOpenAiModelFixture(port) {
       const body = await readJson(request);
       metrics.completions += 1;
       metrics.lastRequest = body;
+      if (controls.failNextCompletions > 0) {
+        controls.failNextCompletions -= 1;
+        return writeJson(response, 503, { error: { message: "injected completion failure" } });
+      }
       const created = Math.floor(Date.now() / 1000);
       const id = `chatcmpl-openclaw-e2e-${metrics.completions}`;
       const fixtureToolNames = new Set([
@@ -204,6 +210,7 @@ export async function startOpenAiModelFixture(port) {
 
   return {
     metrics,
+    controls,
     close: () => new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
       server.closeAllConnections();

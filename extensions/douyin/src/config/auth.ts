@@ -16,6 +16,8 @@ import { douyinFetch, readResponseBodyAsBuffer } from "../shared/http.js";
 
 const CLIENT_TOKEN_URL = "https://open.douyin.com/oauth/client_token/";
 const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
+/** 多账号及热更新场景下的凭据指纹缓存上限，避免废弃配置长期占用内存。 */
+const MAX_TOKEN_CACHE_ENTRIES = 256;
 
 /** 开放平台 client_token 接口响应体（节选） */
 interface ClientTokenResponse {
@@ -31,6 +33,19 @@ interface ClientTokenResponse {
 type TokenCacheEntry = { token: string; expiresAt: number };
 const tokenCache = new Map<string, TokenCacheEntry>();
 const tokenRequests = new Map<string, Promise<string>>();
+
+/** Map 插入顺序作为 LRU 顺序；命中后移到末尾，写入时淘汰最久未使用项。 */
+function touchTokenCache(key: string, entry: TokenCacheEntry): void {
+  tokenCache.delete(key);
+  tokenCache.set(key, entry);
+  while (tokenCache.size > MAX_TOKEN_CACHE_ENTRIES) {
+    const oldest = tokenCache.keys().next().value as string | undefined;
+    if (oldest === undefined) {
+      break;
+    }
+    tokenCache.delete(oldest);
+  }
+}
 
 function cacheKey(config: DouyinAccountConfig): string {
   return createHash("sha256")
@@ -51,7 +66,10 @@ export async function getClientToken(
   if (!config?.app_key || !config?.app_secret) return null;
   const key = cacheKey(config);
   const cached = tokenCache.get(key);
-  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    touchTokenCache(key, cached);
+    return cached.token;
+  }
   const pending = tokenRequests.get(key);
   if (pending) return pending;
 
@@ -82,7 +100,7 @@ export async function getClientToken(
         `[douyin] client_token failed (${res.status}/${json.data?.error_code ?? "unknown"}): ${json.data?.description ?? json.message ?? "unknown error"}`,
       );
     }
-    tokenCache.set(key, {
+    touchTokenCache(key, {
       token,
       expiresAt: Date.now() + Math.max(60, json.data?.expires_in ?? 7200) * 1000,
     });

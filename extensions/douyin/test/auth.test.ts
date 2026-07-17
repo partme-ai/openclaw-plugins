@@ -48,4 +48,21 @@ describe("getClientToken", () => {
     await expect(getClientToken({ app_key: "key", app_secret: "secret" }))
       .rejects.toThrow(/invalid or oversized JSON.*502/);
   });
+
+  it("bounds the multi-account token cache with LRU eviction", async () => {
+    douyinFetchMock.mockImplementation(async (_cfg, _url, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { client_key: string };
+      return new Response(JSON.stringify({
+        data: { access_token: `token-${body.client_key}`, expires_in: 7200, error_code: 0 },
+      }));
+    });
+    for (let index = 0; index <= 256; index += 1) {
+      await getClientToken({ app_key: `key-${index}`, app_secret: `secret-${index}` });
+    }
+    expect(douyinFetchMock).toHaveBeenCalledTimes(257);
+
+    await expect(getClientToken({ app_key: "key-0", app_secret: "secret-0" }))
+      .resolves.toBe("token-key-0");
+    expect(douyinFetchMock).toHaveBeenCalledTimes(258);
+  });
 });

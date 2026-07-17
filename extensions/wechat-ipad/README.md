@@ -96,6 +96,7 @@ stateDiagram-v2
 
 - 远程服务强制使用 `wss://` 和 `https://`；仅回环地址允许 `ws://`、`http://`。
 - 远程服务必须提供 Token；WebSocket 与 HTTP API 默认必须同主机，拆分部署需显式确认 `allowSplitBridgeHosts=true`。
+- HTTP 和 WebSocket 都禁止自动跟随重定向，Bearer Token 只会发往配置阶段已经校验的固定地址。
 - Token 使用 WebSocket/HTTP `Authorization: Bearer ...`，不会进入 URL、状态输出或日志；网络异常和 HTTP 业务错误在所有上层出口统一脱敏。
 - 配置可使用 `auth.token`，也可通过 `WECHAT_IPAD_BRIDGE_TOKEN` 注入。
 - 状态端点为精确匹配并强制 OpenClaw Gateway 认证，只返回脱敏连接状态。
@@ -104,6 +105,38 @@ stateDiagram-v2
 - 入站 Agent Turn 使用有界单消费者队列，保持消息顺序，并以 `maxPendingMessages` 限制桥接洪泛产生的等待任务。
 - 具备连接、请求、事件、响应和文本大小限制；断线采用指数退避与抖动重连。
 - Gateway 生命周期会启动和停止连接，不注册全局进程信号处理器。
+
+### 认证请求边界
+
+```text
+配置 serviceUrl / apiUrl
+          │
+          ▼
+校验协议、主机、URL 凭据与拆分主机策略
+          │
+          ▼
+仅向固定目标注入 Authorization: Bearer ***
+          │
+          ├── WebSocket：followRedirects=false
+          │
+          └── HTTP：redirect=manual
+                        │
+                        ▼
+              3xx 按失败处理，不转发 Token
+```
+
+```mermaid
+flowchart TD
+    C["serviceUrl / apiUrl 配置"] --> V{"协议、主机和 URL 安全校验"}
+    V -->|失败| R["拒绝启动"]
+    V -->|通过| T["仅向固定目标注入 Bearer Token"]
+    T --> W["WebSocket<br/>followRedirects=false"]
+    T --> H["HTTP<br/>redirect=manual"]
+    W --> S["外部 iPad 桥接服务"]
+    H --> S
+    W -. "3xx / upgrade 跳转" .-> X["拒绝，不转发 Token"]
+    H -. "3xx Location" .-> X
+```
 
 ## 配置
 
@@ -135,7 +168,8 @@ stateDiagram-v2
         "maxResponseBytes": 1048576,
         "maxEventBytes": 1048576,
         "heartbeatIntervalMs": 30000,
-        "pongTimeoutMs": 10000
+        "pongTimeoutMs": 10000,
+        "stableConnectionMs": 60000
       },
       "message": {
         "dmPolicy": "allowlist",
@@ -153,7 +187,7 @@ stateDiagram-v2
 }
 ```
 
-本机开发可使用默认的 `ws://127.0.0.1:5555` 和 `http://127.0.0.1:5556`。`required=true` 表示首次连接失败将使插件服务启动失败；设为 `false` 时会降级并在后台重连。`maxRetries=0` 表示不限制重连次数。升级旧配置时必须补充 `message.allowFrom`，或者显式选择 `dmPolicy=disabled/open`；这是为修复旧版“任意 wxid 都能进入 Agent 且被标记为命令已授权”的安全缺口而加入的非静默迁移要求。
+本机开发可使用默认的 `ws://127.0.0.1:5555` 和 `http://127.0.0.1:5556`。`required=true` 表示首次连接失败将使插件服务启动失败；设为 `false` 时会降级并在后台重连。`maxRetries=0` 表示不限制重连次数；连接只有持续达到 `stableConnectionMs`，或收到 Pong、业务 heartbeat、`logged_in` 信号后，才清零连续重连计数，避免“刚连上就断开”永久绕过重连上限。升级旧配置时必须补充 `message.allowFrom`，或者显式选择 `dmPolicy=disabled/open`；这是为修复旧版“任意 wxid 都能进入 Agent 且被标记为命令已授权”的安全缺口而加入的非静默迁移要求。
 
 ### 入站授权决策
 

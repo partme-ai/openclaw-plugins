@@ -16,7 +16,11 @@ import {
   defineChannelPluginEntry,
   type OpenClawPluginApi,
 } from "openclaw/plugin-sdk/core";
-import { douyinChannelPlugin } from "./channel.js";
+import {
+  douyinChannelPlugin,
+  getDouyinWebhookInboxStatus,
+  replayDouyinWebhookDeadLetters,
+} from "./channel.js";
 import { getDouyinRuntime, setDouyinRuntime } from "./runtime.js";
 import { createDouyinTools } from "./tools/tools.js";
 
@@ -52,5 +56,49 @@ export default defineChannelPluginEntry({
     for (const tool of createDouyinTools(getConfig)) {
       api.registerTool(tool as never);
     }
+    // 仅 Gateway 管理员可查看可靠入站积压；状态不包含消息正文、用户 ID 或凭据。
+    api.registerHttpRoute({
+      path: "/douyin/status",
+      auth: "gateway",
+      match: "exact",
+      handler: (_req, res) => {
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(JSON.stringify({ ok: true, inboxes: getDouyinWebhookInboxStatus() }));
+      },
+    });
+    api.registerHttpRoute({
+      path: "/douyin/replay-dead-letters",
+      auth: "gateway",
+      match: "exact",
+      handler: async (req, res) => {
+        if (req.method !== "POST") {
+          res.writeHead(405, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: false, error: "method not allowed" }));
+          return;
+        }
+        const url = new URL(req.url ?? "/douyin/replay-dead-letters", "http://localhost");
+        const accountId = url.searchParams.get("account")?.trim() || "default";
+        const requestedLimit = Number(url.searchParams.get("limit") ?? "100");
+        if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 1000) {
+          res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: false, error: "limit must be an integer between 1 and 1000" }));
+          return;
+        }
+        const replayed = await replayDouyinWebhookDeadLetters(accountId, requestedLimit);
+        if (replayed === null) {
+          res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: false, error: "account inbox is not running" }));
+          return;
+        }
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(JSON.stringify({ ok: true, accountId, replayed }));
+      },
+    });
   },
 });

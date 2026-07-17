@@ -74,7 +74,7 @@ flowchart LR
 }
 ```
 
-生产地址强制使用 `wss://` 和 `https://`，并且必须配置 Token；本机回环测试才允许明文协议和无 Token。WebSocket 与 HTTP API 默认必须属于同一主机，确需拆分时要显式设置 `allowSplitBridgeHosts=true`，避免把同一 Bearer Token 误发给错误主机。Token 不写入 URL、日志或状态响应；网络异常与 HTTP 业务错误都会统一遮蔽 URL 用户信息、Bearer/Authorization/token 字段和真实配置值。
+生产地址强制使用 `wss://` 和 `https://`，并且必须配置 Token；本机回环测试才允许明文协议和无 Token。WebSocket 与 HTTP API 默认必须属于同一主机，确需拆分时要显式设置 `allowSplitBridgeHosts=true`，避免把同一 Bearer Token 误发给错误主机。HTTP 使用 `redirect=manual`，WebSocket 使用 `followRedirects=false`，任何 3xx 都不会把 Token 转发到新地址。Token 不写入 URL、日志或状态响应；网络异常与 HTTP 业务错误都会统一遮蔽 URL 用户信息、Bearer/Authorization/token 字段和真实配置值。
 
 ## 入站授权与背压
 
@@ -117,7 +117,7 @@ stateDiagram-v2
     disconnected --> [*]: Gateway stop
 ```
 
-`required=true` 时首次连接失败会中止插件启动；运行中断线进入有界重连。主动停止会先清理心跳和重连定时器，避免关闭回调再次拉起连接。连接由 OpenClaw 2026.7.1 标准 `gateway.startAccount` 生命周期托管；Socket `connected` 只表示传输可达，只有外部服务上报 `login_status=logged_in` 时 `probeAccount` 才通过并驱动 `/readyz` 业务就绪。
+`required=true` 时首次连接失败会中止插件启动；运行中断线进入有界重连。连接只有持续达到 `stableConnectionMs`，或收到 Pong、业务 heartbeat、`logged_in` 后，才清零连续重连计数，防止反复“刚连上就断开”绕过 `maxRetries`。主动停止会先清理心跳和重连定时器，避免关闭回调再次拉起连接。连接由 OpenClaw 2026.7.1 标准 `gateway.startAccount` 生命周期托管；Socket `connected` 只表示传输可达，只有外部服务上报 `login_status=logged_in` 时 `probeAccount` 才通过并驱动 `/readyz` 业务就绪。
 
 成功完成 Agent 调度与回复投递后，消息 ID 才写入状态目录中的有界 JSONL 日志；目录权限为 0700、文件权限为 0600，压缩通过同目录临时文件原子替换。Agent 失败时不提交记录，允许桥接服务重试；Gateway 重启后重放相同 `msgId` 不会再次调用模型或发送回复。
 

@@ -2,7 +2,7 @@
  * 抖音 Webhook 的跨进程安装态 E2E。
  *
  * 覆盖链路：tarball 安装 → Gateway 动态路由 → 挑战应答/验签 → 真实 Agent Turn →
- * `Msg-Id` 并发防重 → Gateway 重启后的持久化防重。测试不伪造抖音 OpenAPI 写操作。
+ * 持久 Inbox 故障留存/重启恢复 → `Msg-Id` 并发防重与持久防重。测试不伪造抖音 OpenAPI 写操作。
  */
 import { createHash } from "node:crypto";
 
@@ -100,10 +100,40 @@ export async function testDouyin(ctx, results) {
       if (ctx.modelFixture.metrics.completions !== completionsBefore + 1) {
         throw new Error("post-restart duplicate Msg-Id bypassed persistent deduplication");
       }
+
+      // 注入模型失败，验证 Webhook 仍在持久提交后快速 ACK，并且失败任务留在 Inbox 而非丢失。
+      const recoveryId = `douyin-e2e-recovery-${Date.now()}`;
+      const recoveryBody = JSON.stringify({
+        event: "life_service.message",
+        client_key: DOUYIN_E2E_CONFIG.app_key,
+        content: { from_user_id: "douyin-e2e-recovery-user", text: "验证持久 Inbox 重启恢复" },
+      });
+      ctx.modelFixture.controls.failNextCompletions = 10;
+      const recoveryAccepted = await postWebhook(ctx, recoveryBody, {
+        "x-douyin-signature": sign(recoveryBody),
+        "msg-id": recoveryId,
+      });
+      if (recoveryAccepted.status !== 200) {
+        throw new Error(`recovery webhook was not durably acknowledged: ${recoveryAccepted.status}`);
+      }
+      await ctx.waitFor(async () => {
+        const status = await ctx.gatewayFetch("/douyin/status");
+        return status.status === 200 && status.json?.inboxes?.default?.pending === 1;
+      }, { timeoutMs: 30_000, intervalMs: 100, label: "Douyin durable Inbox pending state" });
+
+      // 清除故障并重启 Gateway；新进程必须从 stateDir 恢复 pending 事件并完成一次 Agent Turn。
+      ctx.modelFixture.controls.failNextCompletions = 0;
+      const beforeRecovery = ctx.modelFixture.metrics.completions;
+      await ensureGatewayRunning();
+      await waitForCompletions(ctx, beforeRecovery + 1, "Douyin Inbox restart recovery");
+      await ctx.waitFor(async () => {
+        const status = await ctx.gatewayFetch("/douyin/status");
+        return status.status === 200 && status.json?.inboxes?.default?.pending === 0;
+      }, { timeoutMs: 30_000, intervalMs: 100, label: "Douyin durable Inbox drained state" });
     },
     {
       service: "local signed Douyin Webhook + OpenAI-compatible model fixture",
-      method: "tarball install + challenge/signature + Agent Turn + in-process/restart dedupe",
+      method: "tarball install + signed Webhook + durable Inbox restart recovery + persistent dedupe",
     },
     results,
   );

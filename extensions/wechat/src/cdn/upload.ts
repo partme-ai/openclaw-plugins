@@ -37,7 +37,9 @@ const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
 
 function assertRemoteMediaUrl(rawUrl: string): URL {
   const url = new URL(rawUrl);
-  if (url.protocol !== "https:") throw new Error("remote media URL must use HTTPS");
+  if (url.protocol !== "https:") {
+    throw new Error("remote media URL must use HTTPS");
+  }
   return url;
 }
 
@@ -45,7 +47,10 @@ function assertRemoteMediaUrl(rawUrl: string): URL {
  * Download a remote media URL (image, video, file) to a local temp file in destDir.
  * Returns the local file path; extension is inferred from Content-Type / URL.
  */
-export async function downloadRemoteImageToTemp(url: string, destDir: string): Promise<string> {
+export async function downloadRemoteImageToTemp(
+  url: string,
+  destDir: string,
+): Promise<string> {
   const safeUrl = assertRemoteMediaUrl(url);
   logger.debug(`downloadRemoteImageToTemp: fetching host=${safeUrl.host}`);
   // OpenClaw SSRF Guard 会在 DNS 解析、连接和每次重定向时重新校验目标地址，
@@ -89,10 +94,14 @@ export async function downloadRemoteImageToTemp(url: string, destDir: string): P
       }
       buf = Buffer.concat(chunks);
     }
-    if (buf.length > MAX_MEDIA_BYTES) throw new Error(`remote media exceeds ${MAX_MEDIA_BYTES} bytes`);
+    if (buf.length > MAX_MEDIA_BYTES)
+      throw new Error(`remote media exceeds ${MAX_MEDIA_BYTES} bytes`);
     logger.debug(`downloadRemoteImageToTemp: downloaded ${buf.length} bytes`);
     await fs.mkdir(destDir, { recursive: true });
-    const ext = getExtensionFromContentTypeOrUrl(res.headers.get("content-type"), url);
+    const ext = getExtensionFromContentTypeOrUrl(
+      res.headers.get("content-type"),
+      url,
+    );
     const name = tempFileName("weixin-remote", ext);
     const filePath = path.join(destDir, name);
     await fs.writeFile(filePath, buf);
@@ -100,6 +109,25 @@ export async function downloadRemoteImageToTemp(url: string, destDir: string): P
     return filePath;
   } finally {
     await release();
+  }
+}
+
+/**
+ * 在一次回调生命周期内使用远程媒体暂存文件。
+ *
+ * 调用方不接管文件所有权；上传成功、业务发送失败或回调抛错都会进入 `finally` 回收。
+ * 统一封装可避免 channel 主动发送与 Agent 自动回复中的清理语义发生漂移。
+ */
+export async function withRemoteMediaTempFile<T>(params: {
+  url: string;
+  destDir: string;
+  use: (filePath: string) => Promise<T>;
+}): Promise<T> {
+  const filePath = await downloadRemoteImageToTemp(params.url, params.destDir);
+  try {
+    return await params.use(filePath);
+  } finally {
+    await fs.unlink(filePath).catch(() => {});
   }
 }
 
@@ -115,7 +143,15 @@ async function uploadMediaToCdn(params: {
   mediaType: (typeof UploadMediaType)[keyof typeof UploadMediaType];
   label: string;
 }): Promise<UploadedFileInfo> {
-  const { filePath, toUserId, opts, cdnBaseUrl, mediaLocalRoots, mediaType, label } = params;
+  const {
+    filePath,
+    toUserId,
+    opts,
+    cdnBaseUrl,
+    mediaLocalRoots,
+    mediaType,
+    label,
+  } = params;
 
   // 读取必须经过 OpenClaw Path Guard，避免 Agent 被提示注入后把任意系统文件上传给用户。
   const plaintext = await readWeixinLocalMedia({
@@ -129,9 +165,7 @@ async function uploadMediaToCdn(params: {
   const filekey = crypto.randomBytes(16).toString("hex");
   const aeskey = crypto.randomBytes(16);
 
-  logger.debug(
-    `${label}: rawsize=${rawsize} filesize=${filesize}`,
-  );
+  logger.debug(`${label}: rawsize=${rawsize} filesize=${filesize}`);
 
   const uploadUrlResp = await getUploadUrl({
     ...opts,
@@ -148,19 +182,22 @@ async function uploadMediaToCdn(params: {
   const uploadFullUrl = uploadUrlResp.upload_full_url?.trim();
   const uploadParam = uploadUrlResp.upload_param;
   if (!uploadFullUrl && !uploadParam) {
-    logger.error(`${label}: getUploadUrl returned no upload URL (need upload_full_url or upload_param)`);
+    logger.error(
+      `${label}: getUploadUrl returned no upload URL (need upload_full_url or upload_param)`,
+    );
     throw new Error(`${label}: getUploadUrl returned no upload URL`);
   }
 
-  const { downloadParam: downloadEncryptedQueryParam } = await uploadBufferToCdn({
-    buf: plaintext,
-    uploadFullUrl: uploadFullUrl || undefined,
-    uploadParam: uploadParam ?? undefined,
-    filekey,
-    cdnBaseUrl,
-    aeskey,
-    label,
-  });
+  const { downloadParam: downloadEncryptedQueryParam } =
+    await uploadBufferToCdn({
+      buf: plaintext,
+      uploadFullUrl: uploadFullUrl || undefined,
+      uploadParam: uploadParam ?? undefined,
+      filekey,
+      cdnBaseUrl,
+      aeskey,
+      label,
+    });
 
   return {
     filekey,

@@ -7,6 +7,7 @@ import {
   listDouyinAccountIds,
   resolveDefaultDouyinAccountId,
   resolveDouyinAccount,
+  resolveDouyinWebhookInboxConfig,
 } from "../src/config.js";
 
 describe("resolveDouyinAccount", () => {
@@ -116,6 +117,28 @@ describe("resolveDouyinAccount", () => {
       "default",
     );
     expect(account.enabled).toBe(false);
+  });
+
+  it("validates durable webhook delivery bounds at runtime", () => {
+    const account = resolveDouyinAccount({
+      channels: {
+        douyin: {
+          app_key: "k",
+          app_secret: "s",
+          webhookDelivery: { maxPending: 25, maxAttempts: 7 },
+        },
+      },
+    }, "default");
+    expect(resolveDouyinWebhookInboxConfig(account)).toMatchObject({
+      maxPending: 25,
+      maxAttempts: 7,
+      initialDelayMs: 1000,
+    });
+
+    account.config.webhookDelivery = { maxAttempts: 0 };
+    expect(() => resolveDouyinWebhookInboxConfig(account)).toThrow(
+      "webhookDelivery.maxAttempts",
+    );
   });
 });
 

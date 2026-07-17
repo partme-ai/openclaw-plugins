@@ -4,11 +4,11 @@
 
 ## 能力边界
 
-- Webhook：校验 `X-Douyin-Signature = SHA1(app_secret + rawBody)`，校验 `client_key`，按账号持久化 `Msg-Id` 去重；仅在处理成功后提交，失败会释放以允许重试。
+- Webhook：校验 `X-Douyin-Signature = SHA1(app_secret + rawBody)` 和 `client_key`；事件必须先进入账号隔离的持久 Inbox，原子落盘成功后才返回 200。
 - 回调验证：对签名有效的 `verify_webhook` 返回 `{"challenge": ...}` JSON。
-- 事件处理：兼容 object 和 JSON 字符串两种 `content`；官方连接超过 5 秒会断开并最多重试 3 次，插件在验签与基础校验后立即确认，再异步进入 Agent Transcript 管线。
+- 事件处理：兼容 object 和 JSON 字符串两种 `content`；后台派发失败采用有限指数退避，Gateway 重启会恢复未完成事件，耗尽后进入有界 DLQ。
 - 访问控制：自定义 Webhook 在 Transcript 前显式执行 `dmPolicy`、`allowFrom`、pairing store 和 OpenClaw 命令授权；签名有效不等于发送者有权触发 Agent。
-- OpenAPI：缓存 `client_token`，合并并发刷新；Token 失效时刷新一次；查询类请求支持有限重试。
+- OpenAPI：`client_token` 使用最多 256 项的 LRU + single-flight 缓存；Token 失效时刷新一次；查询类请求支持有限重试；所有凭据请求禁止自动重定向。
 - 工具：实现官方订单查询、餐饮评价回复接口。
 - 多账号：支持顶层账号及 `accounts.<id>` 覆盖。
 
@@ -20,10 +20,15 @@
 抖音生活服务平台
         │ 签名 Webhook                         ▲ 官方 OpenAPI
         ▼                                      │
-原始报文验签 / client_key / 快速 ACK            │
+原始报文验签 / client_key                         │
         │                                      │
         ▼                                      │
-DM 与命令策略 ──▶ 持久 Msg-Id 去重 ──▶ OpenClaw Agent
+账号级持久 Inbox（0600 / 原子写 / 容量限制）      │
+        │ 落盘成功后 200                        │
+        ▼                                      │
+DM 与命令策略 ──▶ Msg-Id 去重 ──▶ OpenClaw Agent
+        │失败                                     │
+        └──▶ 指数退避 ──▶ DLQ ──▶ 管理员重放      │
                                               │
                                               ▼
                           订单查询 / 评价回复 Tool ──▶ Token 缓存
@@ -33,22 +38,26 @@ DM 与命令策略 ──▶ 持久 Msg-Id 去重 ──▶ OpenClaw Agent
 flowchart LR
     Platform["抖音生活服务平台"]
     Webhook["Webhook 路由<br/>原始报文签名 + client_key"]
-    Dedupe[("按账号持久 Msg-Id 去重")]
-    Ack["2.5 秒窗口内确认接收"]
-    Dispatch["异步 Transcript Dispatch"]
+    Inbox[("账号级持久 Inbox<br/>原子写 + 容量限制")]
+    Ack["持久提交后确认接收"]
+    Dispatch["后台 Transcript Dispatch"]
     Policy{"DM / 命令访问策略"}
     Agent["OpenClaw Agent"]
+    Retry["有限指数退避"]
+    DLQ[("有界 DLQ<br/>管理员重放")]
     Tools["订单查询 / 评价回复工具"]
     Token["client_token single-flight 缓存"]
     Api["官方生活服务 OpenAPI"]
 
-    Platform -->|"事件回调"| Webhook --> Ack
-    Webhook -->|"异步启动"| Dispatch --> Policy --> Dedupe --> Agent
+    Platform -->|"事件回调"| Webhook --> Inbox --> Ack
+    Inbox --> Dispatch --> Policy --> Dedupe[("按账号持久 Msg-Id 去重")] --> Agent
+    Dispatch -->|"失败 / 超时"| Retry --> Dispatch
+    Retry -->|"耗尽"| DLQ -->|"显式重放"| Inbox
     Agent --> Tools --> Token --> Api
     Api -->|"业务响应"| Tools
 ```
 
-Webhook 入站与 OpenAPI 业务动作是两条不同链路：前者成功进入 Agent 后才提交去重，后者按接口幂等属性决定是否允许重试。
+Webhook 入站与 OpenAPI 业务动作是两条不同链路：前者先持久接管、再异步派发，后者按接口幂等属性决定是否允许重试。Inbox 文件位于 OpenClaw state 目录，目录权限 0700、文件权限 0600；消息成功或被策略终止后会从 Inbox 删除。
 
 ## Webhook 确认与去重时序
 
@@ -57,6 +66,7 @@ sequenceDiagram
     autonumber
     participant D as 抖音平台
     participant H as Webhook Handler
+    participant I as 持久 Inbox
     participant P as DM/命令策略
     participant Q as 持久去重器
     participant A as OpenClaw Agent
@@ -66,24 +76,33 @@ sequenceDiagram
     alt 校验失败
         H-->>D: 4xx，不进入 Agent
     else 校验通过
-        H-->>D: 200 success（不等待 Agent）
-        H->>P: dmPolicy + allowFrom + pairing + command auth
+        H->>I: 原子写入 Msg-Id + 原始事件
+        alt 磁盘/容量失败
+            I-->>H: 未接管
+            H-->>D: 503，请平台重投
+        else 持久提交成功
+            H-->>D: 200 success（不等待 Agent）
+            I->>P: 后台 dmPolicy + allowFrom + pairing + command auth
         alt 未授权
-            P-->>H: blocked，不触发 Agent
+                P-->>I: blocked，删除 Inbox 条目
         else 已授权
-            H->>Q: claim(accountId, Msg-Id)
+                I->>Q: claim(accountId, Msg-Id)
             alt 已提交或正在处理
-                Q-->>H: duplicate，停止
+                    Q-->>I: duplicate，删除 Inbox 条目
             else 认领成功
-                H->>A: Transcript Dispatch
+                    I->>A: Transcript Dispatch
                 alt Agent 完成
-                    A-->>H: 完成
-                    H->>Q: commit，24 小时防重放
+                        A-->>I: 完成
+                        I->>Q: commit，24 小时防重放
+                        I->>I: 删除 Inbox 条目
                 else 失败或超时
-                    A-->>H: error / timeout
-                    H->>Q: release，允许后续重试
+                        A-->>I: error / timeout
+                        I->>Q: release
+                        I->>I: 指数退避；耗尽后进入 DLQ
+                    end
                 end
             end
+        end
         end
     end
 ```
@@ -114,6 +133,14 @@ flowchart TD
       "webhook_path": "/channels/douyin/webhook",
       "callback_url": "https://example.com/channels/douyin/webhook",
       "request_timeout_ms": 10000,
+      "webhookDelivery": {
+        "maxPending": 1000,
+        "maxAttempts": 5,
+        "initialDelayMs": 1000,
+        "maxDelayMs": 60000,
+        "maxDeadLetters": 100,
+        "maxStateBytes": 33554432
+      },
       "dmPolicy": "open"
     }
   }
@@ -126,6 +153,23 @@ flowchart TD
 - `allowlist`：仅允许 `allowFrom` 或已批准 pairing store 中的发送者。
 - `pairing`：未知发送者只创建 OpenClaw pairing 请求，本次事件不进入 Agent。生活服务 Webhook 没有通用被动回复能力，插件不会把配对码泄露到 HTTP 响应或日志；管理员通过 OpenClaw pairing 命令查看并批准。
 - `disabled`：所有入站事件在 Agent 前被拒绝，但仍对已验签平台请求快速 ACK，防止无意义重投。
+
+## Inbox 运维
+
+```text
+GET  /douyin/status
+        │ 查看各账号 pending / DLQ / 最老积压 / 最近错误
+        ▼
+确认故障已经修复
+        │
+        ▼
+POST /douyin/replay-dead-letters?account=default&limit=100
+        │
+        ▼
+DLQ ──原子迁回──▶ Pending Inbox ──▶ 后台重新派发
+```
+
+两个端点都要求 OpenClaw Gateway 管理员认证，不返回消息正文、用户 ID 或凭据。`maxStateBytes` 同时约束 pending 与 DLQ 的完整持久文件，避免大报文乘以积压数量耗尽磁盘；容量或持久化失败时 Webhook 返回 503。
 
 `account_id` 是抖音来客商户根账户 ID；`poi_id` 是评价回复等接口需要的门店 ID。旧字段 `shop_id` 仅作为 `account_id` 的兼容回退，新配置不应继续使用。
 

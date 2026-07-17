@@ -1,7 +1,7 @@
 /**
  * Douyin plugin manifest and entry smoke tests.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -59,7 +59,19 @@ describe("douyin plugin entry", () => {
       },
       registrationMode: "full",
     });
+    const registerHttpRoute = vi.fn();
+    Object.assign(api, { registerHttpRoute });
     plugin.register(api as never);
     expect(api.registerTool).toHaveBeenCalled();
+    expect(registerHttpRoute).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/douyin/status", auth: "gateway", match: "exact" }),
+    );
+    expect(registerHttpRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "/douyin/replay-dead-letters",
+        auth: "gateway",
+        match: "exact",
+      }),
+    );
   });
 });

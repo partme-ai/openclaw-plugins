@@ -8,13 +8,14 @@ Security properties:
 
 - Remote endpoints require `wss://`, `https://`, and a bridge token; plaintext and tokenless operation are loopback-only.
 - WebSocket and HTTP endpoints must use the same host unless `allowSplitBridgeHosts=true` explicitly acknowledges token exposure to two hosts.
+- HTTP and WebSocket redirects are disabled, so the Bearer token is never forwarded beyond the validated configured endpoint.
 - The bridge token is sent as `Authorization: Bearer`, never in URLs or status output. `WECHAT_IPAD_BRIDGE_TOKEN` is supported.
 - Groups are disabled by default and require a non-empty allowlist unless `allowAllGroups=true` is explicit.
 - Direct messages default to `dmPolicy=allowlist`; `allowFrom` controls conversation ingress while the separate `commandAllowFrom` controls OpenClaw command authorization.
 - Agent turns pass through a bounded serial queue (`maxPendingMessages`) to preserve order and contain event floods.
 - Connection, request, payload, response, heartbeat, and text limits are configurable.
 - `/wechat-ipad/status` uses exact routing plus OpenClaw Gateway authentication and returns sanitized state only.
-- Managed start/stop lifecycle, instance-owned hot-reload cleanup, bounded exponential reconnect with jitter, and persistent message deduplication are included. Readiness requires a validated `login_status=logged_in`, not merely an open socket.
+- Managed start/stop lifecycle, instance-owned hot-reload cleanup, bounded exponential reconnect with jitter, and persistent message deduplication are included. A reconnect streak is reset only after `stableConnectionMs` or a healthy Pong, heartbeat, or `logged_in` signal, so rapid open-close flapping cannot bypass `maxRetries`. Readiness requires a validated `login_status=logged_in`, not merely an open socket.
 
 The text diagram is retained for terminals and raw Markdown; the Mermaid diagram is retained for rendered component relationships.
 
@@ -40,6 +41,30 @@ flowchart LR
 ```
 
 Transport and HTTP business errors are sanitized at the shared bridge boundary: URL userinfo, Bearer/Authorization/token fields, configured credentials, control characters, and overlong diagnostics do not pass through to logs or channel errors.
+
+```text
+validated serviceUrl / apiUrl
+             │
+             ▼
+      inject Bearer token
+             │
+             ├── WebSocket: followRedirects=false
+             └── HTTP: redirect=manual
+                         │
+                         ▼
+              treat every 3xx as failure
+```
+
+```mermaid
+flowchart TD
+    C["Validated configured endpoint"] --> T["Inject Bearer token"]
+    T --> W["WebSocket<br/>redirects disabled"]
+    T --> H["HTTP<br/>redirect=manual"]
+    W --> S["External bridge"]
+    H --> S
+    W -. "redirect" .-> X["Reject without forwarding token"]
+    H -. "3xx Location" .-> X
+```
 
 See [README.md](./README.md) for the complete configuration and external bridge contract.
 

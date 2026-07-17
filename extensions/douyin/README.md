@@ -2,9 +2,43 @@
 
 `@partme.ai/openclaw-douyin` integrates OpenClaw with Douyin Life Service merchant applications.
 
-It provides signed Webhook ingestion, cached `client_token` authentication, the official order-query API, and the catering review-reply API. Webhook `content` may be either an object or a JSON string; events are acknowledged within Douyin's callback window and dispatched asynchronously through the OpenClaw transcript pipeline.
+It provides signed Webhook ingestion, cached `client_token` authentication, the official order-query API, and the catering review-reply API. Webhook `content` may be either an object or a JSON string. A valid event is atomically persisted to an account-scoped Inbox before HTTP 200; background dispatch then uses bounded retries, restart recovery, and a bounded DLQ.
 
 The Life Service Webhook is not a symmetric direct-message protocol. Generic channel `sendText` therefore fails explicitly instead of returning a fake delivery result.
+
+## Architecture
+
+The character diagram is retained for terminals and raw Markdown; the Mermaid diagram provides the same boundary in rendered documentation.
+
+```text
+Douyin platform
+      │ signed Webhook
+      ▼
+signature / client_key / body limit
+      │
+      ▼
+durable account Inbox ──fsync──▶ HTTP 200
+      │
+      ▼
+access policy ──▶ Msg-Id dedupe ──▶ OpenClaw Agent
+      │ failure
+      └──▶ bounded retry ──▶ DLQ ──▶ admin replay
+
+Agent tools ──▶ 256-entry token LRU ──▶ official OpenAPI
+```
+
+```mermaid
+flowchart LR
+    P["Douyin Life Service"] -->|"signed Webhook"| V["signature, client_key<br/>and body validation"]
+    V --> I[("account-scoped durable Inbox")]
+    I -->|"atomic commit"| ACK["HTTP 200"]
+    I --> D["background dispatch"] --> A{"access policy"} --> Q[("persistent Msg-Id dedupe")] --> G["OpenClaw Agent"]
+    D -->|"failure / timeout"| R["bounded exponential retry"] --> D
+    R -->|"exhausted"| DLQ[("bounded DLQ")] -->|"authenticated admin replay"| I
+    G --> T["order / review tools"] --> C["256-entry client_token LRU"] --> API["official OpenAPI"]
+```
+
+If Inbox persistence or capacity checks fail, the handler returns 503 rather than acknowledging data it has not durably accepted. State is stored with 0700 directory and 0600 file permissions and is removed after terminal processing. `GET /douyin/status` exposes sanitized queue counts; authenticated administrators can replay dead letters with `POST /douyin/replay-dead-letters?account=default&limit=100`.
 
 ## Configuration
 
@@ -19,7 +53,15 @@ The Life Service Webhook is not a symmetric direct-message protocol. Generic cha
       "poi_id": "your_poi_id",
       "webhook_path": "/channels/douyin/webhook",
       "callback_url": "https://example.com/channels/douyin/webhook",
-      "request_timeout_ms": 10000
+      "request_timeout_ms": 10000,
+      "webhookDelivery": {
+        "maxPending": 1000,
+        "maxAttempts": 5,
+        "initialDelayMs": 1000,
+        "maxDelayMs": 60000,
+        "maxDeadLetters": 100,
+        "maxStateBytes": 33554432
+      }
     }
   }
 }
@@ -32,7 +74,7 @@ The Life Service Webhook is not a symmetric direct-message protocol. Generic cha
 - `douyin_query_orders` calls `GET /goodlife/v1/trade/order/query/` and requires `life.capacity.order.query`.
 - `douyin_reply_review` calls `POST /goodlife/v1/akte/comment/reply/` and requires `life.capacity.catering.comment` plus review-reply permission.
 
-OpenAPI credentials are sent using the official `access-token` header. Platform errors are surfaced to the tool caller rather than converted into empty successful results.
+OpenAPI credentials are sent using the official `access-token` header. Redirects are disabled so `client_secret` and access tokens are never forwarded to a 3xx target. The token cache is a bounded 256-entry LRU with concurrent refresh coalescing. Platform errors are surfaced to the tool caller rather than converted into empty successful results.
 
 ## Verification
 

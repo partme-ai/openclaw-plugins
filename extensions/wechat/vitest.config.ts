@@ -4,6 +4,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // 账号/游标兼容测试会 resetModules 后重新加载 OpenClaw 2026.7.1 的插件运行时；
+    // 并行覆盖率采集时首次模块图构建在较慢 CI 上可能超过 Vitest 默认 5 秒。
+    testTimeout: 15_000,
     include: ["test/**/*.test.ts"],
     coverage: {
       provider: "v8",

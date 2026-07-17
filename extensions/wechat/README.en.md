@@ -16,9 +16,9 @@
 
 ## Compatibility
 
-| Plugin Version | OpenClaw Version | Status |
-|----------------|------------------|--------|
-| 2026.7.1 | `>=2026.7.1` | Current baseline |
+| Plugin Version | OpenClaw Version | Status           |
+| -------------- | ---------------- | ---------------- |
+| 2026.7.1       | `>=2026.7.1`     | Current baseline |
 
 The plugin checks the host version at startup and refuses to load when the running OpenClaw version is outside the supported range.
 
@@ -72,13 +72,13 @@ openclaw gateway restart
 
 The plugin communicates with the backend gateway through HTTP JSON APIs. All endpoints use `POST` with JSON request and response bodies.
 
-| Endpoint | Path | Purpose |
-|----------|------|---------|
-| `getUpdates` | `getupdates` | Long-poll for new messages |
-| `sendMessage` | `sendmessage` | Send text, image, video, or file messages |
-| `getUploadUrl` | `getuploadurl` | Get CDN upload parameters |
-| `getConfig` | `getconfig` | Get account config such as typing ticket |
-| `sendTyping` | `sendtyping` | Send or cancel typing status |
+| Endpoint       | Path           | Purpose                                   |
+| -------------- | -------------- | ----------------------------------------- |
+| `getUpdates`   | `getupdates`   | Long-poll for new messages                |
+| `sendMessage`  | `sendmessage`  | Send text, image, video, or file messages |
+| `getUploadUrl` | `getuploadurl` | Get CDN upload parameters                 |
+| `getConfig`    | `getconfig`    | Get account config such as typing ticket  |
+| `sendTyping`   | `sendtyping`   | Send or cancel typing status              |
 
 Text send example:
 
@@ -99,7 +99,26 @@ Text send example:
 }
 ```
 
-Media messages use CDN parameters and AES-128-ECB encryption. See `src/api/types.ts` and `src/api/api.ts` for implementation details.
+Media messages use CDN parameters and AES-128-ECB encryption. Local files must stay under OpenClaw-managed roots or the account-level `mediaLocalRoots`; the Path Guard rejects traversal, symlink escapes, special files, and files above 100 MiB. HTTPS media downloads use OpenClaw's DNS/redirect-aware SSRF Guard, and plugin-created temporary files are removed on both success and failure. Server-provided upload URLs must match the configured CDN origin and `/upload` path; uploads reject redirects, time out after 30 seconds, never retry 4xx, and retry network/5xx failures at most three times.
+
+Each account may also define its own `routeTag`; the plugin propagates it as `SKRouteTag` to every iLink API call for that account:
+
+```json
+{
+  "channels": {
+    "openclaw-weixin": {
+      "accounts": {
+        "your-account-id": {
+          "routeTag": "shard-a",
+          "mediaLocalRoots": ["/data/openclaw/weixin-media"]
+        }
+      }
+    }
+  }
+}
+```
+
+See `src/api/types.ts` and `src/api/api.ts` for protocol details.
 
 ## Inbound transaction boundary
 
@@ -149,12 +168,12 @@ pnpm test
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| `requires OpenClaw >=2026.7.1` | Upgrade OpenClaw before enabling this plugin |
+| Symptom                         | Fix                                                                              |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `requires OpenClaw >=2026.7.1`  | Upgrade OpenClaw before enabling this plugin                                     |
 | Channel is OK but not connected | Ensure `plugins.entries.openclaw-weixin.enabled` is `true`, then restart Gateway |
-| Multiple accounts share context | Set `session.dmScope` to `per-account-channel-peer` |
-| Login session expired | Run `openclaw channels login --channel openclaw-weixin` again |
+| Multiple accounts share context | Set `session.dmScope` to `per-account-channel-peer`                              |
+| Login session expired           | Run `openclaw channels login --channel openclaw-weixin` again                    |
 
 ## Uninstall
 

@@ -18,12 +18,37 @@ import {
   listDouyinAccountIds,
   resolveDefaultDouyinAccountId,
   resolveDouyinAccount,
+  resolveDouyinWebhookInboxConfig,
 } from "./config.js";
 import { createDouyinPluginHttpHandler } from "./inbound.js";
+import { dispatchDouyinWebhookInbound } from "./dispatch/dispatch-inbound.js";
+import {
+  DouyinWebhookInbox,
+  type DouyinWebhookInboxStatus,
+} from "./dispatch/webhook-inbox.js";
+import { getDouyinRuntime } from "./runtime.js";
 import { douyinSetupAdapter, douyinSetupWizard } from "./onboarding.js";
 import type { ResolvedDouyinAccount } from "./types.js";
 
 const CHANNEL_ID = "douyin";
+/** 当前账号生命周期拥有的 Inbox；状态输出只暴露计数，不包含消息正文和发送者。 */
+const activeInboxes = new Map<string, DouyinWebhookInbox>();
+
+/** 返回所有活动账号的脱敏可靠投递摘要。 */
+export function getDouyinWebhookInboxStatus(): Record<string, DouyinWebhookInboxStatus> {
+  return Object.fromEntries(
+    [...activeInboxes.entries()].map(([accountId, inbox]) => [accountId, inbox.status()]),
+  );
+}
+
+/** 管理员按账号把有界数量的 DLQ 事件重新放回持久 Inbox。 */
+export async function replayDouyinWebhookDeadLetters(
+  accountId: string,
+  limit: number,
+): Promise<number | null> {
+  const inbox = activeInboxes.get(accountId);
+  return inbox ? inbox.replayDeadLetters(limit) : null;
+}
 
 const douyinHybridConfig = createHybridChannelConfigAdapter<ResolvedDouyinAccount>({
   sectionKey: CHANNEL_ID,
@@ -136,24 +161,53 @@ export function createDouyinChannelPlugin(): ChannelPlugin<ResolvedDouyinAccount
             );
           }
 
-          const handler = createDouyinPluginHttpHandler({ account, log });
-          // plugin 鉴权：由 OpenClaw Gateway 校验插件身份后再转发至 handler
-          const unregister = registerPluginHttpRoute({
-            path: account.webhook_path,
-            auth: "plugin",
-            pluginId: CHANNEL_ID,
-            accountId: account.accountId,
-            replaceExisting: false,
-            log: (m: string) => log?.info?.(m),
-            handler,
-          });
-
-          log?.info?.(`[douyin] registered HTTP ${account.webhook_path} (account ${account.accountId})`);
-
-          return waitUntilAbort(abortSignal, () => {
-            unregister();
+          const inbox = new DouyinWebhookInbox(
+            account.accountId,
+            resolveDouyinWebhookInboxConfig(account),
+            async (item) => {
+              const runtime = getDouyinRuntime();
+              // 每次重试重新读取配置快照，使恢复任务使用当前 bindings、策略和 Agent 路由。
+              const cfg = runtime.config.loadConfig() as Record<string, unknown>;
+              return dispatchDouyinWebhookInbound({
+                runtime,
+                cfg,
+                account,
+                rawBody: item.rawBody,
+                text: item.text,
+                peerId: item.peerId,
+                messageId: item.messageId,
+                log,
+              });
+            },
+            log,
+          );
+          await inbox.start();
+          activeInboxes.set(account.accountId, inbox);
+          let unregister: (() => void) | undefined;
+          try {
+            const handler = createDouyinPluginHttpHandler({ account, inbox, log });
+            // plugin 鉴权：由 OpenClaw Gateway 校验插件身份后再转发至 handler
+            unregister = registerPluginHttpRoute({
+              path: account.webhook_path,
+              auth: "plugin",
+              pluginId: CHANNEL_ID,
+              accountId: account.accountId,
+              replaceExisting: false,
+              log: (m: string) => log?.info?.(m),
+              handler,
+            });
+            log?.info?.(
+              `[douyin] registered durable HTTP ${account.webhook_path} (account ${account.accountId})`,
+            );
+            await waitUntilAbort(abortSignal);
+          } finally {
+            unregister?.();
+            await inbox.stop();
+            if (activeInboxes.get(account.accountId) === inbox) {
+              activeInboxes.delete(account.accountId);
+            }
             log?.info?.(`[douyin] stopped account ${account.accountId}`);
-          });
+          }
         },
         stopAccount: async (ctx: DouyinGatewayCtx) => {
           ctx.log?.info?.(`[douyin] stopAccount ${ctx.accountId}`);

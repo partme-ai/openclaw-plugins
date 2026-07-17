@@ -18,9 +18,9 @@
 
 ## 兼容性
 
-| 插件版本 | OpenClaw 版本 | 状态 |
-|---------|---------------|------|
-| 2026.7.1 | `>=2026.7.1` | 当前基线 |
+| 插件版本 | OpenClaw 版本 | 状态     |
+| -------- | ------------- | -------- |
+| 2026.7.1 | `>=2026.7.1`  | 当前基线 |
 
 插件启动时会检查宿主版本。如果运行的 OpenClaw 版本不满足要求，插件会拒绝加载。
 
@@ -170,22 +170,22 @@ sequenceDiagram
 
 通用请求头：
 
-| Header | 说明 |
-|--------|------|
-| `Content-Type` | `application/json` |
-| `AuthorizationType` | 固定值 `ilink_bot_token` |
-| `Authorization` | `Bearer <TOKEN>` |
-| `X-WECHAT-UIN` | 随机 uint32 的 base64 编码 |
+| Header              | 说明                       |
+| ------------------- | -------------------------- |
+| `Content-Type`      | `application/json`         |
+| `AuthorizationType` | 固定值 `ilink_bot_token`   |
+| `Authorization`     | `Bearer <TOKEN>`           |
+| `X-WECHAT-UIN`      | 随机 uint32 的 base64 编码 |
 
 接口列表：
 
-| 接口 | 路径 | 用途 |
-|------|------|------|
-| `getUpdates` | `getupdates` | 长轮询获取新消息 |
-| `sendMessage` | `sendmessage` | 发送文本、图片、视频或文件 |
-| `getUploadUrl` | `getuploadurl` | 获取 CDN 上传预签名参数 |
-| `getConfig` | `getconfig` | 获取账号配置，例如 typing ticket |
-| `sendTyping` | `sendtyping` | 发送或取消输入状态 |
+| 接口           | 路径           | 用途                             |
+| -------------- | -------------- | -------------------------------- |
+| `getUpdates`   | `getupdates`   | 长轮询获取新消息                 |
+| `sendMessage`  | `sendmessage`  | 发送文本、图片、视频或文件       |
+| `getUploadUrl` | `getuploadurl` | 获取 CDN 上传预签名参数          |
+| `getConfig`    | `getconfig`    | 获取账号配置，例如 typing ticket |
+| `sendTyping`   | `sendtyping`   | 发送或取消输入状态               |
 
 文本发送示例：
 
@@ -211,8 +211,27 @@ sequenceDiagram
 1. 计算原文件明文大小、MD5 和 AES-128-ECB 加密后的密文大小。
 2. 图片/视频需要额外计算缩略图参数。
 3. 调用 `getuploadurl` 获取 `upload_param` 和可选的 `thumb_upload_param`。
-4. 加密后 PUT 上传到 CDN。
+4. 校验上传地址与配置的 CDN 同源且路径固定为 `/upload`，再用禁止重定向、30 秒超时的 POST 上传密文；4xx 不重试，网络/5xx 最多重试 3 次。
 5. 用返回的 `encrypt_query_param` 和 `aes_key` 构造媒体消息并调用 `sendmessage`。
+
+本地媒体必须位于 OpenClaw 默认受管目录或账号级 `mediaLocalRoots`；Path Guard 会拒绝目录穿越、符号链接逃逸、特殊文件和超过 100 MiB 的文件。HTTPS 远程媒体通过 OpenClaw SSRF Guard 下载，校验 DNS、目标 IP 和每次重定向；插件创建的临时文件在成功或失败后都会回收。
+
+多账号可以分别配置 `routeTag`，该值会进入当前账号所有 iLink API 请求的 `SKRouteTag`，不会复用进程首次读取的顶层值：
+
+```json
+{
+  "channels": {
+    "openclaw-weixin": {
+      "accounts": {
+        "your-account-id": {
+          "routeTag": "shard-a",
+          "mediaLocalRoots": ["/data/openclaw/weixin-media"]
+        }
+      }
+    }
+  }
+}
+```
 
 完整类型定义见 `src/api/types.ts`，API 调用实现见 `src/api/api.ts`。
 
