@@ -32,9 +32,10 @@ flowchart LR
 统一规则：
 
 - 目录名、`openclaw.plugin.json#id`、运行时插件 ID 必须是同一个短 kebab-case ID。
-- npm 包默认命名为 `@partme.ai/openclaw-<plugin-id>`。
-- `weixin`、`wechat-ipad`、`wecom`、`wecom-kf` 是显式登记的独立品牌包。
+- npm 已发布包名是独立的安装契约，本次保持不变：例如仍安装 `@partme.ai/openclaw-nacos`，其插件 ID 使用 `nacos`。
+- npm 包默认命名为 `@partme.ai/openclaw-<plugin-id>`；`weixin`、`wechat-ipad`、`wecom`、`wecom-kf` 是显式登记的独立品牌包。
 - Channel ID 属于外部协议层，可以与插件 ID 不同。例如微信插件 ID 是 `wechat`，Channel ID 仍是 `openclaw-weixin`。
+- manifest ID 简写会改变 `plugins.entries`、`plugins.allow` 和 `plugins.deny` 中的配置键，因此必须通过下文迁移工具升级，不能只替换 manifest。
 - 跨插件可见的服务 ID、Tool 名和协议名应保留命名空间，防止全局冲突。
 
 ## 2. 历史 ID 迁移表
@@ -86,7 +87,7 @@ node scripts/migrate-plugin-config-ids.mjs --config /path/to/openclaw.json
 node scripts/migrate-plugin-config-ids.mjs --config /path/to/openclaw.json --write
 ```
 
-微信插件需要特别区分两层配置：
+微信插件需要特别区分插件配置和 Channel 配置：
 
 ```json
 {
