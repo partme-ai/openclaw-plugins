@@ -44,8 +44,7 @@
     "LICENSE"
   ],
   "publishConfig": {
-    "access": "public",
-    "registry": "https://packages.aliyun.com/5fdc0afd99b59ba3c5ead757/npm/repo-cxytb/"
+    "access": "public"
   },
   "openclaw": {
     "extensions": [

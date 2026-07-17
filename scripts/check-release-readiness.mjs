@@ -80,6 +80,10 @@ for (const pluginDir of pluginDirs) {
   if (pkg.version !== TARGET_RELEASE_VERSION) {
     fail(packagePath, `version must be ${TARGET_RELEASE_VERSION} for this release, got ${pkg.version}`);
   }
+  const publishRegistry = pkg.publishConfig?.registry;
+  if (publishRegistry && publishRegistry !== "https://registry.npmjs.org") {
+    fail(packagePath, `publishConfig.registry must target npmjs, got ${publishRegistry}`);
+  }
   if (inventoryEntry && inventoryEntry.filter !== pkg.name) {
     fail(packagePath, `inventory filter ${inventoryEntry.filter} must match package name ${pkg.name}`);
   }
