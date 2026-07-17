@@ -1,5 +1,117 @@
 # OpenClaw Router
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Provides recoverable and observable cross-channel forwarding. Component type: **Reliable cross-channel router**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-router` |
+| Version | `2026.7.1` |
+| Plugin ID | `router` |
+| Channel ID | — |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/router` |
+
+## 2. At a glance
+
+```text
+[OpenClaw message events]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: router
+│ 1. Match rules, targets, and loop guards
+│ 2. Write to a durable outbox and deduplicate
+│ 3. Retry delivery and move failures to the DLQ
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[Target-channel messages and routing state]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+OpenClaw message events
+  │
+  ▼
+Match rules, targets, and loop guards
+  │
+  ▼
+Write to a durable outbox and deduplicate
+  │
+  ▼
+Retry delivery and move failures to the DLQ
+  │
+  ▼
+Target-channel messages and routing state
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Provides recoverable and observable cross-channel forwarding |
+| Does not own | Does not alter target-channel authentication or send policy |
+| Input | OpenClaw message events |
+| Output | Target-channel messages and routing state |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-router@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | `plugins.entries.router.config` |
+| Channel configuration | Not applicable |
+| Configuration schema | `extensions/router/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-router" typecheck
+pnpm --filter "@partme.ai/openclaw-router" test
+pnpm --filter "@partme.ai/openclaw-router" build
+```
+
+- [Plugin architecture overview](../../doc/OpenClaw-Plugins-Architecture.md)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 > Production-oriented cross-channel routing with a durable outbox, retry/DLQ, persisted deduplication, audit, and loop protection.
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--router-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-router)

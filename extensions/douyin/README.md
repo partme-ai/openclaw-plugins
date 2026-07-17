@@ -1,5 +1,117 @@
 # Douyin Life Service plugin
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Connects Douyin messaging and allowlisted operation capabilities. Component type: **Public-platform IM channel**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-douyin` |
+| Version | `2026.7.1` |
+| Plugin ID | `douyin` |
+| Channel ID | `douyin` |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/douyin` |
+
+## 2. At a glance
+
+```text
+[Douyin webhooks and operation tools]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: douyin
+│ 1. Verify signature, policy, and deduplication
+│ 2. Map session and enter the Agent pipeline
+│ 3. Reply or act through Open Platform APIs
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[Douyin replies and controlled operation results]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+Douyin webhooks and operation tools
+  │
+  ▼
+Verify signature, policy, and deduplication
+  │
+  ▼
+Map session and enter the Agent pipeline
+  │
+  ▼
+Reply or act through Open Platform APIs
+  │
+  ▼
+Douyin replies and controlled operation results
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Connects Douyin messaging and allowlisted operation capabilities |
+| Does not own | Does not bypass platform permissions, moderation, or human approval |
+| Input | Douyin webhooks and operation tools |
+| Output | Douyin replies and controlled operation results |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-douyin@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | `plugins.entries.douyin.config` |
+| Channel configuration | `channels["douyin"]` |
+| Configuration schema | `extensions/douyin/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-douyin" typecheck
+pnpm --filter "@partme.ai/openclaw-douyin" test
+pnpm --filter "@partme.ai/openclaw-douyin" build
+```
+
+- [Plugin architecture overview](../../doc/OpenClaw-Plugins-Architecture.md)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 `@partme.ai/openclaw-douyin` integrates OpenClaw with Douyin Life Service merchant applications.
 
 It provides signed Webhook ingestion, cached `client_token` authentication, the official order-query API, and the catering review-reply API. Webhook `content` may be either an object or a JSON string. A valid event is atomically persisted to an account-scoped Inbox before HTTP 200; background dispatch then uses bounded retries, restart recovery, and a bounded DLQ.

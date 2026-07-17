@@ -1,5 +1,117 @@
 # OpenClaw WeChat iPad 中文说明
 
+<!-- README_STANDARD_START -->
+
+> 统一阅读顺序：组件定位 → 架构 → 流程 → 边界 → 安装 → 配置 → 运维 → 深入阅读。
+> 本区块以 npm 可稳定渲染的 text 图为主；适用时，更深入的 Mermaid 图保留在仓库 `doc/` 设计资料中。
+
+[简体中文](./README.md) | [English](./README.en.md)
+
+## 1. 组件定位
+
+仅桥接独立运行的协议服务，不在插件内实现协议。组件类型：**非官方桥接 IM Channel**。
+
+| 项目 | 内容 |
+|---|---|
+| npm 包 | `@partme.ai/wechat-ipad` |
+| 当前版本 | `2026.7.1` |
+| 插件 ID | `wechat-ipad` |
+| Channel ID | `wechat-ipad` |
+| OpenClaw | `>=2026.7.1` |
+| 源码目录 | `extensions/wechat-ipad` |
+
+## 2. 一眼看懂
+
+```text
+[独立 iPad 协议服务的 WebSocket/HTTP]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ OpenClaw Gateway 内: wechat-ipad
+│ 1. 校验桥接来源、白名单与去重状态
+│ 2. 排队处理消息并运行 Agent
+│ 3. 调用桥接 HTTP API 回复并持久化结果
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[微信消息与桥接健康状态]
+```
+
+## 3. 架构与核心流程
+
+该组件把“协议/平台差异”限制在自身边界内，对 OpenClaw 暴露稳定的插件、Channel、Hook、Tool 或 Service 契约。
+
+```text
+独立 iPad 协议服务的 WebSocket/HTTP
+  │
+  ▼
+校验桥接来源、白名单与去重状态
+  │
+  ▼
+排队处理消息并运行 Agent
+  │
+  ▼
+调用桥接 HTTP API 回复并持久化结果
+  │
+  ▼
+微信消息与桥接健康状态
+
+异常路径: 任一步失败：记录可诊断错误并按组件策略重试、拒绝或降级
+```
+
+## 4. 能力与边界
+
+| 能力 | 说明 |
+|---|---|
+| 负责 | 仅桥接独立运行的协议服务，不在插件内实现协议 |
+| 不负责 | 非官方协议有封号与合规风险，不能等同官方生产通道 |
+| 输入 | 独立 iPad 协议服务的 WebSocket/HTTP |
+| 输出 | 微信消息与桥接健康状态 |
+| 失败原则 | 默认失败应可观测；鉴权、边界校验和持久化失败不得伪装成功 |
+
+## 5. 快速开始
+
+```bash
+openclaw plugins install "@partme.ai/wechat-ipad@2026.7.1"
+```
+
+安装后先按最小权限配置，再启动 Gateway；生产环境应在隔离配置目录中完成连通性、权限和失败恢复验证。
+
+## 6. 配置入口
+
+| 配置层 | 路径 |
+|---|---|
+| 插件配置 | `plugins.entries.wechat-ipad.config` |
+| Channel 配置 | `channels["wechat-ipad"]` |
+| 配置 Schema | `extensions/wechat-ipad/openclaw.plugin.json` |
+
+配置字段、环境变量与完整示例继续保留在下方原有详细说明中。
+
+## 7. 运维、安全与故障定位
+
+- 先确认 OpenClaw 版本、插件版本、manifest ID 与配置键一致。
+- 凭据使用环境变量或 SecretRef，不写入日志、仓库和示例明文。
+- 通过 Gateway 日志、插件健康状态及外部依赖状态分层定位问题。
+- 升级前备份状态数据；涉及游标、队列或索引时，必须验证重启恢复与重复投递语义。
+
+## 8. 验证与深入阅读
+
+```bash
+pnpm --filter "@partme.ai/wechat-ipad" typecheck
+pnpm --filter "@partme.ai/wechat-ipad" test
+pnpm --filter "@partme.ai/wechat-ipad" build
+```
+
+- [插件总体架构](../../doc/OpenClaw-Plugins-Architecture_CN.md)
+- [统一插件结构规范](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. 原有详细说明
+
+以下内容保留该组件原有的配置表、协议细节、示例和故障排查资料。
+
+<!-- README_STANDARD_END -->
+
+
 `@partme.ai/wechat-ipad` 是 OpenClaw 2026.7.1 的可选 Channel 插件，用于连接使用方自行部署的外部 iPad 协议服务。插件通过 WebSocket 接收入站事件，通过 HTTP API 发送消息；它不包含微信底层协议实现。
 
 > 这不是微信官方接口。只有同时设置 `enabled=true` 与 `acknowledgeUnofficialProtocolRisk=true` 才会建立连接。上线前必须使用隔离账号评估账号、合规、隐私和服务稳定性风险。

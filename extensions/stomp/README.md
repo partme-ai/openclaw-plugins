@@ -1,5 +1,117 @@
 # OpenClaw STOMP TCP
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Provides native TCP STOMP, topic bindings, and cumulative acknowledgement. Component type: **STOMP/TCP wire channel**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-stomp` |
+| Version | `2026.7.1` |
+| Plugin ID | `stomp` |
+| Channel ID | `stomp-tcp` |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/stomp` |
+
+## 2. At a glance
+
+```text
+[Native STOMP clients and brokers]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: stomp
+│ 1. Negotiate connection, subscriptions, and ACK mode
+│ 2. Parse frames, bind sessions, and run the Agent
+│ 3. Send frames and handle ACK/NACK
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[STOMP frames and delivery state]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+Native STOMP clients and brokers
+  │
+  ▼
+Negotiate connection, subscriptions, and ACK mode
+  │
+  ▼
+Parse frames, bind sessions, and run the Agent
+  │
+  ▼
+Send frames and handle ACK/NACK
+  │
+  ▼
+STOMP frames and delivery state
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Provides native TCP STOMP, topic bindings, and cumulative acknowledgement |
+| Does not own | Does not provide a full general-purpose broker or JMS implementation |
+| Input | Native STOMP clients and brokers |
+| Output | STOMP frames and delivery state |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-stomp@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | `plugins.entries.stomp.config` |
+| Channel configuration | `channels["stomp-tcp"]` |
+| Configuration schema | `extensions/stomp/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-stomp" typecheck
+pnpm --filter "@partme.ai/openclaw-stomp" test
+pnpm --filter "@partme.ai/openclaw-stomp" build
+```
+
+- [Plugin architecture overview](../../doc/OpenClaw-Plugins-Architecture.md)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 Authenticated STOMP 1.2 over native TCP/TLS for OpenClaw 2026.7.1. This embedded channel accepts bounded STOMP connections, routes `SEND` frames to configured Agents, and returns Agent replies through connection-scoped topics.
 
 [中文说明](README.zh-CN.md)

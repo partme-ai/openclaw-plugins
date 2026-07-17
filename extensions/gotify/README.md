@@ -1,5 +1,117 @@
 # OpenClaw Gotify
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Provides bidirectional Gotify messaging, backlog recovery, and diagnostics. Component type: **Push-notification IM channel**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-gotify` |
+| Version | `2026.7.1` |
+| Plugin ID | `gotify` |
+| Channel ID | `gotify` |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/gotify` |
+
+## 2. At a glance
+
+```text
+[Gotify REST messages and WebSocket stream]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: gotify
+│ 1. Resolve account, cursor, and access policy
+│ 2. Consume inbound messages and run the Agent
+│ 3. Send replies through the Application API
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[Gotify notifications and recoverable consumption state]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+Gotify REST messages and WebSocket stream
+  │
+  ▼
+Resolve account, cursor, and access policy
+  │
+  ▼
+Consume inbound messages and run the Agent
+  │
+  ▼
+Send replies through the Application API
+  │
+  ▼
+Gotify notifications and recoverable consumption state
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Provides bidirectional Gotify messaging, backlog recovery, and diagnostics |
+| Does not own | Does not manage Gotify Server users or its Go plugin system |
+| Input | Gotify REST messages and WebSocket stream |
+| Output | Gotify notifications and recoverable consumption state |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-gotify@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | `plugins.entries.gotify.config` |
+| Channel configuration | `channels["gotify"]` |
+| Configuration schema | `extensions/gotify/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-gotify" typecheck
+pnpm --filter "@partme.ai/openclaw-gotify" test
+pnpm --filter "@partme.ai/openclaw-gotify" build
+```
+
+- [gotify deep-design documents](../../doc/gotify/)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 **OpenClaw plugin — Gotify channel bridge with Message API delivery, WebSocket stream inbound handling, and bootstrap helpers**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--gotify-blue)

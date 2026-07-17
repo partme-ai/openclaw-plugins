@@ -1,5 +1,117 @@
 # OpenClaw mTLS
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Provides a mutual-TLS identity boundary in front of the Gateway. Component type: **Security reverse proxy**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-mtls` |
+| Version | `2026.7.1` |
+| Plugin ID | `mtls` |
+| Channel ID | — |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/mtls` |
+
+## 2. At a glance
+
+```text
+[TLS client connections]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: mtls
+│ 1. Validate certificate chain and client identity
+│ 2. Overwrite trusted identity headers and remove spoofed values
+│ 3. Proxy HTTP and WebSocket traffic to Gateway
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[Authenticated Gateway requests]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+TLS client connections
+  │
+  ▼
+Validate certificate chain and client identity
+  │
+  ▼
+Overwrite trusted identity headers and remove spoofed values
+  │
+  ▼
+Proxy HTTP and WebSocket traffic to Gateway
+  │
+  ▼
+Authenticated Gateway requests
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Provides a mutual-TLS identity boundary in front of the Gateway |
+| Does not own | Does not issue certificates or replace Gateway authorization |
+| Input | TLS client connections |
+| Output | Authenticated Gateway requests |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-mtls@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | `plugins.entries.mtls.config` |
+| Channel configuration | Not applicable |
+| Configuration schema | `extensions/mtls/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-mtls" typecheck
+pnpm --filter "@partme.ai/openclaw-mtls" test
+pnpm --filter "@partme.ai/openclaw-mtls" build
+```
+
+- [Plugin architecture overview](../../doc/OpenClaw-Plugins-Architecture.md)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 **OpenClaw plugin — mTLS (Mutual TLS) bidirectional certificate authentication**
 
 ![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--mtls-blue)

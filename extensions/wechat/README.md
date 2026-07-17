@@ -12,6 +12,118 @@
 
 </div>
 
+<!-- README_STANDARD_START -->
+
+> 统一阅读顺序：组件定位 → 架构 → 流程 → 边界 → 安装 → 配置 → 运维 → 深入阅读。
+> 本区块以 npm 可稳定渲染的 text 图为主；适用时，更深入的 Mermaid 图保留在仓库 `doc/` 设计资料中。
+
+[简体中文](./README.md) | [English](./README.en.md)
+
+## 1. 组件定位
+
+提供扫码登录、长轮询、媒体和多账号会话。组件类型：**微信 IM Channel**。
+
+| 项目 | 内容 |
+|---|---|
+| npm 包 | `@partme.ai/weixin` |
+| 当前版本 | `2026.7.1` |
+| 插件 ID | `wechat` |
+| Channel ID | `openclaw-weixin` |
+| OpenClaw | `>=2026.7.1` |
+| 源码目录 | `extensions/wechat` |
+
+## 2. 一眼看懂
+
+```text
+[微信 iLink 长轮询消息]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ OpenClaw Gateway 内: wechat
+│ 1. 账号解析、配对/白名单与游标恢复
+│ 2. 下载受控媒体并运行 Agent
+│ 3. 通过 iLink API 发送回复并提交游标
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[微信消息与本地账号状态]
+```
+
+## 3. 架构与核心流程
+
+该组件把“协议/平台差异”限制在自身边界内，对 OpenClaw 暴露稳定的插件、Channel、Hook、Tool 或 Service 契约。
+
+```text
+微信 iLink 长轮询消息
+  │
+  ▼
+账号解析、配对/白名单与游标恢复
+  │
+  ▼
+下载受控媒体并运行 Agent
+  │
+  ▼
+通过 iLink API 发送回复并提交游标
+  │
+  ▼
+微信消息与本地账号状态
+
+异常路径: 任一步失败：记录可诊断错误并按组件策略重试、拒绝或降级
+```
+
+## 4. 能力与边界
+
+| 能力 | 说明 |
+|---|---|
+| 负责 | 提供扫码登录、长轮询、媒体和多账号会话 |
+| 不负责 | 不应把插件 ID `wechat` 与 Channel ID `openclaw-weixin` 混用 |
+| 输入 | 微信 iLink 长轮询消息 |
+| 输出 | 微信消息与本地账号状态 |
+| 失败原则 | 默认失败应可观测；鉴权、边界校验和持久化失败不得伪装成功 |
+
+## 5. 快速开始
+
+```bash
+openclaw plugins install "@partme.ai/weixin@2026.7.1"
+```
+
+安装后先按最小权限配置，再启动 Gateway；生产环境应在隔离配置目录中完成连通性、权限和失败恢复验证。
+
+## 6. 配置入口
+
+| 配置层 | 路径 |
+|---|---|
+| 插件配置 | `plugins.entries.wechat.config` |
+| Channel 配置 | `channels["openclaw-weixin"]` |
+| 配置 Schema | `extensions/wechat/openclaw.plugin.json` |
+
+配置字段、环境变量与完整示例继续保留在下方原有详细说明中。
+
+## 7. 运维、安全与故障定位
+
+- 先确认 OpenClaw 版本、插件版本、manifest ID 与配置键一致。
+- 凭据使用环境变量或 SecretRef，不写入日志、仓库和示例明文。
+- 通过 Gateway 日志、插件健康状态及外部依赖状态分层定位问题。
+- 升级前备份状态数据；涉及游标、队列或索引时，必须验证重启恢复与重复投递语义。
+
+## 8. 验证与深入阅读
+
+```bash
+pnpm --filter "@partme.ai/weixin" typecheck
+pnpm --filter "@partme.ai/weixin" test
+pnpm --filter "@partme.ai/weixin" build
+```
+
+- [插件总体架构](../../doc/OpenClaw-Plugins-Architecture_CN.md)
+- [统一插件结构规范](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. 原有详细说明
+
+以下内容保留该组件原有的配置表、协议细节、示例和故障排查资料。
+
+<!-- README_STANDARD_END -->
+
+
 `@partme.ai/weixin` 用于把个人微信账号接入 OpenClaw。插件通过扫码完成登录授权，登录凭据保存在本地，可同时维护多个微信账号，并把私聊消息转成 OpenClaw Agent 可处理的会话。
 
 > 说明：本插件面向需要个人微信通道的中国用户。生产客服、企业合规和主动外呼场景优先评估企业微信官方能力，例如 `@partme.ai/wecom` 或 `@partme.ai/wecom-kf`。
@@ -71,7 +183,7 @@ openclaw channels login --channel openclaw-weixin
 
 终端会显示二维码。用手机微信扫码并确认授权，成功后登录凭据会自动保存到本地。
 
-> 插件 ID 与 Channel ID 均为 `openclaw-weixin`；仓库目录 `extensions/wechat` 仅保留历史命名。
+> 插件 ID 是 `wechat`，Channel ID 是 `openclaw-weixin`；配置时不要混用两者。
 
 4. 重启并检查：
 

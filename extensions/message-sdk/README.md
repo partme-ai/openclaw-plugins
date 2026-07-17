@@ -1,5 +1,117 @@
 # OpenClaw Message SDK
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Provides shared primitives for Wire and Transcript channels. Component type: **Shared message SDK**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-message-sdk` |
+| Version | `2026.7.1` |
+| Plugin ID | `message-sdk` |
+| Channel ID | — |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/message-sdk` |
+
+## 2. At a glance
+
+```text
+[Raw channel messages and media]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: message-sdk
+│ 1. Convert into UnifiedMessage and Envelope
+│ 2. Apply queue, idempotency, and media boundaries
+│ 3. Bridge OpenClaw inbound and reply pipelines
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[Stable cross-plugin message contract]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+Raw channel messages and media
+  │
+  ▼
+Convert into UnifiedMessage and Envelope
+  │
+  ▼
+Apply queue, idempotency, and media boundaries
+  │
+  ▼
+Bridge OpenClaw inbound and reply pipelines
+  │
+  ▼
+Stable cross-plugin message contract
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Provides shared primitives for Wire and Transcript channels |
+| Does not own | It is not a standalone runtime channel |
+| Input | Raw channel messages and media |
+| Output | Stable cross-plugin message contract |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+npm install "@partme.ai/openclaw-message-sdk@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | No runtime plugin configuration; consumers install it as an SDK dependency |
+| Channel configuration | Not applicable |
+| Configuration schema | `extensions/message-sdk/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-message-sdk" typecheck
+pnpm --filter "@partme.ai/openclaw-message-sdk" test
+pnpm --filter "@partme.ai/openclaw-message-sdk" build
+```
+
+- [Plugin architecture overview](../../doc/OpenClaw-Plugins-Architecture.md)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 > Unified Message Format SDK — cross-channel message standard and shared utility library for all openclaw-plugins channel plugins.
 
 [![npm](https://img.shields.io/badge/npm-@partme.ai%2Fopenclaw--message--sdk-blue)](https://www.npmjs.com/package/@partme.ai/openclaw-message-sdk)

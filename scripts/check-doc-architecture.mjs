@@ -4,9 +4,9 @@
  * 中文文档可理解性门禁。
  *
  * 防止架构说明再次被压缩成跳转链接或纯文字短文，也防止插件中文 README 在重写时只留下
- * 宣传性描述：架构文档和中文 README 都必须同时有字符速览图与 Mermaid；README 还必须保留
- * 可复制的配置、命令或调用示例。门禁只检查资产是否存在，图与代码是否符合当前实现仍由评审
- * 和 E2E 负责。
+ * 宣传性描述。深度架构文档必须同时有字符速览图与 Mermaid；面向 npm 的中文 README
+ * 以字符图为必需项、Mermaid 为可选补充，并继续保留可复制的配置、命令或调用示例。
+ * 门禁只检查资产是否存在，图与代码是否符合当前实现仍由评审和 E2E 负责。
  */
 
 import fs from "node:fs";
@@ -95,7 +95,9 @@ for (const file of [...documents, ...pluginReadmes]) {
 
   if (lines < MIN_LINES) problems.push(`${relative}: 只有 ${lines} 行，原理说明过短`);
   if (!hasCharacterDiagram(source)) problems.push(`${relative}: 缺少字符架构/流程速览图`);
-  if (mermaidBlocks.length === 0) problems.push(`${relative}: 缺少 Mermaid 架构/流程图`);
+  if (isArchitectureDocument(file) && mermaidBlocks.length === 0) {
+    problems.push(`${relative}: 深度架构文档缺少 Mermaid 架构/流程图`);
+  }
   if (mermaidBlocks.some((match) => !match[1]?.trim())) problems.push(`${relative}: 存在空 Mermaid 图块`);
   if (fenceCount % 2 !== 0) problems.push(`${relative}: Markdown 代码围栏未闭合`);
   if (
@@ -108,11 +110,11 @@ for (const file of [...documents, ...pluginReadmes]) {
 
 console.log(
   `中文文档审计：${documents.length} 个架构文档 + ${pluginReadmes.length} 个插件 README，` +
-    `最低 ${MIN_LINES} 行，必须同时包含字符图与 Mermaid；README 必须包含代码示例。`,
+  `最低 ${MIN_LINES} 行；架构文档需字符图 + Mermaid，README 需字符图 + 代码示例。`,
 );
 if (problems.length > 0) {
   for (const problem of problems) console.error(`- ${problem}`);
   process.exitCode = 1;
 } else {
-  console.log("通过：所有目标文档均包含可视化图例、完整正文结构和所需代码示例。");
+  console.log("通过：深度文档保留双图例，npm README 以字符图为主并保留代码示例。");
 }

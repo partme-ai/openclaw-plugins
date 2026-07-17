@@ -1,5 +1,117 @@
 # OpenClaw STOMP TCP
 
+<!-- README_STANDARD_START -->
+
+> 统一阅读顺序：组件定位 → 架构 → 流程 → 边界 → 安装 → 配置 → 运维 → 深入阅读。
+> 本区块以 npm 可稳定渲染的 text 图为主；适用时，更深入的 Mermaid 图保留在仓库 `doc/` 设计资料中。
+
+[简体中文](./README.zh-CN.md) | [English](./README.md)
+
+## 1. 组件定位
+
+提供原生 TCP STOMP、Topic 绑定和累计确认。组件类型：**STOMP/TCP Wire Channel**。
+
+| 项目 | 内容 |
+|---|---|
+| npm 包 | `@partme.ai/openclaw-stomp` |
+| 当前版本 | `2026.7.1` |
+| 插件 ID | `stomp` |
+| Channel ID | `stomp-tcp` |
+| OpenClaw | `>=2026.7.1` |
+| 源码目录 | `extensions/stomp` |
+
+## 2. 一眼看懂
+
+```text
+[原生 STOMP Client / Broker]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ OpenClaw Gateway 内: stomp
+│ 1. 协商连接、订阅与 ACK 模式
+│ 2. 解析 Frame、绑定会话并运行 Agent
+│ 3. 发送 Frame 并处理 ACK/NACK
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[STOMP Frame 与交付状态]
+```
+
+## 3. 架构与核心流程
+
+该组件把“协议/平台差异”限制在自身边界内，对 OpenClaw 暴露稳定的插件、Channel、Hook、Tool 或 Service 契约。
+
+```text
+原生 STOMP Client / Broker
+  │
+  ▼
+协商连接、订阅与 ACK 模式
+  │
+  ▼
+解析 Frame、绑定会话并运行 Agent
+  │
+  ▼
+发送 Frame 并处理 ACK/NACK
+  │
+  ▼
+STOMP Frame 与交付状态
+
+异常路径: 任一步失败：记录可诊断错误并按组件策略重试、拒绝或降级
+```
+
+## 4. 能力与边界
+
+| 能力 | 说明 |
+|---|---|
+| 负责 | 提供原生 TCP STOMP、Topic 绑定和累计确认 |
+| 不负责 | 不提供完整通用 Broker 或 JMS 实现 |
+| 输入 | 原生 STOMP Client / Broker |
+| 输出 | STOMP Frame 与交付状态 |
+| 失败原则 | 默认失败应可观测；鉴权、边界校验和持久化失败不得伪装成功 |
+
+## 5. 快速开始
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-stomp@2026.7.1"
+```
+
+安装后先按最小权限配置，再启动 Gateway；生产环境应在隔离配置目录中完成连通性、权限和失败恢复验证。
+
+## 6. 配置入口
+
+| 配置层 | 路径 |
+|---|---|
+| 插件配置 | `plugins.entries.stomp.config` |
+| Channel 配置 | `channels["stomp-tcp"]` |
+| 配置 Schema | `extensions/stomp/openclaw.plugin.json` |
+
+配置字段、环境变量与完整示例继续保留在下方原有详细说明中。
+
+## 7. 运维、安全与故障定位
+
+- 先确认 OpenClaw 版本、插件版本、manifest ID 与配置键一致。
+- 凭据使用环境变量或 SecretRef，不写入日志、仓库和示例明文。
+- 通过 Gateway 日志、插件健康状态及外部依赖状态分层定位问题。
+- 升级前备份状态数据；涉及游标、队列或索引时，必须验证重启恢复与重复投递语义。
+
+## 8. 验证与深入阅读
+
+```bash
+pnpm --filter "@partme.ai/openclaw-stomp" typecheck
+pnpm --filter "@partme.ai/openclaw-stomp" test
+pnpm --filter "@partme.ai/openclaw-stomp" build
+```
+
+- [插件总体架构](../../doc/OpenClaw-Plugins-Architecture_CN.md)
+- [统一插件结构规范](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. 原有详细说明
+
+以下内容保留该组件原有的配置表、协议细节、示例和故障排查资料。
+
+<!-- README_STANDARD_END -->
+
+
 面向 OpenClaw 2026.7.1 的原生 TCP/TLS STOMP 1.2 渠道。插件接收有界的 STOMP 连接，将 `SEND` 帧路由到已配置的 Agent，并通过连接级主题返回 Agent 回复。
 
 [English](README.md)

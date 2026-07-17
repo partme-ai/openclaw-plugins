@@ -1,5 +1,117 @@
 # OpenClaw OpenMem
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Connects OpenMem as a pluggable memory backend. Component type: **External memory bridge**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-openmem` |
+| Version | `2026.7.1` |
+| Plugin ID | `openmem` |
+| Channel ID | — |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/openmem` |
+
+## 2. At a glance
+
+```text
+[OpenClaw memory queries and lifecycle events]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: openmem
+│ 1. Build tenant- and session-scoped requests
+│ 2. Call OpenMem HTTP recall or ingest
+│ 3. Bound, sanitize, and merge results
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[External memory context and ingest status]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+OpenClaw memory queries and lifecycle events
+  │
+  ▼
+Build tenant- and session-scoped requests
+  │
+  ▼
+Call OpenMem HTTP recall or ingest
+  │
+  ▼
+Bound, sanitize, and merge results
+  │
+  ▼
+External memory context and ingest status
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Connects OpenMem as a pluggable memory backend |
+| Does not own | Does not deploy OpenMem or bypass its tenant isolation |
+| Input | OpenClaw memory queries and lifecycle events |
+| Output | External memory context and ingest status |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-openmem@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | `plugins.entries.openmem.config` |
+| Channel configuration | Not applicable |
+| Configuration schema | `extensions/openmem/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-openmem" typecheck
+pnpm --filter "@partme.ai/openclaw-openmem" test
+pnpm --filter "@partme.ai/openclaw-openmem" build
+```
+
+- [Plugin architecture overview](../../doc/OpenClaw-Plugins-Architecture.md)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 Production-oriented OpenMem REST bridge for OpenClaw 2026.7.1.
 
 [简体中文](./README.zh-CN.md) | [English](./README.md)

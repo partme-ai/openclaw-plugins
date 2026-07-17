@@ -11,6 +11,118 @@
 
 </div>
 
+<!-- README_STANDARD_START -->
+
+> 统一阅读顺序：组件定位 → 架构 → 流程 → 边界 → 安装 → 配置 → 运维 → 深入阅读。
+> 本区块以 npm 可稳定渲染的 text 图为主；适用时，更深入的 Mermaid 图保留在仓库 `doc/` 设计资料中。
+
+[简体中文](./README.zh-CN.md) | [English](./README.md)
+
+## 1. 组件定位
+
+提供配置同步、回滚备份和 Gateway 注册。组件类型：**配置中心与服务发现**。
+
+| 项目 | 内容 |
+|---|---|
+| npm 包 | `@partme.ai/openclaw-nacos` |
+| 当前版本 | `2026.7.1` |
+| 插件 ID | `nacos` |
+| Channel ID | — |
+| OpenClaw | `>=2026.7.1` |
+| 源码目录 | `extensions/nacos` |
+
+## 2. 一眼看懂
+
+```text
+[Nacos Config / Naming]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ OpenClaw Gateway 内: nacos
+│ 1. 拉取并按层深度合并配置
+│ 2. 展开环境变量、校验并备份写盘
+│ 3. 注册 Gateway 并订阅节点变化
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[OpenClaw 配置与节点视图]
+```
+
+## 3. 架构与核心流程
+
+该组件把“协议/平台差异”限制在自身边界内，对 OpenClaw 暴露稳定的插件、Channel、Hook、Tool 或 Service 契约。
+
+```text
+Nacos Config / Naming
+  │
+  ▼
+拉取并按层深度合并配置
+  │
+  ▼
+展开环境变量、校验并备份写盘
+  │
+  ▼
+注册 Gateway 并订阅节点变化
+  │
+  ▼
+OpenClaw 配置与节点视图
+
+异常路径: 任一步失败：记录可诊断错误并按组件策略重试、拒绝或降级
+```
+
+## 4. 能力与边界
+
+| 能力 | 说明 |
+|---|---|
+| 负责 | 提供配置同步、回滚备份和 Gateway 注册 |
+| 不负责 | 不替代 Nacos Server 的高可用与权限治理 |
+| 输入 | Nacos Config / Naming |
+| 输出 | OpenClaw 配置与节点视图 |
+| 失败原则 | 默认失败应可观测；鉴权、边界校验和持久化失败不得伪装成功 |
+
+## 5. 快速开始
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-nacos@2026.7.1"
+```
+
+安装后先按最小权限配置，再启动 Gateway；生产环境应在隔离配置目录中完成连通性、权限和失败恢复验证。
+
+## 6. 配置入口
+
+| 配置层 | 路径 |
+|---|---|
+| 插件配置 | `plugins.entries.nacos.config` |
+| Channel 配置 | 不适用 |
+| 配置 Schema | `extensions/nacos/openclaw.plugin.json` |
+
+配置字段、环境变量与完整示例继续保留在下方原有详细说明中。
+
+## 7. 运维、安全与故障定位
+
+- 先确认 OpenClaw 版本、插件版本、manifest ID 与配置键一致。
+- 凭据使用环境变量或 SecretRef，不写入日志、仓库和示例明文。
+- 通过 Gateway 日志、插件健康状态及外部依赖状态分层定位问题。
+- 升级前备份状态数据；涉及游标、队列或索引时，必须验证重启恢复与重复投递语义。
+
+## 8. 验证与深入阅读
+
+```bash
+pnpm --filter "@partme.ai/openclaw-nacos" typecheck
+pnpm --filter "@partme.ai/openclaw-nacos" test
+pnpm --filter "@partme.ai/openclaw-nacos" build
+```
+
+- [nacos 深度设计文档](../../doc/nacos/)
+- [统一插件结构规范](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. 原有详细说明
+
+以下内容保留该组件原有的配置表、协议细节、示例和故障排查资料。
+
+<!-- README_STANDARD_END -->
+
+
 [简体中文](https://github.com/partme-ai/openclaw-nacos/blob/main/README.zh-CN.md) | [English](https://github.com/partme-ai/openclaw-nacos/blob/main/README.md)
 
 `@partme.ai/openclaw-nacos` 是为 [OpenClaw](https://github.com/openclaw/openclaw) 开发的 [Nacos](https://nacos.io/) 集成插件：提供 **命名注册**（Gateway / Hooks 服务发现）与可选的 **配置中心**（远程配置合并、写盘前备份、订阅变更）。推荐使用 OpenClaw CLI 安装到扩展目录；也可通过 npm 手动接入。

@@ -1,5 +1,117 @@
 # @partme.ai/openclaw-rednode
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Provides explicitly registered RedNote merchant API tools. Component type: **Capability tool**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-rednode` |
+| Version | `2026.7.1` |
+| Plugin ID | `rednode` |
+| Channel ID | — |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/rednode` |
+
+## 2. At a glance
+
+```text
+[Agent RedNote Ark operation]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: rednode
+│ 1. Validate operation allowlist, confirmation, and rate
+│ 2. Sign and call Ark Open API
+│ 3. Bound responses and redact Tool Results
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[Controlled Ark API results]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+Agent RedNote Ark operation
+  │
+  ▼
+Validate operation allowlist, confirmation, and rate
+  │
+  ▼
+Sign and call Ark Open API
+  │
+  ▼
+Bound responses and redact Tool Results
+  │
+  ▼
+Controlled Ark API results
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Provides explicitly registered RedNote merchant API tools |
+| Does not own | It is not a scraper, messaging channel, or moderation substitute |
+| Input | Agent RedNote Ark operation |
+| Output | Controlled Ark API results |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-rednode@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | `plugins.entries.rednode.config` |
+| Channel configuration | Not applicable |
+| Configuration schema | `extensions/rednode/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-rednode" typecheck
+pnpm --filter "@partme.ai/openclaw-rednode" test
+pnpm --filter "@partme.ai/openclaw-rednode" build
+```
+
+- [Plugin architecture overview](../../doc/OpenClaw-Plugins-Architecture.md)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 Allowlisted RED Ark Open API capability for OpenClaw 2026.7.1. It is not a messaging, content-publishing, or browser-automation channel.
 
 The client follows the official Ark contract: JSON requests, `timestamp` / `app-key` / `sign` headers, and MD5 of the API path plus sorted query/header parameters plus app-secret. Production uses `https://ark.xiaohongshu.com`; the explicitly selected sandbox uses `http://flssandbox.xiaohongshu.com`.

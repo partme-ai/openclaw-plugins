@@ -56,6 +56,18 @@ export function scanDocumentationText(source) {
       "legacy-manifest-id",
       issues,
     );
+    addMatches(
+      source,
+      new RegExp(`插件 ID[^\\n]{0,80}(?:均为|都是)[^\\n]{0,40}\`${id}\``, "g"),
+      "legacy-plugin-id-prose",
+      issues,
+    );
+    addMatches(
+      source,
+      new RegExp(`Plugin ID[^\\n]{0,80}(?:both|is)[^\\n]{0,40}\`${id}\``, "gi"),
+      "legacy-plugin-id-prose",
+      issues,
+    );
   }
   return issues;
 }
@@ -97,4 +109,3 @@ if (fileURLToPath(import.meta.url) === resolve(process.argv[1] ?? "")) {
   }
   console.log(`Documentation plugin ID check passed for ${result.checked} Markdown files.`);
 }
-

@@ -11,6 +11,118 @@
 
 </div>
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Provides configuration sync, rollback backups, and Gateway registration. Component type: **Configuration and service discovery**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-nacos` |
+| Version | `2026.7.1` |
+| Plugin ID | `nacos` |
+| Channel ID | — |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/nacos` |
+
+## 2. At a glance
+
+```text
+[Nacos Config and Naming]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: nacos
+│ 1. Pull and deep-merge configuration layers
+│ 2. Expand environment values, validate, back up, and write
+│ 3. Register the Gateway and subscribe to peer changes
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[OpenClaw configuration and peer view]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+Nacos Config and Naming
+  │
+  ▼
+Pull and deep-merge configuration layers
+  │
+  ▼
+Expand environment values, validate, back up, and write
+  │
+  ▼
+Register the Gateway and subscribe to peer changes
+  │
+  ▼
+OpenClaw configuration and peer view
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Provides configuration sync, rollback backups, and Gateway registration |
+| Does not own | Does not replace Nacos Server availability or access governance |
+| Input | Nacos Config and Naming |
+| Output | OpenClaw configuration and peer view |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-nacos@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | `plugins.entries.nacos.config` |
+| Channel configuration | Not applicable |
+| Configuration schema | `extensions/nacos/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-nacos" typecheck
+pnpm --filter "@partme.ai/openclaw-nacos" test
+pnpm --filter "@partme.ai/openclaw-nacos" build
+```
+
+- [nacos deep-design documents](../../doc/nacos/)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 [English](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/nacos/README.md) | [简体中文](https://github.com/partme-ai/openclaw-plugins/tree/main/extensions/nacos/README.zh-CN.md)
 
 ## 📖 Introduction

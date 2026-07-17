@@ -12,6 +12,118 @@
 
 </div>
 
+<!-- README_STANDARD_START -->
+
+> 统一阅读顺序：组件定位 → 架构 → 流程 → 边界 → 安装 → 配置 → 运维 → 深入阅读。
+> 本区块以 npm 可稳定渲染的 text 图为主；适用时，更深入的 Mermaid 图保留在仓库 `doc/` 设计资料中。
+
+[简体中文](./README.md) | [English](./README.en.md)
+
+## 1. 组件定位
+
+提供多 Agent 客服路由和隔离的控制类 Tools。组件类型：**企业微信客服 Channel**。
+
+| 项目 | 内容 |
+|---|---|
+| npm 包 | `@partme.ai/wecom-kf` |
+| 当前版本 | `2026.7.1` |
+| 插件 ID | `wecom-kf` |
+| Channel ID | `wecom-kf` |
+| OpenClaw | `>=2026.7.1` |
+| 源码目录 | `extensions/wecom-kf` |
+
+## 2. 一眼看懂
+
+```text
+[微信客服回调与 Sync 消息]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ OpenClaw Gateway 内: wecom-kf
+│ 1. 验签解密、游标持久化与客户/账号映射
+│ 2. 路由到指定 Agent 并生成回复
+│ 3. 发送客服消息或通过 Control Tool 转人工
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[客服会话、转人工状态与审计事件]
+```
+
+## 3. 架构与核心流程
+
+该组件把“协议/平台差异”限制在自身边界内，对 OpenClaw 暴露稳定的插件、Channel、Hook、Tool 或 Service 契约。
+
+```text
+微信客服回调与 Sync 消息
+  │
+  ▼
+验签解密、游标持久化与客户/账号映射
+  │
+  ▼
+路由到指定 Agent 并生成回复
+  │
+  ▼
+发送客服消息或通过 Control Tool 转人工
+  │
+  ▼
+客服会话、转人工状态与审计事件
+
+异常路径: 任一步失败：记录可诊断错误并按组件策略重试、拒绝或降级
+```
+
+## 4. 能力与边界
+
+| 能力 | 说明 |
+|---|---|
+| 负责 | 提供多 Agent 客服路由和隔离的控制类 Tools |
+| 不负责 | 控制面结果不进入 LLM transcript，且不替代人工客服流程 |
+| 输入 | 微信客服回调与 Sync 消息 |
+| 输出 | 客服会话、转人工状态与审计事件 |
+| 失败原则 | 默认失败应可观测；鉴权、边界校验和持久化失败不得伪装成功 |
+
+## 5. 快速开始
+
+```bash
+openclaw plugins install "@partme.ai/wecom-kf@2026.7.1"
+```
+
+安装后先按最小权限配置，再启动 Gateway；生产环境应在隔离配置目录中完成连通性、权限和失败恢复验证。
+
+## 6. 配置入口
+
+| 配置层 | 路径 |
+|---|---|
+| 插件配置 | `plugins.entries.wecom-kf.config` |
+| Channel 配置 | `channels["wecom-kf"]` |
+| 配置 Schema | `extensions/wecom-kf/openclaw.plugin.json` |
+
+配置字段、环境变量与完整示例继续保留在下方原有详细说明中。
+
+## 7. 运维、安全与故障定位
+
+- 先确认 OpenClaw 版本、插件版本、manifest ID 与配置键一致。
+- 凭据使用环境变量或 SecretRef，不写入日志、仓库和示例明文。
+- 通过 Gateway 日志、插件健康状态及外部依赖状态分层定位问题。
+- 升级前备份状态数据；涉及游标、队列或索引时，必须验证重启恢复与重复投递语义。
+
+## 8. 验证与深入阅读
+
+```bash
+pnpm --filter "@partme.ai/wecom-kf" typecheck
+pnpm --filter "@partme.ai/wecom-kf" test
+pnpm --filter "@partme.ai/wecom-kf" build
+```
+
+- [wecom-kf 深度设计文档](../../doc/wecom-kf/)
+- [统一插件结构规范](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. 原有详细说明
+
+以下内容保留该组件原有的配置表、协议细节、示例和故障排查资料。
+
+<!-- README_STANDARD_END -->
+
+
 `@partme.ai/wecom-kf` 将企业微信「微信客服」接入 OpenClaw，让 AI Agent 作为客服坐席自动接待来自公众号、小程序、视频号等入口的客户咨询，并在需要时转接人工客服。
 
 **范围声明**：本插件专注微信客服 KF API，包括回调、`sync_msg`、`send_msg`、事件消息、接待人员列表、客服账号列表、客服链接和会话分配。不包含客户联系 Bot/Agent、客服账号增删改、知识库管理、客户统计等运营后台功能。

@@ -10,6 +10,118 @@
 
 </div>
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Provides RabbitMQ topic routing and reliable consumption. Component type: **AMQP wire channel**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-rabbitmq` |
+| Version | `2026.7.1` |
+| Plugin ID | `rabbitmq` |
+| Channel ID | `rabbitmq` |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/rabbitmq` |
+
+## 2. At a glance
+
+```text
+[RabbitMQ exchanges and queues]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: rabbitmq
+│ 1. Declare topology, bindings, and acknowledgements
+│ 2. Decode, deduplicate, and route to the Agent
+│ 3. Encode replies and publish to an exchange
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[AMQP messages and Agent replies]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+RabbitMQ exchanges and queues
+  │
+  ▼
+Declare topology, bindings, and acknowledgements
+  │
+  ▼
+Decode, deduplicate, and route to the Agent
+  │
+  ▼
+Encode replies and publish to an exchange
+  │
+  ▼
+AMQP messages and Agent replies
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Provides RabbitMQ topic routing and reliable consumption |
+| Does not own | Does not replace broker clustering, DLX, or permission operations |
+| Input | RabbitMQ exchanges and queues |
+| Output | AMQP messages and Agent replies |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-rabbitmq@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | `plugins.entries.rabbitmq.config` |
+| Channel configuration | `channels["rabbitmq"]` |
+| Configuration schema | `extensions/rabbitmq/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-rabbitmq" typecheck
+pnpm --filter "@partme.ai/openclaw-rabbitmq" test
+pnpm --filter "@partme.ai/openclaw-rabbitmq" build
+```
+
+- [Plugin architecture overview](../../doc/OpenClaw-Plugins-Architecture.md)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
 ## 📖 Introduction

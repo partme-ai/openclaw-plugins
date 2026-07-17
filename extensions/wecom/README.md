@@ -12,6 +12,118 @@
 
 </div>
 
+<!-- README_STANDARD_START -->
+
+> 统一阅读顺序：组件定位 → 架构 → 流程 → 边界 → 安装 → 配置 → 运维 → 深入阅读。
+> 本区块以 npm 可稳定渲染的 text 图为主；适用时，更深入的 Mermaid 图保留在仓库 `doc/` 设计资料中。
+
+[简体中文](./README.md) | [English](./README.en.md)
+
+## 1. 组件定位
+
+提供多形态企业微信接入、媒体和业务 Skills。组件类型：**企业微信 IM Channel**。
+
+| 项目 | 内容 |
+|---|---|
+| npm 包 | `@partme.ai/wecom` |
+| 当前版本 | `2026.7.1` |
+| 插件 ID | `wecom` |
+| Channel ID | `wecom` |
+| OpenClaw | `>=2026.7.1` |
+| 源码目录 | `extensions/wecom` |
+
+## 2. 一眼看懂
+
+```text
+[企业微信 Bot、Agent 与 Webhook 事件]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ OpenClaw Gateway 内: wecom
+│ 1. 验签解密、账号/租户策略与去重
+│ 2. 组装 Transcript 并运行 Agent
+│ 3. 通过企业微信 API 发送文本、媒体或流式结果
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[企业微信消息、MCP/Skill 与运营状态]
+```
+
+## 3. 架构与核心流程
+
+该组件把“协议/平台差异”限制在自身边界内，对 OpenClaw 暴露稳定的插件、Channel、Hook、Tool 或 Service 契约。
+
+```text
+企业微信 Bot、Agent 与 Webhook 事件
+  │
+  ▼
+验签解密、账号/租户策略与去重
+  │
+  ▼
+组装 Transcript 并运行 Agent
+  │
+  ▼
+通过企业微信 API 发送文本、媒体或流式结果
+  │
+  ▼
+企业微信消息、MCP/Skill 与运营状态
+
+异常路径: 任一步失败：记录可诊断错误并按组件策略重试、拒绝或降级
+```
+
+## 4. 能力与边界
+
+| 能力 | 说明 |
+|---|---|
+| 负责 | 提供多形态企业微信接入、媒体和业务 Skills |
+| 不负责 | 不替代企业微信管理员授权、数据治理或知识插件 |
+| 输入 | 企业微信 Bot、Agent 与 Webhook 事件 |
+| 输出 | 企业微信消息、MCP/Skill 与运营状态 |
+| 失败原则 | 默认失败应可观测；鉴权、边界校验和持久化失败不得伪装成功 |
+
+## 5. 快速开始
+
+```bash
+openclaw plugins install "@partme.ai/wecom@2026.7.1"
+```
+
+安装后先按最小权限配置，再启动 Gateway；生产环境应在隔离配置目录中完成连通性、权限和失败恢复验证。
+
+## 6. 配置入口
+
+| 配置层 | 路径 |
+|---|---|
+| 插件配置 | `plugins.entries.wecom.config` |
+| Channel 配置 | `channels["wecom"]` |
+| 配置 Schema | `extensions/wecom/openclaw.plugin.json` |
+
+配置字段、环境变量与完整示例继续保留在下方原有详细说明中。
+
+## 7. 运维、安全与故障定位
+
+- 先确认 OpenClaw 版本、插件版本、manifest ID 与配置键一致。
+- 凭据使用环境变量或 SecretRef，不写入日志、仓库和示例明文。
+- 通过 Gateway 日志、插件健康状态及外部依赖状态分层定位问题。
+- 升级前备份状态数据；涉及游标、队列或索引时，必须验证重启恢复与重复投递语义。
+
+## 8. 验证与深入阅读
+
+```bash
+pnpm --filter "@partme.ai/wecom" typecheck
+pnpm --filter "@partme.ai/wecom" test
+pnpm --filter "@partme.ai/wecom" build
+```
+
+- [wecom 深度设计文档](../../doc/wecom/)
+- [统一插件结构规范](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. 原有详细说明
+
+以下内容保留该组件原有的配置表、协议细节、示例和故障排查资料。
+
+<!-- README_STANDARD_END -->
+
+
 `@partme.ai/wecom` 用于把 OpenClaw 接入企业微信。它面向中国企业微信用户，支持智能机器人 Bot WebSocket、Bot HTTP Webhook 和自建应用 Agent 三条路径：Bot 负责低门槛交互式对话与流式回复，Agent 负责主动推送、Cron 定时投递、部门/标签广播和完整文件兜底。
 
 当前插件包版本：`2026.7.1`。OpenClaw 兼容基线为 `>=2026.7.1`，依赖 `@partme.ai/openclaw-message-sdk`：`2026.7.1`。测试数量会随实现演进，请以当前 `pnpm test` 输出为准。

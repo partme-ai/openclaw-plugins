@@ -11,6 +11,118 @@
 
 </div>
 
+<!-- README_STANDARD_START -->
+
+> Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.
+> This block favors text diagrams that render reliably on npm; when applicable, deeper Mermaid diagrams remain in the repository's `doc/` design material.
+
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
+## 1. Component positioning
+
+Provides low-latency Pub/Sub and reliable stream paths. Component type: **Redis wire channel**.
+
+| Item | Value |
+|---|---|
+| npm package | `@partme.ai/openclaw-redis-stream` |
+| Version | `2026.7.1` |
+| Plugin ID | `redis-stream` |
+| Channel ID | `redis-stream` |
+| OpenClaw | `>=2026.7.1` |
+| Source | `extensions/redis-stream` |
+
+## 2. At a glance
+
+```text
+[Redis Pub/Sub and streams]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Inside OpenClaw Gateway: redis-stream
+│ 1. Read consumer groups, claim, and deduplicate
+│ 2. Decode and enter the Agent pipeline
+│ 3. Publish replies and acknowledge processing state
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[Redis messages and consumption cursors]
+```
+
+## 3. Architecture and core flow
+
+The component keeps protocol and platform differences inside its own boundary and exposes stable plugin, channel, hook, tool, or service contracts to OpenClaw.
+
+```text
+Redis Pub/Sub and streams
+  │
+  ▼
+Read consumer groups, claim, and deduplicate
+  │
+  ▼
+Decode and enter the Agent pipeline
+  │
+  ▼
+Publish replies and acknowledge processing state
+  │
+  ▼
+Redis messages and consumption cursors
+
+Failure path: Any failed stage: record a diagnosable error, then retry, reject, or degrade per component policy
+```
+
+## 4. Capabilities and boundaries
+
+| Area | Contract |
+|---|---|
+| Owns | Provides low-latency Pub/Sub and reliable stream paths |
+| Does not own | Does not replace Redis HA, persistence, or capacity planning |
+| Input | Redis Pub/Sub and streams |
+| Output | Redis messages and consumption cursors |
+| Failure rule | Failures remain observable; authentication, boundary validation, and persistence failures must not be reported as success |
+
+## 5. Quick start
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-redis-stream@2026.7.1"
+```
+
+Start with least-privilege configuration, then launch the Gateway. Validate connectivity, authorization, and recovery in an isolated profile before production use.
+
+## 6. Configuration entry points
+
+| Layer | Path |
+|---|---|
+| Plugin configuration | `plugins.entries.redis-stream.config` |
+| Channel configuration | `channels["redis-stream"]` |
+| Configuration schema | `extensions/redis-stream/openclaw.plugin.json` |
+
+Field definitions, environment variables, and complete examples remain in the preserved detailed reference below.
+
+## 7. Operations, security, and troubleshooting
+
+- Confirm the OpenClaw version, package version, manifest ID, and configuration key first.
+- Keep credentials in environment variables or SecretRef values, never in logs, source control, or plaintext examples.
+- Diagnose by layer: Gateway logs, plugin health, then the external dependency.
+- Back up state before upgrades; for cursors, queues, or indexes, verify restart recovery and duplicate-delivery semantics.
+
+## 8. Verification and deep dives
+
+```bash
+pnpm --filter "@partme.ai/openclaw-redis-stream" typecheck
+pnpm --filter "@partme.ai/openclaw-redis-stream" test
+pnpm --filter "@partme.ai/openclaw-redis-stream" build
+```
+
+- [redis-stream deep-design documents](../../doc/redis-stream/)
+- [Unified plugin structure standard](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. Preserved detailed reference
+
+The original configuration tables, protocol details, examples, and troubleshooting material continue below.
+
+<!-- README_STANDARD_END -->
+
+
 ---
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)

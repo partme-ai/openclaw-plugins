@@ -1,5 +1,117 @@
 # OpenClaw AMap 中文说明
 
+<!-- README_STANDARD_START -->
+
+> 统一阅读顺序：组件定位 → 架构 → 流程 → 边界 → 安装 → 配置 → 运维 → 深入阅读。
+> 本区块以 npm 可稳定渲染的 text 图为主；适用时，更深入的 Mermaid 图保留在仓库 `doc/` 设计资料中。
+
+[简体中文](./README.md)
+
+## 1. 组件定位
+
+提供有界、可审计的地点搜索能力。组件类型：**业务能力 Tool**。
+
+| 项目 | 内容 |
+|---|---|
+| npm 包 | `@partme.ai/openclaw-amap` |
+| 当前版本 | `2026.7.1` |
+| 插件 ID | `amap` |
+| Channel ID | — |
+| OpenClaw | `>=2026.7.1` |
+| 源码目录 | `extensions/amap` |
+
+## 2. 一眼看懂
+
+```text
+[Agent 地点检索请求]
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────┐
+│ OpenClaw Gateway 内: amap
+│ 1. 校验白名单操作与参数
+│ 2. 签名并调用高德 Web API
+│ 3. 限制并清洗 Tool Result
+└──────────────────────────────────────────────────────────────┘
+          │
+          ▼
+[结构化地点结果]
+```
+
+## 3. 架构与核心流程
+
+该组件把“协议/平台差异”限制在自身边界内，对 OpenClaw 暴露稳定的插件、Channel、Hook、Tool 或 Service 契约。
+
+```text
+Agent 地点检索请求
+  │
+  ▼
+校验白名单操作与参数
+  │
+  ▼
+签名并调用高德 Web API
+  │
+  ▼
+限制并清洗 Tool Result
+  │
+  ▼
+结构化地点结果
+
+异常路径: 任一步失败：记录可诊断错误并按组件策略重试、拒绝或降级
+```
+
+## 4. 能力与边界
+
+| 能力 | 说明 |
+|---|---|
+| 负责 | 提供有界、可审计的地点搜索能力 |
+| 不负责 | 不是地图 Channel，也不代理任意高德 API |
+| 输入 | Agent 地点检索请求 |
+| 输出 | 结构化地点结果 |
+| 失败原则 | 默认失败应可观测；鉴权、边界校验和持久化失败不得伪装成功 |
+
+## 5. 快速开始
+
+```bash
+openclaw plugins install "@partme.ai/openclaw-amap@2026.7.1"
+```
+
+安装后先按最小权限配置，再启动 Gateway；生产环境应在隔离配置目录中完成连通性、权限和失败恢复验证。
+
+## 6. 配置入口
+
+| 配置层 | 路径 |
+|---|---|
+| 插件配置 | `plugins.entries.amap.config` |
+| Channel 配置 | 不适用 |
+| 配置 Schema | `extensions/amap/openclaw.plugin.json` |
+
+配置字段、环境变量与完整示例继续保留在下方原有详细说明中。
+
+## 7. 运维、安全与故障定位
+
+- 先确认 OpenClaw 版本、插件版本、manifest ID 与配置键一致。
+- 凭据使用环境变量或 SecretRef，不写入日志、仓库和示例明文。
+- 通过 Gateway 日志、插件健康状态及外部依赖状态分层定位问题。
+- 升级前备份状态数据；涉及游标、队列或索引时，必须验证重启恢复与重复投递语义。
+
+## 8. 验证与深入阅读
+
+```bash
+pnpm --filter "@partme.ai/openclaw-amap" typecheck
+pnpm --filter "@partme.ai/openclaw-amap" test
+pnpm --filter "@partme.ai/openclaw-amap" build
+```
+
+- [插件总体架构](../../doc/OpenClaw-Plugins-Architecture_CN.md)
+- [统一插件结构规范](../../doc/OpenClaw-Plugins-Structure-Standard.md)
+
+## 9. 原有详细说明
+
+以下内容保留该组件原有的配置表、协议细节、示例和故障排查资料。
+
+<!-- README_STANDARD_END -->
+
+
 `@partme.ai/openclaw-amap` 是适配 OpenClaw 2026.7.1 的高德 Web 服务工具插件。它向 Agent 提供地点搜索能力，不是聊天渠道，也不会注册 Webhook 或伪造消息发送能力。
 
 完整参数和接口依据见同目录 [README.md](./README.md)，本页重点说明插件在系统中的位置、边界和上线检查方式。
