@@ -95,6 +95,6 @@ describe("createWeComMcpTool", () => {
 
     const joined = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(joined).not.toContain('"big"');
-    expect(joined).toContain("(debug off)");
+    expect(joined).toBe("");
   });
 });

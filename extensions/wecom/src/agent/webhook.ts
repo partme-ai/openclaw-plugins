@@ -48,11 +48,26 @@ export type AgentWebhookTarget = {
 
 const agentTargets = new Map<string, AgentWebhookTarget[]>();
 
-/** 注册 Agent Webhook 目标到 path 维度的列表中（支持同 path 多账号）。 */
-export function registerAgentWebhookTarget(target: AgentWebhookTarget): void {
+/** 企业微信回调允许的最大时钟偏差；超出窗口的已签名请求仍可能是重放。 */
+const MAX_CALLBACK_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * 注册 Agent Webhook 目标并返回只移除本次注册的注销器。
+ *
+ * 精确注销很重要：配置热重载时旧生命周期的 abort 可能晚于新实例启动；若仍按 accountId
+ * 全量删除，旧 abort 会误删新实例刚注册的目标。
+ */
+export function registerAgentWebhookTarget(target: AgentWebhookTarget): () => void {
     const list = agentTargets.get(target.path) ?? [];
     list.push(target);
     agentTargets.set(target.path, list);
+    return () => {
+        const current = agentTargets.get(target.path);
+        if (!current) return;
+        const filtered = current.filter((candidate) => candidate !== target);
+        if (filtered.length === 0) agentTargets.delete(target.path);
+        else agentTargets.set(target.path, filtered);
+    };
 }
 
 /** 按 accountId 从所有 path 的注册表中移除目标。 */
@@ -97,6 +112,48 @@ function resolveSignatureParam(params: URLSearchParams): string {
         params.get("signature") ??
         ""
     );
+}
+
+/**
+ * 校验企业微信秒级时间戳的新鲜度。
+ *
+ * 签名只能证明请求由持有 Token 的一方生成，不能阻止攻击者重放旧的合法请求；因此验签前
+ * 先实施有界时间窗。使用绝对偏差也会拒绝明显来自未来的请求，暴露节点时钟漂移。
+ */
+function isFreshCallbackTimestamp(timestamp: string, now = Date.now()): boolean {
+    if (!/^\d{10,13}$/.test(timestamp)) return false;
+    const numeric = Number(timestamp);
+    if (!Number.isSafeInteger(numeric)) return false;
+    const timestampMs = timestamp.length === 13 ? numeric : numeric * 1000;
+    return Math.abs(now - timestampMs) <= MAX_CALLBACK_CLOCK_SKEW_MS;
+}
+
+/** 单个账号的坏密钥不能中断其他账号匹配；该账号按签名不匹配处理并记录脱敏告警。 */
+function matchesTargetSignature(params: {
+    target: AgentWebhookTarget;
+    signature: string;
+    timestamp: string;
+    nonce: string;
+    encrypted: string;
+}): boolean {
+    try {
+        const wc = new WecomCrypto(
+            params.target.agent.token,
+            params.target.agent.encodingAESKey,
+            params.target.agent.corpId,
+        );
+        return wc.verifySignature(
+            params.signature,
+            params.timestamp,
+            params.nonce,
+            params.encrypted,
+        );
+    } catch {
+        params.target.runtime.error?.(
+            `[wecom] inbound(agent): accountId=${params.target.agent.accountId} signature verifier unavailable`,
+        );
+        return false;
+    }
 }
 
 /**
@@ -192,14 +249,24 @@ export async function handleWecomAgentWebhookRequest(
     const nonce = query.get("nonce") ?? "";
     const signature = resolveSignatureParam(query);
 
+    if (!isFreshCallbackTimestamp(timestamp)) {
+        res.statusCode = 401;
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.end(JSON.stringify({ error: "stale_timestamp", message: "Agent callback timestamp is outside the allowed window." }));
+        return true;
+    }
+
     // ── GET: echostr URL 验证（企微配置回调 URL 时发起）──
     if (req.method === "GET") {
         const echostr = query.get("echostr") ?? "";
         // 用签名匹配正确的 target
-        const matched = targets.filter((t) => {
-            const wc = new WecomCrypto(t.agent.token, t.agent.encodingAESKey, t.agent.corpId);
-            return wc.verifySignature(signature, timestamp, nonce, echostr);
-        });
+        const matched = targets.filter((target) => matchesTargetSignature({
+            target,
+            signature,
+            timestamp,
+            nonce,
+            encrypted: echostr,
+        }));
         if (matched.length !== 1) {
             const reason = matched.length === 0 ? "account_not_found" : "account_conflict";
             res.statusCode = 401;
@@ -245,10 +312,13 @@ export async function handleWecomAgentWebhookRequest(
     }
 
     // 签名匹配
-    const matched = targets.filter((t) => {
-        const wc = new WecomCrypto(t.agent.token, t.agent.encodingAESKey, t.agent.corpId);
-        return wc.verifySignature(signature, timestamp, nonce, encrypted);
-    });
+    const matched = targets.filter((target) => matchesTargetSignature({
+        target,
+        signature,
+        timestamp,
+        nonce,
+        encrypted,
+    }));
     if (matched.length !== 1) {
         const reason = matched.length === 0 ? "account_not_found" : "account_conflict";
         res.statusCode = 401;
@@ -277,7 +347,7 @@ export async function handleWecomAgentWebhookRequest(
         return true;
     }
 
-    // agentId 一致性校验（仅告警）
+    // AgentID 是解密后仍需校验的接收方边界；不一致说明路由/凭据配置错误，不能继续投递。
     const inboundAgentId = normalizeAgentIdValue(extractAgentId(parsed));
     if (
         inboundAgentId !== undefined &&
@@ -287,6 +357,10 @@ export async function handleWecomAgentWebhookRequest(
         selected.runtime.error?.(
             `[wecom] inbound(agent): reqId=${reqId} accountId=${selected.agent.accountId} agentId_mismatch expected=${selected.agent.agentId} actual=${inboundAgentId}`,
         );
+        res.statusCode = 403;
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.end(JSON.stringify({ error: "agent_id_mismatch", message: "Agent callback target does not match the configured application." }));
+        return true;
     }
 
     const core = runtime;

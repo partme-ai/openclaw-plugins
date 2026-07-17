@@ -51,6 +51,45 @@ flowchart TB
     NN <--> CLUSTER
 ```
 
+### 纯文本架构速览
+
+下面的字符图与 Mermaid 并列保留：它在终端、源码评审、纯文本日志和不支持 Mermaid 的平台中，
+仍能一眼看清三个组件与 Nacos 两个子系统的关系。
+
+```text
+┌──────────────────────────────────────────────────────────────────┐
+│                    OpenClaw Gateway                               │
+├──────────────────────────────────────────────────────────────────┤
+│  openclaw-nacos 插件                                              │
+│                                                                   │
+│  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
+│  │ NacosConfigSync     │  │ GatewayNacosRegistry             │   │
+│  │ • primaryConfigDataId│  │ • 注册临时实例                    │   │
+│  │ • sharedConfigs     │  │ • Hooks 元数据                   │   │
+│  │ • pluginConfigIds   │  │ • 心跳维持                       │   │
+│  │ • 备份 → 写入       │  │ • 停止时注销                     │   │
+│  │ • 订阅变更          │  └──────────────┬───────────────────┘   │
+│  └──────────┬──────────┘                 │                       │
+│             │                            │                       │
+│  ┌──────────┴────────────────────────────┴───────────────────┐   │
+│  │ WebhookClusterService                                    │   │
+│  │ • 订阅命名服务 → 实时节点列表                            │   │
+│  │ • 自身过滤（排除本机 ip:port）                           │   │
+│  │ • HTTP: GET /nacos/cluster → 节点元数据                  │   │
+│  │ • HTTP: GET /nacos/health  → 组件状态                    │   │
+│  └───────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────┘
+         │                          │
+         ▼                          ▼
+┌──────────────────────────────────────────┐
+│              Nacos Server                │
+│  ┌────────────┐  ┌───────────────────┐   │
+│  │ Naming     │  │ Config Center     │   │
+│  │ (Distro)   │  │ (Raft)            │   │
+│  └────────────┘  └───────────────────┘   │
+└──────────────────────────────────────────┘
+```
+
 ## 模块地图
 
 ```
@@ -154,6 +193,36 @@ flowchart TD
     ENV -->|变量缺失| KEEP
     VALIDATE -->|无效| KEEP
     KEEP --> DEGRADED["health.errors.configSync = 错误摘要"]
+```
+
+同一流程的纯文本版本保留如下，便于在源码和终端中直接阅读：
+
+```text
+远程 Nacos 配置
+        │
+        ▼
+  NacosConfigClient.getConfig(dataId, group)
+        │
+        ▼
+  parseConfigBody() — JSON 或 YAML 安全解析
+        │
+        ▼
+  deepMerge(base, fetched) — 顺序：primary → shared[] → app → plugins
+        │
+        ▼
+  expandEnvPlaceholdersInValue() — ${VAR} / ${VAR:default} 解析
+        │
+        ▼
+  validateMergedConfig() — 结构与 JSON 可序列化检查
+        │
+        ▼
+  backupOpenClawConfig() → stateDir/openclaw-nacos-yyyyMMddHHmmss-<uuid>.json
+        │
+        ▼
+  api.runtime.config.replaceConfigFile() → 写入磁盘 openclaw.json
+        │
+        ▼
+  Gateway 检测配置变更 → 热更新或原地重启
 ```
 
 ## 数据流：服务注册

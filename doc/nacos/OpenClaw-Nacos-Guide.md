@@ -20,7 +20,7 @@ openclaw plugins install @partme.ai/openclaw-nacos
 cd openclaw-nacos
 pnpm build
 npm pack
-openclaw plugins install ./partme.ai-openclaw-nacos-2026.5.24.tgz
+openclaw plugins install ./partme.ai-openclaw-nacos-2026.7.1.tgz
 ```
 
 ### From Source (Development)
@@ -48,7 +48,7 @@ Add to `~/.openclaw/openclaw.json`:
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           "serverList": "127.0.0.1:8848",

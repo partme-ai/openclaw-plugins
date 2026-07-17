@@ -17,8 +17,8 @@
 - [ ] OpenClaw Gateway 已启动：`openclaw gateway restart`
 - [ ] 插件已安装：`openclaw plugins install @partme.ai/wecom@latest --dangerously-force-unsafe-install`
 - [ ] 依赖版本对齐（monorepo 当前）：
-  - `@partme.ai/wecom`：`2026.6.1`
-  - `@partme.ai/openclaw-message-sdk`：`2026.6.1`（workspace）
+  - `@partme.ai/wecom`：`2026.7.1`
+  - `@partme.ai/openclaw-message-sdk`：`2026.7.1`（workspace）
   - `openclaw` peer：`>=2026.7.1`
 - [ ] 本地自检：`cd extensions/wecom && pnpm test && pnpm typecheck`（当前约 330 个测试用例，数量会随源码变化）
 
@@ -414,7 +414,7 @@ grep -E '\[wecom-agent\]|duplicate msgId|dm policy blocked|media saved|welcome m
 | 包 | 用途 |
 |----|------|
 | `@partme.ai/openclaw-message-sdk` | ingress command-auth、dedup、transcript 流式、keyed queue、config merge |
-| 版本 | 与 `@partme.ai/wecom` 同 monorepo 发布，当前 `2026.6.1` |
+| 版本 | 与 `@partme.ai/wecom` 同 monorepo 发布，当前 `2026.7.1` |
 
 ### 4.3 未接线 / 规划字段
 
@@ -489,4 +489,4 @@ grep -E 'wecom-dedup|debounce|merged|queued' "$LOG"
 
 ---
 
-**最后更新**：与 `@partme.ai/wecom@2026.6.1`、`openclaw-message-sdk@2026.6.1` 及 OpenClaw 2026.7.1 源码对齐。
+**最后更新**：与 `@partme.ai/wecom@2026.7.1`、`openclaw-message-sdk@2026.7.1` 及 OpenClaw 2026.7.1 源码对齐。

@@ -190,7 +190,6 @@ const AUTH_TYPE_MAP: Record<number, string> = {
  * @returns 格式化文本；非 auth_change_event 时返回 `undefined`
  */
 function buildAuthChangeEventText(body: MessageBody): string | undefined {
-  console.log("authChangeEventCheck", body.event);
   const authChangeEvent = body.event?.auth_change_event;
   if (
     body.msgtype !== "event" ||

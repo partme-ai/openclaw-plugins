@@ -164,7 +164,7 @@ Remote Nacos Config
   validateMergedConfig() — JSON serializability check
         │
         ▼
-  backupOpenClawConfig() → stateDir/openclaw-nacos-yyyyMMddHHmmss.json
+  backupOpenClawConfig() → stateDir/openclaw-nacos-yyyyMMddHHmmss-<uuid>.json
         │
         ▼
   api.runtime.config.replaceConfigFile() → openclaw.json on disk
@@ -220,7 +220,7 @@ Config from Nacos is **merged** into the current runtime config, not replaced. T
 
 ### Backup Before Write
 
-Every Nacos-triggered config write is preceded by a timestamped backup. This provides an audit trail and rollback capability. Backups are stored in the OpenClaw `stateDir` with the naming pattern `openclaw-nacos-yyyyMMddHHmmss.json`.
+Every Nacos-triggered config write is preceded by a uniquely named backup. This provides an audit trail and rollback capability without overwriting two backups created in the same second. Backups are stored in the OpenClaw `stateDir` with the naming pattern `openclaw-nacos-yyyyMMddHHmmss-<uuid>.json`.
 
 ### Plugin Config IDs with Profile Support
 

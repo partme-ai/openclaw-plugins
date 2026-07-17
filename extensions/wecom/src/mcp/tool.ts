@@ -59,6 +59,14 @@ const normalizeOptionalString = (value: string | undefined): string | undefined 
   return trimmed ? trimmed : undefined;
 };
 
+/** 调试日志也设置硬上限，避免误开开关后把大文档或完整表格写入日志。 */
+const truncateDebugValue = (value: unknown, maxChars = 500): string => {
+  const serialized = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
+  return serialized.length > maxChars
+    ? `${serialized.slice(0, maxChars)}...(truncated)`
+    : serialized;
+};
+
 /** 构造错误响应 */
 const errorResult = (err: unknown) => {
   // 适配企业微信 API 返回的 { errcode, errmsg } 结构
@@ -107,7 +115,13 @@ const handleCall = async (ctx: CallContext): Promise<unknown> => {
   const { category, method, args, requesterUserId, accountId } = ctx;
   const callStart = performance.now();
 
-  console.log(`[mcp] handleCall ${category}/${method} 入参: ${isWeComMcpDebugEnabled() ? JSON.stringify(args) : "(debug off)"}`);
+  if (isWeComMcpDebugEnabled()) {
+    const argsText = JSON.stringify(args);
+    mcpDebugLog(
+      `[mcp] handleCall ${category}/${method} 入参: ${argsText.slice(0, 500)}` +
+      (argsText.length > 500 ? "...(truncated)" : ""),
+    );
+  }
 
   // 1. 收集拦截器的 beforeCall 配置（如超时时间、替换 args）
   const { options, args: resolvedArgs } = await resolveBeforeCall(ctx);
@@ -156,12 +170,12 @@ const handleCall = async (ctx: CallContext): Promise<unknown> => {
         (finalStr.length > 500 ? "...(truncated)" : ""),
       );
     }
-    console.log(
+    mcpDebugLog(
       `[mcp] handleCall ${category}/${method} 总耗时: ${totalMs}ms` +
       ` (MCP请求: ${rpcMs}ms, 拦截处理: ${interceptMs}ms)`,
     );
   } else {
-    console.log(`[mcp] handleCall ${category}/${method} 耗时: ${rpcMs}ms`);
+    mcpDebugLog(`[mcp] handleCall ${category}/${method} 耗时: ${rpcMs}ms`);
   }
 
   return finalResult;
@@ -181,7 +195,8 @@ const parseArgs = (args: string | Record<string, unknown> | undefined): Record<s
     return JSON.parse(args) as Record<string, unknown>;
   } catch (err) {
     const detail = err instanceof SyntaxError ? err.message : String(err);
-    throw new Error(`args 参数不是合法的 JSON: ${args} (${detail})`);
+    // 工具参数可能包含文档内容、成员信息或凭据；解析失败只返回位置原因，不回显原文。
+    throw new Error(`args 参数不是合法的 JSON (${detail})`);
   }
 };
 
@@ -240,11 +255,11 @@ export function createWeComMcpTool(options: CreateWeComMcpToolOptions = {}) {
     },
     async execute(_toolCallId: string, params: unknown) {
       const p = params as WeComToolsParams;
-      console.log(
+      mcpDebugLog(
         `[mcp] execute: action=${p.action}, category=${p.category}` +
         (p.method ? `, method=${p.method}` : "") +
         (p.args && isWeComMcpDebugEnabled()
-          ? `, args=${typeof p.args === "string" ? p.args : JSON.stringify(p.args)}`
+          ? `, args=${truncateDebugValue(p.args)}`
           : ""),
       );
       try {
@@ -274,7 +289,7 @@ export function createWeComMcpTool(options: CreateWeComMcpToolOptions = {}) {
           default:
             result = textResult({ error: `未知操作类型: ${String(p.action)}，支持 list 和 call` });
         }
-        console.log(
+        mcpDebugLog(
           `[mcp] execute: action=${p.action}, category=${p.category}` +
           (p.method ? `, method=${p.method}` : "") +
           ` → 响应长度=${result.content[0].text.length} chars`,

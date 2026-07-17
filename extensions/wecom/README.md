@@ -14,7 +14,7 @@
 
 `@partme.ai/wecom` 用于把 OpenClaw 接入企业微信。它面向中国企业微信用户，支持智能机器人 Bot WebSocket、Bot HTTP Webhook 和自建应用 Agent 三条路径：Bot 负责低门槛交互式对话与流式回复，Agent 负责主动推送、Cron 定时投递、部门/标签广播和完整文件兜底。
 
-当前插件包版本：`2026.6.1`。OpenClaw 兼容基线为 `>=2026.7.1`，依赖 `@partme.ai/openclaw-message-sdk`：`2026.7.1`。测试数量会随实现演进，请以当前 `pnpm test` 输出为准。
+当前插件包版本：`2026.7.1`。OpenClaw 兼容基线为 `>=2026.7.1`，依赖 `@partme.ai/openclaw-message-sdk`：`2026.7.1`。测试数量会随实现演进，请以当前 `pnpm test` 输出为准。
 
 ## ✨ 核心能力
 

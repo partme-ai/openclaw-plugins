@@ -670,11 +670,31 @@ Tracing 的 File/OTLP 缓冲仍是进程内 best-effort，不是持久 Outbox �
 
 本地门禁（2026-07-17）：
 
-- `pnpm --dir extensions/nacos test:coverage`：14 个测试文件、120 个测试通过；语句 80.66%、分支 78.64%、函数 77.22%、行 81.10%。覆盖启动/停止资源回收、订阅事件合并、同秒唯一备份、public tenant、配置资源边界、原型污染、错误脱敏和 2026.7.1 注册契约。
+- `pnpm --dir extensions/nacos test:coverage`：14 个测试文件、121 个测试通过；语句 80.69%、分支 78.45%、函数 77.22%、行 81.13%。覆盖启动/停止资源回收、订阅事件合并、同秒唯一备份、public tenant、配置资源边界、原型污染、错误脱敏和 2026.7.1 注册契约。
 - `typecheck`、ESM/CJS/DTS 构建和最终 tarball 安装通过；统一 E2E 新增 Nacos 2.5.1 容器，成组映射 HTTP 与 SDK 2.x gRPC 端口。
-- 从最终 tarball 执行真实 OpenClaw 2026.7.1 + Nacos 2.5.1 E2E：Naming 注册、集群自过滤、Config 初始拉取与订阅、写盘前备份、缺失环境变量拒绝、上一有效配置保持和修复后恢复全部 PASS。归档：`scripts/e2e/reports/2026-07-17T04-01-47.452Z-nacos-aa6f4343-5bd7-44f7-85ec-73fe432d5a67.json`。
+- 从最终 tarball 执行真实 OpenClaw 2026.7.1 + Nacos 2.5.1 E2E：Naming 注册、集群自过滤、Config 初始拉取与订阅、写盘前备份、缺失环境变量拒绝、上一有效配置保持和修复后恢复全部 PASS。最后复验归档：`scripts/e2e/reports/2026-07-17T04-14-18.231Z-nacos-3e58a3a5-969c-4690-bab0-627308dbb9d4.json`。
 
 用户已在上一版本环境验证过 Nacos；本轮证据证明 2026.7.1 安装态与本地真实 Nacos 协议闭环，但仍需在目标生产 Nacos 集群验证鉴权、真实 namespace id、多节点地址切换、Nacos Server 重启、网络分区、临时实例续约、配置规模、备份清理策略和凭据轮换后，才能完成当前环境的生产验收。
+
+## WeCom 当前优化进度
+
+- 包、manifest、OpenClaw peer 与 message-sdk 基线已统一为 `2026.7.1`；manifest 不再接受任意渠道根字段，已声明账号、接入模式、策略、流式、媒体和用户文案等配置结构。
+- manifest 声明 `contracts.tools=["wecom_mcp"]`；修复 OpenClaw 2026.7.1 在最终包启动时拒绝未声明 Agent Tool 的回归。
+- Webhook-only 账号在 `isConfigured`、账号描述与状态快照中使用同一判定，修复“可运行但状态显示未配置”。
+- 多账号 Bot WS 共用的 MessageState TTL 清理器改为按 accountId 引用计数，单个账号退出不会停止其他在线账号的过期状态回收。
+- Agent Webhook 注册返回精确注销器；配置热重载时，旧生命周期迟到的 abort 只能移除自己的 target，不会误删新实例。
+- Agent 媒体兜底不再使用裸 `fetch` 和无界 `arrayBuffer`：远程 URL 经过 OpenClaw SSRF Guard 并流式实施字节上限，本地文件经过白名单 Path Guard，两条路径共享 `media.maxBytes`。
+- `send` / `sendAttachment` Tool 不再在 Bot WS 离线或媒体上传失败时伪造成功 messageId；只有收到真实投递结果才返回成功，可选 caption 会实际发送。
+- WS 认证后获取 MCP 配置的轮询增加 60 秒上限、`unref` 与停止清理；Agent-only 生命周期处理启动前已 abort 的边界。
+- Nacos 与 WeCom 文档保留原字符架构/数据流图，同时增加 Mermaid；后续插件遵循“字符速览 + Mermaid 架构/时序 + 原理说明 + 配置代码”，不以一种图例替换另一种。
+
+本地门禁（2026-07-17，阶段性）：
+
+- `pnpm --dir extensions/wecom test:coverage`：32 个测试文件、396 个测试通过；语句 27.56%、分支 23.37%、函数 30.04%、行 28.11%。现有测试数量较多但入口、Channel 生命周期、Agent/Webhook、媒体与 MCP 拦截器覆盖不足，不能用“396 项通过”推导生产就绪。
+- `typecheck`、ESM/DTS 构建、`--strict-new` 结构检查与 `npm pack --dry-run --json` 已通过；归档 `partme.ai-wecom-2026.7.1.tgz` 为 87 个文件。
+- 最终 tarball 与 message-sdk tarball 实体化安装到隔离目录后，OpenClaw `2026.7.1 (2d2ddc4)` 显示 WeCom `Status: loaded`、`Version: 2026.7.1`；Webhook-only 配置通过严格 Schema 校验，Gateway 进入 ready，`wecom_mcp` 契约告警消失，SIGINT 时注销 Target 并 clean shutdown。
+
+用户已在上一版本环境验证过 WeCom。本轮仍需补齐 2026.7.1 最终 tarball 安装态 E2E、Bot WS/Webhook/Agent 三路径的失败注入与生命周期测试，并在真实企业微信租户复验回调、主动发送、媒体、流式、断线重连、可信 IP/代理、多账号与凭据轮换后，才能完成生产验收。
 
 ## WeCom KF 当前交付
 

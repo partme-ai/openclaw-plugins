@@ -2,7 +2,7 @@
 
 ## Plugin Entry
 
-All configuration lives under `plugins.entries["openclaw-nacos"].config` in `openclaw.json`.
+All configuration lives under `plugins.entries.nacos.config` in `openclaw.json`.
 
 ## Full Schema
 
@@ -10,7 +10,7 @@ All configuration lives under `plugins.entries["openclaw-nacos"].config` in `ope
 {
   "plugins": {
     "entries": {
-      "openclaw-nacos": {
+      "nacos": {
         "enabled": true,
         "config": {
           // ── Connection ──────────────────────────────────
@@ -184,7 +184,7 @@ configCenter.profile > OPENCLAW_PROFILE env > SPRING_PROFILES_ACTIVE env > "defa
 
 ```jsonc
 {
-  "openclaw-nacos": {
+  "nacos": {
     "enabled": true,
     "config": {
       "serverList": "127.0.0.1:8848"
@@ -197,7 +197,7 @@ configCenter.profile > OPENCLAW_PROFILE env > SPRING_PROFILES_ACTIVE env > "defa
 
 ```jsonc
 {
-  "openclaw-nacos": {
+  "nacos": {
     "enabled": true,
     "config": {
       "serverList": "127.0.0.1:8848",
@@ -214,7 +214,7 @@ configCenter.profile > OPENCLAW_PROFILE env > SPRING_PROFILES_ACTIVE env > "defa
 
 ```jsonc
 {
-  "openclaw-nacos": {
+  "nacos": {
     "enabled": true,
     "config": {
       "serverList": "nacos-prod-1:8848,nacos-prod-2:8848,nacos-prod-3:8848",

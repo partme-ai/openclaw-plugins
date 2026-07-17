@@ -41,7 +41,8 @@ export async function sendWelcomeMessage(
       text,
     });
   } catch (error) {
-    console.error(`[wecom-agent] Failed to send welcome message to ${userId}:`, error);
+    // userid 可能直接映射企业成员身份，异常日志不得回显目标标识。
+    console.error(`[wecom-agent] Failed to send welcome message (accountId=${account.accountId}):`, error);
     throw error;
   }
 }

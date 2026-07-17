@@ -1,6 +1,6 @@
 # 企业微信（WeCom）插件架构设计
 
-> 文档版本：2026-05-23  
+> 文档版本：2026-07-17
 > 适用范围：`@partme.ai/wecom`（`extensions/wecom`）  
 > 关联代码：`openclaw-plugins/extensions/wecom/src/`
 
@@ -82,6 +82,30 @@ flowchart TB
   Core -->|sendMessage 兜底| AgentAPI
 
   Entry --> Channel
+```
+
+同一拓扑保留一份字符图，方便直接在终端、源码评审和纯文本工单中阅读：
+
+```text
+┌──────────────────────────── 企业微信平台 ────────────────────────────┐
+│ 用户/群 ── Bot WebSocket ─┐                                        │
+│ 用户/群 ── Bot Webhook ───┼──→ 验签 / 解密 / 去重                   │
+│ 用户    ── Agent Webhook ─┘                                        │
+└──────────────────────────────┬───────────────────────────────────────┘
+                               ▼
+┌──────────────────────── OpenClaw Gateway ───────────────────────────┐
+│ index.ts：注册 Channel、HTTP Route、MCP、提示注入                   │
+│                               │                                     │
+│                               ▼                                     │
+│ channel.ts：账号解析 / 安全策略 / 生命周期 / 出站选择              │
+│                               │                                     │
+│                               ▼                                     │
+│ message-sdk 归一化 → Agent binding / Dynamic Agent → Agent Runtime │
+│                               │                                     │
+│                  ┌────────────┴────────────┐                        │
+│                  ▼                         ▼                        │
+│          Bot WS / Webhook 回复      Agent HTTP API 主动发送/兜底   │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 2.3 连接模式（Bot 子模式）

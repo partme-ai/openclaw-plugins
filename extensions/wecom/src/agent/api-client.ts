@@ -39,6 +39,36 @@ type TokenCache = {
 };
 
 const tokenCaches = new Map<string, TokenCache>();
+const MAX_TOKEN_CACHE_ENTRIES = 256;
+
+/** Secret 只参与不可逆指纹，既隔离轮换前后缓存，也不把凭据明文留在 Map key/堆快照中。 */
+function tokenCacheKey(agent: ResolvedAgentAccount): string {
+    return crypto
+        .createHash("sha256")
+        .update(`${agent.corpId}\0${agent.corpSecret}\0${String(agent.agentId ?? "na")}`)
+        .digest("hex");
+}
+
+function trimTokenCache(): void {
+    while (tokenCaches.size > MAX_TOKEN_CACHE_ENTRIES) {
+        const oldest = tokenCaches.keys().next().value as string | undefined;
+        if (!oldest) break;
+        tokenCaches.delete(oldest);
+    }
+}
+
+/** 外部 API 错误只保留有限、单行的错误码与摘要，避免控制字符和超长正文进入日志。 */
+function apiFailure(operation: string, value: { errcode?: number; errmsg?: string }): Error {
+    const code = Number.isFinite(value.errcode) ? String(value.errcode) : "unknown";
+    const message = String(value.errmsg ?? "unknown")
+        .replace(/[\u0000-\u001f\u007f]/g, " ")
+        .slice(0, 256);
+    return new Error(`${operation} failed: ${code} ${message}`);
+}
+
+function rejectedRecipientCount(value: string | undefined): number {
+    return value?.split(/[|,]/).map((entry) => entry.trim()).filter(Boolean).length ?? 0;
+}
 
 /** 规范化上传文件名，避免企微网关拒绝特殊字符或非 ASCII。 */
 function normalizeUploadFilename(filename: string): string {
@@ -95,12 +125,13 @@ function requireAgentId(agent: ResolvedAgentAccount): number {
  * @returns 有效的 AccessToken
  */
 export async function getAccessToken(agent: ResolvedAgentAccount): Promise<string> {
-    const cacheKey = `${agent.corpId}:${String(agent.agentId ?? "na")}`;
+    const cacheKey = tokenCacheKey(agent);
     let cache = tokenCaches.get(cacheKey);
 
     if (!cache) {
         cache = { token: "", expiresAt: 0, refreshPromise: null };
         tokenCaches.set(cacheKey, cache);
+        trimTokenCache();
     }
 
     const now = Date.now();
@@ -120,7 +151,7 @@ export async function getAccessToken(agent: ResolvedAgentAccount): Promise<strin
             const json = await res.json() as { access_token?: string; expires_in?: number; errcode?: number; errmsg?: string };
 
             if (!json?.access_token) {
-                throw new Error(`gettoken failed: ${json?.errcode} ${json?.errmsg}`);
+                throw apiFailure("gettoken", json);
             }
 
             cache!.token = json.access_token;
@@ -189,14 +220,14 @@ export async function sendText(params: {
     };
 
     if (json?.errcode !== 0) {
-        throw new Error(`send failed: ${json?.errcode} ${json?.errmsg}`);
+        throw apiFailure("send", json);
     }
 
     if (json?.invaliduser || json?.invalidparty || json?.invalidtag) {
         const details = [
-            json.invaliduser ? `invaliduser=${json.invaliduser}` : "",
-            json.invalidparty ? `invalidparty=${json.invalidparty}` : "",
-            json.invalidtag ? `invalidtag=${json.invalidtag}` : ""
+            json.invaliduser ? `invaliduserCount=${rejectedRecipientCount(json.invaliduser)}` : "",
+            json.invalidparty ? `invalidpartyCount=${rejectedRecipientCount(json.invalidparty)}` : "",
+            json.invalidtag ? `invalidtagCount=${rejectedRecipientCount(json.invalidtag)}` : ""
         ].filter(Boolean).join(", ");
         throw new Error(`send partial failure: ${details}`);
     }
@@ -237,9 +268,6 @@ export async function uploadMedia(params: {
     // 添加 debug=1 参数获取更多错误信息
     const url = `${API_ENDPOINTS.UPLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}&debug=1`;
 
-    // DEBUG: 输出上传信息
-    console.log(`[wecom-upload] Uploading media: type=${type}, filename=${safeFilename}, size=${buffer.length} bytes`);
-
     const uploadOnce = async (fileContentType: string) => {
         // 手动构造 multipart/form-data 请求体
         // 企业微信要求包含 filename 和 filelength
@@ -253,8 +281,6 @@ export async function uploadMedia(params: {
         const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
         const body = Buffer.concat([header, buffer, footer]);
 
-        console.log(`[wecom-upload] Multipart body size=${body.length}, boundary=${boundary}, fileContentType=${fileContentType}`);
-
         const res = await wecomFetch(url, {
             method: "POST",
             headers: {
@@ -264,7 +290,6 @@ export async function uploadMedia(params: {
             body: body,
         }, { proxyUrl, timeoutMs: LIMITS.REQUEST_TIMEOUT_MS });
         const json = await res.json() as { media_id?: string; errcode?: number; errmsg?: string };
-        console.log(`[wecom-upload] Response:`, JSON.stringify(json));
         return json;
     };
 
@@ -273,14 +298,11 @@ export async function uploadMedia(params: {
 
     // 某些文件类型在严格网关/企业微信校验下可能失败，回退到通用类型再试一次。
     if (!json?.media_id && preferredContentType !== "application/octet-stream") {
-        console.warn(
-            `[wecom-upload] Upload failed with ${preferredContentType}, retrying as application/octet-stream: ${json?.errcode} ${json?.errmsg}`,
-        );
         json = await uploadOnce("application/octet-stream");
     }
 
     if (!json?.media_id) {
-        throw new Error(`upload failed: ${json?.errcode} ${json?.errmsg}`);
+        throw apiFailure("upload", json);
     }
     return json.media_id;
 }
@@ -349,7 +371,7 @@ export async function sendMedia(params: {
     };
 
     if (json?.errcode !== 0) {
-        throw new Error(`send ${mediaType} failed: ${json?.errcode} ${json?.errmsg}`);
+        throw apiFailure(`send ${mediaType}`, json);
     }
 
     if (json?.invaliduser || json?.invalidparty || json?.invalidtag) {
@@ -408,7 +430,7 @@ export async function downloadMedia(params: {
     // 检查是否返回了错误 JSON
     if (contentType.includes("application/json")) {
         const json = await res.json() as { errcode?: number; errmsg?: string };
-        throw new Error(`download failed: ${json?.errcode} ${json?.errmsg}`);
+        throw apiFailure("download", json);
     }
 
     const buffer = await readResponseBodyAsBuffer(res, params.maxBytes);

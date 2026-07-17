@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/wecom",
-  "version": "2026.6.1",
+  "version": "2026.7.1",
   "type": "module",
   "description": "OpenClaw WeCom (WeChat Work) intelligent bot channel plugin",
   "main": "./dist/index.js",
@@ -9,6 +9,7 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest --config vitest.config.ts run",
+    "test:coverage": "vitest --config vitest.config.ts run --coverage",
     "prepublishOnly": "pnpm build",
     "clean": "rm -rf dist",
     "pack-dry": "node scripts/pack-dry.mjs"
