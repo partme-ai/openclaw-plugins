@@ -34,6 +34,7 @@ import {
   mapRocketmqWirePayloadMode,
 } from "./shared/wire-helpers.js";
 import type { InboundEvent } from "./transport/server.js";
+import { redactRocketmqError } from "./shared/redact.js";
 
 type InboundResult = {
   accepted: boolean;
@@ -140,10 +141,10 @@ export async function processInbound(
       dedupe.release(idempotencyKey);
     }
     console.error(
-      `[openclaw-rocketmq] Runtime dispatch failed for peer=${route.peerId || event.topic}:`,
-      error,
+      `[openclaw-rocketmq] Runtime dispatch failed for peer=${route.peerId || event.topic}: ${redactRocketmqError(error, config)}`,
     );
-    return { accepted: false, reconsume: true, reason: `dispatch_error:${String(error)}` };
+    // Broker 处置只需要稳定原因码；原始异常进入 reason 会被状态端点继续传播，扩大泄密面。
+    return { accepted: false, reconsume: true, reason: "dispatch_error" };
   }
 }
 

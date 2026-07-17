@@ -20,6 +20,7 @@ import {
   type MessageView,
 } from "rocketmq-client-nodejs";
 import { DEFAULT_ROCKERMQ_CONFIG, type RockermqConfig } from "../config.js";
+import { redactRocketmqError } from "../shared/redact.js";
 
 /** @description PushConsumer 回调的入站消息事件。 */
 export type InboundEvent = {
@@ -67,6 +68,8 @@ let inboundHandler: InboundHandler | null = null;
 let stopping = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let startupPromise: Promise<void> | null = null;
+/** 正在执行的消费回调；关闭 Producer 前必须排空，否则已接纳 Turn 的回复会被人为截断。 */
+const inboundTasks = new Set<Promise<InboundDisposition>>();
 const ROCKETMQ_STATUS_OK = 20_000;
 const DEFAULT_MAX_MESSAGE_SIZE_IN_BYTES = 4 * 1024 * 1024;
 
@@ -369,6 +372,11 @@ async function connectOnce(cfg: RockermqConfig): Promise<void> {
       requestTimeout: cfg.consumer.requestTimeout,
       messageListener: {
         async consume(messageView: MessageView): Promise<ConsumeResult> {
+          if (stopping) {
+            // Consumer shutdown 期间 SDK 仍可能投递最后一批消息；明确 FAILURE 交还 Broker，
+            // 不再接纳新的 Agent Turn。
+            return ConsumeResult.FAILURE;
+          }
           if (!inboundHandler || !config) {
             return ConsumeResult.FAILURE;
           }
@@ -379,7 +387,7 @@ async function connectOnce(cfg: RockermqConfig): Promise<void> {
 
           let disposition: InboundDisposition;
           try {
-            disposition = await inboundHandler({
+            const task = Promise.resolve().then(() => inboundHandler!({
               topic: String(messageView.topic),
               tag:
                 typeof messageView.tag === "string"
@@ -397,7 +405,13 @@ async function connectOnce(cfg: RockermqConfig): Promise<void> {
                 typeof messageView.deliveryAttempt === "number"
                   ? messageView.deliveryAttempt
                   : undefined,
-            });
+            }));
+            inboundTasks.add(task);
+            try {
+              disposition = await task;
+            } finally {
+              inboundTasks.delete(task);
+            }
           } catch (error) {
             recordError(error);
             if (activeConfig.consumer.reconsumeOnError) {
@@ -555,10 +569,7 @@ function recordError(error: unknown): void {
 
 /** 诊断只保留单行错误摘要，避免控制字符污染日志或状态接口。 */
 function formatError(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error)).replace(
-    /[\r\n\t]/g,
-    " ",
-  );
+  return redactRocketmqError(error, config ?? undefined);
 }
 
 /**
@@ -618,6 +629,23 @@ async function teardownTransport(): Promise<void> {
     recordError(error);
   } finally {
     consumer = null;
+  }
+
+  if (inboundTasks.size > 0) {
+    // dispatch 本身有超时保护；这里至少等待一个完整 dispatch 预算，再决定带诊断退出。
+    const drainTimeoutMs = Math.max(
+      timeoutMs,
+      config?.dispatch.timeoutMs ?? DEFAULT_ROCKERMQ_CONFIG.dispatch.timeoutMs,
+    );
+    try {
+      await withTimeout(
+        Promise.allSettled([...inboundTasks]),
+        drainTimeoutMs,
+        "RocketMQ in-flight Agent task drain",
+      );
+    } catch (error) {
+      recordError(error);
+    }
   }
 
   try {

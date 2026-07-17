@@ -14,6 +14,27 @@
 
 `@partme.ai/openclaw-rocketmq` bridges external RocketMQ messages into OpenClaw agents and publishes agent replies back to RocketMQ. It uses `rocketmq-client-nodejs` for Producer and PushConsumer, with a full OpenClaw channel plugin lifecycle.
 
+The character diagram gives a quick view of message ownership and shutdown ordering; the Mermaid diagram below keeps the complete renderable relationship:
+
+```text
+Business system ──publish──▶ RocketMQ Broker / Proxy
+                                  │ PushConsumer (Broker owns redelivery)
+                                  ▼
+                         Topic+Tag route → idempotency claim
+                                  │
+                                  ▼
+                           OpenClaw Agent Turn
+                                  │ successful reply
+                                  ▼
+                        long-lived Producer ──▶ reply Topic
+                                  │
+                                  └─ success: SUCCESS / ACK
+                                     transient: FAILURE / redelivery
+                                     exhausted: Broker DLQ, then ACK source
+
+stop: reject new delivery → close Consumer → drain admitted turns → close Producer
+```
+
 ```mermaid
 flowchart LR
     APP["Business system / device"] -->|"inbound message"| B["RocketMQ Broker + Proxy"]
@@ -267,7 +288,8 @@ Available when the plugin registers in "full" mode:
 - Thrown handler exceptions and explicit `reconsume=true` results share the same max-attempt/DLQ state machine; exceptions cannot bypass poison-message exhaustion handling
 - Unroutable messages are acknowledged as permanent drops; runtime and dispatch failures request redelivery
 - Normal outbound delivery without a session context fails before publishing instead of returning a placeholder success message ID
-- Producer and Consumer shutdown calls are time-bounded by `connection.shutdownTimeoutMs`; a stuck SDK shutdown is recorded but cannot block Gateway termination indefinitely
+- Producer and Consumer shutdown calls are time-bounded by `connection.shutdownTimeoutMs`; shutdown rejects new deliveries, closes the Consumer, drains admitted turns within the Agent dispatch budget, then closes the reply Producer
+- SDK, proxy, and Agent errors are credential-redacted before entering logs or health state; inbound logs record payload byte length, not message content
 - Idempotency is process-local and does not provide cross-node exactly-once semantics
 - No manual retry queue management needed (unlike RabbitMQ)
 - Request/reply RPC requires an explicit `replyTopic` + `replyTag` binding (RocketMQ does not natively support direct-reply-to like RabbitMQ)

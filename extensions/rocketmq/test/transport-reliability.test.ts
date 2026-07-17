@@ -324,4 +324,35 @@ describe("rocketmq transport reliability", () => {
     expect(mocks.producerShutdown).toHaveBeenCalledOnce();
     expect(getStats().lastError).toContain("consumer shutdown timed out");
   });
+
+  it("drains an accepted Agent task before closing the reply Producer", async () => {
+    let signalStarted!: () => void;
+    let releaseTask!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseTask = resolve; });
+    await startRockermqServer(config, async () => {
+      signalStarted();
+      await gate;
+      return { ok: true };
+    });
+    const listener = mocks.consumerOptions?.messageListener as {
+      consume: (message: Record<string, unknown>) => Promise<string>;
+    };
+    const consuming = listener.consume({
+      topic: "openclaw--agent--main--in--peer",
+      body: Buffer.from("drain me"),
+      messageId: "drain-1",
+    });
+    await started;
+
+    let stopped = false;
+    const stopping = stopRockermqServer().then(() => { stopped = true; });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(stopped).toBe(false);
+    expect(mocks.producerShutdown).not.toHaveBeenCalled();
+    releaseTask();
+    await expect(consuming).resolves.toBe("SUCCESS");
+    await stopping;
+    expect(mocks.producerShutdown).toHaveBeenCalledOnce();
+  });
 });

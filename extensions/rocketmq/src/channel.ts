@@ -126,7 +126,8 @@ export const rockermqChannel = {
               reason: result.reason ?? "drop",
             };
           } catch (error) {
-            trackInboundDropped(`inbound_dispatch_error:${String(error)}`);
+            // 传输层会记录已脱敏诊断；业务丢弃指标只保留低基数原因码。
+            trackInboundDropped("inbound_dispatch_error");
             return {
               ok: false as const,
               reconsume: config.consumer.reconsumeOnError,

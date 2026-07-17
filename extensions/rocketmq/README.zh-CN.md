@@ -14,6 +14,27 @@
 
 `@partme.ai/openclaw-rocketmq` 将外部 RocketMQ 消息桥接到 OpenClaw Agent，并将 Agent 回复重新发布到 RocketMQ。它使用 `rocketmq-client-nodejs` 实现 Producer 和 PushConsumer，遵循完整的 OpenClaw channel 插件生命周期。
 
+先用字符图快速看清消息所有权与停机顺序；下方 Mermaid 保留可渲染的完整关系：
+
+```text
+业务系统 ──发布──▶ RocketMQ Broker / Proxy
+                         │ PushConsumer（Broker 持有重投责任）
+                         ▼
+              Topic+Tag 路由 → 幂等 claim
+                         │
+                         ▼
+                  OpenClaw Agent Turn
+                         │ 回复成功
+                         ▼
+               长连接 Producer ──发布──▶ 回复 Topic
+                         │
+                         └─ 成功：SUCCESS / ACK
+                            临时失败：FAILURE / Broker 重投
+                            耗尽：Broker DLQ 成功后 ACK 原消息
+
+stop：拒绝新投递 → 关闭 Consumer → 排空已接纳 Turn → 关闭 Producer
+```
+
 ```mermaid
 flowchart LR
     APP["业务系统 / IoT 设备"] -->|"发布入站消息"| BROKER["RocketMQ Proxy + Broker"]
@@ -288,7 +309,8 @@ sequenceDiagram
 - Agent 派发或回复发布失败返回 `ConsumeResult.FAILURE`；配置化客户端退避规避 Node SDK 不支持 Broker customized-backoff 的缺口，耗尽后通过 Broker DLQ API 转发
 - Agent 处理器抛异常和显式 `reconsume=true` 共用最大尝试/DLQ 状态机，异常不会绕过毒消息耗尽处理
 - Producer/Consumer 启动使用“指数退避 + 上限 + 抖动”；停止账号时 AbortSignal 会立即打断等待
-- Producer/Consumer 停机受 `connection.shutdownTimeoutMs` 约束；SDK 卡住会记录错误，但不能无限阻塞 Gateway 退出
+- Producer/Consumer 停机受 `connection.shutdownTimeoutMs` 约束；停止时先拒绝新投递并关闭 Consumer，再按 Agent dispatch 预算排空已接纳 Turn，最后关闭回复 Producer
+- SDK、代理与 Agent 错误进入日志/健康状态前统一脱敏 ACL 凭证；入站日志只记录消息字节数，不记录正文
 - 用户显式填写的非法数值、枚举或半套 ACL 凭证不会被默认值悄悄覆盖，而是在启动前集中报错
 - 无法路由属于永久丢弃并确认；Runtime 未就绪或派发失败会请求 Broker 重投
 - 普通出站缺少 session context 时明确失败，不再用占位 messageId 伪装 Broker 已确认
