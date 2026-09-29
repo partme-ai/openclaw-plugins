@@ -66,6 +66,44 @@ describe("downloadRemoteImageToTemp", () => {
 });
 
 describe("uploadFileToWeixin", () => {
+  it("uploads from the trusted session sandbox but rejects a sibling sandbox", async () => {
+    const parent = fsSync.mkdtempSync(path.join(os.tmpdir(), "upload-session-test-"));
+    try {
+      const sessionWorkspaceDir = path.join(parent, "sandboxes", "current");
+      const siblingWorkspaceDir = path.join(parent, "sandboxes", "sibling");
+      await fs.mkdir(sessionWorkspaceDir, { recursive: true });
+      await fs.mkdir(siblingWorkspaceDir, { recursive: true });
+      const filePath = path.join(sessionWorkspaceDir, "result.png");
+      const siblingPath = path.join(siblingWorkspaceDir, "secret.png");
+      await fs.writeFile(filePath, "session-media");
+      await fs.writeFile(siblingPath, "sibling-secret");
+      mockGetUploadUrl.mockResolvedValueOnce({ upload_param: "up-param" });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "x-encrypted-param": "dl-param" }),
+      });
+      const options = {
+        toUserId: "user1",
+        opts: { baseUrl: "https://api.com", token: "tok" },
+        cdnBaseUrl: "https://cdn.com",
+        cfg: {},
+        agentId: "main",
+        sessionWorkspaceDir,
+      };
+
+      await expect(uploadFileToWeixin({ ...options, filePath })).resolves.toMatchObject({
+        fileSize: 13,
+      });
+      await expect(uploadFileToWeixin({ ...options, filePath: siblingPath })).rejects.toThrow(
+        "not under an allowed directory",
+      );
+      expect(mockGetUploadUrl).toHaveBeenCalledOnce();
+    } finally {
+      fsSync.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
   it("uploads image file and returns info", async () => {
     const tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "upload-img-test-"));
     try {

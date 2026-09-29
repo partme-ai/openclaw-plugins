@@ -22,7 +22,60 @@ async function tempDir(prefix: string): Promise<string> {
   return dir;
 }
 
+async function withStateDir<T>(stateDir: string, run: () => Promise<T>): Promise<T> {
+  const previous = process.env.OPENCLAW_STATE_DIR;
+  process.env.OPENCLAW_STATE_DIR = stateDir;
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) delete process.env.OPENCLAW_STATE_DIR;
+    else process.env.OPENCLAW_STATE_DIR = previous;
+  }
+}
+
 describe("Weixin local media Path Guard", () => {
+  it("reads a file in the trusted current session sandbox", async () => {
+    const parent = await tempDir("weixin-session-sandboxes-");
+    const sessionWorkspaceDir = path.join(parent, "sandboxes", "current");
+    await fs.mkdir(sessionWorkspaceDir, { recursive: true });
+    const filePath = path.join(sessionWorkspaceDir, "result.png");
+    await fs.writeFile(filePath, "session-media");
+
+    await withStateDir(parent, async () => {
+      await expect(
+        readWeixinLocalMedia({
+          filePath,
+          cfg: {},
+          agentId: "main",
+          sessionWorkspaceDir,
+          maxBytes: 1024,
+        }),
+      ).resolves.toEqual(Buffer.from("session-media"));
+    });
+  });
+
+  it("does not grant a sibling sandbox through the current session", async () => {
+    const parent = await tempDir("weixin-session-sandboxes-");
+    const sessionWorkspaceDir = path.join(parent, "sandboxes", "current");
+    const siblingWorkspaceDir = path.join(parent, "sandboxes", "sibling");
+    await fs.mkdir(sessionWorkspaceDir, { recursive: true });
+    await fs.mkdir(siblingWorkspaceDir, { recursive: true });
+    const filePath = path.join(siblingWorkspaceDir, "secret.png");
+    await fs.writeFile(filePath, "sibling-secret");
+
+    await withStateDir(parent, async () => {
+      await expect(
+        readWeixinLocalMedia({
+          filePath,
+          cfg: {},
+          agentId: "main",
+          sessionWorkspaceDir,
+          maxBytes: 1024,
+        }),
+      ).rejects.toThrow("not under an allowed directory");
+    });
+  });
+
   it("reads a regular file inside an explicitly trusted root", async () => {
     const root = await tempDir("weixin-media-root-");
     const filePath = path.join(root, "report.txt");

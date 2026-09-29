@@ -52,6 +52,7 @@ if (
 const requiredExports = {
   "hook-runtime": ["buildCanonicalSentMessageHookContext", "fireAndForgetHook", "toPluginMessageContext", "toPluginMessageSentEvent"],
   "plugin-runtime": ["getGlobalHookRunner"],
+  "agent-harness-runtime": ["resolveSandboxContext"],
   "channel-outbound": ["sanitizeForPlainText"],
   "channel-message": ["createTypingCallbacks", "formatChannelProgressDraftLineForEntry"],
   "extension-shared": ["buildTimeoutAbortSignal"],

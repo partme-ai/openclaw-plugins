@@ -6,9 +6,15 @@ const mocks = vi.hoisted(() => ({
   handleSlashCommand: vi.fn(),
   downloadMedia: vi.fn(),
   resolveTypingTicket: vi.fn(),
+  resolveSandboxContext: vi.fn(),
+  sendWeixinMediaFile: vi.fn(),
+  createMsgContext: vi.fn(),
 }));
 
 vi.mock("openclaw/plugin-sdk/channel-message", () => ({ createTypingCallbacks: vi.fn() }));
+vi.mock("openclaw/plugin-sdk/agent-harness-runtime", () => ({
+  resolveSandboxContext: mocks.resolveSandboxContext,
+}));
 vi.mock("openclaw/plugin-sdk/temp-path", () => ({
   resolvePreferredOpenClawTmpDir: () => "/tmp/openclaw-weixin-test",
 }));
@@ -34,11 +40,11 @@ vi.mock("../../src/messaging/debug-mode.js", () => ({ isDebugMode: () => false }
 vi.mock("../../src/messaging/error-notice.js", () => ({ sendWeixinErrorNotice: vi.fn() }));
 vi.mock("../../src/messaging/inbound.js", () => ({
   setContextToken: vi.fn(),
-  weixinMessageToMsgContext: vi.fn(),
+  weixinMessageToMsgContext: mocks.createMsgContext,
   getContextTokenFromMsgContext: vi.fn(),
   isMediaItem: () => true,
 }));
-vi.mock("../../src/messaging/send-media.js", () => ({ sendWeixinMediaFile: vi.fn() }));
+vi.mock("../../src/messaging/send-media.js", () => ({ sendWeixinMediaFile: mocks.sendWeixinMediaFile }));
 vi.mock("../../src/messaging/markdown-filter.js", () => ({
   StreamingMarkdownFilter: class {
     feed(value: string): string { return value; }
@@ -86,6 +92,53 @@ beforeEach(() => {
 });
 
 describe("processOneMessage authorization boundary", () => {
+  it("passes the routed session workspace to outbound media without using its file path as authority", async () => {
+    mocks.resolveCommandAuthorization.mockResolvedValue({
+      senderAllowedForCommands: true,
+      commandAuthorized: false,
+    });
+    mocks.resolveDmOutcome.mockReturnValue("authorized");
+    mocks.createMsgContext.mockReturnValue({ Body: "hello", To: "stranger" });
+    mocks.resolveSandboxContext.mockResolvedValue({ workspaceDir: "/trusted/sandboxes/current" });
+    let deliver: (payload: { mediaUrl: string }) => Promise<void>;
+    const input = deps();
+    input.channelRuntime = {
+      commands: {},
+      routing: { resolveAgentRoute: () => ({
+        agentId: "main",
+        sessionKey: "agent:main:direct:current",
+        mainSessionKey: "agent:main:main",
+      }) },
+      session: {
+        resolveStorePath: () => "/tmp/store.json",
+        recordInboundSession: vi.fn(),
+      },
+      reply: {
+        finalizeInboundContext: (ctx: unknown) => ctx,
+        resolveHumanDelayConfig: () => undefined,
+        createReplyDispatcherWithTyping: (params: { deliver: typeof deliver }) => {
+          deliver = params.deliver;
+          return { dispatcher: {}, replyOptions: {}, markDispatchIdle: vi.fn() };
+        },
+        withReplyDispatcher: ({ run }: { run: () => Promise<void> }) => run(),
+        dispatchReplyFromConfig: () => deliver({ mediaUrl: "/untrusted/sandboxes/sibling/secret.png" }),
+      },
+    } as never;
+
+    await processOneMessage(message("hello"), input);
+
+    expect(mocks.resolveSandboxContext).toHaveBeenCalledWith({
+      config: input.config,
+      agentId: "main",
+      sessionKey: "agent:main:direct:current",
+    });
+    expect(mocks.sendWeixinMediaFile).toHaveBeenCalledWith(expect.objectContaining({
+      filePath: "/untrusted/sandboxes/sibling/secret.png",
+      sessionWorkspaceDir: "/trusted/sandboxes/current",
+      agentId: "main",
+    }));
+  });
+
   it("fails the batch when the channel runtime is unavailable", async () => {
     const input = deps();
     Object.assign(input, { channelRuntime: undefined });

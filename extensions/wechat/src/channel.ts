@@ -275,6 +275,8 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
             },
             cdnBaseUrl: account.cdnBaseUrl,
             mediaLocalRoots: account.mediaLocalRoots,
+            cfg: ctx.cfg,
+            sessionWorkspaceDir: ctx.mediaAccess?.workspaceDir,
           });
           return { channel: "openclaw-weixin", messageId: result.messageId };
         };

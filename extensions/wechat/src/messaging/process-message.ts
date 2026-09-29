@@ -17,6 +17,7 @@
 import path from "node:path";
 
 import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-message";
+import { resolveSandboxContext } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   resolveSenderCommandAuthorizationWithRuntime,
   resolveDirectDmAuthorizationOutcome,
@@ -416,7 +417,15 @@ export async function processOneMessage(
 
         try {
           if (mediaUrl) {
-            const sendFile = async (filePath: string) => {
+            const sendFile = async (filePath: string, localSource: boolean) => {
+              // Resolve from the host's authenticated route, never from the media path.
+              const sandbox = localSource
+                ? await resolveSandboxContext({
+                    config: deps.config,
+                    agentId: route.agentId,
+                    sessionKey: route.sessionKey,
+                  })
+                : null;
               await sendWeixinMediaFile({
                 filePath,
                 to: ctx.To,
@@ -429,6 +438,9 @@ export async function processOneMessage(
                 },
                 cdnBaseUrl: deps.cdnBaseUrl,
                 mediaLocalRoots: deps.mediaLocalRoots,
+                cfg: deps.config,
+                agentId: route.agentId,
+                sessionWorkspaceDir: sandbox?.workspaceDir,
               });
             };
             if (!mediaUrl.includes("://") || mediaUrl.startsWith("file://")) {
@@ -439,7 +451,7 @@ export async function processOneMessage(
               logger.debug(
                 `outbound: local file path resolved filePath=${filePath}`,
               );
-              await sendFile(filePath);
+              await sendFile(filePath, true);
             } else if (
               mediaUrl.startsWith("http://") ||
               mediaUrl.startsWith("https://")
@@ -450,7 +462,7 @@ export async function processOneMessage(
               await withRemoteMediaTempFile({
                 url: mediaUrl,
                 destDir: MEDIA_OUTBOUND_TEMP_DIR,
-                use: sendFile,
+                use: (filePath) => sendFile(filePath, false),
               });
             } else {
               logger.warn(

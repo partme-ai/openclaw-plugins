@@ -16,6 +16,7 @@ import { logger } from "../util/logger.js";
 import { getMimeFromFilename } from "../media/mime.js";
 import { sendFileMessageWeixin, sendImageMessageWeixin, sendVideoMessageWeixin } from "./send.js";
 import { uploadFileAttachmentToWeixin, uploadFileToWeixin, uploadVideoToWeixin } from "../cdn/upload.js";
+import type { WeixinMediaSessionContext } from "../media/path-guard.js";
 
 /**
  * Upload a local file and send it as a weixin message, routing by MIME type:
@@ -26,7 +27,7 @@ import { uploadFileAttachmentToWeixin, uploadFileToWeixin, uploadVideoToWeixin }
  * Used by both the auto-reply deliver path (monitor.ts) and the outbound
  * sendMedia path (channel.ts) so they stay in sync.
  */
-export async function sendWeixinMediaFile(params: {
+export async function sendWeixinMediaFile(params: WeixinMediaSessionContext & {
   filePath: string;
   to: string;
   text: string;
@@ -35,7 +36,8 @@ export async function sendWeixinMediaFile(params: {
   /** 当前账号允许读取的额外本地媒体目录；默认根由 OpenClaw 提供。 */
   mediaLocalRoots?: readonly string[];
 }): Promise<{ messageId: string }> {
-  const { filePath, to, text, opts, cdnBaseUrl, mediaLocalRoots } = params;
+  const { filePath, to, text, opts, cdnBaseUrl, mediaLocalRoots, cfg, agentId, sessionWorkspaceDir } =
+    params;
   const mime = getMimeFromFilename(filePath);
   const uploadOpts: WeixinApiOptions = {
     baseUrl: opts.baseUrl,
@@ -52,6 +54,9 @@ export async function sendWeixinMediaFile(params: {
       opts: uploadOpts,
       cdnBaseUrl,
       mediaLocalRoots,
+      cfg,
+      agentId,
+      sessionWorkspaceDir,
     });
     logger.info(
       `[weixin] sendWeixinMediaFile: video upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
@@ -67,6 +72,9 @@ export async function sendWeixinMediaFile(params: {
       opts: uploadOpts,
       cdnBaseUrl,
       mediaLocalRoots,
+      cfg,
+      agentId,
+      sessionWorkspaceDir,
     });
     logger.info(
       `[weixin] sendWeixinMediaFile: image upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
@@ -86,6 +94,9 @@ export async function sendWeixinMediaFile(params: {
     opts: uploadOpts,
     cdnBaseUrl,
     mediaLocalRoots,
+    cfg,
+    agentId,
+    sessionWorkspaceDir,
   });
   logger.info(
     `[weixin] sendWeixinMediaFile: file upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
