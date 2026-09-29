@@ -38,6 +38,7 @@ type InboxState = {
   version: 1;
   pending: Record<string, DouyinWebhookInboxItem>;
   deadLetters: DouyinWebhookInboxItem[];
+  completed: Record<string, number>;
 };
 
 export type DouyinWebhookInboxConfig = {
@@ -53,6 +54,7 @@ export type DouyinWebhookInboxStatus = {
   running: boolean;
   pending: number;
   deadLetters: number;
+  completed: number;
   oldestPendingAt: number | null;
   lastError: string | null;
 };
@@ -67,7 +69,10 @@ const EMPTY_STATE = (): InboxState => ({
   version: 1,
   pending: {},
   deadLetters: [],
+  completed: {},
 });
+const COMPLETED_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_COMPLETED = 10_000;
 /** 同一进程内禁止热重载的新旧生命周期同时写同一个账号文件。 */
 const claimedInboxFiles = new Set<string>();
 const TERMINAL_RESULTS = new Set<DouyinWebhookDispatchResult>([
@@ -107,7 +112,18 @@ function parseState(raw: string): InboxState {
   value.deadLetters.forEach((item, index) =>
     assertInboxItem(item, `deadLetters.${index}`),
   );
+  if (value.completed === undefined) value.completed = {};
+  if (value.completed === null || typeof value.completed !== "object" || Array.isArray(value.completed) ||
+      Object.values(value.completed).some((at) => typeof at !== "number" || !Number.isFinite(at))) {
+    throw new Error("[douyin] invalid webhook inbox completed state");
+  }
   return value as InboxState;
+}
+
+function pruneCompleted(state: InboxState, now: number): void {
+  for (const [messageId, completedAt] of Object.entries(state.completed)) {
+    if (now - completedAt >= COMPLETED_TTL_MS) delete state.completed[messageId];
+  }
 }
 
 function assertInboxItem(
@@ -226,6 +242,8 @@ export class DouyinWebhookInbox {
       }
       if (
         this.state.pending[item.messageId] ||
+        (Object.hasOwn(this.state.completed, item.messageId) &&
+          Date.now() - this.state.completed[item.messageId] < COMPLETED_TTL_MS) ||
         this.state.deadLetters.some(
           (entry) => entry.messageId === item.messageId,
         )
@@ -239,6 +257,11 @@ export class DouyinWebhookInbox {
       }
       const now = Date.now();
       const next = structuredClone(this.state);
+      pruneCompleted(next, now);
+      if (Object.keys(next.completed).length >= MAX_COMPLETED) {
+        this.lastError = `webhook completed capacity ${MAX_COMPLETED} reached`;
+        throw new Error(`[douyin] ${this.lastError}`);
+      }
       next.pending[item.messageId] = {
         ...item,
         attempts: 0,
@@ -262,6 +285,7 @@ export class DouyinWebhookInbox {
       running: this.running,
       pending: pending.length,
       deadLetters: this.state.deadLetters.length,
+      completed: Object.keys(this.state.completed).length,
       oldestPendingAt: pending.length
         ? Math.min(...pending.map((item) => item.createdAt))
         : null,
@@ -383,7 +407,7 @@ export class DouyinWebhookInbox {
 
     try {
       if (TERMINAL_RESULTS.has(result)) {
-        await this.remove(item.messageId);
+        await this.complete(item.messageId);
         this.lastError = null;
         return;
       }
@@ -404,6 +428,10 @@ export class DouyinWebhookInbox {
         throw new Error("webhook item cannot start processing");
       }
       const next = structuredClone(this.state);
+      pruneCompleted(next, Date.now());
+      if (Object.keys(next.completed).length >= MAX_COMPLETED) {
+        throw new Error(`webhook completed capacity ${MAX_COMPLETED} reached`);
+      }
       next.pending[messageId].processingAt = Date.now();
       await this.persist(next);
       this.state = next;
@@ -444,9 +472,16 @@ export class DouyinWebhookInbox {
     this.logger.error?.(`[douyin] webhook needs manual review (${recoveryState})`);
   }
 
-  private async remove(messageId: string): Promise<void> {
+  private async complete(messageId: string): Promise<void> {
     await this.lock(async () => {
       const next = structuredClone(this.state);
+      pruneCompleted(next, Date.now());
+      if (next.completed[messageId] === undefined && Object.keys(next.completed).length >= MAX_COMPLETED) {
+        throw new Error(`[douyin] webhook completed capacity ${MAX_COMPLETED} reached`);
+      }
+      Object.defineProperty(next.completed, messageId, {
+        value: Date.now(), enumerable: true, writable: true, configurable: true,
+      });
       delete next.pending[messageId];
       await this.persist(next);
       this.state = next;

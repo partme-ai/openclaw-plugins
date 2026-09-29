@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TranscriptDispatchError } from "@partme.ai/openclaw-message-sdk";
+import { createClaimableDedupe, TranscriptDispatchError, type PersistentDedupe } from "@partme.ai/openclaw-message-sdk";
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
 const admission = vi.hoisted(() => ({ active: 0, calls: 0 }));
@@ -70,6 +71,11 @@ async function stateDirectory(): Promise<string> {
   return directory;
 }
 
+function stateFile(directory: string): string {
+  const suffix = createHash("sha256").update("default").digest("hex").slice(0, 12);
+  return join(directory, `default-${suffix}.json`);
+}
+
 function event(messageId: string) {
   return {
     messageId,
@@ -80,6 +86,86 @@ function event(messageId: string) {
 }
 
 describe("DouyinWebhookInbox", () => {
+  it("keeps a durable completed receipt when dedupe commit only succeeds in memory", async () => {
+    const directory = await stateDirectory();
+    const platformSends = vi.fn();
+    const diskError = Object.assign(new Error("injected dedupe EIO"), { code: "EIO" });
+    const persistent: PersistentDedupe = {
+      checkAndRecord: vi.fn().mockRejectedValue(diskError),
+      hasRecent: vi.fn().mockResolvedValue(false),
+      warmup: vi.fn().mockResolvedValue(0),
+      clearMemory: vi.fn(), memorySize: vi.fn().mockReturnValue(0),
+    };
+    const onPersistentError = vi.fn();
+    const dedupe = createClaimableDedupe({
+      ttlMs: 24 * 60 * 60 * 1000, memoryMaxSize: 1_000, persistent, onPersistentError,
+    });
+    const dispatch = vi.fn(async (item: { messageId: string }) => {
+      expect((await dedupe.claim(item.messageId)).kind).toBe("claimed");
+      platformSends();
+      await dedupe.commit(item.messageId);
+      return "dispatched" as const;
+    });
+    const first = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await first.start();
+    await first.enqueue(event("msg-dedupe-eio"));
+    await vi.waitFor(() => expect(first.status().pending).toBe(0));
+    const [file] = await import("node:fs/promises").then((fs) => fs.readdir(directory));
+    const persisted = JSON.parse(await readFile(join(directory, file), "utf8"));
+    expect(persisted.completed["msg-dedupe-eio"]).toEqual(expect.any(Number));
+    expect(persistent.checkAndRecord).toHaveBeenCalledTimes(1);
+    expect(onPersistentError).toHaveBeenCalledWith(diskError);
+    await first.stop();
+
+    dedupe.clearMemory();
+    const recovered = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await recovered.start();
+    expect(await recovered.enqueue(event("msg-dedupe-eio"))).toBe("duplicate");
+    expect(recovered.status().pending).toBe(0);
+    expect(platformSends).toHaveBeenCalledTimes(1);
+    await recovered.stop();
+  });
+
+  it("expires completed receipts only after the 24-hour dedupe window", async () => {
+    const directory = await stateDirectory();
+    const staleAt = Date.now() - 24 * 60 * 60 * 1000 - 1;
+    await writeFile(stateFile(directory), JSON.stringify({
+      version: 1, pending: {}, deadLetters: [], completed: { "msg-expired": staleAt },
+    }));
+    const dispatch = vi.fn().mockResolvedValue("dispatched");
+    const inbox = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await inbox.start();
+    expect(await inbox.enqueue(event("msg-expired"))).toBe("enqueued");
+    await vi.waitFor(() => expect(inbox.status().pending).toBe(0));
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const persisted = JSON.parse(await readFile(stateFile(directory), "utf8"));
+    expect(persisted.completed["msg-expired"]).toBeGreaterThan(staleAt);
+    await inbox.stop();
+  });
+
+  it("fails closed when 10k unexpired completed receipts fill capacity", async () => {
+    const directory = await stateDirectory();
+    const completed = Object.fromEntries(Array.from({ length: 10_000 }, (_, index) => [
+      `msg-${index}`, Date.now(),
+    ]));
+    await writeFile(stateFile(directory), JSON.stringify({ version: 1, pending: {}, deadLetters: [], completed }));
+    const dispatch = vi.fn().mockResolvedValue("dispatched");
+    const inbox = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await inbox.start();
+    await expect(inbox.enqueue(event("msg-over-capacity"))).rejects.toThrow("completed capacity");
+    expect(inbox.status().lastError).toContain("completed capacity");
+    expect(inbox.status().pending).toBe(0);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(Object.keys(JSON.parse(await readFile(stateFile(directory), "utf8")).completed)).toHaveLength(10_000);
+    await inbox.stop();
+
+    const recovered = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await recovered.start();
+    await expect(recovered.enqueue(event("msg-over-capacity"))).rejects.toThrow("completed capacity");
+    expect(recovered.status().pending).toBe(0);
+    expect(dispatch).not.toHaveBeenCalled();
+    await recovered.stop();
+  });
   it("writes processing before model execution and leaves an interrupted turn for restart review", async () => {
     const directory = await stateDirectory();
     let finish: ((result: "dispatched") => void) | undefined;

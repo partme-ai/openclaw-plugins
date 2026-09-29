@@ -7,15 +7,17 @@ import type { TranscriptRecordState } from "@partme.ai/openclaw-message-sdk";
 
 export type KfInboundRecoveryEntry = {
   msgId: string;
-  phase: "processing" | "quarantined";
+  phase: "processing" | "quarantined" | "completed";
   recordState?: Exclude<TranscriptRecordState, "not_started">;
-  reason: string;
-  createdAt: number;
+  reason?: string;
+  createdAt?: number;
+  completedAt?: number;
 };
 
 type RecoveryState = { version: 1; entries: Record<string, KfInboundRecoveryEntry> };
 const MAX_ENTRIES = 10_000;
 const MAX_BYTES = 1024 * 1024;
+const COMPLETED_TTL_MS = 24 * 60 * 60 * 1000;
 const writes = new Map<string, Promise<void>>();
 /** 隔离写盘失败时继续在本进程阻断重跑；重启由已落盘的 processing 标记接管。 */
 const volatileQuarantines = new Map<string, KfInboundRecoveryEntry>();
@@ -56,12 +58,24 @@ export async function getKfInboundRecovery(params: {
   const volatile = volatileQuarantines.get(entryKey(file, params.msgId));
   if (volatile) return volatile;
   await writes.get(file);
-  return (await readState(file)).entries[params.msgId] ?? null;
+  const entry = (await readState(file)).entries[params.msgId];
+  if (entry?.phase === "completed" && typeof entry.completedAt === "number" &&
+      Date.now() - entry.completedAt >= COMPLETED_TTL_MS) {
+    return null;
+  }
+  return entry ?? null;
 }
 
 async function updateState(file: string, change: (state: RecoveryState) => void): Promise<void> {
   const save = async () => {
     const state = await readState(file);
+    const now = Date.now();
+    for (const [msgId, entry] of Object.entries(state.entries)) {
+      if (entry.phase === "completed" && typeof entry.completedAt === "number" &&
+          now - entry.completedAt >= COMPLETED_TTL_MS) {
+        delete state.entries[msgId];
+      }
+    }
     change(state);
     const payload = `${JSON.stringify(state)}\n`;
     if (Buffer.byteLength(payload) > MAX_BYTES) throw new Error("KF inbound recovery state exceeds size limit");
@@ -107,13 +121,31 @@ export async function beginKfInboundProcessing(params: {
   });
 }
 
-/** 成功提交去重或确认记录前失败后，才允许移除 processing 标记。 */
+/** 确认记录前失败后，才允许移除 processing 标记。 */
 export async function finishKfInboundProcessing(params: {
   openKfId: string; msgId: string; stateDir?: string;
 }): Promise<void> {
   const file = resolveKfInboundRecoveryPath(params.openKfId, params.stateDir);
   await updateState(file, (state) => { delete state.entries[params.msgId]; });
   volatileQuarantines.delete(entryKey(file, params.msgId));
+}
+
+/** 宿主轮次完成后保留独立于 best-effort dedupe 的 24 小时持久完成凭据。 */
+export async function completeKfInboundProcessing(params: {
+  openKfId: string; msgId: string; stateDir?: string;
+}): Promise<void> {
+  const file = resolveKfInboundRecoveryPath(params.openKfId, params.stateDir);
+  await updateState(file, (state) => {
+    const current = state.entries[params.msgId];
+    if (!current || current.phase !== "processing") {
+      throw new Error("KF inbound processing receipt is missing");
+    }
+    state.entries[params.msgId] = {
+      msgId: params.msgId,
+      phase: "completed",
+      completedAt: Date.now(),
+    };
+  });
 }
 
 export async function putKfInboundRecovery(params: {

@@ -32,6 +32,7 @@ import { toSafeErrorSummary } from "../shared/safe-log.js";
 import { TranscriptDispatchError } from "@partme.ai/openclaw-message-sdk";
 import {
   beginKfInboundProcessing,
+  completeKfInboundProcessing,
   finishKfInboundProcessing,
   getKfInboundRecovery,
   putKfInboundRecovery,
@@ -411,6 +412,7 @@ async function processSyncedMessage(
 
   if (msgId) {
     const recovery = await getKfInboundRecovery({ openKfId, msgId });
+    if (recovery?.phase === "completed") return;
     if (recovery) throw new KfInboundRecoveryRequiredError(msgId);
     const claim = await claimWecomKfInboundMsgid(openKfId, msgId);
     if (claim.kind !== "claimed") {
@@ -462,7 +464,7 @@ async function processSyncedMessage(
     }
     signal.throwIfAborted();
     if (msgId) await commitWecomKfInboundMsgid(openKfId, msgId);
-    if (msgId && processingStarted) await finishKfInboundProcessing({ openKfId, msgId });
+    if (msgId && processingStarted) await completeKfInboundProcessing({ openKfId, msgId });
   } catch (error) {
     if (msgId) {
       const recordState = error instanceof TranscriptDispatchError ? error.recordState : "ambiguous";

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { TranscriptDispatchError } from "@partme.ai/openclaw-message-sdk";
+import { createClaimableDedupe, TranscriptDispatchError, type PersistentDedupe } from "@partme.ai/openclaw-message-sdk";
 import { EventEmitter } from "node:events";
 
 import {
@@ -22,12 +22,14 @@ const releaseInboundMock = vi.hoisted(() => vi.fn(async () => undefined));
 const recoveryEntries = vi.hoisted(() => new Map<string, { phase: string; recordState?: string }>());
 const beginRecoveryMock = vi.hoisted(() => vi.fn());
 const finishRecoveryMock = vi.hoisted(() => vi.fn());
+const completeRecoveryMock = vi.hoisted(() => vi.fn());
 const putRecoveryMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../dedup/kf-inbound-recovery.js", () => ({
   getKfInboundRecovery: vi.fn(async ({ openKfId, msgId }) => recoveryEntries.get(`${openKfId}:${msgId}`) ?? null),
   beginKfInboundProcessing: beginRecoveryMock,
   finishKfInboundProcessing: finishRecoveryMock,
+  completeKfInboundProcessing: completeRecoveryMock,
   putKfInboundRecovery: putRecoveryMock,
 }));
 const detachedAdmission = vi.hoisted(() => ({ active: false, calls: 0, reservationOpen: true }));
@@ -238,6 +240,9 @@ describe("createKfCallbackHandler", () => {
     });
     finishRecoveryMock.mockReset().mockImplementation(async ({ openKfId, msgId }) => {
       recoveryEntries.delete(`${openKfId}:${msgId}`);
+    });
+    completeRecoveryMock.mockReset().mockImplementation(async ({ openKfId, msgId }) => {
+      recoveryEntries.set(`${openKfId}:${msgId}`, { phase: "completed" });
     });
     putRecoveryMock.mockReset().mockImplementation(async ({ openKfId, msgId, recordState }) => {
       recoveryEntries.set(`${openKfId}:${msgId}`, { phase: "quarantined", recordState });
@@ -601,9 +606,69 @@ describe("createKfCallbackHandler", () => {
     expect(dispatchKfMessageMock).toHaveBeenCalledTimes(2);
     expect(commitInboundMock.mock.calls.filter((call) => call[1] === "msg-recovered")).toHaveLength(1);
     expect(releaseInboundMock).toHaveBeenCalledWith("kf_001", "msg-recovered", expect.any(Error));
-    expect(recoveryEntries.size).toBe(0);
+    expect(recoveryEntries.get("kf_001:msg-recovered")).toMatchObject({ phase: "completed" });
     const cursor = await (await import("../state/cursor-store.js")).getCursorStore().getCursor("default:kf_001");
     expect(cursor).toBe("cursor-recovered");
+  });
+
+  it("dedupe 落盘被吞错且同页后续消息失败时 completed 防止重启后重复发送", async () => {
+    const sends = vi.fn();
+    let laterAttempts = 0;
+    dispatchKfMessageMock.mockImplementation(async ({ msg }) => {
+      if (msg.msgid === "msg-later") {
+        laterAttempts += 1;
+        if (laterAttempts === 1) {
+          throw new TranscriptDispatchError(new Error("later message not started"), "not_started");
+        }
+      }
+      sends(msg.msgid);
+    });
+    const diskError = Object.assign(new Error("injected dedupe EIO"), { code: "EIO" });
+    const persistent: PersistentDedupe = {
+      checkAndRecord: vi.fn().mockRejectedValue(diskError),
+      hasRecent: vi.fn().mockResolvedValue(false),
+      warmup: vi.fn().mockResolvedValue(0),
+      clearMemory: vi.fn(), memorySize: vi.fn().mockReturnValue(0),
+    };
+    const onPersistentError = vi.fn();
+    const dedupe = createClaimableDedupe({
+      ttlMs: 24 * 60 * 60 * 1000, memoryMaxSize: 1_000, persistent, onPersistentError,
+    });
+    claimInboundMock.mockImplementation((openKfId, msgId) => dedupe.claim(msgId, { namespace: openKfId }));
+    commitInboundMock.mockImplementation((openKfId, msgId) => dedupe.commit(msgId, { namespace: openKfId }));
+    releaseInboundMock.mockImplementation(async (openKfId, msgId, error) => {
+      dedupe.release(msgId, { namespace: openKfId, error });
+    });
+    syncKfMessagesMock.mockResolvedValue({
+      errcode: 0, errmsg: "ok", next_cursor: "cursor-completed-replay", has_more: 0,
+      msg_list: ["msg-first", "msg-later"].map((msgid) => ({
+        msgid, msgtype: "text", origin: 3, open_kfid: "kf_001",
+        external_userid: "wx-user-1", text: { content: msgid },
+      })),
+    });
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
+    expect((await sendKfNotification(handler, "nonce-completed-1")).statusCode).toBe(200);
+    await vi.waitFor(() => expect(releaseInboundMock).toHaveBeenCalledWith("kf_001", "msg-later", expect.any(Error)));
+    await stopKfCallbackProcessing(1_000);
+    expect(recoveryEntries.get("kf_001:msg-first")).toMatchObject({ phase: "completed" });
+    expect(persistent.checkAndRecord).toHaveBeenCalledTimes(1);
+    expect(onPersistentError).toHaveBeenCalledWith(diskError);
+    const cursorStore = (await import("../state/cursor-store.js")).getCursorStore();
+    expect(await cursorStore.getCursor("default:kf_001")).not.toBe("cursor-completed-replay");
+
+    dedupe.clearMemory(); // 新进程的内存 claim 消失，持久 dedupe 曾写失败。
+    startKfCallbackProcessing();
+    expect((await sendKfNotification(handler, "nonce-completed-2")).statusCode).toBe(200);
+    await vi.waitFor(() => expect(cursorStore.getCursor("default:kf_001")).resolves.toBe("cursor-completed-replay"));
+    await stopKfCallbackProcessing(1_000);
+    expect(sends.mock.calls.filter(([msgid]) => msgid === "msg-first")).toHaveLength(1);
+    expect(sends.mock.calls.filter(([msgid]) => msgid === "msg-later")).toHaveLength(1);
+    expect(commitInboundMock.mock.calls.filter((call) => call[1] === "msg-first")).toHaveLength(1);
+    claimInboundMock.mockImplementation(async (_openKfId, msgid) => ({
+      kind: msgid === "msg-1-dup" ? "duplicate" : "claimed", key: msgid,
+    }));
+    commitInboundMock.mockImplementation(async () => undefined);
+    releaseInboundMock.mockImplementation(async () => undefined);
   });
 
   it("已记录但失败的 msgid 持久隔离，后续回调不重跑且不推进游标", async () => {

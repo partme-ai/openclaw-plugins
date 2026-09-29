@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 const diskFaults = vi.hoisted(() => ({ failNextRecoveryRename: false }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -18,6 +18,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 import {
   beginKfInboundProcessing,
+  completeKfInboundProcessing,
   finishKfInboundProcessing,
   getKfInboundRecovery,
   putKfInboundRecovery,
@@ -27,7 +28,44 @@ import {
 const dirs: string[] = [];
 afterEach(async () => {
   diskFaults.failNextRecoveryRename = false;
+  vi.restoreAllMocks();
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+it("retains a completed receipt across module reload for the 24-hour dedupe window", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wecom-recovery-"));
+  dirs.push(dir);
+  const key = { openKfId: "kf-complete", msgId: "msg-complete", stateDir: dir };
+  await beginKfInboundProcessing(key);
+  await completeKfInboundProcessing(key);
+  expect(await getKfInboundRecovery(key)).toMatchObject({ phase: "completed", completedAt: expect.any(Number) });
+  vi.resetModules();
+  const reloaded = await import("./kf-inbound-recovery.js");
+  expect(await reloaded.getKfInboundRecovery(key)).toMatchObject({ phase: "completed" });
+  const completedAt = (await getKfInboundRecovery(key))!.completedAt!;
+  vi.spyOn(Date, "now").mockReturnValue(completedAt + 24 * 60 * 60 * 1000 + 1);
+  expect(await reloaded.getKfInboundRecovery(key)).toBeNull();
+  await reloaded.beginKfInboundProcessing({ ...key, msgId: "msg-new" });
+  const state = JSON.parse(await readFile(resolveKfInboundRecoveryPath(key.openKfId, dir), "utf8"));
+  expect(state.entries).not.toHaveProperty(key.msgId);
+});
+
+it("fails closed at 10k unexpired completed entries without evicting them", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "wecom-recovery-"));
+  dirs.push(dir);
+  const file = resolveKfInboundRecoveryPath("kf-capacity", dir);
+  await mkdir(dirname(file), { recursive: true });
+  const now = Date.now();
+  const entries = Object.fromEntries(Array.from({ length: 10_000 }, (_, index) => {
+    const msgId = index.toString(36);
+    return [msgId, { msgId, phase: "completed", completedAt: now }];
+  }));
+  await writeFile(file, JSON.stringify({ version: 1, entries }), { mode: 0o600 });
+  await expect(beginKfInboundProcessing({ openKfId: "kf-capacity", msgId: "new", stateDir: dir }))
+    .rejects.toThrow("full");
+  const unchanged = JSON.parse(await readFile(file, "utf8"));
+  expect(Object.keys(unchanged.entries)).toHaveLength(10_000);
+  expect(unchanged.entries).not.toHaveProperty("new");
 });
 
 it("persists processing before dispatch and clears it only after settlement", async () => {
