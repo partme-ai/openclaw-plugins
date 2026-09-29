@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   resolveCommandAuthorization: vi.fn(),
@@ -59,6 +62,11 @@ vi.mock("../../src/messaging/slash-commands.js", () => ({
 import type { WeixinMessage } from "../../src/api/types.js";
 import { MessageItemType } from "../../src/api/types.js";
 import { processOneMessage } from "../../src/messaging/process-message.js";
+import { captureWeixinReplyWorkspace } from "../../src/media/reply-workspace.js";
+import { readWeixinLocalMedia } from "../../src/media/path-guard.js";
+
+const cleanup: string[] = [];
+let previousStateDir: string | undefined;
 
 function message(text = "/status"): WeixinMessage {
   return {
@@ -83,6 +91,7 @@ function deps() {
 }
 
 beforeEach(() => {
+  previousStateDir = process.env.OPENCLAW_STATE_DIR;
   vi.clearAllMocks();
   mocks.resolveCommandAuthorization.mockResolvedValue({
     senderAllowedForCommands: false,
@@ -91,15 +100,32 @@ beforeEach(() => {
   mocks.resolveDmOutcome.mockReturnValue("unauthorized");
 });
 
+afterEach(async () => {
+  if (previousStateDir === undefined) delete process.env.OPENCLAW_STATE_DIR;
+  else process.env.OPENCLAW_STATE_DIR = previousStateDir;
+  await Promise.all(cleanup.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+});
+
 describe("processOneMessage authorization boundary", () => {
-  it("passes the routed session workspace to outbound media without using its file path as authority", async () => {
+  it("sends existing local media even when sandbox backend provisioning is unavailable", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "weixin-existing-media-"));
+    cleanup.push(stateDir);
+    const sessionWorkspaceDir = path.join(stateDir, "sandboxes", "current");
+    const filePath = path.join(sessionWorkspaceDir, "result.png");
+    await fs.mkdir(sessionWorkspaceDir, { recursive: true });
+    await fs.writeFile(filePath, "existing-media");
+    process.env.OPENCLAW_STATE_DIR = stateDir;
     mocks.resolveCommandAuthorization.mockResolvedValue({
       senderAllowedForCommands: true,
       commandAuthorized: false,
     });
     mocks.resolveDmOutcome.mockReturnValue("authorized");
     mocks.createMsgContext.mockReturnValue({ Body: "hello", To: "stranger" });
-    mocks.resolveSandboxContext.mockResolvedValue({ workspaceDir: "/trusted/sandboxes/current" });
+    mocks.resolveSandboxContext.mockRejectedValue(new Error("backend unavailable"));
+    mocks.sendWeixinMediaFile.mockImplementationOnce(async (params) => {
+      const bytes = await readWeixinLocalMedia({ ...params, maxBytes: 1024 });
+      expect(bytes).toEqual(Buffer.from("existing-media"));
+    });
     let deliver: (payload: { mediaUrl: string }) => Promise<void>;
     const input = deps();
     input.channelRuntime = {
@@ -121,20 +147,23 @@ describe("processOneMessage authorization boundary", () => {
           return { dispatcher: {}, replyOptions: {}, markDispatchIdle: vi.fn() };
         },
         withReplyDispatcher: ({ run }: { run: () => Promise<void> }) => run(),
-        dispatchReplyFromConfig: () => deliver({ mediaUrl: "/untrusted/sandboxes/sibling/secret.png" }),
+        dispatchReplyFromConfig: () => {
+          captureWeixinReplyWorkspace({
+            agentId: "main",
+            sessionKey: "agent:main:direct:current",
+            workspaceDir: sessionWorkspaceDir,
+          });
+          return deliver({ mediaUrl: filePath });
+        },
       },
     } as never;
 
-    await processOneMessage(message("hello"), input);
+    await expect(processOneMessage(message("hello"), input)).resolves.toBeUndefined();
 
-    expect(mocks.resolveSandboxContext).toHaveBeenCalledWith({
-      config: input.config,
-      agentId: "main",
-      sessionKey: "agent:main:direct:current",
-    });
+    expect(mocks.resolveSandboxContext).not.toHaveBeenCalled();
     expect(mocks.sendWeixinMediaFile).toHaveBeenCalledWith(expect.objectContaining({
-      filePath: "/untrusted/sandboxes/sibling/secret.png",
-      sessionWorkspaceDir: "/trusted/sandboxes/current",
+      filePath,
+      sessionWorkspaceDir,
       agentId: "main",
     }));
   });

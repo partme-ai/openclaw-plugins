@@ -17,7 +17,6 @@
 import path from "node:path";
 
 import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-message";
-import { resolveSandboxContext } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   resolveSenderCommandAuthorizationWithRuntime,
   resolveDirectDmAuthorizationOutcome,
@@ -45,6 +44,10 @@ import {
 } from "./inbound.js";
 import type { WeixinInboundMediaOpts } from "./inbound.js";
 import { sendWeixinMediaFile } from "./send-media.js";
+import {
+  runWithWeixinReplyWorkspace,
+  type WeixinReplyWorkspace,
+} from "../media/reply-workspace.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
 import { handleSlashCommand } from "./slash-commands.js";
@@ -383,6 +386,11 @@ export async function processOneMessage(
     keepaliveIntervalMs: 5000,
   });
 
+  const replyWorkspace: WeixinReplyWorkspace = {
+    agentId: route.agentId,
+    sessionKey: route.sessionKey,
+  };
+
   /** Delivery records populated synchronously at deliver() entry, safe to read in finally. */
   const debugDeliveries: Array<{
     textLen: number;
@@ -418,14 +426,6 @@ export async function processOneMessage(
         try {
           if (mediaUrl) {
             const sendFile = async (filePath: string, localSource: boolean) => {
-              // Resolve from the host's authenticated route, never from the media path.
-              const sandbox = localSource
-                ? await resolveSandboxContext({
-                    config: deps.config,
-                    agentId: route.agentId,
-                    sessionKey: route.sessionKey,
-                  })
-                : null;
               await sendWeixinMediaFile({
                 filePath,
                 to: ctx.To,
@@ -440,7 +440,7 @@ export async function processOneMessage(
                 mediaLocalRoots: deps.mediaLocalRoots,
                 cfg: deps.config,
                 agentId: route.agentId,
-                sessionWorkspaceDir: sandbox?.workspaceDir,
+                sessionWorkspaceDir: localSource ? replyWorkspace.workspaceDir : undefined,
               });
             };
             if (!mediaUrl.includes("://") || mediaUrl.startsWith("file://")) {
@@ -539,16 +539,18 @@ export async function processOneMessage(
     `dispatchReplyFromConfig: starting agentId=${route.agentId ?? "(none)"}`,
   );
   try {
-    await deps.channelRuntime.reply.withReplyDispatcher({
-      dispatcher,
-      run: () =>
-        deps.channelRuntime.reply.dispatchReplyFromConfig({
-          ctx: finalized,
-          cfg: deps.config,
-          dispatcher,
-          replyOptions: { ...replyOptions, disableBlockStreaming: true },
-        }),
-    });
+    await runWithWeixinReplyWorkspace(replyWorkspace, () =>
+      deps.channelRuntime.reply.withReplyDispatcher({
+        dispatcher,
+        run: () =>
+          deps.channelRuntime.reply.dispatchReplyFromConfig({
+            ctx: finalized,
+            cfg: deps.config,
+            dispatcher,
+            replyOptions: { ...replyOptions, disableBlockStreaming: true },
+          }),
+      }),
+    );
     logger.debug(
       `dispatchReplyFromConfig: done agentId=${route.agentId ?? "(none)"}`,
     );
