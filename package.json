@@ -48,7 +48,8 @@
   "devDependencies": {
     "openclaw": "2026.9.6",
     "playwright": "1.52.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "yaml": "2.9.0"
   },
   "workspaces": [
     "extensions/*",
