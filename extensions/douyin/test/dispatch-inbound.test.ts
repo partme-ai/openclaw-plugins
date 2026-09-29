@@ -1,8 +1,12 @@
 /**
  * Douyin webhook dispatch entry tests (idempotency + transcript routing).
  */
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
+import { TranscriptDispatchError } from "@partme.ai/openclaw-message-sdk";
 
 const dispatchDouyinTranscriptTurnMock = vi.hoisted(() => vi.fn());
 
@@ -50,9 +54,17 @@ function transcriptRuntime(): PluginRuntime {
 }
 
 describe("dispatchDouyinWebhookInbound", () => {
-  beforeEach(() => {
+  let stateDir: string;
+  beforeEach(async () => {
+    stateDir = await mkdtemp(join(tmpdir(), "douyin-dispatch-test-"));
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
     dispatchDouyinTranscriptTurnMock.mockReset();
     resetDouyinWebhookDedupeForTests();
+  });
+  afterEach(async () => {
+    resetDouyinWebhookDedupeForTests();
+    vi.unstubAllEnvs();
+    await rm(stateDir, { recursive: true, force: true });
   });
 
   it("returns duplicate when the same messageId is seen twice", async () => {
@@ -175,9 +187,21 @@ describe("dispatchDouyinWebhookInbound", () => {
       messageId: uniqueMessageId("msg-not-dispatched"),
     };
 
-    expect(await dispatchDouyinWebhookInbound(params)).toBe("skipped");
-    expect(await dispatchDouyinWebhookInbound(params)).toBe("skipped");
+    expect(await dispatchDouyinWebhookInbound(params)).toBe("blocked");
+    expect(await dispatchDouyinWebhookInbound(params)).toBe("blocked");
     expect(dispatchDouyinTranscriptTurnMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not treat an inconsistent false dispatch admission as a terminal policy decision", async () => {
+    dispatchDouyinTranscriptTurnMock.mockResolvedValue({
+      route: { sessionKey: "sk" }, delivered: false,
+      hostResult: { admission: { kind: "dispatch" }, dispatched: false },
+    });
+    await expect(dispatchDouyinWebhookInbound({
+      runtime: transcriptRuntime(), cfg: {}, account: baseAccount,
+      rawBody: "uncertain", text: "uncertain", peerId: "user-uncertain",
+      messageId: uniqueMessageId("msg-false-dispatch"),
+    })).rejects.toMatchObject({ recordState: "ambiguous" });
   });
 
   it("releases the message claim when dispatch is skipped so a retry can succeed", async () => {
@@ -215,5 +239,17 @@ describe("dispatchDouyinWebhookInbound", () => {
     });
 
     expect(result).toBe("dispatched");
+  });
+
+  it.each(["recorded", "ambiguous"] as const)("retains an uncertain %s claim instead of committing or retrying", async (recordState) => {
+    dispatchDouyinTranscriptTurnMock.mockRejectedValueOnce(new TranscriptDispatchError(new Error("host failed"), recordState));
+    const params = {
+      runtime: transcriptRuntime(), cfg: {}, account: baseAccount,
+      rawBody: "uncertain", text: "uncertain", peerId: "user-uncertain",
+      messageId: uniqueMessageId(recordState),
+    };
+    await expect(dispatchDouyinWebhookInbound(params)).rejects.toMatchObject({ recordState });
+    expect(await dispatchDouyinWebhookInbound(params)).toBe("duplicate");
+    expect(dispatchDouyinTranscriptTurnMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -176,6 +176,7 @@ export function createDouyinChannelPlugin(): ChannelPlugin<ResolvedDouyinAccount
                 text: item.text,
                 peerId: item.peerId,
                 messageId: item.messageId,
+                signal: abortSignal,
                 log,
               });
             },

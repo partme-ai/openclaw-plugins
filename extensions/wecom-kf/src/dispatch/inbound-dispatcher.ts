@@ -5,6 +5,7 @@
  */
 
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
+import { TranscriptDispatchError } from "@partme.ai/openclaw-message-sdk";
 
 import { extractInboundTextContent } from "./bot.js";
 import { checkKfDmPolicy } from "./dm-policy.js";
@@ -52,9 +53,11 @@ export async function dispatchKfMessage(params: {
   accountConfig: WecomAccountConfig;
   msg: KfMessage;
   core?: PluginRuntime;
+  signal?: AbortSignal;
   log?: (message: string) => void;
   error?: (message: string) => void;
 }): Promise<void> {
+  params.signal?.throwIfAborted();
   const logger = createLogger({ log: params.log, error: params.error });
   const previewText = extractInboundTextContent(params.msg);
 
@@ -90,6 +93,7 @@ export async function dispatchKfMessage(params: {
     log: params.log,
     error: params.error,
   });
+  params.signal?.throwIfAborted();
   if (!dmResult.allowed) {
     // external_userid 属于用户标识，策略审计只记录拒绝原因，避免写入常规运行日志。
     logger.info("skip inbound reason=dm_policy");
@@ -97,6 +101,7 @@ export async function dispatchKfMessage(params: {
   }
 
   const sessionState = await getKfSessionServiceState(openKfId, externalUserId);
+  params.signal?.throwIfAborted();
   if (isKfAgentReplyBlocked(sessionState?.serviceState)) {
     logger.info(
       `skip inbound reason=service_state_${sessionState?.serviceState ?? "unknown"} ` +
@@ -120,6 +125,7 @@ export async function dispatchKfMessage(params: {
     rawBody: previewText,
     senderUserId: externalUserId,
   });
+  params.signal?.throwIfAborted();
   if (authz.shouldComputeAuth && authz.commandAuthorized !== true) {
     const prompt = buildWecomUnauthorizedCommandPrompt({
       senderUserId: externalUserId,
@@ -134,8 +140,10 @@ export async function dispatchKfMessage(params: {
           externalUserId,
           text: prompt,
           openKfId,
+          signal: params.signal,
         });
       } catch (err) {
+        params.signal?.throwIfAborted();
         logger.error(`unauthorized command reply failed: ${toSafeErrorSummary(err)}`);
       }
     }
@@ -151,6 +159,7 @@ export async function dispatchKfMessage(params: {
     log: params.log,
     error: params.error,
   });
+  params.signal?.throwIfAborted();
   const rawText = mediaContext.finalContent;
 
   const resolvedRoute = resolveKfTranscriptRoute({
@@ -161,8 +170,7 @@ export async function dispatchKfMessage(params: {
     log: params.log,
   });
   if (!resolvedRoute) {
-    logger.warn("runtime routing unavailable");
-    return;
+    throw new TranscriptDispatchError(new Error("KF runtime routing unavailable"), "not_started");
   }
 
   try {
@@ -177,6 +185,7 @@ export async function dispatchKfMessage(params: {
   } catch (error) {
     logger.warn(`dialogue inbound transition failed (non-blocking): ${toSafeErrorSummary(error)}`);
   }
+  params.signal?.throwIfAborted();
 
   const result = await dispatchKfTranscriptTurn({
     cfg,
@@ -188,9 +197,14 @@ export async function dispatchKfMessage(params: {
     messageSid: params.msg.msgid,
     mediaContext,
     commandAuthorized: authz.commandAuthorized ?? true,
+    signal: params.signal,
     log: params.log,
     error: params.error,
   });
+  params.signal?.throwIfAborted();
+  if (!result) {
+    throw new TranscriptDispatchError(new Error("KF inbound dispatch unavailable"), "not_started");
+  }
 
   if (result?.timedOut) {
     const templates = resolveWecomKfTemplates(
@@ -208,11 +222,22 @@ export async function dispatchKfMessage(params: {
           externalUserId,
           text: timeoutText,
           openKfId,
+          signal: params.signal,
         });
       } catch (err) {
+        params.signal?.throwIfAborted();
         logger.error(`timeout reply failed: ${toSafeErrorSummary(err)}`);
       }
     }
+    return;
+  }
+
+  if (result.hostResult?.dispatched === false) {
+    const admission = result.hostResult.admission.kind;
+    if (admission !== "handled" && admission !== "drop") {
+      throw new TranscriptDispatchError(new Error(`KF host returned a non-terminal ${admission} admission`), "ambiguous");
+    }
+    logger.info(`skip inbound reason=host_${admission}`);
     return;
   }
 

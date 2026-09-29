@@ -18,6 +18,7 @@ import {
 import { dirname, join } from "node:path";
 import { resolveOpenClawStateDir } from "@partme.ai/openclaw-message-sdk/openclaw";
 import { runDetachedWebhookWork } from "openclaw/plugin-sdk/webhook-request-guards";
+import { TranscriptDispatchError, type TranscriptRecordState } from "@partme.ai/openclaw-message-sdk";
 import type { DouyinWebhookDispatchResult } from "./dispatch-inbound.js";
 
 export type DouyinWebhookInboxItem = {
@@ -29,6 +30,7 @@ export type DouyinWebhookInboxItem = {
   createdAt: number;
   nextAttemptAt: number;
   lastError?: string;
+  recoveryState?: Exclude<TranscriptRecordState, "not_started">;
 };
 
 type InboxState = {
@@ -262,7 +264,7 @@ export class DouyinWebhookInbox {
     const replayed = await this.lock(async () => {
       const count = Math.min(
         Math.max(0, Math.floor(limit)),
-        this.state.deadLetters.length,
+        this.state.deadLetters.filter((item) => !item.recoveryState).length,
         Math.max(
           0,
           this.config.maxPending - Object.keys(this.state.pending).length,
@@ -272,7 +274,9 @@ export class DouyinWebhookInbox {
         return 0;
       }
       const next = structuredClone(this.state);
-      const tasks = next.deadLetters.splice(0, count);
+      const tasks = next.deadLetters.filter((item) => !item.recoveryState).slice(0, count);
+      const taskIds = new Set(tasks.map((item) => item.messageId));
+      next.deadLetters = next.deadLetters.filter((item) => !taskIds.has(item.messageId));
       const now = Date.now();
       for (const task of tasks) {
         next.pending[task.messageId] = {
@@ -315,7 +319,7 @@ export class DouyinWebhookInbox {
       const item = await this.lock(
         () =>
           Object.values(this.state.pending)
-            .filter((entry) => entry.nextAttemptAt <= Date.now())
+            .filter((entry) => !entry.recoveryState && entry.nextAttemptAt <= Date.now())
             .sort(
               (left, right) =>
                 left.nextAttemptAt - right.nextAttemptAt ||
@@ -339,8 +343,36 @@ export class DouyinWebhookInbox {
       }
       await this.fail(item, `dispatch result: ${result}`);
     } catch (error) {
-      await this.fail(item, errorMessage(error));
+      if (error instanceof TranscriptDispatchError && error.recordState === "not_started") {
+        await this.fail(item, errorMessage(error));
+      } else {
+        const recordState = error instanceof TranscriptDispatchError && error.recordState === "recorded"
+          ? "recorded"
+          : "ambiguous";
+        await this.quarantine(item, recordState, errorMessage(error));
+      }
     }
+  }
+
+  private async quarantine(
+    item: DouyinWebhookInboxItem,
+    recoveryState: Exclude<TranscriptRecordState, "not_started">,
+    diagnostic: string,
+  ): Promise<void> {
+    this.lastError = `manual review (${recoveryState}): ${diagnostic}`;
+    await this.lock(async () => {
+      const next = structuredClone(this.state);
+      const retained = { ...item, recoveryState, lastError: this.lastError! };
+      if (next.deadLetters.length < this.config.maxDeadLetters) {
+        delete next.pending[item.messageId];
+        next.deadLetters.push(retained);
+      } else {
+        next.pending[item.messageId] = retained;
+      }
+      await this.persist(next);
+      this.state = next;
+    });
+    this.logger.error?.(`[douyin] webhook needs manual review (${recoveryState})`);
   }
 
   private async remove(messageId: string): Promise<void> {
@@ -404,7 +436,7 @@ export class DouyinWebhookInbox {
       return;
     }
     const nextAttemptAt = await this.lock(() => {
-      const values = Object.values(this.state.pending);
+      const values = Object.values(this.state.pending).filter((item) => !item.recoveryState);
       return values.length
         ? Math.min(...values.map((item) => item.nextAttemptAt))
         : null;

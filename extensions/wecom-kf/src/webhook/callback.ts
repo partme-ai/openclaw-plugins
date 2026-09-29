@@ -29,6 +29,8 @@ import { resolveKfAgentAccount } from "../tools/call-context.js";
 import { getWecomRuntime } from "../runtime/index.js";
 import type { KfMessage } from "../types/index.js";
 import { toSafeErrorSummary } from "../shared/safe-log.js";
+import { TranscriptDispatchError } from "@partme.ai/openclaw-message-sdk";
+import { getKfInboundRecovery, putKfInboundRecovery } from "../dedup/kf-inbound-recovery.js";
 
 /** Account state tracking — updates via channel setStatus */
 const accountStatePatches = new Map<string, Record<string, unknown>>();
@@ -40,11 +42,19 @@ const DEFAULT_SYNC_RETRY_DELAY_MS = 500;
 const MAX_SYNC_RETRY_DELAY_MS = 30_000;
 const DEFAULT_CALLBACK_DRAIN_TIMEOUT_MS = 30_000;
 let acceptingBackgroundSync = true;
+let callbackAbortController = new AbortController();
+
+class KfInboundRecoveryRequiredError extends Error {
+  constructor(msgId: string) {
+    super(`KF inbound msgid ${msgId} requires manual recovery review`);
+  }
+}
 
 /**
  * 打开回调后台同步入口。由插件 Service start 调用；独立使用 handler 的测试和兼容入口默认开启。
  */
 export function startKfCallbackProcessing(): void {
+  callbackAbortController = new AbortController();
   acceptingBackgroundSync = true;
 }
 
@@ -61,6 +71,7 @@ export async function stopKfCallbackProcessing(
     throw new Error("wecom-kf callback drain timeout must be an integer between 1 and 300000");
   }
   acceptingBackgroundSync = false;
+  callbackAbortController.abort();
   const pending = [...accountSyncQueues.values()];
   if (pending.length === 0) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -117,10 +128,8 @@ function assertCursorProgress(params: {
 function enqueueAccountSync(key: string, task: () => Promise<void>): boolean {
   if (!acceptingBackgroundSync) return false;
   const previous = accountSyncQueues.get(key) ?? Promise.resolve();
-  const next = previous.then(
-    () => runDetachedWebhookWork(task),
-    () => runDetachedWebhookWork(task),
-  );
+  // HTTP 请求仍被准入时预留 detached root；账号任务继续按 previous 顺序执行。
+  const next = runDetachedWebhookWork(() => previous.then(task, task));
   accountSyncQueues.set(key, next);
   void next
     .catch((error: unknown) => {
@@ -142,14 +151,17 @@ async function retryAccountSync(
   task: () => Promise<void>,
   attempts: number,
   initialDelayMs: number,
+  signal: AbortSignal,
 ): Promise<void> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      signal.throwIfAborted();
       await task();
       return;
     } catch (error) {
       lastError = error;
+      if (signal.aborted || error instanceof KfInboundRecoveryRequiredError) break;
       if (attempt >= attempts) break;
       const delay = Math.min(initialDelayMs * 2 ** (attempt - 1), MAX_SYNC_RETRY_DELAY_MS);
       await new Promise<void>((resolve) => {
@@ -234,10 +246,12 @@ export function createKfCallbackHandler(
           throw new Error("callback open_kfid does not match the route-bound account");
         }
         const queueKey = boundOpenKfId;
+        const signal = callbackAbortController.signal;
         const accepted = enqueueAccountSync(queueKey, () => retryAccountSync(
-          () => processKfEvent(eventData, defaultConfig),
+          () => processKfEvent(eventData, defaultConfig, signal),
           syncRetryAttempts,
           syncRetryDelayMs,
+          signal,
         ));
         if (!accepted) {
           // 尚未 ACK，返回 503 让企微稍后重投；此时不能回 success，否则停机窗口会丢通知。
@@ -290,7 +304,9 @@ function assertFreshCallbackTimestamp(
 async function processKfEvent(
   eventData: Record<string, unknown>,
   accountConfig: WecomAccountConfig,
+  signal: AbortSignal,
 ): Promise<void> {
+  signal.throwIfAborted();
   const callbackToken = eventData.Token as string | undefined;
   const openKfId = (eventData.OpenKfId as string | undefined)?.trim();
 
@@ -325,6 +341,7 @@ async function processKfEvent(
   let page = 0;
 
   while (hasMore && page < MAX_SYNC_PAGES) {
+    signal.throwIfAborted();
     page += 1;
     const syncResult = await syncKfMessages(agent, {
       cursor,
@@ -337,8 +354,10 @@ async function processKfEvent(
       throw new Error(`sync_msg failed (errcode=${syncResult.errcode})`);
     }
 
+    signal.throwIfAborted();
+
     for (const msg of syncResult.msg_list) {
-      await processSyncedMessage(msg, accountConfig, cfg, runtime);
+      await processSyncedMessage(msg, accountConfig, cfg, runtime, signal);
     }
 
     trackAccountEvent(effectiveOpenKfId, { lastSyncAt: Date.now() });
@@ -347,6 +366,7 @@ async function processKfEvent(
     hasMore = syncResult.has_more === 1;
     assertCursorProgress({ current: cursor, next: nextCursor, hasMore, page });
     if (nextCursor) {
+      signal.throwIfAborted();
       cursor = nextCursor;
       await cursorStore.saveCursor(cursorKey, cursor);
     }
@@ -378,11 +398,15 @@ async function processSyncedMessage(
   accountConfig: WecomAccountConfig,
   cfg: OpenClawConfig,
   runtime: ReturnType<typeof getWecomRuntime>,
+  signal: AbortSignal,
 ): Promise<void> {
+  signal.throwIfAborted();
   const msgId = msg.msgid?.trim();
   const openKfId = msg.open_kfid?.trim() ?? accountConfig.openKfId?.trim() ?? "default";
 
   if (msgId) {
+    const recovery = await getKfInboundRecovery({ openKfId, msgId });
+    if (recovery) throw new KfInboundRecoveryRequiredError(msgId);
     const claim = await claimWecomKfInboundMsgid(openKfId, msgId);
     if (claim.kind !== "claimed") {
       console.log(`[wecom_kf] inbound message skipped by dedupe (${claim.kind})`);
@@ -403,6 +427,7 @@ async function processSyncedMessage(
         accountConfig: effectiveAccountConfig,
         msg: msg as KfMessage,
         core: runtime,
+        signal,
       });
       break;
 
@@ -424,9 +449,22 @@ async function processSyncedMessage(
         console.log(`[wecom_kf] Unknown origin: ${origin ?? "undefined"}`);
       }
     }
+    signal.throwIfAborted();
     if (msgId) await commitWecomKfInboundMsgid(openKfId, msgId);
   } catch (error) {
-    if (msgId) await releaseWecomKfInboundMsgid(openKfId, msgId, error);
+    if (msgId) {
+      const recordState = error instanceof TranscriptDispatchError ? error.recordState : "ambiguous";
+      if (recordState !== "not_started") {
+        await putKfInboundRecovery({
+          openKfId,
+          msgId,
+          recordState,
+          reason: toSafeErrorSummary(error),
+        });
+      }
+      await releaseWecomKfInboundMsgid(openKfId, msgId, error);
+      if (recordState !== "not_started") throw new KfInboundRecoveryRequiredError(msgId);
+    }
     throw error;
   }
 }

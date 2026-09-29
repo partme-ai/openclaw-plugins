@@ -31,6 +31,7 @@ export {
 export {
   dispatchWireMessage,
   dispatchTranscriptTurn,
+  TranscriptDispatchError,
   dispatchChannelMessage,
   dispatchEmbeddedAgentMessage,
   dispatchSubagentMessage,
@@ -52,6 +53,7 @@ export {
   type WireDispatchParams,
   type WireDispatchResult,
   type TranscriptChannelRuntime,
+  type TranscriptRecordState,
   type TranscriptDispatchParams,
   type TranscriptRecordParams,
   type WireDispatchOptions,

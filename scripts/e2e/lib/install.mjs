@@ -19,9 +19,9 @@ const APPROVED_E2E_CAPABILITIES = {
 // package, including dist; this does not claim a complete runtime surface list.
 const APPROVED_E2E_ARTIFACT_SHA256 = {
   router: "5eb633c4bb60e27964f90820bd457d49ea848b733cc9c6556556189acb57a5dd",
-  gotify: "f996d1931270e0e79ef5521f04b165d06a805eedbcc0a80b98b0f5f50301626d",
-  douyin: "2f48eb5b1e436da390c8240c053abba4b0a3c75f746a4067b3b34bdb63888057",
-  "wecom-kf": "12f9e8d27daff605cefad17e1214b38fcf028ba3979ed7d4af548776eb45f2b9",
+  gotify: "63ae8758fb8a9713cb0fc230a1421174df4139aeb870a355f3ef3ab16b55a02d",
+  douyin: "47d69f4d958cb8676c3b13a17528e79d0dcf5b60a7900fe3c182a3b8f855d2dc",
+  "wecom-kf": "586f544a72fa81ee22941907f79c56816527f34178ff86c3d0deadee8fec1f82",
   tracing: "603e57996443a8eff0fc3cc7364579fa0a66dfef000f4ecb062a7487983bf895",
   mqtt: "9a1d7af3ca8ee0f652c4bf695072377aae9b161a2cb510ba9cf0afba12c1a917",
 };

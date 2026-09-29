@@ -3,6 +3,13 @@ import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import { dispatchKfMessage } from "./inbound-dispatcher.js";
 import type { KfMessage, WecomAccountConfig } from "../types/index.js";
+import { TranscriptDispatchError } from "@partme.ai/openclaw-message-sdk";
+
+const deliverReplyMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
+vi.mock("../outbound/kf-send.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../outbound/kf-send.js")>()),
+  deliverKfAgentReplyPayload: deliverReplyMock,
+}));
 
 function createAccountConfig(): WecomAccountConfig {
   return {
@@ -89,8 +96,11 @@ const cfg = {
       accounts: {
         default: {
           openKfId: "wk-test",
+          agentId: "agent-1",
           corpId: "ww-test-corp",
           corpSecret: "kf-secret",
+          token: "callback-token",
+          encodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
         },
       },
     },
@@ -98,6 +108,8 @@ const cfg = {
 } as OpenClawConfig;
 
 afterEach(() => {
+  deliverReplyMock.mockReset();
+  deliverReplyMock.mockResolvedValue({ ok: true });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -117,6 +129,38 @@ describe("wecom-kf dispatch", () => {
 
     expect(dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a failed platform delivery after recording as a completed turn", async () => {
+    deliverReplyMock.mockResolvedValueOnce({ ok: false, error: "platform rejected" });
+    const dispatchReplyWithBufferedBlockDispatcher = vi.fn(async ({ dispatcherOptions }) => {
+      await dispatcherOptions.deliver({ text: "reply" });
+    });
+    await expect(dispatchKfMessage({
+      cfg,
+      accountConfig: createAccountConfig(),
+      msg: createTextMessage(),
+      core: createRuntime(dispatchReplyWithBufferedBlockDispatcher),
+    })).rejects.toMatchObject({ recordState: "recorded" } satisfies Partial<TranscriptDispatchError>);
+    expect(deliverReplyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports unavailable inbound capability as not started so the callback can retry", async () => {
+    const runtime = createRuntime(vi.fn());
+    (runtime.channel.inbound as { dispatchReply?: unknown }).dispatchReply = undefined;
+    await expect(dispatchKfMessage({
+      cfg, accountConfig: createAccountConfig(), msg: createTextMessage(), core: runtime,
+    })).rejects.toMatchObject({ recordState: "not_started" } satisfies Partial<TranscriptDispatchError>);
+  });
+
+  it("does not accept a false dispatch admission as a policy terminal result", async () => {
+    const runtime = createRuntime(vi.fn());
+    (runtime.channel.inbound as { dispatchReply: unknown }).dispatchReply = vi.fn(async () => ({
+      admission: { kind: "dispatch" }, dispatched: false,
+    }));
+    await expect(dispatchKfMessage({
+      cfg, accountConfig: createAccountConfig(), msg: createTextMessage(), core: runtime,
+    })).rejects.toMatchObject({ recordState: "ambiguous" } satisfies Partial<TranscriptDispatchError>);
   });
 
   it("skips non origin=3 text messages", async () => {

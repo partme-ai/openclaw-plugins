@@ -3,6 +3,7 @@
  */
 
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
+import { TranscriptDispatchError } from "@partme.ai/openclaw-message-sdk";
 import { normalizeWireIngress } from "../runtime/runtime-api.js";
 import { dispatchDouyinTranscriptTurn } from "./transcript-dispatch.js";
 import type { ResolvedDouyinAccount } from "../types.js";
@@ -22,6 +23,7 @@ export type DouyinWebhookDispatchParams = {
   text: string;
   peerId: string;
   messageId?: string;
+  signal?: AbortSignal;
   log?: {
     info?: (message: string) => void;
     warn?: (message: string) => void;
@@ -61,6 +63,7 @@ function getTranscriptRuntime(runtime: unknown): PluginRuntime | null {
 export async function dispatchDouyinWebhookInbound(
   params: DouyinWebhookDispatchParams,
 ): Promise<DouyinWebhookDispatchResult> {
+  params.signal?.throwIfAborted();
   const parsed = normalizeWireIngress({
     rawPayload: params.rawBody,
     mode: "jsonTextOrPlain",
@@ -86,6 +89,7 @@ export async function dispatchDouyinWebhookInbound(
     rawText: text,
     log: params.log,
   });
+  params.signal?.throwIfAborted();
   if (!authorization.allowed) return "blocked";
 
   const messageId = params.messageId?.trim();
@@ -104,9 +108,11 @@ export async function dispatchDouyinWebhookInbound(
       rawText: text,
       messageSid: params.messageId,
       commandAuthorized: authorization.commandAuthorized,
+      signal: params.signal,
       log: params.log?.info,
       error: params.log?.error,
     });
+    params.signal?.throwIfAborted();
     if (!result) {
       if (messageId) {
         await releaseDouyinWebhookMessage(params.account.accountId, messageId, "dispatch skipped");
@@ -124,17 +130,21 @@ export async function dispatchDouyinWebhookInbound(
       return "timed_out";
     }
     if (result.hostResult?.dispatched === false) {
-      if (messageId) {
-        await releaseDouyinWebhookMessage(params.account.accountId, messageId, "host did not dispatch");
+      const admission = result.hostResult.admission.kind;
+      if (admission !== "handled" && admission !== "drop") {
+        throw new TranscriptDispatchError(new Error(`Douyin host returned a non-terminal ${admission} admission`), "ambiguous");
       }
-      return "skipped";
+      if (messageId) {
+        await releaseDouyinWebhookMessage(params.account.accountId, messageId, admission);
+      }
+      return "blocked";
     }
     if (messageId) {
       await commitDouyinWebhookMessage(params.account.accountId, messageId);
     }
     return "dispatched";
   } catch (error) {
-    if (messageId) {
+    if (messageId && error instanceof TranscriptDispatchError && error.recordState === "not_started") {
       await releaseDouyinWebhookMessage(params.account.accountId, messageId, error);
     }
     throw error;

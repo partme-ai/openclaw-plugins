@@ -225,14 +225,18 @@ export async function uploadMedia(params: {
     type: "image" | "voice" | "video" | "file";
     buffer: Buffer;
     filename: string;
+    signal?: AbortSignal;
 }): Promise<string> {
+    params.signal?.throwIfAborted();
     const { agent, type, buffer, filename } = params;
     const safeFilename = normalizeUploadFilename(filename);
     const token = await getAccessToken(agent);
+    params.signal?.throwIfAborted();
     // 添加 debug=1 参数获取更多错误信息
     const url = buildAgentApiUrl(agent, `${API_ENDPOINTS.UPLOAD_MEDIA}?access_token=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}`);
 
     const uploadOnce = async (fileContentType: string) => {
+        params.signal?.throwIfAborted();
         // 手动构造 multipart/form-data 请求体
         // 企业微信要求包含 filename 和 filelength
         const boundary = `----WebKitFormBoundary${crypto.randomBytes(16).toString("hex")}`;
@@ -252,6 +256,7 @@ export async function uploadMedia(params: {
                 "Content-Length": String(body.length),
             },
             body: body,
+            signal: params.signal,
         }, resolveAgentHttpOptions(agent));
         const json = await readJsonResponse<{ media_id?: string; errcode?: number; errmsg?: string }>(res);
         return json;
@@ -342,7 +347,9 @@ async function callAuthenticatedJson<T extends { errcode?: number; errmsg?: stri
   options: { retrySafe?: boolean } = {},
 ): Promise<T> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    init.signal?.throwIfAborted();
     const accessToken = await getAccessToken(agent);
+    init.signal?.throwIfAborted();
     const url = buildAgentApiUrl(agent, buildPath(accessToken));
     const res = await wecomFetch(url, {
       ...init,
@@ -537,10 +544,16 @@ export async function sendKfMessage(
         msgtype: string;
         [key: string]: unknown;
     },
+    signal?: AbortSignal,
 ): Promise<KfSendMsgResult> {
+    signal?.throwIfAborted();
     const openKfId = String(params.open_kfid ?? "").trim();
     const externalUserId = String(params.touser ?? "").trim();
     const guard = await reserveKfOutboundSend({ openKfId, externalUserId });
+    if (signal?.aborted && guard.allowed) {
+        await rollbackKfSendReservation(guard.reservation);
+    }
+    signal?.throwIfAborted();
     if (!guard.allowed) {
         console.warn(`[wecom-kf] send_msg blocked code=${guard.code}: ${guard.reason}`);
         return { errcode: 95001, errmsg: guard.reason };
@@ -561,7 +574,7 @@ export async function sendKfMessage(
         const result = await callAuthenticatedJson<KfSendMsgResult>(
             agent,
             (accessToken) => `${API_ENDPOINTS.KF_SEND_MSG}?access_token=${encodeURIComponent(accessToken)}`,
-            { method: "POST", body: JSON.stringify(body) },
+            { method: "POST", body: JSON.stringify(body), signal },
         );
         if (result.errcode !== 0) {
             await rollbackKfSendReservation(guard.reservation);
@@ -719,6 +732,7 @@ export async function sendKfTextMessage(params: {
   externalUserId: string;
   text: string;
   openKfId?: string;
+  signal?: AbortSignal;
 }): Promise<Array<{ errcode: number; errmsg: string; msgid?: string }>> {
   const { agent, externalUserId } = params;
   const openKfId = params.openKfId?.trim();
@@ -730,12 +744,13 @@ export async function sendKfTextMessage(params: {
   const results: KfSendMsgResult[] = [];
 
   for (const chunk of chunks) {
+    params.signal?.throwIfAborted();
     const result = await sendKfMessage(agent, {
       touser: externalUserId,
       open_kfid: openKfId,
       msgtype: "text",
       text: { content: chunk },
-    });
+    }, params.signal);
     results.push(result);
     if (result.errcode !== 0) {
       break;
@@ -807,7 +822,9 @@ export async function sendKfMediaMessage(params: {
   contentType?: string;
   title?: string;
   description?: string;
+  signal?: AbortSignal;
 }): Promise<KfSendMsgResult> {
+  params.signal?.throwIfAborted();
   const openKfId = params.openKfId.trim();
   const externalUserId = params.externalUserId.trim();
   if (!openKfId || !externalUserId) {
@@ -839,6 +856,7 @@ export async function sendKfMediaMessage(params: {
     type: mediaType,
     buffer,
     filename,
+    signal: params.signal,
   });
 
   const payload: Record<string, unknown> = {
@@ -862,5 +880,5 @@ export async function sendKfMediaMessage(params: {
     open_kfid: string;
     msgtype: string;
     [key: string]: unknown;
-  });
+  }, params.signal);
 }
