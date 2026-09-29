@@ -94,7 +94,26 @@ export interface ChannelDispatchParams {
 export type ChannelDispatchResult =
   | { mode: "reply-pipeline"; wireResult: DispatchInboundResult }
   | { mode: "embedded-agent"; runId: string; delivered: boolean }
-  | { mode: "subagent"; runId: string; delivered: boolean };
+  | ({ mode: "subagent" } & SubagentDispatchResult);
+
+/** 宿主公开 PluginRuntime.subagent.waitForRun 返回的终态类型。 */
+export type AgentWaitResult = Awaited<ReturnType<PluginRuntime["subagent"]["waitForRun"]>>;
+
+/** 子 Agent 的回复或失败终态。 */
+export type SubagentOutcome =
+  | { kind: "visible"; text: string }
+  | { kind: "silent" }
+  | { kind: "empty" }
+  | { kind: "pending" }
+  | { kind: "failed"; status: "timeout" | "error" | "invalid" };
+
+/** 派发结果保留宿主接受的 canonical sessionKey（如宿主提供）。 */
+export type SubagentDispatchResult = {
+  runId: string;
+  sessionKey?: string;
+  delivered: boolean;
+  outcome: SubagentOutcome;
+};
 
 /** embedded-agent runtime 能力子集 / Embedded agent runtime capability subset */
 export interface EmbeddedAgentRuntime extends BridgePluginRuntime {
@@ -117,14 +136,7 @@ export interface EmbeddedAgentRuntime extends BridgePluginRuntime {
 
 /** subagent runtime 能力子集 / Subagent runtime capability subset */
 export interface SubagentRuntime extends BridgePluginRuntime {
-  subagent: {
-    run: (params: {
-      sessionKey: string;
-      message: string;
-      deliver: boolean;
-    }) => Promise<{ runId: string }>;
-    waitForRun: (params: { runId: string; timeoutMs: number }) => Promise<unknown>;
-  };
+  subagent: Pick<PluginRuntime["subagent"], "run" | "waitForRun">;
 }
 
 /** dispatchEmbeddedAgentMessage 入参 / Embedded agent dispatch params */

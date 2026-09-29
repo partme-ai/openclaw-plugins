@@ -28,17 +28,20 @@ export async function testRabbitmq(ctx, results) {
       const inboundKey = "openclaw.agent.main.in";
       const replyKey = "openclaw.agent.main.out";
       const correlationId = `rabbitmq-e2e-${Date.now()}`;
+      const subagentTimeout = process.env.OPENCLAW_E2E_RABBITMQ_SUBAGENT === "timeout";
       try {
         await ch.assertExchange(exchange, "topic", { durable: true });
         const queue = await ch.assertQueue("", { exclusive: true, autoDelete: true });
         await ch.bindQueue(queue.queue, exchange, replyKey);
 
-        const reply = new Promise((resolve, reject) => {
+        const observedReplies = [];
+        const reply = subagentTimeout ? null : new Promise((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error("Timed out waiting for RabbitMQ Agent reply")), 30_000);
           timer.unref?.();
           void ch.consume(queue.queue, (message) => {
             if (!message) return;
             const raw = message.content.toString("utf8");
+            observedReplies.push(raw);
             if (!raw.includes("openclaw e2e fixture reply")) return;
             clearTimeout(timer);
             resolve(raw);
@@ -47,6 +50,11 @@ export async function testRabbitmq(ctx, results) {
             reject(error);
           });
         });
+        if (subagentTimeout) {
+          await ch.consume(queue.queue, (message) => {
+            if (message) observedReplies.push(message.content.toString("utf8"));
+          }, { noAck: true });
+        }
 
         ch.publish(
           exchange,
@@ -55,6 +63,23 @@ export async function testRabbitmq(ctx, results) {
           { contentType: "application/json", correlationId, messageId: correlationId, persistent: true },
         );
         await ch.waitForConfirms();
+
+        if (subagentTimeout) {
+          await ctx.waitFor(async () => {
+            const stats = await ctx.gatewayFetch("/rabbitmq/stats");
+            const snapshot = stats.json?.data?.stats;
+            return stats.ok && snapshot?.messagesNacked === 1 && snapshot?.messagesAcked === 0;
+          }, { label: "rabbitmq subagent timeout NACK without ACK", timeoutMs: 30_000 });
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+          if (observedReplies.length !== 0) {
+            throw new Error(`Subagent timeout published a reply body: ${JSON.stringify(observedReplies)}`);
+          }
+          const stats = await ctx.gatewayFetch("/rabbitmq/stats");
+          if (stats.json?.data?.stats?.messagesSent !== 0) {
+            throw new Error("Subagent timeout falsely recorded an outbound publish");
+          }
+          return;
+        }
 
         const rawReply = await reply;
         const envelope = JSON.parse(rawReply);

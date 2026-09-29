@@ -13,6 +13,7 @@ const TOOL_PATH = `/opt/homebrew/bin:${process.env.PATH ?? ""}`;
 const APPROVED_E2E_CAPABILITIES = {
   tracing: { distributedTracing: true },
   mqtt: { protocolBridge: true, iot: true },
+  rabbitmq: {},
   "wecom-kf": { humanTransfer: true, satisfactionSurvey: true, sessionManagement: true },
 };
 // Exact reviewed E2E package snapshots. Update only after reviewing the changed
@@ -24,6 +25,7 @@ const APPROVED_E2E_ARTIFACT_SHA256 = {
   "wecom-kf": "0769e14496a68c037198214c3cfc84c7f7f067aad02441dd5dff147949342a7a",
   tracing: "603e57996443a8eff0fc3cc7364579fa0a66dfef000f4ecb062a7487983bf895",
   mqtt: "9a1d7af3ca8ee0f652c4bf695072377aae9b161a2cb510ba9cf0afba12c1a917",
+  rabbitmq: "7710fe228bd463410e87c5482ffc54dcc5f53dc4bb18cbde19af9f6a01e825f6",
 };
 const REVIEWED_CONSENT_IDS = new Set(Object.keys(APPROVED_E2E_ARTIFACT_SHA256));
 
@@ -83,12 +85,13 @@ export function trustedE2ELinkArgs(pluginDir, extPath, repoRoot = REPO_ROOT, sta
       const manifest = JSON.parse(readFileSync(join(path, "openclaw.plugin.json"), "utf8"));
       const pkg = JSON.parse(readFileSync(join(path, "package.json"), "utf8"));
       const actual = manifest.capabilities;
+      const actualCapabilities = actual === undefined ? {} : actual;
       if (manifest.id !== pluginId || pkg.name !== definition.filter) {
         throw new Error(`Refusing install for changed ${pluginId} package identity`);
       }
-      if (approvedCapabilities && (typeof actual !== "object" || actual === null ||
-          Object.keys(actual).length !== Object.keys(approvedCapabilities).length ||
-          Object.entries(approvedCapabilities).some(([key, value]) => actual[key] !== value))) {
+      if (approvedCapabilities && (typeof actualCapabilities !== "object" || actualCapabilities === null ||
+          Object.keys(actualCapabilities).length !== Object.keys(approvedCapabilities).length ||
+          Object.entries(approvedCapabilities).some(([key, value]) => actualCapabilities[key] !== value))) {
         throw new Error(`Refusing capability consent for changed ${pluginId} manifest`);
       }
       if (!approvedCapabilities && Object.keys(actual ?? {}).length > 0) {

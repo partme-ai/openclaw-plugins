@@ -129,11 +129,38 @@ describe("rabbitmq deferred ack inbound", () => {
       dispatch: { ...DEFAULT_RABBITMQ_CONFIG.dispatch, mode: "reply-pipeline" as const, reply: { enabled: true } },
     };
 
-    await processInbound(buildEvent("openclaw.agent.agent-1.in.device-1", delivery), config);
+    const event = buildEvent("openclaw.agent.agent-1.in.device-1", delivery);
+    const result = await processInbound(event, config);
 
+    expect(result.accepted).toBe(false);
     expect(publishMessage).not.toHaveBeenCalled();
     expect(delivery.nack).toHaveBeenCalledWith(
       expect.objectContaining({ reason: "no_reply_published" }),
     );
+    const retryDelivery = mockDelivery();
+    await processInbound({ ...event, delivery: retryDelivery }, config);
+    expect(dispatchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases a timed-out subagent claim without publishing or acknowledging", async () => {
+    dispatchSpy.mockResolvedValue({
+      mode: "subagent", runId: "run-timeout", delivered: false,
+      outcome: { kind: "failed", status: "timeout" },
+    });
+    const { processInbound } = await import("../src/inbound.js");
+    const delivery = mockDelivery();
+    const config = {
+      ...DEFAULT_RABBITMQ_CONFIG,
+      subscribeTopics: [],
+      dispatch: { ...DEFAULT_RABBITMQ_CONFIG.dispatch, mode: "subagent" as const, reply: { enabled: true } },
+    };
+    const event = buildEvent("openclaw.agent.agent-1.in.device-1", delivery);
+
+    expect((await processInbound(event, config)).accepted).toBe(false);
+    expect(delivery.nack).toHaveBeenCalledTimes(1);
+    expect(delivery.ack).not.toHaveBeenCalled();
+    expect(publishMessage).not.toHaveBeenCalled();
+    await processInbound({ ...event, delivery: mockDelivery() }, config);
+    expect(dispatchSpy).toHaveBeenCalledTimes(2);
   });
 });

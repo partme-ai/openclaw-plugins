@@ -61,7 +61,7 @@ describe("dispatchChannelMessage", () => {
   it("routes subagent to dispatchSubagentMessage", async () => {
     const spy = vi
       .spyOn(subagentDispatch, "dispatchSubagentMessage")
-      .mockResolvedValue({ runId: "r2", delivered: false });
+      .mockResolvedValue({ runId: "r2", delivered: false, outcome: { kind: "failed", status: "timeout" } });
 
     const result = await dispatchChannelMessage({
       ...baseParams,
@@ -70,7 +70,7 @@ describe("dispatchChannelMessage", () => {
     });
 
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ mode: "subagent", runId: "r2", delivered: false });
+    expect(result).toEqual({ mode: "subagent", runId: "r2", delivered: false, outcome: { kind: "failed", status: "timeout" } });
     spy.mockRestore();
   });
 

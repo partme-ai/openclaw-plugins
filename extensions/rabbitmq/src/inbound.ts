@@ -193,7 +193,7 @@ async function dispatchToRuntime(
   };
 
   try {
-    await dispatchChannelMessage({
+    const dispatchResult = await dispatchChannelMessage({
       mode,
       runtime: rt as unknown as BridgePluginRuntime,
       channel: "rabbitmq",
@@ -218,7 +218,16 @@ async function dispatchToRuntime(
         userId: sessionKey,
       },
     });
+    if (config.dispatch.reply.enabled && dispatchResult.mode === "subagent" &&
+        (dispatchResult.outcome.kind === "failed" || dispatchResult.outcome.kind === "pending")) {
+      throw new Error(`RabbitMQ subagent did not complete: ${dispatchResult.outcome.kind}`);
+    }
     deferredAck.finalizeAfterDispatch();
+    // NACK is already settled by deferredAck; propagate failure so the outer
+    // claim is released rather than committed as a successful inbound turn.
+    if (config.dispatch.reply.enabled && !deferredAck.wasReplyPublished()) {
+      throw new Error("RabbitMQ dispatch completed without a required reply");
+    }
   } catch (error) {
     deferredAck.nackOnFailure(config.consume.requeueOnError, "reply_publish_or_dispatch_failed");
     throw error;

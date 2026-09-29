@@ -25,6 +25,7 @@ export { dispatchChannelMessage } from "./channel-dispatch.js";
 export {
   extractFinalTextFromRunResult,
   extractSubagentResultText,
+  resolveSubagentOutcome,
   sanitizeSessionId,
   createDispatchRunId,
 } from "./agent-helpers.js";
@@ -39,6 +40,9 @@ export type {
   ChannelDispatchResult,
   EmbeddedAgentRuntime,
   SubagentRuntime,
+  AgentWaitResult,
+  SubagentOutcome,
+  SubagentDispatchResult,
   EmbeddedAgentDispatchParams,
   SubagentDispatchParams,
   WireDispatchConfig,

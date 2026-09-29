@@ -62,6 +62,7 @@ test("local install consent is limited to a plugin in this checkout and extracte
     for (const [id, packageName, capabilities] of [
       ["tracing", "@partme.ai/openclaw-tracing", { distributedTracing: true }],
       ["mqtt", "@partme.ai/openclaw-mqtt", { protocolBridge: true, iot: true }],
+      ["rabbitmq", "@partme.ai/openclaw-rabbitmq", undefined],
       ["douyin", "@partme.ai/openclaw-douyin", undefined],
       ["wecom-kf", "@partme.ai/wecom-kf", { humanTransfer: true, satisfactionSurvey: true, sessionManagement: true }],
     ]) {
@@ -77,6 +78,10 @@ test("local install consent is limited to a plugin in this checkout and extracte
       writeFileSync(join(dest, "package.json"), pkg);
       const approved = { [id]: reviewedArtifactDigest(dest) };
       assert.ok(trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved).includes("--accept-capabilities"));
+      assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, { [id]: "unreviewed" }));
+      writeFileSync(join(dest, "package.json"), JSON.stringify({ name: "unexpected-package" }));
+      assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved));
+      writeFileSync(join(dest, "package.json"), pkg);
       writeFileSync(join(dest, "openclaw.plugin.json"), JSON.stringify({ id, capabilities: { ...capabilities, shell: true } }));
       assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved));
       writeFileSync(join(dest, "openclaw.plugin.json"), manifest);
