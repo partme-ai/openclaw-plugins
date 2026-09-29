@@ -30,7 +30,12 @@ import { getWecomRuntime } from "../runtime/index.js";
 import type { KfMessage } from "../types/index.js";
 import { toSafeErrorSummary } from "../shared/safe-log.js";
 import { TranscriptDispatchError } from "@partme.ai/openclaw-message-sdk";
-import { getKfInboundRecovery, putKfInboundRecovery } from "../dedup/kf-inbound-recovery.js";
+import {
+  beginKfInboundProcessing,
+  finishKfInboundProcessing,
+  getKfInboundRecovery,
+  putKfInboundRecovery,
+} from "../dedup/kf-inbound-recovery.js";
 
 /** Account state tracking — updates via channel setStatus */
 const accountStatePatches = new Map<string, Record<string, unknown>>();
@@ -417,8 +422,14 @@ async function processSyncedMessage(
   const effectiveAccountConfig = resolveMessageAccountConfig(msg, accountConfig, cfg);
   const origin = msg.origin;
   const msgtype = msg.msgtype;
+  let processingStarted = false;
 
   try {
+    if (msgId && origin === 3) {
+      // crash 后的 processing 残留必须阻断整轮重跑；写失败时绝不启动宿主。
+      await beginKfInboundProcessing({ openKfId, msgId });
+      processingStarted = true;
+    }
     switch (origin) {
     case 3:
       trackAccountEvent(openKfId, { lastInboundAt: Date.now() });
@@ -451,19 +462,35 @@ async function processSyncedMessage(
     }
     signal.throwIfAborted();
     if (msgId) await commitWecomKfInboundMsgid(openKfId, msgId);
+    if (msgId && processingStarted) await finishKfInboundProcessing({ openKfId, msgId });
   } catch (error) {
     if (msgId) {
       const recordState = error instanceof TranscriptDispatchError ? error.recordState : "ambiguous";
-      if (recordState !== "not_started") {
-        await putKfInboundRecovery({
-          openKfId,
-          msgId,
-          recordState,
-          reason: toSafeErrorSummary(error),
-        });
+      if (processingStarted) {
+        if (recordState === "not_started") {
+          try {
+            await finishKfInboundProcessing({ openKfId, msgId });
+          } catch (settleError) {
+            await releaseWecomKfInboundMsgid(openKfId, msgId, settleError);
+            throw new KfInboundRecoveryRequiredError(msgId);
+          }
+        } else {
+          try {
+            await putKfInboundRecovery({
+              openKfId,
+              msgId,
+              recordState,
+              reason: toSafeErrorSummary(error),
+            });
+          } catch (quarantineError) {
+            // durable processing 与内存隔离继续阻断；不得留 inflight 供后续当 duplicate 略过。
+            console.error(`[wecom_kf] recovery write failed: ${toSafeErrorSummary(quarantineError)}`);
+          }
+          await releaseWecomKfInboundMsgid(openKfId, msgId, error);
+          throw new KfInboundRecoveryRequiredError(msgId);
+        }
       }
       await releaseWecomKfInboundMsgid(openKfId, msgId, error);
-      if (recordState !== "not_started") throw new KfInboundRecoveryRequiredError(msgId);
     }
     throw error;
   }

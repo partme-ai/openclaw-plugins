@@ -31,6 +31,7 @@ export type DouyinWebhookInboxItem = {
   nextAttemptAt: number;
   lastError?: string;
   recoveryState?: Exclude<TranscriptRecordState, "not_started">;
+  processingAt?: number;
 };
 
 type InboxState = {
@@ -125,7 +126,8 @@ function assertInboxItem(
     typeof item.createdAt !== "number" ||
     !Number.isFinite(item.createdAt) ||
     typeof item.nextAttemptAt !== "number" ||
-    !Number.isFinite(item.nextAttemptAt)
+    !Number.isFinite(item.nextAttemptAt) ||
+    (item.processingAt !== undefined && !Number.isFinite(item.processingAt))
   ) {
     throw new Error(`[douyin] invalid webhook inbox item at ${location}`);
   }
@@ -140,6 +142,7 @@ export class DouyinWebhookInbox {
   private drainPromise: Promise<void> | null = null;
   private retryTimer: NodeJS.Timeout | undefined;
   private lastError: string | null = null;
+  private persistenceSuspended = false;
 
   constructor(
     accountId: string,
@@ -171,6 +174,13 @@ export class DouyinWebhookInbox {
             );
           }
           this.state = parseState(await readFile(this.filePath, "utf8"));
+          for (const item of Object.values(this.state.pending)) {
+            if (item.processingAt && !item.recoveryState) {
+              item.recoveryState = "ambiguous";
+              item.lastError = "interrupted processing requires manual review";
+              this.lastError = item.lastError;
+            }
+          }
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
             throw error;
@@ -296,8 +306,17 @@ export class DouyinWebhookInbox {
     return replayed;
   }
 
+  /** 仅重试当前状态的持久保存；不重新执行已经开始过的用户轮次。 */
+  async retryPersistence(): Promise<void> {
+    await this.lock(async () => {
+      await this.persist(this.state);
+      this.persistenceSuspended = false;
+    });
+    this.wake();
+  }
+
   private wake(): void {
-    if (!this.running || this.drainPromise) {
+    if (!this.running || this.persistenceSuspended || this.drainPromise) {
       return;
     }
     this.drainPromise = runDetachedWebhookWork(() => this.drain()).finally(() => {
@@ -315,11 +334,11 @@ export class DouyinWebhookInbox {
   }
 
   private async drain(): Promise<void> {
-    while (this.running) {
+    while (this.running && !this.persistenceSuspended) {
       const item = await this.lock(
         () =>
           Object.values(this.state.pending)
-            .filter((entry) => !entry.recoveryState && entry.nextAttemptAt <= Date.now())
+            .filter((entry) => !entry.recoveryState && !entry.processingAt && entry.nextAttemptAt <= Date.now())
             .sort(
               (left, right) =>
                 left.nextAttemptAt - right.nextAttemptAt ||
@@ -335,23 +354,73 @@ export class DouyinWebhookInbox {
 
   private async process(item: DouyinWebhookInboxItem): Promise<void> {
     try {
-      const result = await this.dispatch(structuredClone(item));
+      await this.markProcessing(item.messageId);
+    } catch (error) {
+      this.persistenceSuspended = true;
+      this.lastError = `processing write failed: ${errorMessage(error)}`;
+      this.logger.error?.(`[douyin] webhook processing write failed: ${this.lastError}`);
+      return;
+    }
+
+    let result: DouyinWebhookDispatchResult;
+    try {
+      result = await this.dispatch(structuredClone(item));
+    } catch (error) {
+      try {
+        if (error instanceof TranscriptDispatchError && error.recordState === "not_started") {
+          await this.fail(item, errorMessage(error));
+        } else {
+          const recordState = error instanceof TranscriptDispatchError && error.recordState === "recorded"
+            ? "recorded"
+            : "ambiguous";
+          await this.quarantine(item, recordState, errorMessage(error));
+        }
+      } catch (writeError) {
+        await this.blockAfterWriteFailure(item.messageId, writeError);
+      }
+      return;
+    }
+
+    try {
       if (TERMINAL_RESULTS.has(result)) {
         await this.remove(item.messageId);
         this.lastError = null;
         return;
       }
-      await this.fail(item, `dispatch result: ${result}`);
-    } catch (error) {
-      if (error instanceof TranscriptDispatchError && error.recordState === "not_started") {
-        await this.fail(item, errorMessage(error));
+      if (result === "skipped") {
+        await this.fail(item, `dispatch result: ${result}`);
       } else {
-        const recordState = error instanceof TranscriptDispatchError && error.recordState === "recorded"
-          ? "recorded"
-          : "ambiguous";
-        await this.quarantine(item, recordState, errorMessage(error));
+        await this.quarantine(item, "ambiguous", `dispatch result: ${result}`);
       }
+    } catch (writeError) {
+      await this.blockAfterWriteFailure(item.messageId, writeError);
     }
+  }
+
+  private async markProcessing(messageId: string): Promise<void> {
+    await this.lock(async () => {
+      const current = this.state.pending[messageId];
+      if (!current || current.processingAt || current.recoveryState) {
+        throw new Error("webhook item cannot start processing");
+      }
+      const next = structuredClone(this.state);
+      next.pending[messageId].processingAt = Date.now();
+      await this.persist(next);
+      this.state = next;
+    });
+  }
+
+  private async blockAfterWriteFailure(messageId: string, error: unknown): Promise<void> {
+    this.persistenceSuspended = true;
+    this.lastError = `recovery write failed: ${errorMessage(error)}`;
+    await this.lock(() => {
+      const pending = this.state.pending[messageId];
+      if (pending) {
+        pending.recoveryState = "ambiguous";
+        pending.lastError = this.lastError!;
+      }
+    });
+    this.logger.error?.(`[douyin] webhook recovery write failed: ${this.lastError}`);
   }
 
   private async quarantine(
@@ -362,7 +431,7 @@ export class DouyinWebhookInbox {
     this.lastError = `manual review (${recoveryState}): ${diagnostic}`;
     await this.lock(async () => {
       const next = structuredClone(this.state);
-      const retained = { ...item, recoveryState, lastError: this.lastError! };
+      const retained = { ...item, recoveryState, processingAt: undefined, lastError: this.lastError! };
       if (next.deadLetters.length < this.config.maxDeadLetters) {
         delete next.pending[item.messageId];
         next.deadLetters.push(retained);
@@ -396,7 +465,7 @@ export class DouyinWebhookInbox {
       }
       const attempts = current.attempts + 1;
       const next = structuredClone(this.state);
-      const failed = { ...current, attempts, lastError: diagnostic };
+      const failed = { ...current, attempts, processingAt: undefined, lastError: diagnostic };
       if (attempts >= this.config.maxAttempts) {
         if (next.deadLetters.length >= this.config.maxDeadLetters) {
           next.pending[item.messageId] = {
@@ -417,7 +486,7 @@ export class DouyinWebhookInbox {
           this.config.initialDelayMs * 2 ** Math.max(0, attempts - 1),
         );
         next.pending[item.messageId] = {
-          ...current,
+          ...failed,
           attempts,
           lastError: diagnostic,
           nextAttemptAt: Date.now() + delay,
@@ -436,7 +505,7 @@ export class DouyinWebhookInbox {
       return;
     }
     const nextAttemptAt = await this.lock(() => {
-      const values = Object.values(this.state.pending).filter((item) => !item.recoveryState);
+      const values = Object.values(this.state.pending).filter((item) => !item.recoveryState && !item.processingAt);
       return values.length
         ? Math.min(...values.map((item) => item.nextAttemptAt))
         : null;

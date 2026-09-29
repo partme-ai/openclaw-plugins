@@ -6,6 +6,22 @@ import { TranscriptDispatchError } from "@partme.ai/openclaw-message-sdk";
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
 const admission = vi.hoisted(() => ({ active: 0, calls: 0 }));
+const diskFaults = vi.hoisted(() => ({ inboxRenames: 0, failOn: new Set<number>() }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...fs,
+    rename: async (...args: Parameters<typeof fs.rename>) => {
+      if (String(args[1]).includes("douyin-inbox-test-")) {
+        diskFaults.inboxRenames += 1;
+        if (diskFaults.failOn.has(diskFaults.inboxRenames)) {
+          throw Object.assign(new Error("injected disk full"), { code: "ENOSPC" });
+        }
+      }
+      return fs.rename(...args);
+    },
+  };
+});
 vi.mock("openclaw/plugin-sdk/webhook-request-guards", () => ({
   runDetachedWebhookWork: async (run: () => Promise<unknown>) => {
     admission.calls += 1;
@@ -28,6 +44,8 @@ import type { ResolvedDouyinAccount } from "../src/types.js";
 
 const directories: string[] = [];
 afterEach(async () => {
+  diskFaults.inboxRenames = 0;
+  diskFaults.failOn.clear();
   resetDouyinWebhookDedupeForTests();
   vi.unstubAllEnvs();
   await Promise.all(
@@ -62,6 +80,75 @@ function event(messageId: string) {
 }
 
 describe("DouyinWebhookInbox", () => {
+  it("writes processing before model execution and leaves an interrupted turn for restart review", async () => {
+    const directory = await stateDirectory();
+    let finish: ((result: "dispatched") => void) | undefined;
+    const dispatch = vi.fn(() => new Promise<"dispatched">((resolve) => { finish = resolve; }));
+    const inbox = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await inbox.start();
+    await inbox.enqueue(event("msg-crash-window"));
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
+    const [file] = await import("node:fs/promises").then((fs) => fs.readdir(directory));
+    const persisted = JSON.parse(await readFile(join(directory, file), "utf8"));
+    expect(persisted.pending["msg-crash-window"].processingAt).toEqual(expect.any(Number));
+    finish?.("dispatched");
+    await vi.waitFor(() => expect(inbox.status().pending).toBe(0));
+    await inbox.stop();
+
+    persisted.pending["msg-crash-window"].processingAt = Date.now();
+    await import("node:fs/promises").then((fs) => fs.writeFile(join(directory, file), JSON.stringify(persisted)));
+    const recovered = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await recovered.start();
+    expect(recovered.status().pending).toBe(1);
+    expect(await recovered.enqueue(event("msg-crash-window"))).toBe("duplicate");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    await recovered.stop();
+  });
+
+  it("does not run the model when the initial processing write fails", async () => {
+    const directory = await stateDirectory();
+    const dispatch = vi.fn().mockResolvedValue("dispatched");
+    const inbox = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await inbox.start();
+    diskFaults.failOn.add(2);
+    await inbox.enqueue(event("msg-initial-eio"));
+    await vi.waitFor(() => expect(String(inbox.status().lastError)).toContain("disk full"));
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(inbox.status().pending).toBe(1);
+    diskFaults.failOn.clear();
+    await inbox.retryPersistence();
+    await vi.waitFor(() => expect(inbox.status().pending).toBe(0));
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
+    await inbox.stop();
+  });
+
+  it("keeps a sent but unacknowledged reply blocked when quarantine persistence fails", async () => {
+    const directory = await stateDirectory();
+    const sends = vi.fn();
+    const dispatch = vi.fn(async () => {
+      sends();
+      throw new TranscriptDispatchError(new Error("platform response lost"), "recorded");
+    });
+    const inbox = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await inbox.start();
+    diskFaults.failOn.add(3);
+    await inbox.enqueue(event("msg-reply-lost"));
+    await vi.waitFor(() => expect(inbox.status().lastError).toContain("disk full"));
+    expect(sends).toHaveBeenCalledTimes(1);
+    expect(inbox.status().pending).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    diskFaults.failOn.clear();
+    await inbox.retryPersistence();
+    await inbox.stop();
+    const recovered = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await recovered.start();
+    expect(await recovered.enqueue(event("msg-reply-lost"))).toBe("duplicate");
+    expect(recovered.status().pending + recovered.status().deadLetters).toBe(1);
+    expect(sends).toHaveBeenCalledTimes(1);
+    await recovered.stop();
+  });
   it("runs accepted Webhook work under a detached host admission after HTTP ACK", async () => {
     const directory = await stateDirectory();
     const dispatch = vi.fn(async () => {
@@ -109,7 +196,7 @@ describe("DouyinWebhookInbox", () => {
       pending: Record<string, unknown>;
     };
     expect(persisted.pending).toHaveProperty("msg-1");
-    expect(dispatch).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
 
     finish?.("dispatched");
     await vi.waitFor(() => expect(inbox.status().pending).toBe(0));
@@ -118,7 +205,7 @@ describe("DouyinWebhookInbox", () => {
 
   it("restores a failed event after restart and dispatches it exactly once", async () => {
     const directory = await stateDirectory();
-    const firstDispatch = vi.fn().mockResolvedValue("timed_out");
+    const firstDispatch = vi.fn().mockResolvedValue("skipped");
     const first = new DouyinWebhookInbox(
       "shop-a",
       config,

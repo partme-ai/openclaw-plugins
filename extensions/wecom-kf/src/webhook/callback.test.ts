@@ -19,13 +19,16 @@ const claimInboundMock = vi.hoisted(() => vi.fn(async (_openKfId: string, msgid:
 })));
 const commitInboundMock = vi.hoisted(() => vi.fn(async () => undefined));
 const releaseInboundMock = vi.hoisted(() => vi.fn(async () => undefined));
-const recoveryEntries = vi.hoisted(() => new Map<string, { recordState: string }>());
+const recoveryEntries = vi.hoisted(() => new Map<string, { phase: string; recordState?: string }>());
+const beginRecoveryMock = vi.hoisted(() => vi.fn());
+const finishRecoveryMock = vi.hoisted(() => vi.fn());
+const putRecoveryMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../dedup/kf-inbound-recovery.js", () => ({
   getKfInboundRecovery: vi.fn(async ({ openKfId, msgId }) => recoveryEntries.get(`${openKfId}:${msgId}`) ?? null),
-  putKfInboundRecovery: vi.fn(async ({ openKfId, msgId, recordState }) => {
-    recoveryEntries.set(`${openKfId}:${msgId}`, { recordState });
-  }),
+  beginKfInboundProcessing: beginRecoveryMock,
+  finishKfInboundProcessing: finishRecoveryMock,
+  putKfInboundRecovery: putRecoveryMock,
 }));
 const detachedAdmission = vi.hoisted(() => ({ active: false, calls: 0, reservationOpen: true }));
 
@@ -136,6 +139,16 @@ function mockResponse(): ServerResponse & { statusCode?: number; body?: string }
   return res as ServerResponse & { statusCode?: number; body?: string };
 }
 
+async function sendKfNotification(handler: ReturnType<typeof createKfCallbackHandler>, nonce: string) {
+  const xml = buildEventXml("kf_msg_or_event", "<Token><![CDATA[SYNC_TOKEN]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId>");
+  const encrypted = encryptWecomPlaintext({ encodingAESKey: ENCODING_AES_KEY, receiveId: CORP_ID, plaintext: xml });
+  const timestamp = "1710000005";
+  const signature = computeWecomMsgSignature({ token: TOKEN, timestamp, nonce, encrypt: encrypted });
+  const res = mockResponse();
+  await handler(makePostReq({ msg_signature: signature, timestamp, nonce }, wrapEncryptedXml(encrypted)), res);
+  return res;
+}
+
 describe("parseWecomCallback", () => {
   it("GET 验签并解密 echostr", () => {
     const plainEchostr = "hello-echostr-verify";
@@ -220,6 +233,15 @@ describe("createKfCallbackHandler", () => {
     detachedAdmission.calls = 0;
     detachedAdmission.reservationOpen = true;
     recoveryEntries.clear();
+    beginRecoveryMock.mockReset().mockImplementation(async ({ openKfId, msgId }) => {
+      recoveryEntries.set(`${openKfId}:${msgId}`, { phase: "processing" });
+    });
+    finishRecoveryMock.mockReset().mockImplementation(async ({ openKfId, msgId }) => {
+      recoveryEntries.delete(`${openKfId}:${msgId}`);
+    });
+    putRecoveryMock.mockReset().mockImplementation(async ({ openKfId, msgId, recordState }) => {
+      recoveryEntries.set(`${openKfId}:${msgId}`, { phase: "quarantined", recordState });
+    });
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -506,6 +528,54 @@ describe("createKfCallbackHandler", () => {
     expect(recoveryEntries.size).toBe(0);
   });
 
+  it("processing 持久写入 EIO 时不执行模型且不推进 cursor", async () => {
+    beginRecoveryMock.mockRejectedValueOnce(Object.assign(new Error("injected processing EIO"), { code: "EIO" }));
+    syncKfMessagesMock.mockResolvedValue({
+      errcode: 0, errmsg: "ok", next_cursor: "cursor-processing-eio", has_more: 0,
+      msg_list: [{ msgid: "msg-processing-eio", msgtype: "text", origin: 3, open_kfid: "kf_001",
+        external_userid: "wx-user-1", text: { content: "never run" } }],
+    });
+    const res = await sendKfNotification(createKfCallbackHandler(getAccountConfig, handlerOptions), "nonce-processing-eio");
+    expect(res.statusCode).toBe(200);
+    await vi.waitFor(() => expect(syncKfMessagesMock).toHaveBeenCalled());
+    await stopKfCallbackProcessing(1_000);
+    expect(beginRecoveryMock).toHaveBeenCalledWith({ openKfId: "kf_001", msgId: "msg-processing-eio" });
+    expect(dispatchKfMessageMock).not.toHaveBeenCalled();
+    expect(commitInboundMock).not.toHaveBeenCalled();
+    const cursor = await (await import("../state/cursor-store.js")).getCursorStore().getCursor("default:kf_001");
+    expect(cursor).not.toBe("cursor-processing-eio");
+  });
+
+  it("平台已发送但响应丢失且隔离写 ENOSPC 时阻断重试与 cursor", async () => {
+    const sends = vi.fn();
+    dispatchKfMessageMock.mockImplementationOnce(async () => {
+      sends();
+      throw new TranscriptDispatchError(new Error("send_msg response lost"), "recorded");
+    });
+    putRecoveryMock.mockRejectedValueOnce(Object.assign(new Error("injected quarantine ENOSPC"), { code: "ENOSPC" }));
+    syncKfMessagesMock.mockResolvedValue({
+      errcode: 0, errmsg: "ok", next_cursor: "cursor-quarantine-enospc", has_more: 0,
+      msg_list: [{ msgid: "msg-quarantine-enospc", msgtype: "text", origin: 3, open_kfid: "kf_001",
+        external_userid: "wx-user-1", text: { content: "one send only" } }],
+    });
+    const handler = createKfCallbackHandler(getAccountConfig, handlerOptions);
+    expect((await sendKfNotification(handler, "nonce-quarantine-enospc-1")).statusCode).toBe(200);
+    await vi.waitFor(() => expect(putRecoveryMock).toHaveBeenCalled());
+    await stopKfCallbackProcessing(1_000);
+    expect(sends).toHaveBeenCalledTimes(1);
+    expect(recoveryEntries.get("kf_001:msg-quarantine-enospc")).toMatchObject({ phase: "processing" });
+    expect(releaseInboundMock).toHaveBeenCalledWith("kf_001", "msg-quarantine-enospc", expect.any(Error));
+    expect(commitInboundMock).not.toHaveBeenCalledWith("kf_001", "msg-quarantine-enospc");
+    startKfCallbackProcessing();
+    expect((await sendKfNotification(handler, "nonce-quarantine-enospc-2")).statusCode).toBe(200);
+    await vi.waitFor(() => expect(syncKfMessagesMock).toHaveBeenCalledTimes(2));
+    await stopKfCallbackProcessing(1_000);
+    expect(dispatchKfMessageMock).toHaveBeenCalledTimes(1);
+    expect(sends).toHaveBeenCalledTimes(1);
+    const cursor = await (await import("../state/cursor-store.js")).getCursorStore().getCursor("default:kf_001");
+    expect(cursor).not.toBe("cursor-quarantine-enospc");
+  });
+
   it("未开始记录的失败可重试，成功后只提交一次并推进游标", async () => {
     dispatchKfMessageMock
       .mockRejectedValueOnce(new TranscriptDispatchError(new Error("runtime unavailable"), "not_started"))
@@ -556,12 +626,12 @@ describe("createKfCallbackHandler", () => {
       await handler(makePostReq({ msg_signature: msgSignature, timestamp, nonce }, wrapEncryptedXml(encrypt)), res);
       expect(res.statusCode).toBe(200);
       if (attempt === 0) {
-        await vi.waitFor(() => expect(recoveryEntries.get("kf_001:msg-recorded")).toEqual({ recordState: "recorded" }));
+        await vi.waitFor(() => expect(recoveryEntries.get("kf_001:msg-recorded")).toMatchObject({ recordState: "recorded" }));
       }
       await stopKfCallbackProcessing(1_000);
       startKfCallbackProcessing();
     }
-    expect(recoveryEntries.get("kf_001:msg-recorded")).toEqual({ recordState: "recorded" });
+    expect(recoveryEntries.get("kf_001:msg-recorded")).toMatchObject({ recordState: "recorded" });
     expect(dispatchKfMessageMock).toHaveBeenCalledTimes(1);
     expect(commitInboundMock).not.toHaveBeenCalledWith("kf_001", "msg-recorded");
     const cursor = await (await import("../state/cursor-store.js")).getCursorStore().getCursor("default:kf_001");
@@ -593,7 +663,7 @@ describe("createKfCallbackHandler", () => {
     expect(res.statusCode).toBe(200);
     await vi.waitFor(() => expect(dispatchKfMessageMock).toHaveBeenCalledTimes(1));
     await stopKfCallbackProcessing(1_000);
-    expect(recoveryEntries.get("kf_001:msg-stop")).toEqual({ recordState: "recorded" });
+    expect(recoveryEntries.get("kf_001:msg-stop")).toMatchObject({ recordState: "recorded" });
     expect(commitInboundMock).not.toHaveBeenCalledWith("kf_001", "msg-stop");
     const cursor = await (await import("../state/cursor-store.js")).getCursorStore().getCursor("default:kf_001");
     expect(cursor).not.toBe("cursor-stop");

@@ -7,7 +7,8 @@ import type { TranscriptRecordState } from "@partme.ai/openclaw-message-sdk";
 
 export type KfInboundRecoveryEntry = {
   msgId: string;
-  recordState: Exclude<TranscriptRecordState, "not_started">;
+  phase: "processing" | "quarantined";
+  recordState?: Exclude<TranscriptRecordState, "not_started">;
   reason: string;
   createdAt: number;
 };
@@ -16,6 +17,12 @@ type RecoveryState = { version: 1; entries: Record<string, KfInboundRecoveryEntr
 const MAX_ENTRIES = 10_000;
 const MAX_BYTES = 1024 * 1024;
 const writes = new Map<string, Promise<void>>();
+/** 隔离写盘失败时继续在本进程阻断重跑；重启由已落盘的 processing 标记接管。 */
+const volatileQuarantines = new Map<string, KfInboundRecoveryEntry>();
+
+function entryKey(file: string, msgId: string): string {
+  return `${file}\0${msgId}`;
+}
 
 export function resolveKfInboundRecoveryPath(openKfId: string, stateDir = resolveOpenClawStateDir()): string {
   const hash = createHash("sha256").update(openKfId).digest("hex").slice(0, 20);
@@ -46,30 +53,16 @@ export async function getKfInboundRecovery(params: {
   stateDir?: string;
 }): Promise<KfInboundRecoveryEntry | null> {
   const file = resolveKfInboundRecoveryPath(params.openKfId, params.stateDir);
+  const volatile = volatileQuarantines.get(entryKey(file, params.msgId));
+  if (volatile) return volatile;
   await writes.get(file);
   return (await readState(file)).entries[params.msgId] ?? null;
 }
 
-export async function putKfInboundRecovery(params: {
-  openKfId: string;
-  msgId: string;
-  recordState: Exclude<TranscriptRecordState, "not_started">;
-  reason: string;
-  stateDir?: string;
-}): Promise<void> {
-  const file = resolveKfInboundRecoveryPath(params.openKfId, params.stateDir);
-  const previous = writes.get(file) ?? Promise.resolve();
-  const write = previous.then(async () => {
+async function updateState(file: string, change: (state: RecoveryState) => void): Promise<void> {
+  const save = async () => {
     const state = await readState(file);
-    if (!state.entries[params.msgId] && Object.keys(state.entries).length >= MAX_ENTRIES) {
-      throw new Error("KF inbound recovery state is full");
-    }
-    state.entries[params.msgId] = {
-      msgId: params.msgId,
-      recordState: params.recordState,
-      reason: params.reason.replace(/[\r\n\t\u0000-\u001f\u007f]+/gu, " ").slice(0, 300),
-      createdAt: Date.now(),
-    };
+    change(state);
     const payload = `${JSON.stringify(state)}\n`;
     if (Buffer.byteLength(payload) > MAX_BYTES) throw new Error("KF inbound recovery state exceeds size limit");
     await mkdir(dirname(file), { recursive: true, mode: 0o700 });
@@ -89,11 +82,62 @@ export async function putKfInboundRecovery(params: {
     } finally {
       await rm(temporary, { force: true });
     }
-  });
+  };
+  const previous = writes.get(file) ?? Promise.resolve();
+  const write = previous.then(save, save);
   writes.set(file, write);
   try {
     await write;
   } finally {
     if (writes.get(file) === write) writes.delete(file);
   }
+}
+
+/** 在调用宿主之前持久预留本轮；残留标记在重启后要求人工核对。 */
+export async function beginKfInboundProcessing(params: {
+  openKfId: string; msgId: string; stateDir?: string;
+}): Promise<void> {
+  const file = resolveKfInboundRecoveryPath(params.openKfId, params.stateDir);
+  await updateState(file, (state) => {
+    if (state.entries[params.msgId]) throw new Error("KF inbound already needs recovery review");
+    if (Object.keys(state.entries).length >= MAX_ENTRIES) throw new Error("KF inbound recovery state is full");
+    state.entries[params.msgId] = {
+      msgId: params.msgId, phase: "processing", reason: "host turn may have started", createdAt: Date.now(),
+    };
+  });
+}
+
+/** 成功提交去重或确认记录前失败后，才允许移除 processing 标记。 */
+export async function finishKfInboundProcessing(params: {
+  openKfId: string; msgId: string; stateDir?: string;
+}): Promise<void> {
+  const file = resolveKfInboundRecoveryPath(params.openKfId, params.stateDir);
+  await updateState(file, (state) => { delete state.entries[params.msgId]; });
+  volatileQuarantines.delete(entryKey(file, params.msgId));
+}
+
+export async function putKfInboundRecovery(params: {
+  openKfId: string;
+  msgId: string;
+  recordState: Exclude<TranscriptRecordState, "not_started">;
+  reason: string;
+  stateDir?: string;
+}): Promise<void> {
+  const file = resolveKfInboundRecoveryPath(params.openKfId, params.stateDir);
+  const key = entryKey(file, params.msgId);
+  const entry: KfInboundRecoveryEntry = {
+    msgId: params.msgId,
+    phase: "quarantined",
+    recordState: params.recordState,
+    reason: params.reason.replace(/[\r\n\t\u0000-\u001f\u007f]+/gu, " ").slice(0, 300),
+    createdAt: Date.now(),
+  };
+  volatileQuarantines.set(key, entry);
+  await updateState(file, (state) => {
+    if (!state.entries[params.msgId] && Object.keys(state.entries).length >= MAX_ENTRIES) {
+      throw new Error("KF inbound recovery state is full");
+    }
+    state.entries[params.msgId] = entry;
+  });
+  volatileQuarantines.delete(key);
 }
