@@ -44,10 +44,6 @@ import {
 } from "./inbound.js";
 import type { WeixinInboundMediaOpts } from "./inbound.js";
 import { sendWeixinMediaFile } from "./send-media.js";
-import {
-  runWithWeixinReplyWorkspace,
-  type WeixinReplyWorkspace,
-} from "../media/reply-workspace.js";
 import { StreamingMarkdownFilter } from "./markdown-filter.js";
 import { sendMessageWeixin } from "./send.js";
 import { handleSlashCommand } from "./slash-commands.js";
@@ -386,11 +382,6 @@ export async function processOneMessage(
     keepaliveIntervalMs: 5000,
   });
 
-  const replyWorkspace: WeixinReplyWorkspace = {
-    agentId: route.agentId,
-    sessionKey: route.sessionKey,
-  };
-
   /** Delivery records populated synchronously at deliver() entry, safe to read in finally. */
   const debugDeliveries: Array<{
     textLen: number;
@@ -425,7 +416,9 @@ export async function processOneMessage(
 
         try {
           if (mediaUrl) {
-            const sendFile = async (filePath: string, localSource: boolean) => {
+            const sendFile = async (filePath: string) => {
+              // ReplyPayload has no trusted sandbox root. Host-prepared media and
+              // configured roots remain readable; raw sandbox paths fail closed.
               await sendWeixinMediaFile({
                 filePath,
                 to: ctx.To,
@@ -440,7 +433,6 @@ export async function processOneMessage(
                 mediaLocalRoots: deps.mediaLocalRoots,
                 cfg: deps.config,
                 agentId: route.agentId,
-                sessionWorkspaceDir: localSource ? replyWorkspace.workspaceDir : undefined,
               });
             };
             if (!mediaUrl.includes("://") || mediaUrl.startsWith("file://")) {
@@ -451,7 +443,7 @@ export async function processOneMessage(
               logger.debug(
                 `outbound: local file path resolved filePath=${filePath}`,
               );
-              await sendFile(filePath, true);
+              await sendFile(filePath);
             } else if (
               mediaUrl.startsWith("http://") ||
               mediaUrl.startsWith("https://")
@@ -462,7 +454,7 @@ export async function processOneMessage(
               await withRemoteMediaTempFile({
                 url: mediaUrl,
                 destDir: MEDIA_OUTBOUND_TEMP_DIR,
-                use: (filePath) => sendFile(filePath, false),
+                use: sendFile,
               });
             } else {
               logger.warn(
@@ -539,18 +531,16 @@ export async function processOneMessage(
     `dispatchReplyFromConfig: starting agentId=${route.agentId ?? "(none)"}`,
   );
   try {
-    await runWithWeixinReplyWorkspace(replyWorkspace, () =>
-      deps.channelRuntime.reply.withReplyDispatcher({
-        dispatcher,
-        run: () =>
-          deps.channelRuntime.reply.dispatchReplyFromConfig({
-            ctx: finalized,
-            cfg: deps.config,
-            dispatcher,
-            replyOptions: { ...replyOptions, disableBlockStreaming: true },
-          }),
-      }),
-    );
+    await deps.channelRuntime.reply.withReplyDispatcher({
+      dispatcher,
+      run: () =>
+        deps.channelRuntime.reply.dispatchReplyFromConfig({
+          ctx: finalized,
+          cfg: deps.config,
+          dispatcher,
+          replyOptions: { ...replyOptions, disableBlockStreaming: true },
+        }),
+    });
     logger.debug(
       `dispatchReplyFromConfig: done agentId=${route.agentId ?? "(none)"}`,
     );

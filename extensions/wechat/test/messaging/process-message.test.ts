@@ -62,7 +62,6 @@ vi.mock("../../src/messaging/slash-commands.js", () => ({
 import type { WeixinMessage } from "../../src/api/types.js";
 import { MessageItemType } from "../../src/api/types.js";
 import { processOneMessage } from "../../src/messaging/process-message.js";
-import { captureWeixinReplyWorkspace } from "../../src/media/reply-workspace.js";
 import { readWeixinLocalMedia } from "../../src/media/path-guard.js";
 
 const cleanup: string[] = [];
@@ -93,6 +92,8 @@ function deps() {
 beforeEach(() => {
   previousStateDir = process.env.OPENCLAW_STATE_DIR;
   vi.clearAllMocks();
+  mocks.resolveSandboxContext.mockReset();
+  mocks.sendWeixinMediaFile.mockReset();
   mocks.resolveCommandAuthorization.mockResolvedValue({
     senderAllowedForCommands: false,
     commandAuthorized: false,
@@ -107,14 +108,32 @@ afterEach(async () => {
 });
 
 describe("processOneMessage authorization boundary", () => {
-  it("sends existing local media even when sandbox backend provisioning is unavailable", async () => {
+  it("sends host-prepared media without provisioning and refuses an untrusted sandbox path", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "weixin-existing-media-"));
     cleanup.push(stateDir);
-    const sessionWorkspaceDir = path.join(stateDir, "sandboxes", "current");
-    const filePath = path.join(sessionWorkspaceDir, "result.png");
-    await fs.mkdir(sessionWorkspaceDir, { recursive: true });
-    await fs.writeFile(filePath, "existing-media");
+    const agentWorkspaceDir = path.join(stateDir, "agents", "main", "workspace");
+    const sandboxWorkspaceDir = path.join(stateDir, "sandboxes", "current");
+    const managedFilePath = path.join(stateDir, "media", "outbound", "result.png");
+    const sandboxFilePath = path.join(sandboxWorkspaceDir, "result.png");
+    await fs.mkdir(agentWorkspaceDir, { recursive: true });
+    await fs.mkdir(path.dirname(managedFilePath), { recursive: true });
+    await fs.mkdir(sandboxWorkspaceDir, { recursive: true });
+    await fs.writeFile(managedFilePath, "existing-media");
+    await fs.writeFile(sandboxFilePath, "sandbox-media");
+    const actualHostHookContext = {
+      agentId: "main",
+      sessionKey: "agent:main:direct:current",
+      workspaceDir: agentWorkspaceDir,
+    };
+    expect(actualHostHookContext.workspaceDir).not.toBe(sandboxWorkspaceDir);
     process.env.OPENCLAW_STATE_DIR = stateDir;
+    await expect(readWeixinLocalMedia({
+      filePath: sandboxFilePath,
+      cfg: {},
+      agentId: actualHostHookContext.agentId,
+      sessionWorkspaceDir: actualHostHookContext.workspaceDir,
+      maxBytes: 1024,
+    })).rejects.toThrow("not under an allowed directory");
     mocks.resolveCommandAuthorization.mockResolvedValue({
       senderAllowedForCommands: true,
       commandAuthorized: false,
@@ -122,10 +141,11 @@ describe("processOneMessage authorization boundary", () => {
     mocks.resolveDmOutcome.mockReturnValue("authorized");
     mocks.createMsgContext.mockReturnValue({ Body: "hello", To: "stranger" });
     mocks.resolveSandboxContext.mockRejectedValue(new Error("backend unavailable"));
-    mocks.sendWeixinMediaFile.mockImplementationOnce(async (params) => {
+    mocks.sendWeixinMediaFile.mockImplementation(async (params) => {
       const bytes = await readWeixinLocalMedia({ ...params, maxBytes: 1024 });
       expect(bytes).toEqual(Buffer.from("existing-media"));
     });
+    let mediaUrl = managedFilePath;
     let deliver: (payload: { mediaUrl: string }) => Promise<void>;
     const input = deps();
     input.channelRuntime = {
@@ -147,14 +167,7 @@ describe("processOneMessage authorization boundary", () => {
           return { dispatcher: {}, replyOptions: {}, markDispatchIdle: vi.fn() };
         },
         withReplyDispatcher: ({ run }: { run: () => Promise<void> }) => run(),
-        dispatchReplyFromConfig: () => {
-          captureWeixinReplyWorkspace({
-            agentId: "main",
-            sessionKey: "agent:main:direct:current",
-            workspaceDir: sessionWorkspaceDir,
-          });
-          return deliver({ mediaUrl: filePath });
-        },
+        dispatchReplyFromConfig: () => deliver({ mediaUrl }),
       },
     } as never;
 
@@ -162,10 +175,20 @@ describe("processOneMessage authorization boundary", () => {
 
     expect(mocks.resolveSandboxContext).not.toHaveBeenCalled();
     expect(mocks.sendWeixinMediaFile).toHaveBeenCalledWith(expect.objectContaining({
-      filePath,
-      sessionWorkspaceDir,
+      filePath: managedFilePath,
       agentId: "main",
     }));
+    expect(mocks.sendWeixinMediaFile.mock.calls[0][0]).not.toHaveProperty("sessionWorkspaceDir");
+    mediaUrl = sandboxFilePath;
+    await expect(processOneMessage(message("hello"), input)).rejects.toThrow(
+      "not under an allowed directory",
+    );
+    expect(mocks.sendWeixinMediaFile).toHaveBeenLastCalledWith(expect.objectContaining({
+      filePath: sandboxFilePath,
+      agentId: "main",
+    }));
+    expect(mocks.sendWeixinMediaFile.mock.lastCall?.[0]).not.toHaveProperty("sessionWorkspaceDir");
+    expect(mocks.resolveSandboxContext).not.toHaveBeenCalled();
   });
 
   it("fails the batch when the channel runtime is unavailable", async () => {

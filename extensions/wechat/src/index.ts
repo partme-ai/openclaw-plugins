@@ -22,7 +22,6 @@ import { weixinPlugin } from "./channel.js";
 import { assertHostCompatibility } from "./shared/compat.js";
 import { WeixinConfigSchema } from "./config.js";
 import { setWeixinRuntime } from "./runtime.js";
-import { captureWeixinReplyWorkspace } from "./media/reply-workspace.js";
 
 export { weixinPlugin } from "./channel.js";
 
@@ -45,10 +44,6 @@ const plugin: OpenClawPluginDefinition = {
     if (api.runtime) {
       setWeixinRuntime(api.runtime);
     }
-
-    api.on("before_prompt_build", (_event, context) => {
-      captureWeixinReplyWorkspace(context);
-    });
 
     api.registerChannel({ plugin: weixinPlugin });
   },
