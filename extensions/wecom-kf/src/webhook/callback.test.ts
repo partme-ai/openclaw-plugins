@@ -18,6 +18,19 @@ const claimInboundMock = vi.hoisted(() => vi.fn(async (_openKfId: string, msgid:
 })));
 const commitInboundMock = vi.hoisted(() => vi.fn(async () => undefined));
 const releaseInboundMock = vi.hoisted(() => vi.fn(async () => undefined));
+const detachedAdmission = vi.hoisted(() => ({ active: false, calls: 0 }));
+
+vi.mock("openclaw/plugin-sdk/webhook-request-guards", () => ({
+  runDetachedWebhookWork: async (run: () => Promise<unknown>) => {
+    detachedAdmission.calls += 1;
+    detachedAdmission.active = true;
+    try {
+      return await run();
+    } finally {
+      detachedAdmission.active = false;
+    }
+  },
+}));
 
 vi.mock("../dispatch/inbound-dispatcher.js", () => ({
   dispatchKfMessage: dispatchKfMessageMock,
@@ -191,6 +204,8 @@ describe("createKfCallbackHandler", () => {
 
   beforeEach(() => {
     startKfCallbackProcessing();
+    detachedAdmission.active = false;
+    detachedAdmission.calls = 0;
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -320,6 +335,11 @@ describe("createKfCallbackHandler", () => {
   it("POST kf_msg_or_event 快速 200 后触发 sync_msg 分页", async () => {
     dispatchKfMessageMock.mockClear();
     syncKfMessagesMock.mockClear();
+    dispatchKfMessageMock.mockImplementation(async () => {
+      if (!detachedAdmission.active) {
+        throw new Error("GatewayDrainingError: Gateway is draining; new tasks are not accepted");
+      }
+    });
 
     let syncCallCount = 0;
     syncKfMessagesMock.mockImplementation(async (_agent, params) => {
@@ -396,6 +416,8 @@ describe("createKfCallbackHandler", () => {
     });
     expect(dispatchKfMessageMock).toHaveBeenCalledTimes(1);
     expect(commitInboundMock).toHaveBeenCalledWith("kf_001", "msg-1");
+    expect(detachedAdmission.calls).toBe(1);
+    expect(releaseInboundMock).not.toHaveBeenCalled();
   });
 
   it("拒绝使用当前路径签名跨账号触发其他 OpenKfId", async () => {

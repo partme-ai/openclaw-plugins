@@ -47,6 +47,28 @@ function createRuntime(
         dispatchReplyWithBufferedBlockDispatcher,
         finalizeInboundContext: (ctx: Record<string, unknown>) => ctx,
       },
+      inbound: {
+        dispatchReply: vi.fn(async (turn) => {
+          await turn.recordInboundSession({
+            storePath: turn.storePath,
+            sessionKey: turn.routeSessionKey,
+            ctx: turn.ctxPayload,
+            onRecordError: turn.record?.onRecordError ?? (() => undefined),
+          });
+          await turn.dispatchReplyWithBufferedBlockDispatcher({
+            ctx: turn.ctxPayload,
+            cfg: turn.cfg,
+            dispatcherOptions: { deliver: turn.delivery.deliver },
+          });
+          return {
+            admission: { kind: "dispatch" },
+            dispatched: true,
+            routeSessionKey: turn.routeSessionKey,
+            ctxPayload: turn.ctxPayload,
+            dispatchResult: { queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } },
+          };
+        }),
+      },
       session: {
         resolveStorePath: () => "/tmp/session",
         recordInboundSession: vi.fn(async () => undefined),

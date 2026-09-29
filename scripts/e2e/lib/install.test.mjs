@@ -59,9 +59,11 @@ test("local install consent is limited to a plugin in this checkout and extracte
     }
     assert.ok(!trustedE2ELinkArgs("extensions/bridge", bridgeDest, repo, state, "bridge").includes("--accept-capabilities"));
 
-    for (const [id, capabilities] of [
-      ["tracing", { distributedTracing: true }],
-      ["mqtt", { protocolBridge: true, iot: true }],
+    for (const [id, packageName, capabilities] of [
+      ["tracing", "@partme.ai/openclaw-tracing", { distributedTracing: true }],
+      ["mqtt", "@partme.ai/openclaw-mqtt", { protocolBridge: true, iot: true }],
+      ["douyin", "@partme.ai/openclaw-douyin", undefined],
+      ["wecom-kf", "@partme.ai/wecom-kf", { humanTransfer: true, satisfactionSurvey: true, sessionManagement: true }],
     ]) {
       const src = join(repo, "extensions", id);
       const dest = join(state, "extensions", id);
@@ -70,7 +72,7 @@ test("local install consent is limited to a plugin in this checkout and extracte
       const manifest = JSON.stringify({ id, capabilities });
       writeFileSync(join(src, "openclaw.plugin.json"), manifest);
       writeFileSync(join(dest, "openclaw.plugin.json"), manifest);
-      const pkg = JSON.stringify({ name: `@partme.ai/openclaw-${id}` });
+      const pkg = JSON.stringify({ name: packageName });
       writeFileSync(join(src, "package.json"), pkg);
       writeFileSync(join(dest, "package.json"), pkg);
       const approved = { [id]: reviewedArtifactDigest(dest) };
@@ -82,6 +84,10 @@ test("local install consent is limited to a plugin in this checkout and extracte
       writeFileSync(newService, "api.registerService({ id: 'new-service' })");
       assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved));
       unlinkSync(newService);
+      const dist = join(dest, "dist");
+      mkdirSync(dist);
+      writeFileSync(join(dist, "index.js"), "changed compiled runtime");
+      assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved));
     }
 
     for (const [id, routePaths, hooks, marker] of [

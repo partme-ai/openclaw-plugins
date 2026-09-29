@@ -17,6 +17,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveOpenClawStateDir } from "@partme.ai/openclaw-message-sdk/openclaw";
+import { runDetachedWebhookWork } from "openclaw/plugin-sdk/webhook-request-guards";
 import type { DouyinWebhookDispatchResult } from "./dispatch-inbound.js";
 
 export type DouyinWebhookInboxItem = {
@@ -295,7 +296,7 @@ export class DouyinWebhookInbox {
     if (!this.running || this.drainPromise) {
       return;
     }
-    this.drainPromise = this.drain().finally(() => {
+    this.drainPromise = runDetachedWebhookWork(() => this.drain()).finally(() => {
       this.drainPromise = null;
       if (this.running) {
         void this.scheduleNext();

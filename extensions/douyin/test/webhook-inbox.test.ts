@@ -2,6 +2,20 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const admission = vi.hoisted(() => ({ active: 0, calls: 0 }));
+vi.mock("openclaw/plugin-sdk/webhook-request-guards", () => ({
+  runDetachedWebhookWork: async (run: () => Promise<unknown>) => {
+    admission.calls += 1;
+    admission.active += 1;
+    try {
+      return await run();
+    } finally {
+      admission.active -= 1;
+    }
+  },
+}));
+
 import {
   DouyinWebhookInbox,
   type DouyinWebhookInboxConfig,
@@ -41,6 +55,25 @@ function event(messageId: string) {
 }
 
 describe("DouyinWebhookInbox", () => {
+  it("runs accepted Webhook work under a detached host admission after HTTP ACK", async () => {
+    const directory = await stateDirectory();
+    const dispatch = vi.fn(async () => {
+      if (admission.active === 0) {
+        throw new Error("GatewayDrainingError: inherited HTTP admission was released");
+      }
+      return "dispatched" as const;
+    });
+    const inbox = new DouyinWebhookInbox("default", config, dispatch, {}, directory);
+    await inbox.start();
+    const callsBefore = admission.calls;
+
+    await expect(inbox.enqueue(event("msg-admission"))).resolves.toBe("enqueued");
+    await vi.waitFor(() => expect(inbox.status().pending).toBe(0));
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(admission.calls).toBeGreaterThan(callsBefore);
+    await inbox.stop();
+  });
+
   it("persists an event before enqueue resolves and removes it after dispatch", async () => {
     const directory = await stateDirectory();
     let finish: ((value: "dispatched") => void) | undefined;

@@ -1,104 +1,86 @@
-/**
- * transcript-dispatch.test.ts — 通道消息派发 facade，统一 Wire、Transcript、embedded-agent 与 subagent 路径。
- *
- * 这些测试锁定该模块的公开契约，防止命名、归一化、幂等或派发路径在重构时发生行为回退。
- */
-
 import { describe, expect, it, vi } from "vitest";
 import { dispatchTranscriptTurn } from "./transcript-dispatch.js";
 
-describe("dispatchTranscriptTurn", () => {
-  it("uses turn.runAssembled when session APIs are available", async () => {
-    const recordInboundSession = vi.fn().mockResolvedValue(undefined);
-    const dispatchReplyWithBufferedBlockDispatcher = vi.fn().mockResolvedValue(undefined);
-    const runAssembled = vi.fn().mockResolvedValue(undefined);
-    const deliver = vi.fn().mockResolvedValue(undefined);
+const sessionKey = "agent:main:gotify:default:direct:4";
 
-    await dispatchTranscriptTurn({
-      channelRuntime: {
-        turn: { runAssembled },
-        session: { recordInboundSession },
-        reply: { dispatchReplyWithBufferedBlockDispatcher },
-      },
-      cfg: { session: { store: "/tmp/sessions.json" } },
-      channel: "gotify",
-      accountId: "default",
-      agentId: "main",
-      sessionKey: "agent:main:gotify:default:direct:4",
-      storePath: "/tmp/sessions.json",
-      inboundContext: { Body: "hello" },
-      record: {
-        updateLastRoute: {
-          sessionKey: "agent:main:main",
-          channel: "gotify",
-          to: "gotify:4",
-          accountId: "default",
-        },
-      },
-      delivery: { deliver },
-    });
-
-    expect(runAssembled).toHaveBeenCalledTimes(1);
-    expect(dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
-    expect(recordInboundSession).not.toHaveBeenCalled();
-  });
-
-  it("falls back to record + dispatch when runAssembled is missing", async () => {
-    const recordInboundSession = vi.fn().mockResolvedValue(undefined);
-    const dispatchReplyWithBufferedBlockDispatcher = vi.fn().mockResolvedValue(undefined);
-    const deliver = vi.fn().mockResolvedValue(undefined);
-
-    await dispatchTranscriptTurn({
-      channelRuntime: {
-        session: { recordInboundSession },
-        reply: { dispatchReplyWithBufferedBlockDispatcher },
-      },
-      cfg: {},
-      channel: "gotify",
-      accountId: "default",
-      agentId: "main",
-      sessionKey: "sk",
-      storePath: "/tmp/sessions.json",
-      inboundContext: { Body: "hello" },
-      record: {},
-      delivery: { deliver },
-    });
-
-    expect(recordInboundSession).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionKey: "sk", storePath: "/tmp/sessions.json" }),
-    );
-    expect(dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledWith(
-      expect.objectContaining({
-        dispatcherOptions: expect.objectContaining({ deliver }),
-      }),
-    );
-  });
-
-  it("records inbound on runAssembled failure before rethrowing", async () => {
-    const recordInboundSession = vi.fn().mockResolvedValue(undefined);
-    const dispatchReplyWithBufferedBlockDispatcher = vi.fn();
-    const runAssembled = vi.fn().mockRejectedValue(new Error("assembled failed"));
-    const onRecordError = vi.fn();
-
-    await expect(
-      dispatchTranscriptTurn({
-        channelRuntime: {
-          turn: { runAssembled },
-          session: { recordInboundSession },
-          reply: { dispatchReplyWithBufferedBlockDispatcher },
-        },
-        cfg: {},
+function makeTurn(dispatchReply: ReturnType<typeof vi.fn>, signal?: AbortSignal) {
+  const deliver = vi.fn(async () => undefined);
+  return {
+    channelRuntime: {
+      inbound: { dispatchReply },
+      session: { recordInboundSession: vi.fn(async () => undefined) },
+      reply: { dispatchReplyWithBufferedBlockDispatcher: vi.fn() },
+    },
+    cfg: { session: { store: "/tmp/sessions.json" } },
+    channel: "gotify",
+    accountId: "default",
+    agentId: "main",
+    sessionKey,
+    storePath: "/tmp/sessions.json",
+    inboundContext: { Body: "hello", SessionKey: sessionKey, MessageThreadId: "thread-7" },
+    record: {
+      updateLastRoute: {
+        sessionKey,
         channel: "gotify",
+        to: "gotify:4",
         accountId: "default",
-        agentId: "main",
-        sessionKey: "sk",
-        storePath: "/tmp/sessions.json",
-        inboundContext: { Body: "hello" },
-        record: { onRecordError },
-        delivery: { deliver: vi.fn() },
-      }),
-    ).rejects.toThrow("assembled failed");
+        threadId: "thread-7",
+      },
+    },
+    delivery: { deliver },
+    signal,
+  };
+}
 
-    expect(recordInboundSession).toHaveBeenCalledTimes(1);
+describe("dispatchTranscriptTurn", () => {
+  it("uses the public inbound dispatcher once and returns its result with the same session and thread", async () => {
+    const transcript: string[] = [];
+    const result = { admission: { kind: "dispatch" }, dispatched: true, routeSessionKey: sessionKey, dispatchResult: { queuedFinal: false, counts: { tool: 0, block: 0, final: 1 } } };
+    const dispatchReply = vi.fn(async (turn) => {
+      transcript.push(turn.ctxPayload.Body);
+      await turn.delivery.deliver({ text: "answer" });
+      return result;
+    });
+    const turn = makeTurn(dispatchReply);
+
+    expect(await dispatchTranscriptTurn(turn)).toBe(result);
+    expect(dispatchReply).toHaveBeenCalledTimes(1);
+    expect(dispatchReply).toHaveBeenCalledWith(expect.objectContaining({
+      routeSessionKey: sessionKey,
+      storePath: "/tmp/sessions.json",
+      ctxPayload: expect.objectContaining({ SessionKey: sessionKey, MessageThreadId: "thread-7" }),
+      record: expect.objectContaining({ updateLastRoute: expect.objectContaining({ threadId: "thread-7" }) }),
+    }));
+    expect(transcript).toEqual(["hello"]);
+    expect(turn.channelRuntime.session.recordInboundSession).not.toHaveBeenCalled();
+    expect(turn.channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+    expect(turn.delivery.deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it("never writes a second user turn when dispatch fails after recording", async () => {
+    const transcript: string[] = [];
+    const dispatchReply = vi.fn(async (turn) => {
+      transcript.push(turn.ctxPayload.Body);
+      throw new Error("dispatch failed after record");
+    });
+    const turn = makeTurn(dispatchReply);
+
+    await expect(dispatchTranscriptTurn(turn)).rejects.toThrow("dispatch failed after record");
+    expect(transcript).toEqual(["hello"]);
+    expect(turn.channelRuntime.session.recordInboundSession).not.toHaveBeenCalled();
+    expect(turn.delivery.deliver).not.toHaveBeenCalled();
+  });
+
+  it("does not deliver after cancellation while the host dispatcher is pending", async () => {
+    const controller = new AbortController();
+    const dispatchReply = vi.fn(async (turn) => {
+      controller.abort();
+      await turn.delivery.deliver({ text: "late reply" });
+      return { admission: { kind: "dispatch" }, dispatched: true };
+    });
+    const turn = makeTurn(dispatchReply, controller.signal);
+
+    await expect(dispatchTranscriptTurn(turn)).rejects.toMatchObject({ name: "AbortError" });
+    expect(turn.delivery.deliver).not.toHaveBeenCalled();
   });
 });

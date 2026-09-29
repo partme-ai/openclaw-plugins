@@ -8,6 +8,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
+import { runDetachedWebhookWork } from "openclaw/plugin-sdk/webhook-request-guards";
 import {
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,
   readRequestBodyWithLimit,
@@ -116,7 +117,10 @@ function assertCursorProgress(params: {
 function enqueueAccountSync(key: string, task: () => Promise<void>): boolean {
   if (!acceptingBackgroundSync) return false;
   const previous = accountSyncQueues.get(key) ?? Promise.resolve();
-  const next = previous.then(task, task);
+  const next = previous.then(
+    () => runDetachedWebhookWork(task),
+    () => runDetachedWebhookWork(task),
+  );
   accountSyncQueues.set(key, next);
   void next
     .catch((error: unknown) => {

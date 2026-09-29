@@ -14,6 +14,7 @@ import type { UnifiedMessage } from "../core/types.js";
 import type { DispatchInboundParams, DispatchInboundResult } from "../bridge/inbound-bridge.js";
 import type { BridgePluginRuntime } from "../bridge/types.js";
 import type { OutboundWireFormat } from "../pipeline/serialize-payload.js";
+import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
 /** 重新导出通道类别 / Re-export channel class type */
 export type { ChannelClass };
@@ -175,87 +176,44 @@ export type WireDispatchParams = DispatchInboundParams;
 /** dispatchWireMessage 返回值 / Wire dispatch result alias */
 export type WireDispatchResult = DispatchInboundResult;
 
-/** Transcript 路径 recordInboundSession 参数子集 / Transcript record params subset */
-export interface TranscriptRecordParams {
-  storePath: string;
-  sessionKey: string;
-  ctx: Record<string, unknown>;
-  updateLastRoute?: {
-    sessionKey: string;
-    channel: string;
-    to: string;
-    accountId: string;
-  };
-  onRecordError?: (err: unknown) => void;
-}
+type HostDispatchReply = PluginRuntime["channel"]["inbound"]["dispatchReply"];
+type HostDispatchReplyParams = Parameters<HostDispatchReply>[0];
 
-/** OpenClaw channel.turn.runAssembled 所需 runtime 子集 / Transcript channel runtime subset */
+/** 稳定版公开入站记录参数。 */
+export type TranscriptRecordParams = Parameters<HostDispatchReplyParams["recordInboundSession"]>[0];
+
+/** 稳定版公开入站结果。 */
+export type TranscriptDispatchResult = Awaited<ReturnType<HostDispatchReply>>;
+
+/** Transcript 所需的公开 channel runtime 能力。 */
 export interface TranscriptChannelRuntime {
-  turn?: {
-    runAssembled?: (params: {
-      cfg: Record<string, unknown>;
-      channel: string;
-      accountId: string;
-      agentId: string;
-      routeSessionKey: string;
-      storePath: string;
-      ctxPayload: Record<string, unknown>;
-      recordInboundSession: (
-        params: TranscriptRecordParams,
-      ) => void | Promise<void>;
-      dispatchReplyWithBufferedBlockDispatcher: (params: {
-        ctx: Record<string, unknown>;
-        cfg: Record<string, unknown>;
-        dispatcherOptions: {
-          deliver: (payload: { text: string }) => void | Promise<void>;
-          onError?: (error: unknown) => void;
-        };
-      }) => void | Promise<void>;
-      delivery: {
-        deliver: (payload: { text: string }) => void | Promise<void>;
-        onError?: (error: unknown) => void;
-      };
-      record?: {
-        updateLastRoute?: TranscriptRecordParams["updateLastRoute"];
-        onRecordError?: (err: unknown) => void;
-      };
-    }) => void | Promise<void>;
-  };
+  inbound?: Pick<PluginRuntime["channel"]["inbound"], "dispatchReply">;
   session?: {
-    resolveStorePath?: (
-      store?: string,
-      opts?: { agentId?: string },
-    ) => string | undefined;
-    recordInboundSession?: (params: TranscriptRecordParams) => void | Promise<void>;
+    resolveStorePath?: PluginRuntime["channel"]["session"]["resolveStorePath"];
+    recordInboundSession?: HostDispatchReplyParams["recordInboundSession"];
   };
-  reply: {
-    dispatchReplyWithBufferedBlockDispatcher: (params: {
-      ctx: Record<string, unknown>;
-      cfg: Record<string, unknown>;
-      dispatcherOptions: {
-        deliver: (payload: { text: string }) => void | Promise<void>;
-        onError?: (error: unknown) => void;
-      };
-    }) => void | Promise<void>;
+  reply?: {
+    dispatchReplyWithBufferedBlockDispatcher?: HostDispatchReplyParams["dispatchReplyWithBufferedBlockDispatcher"];
   };
 }
 
 /** dispatchTranscriptTurn 入参 / Transcript turn dispatch params */
 export interface TranscriptDispatchParams {
   channelRuntime: TranscriptChannelRuntime;
-  cfg: Record<string, unknown>;
+  cfg: HostDispatchReplyParams["cfg"];
   channel: string;
   accountId: string;
   agentId: string;
   sessionKey: string;
   storePath?: string;
-  inboundContext: Record<string, unknown>;
+  inboundContext: HostDispatchReplyParams["ctxPayload"];
   record: {
-    updateLastRoute?: TranscriptRecordParams["updateLastRoute"];
+    updateLastRoute?: NonNullable<HostDispatchReplyParams["record"]>["updateLastRoute"];
     onRecordError?: (err: unknown) => void;
   };
   delivery: {
-    deliver: (payload: { text: string }) => void | Promise<void>;
-    onError?: (error: unknown) => void;
+    deliver: HostDispatchReplyParams["delivery"]["deliver"];
+    onError?: HostDispatchReplyParams["delivery"]["onError"];
   };
+  signal?: AbortSignal;
 }

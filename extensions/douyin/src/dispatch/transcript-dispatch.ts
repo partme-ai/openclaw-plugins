@@ -48,6 +48,7 @@ export type DouyinTranscriptDispatchParams = {
 export type DouyinTranscriptDispatchResult = {
   route: DouyinTranscriptRoute;
   delivered: boolean;
+  hostResult?: Awaited<ReturnType<typeof dispatchTranscriptTurn>>;
   timedOut?: boolean;
   dispatchTimeoutMs?: number;
   timeoutUserMessage?: string;
@@ -195,9 +196,8 @@ export async function dispatchDouyinTranscriptTurn(
   const logger = createLogger({ log: params.log, error: params.error });
   const { runtime, cfg, accountId, peerId, shopId } = params;
 
-  const dispatchReply = runtime.channel?.reply?.dispatchReplyWithBufferedBlockDispatcher;
-  if (!dispatchReply) {
-    logger.warn("runtime buffered reply dispatcher unavailable");
+  if (!runtime.channel?.inbound?.dispatchReply) {
+    logger.warn("runtime inbound reply dispatcher unavailable");
     return null;
   }
 
@@ -250,17 +250,19 @@ export async function dispatchDouyinTranscriptTurn(
   const dispatchTimeoutMs = resolveDouyinAgentReplyTimeoutMs(cfg as ChannelLimitsOpenClawConfig);
   const agentId = route.agentId ?? "main";
 
+  const abortController = new AbortController();
+  let hostResult: Awaited<ReturnType<typeof dispatchTranscriptTurn>>;
   try {
-    await withTimeout(
+    hostResult = await withTimeout(
       dispatchTranscriptTurn({
         channelRuntime: runtime.channel as unknown as TranscriptChannelRuntime,
-        cfg,
+        cfg: cfg as Parameters<typeof dispatchTranscriptTurn>[0]["cfg"],
         channel: CHANNEL_ID,
         accountId,
         agentId,
         sessionKey: route.sessionKey,
         storePath,
-        inboundContext,
+        inboundContext: inboundContext as Parameters<typeof dispatchTranscriptTurn>[0]["inboundContext"],
         record: {
           updateLastRoute: {
             sessionKey: String((route.mainSessionKey ?? route.sessionKey) || route.sessionKey),
@@ -278,11 +280,13 @@ export async function dispatchDouyinTranscriptTurn(
             logger.error(`reply failed: ${String(error)}`);
           },
         },
+        signal: abortController.signal,
       }),
       dispatchTimeoutMs,
       `Douyin dispatch timed out after ${dispatchTimeoutMs}ms`,
     );
   } catch (error) {
+    abortController.abort();
     if (error instanceof TimeoutError) {
       logger.error(`dispatchTranscriptTurn timed out after ${dispatchTimeoutMs}ms`);
       const timeoutUserMessage = buildAgentReplyTimeoutSummary(
@@ -295,9 +299,13 @@ export async function dispatchDouyinTranscriptTurn(
     return { route, delivered: false };
   }
 
+  if (!hostResult.dispatched) {
+    return { route, delivered: false, hostResult };
+  }
+
   const combined = responseChunks.join("\n\n").trim();
   if (!combined && responseMediaUrls.length === 0) {
-    return { route, delivered: false };
+    return { route, delivered: false, hostResult };
   }
 
   try {
@@ -309,9 +317,9 @@ export async function dispatchDouyinTranscriptTurn(
       mediaUrls: responseMediaUrls,
       log: params.log,
     });
-    return { route, delivered: delivery.ok };
+    return { route, delivered: delivery.ok, hostResult };
   } catch (error) {
     logger.error(`reply send failed: ${String(error)}`);
-    return { route, delivered: false };
+    return { route, delivered: false, hostResult };
   }
 }

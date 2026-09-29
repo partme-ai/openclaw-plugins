@@ -39,6 +39,12 @@ function transcriptRuntime(): PluginRuntime {
       reply: {
         dispatchReplyWithBufferedBlockDispatcher: vi.fn(),
       },
+      inbound: {
+        dispatchReply: vi.fn(),
+      },
+      session: {
+        recordInboundSession: vi.fn(),
+      },
     },
   } as unknown as PluginRuntime;
 }
@@ -151,6 +157,27 @@ describe("dispatchDouyinWebhookInbound", () => {
     });
 
     expect(result).toBe("skipped");
+  });
+
+  it("does not commit the webhook claim when the host did not dispatch", async () => {
+    dispatchDouyinTranscriptTurnMock.mockResolvedValue({
+      route: { sessionKey: "sk" },
+      delivered: false,
+      hostResult: { admission: { kind: "drop", reason: "cancelled" }, dispatched: false },
+    });
+    const params = {
+      runtime: transcriptRuntime(),
+      cfg: {},
+      account: baseAccount,
+      rawBody: "retry after cancelled admission",
+      text: "retry after cancelled admission",
+      peerId: "user-cancelled",
+      messageId: uniqueMessageId("msg-not-dispatched"),
+    };
+
+    expect(await dispatchDouyinWebhookInbound(params)).toBe("skipped");
+    expect(await dispatchDouyinWebhookInbound(params)).toBe("skipped");
+    expect(dispatchDouyinTranscriptTurnMock).toHaveBeenCalledTimes(2);
   });
 
   it("releases the message claim when dispatch is skipped so a retry can succeed", async () => {

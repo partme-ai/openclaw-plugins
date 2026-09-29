@@ -2,7 +2,7 @@
  * @module dispatch/kf-transcript-dispatch
  *
  * KF 客户消息 Transcript 派发：route → finalizeInboundContext → record →
- * `dispatchTranscriptTurn`（runAssembled 优先）→ `deliverKfAgentReplyPayload`。
+ * `dispatchTranscriptTurn`（稳定版 channel.inbound）→ `deliverKfAgentReplyPayload`。
  */
 
 import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
@@ -45,6 +45,7 @@ export type KfTranscriptDispatchParams = {
 export type KfTranscriptDispatchResult = {
   route: KfTranscriptRoute;
   delivered: boolean;
+  hostResult?: Awaited<ReturnType<typeof dispatchTranscriptTurn>>;
   /** Agent 派发是否因超时失败 */
   timedOut?: boolean;
   /** 实际使用的派发超时（毫秒），超时兜底文案会用到 */
@@ -236,9 +237,8 @@ export async function dispatchKfTranscriptTurn(
   const logger = createLogger({ log: params.log, error: params.error });
   const { runtime, cfg, openKfId, externalUserId } = params;
 
-  const dispatchReply = runtime.channel?.reply?.dispatchReplyWithBufferedBlockDispatcher;
-  if (!dispatchReply) {
-    logger.warn("runtime buffered reply dispatcher unavailable");
+  if (!runtime.channel?.inbound?.dispatchReply) {
+    logger.warn("runtime inbound reply dispatcher unavailable");
     return null;
   }
 
@@ -293,17 +293,19 @@ export async function dispatchKfTranscriptTurn(
   const dispatchTimeoutMs = resolveDispatchTimeoutMs(params.accountConfig);
   const agentId = route.agentId ?? "main";
 
+  const abortController = new AbortController();
+  let hostResult: Awaited<ReturnType<typeof dispatchTranscriptTurn>>;
   try {
-    await withTimeout(
+    hostResult = await withTimeout(
       dispatchTranscriptTurn({
         channelRuntime: runtime.channel as unknown as TranscriptChannelRuntime,
-        cfg: cfg as unknown as Record<string, unknown>,
+        cfg,
         channel: "wecom-kf",
         accountId: openKfId,
         agentId,
         sessionKey: route.sessionKey,
         storePath,
-        inboundContext,
+        inboundContext: inboundContext as Parameters<typeof dispatchTranscriptTurn>[0]["inboundContext"],
         record: {
           updateLastRoute: {
             sessionKey: String((route.mainSessionKey ?? route.sessionKey) || route.sessionKey),
@@ -321,11 +323,13 @@ export async function dispatchKfTranscriptTurn(
             logger.error(`reply failed: ${String(error)}`);
           },
         },
+        signal: abortController.signal,
       }),
       dispatchTimeoutMs,
       `KF dispatch timed out after ${dispatchTimeoutMs}ms`,
     );
   } catch (error) {
+    abortController.abort();
     if (error instanceof TimeoutError) {
       logger.error(`dispatchTranscriptTurn timed out after ${dispatchTimeoutMs}ms`);
       return { route, delivered: false, timedOut: true, dispatchTimeoutMs };
@@ -334,15 +338,19 @@ export async function dispatchKfTranscriptTurn(
     return { route, delivered: false };
   }
 
+  if (!hostResult.dispatched) {
+    return { route, delivered: false, hostResult };
+  }
+
   const combined = responseChunks.join("\n\n").trim();
   if (!combined && responseMediaUrls.length === 0) {
-    return { route, delivered: false };
+    return { route, delivered: false, hostResult };
   }
 
   const agent = resolveKfAgentAccount(cfg, openKfId);
   if (!agent) {
     logger.warn("skip outbound: missing corp credentials");
-    return { route, delivered: false };
+    return { route, delivered: false, hostResult };
   }
 
   try {
@@ -356,11 +364,11 @@ export async function dispatchKfTranscriptTurn(
     });
     if (!delivery.ok) {
       logger.error(`reply send failed: ${delivery.error ?? "unknown error"}`);
-      return { route, delivered: false };
+      return { route, delivered: false, hostResult };
     }
-    return { route, delivered: true };
+    return { route, delivered: true, hostResult };
   } catch (error) {
     logger.error(`reply send failed: ${String(error)}`);
-    return { route, delivered: false };
+    return { route, delivered: false, hostResult };
   }
 }

@@ -40,10 +40,14 @@ export type DouyinWebhookDispatchResult =
 function getTranscriptRuntime(runtime: unknown): PluginRuntime | null {
   const rt = runtime as Record<string, unknown> | null | undefined;
   const channel = rt?.channel as Record<string, unknown> | undefined;
+  const inbound = channel?.inbound as Record<string, unknown> | undefined;
   const reply = channel?.reply as Record<string, unknown> | undefined;
+  const session = channel?.session as Record<string, unknown> | undefined;
   const routing = channel?.routing as Record<string, unknown> | undefined;
   if (
+    typeof inbound?.dispatchReply === "function" &&
     typeof reply?.dispatchReplyWithBufferedBlockDispatcher === "function" &&
+    typeof session?.recordInboundSession === "function" &&
     typeof routing?.resolveAgentRoute === "function"
   ) {
     return runtime as PluginRuntime;
@@ -118,6 +122,12 @@ export async function dispatchDouyinWebhookInbound(
         await releaseDouyinWebhookMessage(params.account.accountId, messageId, "dispatch timed out");
       }
       return "timed_out";
+    }
+    if (result.hostResult?.dispatched === false) {
+      if (messageId) {
+        await releaseDouyinWebhookMessage(params.account.accountId, messageId, "host did not dispatch");
+      }
+      return "skipped";
     }
     if (messageId) {
       await commitDouyinWebhookMessage(params.account.accountId, messageId);
