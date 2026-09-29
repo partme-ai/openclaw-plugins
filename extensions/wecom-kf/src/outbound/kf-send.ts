@@ -2,7 +2,7 @@
  * KF 出站：解析目标并调用 send_msg API（文本 + 媒体）。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import {
   isHttpUrl,
   parseMediaDirectives,

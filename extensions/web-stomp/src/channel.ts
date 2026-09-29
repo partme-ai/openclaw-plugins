@@ -1,3 +1,4 @@
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * @fileoverview STOMP 1.2 over WebSocket 服务到 OpenClaw Channel 的生命周期适配层。
  *
@@ -7,13 +8,12 @@
  */
 import type {
   ChannelAccountSnapshot,
-  ChannelGatewayContext,
   ChannelPlugin,
   OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 import { deleteAccountFromConfigSection, setAccountEnabledInConfigSection } from "openclaw/plugin-sdk/core";
 import type { ChannelOutboundContext } from "openclaw/plugin-sdk/channel-contract";
-import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
+import { sanitizeForPlainText } from "openclaw/plugin-sdk/channel-outbound";
 
 import {
   describeStompAccount,

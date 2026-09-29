@@ -34,7 +34,7 @@
     "node": ">=24.16.0 <25 || >=26.1.0"
   },
   "files": [
-    "dist",
+    "dist/**/*",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE",

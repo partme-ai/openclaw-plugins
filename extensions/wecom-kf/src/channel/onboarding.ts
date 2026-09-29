@@ -5,7 +5,7 @@
  * 自 research/openclaw-china/extensions/wecom-kf 移植并适配 OpenClaw plugin-sdk。
  */
 
-import type { OpenClawConfig, WizardPrompter } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, WizardPrompter } from "openclaw/plugin-sdk/core";
 
 import {
     DEFAULT_ACCOUNT_ID,

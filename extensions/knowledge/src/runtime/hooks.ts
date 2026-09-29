@@ -9,7 +9,7 @@
  * @module knowledge/runtime/hooks
  */
 
-import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import type {
   KnowledgeConfig,
   DeepPartialKnowledgeConfig,

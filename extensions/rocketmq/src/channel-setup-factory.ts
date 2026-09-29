@@ -13,7 +13,7 @@
  * 共享 Channel setup 工厂 — declarative wizard 构建器。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { ChannelSetupAdapter, ChannelSetupWizard } from "openclaw/plugin-sdk/setup";
 import {
   applySetupAccountConfigPatch,

@@ -4,7 +4,7 @@
  * 使用 message-sdk：command-auth、dispatchTranscriptTurn、timeout、dm-policy
  */
 
-import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import { extractInboundTextContent } from "./bot.js";
 import { checkKfDmPolicy } from "./dm-policy.js";

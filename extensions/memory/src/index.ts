@@ -5,7 +5,7 @@
  * `agent_end` 事件后持久化 L0 对话及抽取出的 L1/L2/L3 记录。对话捕获必须显式授权，服务
  * 生命周期同时负责保留期清理、搜索管理器缓存和关闭排空。
  */
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   buildJsonPluginConfigSchema,
   definePluginEntry,

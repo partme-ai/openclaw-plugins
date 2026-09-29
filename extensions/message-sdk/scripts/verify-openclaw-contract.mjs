@@ -25,7 +25,7 @@ while (packageRoot !== filesystemRoot) {
 }
 if (!packageJson)
   throw new Error("Unable to locate the resolved openclaw package root");
-const minimum = [2026, 7, 1];
+const minimum = [2026, 9, 6];
 const actual = String(packageJson.version ?? "0.0.0")
   .split(/[.-]/u)
   .slice(0, 3)
@@ -45,27 +45,33 @@ if (
   compareVersion(actual, minimum) < 0
 ) {
   failures.push(
-    `openclaw ${packageJson.version ?? "unknown"} is below required 2026.7.1`,
+    `openclaw ${packageJson.version ?? "unknown"} is below required 2026.9.6`,
   );
 }
 
-const hookRuntime = await import("openclaw/plugin-sdk/hook-runtime");
-const pluginRuntime = await import("openclaw/plugin-sdk/plugin-runtime");
-const requiredHookRuntimeFunctions = [
-  "buildCanonicalSentMessageHookContext",
-  "fireAndForgetHook",
-  "toPluginMessageContext",
-  "toPluginMessageSentEvent",
-];
-for (const name of requiredHookRuntimeFunctions) {
-  if (typeof hookRuntime[name] !== "function") {
-    failures.push(`openclaw/plugin-sdk/hook-runtime.${name} is unavailable`);
+const requiredExports = {
+  "hook-runtime": ["buildCanonicalSentMessageHookContext", "fireAndForgetHook", "toPluginMessageContext", "toPluginMessageSentEvent"],
+  "plugin-runtime": ["getGlobalHookRunner"],
+  "channel-outbound": ["sanitizeForPlainText"],
+  "channel-message": ["createTypingCallbacks", "formatChannelProgressDraftLineForEntry"],
+  "extension-shared": ["buildTimeoutAbortSignal"],
+  "infra-runtime": ["readLocalFileFromRoots", "withFileLock"],
+  "media-local-roots": ["getAgentScopedMediaLocalRoots"],
+};
+for (const [subpath, names] of Object.entries(requiredExports)) {
+  const sdkPath = `openclaw/plugin-sdk/${subpath}`;
+  let module;
+  try {
+    module = await import(sdkPath);
+  } catch (error) {
+    failures.push(`${sdkPath} cannot load: ${String(error)}`);
+    continue;
   }
-}
-if (typeof pluginRuntime.getGlobalHookRunner !== "function") {
-  failures.push(
-    "openclaw/plugin-sdk/plugin-runtime.getGlobalHookRunner is unavailable",
-  );
+  for (const name of names) {
+    if (typeof module[name] !== "function") {
+      failures.push(`${sdkPath}.${name} is unavailable`);
+    }
+  }
 }
 
 if (failures.length > 0) {
@@ -75,6 +81,6 @@ if (failures.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `message-sdk OpenClaw contract verification passed (openclaw ${packageJson.version}, 5 runtime symbols)`,
+    `message-sdk OpenClaw contract verification passed (openclaw ${packageJson.version}, ${Object.values(requiredExports).flat().length} runtime symbols)`,
   );
 }

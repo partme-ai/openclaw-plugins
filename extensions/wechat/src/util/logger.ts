@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
-import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import { sanitizeLogMessage } from "./redact.js";
 
 /**

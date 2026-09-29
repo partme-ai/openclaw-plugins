@@ -7,7 +7,7 @@
 import { Buffer } from "node:buffer";
 import * as path from "node:path";
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 /**
  * 本地 Memory 存储、抽取和召回的完整运行时配置。

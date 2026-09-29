@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { resolveKfCallContext, resolveKfAgentAccount } from "./call-context.js";
 
 const testCfg = {

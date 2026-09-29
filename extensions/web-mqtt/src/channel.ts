@@ -1,3 +1,4 @@
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * web-mqtt channel 插件定义。
  * 负责账户状态、gateway 生命周期与 outbound 回包逻辑。
@@ -7,10 +8,9 @@ import { parseDirectTarget, publishDirectText, publishOutboundText } from "./out
 import type { ChannelOutboundContext } from "openclaw/plugin-sdk/channel-contract";
 import type {
   ChannelAccountSnapshot,
-  ChannelGatewayContext,
   ChannelPlugin,
   OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 import {
   getStats,
   startWebMqttServer,

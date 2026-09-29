@@ -10,7 +10,7 @@
  * **关键导出**：默认 plugin、`types/index` 重导出
  */
 
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/core";
 
 import { registerWecomKfFull } from "./runtime/register-full.js";
 

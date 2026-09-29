@@ -20,6 +20,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { rockermqChannel } from "./channel.js";
 import { setRockermqRuntime } from "./runtime.js";
@@ -31,7 +32,7 @@ import { getStats } from "./transport/server.js";
 export { rockermqChannel } from "./channel.js";
 
 /** @description RocketMQ Channel 插件注册入口。 */
-export default defineChannelPluginEntry({
+const entry: OpenClawPluginDefinition = defineChannelPluginEntry({
   id: "rocketmq",
   name: "OpenClaw RocketMQ",
   description: "OpenClaw RocketMQ channel plugin with producer and push-consumer support.",
@@ -99,3 +100,5 @@ export default defineChannelPluginEntry({
     });
   },
 });
+
+export default entry;

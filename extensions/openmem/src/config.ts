@@ -4,7 +4,7 @@
  * 远端地址强制 HTTPS，密钥只允许引用环境变量；`allowSharedRecall` 默认关闭，因为当前
  * sidecar 的 hybrid search 没有 tenant filter，误开启会扩大跨会话召回范围。
  */
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 /**
  * OpenMem 插件完成校验后的运行时配置。

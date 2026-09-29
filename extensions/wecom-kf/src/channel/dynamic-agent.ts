@@ -6,7 +6,7 @@
  * **KF 主路径说明**：`handleCustomerMessage` 使用 OpenClaw bindings（channel=wecom-kf）
  * 固定 agentId 映射；动态 peer 路由为可选扩展，供多 Agent 场景使用。
  */
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import {
   readDynamicAgentsFromChannelConfig,
   sanitizeDynamicIdPart,

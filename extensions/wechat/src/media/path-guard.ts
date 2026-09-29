@@ -15,14 +15,13 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  assertLocalMediaAllowed,
-  getDefaultMediaLocalRoots,
-} from "openclaw/plugin-sdk/media-runtime";
-import { readRegularFile } from "openclaw/plugin-sdk/security-runtime";
+  getAgentScopedMediaLocalRoots,
+} from "openclaw/plugin-sdk/media-local-roots";
+import { readLocalFileFromRoots } from "openclaw/plugin-sdk/infra-runtime";
 
 /** 合并 OpenClaw 默认媒体根与管理员为当前微信账号扩展的可信目录。 */
 export function resolveWeixinMediaLocalRoots(customRoots?: readonly string[]): string[] {
-  const roots = [...getDefaultMediaLocalRoots()];
+  const roots = [...getAgentScopedMediaLocalRoots({})];
   for (const root of customRoots ?? []) {
     const normalized = path.resolve(root.trim().replace(/^~(?=\/|$)/u, os.homedir()));
     if (normalized !== path.parse(normalized).root && !roots.includes(normalized)) {
@@ -35,8 +34,7 @@ export function resolveWeixinMediaLocalRoots(customRoots?: readonly string[]): s
 /**
  * 在账号白名单内读取普通文件，并实施真实字节上限。
  *
- * `assertLocalMediaAllowed` 负责 OpenClaw 统一路径策略，`readRegularFile` 负责打开时
- * 的文件类型/链接安全与大小检查；两层不能用普通 `stat + readFile` 替代。
+ * `readLocalFileFromRoots` 将根目录约束、文件类型和大小限制绑定到同一次打开。
  */
 export async function readWeixinLocalMedia(params: {
   filePath: string;
@@ -44,10 +42,13 @@ export async function readWeixinLocalMedia(params: {
   maxBytes: number;
 }): Promise<Buffer> {
   const roots = resolveWeixinMediaLocalRoots(params.customRoots);
-  await assertLocalMediaAllowed(params.filePath, roots);
-  const result = await readRegularFile({
+  const result = await readLocalFileFromRoots({
     filePath: params.filePath,
+    roots,
     maxBytes: params.maxBytes,
   });
+  if (!result) {
+    throw new Error(`Local media path is not under an allowed directory or is unsafe: ${params.filePath}`);
+  }
   return result.buffer;
 }

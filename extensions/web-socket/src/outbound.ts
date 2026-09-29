@@ -9,7 +9,7 @@ import type {
   ChannelOutboundContext,
 } from "openclaw/plugin-sdk/channel-contract";
 import { chunkText } from "openclaw/plugin-sdk/reply-runtime";
-import { sanitizeForPlainText } from "openclaw/plugin-sdk/outbound-runtime";
+import { sanitizeForPlainText } from "openclaw/plugin-sdk/channel-outbound";
 
 import { DEFAULT_WEBSOCKET_CONFIG } from "./config.js";
 import { serializeReplyFrame } from "./transport/protocol.js";

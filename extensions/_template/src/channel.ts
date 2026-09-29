@@ -2,7 +2,7 @@
  * ChannelPlugin 定义（通道契约层）。
  */
 
-import type { ChannelPlugin } from "openclaw/plugin-sdk";
+import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
 
 import { DEFAULT_ACCOUNT_ID } from "./config.js";
 import { templateSetupAdapter, templateSetupWizard } from "./onboarding.js";

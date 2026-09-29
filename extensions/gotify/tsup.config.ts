@@ -12,6 +12,7 @@ export default defineConfig({
   sourcemap: false,
   target: "node22",
   outDir: "dist",
+  banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
   external: [/^openclaw(\/.*)?$/],
   noExternal: ["@partme.ai/openclaw-message-sdk", "ws", "zod"],
 });

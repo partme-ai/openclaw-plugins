@@ -5,7 +5,7 @@
  * `dispatchTranscriptTurn`（runAssembled 优先）→ `deliverKfAgentReplyPayload`。
  */
 
-import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 import {
   dispatchTranscriptTurn,
   type TranscriptChannelRuntime,

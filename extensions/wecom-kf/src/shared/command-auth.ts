@@ -7,7 +7,7 @@
  * - `resolveCommandAuthorization` 来自 message-sdk/ingress（channelId=wecom-kf）
  * - 未授权时的中文提示由本模块 `buildWecomUnauthorizedCommandPrompt` 提供
  */
-import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 import {
   createAllowFromNormalizer,
   resolveCommandAuthorization,

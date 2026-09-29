@@ -4,7 +4,7 @@
  * @module web-socket/config
  */
 
-import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk";
+import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import type {
   OpenClawDmScope,

@@ -5,7 +5,7 @@
  * 明文监听只能绑定回环地址；非回环 TLS 必须具备登录认证或受信客户端证书；状态快照会移除
  * 明文密码，只展示凭据是否已配置。
  */
-import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk";
+import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import type {
   ResolvedStompTcpAccount,

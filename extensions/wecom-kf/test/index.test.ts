@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import plugin from "../src/index.js";
 import { WEBHOOK_PATHS } from "../src/types/constants.js";
 

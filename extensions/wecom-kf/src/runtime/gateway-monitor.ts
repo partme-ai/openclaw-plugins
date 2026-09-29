@@ -1,3 +1,4 @@
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * @fileoverview 企业微信客服账号在 OpenClaw Gateway 中的长运行生命周期监视器。
  *
@@ -6,9 +7,8 @@
  * 重新启用已移除的 wecom-cs 路径。
  */
 import type {
-  ChannelGatewayContext,
   OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 
 import {
   listWecomAccountIds,

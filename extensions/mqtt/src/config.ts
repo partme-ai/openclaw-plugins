@@ -4,7 +4,7 @@
  * @module mqtt/config
  */
 
-import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk";
+import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import type { MqttBrokerConfig, MqttChannelConfig, OpenClawDmScope, MqttPersistenceConfig } from "./types.js";
 

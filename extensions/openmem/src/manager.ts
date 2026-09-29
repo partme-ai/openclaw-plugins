@@ -5,12 +5,17 @@
  * 会转换成受控虚拟路径并进入有界内容缓存，`readFile` 只能读取允许的 archive/memory 来源。
  * 状态与探针明确标识当前使用 FTS/字符重排而非向量嵌入。
  */
-import type {
-  MemoryEmbeddingProbeResult,
-  MemoryProviderStatus,
-  MemorySearchManager,
-  MemorySearchResult,
-} from "openclaw/plugin-sdk/memory-core-host-engine-storage";
+import type { MemoryPluginCapability } from "openclaw/plugin-sdk/memory-host-core";
+
+type MemoryRuntime = NonNullable<MemoryPluginCapability["runtime"]>;
+type MemorySearchManager = NonNullable<
+  Awaited<ReturnType<MemoryRuntime["getMemorySearchManager"]>>["manager"]
+>;
+type MemorySearchResult = Awaited<ReturnType<MemorySearchManager["search"]>>[number];
+type MemoryEmbeddingProbeResult = Awaited<
+  ReturnType<MemorySearchManager["probeEmbeddingAvailability"]>
+>;
+type MemoryProviderStatus = ReturnType<MemorySearchManager["status"]>;
 
 import { OpenMemClient } from "./client.js";
 import type { OpenMemConfig } from "./config.js";

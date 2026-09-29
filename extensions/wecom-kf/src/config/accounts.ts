@@ -3,7 +3,7 @@
  * 渠道键：channels.wecom-kf（wecom-cs 为读时弃用别名）
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { mergeChannelAccountConfig } from "@partme.ai/openclaw-message-sdk/config";
 import type {
     WecomConfig,

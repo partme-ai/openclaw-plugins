@@ -33,7 +33,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { clearBridgeRuntime } from "../runtime.js";
 import { getChannelMeta } from "./channels.js";
 import { redactBridgeError } from "./redact.js";

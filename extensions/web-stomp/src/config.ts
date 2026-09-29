@@ -5,7 +5,7 @@
  * 监听必须启用 TLS，公开 TLS 监听还必须具备登录认证或受信客户端证书；状态快照不会输出
  * 明文密码或散列内容。
  */
-import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk";
+import type { ChannelAccountSnapshot, OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import type { ResolvedWebStompAccount, StompAuthUser, StompServerConfig } from "./types.js";
 

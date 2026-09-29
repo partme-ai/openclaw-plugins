@@ -5,7 +5,7 @@
  * agent_end、session_end 生命周期创建会话、摄取成功对话和提交归档。所有能力限定到配置的
  * Agent；`required=false` 时 Sidecar 启动不可用只降级告警，不阻断 Gateway。
  */
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   buildJsonPluginConfigSchema,
   definePluginEntry,

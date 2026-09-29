@@ -1,3 +1,4 @@
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * @fileoverview 微信 iPad 外部桥接的 OpenClaw Channel 契约。
  *
@@ -7,8 +8,7 @@
  */
 import type {
   ChannelAccountSnapshot,
-  ChannelGatewayContext,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 import type {
   ChannelPlugin,
   OpenClawConfig,

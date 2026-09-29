@@ -16,6 +16,7 @@ import {
   defineChannelPluginEntry,
   type OpenClawPluginApi,
 } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import {
   douyinChannelPlugin,
   getDouyinWebhookInboxStatus,
@@ -36,7 +37,7 @@ export { setDouyinRuntime, getDouyinRuntime } from "./runtime.js";
 function createGetDouyinSectionConfig() {
   return () => {
     const rt = getDouyinRuntime();
-    const cfg = rt.config.loadConfig();
+    const cfg = rt.config.current();
     const channels = cfg.channels as Record<string, unknown> | undefined;
     return {
       rootConfig: cfg,
@@ -45,7 +46,7 @@ function createGetDouyinSectionConfig() {
   };
 }
 
-export default defineChannelPluginEntry({
+const entry: OpenClawPluginDefinition = defineChannelPluginEntry({
   id: "douyin",
   name: "抖音",
   description: "抖音开放平台 Webhook 渠道与运营工具",
@@ -102,3 +103,5 @@ export default defineChannelPluginEntry({
     });
   },
 });
+
+export default entry;

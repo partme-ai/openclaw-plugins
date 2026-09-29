@@ -3,7 +3,7 @@
  * KF Tool 调用上下文解析 — 从 OpenClawPluginToolContext 与会话参数注入 open_kfid / external_userid
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { ResolvedAgentAccount } from "../types/index.js";
 import { resolveKfAccountByOpenKfId, WECOM_KF_CHANNEL_ID } from "../config/accounts.js";
 

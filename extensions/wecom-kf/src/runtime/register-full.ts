@@ -2,7 +2,7 @@
  * WeCom KF full 模式注册：Channel、Webhook、Tools、Hooks。
  */
 
-import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { initKfSendGuardStore } from "../agent/kf-send-guard.js";
 import { wecomPlugin } from "../channel/channel.js";

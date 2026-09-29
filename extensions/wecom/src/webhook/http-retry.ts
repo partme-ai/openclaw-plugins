@@ -7,7 +7,7 @@
  * 企微 60020 IP 白名单等不重试。
  */
 
-import { retryAsync } from "openclaw/plugin-sdk/retry-runtime";
+import { retryAsync } from "openclaw/plugin-sdk/infra-runtime";
 
 /** 企微 API 明确不可重试的 errcode（IP 白名单、凭据无效等）。 */
 export const WECOM_NON_RETRYABLE_ERRCODES = new Set([

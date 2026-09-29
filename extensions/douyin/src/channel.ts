@@ -167,7 +167,7 @@ export function createDouyinChannelPlugin(): ChannelPlugin<ResolvedDouyinAccount
             async (item) => {
               const runtime = getDouyinRuntime();
               // 每次重试重新读取配置快照，使恢复任务使用当前 bindings、策略和 Agent 路由。
-              const cfg = runtime.config.loadConfig() as Record<string, unknown>;
+              const cfg = runtime.config.current() as Record<string, unknown>;
               return dispatchDouyinWebhookInbound({
                 runtime,
                 cfg,

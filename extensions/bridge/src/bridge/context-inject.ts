@@ -17,7 +17,7 @@
  * 渠道自带工具的不需要重复注入工具说明，只注入平台交互规则。
  */
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { getChannelMeta, type ChannelContextPreset } from "./channels.js";
 import { PRESETS } from "./presets.js";
 

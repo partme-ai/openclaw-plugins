@@ -14,7 +14,7 @@
  * OpenClaw Bridge 插件定义（register 入口）。
  */
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { registerContextInjection } from "./context-inject.js";
 import { registerMessageBridge, validateBridgeConfig, type BridgeConfig } from "./message-bridge.js";
 import { ALL_CHANNELS } from "./channels.js";

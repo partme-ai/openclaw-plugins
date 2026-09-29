@@ -18,12 +18,17 @@ import { createReadStream } from "node:fs";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
 
-import type {
-  MemoryEmbeddingProbeResult,
-  MemoryProviderStatus,
-  MemorySearchManager,
-  MemorySearchResult,
-} from "openclaw/plugin-sdk/memory-core-host-engine-storage";
+import type { MemoryPluginCapability } from "openclaw/plugin-sdk/memory-host-core";
+
+type MemoryRuntime = NonNullable<MemoryPluginCapability["runtime"]>;
+type MemorySearchManager = NonNullable<
+  Awaited<ReturnType<MemoryRuntime["getMemorySearchManager"]>>["manager"]
+>;
+type MemorySearchResult = Awaited<ReturnType<MemorySearchManager["search"]>>[number];
+type MemoryEmbeddingProbeResult = Awaited<
+  ReturnType<MemorySearchManager["probeEmbeddingAvailability"]>
+>;
+type MemoryProviderStatus = ReturnType<MemorySearchManager["status"]>;
 
 import type { MemoryConfig } from "./config.js";
 import type { CapturedTurn, MemoryLevel, MemoryRecord } from "./model.js";

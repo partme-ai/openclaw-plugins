@@ -9,7 +9,7 @@
  * 参考企微文档 95122 / 94670
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { KfMessage, EventMessagesConfig } from "../types/index.js";
 import { sendKfWelcomeMessage } from "./api-client.js";
 import {

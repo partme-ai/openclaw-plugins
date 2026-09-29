@@ -2,7 +2,7 @@
  * 微信（Weixin）渠道 setupWizard — API Base URL 与登录引导。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { DEFAULT_BASE_URL, listWeixinAccountIds } from "./auth/accounts.js";
 import { createSimpleChannelSetup, getChannelSection } from "./channel-setup-factory.js";
 

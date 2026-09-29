@@ -8,8 +8,8 @@ const mocks = vi.hoisted(() => ({
   resolveTypingTicket: vi.fn(),
 }));
 
-vi.mock("openclaw/plugin-sdk/channel-runtime", () => ({ createTypingCallbacks: vi.fn() }));
-vi.mock("openclaw/plugin-sdk/infra-runtime", () => ({
+vi.mock("openclaw/plugin-sdk/channel-message", () => ({ createTypingCallbacks: vi.fn() }));
+vi.mock("openclaw/plugin-sdk/temp-path", () => ({
   resolvePreferredOpenClawTmpDir: () => "/tmp/openclaw-weixin-test",
 }));
 vi.mock("openclaw/plugin-sdk/command-auth", () => ({

@@ -7,7 +7,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import {
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,
   readRequestBodyWithLimit,

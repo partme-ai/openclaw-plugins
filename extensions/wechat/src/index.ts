@@ -15,7 +15,7 @@
  * **关键导出**：默认 plugin 对象、`weixinPlugin`
  */
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import type { OpenClawPluginApi, OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import { buildChannelConfigSchema } from "openclaw/plugin-sdk/channel-config-schema";
 
 import { weixinPlugin } from "./channel.js";
@@ -25,7 +25,7 @@ import { setWeixinRuntime } from "./runtime.js";
 
 export { weixinPlugin } from "./channel.js";
 
-export default {
+const plugin: OpenClawPluginDefinition = {
   id: "wechat",
   name: "Weixin",
   description: "Weixin channel (getUpdates long-poll + sendMessage)",
@@ -48,3 +48,5 @@ export default {
     api.registerChannel({ plugin: weixinPlugin });
   },
 };
+
+export default plugin;

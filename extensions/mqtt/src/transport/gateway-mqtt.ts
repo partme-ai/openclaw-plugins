@@ -1,10 +1,11 @@
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * @module mqtt/transport/gateway-mqtt
  *
  * Gateway 账号生命周期：启动/停止内嵌 Aedes，与 OpenClaw `startAccount` 对齐。
  */
 
-import type { ChannelAccountSnapshot, ChannelGatewayContext } from "openclaw/plugin-sdk";
+import type { ChannelAccountSnapshot } from "openclaw/plugin-sdk/core";
 
 import { startBroker, stopBroker } from "./server.js";
 import { handleInboundMessage } from "../inbound.js";

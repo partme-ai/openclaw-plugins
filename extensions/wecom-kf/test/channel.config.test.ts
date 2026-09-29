@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { describe, expect, it, vi } from "vitest";
 
 import { wecomPlugin } from "../src/channel/channel.js";

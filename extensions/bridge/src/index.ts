@@ -22,7 +22,7 @@
  * 3. 导出 normalizeForChannel / getChannelCapabilities / deriveTraceId 等供下游使用
  */
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import plugin from "./bridge/plugin-entry.js";
 
 // ── 渠道注册表 ──

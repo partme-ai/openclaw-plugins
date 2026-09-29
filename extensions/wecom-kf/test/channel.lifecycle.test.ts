@@ -1,8 +1,8 @@
 import {
   type ChannelAccountSnapshot,
-  type ChannelGatewayContext,
   type OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import { describe, expect, it, vi } from "vitest";
 
 import { createRuntimeEnv } from "../../../test-utils/runtime-env.js";

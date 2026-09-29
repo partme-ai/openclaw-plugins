@@ -4,7 +4,7 @@
  * 从 research/openclaw-china/extensions/wecom-kf 移植，供 index.ts 动态注册 HTTP 路由。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import type { WecomKfConfig } from "../types/index.js";
 import { getWecomKfChannelBlock } from "./channel-block.js";

@@ -9,7 +9,7 @@ import type {
   ChannelAccountSnapshot,
   ChannelPlugin,
   OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 
 import {
   deleteAccountFromConfigSection,

@@ -15,6 +15,7 @@ export default defineConfig({
   sourcemap: true,
   target: "node22",
   outDir: "dist",
+  banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
   /** OpenClaw 由 Gateway 运行时提供，不得打入 dist */
   external: [/^openclaw(\/.*)?$/],
   noExternal: ["amqplib"],

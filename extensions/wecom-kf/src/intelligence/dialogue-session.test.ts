@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import {
   applyInboundDialogueTransition,
@@ -13,9 +13,15 @@ function createMockRuntime(store: Record<string, unknown>): PluginRuntime {
     agent: {
       session: {
         resolveStorePath: () => "/tmp/sessions.json",
-        loadSessionStore: () => store,
-        updateSessionStore: vi.fn(async (_path, mutator) => {
-          mutator(store);
+        getSessionEntry: ({ sessionKey }: { sessionKey: string }) => store[sessionKey],
+        updateSessionStoreEntry: vi.fn(async ({ sessionKey, update }: {
+          sessionKey: string;
+          update: (entry: Record<string, unknown>) => Record<string, unknown>;
+        }) => {
+          const current = store[sessionKey] as Record<string, unknown> | undefined;
+          if (current) {
+            store[sessionKey] = { ...current, ...update(current) };
+          }
         }),
       },
     },

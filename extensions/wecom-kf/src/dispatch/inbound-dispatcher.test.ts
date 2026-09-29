@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import { dispatchKfMessage } from "./inbound-dispatcher.js";
 import type { KfMessage, WecomAccountConfig } from "../types/index.js";
