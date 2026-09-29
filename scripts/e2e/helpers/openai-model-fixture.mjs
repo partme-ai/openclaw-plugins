@@ -20,6 +20,7 @@ export async function startOpenAiModelFixture(port) {
   const metrics = {
     models: 0,
     completions: 0,
+    completionsFinished: 0,
     embeddings: 0,
     lastRequest: null,
     lastEmbeddingRequest: null,
@@ -37,6 +38,7 @@ export async function startOpenAiModelFixture(port) {
     if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
       const body = await readJson(request);
       metrics.completions += 1;
+      response.once("finish", () => { metrics.completionsFinished += 1; });
       metrics.lastRequest = body;
       if (controls.failNextCompletions > 0) {
         controls.failNextCompletions -= 1;

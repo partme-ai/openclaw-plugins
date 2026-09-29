@@ -45,6 +45,13 @@ interface InboundResult {
   manualAck?: boolean;
 }
 
+/** 仅保留宿主结构化终态和运行身份，不将模型输出或错误正文写入状态面。 */
+class SubagentWaitOutcomeError extends Error {
+  constructor(status: "timeout" | "error" | "invalid" | "pending", runId: string) {
+    super(`subagent_wait status=${status} runId=${encodeURIComponent(runId)}`);
+  }
+}
+
 /**
  * @description 处理单条 RabbitMQ 入站消息（设备/上游 → Agent）。
  * @param event - AMQP 消费事件
@@ -220,7 +227,10 @@ async function dispatchToRuntime(
     });
     if (config.dispatch.reply.enabled && dispatchResult.mode === "subagent" &&
         (dispatchResult.outcome.kind === "failed" || dispatchResult.outcome.kind === "pending")) {
-      throw new Error(`RabbitMQ subagent did not complete: ${dispatchResult.outcome.kind}`);
+      const status = dispatchResult.outcome.kind === "failed"
+        ? dispatchResult.outcome.status
+        : "pending";
+      throw new SubagentWaitOutcomeError(status, dispatchResult.runId);
     }
     deferredAck.finalizeAfterDispatch();
     // NACK is already settled by deferredAck; propagate failure so the outer
@@ -229,7 +239,10 @@ async function dispatchToRuntime(
       throw new Error("RabbitMQ dispatch completed without a required reply");
     }
   } catch (error) {
-    deferredAck.nackOnFailure(config.consume.requeueOnError, "reply_publish_or_dispatch_failed");
+    const reason = error instanceof SubagentWaitOutcomeError
+      ? error.message
+      : "reply_publish_or_dispatch_failed";
+    deferredAck.nackOnFailure(config.consume.requeueOnError, reason);
     throw error;
   }
 }
