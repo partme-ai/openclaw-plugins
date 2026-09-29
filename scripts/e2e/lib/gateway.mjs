@@ -23,23 +23,39 @@ async function waitGatewayHttpReady() {
 const PID_FILE = join(E2E_DIR, ".gateway.pid");
 const LOG_FILE = join(E2E_DIR, "gateway.log");
 
+/** Treat an unobservable live PID as unknown, never as stopped. */
+export function isGatewayProcessAlive(pid, signal = process.kill, ps = (candidate) =>
+  execFileSync("ps", ["-p", String(candidate), "-o", "stat="], { encoding: "utf8" })) {
+  try {
+    signal(pid, 0);
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+  try {
+    const state = ps(pid).trim();
+    if (state) return !state.startsWith("Z");
+  } catch (error) {
+    // ps can race with exit. Confirm ESRCH before treating that race as stopped.
+    try {
+      signal(pid, 0);
+    } catch (followup) {
+      if (followup?.code === "ESRCH") return false;
+      throw followup;
+    }
+    throw error;
+  }
+  try {
+    signal(pid, 0);
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+  throw new Error(`Unable to confirm E2E Gateway PID ${pid} process state`);
+}
+
 const processLifecycle = {
-  isAlive(pid) {
-    try {
-      process.kill(pid, 0);
-    } catch (error) {
-      if (error?.code === "ESRCH") return false;
-      throw error;
-    }
-    // A detached child may be a zombie until this synchronous caller yields
-    // back to Node's event loop; kill(pid, 0) still succeeds for that state.
-    try {
-      const state = execFileSync("ps", ["-p", String(pid), "-o", "stat="], { encoding: "utf8" }).trim();
-      return state.length > 0 && !state.startsWith("Z");
-    } catch {
-      return false;
-    }
-  },
+  isAlive: isGatewayProcessAlive,
   ownsPort(pid, port) {
     try {
       const output = execFileSync("lsof", ["-nP", "-t", `-iTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" });

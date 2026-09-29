@@ -1,9 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { trustedE2ELinkArgs } from "./install.mjs";
+import { assertCleanPackedArtifact, reviewedArtifactDigest, trustedE2ELinkArgs } from "./install.mjs";
+
+test("packed artifact cannot carry ignored dependency state", () => {
+  const root = mkdtempSync(join(tmpdir(), "openclaw-packed-review-"));
+  try {
+    assertCleanPackedArtifact(root);
+    writeFileSync(join(root, "package-lock.json"), "{}");
+    assert.throws(() => assertCleanPackedArtifact(root));
+    unlinkSync(join(root, "package-lock.json"));
+    mkdirSync(join(root, "node_modules"));
+    assert.throws(() => assertCleanPackedArtifact(root));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("local install consent is limited to a plugin in this checkout and extracted E2E state", () => {
   const root = mkdtempSync(join(tmpdir(), "openclaw-install-test-"));
@@ -59,9 +73,15 @@ test("local install consent is limited to a plugin in this checkout and extracte
       const pkg = JSON.stringify({ name: `@partme.ai/openclaw-${id}` });
       writeFileSync(join(src, "package.json"), pkg);
       writeFileSync(join(dest, "package.json"), pkg);
-      assert.ok(trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id).includes("--accept-capabilities"));
+      const approved = { [id]: reviewedArtifactDigest(dest) };
+      assert.ok(trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved).includes("--accept-capabilities"));
       writeFileSync(join(dest, "openclaw.plugin.json"), JSON.stringify({ id, capabilities: { ...capabilities, shell: true } }));
-      assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id));
+      assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved));
+      writeFileSync(join(dest, "openclaw.plugin.json"), manifest);
+      const newService = join(dest, "new-service.js");
+      writeFileSync(newService, "api.registerService({ id: 'new-service' })");
+      assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved));
+      unlinkSync(newService);
     }
 
     for (const [id, routePaths, hooks, marker] of [
@@ -82,10 +102,23 @@ test("local install consent is limited to a plugin in this checkout and extracte
       const code = [...routePaths.map((path) => `path: "${path}"`), ...hooks.map((hook) => `api.on("${hook}"`), id === "router" ? marker : ""].join("\n");
       const codePath = id === "router" ? join(codeDir, "index.ts") : join(codeDir, "register-full.ts");
       writeFileSync(codePath, code);
+      const installedCodePath = id === "router" ? join(dest, "src", "index.ts") : join(dest, "src", "runtime", "register-full.ts");
+      mkdirSync(id === "router" ? join(dest, "src") : join(dest, "src", "runtime"), { recursive: true });
+      writeFileSync(installedCodePath, code);
       if (id === "gotify") writeFileSync(join(src, "src", "index.ts"), marker);
-      assert.ok(trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id).includes("--accept-capabilities"));
-      writeFileSync(codePath, `${code}\npath: "/unexpected"`);
-      assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id));
+      const approved = { [id]: reviewedArtifactDigest(dest) };
+      assert.ok(trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved).includes("--accept-capabilities"));
+      writeFileSync(installedCodePath, `${code}\npath: "/unexpected"`);
+      assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved));
+      writeFileSync(installedCodePath, code);
+      const newTool = join(dest, "new-tool.js");
+      writeFileSync(newTool, "api.registerTool({ name: 'new-tool' })");
+      assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved));
+      unlinkSync(newTool);
+      const dist = join(dest, "dist");
+      mkdirSync(dist);
+      writeFileSync(join(dist, "index.js"), "changed compiled runtime");
+      assert.throws(() => trustedE2ELinkArgs(`extensions/${id}`, dest, repo, state, id, approved));
     }
   } finally {
     rmSync(root, { recursive: true, force: true });

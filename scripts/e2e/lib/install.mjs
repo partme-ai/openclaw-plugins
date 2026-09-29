@@ -2,6 +2,7 @@
  * Build, pack, and install queue/channel plugins into OpenClaw E2E profile.
  */
 import { execFileSync, execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
@@ -13,28 +14,51 @@ const APPROVED_E2E_CAPABILITIES = {
   tracing: { distributedTracing: true },
   mqtt: { protocolBridge: true, iot: true },
 };
-const APPROVED_RUNTIME_SURFACES = {
-  router: {
-    file: "src/index.ts",
-    routePaths: ["/router/status", "/router/health", "/router/dlq", "/router/audit", "/router/dlq/replay"],
-    hooks: ["message_received", "message_sent", "reply_payload_sending"],
-    marker: 'id: "openclaw-router-delivery"',
-  },
-  gotify: {
-    file: "src/runtime/register-full.ts",
-    routePaths: ["/gotify/status", "/gotify/health", "/gotify/doctor"],
-    hooks: [],
-    marker: 'registerFull: registerGotifyFull',
-  },
+// Exact reviewed E2E package snapshots. Update only after reviewing the changed
+// package, including dist; this does not claim a complete runtime surface list.
+const APPROVED_E2E_ARTIFACT_SHA256 = {
+  router: "5eb633c4bb60e27964f90820bd457d49ea848b733cc9c6556556189acb57a5dd",
+  gotify: "5a1acd885f9cf5466103f6832394dad5ffdb7a51abf90dfa0036d784080b6854",
+  tracing: "603e57996443a8eff0fc3cc7364579fa0a66dfef000f4ecb062a7487983bf895",
+  mqtt: "9a1d7af3ca8ee0f652c4bf695072377aae9b161a2cb510ba9cf0afba12c1a917",
 };
+const REVIEWED_CONSENT_IDS = new Set(Object.keys(APPROVED_E2E_ARTIFACT_SHA256));
 
 function isChildOf(parent, child) {
   const suffix = relative(parent, child);
   return suffix.length > 0 && !suffix.startsWith("..") && !isAbsolute(suffix);
 }
 
+/** npm may create these later; they must not be hidden in a packed candidate. */
+export function assertCleanPackedArtifact(root) {
+  for (const name of ["node_modules", "package-lock.json"]) {
+    if (existsSync(join(root, name))) throw new Error(`Refusing packed artifact with ${name}`);
+  }
+}
+
+/** Hash every packaged file that can affect plugin behavior after npm adds dependencies. */
+export function reviewedArtifactDigest(root) {
+  const hash = createHash("sha256");
+  const visit = (directory, prefix = "") => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (prefix === "" && ["node_modules", "package-lock.json"].includes(entry.name)) continue;
+      const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(path, name);
+      } else if (entry.isFile()) {
+        hash.update(name).update("\0").update(readFileSync(path)).update("\0");
+      } else {
+        throw new Error(`Refusing unsupported artifact entry: ${name}`);
+      }
+    }
+  };
+  visit(root);
+  return hash.digest("hex");
+}
+
 /** Confirm --force only for a packed plugin from this checkout in a disposable E2E profile. */
-export function trustedE2ELinkArgs(pluginDir, extPath, repoRoot = REPO_ROOT, stateDir = STATE_DIR, pluginId) {
+export function trustedE2ELinkArgs(pluginDir, extPath, repoRoot = REPO_ROOT, stateDir = STATE_DIR, pluginId, approvedArtifacts = APPROVED_E2E_ARTIFACT_SHA256) {
   const realRepo = realpathSync(repoRoot);
   const realSource = realpathSync(join(repoRoot, pluginDir));
   const realState = realpathSync(stateDir);
@@ -46,7 +70,7 @@ export function trustedE2ELinkArgs(pluginDir, extPath, repoRoot = REPO_ROOT, sta
   }
   const args = ["--profile", PROFILE, "plugins", "install", "--link", "--force"];
   const approvedCapabilities = APPROVED_E2E_CAPABILITIES[pluginId];
-  const reviewedSurface = APPROVED_RUNTIME_SURFACES[pluginId];
+  const consentRequired = REVIEWED_CONSENT_IDS.has(pluginId);
   if (pluginId) {
     const definition = PLUGIN_REGISTRY.find((entry) => entry.id === pluginId);
     if (!definition || pluginDir !== definition.dir) {
@@ -69,18 +93,11 @@ export function trustedE2ELinkArgs(pluginDir, extPath, repoRoot = REPO_ROOT, sta
       }
     }
   }
-  if (reviewedSurface) {
-    const source = readFileSync(join(realSource, reviewedSurface.file), "utf8");
-    const routePaths = [...source.matchAll(/path: "([^"]+)"/g)].map((match) => match[1]);
-    const hooks = [...source.matchAll(/api\.on\("([^"]+)"/g)].map((match) => match[1]);
-    const markerSource = pluginId === "gotify" ? readFileSync(join(realSource, "src/index.ts"), "utf8") : source;
-    if (JSON.stringify(routePaths) !== JSON.stringify(reviewedSurface.routePaths) ||
-        JSON.stringify(hooks) !== JSON.stringify(reviewedSurface.hooks) ||
-        !markerSource.includes(reviewedSurface.marker)) {
-      throw new Error(`Refusing capability consent for changed ${pluginId} runtime surface`);
+  if (consentRequired) {
+    const expected = approvedArtifacts[pluginId];
+    if (!expected || reviewedArtifactDigest(realDestination) !== expected) {
+      throw new Error(`Refusing capability consent for changed ${pluginId} package artifact`);
     }
-  }
-  if (approvedCapabilities || reviewedSurface) {
     args.push("--accept-capabilities");
   }
   return [...args, realDestination];
@@ -128,8 +145,6 @@ function installProductionDeps(extPath, messageSdkArchive) {
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
   const consumesMessageSdk = ["dependencies", "peerDependencies", "optionalDependencies"]
     .some((section) => pkg[section]?.["@partme.ai/openclaw-message-sdk"]);
-  delete pkg.devDependencies;
-  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
   const sdkArg = consumesMessageSdk ? ` --no-save "${messageSdkArchive}"` : "";
   run(`npm install --omit=dev --legacy-peer-deps --no-audit --no-fund${sdkArg}`, { cwd: extPath });
 }
@@ -196,6 +211,7 @@ export function installPlugins(pluginIds) {
       const extPath = join(STATE_DIR, "extensions", def.extDir ?? def.id);
       extractTgz(tgzPath, extPath);
       overlayWorkspaceBuild(def.dir, extPath);
+      if (REVIEWED_CONSENT_IDS.has(def.id)) assertCleanPackedArtifact(extPath);
 
       const pkg = JSON.parse(readFileSync(join(extPath, "package.json"), "utf8"));
       installProductionDeps(extPath, messageSdkArchive);

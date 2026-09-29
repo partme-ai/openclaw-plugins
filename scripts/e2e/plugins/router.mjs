@@ -42,6 +42,10 @@ export async function testRouter(ctx, results) {
       if (!beforeReplay.ok || beforeReplay.json?.data?.length !== 1) {
         throw new Error(`unauthorized replay changed DLQ: ${beforeReplay.status}`);
       }
+      const audit = await ctx.gatewayFetch("/router/audit?limit=1", authorized);
+      if (audit.status !== 200 || audit.json?.ok !== true || !Array.isArray(audit.json?.data)) {
+        throw new Error(`authorized audit response changed: ${audit.status}`);
+      }
       const replay = await ctx.gatewayFetch("/router/dlq/replay?limit=1", { method: "POST", ...authorized });
       if (replay.status !== 202 || replay.json?.data?.replayed !== 1) {
         throw new Error(`authorized replay failed: ${replay.status}`);

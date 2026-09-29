@@ -3,7 +3,17 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { stopGatewayByPidFile } from "./gateway.mjs";
+import { isGatewayProcessAlive, stopGatewayByPidFile } from "./gateway.mjs";
+
+test("PID is retained when ps fails and kill still finds a live process", () => {
+  const alive = () => {};
+  const brokenPs = () => { throw new Error("ps unavailable"); };
+  assert.throws(() => isGatewayProcessAlive(12345, alive, brokenPs), /ps unavailable/);
+  assert.equal(isGatewayProcessAlive(12345, alive, () => "Z+\n"), false);
+  assert.equal(isGatewayProcessAlive(12345, alive, () => "S+\n"), true);
+  const gone = () => { const error = new Error("gone"); error.code = "ESRCH"; throw error; };
+  assert.equal(isGatewayProcessAlive(12345, gone, brokenPs), false);
+});
 
 test("E2E Gateway stop confirms ownership and exit before clearing its PID file", () => {
   const root = mkdtempSync(join(tmpdir(), "openclaw-gateway-stop-e2e-"));
