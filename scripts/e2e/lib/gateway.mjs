@@ -1,7 +1,7 @@
 /**
  * OpenClaw gateway lifecycle — host process or Docker compose service.
  */
-import { execSync, spawn } from "node:child_process";
+import { execFileSync, execSync, spawn } from "node:child_process";
 import { existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { COMPOSE_FILE, DOCKER, dockerEnv, dockerOk, useHostGateway } from "./compose.mjs";
@@ -23,27 +23,80 @@ async function waitGatewayHttpReady() {
 const PID_FILE = join(E2E_DIR, ".gateway.pid");
 const LOG_FILE = join(E2E_DIR, "gateway.log");
 
+const processLifecycle = {
+  isAlive(pid) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error?.code === "ESRCH") return false;
+      throw error;
+    }
+    // A detached child may be a zombie until this synchronous caller yields
+    // back to Node's event loop; kill(pid, 0) still succeeds for that state.
+    try {
+      const state = execFileSync("ps", ["-p", String(pid), "-o", "stat="], { encoding: "utf8" }).trim();
+      return state.length > 0 && !state.startsWith("Z");
+    } catch {
+      return false;
+    }
+  },
+  ownsPort(pid, port) {
+    try {
+      const output = execFileSync("lsof", ["-nP", "-t", `-iTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" });
+      return output.trim().split(/\s+/).includes(String(pid));
+    } catch {
+      return false;
+    }
+  },
+  signal: (pid, signal) => process.kill(pid, signal),
+  pause(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  },
+};
+
+/** Stop only this harness's live Gateway; preserve its profile if exit cannot be confirmed. */
+export function stopGatewayByPidFile(pidFile, port, lifecycle = processLifecycle, waitMs = 5_000) {
+  if (!existsSync(pidFile)) return;
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid E2E Gateway PID file");
+  if (!lifecycle.isAlive(pid)) {
+    rmSync(pidFile, { force: true });
+    return;
+  }
+  const waitForExit = (timeoutMs = waitMs) => {
+    const deadline = performance.now() + timeoutMs;
+    while (lifecycle.isAlive(pid) && performance.now() < deadline) lifecycle.pause(50);
+    return !lifecycle.isAlive(pid);
+  };
+  if (!lifecycle.ownsPort(pid, port)) {
+    if (waitForExit()) {
+      rmSync(pidFile, { force: true });
+      return;
+    }
+    throw new Error(`E2E Gateway PID ${pid} does not own port ${port}; profile preserved`);
+  }
+  lifecycle.signal(pid, "SIGTERM");
+  if (!waitForExit()) {
+    if (!lifecycle.ownsPort(pid, port)) {
+      // The listener closes before the process finishes its remaining shutdown hooks.
+      // Never send a stronger signal after ownership can no longer be proved.
+      if (waitForExit(30_000)) {
+        rmSync(pidFile, { force: true });
+        return;
+      }
+      throw new Error(`E2E Gateway PID ${pid} ownership changed; profile preserved`);
+    }
+    lifecycle.signal(pid, "SIGKILL");
+    if (!waitForExit()) {
+      throw new Error(`E2E Gateway PID ${pid} did not exit; profile preserved`);
+    }
+  }
+  rmSync(pidFile, { force: true });
+}
+
 /** Stop host gateway if previously started by E2E. */
 export function stopHostGateway() {
-  if (!existsSync(PID_FILE)) return;
-  const pid = Number(readFileSync(PID_FILE, "utf8"));
-  try {
-    process.kill(pid, "SIGTERM");
-    const sleeper = new Int32Array(new SharedArrayBuffer(4));
-    const deadline = performance.now() + 2_000;
-    while (performance.now() < deadline) {
-      try {
-        process.kill(pid, 0);
-        Atomics.wait(sleeper, 0, 0, 50);
-      } catch {
-        break;
-      }
-    }
-  } catch {
-    /* ignore */
-  } finally {
-    rmSync(PID_FILE, { force: true });
-  }
+  stopGatewayByPidFile(PID_FILE, GATEWAY_PORT);
 }
 
 /**

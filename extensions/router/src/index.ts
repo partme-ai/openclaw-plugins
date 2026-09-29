@@ -3,7 +3,7 @@
  *
  * 监听 inbound、outbound 和 reply_payload 事件，按规则生成稳定幂等键与 hop trace，再交给
  * `ReliableRouteDispatcher` 持久化投递。trace 限制和已拥有 identity 检查防止路由环路；
- * 状态、健康、DLQ、审计及重放端点均要求插件认证，并只返回脱敏摘要。
+ * 状态、健康、DLQ、审计及重放端点均要求 Gateway 鉴权，并只返回脱敏摘要。
  */
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
@@ -324,7 +324,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.registerHttpRoute({
       path: "/router/status",
-      auth: "plugin",
+      auth: "gateway",
       match: "exact",
       handler: async (req, res) => {
         if ((req.method ?? "GET") !== "GET") {
@@ -338,7 +338,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.registerHttpRoute({
       path: "/router/health",
-      auth: "plugin",
+      auth: "gateway",
       match: "exact",
       handler: async (req, res) => {
         if ((req.method ?? "GET") !== "GET") {
@@ -353,7 +353,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.registerHttpRoute({
       path: "/router/dlq",
-      auth: "plugin",
+      auth: "gateway",
       match: "exact",
       handler: async (req, res) => {
         if ((req.method ?? "GET") !== "GET") {
@@ -369,7 +369,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.registerHttpRoute({
       path: "/router/audit",
-      auth: "plugin",
+      auth: "gateway",
       match: "exact",
       handler: async (req, res) => {
         if ((req.method ?? "GET") !== "GET") {
@@ -385,7 +385,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.registerHttpRoute({
       path: "/router/dlq/replay",
-      auth: "plugin",
+      auth: "gateway",
       match: "exact",
       handler: async (req, res) => {
         if (req.method !== "POST") {

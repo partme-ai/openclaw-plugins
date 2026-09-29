@@ -20,7 +20,7 @@ function response() {
 }
 
 describe("tracing plugin", () => {
-  it("ID、生命周期和认证 GET-only 路由与 OpenClaw 2026.7.1 对齐", async () => {
+  it("ID、生命周期和 Gateway 认证 GET-only 路由与 OpenClaw 2026.9.6 对齐", async () => {
     const hooks = new Map<string, Hook[]>();
     const routes = new Map<string, { auth?: string; match?: string; handler: Hook }>();
     const api = {
@@ -38,7 +38,7 @@ describe("tracing plugin", () => {
     expect(plugin.id).toBe("tracing");
     plugin.register(api as never);
     expect(routes.size).toBe(3);
-    expect([...routes.values()].every((route) => route.auth === "plugin")).toBe(true);
+    expect([...routes.values()].every((route) => route.auth === "gateway")).toBe(true);
     expect([...routes.values()].every((route) => route.match === "exact")).toBe(true);
     expect(hooks.get("message_received")).toHaveLength(1);
     expect(hooks.get("reply_payload_sending")).toHaveLength(1);

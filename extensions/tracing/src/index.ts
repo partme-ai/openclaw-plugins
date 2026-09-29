@@ -265,7 +265,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
   name: "openclaw-tracing",
   description: "Bounded OpenTelemetry-compatible tracing for OpenClaw message and tool lifecycles",
   register(api: OpenClawPluginApi) {
-    const routeOptions = { auth: "plugin" as const, match: "exact" as const };
+    const routeOptions = { auth: "gateway" as const, match: "exact" as const };
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/status", handler: statusHandler });
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/traces", handler: tracesHandler });
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/trace", handler: traceDetailHandler });

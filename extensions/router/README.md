@@ -386,7 +386,9 @@ flowchart LR
 
 For rotation, retain the old environment name in `statePreviousEncryptionKeyEnvs`, point `stateEncryptionKeyEnv` at the new key, and restart. The authenticated old state is immediately rewritten with the current primary key. Remove the previous key only after that rewrite succeeds.
 
-Operational routes use OpenClaw plugin authentication and exact matching:
+Operational routes use OpenClaw Gateway authentication (`auth: "gateway"`) and exact matching:
+
+Configure Gateway authentication (for example, a Gateway token) before exposing these endpoints. With `gateway.auth.mode: "none"`, OpenClaw has no identity to authenticate and these routes must be treated as unauthenticated. The Gateway owns credential and browser-grant checks; a read-only browser grant cannot authorize the replay POST. Platform webhooks retain their own signature verification and are unaffected.
 
 - `GET /router/status`
 - `GET /router/health`

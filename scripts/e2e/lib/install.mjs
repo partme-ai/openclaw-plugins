@@ -1,14 +1,90 @@
 /**
  * Build, pack, and install queue/channel plugins into OpenClaw E2E profile.
  */
-import { execSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, execSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { MESSAGE_SDK, PLUGIN_REGISTRY, resolvePlugins } from "./registry.mjs";
 import { OPENCLAW_BIN, PROFILE, REPO_ROOT, STATE_DIR } from "./utils.mjs";
 
 const TOOL_PATH = `/opt/homebrew/bin:${process.env.PATH ?? ""}`;
+const APPROVED_E2E_CAPABILITIES = {
+  tracing: { distributedTracing: true },
+  mqtt: { protocolBridge: true, iot: true },
+};
+const APPROVED_RUNTIME_SURFACES = {
+  router: {
+    file: "src/index.ts",
+    routePaths: ["/router/status", "/router/health", "/router/dlq", "/router/audit", "/router/dlq/replay"],
+    hooks: ["message_received", "message_sent", "reply_payload_sending"],
+    marker: 'id: "openclaw-router-delivery"',
+  },
+  gotify: {
+    file: "src/runtime/register-full.ts",
+    routePaths: ["/gotify/status", "/gotify/health", "/gotify/doctor"],
+    hooks: [],
+    marker: 'registerFull: registerGotifyFull',
+  },
+};
+
+function isChildOf(parent, child) {
+  const suffix = relative(parent, child);
+  return suffix.length > 0 && !suffix.startsWith("..") && !isAbsolute(suffix);
+}
+
+/** Confirm --force only for a packed plugin from this checkout in a disposable E2E profile. */
+export function trustedE2ELinkArgs(pluginDir, extPath, repoRoot = REPO_ROOT, stateDir = STATE_DIR, pluginId) {
+  const realRepo = realpathSync(repoRoot);
+  const realSource = realpathSync(join(repoRoot, pluginDir));
+  const realState = realpathSync(stateDir);
+  const realDestination = realpathSync(extPath);
+  if (!basename(realState).toLowerCase().includes("e2e") ||
+      !isChildOf(realRepo, realSource) ||
+      !isChildOf(join(realState, "extensions"), realDestination)) {
+    throw new Error("Refusing forced install outside this checkout's disposable E2E plugin directories");
+  }
+  const args = ["--profile", PROFILE, "plugins", "install", "--link", "--force"];
+  const approvedCapabilities = APPROVED_E2E_CAPABILITIES[pluginId];
+  const reviewedSurface = APPROVED_RUNTIME_SURFACES[pluginId];
+  if (pluginId) {
+    const definition = PLUGIN_REGISTRY.find((entry) => entry.id === pluginId);
+    if (!definition || pluginDir !== definition.dir) {
+      throw new Error(`Refusing install for unregistered ${pluginId} source`);
+    }
+    for (const path of [realSource, realDestination]) {
+      const manifest = JSON.parse(readFileSync(join(path, "openclaw.plugin.json"), "utf8"));
+      const pkg = JSON.parse(readFileSync(join(path, "package.json"), "utf8"));
+      const actual = manifest.capabilities;
+      if (manifest.id !== pluginId || pkg.name !== definition.filter) {
+        throw new Error(`Refusing install for changed ${pluginId} package identity`);
+      }
+      if (approvedCapabilities && (typeof actual !== "object" || actual === null ||
+          Object.keys(actual).length !== Object.keys(approvedCapabilities).length ||
+          Object.entries(approvedCapabilities).some(([key, value]) => actual[key] !== value))) {
+        throw new Error(`Refusing capability consent for changed ${pluginId} manifest`);
+      }
+      if (!approvedCapabilities && Object.keys(actual ?? {}).length > 0) {
+        throw new Error(`Refusing unlisted capability consent for ${pluginId}`);
+      }
+    }
+  }
+  if (reviewedSurface) {
+    const source = readFileSync(join(realSource, reviewedSurface.file), "utf8");
+    const routePaths = [...source.matchAll(/path: "([^"]+)"/g)].map((match) => match[1]);
+    const hooks = [...source.matchAll(/api\.on\("([^"]+)"/g)].map((match) => match[1]);
+    const markerSource = pluginId === "gotify" ? readFileSync(join(realSource, "src/index.ts"), "utf8") : source;
+    if (JSON.stringify(routePaths) !== JSON.stringify(reviewedSurface.routePaths) ||
+        JSON.stringify(hooks) !== JSON.stringify(reviewedSurface.hooks) ||
+        !markerSource.includes(reviewedSurface.marker)) {
+      throw new Error(`Refusing capability consent for changed ${pluginId} runtime surface`);
+    }
+  }
+  if (approvedCapabilities || reviewedSurface) {
+    args.push("--accept-capabilities");
+  }
+  return [...args, realDestination];
+}
 
 /** @returns {NodeJS.ProcessEnv} */
 function toolEnv() {
@@ -127,7 +203,9 @@ export function installPlugins(pluginIds) {
       // index. Merely adding plugins.load.paths is insufficient on 2026.7.1:
       // startup migrations may otherwise treat an unpublished configured
       // plugin as missing and attempt an npm repair before Gateway startup.
-      run(`${OPENCLAW_BIN} --profile ${PROFILE} plugins install --link "${extPath}"`);
+      const installArgs = trustedE2ELinkArgs(def.dir, extPath, REPO_ROOT, STATE_DIR, def.id);
+      console.log(`\n$ ${OPENCLAW_BIN} ${installArgs.slice(0, -1).join(" ")} "${extPath}"`);
+      execFileSync(OPENCLAW_BIN, installArgs, { stdio: "inherit", cwd: REPO_ROOT, env: toolEnv() });
       installed.push({ id: def.id, path: extPath, version: pkg.version, tgz: tgzName });
     }
 

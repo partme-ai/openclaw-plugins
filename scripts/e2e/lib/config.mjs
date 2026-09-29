@@ -1,11 +1,15 @@
 /**
  * Merge per-plugin config fragments into ~/.openclaw-queue-e2e/openclaw.json.
  */
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { loadPluginConfigs } from "../config/plugins/index.mjs";
 import { PLUGIN_REGISTRY, resolvePlugins } from "./registry.mjs";
 import { E2E_DIR, E2E_PORTS, GATEWAY_PORT, STATE_DIR } from "./utils.mjs";
+
+// Dedicated disposable E2E profile only; never use this credential for a user Gateway.
+export const MANAGEMENT_E2E_GATEWAY_TOKEN = randomBytes(32).toString("hex");
 
 /**
  * Installed plugin ids from prior install step (may include plugins outside this run).
@@ -65,7 +69,9 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
             allowUsers: [ids.includes("oauth2") ? "oauth-e2e-user" : "e2e-client"],
           },
         },
-      } : { auth: { mode: "none" } }),
+      } : ids.includes("router") || ids.includes("tracing")
+        ? { auth: { mode: "token", token: MANAGEMENT_E2E_GATEWAY_TOKEN } }
+        : { auth: { mode: "none" } }),
     },
     session: { dmScope: "main" },
     plugins: {
@@ -144,6 +150,7 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
     mkdirSync(routerDir, { recursive: true });
     const now = Date.now();
     const id = `router-e2e-${now}`;
+    const replayId = `router-replay-e2e-${now}`;
     writeFileSync(join(routerDir, "delivery-state.json"), JSON.stringify({
       version: 1,
       pending: {
@@ -164,7 +171,21 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
         },
       },
       delivered: {},
-      deadLetters: [],
+      deadLetters: [{
+        id: replayId,
+        dedupeKey: replayId,
+        ruleId: "e2e-dlq-replay",
+        actionType: "forward",
+        payload: {
+          channel: "gotify",
+          to: "e2e",
+          content: `router authenticated DLQ replay E2E ${e2eTopic}`,
+          metadata: { idempotencyKey: replayId },
+        },
+        attempts: 1,
+        createdAt: now,
+        nextAttemptAt: now,
+      }],
       audit: [],
     }, null, 2));
   }

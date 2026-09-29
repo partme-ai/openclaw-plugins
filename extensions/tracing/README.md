@@ -230,8 +230,10 @@ URL. Configuration is validated again at runtime; invalid values fail startup.
 
 ## Operations API
 
-All routes use OpenClaw plugin authentication, reject non-GET methods, and send
+All routes use OpenClaw Gateway authentication (`auth: "gateway"`), reject non-GET methods, and send
 `Cache-Control: no-store`:
+
+Configure Gateway authentication before exposing these endpoints. With `gateway.auth.mode: "none"`, the Gateway has no identity to authenticate and these routes must be treated as unauthenticated. Gateway authorization also governs browser grants. Platform webhooks keep their independent signature verification.
 
 - `GET /tracing/status`
 - `GET /tracing/traces?limit=50` (`1..200`)

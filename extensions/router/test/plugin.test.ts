@@ -127,7 +127,7 @@ describe("router plugin", () => {
     const { routes, service } = await harness();
     expect([...routes.values()]).toHaveLength(5);
     for (const registered of routes.values()) {
-      expect(registered).toMatchObject({ auth: "plugin", match: "exact" });
+      expect(registered).toMatchObject({ auth: "gateway", match: "exact" });
     }
     const route = routes.get("/router/status") as any;
     const response = { status: 0, headers: {}, body: "", setHeader: vi.fn(), writeHead(status: number, headers: object) { this.status = status; this.headers = headers; }, end(body: string) { this.body = body; } };

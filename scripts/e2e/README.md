@@ -183,6 +183,7 @@ Do **not** fake success — if the gateway never listens on `E2E_GATEWAY_PORT`, 
 | `OPENCLAW_BIN` | repo or wecom install | OpenClaw CLI path |
 | `OPENCLAW_E2E_STATE_DIR` | `~/.openclaw-queue-e2e` | Profile state |
 | `E2E_GATEWAY_PORT` | `19789` | Gateway HTTP port |
+| `E2E_GOTIFY_PORT` | `18080` | Gotify host port; set `GOTIFY_URL=http://127.0.0.1:<port>` to the same port when overriding |
 | `OPENCLAW_E2E_SKIP_DOCKER` | unset | `1` = skip Docker entirely (broker tests fail unless services already running) |
 | `E2E_STOMP_TCP_PORT` | `61613` | stomp-tcp channel port in config/tests |
 

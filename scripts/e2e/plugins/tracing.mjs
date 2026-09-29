@@ -3,6 +3,9 @@ import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { dockerEnv, DOCKER } from "../lib/compose.mjs";
 import { runAdapterTest } from "./_context.mjs";
+import { MANAGEMENT_E2E_GATEWAY_TOKEN } from "../lib/config.mjs";
+
+const authorized = { headers: { Authorization: `Bearer ${MANAGEMENT_E2E_GATEWAY_TOKEN}` } };
 
 const execFileAsync = promisify(execFile);
 const req = createRequire(new URL("../../../extensions/mqtt/package.json", import.meta.url));
@@ -70,6 +73,23 @@ export async function testTracing(ctx, results) {
       if (!ctx.pluginIds.includes("mqtt")) {
         throw new Error("tracing E2E requires the mqtt plugin to exercise a real inbound channel turn");
       }
+      const deniedStatuses = [];
+      for (const path of ["/tracing/status", "/tracing/traces?limit=1", "/tracing/trace?traceId=00000000000000000000000000000000"]) {
+        const anonymous = await ctx.gatewayFetch(path);
+        if (![401, 403].includes(anonymous.status) || anonymous.json?.data !== undefined) {
+          throw new Error(`anonymous GET ${path} exposed traces (${anonymous.status})`);
+        }
+        deniedStatuses.push(`${path}:${anonymous.status}`);
+      }
+      const invalid = await ctx.gatewayFetch("/tracing/status", { headers: { Authorization: "Bearer invalid-e2e-token" } });
+      if (![401, 403].includes(invalid.status) || invalid.json?.data !== undefined) {
+        throw new Error(`invalid token exposed tracing status (${invalid.status})`);
+      }
+      const authorizedStatus = await ctx.gatewayFetch("/tracing/status", authorized);
+      if (!authorizedStatus.ok || authorizedStatus.json?.data?.plugin !== "tracing") {
+        throw new Error(`authorized tracing status failed (${authorizedStatus.status})`);
+      }
+      console.log(`[tracing-auth] anonymous GET ${deniedStatuses.join(", ")}; invalid token=${invalid.status}; authorized status=${authorizedStatus.status}`);
       const model = ctx.modelFixture;
       if (!model) throw new Error("tracing E2E model fixture was not started by the orchestrator");
       const initialCompletions = model.metrics.completions;
@@ -82,12 +102,21 @@ export async function testTracing(ctx, results) {
         throw new Error(`fixture completion delta=${model.metrics.completions - initialCompletions}, expected 1`);
       }
 
-      await ctx.waitFor(async () => {
+      try {
+        await ctx.waitFor(async () => {
+          const logs = await collectorLogs();
+          return logs.includes("message.received") && logs.includes("openclaw.channel");
+        }, { label: "tracing spans in OpenTelemetry Collector", timeoutMs: 30_000, intervalMs: 500 });
+      } catch (error) {
         const logs = await collectorLogs();
-        return logs.includes("message.received") && logs.includes("openclaw.channel");
-      }, { label: "tracing spans in OpenTelemetry Collector", timeoutMs: 30_000, intervalMs: 500 });
+        const status = await ctx.gatewayFetch("/tracing/status", authorized);
+        const receivedCount = logs.match(/message\.received/g)?.length ?? 0;
+        const channelCount = logs.match(/openclaw\.channel/g)?.length ?? 0;
+        console.log(`[tracing-otlp] Collector message.received=${receivedCount}, openclaw.channel=${channelCount}; status=${status.status}; activeSpans=${status.json?.data?.activeSpans}, recentTraces=${status.json?.data?.recentTraces}, backend=${status.json?.data?.backend}, bufferedSpans=${status.json?.data?.backendStatus?.bufferedSpans}`);
+        throw error;
+      }
 
-      const status = await ctx.gatewayFetch("/tracing/status");
+      const status = await ctx.gatewayFetch("/tracing/status", authorized);
       if (!status.ok || status.json?.data?.backend !== "otlp") {
         throw new Error(`tracing status failed: ${status.status} ${status.text}`);
       }
@@ -96,6 +125,14 @@ export async function testTracing(ctx, results) {
       }
       if (status.json?.data?.backendStatus?.healthy !== true || status.json?.data?.backendStatus?.bufferedSpans !== 0) {
         throw new Error(`tracing backend not drained and healthy: ${status.text}`);
+      }
+      const traces = await ctx.gatewayFetch("/tracing/traces?limit=1", authorized);
+      if (!traces.ok || !Array.isArray(traces.json?.data) || traces.json.data.length !== 1) {
+        throw new Error(`authorized trace listing failed (${traces.status})`);
+      }
+      const detail = await ctx.gatewayFetch(`/tracing/trace?traceId=${traces.json.data[0].traceId}`, authorized);
+      if (!detail.ok || detail.json?.data?.traceId !== traces.json.data[0].traceId) {
+        throw new Error(`authorized trace detail failed (${detail.status})`);
       }
     },
     {

@@ -236,7 +236,9 @@ openclaw plugins install @partme.ai/openclaw-tracing
 
 ## 运维接口
 
-全部路由使用 OpenClaw 插件鉴权、只允许 GET，并返回 `Cache-Control: no-store`：
+全部路由使用 OpenClaw Gateway 鉴权（`auth: "gateway"`）、只允许 GET，并返回 `Cache-Control: no-store`：
+
+对外提供这些接口前须配置 Gateway 鉴权。若设置 `gateway.auth.mode: "none"`，Gateway 无法认证身份，这些接口应视为未鉴权。浏览器 grant 的授权由 Gateway 管理。平台 Webhook 仍使用原有的独立签名验证。
 
 - `GET /tracing/status`
 - `GET /tracing/traces?limit=50`，范围 `1..200`

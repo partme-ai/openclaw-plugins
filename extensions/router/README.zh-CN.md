@@ -393,7 +393,9 @@ flowchart LR
 
 轮换顺序：先把旧环境变量名加入 `statePreviousEncryptionKeyEnvs`，再把 `stateEncryptionKeyEnv` 指向新密钥并重启；Router 读取旧密文后会立即用新主密钥原子重写。确认重写完成后，再移除旧密钥。不能直接删除仍在使用的旧密钥，否则插件会因无法认证状态文件而拒绝启动。
 
-运维接口均使用 OpenClaw 插件鉴权并精确匹配：
+运维接口均使用 OpenClaw Gateway 鉴权（`auth: "gateway"`）并精确匹配：
+
+对外提供这些接口前须配置 Gateway 鉴权（例如 Gateway token）。若设置 `gateway.auth.mode: "none"`，Gateway 无法认证身份，这些接口应视为未鉴权。凭据和浏览器 grant 由 Gateway 校验；只读浏览器 grant 不能授权重放 POST。平台 Webhook 仍使用原有的独立签名验证。
 
 - `GET /router/status`
 - `GET /router/health`
