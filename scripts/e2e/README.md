@@ -162,7 +162,7 @@ Future categories (extensible via `lib/registry.mjs` + adapter registration):
 
 ## OpenClaw in Docker vs host
 
-There is **no official OpenClaw image** in this repo. The compose `openclaw` service uses `node:22-bookworm-slim`, mounts the repo + E2E state dir, and runs the CLI from `devDependencies.openclaw` (or `npm install -g` fallback).
+There is **no official OpenClaw image** in this repo. The compose `openclaw` service uses `node:24.18.0-bookworm-slim`, mounts the repo + E2E state dir, and runs the pinned OpenClaw `2026.9.6` CLI from `devDependencies.openclaw` (or `npm install -g` fallback).
 
 **Mac / local dev:** use host gateway when bind mounts or CLI paths are simpler:
 

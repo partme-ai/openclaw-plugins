@@ -113,7 +113,7 @@ Channel plugins with media support follow the `src/media.ts` pattern: `detectMed
 - **No cross-plugin deps**: each plugin is fully self-contained. `message-sdk` is the sole shared library — consumers use `workspace:^<sdkVersion>` in dev; `publish-changed.mjs` materializes to `^<version>` on npm publish. Run `pnpm sync-message-sdk-deps` after bumping message-sdk.
 - **File naming**: `kebab-case.ts` for modules, `camelCase.ts` for narrow utilities
 - **Plugin IDs**: lowercase, dash-separated
-- **Node**: >=22.0.0, pnpm 9, ESM only
+- **Node**: >=24.16.0 <25 || >=26.1.0; CI and E2E container use 24.18.0. pnpm 9.0.0, ESM only
 
 ## CLAUDE Rules
 

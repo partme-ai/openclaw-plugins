@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.18.0
       - id: detect
         run: |
           PLUGINS=$(node scripts/ci-detect.mjs --json --base origin/main)
@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.18.0
       - uses: pnpm/action-setup@v4
 
       - name: Install dependencies
@@ -46,6 +46,7 @@ jobs:
 
       - name: Release metadata gate
         run: |
+          node scripts/check-openclaw-baseline.mjs
           pnpm check-release-readiness
           pnpm test:release-scripts
 
@@ -67,7 +68,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.18.0
       - uses: pnpm/action-setup@v4
 
       - name: Install dependencies

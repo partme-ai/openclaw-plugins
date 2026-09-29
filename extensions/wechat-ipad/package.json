@@ -25,7 +25,7 @@
   "author": "PartMe",
   "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=24.16.0 <25 || >=26.1.0"
   },
   "files": [
     "dist",
@@ -45,7 +45,7 @@
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
     "@vitest/coverage-v8": "^4.1.6",
-    "openclaw": "2026.7.1",
+    "openclaw": "2026.9.6",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.6"
@@ -56,11 +56,11 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "build": {
-      "openclawVersion": "2026.7.1"
+      "openclawVersion": "2026.9.6"
     },
     "compat": {
-      "pluginApi": ">=2026.7.1",
-      "minGatewayVersion": "2026.7.1"
+      "pluginApi": ">=2026.9.6",
+      "minGatewayVersion": "2026.9.6"
     },
     "channel": {
       "id": "wechat-ipad",
@@ -70,11 +70,11 @@
     "install": {
       "npmSpec": "@partme.ai/wechat-ipad",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.7.1"
+      "minHostVersion": ">=2026.9.6"
     }
   },
   "peerDependencies": {
-    "openclaw": ">=2026.7.1"
+    "openclaw": ">=2026.9.6"
   },
   "peerDependenciesMeta": {
     "openclaw": {

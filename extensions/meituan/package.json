@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "engines": {
-    "node": ">=22"
+    "node": ">=24.16.0 <25 || >=26.1.0"
   },
   "scripts": {
     "build": "tsup",
@@ -38,7 +38,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^4.1.6",
-    "openclaw": "2026.7.1",
+    "openclaw": "2026.9.6",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.6"
@@ -55,7 +55,7 @@
     }
   },
   "peerDependencies": {
-    "openclaw": ">=2026.7.1"
+    "openclaw": ">=2026.9.6"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -70,17 +70,17 @@
       "tools"
     ],
     "compat": {
-      "pluginApi": ">=2026.7.1",
-      "minGatewayVersion": "2026.7.1"
+      "pluginApi": ">=2026.9.6",
+      "minGatewayVersion": "2026.9.6"
     },
     "build": {
-      "openclawVersion": "2026.7.1",
-      "pluginSdkVersion": "2026.7.1"
+      "openclawVersion": "2026.9.6",
+      "pluginSdkVersion": "2026.9.6"
     },
     "install": {
       "npmSpec": "@partme.ai/openclaw-meituan",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.7.1"
+      "minHostVersion": ">=2026.9.6"
     }
   }
 }

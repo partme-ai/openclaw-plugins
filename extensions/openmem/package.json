@@ -29,7 +29,7 @@
     "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.7.1"
+    "openclaw": ">=2026.9.6"
   },
   "devDependencies": {
     "tsup": "^8.2.0",
@@ -43,12 +43,15 @@
     "install": {
       "npmSpec": "@partme.ai/openclaw-openmem",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.7.1"
+      "minHostVersion": ">=2026.9.6"
     }
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/partme-ai/openclaw-plugins.git",
     "directory": "extensions/openmem"
+  },
+  "engines": {
+    "node": ">=24.16.0 <25 || >=26.1.0"
   }
 }

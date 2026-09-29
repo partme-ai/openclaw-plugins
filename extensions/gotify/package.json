@@ -31,7 +31,7 @@
   "author": "PartMe",
   "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=24.16.0 <25 || >=26.1.0"
   },
   "files": [
     "dist",
@@ -75,7 +75,7 @@
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.7.1"
+    "openclaw": ">=2026.9.6"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -88,11 +88,11 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "build": {
-      "openclawVersion": "2026.7.1"
+      "openclawVersion": "2026.9.6"
     },
     "compat": {
-      "pluginApi": ">=2026.7.1",
-      "minGatewayVersion": "2026.7.1"
+      "pluginApi": ">=2026.9.6",
+      "minGatewayVersion": "2026.9.6"
     },
     "channel": {
       "id": "gotify",
@@ -102,7 +102,7 @@
     "install": {
       "npmSpec": "@partme.ai/openclaw-gotify",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.7.1"
+      "minHostVersion": ">=2026.9.6"
     }
   },
   "exports": {

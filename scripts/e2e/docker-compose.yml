@@ -127,7 +127,7 @@ services:
       NAMESRV_ADDR: rocketmq-namesrv:9876
 
   openclaw:
-    image: node:22-bookworm-slim
+    image: node:24.18.0-bookworm-slim
     container_name: openclaw-e2e-gateway
     depends_on:
       - rabbitmq

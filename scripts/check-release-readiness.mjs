@@ -14,7 +14,7 @@ import { checkRuntimePluginIds } from "./runtime-plugin-id-contract.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const EXTENSIONS = join(ROOT, "extensions");
-const TARGET_OPENCLAW_RANGE = ">=2026.7.1";
+const TARGET_OPENCLAW_RANGE = ">=2026.9.6";
 const TARGET_RELEASE_VERSION = "2026.7.1";
 const SDK_PACKAGE = "@partme.ai/openclaw-message-sdk";
 const SDK_VERSION = readMessageSdkVersion();
