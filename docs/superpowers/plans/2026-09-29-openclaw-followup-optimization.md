@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、OpenClaw 2026.9.6、Node 24.18.0、pnpm 9.0.0、现有 JSONL/SQLite/OTLP/Prometheus 实现。
 
-**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1、2 已完成当前本地候选物验收；Task 2 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)；Task 3–7 待实施。
+**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–3 已完成当前本地候选物验收；Task 2、3 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)和[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)；Task 4–7 待实施。
 
 ## Global Constraints
 
@@ -65,11 +65,13 @@ O2 实施、scoped 安装态验收与独立审查完成，Spec PASS / Quality AP
 
 **Interfaces:** 新增显式格式 `structured-v1`：`{schemaVersion:1,messageId,deliveryId,parts:Array<{type:"text",text}|{type:"media",mediaType,url}>,replyTo?:string,threadId?:string}`；媒体 URL 必须为经授权的可传输引用。旧 envelope/legacyJsonText 编码保持。Router 含媒体到纯文本目标默认拒绝，显式 text fallback 才降级并审计。
 
-- [ ] 写文本/媒体交错顺序、thread/reply/message/delivery 身份往返测试；旧格式 golden fixture 字节不变；拒绝本地绝对路径、敏感 token URL；未声明能力的目标拒绝附件。
-- [ ] 运行 `pnpm --dir extensions/message-sdk exec vitest run src/dispatch/structured-wire.test.ts`、`pnpm --dir extensions/router test`，记录新格式红灯。
-- [ ] 实现版本化编解码和 Router payload 转发，连接升级计划已定义的投递回执；保留媒体授权，未知 schemaVersion 显式报错。
-- [ ] 重跑测试与一个 MQ→Router→支持媒体目标的安装态 fixture；同时验收纯文本老客户端、附件拒绝/显式降级、重试身份保持。
-- [ ] 更新协议文档与消费者兼容表；获授权时提交 `feat: preserve structured replies through wire routing`。
+- [x] 写文本/媒体交错顺序、thread/reply/message/delivery 身份往返测试；旧格式 golden fixture 字节不变；拒绝本地绝对路径、敏感 token URL；未声明能力的目标拒绝附件。
+- [x] 运行 `pnpm --dir extensions/message-sdk exec vitest run src/dispatch/structured-wire.test.ts`、`pnpm --dir extensions/router test`，记录新格式红灯。
+- [x] 实现版本化编解码和 Router payload 转发，连接升级计划已定义的投递回执；保留媒体授权，未知 schemaVersion 显式报错。
+- [x] 重跑测试与一个 MQ→Router→支持媒体目标的安装态 fixture；同时验收纯文本老客户端、附件拒绝/显式降级、重试身份保持。
+- [x] 更新协议文档与消费者兼容表；已按授权提交 `feat: preserve structured replies through wire routing` 和独立审查修复 `fix: reject empty structured text fallback`。
+
+O3 安装态 mqtt/router/wecom/gotify 四项均 PASS 且零跳过，修复后的证据已按当前源码指纹和精确候选物验证；独立复审 Spec PASS / Quality APPROVE。详见[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)。其余 23 项仍待最终全仓重验。
 
 ### Task 4: Bridge 渠道能力与运行状态（O4）
 
@@ -127,4 +129,4 @@ O1–O7 分别由 T1–T7 覆盖。五项 Review Focus 均有对应测试。O1 �
 - [ ] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；公共 SDK 变化引起的指纹失效必须重跑。
 - [ ] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。
 
-当前按用户后续授权逐任务实施与独立审查。Task 1、2 已完成各自本地候选物验收，Task 2 独立审查通过；当前 knowledge/memory/bridge/mqtt 四项证据有效，其余 23 项仍不满足全仓门禁，收口前必须按最终输入重验。Task 3–7 仍按本计划依赖顺序推进。
+当前按用户后续授权逐任务实施与独立审查。Task 1–3 已完成各自本地候选物验收，Task 3 独立复审通过；当前 mqtt/router/wecom/gotify 四项证据有效，其余 23 项仍不满足全仓门禁，收口前必须按最终输入重验。Task 4–7 仍按本计划依赖顺序推进。

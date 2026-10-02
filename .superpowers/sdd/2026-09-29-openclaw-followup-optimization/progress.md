@@ -1,0 +1,57 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-09-29-openclaw-followup-optimization.md
+
+Baseline: `de9d746afecf125e5541f110c7f8ea9d39010878`; isolated linked worktree, detached HEAD. Existing three `.browser-*.log` modifications are user state and excluded from task commits. No `.codegraph/` at this worktree root; CodeGraph is skipped under the repository instruction.
+
+## Preflight task/interface scan
+
+| Pair or task | Produced / consumed interface or task-internal check | Finding |
+| --- | --- | --- |
+| T1 and T2 | T1 changes memory capability/session ownership; T2 later changes memory prompt injection and budget in `extensions/memory/src/index.ts`. | Sequential edits required; T2 must retain T1 identity guard and promptBuilder behavior. |
+| T2 and T4 | T2 changes Bridge context injection budget; T4 changes Bridge channel facts and its context-inject module. | Sequential edits required; T4 must preserve T2 budget and cancellation semantics. |
+| T3 and T6 | T3 supplies structured wire delivery identity; T6 consumes settlement and shared trace identity. | T6 must use the public settlement result established by T3, without inferring success from an older text envelope. |
+| T5 and T6 | T5 makes tracing/Prometheus owners instance-local; T6 adds hooks and observers. | T6 must retain owner lifecycle and bounded collector behavior. |
+| T2 and T7 | T2 changes memory injection; T7 measures memory/router storage. | T7 measures the state after T2 and records configuration; no storage migration. |
+| T6 and T7 | T6 changes telemetry overhead; T7 measures final workload. | T7 runs after T6 to avoid attributing telemetry cost to the earlier baseline. |
+| T1 | Tests cover available tool prompt, absent identity, explicit sharing; implementation keeps manager interface and only advertises supported capabilities; E2E and docs follow. | Internally consistent. |
+| T2 | Tests cover allocation sum, Unicode truncation, dedupe, cancellation; code and CLI provide same profile contract. | Internally consistent. |
+| T3 | Tests cover structured-v1 ordering/identity/media authorization and legacy golden bytes; versioned codec and Router are named. | Internally consistent. |
+| T4 | Tests cover known/installed/enabled/ready and runtime failures; implementation uses public facts or unavailableFacts. | Internally consistent. |
+| T5 | Two-instance/start-failure tests correspond to instance-owned lifecycle implementation and five-plugin E2E. | Internally consistent. |
+| T6 | Settlement and cardinality tests correspond to bounded labels, OTLP/scrape assertions and docs. | Internally consistent. |
+| T7 | Reproducibility/failure tests correspond to deterministic dataset and real measurements; no production storage change. | Internally consistent. |
+
+Ruling: The plan's statement that this round only writes a plan describes its 2026-09-29 drafting state; the later user request to execute tasks with subagents authorizes implementation. If wrong, these task commits can be reverted before release.
+Ruling: Earlier user authorization to commit and push GitHub applies to reviewed task commits. If wrong, published commits would require a follow-up revert rather than history rewrite.
+
+Task 1: in progress (base `de9d746`)
+Task 1: implementer surfaced repository `CLAUDE.md` per-task 4k token budget exceeded during required source/spec reading; continue focused on O1 and report the breach rather than dropping acceptance requirements.
+Task 1: initial commit `a7242b0`; first review Spec FAIL / Quality Needs fixes. Important 1: write path normalizes sessionKey/sessionId but real memory/openmem search tools use raw sessionKey, so fallback data is not retrievable (reviewer reproduced OpenMem ingest `fallback-session` vs tool search ` `). Important 2: both installed E2E runs stopped at artifact consent pin; no installed runtime result. Artifact audit allowed only exact currently reviewed candidate; identity fix requires fresh package and renewed audit.
+Task 1: fix round 1/5 in progress (fix base `a7242b0`).
+Task 1: fix round 1/5 review — identity finding ADDRESSED; installed E2E finding OPEN. Commit `eae92b2`. New exact candidate archives audited by implementer, controller, and independent reviewer; reviewed content digests memory `10b4e776c96580cc3b21354e62f0103e1c97e14fde4bf4774ec15018bb35d534`, openmem `dd6b117eec6d9d77981adc9724f736ab3bb114f7dbddcd22ed287af16d512013`. No additional capabilities. Ruling: update only these two local E2E consent pins for this exact code and re-run installed tests; if wrong, the gate still confines install to the disposable test profile and changes can be reverted.
+Task 1: fix round 2/5 in progress (fix base `eae92b2`) — installed E2E and evidence.
+Task 1: Ruling: O1's "restart and close" checks plugin/Gateway shutdown drain, explicitly ended session commit, and recovery of logically active sessions; it does not require every remote ACTIVE session to be force-archived when Gateway stops. The OpenMem runtime only drains pending commits, and the spec says to preserve external session coordination; force-archiving would end sessions that should resume after restart. If wrong, ACTIVE sessions may accumulate when the host never emits session_end, requiring a separate lifecycle policy and cleanup test.
+Task 1: fix round 2/5 review — installation finding ADDRESSED; no new Important/Critical issue. Reviewer independently checked both current manifests/fingerprints and installed reports; O1 Spec PASS / Quality Approved. Task commits `a7242b0`, `eae92b2`, `cde00d4`; documentation/status commit `59700b8`.
+Task 1: complete (commits `de9d746`..`59700b8`, review clean). Local O1 only; 25 historical plugin E2E reports are stale after shared harness changes and must be rerun at final convergence.
+Task 2: in progress (base `59700b8`).
+Task 2: Ruling: CLI budget fragments must be accepted by plugin schemas and consumed at runtime; otherwise O2 is only paper configuration. Permit explicit optional per-plugin fields and existing message-sdk workspace dependencies, preserving defaults. If wrong, more manifests/lock entries change than a pure helper design would require.
+Task 2: Ruling: host hookInvocation exposes assertActive but no AbortSignal. Require post-await assertActive to prevent late injection, and propagate explicit/local timeout AbortSignal through the available knowledge I/O path; do not claim host-driven network cancellation that the SDK does not expose. If wrong, in-flight provider work can continue until its own timeout after host cancellation, although the result is discarded.
+Task 2: implementer commit `e7bbe18a639d102ec1cf7774f35a8ce328a70aca` (base `59700b8`); independent spec/quality review in progress. Knowledge, Memory, Bridge, and companion MQTT current installed reports each independently validated with `validateEvidence=[]`, 0 skipped, OpenClaw 2026.9.6 and Node v24.18.0. Shared SDK/harness changes leave 23 other full-repository E2E evidence items stale; this remains a final convergence gate, not an O2 claim.
+Task 2: independent reviewer concluded Spec PASS / Quality APPROVE, no reproducible Critical/Important finding; independently ran 103 focused tests, all pass, and validated all four current reports. O2 scoped work complete; 23 other full-repository E2E evidence items remain stale for final convergence.
+Task 2: review/status documentation committed as `357bb9e` after `e7bbe18`; only the three preexisting browser logs remain modified. Proceed to Task 3 from this HEAD.
+Task 2: reviewed O1/O2 range through `357bb9e871ad532a9401c42de619f7756f1cebc7` pushed to `origin/main`; independent `ls-remote` confirmed the same SHA. Final optimization work remains active.
+Task 3: in progress (base `357bb9e`); brief `.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-brief.md`. Initial trace shows `serializeForTransport` text-only and Router Outbox `content` text-only; producer, durable payload, target capability, and media authorization must be connected without changing old wire defaults.
+Task 3: Ruling: approve explicit SDK structured codec/exports/parse/dispatch and Router optional persisted structured payload/config/dependency plus scoped E2E; preserve version-1 old tasks and old wire bytes. Media requires trusted-config HTTPS host allowlist without credentials/query/hash and host `loadWebMediaRaw` SSRF/byte checks; local/unauthorized references rejected. Target must explicitly declare structured-v1 and possess a real send capability. Ordered multi-send keeps existing at-least-once semantics; stable delivery/part identity must be tested, no exactly-once claim or partial-resume cursor. MQTT production changes require a separate exact call-path/RED request before editing. If wrong, strict URL policy may reject some legitimate signed media URLs, and partial retries may duplicate earlier parts; both are documented compatibility/safety choices.
+Task 3: implementation `b5fc071c0315c41f99e353c8b01dbd06cfc962ec`; first independent review found empty media-only text fallback could call sendText("") and falsely settle delivered. Worker reproduced RED, fixed it in `83f373b9d5aee79db680fa63620f71d6a53bd168`, and reran affected tests. Original reviewer rechecked and concluded Spec PASS / Quality APPROVE, no remaining blocker. Reviewer independently replayed current dist and temporary Outbox (sendText 0, delivered 0, DLQ 1, failure audit); targeted Router 28/28, full Router 71/71 on second run, typecheck and native import passed. First full Router rerun had an intermittent lease-owner JSON read; no persistence-layer change was made.
+Task 3: repaired-source installed E2E report `scripts/e2e/reports/2026-10-02T18-47-56.839Z-mqtt+router+wecom+gotify-5ef977b6-66d1-4519-9283-a97543707860.json`, candidate manifest `scripts/e2e/reports/candidates/4fb88b1c-629e-4e0d-9bc4-c58e3487d363.json`; mqtt/router/wecom/gotify PASS, zero skipped, OpenClaw 2026.9.6 / Node v24.18.0. Parent independently validated archive hashes, current source fingerprints and evidence (`[]`). Exact repaired Router archive SHA256 `49f71f10b3af5ad377238a4997aec06275a993abc37fd03d85a669010988e9dd`, content digest `8aede03cac28b2218ecdb97295cb9203932286a6b750f990827c7c261919ce58`. Real local mock received text→image→text and 198113 uploaded bytes matching SHA256 `2e482e7c603d87edd0411414466f0f84d02c5055741a5a507b54f54a9c026851`. Four current reports valid; 23 other plugins still need the final full-repository gate. Live external WeCom and provider-specific reply/thread behavior remain unverified.
+Task 3: complete after original reviewer follow-up; proceed to Task 4 from `83f373b` plus status commit. Three preexisting browser logs remain excluded.
+
+## Task checklist
+
+- [x] T1 Memory/OpenMem capability and session ownership
+- [x] T2 Combined context budget, provenance and cancellation
+- [x] T3 Structured wire and Router forwarding
+- [ ] T4 Bridge channel capability and readiness
+- [ ] T5 Per-instance service lifecycle
+- [ ] T6 Delivery and recall telemetry
+- [ ] T7 Storage performance baseline and decision
+- [ ] Whole-branch review and final verification
