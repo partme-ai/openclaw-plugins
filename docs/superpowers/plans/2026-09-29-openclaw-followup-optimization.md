@@ -8,14 +8,14 @@
 
 **Tech Stack:** TypeScript、Vitest、OpenClaw 2026.9.6、Node 24.18.0、pnpm 9.0.0、现有 JSONL/SQLite/OTLP/Prometheus 实现。
 
-**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：计划已编写，实施尚未开始。
+**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1 已完成当前本地候选物验收，见[O1 记录](../reports/2026-10-03-o1-memory-capability.md)；Task 2–7 待实施。
 
 ## Global Constraints
 
 - 运行基线沿用 OpenClaw `2026.9.6`、Node `>=24.16.0 <25 || >=26.1.0`、pnpm `9.0.0`。
 - 不新增跨插件依赖；公共代码仅放 message-sdk。保留现有配置默认行为，新增能力通过显式配置开启。
 - 保留会话隔离、媒体访问授权、状态加密、保留策略、容量限制和现有故障回退。
-- 稳定版升级 U1–U8 是发布前置条件；本轮计划编写不执行任何实现、安装、提交、推送或发布。
+- 稳定版升级 U1–U8 是发布前置条件；2026-09-29 的计划编写阶段不执行实现、安装、提交、推送或发布。后续实施按用户授权逐任务推进。
 - 执行前读适用的 CLAUDE.md，查询 CodeGraph 调用方，检查用户改动；每项遵循红→绿→受影响回归，已有绿灯不制造假红灯。
 - 提交步骤仅在取得提交授权后执行；未授权保留差异和验证记录，不阻塞已授权实现。生产数据迁移另行确认。
 
@@ -39,11 +39,11 @@ T1 memory/openmem；T2 knowledge/memory/bridge 的上下文与 message-sdk 预�
 
 **Interfaces:** 使用上游 `registerMemoryCapability` 的真实公开类型；deterministicRecallToolName 分别为 memory_search/openmem_search，promptBuilder 消费 availableTools；保持现有 manager 接口。
 
-- [ ] 测试禁用工具时 prompt 不出现召回指令、工具可用时出现正确名称；无 sessionKey/sessionId 时 append/ingest 为 0；显式共享关闭时跨会话结果为空。
-- [ ] 运行 `pnpm --dir extensions/memory test` 与 `pnpm --dir extensions/openmem test`，记录新增断言红灯或已有覆盖。
-- [ ] 补齐真实工具声明和 promptBuilder，拒绝无可靠身份的写入；为 flush/publicArtifacts 建立支持矩阵，只有后端实际支持时才注册并测试，不宣称私有 transcript 能力。
-- [ ] 重跑目标测试，分别执行 `node scripts/e2e/run-e2e.mjs --plugins memory` 和 `--plugins openmem`，验证检索、隔离、重启与关闭。
-- [ ] 记录能力支持矩阵和证据；获授权时提交 `feat: align memory capabilities and session ownership`。
+- [x] 测试禁用工具时 prompt 不出现召回指令、工具可用时出现正确名称；无 sessionKey/sessionId 时 append/ingest 为 0；显式共享关闭时跨会话结果为空。
+- [x] 运行 `pnpm --dir extensions/memory test` 与 `pnpm --dir extensions/openmem test`，记录新增断言红灯或已有覆盖。
+- [x] 补齐真实工具声明和 promptBuilder，拒绝无可靠身份的写入；为 flush/publicArtifacts 建立支持矩阵，只有后端实际支持时才注册并测试，不宣称私有 transcript 能力。
+- [x] 重跑目标测试，分别执行 `node scripts/e2e/run-e2e.mjs --plugins memory` 和 `--plugins openmem`，验证检索、隔离、重启与关闭；本地候选物证据见[O1 记录](../reports/2026-10-03-o1-memory-capability.md)。
+- [x] 记录能力支持矩阵和证据；已按授权提交 `feat: align memory capabilities and session ownership` 及两次修复/验收提交。
 
 ### Task 2: 组合上下文预算、来源与取消（O2）
 
@@ -125,4 +125,4 @@ O1–O7 分别由 T1–T7 覆盖。五项 Review Focus 均有对应测试。O1 �
 - [ ] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；公共 SDK 变化引起的指纹失效必须重跑。
 - [ ] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。
 
-执行方式待用户选择；当前仅交付文档。推荐先执行稳定版升级计划，再逐项选择优化任务，保持每次变更可独立验收。
+当前按用户后续授权逐任务实施与独立审查。Task 1 已完成本地候选物验收；共享 E2E 输入变化使旧 27 项中的 25 项证据失效，收口前必须按最终输入重验。Task 2–7 仍按本计划依赖顺序推进。
