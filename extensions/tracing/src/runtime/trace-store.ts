@@ -26,6 +26,8 @@ export interface EndSpanOptions {
   attributes?: Record<string, string | number | boolean>;
 }
 
+/** 为每次插件注册创建独立的活动 Trace 状态。 */
+export function createTraceStore() {
 const MAX_RECENT_TRACES = 200;
 const DEFAULT_ACTIVE_TRACE_TTL_MS = 30 * 60_000;
 const recentTraces = new Map<string, Span[]>();
@@ -39,7 +41,7 @@ const suppressedSessionKeys = new Set<string>();
 const MAX_COMPLETED_RUN_IDS = 1_000;
 
 /** 入站观察到但因采样或容量限制未建立根 Span 的 run，终态不能重新抽样。 */
-export function suppressRun(runId: string): void {
+function suppressRun(runId: string): void {
   suppressedRunIds.add(runId);
   if (suppressedRunIds.size > MAX_COMPLETED_RUN_IDS) {
     const oldest = suppressedRunIds.values().next().value;
@@ -47,14 +49,14 @@ export function suppressRun(runId: string): void {
   }
 }
 
-export function consumeSuppressedRun(runId: string): boolean {
+function consumeSuppressedRun(runId: string): boolean {
   if (!suppressedRunIds.delete(runId)) return false;
   rememberCompletedRun(runId);
   return true;
 }
 
 /** 入站 hook 可能尚无 runId，用会话键暂存拒绝，等待对应终态消费。 */
-export function suppressSession(sessionKey: string): void {
+function suppressSession(sessionKey: string): void {
   suppressedSessionKeys.add(sessionKey);
   if (suppressedSessionKeys.size > MAX_COMPLETED_RUN_IDS) {
     const oldest = suppressedSessionKeys.values().next().value;
@@ -62,12 +64,12 @@ export function suppressSession(sessionKey: string): void {
   }
 }
 
-export function consumeSuppressedSession(sessionKey: string): boolean {
+function consumeSuppressedSession(sessionKey: string): boolean {
   return suppressedSessionKeys.delete(sessionKey);
 }
 
 /** 最近完成的 runId 用于防止终态 fallback 在正常回复之后重复导出。 */
-export function rememberCompletedRun(runId: string): boolean {
+function rememberCompletedRun(runId: string): boolean {
   if (completedRunIds.has(runId)) return false;
   completedRunIds.add(runId);
   if (completedRunIds.size > MAX_COMPLETED_RUN_IDS) {
@@ -78,14 +80,14 @@ export function rememberCompletedRun(runId: string): boolean {
 }
 
 /** 使用 Web Crypto CSPRNG 生成指定字节数的小写十六进制 Trace/Span ID。 */
-export function randomHexId(bytes: number): string {
+function randomHexId(bytes: number): string {
   const array = new Uint8Array(bytes);
   crypto.getRandomValues(array);
   return Array.from(array, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 /** 创建活动 Span 并登记到进程内有界生命周期状态机。 */
-export function createSpan(
+function createSpan(
   name: string,
   options: {
     traceId?: string;
@@ -112,7 +114,7 @@ export function createSpan(
 }
 
 /** 在导出前固化计时和属性，避免异步后端看到后续可变状态。 */
-export async function endSpan(
+async function endSpan(
   spanId: string,
   status: SpanStatus,
   backend: TracingBackend | null,
@@ -145,7 +147,7 @@ export async function endSpan(
 }
 
 /** 将同一 Trace 绑定到可用的 sessionKey/runId，并刷新其活动时间。 */
-export function registerActiveTrace(ctx: ActiveTraceContext): void {
+function registerActiveTrace(ctx: ActiveTraceContext): void {
   const now = Date.now();
   ctx.createdAtMs ??= now;
   ctx.lastTouchedAtMs = now;
@@ -154,7 +156,7 @@ export function registerActiveTrace(ctx: ActiveTraceContext): void {
 }
 
 /** 优先按 runId、其次按 sessionKey 定位活动 Trace，并刷新 TTL 活跃时间。 */
-export function resolveActiveTrace(sessionKey?: string, runId?: string): ActiveTraceContext | undefined {
+function resolveActiveTrace(sessionKey?: string, runId?: string): ActiveTraceContext | undefined {
   const context = (runId ? runTraceMap.get(runId) : undefined)
     ?? (sessionKey ? sessionTraceMap.get(sessionKey) : undefined);
   if (context) context.lastTouchedAtMs = Date.now();
@@ -162,7 +164,7 @@ export function resolveActiveTrace(sessionKey?: string, runId?: string): ActiveT
 }
 
 /** 在单 Trace 上限内预留一个 Span 名额；超过上限返回 false 以阻止无界增长。 */
-export function incrementSpanCount(active: ActiveTraceContext, maxSpansPerTrace: number): boolean {
+function incrementSpanCount(active: ActiveTraceContext, maxSpansPerTrace: number): boolean {
   active.lastTouchedAtMs = Date.now();
   if (active.spanCount >= maxSpansPerTrace) return false;
   active.spanCount += 1;
@@ -170,7 +172,7 @@ export function incrementSpanCount(active: ActiveTraceContext, maxSpansPerTrace:
 }
 
 /** 从 session/run 两类索引中原子式移除同一个活动 Trace 上下文。 */
-export function clearActiveTrace(sessionKey?: string, runId?: string): ActiveTraceContext | undefined {
+function clearActiveTrace(sessionKey?: string, runId?: string): ActiveTraceContext | undefined {
   const context = resolveActiveTrace(sessionKey, runId);
   if (!context) return undefined;
   for (const [key, candidate] of sessionTraceMap) {
@@ -183,19 +185,19 @@ export function clearActiveTrace(sessionKey?: string, runId?: string): ActiveTra
 }
 
 /** 将 OpenClaw toolCallId 绑定到对应子 Span，供 after_tool_call 精确收尾。 */
-export function bindToolSpan(toolCallId: string, spanId: string, traceId: string): void {
+function bindToolSpan(toolCallId: string, spanId: string, traceId: string): void {
   toolSpanMap.set(toolCallId, { spanId, traceId });
 }
 
 /** 一次性取出并删除工具 Span 绑定，避免重复 after hook 二次结束同一 Span。 */
-export function takeToolSpanId(toolCallId: string): string | undefined {
+function takeToolSpanId(toolCallId: string): string | undefined {
   const binding = toolSpanMap.get(toolCallId);
   toolSpanMap.delete(toolCallId);
   return binding?.spanId;
 }
 
 /** 结束 trace 内仍悬挂的 tool span，再结束 root span并清理所有映射。 */
-export async function finishActiveTrace(
+async function finishActiveTrace(
   sessionKey: string | undefined,
   runId: string | undefined,
   rootStatus: SpanStatus,
@@ -240,7 +242,7 @@ export async function finishActiveTrace(
  * 每个未完成 Span 都标记为 error；单个后端导出失败不会阻止其余 Span 回收，最后再抛出首个
  * 错误，使调用方仍能执行后端 shutdown，同时保留故障可见性。
  */
-export async function finishAllActiveTraces(
+async function finishAllActiveTraces(
   backend: TracingBackend | null,
   reason = "gateway_shutdown",
 ): Promise<number> {
@@ -268,22 +270,22 @@ export async function finishAllActiveTraces(
 }
 
 /** 返回当前尚未结束的 Span 数，用于状态接口和泄漏监控。 */
-export function getActiveSpanCount(): number {
+function getActiveSpanCount(): number {
   return activeSpans.size;
 }
 
 /** 返回去重后的活动 Trace 数；同一上下文可能同时存在 session/run 两个索引。 */
-export function getActiveTraceCount(): number {
+function getActiveTraceCount(): number {
   return new Set([...sessionTraceMap.values(), ...runTraceMap.values()]).size;
 }
 
 /** 返回进程内近期 Trace 数；该存储最多保留 200 条。 */
-export function getRecentTraceCount(): number {
+function getRecentTraceCount(): number {
   return recentTraces.size;
 }
 
 /** 按最近写入顺序返回有界 Trace 摘要，不暴露可变的内部 Span 对象。 */
-export function listRecentTraces(limit: number): Array<{
+function listRecentTraces(limit: number): Array<{
   traceId: string;
   spanCount: number;
   startTimeMs: number;
@@ -311,12 +313,12 @@ export function listRecentTraces(limit: number): Array<{
 }
 
 /** 返回指定 Trace 的深复制 Span 列表，防止状态接口调用方修改内部缓存。 */
-export function getTraceSpans(traceId: string): Span[] | undefined {
+function getTraceSpans(traceId: string): Span[] | undefined {
   return recentTraces.get(traceId)?.map(cloneSpan);
 }
 
 /** TTL 清理会真正关闭 orphan spans，而不只是丢掉索引。 */
-export async function cleanupSessionTraces(
+async function cleanupSessionTraces(
   backend: TracingBackend | null,
   nowMs = Date.now(),
   ttlMs = DEFAULT_ACTIVE_TRACE_TTL_MS,
@@ -340,7 +342,7 @@ export async function cleanupSessionTraces(
 }
 
 /** 清空所有活动与近期索引；仅供生命周期最终清理和测试隔离使用。 */
-export function resetTraceStore(): void {
+function resetTraceStore(): void {
   activeSpans.clear();
   recentTraces.clear();
   sessionTraceMap.clear();
@@ -362,4 +364,32 @@ function cloneSpan(span: Span): Span {
   };
 }
 
-export { activeSpans, recentTraces };
+  return { suppressRun, consumeSuppressedRun, suppressSession, consumeSuppressedSession, rememberCompletedRun, randomHexId, createSpan, endSpan, registerActiveTrace, resolveActiveTrace, incrementSpanCount, clearActiveTrace, bindToolSpan, takeToolSpanId, finishActiveTrace, finishAllActiveTraces, getActiveSpanCount, getActiveTraceCount, getRecentTraceCount, listRecentTraces, getTraceSpans, cleanupSessionTraces, resetTraceStore, activeSpans, recentTraces };
+}
+
+const defaultTraceStore = createTraceStore();
+export const suppressRun = defaultTraceStore.suppressRun;
+export const consumeSuppressedRun = defaultTraceStore.consumeSuppressedRun;
+export const suppressSession = defaultTraceStore.suppressSession;
+export const consumeSuppressedSession = defaultTraceStore.consumeSuppressedSession;
+export const rememberCompletedRun = defaultTraceStore.rememberCompletedRun;
+export const randomHexId = defaultTraceStore.randomHexId;
+export const createSpan = defaultTraceStore.createSpan;
+export const endSpan = defaultTraceStore.endSpan;
+export const registerActiveTrace = defaultTraceStore.registerActiveTrace;
+export const resolveActiveTrace = defaultTraceStore.resolveActiveTrace;
+export const incrementSpanCount = defaultTraceStore.incrementSpanCount;
+export const clearActiveTrace = defaultTraceStore.clearActiveTrace;
+export const bindToolSpan = defaultTraceStore.bindToolSpan;
+export const takeToolSpanId = defaultTraceStore.takeToolSpanId;
+export const finishActiveTrace = defaultTraceStore.finishActiveTrace;
+export const finishAllActiveTraces = defaultTraceStore.finishAllActiveTraces;
+export const getActiveSpanCount = defaultTraceStore.getActiveSpanCount;
+export const getActiveTraceCount = defaultTraceStore.getActiveTraceCount;
+export const getRecentTraceCount = defaultTraceStore.getRecentTraceCount;
+export const listRecentTraces = defaultTraceStore.listRecentTraces;
+export const getTraceSpans = defaultTraceStore.getTraceSpans;
+export const cleanupSessionTraces = defaultTraceStore.cleanupSessionTraces;
+export const resetTraceStore = defaultTraceStore.resetTraceStore;
+export const activeSpans = defaultTraceStore.activeSpans;
+export const recentTraces = defaultTraceStore.recentTraces;

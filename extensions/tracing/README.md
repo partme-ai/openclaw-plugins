@@ -237,6 +237,8 @@ Configure Gateway authentication before exposing these endpoints. With `gateway.
 
 The plugin registers a Control UI status tab backed by `GET /tracing/status`. Its server-issued read Cookie is scoped to that exact route; trace-list and detail requests require normal Gateway authorization.
 
+Each registration owns its backend, cleanup timer, Hook queue, and active TraceStore. Stopping an older registration leaves a newer one active. The completed-trace SQLite journal remains shared by registrations within the same OpenClaw state profile so Gateway routes can query spans written by a separate Hook runtime.
+
 - `GET /tracing/status`
 - `GET /tracing/traces?limit=50` (`1..200`)
 - `GET /tracing/trace?traceId=<32-hex-character-id>`

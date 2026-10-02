@@ -1,6 +1,7 @@
 import * as http from "node:http";
 import { startOAuth2Provider } from "../helpers/oauth2-provider.mjs";
 import { oauth2ClientAddress } from "../config/plugins/oauth2.mjs";
+import { restartInstalledGateway } from "../lib/lifecycle.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 function cookieFrom(response) {
@@ -121,13 +122,24 @@ export async function testOAuth2(ctx, results) {
         if (provider.metrics.refresh < 1 || provider.metrics.introspect < 2 || provider.metrics.revoke !== 1) {
           throw new Error(`OAuth2 lifecycle incomplete: ${safeProviderMetrics(provider.metrics)}`);
         }
+
+        await restartInstalledGateway(ctx, [ctx.ports.oauth2Proxy]);
+        await ctx.waitFor(async () => {
+          try { return (await manualFetch(`${proxy}/health`)).ok; }
+          catch { return false; }
+        }, { label: "OAuth2 proxy after Gateway restart", timeoutMs: 30_000 });
+        const restartedAnonymous = await manualFetch(`${proxy}/auth/oauth2/status`);
+        const restartedLogin = await manualFetch(`${proxy}/auth/oauth2/login?returnTo=%2Fauth%2Foauth2%2Fstatus`);
+        if (restartedAnonymous.status !== 401 || restartedLogin.status !== 302 || !restartedLogin.headers.get("location")) {
+          throw new Error(`OAuth2 restart changed auth routes: status=${restartedAnonymous.status}, login=${restartedLogin.status}`);
+        }
       } finally {
         await provider.close();
       }
     },
     {
       service: `http://127.0.0.1:${ctx.ports.oauth2Proxy} (client source ${oauth2ClientAddress()})`,
-      method: "Authorization Code + PKCE + refresh + introspection + revoke + OpenClaw trusted-proxy",
+      method: "Authorization Code + PKCE + refresh + introspection + revoke + Gateway stop/restart auth recovery",
     },
     results,
   );

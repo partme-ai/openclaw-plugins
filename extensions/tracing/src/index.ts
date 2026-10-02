@@ -23,13 +23,7 @@ import {
 import { TracingSampler } from "./runtime/sampler.js";
 import { SharedTraceJournal } from "./runtime/shared-trace-journal.js";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import {
-  cleanupSessionTraces,
-  finishAllActiveTraces,
-  getActiveSpanCount,
-  getActiveTraceCount,
-  resetTraceStore,
-} from "./runtime/trace-store.js";
+import { createTraceStore } from "./runtime/trace-store.js";
 import type {
   TracingBackend,
   TracingConfig,
@@ -39,12 +33,6 @@ import { redactTraceText } from "./shared/redact.js";
 
 const PLUGIN_ID = "tracing";
 const SUPPORTED_BACKENDS: TracingConfig["backend"][] = ["log", "file", "otlp"];
-let activeContext: TracingHookContext | null = null;
-let cleanupTimer: ReturnType<typeof setInterval> | null = null;
-let initialized = false;
-let initializationPromise: Promise<void> | null = null;
-let stopping = false;
-let lifecycleGeneration = 0;
 
 function journalFor(config: TracingConfig): SharedTraceJournal {
   const stateDir = resolveStateDir();
@@ -127,6 +115,16 @@ function resolveTracingConfig(api: OpenClawPluginApi): TracingConfig {
   return config;
 }
 
+function createLifecycle() {
+  const store = createTraceStore();
+let activeContext: TracingHookContext | null = null;
+let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+let initialized = false;
+let initializationPromise: Promise<void> | null = null;
+let stopping = false;
+let lifecycleGeneration = 0;
+let cleanupTask: Promise<void> | null = null;
+
 async function initTracing(api: OpenClawPluginApi): Promise<void> {
   if (stopping) return;
   if (initialized) return;
@@ -165,11 +163,16 @@ async function initializeTracing(api: OpenClawPluginApi): Promise<void> {
     };
     initialized = true;
     cleanupTimer = setInterval(() => {
-      void cleanupSessionTraces(backend).then((count) => {
+      if (cleanupTask) return;
+      const task = store.cleanupSessionTraces(backend).then((count) => {
+        if (generation !== lifecycleGeneration) return;
         if (count > 0) api.logger.warn(`[tracing] Closed ${count} expired active traces`);
       }).catch((error: unknown) => {
+        if (generation !== lifecycleGeneration) return;
         api.logger.error(`[tracing] Active trace cleanup failed: ${toErrorMessage(error)}`);
       });
+      cleanupTask = task;
+      void task.finally(() => { if (cleanupTask === task) cleanupTask = null; });
     }, 60_000);
     cleanupTimer.unref?.();
     api.logger.info(
@@ -186,7 +189,7 @@ async function initializeTracing(api: OpenClawPluginApi): Promise<void> {
   }
 }
 
-async function shutdownTracing(): Promise<void> {
+async function shutdownTracing(drainHooks: () => Promise<void>): Promise<void> {
   stopping = true;
   lifecycleGeneration += 1;
   if (cleanupTimer) {
@@ -197,6 +200,8 @@ async function shutdownTracing(): Promise<void> {
   const shutdownTimeoutMs = activeContext?.config.shutdownTimeoutMs ?? 15_000;
   try {
     await withTimeout((async () => {
+      await drainHooks();
+      if (cleanupTask) await cleanupTask;
       if (initializationPromise) {
         try {
           await initializationPromise;
@@ -208,7 +213,7 @@ async function shutdownTracing(): Promise<void> {
       activeContext = null;
       initialized = false;
       try {
-        if (backend) await finishAllActiveTraces(backend, "gateway_shutdown");
+        if (backend) await store.finishAllActiveTraces(backend, "gateway_shutdown");
       } catch (error) {
         firstError ??= error;
       }
@@ -224,7 +229,8 @@ async function shutdownTracing(): Promise<void> {
     activeContext = null;
     initialized = false;
     initializationPromise = null;
-    resetTraceStore();
+    cleanupTask = null;
+    store.resetTraceStore();
     stopping = false;
   }
   if (firstError) throw firstError;
@@ -246,8 +252,12 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message:
   }
 }
 
-async function statusHandler(req: IncomingMessage, res: ServerResponse, journal: SharedTraceJournal): Promise<void> {
+  return { initTracing, shutdownTracing, store, getContext: () => activeContext, getStatus: () => ({ activeContext, initializationPromise }) };
+}
+
+async function statusHandler(req: IncomingMessage, res: ServerResponse, journal: SharedTraceJournal, lifecycle: ReturnType<typeof createLifecycle>): Promise<void> {
   if (!requireGet(req, res)) return;
+  const { activeContext, initializationPromise } = lifecycle.getStatus();
   const backendStatus = activeContext?.backend.getStatus();
   const healthy = backendStatus?.healthy ?? true;
   let sharedRecentTraces: number;
@@ -274,8 +284,8 @@ async function statusHandler(req: IncomingMessage, res: ServerResponse, journal:
       exportHealth: { scope: "gateway-runtime", healthy },
       queryHealth: { scope: "profile-journal", healthy: true, completeness: "unverified" },
       sampleRate: activeContext?.sampler.getSampleRate() ?? 0,
-      activeSpans: getActiveSpanCount(),
-      activeTraces: getActiveTraceCount(),
+      activeSpans: lifecycle.store.getActiveSpanCount(),
+      activeTraces: lifecycle.store.getActiveTraceCount(),
       recentTraces: sharedRecentTraces,
       features: { pluginHooks: true, backends: SUPPORTED_BACKENDS },
     },
@@ -354,9 +364,10 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
   name: "openclaw-tracing",
   description: "Bounded OpenTelemetry-compatible tracing for OpenClaw message and tool lifecycles",
   register(api: OpenClawPluginApi) {
+    const lifecycle = createLifecycle();
     const routeOptions = { auth: "gateway" as const, match: "exact" as const };
     const journal = journalFor(resolveTracingConfig(api));
-    api.registerHttpRoute({ ...routeOptions, path: "/tracing/status", handler: (req, res) => statusHandler(req, res, journal) });
+    api.registerHttpRoute({ ...routeOptions, path: "/tracing/status", handler: (req, res) => statusHandler(req, res, journal, lifecycle) });
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/traces", handler: (req, res) => tracesHandler(req, res, journal) });
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/trace", handler: (req, res) => traceDetailHandler(req, res, journal) });
     if (api.registrationMode === "full") {
@@ -372,13 +383,13 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     // instances that do not receive the Gateway instance's gateway_start
     // state. Initialize lazily inside each hook runtime so message/tool hooks
     // never observe a permanently empty module-local context.
-    registerTracingPluginHooks(api, async () => {
-      await initTracing(api);
-      return activeContext;
-    });
-    api.on("gateway_start", async () => initTracing(api));
+    const stopHooks = registerTracingPluginHooks(api, async () => {
+      await lifecycle.initTracing(api);
+      return lifecycle.getContext();
+    }, lifecycle.store);
+    api.on("gateway_start", async () => lifecycle.initTracing(api));
     api.on("gateway_stop", async () => {
-      await shutdownTracing();
+      await lifecycle.shutdownTracing(stopHooks);
       api.logger.info("[tracing] Shut down on gateway_stop");
     });
     api.logger.info("[tracing] Plugin registered; awaiting gateway_start");

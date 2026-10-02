@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import plugin from "./index.js";
 import { SharedTraceJournal } from "./runtime/shared-trace-journal.js";
+import { LogBackend } from "./backends/log-backend.js";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 
 type Hook = (event?: Record<string, unknown>, ctx?: Record<string, unknown>) => Promise<void> | void;
@@ -38,6 +39,82 @@ function response() {
 }
 
 describe("tracing plugin", () => {
+  it("failed and in-flight initialization clean only their backend and allow restart", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const routes = new Map<string, Hook>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", traceDir: testTraceDir },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+    } as never);
+    const originalInit = LogBackend.prototype.init;
+    const shutdown = vi.spyOn(LogBackend.prototype, "shutdown");
+    const init = vi.spyOn(LogBackend.prototype, "init").mockRejectedValueOnce(new Error("backend unavailable"));
+    try {
+      await expect(emit(hooks, "gateway_start")).rejects.toThrow("backend unavailable");
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      const gate = Promise.withResolvers<void>();
+      init.mockImplementationOnce(() => gate.promise);
+      const starting = emit(hooks, "gateway_start");
+      const stopping = emit(hooks, "gateway_stop");
+      gate.resolve();
+      await Promise.allSettled([starting, stopping]);
+      const stoppedStatus = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, stoppedStatus as never);
+      expect(JSON.parse(stoppedStatus.body).data.status).toBe("disabled");
+      expect(shutdown).toHaveBeenCalledTimes(2);
+      init.mockImplementation(originalInit);
+      await emit(hooks, "gateway_start");
+      const restartedStatus = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, restartedStatus as never);
+      expect(JSON.parse(restartedStatus.body).data.status).toBe("active");
+      await emit(hooks, "gateway_stop");
+    } finally { vi.restoreAllMocks(); }
+  });
+  it("concurrent gateway_stop waits for the in-flight Hook export before backend shutdown", async () => {
+    const hooks = new Map<string, Hook[]>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1, traceDir: testTraceDir },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute: vi.fn(),
+    } as never);
+    const gate = Promise.withResolvers<void>();
+    const exporting = vi.spyOn(LogBackend.prototype, "exportSpans").mockImplementation(() => gate.promise);
+    const shutdown = vi.spyOn(LogBackend.prototype, "shutdown");
+    try {
+      await emit(hooks, "gateway_start");
+      await emit(hooks, "message_received", {}, { sessionKey: "race-session", runId: "race-run", channelId: "wecom" });
+      const reply = emit(hooks, "reply_payload_sending", { kind: "final" }, { sessionKey: "race-session", runId: "race-run" });
+      await vi.waitFor(() => expect(exporting).toHaveBeenCalled());
+      const stopping = Promise.all((hooks.get("gateway_stop") ?? []).map((handler) => handler({}, {})));
+      await Promise.resolve();
+      expect(shutdown).not.toHaveBeenCalled();
+      gate.resolve();
+      await Promise.all([reply, stopping]);
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally { gate.resolve(); vi.restoreAllMocks(); }
+  });
+  it("stopping registration A leaves B backend and active spans intact", async () => {
+    const register = () => {
+      const hooks = new Map<string, Hook[]>();
+      const routes = new Map<string, Hook>();
+      plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1, traceDir: testTraceDir },
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+        registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+      } as never);
+      return { hooks, routes };
+    };
+    const a = register(); const b = register();
+    await emit(a.hooks, "gateway_start");
+    await emit(b.hooks, "gateway_start");
+    await emit(b.hooks, "message_received", {}, { sessionKey: "b-session", runId: "b-run", channelId: "wecom" });
+    await emit(a.hooks, "gateway_stop");
+    const status = response();
+    await b.routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, status as never);
+    expect(JSON.parse(status.body).data).toMatchObject({ status: "active", activeSpans: 1, activeTraces: 1 });
+    await emit(b.hooks, "gateway_stop");
+  });
   it("ID、生命周期和 Gateway 认证 GET-only 路由与 OpenClaw 2026.9.6 对齐", async () => {
     const hooks = new Map<string, Hook[]>();
     const routes = new Map<string, { auth?: string; match?: string; handler: Hook }>();

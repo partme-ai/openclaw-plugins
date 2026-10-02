@@ -152,6 +152,7 @@ The original configuration tables, protocol details, examples, and troubleshooti
 - Maintains an in-memory peer list that **auto-updates** via Nacos naming subscription.
 - Exposes `GET /nacos/cluster` with peer IP, port, hooks path and health; sensitive metadata keys are redacted.
 - `GET /nacos/health` includes cluster discovery status and peer count.
+- The config, naming, and cluster services and both diagnostic routes are scoped to each full registration. A stopped registration cannot clear a newer registration's health or peer state; late start callbacks are discarded.
 
 ### ✨ Highlights
 

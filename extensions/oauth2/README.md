@@ -183,6 +183,8 @@ The authenticated identity can come from ID Token claims, UserInfo, or introspec
 - `/auth/oauth2/status` is forwarded to OpenClaw's `auth: "gateway"` route
 - `GET/HEAD /health`
 
+Each full registration owns its proxy and status route. Repeated service start/stop is safe; a failed or cancelled start closes its partial proxy before a later start retries.
+
 `requiredScopes` gates access at the OAuth2 proxy. OAuth scopes are not translated into OpenClaw operator scopes; configure OpenClaw trusted-proxy and `allowUsers` for Gateway authorization. For production, use HTTPS, secure cookies, bounded sessions, and Redis-backed sessions for multiple proxy instances.
 
 ## OpenClaw trusted-proxy requirement

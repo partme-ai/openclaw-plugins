@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { dockerEnv, DOCKER } from "../lib/compose.mjs";
 import { runAdapterTest } from "./_context.mjs";
 import { MANAGEMENT_E2E_GATEWAY_TOKEN } from "../lib/config.mjs";
+import { restartInstalledGateway } from "../lib/lifecycle.mjs";
 
 const authorized = { headers: { Authorization: `Bearer ${MANAGEMENT_E2E_GATEWAY_TOKEN}` } };
 
@@ -191,10 +192,24 @@ export async function testTracing(ctx, results) {
         throw new Error(`tracing backend not drained and healthy: ${status.text}`);
       }
       console.log(`[tracing-otlp] completed traceId=${completedTrace.traceId}, spanId=${completedTrace.spanId}; gatewayActiveSpans=${status.json?.data?.activeSpans}, gatewayActiveTraces=${status.json?.data?.activeTraces}, journalRecentTraces=${status.json?.data?.recentTraces}`);
+      await restartInstalledGateway(ctx);
+      await ctx.waitFor(async () => {
+        try {
+          const restarted = await ctx.gatewayFetch("/tracing/status", authorized);
+          return restarted.ok && restarted.json?.data?.backendStatus?.healthy === true;
+        } catch { return false; }
+      }, { label: "Tracing backend after Gateway restart", timeoutMs: 30_000 });
+      const restartedStatus = await ctx.gatewayFetch("/tracing/status", authorized);
+      const retainedTrace = await ctx.gatewayFetch(`/tracing/trace?traceId=${completedTrace.traceId}`, authorized);
+      const restartedAnonymous = await ctx.gatewayFetch("/tracing/status");
+      if (restartedStatus.json?.data?.backend !== "otlp" || restartedStatus.json?.data?.activeTraces !== 0 ||
+          retainedTrace.json?.data?.traceId !== completedTrace.traceId || restartedAnonymous.status !== 401) {
+        throw new Error(`Tracing restart changed backend/auth/journal state: ${restartedStatus.text}`);
+      }
     },
     {
       service: `http://127.0.0.1:${ctx.ports.otlpHttp}/v1/traces`,
-      method: "MQTT inbound + real Agent Turn + local OpenAI fixture + OTLP/HTTP Collector export",
+      method: "MQTT Agent Turn + OTLP export + Gateway stop/restart backend and journal recovery",
     },
     results,
   );

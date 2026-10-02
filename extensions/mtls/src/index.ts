@@ -14,8 +14,6 @@ import { resolveMtlsConfig, validateMtlsGatewayIntegration } from "./config.js";
 import { MtlsProxyServer } from "./proxy-server.js";
 import { getMtlsStats } from "./runtime/stats.js";
 
-let activeProxy: MtlsProxyServer | null = null;
-
 const configSchema = {
   type: "object" as const,
   additionalProperties: false,
@@ -89,22 +87,54 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
   configSchema: buildJsonPluginConfigSchema(configSchema, { cacheKey: "openclaw-mtls" }),
   register(api) {
     if (api.registrationMode !== "full") return;
+    let activeProxy: MtlsProxyServer | null = null;
+    let pendingStart: Promise<void> | null = null;
+    let pendingStop: Promise<void> | null = null;
+    let generation = 0;
 
     api.registerService({
       id: "openclaw-mtls-proxy",
       start: async (context) => {
+        if (pendingStop) await pendingStop;
+        if (pendingStart) return pendingStart;
+        if (activeProxy) return;
         const config = resolveMtlsConfig(api.pluginConfig);
         if (!config.enabled) {
           context.logger.info("[openclaw-mtls] disabled; proxy not started");
           return;
         }
         validateMtlsGatewayIntegration(config, api.config);
-        activeProxy = new MtlsProxyServer(config, context.logger);
-        await activeProxy.start();
+        const currentGeneration = generation;
+        const proxy = new MtlsProxyServer(config, context.logger);
+        const starting = (async () => {
+          try {
+            await proxy.start();
+            if (currentGeneration !== generation) {
+              await proxy.stop();
+              return;
+            }
+            activeProxy = proxy;
+          } catch (error) {
+            await proxy.stop().catch(() => undefined);
+            throw error;
+          }
+        })();
+        pendingStart = starting;
+        try { await starting; }
+        finally { if (pendingStart === starting) pendingStart = null; }
       },
       stop: async () => {
-        await activeProxy?.stop();
-        activeProxy = null;
+        if (pendingStop) return pendingStop;
+        generation += 1;
+        const stopping = (async () => {
+          try { await pendingStart; } catch { /* Failed start already cleans its proxy. */ }
+          const proxy = activeProxy;
+          activeProxy = null;
+          await proxy?.stop();
+        })();
+        pendingStop = stopping;
+        try { await stopping; }
+        finally { if (pendingStop === stopping) pendingStop = null; }
       },
     });
 

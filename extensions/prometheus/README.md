@@ -153,6 +153,7 @@ Metrics come from two layers:
 
 - Loaded through `package.json` / `openclaw.plugin.json` discovery like any other OpenClaw plugin.
 - `register()` wires `api.runtime`, installs hook/event observers, and registers plugin-owned routes with `api.registerHttpRoute`.
+- Each registration owns its collectors, scrape cache, RPC connection, observer subscriptions, and diagnostics subscription. Stopping an old registration releases only its resources; callbacks that arrive after stop cannot add metrics to it.
 - Routes are mounted directly on the Gateway. The plugin does not open a separate listener; terminate TLS and enforce network policy at the Gateway or reverse proxy.
 
 ### Runtime architecture

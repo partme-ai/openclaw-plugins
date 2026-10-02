@@ -9,26 +9,9 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { TracingBackend, TracingConfig } from "../shared/types.js";
 import { TracingSampler } from "./sampler.js";
 import { redactTraceText } from "../shared/redact.js";
-import {
-  bindToolSpan,
-  consumeSuppressedRun,
-  consumeSuppressedSession,
-  createSpan,
-  endSpan,
-  finishActiveTrace,
-  getActiveTraceCount,
-  incrementSpanCount,
-  randomHexId,
-  rememberCompletedRun,
-  suppressRun,
-  suppressSession,
-  registerActiveTrace,
-  resolveActiveTrace,
-  takeToolSpanId,
-} from "./trace-store.js";
-
-/** 同一会话的 Hook 状态变更串行执行；Promise 完成后立即删除，避免锁表随会话数增长。 */
-const traceOperationChains = new Map<string, Promise<void>>();
+import { createTraceStore } from "./trace-store.js";
+import * as defaultTraceStore from "./trace-store.js";
+type TraceStore = ReturnType<typeof createTraceStore>;
 
 /** 单次 Gateway 生命周期中供所有 tracing hooks 共享的后端、采样器与不可变配置。 */
 export interface TracingHookContext {
@@ -114,26 +97,39 @@ function toolBindingKey(toolCallId: string, traceId: string): string {
   return JSON.stringify([traceId, toolCallId]);
 }
 
-async function runTraceOperation(key: string, operation: () => void | Promise<void>): Promise<void> {
-  const previous = traceOperationChains.get(key) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(operation);
-  traceOperationChains.set(key, current);
-  try {
-    await current;
-  } finally {
-    if (traceOperationChains.get(key) === current) traceOperationChains.delete(key);
-  }
-}
-
 /** hooks 只注册一次，通过 provider 获取当前 gateway 生命周期的后端。 */
 export function registerTracingPluginHooks(
   api: OpenClawPluginApi,
   getContext: TracingHookContextProvider,
-): void {
+  store: TraceStore = defaultTraceStore,
+): () => Promise<void> {
+  const {
+    bindToolSpan, consumeSuppressedRun, consumeSuppressedSession, createSpan, endSpan,
+    finishActiveTrace, getActiveTraceCount, incrementSpanCount, randomHexId,
+    rememberCompletedRun, suppressRun, suppressSession, registerActiveTrace,
+    resolveActiveTrace, takeToolSpanId,
+  } = store;
+  /** 同一注册实例的 Hook 状态变更串行执行。 */
+  const traceOperationChains = new Map<string, Promise<void>>();
   const hookOpts = { priority: 100 };
   let lifecycleClosed = false;
-  const getLiveContext = () => lifecycleClosed ? null : getContext();
-  api.on("gateway_stop", () => { lifecycleClosed = true; }, hookOpts);
+  const getLiveContext = async () => {
+    if (lifecycleClosed) return null;
+    const context = await getContext();
+    return lifecycleClosed ? null : context;
+  };
+  async function runTraceOperation(key: string, operation: () => void | Promise<void>): Promise<void> {
+    const previous = traceOperationChains.get(key) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(() => lifecycleClosed ? undefined : operation());
+    traceOperationChains.set(key, current);
+    try { await current; }
+    finally { if (traceOperationChains.get(key) === current) traceOperationChains.delete(key); }
+  }
+  const stopHooks = async () => {
+    lifecycleClosed = true;
+    await Promise.allSettled([...traceOperationChains.values()]);
+  };
+  api.on("gateway_stop", stopHooks, hookOpts);
   api.on("gateway_start", () => { lifecycleClosed = false; }, hookOpts);
 
   api.on(
@@ -369,4 +365,5 @@ export function registerTracingPluginHooks(
   );
 
   api.logger.info("[tracing] Hooks registered (message_received, tool, reply_payload_sending, agent_end, session_end)");
+  return stopHooks;
 }

@@ -5,6 +5,7 @@
  * Gateway 注册的真实 HTTP 路由，因此可以发现 manifest、加载路径、auth 和路由契约漂移。
  */
 import { PROMETHEUS_E2E_TOKEN } from "../config/plugins/prometheus.mjs";
+import { restartInstalledGateway } from "../lib/lifecycle.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 const AUTH_HEADERS = { Authorization: `Bearer ${PROMETHEUS_E2E_TOKEN}` };
@@ -75,10 +76,26 @@ export async function testPrometheus(ctx, results) {
       if (concurrent.some((response) => response.status !== 200)) {
         throw new Error("one or more concurrent scrapes failed");
       }
+
+      await restartInstalledGateway(ctx);
+      await ctx.waitFor(async () => {
+        try {
+          const response = await ctx.gatewayFetch("/metrics", { headers: AUTH_HEADERS });
+          return response.status === 200 && /^openclaw_up(?:\{[^}]*\})? 1(?:\s|$)/m.test(response.text);
+        } catch { return false; }
+      }, { label: "Prometheus scrape after Gateway restart", timeoutMs: 30_000 });
+      const restartedScrape = await ctx.gatewayFetch("/metrics", { headers: AUTH_HEADERS });
+      const restartedHealth = await ctx.gatewayFetch("/metrics/health", { headers: AUTH_HEADERS });
+      const restartedAnonymous = await ctx.gatewayFetch("/metrics");
+      if (restartedAnonymous.status !== 401 || count(restartedScrape.text, "# HELP openclaw_exporter_build_info") !== 1 ||
+          restartedHealth.json?.healthy !== true || restartedHealth.json?.rpc?.initialized !== true ||
+          restartedHealth.json?.collectors?.failed !== 0) {
+        throw new Error(`Prometheus restart changed scrape/collector state: ${restartedHealth.text}`);
+      }
     },
     {
       service: "OpenClaw Gateway /metrics",
-      method: "tarball install + Bearer auth + metrics/health contract + exact GET routes + concurrent scrape",
+      method: "tarball install + Bearer auth + metrics/health contract + concurrent scrape + Gateway stop/restart",
     },
     results,
   );

@@ -93,6 +93,25 @@ describe("WebhookClusterService", () => {
       await service.stop(mockLogger);
     });
 
+    it("ignores a queued subscription callback after stop and after restart", async () => {
+      const service = new WebhookClusterService();
+      const params = { pluginConfig: makeConfig(), selfPort: 18789, logger: mockLogger };
+      await service.start(params);
+      const oldCallback = mockSubscribe.mock.calls[0][1];
+      await service.stop(mockLogger);
+      oldCallback([{ ip: "10.0.0.9", port: 18800, metadata: {} }]);
+      expect(service.getState()).toEqual({ peers: [], lastUpdated: 0 });
+
+      await service.start(params);
+      const restartedAt = service.getState().lastUpdated;
+      oldCallback([{ ip: "10.0.0.9", port: 18800, metadata: {} }]);
+      expect(service.getState()).toEqual({ peers: [], lastUpdated: restartedAt });
+      const newCallback = mockSubscribe.mock.calls[1][1];
+      newCallback([{ ip: "10.0.0.10", port: 18800, metadata: {} }]);
+      expect(service.getPeers()).toMatchObject([{ ip: "10.0.0.10" }]);
+      await service.stop(mockLogger);
+    });
+
     it("initial state has no peers", () => {
       const service = new WebhookClusterService();
       expect(service.getPeers()).toEqual([]);

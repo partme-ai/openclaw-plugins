@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { STATE_DIR } from "../lib/utils.mjs";
 import { mtlsClientAddress } from "../config/plugins/mtls.mjs";
+import { restartInstalledGateway } from "../lib/lifecycle.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 const CERT_DIR = join(STATE_DIR, "mtls-certs");
@@ -71,10 +72,28 @@ export async function testMtls(ctx, results) {
       if (authenticated.status !== 200 || authenticated.json?.ok !== true || authenticated.json?.running !== true) {
         throw new Error(`verified mTLS → OpenClaw trusted-proxy status failed: ${authenticated.status} (${authenticated.json?.error ?? "unknown"}: ${authenticated.json?.message ?? "no detail"})`);
       }
+
+      await restartInstalledGateway(ctx, [ctx.ports.mtlsHttps]);
+      await ctx.waitFor(async () => {
+        try { return (await request(ctx.ports.mtlsHttps)).status === 401; }
+        catch { return false; }
+      }, { label: "mTLS listener after Gateway restart", timeoutMs: 30_000 });
+      const restartedRogue = await request(ctx.ports.mtlsHttps, {
+        cert: readFileSync(join(CERT_DIR, "rogue-client.crt")),
+        key: readFileSync(join(CERT_DIR, "rogue-client.key")),
+      });
+      const restartedAuthenticated = await request(ctx.ports.mtlsHttps, {
+        cert: readFileSync(join(CERT_DIR, "client.crt")),
+        key: readFileSync(join(CERT_DIR, "client.key")),
+      });
+      if (restartedRogue.status !== 401 || restartedAuthenticated.status !== 200 ||
+          restartedAuthenticated.json?.running !== true) {
+        throw new Error(`mTLS restart changed certificate policy: rogue=${restartedRogue.status}, valid=${restartedAuthenticated.status}`);
+      }
     },
     {
       service: `https://127.0.0.1:${ctx.ports.mtlsHttps} (client source ${mtlsClientAddress()})`,
-      method: "OpenSSL client cert + fail-closed policy + OpenClaw trusted-proxy auth",
+      method: "OpenSSL client cert + fail-closed policy + Gateway stop/restart auth recovery",
     },
     results,
   );

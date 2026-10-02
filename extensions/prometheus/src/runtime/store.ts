@@ -10,6 +10,7 @@
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { ResolvedPrometheusConfig } from "../config/plugin-config.js";
 import type { MetricSample, MonitoredProviderSnapshot } from "../types.js";
@@ -39,7 +40,23 @@ type RuntimeStoreState = {
   lastRpcMethod?: string;
 };
 
-let state: RuntimeStoreState | null = null;
+const ownerContext = new AsyncLocalStorage<object>();
+const defaultOwner = {};
+const states = new WeakMap<object, RuntimeStoreState>();
+
+/** 将宿主延迟调用的 route/hook/service 绑定到注册时的资源所有者。 */
+export function withRuntimeOwner<T>(owner: object, callback: () => T): T {
+  return ownerContext.run(owner, callback);
+}
+
+export function bindRuntimeOwner<T extends (...args: any[]) => any>(callback: T): T {
+  const owner = ownerContext.getStore() ?? defaultOwner;
+  return ((...args: Parameters<T>) => withRuntimeOwner(owner, () => callback(...args))) as T;
+}
+
+export function currentRuntimeOwner(): object {
+  return ownerContext.getStore() ?? defaultOwner;
+}
 
 /** 独立于指标 series 上限的已观测渠道账号容量，防止 activity 刷新 Map 无界增长。 */
 export const MAX_OBSERVED_CHANNEL_ACCOUNTS = 512;
@@ -53,7 +70,7 @@ const OBSERVED_ACCOUNTS_DROPPED = "openclaw_observed_channel_accounts_dropped_to
  * @returns 新建的运行时状态对象
  */
 export function initializeRuntimeStore(api: OpenClawPluginApi, cfg: ResolvedPrometheusConfig): RuntimeStoreState {
-  state = {
+  const state: RuntimeStoreState = {
     api,
     cfg,
     registry: new MetricsRegistry(),
@@ -63,6 +80,7 @@ export function initializeRuntimeStore(api: OpenClawPluginApi, cfg: ResolvedProm
     rpcSamples: [],
     rpcClientInitialized: false,
   };
+  states.set(currentRuntimeOwner(), state);
   return state;
 }
 
@@ -73,6 +91,7 @@ export function initializeRuntimeStore(api: OpenClawPluginApi, cfg: ResolvedProm
  * @throws 若 register 尚未调用 initializeRuntimeStore
  */
 export function getRuntimeStore(): RuntimeStoreState {
+  const state = states.get(currentRuntimeOwner());
   if (!state) {
     throw new Error("[openclaw-prometheus] Runtime store not initialized.");
   }

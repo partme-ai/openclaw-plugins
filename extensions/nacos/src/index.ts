@@ -59,11 +59,12 @@ const NACOS_PLUGIN_RELOAD = {
 } as const;
 
 /** 各组件独立保存错误，任一组件后续成功都不能覆盖其它组件的失败。 */
-const healthState = {
+function createHealthState() { return {
   configSync: { running: false, lastSyncTime: 0, error: null as string | null },
   naming: { registered: false, error: null as string | null },
   clusterDiscovery: { running: false, error: null as string | null },
-};
+}; }
+type HealthState = ReturnType<typeof createHealthState>;
 
 /** Sanitize error messages before exposing in HTTP responses. */
 function sanitizeError(err: unknown): string {
@@ -104,20 +105,21 @@ function toPluginLog(logger: OpenClawPluginServiceContext["logger"]): PluginLog 
   };
 }
 
-/** Module-level cluster service reference for HTTP routes. */
-let activeClusterService: WebhookClusterService | null = null;
-
 /**
  * 注册 Nacos Config Center 同步服务（pull / merge / backup / subscribe）。
  *
  * @param api - OpenClaw 插件 API
  */
-function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
+function registerNacosConfigCenterService(api: OpenClawPluginApi, healthState: HealthState): void {
   let sync: NacosConfigSyncService | null = null;
+  let generation = 0;
+  let pending: Promise<void> | null = null;
 
   api.registerService({
     id: "openclaw-nacos-config",
     start: async (ctx: OpenClawPluginServiceContext) => {
+      if (pending) return pending;
+      if (sync) return;
       const parsed = parseNacosPluginConfig(api.pluginConfig);
       if (parsed.kind !== "ok") {
         return;
@@ -127,9 +129,12 @@ function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
         return;
       }
 
-      sync = new NacosConfigSyncService();
+      const currentGeneration = generation;
+      const instance = new NacosConfigSyncService();
+      sync = instance;
+      const starting = (async () => {
       try {
-        await sync.start({
+        await instance.start({
           pluginConfig: parsed.config,
           getCurrentConfig: () => api.runtime.config.current(),
           replaceConfig: (next) =>
@@ -143,28 +148,37 @@ function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
           logger: toPluginLog(ctx.logger),
           env: process.env,
           onApplied: () => {
+            if (currentGeneration !== generation) return;
             healthState.configSync.running = true;
             healthState.configSync.lastSyncTime = Date.now();
             healthState.configSync.error = null;
           },
           onError: (error) => {
+            if (currentGeneration !== generation) return;
             healthState.configSync.error = sanitizeError(error);
           },
         });
+        if (currentGeneration !== generation) return;
         healthState.configSync.running = true;
       } catch (err) {
+        await instance.stop(toPluginLog(ctx.logger)).catch(() => undefined);
+        if (sync === instance) sync = null;
+        if (currentGeneration !== generation) return;
         healthState.configSync.running = false;
         healthState.configSync.error = sanitizeError(err);
         ctx.logger.error(`[openclaw-nacos] config center failed: ${String(err)}`);
-        sync = null;
         rethrowUnlessDegraded(parsed.config.startupFailurePolicy, err);
       }
+      })();
+      pending = starting;
+      try { await starting; } finally { if (pending === starting) pending = null; }
     },
     stop: async (ctx: OpenClawPluginServiceContext) => {
-      if (sync) {
-        await sync.stop(toPluginLog(ctx.logger));
-        sync = null;
-      }
+      generation += 1;
+      try { await pending; } catch { /* Failed start has already cleaned up. */ }
+      const instance = sync;
+      sync = null;
+      if (instance) await instance.stop(toPluginLog(ctx.logger));
       healthState.configSync.running = false;
       healthState.configSync.error = null;
     },
@@ -176,12 +190,16 @@ function registerNacosConfigCenterService(api: OpenClawPluginApi): void {
  *
  * @param api - OpenClaw 插件 API
  */
-function registerNacosNamingService(api: OpenClawPluginApi): void {
+function registerNacosNamingService(api: OpenClawPluginApi, healthState: HealthState): void {
   let registry: GatewayNacosRegistry | null = null;
+  let generation = 0;
+  let pending: Promise<void> | null = null;
 
   api.registerService({
     id: "openclaw-nacos-naming",
     start: async (ctx: OpenClawPluginServiceContext) => {
+      if (pending) return pending;
+      if (registry) return;
       const parsed = parseNacosPluginConfig(api.pluginConfig);
       if (parsed.kind === "disabled") {
         ctx.logger.info("[openclaw-nacos] disabled in config; skipping Nacos registration");
@@ -200,28 +218,38 @@ function registerNacosNamingService(api: OpenClawPluginApi): void {
         return;
       }
 
-      registry = new GatewayNacosRegistry();
+      const currentGeneration = generation;
+      const instance = new GatewayNacosRegistry();
+      registry = instance;
+      const starting = (async () => {
       try {
-        await registry.register({
+        await instance.register({
           pluginConfig: parsed.config,
           openClawConfig: ctx.config as OpenClawConfigSlice,
           logger: toPluginLog(ctx.logger),
         });
+        if (currentGeneration !== generation) return;
         healthState.naming.registered = true;
         healthState.naming.error = null;
       } catch (err) {
+        await instance.stop(toPluginLog(ctx.logger)).catch(() => undefined);
+        if (registry === instance) registry = null;
+        if (currentGeneration !== generation) return;
         healthState.naming.registered = false;
         healthState.naming.error = sanitizeError(err);
         ctx.logger.error(`[openclaw-nacos] Nacos registration failed: ${String(err)}`);
-        registry = null;
         rethrowUnlessDegraded(parsed.config.startupFailurePolicy, err);
       }
+      })();
+      pending = starting;
+      try { await starting; } finally { if (pending === starting) pending = null; }
     },
     stop: async (ctx: OpenClawPluginServiceContext) => {
-      if (registry) {
-        await registry.stop(toPluginLog(ctx.logger));
-        registry = null;
-      }
+      generation += 1;
+      try { await pending; } catch { /* Failed start has already cleaned up. */ }
+      const instance = registry;
+      registry = null;
+      if (instance) await instance.stop(toPluginLog(ctx.logger));
       healthState.naming.registered = false;
       healthState.naming.error = null;
     },
@@ -233,12 +261,16 @@ function registerNacosNamingService(api: OpenClawPluginApi): void {
  *
  * @param api - OpenClaw 插件 API
  */
-function registerNacosClusterService(api: OpenClawPluginApi): void {
+function registerNacosClusterService(api: OpenClawPluginApi, healthState: HealthState, getCluster: () => WebhookClusterService | null, setCluster: (cluster: WebhookClusterService | null) => void): void {
   let cluster: WebhookClusterService | null = null;
+  let generation = 0;
+  let pending: Promise<void> | null = null;
 
   api.registerService({
     id: "openclaw-nacos-cluster",
     start: async (ctx: OpenClawPluginServiceContext) => {
+      if (pending) return pending;
+      if (cluster) return;
       const parsed = parseNacosPluginConfig(api.pluginConfig);
       if (parsed.kind !== "ok") {
         return;
@@ -254,30 +286,40 @@ function registerNacosClusterService(api: OpenClawPluginApi): void {
 
       const port = resolveGatewayPort(ctx.config as OpenClawConfigSlice);
 
-      cluster = new WebhookClusterService();
+      const currentGeneration = generation;
+      const instance = new WebhookClusterService();
+      cluster = instance;
+      const starting = (async () => {
       try {
-        await cluster.start({
+        await instance.start({
           pluginConfig: parsed.config,
           selfPort: port,
           logger: toPluginLog(ctx.logger),
         });
-        activeClusterService = cluster;
+        if (currentGeneration !== generation) return;
+        setCluster(instance);
         healthState.clusterDiscovery.running = true;
         healthState.clusterDiscovery.error = null;
       } catch (err) {
+        await instance.stop(toPluginLog(ctx.logger)).catch(() => undefined);
+        if (cluster === instance) cluster = null;
+        if (currentGeneration !== generation) return;
         healthState.clusterDiscovery.running = false;
         healthState.clusterDiscovery.error = sanitizeError(err);
         ctx.logger.error(`[openclaw-nacos] cluster discovery failed: ${String(err)}`);
-        cluster = null;
         rethrowUnlessDegraded(parsed.config.startupFailurePolicy, err);
       }
+      })();
+      pending = starting;
+      try { await starting; } finally { if (pending === starting) pending = null; }
     },
     stop: async (ctx: OpenClawPluginServiceContext) => {
-      if (cluster) {
-        await cluster.stop(toPluginLog(ctx.logger));
-        cluster = null;
-      }
-      activeClusterService = null;
+      generation += 1;
+      try { await pending; } catch { /* Failed start has already cleaned up. */ }
+      const instance = cluster;
+      cluster = null;
+      if (instance) await instance.stop(toPluginLog(ctx.logger));
+      if (getCluster() === instance) setCluster(null);
       healthState.clusterDiscovery.running = false;
       healthState.clusterDiscovery.error = null;
     },
@@ -305,9 +347,11 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       return;
     }
 
-    registerNacosConfigCenterService(api);
-    registerNacosNamingService(api);
-    registerNacosClusterService(api);
+    const healthState = createHealthState();
+    let activeClusterService: WebhookClusterService | null = null;
+    registerNacosConfigCenterService(api, healthState);
+    registerNacosNamingService(api, healthState);
+    registerNacosClusterService(api, healthState, () => activeClusterService, (cluster) => { activeClusterService = cluster; });
 
     // Health check HTTP endpoint — internal diagnostics
     api.registerHttpRoute({

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   namingStop: vi.fn(),
   clusterStart: vi.fn(),
   clusterStop: vi.fn(),
+  clusterInstances: [] as Array<{ stop: ReturnType<typeof vi.fn> }>,
 }));
 
 vi.mock("./runtime/nacos-config-sync.js", async (importOriginal) => {
@@ -40,12 +41,13 @@ vi.mock("./runtime/nacos-cluster.js", async (importOriginal) => {
     ...actual,
     WebhookClusterService: class {
       start = mocks.clusterStart;
-      stop = mocks.clusterStop;
+      stop = vi.fn((...args: unknown[]) => mocks.clusterStop(...args));
+      constructor() { mocks.clusterInstances.push(this); }
       getState() {
         return {
           peers: [{
             ip: "10.0.0.2",
-            port: 18789,
+            port: mocks.clusterInstances.indexOf(this) + 18789,
             serviceName: "openclaw-gateway",
             groupName: "DEFAULT_GROUP",
             weight: 1,
@@ -100,6 +102,7 @@ function responseCapture() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.clusterInstances.length = 0;
   mocks.configStart.mockResolvedValue(undefined);
   mocks.configStop.mockResolvedValue(undefined);
   mocks.namingRegister.mockResolvedValue(undefined);
@@ -109,6 +112,52 @@ beforeEach(() => {
 });
 
 describe("nacos plugin entry", () => {
+  it("A.stop cannot clear B cluster or B health route", async () => {
+    const a = createHarness(); const b = createHarness();
+    await a.services.get("openclaw-nacos-cluster")?.start(a.context);
+    await b.services.get("openclaw-nacos-cluster")?.start(b.context);
+    await a.services.get("openclaw-nacos-cluster")?.stop(a.context);
+    const response = responseCapture();
+    await b.routes.get("/nacos/cluster")?.handler({}, response);
+    const body = JSON.parse(response.body) as { peerCount: number; peers: Array<{ port: number }> };
+    expect(body.peerCount).toBe(1);
+    expect(body.peers[0].port).toBe(18790);
+    expect(mocks.clusterInstances[1].stop).not.toHaveBeenCalled();
+    const stopped = responseCapture();
+    await a.routes.get("/nacos/cluster")?.handler({}, stopped);
+    expect(JSON.parse(stopped.body).peerCount).toBe(0);
+    await b.services.get("openclaw-nacos-cluster")?.stop(b.context);
+  });
+
+  it("stops late cluster start and does not publish its state", async () => {
+    const gate = Promise.withResolvers<void>();
+    mocks.clusterStart.mockImplementationOnce(() => gate.promise);
+    const a = createHarness();
+    const starting = a.services.get("openclaw-nacos-cluster")!.start(a.context);
+    const stopping = a.services.get("openclaw-nacos-cluster")!.stop(a.context);
+    gate.resolve();
+    await Promise.all([starting, stopping]);
+    expect(mocks.clusterInstances[0].stop).toHaveBeenCalledTimes(1);
+    const response = responseCapture();
+    await a.routes.get("/nacos/cluster")?.handler({}, response);
+    expect(JSON.parse(response.body).peerCount).toBe(0);
+    await a.services.get("openclaw-nacos-cluster")?.start(a.context);
+    expect(mocks.clusterInstances).toHaveLength(2);
+    await a.services.get("openclaw-nacos-cluster")?.stop(a.context);
+  });
+
+  it("failed cluster start closes its partial client and can restart", async () => {
+    mocks.clusterStart.mockRejectedValueOnce(new Error("cluster unavailable"));
+    const a = createHarness();
+    await expect(a.services.get("openclaw-nacos-cluster")?.start(a.context)).rejects.toThrow("cluster unavailable");
+    expect(mocks.clusterInstances[0].stop).toHaveBeenCalledTimes(1);
+    await a.services.get("openclaw-nacos-cluster")?.start(a.context);
+    const response = responseCapture();
+    await a.routes.get("/nacos/cluster")?.handler({}, response);
+    expect(JSON.parse(response.body).peerCount).toBe(1);
+    await a.services.get("openclaw-nacos-cluster")?.stop(a.context);
+  });
+
   it("默认 fail 策略会把 Naming 初始化失败传播给 Gateway", async () => {
     mocks.namingRegister.mockRejectedValueOnce(new Error("password=secret connection refused"));
     const { services, context } = createHarness();

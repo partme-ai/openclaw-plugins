@@ -11,17 +11,31 @@
 import { GatewayClient } from "openclaw/plugin-sdk/gateway-runtime";
 
 import type { GatewayRuntime } from "../types.js";
-import { recordRpcError, recordRpcSuccess, setRpcClientInitialized } from "./store.js";
+import { currentRuntimeOwner, recordRpcError, recordRpcSuccess, setRpcClientInitialized } from "./store.js";
 
 const CONNECT_TIMEOUT_MS = 15_000;
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAY_MS = 5_000;
 
-/** 缓存的 Gateway Runtime 引用 */
-let _runtime: GatewayRuntime | null = null;
-let _gatewayClient: GatewayClient | null = null;
-let _gatewayReadyPromise: Promise<GatewayClient> | null = null;
-let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+/** 每次插件注册持有自己的 Gateway RPC 连接与重试句柄。 */
+type BridgeState = {
+  _runtime: GatewayRuntime | null;
+  _gatewayClient: GatewayClient | null;
+  _gatewayReadyPromise: Promise<GatewayClient> | null;
+  _reconnectTimer: ReturnType<typeof setTimeout> | null;
+  generation: number;
+};
+const bridgeStates = new WeakMap<object, BridgeState>();
+function bridgeState(): BridgeState {
+  const owner = currentRuntimeOwner();
+  let state = bridgeStates.get(owner);
+  if (!state) {
+    state = { _runtime: null, _gatewayClient: null, _gatewayReadyPromise: null,
+      _reconnectTimer: null, generation: 0 };
+    bridgeStates.set(owner, state);
+  }
+  return state;
+}
 
 /**
  * 设置 Gateway Runtime 引用
@@ -31,24 +45,26 @@ let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
  */
 export function setRuntime(runtime: GatewayRuntime): void {
   resetGatewayConnection();
-  _runtime = runtime;
+  bridgeState()._runtime = runtime;
 }
 
 /** 停止 Gateway RPC Client、取消待执行重连并清除 Runtime 引用，供关闭和测试隔离使用。 */
 export function resetRuntime(): void {
   resetGatewayConnection();
-  _runtime = null;
+  bridgeState()._runtime = null;
   setRpcClientInitialized(false);
 }
 
 function resetGatewayConnection(): void {
-  if (_reconnectTimer) {
-    clearTimeout(_reconnectTimer);
-    _reconnectTimer = null;
+  const state = bridgeState();
+  state.generation += 1;
+  if (state._reconnectTimer) {
+    clearTimeout(state._reconnectTimer);
+    state._reconnectTimer = null;
   }
-  const client = _gatewayClient;
-  _gatewayClient = null;
-  _gatewayReadyPromise = null;
+  const client = bridgeState()._gatewayClient;
+  bridgeState()._gatewayClient = null;
+  bridgeState()._gatewayReadyPromise = null;
   try {
     client?.stop();
   } catch {
@@ -62,12 +78,13 @@ function resetGatewayConnection(): void {
  * @throws 如果 runtime 未初始化
  */
 export function getRuntime(): GatewayRuntime {
-  if (!_runtime) {
+  const runtime = bridgeState()._runtime;
+  if (!runtime) {
     throw new Error(
       "[openclaw-prometheus] Gateway runtime not initialized. Plugin not registered?"
     );
   }
-  return _runtime;
+  return runtime;
 }
 
 /**
@@ -82,13 +99,16 @@ export async function rpcCall<T = unknown>(
   method: string,
   params?: Record<string, unknown>
 ): Promise<T> {
+  const generation = bridgeState().generation;
   try {
     const client = await getGatewayClient();
+    if (generation !== bridgeState().generation) throw new Error("Gateway connection cancelled");
     const payload = await client.request<T>(method, params ?? {});
+    if (generation !== bridgeState().generation) throw new Error("Gateway connection cancelled");
     recordRpcSuccess(method);
     return payload;
   } catch (error) {
-    recordRpcError(method, error);
+    if (generation === bridgeState().generation) recordRpcError(method, error);
     throw error;
   }
 }
@@ -124,13 +144,14 @@ export function getConfig(): Record<string, unknown> {
  * @returns true 表示 runtime 已就绪
  */
 export function isReady(): boolean {
-  return _runtime !== null;
+  return bridgeState()._runtime !== null;
 }
 
 /** @description 获取或建立 GatewayClient 单例（含重连 Promise 缓存）。 */
 async function getGatewayClient(): Promise<GatewayClient> {
-  if (_gatewayClient && _gatewayReadyPromise) {
-    return _gatewayReadyPromise;
+  const state = bridgeState();
+  if (state._gatewayClient && state._gatewayReadyPromise) {
+    return state._gatewayReadyPromise;
   }
 
   const runtime = getRuntime();
@@ -138,9 +159,9 @@ async function getGatewayClient(): Promise<GatewayClient> {
   const url = resolveGatewayUrl(gateway);
   const connect = resolveGatewayConnect(gateway);
 
-  _gatewayReadyPromise = connectWithRetry(url, connect, 0);
+  state._gatewayReadyPromise = connectWithRetry(url, connect, 0);
 
-  return _gatewayReadyPromise;
+  return state._gatewayReadyPromise;
 }
 
 /**
@@ -156,15 +177,18 @@ async function connectWithRetry(
   attempt: number,
 ): Promise<GatewayClient> {
   return new Promise<GatewayClient>((resolve, reject) => {
+    const state = bridgeState();
+    const generation = state.generation;
     let settled = false;
     const timeoutId = setTimeout(() => {
       if (!settled) {
         settled = true;
         cleanup();
+        if (generation !== state.generation) { reject(new Error("Gateway connection cancelled")); return; }
         const err = new Error(
           `[openclaw-prometheus] Gateway connection timeout after ${CONNECT_TIMEOUT_MS}ms at ${url}`
         );
-        handleConnectionFailure(err, url, connect, attempt, reject);
+        handleConnectionFailure(err, url, connect, attempt, reject, generation);
       }
     }, CONNECT_TIMEOUT_MS);
 
@@ -180,6 +204,7 @@ async function connectWithRetry(
         if (!settled) {
           settled = true;
           cleanup();
+          if (generation !== state.generation) { client.stop(); reject(new Error("Gateway connection cancelled")); return; }
           setRpcClientInitialized(true);
           resolve(client);
         }
@@ -188,18 +213,20 @@ async function connectWithRetry(
         if (!settled) {
           settled = true;
           cleanup();
+          if (generation !== state.generation) { reject(new Error("Gateway connection cancelled")); return; }
           setRpcClientInitialized(false);
-          handleConnectionFailure(error, url, connect, attempt, reject);
+          handleConnectionFailure(error, url, connect, attempt, reject, generation);
         }
       },
       onClose: () => {
+        if (generation !== state.generation) return;
         setRpcClientInitialized(false);
-        _gatewayClient = null;
-        _gatewayReadyPromise = null;
+        bridgeState()._gatewayClient = null;
+        bridgeState()._gatewayReadyPromise = null;
       },
     });
 
-    _gatewayClient = client;
+    bridgeState()._gatewayClient = client;
     client.start();
   });
 }
@@ -211,10 +238,12 @@ function handleConnectionFailure(
   connect: Record<string, unknown>,
   attempt: number,
   reject: (reason: Error) => void,
+  generation: number,
 ): void {
-  const failedClient = _gatewayClient;
-  _gatewayClient = null;
-  _gatewayReadyPromise = null;
+  if (generation !== bridgeState().generation) { reject(new Error("Gateway connection cancelled")); return; }
+  const failedClient = bridgeState()._gatewayClient;
+  bridgeState()._gatewayClient = null;
+  bridgeState()._gatewayReadyPromise = null;
   try {
     failedClient?.stop();
   } catch {
@@ -224,9 +253,10 @@ function handleConnectionFailure(
   const nextAttempt = attempt + 1;
   if (nextAttempt < MAX_RECONNECT_ATTEMPTS) {
     // 延迟后重试
-    _reconnectTimer = setTimeout(() => {
-      _reconnectTimer = null;
-      _gatewayReadyPromise = connectWithRetry(url, connect, nextAttempt);
+    bridgeState()._reconnectTimer = setTimeout(() => {
+      if (generation !== bridgeState().generation) return;
+      bridgeState()._reconnectTimer = null;
+      bridgeState()._gatewayReadyPromise = connectWithRetry(url, connect, nextAttempt);
       // 重连 Promise 静默替换，下次 rpcCall 会使用新的
     }, RECONNECT_DELAY_MS);
     reject(new Error(

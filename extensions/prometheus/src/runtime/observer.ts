@@ -11,16 +11,13 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { MetricSample } from "../types.js";
 import { sanitizeLabel } from "../shared/label-sanitize.js";
-import { getRuntimeStore, listObservedChannelAccounts, rememberObservedChannelAccount, setSnapshotState } from "./store.js";
+import { bindRuntimeOwner, currentRuntimeOwner, getRuntimeStore, listObservedChannelAccounts, rememberObservedChannelAccount, setSnapshotState } from "./store.js";
 
 const PROVIDER_STATUSES = ["ok", "missing", "error"] as const;
 
 // ─────────── HTTP 延迟环形缓冲区（用于计算 P95/P99） ───────────
-const HTTP_LATENCY_SAMPLES: number[] = [];
 const HTTP_LATENCY_MAX_SAMPLES = 1000;
-let runtimeDisposers: Array<() => void> = [];
-let snapshotRefreshPromise: Promise<void> | null = null;
-let observerGeneration = 0;
+
 
 /**
  * Hook 中的 tool/channel 等字段来自运行时扩展，不能假设天然低基数。
@@ -29,14 +26,31 @@ let observerGeneration = 0;
  * 4096 series 总上限之前，避免单个动态 tool 名称族先耗尽整个 exporter 的系列预算。
  */
 const DYNAMIC_LABEL_VALUE_LIMIT = 64;
-const dynamicLabelValues = new Map<string, Set<string>>();
+type ObserverState = {
+  HTTP_LATENCY_SAMPLES: number[];
+  runtimeDisposers: Array<() => void>;
+  snapshotRefreshPromise: Promise<void> | null;
+  observerGeneration: number;
+  dynamicLabelValues: Map<string, Set<string>>;
+};
+const observerStates = new WeakMap<object, ObserverState>();
+function observerState(): ObserverState {
+  const owner = currentRuntimeOwner();
+  let state = observerStates.get(owner);
+  if (!state) {
+    state = { HTTP_LATENCY_SAMPLES: [], runtimeDisposers: [], snapshotRefreshPromise: null,
+      observerGeneration: 0, dynamicLabelValues: new Map() };
+    observerStates.set(owner, state);
+  }
+  return state;
+}
 
 function boundedDynamicLabel(family: string, value: unknown): string {
   const normalized = typeof value === "string" && value.trim()
     ? sanitizeLabel(value)
     : "unknown";
-  const observed = dynamicLabelValues.get(family) ?? new Set<string>();
-  if (!dynamicLabelValues.has(family)) dynamicLabelValues.set(family, observed);
+  const observed = observerState().dynamicLabelValues.get(family) ?? new Set<string>();
+  if (!observerState().dynamicLabelValues.has(family)) observerState().dynamicLabelValues.set(family, observed);
   if (observed.has(normalized)) return normalized;
   if (observed.size >= DYNAMIC_LABEL_VALUE_LIMIT) return "other";
   observed.add(normalized);
@@ -57,20 +71,25 @@ export function registerPluginObservers(api: OpenClawPluginApi): void {
   registerSupplementaryPluginHooks(api);
 }
 
+/** 同一注册实例的 service 重启时仅恢复运行时事件订阅，避免重复注册 SDK hooks。 */
+export function restartPluginRuntimeEventListeners(api: OpenClawPluginApi): void {
+  registerRuntimeEventListeners(api);
+}
+
 /** 释放全部运行时事件订阅并清空进程内延迟采样，防止插件热重载后重复计数。 */
 export function stopPluginObservers(): void {
   // 代际递增使已经发出的 Provider 探测只能结束自身，不能写入热重载后的新 RuntimeStore。
-  observerGeneration += 1;
-  snapshotRefreshPromise = null;
-  for (const dispose of runtimeDisposers.splice(0)) {
+  observerState().observerGeneration += 1;
+  observerState().snapshotRefreshPromise = null;
+  for (const dispose of observerState().runtimeDisposers.splice(0)) {
     try {
       dispose();
     } catch {
       // Shutdown must remain best-effort.
     }
   }
-  HTTP_LATENCY_SAMPLES.length = 0;
-  dynamicLabelValues.clear();
+  observerState().HTTP_LATENCY_SAMPLES.length = 0;
+  observerState().dynamicLabelValues.clear();
 }
 
 /** @description 注册 gateway / session 生命周期 hooks。 */
@@ -203,7 +222,9 @@ function registerToolHooks(api: OpenClawPluginApi): void {
 
 /** @description 订阅 api.runtime.events 上的 Agent / 会话转录事件。 */
 function registerRuntimeEventListeners(api: OpenClawPluginApi): void {
-  const disposeAgentEvents = api.runtime.events?.onAgentEvent?.((event) => {
+  const generation = observerState().observerGeneration;
+  const disposeAgentEvents = api.runtime.events?.onAgentEvent?.(bindRuntimeOwner((event) => {
+    if (generation !== observerState().observerGeneration) return;
     try {
       const { registry } = getRuntimeStore();
       registry.inc("openclaw_agent_events_total", 1, {
@@ -225,10 +246,11 @@ function registerRuntimeEventListeners(api: OpenClawPluginApi): void {
     } catch {
       // 静默吞下 listener 异常，避免中断事件流
     }
-  });
-  if (typeof disposeAgentEvents === "function") runtimeDisposers.push(disposeAgentEvents);
+  }));
+  if (typeof disposeAgentEvents === "function") observerState().runtimeDisposers.push(disposeAgentEvents);
 
-  const disposeTranscript = api.runtime.events?.onSessionTranscriptUpdate?.((update) => {
+  const disposeTranscript = api.runtime.events?.onSessionTranscriptUpdate?.(bindRuntimeOwner((update) => {
+    if (generation !== observerState().observerGeneration) return;
     try {
       const { registry } = getRuntimeStore();
       registry.inc("openclaw_session_transcript_updates_total", 1, {
@@ -247,8 +269,8 @@ function registerRuntimeEventListeners(api: OpenClawPluginApi): void {
     } catch {
       // 静默吞下 listener 异常
     }
-  });
-  if (typeof disposeTranscript === "function") runtimeDisposers.push(disposeTranscript);
+  }));
+  if (typeof disposeTranscript === "function") observerState().runtimeDisposers.push(disposeTranscript);
 }
 
 /**
@@ -423,14 +445,15 @@ function normalizeSubagentOutcome(outcome: unknown): string {
  * @param force - 为 true 时跳过间隔节流立即刷新
  */
 export async function refreshRuntimeSnapshots(force = false): Promise<void> {
-  if (snapshotRefreshPromise) return snapshotRefreshPromise;
-  const generation = observerGeneration;
+  const state = observerState();
+  if (state.snapshotRefreshPromise) return state.snapshotRefreshPromise;
+  const generation = observerState().observerGeneration;
   const pending = refreshRuntimeSnapshotsInternal(force, generation);
-  snapshotRefreshPromise = pending;
+  observerState().snapshotRefreshPromise = pending;
   try {
     await pending;
   } finally {
-    if (snapshotRefreshPromise === pending) snapshotRefreshPromise = null;
+    if (observerState().snapshotRefreshPromise === pending) observerState().snapshotRefreshPromise = null;
   }
 }
 
@@ -474,7 +497,7 @@ async function refreshRuntimeSnapshotsInternal(force: boolean, generation: numbe
   );
 
   // stop/reload 发生后旧探测结果作废，避免把旧凭据状态写进新插件代际。
-  if (generation !== observerGeneration) return;
+  if (generation !== observerState().observerGeneration) return;
 
   setSnapshotState({
     refreshedAt: now,
@@ -626,20 +649,20 @@ function stringOr(value: unknown, fallback: string): string {
  * @param seconds - 请求耗时（秒）
  */
 export function recordHttpLatency(seconds: number): void {
-  HTTP_LATENCY_SAMPLES.push(seconds);
-  if (HTTP_LATENCY_SAMPLES.length > HTTP_LATENCY_MAX_SAMPLES) {
-    HTTP_LATENCY_SAMPLES.shift();
+  observerState().HTTP_LATENCY_SAMPLES.push(seconds);
+  if (observerState().HTTP_LATENCY_SAMPLES.length > HTTP_LATENCY_MAX_SAMPLES) {
+    observerState().HTTP_LATENCY_SAMPLES.shift();
   }
 }
 
 /**
- * @description 根据 HTTP_LATENCY_SAMPLES 刷新 P95/P99 与缓冲区使用率 gauge。
+ * @description 根据 observerState().HTTP_LATENCY_SAMPLES 刷新 P95/P99 与缓冲区使用率 gauge。
  */
 export function refreshHttpLatencyMetrics(): void {
   const { registry } = getRuntimeStore();
 
-  if (HTTP_LATENCY_SAMPLES.length > 0) {
-    const sortedValues = [...HTTP_LATENCY_SAMPLES].sort((a, b) => a - b);
+  if (observerState().HTTP_LATENCY_SAMPLES.length > 0) {
+    const sortedValues = [...observerState().HTTP_LATENCY_SAMPLES].sort((a, b) => a - b);
     const p95Index = Math.floor(sortedValues.length * 0.95);
     const p99Index = Math.floor(sortedValues.length * 0.99);
 
@@ -652,10 +675,10 @@ export function refreshHttpLatencyMetrics(): void {
   }
 
   // ─────────── 环形缓冲区使用率监控 ───────────
-  registry.set("openclaw_http_latency_samples_used", HTTP_LATENCY_SAMPLES.length, {
+  registry.set("openclaw_http_latency_samples_used", observerState().HTTP_LATENCY_SAMPLES.length, {
     help: "Number of HTTP latency samples in buffer",
   });
-  registry.set("openclaw_http_latency_samples_usage_ratio", HTTP_LATENCY_SAMPLES.length / HTTP_LATENCY_MAX_SAMPLES, {
+  registry.set("openclaw_http_latency_samples_usage_ratio", observerState().HTTP_LATENCY_SAMPLES.length / HTTP_LATENCY_MAX_SAMPLES, {
     help: "HTTP latency buffer usage ratio (0~1)",
   });
 }
