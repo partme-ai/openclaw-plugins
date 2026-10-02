@@ -27,7 +27,7 @@ flowchart LR
 | 全量安装态复验 | 共享模型夹具和配置改变后，重新运行 27 项场景；最新报告逐项为 E2E PASS、`skipCount=0`、`skipInstall=false`、`skipBrowser=false`、候选包 SHA 有值、宿主 2026.9.6；`node scripts/check-e2e-evidence.mjs` 退出 0 |
 | 浏览器 | Web-MQTT、Web-Socket、Web-STOMP 均使用本机 Chrome 完成真实浏览器断言，三份最新报告均为 browser PASS |
 
-全量矩阵使用 24 个单插件场景和 3 个组合场景：Bridge+MQTT、Router+Gotify、Tracing+MQTT。所有最新报告的 `gatewayMode=host`；需要后端服务的场景仍使用 Docker。共享输入改动前的报告保留为历史证据，未用于本轮 27/27 门禁。
+全量矩阵使用 24 个单插件场景和 3 个组合场景：Bridge+MQTT、Router+Gotify、Tracing+MQTT。该次全量矩阵的 27 项报告均为 `gatewayMode=host`；需要后端服务的场景仍使用 Docker。后续单项 Prometheus 容器 Gateway 复验见下表。共享输入改动前的报告保留为历史证据，未用于本轮 27/27 门禁。
 
 ## 本机环境偏差与边界
 
@@ -35,7 +35,7 @@ flowchart LR
 | --- | --- |
 | 18080 被无关容器占用，Gotify 默认端口无法绑定 | 只对 Gotify 和 Router+Gotify 设置 `E2E_GOTIFY_PORT=18081` 与对应 `GOTIFY_URL`；未触碰占用者 |
 | mTLS 错误地以 Docker Gateway 启动，未加载 mTLS 插件，18443 不监听 | 保留失败日志；按 E2E README 的宿主 Gateway 模式重跑，PASS |
-| Prometheus 使用的 Docker 测试容器报告 `/state/state/openclaw.sqlite` malformed | 保留失败归档；使用独立 `queue-e2e` 宿主 Gateway 重跑，PASS；未修改或删除损坏卷 |
+| 先前 Prometheus 容器运行曾报告 `/state/state/openclaw.sqlite` malformed | 当次报错的原始日志和库快照在当前工作树不可得；当时改用独立 `queue-e2e` 宿主 Gateway 重跑，PASS。后续在全新 `/tmp/openclaw-container-e2e.*` 状态目录以容器 Gateway 重跑安装态 Prometheus，PASS、`skipCount=0`；报告为 `scripts/e2e/reports/2026-10-02T13-02-26.485Z-prometheus-38775f34-3121-49de-9d5f-dbd53c9f7907.json`，OpenClaw 2026.9.6、Node v24.18.0、候选 tarball SHA-256 `9b71aa17669245cee78ac71fa6671c5a93ac1d7cb70b99df08145072b2cbcdc3`。当前默认测试库和本轮隔离测试库的只读 `PRAGMA integrity_check` 均为 `ok`；无法据此确定先前报错原因。 |
 | Playwright 默认缓存缺少 Chromium headless shell | 仅三组 Web 场景设置 `OPENCLAW_E2E_BROWSER_EXECUTABLE` 为本机 Google Chrome，三组浏览器均 PASS；未安装新浏览器 |
 
-受保护代理和 Sidecar 均为本机临时环境，Sidecar 本机 HTTP 端口仍可由同机进程直接访问。通用 27 项证据门禁不检查受保护 wrapper，故本轮单独核对 wrapper SHA、底层报告及代理成功计数；受保护归档未保存工具正文或脱敏引用摘要，后续复用仍需结合当前断言源码。Docker 测试卷损坏尚未修复。跨主机/网络卷的单写入约束、真实断电/部署恢复、已部署认证代理和厂商真实回调继续未验收；本地通过不等于生产环境就绪。
+受保护代理和 Sidecar 均为本机临时环境，Sidecar 本机 HTTP 端口仍可由同机进程直接访问。通用 27 项证据门禁不检查受保护 wrapper，故本轮单独核对 wrapper SHA、底层报告及代理成功计数；受保护归档未保存工具正文或脱敏引用摘要，后续复用仍需结合当前断言源码。后续容器模式 Prometheus 复验通过，`node scripts/check-e2e-evidence.mjs` 对当前 27 项证据仍退出 0；先前容器状态库报错的根因没有保留下来可供复核。跨主机/网络卷的单写入约束、真实断电/部署恢复、已部署认证代理和厂商真实回调继续未验收；本地通过不等于生产环境就绪。
