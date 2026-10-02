@@ -151,7 +151,9 @@
 - [x] 插件只在 Sidecar 明确声明幂等且可恢复时重试；下一会话开始前处理持久意图；旧 Sidecar 保持人工对账。
 - [x] Core 16/16、Server 7/7、插件 47/47、构建和类型检查，以及 OpenClaw 2026.9.6 tarball 安装态 OpenMem 场景通过；Core 包含文件路径边界回归。
 - [x] 本地真实 Sidecar 进程在归档写入后注入记忆写入失败，强制结束、重启并重试；归档/事实 ID、Markdown 和终态保持一致，检索可命中原始事实。该检索接口存在回退路径，不能据此证明故障恢复场景的 FTS 索引完整；见[本地复验记录](../reports/2026-10-02-local-gateway-sidecar-callbacks.md)。
-- [x] 单写入者启动防护：本地两个生产入口进程指向同一数据目录时，第二个在监听前明确拒绝；首个正常退出或 `SIGKILL` 后新进程可取得写入权，提交与同 ID 重放通过。RED 先复现第二实例错误监听；修复并发双拒绝后 15/15 次本机竞争通过，Core 16/16、Server 14/14、独立审查 Critical/Important/Minor 均为 0。OpenMem 提交 `52145c4` 和[本地证据](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)记录了运行边界；半提交故障恢复仍由前一项单独验证。
+- [x] 单写入者启动防护：本地两个生产入口进程指向同一数据目录时，第二个在监听前明确拒绝；首个正常退出或 `SIGKILL` 后新进程可取得写入权，提交与同 ID 重放通过。RED 先复现第二实例错误监听；修复并发双拒绝后 15/15 次本机竞争通过。追加 `1cf0d23` 在真实生产入口复现归档已落盘、事实写入失败，再 `SIGKILL`、接管并同 ID 重放，唯一产物与直接 FTS 三行匹配；独立审查通过。见[本地证据](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)。
+- [x] 生产入口默认仅监听 loopback；显式外部绑定可供受保护代理使用，日志显示实际绑定地址。本机旧入口 `lsof` 显示 `*`，新进程绑定测试 6/6，通过独立审查；保留程序化入口的独立边界，见[本地证据](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)。
+- [x] HTTP 应用在所有路由前拒绝不可信 Host/Origin 和跨站浏览器请求，默认不向任意 Origin 开放 CORS；受保护代理 Host/Origin 显式配置，CLI/Gateway 无 Origin 请求继续可用。GET 工作记忆不落盘新文件；本地预检、表单 POST、DNS rebinding、同源和代理配置测试通过，独立安全审查以真实 HTTP 验证五类拒绝后零会话，见[本地证据](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)。
 - [ ] 跨主机/网络卷的单写入约束、真实断电/部署恢复和受保护网络验收；[本地并发及代理探测](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)已复现旧入口双 Sidecar 共享目录的 SQLite 锁冲突，新生产入口在本机拒绝第二写入者，本地 HTTPS 测试代理通过但不代表真实部署。[预发环境发现与入口清单](../reports/2026-10-02-preprod-discovery.md)已记录；完成独立环境验收后才能把该协议视为生产环境已验收。
 
 共享安装门禁的 OpenMem 包摘要更新后，已重新运行 27 个插件的安装态场景；`check-e2e-evidence` 对当前候选物退出 0。旧报告只作为历史证据。

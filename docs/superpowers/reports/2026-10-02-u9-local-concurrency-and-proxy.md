@@ -1,6 +1,6 @@
 # U9 本地多写入者与受保护代理探测
 
-日期：2026-10-02。对应 [OpenClaw 2026.9.6 升级规格](../specs/2026-09-29-openclaw-2026-9-6-upgrade.md) 的 U9 和 [实施计划](../plans/2026-09-29-openclaw-2026-9-6-upgrade.md) Task 9。测试仅访问本机 loopback 和独立临时目录，未使用个人 Gateway、厂商账号或生产数据。OpenMem 源码仓库测试后为干净的 `main`，测试进程和数据目录已清理。
+日期：2026-10-02。对应 [OpenClaw 2026.9.6 升级规格](../specs/2026-09-29-openclaw-2026-9-6-upgrade.md) 的 U9 和 [实施计划](../plans/2026-09-29-openclaw-2026-9-6-upgrade.md) Task 9。测试使用本机隔离进程和临时数据目录，未使用个人 Gateway、厂商账号或生产数据；安装态 E2E 使用独立 `queue-e2e` Gateway profile。初始探测结束后，OpenMem 已在隔离工作树继续补充生产入口与 HTTP 边界测试。
 
 ## 运行结果
 
@@ -22,8 +22,16 @@ OpenMem 的隔离实施与独立审查已完成并推送，最终提交 `52145c4
 
 使用最终 OpenMem 提交重新执行 `OPENMEM_E2E_REPO=... node scripts/e2e/run-e2e.mjs --plugins openmem`：OpenClaw 2026.9.6、Node v24.18.0 的 tarball 安装态 Gateway Agent Turn、归档和 Gateway 重启后续轮次均 PASS，`skipCount=0`；归档为 `scripts/e2e/reports/2026-10-02T08-49-10.208Z-openmem-568ce2c6-6715-4865-a629-4ba0e9a63195.json`。该 E2E 的 Sidecar 启动器通过 programmatic `createApp`，不经过新生产入口；锁接管由上述真实生产进程测试单独证明。`node scripts/check-e2e-evidence.mjs` 对当前 27 个插件候选物继续退出 0。
 
+## 生产入口半提交与 HTTP 边界补测
+
+OpenMem 隔离工作树追加 `1cf0d23`：真实 `dist/index.js` 进程取得单写入者锁后，临时撤销 `memories/` 目录的写权限，使归档 JSON/Markdown 和提交快照已落盘、事实 JSON 尚未写入时，提交返回 HTTP 500。保持故障至 `SIGKILL`，恢复权限，新生产进程接管同一目录。两次 POST 重放保持同一归档/事实 ID，唯一 JSON/Markdown 和 `ARCHIVED` 终态成立；直接查询 SQLite FTS 得到事件、归档、事实各一行，全文 `MATCH` 三行。新增用例独立连续 5 次通过，独立审查 Spec PASS、Quality APPROVE。它验证本机权限故障与进程接管，不是实际断电。
+
+本机探测旧生产入口时，日志声称 `127.0.0.1`，`lsof` 却显示 `TCP *:53970 (LISTEN)`；旧 HTTP 应用对任意 Origin 的预检返回 204 与 `Access-Control-Allow-Origin: *`，跨站表单 POST `/sessions/start` 返回 201。OpenMem 提交 `4af8490`、`b583486` 将生产入口默认绑定 `127.0.0.1`，外部接口需显式 `OPENMEM_HOST`，日志读取实际绑定地址；`0afdd62` 使工作记忆 GET 不落盘，未知会话 404，已有会话缺失记录时返回稳定空视图，API 空 ID 语义已写入 OpenMem README。`1eec6b7`、`ad9cb0d` 在所有 HTTP 路由前校验原始 Host/Origin 与 Fetch Metadata，拒绝不可信和 `null` Origin、跨站表单及 DNS rebinding Host；受保护代理 Host/Origin 须显式列入允许列表，CLI/Gateway 无 Origin 请求保持可用。后续独立安全审查以真实 HTTP 探测五种拒绝路径，均返回 403，事后会话数为 0；Spec PASS、Quality APPROVE，Critical/Important/Minor 均为 0。Host/Origin 防护不是请求鉴权，显式开放外部 Host 时仍需认证代理与网络隔离。
+
+合并后的 OpenMem `pnpm test`：Core 16/16、Server 33/33，完整 `pnpm build` 退出 0（Web 构建存在非失败的 Sass/Browserslist/体积警告）。最终候选物再次执行 `OPENMEM_E2E_REPO=... node scripts/e2e/run-e2e.mjs --plugins openmem`：OpenClaw 2026.9.6、Node v24.18.0，插件单元 47/47，tarball 安装态 Gateway Agent Turn、归档、Gateway 重启后下一轮连续性均 PASS；`skipCount=0`、`skipInstall=false`、`skipBrowser=false`。归档为 `scripts/e2e/reports/2026-10-02T10-49-03.232Z-openmem-0e293449-4d85-4364-801f-f390f8faaafd.json`；`node scripts/check-e2e-evidence.mjs` 对 27 个运行时插件候选物退出 0。此 E2E 的 Sidecar 仍由程序化 `createApp` 启动，生产入口锁和监听防护由上面的真实进程测试单独证明。OpenMem 仓库 `lint` 命令因未安装 ESLint 无法执行；没有据此声称 lint 通过，也未安装新依赖。
+
 ## 验收结论
 
-本地单写入者的指定故障恢复，以及测试代理上的 TLS/令牌/重放探测通过。**旧入口的多写入者共享数据目录在本机复现 HTTP 500；新生产入口现在以运行时锁强制每个数据目录单写入者，第二实例在监听前拒绝。** 直接调用 Sidecar 引擎的其他入口不受该锁保护。Task 9 的跨主机/网络卷单写入约束、真实断电/部署恢复和受保护网络验收保持未完成；本地测试代理不得记为预发或生产验收。
+本地单写入者、生产入口半提交恢复、默认回环监听、Host/Origin 防护及测试代理上的 TLS/令牌/重放探测通过。**旧入口的多写入者共享数据目录在本机复现 HTTP 500；新生产入口以运行时锁强制每个数据目录单写入者，第二实例在监听前拒绝。** 直接调用 Sidecar 引擎的其他入口不受该锁保护。Task 9 的跨主机/网络卷单写入约束、真实断电/部署恢复和受保护网络验收保持未完成；本地测试代理不得记为预发或生产验收。
 
 真实厂商回调继续以 [本地 Gateway、Sidecar 与回调夹具复验](2026-10-02-local-gateway-sidecar-callbacks.md) 的本机夹具结果为准。没有厂商平台实际投递证据。
