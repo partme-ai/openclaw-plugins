@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommittedPersistenceError, DurableRouteStore } from "../src/durable-store.js";
 import { ReliableRouteDispatcher, stableDeliveryKey } from "../src/reliable-dispatcher.js";
 import type { RouterConfig } from "../src/types.js";
+import { onInternalDiagnosticEvent, waitForDiagnosticEventsDrained } from "openclaw/plugin-sdk/diagnostic-runtime";
 
 const directories: string[] = [];
 
@@ -65,6 +66,42 @@ afterEach(async () => {
 });
 
 describe("ReliableRouteDispatcher", () => {
+  it("records retry then delivered once and classifies an exhausted timeout as ambiguous", async () => {
+    const events: Array<{ attributes?: Record<string, unknown> }> = [];
+    const stop = onInternalDiagnosticEvent((event) => {
+      if (event.type === "log.record" && event.loggerName === "partme.delivery-recall.v1") events.push(event);
+    });
+    try {
+      const firstDir = await stateDir();
+      const firstConfig = config({ maxAttempts: 2 });
+      const publish = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
+      const first = new ReliableRouteDispatcher(api(), firstConfig, new DurableRouteStore(firstDir, firstConfig), publish);
+      await first.start();
+      await first.enqueue({ dedupeKey: "retry-success", ruleId: "r", actionType: "forward",
+        payload: { channel: "mqtt", content: "hello" } });
+      await waitFor(async () => (await first.status()).delivered === 1);
+      await first.stop();
+
+      const secondDir = await stateDir();
+      const secondConfig = config({ maxAttempts: 1, publishTimeoutMs: 10 });
+      const second = new ReliableRouteDispatcher(api(), secondConfig, new DurableRouteStore(secondDir, secondConfig),
+        () => new Promise<void>(() => {}));
+      await second.start();
+      await second.enqueue({ dedupeKey: "unknown-final", ruleId: "r", actionType: "forward",
+        payload: { channel: "mqtt", content: "hello" } });
+      await waitFor(async () => (await second.deadLetters(10)).length === 1);
+      await second.stop();
+      await waitForDiagnosticEventsDrained();
+      const facts = events.map((event) => event.attributes);
+      expect(facts.filter((fact) => fact?.event === "retry" && fact?.channel === "router")).toHaveLength(1);
+      expect(facts.filter((fact) => fact?.event === "settlement" && fact?.outcome === "delivered")).toHaveLength(1);
+      expect(facts.filter((fact) => fact?.event === "settlement" && fact?.outcome === "ambiguous")).toHaveLength(1);
+      expect(facts.filter((fact) => fact?.event === "settlement" && fact?.outcome === "failed")).toHaveLength(0);
+      expect(facts.filter((fact) => fact?.event === "dlq" && fact?.entries === 1)).toHaveLength(1);
+    } finally {
+      stop();
+    }
+  });
   it("commits only after publish succeeds and suppresses a persisted duplicate", async () => {
     const directory = await stateDir();
     const resolved = config();

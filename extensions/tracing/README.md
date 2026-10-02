@@ -123,6 +123,8 @@ Production-oriented message and tool tracing for OpenClaw 2026.7.1.
 creates an OpenTelemetry-compatible root span for each sampled message and a
 child span for each tool call.
 
+Delivery start, final settlement, retry, Router DLQ depth, and memory recall facts from the public OpenClaw diagnostics bus produce `delivery.*` and `memory.recall` spans. The versioned envelope accepts fixed event kinds and bounded attributes only; run/message/delivery identifiers are SHA-256 pseudonyms and message bodies or credentials are not copied. A delivery start and its settlement share the same pseudonymous delivery ID. On OpenClaw 2026.9.6, the installed-host MQTT probe found no active host trace scope at SDK delivery, so Agent root and delivery spans do not share a trace ID; this Agent-to-delivery link remains incomplete. On Gateway stop, tracing invalidates the old generation immediately and flushes already accepted spans within its shutdown timeout. Queued diagnostics that have not reached the subscriber are reported as potentially incomplete. `diagnostics.enabled=false` suppresses these spans.
+
 The plugin supports three real export paths:
 
 - `log`: one compact JSON object per completed span through the OpenClaw logger.
@@ -237,7 +239,7 @@ Configure Gateway authentication before exposing these endpoints. With `gateway.
 
 The plugin registers a Control UI status tab backed by `GET /tracing/status`. Its server-issued read Cookie is scoped to that exact route; trace-list and detail requests require normal Gateway authorization.
 
-Each registration owns its backend, cleanup timer, Hook queue, and active TraceStore. Stopping an older registration leaves a newer one active. The completed-trace SQLite journal remains shared by registrations within the same OpenClaw state profile so Gateway routes can query spans written by a separate Hook runtime.
+Each registration owns its backend, cleanup timer, Hook queue, and active TraceStore. Diagnostic events carry a host process sequence number; registrations in that process share a bounded 2048-sequence claim set, so one live registration exports each delivery fact. A registration without a live backend leaves the event for another subscriber. Stopping an older registration leaves a newer one active. The completed-trace SQLite journal remains shared by registrations within the same OpenClaw state profile so Gateway routes can query spans written by a separate Hook runtime.
 
 - `GET /tracing/status`
 - `GET /tracing/traces?limit=50` (`1..200`)

@@ -17,6 +17,7 @@ import * as fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
+import { emitRecallTelemetry } from "@partme.ai/openclaw-message-sdk/transport";
 
 import type { MemoryPluginCapability } from "openclaw/plugin-sdk/memory-host-core";
 
@@ -272,6 +273,8 @@ export class MemoryStore {
       signal?: AbortSignal;
     },
   ): Promise<MemorySearchResult[]> {
+    const startedAt = performance.now();
+    try {
     this.ensureReady();
     if (opts?.maxResults !== undefined && (!Number.isInteger(opts.maxResults) || opts.maxResults < 1)) {
       throw new Error("[memory] maxResults must be a positive integer");
@@ -348,6 +351,9 @@ export class MemoryStore {
       }
     }
     return results.sort((left, right) => right.score - left.score).slice(0, maxResults);
+    } finally {
+      emitRecallTelemetry({ plugin: "memory", durationMs: performance.now() - startedAt });
+    }
   }
 
   private async readFile(agentId: string, relPath: string, from?: number, lines?: number) {

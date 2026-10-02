@@ -6,6 +6,7 @@
  * 不确定”，两类情况都会降低健康状态，避免把无法证明的投递结果误报为完全成功。
  */
 import { createHash, randomUUID } from "node:crypto";
+import { emitDeliveryTelemetry } from "@partme.ai/openclaw-message-sdk/transport";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
@@ -101,6 +102,7 @@ export class ReliableRouteDispatcher {
 
   async start(): Promise<void> {
     await this.store.initialize();
+    emitDeliveryTelemetry({ event: "dlq", channel: "router", entries: (await this.store.snapshot()).deadLetters });
     if (!this.publish) {
       // 初始化已经持有 writer lease；启动失败必须释放，否则同目录后续实例无法接管。
       await this.store.close();
@@ -151,6 +153,7 @@ export class ReliableRouteDispatcher {
 
   async replayDeadLetters(limit: number): Promise<number> {
     const count = await this.store.replayDeadLetters(limit);
+    if (count > 0) emitDeliveryTelemetry({ event: "dlq", channel: "router", entries: (await this.store.snapshot()).deadLetters });
     if (count > 0) this.wake();
     return count;
   }
@@ -237,26 +240,33 @@ export class ReliableRouteDispatcher {
         this.lastError = errorMessage(error);
         this.lastErrorAt = Date.now();
         this.counters.delivered += 1;
+        emitDeliveryTelemetry({ event: "settlement", channel: "router", outcome: "ambiguous", deliveryId: task.id });
         this.api.logger.error(`[router] delivery committed with uncertain directory durability task=${task.id}: ${this.lastError}`);
         return;
       }
       this.counters.delivered += 1;
+      emitDeliveryTelemetry({ event: "settlement", channel: "router", outcome: "delivered", deliveryId: task.id });
       if (this.config.audit.logToConsole) this.api.logger.info(`[router] delivered task=${task.id} rule=${task.ruleId} target=${task.payload.channel}`);
     } catch (error) {
       // 同一份脱敏文本同时进入状态、持久 DLQ/审计和日志，避免不同出口遗漏凭据。
       const diagnostic = errorMessage(error);
       this.lastError = diagnostic;
       this.lastErrorAt = Date.now();
-      if (error instanceof Error && error.name === "RouterDeliveryTimeoutError") this.counters.unknownOutcomes += 1;
+      const timedOut = error instanceof Error && error.name === "RouterDeliveryTimeoutError";
+      if (timedOut) this.counters.unknownOutcomes += 1;
       const attempts = task.attempts + 1;
       const dead = attempts >= this.config.delivery.maxAttempts;
       const nextAttemptAt = dead ? null : Date.now() + this.retryDelay(attempts);
-      const outcome = await this.store.markFailed(task, diagnostic, nextAttemptAt);
+      const outcome = await this.store.markFailed(task, diagnostic, nextAttemptAt, timedOut);
       if (outcome === "dead-letter") {
         this.counters.deadLetters += 1;
+        emitDeliveryTelemetry({ event: "settlement", channel: "router",
+          outcome: timedOut || task.outcomeUncertain ? "ambiguous" : "failed", deliveryId: task.id });
+        emitDeliveryTelemetry({ event: "dlq", channel: "router", entries: (await this.store.snapshot()).deadLetters });
         this.api.logger.error(`[router] delivery exhausted task=${task.id} rule=${task.ruleId}: ${diagnostic}`);
       } else {
         this.counters.retries += 1;
+        emitDeliveryTelemetry({ event: "retry", channel: "router", deliveryId: task.id });
         this.api.logger.warn(`[router] delivery ${outcome === "blocked" ? "blocked by full DLQ" : `retry ${attempts}/${this.config.delivery.maxAttempts}`} task=${task.id}: ${diagnostic}`);
       }
     } finally {

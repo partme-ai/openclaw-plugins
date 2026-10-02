@@ -9,6 +9,7 @@
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { areDiagnosticsEnabledForProcess } from "openclaw/plugin-sdk/diagnostic-runtime";
 import type { MetricSample } from "../types.js";
 import { sanitizeLabel } from "../shared/label-sanitize.js";
 import { bindRuntimeOwner, currentRuntimeOwner, getRuntimeStore, listObservedChannelAccounts, rememberObservedChannelAccount, setSnapshotState } from "./store.js";
@@ -550,6 +551,9 @@ async function refreshRuntimeSnapshotsInternal(force: boolean, generation: numbe
 export function refreshHousekeepingMetrics(): void {
   const store = getRuntimeStore();
   const { registry, cfg } = store;
+  registry.set("openclaw_delivery_telemetry_enabled", areDiagnosticsEnabledForProcess() ? 1 : 0, {
+    help: "Whether the host diagnostics bus needed for delivery and recall telemetry is enabled",
+  });
   registry.set("openclaw_up", 1, {
     help: "Whether the OpenClaw Prometheus plugin is loaded",
     labels: { instance: cfg.instance || "default" },

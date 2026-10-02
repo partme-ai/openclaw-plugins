@@ -11,7 +11,25 @@ import { TracingSampler } from "./sampler.js";
 import { redactTraceText } from "../shared/redact.js";
 import { createTraceStore } from "./trace-store.js";
 import * as defaultTraceStore from "./trace-store.js";
+import { hasPendingInternalDiagnosticEvent, onInternalDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
+import { createHash } from "node:crypto";
 type TraceStore = ReturnType<typeof createTraceStore>;
+
+// OpenClaw can register the same plugin in multiple scoped runtimes in one
+// process. Its diagnostic seq is process-wide, so claim only after a live
+// backend exists; the bounded global set prevents duplicate OTLP exports.
+const TELEMETRY_SEEN_KEY = Symbol.for("partme.tracing.deliveryTelemetrySeen.v1");
+function claimTelemetryEvent(sequence: unknown): boolean {
+  if (!Number.isSafeInteger(sequence) || (sequence as number) <= 0) return false;
+  const global = globalThis as unknown as Record<symbol, unknown>;
+  let seen = global[TELEMETRY_SEEN_KEY] as Set<number> | undefined;
+  if (!seen) global[TELEMETRY_SEEN_KEY] = seen = new Set<number>();
+  const seq = sequence as number;
+  if (seen.has(seq)) return false;
+  seen.add(seq);
+  if (seen.size > 2048) seen.delete(seen.values().next().value!);
+  return true;
+}
 
 /** 单次 Gateway 生命周期中供所有 tracing hooks 共享的后端、采样器与不可变配置。 */
 export interface TracingHookContext {
@@ -97,6 +115,10 @@ function toolBindingKey(toolCallId: string, traceId: string): string {
   return JSON.stringify([traceId, toolCallId]);
 }
 
+function correlationId(value: string): string {
+  return `id_${createHash("sha256").update(value).digest("hex").slice(0, 24)}`;
+}
+
 /** hooks 只注册一次，通过 provider 获取当前 gateway 生命周期的后端。 */
 export function registerTracingPluginHooks(
   api: OpenClawPluginApi,
@@ -111,6 +133,9 @@ export function registerTracingPluginHooks(
   } = store;
   /** 同一注册实例的 Hook 状态变更串行执行。 */
   const traceOperationChains = new Map<string, Promise<void>>();
+  const telemetryExports = new Set<Promise<void>>();
+  let stopTelemetry: () => void = () => {};
+  let stopPromise: Promise<void> | null = null;
   const hookOpts = { priority: 100 };
   let lifecycleClosed = false;
   let hookGeneration = 0;
@@ -129,18 +154,100 @@ export function registerTracingPluginHooks(
     try { await current; }
     finally { if (traceOperationChains.get(key) === current) traceOperationChains.delete(key); }
   }
-  const stopHooks = async () => {
+  const stopHooks = (): Promise<void> => {
+    if (lifecycleClosed) return stopPromise ?? Promise.resolve();
     lifecycleClosed = true;
     hookGeneration += 1;
+    // Preserve O5 immediate generation invalidation. The host's queued
+    // diagnostics cannot be claimed as collected after this boundary.
+    if (hasPendingInternalDiagnosticEvent((event) => event.type === "log.record" &&
+        event.loggerName === "partme.delivery-recall.v1")) {
+      api.logger.warn("[tracing] diagnostic queue pending at stop; delivery telemetry may be incomplete");
+    }
+    const unsubscribe = stopTelemetry;
+    stopTelemetry = () => {};
+    unsubscribe();
+    const stopping = (async () => {
     const pending = [...traceOperationChains.values()];
     traceOperationChains.clear();
     await Promise.allSettled(pending);
+    await Promise.allSettled([...telemetryExports]);
+    })();
+    stopPromise = stopping;
+    void stopping.finally(() => { if (stopPromise === stopping) stopPromise = null; });
+    return stopping;
   };
+  const subscribeTelemetry = () => onInternalDiagnosticEvent((event) => {
+    if (lifecycleClosed || event.type !== "log.record" || event.loggerName !== "partme.delivery-recall.v1" ||
+        event.level !== "info" || !event.attributes) return;
+    const attributes = event.attributes;
+    const kind = attributes.event;
+    const allowedKinds = ["started", "settlement", "retry", "dlq", "recall"];
+    if (typeof kind !== "string" || !allowedKinds.includes(kind)) return;
+    const allowedKeys = new Set(["event", "channel", "outcome", "plugin", "duration_ms", "entries", "run_id", "message_id", "delivery_id"]);
+    if (Object.keys(attributes).some((key) => !allowedKeys.has(key))) return;
+    for (const key of ["run_id", "message_id", "delivery_id"] as const) {
+      const value = attributes[key];
+      if (value !== undefined && (typeof value !== "string" || !/^id_[a-f0-9]{24}$/u.test(value))) return;
+    }
+    if ((kind === "recall" && event.message !== "recall telemetry") ||
+        (kind !== "recall" && event.message !== "delivery telemetry")) return;
+    if (kind === "recall" && (attributes.plugin !== "memory" && attributes.plugin !== "openmem" ||
+        typeof attributes.duration_ms !== "number" || !Number.isFinite(attributes.duration_ms) ||
+        attributes.duration_ms < 0 || attributes.duration_ms > 600_000 || attributes.channel !== undefined ||
+        attributes.outcome !== undefined || attributes.entries !== undefined || attributes.run_id !== undefined ||
+        attributes.message_id !== undefined || attributes.delivery_id !== undefined)) return;
+    const channels = ["mqtt", "rabbitmq", "redis-stream", "rocketmq", "stomp", "web-mqtt", "web-stomp", "router", "other"];
+    if (kind !== "recall" && (typeof attributes.channel !== "string" || !channels.includes(attributes.channel))) return;
+    if (kind === "settlement" && (!["delivered", "failed", "ambiguous"].includes(String(attributes.outcome)) ||
+        attributes.plugin !== undefined || attributes.duration_ms !== undefined || attributes.entries !== undefined)) return;
+    if (kind === "started" && (attributes.delivery_id === undefined || attributes.outcome !== undefined ||
+        attributes.plugin !== undefined || attributes.duration_ms !== undefined || attributes.entries !== undefined)) return;
+    if (kind === "retry" && (attributes.outcome !== undefined || attributes.plugin !== undefined ||
+        attributes.duration_ms !== undefined || attributes.entries !== undefined)) return;
+    if (kind === "dlq" && (attributes.channel !== "router" || typeof attributes.entries !== "number" ||
+        !Number.isInteger(attributes.entries) || attributes.entries < 0 || attributes.entries > 1_000_000 ||
+        attributes.outcome !== undefined || attributes.plugin !== undefined || attributes.duration_ms !== undefined ||
+        attributes.run_id !== undefined || attributes.message_id !== undefined || attributes.delivery_id !== undefined)) return;
+    if (telemetryExports.size >= 256) {
+      api.logger.warn("[tracing] telemetry export cap reached; delivery telemetry may be incomplete");
+      return;
+    }
+    const generation = hookGeneration;
+    const exportFact = (async () => {
+      const context = await resolveHookContext(api, getLiveContext, "telemetry");
+      if (!context || !isLive(generation)) return;
+      if (!claimTelemetryEvent(event.seq)) return;
+      const fields: Record<string, string | number | boolean> = { "partme.event": kind };
+      for (const key of ["channel", "outcome", "plugin"] as const) {
+        const value = attributes[key];
+        if (typeof value === "string" && /^[a-z-]{1,24}$/u.test(value)) fields[`partme.${key}`] = value;
+      }
+      for (const key of ["run_id", "message_id", "delivery_id"] as const) {
+        const value = attributes[key];
+        if (typeof value === "string" && /^id_[a-f0-9]{24}$/u.test(value)) fields[`partme.${key}`] = value;
+      }
+      const duration = attributes.duration_ms;
+      if (typeof duration === "number" && Number.isFinite(duration) && duration >= 0 && duration <= 600_000) {
+        fields["partme.duration_ms"] = duration;
+      }
+      if (kind === "dlq") fields["partme.entries"] = attributes.entries as number;
+      const span = createSpan(kind === "recall" ? "memory.recall" : `delivery.${kind}`, {
+        kind: "internal", attributes: fields,
+      });
+      await endSpan(span.spanId, kind === "settlement" && attributes.outcome !== "delivered" ? "error" : "ok",
+        context.backend, typeof duration === "number" ? { durationMs: duration } : {});
+    })().catch((error) => logHookError(api, "telemetry export", error));
+    telemetryExports.add(exportFact);
+    void exportFact.finally(() => telemetryExports.delete(exportFact));
+  }, { include: ["log.record"] });
+  stopTelemetry = subscribeTelemetry();
   api.on("gateway_stop", stopHooks, hookOpts);
   api.on("gateway_start", () => {
     if (!lifecycleClosed) return;
     hookGeneration += 1;
     lifecycleClosed = false;
+    stopTelemetry = subscribeTelemetry();
   }, hookOpts);
 
   api.on(
@@ -192,6 +299,8 @@ export function registerTracingPluginHooks(
             ...(sessionKey ? { "openclaw.session_key": sessionKey } : {}),
             ...(runId ? { "openclaw.run_id": runId } : {}),
             ...(messageId ? { "openclaw.message_id": messageId } : {}),
+            ...(runId ? { "partme.run_id": correlationId(runId) } : {}),
+            ...(messageId ? { "partme.message_id": correlationId(messageId) } : {}),
             ...(messageText ? { "openclaw.message_text": messageText } : {}),
           },
         });

@@ -339,10 +339,11 @@ export class DurableRouteStore {
     });
   }
 
-  async markFailed(task: RouteDeliveryTask, error: string, nextAttemptAt: number | null): Promise<"retry" | "dead-letter" | "blocked"> {
+  async markFailed(task: RouteDeliveryTask, error: string, nextAttemptAt: number | null, outcomeUncertain = false): Promise<"retry" | "dead-letter" | "blocked"> {
     let outcome: "retry" | "dead-letter" | "blocked" = nextAttemptAt === null ? "dead-letter" : "retry";
     await this.mutate(async (next) => {
-      const failed = { ...task, attempts: task.attempts + 1, lastError: error };
+      const failed = { ...task, attempts: task.attempts + 1, lastError: error,
+        outcomeUncertain: task.outcomeUncertain === true || outcomeUncertain };
       if (nextAttemptAt === null) {
         if (next.deadLetters.length >= this.config.delivery.maxDeadLetters) {
           outcome = "blocked";

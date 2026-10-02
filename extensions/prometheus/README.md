@@ -135,6 +135,12 @@ Metrics come from two layers:
 
 > After enabling this plugin, **disable** bundled `diagnostics-prometheus` to avoid duplicate subscriptions and duplicate series.
 
+### Delivery and recall telemetry (O6)
+
+`openclaw_delivery_settlements_total{channel,outcome}` records final `delivered`, `failed`, or `ambiguous` facts. `openclaw_delivery_retries_total{channel}` counts retry attempts separately; a retry followed by success contributes one delivered settlement. `openclaw_router_dlq_entries` is the **current durable DLQ depth** and decreases after replay. A publish timeout can mean the target received the message; an exhausted timeout is `ambiguous`, while a proven rejection is `failed`. `openclaw_memory_recall_duration_seconds{plugin}` measures searches in `memory` or `openmem`. Raw run, message, delivery, and session IDs never appear as metric labels.
+
+These facts travel through OpenClaw's public diagnostics `log.record` bus with a versioned `partme.delivery-recall.v1` envelope. The host queues these events asynchronously. Set `diagnostics.enabled` to true; when disabled, `openclaw_delivery_telemetry_enabled` is 0 and `/health` reports `deliveryTelemetry.status: "degraded"`. `/health` also reports `diagnosticQueueDrops`, and `openclaw_diagnostic_async_queue_dropped_total` exposes host queue overload. When either condition occurs, counts may be incomplete. Even with both clear, telemetry is best effort across a process crash between a durable settlement and diagnostic emission. Do not use scrape counts as an ACK ledger. The existing scrape authorization protects both `/metrics` and `/health`.
+
 ## Core capabilities
 
 - **diagnostics-prometheus drop-in**: `src/diagnostics/metric-store.ts` mirrors the official implementation (series cap, low-cardinality labels, histogram buckets).

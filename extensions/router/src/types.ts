@@ -96,4 +96,6 @@ export type RouteDeliveryTask = {
   createdAt: number;
   nextAttemptAt: number;
   lastError?: string;
+  /** An earlier publish timed out, so target receipt cannot be disproved. */
+  outcomeUncertain?: boolean;
 };

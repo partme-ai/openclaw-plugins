@@ -17,6 +17,7 @@ import { dispatchSubagentMessage } from "./subagent-dispatch.js";
 import { createHash } from "node:crypto";
 import { createDeliveryJournal, PendingDeliveryReconciliationError } from "./delivery-journal.js";
 import { resolveOpenClawStateDir } from "../openclaw/state-dir.js";
+import { emitDeliveryTelemetry } from "../transport/telemetry.js";
 import type {
   ChannelDispatchMode,
   ChannelDispatchParams,
@@ -96,12 +97,22 @@ export async function dispatchChannelMessage(
   if (params.requireDeliveryIdentity && !inboundId) {
     throw new Error(`Stable delivery identity is required for ${params.channel}`);
   }
-  if (!inboundId) return dispatchChannelMessageCore(params, wireOptions);
+  const observe = (kind: "delivered" | "ambiguous" | "retryable", runId?: string) => {
+    emitDeliveryTelemetry({ event: kind === "retryable" ? "retry" : "settlement", channel: params.channel,
+      ...(kind === "retryable" ? {} : { outcome: kind }), runId,
+      messageId: params.unified?.messageId, deliveryId: inboundId });
+  };
+  if (!inboundId) {
+    const result = await dispatchChannelMessageCore(params, wireOptions);
+    if (result.deliveryOutcome?.kind === "delivered" || result.deliveryOutcome?.kind === "ambiguous" ||
+        result.deliveryOutcome?.kind === "retryable") observe(result.deliveryOutcome.kind, "runId" in result ? result.runId : undefined);
+    return result;
+  }
 
   const stateDir = resolveOpenClawStateDir();
   const journal = createDeliveryJournal(stateDir);
   const identity = [params.channel, params.accountId, inboundId] as const;
-  const confirmPrepared = (outcome: "delivered" | "no-reply") => {
+  const confirmPrepared = (outcome: "delivered" | "no-reply", runId?: string) => {
     let confirmed = false;
     return () => {
       if (confirmed) return;
@@ -109,6 +120,7 @@ export async function dispatchChannelMessage(
       try {
         confirmation.confirmPreparedSettlement(...identity, outcome);
         confirmed = true;
+        if (outcome === "delivered") observe("delivered", runId);
       } finally {
         confirmation.close();
       }
@@ -124,6 +136,7 @@ export async function dispatchChannelMessage(
       const deliveryOutcome = { kind: outcome } as const;
       return { mode: "reply-pipeline", wireResult: { ctx: { skippedDuplicate: true }, dispatcher: undefined,
         replyOptions: {}, deliveryOutcome }, deliveryOutcome,
+      // Recovery has no persisted run ID; avoid inventing a run correlation.
       ...(claim.startsWith("ack-pending-") ? { confirmDelivery: confirmPrepared(outcome) } : {}) };
     }
 
@@ -136,6 +149,8 @@ export async function dispatchChannelMessage(
       journal.sendStarted(...identity, hash);
       sendAttempted = true;
       sendsStarted++;
+      emitDeliveryTelemetry({ event: "started", channel: params.channel,
+        messageId: params.unified?.messageId, deliveryId: inboundId });
       await deliver(payload);
       journal.sendConfirmed(...identity, hash);
       sendsConfirmed++;
@@ -154,6 +169,7 @@ export async function dispatchChannelMessage(
         // The Agent may have changed state. A broker retry would rerun the turn,
         // while the journal deliberately prevents that replay after restart.
         const deliveryOutcome = { kind: "ambiguous" } as const;
+        observe("ambiguous", "runId" in result ? result.runId : undefined);
         return result.mode === "reply-pipeline"
           ? { ...result, wireResult: { ...result.wireResult, deliveryOutcome }, deliveryOutcome }
           : { ...result, deliveryOutcome };
@@ -166,11 +182,15 @@ export async function dispatchChannelMessage(
           }
           // SQLite commits the recovery disposition before the broker ACK frame is sent.
           journal.prepareSettlement(...identity, outcome);
-          return { ...result, confirmDelivery: confirmPrepared(outcome) };
+          return { ...result, confirmDelivery: confirmPrepared(outcome, "runId" in result ? result.runId : undefined) };
         }
         journal.settle(...identity, result.deliveryOutcome.kind);
+        if (result.deliveryOutcome.kind === "delivered") observe("delivered", "runId" in result ? result.runId : undefined);
       } else if (!agentStarted && !sendAttempted) {
         journal.releaseBeforeSend(...identity);
+      }
+      if (result.deliveryOutcome.kind === "ambiguous" || result.deliveryOutcome.kind === "retryable") {
+        observe(result.deliveryOutcome.kind, "runId" in result ? result.runId : undefined);
       }
       return result;
     } catch (error) {

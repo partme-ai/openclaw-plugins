@@ -22,10 +22,12 @@ import {
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { areDiagnosticsEnabledForProcess, waitForDiagnosticEventsDrained } from "openclaw/plugin-sdk/diagnostic-runtime";
 
 import { DiagnosticsCollector } from "./diagnostics/collector.js";
 import { safeDiagnosticHandlerError } from "./diagnostics/metric-store.js";
 import {
+  getDiagnosticsMetricStore,
   resetDiagnosticsMetricStore,
   startDiagnosticsSubscription,
   stopDiagnosticsSubscription,
@@ -490,6 +492,11 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
       generation += 1;
       const stopping = (async () => {
       try { await pendingStart; } catch { /* Subscription startup has no required external service. */ }
+      // Host log.record diagnostics are queued. Bound shutdown drain so a stuck
+      // dispatcher cannot hold Gateway stop indefinitely.
+      await Promise.race([waitForDiagnosticEventsDrained(), new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 1_000); timer.unref();
+      })]);
       stopDiagnosticsSubscription();
       resetDiagnosticsMetricStore();
       stopPluginObservers();
@@ -628,6 +635,9 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
       const snapshotAge = Date.now() - (store.lastSnapshotRefreshAt ?? 0);
       const snapshotHealthy = snapshotAge <= Math.max(60_000, cfg.snapshotIntervalMs * 2);
       const collectorFailures = diagnosticsFromCollectorMap();
+      const diagnosticQueueDrops = [...getDiagnosticsMetricStore().snapshot().counters]
+        .filter(([key]) => key.startsWith("openclaw_diagnostic_async_queue_dropped_total|"))
+        .reduce((sum, [, sample]) => sum + sample.value, 0);
       const healthy =
         snapshotHealthy &&
         collectorFailures.failed === 0 &&
@@ -652,6 +662,12 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
           lastError: store.lastRpcError ? safeDiagnosticHandlerError(store.lastRpcError) : null,
         },
         collectors: collectorFailures,
+        deliveryTelemetry: {
+          diagnosticsEnabled: areDiagnosticsEnabledForProcess(),
+          subscribed: started,
+          diagnosticQueueDrops,
+          status: !areDiagnosticsEnabledForProcess() || !started || diagnosticQueueDrops > 0 ? "degraded" : "best-effort",
+        },
         snapshot: {
           ageMs: snapshotAge,
           healthy: snapshotHealthy,

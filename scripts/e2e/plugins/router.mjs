@@ -18,14 +18,17 @@ export async function testRouter(ctx, results) {
     ctx,
     "router",
     async () => {
+      const o6 = process.env.OPENCLAW_E2E_O6 === "1";
       if (!ctx.gotifySecrets) throw new Error("Gotify secrets missing for Router target verification");
       await ctx.waitFor(async () => {
         const current = await ctx.gatewayFetch("/router/status", authorized);
-        return current.ok && current.json?.data?.delivered >= 1 && current.json?.data?.pending === 0 && current.json?.data?.deadLetters === 1;
+        return current.ok && current.json?.data?.delivered >= 1 && current.json?.data?.pending === 0 &&
+          (o6 ? current.json?.data?.deadLetters >= 1 : current.json?.data?.deadLetters === 1);
       }, { label: "router persisted outbox delivery through Gateway send", timeoutMs: 20_000 });
       const beforeDeniedStatus = await ctx.gatewayFetch("/router/status", authorized);
       const beforeDeniedDlq = await ctx.gatewayFetch("/router/dlq", authorized);
-      if (!beforeDeniedStatus.ok || !beforeDeniedDlq.ok || beforeDeniedDlq.json?.data?.length !== 1) {
+      if (!beforeDeniedStatus.ok || !beforeDeniedDlq.ok ||
+          (o6 ? beforeDeniedDlq.json?.data?.length < 1 : beforeDeniedDlq.json?.data?.length !== 1)) {
         throw new Error("Router management baseline is unavailable before denied requests");
       }
 
@@ -66,7 +69,8 @@ export async function testRouter(ctx, results) {
         const current = await ctx.gatewayFetch("/router/status", authorized);
         return current.ok &&
           current.json?.data?.delivered === beforeDeniedStatus.json.data.delivered + 1 &&
-          current.json?.data?.pending === 0 && current.json?.data?.deadLetters === 0;
+          current.json?.data?.pending === 0 &&
+          current.json?.data?.deadLetters === beforeDeniedStatus.json.data.deadLetters - 1;
       }, { label: "single authorized DLQ replay delivery", timeoutMs: 20_000 });
       const health = await ctx.gatewayFetch("/router/health", authorized);
       if (!health.ok) throw new Error(`/router/health → ${health.status}`);

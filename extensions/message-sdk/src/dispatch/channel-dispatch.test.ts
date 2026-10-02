@@ -13,8 +13,10 @@ import * as resolveRoute from "../bridge/resolve-channel-route.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { createDeliveryJournal } from "./delivery-journal.js";
 import { createDeferredDeliveryAck } from "../ingress/deferred-delivery-ack.js";
+import { onInternalDiagnosticEvent, waitForDiagnosticEventsDrained } from "openclaw/plugin-sdk/diagnostic-runtime";
 
 describe("dispatchChannelMessage", () => {
   it("does not rerun an Agent after a durable visible delivery was settled", async () => {
@@ -333,6 +335,11 @@ describe("dispatchChannelMessage", () => {
     }
   });
   it("commits a deferred journal outcome after broker ACK and suppresses replay", async () => {
+    await waitForDiagnosticEventsDrained();
+    const events: Array<{ attributes?: Record<string, unknown> }> = [];
+    const stopTelemetry = onInternalDiagnosticEvent((event) => {
+      if (event.type === "log.record" && event.loggerName === "partme.delivery-recall.v1") events.push(event);
+    });
     const dir = mkdtempSync(join(tmpdir(), "channel-journal-"));
     const old = process.env.OPENCLAW_STATE_DIR;
     process.env.OPENCLAW_STATE_DIR = dir;
@@ -348,11 +355,50 @@ describe("dispatchChannelMessage", () => {
       const journal = createDeliveryJournal(dir);
       expect(journal.inspect("rabbitmq", "default", "cid-ack-commit")?.status).toBe("ack-pending-delivered");
       result.confirmDelivery?.();
+      result.confirmDelivery?.();
       expect(journal.inspect("rabbitmq", "default", "cid-ack-commit")?.status).toBe("delivered");
       journal.close();
       await expect(dispatchChannelMessage(params)).resolves.toMatchObject({ deliveryOutcome: { kind: "delivered" } });
       expect(spy).toHaveBeenCalledOnce();
+      await waitForDiagnosticEventsDrained();
+      expect(events.filter((event) => event.attributes?.event === "settlement" && event.attributes?.outcome === "delivered")).toHaveLength(1);
     } finally {
+      stopTelemetry();
+      spy.mockRestore();
+      if (old === undefined) delete process.env.OPENCLAW_STATE_DIR;
+      else process.env.OPENCLAW_STATE_DIR = old;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("keeps the Agent run identity in a deferred settlement callback", async () => {
+    await waitForDiagnosticEventsDrained();
+    const events: Array<{ attributes?: Record<string, unknown> }> = [];
+    const stopTelemetry = onInternalDiagnosticEvent((event) => {
+      if (event.type === "log.record" && event.loggerName === "partme.delivery-recall.v1") events.push(event);
+    });
+    const dir = mkdtempSync(join(tmpdir(), "channel-journal-"));
+    const old = process.env.OPENCLAW_STATE_DIR;
+    process.env.OPENCLAW_STATE_DIR = dir;
+    const spy = vi.spyOn(embeddedDispatch, "dispatchEmbeddedAgentMessage").mockImplementation(async (params) => {
+      params.beforeAgentDispatch?.();
+      await params.reply.deliver({ wire: "reply", runId: "run-deferred" });
+      return { runId: "run-deferred", delivered: true, outcome: "visible" };
+    });
+    try {
+      const result = await dispatchChannelMessage({ ...baseParams, mode: "embedded-agent",
+        deliveryIdentity: "cid-run-deferred", requireDeliveryIdentity: true,
+        deferDeliverySettlement: true, canPrepareDeliverySettlement: () => true });
+      result.confirmDelivery?.();
+      await waitForDiagnosticEventsDrained();
+      const expected = `id_${createHash("sha256").update("run-deferred").digest("hex").slice(0, 24)}`;
+      expect(events.find((event) => event.attributes?.event === "settlement")?.attributes?.run_id).toBe(expected);
+      const started = events.find((event) => event.attributes?.event === "started");
+      const settled = events.find((event) => event.attributes?.event === "settlement");
+      expect(started?.attributes?.delivery_id).toMatch(/^id_[a-f0-9]{24}$/);
+      expect(started?.attributes?.delivery_id).toBe(settled?.attributes?.delivery_id);
+      expect(events.indexOf(started!)).toBeLessThan(events.indexOf(settled!));
+    } finally {
+      stopTelemetry();
       spy.mockRestore();
       if (old === undefined) delete process.env.OPENCLAW_STATE_DIR;
       else process.env.OPENCLAW_STATE_DIR = old;

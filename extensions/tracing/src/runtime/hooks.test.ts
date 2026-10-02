@@ -4,6 +4,8 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { registerTracingPluginHooks } from "./hooks.js";
+import { emitDeliveryTelemetry } from "../../../message-sdk/src/transport/telemetry.js";
+import { emitDiagnosticEvent, waitForDiagnosticEventsDrained } from "openclaw/plugin-sdk/diagnostic-runtime";
 import { TracingSampler } from "./sampler.js";
 import {
   createTraceStore,
@@ -61,6 +63,91 @@ const baseConfig: TracingConfig = {
 };
 
 describe("registerTracingPluginHooks", () => {
+  it("links delivery start and final settlement by one pseudonymous ID", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const stop = registerTracingPluginHooks(api as never, () => ({ backend,
+      sampler: new TracingSampler(1), config: baseConfig }));
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", deliveryId: "private-delivery" });
+    emitDeliveryTelemetry({ event: "settlement", channel: "mqtt", outcome: "delivered", deliveryId: "private-delivery" });
+    emitDiagnosticEvent({ type: "log.record", level: "info", loggerName: "partme.delivery-recall.v1",
+      message: "delivery telemetry", attributes: { event: "started", channel: "mqtt", delivery_id: "raw-id" } });
+    emitDiagnosticEvent({ type: "log.record", level: "info", loggerName: "partme.delivery-recall.v1",
+      message: "delivery telemetry", attributes: { event: "started", channel: "mqtt", delivery_id: "id_000000000000000000000000",
+        outcome: "failed" } });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(backend.exportSpans).toHaveBeenCalledTimes(2));
+    const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.map((span) => span.name).sort()).toEqual(["delivery.settlement", "delivery.started"]);
+    expect(spans[0]?.attributes["partme.delivery_id"]).toBe(spans[1]?.attributes["partme.delivery_id"]);
+    expect(JSON.stringify(spans)).not.toContain("private-delivery");
+    await stop();
+  });
+  it("exports one delivery fact when two hook registrations share a Gateway process", async () => {
+    const backend = createMockBackend();
+    const first = createMockApi();
+    const second = createMockApi();
+    const context = () => ({ backend, sampler: new TracingSampler(1), config: baseConfig });
+    const stopFirst = registerTracingPluginHooks(first as never, context);
+    const stopSecond = registerTracingPluginHooks(second as never, context);
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", deliveryId: "shared-delivery" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(backend.exportSpans).toHaveBeenCalledTimes(1));
+    await stopFirst();
+    emitDeliveryTelemetry({ event: "settlement", channel: "mqtt", outcome: "delivered", deliveryId: "shared-delivery" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(backend.exportSpans).toHaveBeenCalledTimes(2));
+    await stopSecond();
+  });
+  it("exports a redacted final delivery span and stops listening after shutdown", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const stop = registerTracingPluginHooks(api as never, () => ({ backend,
+      sampler: new TracingSampler(1), config: baseConfig }));
+    emitDeliveryTelemetry({ event: "settlement", channel: "mqtt", outcome: "ambiguous",
+      runId: "run-private", messageId: "message-private", deliveryId: "delivery-private" });
+    emitDiagnosticEvent({ type: "log.record", level: "info", loggerName: "partme.delivery-recall.v1",
+      message: "delivery telemetry", attributes: { event: "settlement", channel: "mqtt", outcome: "failed",
+        delivery_id: "Bearer raw-credential" } });
+    emitDiagnosticEvent({ type: "log.record", level: "info", loggerName: "partme.delivery-recall.v1",
+      message: "delivery telemetry", attributes: { event: "settlement", channel: "attacker", outcome: "failed" } });
+    emitDiagnosticEvent({ type: "log.record", level: "info", loggerName: "partme.delivery-recall.v1",
+      message: "recall telemetry", attributes: { event: "recall", plugin: "memory", duration_ms: 1,
+        delivery_id: "id_000000000000000000000000" } });
+    await waitForDiagnosticEventsDrained();
+    expect(backend.exportSpans).toHaveBeenCalledTimes(1);
+    const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.some((span) => span.name === "delivery.settlement")).toBe(true);
+    expect(JSON.stringify(spans)).not.toMatch(/run-private|message-private|delivery-private/);
+    await stop();
+    emitDeliveryTelemetry({ event: "retry", channel: "mqtt", deliveryId: "other-private" });
+    await waitForDiagnosticEventsDrained();
+    expect(backend.exportSpans).toHaveBeenCalledTimes(1);
+    await api.emit("gateway_start", {}, {});
+    emitDeliveryTelemetry({ event: "retry", channel: "mqtt", deliveryId: "after-restart" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(backend.exportSpans).toHaveBeenCalledTimes(2));
+    await stop();
+  });
+  it("resubscribes a new generation while an old stop is still draining", async () => {
+    const gate = Promise.withResolvers<void>();
+    const backend = createMockBackend();
+    vi.mocked(backend.exportSpans).mockImplementationOnce(() => gate.promise);
+    const api = createMockApi();
+    const stop = registerTracingPluginHooks(api as never, () => ({ backend,
+      sampler: new TracingSampler(1), config: baseConfig }));
+    emitDeliveryTelemetry({ event: "retry", channel: "mqtt", deliveryId: "before-stop" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(backend.exportSpans).toHaveBeenCalledTimes(1));
+    const stopping = stop();
+    await api.emit("gateway_start", {}, {});
+    emitDeliveryTelemetry({ event: "retry", channel: "mqtt", deliveryId: "after-start" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(backend.exportSpans).toHaveBeenCalledTimes(2));
+    gate.resolve();
+    await stopping;
+    await stop();
+  });
   beforeEach(() => {
     resetTraceStore();
   });

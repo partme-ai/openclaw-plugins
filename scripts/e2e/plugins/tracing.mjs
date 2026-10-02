@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { dockerEnv, DOCKER } from "../lib/compose.mjs";
@@ -58,14 +58,26 @@ function collectorHasSpan(log, root) {
   return false;
 }
 
-function runInboundTurn(ctx, nonce) {
+function collectorHasTelemetrySpan(log, name, identity) {
+  return collectorTelemetrySpanCount(log, name, identity) > 0;
+}
+
+function collectorTelemetrySpanCount(log, name, identity) {
+  const starts = [...log.matchAll(/^[ \t]*Span #\d+[ \t]*$/gm)].map((match) => match.index);
+  return starts.filter((start, index) => {
+    const block = log.slice(start, starts[index + 1] ?? log.length);
+    return block.includes(`Name           : ${name}`) && (!identity || block.includes(identity));
+  }).length;
+}
+
+export function runInboundTurn(ctx, nonce, deliveryId) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       client.end(true);
       reject(new Error("Timed out waiting for MQTT agent reply"));
     }, 30_000);
     const client = mqtt.connect("mqtt://127.0.0.1:11883", {
-      clientId: `tracing-e2e-${Date.now()}`,
+      clientId: `tracing-e2e-${nonce}`,
       reconnectPeriod: 0,
     });
     const finish = (error, value) => {
@@ -86,6 +98,7 @@ function runInboundTurn(ctx, nonce) {
           JSON.stringify({
             ...ctx.pingPayload,
             text: `Return the tracing fixture response. trace_nonce=${nonce}`,
+            ...(deliveryId ? { idempotencyKey: deliveryId } : {}),
             metadata: { ...ctx.pingPayload.metadata, e2e: "tracing" },
           }),
           (publishError) => {
@@ -104,6 +117,7 @@ function runInboundTurn(ctx, nonce) {
 /** @param {ReturnType<import('./_context.mjs').createTestContext>} ctx */
 /** @param {import('../lib/utils.mjs').resultRow extends (...args: never) => infer R ? R[] : never} results */
 export async function testTracing(ctx, results) {
+  const evidence = {};
   await runAdapterTest(
     ctx,
     "tracing",
@@ -139,6 +153,7 @@ export async function testTracing(ctx, results) {
       const model = ctx.modelFixture;
       if (!model) throw new Error("tracing E2E model fixture was not started by the orchestrator");
       const nonce = randomUUID();
+      const o6DeliveryId = process.env.OPENCLAW_E2E_O6 === "1" ? `o6-delivery-${randomUUID()}` : undefined;
       const initialCompletions = model.metrics.completions;
       const initialTraces = await ctx.gatewayFetch("/tracing/traces?limit=200", authorized);
       if (!initialTraces.ok || !Array.isArray(initialTraces.json?.data)) {
@@ -152,7 +167,7 @@ export async function testTracing(ctx, results) {
       const previousReplyText = model.controls.replyText;
       model.controls.replyText = `openclaw e2e fixture reply ${nonce}`;
       try {
-        await runInboundTurn(ctx, nonce);
+        await runInboundTurn(ctx, nonce, o6DeliveryId);
       } finally {
         model.controls.replyText = previousReplyText;
       }
@@ -192,6 +207,28 @@ export async function testTracing(ctx, results) {
         throw new Error(`tracing backend not drained and healthy: ${status.text}`);
       }
       console.log(`[tracing-otlp] completed traceId=${completedTrace.traceId}, spanId=${completedTrace.spanId}; gatewayActiveSpans=${status.json?.data?.activeSpans}, gatewayActiveTraces=${status.json?.data?.activeTraces}, journalRecentTraces=${status.json?.data?.recentTraces}`);
+      if (o6DeliveryId) {
+        if (!ctx.pluginIds.includes("memory")) throw new Error("O6 tracing E2E requires installed memory recall");
+        const journalId = createHash("sha256").update(JSON.stringify(["local", `tracing-e2e-${nonce}`, o6DeliveryId])).digest("hex");
+        const token = `id_${createHash("sha256").update(journalId).digest("hex").slice(0, 24)}`;
+        await ctx.waitFor(async () => {
+          const logs = await collectorLogs();
+          return collectorHasTelemetrySpan(logs, "delivery.started", token) &&
+            collectorHasTelemetrySpan(logs, "delivery.settlement", token) &&
+            collectorHasTelemetrySpan(logs, "memory.recall") &&
+            !logs.includes(o6DeliveryId);
+        }, { label: "O6 delivery telemetry in OTLP Collector with hashed identity", timeoutMs: 30_000, intervalMs: 500 });
+        const collectorLog = await collectorLogs();
+        const startedCount = collectorTelemetrySpanCount(collectorLog, "delivery.started", token);
+        const settledCount = collectorTelemetrySpanCount(collectorLog, "delivery.settlement", token);
+        if (startedCount !== 1 || settledCount !== 1) {
+          throw new Error(`O6 delivery spans duplicated or missing: started=${startedCount}, settlement=${settledCount}`);
+        }
+        evidence.o6 = { collectorSpanNames: ["delivery.started", "delivery.settlement", "memory.recall"],
+          deliveryIdHash: token, startedCount, settledCount,
+          rawDeliveryIdAbsent: true, agentDeliveryCorrelation: "unavailable-host-trace-scope" };
+        console.log(`[o6-tracing] OTLP received delivery.started and delivery.settlement identity=${token}, memory.recall; raw delivery ID absent`);
+      }
       await restartInstalledGateway(ctx);
       await ctx.waitFor(async () => {
         try {
@@ -210,6 +247,7 @@ export async function testTracing(ctx, results) {
     {
       service: `http://127.0.0.1:${ctx.ports.otlpHttp}/v1/traces`,
       method: "MQTT Agent Turn + OTLP export + Gateway stop/restart backend and journal recovery",
+      ...(process.env.OPENCLAW_E2E_O6 === "1" ? { evidence } : {}),
     },
     results,
   );

@@ -70,6 +70,7 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
   }
 
   const config = {
+    ...(process.env.OPENCLAW_E2E_O6 === "1" ? { diagnostics: { enabled: true } } : {}),
     gateway: {
       mode: "local",
       port: GATEWAY_PORT,

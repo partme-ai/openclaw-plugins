@@ -9,8 +9,10 @@ export function routerConfig() {
             rules: [{ id: "o3-mqtt-media", match: { channels: ["mqtt"], direction: "inbound" }, actions: [
               { type: "forward", target: "wecom", topic: "user:o3-recipient", payloadFormat: "structured-v1" },
             ] }],
-          } : { rules: [] }),
-          delivery: { publishTimeoutMs: 5000, initialDelayMs: 100, maxDelayMs: 1000 },
+          } : process.env.OPENCLAW_E2E_O6 === "1" ? { rules: [{ id: "o6-retry-dlq",
+            match: { channels: ["mqtt"], direction: "inbound" }, actions: [{ type: "forward", target: "o6-missing-channel" }] }] } : { rules: [] }),
+          delivery: { publishTimeoutMs: 5000, initialDelayMs: 100, maxDelayMs: 1000,
+            ...(process.env.OPENCLAW_E2E_O6 === "1" ? { maxAttempts: 2 } : {}) },
         },
       },
     },

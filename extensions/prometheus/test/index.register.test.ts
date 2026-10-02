@@ -129,6 +129,17 @@ describe("prometheusPlugin register", () => {
     expect(body).toContain("openclaw_model_auth_provider_status{provider=\"openai\",status=\"ok\"} 1");
     expect(body).toContain("openclaw_sli_message_success_ratio");
     expect(body).toContain("openclaw_sli_channel_health_ratio");
+    expect(body).toContain("openclaw_delivery_telemetry_enabled 1");
+    const healthBody: string[] = [];
+    const healthResponse = { statusCode: 200, writeHead: () => {}, end: (chunk?: string) => {
+      if (chunk) healthBody.push(chunk);
+    } } as unknown as import("node:http").ServerResponse;
+    const healthRoute = fakeApi._routes.get("/metrics/health");
+    await (healthRoute?.handler as (req: typeof mockReq, res: typeof healthResponse) => Promise<void>)(
+      { headers: {}, method: "GET", url: "/metrics/health" } as typeof mockReq, healthResponse);
+    expect(JSON.parse(healthBody.join(""))).toMatchObject({ deliveryTelemetry: {
+      diagnosticsEnabled: true, subscribed: false, diagnosticQueueDrops: 0, status: "degraded",
+    } });
   });
 });
 

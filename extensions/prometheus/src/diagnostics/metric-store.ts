@@ -389,6 +389,54 @@ export function recordDiagnosticEvent(
   evt: DiagnosticEventPayload,
   metadata: DiagnosticEventMetadata,
 ): void {
+  if (evt.type === "diagnostic.async_queue.dropped" && metadata.internal &&
+      Number.isFinite(evt.droppedEvents) && evt.droppedEvents > 0) {
+    store.counter("openclaw_diagnostic_async_queue_dropped_total",
+      "Host diagnostic events dropped by the bounded asynchronous queue.", {}, evt.droppedEvents);
+    return;
+  }
+  // The public diagnostic emitter marks plugin events untrusted. Accept only
+  // the narrow, versioned O6 schema; arbitrary log.record cannot create metrics.
+  if (evt.type === "log.record" && evt.loggerName === "partme.delivery-recall.v1") {
+    const attributes = evt.attributes;
+    if (evt.level !== "info" || !attributes) return;
+    const allowed = new Set(["event", "channel", "outcome", "plugin", "duration_ms", "entries", "run_id", "message_id", "delivery_id"]);
+    if (Object.keys(attributes).some((key) => !allowed.has(key))) return;
+    for (const key of ["run_id", "message_id", "delivery_id"] as const) {
+      const value = attributes[key];
+      if (value !== undefined && (typeof value !== "string" || !/^id_[a-f0-9]{24}$/u.test(value))) return;
+    }
+    const kind = attributes.event;
+    const channel = attributes.channel;
+    const channels = new Set(["mqtt", "rabbitmq", "redis-stream", "rocketmq", "stomp", "web-mqtt", "web-stomp", "router", "other"]);
+    if (kind === "recall") {
+      if (evt.message !== "recall telemetry" || (attributes.plugin !== "memory" && attributes.plugin !== "openmem") ||
+          typeof attributes.duration_ms !== "number" || !Number.isFinite(attributes.duration_ms) ||
+          attributes.duration_ms < 0 || attributes.duration_ms > 600_000 ||
+          attributes.channel !== undefined || attributes.outcome !== undefined || attributes.entries !== undefined ||
+          attributes.run_id !== undefined || attributes.message_id !== undefined || attributes.delivery_id !== undefined) return;
+      store.histogram("openclaw_memory_recall_duration_seconds", "Memory recall duration in seconds.",
+        { plugin: attributes.plugin }, attributes.duration_ms / 1000);
+      return;
+    }
+    if (evt.message !== "delivery telemetry" || typeof channel !== "string" || !channels.has(channel)) return;
+    if (kind === "settlement" && attributes.entries === undefined && attributes.plugin === undefined &&
+        attributes.duration_ms === undefined &&
+        (attributes.outcome === "delivered" || attributes.outcome === "failed" || attributes.outcome === "ambiguous")) {
+      store.counter("openclaw_delivery_settlements_total", "Final delivery settlements by channel and outcome.",
+        { channel, outcome: attributes.outcome });
+    } else if (kind === "retry" && attributes.outcome === undefined && attributes.entries === undefined &&
+        attributes.plugin === undefined && attributes.duration_ms === undefined) {
+      store.counter("openclaw_delivery_retries_total", "Delivery retries by channel.", { channel });
+    } else if (kind === "dlq" && channel === "router" && attributes.outcome === undefined &&
+        attributes.plugin === undefined && attributes.duration_ms === undefined &&
+        attributes.run_id === undefined && attributes.message_id === undefined && attributes.delivery_id === undefined &&
+        typeof attributes.entries === "number" && Number.isInteger(attributes.entries) &&
+        attributes.entries >= 0 && attributes.entries <= 1_000_000) {
+      store.gauge("openclaw_router_dlq_entries", "Current Router dead letter queue depth.", {}, attributes.entries);
+    }
+    return;
+  }
   if (!metadata.trusted) {
     return;
   }
