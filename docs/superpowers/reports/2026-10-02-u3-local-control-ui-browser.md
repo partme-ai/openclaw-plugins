@@ -34,4 +34,19 @@
 
 `node --check scripts/u3-control-ui-browser-e2e.mjs` 通过；最终版本在 Chrome 启动故障注入后重新完整运行，独立复审为 **Spec PASS / Quality APPROVE**。现场构建消除了旧 `dist` 假通过，启动及页面运行阶段的中断注入验证了报告和清理。当前无该脚本的专属临时目录或 Gateway/Chrome 进程。
 
-新门禁证明本地源码构建后的入口与状态内容可重复读取；它仍不安装 tarball，不验证真实代理、厂商回调或生产部署，也不把浏览器原生 JSON 视图判为视觉可用。若需要可维护的状态页面，应在新的增量规格中明确 Router/Tracing 的页面内容、移动端可读性与错误状态。当前 U3 的鉴权要求不依赖视觉页面完成。
+## 打包候选物安装态浏览器补测
+
+同一脚本新增 `node scripts/u3-control-ui-browser-e2e.mjs --installed-candidate`。该模式现场构建、打包 Router/Tracing，校验归档内容、插件身份和 capability 声明，在独立 HOME、状态目录和随机 profile 中以 OpenClaw CLI 注册从 tarball 提取的插件，再运行相同的真实 Chrome 六次 tab 检查。它保留两份 tarball 于私有忽略目录，结束时核对 SHA-256，并删除临时安装目录；没有使用共享的 `queue-e2e` profile。
+
+| 模式或故障注入 | 实测结果 | 忽略目录报告 |
+| --- | --- | --- |
+| 打包候选物安装态正常运行 | 退出 0；3 视口×2 tab，6/6 PASS；两个插件从提取目录加载；构建、打包、安装进程组以及 Chrome、Gateway、临时状态清理均确认 | `2026-10-02T15-26-20.950Z/report.json` |
+| 默认源码态回归 | 退出 0；6/6 PASS；全部清理确认 | `2026-10-02T15-27-14.153Z/report.json` |
+| 构建中 SIGINT | 退出 130；`INTERRUPTED`，活动进程组和临时状态清理确认 | `2026-10-02T15-28-19.999Z/report.json` |
+| 打包中 SIGINT | 退出 130；`INTERRUPTED`，活动进程组和临时状态清理确认 | `2026-10-02T15-23-32.095Z/report.json` |
+| 安装中 SIGINT | 退出 130；`INTERRUPTED`，活动进程组和临时状态清理确认 | `2026-10-02T15-24-17.958Z/report.json` |
+| 命令主进程先退出、子进程仍存活 | 退出 1；`FAIL`，对子进程组发送 SIGTERM 并确认消失，未误报 PASS | `2026-10-02T15-25-54.439Z/report.json` |
+
+安装态报告中 Router tarball SHA-256 为 `416da46eff45b93f533264be1c30201d47b356889734833e14e4ed39a07b2c8e`，提取内容摘要为 `79461dd6c2c51d858ef9c2db680cbe50eb308c4c4dfa74333bb4fd065231b2bf`；Tracing 分别为 `9aa800dbb8aaba1224ce96e55616709fa7745ec1fb878c7cbc47722d6000f97b` 和 `e79ed8d7ea1e9de75fc89c6232decc0562d457286e2717c925cac4df55568239`。报告及保留 tarball 权限为 0600，目录为 0700。`commandRuns` 记录各阶段进程组的退出确认；无法确认清理时门禁不会 PASS。第二轮独立代码与证据审查为 **Spec PASS / Quality APPROVE**，无阻塞项。
+
+这些结果证明本地源码和本轮 tarball 候选物在隔离的 OpenClaw 2026.9.6 Gateway 上可重复进入 Router/Tracing 状态页；它们不验证真实代理、厂商回调、npm 发布或生产部署，也不把浏览器原生 JSON 视图判为视觉可用。若需要可维护的状态页面，应在新的增量规格中明确 Router/Tracing 的页面内容、移动端可读性与错误状态。当前 U3 的鉴权要求不依赖视觉页面完成。

@@ -2,13 +2,14 @@
 /** Local Chrome exercise of the real OpenClaw Control UI Router/Tracing tabs. */
 import { spawn, execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { writeDisposableConfig } from "./fixtures/u3-auth-grant/runner-lib.mjs";
+import { assertCleanPackedArtifact, preparePackedCandidate, reviewedArtifactDigest, trustedE2ELinkArgs } from "./e2e/lib/install.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const routerDir = join(root, "extensions/router");
@@ -115,11 +116,34 @@ async function waitChromeCdp(port, child, abortSignal) {
   throw new Error("Chrome DevTools readiness timeout");
 }
 
-function buildPlugin(dir) {
-  execFileSync("pnpm", ["--dir", dir, "build"], { cwd: root, stdio: "inherit", timeout: 120_000 });
+function buildEvidence(dir) {
   const dist = join(dir, "dist");
   if (!existsSync(join(dist, "index.js"))) throw new Error(`${dir} build omitted dist/index.js`);
   return { sourceSha256: sourceSha(dir), distSha256: treeSha(dist) };
+}
+
+function sha256File(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function assertInstalledIdentity(id, sourceDir, installedDir, expectedDigest) {
+  const sourcePackage = JSON.parse(readFileSync(join(sourceDir, "package.json"), "utf8"));
+  const installedPackage = JSON.parse(readFileSync(join(installedDir, "package.json"), "utf8"));
+  const sourceManifest = JSON.parse(readFileSync(join(sourceDir, "openclaw.plugin.json"), "utf8"));
+  const installedManifest = JSON.parse(readFileSync(join(installedDir, "openclaw.plugin.json"), "utf8"));
+  if (realpathSync(installedDir) === realpathSync(sourceDir) ||
+      installedPackage.name !== sourcePackage.name || installedPackage.version !== sourcePackage.version ||
+      installedManifest.id !== id || installedManifest.version !== sourceManifest.version ||
+      JSON.stringify(installedManifest.capabilities ?? {}) !== JSON.stringify(sourceManifest.capabilities ?? {}) ||
+      reviewedArtifactDigest(installedDir) !== expectedDigest || !existsSync(join(installedDir, "dist/index.js"))) {
+    throw new Error(`${id}: extracted package identity, capabilities, content, or dist mismatch`);
+  }
+  for (const section of ["dependencies", "optionalDependencies"]) {
+    if (Object.keys(installedPackage[section] ?? {}).length) throw new Error(`${id}: production dependencies require an explicit installed dependency step`);
+  }
+  return { name: installedPackage.name, version: installedPackage.version,
+    capabilities: installedManifest.capabilities ?? {}, artifactSha256: expectedDigest,
+    installedDistSha256: treeSha(join(installedDir, "dist")) };
 }
 
 function syntheticModel(configPath) {
@@ -169,6 +193,7 @@ async function inspectTab(page, origin, view, tab, outputDir) {
 }
 
 async function main() {
+  const installedCandidate = process.argv.includes("--installed-candidate");
   const startedAt = new Date().toISOString();
   mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
   chmodSync(cacheDir, 0o700);
@@ -176,9 +201,12 @@ async function main() {
   mkdirSync(outputDir, { recursive: true, mode: 0o700 });
   chmodSync(outputDir, 0o700);
   const reportPath = join(outputDir, "report.json");
-  const report = { status: "FAIL", startedAt, hostVersion: "2026.9.6", chrome: chromePath,
-    build: {}, evidence: [], cleanup: {}, limitations: ["Local source/dist and loopback browser only; no installed tarball, deployed proxy, or vendor callback evidence."] };
-  let stateDir, gateway, browser, chromeChild;
+  const report = { status: "FAIL", startedAt, mode: installedCandidate ? "installed-candidate" : "source",
+    hostVersion: "2026.9.6", chrome: chromePath, build: {}, candidates: [], commandRuns: [], evidence: [], cleanup: {},
+    limitations: [installedCandidate ? "Local packed candidate and loopback browser only; no deployed proxy or vendor callback evidence." :
+      "Local source/dist and loopback browser only; no installed tarball, deployed proxy, or vendor callback evidence."] };
+  let stateDir, gateway, browser, chromeChild, commandChild, commandShutdown;
+  const commandGroups = new Set();
   let token;
   let interruption;
   let interrupt;
@@ -188,11 +216,79 @@ async function main() {
     const raw = error instanceof Error ? error.message : String(error);
     return token ? raw.replaceAll(token, "[redacted-token]") : raw;
   };
+  const commandGroupAlive = (groupId) => {
+    try { process.kill(-groupId, 0); return true; }
+    catch (error) { if (error.code === "ESRCH") return false; if (error.code === "EPERM") return true; throw error; }
+  };
+  const waitGroupGone = async (groupId, timeoutMs) => {
+    const deadline = Date.now() + timeoutMs;
+    while (commandGroupAlive(groupId) && Date.now() < deadline) await sleep(100);
+    return !commandGroupAlive(groupId);
+  };
+  const signalGroup = (groupId, signal) => {
+    try { process.kill(-groupId, signal); }
+    catch (error) { if (error.code !== "ESRCH") throw error; }
+  };
+  const ensureGroupStopped = async (groupId, urgent = false) => {
+    if (!groupId) return;
+    const evidence = report.commandRuns.find((item) => item.pgid === groupId);
+    const confirmed = () => {
+      commandGroups.delete(groupId);
+      if (evidence) evidence.groupGoneConfirmed = true;
+    };
+    if (!urgent && await waitGroupGone(groupId, 1_000)) { confirmed(); return; }
+    if (commandGroupAlive(groupId)) {
+      signalGroup(groupId, "SIGTERM");
+      if (evidence) evidence.sigtermSent = true;
+    }
+    if (await waitGroupGone(groupId, 5_000)) { confirmed(); return; }
+    signalGroup(groupId, "SIGKILL");
+    if (evidence) evidence.sigkillSent = true;
+    if (await waitGroupGone(groupId, 5_000)) { confirmed(); return; }
+    throw new Error(`build, pack, or install process group ${groupId} remained after SIGKILL`);
+  };
+  const stopCommand = async () => {
+    await Promise.all([...commandGroups].map((groupId) => ensureGroupStopped(groupId, true)));
+    if (commandGroups.size) throw new Error("build, pack, or install process group cleanup was not confirmed");
+  };
+  const requestCommandShutdown = () => {
+    commandShutdown ??= stopCommand();
+    return commandShutdown;
+  };
+  const runOwnedCommand = async (bin, args, options = {}) => {
+    assertNotInterrupted();
+    const injectHold = options.stage && process.argv.includes(`--hold-during-${options.stage}`);
+    const injectOrphan = options.stage && process.argv.includes(`--orphan-during-${options.stage}`);
+    const launchBin = injectHold || injectOrphan ? "/bin/sh" : bin;
+    const launchArgs = injectHold ? ["-c", `sleep 3600 & echo HOLD_DURING_${options.stage.toUpperCase()}; wait`] :
+      injectOrphan ? ["-c", `sleep 3600 & echo ORPHAN_DURING_${options.stage.toUpperCase()}; exit 23`] : args;
+    const child = spawn(launchBin, launchArgs, { cwd: options.cwd ?? root, env: options.env ?? process.env,
+      stdio: "inherit", detached: true });
+    commandChild = child;
+    if (child.pid) {
+      commandGroups.add(child.pid);
+      report.commandRuns.push({ stage: options.stage ?? "command", pgid: child.pid,
+        injectedHold: Boolean(injectHold), injectedOrphan: Boolean(injectOrphan), groupGoneConfirmed: false });
+    }
+    try {
+      const exit = await new Promise((done, reject) => {
+        child.once("error", reject);
+        child.once("exit", (code, signal) => done({ code, signal }));
+      });
+      await ensureGroupStopped(child.pid);
+      assertNotInterrupted();
+      if (exit.code !== 0) throw new Error(`${bin} ${args.slice(0, 3).join(" ")} exited ${exit.code ?? exit.signal}`);
+    } finally {
+      if (commandChild === child) commandChild = undefined;
+    }
+  };
   const interrupted = new Promise((_, reject) => { interrupt = reject; });
   const signalHandler = (signal) => {
     if (interruption) return;
     interruption = signal;
     abort.abort(new Error(`Interrupted by ${signal}`));
+    // Build/pack/install may still be running after the outer interrupt race settles.
+    void requestCommandShutdown().catch(() => {});
     interrupt(new Error(`Interrupted by ${signal}`));
   };
   const onSigint = () => signalHandler("SIGINT");
@@ -206,17 +302,76 @@ async function main() {
       const version = execFileSync(process.execPath, [selectedCli, "--version"], { encoding: "utf8" }).trim();
       if (!/\b2026\.9\.6\b/.test(version)) throw new Error(`OpenClaw 2026.9.6 required, got ${version}`);
       if (!existsSync(chromePath)) throw new Error(`Chrome not found: ${chromePath}`);
-      report.build.router = buildPlugin(routerDir);
-      report.build.tracing = buildPlugin(tracingDir);
+      stateDir = mkdtempSync(join(tmpdir(), "openclaw-u3-browser-e2e-"));
+      for (const [id, dir] of [["router", routerDir], ["tracing", tracingDir]]) {
+        await runOwnedCommand("pnpm", ["--dir", dir, "build"], { stage: "build" });
+        report.build[id] = buildEvidence(dir);
+      }
       assertNotInterrupted();
-      stateDir = mkdtempSync(join(tmpdir(), "openclaw-u3-control-ui-browser-"));
+      let loadedRouterDir = routerDir;
+      let loadedTracingDir = tracingDir;
+      if (installedCandidate) {
+        const packRoot = join(stateDir, "packs");
+        for (const [id, dir] of [["router", routerDir], ["tracing", tracingDir]]) {
+          const packDir = join(packRoot, id);
+          mkdirSync(packDir, { recursive: true, mode: 0o700 });
+          await runOwnedCommand("pnpm", ["pack", "--pack-destination", packDir], { cwd: dir, stage: "pack" });
+          const archives = readdirSync(packDir).filter((name) => name.endsWith(".tgz"));
+          if (archives.length !== 1) throw new Error(`${id}: pnpm pack produced ${archives.length} archives`);
+          const archivePath = join(packDir, archives[0]);
+          const retainedTarballPath = join(outputDir, `${id}-${archives[0]}`);
+          copyFileSync(archivePath, retainedTarballPath);
+          chmodSync(retainedTarballPath, 0o600);
+          const tarballSha256 = sha256File(archivePath);
+          if (sha256File(retainedTarballPath) !== tarballSha256) throw new Error(`${id}: retained tarball hash mismatch`);
+          const installedPath = join(stateDir, "extensions", `${id}-candidate`);
+          const packedContentSha256 = preparePackedCandidate(archivePath, installedPath);
+          assertCleanPackedArtifact(installedPath);
+          const identity = assertInstalledIdentity(id, dir, installedPath, packedContentSha256);
+          const reviewedArgs = trustedE2ELinkArgs(`extensions/${id}`, installedPath, root, stateDir, id);
+          if (reviewedArgs[0] !== "--profile" || reviewedArgs[1] !== "queue-e2e" ||
+              reviewedArgs.at(-1) !== realpathSync(installedPath) || !reviewedArgs.includes("--accept-capabilities")) {
+            throw new Error(`${id}: reviewed install argument shape changed`);
+          }
+          report.candidates.push({ id, sourcePath: dir, packedPath: archivePath,
+            retainedTarballPath, tarballSha256, installedPath, ...identity,
+            reviewedCapabilityConsent: true });
+        }
+        if (process.argv.includes("--hold-after-pack")) {
+          console.log("[u3-browser] HOLD_AFTER_PACK");
+          await sleep(3_600_000, undefined, { signal: abort.signal });
+        }
+        loadedRouterDir = report.candidates.find((candidate) => candidate.id === "router").installedPath;
+        loadedTracingDir = report.candidates.find((candidate) => candidate.id === "tracing").installedPath;
+      }
       token = randomBytes(32).toString("hex");
       const port = await unusedPort();
       assertNotInterrupted();
       const origin = `http://127.0.0.1:${port}`;
       const profile = `u3-browser-${randomBytes(6).toString("hex")}`;
-      const configPath = writeDisposableConfig({ stateDir, fixtureDir, routerDir, tracingDir, port, token });
+      const configPath = writeDisposableConfig({ stateDir, fixtureDir, routerDir: loadedRouterDir,
+        tracingDir: loadedTracingDir, port, token });
       syntheticModel(configPath);
+      if (installedCandidate) {
+        const configuredPaths = JSON.parse(readFileSync(configPath, "utf8")).plugins.load.paths;
+        if (configuredPaths.includes(routerDir) || configuredPaths.includes(tracingDir) ||
+            !configuredPaths.includes(loadedRouterDir) || !configuredPaths.includes(loadedTracingDir)) {
+          throw new Error("installed candidate config referenced source or omitted installed paths");
+        }
+        report.configuredPluginPaths = configuredPaths;
+        for (const candidate of report.candidates) {
+          const reviewedArgs = trustedE2ELinkArgs(`extensions/${candidate.id}`, candidate.installedPath,
+            root, stateDir, candidate.id);
+          await runOwnedCommand(process.execPath, [selectedCli, "--profile", profile, ...reviewedArgs.slice(2)], {
+            env: { ...process.env, HOME: stateDir, OPENCLAW_STATE_DIR: stateDir, OPENCLAW_CONFIG_PATH: configPath },
+            stage: "install",
+          });
+          if (reviewedArtifactDigest(candidate.installedPath) !== candidate.artifactSha256) {
+            throw new Error(`${candidate.id}: installed package changed during registration`);
+          }
+          candidate.registeredWithOpenClaw = true;
+        }
+      }
       const logFd = openSync(join(stateDir, "gateway.log"), "w", 0o600);
       try {
         assertNotInterrupted();
@@ -235,7 +390,7 @@ async function main() {
       assertNotInterrupted();
       if (process.argv.includes("--hold-before-chrome-spawn")) {
         console.log("[u3-browser] HOLD_BEFORE_CHROME_SPAWN");
-        await new Promise(() => {});
+        await sleep(3_600_000, undefined, { signal: abort.signal });
       }
       const chromeLogFd = openSync(join(stateDir, "chrome.log"), "w", 0o600);
       try {
@@ -271,7 +426,7 @@ async function main() {
               entry.tabs.push(await inspectTab(page, origin, view, tab, outputDir));
               if (view.name === "mobile" && tab.name === "router" && process.argv.includes("--hold-after-mobile-router")) {
                 console.log("[u3-browser] HOLD_AFTER_MOBILE_ROUTER");
-                await new Promise(() => {});
+                await sleep(3_600_000, undefined, { signal: abort.signal });
               }
             }
           } catch (error) {
@@ -288,6 +443,8 @@ async function main() {
     console.error(`[u3-browser] ${report.status}: ${report.error}`);
   } finally {
     // Cleanup is driven by the signal race, so a stalled browser action cannot delay it.
+    try { await requestCommandShutdown(); report.cleanup.commandStopped = true; }
+    catch (error) { report.cleanup.commandError = errorText(error); }
     if (browser) {
       try { await Promise.race([browser.close(), sleep(5_000).then(() => { throw new Error("Chrome close timeout"); })]); }
       catch (error) {
@@ -304,11 +461,22 @@ async function main() {
       await stopChild(gateway, "Gateway");
       report.cleanup.gatewayStopped = true;
     } catch (error) { report.cleanup.gatewayError = errorText(error); }
-    if (stateDir && report.cleanup.gatewayStopped && report.cleanup.chromeStopped) {
+    if (stateDir && report.cleanup.commandStopped && report.cleanup.gatewayStopped && report.cleanup.chromeStopped) {
       try { rmSync(stateDir, { recursive: true }); report.cleanup.tempStateRemoved = !existsSync(stateDir); }
       catch (error) { report.cleanup.tempStateError = errorText(error); }
     }
-    if (report.cleanup.chromeStopped !== true || report.cleanup.gatewayStopped !== true ||
+    for (const candidate of report.candidates) {
+      candidate.packedPathRemovedAfterRun = report.cleanup.tempStateRemoved === true && !existsSync(candidate.packedPath);
+      candidate.installedPathRemovedAfterRun = report.cleanup.tempStateRemoved === true && !existsSync(candidate.installedPath);
+      candidate.retainedTarballVerified = existsSync(candidate.retainedTarballPath) &&
+        sha256File(candidate.retainedTarballPath) === candidate.tarballSha256;
+    }
+    if (installedCandidate && report.candidates.some((candidate) => !candidate.retainedTarballVerified ||
+        !candidate.packedPathRemovedAfterRun || !candidate.installedPathRemovedAfterRun)) {
+      report.status = "FAIL";
+      report.error = `${report.error ?? "Browser checks completed"}; candidate archive or temporary path verification failed`;
+    }
+    if (report.cleanup.commandStopped !== true || report.cleanup.chromeStopped !== true || report.cleanup.gatewayStopped !== true ||
         (stateDir && report.cleanup.tempStateRemoved !== true)) {
       report.status = "FAIL";
       report.error = `${report.error ?? "Browser checks completed"}; owned process or temporary state cleanup failed`;
