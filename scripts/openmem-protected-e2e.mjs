@@ -108,12 +108,33 @@ async function verifyBoundary(proxy) {
   return { tlsRejected, anonymous, wrongToken };
 }
 
-async function runChild(env) {
+/** Never reuse caller state, even when the caller opted into preservation. */
+export function createProtectedChildEnv(baseEnv, fixtureDir, proxy) {
+  const stateDir = join(fixtureDir, "queue-e2e-profile");
+  return {
+    ...baseEnv,
+    OPENCLAW_E2E_STATE_DIR: stateDir,
+    OPENCLAW_STATE_DIR: stateDir,
+    OPENCLAW_CONFIG_PATH: join(stateDir, "openclaw.json"),
+    OPENCLAW_PROFILE: "queue-e2e",
+    OPENCLAW_E2E_PRESERVE_STATE: "0",
+    OPENCLAW_E2E_ALLOW_STATE_RESET: "0",
+    OPENCLAW_E2E_HOST_GATEWAY: "1",
+    OPENMEM_E2E_PROTECTED: "1",
+    OPENMEM_E2E_PROXY_URL: proxy.baseUrl,
+    [TOKEN_ENV]: proxy.token,
+    NODE_EXTRA_CA_CERTS: proxy.certPath,
+  };
+}
+
+async function runChild(env, onSpawn) {
   const child = spawn(process.execPath, [join(E2E_DIR, "run-e2e.mjs"), "--plugins", "openmem"], {
     cwd: ROOT,
     env,
     stdio: "inherit",
+    detached: true,
   });
+  onSpawn(child);
   return new Promise((resolveExit, rejectExit) => {
     child.once("error", rejectExit);
     child.once("exit", (code, signal) => resolveExit({ code, signal }));
@@ -124,24 +145,52 @@ async function runChild(env) {
 export async function runProtectedE2E() {
   const fixtureDir = mkdtempSync(join(tmpdir(), "openmem-protected-e2e-"));
   let proxy;
+  let childProcess;
+  let interruptSignal;
+  let killTimer;
+  const gatewayPidFile = join(E2E_DIR, ".gateway.pid");
+  const gatewayPidBefore = existsSync(gatewayPidFile) ? readFileSync(gatewayPidFile, "utf8") : undefined;
+  const signalChildGroup = (signal) => {
+    // Never signal a recycled process-group id after the direct child exits.
+    if (!childProcess?.pid || childProcess.exitCode !== null || childProcess.signalCode !== null) return;
+    try { process.kill(-childProcess.pid, signal); }
+    catch (error) {
+      if (error?.code !== "ESRCH") console.warn(`[openmem protected] child ${signal} delivery failed:`, error);
+    }
+  };
+  const onSignal = (signal) => {
+    if (interruptSignal) return;
+    interruptSignal = signal;
+    signalChildGroup(signal);
+    killTimer = setTimeout(() => signalChildGroup("SIGKILL"), 5_000);
+    killTimer.unref();
+  };
+  const onSigint = () => onSignal("SIGINT");
+  const onSigterm = () => onSignal("SIGTERM");
+  const throwIfInterrupted = () => {
+    if (!interruptSignal) return;
+    const error = new Error(`protected OpenMem E2E interrupted by ${interruptSignal}`);
+    error.exitCode = interruptSignal === "SIGINT" ? 130 : 143;
+    throw error;
+  };
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
   try {
     const backendPort = Number(process.env.E2E_OPENMEM_PORT ?? 13317);
     proxy = await startAuthenticatedProxy({ backendPort, fixtureDir });
     const negatives = await verifyBoundary(proxy);
-    const env = {
-      ...process.env,
-      OPENCLAW_E2E_HOST_GATEWAY: "1",
-      OPENMEM_E2E_PROTECTED: "1",
-      OPENMEM_E2E_PROXY_URL: proxy.baseUrl,
-      [TOKEN_ENV]: proxy.token,
-      NODE_EXTRA_CA_CERTS: proxy.certPath,
-    };
+    throwIfInterrupted();
+    const env = createProtectedChildEnv(process.env, fixtureDir, proxy);
     const childStartedAt = Date.now();
-    const child = await runChild(env);
+    const child = await runChild(env, (spawned) => {
+      childProcess = spawned;
+      if (interruptSignal) signalChildGroup(interruptSignal);
+    });
+    throwIfInterrupted();
     if (child.code !== 0 || child.signal !== null) {
       throw new Error(`installed OpenMem E2E child exited ${child.code ?? `on ${child.signal}`}; see child output above`);
     }
-    const stateDir = env.OPENCLAW_E2E_STATE_DIR ?? join(process.env.HOME, ".openclaw-queue-e2e");
+    const stateDir = env.OPENCLAW_E2E_STATE_DIR;
     const configText = readFileSync(join(stateDir, "openclaw.json"), "utf8");
     const config = JSON.parse(configText);
     const openmem = config.plugins?.entries?.openmem?.config;
@@ -191,18 +240,29 @@ export async function runProtectedE2E() {
     mkdirSync(archiveDir, { recursive: true });
     const archivePath = join(archiveDir, `${new Date().toISOString().replaceAll(":", "-")}-openmem-${randomUUID()}.json`);
     writeFileSync(archivePath, JSON.stringify(protectedReport, null, 2), { flag: "wx" });
+    throwIfInterrupted();
     console.log(`[openmem protected] ${protectedReport.result}: ${archivePath}`);
     if (!passed) throw new Error("protected OpenMem E2E assertions failed");
     return { archivePath, report: protectedReport };
   } finally {
-    await proxy?.close();
-    rmSync(fixtureDir, { recursive: true, force: true });
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+    if (killTimer) clearTimeout(killTimer);
+    if (interruptSignal && childProcess?.pid) {
+      const gatewayPidAfter = existsSync(gatewayPidFile) ? readFileSync(gatewayPidFile, "utf8") : undefined;
+      if (gatewayPidAfter && gatewayPidAfter !== gatewayPidBefore) {
+        try { (await import("./e2e/lib/gateway.mjs")).stopHostGateway(); }
+        catch (error) { console.warn("[openmem protected] Gateway cleanup:", error); }
+      }
+    }
+    try { await proxy?.close(); }
+    finally { rmSync(fixtureDir, { recursive: true, force: true }); }
   }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   runProtectedE2E().catch((error) => {
     console.error("[openmem protected] failed:", error);
-    process.exitCode = 1;
+    process.exitCode = error?.exitCode ?? 1;
   });
 }

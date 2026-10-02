@@ -7,6 +7,7 @@
  * OpenMem 工具调用需单独验证；此处的模型上下文可能由 OpenClaw transcript 保留。
  */
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
 import { OPENCLAW_BIN, PROFILE } from "../lib/utils.mjs";
@@ -16,6 +17,33 @@ import { runAdapterTest } from "./_context.mjs";
 const execFileAsync = promisify(execFile);
 const SESSION_KEY = "agent:main:openmem-e2e";
 const FIRST_MEMORY = "OpenMem 真实联调代号是海盐蓝，回答应保持简洁。";
+
+/** A prior ACTIVE session may have the same fact; accept only this run's marker. */
+export async function findRunSession(sessions, marker, readEvents) {
+  for (const session of sessions ?? []) {
+    if (session.agent_id !== "main" || !(session.event_count > 0)) continue;
+    const events = await readEvents(session.session_id);
+    if (events.events?.some((event) => event.content?.includes(marker))) return session;
+  }
+  return undefined;
+}
+
+/** A replay of an empty memory set cannot prove fact-memory idempotency. */
+export function assertStableCommitReplay(first, second) {
+  if (!first.archive?.archive_id || first.archive.archive_id !== second.archive?.archive_id) {
+    throw new Error("repeated authenticated commit changed archive ID");
+  }
+  if (!Array.isArray(first.memories) || first.memories.length === 0 || !Array.isArray(second.memories)) {
+    throw new Error("repeated authenticated commit lacks fact memory IDs");
+  }
+  const firstIds = first.memories.map((memory) => memory?.memory_id);
+  const secondIds = second.memories.map((memory) => memory?.memory_id);
+  if (firstIds.some((id) => typeof id !== "string" || !id.trim()) ||
+      secondIds.some((id) => typeof id !== "string" || !id.trim()) ||
+      JSON.stringify(firstIds) !== JSON.stringify(secondIds)) {
+    throw new Error("repeated authenticated commit changed fact memory IDs");
+  }
+}
 
 async function runCli(args) {
   const { stdout, stderr } = await execFileAsync(
@@ -66,8 +94,9 @@ export async function testOpenMem(ctx, results) {
       const health = await readJson(endpoint, "/healthz");
       if (health?.status !== "ok") throw new Error("real OpenMem health check failed");
 
+      const runMarker = randomUUID();
       const beforeFirst = model.metrics.completions;
-      const first = await runAgent(FIRST_MEMORY);
+      const first = await runAgent(`${FIRST_MEMORY} 本轮唯一标识：${runMarker}`);
       if (!first.includes("openclaw e2e fixture reply") || model.metrics.completions !== beforeFirst + 1) {
         throw new Error("first Agent Turn did not complete exactly once through the model fixture");
       }
@@ -75,16 +104,17 @@ export async function testOpenMem(ctx, results) {
       let firstSession;
       await ctx.waitFor(async () => {
         const data = await readJson(endpoint, "/sessions?status=ACTIVE");
-        firstSession = data.sessions?.find((session) => session.agent_id === "main" && session.event_count > 0);
+        firstSession = await findRunSession(data.sessions, runMarker, (sessionId) =>
+          readJson(endpoint, `/events?sessionId=${encodeURIComponent(sessionId)}`));
         return Boolean(firstSession);
-      }, { label: "OpenMem ACTIVE session ingest", timeoutMs: 30_000 });
+      }, { label: "OpenMem current-run ACTIVE session ingest", timeoutMs: 30_000 });
 
       const events = await readJson(endpoint, `/events?sessionId=${encodeURIComponent(firstSession.session_id)}`);
-      if (!events.events?.some((event) => event.content?.includes("海盐蓝"))) {
+      if (!events.events?.some((event) => event.content?.includes("海盐蓝") && event.content.includes(runMarker))) {
         throw new Error("agent_end did not ingest the current user turn into real OpenMem");
       }
       const working = await readJson(endpoint, `/sessions/${encodeURIComponent(firstSession.session_id)}/working-memory`);
-      if (!JSON.stringify(working).includes("海盐蓝")) {
+      if (!JSON.stringify(working).includes(runMarker)) {
         throw new Error("agent_end did not append the current turn to OpenMem working memory");
       }
 
@@ -112,12 +142,7 @@ export async function testOpenMem(ctx, results) {
         const commitPath = `/sessions/${encodeURIComponent(archived.session_id)}/commit`;
         const firstReplay = await readJson(endpoint, commitPath, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
         const secondReplay = await readJson(endpoint, commitPath, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-        if (!firstReplay.archive?.archive_id || firstReplay.archive.archive_id !== secondReplay.archive?.archive_id ||
-            !Array.isArray(firstReplay.memories) || !Array.isArray(secondReplay.memories) ||
-            JSON.stringify(firstReplay.memories.map((memory) => memory.memory_id)) !==
-              JSON.stringify(secondReplay.memories.map((memory) => memory.memory_id))) {
-          throw new Error("repeated authenticated commit changed archive or memory IDs");
-        }
+        assertStableCommitReplay(firstReplay, secondReplay);
       }
 
       await ensureGatewayRunning();
@@ -126,7 +151,7 @@ export async function testOpenMem(ctx, results) {
       if (!second.includes("openclaw e2e fixture reply") || model.metrics.completions !== beforeSecond + 1) {
         throw new Error("second Agent Turn did not complete exactly once");
       }
-      if (!JSON.stringify(model.metrics.lastRequest).includes("海盐蓝")) {
+      if (!JSON.stringify(model.metrics.lastRequest).includes(runMarker)) {
         throw new Error("previous-session context was absent from the next Agent Turn");
       }
     },

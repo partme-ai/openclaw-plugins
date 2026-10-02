@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 
-import { startAuthenticatedProxy } from "./openmem-protected-e2e.mjs";
+import { createProtectedChildEnv, startAuthenticatedProxy } from "./openmem-protected-e2e.mjs";
 
 const temporary = mkdtempSync(join(tmpdir(), "openmem-proxy-test-"));
 after(() => rmSync(temporary, { recursive: true, force: true }));
@@ -53,4 +54,38 @@ test("authenticated HTTPS proxy rejects untrusted, anonymous and wrong-token req
     backend.closeAllConnections();
     await new Promise((resolve) => backend.close(resolve));
   }
+});
+
+test("protected run forces a fresh isolated profile despite inherited preservation settings", () => {
+  const env = createProtectedChildEnv({
+    OPENCLAW_E2E_PRESERVE_STATE: "1",
+    OPENCLAW_E2E_STATE_DIR: "/tmp/stale-e2e-profile",
+    OPENCLAW_STATE_DIR: "/tmp/personal-state",
+    OPENCLAW_CONFIG_PATH: "/tmp/personal-state/openclaw.json",
+    OPENCLAW_E2E_ALLOW_STATE_RESET: "1",
+  }, temporary, { baseUrl: "https://127.0.0.1:12345", token: "test-only", certPath: join(temporary, "ca.pem") });
+  const expectedState = join(temporary, "queue-e2e-profile");
+  assert.equal(env.OPENCLAW_E2E_STATE_DIR, expectedState);
+  assert.equal(env.OPENCLAW_STATE_DIR, expectedState);
+  assert.equal(env.OPENCLAW_CONFIG_PATH, join(expectedState, "openclaw.json"));
+  assert.equal(env.OPENCLAW_E2E_PRESERVE_STATE, "0");
+  assert.equal(env.OPENCLAW_E2E_ALLOW_STATE_RESET, "0");
+});
+
+for (const [signal, expectedCode] of [["SIGINT", 130], ["SIGTERM", 143]]) test(`${signal} exits nonzero and removes the disposable certificate directory`, async () => {
+  const before = new Set(readdirSync(tmpdir()).filter((name) => name.startsWith("openmem-protected-e2e-")));
+  const child = spawn(process.execPath, [join(import.meta.dirname, "openmem-protected-e2e.mjs")], {
+    env: { ...process.env, OPENCLAW_E2E_PRESERVE_STATE: "1" },
+    stdio: "ignore",
+  });
+  const exited = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  assert.equal(child.kill(signal), true);
+  let timeoutId;
+  const timeout = new Promise((_, reject) => { timeoutId = setTimeout(() => reject(new Error("signal cleanup timed out")), 15_000); });
+  const result = await Promise.race([exited, timeout]);
+  clearTimeout(timeoutId);
+  assert.deepEqual(result, { code: expectedCode, signal: null });
+  const after = readdirSync(tmpdir()).filter((name) => name.startsWith("openmem-protected-e2e-") && !before.has(name));
+  assert.deepEqual(after, []);
 });
