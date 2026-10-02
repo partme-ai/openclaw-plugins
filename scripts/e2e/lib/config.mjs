@@ -14,7 +14,7 @@ export const MANAGEMENT_E2E_GATEWAY_TOKEN = randomBytes(32).toString("hex");
 
 /** Model fixture tools are exposed only for adapters that explicitly exercise them. */
 export function fixtureModelSupportsTools(ids) {
-  return ids.some((id) => id === "amap" || id === "meituan" || id === "rednode" || id === "openmem");
+  return ids.some((id) => id === "amap" || id === "meituan" || id === "rednode" || id === "openmem" || id === "memory");
 }
 
 /**
