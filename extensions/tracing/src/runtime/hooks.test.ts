@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { registerTracingPluginHooks } from "./hooks.js";
 import { TracingSampler } from "./sampler.js";
 import {
+  createTraceStore,
   createSpan,
   finishAllActiveTraces,
   getActiveSpanCount,
@@ -62,6 +63,28 @@ const baseConfig: TracingConfig = {
 describe("registerTracingPluginHooks", () => {
   beforeEach(() => {
     resetTraceStore();
+  });
+
+  it("old TTL cleanup cannot close a same-key trace created after store reset", async () => {
+    const store = createTraceStore();
+    const gate = Promise.withResolvers<void>();
+    const backend = createMockBackend();
+    vi.mocked(backend.exportSpans).mockImplementationOnce(() => gate.promise);
+    const register = (sessionKey: string, runId: string, traceId: string, withChild = false) => {
+      const root = store.createSpan("message.received", { traceId });
+      store.registerActiveTrace({ traceId, rootSpanId: root.spanId, spanCount: withChild ? 2 : 1,
+        sessionKey, runId, createdAtMs: 1, lastTouchedAtMs: 1 });
+      if (withChild) store.createSpan("tool:old", { traceId, parentSpanId: root.spanId });
+    };
+    register("first-session", "first-run", "1".repeat(32), true);
+    register("same-session", "same-run", "2".repeat(32));
+    const cleanup = store.cleanupSessionTraces(backend, Date.now() + 1_000, 1);
+    await vi.waitFor(() => expect(backend.exportSpans).toHaveBeenCalledTimes(1));
+    store.resetTraceStore();
+    register("same-session", "same-run", "3".repeat(32));
+    gate.resolve();
+    await cleanup;
+    expect(store.getActiveTraceCount()).toBe(1);
   });
 
   it("message_received 创建 root span，final reply 结束并导出", async () => {

@@ -113,30 +113,42 @@ export function registerTracingPluginHooks(
   const traceOperationChains = new Map<string, Promise<void>>();
   const hookOpts = { priority: 100 };
   let lifecycleClosed = false;
+  let hookGeneration = 0;
+  const isLive = (generation: number) => !lifecycleClosed && generation === hookGeneration;
   const getLiveContext = async () => {
-    if (lifecycleClosed) return null;
+    const generation = hookGeneration;
+    if (!isLive(generation)) return null;
     const context = await getContext();
-    return lifecycleClosed ? null : context;
+    return isLive(generation) ? context : null;
   };
-  async function runTraceOperation(key: string, operation: () => void | Promise<void>): Promise<void> {
+  async function runTraceOperation(key: string, generation: number, operation: (stillLive: () => boolean) => void | Promise<void>): Promise<void> {
+    const stillLive = () => isLive(generation);
     const previous = traceOperationChains.get(key) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(() => lifecycleClosed ? undefined : operation());
+    const current = previous.catch(() => undefined).then(() => stillLive() ? operation(stillLive) : undefined);
     traceOperationChains.set(key, current);
     try { await current; }
     finally { if (traceOperationChains.get(key) === current) traceOperationChains.delete(key); }
   }
   const stopHooks = async () => {
     lifecycleClosed = true;
-    await Promise.allSettled([...traceOperationChains.values()]);
+    hookGeneration += 1;
+    const pending = [...traceOperationChains.values()];
+    traceOperationChains.clear();
+    await Promise.allSettled(pending);
   };
   api.on("gateway_stop", stopHooks, hookOpts);
-  api.on("gateway_start", () => { lifecycleClosed = false; }, hookOpts);
+  api.on("gateway_start", () => {
+    if (!lifecycleClosed) return;
+    hookGeneration += 1;
+    lifecycleClosed = false;
+  }, hookOpts);
 
   api.on(
     "message_received",
     async (event, ctx) => {
+      const eventGeneration = hookGeneration;
       const hookContext = await resolveHookContext(api, getLiveContext, "message_received");
-      if (!hookContext) return;
+      if (!hookContext || !isLive(eventGeneration)) return;
       const { backend, sampler, config } = hookContext;
       const sessionKey = readString(ctx.sessionKey);
       const runId = readString(ctx.runId);
@@ -153,7 +165,7 @@ export function registerTracingPluginHooks(
         return;
       }
 
-      await runTraceOperation(operationKey, async () => {
+      await runTraceOperation(operationKey, eventGeneration, async (stillLive) => {
         const previous = resolveActiveTrace(sessionKey, runId);
         if (previous) {
           try {
@@ -161,6 +173,7 @@ export function registerTracingPluginHooks(
           } catch (error) {
             logHookError(api, "closing superseded trace", error);
           }
+          if (!stillLive()) return;
         } else if (getActiveTraceCount() >= config.maxActiveTraces) {
           if (runId) suppressRun(runId);
           if (sessionKey) suppressSession(sessionKey);
@@ -200,15 +213,16 @@ export function registerTracingPluginHooks(
   api.on(
     "before_tool_call",
     async (event, ctx) => {
+      const eventGeneration = hookGeneration;
       const hookContext = await resolveHookContext(api, getLiveContext, "before_tool_call");
-      if (!hookContext) return;
+      if (!hookContext || !isLive(eventGeneration)) return;
       const toolCallId = readString(event.toolCallId);
       if (!toolCallId) return;
       const sessionKey = readString(ctx.sessionKey);
       const runId = readString(ctx.runId);
       const operationKey = traceOperationKey(sessionKey, runId);
       if (!operationKey) return;
-      await runTraceOperation(operationKey, () => {
+      await runTraceOperation(operationKey, eventGeneration, () => {
         const active = resolveActiveTrace(sessionKey, runId);
         if (!active || !incrementSpanCount(active, hookContext.config.maxSpansPerTrace)) return;
 
@@ -231,15 +245,16 @@ export function registerTracingPluginHooks(
   api.on(
     "after_tool_call",
     async (event, ctx) => {
+      const eventGeneration = hookGeneration;
       const hookContext = await resolveHookContext(api, getLiveContext, "after_tool_call");
-      if (!hookContext) return;
+      if (!hookContext || !isLive(eventGeneration)) return;
       const toolCallId = readString(event.toolCallId);
       if (!toolCallId) return;
       const sessionKey = readString(ctx.sessionKey);
       const runId = readString(ctx.runId);
       const operationKey = traceOperationKey(sessionKey, runId);
       if (!operationKey) return;
-      await runTraceOperation(operationKey, async () => {
+      await runTraceOperation(operationKey, eventGeneration, async () => {
         const active = resolveActiveTrace(sessionKey, runId);
         const spanId = active ? takeToolSpanId(toolBindingKey(toolCallId, active.traceId)) : undefined;
         if (!spanId) return;
@@ -259,13 +274,14 @@ export function registerTracingPluginHooks(
   api.on(
     "reply_payload_sending",
     async (event, ctx) => {
+      const eventGeneration = hookGeneration;
       const hookContext = await resolveHookContext(api, getLiveContext, "reply_payload_sending");
-      if (!hookContext || event.kind !== "final") return;
+      if (!hookContext || !isLive(eventGeneration) || event.kind !== "final") return;
       const sessionKey = readString(event.sessionKey) ?? readString(ctx.sessionKey);
       const runId = readString(event.runId) ?? readString(ctx.runId);
       const operationKey = traceOperationKey(sessionKey, runId);
       if (!operationKey) return;
-      await runTraceOperation(operationKey, async () => {
+      await runTraceOperation(operationKey, eventGeneration, async () => {
         try {
           await finishActiveTrace(sessionKey, runId, "ok", hookContext.backend, "reply_payload_final");
         } catch (error) {
@@ -284,13 +300,14 @@ export function registerTracingPluginHooks(
   api.on(
     "agent_end",
     async (event, ctx) => {
+      const eventGeneration = hookGeneration;
       const hookContext = await resolveHookContext(api, getLiveContext, "agent_end");
-      if (!hookContext) return;
+      if (!hookContext || !isLive(eventGeneration)) return;
       const sessionKey = readString(ctx.sessionKey);
       const runId = readString(event.runId) ?? readString(ctx.runId);
       const operationKey = traceOperationKey(sessionKey, runId);
       if (!operationKey) return;
-      await runTraceOperation(operationKey, async () => {
+      await runTraceOperation(operationKey, eventGeneration, async (stillLive) => {
         try {
           const finished = await finishActiveTrace(
             sessionKey,
@@ -299,6 +316,7 @@ export function registerTracingPluginHooks(
             hookContext.backend,
             event.success ? "agent_end_success" : "agent_end_error",
           );
+          if (!stillLive()) return;
           const suppressedByRun = runId ? consumeSuppressedRun(runId) : false;
           const suppressedBySession = sessionKey ? consumeSuppressedSession(sessionKey) : false;
           if (suppressedByRun || suppressedBySession) {
@@ -341,13 +359,14 @@ export function registerTracingPluginHooks(
   api.on(
     "session_end",
     async (_event, ctx) => {
+      const eventGeneration = hookGeneration;
       const hookContext = await resolveHookContext(api, getLiveContext, "session_end");
-      if (!hookContext) return;
+      if (!hookContext || !isLive(eventGeneration)) return;
       const sessionKey = readString(ctx.sessionKey);
       const runId = readString((ctx as { runId?: unknown }).runId);
       const operationKey = traceOperationKey(sessionKey, runId);
       if (!operationKey) return;
-      await runTraceOperation(operationKey, async () => {
+      await runTraceOperation(operationKey, eventGeneration, async () => {
         try {
           await finishActiveTrace(
             sessionKey,

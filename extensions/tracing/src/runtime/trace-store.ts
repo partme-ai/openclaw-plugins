@@ -39,6 +39,7 @@ const completedRunIds = new Set<string>();
 const suppressedRunIds = new Set<string>();
 const suppressedSessionKeys = new Set<string>();
 const MAX_COMPLETED_RUN_IDS = 1_000;
+let storeGeneration = 0;
 
 /** 入站观察到但因采样或容量限制未建立根 Span 的 run，终态不能重新抽样。 */
 function suppressRun(runId: string): void {
@@ -204,6 +205,7 @@ async function finishActiveTrace(
   backend: TracingBackend | null,
   reason?: string,
 ): Promise<boolean> {
+  const generation = storeGeneration;
   const context = clearActiveTrace(sessionKey, runId);
   if (!context) return false;
   const completedRunId = context.runId ?? runId;
@@ -217,6 +219,7 @@ async function finishActiveTrace(
     .map((span) => span.spanId);
   let firstExportError: unknown;
   for (const childId of childIds) {
+    if (generation !== storeGeneration) return false;
     try {
       await endSpan(childId, "error", backend, {
         attributes: { "openclaw.incomplete": true, ...(reason ? { "openclaw.end_reason": reason } : {}) },
@@ -225,6 +228,7 @@ async function finishActiveTrace(
       firstExportError ??= error;
     }
   }
+  if (generation !== storeGeneration) return false;
   try {
     await endSpan(context.rootSpanId, rootStatus, backend, {
       attributes: reason ? { "openclaw.end_reason": reason } : undefined,
@@ -232,6 +236,7 @@ async function finishActiveTrace(
   } catch (error) {
     firstExportError ??= error;
   }
+  if (generation !== storeGeneration) return false;
   if (firstExportError) throw firstExportError;
   return true;
 }
@@ -246,10 +251,12 @@ async function finishAllActiveTraces(
   backend: TracingBackend | null,
   reason = "gateway_shutdown",
 ): Promise<number> {
+  const generation = storeGeneration;
   const contexts = new Set([...sessionTraceMap.values(), ...runTraceMap.values()]);
   let finished = 0;
   let firstExportError: unknown;
   for (const context of contexts) {
+    if (generation !== storeGeneration) return finished;
     try {
       if (await finishActiveTrace(context.sessionKey, context.runId, "error", backend, reason)) finished += 1;
     } catch (error) {
@@ -257,13 +264,16 @@ async function finishAllActiveTraces(
       firstExportError ??= error;
     }
   }
+  if (generation !== storeGeneration) return finished;
   for (const spanId of [...activeSpans.keys()]) {
+    if (generation !== storeGeneration) return finished;
     try {
       await endSpan(spanId, "error", backend, { attributes: { "openclaw.end_reason": reason } });
     } catch (error) {
       firstExportError ??= error;
     }
   }
+  if (generation !== storeGeneration) return finished;
   toolSpanMap.clear();
   if (firstExportError) throw firstExportError;
   return finished;
@@ -323,10 +333,12 @@ async function cleanupSessionTraces(
   nowMs = Date.now(),
   ttlMs = DEFAULT_ACTIVE_TRACE_TTL_MS,
 ): Promise<number> {
+  const generation = storeGeneration;
   const contexts = new Set([...sessionTraceMap.values(), ...runTraceMap.values()]);
   let cleaned = 0;
   let firstExportError: unknown;
   for (const context of contexts) {
+    if (generation !== storeGeneration) return cleaned;
     if (nowMs - (context.lastTouchedAtMs ?? context.createdAtMs ?? nowMs) < ttlMs) continue;
     try {
       if (await finishActiveTrace(context.sessionKey, context.runId, "error", backend, "trace_ttl_expired")) {
@@ -343,6 +355,7 @@ async function cleanupSessionTraces(
 
 /** 清空所有活动与近期索引；仅供生命周期最终清理和测试隔离使用。 */
 function resetTraceStore(): void {
+  storeGeneration += 1;
   activeSpans.clear();
   recentTraces.clear();
   sessionTraceMap.clear();

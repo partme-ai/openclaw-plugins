@@ -5,6 +5,7 @@ import { join } from "node:path";
 import plugin from "./index.js";
 import { SharedTraceJournal } from "./runtime/shared-trace-journal.js";
 import { LogBackend } from "./backends/log-backend.js";
+import { TracingSampler } from "./runtime/sampler.js";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 
 type Hook = (event?: Record<string, unknown>, ctx?: Record<string, unknown>) => Promise<void> | void;
@@ -145,6 +146,118 @@ describe("tracing plugin", () => {
       expect(closed.filter((backend) => backend === backends[0])).toHaveLength(1);
       expect(closed.filter((backend) => backend === backends[1])).toHaveLength(1);
     } finally { gate.resolve(); vi.restoreAllMocks(); }
+  });
+  it("late superseded message cannot create a trace in the generation after timeout and restart", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const routes = new Map<string, Hook>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1,
+      traceDir: testTraceDir, shutdownTimeoutMs: 100 },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+    } as never);
+    const gate = Promise.withResolvers<void>();
+    const exporting = vi.spyOn(LogBackend.prototype, "exportSpans").mockImplementationOnce(() => gate.promise);
+    let lateMessage: Promise<void> | undefined;
+    try {
+      await emit(hooks, "gateway_start");
+      const identity = { sessionKey: "reused-session", runId: "reused-run", channelId: "mqtt" };
+      await emit(hooks, "message_received", { content: "first" }, identity);
+      lateMessage = emit(hooks, "message_received", { content: "second" }, identity);
+      await vi.waitFor(() => expect(exporting).toHaveBeenCalledTimes(1));
+      const stopHandler = hooks.get("gateway_stop")?.at(-1);
+      await expect(stopHandler?.()).rejects.toThrow("Tracing shutdown timed out after 100ms");
+      await emit(hooks, "gateway_start");
+      const beforeRelease = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, beforeRelease as never);
+      expect(JSON.parse(beforeRelease.body).data).toMatchObject({ status: "active", activeTraces: 0 });
+
+      const newMessage = emit(hooks, "message_received", { content: "new generation" }, identity);
+      await vi.waitFor(async () => {
+        const duringOldExport = response();
+        await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, duringOldExport as never);
+        expect(JSON.parse(duringOldExport.body).data).toMatchObject({ status: "active", activeTraces: 1 });
+      }, { timeout: 300 });
+      await newMessage;
+
+      gate.resolve();
+      await lateMessage;
+      const afterRelease = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, afterRelease as never);
+      expect(JSON.parse(afterRelease.body).data).toMatchObject({ status: "active", activeTraces: 1 });
+    } finally {
+      gate.resolve();
+      await lateMessage?.catch(() => undefined);
+      await emit(hooks, "gateway_stop").catch(() => undefined);
+      vi.restoreAllMocks();
+    }
+  });
+  it("repeated gateway_start keeps an in-flight message in the same generation", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const routes = new Map<string, Hook>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1,
+      traceDir: testTraceDir, shutdownTimeoutMs: 100 },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+    } as never);
+    const gate = Promise.withResolvers<void>();
+    const exporting = vi.spyOn(LogBackend.prototype, "exportSpans").mockImplementationOnce(() => gate.promise);
+    let second: Promise<void> | undefined;
+    try {
+      const identity = { sessionKey: "repeated-start-session", runId: "repeated-start-run", channelId: "mqtt" };
+      await emit(hooks, "gateway_start");
+      await emit(hooks, "message_received", { content: "first" }, identity);
+      second = emit(hooks, "message_received", { content: "second" }, identity);
+      await vi.waitFor(() => expect(exporting).toHaveBeenCalledTimes(1));
+      await emit(hooks, "gateway_start");
+      gate.resolve();
+      await second;
+      const status = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, status as never);
+      expect(JSON.parse(status.body).data).toMatchObject({ status: "active", activeTraces: 1 });
+    } finally {
+      gate.resolve();
+      await second?.catch(() => undefined);
+      await emit(hooks, "gateway_stop").catch(() => undefined);
+      vi.restoreAllMocks();
+    }
+  });
+  it("late agent_end cannot consume a new generation's sampled-out run after timeout", async () => {
+    const hooks = new Map<string, Hook[]>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 0.5,
+      traceDir: testTraceDir, shutdownTimeoutMs: 100 },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute: vi.fn(),
+    } as never);
+    vi.spyOn(TracingSampler.prototype, "shouldSample")
+      .mockReturnValueOnce(true).mockReturnValueOnce(false).mockReturnValue(true);
+    const gate = Promise.withResolvers<void>();
+    const exporting = vi.spyOn(LogBackend.prototype, "exportSpans").mockImplementationOnce(() => gate.promise);
+    let lateEnd: Promise<void> | undefined;
+    try {
+      const identity = { sessionKey: "same-session", runId: "old-run", channelId: "mqtt" };
+      await emit(hooks, "gateway_start");
+      await emit(hooks, "message_received", {}, identity);
+      await emit(hooks, "before_tool_call", { toolCallId: "old-tool", toolName: "search" }, identity);
+      lateEnd = emit(hooks, "agent_end", { runId: "old-run", success: true }, identity);
+      await vi.waitFor(() => expect(exporting).toHaveBeenCalledTimes(1));
+      await expect(hooks.get("gateway_stop")?.at(-1)?.()).rejects.toThrow("Tracing shutdown timed out after 100ms");
+      await emit(hooks, "gateway_start");
+      await emit(hooks, "message_received", {}, { sessionKey: "same-session", channelId: "mqtt" }); // sampled out before runId is known
+      gate.resolve();
+      await lateEnd;
+      await emit(hooks, "agent_end", { runId: "new-run", success: true },
+        { sessionKey: "same-session", runId: "new-run", channelId: "mqtt" });
+      const exportedNames = exporting.mock.calls.flatMap(([spans]) => spans.map((span) => span.name));
+      expect(exportedNames).not.toContain("agent.run");
+    } finally {
+      gate.resolve();
+      await lateEnd?.catch(() => undefined);
+      await emit(hooks, "gateway_stop").catch(() => undefined);
+      vi.restoreAllMocks();
+    }
   });
   it("stopping registration A leaves B backend and active spans intact", async () => {
     const register = () => {
