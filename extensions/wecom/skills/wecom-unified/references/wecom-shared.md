@@ -7,11 +7,7 @@
 ## CLI 安装与版本要求
 
 - **包名**：`@wecom/cli`
-- **安装命令**：
-
-```bash
-npm install -g @wecom/cli
-```
+- **安装责任**：由用户或管理员按当前官方文档选择版本并安装；Agent 不执行全局安装。
 
 - **检查安装**：
 
@@ -30,15 +26,11 @@ wecom-cli auth show --auth-status
 ```
 
 - 输出 `authorized` → 已配置
-- 输出 `unauthorized` → 未配置，需执行初始化
+- 输出 `unauthorized` → 未配置，需用户完成授权
 
 ### 配置凭证
 
-```bash
-wecom-cli init
-```
-
-> 交互式命令，引导用户完成授权配置，仅需执行一次。
+授权涉及用户凭据，必须由用户在可信终端依当前企业微信 CLI 文档操作。Agent 不执行初始化、不读取或转发授权数据。
 
 ---
 

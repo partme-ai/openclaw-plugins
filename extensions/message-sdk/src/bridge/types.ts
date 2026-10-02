@@ -9,6 +9,7 @@
  */
 
 import type { ReplyRoute, UnifiedMessage } from "../core/types.js";
+import type { ReplyDispatchReceipt } from "../dispatch/delivery-outcome.js";
 
 /**
  * 插件 Runtime 中 channel 子集 / Bridge plugin runtime channel subset.
@@ -44,7 +45,13 @@ export interface BridgePluginRuntime {
         cfg: Record<string, unknown>;
         dispatcher: unknown;
         replyOptions: Record<string, unknown>;
-      }) => Promise<void>;
+      }) => Promise<{
+        queuedFinal?: boolean;
+        counts?: Record<"tool" | "block" | "final", number>;
+        settledReceipt?: ReplyDispatchReceipt;
+        deliberateSilentTerminalReply?: true;
+        deferredToActiveRun?: "steer" | "followup";
+      } | void>;
     };
   };
 }

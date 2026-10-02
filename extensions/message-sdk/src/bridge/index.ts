@@ -56,6 +56,9 @@ export {
   type IngressDeliveryControls,
 } from "../ingress/deferred-delivery-ack.js";
 
+export { classifyDeliveryOutcome, requireSettledDelivery, UnsettledDeliveryError, type DeliveryOutcome, type ReplyDispatchReceipt } from "../dispatch/delivery-outcome.js";
+export { createDeliveryJournal, DeliveryIdentityConflictError, PendingDeliveryReconciliationError, type DeliveryJournal, type JournalEntry } from "../dispatch/delivery-journal.js";
+
 export {
   resolveChannelAgentRoute,
   resolveChannelDispatchIdentity,

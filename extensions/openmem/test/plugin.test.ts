@@ -2,6 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import plugin from "../src/index.js";
 
+type RegisteredService = {
+  start: (context: { logger: { info: (message: string) => void; warn: (message: string) => void } }) => Promise<void>;
+  stop: () => Promise<void>;
+};
+const registeredServices = new Set<RegisteredService>();
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
@@ -14,7 +20,9 @@ function createApi(pluginConfig: Record<string, unknown> = {}) {
     pluginConfig,
     logger,
     hooks,
-    registerService: vi.fn(),
+    registerService: vi.fn((service: RegisteredService) => {
+      registeredServices.add(service);
+    }),
     registerMemoryCapability: vi.fn(),
     registerTool: vi.fn(),
     on: vi.fn((name: string, handler: (...args: any[]) => any) => hooks.set(name, handler)),
@@ -28,7 +36,11 @@ function registerPlugin(api: ReturnType<typeof createApi>): void {
 
 describe("openmem OpenClaw 2026.7.1 contract", () => {
   beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(async () => {
+    await Promise.all([...registeredServices].map((service) => service.stop()));
+    registeredServices.clear();
+    vi.unstubAllGlobals();
+  });
 
   it("disabled 时不注册副作用", () => {
     const api = createApi({ enabled: false });

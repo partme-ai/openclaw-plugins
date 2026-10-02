@@ -55,6 +55,7 @@ export function knowledgeConfig() {
     pluginEntry: {
       knowledge: {
         enabled: true,
+        hooks: { allowConversationAccess: true },
         config: KNOWLEDGE_E2E_CONFIG,
       },
     },

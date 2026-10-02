@@ -8,9 +8,17 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const claimInbound = vi.hoisted(() => vi.fn(async () => true));
+const checkDmPolicy = vi.hoisted(() => vi.fn(async () => ({ allowed: false })));
 
 vi.mock("../webhook/dedup.js", () => ({
   claimWecomAgentInboundMsgid: claimInbound,
+}));
+vi.mock("../config/accounts.js", () => ({
+  resolveWeComAccountMulti: () => ({ config: {} }),
+}));
+vi.mock("../config/dm-policy.js", () => ({
+  checkWecomDmPolicy: checkDmPolicy,
+  buildWecomPairingReplyText: vi.fn(),
 }));
 
 import { handleAgentWebhook } from "./handler.js";
@@ -64,6 +72,7 @@ describe("handleAgentWebhook security boundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     claimInbound.mockResolvedValue(true);
+    checkDmPolicy.mockResolvedValue({ allowed: false });
   });
 
   it("rejects POST requests that bypassed the verified envelope layer", async () => {
@@ -120,5 +129,38 @@ describe("handleAgentWebhook security boundary", () => {
     expect(logs).not.toContain("chat-secret");
     expect(logs).not.toContain("msg-secret");
     expect(logs).not.toContain("content-secret");
+  });
+
+  it("keeps the admitted HTTP handler pending until acknowledged Agent work settles", async () => {
+    let releasePolicy!: (value: { allowed: boolean }) => void;
+    checkDmPolicy.mockImplementationOnce(() => new Promise((resolve) => {
+      releasePolicy = resolve;
+    }));
+    const res = response();
+    let handlerSettled = false;
+    const handler = handleAgentWebhook({
+      req: request(),
+      res,
+      agent,
+      config: {},
+      core: {},
+      verifiedPost: verifiedPost({
+        AgentID: 42,
+        MsgType: "text",
+        FromUserName: "member-a",
+        MsgId: "work-lifetime",
+        Content: "hello",
+      }),
+    } as never).then(() => {
+      handlerSettled = true;
+    });
+
+    await vi.waitFor(() => expect(checkDmPolicy).toHaveBeenCalledOnce());
+    expect(res.body).toBe("success");
+    expect(handlerSettled).toBe(false);
+
+    releasePolicy({ allowed: false });
+    await handler;
+    expect(handlerSettled).toBe(true);
   });
 });

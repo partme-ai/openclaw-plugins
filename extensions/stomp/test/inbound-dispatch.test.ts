@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  dispatchChannelMessage: vi.fn().mockResolvedValue(undefined),
+  dispatchChannelMessage: vi.fn().mockResolvedValue({ deliveryOutcome: { kind: "delivered" } }),
   resolveChannelDispatchIdentity: vi.fn().mockResolvedValue({
     agentId: "iot-agent",
     sessionKey: "agent:iot-agent:stomp-tcp:direct:peer-1",
@@ -39,6 +39,7 @@ function makeMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
     destination: "/topic/devices/alpha/in",
     replyDestination: "/topic/devices/reply",
     rawPayload: "hello stomp",
+    idempotencyKey: `test-${Date.now()}-${Math.random()}`,
     ...overrides,
   };
 }
@@ -116,12 +117,32 @@ describe("dispatchInboundMessage", () => {
     expect(reply.replyRoute.destination).toBe("/topic/session.peer-1");
   });
 
-  it("drops duplicate idempotency keys", async () => {
+  it("passes duplicate IDs to durable SDK reconciliation", async () => {
     const key = `stomp-dedup-${Date.now()}`;
     await dispatchInboundMessage(makeMessage({ idempotencyKey: key, rawPayload: "once" }));
     await dispatchInboundMessage(makeMessage({ idempotencyKey: key, rawPayload: "once" }));
 
-    expect(dispatchChannelMessage).toHaveBeenCalledTimes(1);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a SEND without message-id on the best-effort path", async () => {
+    await dispatchInboundMessage(makeMessage({ idempotencyKey: undefined }));
+    expect(dispatchChannelMessage.mock.calls[0][0]).toMatchObject({
+      deliveryIdentity: undefined,
+      requireDeliveryIdentity: false,
+    });
+  });
+
+  it("scopes a caller ID to its authenticated sender across reconnects", async () => {
+    await dispatchInboundMessage(makeMessage({ idempotencyKey: "same", senderScope: "user:alice", peerId: "conn-1" }));
+    await dispatchInboundMessage(makeMessage({ idempotencyKey: "same", senderScope: "user:alice", peerId: "conn-2" }));
+    await dispatchInboundMessage(makeMessage({ idempotencyKey: "same", senderScope: "user:bob", peerId: "conn-3" }));
+    const ids = dispatchChannelMessage.mock.calls.map(([args]) => args.deliveryIdentity);
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[2]).not.toBe(ids[0]);
+    const contexts = dispatchChannelMessage.mock.calls.map(([args]) => args.deliveryFingerprintContext);
+    expect(contexts[0]).toEqual(contexts[1]);
+    expect(contexts[2]).not.toEqual(contexts[0]);
   });
 
   it("releases the idempotency claim when dispatch fails", async () => {

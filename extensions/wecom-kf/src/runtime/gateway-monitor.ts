@@ -1,4 +1,3 @@
-import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * @fileoverview 企业微信客服账号在 OpenClaw Gateway 中的长运行生命周期监视器。
  *
@@ -6,6 +5,7 @@ import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract
  * 监视器一直等待账户 AbortSignal，停止时回写 lastStopAt。遗留 Bot/Agent 配置只告警，不会
  * 重新启用已移除的 wecom-cs 路径。
  */
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type {
   OpenClawConfig,
 } from "openclaw/plugin-sdk/core";

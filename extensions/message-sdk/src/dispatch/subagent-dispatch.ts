@@ -30,6 +30,7 @@ export async function dispatchSubagentMessage(
     params.childSessionKey ??
     `agent:${params.agentId}:subagent:${params.channel}:${sanitizeSessionId(params.sessionKey)}`;
 
+  params.beforeAgentDispatch?.();
   const run = await rt.subagent.run({
     sessionKey: childSessionKey,
     message: params.text,

@@ -21,6 +21,42 @@ export function assertRabbitmqSubagentTimeoutEvidence({ stats, observedReplies, 
   return match[1];
 }
 
+/** Require broker custody for both publishes while the Agent and reply run once. */
+export function assertRabbitmqDurableRedeliveryEvidence({ before, after, replies, completionsStarted, completionsFinished }) {
+  if (after.messagesReceived - before.messagesReceived !== 2 || after.messagesAcked - before.messagesAcked !== 2) {
+    throw new Error("RabbitMQ redelivery did not receive and ACK both broker messages");
+  }
+  if (completionsStarted !== 1 || completionsFinished !== 1 || replies.length !== 1) {
+    throw new Error("RabbitMQ redelivery reran the Agent or published a duplicate reply");
+  }
+}
+
+/** Keep the reply consumer open while checking for delayed duplicate Agent work. */
+export async function observeRabbitmqRedeliveryQuietWindow({ readEvidence, windowMs, pollMs = 100 }) {
+  const deadline = Date.now() + windowMs;
+  do {
+    assertRabbitmqDurableRedeliveryEvidence(await readEvidence());
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, remaining)));
+  } while (true);
+}
+
+/** Require both a confirmed DLQ copy and an original-delivery NACK; counters alone do not prove event order. */
+export function assertRabbitmqAmbiguousDlqEvidence({ before, after, dlq, completionsStarted, completionsFinished }) {
+  if (after.messagesReceived - before.messagesReceived !== 1 || after.messagesNacked - before.messagesNacked !== 1 ||
+      after.messagesAcked !== before.messagesAcked || after.messagesDeadLettered - before.messagesDeadLettered !== 1 ||
+      after.publishConfirmed - before.publishConfirmed < 1) {
+    throw new Error("RabbitMQ ambiguous delivery settlement does not show a confirmed DLQ copy and NACK");
+  }
+  if (!dlq || dlq.content !== "original" || dlq.routingKey !== "openclaw.agent.main.in" || dlq.deliveryOutcome !== "ambiguous") {
+    throw new Error("RabbitMQ ambiguous DLQ copy is missing original payload or custody headers");
+  }
+  if (completionsStarted !== 0 || completionsFinished !== 0) {
+    throw new Error("RabbitMQ missing-identity delivery must not start the Agent");
+  }
+}
+
 /** @param {ReturnType<import('./_context.mjs').createTestContext>} ctx */
 /** @param {import('../lib/utils.mjs').resultRow extends (...args: never) => infer R ? R[] : never} results */
 export async function testRabbitmq(ctx, results) {
@@ -37,6 +73,10 @@ export async function testRabbitmq(ctx, results) {
       if (!model) throw new Error("rabbitmq E2E model fixture was not started by the orchestrator");
       const initialCompletions = model.metrics.completions;
       const initialFinishedCompletions = model.metrics.completionsFinished;
+      const initialStatsResponse = await ctx.gatewayFetch("/rabbitmq/stats");
+      if (!initialStatsResponse.ok) throw new Error(`/rabbitmq/stats → ${initialStatsResponse.status}`);
+      const initialStats = initialStatsResponse.json?.data?.stats;
+      if (!initialStats) throw new Error("RabbitMQ initial stats missing");
       const conn = await amqp.connect("amqp://127.0.0.1:5672");
       const ch = await conn.createConfirmChannel();
       const exchange = "openclaw-e2e";
@@ -71,10 +111,11 @@ export async function testRabbitmq(ctx, results) {
           }, { noAck: true });
         }
 
+        const inboundPayload = Buffer.from(JSON.stringify({ ...ctx.pingPayload, text: "Return the RabbitMQ E2E fixture response." }));
         ch.publish(
           exchange,
           inboundKey,
-          Buffer.from(JSON.stringify({ ...ctx.pingPayload, text: "Return the RabbitMQ E2E fixture response." })),
+          inboundPayload,
           { contentType: "application/json", correlationId, messageId: correlationId, persistent: true },
         );
         await ch.waitForConfirms();
@@ -107,6 +148,57 @@ export async function testRabbitmq(ctx, results) {
           if (envelope?.headers?.replyRoute?.routingKey !== replyKey) {
             throw new Error(`RabbitMQ reply route missing: ${rawReply}`);
           }
+
+          await ctx.waitFor(async () => {
+            const stats = await ctx.gatewayFetch("/rabbitmq/stats");
+            return stats.json?.data?.stats?.messagesAcked >= initialStats.messagesAcked + 1;
+          }, { label: "RabbitMQ first broker ACK", timeoutMs: 15_000 });
+          ch.publish(exchange, inboundKey, inboundPayload,
+            { contentType: "application/json", correlationId, messageId: correlationId, persistent: true });
+          await ch.waitForConfirms();
+          await ctx.waitFor(async () => {
+            const stats = await ctx.gatewayFetch("/rabbitmq/stats");
+            return stats.json?.data?.stats?.messagesReceived >= initialStats.messagesReceived + 2 &&
+              stats.json?.data?.stats?.messagesAcked >= initialStats.messagesAcked + 2;
+          }, { label: "RabbitMQ duplicate broker delivery ACK", timeoutMs: 15_000 });
+          const afterRedelivery = (await ctx.gatewayFetch("/rabbitmq/stats")).json?.data?.stats;
+          await observeRabbitmqRedeliveryQuietWindow({
+            windowMs: 2_000,
+            readEvidence: () => ({
+              before: initialStats, after: afterRedelivery, replies: observedReplies,
+              completionsStarted: model.metrics.completions - initialCompletions,
+              completionsFinished: model.metrics.completionsFinished - initialFinishedCompletions,
+            }),
+          });
+
+          // Bind a probe queue to the real DLX before publishing a reply-required message without an identity.
+          const dlq = await ch.assertQueue("", { exclusive: true, autoDelete: true });
+          await ch.bindQueue(dlq.queue, `${exchange}.dlx`, inboundKey);
+          const dlqCopy = new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("Timed out waiting for RabbitMQ ambiguous DLQ copy")), 15_000);
+            timer.unref?.();
+            void ch.consume(dlq.queue, (message) => {
+              if (!message) return;
+              clearTimeout(timer);
+              resolve({ content: message.content.toString("utf8"),
+                routingKey: message.properties.headers?.["x-original-routing-key"],
+                deliveryOutcome: message.properties.headers?.["x-delivery-outcome"] });
+            }, { noAck: true }).catch((error) => { clearTimeout(timer); reject(error); });
+          });
+          const beforeAmbiguous = afterRedelivery;
+          ch.publish(exchange, inboundKey, Buffer.from("original"), { contentType: "text/plain", persistent: true });
+          await ch.waitForConfirms();
+          const observedDlq = await dlqCopy;
+          await ctx.waitFor(async () => {
+            const stats = await ctx.gatewayFetch("/rabbitmq/stats");
+            return stats.json?.data?.stats?.messagesNacked >= beforeAmbiguous.messagesNacked + 1;
+          }, { label: "RabbitMQ ambiguous DLQ copy and NACK", timeoutMs: 15_000 });
+          const afterAmbiguous = (await ctx.gatewayFetch("/rabbitmq/stats")).json?.data?.stats;
+          assertRabbitmqAmbiguousDlqEvidence({
+            before: beforeAmbiguous, after: afterAmbiguous, dlq: observedDlq,
+            completionsStarted: model.metrics.completions - initialCompletions - 1,
+            completionsFinished: model.metrics.completionsFinished - initialFinishedCompletions - 1,
+          });
         }
       } finally {
         await ch.close();
@@ -132,8 +224,8 @@ export async function testRabbitmq(ctx, results) {
     { service: "docker:5672", method: process.env.OPENCLAW_E2E_RABBITMQ_SUBAGENT === "timeout"
       ? "subagent wait timeout + runId + fixture finished + NACK without ACK or publish"
       : process.env.OPENCLAW_E2E_RABBITMQ_SUBAGENT === "visible"
-        ? "subagent visible reply + confirmed publish + deferred ACK"
-        : "AMQP inbound + real Agent Turn + confirmed reply + deferred ACK" },
+        ? "subagent reply + same-ID Broker redelivery quiet window + observed DLQ/NACK"
+        : "real Agent Turn + same-ID Broker redelivery quiet window + observed DLQ/NACK" },
     results,
   );
 }

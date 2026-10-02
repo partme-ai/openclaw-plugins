@@ -19,10 +19,25 @@ function mockDelivery() {
 }
 
 describe("createDeferredDeliveryAck", () => {
+  it("never acknowledges a pending turn after one block was published", async () => {
+    const delivery = mockDelivery();
+    const ctrl = createDeferredDeliveryAck({ delivery, requireReply: true });
+    await ctrl.wrapReplyDeliver(async () => {})({ wire: "block" });
+    ctrl.finalizeAfterDispatch({ kind: "ambiguous" });
+    expect(delivery.ack).not.toHaveBeenCalled();
+    expect(delivery.nack).toHaveBeenCalledWith({ requeue: false, reason: "ambiguous_delivery" });
+  });
+
+  it("acknowledges a settled silent reply without publish", () => {
+    const delivery = mockDelivery();
+    const ctrl = createDeferredDeliveryAck({ delivery, requireReply: true });
+    ctrl.finalizeAfterDispatch({ kind: "no-reply" });
+    expect(delivery.ack).toHaveBeenCalledOnce();
+  });
   it("acks after dispatch when reply not required", () => {
     const delivery = mockDelivery();
     const ctrl = createDeferredDeliveryAck({ delivery, requireReply: false });
-    ctrl.finalizeAfterDispatch();
+    ctrl.finalizeAfterDispatch({ kind: "no-reply" });
     expect(delivery.ack).toHaveBeenCalledTimes(1);
     expect(delivery.nack).not.toHaveBeenCalled();
   });
@@ -34,8 +49,8 @@ describe("createDeferredDeliveryAck", () => {
       requireReply: true,
       requeueOnMissingReply: false,
     });
-    ctrl.finalizeAfterDispatch();
-    expect(delivery.nack).toHaveBeenCalledWith({ requeue: false, reason: "no_reply_published" });
+    ctrl.finalizeAfterDispatch({ kind: "retryable" });
+    expect(delivery.nack).toHaveBeenCalledWith({ requeue: false, reason: "retryable_delivery" });
     expect(delivery.ack).not.toHaveBeenCalled();
   });
 
@@ -44,7 +59,7 @@ describe("createDeferredDeliveryAck", () => {
     const ctrl = createDeferredDeliveryAck({ delivery, requireReply: true });
     const deliver = ctrl.wrapReplyDeliver(async () => {});
     await deliver({ wire: "{}" });
-    ctrl.finalizeAfterDispatch();
+    ctrl.finalizeAfterDispatch({ kind: "delivered" });
     expect(delivery.ack).toHaveBeenCalledTimes(1);
   });
 
@@ -53,7 +68,7 @@ describe("createDeferredDeliveryAck", () => {
     const ctrl = createDeferredDeliveryAck({ delivery, requireReply: true });
     ctrl.ackImmediate();
     expect(delivery.ack).toHaveBeenCalledTimes(1);
-    ctrl.finalizeAfterDispatch();
+    ctrl.finalizeAfterDispatch({ kind: "no-reply" });
     expect(delivery.ack).toHaveBeenCalledTimes(1);
   });
 });

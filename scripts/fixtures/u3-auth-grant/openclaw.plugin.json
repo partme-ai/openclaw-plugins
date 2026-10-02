@@ -1,0 +1,11 @@
+{
+  "id": "u3-auth-grant-fixture",
+  "name": "U3 Auth Grant Fixture",
+  "description": "Disposable Control UI route for real Gateway grant verification",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

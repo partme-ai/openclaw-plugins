@@ -219,8 +219,8 @@ URL. Configuration is validated again at runtime; invalid values fail startup.
 | `maxActiveTraces` | `1000` | Concurrent active-trace limit; multiplied by `maxSpansPerTrace` must not exceed 100000 |
 | `maxBufferedSpans` | `10000` | Oldest spans are dropped on overflow and health becomes degraded |
 | `flushIntervalMs` | `5000` | File and OTLP flush interval |
-| `traceDir` | `./traces` | File backend directory |
-| `traceRetentionDays` | `7` | File backend retention |
+| `traceDir` | `./traces` | File backend directory; relative paths resolve inside the OpenClaw state directory |
+| `traceRetentionDays` | `7` | File backend and shared query journal retention |
 | `otlpEndpoint` | `http://localhost:4318/v1/traces` | OTLP/HTTP trace endpoint |
 | `otlpHeaders` | `{}` | Collector authentication headers; values are never exposed by logs or status APIs |
 | `exportTimeoutMs` | `10000` | Per OTLP request timeout |
@@ -239,17 +239,37 @@ Configure Gateway authentication before exposing these endpoints. With `gateway.
 - `GET /tracing/traces?limit=50` (`1..200`)
 - `GET /tracing/trace?traceId=<32-hex-character-id>`
 
+The authenticated query routes read completed spans from
+`<OpenClaw state directory>/plugins/tracing/journal/journal.sqlite`. Hook runtimes and Gateway HTTP routes can
+load in separate module realms; this private journal makes the same trace ID
+queryable across those runtimes and after a Gateway restart. It retains at most
+200 traces and 100 completed spans per trace, with an 8 KiB limit per span.
+Excess spans are omitted from the query journal and reported as an observer
+error; the configured log/file/OTLP export still runs. SQLite transactions
+atomically publish spans across processes and roll back incomplete writes after
+a crash. The database has mode `0600` under a `0700` directory. Read routes
+filter expired traces without taking a writer lock; subsequent writes remove
+expired rows physically.
+
 `/tracing/status` returns HTTP 503 when the selected backend reports a current
 export or capacity failure. Its `backendStatus` includes buffered, dropped,
-last-export, and last-error diagnostics.
+last-export, and last-error diagnostics. `exportHealth` describes only the
+Gateway runtime's backend instance; Hook runtimes can be isolated and need
+their own logs/Collector checks. `queryHealth` checks only shared journal
+readability; its `completeness: "unverified"` does not claim every completed
+Span was retained. Journal read failure returns 503 without exposing filesystem
+details. A journal write failure remains in the writer runtime's backend
+diagnostics and log even if a later Span succeeds.
 
 ## Reliability and privacy boundaries
 
-- Active traces and recent query data are bounded in process memory.
+- Active traces are bounded in process memory; completed query data uses the bounded shared journal.
 - Concurrent startup hooks share one initialization promise. Initialization failures are logged and
   fail open, so the observer cannot reject the message or tool path.
-- File and OTLP hooks only append to bounded memory. Disk writes, 50-span HTTP batches, and retries
-  run in serialized background flushes instead of blocking threshold-crossing business requests.
+- File and OTLP export buffers use bounded memory and background flushes for
+  external delivery. Completed spans also synchronously write the small local
+  query journal; monitor local disk latency because it adds observer overhead
+  to completion hooks. Journal errors are logged without rejecting Agent work.
 - OTLP retries only network failures, 408/429, and 5xx responses. Permanent 4xx failures stop the
   current attempt immediately. A `partialSuccess` response is not resent as a whole batch because
   doing so would duplicate spans the Collector already accepted; rejected spans are counted as dropped.
@@ -274,8 +294,13 @@ last-export, and last-error diagnostics.
   boundary before they reach memory, files, logs, or OTLP.
 - `otlpHeaders` may contain credentials. Values are not returned by the plugin, but the OpenClaw
   configuration file still requires least-privilege filesystem protection.
-- The HTTP query cache contains only the 200 most recently completed traces and
-  is cleared on gateway shutdown.
+- Gateway authentication protects HTTP access to the journal; filesystem users
+  who can read the Gateway process's files must be trusted with redacted span
+  data. The journal uses OpenClaw's profile state directory rather than the
+  process working directory, so separate profiles cannot query each other's
+  traces. Relative `traceDir` paths are likewise resolved under that state
+  directory; paths that escape it are rejected. Restart does not clear retained
+  query data.
 
 ## Verification
 

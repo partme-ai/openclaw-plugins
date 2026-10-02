@@ -1,0 +1,317 @@
+{
+  "openclaw": "2026.9.6",
+  "node": "v24.18.0",
+  "vitest": null,
+  "nodeEnv": null,
+  "results": [
+    {
+      "id": "mqtt",
+      "package": "@partme.ai/openclaw-mqtt",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-mqtt-2026.7.1.tgz",
+      "sha256": "792272e8a5f2d95d03e9c694de17184a6174f0f71cc8ccd2119fae2be2788104",
+      "ok": true
+    },
+    {
+      "id": "stomp",
+      "package": "@partme.ai/openclaw-stomp",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-stomp-2026.7.1.tgz",
+      "sha256": "4c578e5e4efc6dfc68ceec077053162a305ec55547c2081b10e7b6f51d82b1e6",
+      "ok": true
+    },
+    {
+      "id": "web-mqtt",
+      "package": "@partme.ai/openclaw-web-mqtt",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-web-mqtt-2026.7.1.tgz",
+      "sha256": "80f7262223a1b8bf0210c7f6007c8ebc7274301ba061dde970b06172581a9449",
+      "ok": true
+    },
+    {
+      "id": "web-stomp",
+      "package": "@partme.ai/openclaw-web-stomp",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-web-stomp-2026.7.1.tgz",
+      "sha256": "fe3ac6221f6a7d3ef7d61d3802696259e95adda8e7ebc53eb2d622637003c8d1",
+      "ok": true
+    },
+    {
+      "id": "web-socket",
+      "package": "@partme.ai/openclaw-web-socket",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-web-socket-2026.7.1.tgz",
+      "sha256": "c2c976eae60052579cda053d628faf50850060bdbbb733fc7396d450beefd61c",
+      "ok": true
+    },
+    {
+      "id": "rabbitmq",
+      "package": "@partme.ai/openclaw-rabbitmq",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-rabbitmq-2026.7.1.tgz",
+      "sha256": "d873b0001bf0ba4f639d294efbe43d8b0a513ddca4d8d58bf311795dc02a5e01",
+      "ok": true
+    },
+    {
+      "id": "rocketmq",
+      "package": "@partme.ai/openclaw-rocketmq",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-rocketmq-2026.7.1.tgz",
+      "sha256": "6b063a27dd3cb5b6574f01a07d76277f390c11f7dbdbdd39beaf48b3847f9d71",
+      "ok": true
+    },
+    {
+      "id": "gotify",
+      "package": "@partme.ai/openclaw-gotify",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-gotify-2026.7.1.tgz",
+      "sha256": "c98ddb9e955fc4b5eff0b2022da299909ede8641f56f9e04afe4454239f56ef0",
+      "ok": true
+    },
+    {
+      "id": "redis-stream",
+      "package": "@partme.ai/openclaw-redis-stream",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-redis-stream-2026.7.1.tgz",
+      "sha256": "5a94ad6b45d8d34068d24ac31190bee5c81b7c4f8e11c2a98115a237388b4620",
+      "ok": true
+    },
+    {
+      "id": "wecom",
+      "package": "@partme.ai/wecom",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-wecom-2026.7.1.tgz",
+      "sha256": "f5bf0e9e1c47bb020a20a410eb16d8837315284540be9b936dc7842fcbc5971c",
+      "ok": true
+    },
+    {
+      "id": "wecom-kf",
+      "package": "@partme.ai/wecom-kf",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-wecom-kf-2026.7.1.tgz",
+      "sha256": "377896344742ae34957b2a8b1fa10dac73bf390ed79bfc6eb5055226b4ee20c4",
+      "ok": true
+    },
+    {
+      "id": "wechat",
+      "package": "@partme.ai/weixin",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-weixin-2026.7.1.tgz",
+      "sha256": "e32ac34baf72249baaa22ed78b21cf726e66ec2ca26ef295628c30390bb37284",
+      "ok": true
+    },
+    {
+      "id": "wechat-ipad",
+      "package": "@partme.ai/wechat-ipad",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-wechat-ipad-2026.7.1.tgz",
+      "sha256": "f171b524679d6ac4e08be9d28451af4a296a027c9a1cae26d9275b3c4b59cff4",
+      "ok": true
+    },
+    {
+      "id": "douyin",
+      "package": "@partme.ai/openclaw-douyin",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-douyin-2026.7.1.tgz",
+      "sha256": "3b579cc63d85e96d61ee3ae7c48272c67d58f1b89128b2177ad364fbfa5aa1c5",
+      "ok": true
+    },
+    {
+      "id": "rednode",
+      "package": "@partme.ai/openclaw-rednode",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-rednode-2026.7.1.tgz",
+      "sha256": "b44b48e6188dc40638f922e99f710b218b57c0bec672c63f388a4ca3e61746bf",
+      "ok": true
+    },
+    {
+      "id": "amap",
+      "package": "@partme.ai/openclaw-amap",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-amap-2026.7.1.tgz",
+      "sha256": "b23963ef9ed299ab4142bbd0abb6564e10f4658eb882d3370839aea854cd4dad",
+      "ok": true
+    },
+    {
+      "id": "meituan",
+      "package": "@partme.ai/openclaw-meituan",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-meituan-2026.7.1.tgz",
+      "sha256": "db65e4bd16638ba298f84bc8e7d894f1c193c6ebd0f47ebede359da8cb76b1de",
+      "ok": true
+    },
+    {
+      "id": "bridge",
+      "package": "@partme.ai/openclaw-bridge",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-bridge-2026.7.1.tgz",
+      "sha256": "3dcafb5d43109089f1e0d01a9c81781b68cf5e3c968e4a38fd338f9431bf3fe6",
+      "ok": true
+    },
+    {
+      "id": "router",
+      "package": "@partme.ai/openclaw-router",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-router-2026.7.1.tgz",
+      "sha256": "eea1389a68509d68659ac6f64df7d51679f4af49f2ab1533438bfe446c7478c3",
+      "ok": true
+    },
+    {
+      "id": "nacos",
+      "package": "@partme.ai/openclaw-nacos",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/bootstrap.cjs"
+      ],
+      "archive": "partme.ai-openclaw-nacos-2026.7.1.tgz",
+      "sha256": "1d20636382b5b0ac8619a2f963da826524d4c54114e49d2974121bfa39332c16",
+      "ok": true
+    },
+    {
+      "id": "mtls",
+      "package": "@partme.ai/openclaw-mtls",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-mtls-2026.7.1.tgz",
+      "sha256": "0fa81c82f129b88023506ea4a75c6c603fdb6725791837b34aca6368c2c8d753",
+      "ok": true
+    },
+    {
+      "id": "oauth2",
+      "package": "@partme.ai/openclaw-oauth2",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-oauth2-2026.7.1.tgz",
+      "sha256": "ce0f4ec551e0ab7f17a0ace2893f9c21a9c8e56d97fab99086d817ac37037c19",
+      "ok": true
+    },
+    {
+      "id": "tracing",
+      "package": "@partme.ai/openclaw-tracing",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-tracing-2026.7.1.tgz",
+      "sha256": "d9b9cce4de165dd687fb667271d42e9d397b57d98f8c706292c00647cc780429",
+      "ok": true
+    },
+    {
+      "id": "prometheus",
+      "package": "@partme.ai/openclaw-prometheus",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-prometheus-2026.7.1.tgz",
+      "sha256": "9b71aa17669245cee78ac71fa6671c5a93ac1d7cb70b99df08145072b2cbcdc3",
+      "ok": true
+    },
+    {
+      "id": "knowledge",
+      "package": "@partme.ai/openclaw-knowledge",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-knowledge-2026.7.1.tgz",
+      "sha256": "68acc0346269addb1c450eaecf44f51af8e757c0774fba43d7f343c9d492ce1e",
+      "ok": true
+    },
+    {
+      "id": "memory",
+      "package": "@partme.ai/openclaw-memory",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-memory-2026.7.1.tgz",
+      "sha256": "5b62b9db57f88fe6ef3ab0b9960e975ad80b31f40c88e1bbf76a564743110d2e",
+      "ok": true
+    },
+    {
+      "id": "openmem",
+      "package": "@partme.ai/openclaw-openmem",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-openmem-2026.7.1.tgz",
+      "sha256": "c478bda15318ae980056c58024a3af25d5bec17e850d188db4c670ac6e23f8d5",
+      "ok": true
+    },
+    {
+      "id": "message-sdk",
+      "package": "@partme.ai/openclaw-message-sdk",
+      "version": "2026.7.1",
+      "entries": [
+        "./dist/index.js"
+      ],
+      "archive": "partme.ai-openclaw-message-sdk-2026.7.1.tgz",
+      "sha256": "02c4eaa03d8ac288b95f3663ff03c124e2a658cd59e5d486f03ab81df4d66e0a",
+      "ok": true
+    }
+  ],
+  "ok": true
+}

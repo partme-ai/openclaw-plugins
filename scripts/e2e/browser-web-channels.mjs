@@ -76,7 +76,11 @@ export async function runBrowserTests(selectedPlugins = ["web-mqtt", "web-stomp"
   try {
     await waitFor(() => tcpReachable(TEST_WEB_PORT), { label: "test-web server", timeoutMs: 10_000 });
 
-    browser = await playwright.chromium.launch({ headless: true });
+    const executablePath = process.env.OPENCLAW_E2E_BROWSER_EXECUTABLE;
+    browser = await playwright.chromium.launch({
+      headless: true,
+      ...(executablePath ? { executablePath } : {}),
+    });
     const page = await browser.newPage();
 
     // Patch default URLs to E2E ports

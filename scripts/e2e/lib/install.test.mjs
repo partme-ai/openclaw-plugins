@@ -1,9 +1,34 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { assertCleanPackedArtifact, reviewedArtifactDigest, trustedE2ELinkArgs } from "./install.mjs";
+import { assertCleanPackedArtifact, preparePackedCandidate, reviewedArtifactDigest, trustedE2ELinkArgs } from "./install.mjs";
+
+test("packed candidate is installed from tarball even when workspace dist differs", () => {
+  const root = mkdtempSync(join(tmpdir(), "openclaw-packed-candidate-"));
+  try {
+    const packageRoot = join(root, "package");
+    const sourceDist = join(root, "repo", "extensions", "demo", "dist");
+    const extracted = join(root, "state-e2e", "extensions", "demo");
+    const archive = join(root, "candidate.tgz");
+    mkdirSync(join(packageRoot, "dist"), { recursive: true });
+    mkdirSync(sourceDist, { recursive: true });
+    writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "demo" }));
+    writeFileSync(join(packageRoot, "dist", "index.js"), "reviewed tarball runtime");
+    writeFileSync(join(sourceDist, "index.js"), "different workspace runtime");
+    writeFileSync(join(sourceDist, "setup-entry.js"), "workspace-only setup entry");
+    execFileSync("tar", ["-czf", archive, "-C", root, "package"]);
+
+    const packedContentDigest = preparePackedCandidate(archive, extracted);
+    assert.equal(readFileSync(join(extracted, "dist", "index.js"), "utf8"), "reviewed tarball runtime");
+    assert.equal(existsSync(join(extracted, "dist", "setup-entry.js")), false);
+    assert.equal(reviewedArtifactDigest(extracted), packedContentDigest);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("packed artifact cannot carry ignored dependency state", () => {
   const root = mkdtempSync(join(tmpdir(), "openclaw-packed-review-"));
@@ -57,14 +82,35 @@ test("local install consent is limited to a plugin in this checkout and extracte
       writeFileSync(join(path, "openclaw.plugin.json"), JSON.stringify({ id: "bridge" }));
       writeFileSync(join(path, "package.json"), JSON.stringify({ name: "@partme.ai/openclaw-bridge" }));
     }
-    assert.ok(!trustedE2ELinkArgs("extensions/bridge", bridgeDest, repo, state, "bridge").includes("--accept-capabilities"));
+    const bridgeApproved = { bridge: reviewedArtifactDigest(bridgeDest) };
+    assert.ok(trustedE2ELinkArgs("extensions/bridge", bridgeDest, repo, state, "bridge", bridgeApproved).includes("--accept-capabilities"));
+    assert.throws(() => trustedE2ELinkArgs("extensions/bridge", bridgeDest, repo, state, "bridge"));
 
     for (const [id, packageName, capabilities] of [
+      ["wecom", "@partme.ai/wecom", undefined],
+      ["wechat-ipad", "@partme.ai/wechat-ipad", undefined],
+      ["rednode", "@partme.ai/openclaw-rednode", undefined],
+      ["amap", "@partme.ai/openclaw-amap", { amapWebService: true }],
+      ["mtls", "@partme.ai/openclaw-mtls", { security: true, mtls: true, tls: true, authentication: true, reverseProxy: true, websocketProxy: true }],
+      ["oauth2", "@partme.ai/openclaw-oauth2", { authentication: true, reverseProxy: true, websocketProxy: true, oidcDiscovery: true, authorizationCode: true, pkce: true, refreshToken: true, tokenRevocation: true, tokenIntrospection: true }],
+      ["knowledge", "@partme.ai/openclaw-knowledge", { knowledgeRAG: true }],
+      ["memory", "@partme.ai/openclaw-memory", undefined],
+      ["openmem", "@partme.ai/openclaw-openmem", undefined],
       ["tracing", "@partme.ai/openclaw-tracing", { distributedTracing: true }],
       ["mqtt", "@partme.ai/openclaw-mqtt", { protocolBridge: true, iot: true }],
+      ["web-mqtt", "@partme.ai/openclaw-web-mqtt", { protocolBridge: true, websocket: true }],
+      ["web-socket", "@partme.ai/openclaw-web-socket", { protocolBridge: true }],
       ["rabbitmq", "@partme.ai/openclaw-rabbitmq", undefined],
+      ["redis-stream", "@partme.ai/openclaw-redis-stream", undefined],
+      ["rocketmq", "@partme.ai/openclaw-rocketmq", undefined],
       ["douyin", "@partme.ai/openclaw-douyin", undefined],
+      ["meituan", "@partme.ai/openclaw-meituan", undefined],
+      ["prometheus", "@partme.ai/openclaw-prometheus", { metricsExport: true }],
+      ["nacos", "@partme.ai/openclaw-nacos", undefined],
+      ["stomp", "@partme.ai/openclaw-stomp", { protocolBridge: true, tcp: true, tls: true, transactions: true }],
+      ["web-stomp", "@partme.ai/openclaw-web-stomp", { protocolBridge: true, websocket: true, wss: true }],
       ["wecom-kf", "@partme.ai/wecom-kf", { humanTransfer: true, satisfactionSurvey: true, sessionManagement: true }],
+      ["wechat", "@partme.ai/weixin", undefined],
     ]) {
       const src = join(repo, "extensions", id);
       const dest = join(state, "extensions", id);

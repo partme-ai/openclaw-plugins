@@ -16,7 +16,7 @@ function writeJson(response, status, body) {
 
 export async function startOpenAiModelFixture(port) {
   /** 各插件可在隔离 E2E 中注入有限故障；默认值不改变正常模型夹具行为。 */
-  const controls = { failNextCompletions: 0 };
+  const controls = { failNextCompletions: 0, replyText: "openclaw e2e fixture reply" };
   const metrics = {
     models: 0,
     completions: 0,
@@ -108,7 +108,7 @@ export async function startOpenAiModelFixture(port) {
           model: "fixture-model",
           choices: [{
             index: 0,
-            message: { role: "assistant", content: "openclaw e2e fixture reply" },
+            message: { role: "assistant", content: controls.replyText },
             finish_reason: "stop",
           }],
           usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
@@ -156,7 +156,7 @@ export async function startOpenAiModelFixture(port) {
                 object: "chat.completion.chunk",
                 created,
                 model: "fixture-model",
-                choices: [{ index: 0, delta: { role: "assistant", content: "openclaw e2e fixture reply" }, finish_reason: null }],
+                choices: [{ index: 0, delta: { role: "assistant", content: controls.replyText }, finish_reason: null }],
               },
               {
                 id,

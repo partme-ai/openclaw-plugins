@@ -530,13 +530,26 @@ export async function processOneMessage(
   logger.debug(
     `dispatchReplyFromConfig: starting agentId=${route.agentId ?? "(none)"}`,
   );
+  // The host may otherwise expand local-media roots from an Agent-authored
+  // MEDIA: path and copy an arbitrary file into its trusted media cache before
+  // this channel's path guard can inspect the original source.
+  const replyConfig = {
+    ...deps.config,
+    tools: {
+      ...deps.config.tools,
+      fs: { ...deps.config.tools?.fs, workspaceOnly: true },
+    },
+  };
   try {
     await deps.channelRuntime.reply.withReplyDispatcher({
       dispatcher,
       run: () =>
         deps.channelRuntime.reply.dispatchReplyFromConfig({
           ctx: finalized,
-          cfg: deps.config,
+          cfg: replyConfig,
+          // The host's prepared Agent runtime otherwise replaces cfg during
+          // reply resolution; apply the same limit to that current runtime.
+          configOverride: { tools: { fs: { workspaceOnly: true } } },
           dispatcher,
           replyOptions: { ...replyOptions, disableBlockStreaming: true },
         }),

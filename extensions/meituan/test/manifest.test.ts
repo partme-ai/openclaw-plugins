@@ -14,7 +14,9 @@ afterEach(() => vi.unstubAllGlobals());
 describe("meituan plugin entry", () => {
   it("declares the registered tool contract", () => {
     const manifest = JSON.parse(readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"));
-    expect(manifest.contracts.tools).toEqual(["meituan_openapi_invoke"]);
+    expect(manifest.contracts.tools).toEqual(["meituan_openapi_invoke", "meituan_callback_inbox"]);
+    expect(manifest.configSchema.properties.operations.minItems).toBe(0);
+    expect(manifest.configSchema.properties.accounts.minItems).toBe(1);
   });
 
   it("registers one tool and no channel or route when enabled", () => {
@@ -32,6 +34,22 @@ describe("meituan plugin entry", () => {
     expect(api.registerTool).toHaveBeenCalledTimes(1);
     expect(registerChannel).not.toHaveBeenCalled();
     expect(registerHttpRoute).not.toHaveBeenCalled();
+  });
+
+  it("registers a callback-only route and inbox tool", () => {
+    const registerHttpRoute = vi.fn();
+    const api = createMockPluginApi({ registerHttpRoute });
+    (api as any).registrationMode = "full";
+    (api as any).pluginConfig = {
+      enabled: true, developerId: "123", signKey: "key", callbacks: { enabled: true },
+    };
+    (api as any).logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    plugin.register(api as never);
+    expect(api.registerTool).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.registerTool).mock.calls[0]?.[1]).toEqual({ name: "meituan_callback_inbox" });
+    expect(registerHttpRoute).toHaveBeenCalledWith(expect.objectContaining({
+      path: "/meituan/callback", auth: "plugin", match: "exact", handler: expect.any(Function),
+    }));
   });
 
   it("binds the runtime trusted agentAccountId to the matching shop token", async () => {

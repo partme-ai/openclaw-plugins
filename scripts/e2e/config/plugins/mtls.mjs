@@ -1,16 +1,37 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync } from "node:fs";
+import { isIP } from "node:net";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 
 import { E2E_PORTS, STATE_DIR } from "../../lib/utils.mjs";
 
 const CERT_DIR = join(STATE_DIR, "mtls-certs");
 
+/** OpenClaw 2026.9.6 requires a non-loopback client attribution behind a trusted proxy. */
+export function mtlsClientAddress() {
+  const interfaces = Object.entries(networkInterfaces());
+  interfaces.sort(([left], [right]) => Number(!/^(en|eth)/.test(left)) - Number(!/^(en|eth)/.test(right)));
+  const addresses = interfaces.flatMap(([, entries]) => (entries ?? [])
+    .filter((entry) => entry.family === "IPv4" && !entry.internal && isIP(entry.address) === 4 && entry.address !== "0.0.0.0")
+    .map((entry) => entry.address));
+  const configured = process.env.E2E_MTLS_CLIENT_ADDRESS;
+  if (configured) {
+    if (!addresses.includes(configured)) {
+      throw new Error("E2E_MTLS_CLIENT_ADDRESS must be a non-loopback IPv4 address assigned to this host");
+    }
+    return configured;
+  }
+  if (addresses[0]) return addresses[0];
+  throw new Error("mTLS E2E requires a non-loopback IPv4 host interface for trusted-proxy attribution");
+}
+
 function openssl(...args) {
   execFileSync("openssl", args, { cwd: CERT_DIR, stdio: "ignore" });
 }
 
 function prepareCertificates() {
+  mtlsClientAddress();
   rmSync(CERT_DIR, { recursive: true, force: true });
   mkdirSync(CERT_DIR, { recursive: true });
 
@@ -44,7 +65,7 @@ export function mtlsConfig(ctx) {
             caFile: `${runtimeCertDir}/ca.crt`,
           },
           proxy: {
-            listenHost: "0.0.0.0",
+            listenHost: "127.0.0.1",
             listenPort: E2E_PORTS.mtlsHttps,
             upstreamHost: "127.0.0.1",
             upstreamPort: ctx.gatewayPort,
@@ -57,4 +78,3 @@ export function mtlsConfig(ctx) {
     channelEntry: {},
   };
 }
-

@@ -33,6 +33,28 @@ function assertNoWorkspaceDependencies(pkg, id) {
   }
 }
 
+function checkPackedJavaScriptSyntax(archive, outputDir, id) {
+  const unpacked = join(outputDir, "unpacked");
+  mkdirSync(unpacked, { recursive: true });
+  execFileSync("tar", ["-xzf", archive, "-C", unpacked]);
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(path);
+      } else if (entry.isFile() && /\.(?:cjs|js|mjs)$/.test(entry.name)) {
+        try {
+          execFileSync(process.execPath, ["--check", path], { stdio: ["ignore", "pipe", "pipe"] });
+        } catch (error) {
+          const diagnostic = error?.stderr?.toString("utf8").trim() || String(error);
+          throw new Error(`${id}: packed JavaScript syntax failed in ${path}: ${diagnostic}`);
+        }
+      }
+    }
+  };
+  visit(join(unpacked, "package", "dist"));
+}
+
 try {
   for (const entry of selected) {
     const outputDir = join(workDir, entry.id);
@@ -62,6 +84,7 @@ try {
       throw new Error(`${entry.id}: packed name ${packedPackage.name} does not match ${entry.filter}`);
     }
     assertNoWorkspaceDependencies(packedPackage, entry.id);
+    checkPackedJavaScriptSyntax(archive, outputDir, entry.id);
     console.log(`packed ${entry.id}: ${archives[0]}`);
   }
   console.log(`Package archive verification passed for ${selected.length} extension(s).`);

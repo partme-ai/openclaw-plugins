@@ -1,17 +1,17 @@
 ---
 name: wecom-preflight
-description: 企业微信插件前置条件检查。在执行任何 wecom_mcp 操作前，通过 shell 命令检查工具权限配置（profile 和白名单），若缺失则自动修复并提示用户重启 Gateway。所有使用 wecom_mcp 的技能都应在首次调用前执行此检查。
+description: 企业微信插件前置条件只读检查。仅在用户要求使用 wecom_mcp 且工具不可用时，检查当前配置并向用户说明所需的管理员操作；不得自行扩大工具权限或重启 Gateway。
 ---
 
 # 企业微信前置条件检查
 
-> 本技能确保 `wecom_mcp` 工具已正确获得执行权限。**所有使用 wecom_mcp 的技能在首次调用前，必须先执行本检查流程。**
+> 本技能只诊断 `wecom_mcp` 的可用性。工具不可用时停止调用并告知用户；不得自行修改工具授权配置。
 
 ## 触发条件
 
 当满足以下**任一条件**时，执行前置检查：
 
-1. 当前会话中**首次**需要调用 `wecom_mcp` 工具
+1. 用户明确要求企业微信操作，而当前会话看不到 `wecom_mcp` 工具
 2. 调用 `wecom_mcp` 时收到 `tool not allowed`、`not permitted`、`permission denied` 或类似权限错误
 
 > 如果当前会话中已成功调用过 `wecom_mcp`（任何操作），则无需重复检查。
@@ -48,54 +48,14 @@ openclaw config get tools.alsoAllow
 根据返回结果分流：
 
 - **返回内容包含 `wecom_mcp`**（如 `["wecom_mcp"]` 或 `["wecom_mcp", "other_tool"]`）→ ✅ 白名单已配置，检查通过，继续执行用户原始请求
-- **返回内容不包含 `wecom_mcp`**（如空数组 `[]`、`undefined`、或列表中没有 `wecom_mcp`）→ 进入步骤 2（自动修复）
+- **返回内容不包含 `wecom_mcp`**（如空数组 `[]`、`undefined`、或列表中没有 `wecom_mcp`）→ 进入步骤 2（报告管理员操作）
 - **命令执行失败** → 进入步骤 3（环境异常）
 
 ---
 
-### 步骤 2：自动修复 tools.alsoAllow
+### 步骤 2：报告管理员操作
 
-在终端执行以下命令，将 `wecom_mcp` 加入工具白名单：
-
-```bash
-openclaw config set tools.alsoAllow '["wecom_mcp"]'
-```
-
-> **注意**：如果步骤 1b 返回的列表中已有其他工具（如 `["other_tool"]`），需要合并后再写入，例如：
-> ```bash
-> openclaw config set tools.alsoAllow '["other_tool", "wecom_mcp"]'
-> ```
-
-根据执行结果分流：
-
-#### 2a. 命令执行成功
-
-向用户回复（**不要自动执行重启**）：
-
-```
-✅ 已自动将 wecom_mcp 加入工具执行权限白名单（tools.alsoAllow）。
-⚠️ 配置变更需要重启 Gateway 后才能生效，请在终端执行以下命令：
-
-openclaw gateway restart
-
-重启完成后请重新发送您的请求。
-```
-
-> **为什么不自动重启**：`openclaw gateway restart` 会中断当前所有活跃连接（包括本会话），
-> 如果由 AI 自动执行，用户可能无法看到完整的提示信息。交由用户手动重启更可控。
-
-#### 2b. 命令执行失败
-
-向用户回复以下手动修复指引：
-
-```
-❌ 自动配置失败，请在终端手动执行以下命令：
-
-openclaw config set tools.alsoAllow '["wecom_mcp"]'
-openclaw gateway restart
-
-完成后请重新发送您的请求。
-```
+告知用户当前配置未授权 `wecom_mcp`，因此本次企业微信操作无法继续。请具有 OpenClaw 配置管理权限的人核对 `tools.profile` 与 `tools.alsoAllow`，在保留既有授权的前提下自行决定是否加入 `wecom_mcp`，然后按其部署流程重启 Gateway。不要由 Agent 执行配置写入、安装或重启，也不要把 `tools.profile` 自动改为 `full`。
 
 ---
 
@@ -119,11 +79,11 @@ openclaw gateway restart
 
 ## 注意事项
 
-1. **全程使用 shell 命令**：本技能的所有探测和修复操作均通过 `openclaw` CLI 在终端中执行，**不涉及任何 MCP tool 调用**。这样可以避免"tool 未白名单 → tool 不可见 → 无法探测"的死锁问题
+1. **只读检查**：仅使用 `openclaw config get` 读取当前配置；不要执行任何配置写入、安装或重启命令
 2. **profile 优先判断**：`tools.profile` 为 `full` 时所有工具无限制，无需检查 `alsoAllow`，可快速跳过
-3. **幂等性**：如果 `tools.alsoAllow` 中已包含 `wecom_mcp`，`openclaw config set` 命令不会产生副作用
-4. **保留已有配置**：修改 `tools.alsoAllow` 时，需保留列表中已有的其他工具名，仅追加 `wecom_mcp`
-5. **不自动重启**：自动配置成功后仅提示用户重启并附上命令，由用户手动执行，避免会话中断导致信息丢失
+3. **最小权限**：只向管理员说明缺失的工具名，不要求切换为 `full` profile
+4. **保留已有配置**：管理员若选择修改授权，应保留列表中已有的其他工具名
+5. **不自动重启**：任何 Gateway 重启都由用户或管理员按部署流程执行
 6. **会话缓存**：在同一个会话中，一旦检查通过（profile 为 full 或 alsoAllow 包含 wecom_mcp），后续调用无需重复检查
 
 ---
@@ -132,10 +92,9 @@ openclaw gateway restart
 
 | 场景 | 处理方式 |
 |------|---------|
-| 首次调用 wecom_mcp 前 | 执行 `openclaw config get tools.profile` 检查 |
+| 用户要求使用 wecom_mcp 且工具不可见 | 执行 `openclaw config get tools.profile` 只读检查 |
 | `tools.profile` 为 `full` | ✅ 跳过，直接执行原始请求 |
 | profile 非 full + alsoAllow 已包含 wecom_mcp | ✅ 跳过，继续执行 |
-| profile 非 full + alsoAllow 不包含 → 自动写入成功 | 提示已配置 + 附 `openclaw gateway restart` 命令让用户重启 |
-| profile 非 full + alsoAllow 不包含 → 自动写入失败 | 给出手动修复指引 |
+| profile 非 full + alsoAllow 不包含 | 停止操作并告知用户联系配置管理员 |
 | openclaw CLI 不可用 | 告知用户检查 OpenClaw 安装 |
 | 会话中已成功调用过 wecom_mcp | 跳过检查 |

@@ -8,6 +8,7 @@
  *
  * **关键导出**：`createDeferredDeliveryAck`、`IngressDeliveryControls`
  */
+import type { DeliveryOutcome } from "../dispatch/delivery-outcome.js";
 
 /** 传输层提供的入站投递处置接口（ack / nack）。 */
 export type IngressDeliveryControls = {
@@ -81,22 +82,26 @@ export function createDeferredDeliveryAck(options: CreateDeferredDeliveryAckOpti
     /**
      * dispatch 完成后根据 requireReply 决定 ack 或 nack。
      *
-     * @returns 是否已 settle delivery
+     * @returns 本次是否执行了 ACK；NACK 和已结算均返回 false
      */
-    finalizeAfterDispatch(): boolean {
+    finalizeAfterDispatch(outcome: DeliveryOutcome): boolean {
       if (options.delivery.settled) {
-        return true;
+        return false;
       }
-      if (options.requireReply) {
-        if (replyPublished) {
-          options.delivery.ack();
-          return true;
-        }
+      if (outcome.kind === "ambiguous" || outcome.kind === "cancelled") {
         options.delivery.nack({
-          requeue: options.requeueOnMissingReply ?? true,
-          reason: "no_reply_published",
+          requeue: false,
+          reason: outcome.kind === "ambiguous" ? "ambiguous_delivery" : "cancelled_delivery",
         });
-        return true;
+        return false;
+      }
+      if (outcome.kind === "retryable") {
+        options.delivery.nack({ requeue: options.requeueOnMissingReply ?? true, reason: "retryable_delivery" });
+        return false;
+      }
+      if (options.requireReply && outcome.kind === "delivered" && !replyPublished) {
+        options.delivery.nack({ requeue: false, reason: "receipt_without_reply_publish" });
+        return false;
       }
       options.delivery.ack();
       return true;

@@ -9,6 +9,9 @@ import { definePluginEntry, type OpenClawPluginDefinition } from "openclaw/plugi
 import { bindMeituanAccount, resolveMeituanConfig } from "./config.js";
 import { MeituanApiError, MeituanClient, signMeituanParams } from "./meituan/meituan-api.js";
 import { createMeituanTool, MEITUAN_TOOL_NAME } from "./tools/tools.js";
+import { MeituanCallbackInbox } from "./callback/inbox.js";
+import { createMeituanCallbackHandler, MEITUAN_CALLBACK_PATH } from "./callback/route.js";
+import { createMeituanCallbackTool, MEITUAN_CALLBACK_TOOL_NAME } from "./callback/tool.js";
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "meituan",
@@ -22,7 +25,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     }
     // 每个受信任账号复用独立 Client：Token 不跨账号，同时保留每账号进程内限流窗口。
     const clients = new Map<string, MeituanClient>();
-    api.registerTool((ctx) => {
+    if (config.operations.length > 0) api.registerTool((ctx) => {
       const boundConfig = bindMeituanAccount(config, ctx.agentAccountId);
       // 仅已配置账号拥有独立槽位；任意未匹配运行时 ID 共享一个失败关闭/回退客户端，避免 Map 无界增长。
       const configuredAccount = config.accounts.some((account) => account.accountId === ctx.agentAccountId);
@@ -34,6 +37,13 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       }
       return createMeituanTool(ctx, boundConfig, client);
     }, { name: MEITUAN_TOOL_NAME });
+    if (config.callbacks.enabled) {
+      const inbox = new MeituanCallbackInbox(config.callbacks.inboxDirectory, config.callbacks.maxInboxEntries, config.callbacks.maxArchivedEntries);
+      if (api.registrationMode === "full") {
+        api.registerHttpRoute({ path: MEITUAN_CALLBACK_PATH, auth: "plugin", match: "exact", handler: createMeituanCallbackHandler(config, inbox) });
+      }
+      api.registerTool({ contextVersion: 2, create: (ctx) => createMeituanCallbackTool(ctx, inbox, config.maxToolResultBytes) }, { name: MEITUAN_CALLBACK_TOOL_NAME });
+    }
     api.logger.info(`[meituan] MTOp tool registered with ${config.operations.length} allowlisted operations`);
   },
 });
@@ -41,6 +51,8 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 export { bindMeituanAccount, resolveMeituanConfig } from "./config.js";
 export { MeituanApiError, MeituanClient, signMeituanParams };
 export { createMeituanTool, MEITUAN_TOOL_NAME } from "./tools/tools.js";
+export { MEITUAN_CALLBACK_PATH } from "./callback/route.js";
+export { MEITUAN_CALLBACK_TOOL_NAME } from "./callback/tool.js";
 export type {
   MeituanAccountCredential,
   MeituanApiResponse,

@@ -1,4 +1,3 @@
-import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * @fileoverview Redis Stream Channel 插件定义。
  *
@@ -8,7 +7,7 @@ import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract
  *
  * @module channel
  */
-
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import {
   getStats,
   startRedisServer,

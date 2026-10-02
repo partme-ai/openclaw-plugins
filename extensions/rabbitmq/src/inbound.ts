@@ -23,6 +23,7 @@ import {
   dispatchChannelMessage,
   resolveChannelDispatchIdentity,
   createDeferredDeliveryAck,
+  PendingDeliveryReconciliationError,
   type BridgePluginRuntime,
   type ChannelDispatchMode,
 } from "@partme.ai/openclaw-message-sdk/bridge";
@@ -30,10 +31,9 @@ import type { ChannelLimitsOpenClawConfig } from "@partme.ai/openclaw-message-sd
 
 import { resolveRabbitmqAgentReplyTimeoutMs } from "./config/resolvers.js";
 import {
-  getRabbitmqClaimableDedupe,
   mapRabbitmqWirePayloadMode,
 } from "./shared/wire-helpers.js";
-import { logRabbitmq, type InboundEvent } from "./transport/server.js";
+import { logRabbitmq, publishAmbiguousInbound, type InboundEvent } from "./transport/server.js";
 import { redactRabbitmqError } from "./shared/redact.js";
 
 /** @description 单条入站消息的处理结果（接受/拒绝及诊断字段）。 */
@@ -47,7 +47,7 @@ interface InboundResult {
 
 /** 仅保留宿主结构化终态和运行身份，不将模型输出或错误正文写入状态面。 */
 class SubagentWaitOutcomeError extends Error {
-  constructor(status: "timeout" | "error" | "invalid" | "pending", runId: string) {
+  constructor(readonly status: "timeout" | "error" | "invalid" | "pending", runId: string) {
     super(`subagent_wait status=${status} runId=${encodeURIComponent(runId)}`);
   }
 }
@@ -89,6 +89,15 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
     event.delivery.ack();
     return { accepted: true, routeSource: "idempotency", manualAck: true };
   }
+  if (config.dispatch.reply.enabled && !correlationId?.trim()) {
+    try {
+      await publishAmbiguousOrRequeue(event);
+    } catch {
+      return { accepted: false, reason: "ambiguous_publish_failed", manualAck: true };
+    }
+    event.delivery.nack({ requeue: false, reason: "missing_delivery_identity" });
+    return { accepted: false, reason: "missing_delivery_identity", manualAck: true };
+  }
   const text = parsed.text;
 
   const replyTopic = route.replyTopic ?? buildReplyTopicFromInbound(event.routingKey, config.topicPrefix);
@@ -123,23 +132,10 @@ export async function processInbound(event: InboundEvent, config: RabbitmqConfig
     `[openclaw-rabbitmq] Inbound: topic=${event.routingKey}, agent=${agentId}, account=${route.accountId}, source=${route.source}, session=${sessionKey}, bytes=${Buffer.byteLength(text, "utf-8")}`,
   );
 
-  const dedupe = correlationId ? getRabbitmqClaimableDedupe(config.idempotency) : undefined;
-  const claim = dedupe && correlationId ? await dedupe.claim(correlationId) : undefined;
-  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
-    event.delivery.ack();
-    return { accepted: true, routeSource: "idempotency", manualAck: true };
-  }
-
   try {
-    await dispatchToRuntime(sessionKey, route.peerId, agentId, text, event, route, replyTopic, config, parsed);
-    if (dedupe && correlationId && claim?.kind === "claimed") {
-      await dedupe.commit(correlationId);
-    }
+    await dispatchToRuntime(sessionKey, route.peerId, agentId, text, event, route, replyTopic, config, parsed, correlationId);
     return { accepted: true, routeSource: route.source, manualAck: true };
   } catch (error) {
-    if (dedupe && correlationId && claim?.kind === "claimed") {
-      dedupe.release(correlationId);
-    }
     const safeError = redactRabbitmqError(error, config);
     logRabbitmq("error", `[openclaw-rabbitmq] Runtime dispatch failed for peer=${route.peerId}: ${safeError}`);
     if (!event.delivery.settled) {
@@ -175,6 +171,7 @@ async function dispatchToRuntime(
   replyTopic: string,
   config: RabbitmqConfig,
   parsed: import("@partme.ai/openclaw-message-sdk").ParsedTransportPayload,
+  correlationId?: string,
 ): Promise<void> {
   const rt = getRabbitmqRuntime();
   if (!rt) {
@@ -199,6 +196,8 @@ async function dispatchToRuntime(
     await publishMessage(replyTopic, wire, runId ? { correlationId: runId } : undefined);
   };
 
+  let uncertainOutcome = false;
+  let preparedDisposition = false;
   try {
     const dispatchResult = await dispatchChannelMessage({
       mode,
@@ -213,6 +212,10 @@ async function dispatchToRuntime(
       sessionId: `rabbitmq:${routeResult.accountId}:${routeResult.agentId}:${peerId}`,
       timeoutMs,
       replyEnabled: config.dispatch.reply.enabled,
+      deliveryIdentity: correlationId,
+      requireDeliveryIdentity: config.dispatch.reply.enabled,
+      deferDeliverySettlement: true,
+      canPrepareDeliverySettlement: (outcome) => outcome === "no-reply" || deferredAck.wasReplyPublished(),
       extra: {
         routingKey: inbound.routingKey,
         desiredAgentId: agentId,
@@ -225,6 +228,17 @@ async function dispatchToRuntime(
         userId: sessionKey,
       },
     });
+    if (dispatchResult.mode === "reply-pipeline" && dispatchResult.wireResult.ctx.skippedDuplicate === true) {
+      preparedDisposition = Boolean(dispatchResult.confirmDelivery);
+      if (preparedDisposition) requirePreparedRequeue(inbound.delivery);
+      deferredAck.ackImmediate();
+      dispatchResult.confirmDelivery?.();
+      return;
+    }
+    uncertainOutcome = dispatchResult.deliveryOutcome?.kind === "ambiguous";
+    preparedDisposition = Boolean(dispatchResult.confirmDelivery) &&
+      (dispatchResult.deliveryOutcome.kind === "no-reply" || deferredAck.wasReplyPublished());
+    if (preparedDisposition) requirePreparedRequeue(inbound.delivery);
     if (config.dispatch.reply.enabled && dispatchResult.mode === "subagent" &&
         (dispatchResult.outcome.kind === "failed" || dispatchResult.outcome.kind === "pending")) {
       const status = dispatchResult.outcome.kind === "failed"
@@ -232,17 +246,55 @@ async function dispatchToRuntime(
         : "pending";
       throw new SubagentWaitOutcomeError(status, dispatchResult.runId);
     }
-    deferredAck.finalizeAfterDispatch();
-    // NACK is already settled by deferredAck; propagate failure so the outer
-    // claim is released rather than committed as a successful inbound turn.
-    if (config.dispatch.reply.enabled && !deferredAck.wasReplyPublished()) {
-      throw new Error("RabbitMQ dispatch completed without a required reply");
+    const outcome = dispatchResult.deliveryOutcome ?? { kind: "ambiguous" as const };
+    if (outcome.kind === "ambiguous" ||
+        (outcome.kind === "delivered" && config.dispatch.reply.enabled && !deferredAck.wasReplyPublished())) {
+      await publishAmbiguousOrRequeue(inbound);
     }
+    const acked = deferredAck.finalizeAfterDispatch(outcome);
+    // Only an ACKed final disposition may commit the inbound dedupe claim.
+    if (!acked || (outcome.kind !== "delivered" && outcome.kind !== "no-reply")) {
+      throw new Error(`RabbitMQ delivery outcome: ${outcome.kind}`);
+    }
+    dispatchResult.confirmDelivery?.();
   } catch (error) {
     const reason = error instanceof SubagentWaitOutcomeError
       ? error.message
       : "reply_publish_or_dispatch_failed";
-    deferredAck.nackOnFailure(config.consume.requeueOnError, reason);
+    const uncertain = deferredAck.wasReplyPublished() ||
+      uncertainOutcome ||
+      error instanceof PendingDeliveryReconciliationError ||
+      (error instanceof SubagentWaitOutcomeError && error.status === "pending");
+    if (preparedDisposition && !inbound.delivery.settled) {
+      deferredAck.nackOnFailure(true, "prepared_ack_failed");
+      throw error;
+    }
+    if (!inbound.delivery.settled &&
+        uncertain) {
+      await publishAmbiguousOrRequeue(inbound);
+    }
+    deferredAck.nackOnFailure(
+      uncertain ? false : config.consume.requeueOnError,
+      reason,
+    );
+    throw error;
+  }
+}
+
+/** ACK-ready 投递失败后，所有后续异常边界都只能重入队，不能回落到默认 NACK(false)。 */
+function requirePreparedRequeue(delivery: InboundEvent["delivery"]): void {
+  const nack = delivery.nack.bind(delivery);
+  delivery.nack = (options) => nack({ ...options, requeue: true });
+}
+
+/** DLQ 未确认时保持原消息由 Broker 托管，避免默认 NACK(false) 丢弃消息。 */
+async function publishAmbiguousOrRequeue(event: InboundEvent): Promise<void> {
+  try {
+    await publishAmbiguousInbound(event);
+  } catch (error) {
+    if (!event.delivery.settled) {
+      event.delivery.nack({ requeue: true, reason: "ambiguous_publish_failed" });
+    }
     throw error;
   }
 }

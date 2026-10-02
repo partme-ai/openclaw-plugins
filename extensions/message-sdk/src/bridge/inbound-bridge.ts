@@ -13,9 +13,12 @@ import { buildMessage } from "../core/message.js";
 import type { InboundBridgeParams, ReplyBridgeParams, ReplyBridgeResult } from "./types.js";
 import { createReplyHandler } from "./reply-bridge.js";
 import { resolveBridgeRuntimeConfig } from "./runtime-config.js";
+import { classifyDeliveryOutcome, type DeliveryOutcome, type ReplyDispatchReceipt } from "../dispatch/delivery-outcome.js";
 
 /** dispatchInbound 入参（含 reply 配置）/ Dispatch inbound params with reply config */
 export interface DispatchInboundParams extends InboundBridgeParams {
+  /** Persist Agent start only after all runtime/context preflight has passed. */
+  beforeAgentDispatch?: () => void;
   reply: Omit<ReplyBridgeParams, "runtime" | "channel" | "accountId" | "peerId">;
 }
 
@@ -23,6 +26,8 @@ export interface DispatchInboundParams extends InboundBridgeParams {
 export interface DispatchInboundResult extends ReplyBridgeResult {
   /** finalizeInboundContext 产出的 ctx / Inbound context from OpenClaw */
   ctx: Record<string, unknown>;
+  receipt?: ReplyDispatchReceipt;
+  deliveryOutcome: DeliveryOutcome;
 }
 
 /**
@@ -80,7 +85,8 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
     ...reply,
   });
 
-  await runtime.channel.reply.dispatchReplyFromConfig({
+  params.beforeAgentDispatch?.();
+  const dispatchResult = await runtime.channel.reply.dispatchReplyFromConfig({
     ctx,
     cfg,
     dispatcher,
@@ -91,13 +97,25 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
   // transport delivery after dispatchReplyFromConfig resolves. Wire/MQ
   // consumers must not treat the inbound message as complete until that
   // delivery has settled, otherwise deferred ACK can race the publish confirm.
-  const waitForIdle = (dispatcher as { waitForIdle?: () => Promise<void> } | undefined)
+  const waitForIdle = (dispatcher as { waitForIdle?: () => Promise<ReplyDispatchReceipt> } | undefined)
     ?.waitForIdle;
+  let idleReceipt: ReplyDispatchReceipt | undefined;
   if (typeof waitForIdle === "function") {
-    await waitForIdle.call(dispatcher);
+    idleReceipt = await waitForIdle.call(dispatcher);
   }
+  const receipt = idleReceipt ?? dispatchResult?.settledReceipt;
+  const terminal = dispatchResult?.deliberateSilentTerminalReply
+    ? "silent"
+    : dispatchResult?.deferredToActiveRun || receipt?.hasPendingDelivery
+      ? "pending"
+      : receipt?.anyVisibleDelivered
+        ? "visible"
+        : dispatchResult && dispatchResult.queuedFinal === false &&
+            Object.values(dispatchResult.counts ?? {}).every((count) => count === 0)
+          ? "empty"
+          : "failed";
 
-  return { ctx, dispatcher, replyOptions };
+  return { ctx, dispatcher, replyOptions, receipt, deliveryOutcome: classifyDeliveryOutcome(receipt, terminal) };
 }
 
 /**

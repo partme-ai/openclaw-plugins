@@ -162,6 +162,8 @@ flowchart LR
 
 The plugin does not acknowledge a Publish and then run the Agent in an unbounded background task. Aedes completes the publish authorization only after the bounded inbound task finishes; queue overflow, Agent failures, and task timeouts are reported as publish failures.
 
+For durable application-level redelivery, JSON messages need an explicit `idempotencyKey` or `messageId`. The delivery key includes the authenticated username and client ID. MQTT packet IDs and plain-text messages without an application ID use best-effort processing and can run the Agent again after a retry.
+
 ### Lifecycle
 
 - Embedded broker starts when Gateway runs `startAccount` for MQTT channel (single account `default` in current release)

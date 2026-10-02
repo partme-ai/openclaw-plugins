@@ -8,7 +8,7 @@ export default defineConfig({
   sourcemap: true,
   target: "node20",
   outDir: "dist",
-  banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
+  banner: { js: 'import { createRequire as createDouyinRequire } from "node:module"; const require = createDouyinRequire(import.meta.url);' },
   external: [/^openclaw(\/.*)?$/],
   noExternal: ["@partme.ai/openclaw-message-sdk"],
 });

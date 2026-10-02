@@ -107,7 +107,7 @@ for (const pluginDir of pluginDirs) {
   if (typeof pkg.scripts?.lint === "string" && /(?:^|\s)--fix(?:\s|$)/.test(pkg.scripts.lint)) {
     fail(packagePath, "lint must be read-only; move --fix to lint:fix");
   }
-  if (!Array.isArray(pkg.files) || !pkg.files.some((entry) => String(entry).replace(/\/$/, "") === "dist")) {
+  if (!Array.isArray(pkg.files) || !pkg.files.some((entry) => ["dist", "dist/", "dist/**/*"].includes(entry))) {
     fail(packagePath, "files must include dist");
   }
 

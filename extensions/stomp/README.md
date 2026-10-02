@@ -126,7 +126,7 @@ Authenticated STOMP 1.2 over native TCP/TLS for OpenClaw 2026.7.1. This embedded
 - Correct cumulative `client` ACK and individual `client-individual` ACK behavior
 - Bounded connection-local transactions for ordered SEND/ACK/NACK commit and abort
 - Optional process-memory durable subscriptions and NACK requeue
-- Claim/commit/release inbound idempotency; a `message-id` is committed only after the Agent turn and reply delivery succeed
+- Durable inbound settlement uses `message-id` together with an authenticated login or explicit `sender-id`. Without both an ID and sender scope, `SEND` remains best-effort and cannot suppress a replay after reconnect. A client-supplied `sender-id` is an idempotency scope, not an authorization identity.
 - Agent allowlists, explicit topic bindings, and connection-scoped reply subscriptions by default
 - OpenClaw Gateway lifecycle integration and a credential-redacted `/stomp-tcp/status` endpoint
 

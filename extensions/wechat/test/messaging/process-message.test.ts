@@ -167,11 +167,23 @@ describe("processOneMessage authorization boundary", () => {
           return { dispatcher: {}, replyOptions: {}, markDispatchIdle: vi.fn() };
         },
         withReplyDispatcher: ({ run }: { run: () => Promise<void> }) => run(),
-        dispatchReplyFromConfig: () => deliver({ mediaUrl }),
+        dispatchReplyFromConfig: vi.fn(() => deliver({ mediaUrl })),
       },
     } as never;
 
     await expect(processOneMessage(message("hello"), input)).resolves.toBeUndefined();
+
+    expect(input.channelRuntime.reply.dispatchReplyFromConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cfg: expect.objectContaining({
+          tools: expect.objectContaining({ fs: expect.objectContaining({ workspaceOnly: true }) }),
+        }),
+        configOverride: {
+          tools: { fs: { workspaceOnly: true } },
+        },
+      }),
+    );
+    expect(input.config.tools?.fs?.workspaceOnly).toBeUndefined();
 
     expect(mocks.resolveSandboxContext).not.toHaveBeenCalled();
     expect(mocks.sendWeixinMediaFile).toHaveBeenCalledWith(expect.objectContaining({

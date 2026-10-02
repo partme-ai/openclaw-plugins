@@ -190,7 +190,7 @@ flowchart LR
 
 这不是“收到 MQTT 包就立即返回成功”的旁路桥接。客户端 Publish 进入有界队列后，只有 Agent 入站处理完成，Aedes 才完成本次发布确认；队列已满、处理失败或超时都会反馈为发布失败。
 
-QoS Packet Identifier 的去重范围是 `clientId + topic + messageId + payload SHA-256`，不会让不同设备的相同编号互相冲突。`DUP=false` 的新发布会刷新已复用编号；Agent dispatch 失败会释放幂等预占，使客户端的 QoS 重投可以再次进入处理链。Gateway 停止时先拒绝新任务并断开 MQTT socket，再等待已经开始的任务链真实结束。
+应用级持久去重要求 JSON payload 提供 `idempotencyKey` 或 `messageId`，身份范围包含已认证用户名与 clientId。MQTT Packet Identifier 可合法复用，不能充当应用级幂等键；未提供应用 ID 的纯文本按尽力而为方式处理，重投可能再次运行 Agent。Gateway 停止时先拒绝新任务并断开 MQTT socket，再等待已经开始的任务链真实结束。
 
 ### 生命周期
 
@@ -558,7 +558,7 @@ flowchart LR
 | **出站 reply** | `publishMessage` await Aedes 回调 |
 | **自消费** | broker 侧 publish（`client==null`）不触发入站 |
 | **背压** | QoS0 OpenClaw 分发 mailbox 软限制；QoS 1/2 的协议确认与重投由 Aedes/MQTT 客户端负责 |
-| **幂等** | messageId 60s 内存 dedup |
+| **幂等** | 显式应用 ID 经 message-sdk 持久 journal 处理；无应用 ID 的消息尽力而为 |
 | **生产** | 开启 `auth`、TLS；每个内嵌 Broker 使用独立 persistence 命名空间，多实例共享消息请改用外部 MQTT Broker |
 
 ## 相关链接

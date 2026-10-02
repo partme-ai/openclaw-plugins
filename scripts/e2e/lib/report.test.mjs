@@ -19,6 +19,10 @@ test("sanitizeReport redacts nested credentials without mutating evidence", () =
   assert.equal(report.gotify.appToken, "app");
 });
 
+test("sanitizeReport removes credentials embedded in captured command output", () => {
+  assert.equal(sanitizeReport("Authorization: Bearer abc123 token=def456"), "Authorization: Bearer [REDACTED] token=[REDACTED]");
+});
+
 test("writeReport keeps latest and creates a non-overwriting per-run archive", () => {
   const e2eDir = mkdtempSync(join(tmpdir(), "openclaw-e2e-report-"));
   const now = new Date("2026-07-17T06:45:00.123Z");

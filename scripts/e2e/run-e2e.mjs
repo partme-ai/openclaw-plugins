@@ -34,7 +34,7 @@ import { startWechatIpadProvider } from "./helpers/wechat-ipad-provider.mjs";
 import { startWecomKfProvider } from "./helpers/wecom-kf-provider.mjs";
 import { startWecomProvider } from "./helpers/wecom-provider.mjs";
 import { prepareWechatState } from "./helpers/wechat-state.mjs";
-import { ensureGatewayRunning, gatewayLogTail, stopHostGateway } from "./lib/gateway.mjs";
+import { ensureGatewayRunning, readStartedGatewayBaseline, stopHostGateway } from "./lib/gateway.mjs";
 import { installPlugins } from "./lib/install.mjs";
 import { dockerServicesForPlugins, resolvePlugins } from "./lib/registry.mjs";
 import { baseReport, printSummary, writeReport } from "./lib/report.mjs";
@@ -42,8 +42,6 @@ import {
   E2E_DIR,
   E2E_PORTS,
   GATEWAY_HTTP,
-  OPENCLAW_BIN,
-  PROFILE,
   REPO_ROOT,
   resetE2EProfile,
   tcpReachable,
@@ -190,7 +188,7 @@ async function main() {
   const needsModelFixture = pluginIds.some((id) =>
     id === "mqtt" || id === "tracing" || id === "rabbitmq" || id === "redis-stream" || id === "rocketmq" || id === "gotify" || id === "stomp" || id === "web-stomp" || id === "web-mqtt" || id === "web-socket" || id === "memory" || id === "openmem" || id === "knowledge" || id === "douyin" || id === "amap" || id === "meituan" || id === "rednode" || id === "wechat" || id === "wechat-ipad" || id === "wecom" || id === "wecom-kf" || id === "bridge"
   );
-  if ((needsModelFixture || pluginIds.some((id) => id === "oauth2" || id === "web-socket" || id === "openmem")) && !useHostGateway()) {
+  if ((needsModelFixture || pluginIds.some((id) => id === "oauth2" || id === "web-socket" || id === "openmem" || id === "nacos")) && !useHostGateway()) {
     process.env.OPENCLAW_E2E_HOST_GATEWAY = "1";
     console.log(`[${pluginIds[0]}] using host Gateway for a host-reachable local fixture`);
   }
@@ -205,6 +203,10 @@ async function main() {
     docker: {},
     e2e: [],
     browser: [],
+    skipped: [],
+    skipCount: 0,
+    skipInstall: opts.skipInstall,
+    skipBrowser: opts.skipBrowser,
     commits: execSync("git rev-parse HEAD", { cwd: REPO_ROOT, encoding: "utf8" }).trim(),
     // 指纹绑定“本次打包实测的源码”和报告，避免工作区变化后继续复用历史 PASS。
     sourceFingerprints: Object.fromEntries(
@@ -248,6 +250,7 @@ async function main() {
       installSeed: true,
     });
     report.installed = installPlugins(pluginIds);
+    report.candidateManifest = report.installed.candidateManifest;
   }
 
   if (report.docker?.ok || pluginIds.some((id) => ["mqtt", "stomp", "web-mqtt", "web-stomp", "web-socket", "mtls", "oauth2", "tracing", "prometheus", "memory", "openmem", "knowledge", "douyin", "amap", "meituan", "rednode", "wechat", "wechat-ipad", "wecom", "wecom-kf", "bridge", "nacos"].includes(id))) {
@@ -302,6 +305,7 @@ async function main() {
   activeWecomProvider = wecomProvider;
 
   report.gateway = await ensureGatewayRunning();
+  report.host = await readStartedGatewayBaseline(report.gateway);
 
   report.e2e = await runPluginTests(pluginIds, { modelFixture, openmemSidecar, amapProvider, meituanProvider, rednodeProvider, wechatProvider, wechatIpadProvider, wecomKfProvider, wecomProvider });
 
@@ -310,6 +314,10 @@ async function main() {
     const { browserResults } = await import("./browser-web-channels.mjs");
     report.browser = browserResults;
   }
+  report.skipped = [...report.e2e, ...report.browser]
+    .filter((result) => result.result === "SKIP" || result.result === "SKIPPED")
+    .map((result) => `${result.plugin}: ${result.blocker ?? result.method ?? "skipped"}`);
+  report.skipCount = report.skipped.length;
   await modelFixture?.close();
   activeModelFixture = null;
   await openmemSidecar?.close();
@@ -329,18 +337,11 @@ async function main() {
   await wecomProvider?.close();
   activeWecomProvider = null;
 
-  try {
-    report.pluginsList = execSync(`${OPENCLAW_BIN} --profile ${PROFILE} plugins list`, { encoding: "utf8" });
-  } catch (err) {
-    report.pluginsList = String(err);
-  }
-
   report.dockerPs = dockerPs();
-  report.gatewayLogTail = gatewayLogTail();
   report.serviceUrls = {
     gateway: GATEWAY_HTTP,
     rabbitmq: "amqp://127.0.0.1:5672",
-    gotify: "http://127.0.0.1:18080",
+    gotify: process.env.GOTIFY_URL ?? `http://127.0.0.1:${process.env.E2E_GOTIFY_PORT ?? "18080"}`,
     rocketmqProxy: "127.0.0.1:8081",
     nacos: `http://127.0.0.1:${E2E_PORTS.nacosHttp}/nacos`,
   };

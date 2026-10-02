@@ -2,7 +2,7 @@
  * Build, pack, and install queue/channel plugins into OpenClaw E2E profile.
  */
 import { execFileSync, execSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative } from "node:path";
@@ -11,21 +11,53 @@ import { OPENCLAW_BIN, PROFILE, REPO_ROOT, STATE_DIR } from "./utils.mjs";
 
 const TOOL_PATH = `/opt/homebrew/bin:${process.env.PATH ?? ""}`;
 const APPROVED_E2E_CAPABILITIES = {
+  amap: { amapWebService: true },
+  mtls: { security: true, mtls: true, tls: true, authentication: true, reverseProxy: true, websocketProxy: true },
+  oauth2: { authentication: true, reverseProxy: true, websocketProxy: true, oidcDiscovery: true, authorizationCode: true, pkce: true, refreshToken: true, tokenRevocation: true, tokenIntrospection: true },
+  knowledge: { knowledgeRAG: true },
   tracing: { distributedTracing: true },
   mqtt: { protocolBridge: true, iot: true },
+  "web-mqtt": { protocolBridge: true, websocket: true },
+  "web-socket": { protocolBridge: true },
   rabbitmq: {},
+  meituan: {},
+  prometheus: { metricsExport: true },
+  nacos: {},
+  stomp: { protocolBridge: true, tcp: true, tls: true, transactions: true },
+  "web-stomp": { protocolBridge: true, websocket: true, wss: true },
   "wecom-kf": { humanTransfer: true, satisfactionSurvey: true, sessionManagement: true },
+  wechat: {},
 };
 // Exact reviewed E2E package snapshots. Update only after reviewing the changed
 // package, including dist; this does not claim a complete runtime surface list.
 const APPROVED_E2E_ARTIFACT_SHA256 = {
+  wecom: "660e4d072b5901b574571d7fb9ba01d011feb6be813696ab43e45b87171818fb",
+  "wechat-ipad": "229a6deb3bf60e25075c1a65b565b3fef470adbf782aff4941774db40254da3f",
+  rednode: "1253223ebe4085d3f074e6dfb53cfc2d039ca86b217981aa3243c6fe5e120323",
+  amap: "ef5e72eef1e401544881f31bb56fac351e6f57c55dba46c9e50527f3dccae28f",
+  bridge: "2f7a6f4b11076d92a5a30892d19cc35efe2e7eed02974b10add90604662167e0",
+  mtls: "68aace35229d6ab668f2fe449ee13d79b843c12dbb4dcd97220a4bc195ac6c96",
+  oauth2: "49c1f72f5fe9a2b16ff601ac9dd6584aa915fb799d09f438c3d159d71a7b9635",
+  knowledge: "f6496216d4b7ad889d5af0906b31b7f2e8818838ef8ca17a67548babb71cf3ec",
+  memory: "424780188b581d47e206cc9cb2582bea0e13cf1205d261ab6af00914484c5ef3",
+  openmem: "ac45a944bcf99f6198bcc98883b2789c48733e9b867c213de187c52409f3cdbc",
   router: "5eb633c4bb60e27964f90820bd457d49ea848b733cc9c6556556189acb57a5dd",
-  gotify: "63ae8758fb8a9713cb0fc230a1421174df4139aeb870a355f3ef3ab16b55a02d",
-  douyin: "f7d2ca3edf5643c0b5d3d05929f9b706062a8827e7b42502bc9bd3631aad084c",
-  "wecom-kf": "0769e14496a68c037198214c3cfc84c7f7f067aad02441dd5dff147949342a7a",
-  tracing: "603e57996443a8eff0fc3cc7364579fa0a66dfef000f4ecb062a7487983bf895",
-  mqtt: "9a1d7af3ca8ee0f652c4bf695072377aae9b161a2cb510ba9cf0afba12c1a917",
-  rabbitmq: "b9d29a23c88102b2799f11c927a55459757fce98db0a41f1eca208f0de942d92",
+  gotify: "03a6a85e9afc97532ca41be4a1807e4ca954e289bb069c1abfe0c482862c1c09",
+  douyin: "69765cc9a2c1b609f1356d388e71396a48abcc11d82a46d2ff4bb0c8ae303ddd",
+  "wecom-kf": "61ce66fb81683d6e8ea405a830ab76a50de1b147423d26239d77fda8fca4a6ca",
+  tracing: "0e4840be7e46148589f00e1714e3f9560aece4ae84763f4ad9c62606dd04e40b",
+  mqtt: "0b30d417d6a6cf11994c5d0367aba92707d090c7ceb20398e4c98b02587f7d66",
+  "web-mqtt": "2b5d11032e2d2762c5d125a0a3b698655c4e3e64e9f691a852ec9486702ba6f3",
+  "web-socket": "fe87dbc1e5015ae1d77990c790d14659a1870ae4a62b3b3c1cd1b2b04abe35f9",
+  rabbitmq: "930b90d74ea1c4873ff6cd36e228ab2c37bbc0f4e69dacdb157c9ff1414e3d15",
+  "redis-stream": "3c17b4ba23476cb98d338e20de7ced12878981f7d62073abb439acd202419c6e",
+  rocketmq: "80274658024d632fe9cd9965b86f87c8d8f6427b9c0dad8411132b1e5c61b939",
+  meituan: "df4f5e8a93215472913f54647f4e74974ced422e10d381a94848b027029231f7",
+  prometheus: "1e2c1228fdfd30b4f736b37d94cac7fbb4392bc1b4dd8ca64a13d98914e6732f",
+  nacos: "a07659e8045bb1bc5d0582559b69e7374172bf7cbc76b0c6c47b6cccca18eb38",
+  stomp: "cf1b3b4898380d94f1607372b198f1fa5861c120e1a4c6f456fb56252726d2e3",
+  "web-stomp": "6d0f4a68894529ff366e736196fd569df5ff84090e2198ca9765201fe23d327c",
+  wechat: "f4f14b36610a9bc4fadd7c99e9b3c04cc6a2a29e2ac734074e889cb2128fe6d4",
 };
 const REVIEWED_CONSENT_IDS = new Set(Object.keys(APPROVED_E2E_ARTIFACT_SHA256));
 
@@ -155,27 +187,16 @@ function installProductionDeps(extPath, messageSdkArchive) {
   run(`npm install --omit=dev --legacy-peer-deps --no-audit --no-fund${sdkArg}`, { cwd: extPath });
 }
 
-/**
- * @param {string} pluginDir
- * @param {string} extPath
- */
-function overlayWorkspaceBuild(pluginDir, extPath) {
-  const srcDist = join(REPO_ROOT, pluginDir, "dist");
-  if (existsSync(srcDist)) {
-    cpSync(srcDist, join(extPath, "dist"), { recursive: true, force: true });
-  }
-  for (const name of ["setup-entry.js", "setup-entry.d.ts"]) {
-    const src = join(srcDist, name);
-    if (existsSync(src)) {
-      cpSync(src, join(extPath, "dist", name), { force: true });
-    }
-  }
+/** Extract a packed plugin and record the package content before dependency installation. */
+export function preparePackedCandidate(tgzPath, extPath) {
+  extractTgz(tgzPath, extPath);
+  return reviewedArtifactDigest(extPath);
 }
 
 /**
  * Build, pack, and install selected plugins.
  * @param {string[]|undefined} pluginIds
- * @returns {Array<{ id: string; path: string; version: string; tgz: string }>}
+ * @returns {Array<{ id: string; path: string; version: string; tgz: string; artifactSha256: string }>}
  */
 export function installPlugins(pluginIds) {
   const ids = resolvePlugins(pluginIds);
@@ -192,8 +213,11 @@ export function installPlugins(pluginIds) {
   }
   const messageSdkArchive = join(sdkPackDir, sdkArchives[0]);
 
-  /** @type {Array<{ id: string; path: string; version: string; tgz: string }>} */
+  /** @type {Array<{ id: string; path: string; version: string; tgz: string; artifactSha256: string }>} */
   const installed = [];
+  const candidateDir = join(REPO_ROOT, "scripts/e2e/reports/candidates");
+  const candidateRunId = randomUUID();
+  const candidates = [];
 
   try {
     for (const def of PLUGIN_REGISTRY) {
@@ -213,14 +237,20 @@ export function installPlugins(pluginIds) {
       }
       const [tgzName] = archives;
       const tgzPath = join(pluginPackDir, tgzName);
+      const artifactSha256 = createHash("sha256").update(readFileSync(tgzPath)).digest("hex");
+      mkdirSync(candidateDir, { recursive: true });
+      const archivePath = join(candidateDir, `${candidateRunId}-${def.id}.tgz`);
+      cpSync(tgzPath, archivePath, { errorOnExist: true, force: false });
 
       const extPath = join(STATE_DIR, "extensions", def.extDir ?? def.id);
-      extractTgz(tgzPath, extPath);
-      overlayWorkspaceBuild(def.dir, extPath);
+      const packedContentDigest = preparePackedCandidate(tgzPath, extPath);
       if (REVIEWED_CONSENT_IDS.has(def.id)) assertCleanPackedArtifact(extPath);
 
       const pkg = JSON.parse(readFileSync(join(extPath, "package.json"), "utf8"));
       installProductionDeps(extPath, messageSdkArchive);
+      if (reviewedArtifactDigest(extPath) !== packedContentDigest) {
+        throw new Error(`${def.id}: installed package content differs from packed tarball`);
+      }
       // Register the extracted local tarball with OpenClaw's installed-plugin
       // index. Merely adding plugins.load.paths is insufficient on 2026.7.1:
       // startup migrations may otherwise treat an unpublished configured
@@ -228,12 +258,16 @@ export function installPlugins(pluginIds) {
       const installArgs = trustedE2ELinkArgs(def.dir, extPath, REPO_ROOT, STATE_DIR, def.id);
       console.log(`\n$ ${OPENCLAW_BIN} ${installArgs.slice(0, -1).join(" ")} "${extPath}"`);
       execFileSync(OPENCLAW_BIN, installArgs, { stdio: "inherit", cwd: REPO_ROOT, env: toolEnv() });
-      installed.push({ id: def.id, path: extPath, version: pkg.version, tgz: tgzName });
+      installed.push({ id: def.id, path: extPath, version: pkg.version, tgz: tgzName, artifactSha256 });
+      candidates.push({ id: def.id, version: pkg.version, artifactSha256, archivePath });
     }
 
     run(`${OPENCLAW_BIN} --profile ${PROFILE} plugins list`);
 
     writeFileSync(join(STATE_DIR, ".e2e-installed.json"), JSON.stringify(installed, null, 2));
+    const candidateManifest = join(candidateDir, `${candidateRunId}.json`);
+    writeFileSync(candidateManifest, JSON.stringify({ candidates }, null, 2), { flag: "wx" });
+    Object.defineProperty(installed, "candidateManifest", { value: candidateManifest });
     console.log("\n[install] done:", installed.map((i) => `${i.id}@${i.version}`).join(", "));
     return installed;
   } finally {

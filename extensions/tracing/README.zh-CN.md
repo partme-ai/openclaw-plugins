@@ -225,8 +225,8 @@ openclaw plugins install @partme.ai/openclaw-tracing
 | `maxActiveTraces` | `1000` | 同时活动的 Trace 总上限；与 `maxSpansPerTrace` 的乘积不得超过 100000 |
 | `maxBufferedSpans` | `10000` | 溢出时丢弃最旧 span，并将健康状态置为 degraded |
 | `flushIntervalMs` | `5000` | File/OTLP 刷新间隔 |
-| `traceDir` | `./traces` | File 后端目录 |
-| `traceRetentionDays` | `7` | File 后端文件保留天数 |
+| `traceDir` | `./traces` | File 后端目录；相对路径在 OpenClaw 状态目录内解析 |
+| `traceRetentionDays` | `7` | File 后端与共享查询 journal 的保留天数 |
 | `otlpEndpoint` | `http://localhost:4318/v1/traces` | OTLP/HTTP trace 地址 |
 | `otlpHeaders` | `{}` | Collector 鉴权头；值不在日志、状态或查询接口中回显 |
 | `exportTimeoutMs` | `10000` | 单次 OTLP 请求超时 |
@@ -244,16 +244,28 @@ openclaw plugins install @partme.ai/openclaw-tracing
 - `GET /tracing/traces?limit=50`，范围 `1..200`
 - `GET /tracing/trace?traceId=<32位十六进制ID>`
 
+已完成 Span 写入 `<OpenClaw 状态目录>/plugins/tracing/journal/journal.sqlite`，使隔离加载的 Hook runtime 与
+Gateway HTTP route 能按相同 traceId 查询，Gateway 重启后仍可读取。查询 journal 最多保留
+200 条 trace，每条最多 100 个已完成 Span，单个 Span 不超过 8 KiB。超过上限的 Span 不进入
+查询 journal，并记录观测错误；原有 Log/File/OTLP 导出仍执行。SQLite 事务保证跨进程原子写入，
+崩溃后的未提交事务自动回滚。数据库权限为 `0600`，目录权限为 `0700`。读接口仅过滤过期
+trace，不争抢写锁；后续写入会物理清理过期记录。
+
 后端发生当前导出或容量故障时，`/tracing/status` 返回 HTTP 503；
-`backendStatus` 包含缓冲量、累计丢弃量、最近导出时间和最近错误。
+`backendStatus` 包含缓冲量、累计丢弃量、最近导出时间和最近错误。`exportHealth` 仅表示
+Gateway runtime 本实例后端的健康情况；隔离 Hook runtime 仍需看其日志与 Collector。
+`queryHealth` 只表示共享 journal 可读性，`completeness: "unverified"` 不保证每个已完成 Span
+都保留。读取失败时返回不含文件路径的 503；写入故障在写入 runtime 的后端诊断及日志中保留，
+后续 Span 写成功也不会清除该故障。
 
 ## 可靠性与隐私边界
 
-- 活跃 trace 与最近查询缓存均有容量边界。
+- 活跃 trace 在进程内有容量边界；已完成查询数据使用有界的共享 journal。
 - `gateway_start` 与首批 Hook 共享同一个初始化 Promise；初始化失败只记录观测故障，Hook
   fail-open，不阻断消息和工具调用。
-- File/OTLP 的 Hook 路径只进入有界内存缓冲；刷盘、HTTP 批次和重试在后台串行执行，
-  不会让临界批次的业务请求等待 Collector 或磁盘。
+- File/OTLP 对外导出使用有界内存缓冲与后台刷新；已完成 Span 还会同步写入本地查询
+  journal，因此完成 Hook 会增加少量本地磁盘时延，部署时需监控。journal 错误会记录日志，
+  不会阻断 Agent 主业务。
 - OTLP 只重试网络错误、408/429 和 5xx；400/401 等永久错误立即停止本批尝试。
   `partialSuccess` 不能整批重发，否则会复制 Collector 已接受的 Span；插件将拒绝数计入
   `droppedSpans`。Collector 成功响应按真实流量限制为 64 KiB，不使用无界 `response.text()`。
@@ -275,7 +287,9 @@ openclaw plugins install @partme.ai/openclaw-tracing
   Gateway 单次生命周期内稳定、跨重启不可关联的 HMAC 令牌。状态查询、Log、File 与 OTLP 因而
   共享同一安全边界，不依赖每个后端重复实现。
 - `otlpHeaders` 可能包含鉴权秘密；插件不会回显，但配置文件本身仍必须使用最小权限保护。
-- HTTP 查询只保留最近完成的 200 个 trace，Gateway 关闭时清空。
+- Gateway 鉴权保护 HTTP 查询；能够读取 Gateway 进程文件的系统用户仍可能看到已脱敏的
+  Span 数据。journal 使用 OpenClaw profile 状态目录而非进程工作目录，各 profile 不会串读。
+  相对 `traceDir` 也在该状态目录内解析，越界路径会被拒绝。Gateway 重启不会清除保留期内的查询数据。
 
 ```mermaid
 stateDiagram-v2

@@ -21,6 +21,11 @@ export async function testRouter(ctx, results) {
         const current = await ctx.gatewayFetch("/router/status", authorized);
         return current.ok && current.json?.data?.delivered >= 1 && current.json?.data?.pending === 0 && current.json?.data?.deadLetters === 1;
       }, { label: "router persisted outbox delivery through Gateway send", timeoutMs: 20_000 });
+      const beforeDeniedStatus = await ctx.gatewayFetch("/router/status", authorized);
+      const beforeDeniedDlq = await ctx.gatewayFetch("/router/dlq", authorized);
+      if (!beforeDeniedStatus.ok || !beforeDeniedDlq.ok || beforeDeniedDlq.json?.data?.length !== 1) {
+        throw new Error("Router management baseline is unavailable before denied requests");
+      }
 
       const deniedStatuses = [];
       for (const path of ["/router/status", "/router/health", "/router/dlq", "/router/audit"]) {
@@ -37,10 +42,14 @@ export async function testRouter(ctx, results) {
       const cookieReplay = await ctx.gatewayFetch("/router/dlq/replay?limit=1", {
         method: "POST", headers: { Cookie: "openclaw-plugin-auth-router=invalid-e2e-cookie" },
       });
-      rejected(cookieReplay, "cookie-only replay POST");
-      const beforeReplay = await ctx.gatewayFetch("/router/dlq", authorized);
-      if (!beforeReplay.ok || beforeReplay.json?.data?.length !== 1) {
-        throw new Error(`unauthorized replay changed DLQ: ${beforeReplay.status}`);
+      rejected(cookieReplay, "forged cookie replay POST");
+      const afterDeniedStatus = await ctx.gatewayFetch("/router/status", authorized);
+      const afterDeniedDlq = await ctx.gatewayFetch("/router/dlq", authorized);
+      if (!afterDeniedStatus.ok || !afterDeniedDlq.ok ||
+          afterDeniedStatus.json?.data?.delivered !== beforeDeniedStatus.json?.data?.delivered ||
+          afterDeniedStatus.json?.data?.deadLetters !== beforeDeniedStatus.json?.data?.deadLetters ||
+          JSON.stringify(afterDeniedDlq.json?.data) !== JSON.stringify(beforeDeniedDlq.json?.data)) {
+        throw new Error("denied replay request changed Router delivery or DLQ state");
       }
       const audit = await ctx.gatewayFetch("/router/audit?limit=1", authorized);
       if (audit.status !== 200 || audit.json?.ok !== true || !Array.isArray(audit.json?.data)) {
@@ -50,10 +59,12 @@ export async function testRouter(ctx, results) {
       if (replay.status !== 202 || replay.json?.data?.replayed !== 1) {
         throw new Error(`authorized replay failed: ${replay.status}`);
       }
-      console.log(`[router-auth] anonymous GET ${deniedStatuses.join(", ")}; POST anonymous=${anonymousReplay.status}, invalid=${invalidReplay.status}, cookie-only=${cookieReplay.status}; authorized replay=${replay.status}, replayed=1`);
+      console.log(`[router-auth] anonymous GET ${deniedStatuses.join(", ")}; POST anonymous=${anonymousReplay.status}, invalid=${invalidReplay.status}, forged-cookie=${cookieReplay.status}; denied requests kept DLQ unchanged; authorized replay=${replay.status}, replayed=1`);
       await ctx.waitFor(async () => {
         const current = await ctx.gatewayFetch("/router/status", authorized);
-        return current.ok && current.json?.data?.delivered === 2 && current.json?.data?.pending === 0 && current.json?.data?.deadLetters === 0;
+        return current.ok &&
+          current.json?.data?.delivered === beforeDeniedStatus.json.data.delivered + 1 &&
+          current.json?.data?.pending === 0 && current.json?.data?.deadLetters === 0;
       }, { label: "single authorized DLQ replay delivery", timeoutMs: 20_000 });
       const health = await ctx.gatewayFetch("/router/health", authorized);
       if (!health.ok) throw new Error(`/router/health → ${health.status}`);

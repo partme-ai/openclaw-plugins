@@ -314,7 +314,7 @@ client.activate();
 
 `SEND` 的 `RECEIPT` 只会在 OpenClaw 成功接收入站派发后返回。使用 `client` 或 `client-individual` 确认模式时，应确认 `MESSAGE` 帧中的 `ack` 头。
 
-只有客户端显式提供 `message-id` 时，插件才把它作为入站幂等键。`receipt` 仅用于关联协议回执；相同正文也可能是用户连续发送的合法请求，因此二者都不会被自动推导为幂等键。
+持久入站结算要求 `message-id` 与已认证 login 或显式 `sender-id` 同时存在；缺少稳定 ID 或发送者作用域时，`SEND` 保留 best-effort 行为，重连重放无法去重。客户端声明的 `sender-id` 仅作为幂等作用域，不是授权身份。`receipt` 仅用于关联协议回执；相同正文也可能是用户连续发送的合法请求，因此二者都不会被自动推导为幂等键。
 
 ## 失败与背压语义
 

@@ -15,6 +15,7 @@ import type { DispatchInboundParams, DispatchInboundResult } from "../bridge/inb
 import type { BridgePluginRuntime } from "../bridge/types.js";
 import type { OutboundWireFormat } from "../pipeline/serialize-payload.js";
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
+import type { DeliveryOutcome } from "./delivery-outcome.js";
 
 /** 重新导出通道类别 / Re-export channel class type */
 export type { ChannelClass };
@@ -56,6 +57,18 @@ export interface ChannelDispatchReplyConfig {
 
 /** dispatchChannelMessage 入参 / Params for unified channel dispatch */
 export interface ChannelDispatchParams {
+  /** Stable broker/application delivery ID used by the durable reply journal. */
+  deliveryIdentity?: string;
+  /** Optional stable source payload fingerprint; do not include redelivery flags or timestamps. */
+  deliveryFingerprint?: string;
+  /** Stable sender/session/reply scope for fingerprinting a reconnect; dispatch still uses the live values. */
+  deliveryFingerprintContext?: { peerId: string; sessionKey: string; replyRoute: Record<string, string> };
+  /** Reject before Agent execution when no stable delivery ID exists. */
+  requireDeliveryIdentity?: boolean;
+  /** Let a broker ACK commit the durable journal after dispatch returns. */
+  deferDeliverySettlement?: boolean;
+  /** Required with deferred settlement: true only when the broker adapter observed the final publish/no-reply outcome. */
+  canPrepareDeliverySettlement?: (outcome: "delivered" | "no-reply") => boolean;
   /** 运行模式，默认 reply-pipeline / Dispatch mode */
   mode?: ChannelDispatchMode;
   /** OpenClaw bridge runtime / Bridge runtime */
@@ -91,10 +104,14 @@ export interface ChannelDispatchParams {
 }
 
 /** dispatchChannelMessage 返回值 / Result discriminated by mode */
-export type ChannelDispatchResult =
-  | { mode: "reply-pipeline"; wireResult: DispatchInboundResult }
-  | { mode: "embedded-agent"; runId: string; delivered: boolean }
-  | ({ mode: "subagent" } & SubagentDispatchResult);
+export type ChannelDispatchResult = (
+  | { mode: "reply-pipeline"; wireResult: DispatchInboundResult; deliveryOutcome: DeliveryOutcome }
+  | { mode: "embedded-agent"; runId: string; delivered: boolean; outcome: EmbeddedDispatchOutcome; deliveryOutcome: DeliveryOutcome }
+  | ({ mode: "subagent"; deliveryOutcome: DeliveryOutcome } & SubagentDispatchResult)
+) & { confirmDelivery?: () => void };
+
+/** Embedded Agent 的可观察终态。 */
+export type EmbeddedDispatchOutcome = "visible" | "silent" | "empty" | "pending" | "failed";
 
 /** 宿主公开 PluginRuntime.subagent.waitForRun 返回的终态类型。 */
 export type AgentWaitResult = Awaited<ReturnType<PluginRuntime["subagent"]["waitForRun"]>>;
@@ -141,6 +158,8 @@ export interface SubagentRuntime extends BridgePluginRuntime {
 
 /** dispatchEmbeddedAgentMessage 入参 / Embedded agent dispatch params */
 export interface EmbeddedAgentDispatchParams {
+  /** Persist the irreversible Agent boundary immediately before runEmbeddedAgent. */
+  beforeAgentDispatch?: () => void;
   runtime: EmbeddedAgentRuntime;
   channel: string;
   accountId: string;
@@ -156,6 +175,8 @@ export interface EmbeddedAgentDispatchParams {
 
 /** dispatchSubagentMessage 入参 / Subagent dispatch params */
 export interface SubagentDispatchParams {
+  /** Persist the irreversible Agent boundary immediately before subagent.run. */
+  beforeAgentDispatch?: () => void;
   runtime: SubagentRuntime;
   channel: string;
   accountId: string;

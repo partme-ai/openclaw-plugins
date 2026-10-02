@@ -20,13 +20,11 @@ import type { RedisChannelConfig, RedisInboundMessage } from "./types.js";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
+  requireSettledDelivery,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
-import {
-  getRedisStreamClaimableDedupe,
-  mapRedisStreamWirePayloadMode,
-} from "./shared/wire-helpers.js";
+import { mapRedisStreamWirePayloadMode } from "./shared/wire-helpers.js";
 import { redactRedisError } from "./shared/redact.js";
 
 /**
@@ -105,15 +103,11 @@ export async function handleInboundMessage(
   // 7. peerId 使用 channel 名称（可通过 fieldPeerId 覆盖）
   const peerId = message.fieldPeerId ?? channel;
 
-  const dedupe = getRedisStreamClaimableDedupe(config.idempotency);
-  const claim = dedupe && messageId ? await dedupe.claim(messageId) : undefined;
-  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
-    logger.info(`Duplicate message skipped: ${messageId?.slice(0, 80)}`);
-    return true;
-  }
-
   // 8. 分发到 OpenClaw Runtime
   try {
+    if (config.channelMode === "stream" && !messageId) {
+      throw new Error("Stable Redis Stream entry ID is required for reply dispatch");
+    }
     logger.info(
       `Inbound: channel=${channel}, agent=${route.agentId}, ` +
         `account=${route.accountId}, source=${route.source}, ` +
@@ -130,7 +124,7 @@ export async function handleInboundMessage(
       },
     );
 
-    await dispatchChannelMessage({
+    const dispatchResult = await dispatchChannelMessage({
       mode: "reply-pipeline",
       runtime: rt as unknown as BridgePluginRuntime,
       channel: "redis-stream",
@@ -139,6 +133,8 @@ export async function handleInboundMessage(
       text,
       agentId,
       sessionKey,
+      deliveryIdentity: messageId,
+      requireDeliveryIdentity: Boolean(messageId),
       unified: parsed.unified,
       timeoutMs: config.network.agentReplyTimeoutMs,
       extra: {
@@ -171,16 +167,10 @@ export async function handleInboundMessage(
         agentId,
       },
     });
-
-    if (dedupe && messageId && claim?.kind === "claimed") {
-      await dedupe.commit(messageId);
-    }
+    requireSettledDelivery(dispatchResult?.deliveryOutcome);
 
     return true;
   } catch (error) {
-    if (dedupe && messageId && claim?.kind === "claimed") {
-      dedupe.release(messageId);
-    }
     logger.error(`Runtime dispatch failed for channel=${channel}: ${redactRedisError(error, config)}`);
     return false;
   }

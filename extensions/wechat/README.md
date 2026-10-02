@@ -328,6 +328,8 @@ sequenceDiagram
 
 本地媒体必须位于 OpenClaw 默认受管目录或账号级 `mediaLocalRoots`；Path Guard 会拒绝目录穿越、符号链接逃逸、特殊文件和超过 100 MiB 的文件。HTTPS 远程媒体通过 OpenClaw SSRF Guard 下载，校验 DNS、目标 IP 和每次重定向；插件创建的临时文件在成功或失败后都会回收。
 
+Agent 自动回复中的 `MEDIA:` 文件路径只能来自当前工作区或宿主受管媒体目录，宿主不会按模型提供的路径临时扩大读取根。账号级 `mediaLocalRoots` 可供通道主动出站发送使用，但不会放宽 Agent 自动回复的读取范围。
+
 多账号可以分别配置 `routeTag`，该值会进入当前账号所有 iLink API 请求的 `SKRouteTag`，不会复用进程首次读取的顶层值：
 
 ```json

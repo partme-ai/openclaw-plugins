@@ -8,6 +8,7 @@ REPO="${OPENCLAW_E2E_REPO:-/workspace}"
 STATE="${OPENCLAW_E2E_STATE_DIR:-/state}"
 
 export HOME="${OPENCLAW_E2E_HOME:-/root}"
+export OPENCLAW_STATE_DIR="${STATE}"
 mkdir -p "${STATE}"
 
 cd "${REPO}"
@@ -25,4 +26,4 @@ else
 fi
 
 echo "[openclaw-entrypoint] profile=${PROFILE} port=${GATEWAY_PORT} state=${STATE}"
-exec ${OPENCLAW_CLI} --profile "${PROFILE}" gateway run --force --allow-unconfigured --port "${GATEWAY_PORT}" --verbose --bind loopback
+exec ${OPENCLAW_CLI} --profile "${PROFILE}" gateway run --force --allow-unconfigured --port "${GATEWAY_PORT}" --verbose --bind lan

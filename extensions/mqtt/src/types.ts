@@ -337,6 +337,8 @@ export interface MqttInboundRoute {
  * MQTT 入站消息（设备 -> Agent）
  */
 export interface MqttInboundMessage {
+  /** CONNECT 时绑定的认证主体快照；clientId 被接管后不得重新查询。 */
+  authenticatedUsername?: string;
   /** 来源 Topic */
   topic: string;
   /** 消息内容 */

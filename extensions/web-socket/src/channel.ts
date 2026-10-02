@@ -1,10 +1,9 @@
-import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * @module web-socket/channel
  *
  * OpenClaw WebSocket 渠道定义。
  */
-
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type {
   ChannelAccountSnapshot,
   ChannelPlugin,

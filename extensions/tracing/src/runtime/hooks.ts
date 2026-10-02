@@ -11,12 +11,17 @@ import { TracingSampler } from "./sampler.js";
 import { redactTraceText } from "../shared/redact.js";
 import {
   bindToolSpan,
+  consumeSuppressedRun,
+  consumeSuppressedSession,
   createSpan,
   endSpan,
   finishActiveTrace,
   getActiveTraceCount,
   incrementSpanCount,
   randomHexId,
+  rememberCompletedRun,
+  suppressRun,
+  suppressSession,
   registerActiveTrace,
   resolveActiveTrace,
   takeToolSpanId,
@@ -52,6 +57,24 @@ function readString(value: unknown): string | undefined {
 function readMessageContent(event: Record<string, unknown>, captureBody: boolean): string | undefined {
   if (!captureBody || typeof event.content !== "string") return undefined;
   return event.content.slice(0, 500);
+}
+
+function readLastUserMessage(messages: unknown): string | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (typeof message !== "object" || message === null || message.role !== "user") continue;
+    const content = message.content;
+    if (typeof content === "string") return content.slice(0, 500);
+    if (Array.isArray(content)) {
+      const text = content
+        .filter((part) => part && typeof part === "object" && part.type === "text" && typeof part.text === "string")
+        .map((part) => part.text)
+        .join("\n");
+      if (text) return text.slice(0, 500);
+    }
+  }
+  return undefined;
 }
 
 function readTraceId(value: unknown): string | undefined {
@@ -108,11 +131,15 @@ export function registerTracingPluginHooks(
   getContext: TracingHookContextProvider,
 ): void {
   const hookOpts = { priority: 100 };
+  let lifecycleClosed = false;
+  const getLiveContext = () => lifecycleClosed ? null : getContext();
+  api.on("gateway_stop", () => { lifecycleClosed = true; }, hookOpts);
+  api.on("gateway_start", () => { lifecycleClosed = false; }, hookOpts);
 
   api.on(
     "message_received",
     async (event, ctx) => {
-      const hookContext = await resolveHookContext(api, getContext, "message_received");
+      const hookContext = await resolveHookContext(api, getLiveContext, "message_received");
       if (!hookContext) return;
       const { backend, sampler, config } = hookContext;
       const sessionKey = readString(ctx.sessionKey);
@@ -124,7 +151,11 @@ export function registerTracingPluginHooks(
       }
       const channelId = readString(ctx.channelId) ?? "unknown";
       const traceId = readTraceId(ctx.traceId) ?? randomHexId(16);
-      if (!sampler.shouldSample(traceId)) return;
+      if (!sampler.shouldSample(traceId)) {
+        if (runId) suppressRun(runId);
+        if (sessionKey) suppressSession(sessionKey);
+        return;
+      }
 
       await runTraceOperation(operationKey, async () => {
         const previous = resolveActiveTrace(sessionKey, runId);
@@ -135,6 +166,8 @@ export function registerTracingPluginHooks(
             logHookError(api, "closing superseded trace", error);
           }
         } else if (getActiveTraceCount() >= config.maxActiveTraces) {
+          if (runId) suppressRun(runId);
+          if (sessionKey) suppressSession(sessionKey);
           api.logger.error(
             `[tracing] active trace limit reached (${config.maxActiveTraces}); skipped channel=${channelId}`,
           );
@@ -160,6 +193,9 @@ export function registerTracingPluginHooks(
           sessionKey,
           runId,
         });
+        // A prior turn in the same session may have been suppressed without
+        // ever producing agent_end. The new accepted root owns this session.
+        if (sessionKey) consumeSuppressedSession(sessionKey);
       });
     },
     hookOpts,
@@ -168,7 +204,7 @@ export function registerTracingPluginHooks(
   api.on(
     "before_tool_call",
     async (event, ctx) => {
-      const hookContext = await resolveHookContext(api, getContext, "before_tool_call");
+      const hookContext = await resolveHookContext(api, getLiveContext, "before_tool_call");
       if (!hookContext) return;
       const toolCallId = readString(event.toolCallId);
       if (!toolCallId) return;
@@ -199,7 +235,7 @@ export function registerTracingPluginHooks(
   api.on(
     "after_tool_call",
     async (event, ctx) => {
-      const hookContext = await resolveHookContext(api, getContext, "after_tool_call");
+      const hookContext = await resolveHookContext(api, getLiveContext, "after_tool_call");
       if (!hookContext) return;
       const toolCallId = readString(event.toolCallId);
       if (!toolCallId) return;
@@ -227,7 +263,7 @@ export function registerTracingPluginHooks(
   api.on(
     "reply_payload_sending",
     async (event, ctx) => {
-      const hookContext = await resolveHookContext(api, getContext, "reply_payload_sending");
+      const hookContext = await resolveHookContext(api, getLiveContext, "reply_payload_sending");
       if (!hookContext || event.kind !== "final") return;
       const sessionKey = readString(event.sessionKey) ?? readString(ctx.sessionKey);
       const runId = readString(event.runId) ?? readString(ctx.runId);
@@ -252,7 +288,7 @@ export function registerTracingPluginHooks(
   api.on(
     "agent_end",
     async (event, ctx) => {
-      const hookContext = await resolveHookContext(api, getContext, "agent_end");
+      const hookContext = await resolveHookContext(api, getLiveContext, "agent_end");
       if (!hookContext) return;
       const sessionKey = readString(ctx.sessionKey);
       const runId = readString(event.runId) ?? readString(ctx.runId);
@@ -260,13 +296,44 @@ export function registerTracingPluginHooks(
       if (!operationKey) return;
       await runTraceOperation(operationKey, async () => {
         try {
-          await finishActiveTrace(
+          const finished = await finishActiveTrace(
             sessionKey,
             runId,
             event.success ? "ok" : "error",
             hookContext.backend,
             event.success ? "agent_end_success" : "agent_end_error",
           );
+          const suppressedByRun = runId ? consumeSuppressedRun(runId) : false;
+          const suppressedBySession = sessionKey ? consumeSuppressedSession(sessionKey) : false;
+          if (suppressedByRun || suppressedBySession) {
+            if (runId) rememberCompletedRun(runId);
+          }
+          // Some custom channel dispatchers reach agent_end without a visible
+          // message_received hook in this runtime. Export the observed Agent
+          // terminal event instead of silently reporting zero traces.
+          if (!finished && runId && !suppressedByRun && !suppressedBySession && rememberCompletedRun(runId)) {
+            if (getActiveTraceCount() >= hookContext.config.maxActiveTraces) return;
+            const traceId = randomHexId(16);
+            if (hookContext.sampler.shouldSample(traceId)) {
+              const messageText = hookContext.config.captureMessageBody
+                ? readLastUserMessage(event.messages)
+                : undefined;
+              const span = createSpan("agent.run", {
+                traceId,
+                kind: "internal",
+                attributes: {
+                  ...(sessionKey ? { "openclaw.session_key": sessionKey } : {}),
+                  "openclaw.run_id": runId,
+                  ...(messageText ? { "openclaw.message_text": messageText } : {}),
+                },
+              });
+              await endSpan(span.spanId, event.success ? "ok" : "error", hookContext.backend, {
+                ...(typeof event.durationMs === "number" && Number.isFinite(event.durationMs) && event.durationMs >= 0
+                  ? { durationMs: event.durationMs } : {}),
+                attributes: { "openclaw.end_reason": event.success ? "agent_end_success" : "agent_end_error" },
+              });
+            }
+          }
         } catch (error) {
           logHookError(api, "ending agent trace", error);
         }
@@ -278,7 +345,7 @@ export function registerTracingPluginHooks(
   api.on(
     "session_end",
     async (_event, ctx) => {
-      const hookContext = await resolveHookContext(api, getContext, "session_end");
+      const hookContext = await resolveHookContext(api, getLiveContext, "session_end");
       if (!hookContext) return;
       const sessionKey = readString(ctx.sessionKey);
       const runId = readString((ctx as { runId?: unknown }).runId);

@@ -67,7 +67,8 @@
       "./dist/index.js"
     ],
     "capabilities": [
-      "tools"
+      "tools",
+      "http-route"
     ],
     "compat": {
       "pluginApi": ">=2026.9.6",

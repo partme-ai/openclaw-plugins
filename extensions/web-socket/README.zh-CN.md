@@ -142,7 +142,7 @@ OpenClaw 2026.7.1+ 的生产型 WebSocket 渠道插件。它不是一个简单�
 │                                ▼                                         │
 │  ┌────────────────────────────────────────────────────────────────────┐  │
 │  │ 有界串行入站队列 → Agent 路由 → Session 映射 → message-sdk Bridge │  │
-│  │ messageId 两阶段幂等 │ Ping/Pong │ 背压 │ 停机排空 │ 错误脱敏      │  │
+  │  │ peerId + messageId 持久幂等 │ Ping/Pong │ 背压 │ 停机排空      │  │
 │  └──────────────────────────────┬─────────────────────────────────────┘  │
 │                                 ▼                                        │
 │                    OpenClaw Runtime → Agent                              │
@@ -207,7 +207,7 @@ flowchart TB
   │                 │                  │                  │◀── 回复 ────┤
   │◀── reply ───────┤◀─────────────────┴──────────────────┤             │
   │◀── accepted ────┤  仅在 Agent 与回复投递均完成后发送                 │
-  │                 │  失败：release(m-1) + error，不发送 accepted       │
+  │                 │  失败：error，不发送 accepted                       │
 ```
 
 字符时序图突出成功确认点；下面的 Mermaid 保留 server/client 共用的完整参与者与处理顺序。
@@ -220,28 +220,27 @@ sequenceDiagram
   participant R as OpenClaw Runtime
   participant A as Agent
 
-  C->>W: message(version=1, messageId=m-1)
-  W->>W: 校验帧、限流、claim(messageId)、路由、会话映射
+  C->>W: message(version=1, peerId=p-1, messageId=m-1)
+  W->>W: 校验帧、限流、路由、会话映射
   W->>R: dispatchChannelMessage
   R->>A: Agent Turn
   A-->>R: 回复内容
   R-->>W: reply pipeline
   W-->>C: reply(version=1)
-  W->>W: commit(messageId)
   W-->>C: accepted(version=1, messageId=m-1)
-  Note over C,W: 任一步失败则 release(messageId)、发送 error，不发送 accepted
+  Note over C,W: 任一步失败则发送 error，不发送 accepted
 ```
 
-`messageId` 使用两阶段去重，不会在刚收到字节时就标成完成：
+同时提供稳定的客户端声明 `peerId` 与 `messageId` 时，message-sdk 持久 journal 记录完成结果，断线重连仍可识别重投；同一对 ID 对应不同业务内容会报冲突。`peerId` 仅用于客户端声明的幂等作用域，不代表已认证身份。缺任一字段时保留尽力而为兼容路径；结果不确定时不会自动重跑 Agent。
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Claimed: claim(messageId)
-  Claimed --> Committed: Agent + reply 成功
-  Claimed --> Retryable: Agent / reply 失败，release
-  Retryable --> Claimed: 上游用同一 messageId 重试
-  Committed --> Duplicate: TTL 内再次收到
-  Duplicate --> [*]: 静默丢弃，不重复执行 Agent
+  [*] --> Pending: peerId + messageId
+  Pending --> Completed: Agent + reply 成功
+  Pending --> Failed: Agent 或 reply 失败
+  Completed --> Duplicate: 同一业务消息重投
+  Completed --> Conflict: 同一 ID 改业务内容
+  Failed --> ManualReview: 结果不确定时人工核对
 ```
 
 ## 帧协议 v1

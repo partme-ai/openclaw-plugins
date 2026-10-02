@@ -223,6 +223,7 @@ stateDiagram-v2
 - 后端 API、扫码登录和 CDN 上传均属于真实环境依赖，本地单元测试不能替代账号验收。
 - 远程媒体通过 OpenClaw SSRF Guard 下载：DNS 解析、连接目标和重定向都会校验，响应流最多读取 100 MiB；上传/发送结束后，无论成功失败都会删除插件创建的临时文件。
 - 本地媒体默认只能读取 OpenClaw 的 media、workspace、canvas、sandbox 等受管目录；额外目录必须显式写入当前账号的 `mediaLocalRoots`，Path Guard 会拒绝目录穿越、符号链接逃逸、特殊文件和超过 100 MiB 的文件。
+- Agent 自动回复的 `MEDIA:` 路径只能来自当前工作区或宿主受管媒体目录，宿主不会因模型给出的路径扩大读取根；账号级 `mediaLocalRoots` 不放宽此限制，可用于通道主动出站发送。
 - `getUploadUrl` 返回的 `upload_full_url` 必须与已配置 `cdnBaseUrl` 同源且路径固定为 `/upload`；上传禁用 HTTP 重定向，单次 30 秒，4xx 不重试，网络/5xx 最多重试 3 次并指数退避。
 - 长轮询需要验证断网恢复、凭据失效、重复消息和 Gateway 重启后的恢复行为。
 - 默认只允许官方 iLink API 与 CDN 地址。自定义 HTTPS 代理必须分别显式设置 `allowCustomApiBaseUrl=true` / `allowCustomCdnBaseUrl=true`；二维码响应中的 `redirect_host` 不读取这些开关，只接受腾讯控制的 `weixin.qq.com` 域名，防止远端响应把 Bot Token 引向任意主机。

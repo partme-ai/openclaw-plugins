@@ -1,4 +1,3 @@
-import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * @fileoverview STOMP 1.2 over WebSocket 服务到 OpenClaw Channel 的生命周期适配层。
  *
@@ -6,6 +5,7 @@ import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract
  * 清理连接；Agent 回复发布到该会话专属 Topic，没有订阅者接收时明确失败。账户配置、状态
  * 和探针与协议帧处理分离，保持 OpenClaw 2026.7.1 Channel 契约清晰。
  */
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type {
   ChannelAccountSnapshot,
   ChannelPlugin,

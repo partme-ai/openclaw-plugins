@@ -15,7 +15,7 @@ import {
   extractFinalTextFromRunResult,
   sanitizeSessionId,
 } from "./agent-helpers.js";
-import type { EmbeddedAgentDispatchParams, EmbeddedAgentRuntime } from "./types.js";
+import type { EmbeddedAgentDispatchParams, EmbeddedAgentRuntime, EmbeddedDispatchOutcome } from "./types.js";
 
 /**
  * 通过 embedded agent 执行 prompt 并将回复经 deliver 发回传输层 / Run embedded agent and deliver reply.
@@ -25,7 +25,7 @@ import type { EmbeddedAgentDispatchParams, EmbeddedAgentRuntime } from "./types.
  */
 export async function dispatchEmbeddedAgentMessage(
   params: EmbeddedAgentDispatchParams,
-): Promise<{ runId: string; delivered: boolean }> {
+): Promise<{ runId: string; delivered: boolean; outcome: EmbeddedDispatchOutcome }> {
   const rt = params.runtime as EmbeddedAgentRuntime;
   const cfg = rt.config;
   const runId = params.runId ?? createDispatchRunId();
@@ -37,6 +37,7 @@ export async function dispatchEmbeddedAgentMessage(
   const workspaceDir = rt.agent.resolveAgentWorkspaceDir(cfg, params.agentId);
   const sessionFile = `${agentDir}/sessions/${sanitizeSessionId(sessionId)}.jsonl`;
 
+  params.beforeAgentDispatch?.();
   const result = await rt.agent.runEmbeddedAgent({
     sessionId,
     sessionKey: params.sessionKey,
@@ -49,9 +50,29 @@ export async function dispatchEmbeddedAgentMessage(
     config: cfg,
   });
 
-  const replyText = extractFinalTextFromRunResult(result);
+  const meta = result && typeof result === "object" && !Array.isArray(result)
+    ? (result as { meta?: unknown }).meta : undefined;
+  const terminal = meta && typeof meta === "object" && !Array.isArray(meta)
+    ? meta as Record<string, unknown> : undefined;
+  if (!terminal) return { runId, delivered: false, outcome: "failed" };
+  if (terminal.error || terminal.failureSignal || terminal.aborted === true || terminal.timeoutPhase) {
+    return { runId, delivered: false, outcome: "failed" };
+  }
+  if (terminal.continuationPending === true || terminal.yielded === true) {
+    return { runId, delivered: false, outcome: "pending" };
+  }
+  const reply = terminal.terminalReply && typeof terminal.terminalReply === "object" &&
+    !Array.isArray(terminal.terminalReply) ? terminal.terminalReply as Record<string, unknown> : undefined;
+  if (reply?.disposition === "silent" || terminal.terminalReplyKind === "silent-empty") {
+    return { runId, delivered: false, outcome: "silent" };
+  }
+  if (reply?.disposition === "empty" || terminal.intentionalTerminalCompletion === "tool-batch") {
+    return { runId, delivered: false, outcome: "empty" };
+  }
+  const replyText = reply?.disposition === "visible" && typeof reply.text === "string"
+    ? reply.text : extractFinalTextFromRunResult(result);
   if (replyText.trim().length === 0) {
-    return { runId, delivered: false };
+    return { runId, delivered: false, outcome: "failed" };
   }
 
   const format: OutboundWireFormat = params.reply.outboundFormat ?? "legacyJsonText";
@@ -66,5 +87,5 @@ export async function dispatchEmbeddedAgentMessage(
   });
 
   await params.reply.deliver({ wire, text: replyText, runId });
-  return { runId, delivered: true };
+  return { runId, delivered: true, outcome: "visible" };
 }

@@ -1,8 +1,11 @@
 /** 美团 capability 的正式 tarball → Agent Tool → MTOp 签名闭环。 */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createHash } from "node:crypto";
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 
-import { OPENCLAW_BIN, PROFILE } from "../lib/utils.mjs";
+import { OPENCLAW_BIN, PROFILE, STATE_DIR } from "../lib/utils.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +36,40 @@ export async function testMeituan(ctx, results) {
       const model = ctx.modelFixture;
       const provider = ctx.meituanProvider;
       if (!model || !provider) throw new Error("Meituan E2E requires model and MTOp fixtures");
+
+      for (const callbackFields of [
+        {
+          businessId: "58", msgType: "5810055", msgId: "meituan-e2e-notice-1", developerId: "123456",
+          timestamp: String(Math.floor(Date.now() / 1000)), message: JSON.stringify({ orderId: "E2E-ORDER-1" }),
+        },
+        {
+          businessId: "2", msgType: "210069", msgId: "meituan-e2e-message-1", developerId: "123456",
+          timestamp: String(Math.floor(Date.now() / 1000)), message: JSON.stringify({ content: "E2E-MESSAGE-1" }),
+        },
+        {
+          businessId: "58", msgType: "5810055", developerId: "123456",
+          timestamp: String(Math.floor(Date.now() / 1000)), message: '{"messageId":1234567890,"orderId":"E2E-ORDER-2"}',
+        },
+      ]) {
+        const sign = createHash("sha1").update("meituan-e2e-sign-key" + Object.keys(callbackFields).sort().map((key) => key + callbackFields[key]).join("")).digest("hex");
+        const callback = await ctx.gatewayFetch("/meituan/callback", {
+          method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ ...callbackFields, sign }).toString(),
+        });
+        if (callback.status !== 200 || callback.json?.code !== 0) {
+          throw new Error(`Meituan callback route rejected valid ${callbackFields.msgType}: ${callback.status}`);
+        }
+      }
+      const inboxPath = join(STATE_DIR, "meituan/callback-inbox");
+      const names = (await readdir(inboxPath)).filter((name) => name.endsWith(".json"));
+      if (names.length !== 3) throw new Error(`Meituan callback inbox expected three persisted events, got ${names.length}`);
+      const saved = await Promise.all(names.map(async (name) => JSON.parse(await readFile(join(inboxPath, name), "utf8"))));
+      if (!saved.some((item) => item.msgType === "5810055" && item.payload?.orderId === "E2E-ORDER-1") ||
+          !saved.some((item) => item.msgType === "210069" && item.payload?.content === "E2E-MESSAGE-1") ||
+          !saved.some((item) => item.msgType === "5810055" && item.msgId === "1234567890" && item.payload?.orderId === "E2E-ORDER-2")) {
+        throw new Error("Meituan callback inbox notification/message payload mismatch");
+      }
+      console.log("[meituan] notification/message callback POST and durable inbox PASS");
 
       const completionsBefore = model.metrics.completions;
       const output = await runAgent();

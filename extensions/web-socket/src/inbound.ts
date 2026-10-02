@@ -10,10 +10,12 @@
 
 import {
   dispatchChannelMessage,
+  requireSettledDelivery,
   normalizeWireIngress,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
+import { createHash } from "node:crypto";
 
 import {
   DEFAULT_WEBSOCKET_CONFIG,
@@ -22,14 +24,11 @@ import {
 import { resolveInboundRoute } from "./routing/agent-router.js";
 import { upsertSessionContext } from "./routing/session-mapper.js";
 import { getWebsocketRuntime } from "./runtime.js";
-import { getWebsocketClaimableDedupe } from "./shared/wire-helpers.js";
 import { getWebsocketChannelConfig } from "./state/web-socket-state.js";
 import type { WebsocketInboundMessage } from "./types.js";
 import { serializeEnvelopeReplyFrame, serializeReplyFrame } from "./transport/protocol.js";
 import { WS_CLIENT_CONNECTION_PREFIX } from "./transport/client.js";
 import { sendToConnectionConfirmed } from "./transport/connection-hub.js";
-
-const inboundDedupe = getWebsocketClaimableDedupe();
 
 /**
  * 解析 OpenClaw 对端 peerId（服务端=connectionId；客户端=帧内 peerId 或 clientId）。
@@ -82,11 +81,11 @@ export async function handleInboundMessage(message: WebsocketInboundMessage): Pr
     mode: config.payload.mode,
     channel: "web-socket",
   });
-  const idempotencyKey = message.messageId?.trim();
-  const claim = idempotencyKey ? await inboundDedupe.claim(idempotencyKey) : undefined;
-  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
-    return;
-  }
+  const applicationId = message.messageId?.trim();
+  const stablePeerId = message.peerId?.trim();
+  const deliveryIdentity = applicationId && stablePeerId
+    ? createHash("sha256").update(JSON.stringify([stablePeerId, applicationId])).digest("hex")
+    : undefined;
 
   upsertSessionContext(sessionKey, {
     connectionId: message.connectionId,
@@ -95,23 +94,17 @@ export async function handleInboundMessage(message: WebsocketInboundMessage): Pr
   });
 
   const text = parsed.text;
-  try {
-    await dispatchToRuntime(
-      sessionKey,
-      peerId,
-      agentId,
-      text,
-      message,
-      route.accountId,
-      parsed.unified,
-      config,
-    );
-    if (idempotencyKey) await inboundDedupe.commit(idempotencyKey);
-  } catch (error) {
-    // accepted 尚未发出时必须释放 claim，否则上游按 messageId 重试会被当成已完成而永久丢失。
-    if (idempotencyKey) inboundDedupe.release(idempotencyKey, { error });
-    throw error;
-  }
+  await dispatchToRuntime(
+    sessionKey,
+    peerId,
+    agentId,
+    text,
+    message,
+    route.accountId,
+    parsed.unified,
+    config,
+    deliveryIdentity,
+  );
 }
 
 /**
@@ -126,6 +119,7 @@ async function dispatchToRuntime(
   accountId: string,
   unified: import("@partme.ai/openclaw-message-sdk").UnifiedMessage | null,
   config: WebsocketChannelConfig,
+  deliveryIdentity: string | undefined,
 ): Promise<void> {
   const rt = getWebsocketRuntime();
   if (!rt) {
@@ -135,7 +129,14 @@ async function dispatchToRuntime(
   const outboundFormat =
     config.payload.outboundFormat === "plain" ? "plainText" : "envelope";
 
-  await dispatchChannelMessage({
+  const dispatchResult = await dispatchChannelMessage({
+    deliveryIdentity,
+    requireDeliveryIdentity: Boolean(deliveryIdentity),
+    deliveryFingerprintContext: deliveryIdentity && inbound.peerId ? {
+      peerId: inbound.peerId,
+      sessionKey: JSON.stringify([accountId, agentId, inbound.peerId]),
+      replyRoute: { peerId: inbound.peerId },
+    } : undefined,
     mode: "reply-pipeline",
     runtime: rt as unknown as BridgePluginRuntime,
     channel: "web-socket",
@@ -178,4 +179,5 @@ async function dispatchToRuntime(
       agentId,
     },
   });
+  requireSettledDelivery(dispatchResult?.deliveryOutcome);
 }

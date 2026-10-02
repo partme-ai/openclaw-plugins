@@ -310,7 +310,7 @@ function validateInteger(
  * @param url - 原始 serverUrl；允许为空。
  * @returns 脱敏后的 URL，解析失败或未配置时返回 null。
  */
-function redactServerUrl(url: string | null): string | null {
+export function redactServerUrl(url: string | null): string | null {
   if (!url) return null;
   try {
     const parsed = new URL(url);

@@ -1,4 +1,4 @@
-import { E2E_PORTS } from "../../lib/utils.mjs";
+import { E2E_PORTS, STATE_DIR } from "../../lib/utils.mjs";
 
 /** 美团 capability 的隔离只读 operation；写操作确认由单元契约测试覆盖。 */
 export function meituanConfig() {
@@ -10,6 +10,7 @@ export function meituanConfig() {
           enabled: true,
           developerId: "123456",
           signKey: "meituan-e2e-sign-key",
+          callbacks: { enabled: true, inboxDirectory: `${STATE_DIR}/meituan/callback-inbox` },
           appAuthToken: "meituan-e2e-auth-token",
           apiBaseUrl: `http://127.0.0.1:${E2E_PORTS.meituanProvider}`,
           operations: [{

@@ -33,6 +33,49 @@ const activeSpans = new Map<string, Span>();
 const sessionTraceMap = new Map<string, ActiveTraceContext>();
 const runTraceMap = new Map<string, ActiveTraceContext>();
 const toolSpanMap = new Map<string, { spanId: string; traceId: string }>();
+const completedRunIds = new Set<string>();
+const suppressedRunIds = new Set<string>();
+const suppressedSessionKeys = new Set<string>();
+const MAX_COMPLETED_RUN_IDS = 1_000;
+
+/** 入站观察到但因采样或容量限制未建立根 Span 的 run，终态不能重新抽样。 */
+export function suppressRun(runId: string): void {
+  suppressedRunIds.add(runId);
+  if (suppressedRunIds.size > MAX_COMPLETED_RUN_IDS) {
+    const oldest = suppressedRunIds.values().next().value;
+    if (oldest) suppressedRunIds.delete(oldest);
+  }
+}
+
+export function consumeSuppressedRun(runId: string): boolean {
+  if (!suppressedRunIds.delete(runId)) return false;
+  rememberCompletedRun(runId);
+  return true;
+}
+
+/** 入站 hook 可能尚无 runId，用会话键暂存拒绝，等待对应终态消费。 */
+export function suppressSession(sessionKey: string): void {
+  suppressedSessionKeys.add(sessionKey);
+  if (suppressedSessionKeys.size > MAX_COMPLETED_RUN_IDS) {
+    const oldest = suppressedSessionKeys.values().next().value;
+    if (oldest) suppressedSessionKeys.delete(oldest);
+  }
+}
+
+export function consumeSuppressedSession(sessionKey: string): boolean {
+  return suppressedSessionKeys.delete(sessionKey);
+}
+
+/** 最近完成的 runId 用于防止终态 fallback 在正常回复之后重复导出。 */
+export function rememberCompletedRun(runId: string): boolean {
+  if (completedRunIds.has(runId)) return false;
+  completedRunIds.add(runId);
+  if (completedRunIds.size > MAX_COMPLETED_RUN_IDS) {
+    const oldest = completedRunIds.values().next().value;
+    if (oldest) completedRunIds.delete(oldest);
+  }
+  return true;
+}
 
 /** 使用 Web Crypto CSPRNG 生成指定字节数的小写十六进制 Trace/Span ID。 */
 export function randomHexId(bytes: number): string {
@@ -161,6 +204,8 @@ export async function finishActiveTrace(
 ): Promise<boolean> {
   const context = clearActiveTrace(sessionKey, runId);
   if (!context) return false;
+  const completedRunId = context.runId ?? runId;
+  if (completedRunId) rememberCompletedRun(completedRunId);
 
   for (const [toolCallId, binding] of toolSpanMap) {
     if (binding.traceId === context.traceId) toolSpanMap.delete(toolCallId);
@@ -301,6 +346,9 @@ export function resetTraceStore(): void {
   sessionTraceMap.clear();
   runTraceMap.clear();
   toolSpanMap.clear();
+  completedRunIds.clear();
+  suppressedRunIds.clear();
+  suppressedSessionKeys.clear();
 }
 
 function cloneSpan(span: Span): Span {

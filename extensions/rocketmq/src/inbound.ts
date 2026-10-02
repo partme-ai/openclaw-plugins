@@ -22,6 +22,7 @@ import type { ParsedTransportPayload } from "@partme.ai/openclaw-message-sdk";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
+  requireSettledDelivery,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
   type ChannelDispatchMode,
@@ -29,10 +30,7 @@ import {
 import type { ChannelLimitsOpenClawConfig } from "@partme.ai/openclaw-message-sdk/config";
 
 import { resolveRocketmqAgentReplyTimeoutMs } from "./config/resolvers.js";
-import {
-  getRocketmqClaimableDedupe,
-  mapRocketmqWirePayloadMode,
-} from "./shared/wire-helpers.js";
+import { mapRocketmqWirePayloadMode } from "./shared/wire-helpers.js";
 import type { InboundEvent } from "./transport/server.js";
 import { redactRocketmqError } from "./shared/redact.js";
 
@@ -84,10 +82,8 @@ export async function processInbound(
   const idempotencyKey =
     event.messageId ?? event.keys?.[0] ?? parsed.idempotencyKey ?? parsed.correlationId;
 
-  const dedupe = getRocketmqClaimableDedupe(config.idempotency);
-  const claim = dedupe && idempotencyKey ? await dedupe.claim(idempotencyKey) : undefined;
-  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
-    return { accepted: true, routeSource: "idempotency" };
+  if (config.dispatch.reply.enabled && !idempotencyKey?.trim()) {
+    return { accepted: false, reconsume: true, reason: "missing_delivery_identity" };
   }
   const peerId = route.peerId || event.topic;
 
@@ -131,15 +127,10 @@ export async function processInbound(
       replyTag: route.replyTag,
       config,
       parsed,
+      deliveryIdentity: idempotencyKey,
     });
-    if (dedupe && idempotencyKey) {
-      await dedupe.commit(idempotencyKey);
-    }
     return { accepted: true, routeSource: route.source };
   } catch (error) {
-    if (dedupe && idempotencyKey) {
-      dedupe.release(idempotencyKey);
-    }
     console.error(
       `[openclaw-rocketmq] Runtime dispatch failed for peer=${route.peerId || event.topic}: ${redactRocketmqError(error, config)}`,
     );
@@ -164,6 +155,7 @@ async function dispatchToRuntime(params: {
   replyTag?: string;
   config: RockermqConfig;
   parsed: ParsedTransportPayload;
+  deliveryIdentity?: string;
 }): Promise<void> {
   const rt = getRockermqRuntime();
   if (!rt) {
@@ -176,7 +168,7 @@ async function dispatchToRuntime(params: {
     params.config.dispatch.timeoutMs,
   );
 
-  await dispatchChannelMessage({
+  const dispatchResult = await dispatchChannelMessage({
     mode,
     runtime: rt as unknown as BridgePluginRuntime,
     channel: "rocketmq",
@@ -185,6 +177,8 @@ async function dispatchToRuntime(params: {
     text: params.prompt,
     agentId: params.agentId,
     sessionKey: params.sessionKey,
+    deliveryIdentity: params.deliveryIdentity,
+    requireDeliveryIdentity: params.config.dispatch.reply.enabled,
     unified: params.parsed.unified,
     sessionId: `rocketmq:${params.accountId ?? "default"}:${params.agentId}:${params.peerId}`,
     timeoutMs,
@@ -211,6 +205,7 @@ async function dispatchToRuntime(params: {
       userId: mode === "subagent" ? params.sessionKey : params.peerId,
     },
   });
+  requireSettledDelivery(dispatchResult?.deliveryOutcome);
 }
 
 /**

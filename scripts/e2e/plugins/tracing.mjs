@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { dockerEnv, DOCKER } from "../lib/compose.mjs";
@@ -20,7 +21,43 @@ async function collectorLogs() {
   return `${stdout}\n${stderr}`;
 }
 
-function runInboundTurn(ctx) {
+/** Match one new, terminal Agent turn in both the shared journal and OTLP Collector. */
+export function selectCompletedTurnTrace({ beforeTraceIds, nonce, summaries, spansByTraceId, collectorLog }) {
+  if (typeof nonce !== "string" || nonce.length === 0) return null;
+  for (const summary of summaries) {
+    const traceId = summary?.traceId;
+    if (typeof traceId !== "string" || !/^[a-f0-9]{32}$/i.test(traceId) || beforeTraceIds.has(traceId)) continue;
+    if (!Number.isFinite(summary.endTimeMs) || summary.endTimeMs < summary.startTimeMs) continue;
+    const root = spansByTraceId.get(traceId)?.find((span) =>
+      span.traceId === traceId && !span.parentSpanId &&
+      ["message.received", "agent.run"].includes(span.name) &&
+      span.status === "ok" && Number.isFinite(span.endTimeMs) &&
+      span.endTimeMs >= span.startTimeMs &&
+      typeof span.attributes?.["openclaw.message_text"] === "string" &&
+      span.attributes["openclaw.message_text"].includes(nonce) &&
+      ["agent_end_success", "reply_payload_final"].includes(span.attributes?.["openclaw.end_reason"]),
+    );
+    if (!root) continue;
+    if (collectorHasSpan(collectorLog, root)) {
+      return { traceId, spanId: root.spanId };
+    }
+  }
+  return null;
+}
+
+function collectorHasSpan(log, root) {
+  const starts = [...log.matchAll(/^[ \t]*Span #\d+[ \t]*$/gm)].map((match) => match.index);
+  for (let index = 0; index < starts.length; index += 1) {
+    const block = log.slice(starts[index], starts[index + 1] ?? log.length);
+    const field = (name) => block.match(new RegExp(`^[ \\t]*${name}[ \\t]*:[ \\t]*([^\\r\\n]*)`, "m"))?.[1]?.trim();
+    if (field("Trace ID")?.toLowerCase() === root.traceId.toLowerCase() &&
+        field("ID")?.toLowerCase() === root.spanId.toLowerCase() &&
+        field("Name") === root.name) return true;
+  }
+  return false;
+}
+
+function runInboundTurn(ctx, nonce) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       client.end(true);
@@ -47,7 +84,7 @@ function runInboundTurn(ctx) {
           "openclaw/agent/main/in",
           JSON.stringify({
             ...ctx.pingPayload,
-            text: "Return the tracing fixture response.",
+            text: `Return the tracing fixture response. trace_nonce=${nonce}`,
             metadata: { ...ctx.pingPayload.metadata, e2e: "tracing" },
           }),
           (publishError) => {
@@ -58,7 +95,7 @@ function runInboundTurn(ctx) {
     });
     client.on("message", (_topic, payload) => {
       const text = payload.toString("utf8");
-      if (text.includes("openclaw e2e fixture reply")) finish(undefined, text);
+      if (text.includes(`openclaw e2e fixture reply ${nonce}`)) finish(undefined, text);
     });
   });
 }
@@ -79,61 +116,81 @@ export async function testTracing(ctx, results) {
         if (![401, 403].includes(anonymous.status) || anonymous.json?.data !== undefined) {
           throw new Error(`anonymous GET ${path} exposed traces (${anonymous.status})`);
         }
-        deniedStatuses.push(`${path}:${anonymous.status}`);
+        const invalid = await ctx.gatewayFetch(path, { headers: { Authorization: "Bearer invalid-e2e-token" } });
+        if (![401, 403].includes(invalid.status) || invalid.json?.data !== undefined) {
+          throw new Error(`invalid token exposed ${path} (${invalid.status})`);
+        }
+        deniedStatuses.push(`${path}:anonymous=${anonymous.status},invalid=${invalid.status}`);
       }
-      const invalid = await ctx.gatewayFetch("/tracing/status", { headers: { Authorization: "Bearer invalid-e2e-token" } });
-      if (![401, 403].includes(invalid.status) || invalid.json?.data !== undefined) {
-        throw new Error(`invalid token exposed tracing status (${invalid.status})`);
+      const anonymousPost = await ctx.gatewayFetch("/tracing/status", { method: "POST" });
+      if (![401, 403].includes(anonymousPost.status) || anonymousPost.json?.data !== undefined) {
+        throw new Error(`anonymous POST /tracing/status exposed traces (${anonymousPost.status})`);
+      }
+      const authorizedPost = await ctx.gatewayFetch("/tracing/status", { method: "POST", ...authorized });
+      if (authorizedPost.status !== 405) {
+        throw new Error(`authorized POST /tracing/status bypassed GET-only route (${authorizedPost.status})`);
       }
       const authorizedStatus = await ctx.gatewayFetch("/tracing/status", authorized);
       if (!authorizedStatus.ok || authorizedStatus.json?.data?.plugin !== "tracing") {
         throw new Error(`authorized tracing status failed (${authorizedStatus.status})`);
       }
-      console.log(`[tracing-auth] anonymous GET ${deniedStatuses.join(", ")}; invalid token=${invalid.status}; authorized status=${authorizedStatus.status}`);
+      console.log(`[tracing-auth] denied GET ${deniedStatuses.join(", ")}; anonymous POST=${anonymousPost.status}, authorized POST=${authorizedPost.status}; authorized status=${authorizedStatus.status}`);
       const model = ctx.modelFixture;
       if (!model) throw new Error("tracing E2E model fixture was not started by the orchestrator");
+      const nonce = randomUUID();
       const initialCompletions = model.metrics.completions;
+      const initialTraces = await ctx.gatewayFetch("/tracing/traces?limit=200", authorized);
+      if (!initialTraces.ok || !Array.isArray(initialTraces.json?.data)) {
+        throw new Error(`authorized baseline trace listing failed (${initialTraces.status})`);
+      }
+      const beforeTraceIds = new Set(initialTraces.json.data.map((trace) => trace.traceId));
       await ctx.waitFor(() => ctx.tcpReachable(11883), {
         label: "MQTT inbound fixture",
         timeoutMs: 30_000,
       });
-      await runInboundTurn(ctx);
+      const previousReplyText = model.controls.replyText;
+      model.controls.replyText = `openclaw e2e fixture reply ${nonce}`;
+      try {
+        await runInboundTurn(ctx, nonce);
+      } finally {
+        model.controls.replyText = previousReplyText;
+      }
       if (model.metrics.completions !== initialCompletions + 1) {
         throw new Error(`fixture completion delta=${model.metrics.completions - initialCompletions}, expected 1`);
       }
-
-      try {
-        await ctx.waitFor(async () => {
-          const logs = await collectorLogs();
-          return logs.includes("message.received") && logs.includes("openclaw.channel");
-        }, { label: "tracing spans in OpenTelemetry Collector", timeoutMs: 30_000, intervalMs: 500 });
-      } catch (error) {
-        const logs = await collectorLogs();
-        const status = await ctx.gatewayFetch("/tracing/status", authorized);
-        const receivedCount = logs.match(/message\.received/g)?.length ?? 0;
-        const channelCount = logs.match(/openclaw\.channel/g)?.length ?? 0;
-        console.log(`[tracing-otlp] Collector message.received=${receivedCount}, openclaw.channel=${channelCount}; status=${status.status}; activeSpans=${status.json?.data?.activeSpans}, recentTraces=${status.json?.data?.recentTraces}, backend=${status.json?.data?.backend}, bufferedSpans=${status.json?.data?.backendStatus?.bufferedSpans}`);
-        throw error;
+      if (!JSON.stringify(model.metrics.lastRequest).includes(nonce)) {
+        throw new Error("tracing nonce did not reach the model fixture request");
       }
 
+      let completedTrace = null;
+      await ctx.waitFor(async () => {
+        const traces = await ctx.gatewayFetch("/tracing/traces?limit=200", authorized);
+        if (!traces.ok || !Array.isArray(traces.json?.data)) return false;
+        const spansByTraceId = new Map();
+        for (const trace of traces.json.data) {
+          if (beforeTraceIds.has(trace.traceId)) continue;
+          const detail = await ctx.gatewayFetch(`/tracing/trace?traceId=${trace.traceId}`, authorized);
+          if (detail.ok && detail.json?.data?.traceId === trace.traceId && Array.isArray(detail.json.data.spans)) {
+            spansByTraceId.set(trace.traceId, detail.json.data.spans);
+          }
+        }
+        completedTrace = selectCompletedTurnTrace({
+          beforeTraceIds,
+          nonce,
+          summaries: traces.json.data,
+          spansByTraceId,
+          collectorLog: await collectorLogs(),
+        });
+        return completedTrace !== null;
+      }, { label: "this completed Agent turn in the journal and OTLP Collector", timeoutMs: 30_000, intervalMs: 500 });
       const status = await ctx.gatewayFetch("/tracing/status", authorized);
       if (!status.ok || status.json?.data?.backend !== "otlp") {
         throw new Error(`tracing status failed: ${status.status} ${status.text}`);
       }
-      if (status.json?.data?.activeSpans !== 0 || status.json?.data?.recentTraces < 1) {
-        throw new Error(`tracing lifecycle did not close and retain the completed trace: ${status.text}`);
-      }
       if (status.json?.data?.backendStatus?.healthy !== true || status.json?.data?.backendStatus?.bufferedSpans !== 0) {
         throw new Error(`tracing backend not drained and healthy: ${status.text}`);
       }
-      const traces = await ctx.gatewayFetch("/tracing/traces?limit=1", authorized);
-      if (!traces.ok || !Array.isArray(traces.json?.data) || traces.json.data.length !== 1) {
-        throw new Error(`authorized trace listing failed (${traces.status})`);
-      }
-      const detail = await ctx.gatewayFetch(`/tracing/trace?traceId=${traces.json.data[0].traceId}`, authorized);
-      if (!detail.ok || detail.json?.data?.traceId !== traces.json.data[0].traceId) {
-        throw new Error(`authorized trace detail failed (${detail.status})`);
-      }
+      console.log(`[tracing-otlp] completed traceId=${completedTrace.traceId}, spanId=${completedTrace.spanId}; gatewayActiveSpans=${status.json?.data?.activeSpans}, gatewayActiveTraces=${status.json?.data?.activeTraces}, journalRecentTraces=${status.json?.data?.recentTraces}`);
     },
     {
       service: `http://127.0.0.1:${ctx.ports.otlpHttp}/v1/traces`,

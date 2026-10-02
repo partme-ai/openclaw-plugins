@@ -1,4 +1,3 @@
-import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * @fileoverview 原生 STOMP 1.2 TCP/TLS 服务到 OpenClaw Channel 的生命周期适配层。
  *
@@ -6,6 +5,7 @@ import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract
  * 连接；Agent 出站文本按 session/topic 目标发布，若没有订阅者接收则明确失败，不伪造成功。
  * 账户状态和探针只读取 transport 快照，不直接管理协议帧。
  */
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type { ChannelAccountSnapshot, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { deleteAccountFromConfigSection, setAccountEnabledInConfigSection } from "openclaw/plugin-sdk/core";
 import type { ChannelOutboundContext } from "openclaw/plugin-sdk/channel-contract";

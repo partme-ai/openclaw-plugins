@@ -11,6 +11,11 @@ const SECRET_KEY = /(token|secret|password|api[-_]?key|authorization)$/i;
 /** Return a JSON-safe report copy with credential-bearing fields removed. */
 export function sanitizeReport(value, key = "") {
   if (SECRET_KEY.test(key)) return "[REDACTED]";
+  if (typeof value === "string") {
+    return value
+      .replace(/\bBearer\s+[^\s"']+/gi, "Bearer [REDACTED]")
+      .replace(/\b(token|secret|password|api[-_]?key)=([^\s&"']+)/gi, "$1=[REDACTED]");
+  }
   if (Array.isArray(value)) return value.map((item) => sanitizeReport(item));
   if (value && typeof value === "object") {
     return Object.fromEntries(

@@ -3,6 +3,7 @@ import * as https from "node:https";
 import { join } from "node:path";
 
 import { STATE_DIR } from "../lib/utils.mjs";
+import { mtlsClientAddress } from "../config/plugins/mtls.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 const CERT_DIR = join(STATE_DIR, "mtls-certs");
@@ -11,6 +12,7 @@ function request(port, credentials = {}) {
   return new Promise((resolve, reject) => {
     const req = https.request({
       host: "127.0.0.1",
+      localAddress: mtlsClientAddress(),
       port,
       path: "/mtls/status",
       ca: readFileSync(join(CERT_DIR, "ca.crt")),
@@ -67,11 +69,11 @@ export async function testMtls(ctx, results) {
         key: readFileSync(join(CERT_DIR, "client.key")),
       });
       if (authenticated.status !== 200 || authenticated.json?.ok !== true || authenticated.json?.running !== true) {
-        throw new Error(`verified mTLS → OpenClaw trusted-proxy status failed: ${authenticated.status}`);
+        throw new Error(`verified mTLS → OpenClaw trusted-proxy status failed: ${authenticated.status} (${authenticated.json?.error ?? "unknown"}: ${authenticated.json?.message ?? "no detail"})`);
       }
     },
     {
-      service: `https://127.0.0.1:${ctx.ports.mtlsHttps}`,
+      service: `https://127.0.0.1:${ctx.ports.mtlsHttps} (client source ${mtlsClientAddress()})`,
       method: "OpenSSL client cert + fail-closed policy + OpenClaw trusted-proxy auth",
     },
     results,

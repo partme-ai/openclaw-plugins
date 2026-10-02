@@ -14,7 +14,8 @@ export function tracingConfig(_ctx) {
           backend: "otlp",
           otlpEndpoint: `http://127.0.0.1:${E2E_PORTS.otlpHttp}`,
           sampleRate: 1,
-          captureMessageBody: false,
+          // Isolated fixture data carries a unique nonce for turn-level trace correlation.
+          captureMessageBody: true,
           maxSpansPerTrace: 20,
           maxBufferedSpans: 100,
           flushIntervalMs: 100,

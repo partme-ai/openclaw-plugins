@@ -431,6 +431,11 @@ async function dispatchSend(state: ConnectionState, frame: StompFrame, config: S
       rawPayload: frame.body,
       // 只有调用方明确提供 message-id 才启用幂等；正文相同的两条合法消息不能被永久合并。
       idempotencyKey: frame.headers["message-id"]?.trim() || undefined,
+      senderScope: config.auth.required && state.user
+        ? `auth:${state.user}`
+        : frame.headers["sender-id"]?.trim()
+          ? `client:${frame.headers["sender-id"].trim()}`
+          : undefined,
     });
   } catch (error) {
     // 普通 SEND 与事务 COMMIT 都经过这里：内部异常只写脱敏日志，协议层返回稳定错误。

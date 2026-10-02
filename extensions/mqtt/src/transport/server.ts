@@ -695,6 +695,7 @@ function enqueueInboundMessage(
   updateMessageMetrics(packet.topic, packet.qos, "inbound");
 
   const message: MqttInboundMessage = {
+    authenticatedUsername: clientUsers.get(client),
     topic: packet.topic,
     payload: packet.payload.toString("utf-8"),
     clientId: client.id,

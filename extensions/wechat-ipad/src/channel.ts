@@ -1,4 +1,3 @@
-import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 /**
  * @fileoverview 微信 iPad 外部桥接的 OpenClaw Channel 契约。
  *
@@ -6,6 +5,7 @@ import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract
  * 连接，也不处理消息正文；实际连接由 `WechatIpadBridge` 管理，收发分别由 inbound/outbound
  * 模块完成。
  */
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type {
   ChannelAccountSnapshot,
 } from "openclaw/plugin-sdk/core";

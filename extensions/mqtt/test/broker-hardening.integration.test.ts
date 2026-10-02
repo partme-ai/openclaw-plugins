@@ -115,6 +115,7 @@ describe.sequential("MQTT broker production hardening", () => {
   it("preserves the replacement connection identity for duplicate clientId takeover", async () => {
     const port = await freePort();
     const inbound: string[] = [];
+    const inboundUsers: Array<string | undefined> = [];
     await startBroker(config(port, {
       maxConnections: 1,
       auth: {
@@ -128,6 +129,7 @@ describe.sequential("MQTT broker production hardening", () => {
     }), async (message) => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       inbound.push(message.topic);
+      inboundUsers.push(message.authenticatedUsername);
     });
 
     const first = await connect(port, {
@@ -144,6 +146,7 @@ describe.sequential("MQTT broker production hardening", () => {
     await replacement.publishAsync("bob/allowed", "ok", { qos: 1 });
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(inbound).toContain("bob/allowed");
+    expect(inboundUsers).toContain("bob");
     await replacement.endAsync();
     first.end(true);
   });

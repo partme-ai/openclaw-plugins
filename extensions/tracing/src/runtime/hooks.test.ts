@@ -133,6 +133,141 @@ describe("registerTracingPluginHooks", () => {
     expect(exported[0]?.attributes["openclaw.end_reason"]).toBe("agent_end_success");
   });
 
+  it("缺少 message_received 时仍为真实 Agent 终态导出可辨认的 span", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: baseConfig,
+    }));
+
+    await api.emit("agent_end", { runId: "run-without-inbound-hook", success: true, durationMs: 1_234 }, {
+      sessionKey: "agent:main:main",
+      runId: "run-without-inbound-hook",
+    });
+
+    const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
+    expect(exported).toHaveLength(1);
+    expect(exported[0]).toMatchObject({
+      name: "agent.run",
+      status: "ok",
+      attributes: {
+        "openclaw.session_key": expect.stringMatching(/^id_[a-f0-9]{24}$/),
+        "openclaw.run_id": expect.stringMatching(/^id_[a-f0-9]{24}$/),
+        "openclaw.end_reason": "agent_end_success",
+      },
+    });
+    expect(getActiveSpanCount()).toBe(0);
+    expect(exported[0]!.endTimeMs! - exported[0]!.startTimeMs).toBe(1_234);
+    await api.emit("agent_end", { runId: "run-without-inbound-hook", success: true }, {
+      sessionKey: "agent:main:main",
+      runId: "run-without-inbound-hook",
+    });
+    expect(vi.mocked(backend.exportSpans).mock.calls).toHaveLength(1);
+  });
+
+  it("显式采集正文时 fallback agent.run 保留本轮最后 user 文本供端到端关联", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: { ...baseConfig, captureMessageBody: true },
+    }));
+
+    await api.emit("agent_end", {
+      runId: "nonce-run",
+      success: true,
+      messages: [
+        { role: "user", content: [{ type: "text", text: "old turn" }] },
+        { role: "assistant", content: [{ type: "text", text: "old reply" }] },
+        { role: "user", content: [{ type: "text", text: "Return tracing fixture nonce-42" }] },
+        { role: "assistant", content: [{ type: "text", text: "fixture reply" }] },
+      ],
+    }, { sessionKey: "nonce-session", runId: "nonce-run" });
+
+    const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
+    expect(exported[0]?.attributes["openclaw.message_text"]).toBe("Return tracing fixture nonce-42");
+  });
+
+  it("入站已被采样拒绝时 agent_end 不补造 span", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const sampler = new TracingSampler(0.5);
+    vi.spyOn(sampler, "shouldSample").mockReturnValueOnce(false).mockReturnValue(true);
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler,
+      config: { ...baseConfig, sampleRate: 0.5 },
+    }));
+    await api.emit("message_received", {}, { sessionKey: "sampled-out" });
+    await api.emit("agent_end", { runId: "sampled-out-run", success: true }, {
+      sessionKey: "sampled-out", runId: "sampled-out-run",
+    });
+    expect(backend.exportSpans).not.toHaveBeenCalled();
+  });
+
+  it("入站因活动上限被拒绝时 agent_end 不绕过上限导出", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler: new TracingSampler(1),
+      config: { ...baseConfig, maxActiveTraces: 1 },
+    }));
+    await api.emit("message_received", {}, { sessionKey: "active-1", runId: "active-run-1" });
+    await api.emit("message_received", {}, { sessionKey: "capped-2" });
+    await api.emit("agent_end", { runId: "active-run-1", success: true }, {
+      sessionKey: "active-1", runId: "active-run-1",
+    });
+    vi.mocked(backend.exportSpans).mockClear();
+    await api.emit("agent_end", { runId: "capped-run-2", success: true }, {
+      sessionKey: "capped-2", runId: "capped-run-2",
+    });
+    expect(backend.exportSpans).not.toHaveBeenCalled();
+    expect(getActiveSpanCount()).toBe(0);
+  });
+
+  it("同一 session 后续入站建根时清除旧拒绝，不污染再下一次无入站终态", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const sampler = new TracingSampler(0.5);
+    vi.spyOn(sampler, "shouldSample")
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true);
+    registerTracingPluginHooks(api as never, () => ({
+      backend,
+      sampler,
+      config: { ...baseConfig, sampleRate: 0.5 },
+    }));
+    await api.emit("message_received", {}, { sessionKey: "reused-session" });
+    await api.emit("message_received", {}, { sessionKey: "reused-session", runId: "accepted-run" });
+    await api.emit("reply_payload_sending", { kind: "final", sessionKey: "reused-session", runId: "accepted-run" }, {
+      sessionKey: "reused-session", runId: "accepted-run",
+    });
+    vi.mocked(backend.exportSpans).mockClear();
+    await api.emit("agent_end", { runId: "fallback-run", success: true }, {
+      sessionKey: "reused-session", runId: "fallback-run",
+    });
+    const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
+    expect(exported.map((span) => span.name)).toEqual(["agent.run"]);
+  });
+
+  it("gateway_stop 后迟到的 session_end 不重新获取或初始化后端", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const getContext = vi.fn(() => ({ backend, sampler: new TracingSampler(1), config: baseConfig }));
+    registerTracingPluginHooks(api as never, getContext);
+    await api.emit("gateway_stop", {}, {});
+    await api.emit("session_end", {}, { sessionKey: "stopped-session", runId: "stopped-run" });
+    expect(getContext).not.toHaveBeenCalled();
+    await api.emit("gateway_start", {}, {});
+    await api.emit("message_received", {}, { sessionKey: "new-session", runId: "new-run" });
+    expect(getContext).toHaveBeenCalledTimes(1);
+  });
+
   it("agent_end 失败会把 root 与悬挂 tool span 标记为错误", async () => {
     const backend = createMockBackend();
     const api = createMockApi();

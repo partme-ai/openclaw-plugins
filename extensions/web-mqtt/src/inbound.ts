@@ -4,6 +4,7 @@
  */
 
 import { resolveInboundRoute } from "./routing/topic-router.js";
+import { createHash } from "node:crypto";
 import { upsertSessionContext } from "./routing/session-mapper.js";
 import { tryGetWebMqttRuntime } from "./runtime.js";
 import type { InboundEvent, WebMqttConfig } from "./types.js";
@@ -12,13 +13,13 @@ import { isUserActionAllowed } from "./transport/acl.js";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
+  requireSettledDelivery,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
 import { WEB_MQTT_CHANNEL_ID } from "./config/resolvers.js";
 import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
 import {
-  getWebMqttClaimableDedupe,
   resolveWebMqttInboundIdempotencyKey,
 } from "./shared/wire-helpers.js";
 
@@ -48,7 +49,7 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
   }
 
   const payloadText = event.payload.toString("utf-8");
-  const idempotencyKey = resolveWebMqttInboundIdempotencyKey(event, payloadText);
+  const applicationId = resolveWebMqttInboundIdempotencyKey(event, payloadText);
   const parsed = normalizeWireIngress({
     rawPayload: payloadText,
     mode: resolvePayloadMode(config.payload.mode),
@@ -60,7 +61,9 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
   }
 
   // transport 传入的是 CONNECT 时的身份快照；fallback 只兼容直接调用旧事件结构的测试/集成。
-  const username = event.authenticatedUsername ?? getClientUsername(event.clientId);
+  const username = Object.hasOwn(event, "authenticatedUsername")
+    ? event.authenticatedUsername
+    : getClientUsername(event.clientId);
   const user = config.auth.users.find((entry) => entry.username === username);
   if (
     config.auth.required &&
@@ -83,70 +86,66 @@ export async function processInbound(event: InboundEvent, config: WebMqttConfig)
     return { accepted: false, reason: "runtime_not_initialized" };
   }
 
-  const dedupe = getWebMqttClaimableDedupe();
-  const claim = idempotencyKey ? await dedupe.claim(idempotencyKey) : undefined;
-  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) {
-    return { accepted: false, reason: "duplicate" };
-  }
+  // MQTT Packet Identifier is reusable. Only an application ID can bind a reply to a durable turn.
+  const deliveryIdentity = applicationId ? createHash("sha256").update(JSON.stringify([
+    config.auth.required ? username : "local", event.clientId, applicationId,
+  ])).digest("hex") : undefined;
 
-  try {
-    const { agentId, sessionKey } = await resolveChannelDispatchIdentity(runtime as unknown as BridgePluginRuntime, {
-      channel: WEB_MQTT_CHANNEL_ID,
-      accountId: route.accountId,
-      peerId: event.clientId,
-      agentId: route.agentId,
-    });
+  const { agentId, sessionKey } = await resolveChannelDispatchIdentity(runtime as unknown as BridgePluginRuntime, {
+    channel: WEB_MQTT_CHANNEL_ID,
+    accountId: route.accountId,
+    peerId: event.clientId,
+    agentId: route.agentId,
+  });
 
-    upsertSessionContext(sessionKey, {
-      clientId: event.clientId,
-      authenticatedUsername: username ?? undefined,
-      agentId,
-      accountId: route.accountId,
-      lastInboundTopic: event.topic,
-      replyTopic: route.replyTopic,
-    });
+  upsertSessionContext(sessionKey, {
+    clientId: event.clientId,
+    authenticatedUsername: username ?? undefined,
+    agentId,
+    accountId: route.accountId,
+    lastInboundTopic: event.topic,
+    replyTopic: route.replyTopic,
+  });
 
-    const outboundFormat =
-      (config.payload.outboundFormat as "envelope" | "legacyJsonText" | "plainText" | undefined) ??
-      "envelope";
-    // 回复闭包捕获本次消息的身份和路由；后续 clientId 接管即使覆盖 sessionContext 也不会串权或串 Topic。
-    const replyTopic = route.replyTopic ?? `${config.topicPrefix}agent/${agentId}/out`;
+  const outboundFormat =
+    (config.payload.outboundFormat as "envelope" | "legacyJsonText" | "plainText" | undefined) ??
+    "envelope";
+  // 回复闭包捕获本次消息的身份和路由；后续 clientId 接管即使覆盖 sessionContext 也不会串权或串 Topic。
+  const replyTopic = route.replyTopic ?? `${config.topicPrefix}agent/${agentId}/out`;
 
-    await dispatchChannelMessage({
-      mode: "reply-pipeline",
-      runtime: runtime as unknown as BridgePluginRuntime,
-      channel: WEB_MQTT_CHANNEL_ID,
-      accountId: route.accountId,
-      peerId: event.clientId,
-      text,
-      agentId,
+  const dispatchResult = await dispatchChannelMessage({
+    deliveryIdentity,
+    requireDeliveryIdentity: Boolean(deliveryIdentity),
+    mode: "reply-pipeline",
+    runtime: runtime as unknown as BridgePluginRuntime,
+    channel: WEB_MQTT_CHANNEL_ID,
+    accountId: route.accountId,
+    peerId: event.clientId,
+    text,
+    agentId,
+    sessionKey,
+    unified: parsed.unified,
+    extra: {
+      mqttTopic: event.topic,
+      mqttClientId: event.clientId,
       sessionKey,
-      unified: parsed.unified,
-      extra: {
-        mqttTopic: event.topic,
-        mqttClientId: event.clientId,
-        sessionKey,
-      },
-      reply: {
-        deliver: async ({ wire }: { wire: string }) => {
-          const { publishOutboundText } = await import("./outbound.js");
-          await publishOutboundText(sessionKey, wire, config.topicPrefix, {
-            authenticatedUsername: username ?? undefined,
-            topic: replyTopic,
-            accountId: route.accountId,
-          });
-        },
-        outboundFormat,
-        replyRoute: {
+    },
+    reply: {
+      deliver: async ({ wire }: { wire: string }) => {
+        const { publishOutboundText } = await import("./outbound.js");
+        await publishOutboundText(sessionKey, wire, config.topicPrefix, {
+          authenticatedUsername: username ?? undefined,
           topic: replyTopic,
-        },
-        agentId,
+          accountId: route.accountId,
+        });
       },
-    });
-    if (idempotencyKey) await dedupe.commit(idempotencyKey);
-    return { accepted: true, routeSource: route.source };
-  } catch (error) {
-    if (idempotencyKey) dedupe.release(idempotencyKey);
-    throw error;
-  }
+      outboundFormat,
+      replyRoute: {
+        topic: replyTopic,
+      },
+      agentId,
+    },
+  });
+  requireSettledDelivery(dispatchResult?.deliveryOutcome);
+  return { accepted: true, routeSource: route.source };
 }
