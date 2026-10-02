@@ -41,6 +41,14 @@ OpenMem 隔离工作树追加 `1cf0d23`：真实 `dist/index.js` 进程取得单
 
 此场景中的 `/inspect/search` 请求是 E2E adapter 直接发出的 Sidecar API 断言；第二轮模型请求携带上一轮内容也可能来自 OpenClaw 自身 transcript。它们不能单独证明模型执行了插件 `openmem_search` 工具。后续已在[Task 8 工具调用复验](2026-10-02-openmem-installed-tool-e2e.md)中补上真实模型 tool call、Gateway 工具结果与代理检索 2xx 增量，并在共享输入变化后重跑全部 27 项安装态场景。
 
+## 本机独立容器共享目录补测
+
+OpenMem 隔离工作树新增 `scripts/session-commit-container-recovery.mjs`（提交 `8ac3d25388a4c2aee7da314531472d79c42b45d9`，审查修复 `07e8006389980955e878f02ee84fe5fe8a9f4136`）。执行 `node scripts/session-commit-container-recovery.mjs`：脚本用本机已安装的 pnpm 10.32.1 现场构建 Core/Server，随后在 `node:24.18.0-bookworm-slim` 镜像中以三个独立容器依次运行真实 `apps/server/dist/index.js` 生产入口。三个容器共享一次性 bind 数据目录，只通过 `docker exec` 访问容器内 loopback，不发布主机端口，也不拉取镜像。本轮容器 Node v24.18.0，镜像 ID `sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d`，Server 入口 SHA-256 `95fa905e24bb039f73644e5ec75c0af77487ac42553c0e02127c00f09313c851`。
+
+修复版由实现者与主 Agent 分别完整执行，均退出 0 且输出 PASS：A 创建会话、摄取唯一事件并提交非空事实；A 存活期间 B 以退出码 1 和 active-writer 错误拒绝，当前源码与构建入口均确认取得租约在引擎创建和监听之前；`SIGKILL` A 后 C 接管，同一提交 POST 重放两次仍为原归档/事实 ID。目录内归档 JSON、事实 JSON、Markdown 各一份；直接 SQLite 查询和 FTS `MATCH` 均证实 event、archive、memory 各一行且内容命中本轮标记。脚本仅按随机所有权标签清理自己的容器；模拟 `docker rm` 失败时退出 1、保留诊断数据，SIGINT/SIGTERM 发生在 Docker 创建命令执行期间时分别以 130/143 退出并完成清理。独立复审给出 Spec PASS、Quality APPROVE，无 Critical/Important 问题；脚本输出中的 Git HEAD 只标识提交，脏工作树时不能单独当作源码指纹，现场构建才是本轮当前源码证据。
+
+该补测证明**同一台 Mac 的 Docker Desktop bind mount** 上生产入口的容器间锁拒绝及接管；不是两个物理主机、NFS/SMB 网络卷或真实断电测试，也没有长期运行的受保护代理。本轮无 `openmem-recovery-*` 测试容器或脚本临时目录残留。
+
 ## 验收结论
 
 本地单写入者、生产入口半提交恢复、默认回环监听、Host/Origin 防护及安装态插件经测试代理的 TLS/令牌/重放探测通过。**旧入口的多写入者共享数据目录在本机复现 HTTP 500；新生产入口以运行时锁强制每个数据目录单写入者，第二实例在监听前拒绝。** 直接调用 Sidecar 引擎的其他入口不受该锁保护。Task 9 的跨主机/网络卷单写入约束、真实断电/部署恢复和受保护网络验收保持未完成；本地测试代理不得记为预发或生产验收。`openmem_search` 的工具调用由后续 Task 8 复验单独证明。
