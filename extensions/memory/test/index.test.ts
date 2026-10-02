@@ -807,6 +807,7 @@ describe("O1 Memory capability 与可信会话身份", () => {
   function register(pluginConfig: Record<string, unknown> = {}) {
     let capability!: Capability;
     let service!: { stop: () => Promise<void> };
+    let toolFactory!: (context: Record<string, unknown>) => any;
     const hooks = new Map<string, (...args: any[]) => Promise<void>>();
     const logger = { info() {}, warn: vi.fn(), error() {}, debug() {} };
     plugin.register!({
@@ -817,11 +818,42 @@ describe("O1 Memory capability 与可信会话身份", () => {
       registerCli() {},
       registerService(value: typeof service) { service = value; },
       registerMemoryCapability(value: Capability) { capability = value; },
-      registerTool() {},
+      registerTool(value: typeof toolFactory) { toolFactory = value; },
       on(name: string, handler: (...args: any[]) => Promise<void>) { hooks.set(name, handler); },
     } as never);
-    return { capability, service, hooks, logger };
+    return { capability, service, hooks, logger, toolFactory };
   }
+
+  it.each([
+    { sessionKey: "  tool-session  " },
+    { sessionKey: " ", sessionId: "  tool-session  " },
+    { sessionId: "  tool-session  " },
+  ])("注册工具与写入共用规范化会话身份：%j", async (identity) => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "memory-o1-tool-"));
+    const { service, hooks, toolFactory } = register({ dataDir, profileScope: "session" });
+    try {
+      await hooks.get("agent_end")!(
+        { success: true, messages: [{ role: "user", content: "我喜欢tool-private-fact" }] },
+        { agentId: "main", ...identity },
+      );
+      const result = await toolFactory({ agentId: "main", ...identity }).execute("same", { query: "tool-private-fact" });
+      expect(result.details.count).toBeGreaterThan(0);
+      expect(result.details.sessionScoped).toBe(true);
+      expect(result.content[0].text).toContain("tool-private-fact");
+      const other = await toolFactory({ agentId: "main", sessionKey: "other-session" }).execute("other", { query: "tool-private-fact" });
+      expect(other.details.count).toBe(0);
+      for (const missing of [{}, { sessionKey: " ", sessionId: " " }]) {
+        const empty = await toolFactory({ agentId: "main", ...missing }).execute("missing", {
+          query: "tool-private-fact", sessionKey: "tool-session", sessionId: "tool-session",
+        });
+        expect(empty.details.count).toBe(0);
+        expect(empty.details.sessionScoped).toBe(false);
+      }
+    } finally {
+      await service.stop();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 
   it("只向模型描述已可调用的真实召回工具", async () => {
     const { capability, service } = register();

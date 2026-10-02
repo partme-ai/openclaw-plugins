@@ -154,6 +154,7 @@ function createMemoryTool(
 ) {
   const agentId = context.agentId?.trim() || "main";
   const manager = store.createSearchManager(agentId);
+  const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim();
   return {
     name: "memory_search",
     label: "Memory Search",
@@ -174,7 +175,7 @@ function createMemoryTool(
       const requested = typeof params.limit === "number" ? params.limit : maxResults;
       const results = await manager.search(query, {
         maxResults: Math.min(Math.max(Math.floor(requested), 1), maxResults),
-        ...(context.sessionKey ? { sessionKey: context.sessionKey } : {}),
+        ...(sessionKey ? { sessionKey } : {}),
       });
       return {
         content: [{
@@ -183,7 +184,7 @@ function createMemoryTool(
             ? "未找到相关记忆。"
             : results.map((result, index) => `${index + 1}. ${result.snippet} (${result.citation})`).join("\n"),
         }],
-        details: { count: results.length, agentId, sessionScoped: Boolean(context.sessionKey) },
+        details: { count: results.length, agentId, sessionScoped: Boolean(sessionKey) },
       };
     },
   };

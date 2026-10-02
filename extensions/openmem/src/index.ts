@@ -42,6 +42,7 @@ const configSchema = {
 };
 
 function createSearchTool(manager: OpenMemSearchManager, context: OpenClawPluginToolContext, limit: number) {
+  const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim();
   return {
     name: "openmem_search",
     label: "OpenMem Search",
@@ -62,7 +63,7 @@ function createSearchTool(manager: OpenMemSearchManager, context: OpenClawPlugin
       const requested = typeof params.limit === "number" ? Math.floor(params.limit) : limit;
       const results = await manager.search(query, {
         maxResults: Math.min(Math.max(requested, 1), limit),
-        ...(context.sessionKey ? { sessionKey: context.sessionKey } : {}),
+        ...(sessionKey ? { sessionKey } : {}),
       });
       return {
         content: [{
@@ -71,7 +72,7 @@ function createSearchTool(manager: OpenMemSearchManager, context: OpenClawPlugin
             ? "未找到 OpenMem 记忆。"
             : results.map((result, index) => `${index + 1}. ${result.snippet} (${result.citation})`).join("\n"),
         }],
-        details: { count: results.length, agentId: context.agentId, sessionScoped: Boolean(context.sessionKey) },
+        details: { count: results.length, agentId: context.agentId, sessionScoped: Boolean(sessionKey) },
       };
     },
   };
