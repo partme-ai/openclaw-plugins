@@ -150,8 +150,8 @@
 - [x] Sidecar 持久提交快照、原子文件发布、产物重放与终态顺序、只读能力端点；完整快照保留提交日志。
 - [x] 插件只在 Sidecar 明确声明幂等且可恢复时重试；下一会话开始前处理持久意图；旧 Sidecar 保持人工对账。
 - [x] Core 16/16、Server 7/7、插件 47/47、构建和类型检查，以及 OpenClaw 2026.9.6 tarball 安装态 OpenMem 场景通过；Core 包含文件路径边界回归。
-- [x] 本地真实 Sidecar 进程在归档写入后注入记忆写入失败，强制结束、重启并重试；归档/事实 ID、Markdown、检索索引与终态保持一致。见[本地复验记录](../reports/2026-10-02-local-gateway-sidecar-callbacks.md)。
-- [ ] 多写入者、真实断电/部署恢复和受保护网络验收；[预发环境发现与入口清单](../reports/2026-10-02-preprod-discovery.md)已记录，取得独立环境后执行。完成后才能把该协议视为生产环境已验收。
+- [x] 本地真实 Sidecar 进程在归档写入后注入记忆写入失败，强制结束、重启并重试；归档/事实 ID、Markdown 和终态保持一致，检索可命中原始事实。该检索接口存在回退路径，不能据此证明故障恢复场景的 FTS 索引完整；见[本地复验记录](../reports/2026-10-02-local-gateway-sidecar-callbacks.md)。
+- [ ] 多写入者、真实断电/部署恢复和受保护网络验收；[本地并发及代理探测](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)已复现双 Sidecar 共享目录的 SQLite 锁冲突，本地 HTTPS 测试代理通过但不代表真实部署。[预发环境发现与入口清单](../reports/2026-10-02-preprod-discovery.md)已记录；完成独立环境验收后才能把该协议视为生产环境已验收。
 
 共享安装门禁的 OpenMem 包摘要更新后，已重新运行 27 个插件的安装态场景；`check-e2e-evidence` 对当前候选物退出 0。旧报告只作为历史证据。
 
