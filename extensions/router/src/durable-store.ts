@@ -17,6 +17,7 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/prom
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 
+import { parseStructuredWire } from "@partme.ai/openclaw-message-sdk/structured-wire";
 import { redactRouterError } from "./redact.js";
 import type { RouteDeliveryTask, RouterConfig } from "./types.js";
 
@@ -29,6 +30,7 @@ export type RouteAuditEntry = {
   attempts: number;
   at: number;
   error?: string;
+  mediaFallback?: "text";
 };
 
 type RouterState = {
@@ -105,6 +107,7 @@ function assertTask(value: unknown, location: string): asserts value is RouteDel
     typeof value.attempts !== "number" || typeof value.createdAt !== "number" || typeof value.nextAttemptAt !== "number") {
     throw new Error(`[router] invalid delivery state at ${location}`);
   }
+  if (value.payload.structured !== undefined) parseStructuredWire(value.payload.structured);
 }
 
 function parseStateValue(value: unknown): RouterState {
@@ -434,7 +437,7 @@ export class DurableRouteStore {
 
   private appendAudit(state: RouterState, task: RouteDeliveryTask, outcome: RouteAuditEntry["outcome"], error?: string): void {
     if (!this.config.audit.enabled) return;
-    state.audit.push({ taskId: task.id, ruleId: task.ruleId, actionType: task.actionType, outcome, attempts: task.attempts, at: Date.now(), ...(error ? { error } : {}) });
+    state.audit.push({ taskId: task.id, ruleId: task.ruleId, actionType: task.actionType, outcome, attempts: task.attempts, at: Date.now(), ...(task.payload.mediaFallback === "text" ? { mediaFallback: "text" as const } : {}), ...(error ? { error } : {}) });
     if (state.audit.length > this.config.audit.maxEntries) state.audit.splice(0, state.audit.length - this.config.audit.maxEntries);
   }
 

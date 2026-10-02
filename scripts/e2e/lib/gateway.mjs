@@ -218,6 +218,8 @@ export function startHostGateway() {
     child = spawn(
       process.execPath,
       [
+        ...(process.env.OPENCLAW_E2E_STRUCTURED_WIRE === "1" && process.env.OPENCLAW_E2E_STRUCTURED_DNS_PIN === "1"
+          ? ["--import", join(E2E_DIR, "helpers", "structured-wire-dns.mjs")] : []),
         cliPath,
         "--profile",
         PROFILE,

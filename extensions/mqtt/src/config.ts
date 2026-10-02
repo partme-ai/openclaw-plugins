@@ -286,9 +286,11 @@ export function resolveBrokerConfig(globalConfig: Record<string, unknown>): Mqtt
       outboundFormat:
         mqttConfig?.payload?.outboundFormat === "envelope" ||
         mqttConfig?.payload?.outboundFormat === "legacyJsonText" ||
-        mqttConfig?.payload?.outboundFormat === "plainText"
+        mqttConfig?.payload?.outboundFormat === "plainText" ||
+        mqttConfig?.payload?.outboundFormat === "structured-v1"
           ? mqttConfig.payload?.outboundFormat
           : DEFAULT_BROKER_CONFIG.payload.outboundFormat,
+      structuredMediaHosts: mqttConfig?.payload?.structuredMediaHosts ?? [],
     },
     auth: {
       enabled: mqttConfig?.auth?.enabled ?? DEFAULT_BROKER_CONFIG.auth.enabled,

@@ -550,6 +550,9 @@ importers:
         specifier: '>=2026.9.6'
         version: 2026.9.6(@aws-sdk/credential-provider-node@3.972.43)(@opentelemetry/api@1.9.1)(@smithy/signature-v4@5.4.3)
     devDependencies:
+      '@partme.ai/openclaw-message-sdk':
+        specifier: workspace:^2026.7.1
+        version: link:../message-sdk
       '@vitest/coverage-v8':
         specifier: ^4.1.6
         version: 4.1.6(vitest@4.1.6)

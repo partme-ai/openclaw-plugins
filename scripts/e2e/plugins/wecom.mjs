@@ -98,6 +98,8 @@ export async function testWecom(ctx, results) {
       const envelope = `<xml><ToUserName><![CDATA[${WECOM_E2E_CONFIG.agent.corpId}]]></ToUserName><Encrypt><![CDATA[${message.encrypt}]]></Encrypt></xml>`;
       const path = callbackPath({ signature: message.signature, timestamp, nonce });
       const completionsBefore = ctx.modelFixture.metrics.completions;
+      const repliesBefore = ctx.wecomProvider.metrics.replies;
+      const messagesBefore = ctx.wecomProvider.metrics.messages.length;
       const accepted = await ctx.gatewayFetch(path, {
         method: "POST",
         headers: { "content-type": "application/xml; charset=utf-8" },
@@ -108,7 +110,8 @@ export async function testWecom(ctx, results) {
       }
       await waitForCompletions(ctx, completionsBefore + 1, "WeCom Agent Turn completion");
       await ctx.waitFor(
-        () => Promise.resolve(ctx.wecomProvider?.metrics.replies === 1),
+        () => Promise.resolve(ctx.wecomProvider.metrics.replies >= repliesBefore + 1
+          && ctx.wecomProvider.metrics.messages.slice(messagesBefore).some((message) => message.touser === "wecom-e2e-user")),
         { timeoutMs: 10_000, intervalMs: 50, label: "WeCom local OpenAPI reply" },
       );
 

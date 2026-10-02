@@ -101,6 +101,10 @@
     "./lifecycle": {
       "types": "./dist/lifecycle/index.d.ts",
       "default": "./dist/lifecycle/index.js"
+    },
+    "./structured-wire": {
+      "types": "./dist/structured-wire.d.ts",
+      "default": "./dist/structured-wire.js"
     }
   },
   "peerDependencies": {

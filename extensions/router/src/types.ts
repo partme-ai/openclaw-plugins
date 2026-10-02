@@ -1,3 +1,5 @@
+import type { StructuredWireMessage } from "@partme.ai/openclaw-message-sdk/structured-wire";
+
 /**
  * Router 的持久投递配置模型。
  *
@@ -12,9 +14,9 @@ export type RouteDirection = "inbound" | "outbound";
  * `forward` 面向 Topic/队列式渠道，`reply-via` 面向具有账号和收件人的 IM 渠道；两者最终都
  * 转换为同一种持久投递任务，不允许绕过 Outbox 直接发送。
  */
-export type RouteAction =
+export type RouteAction = { payloadFormat?: "structured-v1"; mediaFallback?: "text" } & (
   | { type: "forward"; target: string; topic?: string }
-  | { type: "reply-via"; target: string; accountId?: string; to?: string };
+  | { type: "reply-via"; target: string; accountId?: string; to?: string });
 
 /** 一条有稳定 ID 的路由规则；所有 match 条件为 AND，actions 则按 fan-out 全部入队。 */
 export interface RouterRule {
@@ -35,6 +37,7 @@ export interface RouterRule {
  */
 export interface RouterConfig {
   enabled: boolean;
+  structured: { enabled: boolean; allowedMediaHosts: string[] };
   rules: RouterRule[];
   audit: {
     enabled: boolean;
@@ -67,6 +70,9 @@ export interface RouterConfig {
 
 /** Router 交给目标 Channel outbound adapter 的统一消息载荷。 */
 export type PublishInboundParams = {
+  structured?: StructuredWireMessage;
+  payloadFormat?: "structured-v1";
+  mediaFallback?: "text";
   channel: string;
   content: string;
   topic?: string;

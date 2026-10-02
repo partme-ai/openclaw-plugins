@@ -403,7 +403,9 @@ export function resolvePlugins(requested) {
   const isolated = requested.filter((id) => findPlugin(id).isolated);
   const tracingWithMqtt =
     requested.length === 2 && requested.includes("tracing") && requested.includes("mqtt");
-  if (isolated.length > 0 && requested.length > 1 && !tracingWithMqtt) {
+  const structuredWireFixture = process.env.OPENCLAW_E2E_STRUCTURED_WIRE === "1" &&
+    requested.length === 4 && ["mqtt", "router", "wecom", "gotify"].every((id) => requested.includes(id));
+  if (isolated.length > 0 && requested.length > 1 && !tracingWithMqtt && !structuredWireFixture) {
     throw new Error(`Isolated E2E plugin ${isolated.join(", ")} must run alone`);
   }
   return requested;

@@ -45,6 +45,7 @@ export interface ChannelDispatchReplyConfig {
   deliver: (payload: ChannelDispatchDeliverParams) => void | Promise<void>;
   /** 出站 wire 格式 / Outbound wire format */
   outboundFormat?: OutboundWireFormat;
+  structuredMediaHosts?: readonly string[];
   /** 回复路由（MQ topic 等）/ Reply route for publish */
   replyRoute?: Record<string, string>;
   /** Agent ID / Agent id */

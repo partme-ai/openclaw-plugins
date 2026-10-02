@@ -8,7 +8,7 @@
  * **关键导出**：`BridgePluginRuntime`、`InboundBridgeParams`、`ReplyBridgeParams`
  */
 
-import type { ReplyRoute, UnifiedMessage } from "../core/types.js";
+import type { ReplyRoute, UnifiedMessage, StructuredWireMessage } from "../core/types.js";
 import type { ReplyDispatchReceipt } from "../dispatch/delivery-outcome.js";
 
 /**
@@ -33,7 +33,7 @@ export interface BridgePluginRuntime {
     reply: {
       finalizeInboundContext: (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
       createReplyDispatcherWithTyping: (params: {
-        deliver: (payload: { text: string; mediaUrl?: string }) => void | Promise<void>;
+        deliver: (payload: { text?: string; mediaUrl?: string; mediaUrls?: string[]; replyToId?: string; threadId?: string; structured?: StructuredWireMessage }) => void | Promise<void>;
       }) =>
         | unknown
         | {
@@ -78,7 +78,9 @@ export interface ReplyBridgeParams {
   sessionKey?: string;
   /** 出站发布回调（传输层实现）/ Transport-layer publish callback */
   deliver: (payload: { text: string; wire: string }) => void | Promise<void>;
-  outboundFormat?: "envelope" | "legacyJsonText" | "plainText";
+  outboundFormat?: "envelope" | "legacyJsonText" | "plainText" | "structured-v1";
+  structuredMediaHosts?: readonly string[];
+  deliveryIdentity?: string;
   replyRoute?: ReplyRoute;
   agentId?: string;
 }

@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+import { STRUCTURED_MEDIA_URL, STRUCTURED_MEDIA_SHA256 } from "../helpers/structured-wire-fixture.mjs";
 import { runAdapterTest } from "./_context.mjs";
 import { MANAGEMENT_E2E_GATEWAY_TOKEN } from "../lib/config.mjs";
 
@@ -79,8 +81,35 @@ export async function testRouter(ctx, results) {
       if (body.messages.filter((message) => message.message === `router authenticated DLQ replay E2E ${ctx.meta.rocketmqTopic}`).length !== 1) {
         throw new Error("Authorized DLQ replay did not deliver exactly once");
       }
+      if (process.env.OPENCLAW_E2E_STRUCTURED_WIRE === "1") await verifyStructuredMedia(ctx);
     },
-    { service: "openclaw-gateway", method: "Gateway-authenticated management routes + single DLQ replay → Gotify" },
+    { service: "openclaw-gateway", method: process.env.OPENCLAW_E2E_STRUCTURED_WIRE === "1" ? "Gateway management + MQ structured wire → ordered WeCom text/image with uploaded byte SHA" : "Gateway-authenticated management routes + single DLQ replay → Gotify" },
     results,
   );
+}
+
+
+/** Real MQTT ingress → installed Router → installed WeCom media upload/image send. */
+async function verifyStructuredMedia(ctx) {
+  if (!ctx.wecomProvider || !ctx.pluginIds.includes("mqtt")) throw new Error("O3 requires mqtt,router,wecom,gotify");
+  const mqtt = createRequire(new URL("../../../extensions/mqtt/package.json", import.meta.url))("mqtt");
+  const client = mqtt.connect("mqtt://127.0.0.1:11883", { clientId: `o3-media-${Date.now()}`, reconnectPeriod: 0 });
+  const id = `o3-${Date.now()}`;
+  const message = { schemaVersion: 1, messageId: id, deliveryId: `${id}-delivery`, idempotencyKey: `${id}-delivery`,
+    parts: [{ type: "text", text: `${id}:before` }, { type: "media", mediaType: "image", url: STRUCTURED_MEDIA_URL }, { type: "text", text: `${id}:after` }] };
+  try {
+    await new Promise((resolve, reject) => { client.once("connect", resolve); client.once("error", reject); });
+    const start = ctx.wecomProvider.metrics.messages.length;
+    await client.publishAsync("openclaw/agent/main/in", JSON.stringify(message), { qos: 1 });
+    await ctx.waitFor(() => ctx.wecomProvider.metrics.messages.slice(start).some((m) => m.text?.content === `${id}:after`), { timeoutMs: 60_000, label: "O3 ordered WeCom media delivery" });
+    const messages = ctx.wecomProvider.metrics.messages.slice(start);
+    const before = messages.findIndex((m) => m.text?.content === `${id}:before`);
+    const sequence = messages.slice(before, before + 3);
+    if (before < 0 || sequence[0]?.text?.content !== `${id}:before` || sequence[1]?.msgtype !== "image" || sequence[2]?.text?.content !== `${id}:after`) {
+      throw new Error(`O3 media order/fidelity failed: ${JSON.stringify(sequence)}`);
+    }
+    const upload = ctx.wecomProvider.metrics.uploads.find((item) => item.mediaId === sequence[1].image?.media_id);
+    if (!upload || upload.type !== "image" || upload.sha256 !== STRUCTURED_MEDIA_SHA256) throw new Error("O3 actual uploaded media bytes mismatch; text fallback is not accepted");
+    console.log(`[o3-wire] MQTT messageId=${id} deliveryId=${message.deliveryId}; WeCom text→image→text, upload bytes=${upload.bytes} sha256=${upload.sha256}; public HTTPS fixture dependency`);
+  } finally { await client.endAsync(true); }
 }

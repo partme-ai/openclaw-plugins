@@ -141,9 +141,12 @@
           },
           "outboundFormat": {
             "type": "string",
-            "enum": ["envelope", "legacyJsonText", "plainText"],
+            "enum": ["envelope", "legacyJsonText", "plainText", "structured-v1"],
             "default": "envelope",
             "description": "Outbound MQTT payload wire format"
+          },
+          "structuredMediaHosts": {
+            "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$" }, "default": []
           }
         }
       },

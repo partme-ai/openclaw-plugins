@@ -16,7 +16,8 @@ export interface MqttPayloadConfig {
   /** 解析模式，当前支持 JSON.text 优先后回退纯文本 */
   mode: MqttPayloadParseMode;
   /** 出站 wire 格式（默认 envelope） */
-  outboundFormat?: "envelope" | "legacyJsonText" | "plainText";
+  outboundFormat?: "envelope" | "legacyJsonText" | "plainText" | "structured-v1";
+  structuredMediaHosts?: string[];
 }
 
 /**

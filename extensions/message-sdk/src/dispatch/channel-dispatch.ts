@@ -261,6 +261,8 @@ async function dispatchChannelMessageCore(
       reply: {
         deliver: params.reply.deliver,
         outboundFormat: params.reply.outboundFormat,
+        structuredMediaHosts: params.reply.structuredMediaHosts,
+        deliveryIdentity: params.deliveryIdentity,
         replyRoute: params.reply.replyRoute,
         agentId: params.reply.agentId ?? agentId,
         sessionKey: params.reply.sessionKey ?? sessionKey,

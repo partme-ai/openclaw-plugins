@@ -10,6 +10,8 @@
  * **关键导出**：`serializeForTransport`、`SerializeOutboundParams`
  */
 
+import { parseStructuredWire } from "../core/structured-wire.js";
+import type { StructuredWireMessage } from "../core/types.js";
 import { buildOutboundEnvelope, serializeEnvelope } from "../core/envelope.js";
 import type { MessageEnvelopeHeaders, ReplyRoute } from "../core/types.js";
 
@@ -20,12 +22,15 @@ import type { MessageEnvelopeHeaders, ReplyRoute } from "../core/types.js";
  * - `legacyJsonText`：`{ text: "..." }` JSON
  * - `plainText`：裸文本
  */
-export type OutboundWireFormat = "envelope" | "legacyJsonText" | "plainText";
+export type OutboundWireFormat = "envelope" | "legacyJsonText" | "plainText" | "structured-v1";
 
 /**
  * serializeForTransport 参数 / Parameters for outbound serialization.
  */
 export interface SerializeOutboundParams {
+  structured?: StructuredWireMessage;
+  /** 仅传入已经过宿主授权加载的精确引用。 */
+  authorizedMediaUrls?: readonly string[];
   /** 渠道 ID / Channel id */
   channel: string;
   /** 账号 ID / Account id */
@@ -52,6 +57,13 @@ export interface SerializeOutboundParams {
  */
 export function serializeForTransport(params: SerializeOutboundParams): string {
   const format = params.format ?? "envelope";
+  if (format === "structured-v1") {
+    const message = parseStructuredWire(params.structured);
+    for (const part of message.parts) {
+      if (part.type === "media" && !params.authorizedMediaUrls?.includes(part.url)) throw new Error("structured media is not authorized");
+    }
+    return JSON.stringify(message);
+  }
 
   if (format === "plainText") {
     return params.text;

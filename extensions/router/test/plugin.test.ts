@@ -4,6 +4,9 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const mediaLoader = vi.hoisted(() => vi.fn().mockResolvedValue({ buffer: Buffer.from("image"), kind: "image" }));
+vi.mock("openclaw/plugin-sdk/web-media", () => ({ loadWebMediaRaw: mediaLoader }));
+
 import plugin from "../src/index.js";
 
 const directories: string[] = [];
@@ -12,7 +15,7 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-async function harness() {
+async function harness(options: { structured?: unknown; action?: Record<string, unknown>; adapter?: Record<string, unknown> } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "openclaw-router-plugin-"));
   directories.push(directory);
   const hooks = new Map<string, (event: unknown, ctx: unknown) => Promise<void>>();
@@ -27,11 +30,12 @@ async function harness() {
     registrationMode: "full",
     session: { controls: { registerControlUiDescriptor: vi.fn() } },
     pluginConfig: {
+      ...(options.structured ? { structured: options.structured } : {}),
       rules: [{
         id: "all-inbound",
         match: { channels: ["web-*"], direction: "both" },
         actions: [
-          { type: "forward", target: "rabbitmq", topic: "audit/{{channel}}" },
+          { type: "forward", target: "rabbitmq", topic: "audit/{{channel}}", ...options.action },
           { type: "reply-via", target: "wecom", to: "user-1" },
         ],
       }],
@@ -39,7 +43,7 @@ async function harness() {
     },
     runtime: {
       config: { current: vi.fn(() => ({})) },
-      channel: { outbound: { loadAdapter: vi.fn().mockResolvedValue({ sendText }) } },
+      channel: { outbound: { loadAdapter: vi.fn().mockResolvedValue(options.adapter ?? { sendText }) } },
     },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     registerService(value: typeof service) { service = value; },
@@ -137,4 +141,79 @@ describe("router plugin", () => {
     expect(JSON.parse(response.body)).toMatchObject({ ok: true, data: { running: true } });
     await service.stop();
   });
+});
+
+
+describe("structured routing", () => {
+  const wire = { schemaVersion: 1, messageId: "m-structured", deliveryId: "d-structured", replyTo: "parent", threadId: "thread", parts: [
+    { type: "text", text: "first" },
+    { type: "media", mediaType: "image", url: "https://media.example.org/a.png" },
+    { type: "text", text: "last" },
+  ] };
+
+  it("refuses undeclared media targets instead of silently sending their text", async () => {
+    const h = await harness({ structured: { enabled: true } });
+    try {
+      await h.hooks.get("message_received")?.({ content: JSON.stringify(wire) }, { channelId: "web-mqtt" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(h.sendText).not.toHaveBeenCalled();
+    } finally { await h.service.stop(); }
+  });
+
+  it("audits an explicitly configured text fallback without leaking media references", async () => {
+    const h = await harness({ structured: { enabled: true }, action: { mediaFallback: "text" } });
+    try {
+      await h.hooks.get("message_received")?.({ content: JSON.stringify(wire) }, { channelId: "web-mqtt" });
+      await waitFor(() => h.sendText.mock.calls.length === 1);
+      expect(h.sendText.mock.calls[0][0].text).toBe("first\nlast");
+      let response: any;
+      await h.routes.get("/router/audit")?.handler({ method: "GET", url: "/router/audit" }, {
+        writeHead() {}, end(value: string) { response = JSON.parse(value); },
+      });
+      expect(response.data).toEqual(expect.arrayContaining([expect.objectContaining({ mediaFallback: "text" })]));
+    } finally { await h.service.stop(); }
+  });
+  it("preserves ordered media and identities across a partial failure retry", async () => {
+    const sendPayload = vi.fn().mockResolvedValue({ messageId: "sent" });
+    sendPayload.mockImplementationOnce(async () => ({ messageId: "first" }))
+      .mockImplementationOnce(async () => { throw new Error("temporary media failure"); });
+    const h = await harness({ structured: { enabled: true, allowedMediaHosts: ["media.example.org"] }, action: { payloadFormat: "structured-v1" }, adapter: { sendPayload } });
+    try {
+      await h.hooks.get("message_received")?.({ content: JSON.stringify(wire) }, { channelId: "web-mqtt" });
+      await waitFor(() => sendPayload.mock.calls.length === 5);
+      const calls = sendPayload.mock.calls.map(([call]) => call);
+      expect(calls.map((call) => call.deliveryPartIndex)).toEqual([0, 1, 0, 1, 2]);
+      expect(new Set(calls.map((call) => call.deliveryQueueId)).size).toBe(1);
+      expect(calls[2].payload.text).toBe("first");
+      expect(calls[3].payload.mediaUrl).toBe(wire.parts[1].url);
+      expect(calls[4].payload.text).toBe("last");
+      expect(calls.every((call) => call.replyToId === "parent" && call.threadId === "thread" && call.deliveryPartCount === 3)).toBe(true);
+      expect(calls[3].payload.channelData.structuredWire).toMatchObject({ messageId: "m-structured", deliveryId: "d-structured" });
+      expect(mediaLoader).toHaveBeenCalledWith(wire.parts[1].url, expect.objectContaining({ localRoots: [], maxBytes: 8388608 }));
+    } finally { await h.service.stop(); }
+  });
+
+  it("rejects unknown versions before enqueue and rejects media-only unapproved hosts", async () => {
+    const sendPayload = vi.fn();
+    const h = await harness({ structured: { enabled: true }, action: { payloadFormat: "structured-v1" }, adapter: { sendPayload } });
+    try {
+      await expect(h.hooks.get("message_received")?.({ content: JSON.stringify({ ...wire, schemaVersion: 2 }) }, { channelId: "web-mqtt" })).rejects.toThrow(/Version/);
+      await h.hooks.get("message_received")?.({ content: JSON.stringify({ ...wire, parts: [wire.parts[1]] }) }, { channelId: "web-mqtt" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(sendPayload).not.toHaveBeenCalled();
+    } finally { await h.service.stop(); }
+  });
+
+  it("uses the real channel sendMedia contract for explicitly declared media targets", async () => {
+    const order: string[] = [];
+    const sendText = vi.fn(async (context) => { order.push(context.text); return { messageId: "t" }; });
+    const sendMedia = vi.fn(async (context) => { order.push(context.mediaUrl); return { messageId: "m" }; });
+    const h = await harness({ structured: { enabled: true, allowedMediaHosts: ["media.example.org"] }, action: { payloadFormat: "structured-v1" }, adapter: { sendText, sendMedia } });
+    try {
+      await h.hooks.get("message_received")?.({ content: JSON.stringify(wire) }, { channelId: "web-mqtt" });
+      await waitFor(() => order.length === 3);
+      expect(order).toEqual(["first", wire.parts[1].url, "last"]);
+    } finally { await h.service.stop(); }
+  });
+
 });

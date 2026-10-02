@@ -3,6 +3,7 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: {
     index: "src/index.ts",
+    "structured-wire": "src/core/structured-wire-entry.ts",
     "asr/index": "src/asr/index.ts",
     "media/index": "src/media/index.ts",
     "http/index": "src/http/index.ts",

@@ -204,6 +204,7 @@ async function dispatchToRuntime(
         await publishMessage(replyTopic, payload);
       },
       outboundFormat,
+      structuredMediaHosts: getMqttChannelConfig()?.payload?.structuredMediaHosts,
       replyRoute: { topic: replyTopic },
       agentId,
     },

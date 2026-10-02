@@ -31,7 +31,7 @@ const APPROVED_E2E_CAPABILITIES = {
 // Exact reviewed E2E package snapshots. Update only after reviewing the changed
 // package, including dist; this does not claim a complete runtime surface list.
 const APPROVED_E2E_ARTIFACT_SHA256 = {
-  wecom: "660e4d072b5901b574571d7fb9ba01d011feb6be813696ab43e45b87171818fb",
+  wecom: "5f931beaa49752e861897de417cc80dca79da3233c6cd0a0b194d1553f9a939a",
   "wechat-ipad": "229a6deb3bf60e25075c1a65b565b3fef470adbf782aff4941774db40254da3f",
   rednode: "1253223ebe4085d3f074e6dfb53cfc2d039ca86b217981aa3243c6fe5e120323",
   amap: "ef5e72eef1e401544881f31bb56fac351e6f57c55dba46c9e50527f3dccae28f",
@@ -41,12 +41,12 @@ const APPROVED_E2E_ARTIFACT_SHA256 = {
   knowledge: "84f8c0139c2e4f42af0da6b563423f0ad573b8bff6381721821b9638d1d16410",
   memory: "8b694af79213368ed7f0fe24b337b04e7ec20ebb1a3d23d12c941643932c4871",
   openmem: "dd6b117eec6d9d77981adc9724f736ab3bb114f7dbddcd22ed287af16d512013",
-  router: "79461dd6c2c51d858ef9c2db680cbe50eb308c4c4dfa74333bb4fd065231b2bf",
-  gotify: "03a6a85e9afc97532ca41be4a1807e4ca954e289bb069c1abfe0c482862c1c09",
+  router: "cb0227659f7ccf5fea203e6108940e4a829f30e3bd740ba4c6f856184afe22f8",
+  gotify: "db887c22e60191a7d816b18207f874ad16095a17071b38ac4e46ed4af2c6a3c1",
   douyin: "69765cc9a2c1b609f1356d388e71396a48abcc11d82a46d2ff4bb0c8ae303ddd",
   "wecom-kf": "61ce66fb81683d6e8ea405a830ab76a50de1b147423d26239d77fda8fca4a6ca",
   tracing: "e79ed8d7ea1e9de75fc89c6232decc0562d457286e2717c925cac4df55568239",
-  mqtt: "0b30d417d6a6cf11994c5d0367aba92707d090c7ceb20398e4c98b02587f7d66",
+  mqtt: "d9de7761611d413b190e93551d4e1898f8ae8be13f8f05c5d67df6e404e6fd18",
   "web-mqtt": "2b5d11032e2d2762c5d125a0a3b698655c4e3e64e9f691a852ec9486702ba6f3",
   "web-socket": "fe87dbc1e5015ae1d77990c790d14659a1870ae4a62b3b3c1cd1b2b04abe35f9",
   rabbitmq: "930b90d74ea1c4873ff6cd36e228ab2c37bbc0f4e69dacdb157c9ff1414e3d15",
