@@ -30,7 +30,7 @@ function probe(url, { ca, authorization } = {}) {
 
 test("authenticated HTTPS proxy rejects untrusted, anonymous and wrong-token requests", async () => {
   const backend = createServer((req, res) => {
-    res.writeHead(200, { "content-type": "application/json" });
+    res.writeHead(req.url === "/failure" ? 500 : 200, { "content-type": "application/json" });
     res.end(JSON.stringify({ path: req.url, authorization: req.headers.authorization ?? null }));
   });
   await new Promise((resolve) => backend.listen(0, "127.0.0.1", resolve));
@@ -49,6 +49,18 @@ test("authenticated HTTPS proxy rejects untrusted, anonymous and wrong-token req
     assert.equal(ok.status, 200);
     assert.deepEqual(JSON.parse(ok.body), { path: "/healthz", authorization: null });
     assert.equal(proxy.metrics.forwarded, 1);
+    const metrics = await probe(`${proxy.baseUrl}/__e2e_metrics`, { ca: proxy.caPem, authorization: `Bearer ${proxy.token}` });
+    assert.equal(metrics.status, 200);
+    assert.equal(JSON.parse(metrics.body).paths["GET /healthz"], 1);
+    assert.equal(JSON.parse(metrics.body).successfulPaths["GET /healthz"], 1);
+    assert.equal(proxy.metrics.forwarded, 1);
+    const failure = await probe(`${proxy.baseUrl}/failure`, { ca: proxy.caPem, authorization: `Bearer ${proxy.token}` });
+    assert.equal(failure.status, 500);
+    const afterFailure = JSON.parse((await probe(`${proxy.baseUrl}/__e2e_metrics`, {
+      ca: proxy.caPem, authorization: `Bearer ${proxy.token}`,
+    })).body);
+    assert.equal(afterFailure.paths["GET /failure"], 1);
+    assert.equal(afterFailure.successfulPaths["GET /failure"] ?? 0, 0);
   } finally {
     await proxy?.close();
     backend.closeAllConnections();

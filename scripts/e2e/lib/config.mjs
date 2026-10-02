@@ -12,6 +12,11 @@ import { useHostGateway } from "./compose.mjs";
 // Dedicated disposable E2E profile only; never use this credential for a user Gateway.
 export const MANAGEMENT_E2E_GATEWAY_TOKEN = randomBytes(32).toString("hex");
 
+/** Model fixture tools are exposed only for adapters that explicitly exercise them. */
+export function fixtureModelSupportsTools(ids) {
+  return ids.some((id) => id === "amap" || id === "meituan" || id === "rednode" || id === "openmem");
+}
+
 /**
  * Installed plugin ids from prior install step (may include plugins outside this run).
  * @returns {string[]}
@@ -87,7 +92,7 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
     // The deterministic fixture selects the plugin tool from the model request.
     // These installed-tool E2Es need the direct surface; otherwise OpenClaw
     // can defer the tool behind tool_search and the fixture cannot invoke it.
-    ...(ids.some((id) => id === "amap" || id === "meituan" || id === "rednode")
+    ...(fixtureModelSupportsTools(ids)
       ? { tools: { toolSearch: false } } : {}),
     plugins: {
       allow: ids.map(manifestIdFor),
@@ -126,7 +131,7 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
               // preflight context guard.
               contextWindow: 131072,
               maxTokens: 1024,
-              compat: { supportsTools: ids.includes("amap") || ids.includes("meituan") || ids.includes("rednode"), requiresStringContent: true },
+              compat: { supportsTools: fixtureModelSupportsTools(ids), requiresStringContent: true },
             }],
           },
         },

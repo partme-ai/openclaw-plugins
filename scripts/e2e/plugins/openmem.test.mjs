@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { assertStableCommitReplay, findRunSession } from "./openmem.mjs";
+import { assertStableCommitReplay, findRunSession, findToolResultMessage } from "./openmem.mjs";
 
 test("selects only the session with this run's event marker", async () => {
   const sessions = [
@@ -19,4 +19,23 @@ test("replayed commit requires nonempty fact memory IDs and exact ID stability",
   assert.throws(() => assertStableCommitReplay(commit([{}]), commit([{}])), /memory/i);
   assert.throws(() => assertStableCommitReplay(commit([{ memory_id: "m1" }]), commit([{ memory_id: "m2" }])), /memory/i);
   assert.doesNotThrow(() => assertStableCommitReplay(commit([{ memory_id: "m1" }]), commit([{ memory_id: "m1" }])));
+});
+
+test("tool result proof cannot be satisfied by user transcript text", () => {
+  const messages = [
+    { role: "user", content: "海盐蓝" },
+    { role: "tool", tool_call_id: "call_other", content: "海盐蓝" },
+  ];
+  assert.throws(() => findToolResultMessage(messages, "callopenmeme2e", "海盐蓝"), /tool result/i);
+  messages.push({ role: "tool", tool_call_id: "callopenmeme2e", content: "1. 海盐蓝 (openmem/archive/archive-1#L1)" });
+  assert.equal(findToolResultMessage(messages, "callopenmeme2e", "海盐蓝"), messages[2]);
+});
+
+test("tool result proof rejects an error echoing the search query", () => {
+  const messages = [{
+    role: "tool",
+    tool_call_id: "callopenmeme2e",
+    content: "Error: OpenMem search failed for query 海盐蓝",
+  }];
+  assert.throws(() => findToolResultMessage(messages, "callopenmeme2e", "海盐蓝"), /tool result/i);
 });

@@ -206,7 +206,11 @@ through this disposable E2E child process environment. The wrapper checks
 untrusted TLS rejection, anonymous and invalid token 401 responses,
 authenticated proxy traffic during Agent Turn, archive,
 Gateway restart, continuity recall, and repeated commit with stable IDs. The
-plugin config contains an environment variable name, never the token. The
+protected run also makes the installed Gateway execute `openmem_search` through
+a model `tool_call`, then checks the matching tool-role result contains an
+OpenMem memory citation and that the proxy saw an additional successful
+`POST /inspect/search`. A transcript mention alone cannot satisfy this check.
+The plugin config contains an environment variable name, never the token. The
 wrapper also checks that the E2E report and Gateway log do not contain it and
 deletes the temporary certificate and private key on exit.
 

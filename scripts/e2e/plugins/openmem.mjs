@@ -45,6 +45,29 @@ export function assertStableCommitReplay(first, second) {
   }
 }
 
+/** Require the model continuation to contain this tool's result, not transcript text. */
+export function findToolResultMessage(messages, toolCallId, expectedText) {
+  const result = Array.isArray(messages)
+    ? messages.find((message) => message?.role === "tool" && message.tool_call_id === toolCallId)
+    : undefined;
+  const resultContent = JSON.stringify(result?.content) ?? "";
+  const citation = /openmem\/(?:archive|memory)\/[^\s()"\\]+#L1/.test(resultContent);
+  if (!result || !resultContent.includes(expectedText) || !citation) {
+    const outline = Array.isArray(messages) ? messages.map((message) => {
+      const content = JSON.stringify(message?.content) ?? "";
+      return {
+        role: message?.role,
+        toolCallId: message?.tool_call_id,
+        hasExpectedText: content.includes(expectedText),
+        hasCitation: /openmem\/(?:archive|memory)\/[^\s()"\\]+#L1/.test(content),
+        contentLength: content.length,
+      };
+    }) : [];
+    throw new Error(`OpenMem tool result is absent from the model continuation: ${JSON.stringify(outline)}`);
+  }
+  return result;
+}
+
 async function runCli(args) {
   const { stdout, stderr } = await execFileAsync(
     OPENCLAW_BIN,
@@ -100,6 +123,9 @@ export async function testOpenMem(ctx, results) {
       if (!first.includes("openclaw e2e fixture reply") || model.metrics.completions !== beforeFirst + 1) {
         throw new Error("first Agent Turn did not complete exactly once through the model fixture");
       }
+      if (protectedMode && !model.metrics.lastRequest?.tools?.some((tool) => tool?.function?.name === "openmem_search")) {
+        throw new Error("installed Gateway did not expose openmem_search to the model");
+      }
 
       let firstSession;
       await ctx.waitFor(async () => {
@@ -145,20 +171,48 @@ export async function testOpenMem(ctx, results) {
         assertStableCommitReplay(firstReplay, secondReplay);
       }
 
+      const searchBeforeTool = protectedMode
+        ? (await readJson(endpoint, "/__e2e_metrics")).successfulPaths?.["POST /inspect/search"] ?? 0
+        : 0;
       await ensureGatewayRunning();
       const beforeSecond = model.metrics.completions;
-      const second = await runAgent("上一段会话中的联调代号是什么？");
-      if (!second.includes("openclaw e2e fixture reply") || model.metrics.completions !== beforeSecond + 1) {
-        throw new Error("second Agent Turn did not complete exactly once");
+      const beforeToolCalls = model.metrics.toolCalls;
+      if (protectedMode) {
+        model.controls.nextToolCall = {
+          id: "callopenmeme2e",
+          name: "openmem_search",
+          arguments: JSON.stringify({ query: "海盐蓝", limit: 10 }),
+        };
+      }
+      const second = await runAgent(protectedMode
+        ? "请调用 openmem_search 工具检索上一段会话中的联调代号。"
+        : "上一段会话中的联调代号是什么？");
+      if (!second.includes("openclaw e2e fixture reply") ||
+          model.metrics.completions !== beforeSecond + (protectedMode ? 2 : 1)) {
+        throw new Error("second Agent Turn did not complete expected model calls");
       }
       if (!JSON.stringify(model.metrics.lastRequest).includes(runMarker)) {
         throw new Error("previous-session context was absent from the next Agent Turn");
+      }
+      if (protectedMode) {
+        if (model.metrics.toolCalls !== beforeToolCalls + 1 || model.controls.nextToolCall !== null) {
+          throw new Error("model fixture did not issue exactly one OpenMem tool call");
+        }
+        const searchAfterTool = (await readJson(endpoint, "/__e2e_metrics")).successfulPaths?.["POST /inspect/search"] ?? 0;
+        if (searchAfterTool <= searchBeforeTool) {
+          throw new Error("openmem_search did not make a new request through the authenticated HTTPS proxy");
+        }
+        try {
+          findToolResultMessage(model.metrics.lastRequest?.messages, "callopenmeme2e", "海盐蓝");
+        } catch (error) {
+          throw new Error(`${error.message}; proxy search ${searchBeforeTool} → ${searchAfterTool}`);
+        }
       }
     },
     {
       service: process.env.OPENMEM_E2E_PROTECTED === "1" ? "authenticated HTTPS proxy + production OpenMem Server" : "real workspace OpenMem Server",
       method: "tarball install + Agent Turn + shutdown drain + archive + Sidecar continuity API + Gateway restart context" +
-        (process.env.OPENMEM_E2E_PROTECTED === "1" ? " + authenticated idempotent commit replay" : ""),
+        (process.env.OPENMEM_E2E_PROTECTED === "1" ? " + authenticated idempotent commit replay + model tool call and tool-role result" : ""),
     },
     results,
   );

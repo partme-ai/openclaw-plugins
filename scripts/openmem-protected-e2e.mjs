@@ -42,7 +42,7 @@ export async function startAuthenticatedProxy({ backendPort, fixtureDir, proxyPo
   ], { stdio: "ignore" });
   const caPem = readFileSync(certPath, "utf8");
   const token = randomBytes(32).toString("hex");
-  const metrics = { forwarded: 0, denied: 0, paths: Object.create(null) };
+  const metrics = { forwarded: 0, denied: 0, paths: Object.create(null), successfulPaths: Object.create(null) };
   const server = createHttpsServer({ key: readFileSync(keyPath), cert: caPem }, (req, res) => {
     const actual = Buffer.from(req.headers.authorization ?? "");
     const expected = Buffer.from(`Bearer ${token}`);
@@ -53,6 +53,11 @@ export async function startAuthenticatedProxy({ backendPort, fixtureDir, proxyPo
       return;
     }
     const pathname = new URL(req.url ?? "/", "https://127.0.0.1").pathname;
+    if (req.method === "GET" && pathname === "/__e2e_metrics") {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ forwarded: metrics.forwarded, paths: metrics.paths, successfulPaths: metrics.successfulPaths }));
+      return;
+    }
     const route = `${req.method} ${pathname}`;
     metrics.forwarded++;
     metrics.paths[route] = (metrics.paths[route] ?? 0) + 1;
@@ -64,6 +69,9 @@ export async function startAuthenticatedProxy({ backendPort, fixtureDir, proxyPo
       method: req.method,
       headers: { ...forwardHeaders, host: `127.0.0.1:${backendPort}` },
     }, (response) => {
+      if ((response.statusCode ?? 502) >= 200 && (response.statusCode ?? 502) < 300) {
+        metrics.successfulPaths[route] = (metrics.successfulPaths[route] ?? 0) + 1;
+      }
       res.writeHead(response.statusCode ?? 502, response.headers);
       response.pipe(res);
     });
@@ -215,11 +223,13 @@ export async function runProtectedE2E() {
     const paths = proxy.metrics.paths;
     const required = ["POST /sessions/start", "POST /events/ingest", "POST /inspect/search"];
     const missing = required.filter((route) => !paths[route]);
+    const toolSearchCount = paths["POST /inspect/search"] ?? 0;
+    const toolSearchSuccessCount = proxy.metrics.successfulPaths["POST /inspect/search"] ?? 0;
     const commitCount = Object.entries(paths).filter(([route]) => /^POST \/sessions\/[^/]+\/commit$/.test(route)).reduce((sum, [, count]) => sum + count, 0);
     const passed = report.plugins?.length === 1 && report.plugins[0] === "openmem" &&
       report.e2e?.length === 1 && report.e2e[0].result === "PASS" &&
       report.skipCount === 0 && report.skipInstall === false && report.skipBrowser === false &&
-      missing.length === 0 && commitCount >= 3;
+      missing.length === 0 && toolSearchSuccessCount >= 2 && commitCount >= 3;
     const protectedReport = {
       startedAt: report.startedAt,
       finishedAt: new Date().toISOString(),
@@ -230,11 +240,14 @@ export async function runProtectedE2E() {
       installedCandidateSha256,
       e2eArchive: report.archivePath,
       skipCount: report.skipCount,
-      proxy: { baseUrl: proxy.baseUrl, forwarded: proxy.metrics.forwarded, denied: proxy.metrics.denied, paths },
+      proxy: { baseUrl: proxy.baseUrl, forwarded: proxy.metrics.forwarded, denied: proxy.metrics.denied, paths,
+        successfulPaths: proxy.metrics.successfulPaths },
       negatives,
       commitCount,
+      toolSearchCount,
+      toolSearchSuccessCount,
       result: passed ? "PASS" : "FAIL",
-      ...(passed ? {} : { failure: `missing proxy routes: ${missing.join(", ")}; commitCount=${commitCount}; child=${child.code}` }),
+      ...(passed ? {} : { failure: `missing proxy routes: ${missing.join(", ")}; toolSearchSuccessCount=${toolSearchSuccessCount}; commitCount=${commitCount}; child=${child.code}` }),
     };
     const archiveDir = join(E2E_DIR, "reports/protected");
     mkdirSync(archiveDir, { recursive: true });
