@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、OpenClaw 2026.9.6、Node 24.18.0、pnpm 9.0.0、现有 JSONL/SQLite/OTLP/Prometheus 实现。
 
-**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1 已完成当前本地候选物验收，见[O1 记录](../reports/2026-10-03-o1-memory-capability.md)；Task 2 已完成实施及 scoped 验收、待独立审查；Task 3–7 待实施。
+**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1、2 已完成当前本地候选物验收；Task 2 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)；Task 3–7 待实施。
 
 ## Global Constraints
 
@@ -57,7 +57,7 @@ T1 memory/openmem；T2 knowledge/memory/bridge 的上下文与 message-sdk 预�
 - [x] 运行三插件目标单测；新增三插件组合 fixture，断言注入总量 ≤100 token、来源可追踪、取消后零注入；在稳定版重跑 knowledge/memory/bridge 受影响安装态场景。
 - [x] 保存预算配置示例与实测 token/延迟记录；获授权时提交 `feat: bound and attribute plugin context injection`。
 
-O2 实施与 scoped 安装态验收完成，待主任务独立审查；详见 `.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md`。四项当前证据有效，全仓其余 23 项证据需后续刷新。
+O2 实施、scoped 安装态验收与独立审查完成，Spec PASS / Quality APPROVE；详见 `.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md`。四项当前证据有效，全仓其余 23 项证据需后续刷新。
 
 ### Task 3: 结构化 Wire 与 Router 消息（O3）
 
@@ -127,4 +127,4 @@ O1–O7 分别由 T1–T7 覆盖。五项 Review Focus 均有对应测试。O1 �
 - [ ] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；公共 SDK 变化引起的指纹失效必须重跑。
 - [ ] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。
 
-当前按用户后续授权逐任务实施与独立审查。Task 1 已完成本地候选物验收；Task 2 已完成 scoped 验收、待独立审查；当前 knowledge/memory/bridge/mqtt 四项证据有效，其余 23 项仍不满足全仓门禁，收口前必须按最终输入重验。Task 3–7 仍按本计划依赖顺序推进。
+当前按用户后续授权逐任务实施与独立审查。Task 1、2 已完成各自本地候选物验收，Task 2 独立审查通过；当前 knowledge/memory/bridge/mqtt 四项证据有效，其余 23 项仍不满足全仓门禁，收口前必须按最终输入重验。Task 3–7 仍按本计划依赖顺序推进。
