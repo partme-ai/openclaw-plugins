@@ -192,6 +192,37 @@ Do **not** fake success — if the gateway never listens on `E2E_GATEWAY_PORT`, 
 | `OPENCLAW_E2E_SKIP_DOCKER` | unset | `1` = skip Docker entirely (broker tests fail unless services already running) |
 | `E2E_STOMP_TCP_PORT` | `61613` | stomp-tcp channel port in config/tests |
 
+### OpenMem local protected gateway test
+
+```bash
+OPENMEM_E2E_REPO=/absolute/path/to/OpenMem \
+  node scripts/openmem-protected-e2e.mjs
+```
+
+The wrapper generates a disposable certificate and random Bearer token, starts a
+loopback HTTPS proxy, and launches the regular tarball-install E2E with the
+production OpenMem server entrypoint. The Gateway receives certificate trust
+through this disposable E2E child process environment. The wrapper checks
+untrusted TLS rejection, anonymous and invalid token 401 responses,
+authenticated proxy traffic during Agent Turn, archive,
+Gateway restart, continuity recall, and repeated commit with stable IDs. The
+plugin config contains an environment variable name, never the token. The
+wrapper also checks that the E2E report and Gateway log do not contain it and
+deletes the temporary certificate and private key on exit.
+
+The standard OpenMem command remains available:
+
+```bash
+OPENMEM_E2E_REPO=/absolute/path/to/OpenMem \
+  node scripts/e2e/run-e2e.mjs --plugins openmem
+```
+
+Protected wrapper results are archived in `scripts/e2e/reports/protected/` with
+the wrapper SHA-256, OpenClaw version, installed candidate SHA-256, underlying
+E2E archive path, proxy route counts, and negative-case results. This is a
+local fixture; cross-host storage, real power loss, a deployed protecting proxy,
+and vendor callback environments require separate acceptance.
+
 ## Adding a new plugin test adapter
 
 1. Add entry to `lib/registry.mjs` (id, filter, dir, dockerServices, category).

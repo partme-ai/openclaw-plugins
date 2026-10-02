@@ -5,6 +5,11 @@ import { E2E_PORTS } from "../../lib/utils.mjs";
  * Sidecar 使用工作区真实 OpenMem Server，由 E2E 编排器在 Gateway 之前启动。
  */
 export function openmemConfig() {
+  const protectedMode = process.env.OPENMEM_E2E_PROTECTED === "1";
+  const protectedUrl = process.env.OPENMEM_E2E_PROXY_URL;
+  if (protectedMode && !/^https:\/\/127\.0\.0\.1:\d+$/.test(protectedUrl ?? "")) {
+    throw new Error("protected OpenMem E2E requires a loopback HTTPS proxy URL");
+  }
   return {
     pluginEntry: {
       openmem: {
@@ -13,7 +18,8 @@ export function openmemConfig() {
         config: {
           enabled: true,
           required: true,
-          baseUrl: `http://127.0.0.1:${E2E_PORTS.openmem}`,
+          baseUrl: protectedMode ? protectedUrl : `http://127.0.0.1:${E2E_PORTS.openmem}`,
+          ...(protectedMode ? { apiKeyEnv: "OPENMEM_E2E_PROXY_TOKEN" } : {}),
           agentId: "main",
           maxSearchResults: 10,
           timeoutMs: 5_000,
