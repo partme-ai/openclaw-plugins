@@ -1,6 +1,6 @@
 # 预发 Gateway、Sidecar 与厂商回调验收准备
 
-日期：2026-10-02。对应[稳定版升级规格](../specs/2026-09-29-openclaw-2026-9-6-upgrade.md)尚未完成的生产环境证据。本文件只记录环境发现与下一轮验收入口；本地 fixture 的 27/27 PASS 见[当前候选物复验](2026-10-02-current-candidate-verification.md)。
+日期：2026-10-02。对应[稳定版升级规格](../specs/2026-09-29-openclaw-2026-9-6-upgrade.md)尚未完成的生产环境证据。用户已选择先在本地测试，实际运行结果见[本地 Gateway、Sidecar 与回调复验](2026-10-02-local-gateway-sidecar-callbacks.md)；本文保留未来外部环境的入口清单。
 
 ## 当前环境发现
 
