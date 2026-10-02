@@ -17,7 +17,7 @@
 | 当前版本 | `2026.7.1` |
 | 插件 ID | `bridge` |
 | Channel ID | — |
-| OpenClaw | `>=2026.7.1` |
+| OpenClaw | `>=2026.9.6` |
 | 源码目录 | `extensions/bridge` |
 
 ## 2. 一眼看懂
@@ -112,7 +112,7 @@ pnpm --filter "@partme.ai/openclaw-bridge" build
 <!-- README_STANDARD_END -->
 
 
-`@partme.ai/openclaw-bridge` 是面向 OpenClaw 2026.7.1 的跨渠道上下文与消息观测桥。它不替代任何 IM 或 MQ Channel 插件，主要提供两项能力：
+`@partme.ai/openclaw-bridge` 是面向 OpenClaw 2026.9.6 的跨渠道上下文与消息观测桥。它不替代任何 IM 或 MQ Channel 插件，主要提供两项能力：
 
 - 通过官方 `before_prompt_build` Hook，为已配置的 IM 渠道追加平台交互约束。
 - 通过官方 `message_received`、`message_sent` Hook 观察真实收发结果，再经公共 channel outbound adapter 将 `UnifiedMessage` 镜像到 MQ。
@@ -226,7 +226,7 @@ Bridge 的清单 ID 是 `bridge`，配置应写入 `plugins.entries.bridge.confi
 
 只有 `channels` 中显式声明的来源渠道会被处理。未知来源渠道或不支持的 MQ ID 会在注册时失败；受支持但未安装或未就绪的 adapter 会在后台投递时明确失败并执行有界重试，不会静默回退后误投递。
 
-入站媒体消息即使没有正文也会生成 `UnifiedMessage`。`includeMediaUrls` 默认关闭，此时只保留媒体数量、类型和 MIME，避免把带签名的对象存储地址扩散到 MQ。单个信封最多保留 16 个媒体条目，超出时通过原始 `mediaCount` 与 `mediaTruncated=true` 明示截断。显式开启后仅接受不含 URL 用户名/密码的 HTTP(S) 地址；查询参数仍应按敏感数据管理。OpenClaw 2026.7.1 的出站 `message_sent` 不携带媒体元数据，因此该能力仅覆盖入站事件。
+入站媒体消息即使没有正文也会生成 `UnifiedMessage`。`includeMediaUrls` 默认关闭，此时只保留媒体数量、类型和 MIME，避免把带签名的对象存储地址扩散到 MQ。单个信封最多保留 16 个媒体条目，超出时通过原始 `mediaCount` 与 `mediaTruncated=true` 明示截断。显式开启后仅接受不含 URL 用户名/密码的 HTTP(S) 地址；查询参数仍应按敏感数据管理。OpenClaw 2026.9.6 的出站 `message_sent` 不携带媒体元数据，因此该能力仅覆盖入站事件。
 
 ## MQ 渠道
 
@@ -251,18 +251,28 @@ MQ 插件必须独立安装并配置。MQTT、RabbitMQ、Redis Stream、RocketMQ
 
 ## 渠道范围
 
-静态能力表包含 27 个渠道：20 个 OpenClaw 2026.7.1 stock 渠道、当前仓库的 `wecom`、`openclaw-weixin`、`wechat-ipad`、`wecom-kf`、`douyin`、`mqtt`，以及外部 `dingtalk-connector`。其中飞书与 QQ 的当前 stock ID 分别是 `feishu`、`qqbot`；旧文档中的 `openclaw-lark` 已不再使用。
+静态目录识别 27 个渠道：19 个 OpenClaw 2026.9.6 bundled 渠道、当前仓库的 `wecom`、`openclaw-weixin`、`wechat-ipad`、`wecom-kf`、`douyin`、`mqtt`，以及外部 `dingtalk-connector` 和 QQ Bot。飞书 bundled 渠道 ID 是 `feishu`；QQ Bot 是可下载的 `@tencent-connect/openclaw-qqbot`，插件 ID `openclaw-qqbot`、渠道 ID `qqbot`。
+
+`ALL_CHANNELS` 只证明 **known**；`ALL_CAPABILITIES` 是消息格式与限制的静态近似，不证明 **installed / enabled / ready**。Bridge 自己的 `channels` 配置也不是宿主连接状态。调用方可用 `resolveChannelAvailability(meta, runtimeFacts)` 解析宿主事实；缺失字段返回 `false` 并列在 `unavailableFacts` 中，已知否定值不会列入。未知渠道不获得能力。
+
+实时状态由具备 `operator.read` 授权的宿主调用方从同一 OpenClaw Gateway 获取 `plugins.list` 与 `channels.status`，把响应交给 `adaptGatewayChannelFacts(meta, pluginsList, channelsStatus)`。适配器按插件 ID 读取 `installed/enabled/runtime.state`，按渠道 ID 读取 `channelAccounts`；MQTT 的 `running` 表示入站监听器工作，其他渠道需要显式 `connected` 或 `lifecycle=ready`。部分/缺失快照保守为未知。Bridge 外部插件不自行请求 Gateway 或扩大权限。响应契约来源：OpenClaw 2026.9.6 `src/gateway/server-methods/{plugins,channels}.ts`。
+
+### Availability and readiness (English)
+
+The 27 catalog entries only identify channels that Bridge recognizes. The capability table approximates message formats and limits; neither table proves installation, enablement, or runtime readiness. In OpenClaw 2026.9.6, 19 catalog IDs have bundled manifests, while QQ Bot is a downloadable plugin (`@tencent-connect/openclaw-qqbot`, plugin ID `openclaw-qqbot`, channel ID `qqbot`).
+
+An operator with `operator.read` access can supply `plugins.list` and `channels.status` responses from the same Gateway to `adaptGatewayChannelFacts`, then pass the result to `resolveChannelAvailability`. Missing or partial facts resolve to `false` and appear in `unavailableFacts`; explicit negative facts remain distinguishable. MQTT readiness uses its running listener status; other channels need an explicit connected or ready lifecycle state. Bridge does not request privileged Gateway status on its own. Real account, permission, and network readiness still require channel-specific checks.
 
 Bridge 只对实际安装、运行、在配置中启用且正确发出官方消息 Hook 的渠道生效。静态能力表表示“有上下文预设和配置识别”，不代表 27 个渠道均已安装或完成环境验收。当前安装态 E2E 使用 MQTT 验证入站、Agent 回复、`message_sent`、双向审计 Topic 与防回环；其他渠道仍须逐个做真实账号/租户验收。
 
 ```text
-静态渠道元数据 → 2026.7.1 Hook 契约 → MQTT tarball E2E → 真实 IM × MQ 验收 → 生产准入
+静态渠道元数据 → 2026.9.6 状态与 Hook 契约 → MQTT tarball E2E → 真实 IM × MQ 验收 → 生产准入
      已覆盖              已对齐               已自动验证            尚需逐组合执行
 ```
 
 ```mermaid
 flowchart LR
-    META["静态渠道元数据"] --> CONTRACT["OpenClaw 2026.7.1<br/>Hook 契约"]
+    META["静态渠道元数据"] --> CONTRACT["OpenClaw 2026.9.6<br/>状态与 Hook 契约"]
     CONTRACT --> E2E["MQTT tarball E2E"]
     E2E --> ENV["真实 IM × MQ<br/>环境验收"]
     ENV --> PROD["生产准入"]

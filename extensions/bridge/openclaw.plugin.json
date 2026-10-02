@@ -2,7 +2,7 @@
   "id": "bridge",
   "name": "OpenClaw Bridge",
   "version": "2026.7.1",
-  "description": "OpenClaw 2026.7.1 IM context and MQ observation bridge using official hooks and outbound adapters",
+  "description": "OpenClaw 2026.9.6 IM context and MQ observation bridge using official hooks and outbound adapters",
   "main": "dist/index.js",
   "activation": {
     "onStartup": true,

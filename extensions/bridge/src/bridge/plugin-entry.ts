@@ -32,7 +32,7 @@ const plugin = {
   id: "bridge",
   name: "OpenClaw Bridge",
   description:
-    `跨渠道上下文与消息观测桥 — ${ALL_CHANNELS.length} 个渠道统一预设、规范化和 MQ 镜像`,
+    `跨渠道上下文与消息观测桥 — 静态识别 ${ALL_CHANNELS.length} 个渠道，按配置注入与镜像`,
   configSchema: {
     type: "object" as const,
     additionalProperties: false,
@@ -84,7 +84,7 @@ const plugin = {
     // 在任何 Hook、Service 或全局 runtime 引用注册之前校验，保证错误配置原子失败。
     validateBridgeConfig((api.pluginConfig ?? {}) as BridgeConfig);
     setBridgeRuntime(api);
-    api.logger.info(`[openclaw-bridge] Initializing — ${ALL_CHANNELS.length} channels available`);
+    api.logger.info(`[openclaw-bridge] Initializing — ${ALL_CHANNELS.length} channels in static catalog`);
 
     registerContextInjection(api);
     registerMessageBridge(api);
