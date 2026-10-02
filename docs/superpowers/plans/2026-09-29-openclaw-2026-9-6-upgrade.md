@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、Node 24.18.0、pnpm 9.0.0、OpenClaw 2026.9.6、Docker Compose、Playwright。
 
-**Spec:** [稳定版升级规格](../specs/2026-09-29-openclaw-2026-9-6-upgrade.md)。状态：实施中；U1、U2、U4、U5、U6、U7 已完成本地候选物验证；U8 的 27 项候选物安装态证据通过，但 OpenMem `openmem_search` 真实工具调用仍待补测。U3 已完成当前本地 Gateway 和目标安装态验证，见[U3 记录](../reports/2026-10-02-u3-browser-grants.md)。U9 的本地实现和目标验证见[后续记录](../reports/2026-10-02-openmem-recoverable-commit.md)。全量当前候选物证据门禁 27/27 通过，见[当前复验记录](../reports/2026-10-02-current-candidate-verification.md)；旧候选物证据见[验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。
+**Spec:** [稳定版升级规格](../specs/2026-09-29-openclaw-2026-9-6-upgrade.md)。状态：实施中；U1、U2、U4、U5、U6、U7、U8 已完成当前本地候选物验证，U8 的 `openmem_search` 真实工具调用及共享输入变更后的 27 项复验见[工具调用记录](../reports/2026-10-02-openmem-installed-tool-e2e.md)。U3 已完成当前本地 Gateway 和目标安装态验证，见[U3 记录](../reports/2026-10-02-u3-browser-grants.md)。U9 的本地实现和目标验证见[后续记录](../reports/2026-10-02-openmem-recoverable-commit.md)。全量当前候选物证据门禁 27/27 通过；旧候选物证据见[验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。
 
 ## Global Constraints
 
@@ -138,8 +138,8 @@
 
 - [x] 执行 `pnpm typecheck`、`pnpm build`、`pnpm test:unit`、`pnpm test:e2e:harness`、`pnpm test:release-scripts`、`pnpm check-release-readiness`、`pnpm check-explanatory-assets` 和包归档校验；结果见[验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。
 - [x] 按注册表运行安装态场景：单插件使用 `node scripts/e2e/run-e2e.mjs --plugins <id>`；bridge/mqtt、router/gotify、tracing/mqtt 使用规定组合。mtls、oauth2、memory、openmem 等隔离配置分别执行；无 skip-install/skip-browser。
-- [x] 核对已执行安装态场景的 Agent/Tool/协议结果及负例；具备 fixture 的场景标记 fixture，真实第三方平台验收单列。OpenMem 的下一轮上下文可能来自宿主 transcript，尚不能证明 `openmem_search` 被模型调用。
-- [ ] 在本地安装态 Gateway 中让模型实际调用 `openmem_search`，断言工具结果来自 Sidecar 检索且请求经受保护代理，并排除宿主 transcript 单独提供答案的假阳性。
+- [x] 核对已执行安装态场景的 Agent/Tool/协议结果及负例；具备 fixture 的场景标记 fixture，真实第三方平台验收单列。原有 OpenMem 下一轮上下文可能来自宿主 transcript，不能单独证明 `openmem_search` 被模型调用；工具证据见下一项。
+- [x] 在本地安装态 Gateway 中让模型实际调用 `openmem_search`，断言 `role: tool`、调用 ID、OpenMem 引用和代理 `/inspect/search` 上游 2xx 增量；错误文本回显与上游 500 的负例先复现误报再修复。共享夹具变化后 27 项安装态场景全部重跑、无跳过，见[工具调用与全量复验](../reports/2026-10-02-openmem-installed-tool-e2e.md)。
 - [x] 运行 `node scripts/check-e2e-evidence.mjs`，27 个当前候选物与 2026.9.6 宿主全部匹配、退出 0；已保存可访问归档，未提交凭据或原始敏感日志。
 - [x] 完成全变更审查和兼容说明；逐项证据见验收记录，旧 E2E 计划仍待实网验证。独立复核识别出 OpenMem Sidecar 提交意图已落盘但 POST 未发出时无法自动恢复的生产阻断，已记录人工对账边界。2026-10-02 的后续请求已授权 Git 提交与 GitHub 推送；npm 发布仍未授权。
 
@@ -164,4 +164,4 @@
 
 U1–U9 分别由 T1–T9 覆盖；Review Focus 五项已绑定 T2/T3/T5/T6/T7 的测试。T5 的 outcome 与 T6 的 delivery outcome 分开，避免把 Agent 完成等同投递完成。源码、mock、已安装宿主、真实平台四层证据分别记录。
 
-U8 的 27 项固定宿主安装态场景已对当前候选物重验；U3 的 Router/Tracing 同插件签发 Cookie 已在真实 Gateway HTTP 边界验证。真实厂商联调、浏览器视觉交互、生产部署及 U9 的部署故障恢复仍需验收。npm 包尚未发布。
+U8 的 27 项安装态场景已对当前候选物重验；共享 E2E 输入变动后，最新报告全部为宿主 Gateway 模式，三个 Web 场景使用真实 Chrome。U3 的 Router/Tracing 同插件签发 Cookie 已在真实 Gateway HTTP 边界验证。真实厂商联调、浏览器视觉交互、生产部署及 U9 的部署故障恢复仍需验收；Docker E2E 容器的专用状态库损坏尚未修复。npm 包尚未发布。

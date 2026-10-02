@@ -1,6 +1,6 @@
 # OpenClaw 2026.9.6 稳定版升级规格
 
-日期：2026-09-29。状态：实施中；U3 的 Router/Tracing 同插件浏览器 grant 正例已完成当前本地 Gateway 验证，见[U3 记录](../reports/2026-10-02-u3-browser-grants.md)。U9 的 OpenMem 可恢复提交已完成本地实现与安装态验证，见[U9 记录](../reports/2026-10-02-openmem-recoverable-commit.md)。共享 E2E 输入变化后全量 27 插件已重验，当前候选物证据门禁退出 0，见[当前复验记录](../reports/2026-10-02-current-candidate-verification.md)；旧候选物的 27 项记录见[原验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。生产部署与厂商实网验收继续进行。本规格由 CodeGraph 审计和用户确认编写任务的请求形成，不是历史交付重建。
+日期：2026-09-29。状态：实施中；U3 的 Router/Tracing 同插件浏览器 grant 正例已完成当前本地 Gateway 验证，见[U3 记录](../reports/2026-10-02-u3-browser-grants.md)。U9 的 OpenMem 可恢复提交已完成本地实现与安装态验证，见[U9 记录](../reports/2026-10-02-openmem-recoverable-commit.md)。本次共享 E2E 输入变化后全量 27 插件已重验，`openmem_search` 真实工具调用及当前候选物证据门禁见[最新本地复验](../reports/2026-10-02-openmem-installed-tool-e2e.md)；先前 27 项记录见[前次复验](../reports/2026-10-02-current-candidate-verification.md)和[原验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。生产部署与厂商实网验收继续进行。本规格由 CodeGraph 审计和用户确认编写任务的请求形成，不是历史交付重建。
 
 **规格事实源：** 本文件定义本次升级的增量要求；通用约定沿用 [PLUGIN_SPEC](../../../spec/PLUGIN_SPEC.md)。[实施计划](../plans/2026-09-29-openclaw-2026-9-6-upgrade.md) 只拆解任务，不另立需求。功能优化单独见 [优化规格](2026-09-29-openclaw-followup-optimization.md)。
 

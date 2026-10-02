@@ -39,10 +39,10 @@ OpenMem 隔离工作树追加 `1cf0d23`：真实 `dist/index.js` 进程取得单
 
 最终受保护归档 `scripts/e2e/reports/protected/2026-10-02T11-40-35.823Z-openmem-ca39f47c-87c4-4ef9-93a7-a547c8ffb744.json` 为 PASS：插件单测 47/47、安装态 E2E `skipCount=0`，代理实际转发 25 次、拒绝 2 次；会话创建、事件摄取、归档、直接连续性检索和 Gateway 重启后的下一轮插件请求均通过代理路径。插件原始提交及两次重放使同一提交路由收到 3 次请求，重放归档与非空事实记忆 ID 保持一致。该归档绑定了 wrapper SHA-256、OpenClaw 版本、安装 tarball SHA-256 `1962e95f939a51910fa7b9ef75ca97ff29a37dbf577814c5fc379f3c69544cd6` 和原始安装态报告；配置、报告、Gateway 日志均未包含令牌。普通模式最终回归归档为 `scripts/e2e/reports/2026-10-02T11-41-43.267Z-openmem-ba0e66b9-69c7-4d7e-a906-837732419d7d.json`，PASS 且跳过 0；`node scripts/check-e2e-evidence.mjs` 在临时 profile 清理后对 27 个插件退出 0。独立复审为 Spec PASS、Quality APPROVE，无 Critical/Important 问题。通用 27 项证据门禁不检查此受保护 wrapper，本轮已单独核对其 SHA-256 与底层报告。
 
-此场景中的 `/inspect/search` 请求是 E2E adapter 直接发出的 Sidecar API 断言；第二轮模型请求携带上一轮内容也可能来自 OpenClaw 自身 transcript。它们不能单独证明模型执行了插件 `openmem_search` 工具。该工具的真实安装态调用和经代理检索仍列为 Task 8 的本地待验项。
+此场景中的 `/inspect/search` 请求是 E2E adapter 直接发出的 Sidecar API 断言；第二轮模型请求携带上一轮内容也可能来自 OpenClaw 自身 transcript。它们不能单独证明模型执行了插件 `openmem_search` 工具。后续已在[Task 8 工具调用复验](2026-10-02-openmem-installed-tool-e2e.md)中补上真实模型 tool call、Gateway 工具结果与代理检索 2xx 增量，并在共享输入变化后重跑全部 27 项安装态场景。
 
 ## 验收结论
 
-本地单写入者、生产入口半提交恢复、默认回环监听、Host/Origin 防护及安装态插件经测试代理的 TLS/令牌/重放探测通过。**旧入口的多写入者共享数据目录在本机复现 HTTP 500；新生产入口以运行时锁强制每个数据目录单写入者，第二实例在监听前拒绝。** 直接调用 Sidecar 引擎的其他入口不受该锁保护。Task 9 的跨主机/网络卷单写入约束、真实断电/部署恢复和受保护网络验收保持未完成；本地测试代理不得记为预发或生产验收。`openmem_search` 的真实工具调用也尚未由此场景证明。
+本地单写入者、生产入口半提交恢复、默认回环监听、Host/Origin 防护及安装态插件经测试代理的 TLS/令牌/重放探测通过。**旧入口的多写入者共享数据目录在本机复现 HTTP 500；新生产入口以运行时锁强制每个数据目录单写入者，第二实例在监听前拒绝。** 直接调用 Sidecar 引擎的其他入口不受该锁保护。Task 9 的跨主机/网络卷单写入约束、真实断电/部署恢复和受保护网络验收保持未完成；本地测试代理不得记为预发或生产验收。`openmem_search` 的工具调用由后续 Task 8 复验单独证明。
 
 真实厂商回调继续以 [本地 Gateway、Sidecar 与回调夹具复验](2026-10-02-local-gateway-sidecar-callbacks.md) 的本机夹具结果为准。没有厂商平台实际投递证据。
