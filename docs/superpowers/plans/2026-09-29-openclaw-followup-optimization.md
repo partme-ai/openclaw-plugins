@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、OpenClaw 2026.9.6、Node 24.18.0、pnpm 9.0.0、现有 JSONL/SQLite/OTLP/Prometheus 实现。
 
-**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–4 已完成各自本地候选物验收；Task 2–4 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)、[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)和[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)；Task 5–7 待实施。最终全仓证据仍待收口。
+**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–5 已完成各自本地候选物验收；Task 2–5 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)、[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)、[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)和[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)；Task 6–7 待实施。最终全仓证据仍待收口。
 
 ## Global Constraints
 
@@ -93,11 +93,13 @@ O4 独立复审 Spec PASS / Quality APPROVE。最终安装态 Bridge/MQTT 各一
 
 **Interfaces:** 每次 register 创建独立资源 owner，服务 start/stop 闭包引用同一 owner；必要时局部工厂 `createServiceLifecycle(): {start(context):Promise<void>;stop():Promise<void>}`，不引入跨插件单例管理器。
 
-- [ ] 添加 A/B 两实例测试：A.stop 后 B 仍工作；start 失败后连接/定时器归零；重复 stop 安全；停止时并发启动的迟到结果被释放。
-- [ ] 分别运行五插件测试，记录实际缺口；已满足的 generation 防护保留并记录绿灯，不为重构而重构。
-- [ ] 将存在交叉所有权的模块状态收敛到实例 owner，保留现有停止超时、generation、清理顺序和授权。
-- [ ] 重跑目标测试和五插件安装态重启/重载场景，验证无残留监听端口、计时器和后台投递，失败启动可再次恢复。
-- [ ] 保存生命周期资源清单；获授权时提交 `fix: isolate plugin service lifecycle ownership`。
+- [x] 添加 A/B 两实例测试：A.stop 后 B 仍工作；start 失败后连接/定时器归零；重复 stop 安全；停止时并发启动的迟到结果被释放。
+- [x] 分别运行五插件测试，记录实际缺口；已满足的 generation 防护保留并记录绿灯，不为重构而重构。
+- [x] 将存在交叉所有权的模块状态收敛到实例 owner，保留现有停止超时、generation、清理顺序和授权。
+- [x] 重跑目标测试和五插件安装态重启/重载场景，验证无残留监听端口、计时器和后台投递，失败启动可再次恢复。Nacos 自动配置重启未单独探测端口关闭区间，见 O5 报告。
+- [x] 保存生命周期资源清单；已按授权提交 `fix: isolate plugin service lifecycle ownership` 及两轮审查修复。
+
+O5 独立最终复审 Spec PASS / Quality APPROVE。五插件最终安装态各一次 PASS、零跳过，当前指纹及精确包校验均为 `[]`；Nacos 端口观测限制和 OAuth2 单元测试一项 Redis 依赖跳过已记录。全仓 27 插件证据检查目前仍有 21 项历史报告失效，待最终收口。详见[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)。
 
 ### Task 6: 投递与召回的可观测闭环（O6）
 
@@ -131,4 +133,4 @@ O1–O7 分别由 T1–T7 覆盖。五项 Review Focus 均有对应测试。O1 �
 - [ ] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；公共 SDK 变化引起的指纹失效必须重跑。
 - [ ] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。
 
-当前按用户后续授权逐任务实施与独立审查。Task 1–4 已完成各自本地候选物验收，Task 4 独立复审通过；当前 Bridge/MQTT 两项证据有效，其余 25 项仍不满足全仓门禁，收口前必须按最终输入重验。Task 5–7 仍按本计划依赖顺序推进。
+当前按用户后续授权逐任务实施与独立审查。Task 1–5 已完成各自本地候选物验收，Task 5 独立复审通过；当前 OAuth2、mTLS、Nacos、Tracing、Prometheus 和 MQTT 六项证据有效，其余 21 项仍不满足全仓门禁，收口前必须按最终输入重验。Task 6–7 仍按本计划依赖顺序推进。
