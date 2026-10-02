@@ -173,6 +173,29 @@ describe("structured routing", () => {
       expect(response.data).toEqual(expect.arrayContaining([expect.objectContaining({ mediaFallback: "text" })]));
     } finally { await h.service.stop(); }
   });
+  it.each([null, " \n\t"])("rejects text fallback with no nonempty text: %j", async (text) => {
+    const h = await harness({ structured: { enabled: true }, action: { mediaFallback: "text" } });
+    const readRoute = async (path: string) => {
+      let response: any;
+      await h.routes.get(path)?.handler({ method: "GET", url: path }, {
+        writeHead() {}, end(value: string) { response = JSON.parse(value); },
+      });
+      return response.data;
+    };
+    try {
+      const mediaOnly = { ...wire, parts: [...(text === null ? [] : [{ type: "text", text }]), wire.parts[1]] };
+      await h.hooks.get("message_received")?.({ content: JSON.stringify(mediaOnly) }, { channelId: "web-mqtt" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(h.sendText).not.toHaveBeenCalled();
+      await waitFor(() => h.api.logger.error.mock.calls.some(([message]) => message.includes("delivery exhausted")));
+      expect(await readRoute("/router/status")).toMatchObject({ delivered: 0, deadLetters: 1 });
+      expect(await readRoute("/router/audit")).toEqual(expect.arrayContaining([
+        expect.objectContaining({ outcome: "dead-letter", mediaFallback: "text", error: expect.stringContaining("no nonempty text") }),
+      ]));
+      expect((await readRoute("/router/audit")).some((entry: any) => entry.outcome === "delivered")).toBe(false);
+      expect(await readRoute("/router/dlq")).toHaveLength(1);
+    } finally { await h.service.stop(); }
+  });
   it("preserves ordered media and identities across a partial failure retry", async () => {
     const sendPayload = vi.fn().mockResolvedValue({ messageId: "sent" });
     sendPayload.mockImplementationOnce(async () => ({ messageId: "first" }))

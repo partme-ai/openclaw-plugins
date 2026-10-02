@@ -105,6 +105,9 @@ function encodeOutboundTarget(channel: string, target: string): string {
 
 function resolveChannelSend(api: OpenClawPluginApi, config: RouterConfig): ChannelSendFn {
   return async (params, signal) => {
+    if (params.mediaFallback === "text" && !params.content.trim()) {
+      throw new Error("router text fallback has no nonempty text");
+    }
     const target = readString(params.to) ?? readString(params.topic);
     if (!target) throw new Error(`router target ${params.channel} requires action.to or action.topic`);
     const idempotencyKey = readString(params.metadata?.idempotencyKey);
