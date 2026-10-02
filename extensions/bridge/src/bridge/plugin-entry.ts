@@ -37,6 +37,7 @@ const plugin = {
     type: "object" as const,
     additionalProperties: false,
     properties: {
+      contextMaxTokens: { type: "integer" as const, minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       channels: {
         type: "object",
         additionalProperties: {

@@ -1,4 +1,8 @@
 /** Bridge tarball + MQTT：验证真实 Hook 事件被后台镜像到审计 Topic，并且不会自回环。 */
+import { pathToFileURL } from "node:url";
+import { join, dirname } from "node:path";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { REPO_ROOT } from "../lib/utils.mjs";
 import { createRequire } from "node:module";
 import { runAdapterTest } from "./_context.mjs";
 
@@ -43,6 +47,26 @@ export async function testBridge(ctx, results) {
     async () => {
       if (!ctx.pluginIds.includes("mqtt")) throw new Error("Bridge E2E requires --plugins bridge,mqtt");
       if (!ctx.modelFixture) throw new Error("Bridge E2E requires the local model fixture");
+      const peerLink = join(ctx.installedPath('bridge'), 'node_modules/openclaw');
+      if (!existsSync(peerLink)) {
+        mkdirSync(dirname(peerLink), { recursive: true });
+        symlinkSync(join(REPO_ROOT, 'node_modules/openclaw'), peerLink, 'dir');
+      }
+      const installed = await import(pathToFileURL(join(ctx.installedPath('bridge'), 'dist/index.js')).href);
+      let budgetHook;
+      const probeServices = [];
+      installed.default.register({ registrationMode: 'full', pluginConfig: { contextMaxTokens: 1024, channels: { mqtt: { forwardToMq: false } } },
+        logger: { info() {}, warn() {}, error() {} }, registerService(service) { probeServices.push(service); },
+        on(name, hook) { if (name === 'before_prompt_build') budgetHook = hook; },
+      });
+      try {
+        const probeStart = performance.now();
+        const probe = await budgetHook({}, { channel: 'mqtt' });
+        const injected = probe?.appendSystemContext ?? '';
+        if (!injected.includes('[bridge:mqtt]') || Buffer.byteLength(injected) > 1024) throw Error('installed bridge budget/provenance failed');
+        console.log(JSON.stringify({ o2: 'bridge', counter: 'utf8-byte-upper-bound-v1', tokens: Buffer.byteLength(injected), durationMs: performance.now() - probeStart }));
+        if (await budgetHook({}, { channel: 'mqtt', hookInvocation: { assertActive() { throw Error('expired'); } } }) !== undefined) throw Error('installed bridge returned expired injection');
+      } finally { await Promise.all(probeServices.map(service => service.stop?.())); }
       await ctx.waitFor(() => ctx.tcpReachable(11883), { label: "MQTT bridge target", timeoutMs: 30_000 });
 
       const inboundTopic = "openclaw/agent/main/in";

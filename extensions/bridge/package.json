@@ -70,5 +70,8 @@
   },
   "engines": {
     "node": ">=24.16.0 <25 || >=26.1.0"
+  },
+  "dependencies": {
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
   }
 }

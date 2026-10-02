@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、OpenClaw 2026.9.6、Node 24.18.0、pnpm 9.0.0、现有 JSONL/SQLite/OTLP/Prometheus 实现。
 
-**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1 已完成当前本地候选物验收，见[O1 记录](../reports/2026-10-03-o1-memory-capability.md)；Task 2–7 待实施。
+**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1 已完成当前本地候选物验收，见[O1 记录](../reports/2026-10-03-o1-memory-capability.md)；Task 2 已完成实施及 scoped 验收、待独立审查；Task 3–7 待实施。
 
 ## Global Constraints
 
@@ -51,11 +51,13 @@ T1 memory/openmem；T2 knowledge/memory/bridge 的上下文与 message-sdk 预�
 
 **Interfaces:** `validateContextBudgetProfile(profile, enabledPlugins): string[]` 校验规格中的 totalTokens/allocations；`truncateContextToBudget(text: string, maxTokens: number, countTokens: (text: string)=>number): string` 保证计数不超限。CLI 输出各插件现有配置对应的预算片段，由用户显式应用；运行时不引入全局可变总账。
 
-- [ ] 添加总预算 100、三方分配 40/40/20 可通过，40/40/21 必失败；中文/emoji 截断后 token 数不超限；同源片段去重；hookInvocation 已取消时迟到检索不注入。
-- [ ] 运行 `node --test scripts/check-context-budget.test.mjs` 及 `pnpm --dir extensions/message-sdk exec vitest run src/text/context-budget.test.ts`，确认缺失行为红灯。
-- [ ] 实现 profile 校验、来源标记与同源去重；各插件按分配预算裁剪，并在 await 后校验 invocation 活性、传播取消信号。缺少精确 tokenizer 使用经测试的保守上界，保留无 profile 时的旧行为。
-- [ ] 运行三插件目标单测；新增三插件组合 fixture，断言注入总量 ≤100 token、来源可追踪、取消后零注入；在稳定版重跑 knowledge/memory/bridge 受影响安装态场景。
-- [ ] 保存预算配置示例与实测 token/延迟记录；获授权时提交 `feat: bound and attribute plugin context injection`。
+- [x] 添加总预算 100、三方分配 40/40/20 可通过，40/40/21 必失败；中文/emoji 截断后 token 数不超限；同源片段去重；hookInvocation 已取消时迟到检索不注入。
+- [x] 运行 `node --test scripts/check-context-budget.test.mjs` 及 `pnpm --dir extensions/message-sdk exec vitest run src/text/context-budget.test.ts`，确认缺失行为红灯。
+- [x] 实现 profile 校验、来源标记与同源去重；各插件按分配预算裁剪，并在 await 后校验 invocation 活性、传播取消信号。缺少精确 tokenizer 使用经测试的保守上界，保留无 profile 时的旧行为。
+- [x] 运行三插件目标单测；新增三插件组合 fixture，断言注入总量 ≤100 token、来源可追踪、取消后零注入；在稳定版重跑 knowledge/memory/bridge 受影响安装态场景。
+- [x] 保存预算配置示例与实测 token/延迟记录；获授权时提交 `feat: bound and attribute plugin context injection`。
+
+O2 实施与 scoped 安装态验收完成，待主任务独立审查；详见 `.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md`。四项当前证据有效，全仓其余 23 项证据需后续刷新。
 
 ### Task 3: 结构化 Wire 与 Router 消息（O3）
 
@@ -125,4 +127,4 @@ O1–O7 分别由 T1–T7 覆盖。五项 Review Focus 均有对应测试。O1 �
 - [ ] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；公共 SDK 变化引起的指纹失效必须重跑。
 - [ ] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。
 
-当前按用户后续授权逐任务实施与独立审查。Task 1 已完成本地候选物验收；共享 E2E 输入变化使旧 27 项中的 25 项证据失效，收口前必须按最终输入重验。Task 2–7 仍按本计划依赖顺序推进。
+当前按用户后续授权逐任务实施与独立审查。Task 1 已完成本地候选物验收；Task 2 已完成 scoped 验收、待独立审查；当前 knowledge/memory/bridge/mqtt 四项证据有效，其余 23 项仍不满足全仓门禁，收口前必须按最终输入重验。Task 3–7 仍按本计划依赖顺序推进。

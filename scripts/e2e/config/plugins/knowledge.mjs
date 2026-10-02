@@ -18,6 +18,7 @@ export const KNOWLEDGE_E2E_DB_PATH = join(STATE_DIR, "knowledge-e2e", "knowledge
  */
 export const KNOWLEDGE_E2E_CONFIG = {
   enabled: true,
+  contextMaxTokens: 4096,
   embedding: {
     provider: "openai",
     baseUrl: `http://127.0.0.1:${E2E_PORTS.modelFixture}/v1`,

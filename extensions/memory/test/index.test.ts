@@ -899,3 +899,59 @@ describe("O1 Memory capability 与可信会话身份", () => {
     }
   });
 });
+
+describe('O2 bounded recall cancellation', () => {
+  it('retains complete legacy sentence punctuation inside the explicit budget', async () => {
+    let recall!: (...args: any[]) => Promise<any>;
+    let stop!: () => Promise<void>;
+    const ready = vi.spyOn(MemoryStore.prototype, 'initialize').mockResolvedValue();
+    const search = vi.spyOn(MemoryStore.prototype, 'createSearchManager').mockReturnValue({ search: async () => [{ citation: 'a', snippet: '我喜欢中文回答' }] } as never);
+    plugin.register!({ registrationMode: 'full', pluginConfig: { contextMaxTokens: 1000 }, config: {},
+      logger: { info() {}, warn() {} }, registerCli() {}, registerTool() {}, registerMemoryCapability() {},
+      registerService(service: { stop: () => Promise<void> }) { stop = service.stop; },
+      on(name: string, fn: typeof recall) { if (name === 'before_prompt_build') recall = fn; },
+    } as never);
+    try {
+      const result = await recall({ prompt: 'question' }, {});
+      expect(result.prependContext).toContain('我喜欢中文回答。');
+      expect(Buffer.byteLength(result.prependContext)).toBeLessThanOrEqual(1000);
+    } finally { await stop(); ready.mockRestore(); search.mockRestore(); }
+  });
+
+  it.each([false, true])('drops late results after %s timeout/cancellation and propagates signal', async timedOut => {
+    let recall!: (...args: any[]) => Promise<unknown>;
+    let stop!: () => Promise<void>;
+    let finish!: (value: unknown[]) => void;
+    let receivedSignal!: AbortSignal;
+    const ready = vi.spyOn(MemoryStore.prototype, 'initialize').mockResolvedValue();
+    const search = vi.spyOn(MemoryStore.prototype, 'createSearchManager').mockReturnValue({ search: (_query: string, options: { signal: AbortSignal }) => {
+      receivedSignal = options.signal;
+      return new Promise(resolve => { finish = resolve; });
+    } } as never);
+    plugin.register!({ registrationMode: 'full', pluginConfig: { contextMaxTokens: 40, autoRecallTimeoutMs: 50 }, config: {},
+      logger: { info() {}, warn() {} }, registerCli() {}, registerTool() {}, registerMemoryCapability() {},
+      registerService(service: { stop: () => Promise<void> }) { stop = service.stop; },
+      on(name: string, fn: typeof recall) { if (name === 'before_prompt_build') recall = fn; },
+    } as never);
+    let active = true;
+    const controller = new AbortController();
+    try {
+      const pending = recall({ prompt: 'question' }, { signal: controller.signal, hookInvocation: { assertActive() { if (!active) throw Error('expired'); } } });
+      await vi.waitFor(() => expect(finish).toBeDefined(), { interval: 1 });
+      if (timedOut) {
+        expect(await pending).toBeUndefined();
+        expect(receivedSignal.aborted).toBe(true);
+        finish([{ citation: 'a', snippet: 'late' }]);
+      } else {
+        active = false; controller.abort(); finish([{ citation: 'a', snippet: 'late' }]);
+        expect(receivedSignal.aborted).toBe(true);
+        expect(await pending).toBeUndefined();
+      }
+    } finally { await stop(); ready.mockRestore(); search.mockRestore(); }
+  });
+  it('rejects invalid allocation without changing the legacy default', () => {
+    expect(resolveConfig({ pluginConfig: {} } as never).contextMaxTokens).toBeUndefined();
+    for (const contextMaxTokens of [-1, 0.5, '40', null]) expect(() => resolveConfig({ pluginConfig: { contextMaxTokens } } as never)).toThrow('contextMaxTokens');
+    expect(resolveConfig({ pluginConfig: { contextMaxTokens: 0 } } as never).contextMaxTokens).toBe(0);
+  });
+});

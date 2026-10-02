@@ -36,12 +36,13 @@ export class ZhipuEmbeddingService implements EmbeddingService {
     this.dimensions = config?.dimensions ?? DEFAULT_DIMENSIONS;
   }
 
-  async embed(text: string): Promise<number[]> {
-    const results = await this.embedBatch([text]);
+  async embed(text: string, signal?: AbortSignal): Promise<number[]> {
+    const results = await this.embedBatch([text], signal);
     return results[0];
   }
 
-  async embedBatch(texts: string[]): Promise<number[][]> {
+  async embedBatch(texts: string[], signal?: AbortSignal): Promise<number[][]> {
+    signal?.throwIfAborted();
     if (texts.length === 0) return [];
     return inEmbeddingBatches(texts, this.config, async (batch) => {
 
@@ -58,6 +59,7 @@ export class ZhipuEmbeddingService implements EmbeddingService {
 
     const data = await postEmbeddingJson<{ data?: unknown }>(this.baseUrl, {
       method: 'POST',
+      signal,
       headers: {
         'Content-Type': 'application/json',
         ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),

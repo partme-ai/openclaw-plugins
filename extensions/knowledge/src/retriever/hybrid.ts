@@ -53,26 +53,29 @@ export async function hybridSearch(
   store: VectorStore,
   options?: SearchOptions & { config?: Partial<HybridRetrievalConfig> },
 ): Promise<ScoredChunk[]> {
+  options?.signal?.throwIfAborted();
   const config = { ...DEFAULT_CONFIG, ...options?.config };
   const topK = options?.topK ?? 5;
 
   switch (config.strategy) {
     case 'vector': {
-      const vector = await embedding.embed(query);
+      const vector = await embedding.embed(query, options?.signal);
+      options?.signal?.throwIfAborted();
       return store.search(vector, options);
     }
 
     case 'keyword': {
-      const results = await keywordSearch(query, store, topK, options?.sourceId);
+      const results = await keywordSearch(query, store, topK, options?.sourceId, options?.signal);
       return results.filter((item) => item.score >= (options?.minScore ?? 0));
     }
 
     case 'hybrid': {
       // 双路并行召回，各自扩大 topK 供融合阶段裁剪
-      const vector = await embedding.embed(query);
+      const vector = await embedding.embed(query, options?.signal);
+      options?.signal?.throwIfAborted();
       const [vectorResults, keywordResults] = await Promise.all([
         store.search(vector, { ...options, topK: topK * 2, minScore: 0 }),
-        keywordSearch(query, store, topK * 2, options?.sourceId),
+        keywordSearch(query, store, topK * 2, options?.sourceId, options?.signal),
       ]);
 
       return fuseResults(
@@ -102,12 +105,13 @@ async function keywordSearch(
   store: VectorStore,
   topK: number,
   sourceId?: string,
+  signal?: AbortSignal,
 ): Promise<ScoredChunk[]> {
   if (store.keywordSearch) {
-    return store.keywordSearch(query, topK, sourceId);
+    return store.keywordSearch(query, topK, sourceId, signal);
   }
 
-  return simpleKeywordSearch(query, store, topK, sourceId);
+  return simpleKeywordSearch(query, store, topK, sourceId, signal);
 }
 
 /**
@@ -120,8 +124,9 @@ async function simpleKeywordSearch(
   store: VectorStore,
   topK: number,
   sourceId?: string,
+  signal?: AbortSignal,
 ): Promise<ScoredChunk[]> {
-  const allChunks = await getAllChunks(store, sourceId);
+  const allChunks = await getAllChunks(store, sourceId, signal);
   if (allChunks.length === 0) return [];
 
   const queryTerms = tokenize(query);
@@ -195,11 +200,13 @@ function fuseResults(
  *
  * @remarks 生产环境应替换为专用分页 API；当前为第一版 pragmatic 方案。
  */
-async function getAllChunks(store: VectorStore, sourceId?: string): Promise<ScoredChunk['chunk'][]> {
+async function getAllChunks(store: VectorStore, sourceId?: string, signal?: AbortSignal): Promise<ScoredChunk['chunk'][]> {
   const dimensions = (await store.stats()).dimensions;
+  signal?.throwIfAborted();
   const dummyVector = new Array(dimensions).fill(0);
   const results = await store.search(dummyVector, {
     topK: 10000,
+    signal,
     minScore: 0,
     sourceId,
   });

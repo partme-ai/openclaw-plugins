@@ -7,12 +7,14 @@
  */
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { join, dirname } from "node:path";
 import { promisify } from "node:util";
 
 import { MEMORY_E2E_DATA_DIR } from "../config/plugins/memory.mjs";
 import { ensureGatewayRunning, stopHostGateway } from "../lib/gateway.mjs";
-import { GATEWAY_PORT, OPENCLAW_BIN, PROFILE, tcpReachable } from "../lib/utils.mjs";
+import { GATEWAY_PORT, OPENCLAW_BIN, PROFILE, REPO_ROOT, tcpReachable } from "../lib/utils.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -164,6 +166,30 @@ export async function testMemory(ctx, results) {
       if (!modelRequest.includes(FIRST_MEMORY) || !modelRequest.includes("L3/profile")) {
         throw new Error("cross-session L3 memory was not injected into the second model request");
       }
+      // 普通 Node probe 需要与 Gateway 同一 OpenClaw peer；不改 tarball。
+      const peerLink = join(ctx.installedPath('memory'), 'node_modules/openclaw');
+      if (!existsSync(peerLink)) {
+        mkdirSync(dirname(peerLink), { recursive: true });
+        symlinkSync(join(REPO_ROOT, 'node_modules/openclaw'), peerLink, 'dir');
+      }
+      const installed = await import(pathToFileURL(join(ctx.installedPath('memory'), 'dist/index.js')).href);
+      let budgetHook, stopProbe;
+      installed.default.register({ registrationMode: 'full', pluginConfig: { dataDir: MEMORY_E2E_DATA_DIR, profileScope: 'agent', contextMaxTokens: 4096 }, config: {},
+        logger: { info() {}, warn() {} }, registerCli() {}, registerTool() {}, registerMemoryCapability() {},
+        registerService(service) { stopProbe = service.stop; },
+        on(name, hook) { if (name === 'before_prompt_build') budgetHook = hook; },
+      });
+      try {
+        const probeStart = performance.now();
+        const probe = await budgetHook({ prompt: '星云紫' }, { sessionKey: 'agent:main:memory-e2e-b', agentId: 'main' });
+        const injected = probe?.prependContext ?? '';
+        if (!injected.includes('[memory:') || !injected.includes('星云紫') || Buffer.byteLength(injected) > 4096) throw Error('installed memory budget/provenance failed');
+        console.log(JSON.stringify({ o2: 'memory', counter: 'utf8-byte-upper-bound-v1', tokens: Buffer.byteLength(injected), durationMs: performance.now() - probeStart }));
+        let active = true;
+        const late = budgetHook({ prompt: '星云紫' }, { hookInvocation: { assertActive() { if (!active) throw Error('expired'); } } });
+        active = false;
+        if (await late !== undefined) throw Error('installed memory returned late injection');
+      } finally { await stopProbe(); }
       // profileScope=agent shares only L3; the private marker exists solely in L0/L1/L2.
       await runToolRecall(model, "agent:main:memory-e2e-b", privateMarker, "callmemoryisolated", true);
       stopHostGateway();

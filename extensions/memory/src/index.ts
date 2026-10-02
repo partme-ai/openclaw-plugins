@@ -1,3 +1,4 @@
+import { formatBudgetedContext, isContextInvocationActive } from '@partme.ai/openclaw-message-sdk/text';
 /**
  * @fileoverview OpenClaw 内置长期记忆插件的组装入口。
  *
@@ -28,6 +29,7 @@ const configSchema = {
   type: "object" as const,
   additionalProperties: false,
   properties: {
+    contextMaxTokens: { type: "integer" as const, minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
     enabled: { type: "boolean" as const, default: true },
     dataDir: { type: "string" as const, default: "~/.openclaw/state/memory" },
     maxSearchResults: { type: "integer" as const, minimum: 1, maximum: 100, default: 10 },
@@ -107,12 +109,13 @@ function registerMemoryCli(program: CliCommand, config: ReturnType<typeof resolv
 async function withRecallTimeout<T>(
   task: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
+  parentSignal?: AbortSignal,
 ): Promise<T> {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
-      task(controller.signal),
+      task(parentSignal ? AbortSignal.any([parentSignal, controller.signal]) : controller.signal),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
           controller.abort();
@@ -316,7 +319,7 @@ function registerAgentRuntime(api: OpenClawPluginApi, config: ReturnType<typeof 
   );
 
   api.on("before_prompt_build", async (event, context) => {
-    if (!config.autoRecall || !runtime.isActive()) return undefined;
+    if (!config.autoRecall || !runtime.isActive() || !isContextInvocationActive(context)) return undefined;
     const messages = normalizeTurnMessages(Array.isArray(event.messages) ? event.messages : []);
     const latestUser = [...messages].reverse().find((message) => message.role === "user")?.content;
     const query = (latestUser || event.prompt || "").trim().slice(0, 2_000);
@@ -325,6 +328,7 @@ function registerAgentRuntime(api: OpenClawPluginApi, config: ReturnType<typeof 
     const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim();
     try {
       await ensureStoreReady();
+      if (!runtime.isActive() || !isContextInvocationActive(context)) return undefined;
       const results = await withRecallTimeout(
         (signal) => managerFor(agentId).search(query, {
           maxResults: config.autoRecallMaxResults,
@@ -332,8 +336,11 @@ function registerAgentRuntime(api: OpenClawPluginApi, config: ReturnType<typeof 
           signal,
         }),
         config.autoRecallTimeoutMs,
+        (context as { signal?: AbortSignal }).signal,
       );
-      const prependContext = formatRecallContext(results, config.autoRecallMaxChars);
+      if (!runtime.isActive() || !isContextInvocationActive(context)) return undefined;
+      const prependContext = config.contextMaxTokens === undefined ? formatRecallContext(results, config.autoRecallMaxChars)
+        : formatBudgetedContext('memory', results.map(result => ({ source: result.citation ?? result.snippet, text: `Untrusted history: ${/[。！？.!?]$/u.test(result.snippet) ? result.snippet : `${result.snippet}。`}` })), config.contextMaxTokens);
       return prependContext ? { prependContext } : undefined;
     } catch (error) {
       api.logger.warn(`[memory] automatic recall skipped: ${String(error)}`);

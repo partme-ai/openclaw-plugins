@@ -259,6 +259,8 @@ export interface BridgeChannelConfig {
 
 /** @description Bridge 插件配置根：`channels` 键为 channelId。 */
 export interface BridgeConfig {
+  /** 显式组合预算分配，包含来源标签；缺省保留旧注入行为。 */
+  contextMaxTokens?: number;
   channels?: Record<string, BridgeChannelConfig>;
   delivery?: Partial<typeof DEFAULT_DELIVERY>;
 }
@@ -397,8 +399,11 @@ export function validateBridgeConfig(config: BridgeConfig): void {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw new Error("[openclaw-bridge] config must be an object");
   }
-  const rootUnknown = Object.keys(config).filter((key) => key !== "channels" && key !== "delivery");
+  const rootUnknown = Object.keys(config).filter((key) => key !== "channels" && key !== "delivery" && key !== "contextMaxTokens");
   if (rootUnknown.length > 0) throw new Error(`[openclaw-bridge] unknown config field: ${rootUnknown.join(", ")}`);
+  if (config.contextMaxTokens !== undefined && (!Number.isSafeInteger(config.contextMaxTokens) || config.contextMaxTokens < 0)) {
+    throw new Error("[openclaw-bridge] contextMaxTokens must be a non-negative safe integer");
+  }
   if (config.delivery !== undefined && (!config.delivery || typeof config.delivery !== "object" || Array.isArray(config.delivery))) {
     throw new Error("[openclaw-bridge] delivery must be an object");
   }

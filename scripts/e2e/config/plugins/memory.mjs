@@ -20,6 +20,7 @@ export function memoryConfig() {
         },
         config: {
           enabled: true,
+          contextMaxTokens: 4096,
           dataDir: MEMORY_E2E_DATA_DIR,
           maxSearchResults: 10,
           retentionDays: 30,

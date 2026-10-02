@@ -5,6 +5,7 @@ export function bridgeConfig() {
       bridge: {
         enabled: true,
         config: {
+          contextMaxTokens: 1024,
           channels: {
             mqtt: {
               enabled: true,

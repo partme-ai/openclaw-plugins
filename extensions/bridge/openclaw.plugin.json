@@ -18,6 +18,7 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "contextMaxTokens": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
       "channels": {
         "type": "object",
         "additionalProperties": {

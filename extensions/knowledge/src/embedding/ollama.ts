@@ -30,8 +30,20 @@ export class OllamaEmbeddingService implements EmbeddingService {
     this.client = new Ollama({ host: config?.baseUrl ?? process.env.OLLAMA_HOST });
   }
 
-  async embed(text: string): Promise<number[]> {
-    const response = await withEmbeddingTimeout(this.client.embed({
+  private clientFor(signal?: AbortSignal): Ollama {
+    if (!signal) return this.client;
+    signal.throwIfAborted();
+    // 每次请求独立 fetch 闭包，避免共享 Ollama 实例的 abort 取消其它会话。
+    return new Ollama({ host: this.config?.baseUrl ?? process.env.OLLAMA_HOST,
+      fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.any([
+        signal, AbortSignal.timeout(this.config?.requestTimeoutMs ?? DEFAULT_EMBEDDING_TIMEOUT_MS),
+        ...(init?.signal ? [init.signal] : []),
+      ]) }),
+    });
+  }
+
+  async embed(text: string, signal?: AbortSignal): Promise<number[]> {
+    const response = await withEmbeddingTimeout(this.clientFor(signal).embed({
       model: this.modelName,
       input: text,
     }), this.config?.requestTimeoutMs ?? DEFAULT_EMBEDDING_TIMEOUT_MS, 'Ollama');
@@ -41,10 +53,10 @@ export class OllamaEmbeddingService implements EmbeddingService {
     return vector;
   }
 
-  async embedBatch(texts: string[]): Promise<number[][]> {
+  async embedBatch(texts: string[], signal?: AbortSignal): Promise<number[][]> {
     if (texts.length === 0) return [];
     return inEmbeddingBatches(texts, this.config, async (batch) => {
-      const response = await withEmbeddingTimeout(this.client.embed({
+      const response = await withEmbeddingTimeout(this.clientFor(signal).embed({
         model: this.modelName,
         input: batch,
       }), this.config?.requestTimeoutMs ?? DEFAULT_EMBEDDING_TIMEOUT_MS, 'Ollama');

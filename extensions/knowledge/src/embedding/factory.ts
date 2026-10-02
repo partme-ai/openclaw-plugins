@@ -76,11 +76,11 @@ function validateService(service: EmbeddingService): EmbeddingService {
   return {
     dimensions: service.dimensions,
     modelName: service.modelName,
-    async embed(text: string): Promise<number[]> {
-      return validateVector(await service.embed(text), 'Embedding provider');
+    async embed(text: string, signal?: AbortSignal): Promise<number[]> {
+      return validateVector(await service.embed(text, signal), 'Embedding provider');
     },
-    async embedBatch(texts: string[]): Promise<number[][]> {
-      const vectors = await service.embedBatch(texts);
+    async embedBatch(texts: string[], signal?: AbortSignal): Promise<number[][]> {
+      const vectors = await service.embedBatch(texts, signal);
       if (!Array.isArray(vectors) || vectors.length !== texts.length) {
         throw new Error(`Embedding provider returned ${Array.isArray(vectors) ? vectors.length : 'invalid'} vectors; expected ${texts.length}`);
       }

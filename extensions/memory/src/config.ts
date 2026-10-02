@@ -25,6 +25,7 @@ export interface MemoryConfig {
   extractionInterval: number;
   maxRecordBytes: number;
   profileScope: "session" | "agent";
+  contextMaxTokens?: number;
   autoRecall: boolean;
   autoRecallMaxResults: number;
   autoRecallMaxChars: number;
@@ -107,6 +108,7 @@ export function resolveConfig(api: Pick<OpenClawPluginApi, "pluginConfig">): Mem
 
   return {
     enabled: raw.enabled !== false,
+    ...(raw.contextMaxTokens === undefined ? {} : { contextMaxTokens: boundedInteger(raw.contextMaxTokens, "contextMaxTokens", 0, 0, Number.MAX_SAFE_INTEGER) }),
     dataDir,
     maxSearchResults: boundedInteger(raw.maxSearchResults, "maxSearchResults", DEFAULTS.maxSearchResults, 1, 100),
     maxSearchBytes: boundedInteger(
