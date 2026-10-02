@@ -32,3 +32,7 @@ The host tag exposes `plugins.list` (`src/gateway/server-methods/plugins.ts:101+
 ## Boundaries
 
 Other IM platforms have only static catalog/adapter coverage here; they need actual account, permission, network and platform-specific runtime acceptance. An external caller must provide authorized, same-Gateway status snapshots; Bridge does not poll them itself. No npm publication, branch switch or push was performed. Three preexisting `scripts/e2e/.browser-{mqtt,stomp,web-socket}.log` modifications were left untouched and excluded from the O4 commit. The repository `CLAUDE.md` 4,000-token per-task budget was exceeded by the required installed E2E and exact artifact audit; this was reported to the parent agent before implementation.
+
+## Independent review outcome
+
+The original reviewer first reported Spec FAIL / Quality NEEDS FIXES for the `ingressUnavailable=true` false positive. After repair commit `548f34b69e5b700f05e65fb0316f0004d241a01b`, the same reviewer independently replayed the prior case against current dist and concluded **Spec PASS / Quality APPROVE**, with no remaining concrete blocker. They confirmed `ingressUnavailable=true`, `starting`, and `recovering` return `ready=false`, while a normal ready account returns `true`; Bridge 165/165 tests, typecheck, exact candidate SHA, current Bridge/MQTT fingerprints and the final installed report pass. This is scoped MQTT lifecycle evidence; real external accounts and full 27-plugin readiness remain outside this O4 acceptance.

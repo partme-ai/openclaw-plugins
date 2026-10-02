@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、OpenClaw 2026.9.6、Node 24.18.0、pnpm 9.0.0、现有 JSONL/SQLite/OTLP/Prometheus 实现。
 
-**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–3 已完成当前本地候选物验收；Task 2、3 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)和[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)；Task 4–7 待实施。
+**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–4 已完成各自本地候选物验收；Task 2–4 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)、[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)和[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)；Task 5–7 待实施。最终全仓证据仍待收口。
 
 ## Global Constraints
 
@@ -79,11 +79,13 @@ O3 安装态 mqtt/router/wecom/gotify 四项均 PASS 且零跳过，修复后的
 
 **Interfaces:** 新增 `resolveChannelAvailability(meta, runtimeFacts): {known:boolean;installed:boolean;enabled:boolean;ready:boolean;unavailableFacts?:string[]}`；运行事实只能来自宿主公开能力接口或明确注入的 manifest/status 适配器。不能从静态 ALL_CHANNELS 推导 ready；无法查询的字段保守为 false，并通过 unavailableFacts 区分未知与已知否定。
 
-- [ ] 测试静态存在但未安装→known=true/ready=false；已安装但禁用→enabled=false；未知渠道→无特权；运行失败→ready=false。对 2026.9.6 manifest 建立渠道 ID fixture。
-- [ ] 运行 `pnpm --dir extensions/bridge test`，记录新状态契约红灯。
-- [ ] 更新来源与能力映射；按公开宿主事实补全可用性，若宿主不能提供某事实则记录 unavailableFacts 并保持未就绪，不猜测。
-- [ ] 重跑测试及 `node scripts/e2e/run-e2e.mjs --plugins bridge,mqtt`；断开目标后状态转为未就绪，恢复后按真实事件更新。
-- [ ] 更新来源、配置与就绪含义的文档；获授权时提交 `feat: distinguish bridge catalog and runtime capabilities`。
+- [x] 测试静态存在但未安装→known=true/ready=false；已安装但禁用→enabled=false；未知渠道→无特权；运行失败→ready=false。对 2026.9.6 manifest 建立渠道 ID fixture。
+- [x] 运行 `pnpm --dir extensions/bridge test`，记录新状态契约红灯。
+- [x] 更新来源与能力映射；按公开宿主事实补全可用性，若宿主不能提供某事实则记录 unavailableFacts 并保持未就绪，不猜测。
+- [x] 重跑测试及 `node scripts/e2e/run-e2e.mjs --plugins bridge,mqtt`；在隔离 Gateway 停止 MQTT 后状态转为未就绪，恢复后按宿主真实状态更新。
+- [x] 更新来源、配置与就绪含义的英中文档；已按授权提交 `feat: distinguish bridge catalog and runtime capabilities` 和复审修复 `fix: veto bridge readiness when ingress is unavailable`。
+
+O4 独立复审 Spec PASS / Quality APPROVE。最终安装态 Bridge/MQTT 各一次 PASS、零跳过，当前指纹及精确包校验为 `[]`；其他 25 项历史报告仍待最终全仓重验。详见[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)。
 
 ### Task 5: 服务实例生命周期隔离（O5）
 
@@ -129,4 +131,4 @@ O1–O7 分别由 T1–T7 覆盖。五项 Review Focus 均有对应测试。O1 �
 - [ ] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；公共 SDK 变化引起的指纹失效必须重跑。
 - [ ] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。
 
-当前按用户后续授权逐任务实施与独立审查。Task 1–3 已完成各自本地候选物验收，Task 3 独立复审通过；当前 mqtt/router/wecom/gotify 四项证据有效，其余 23 项仍不满足全仓门禁，收口前必须按最终输入重验。Task 4–7 仍按本计划依赖顺序推进。
+当前按用户后续授权逐任务实施与独立审查。Task 1–4 已完成各自本地候选物验收，Task 4 独立复审通过；当前 Bridge/MQTT 两项证据有效，其余 25 项仍不满足全仓门禁，收口前必须按最终输入重验。Task 5–7 仍按本计划依赖顺序推进。
