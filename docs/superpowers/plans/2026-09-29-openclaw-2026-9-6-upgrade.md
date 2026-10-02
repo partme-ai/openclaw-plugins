@@ -81,6 +81,7 @@
 - [x] 调整管理路由鉴权和 E2E 请求凭据，注册同插件只读状态 tab；文档说明 auth=none 边界，保留 Webhook 签名验证行为。
 - [x] 重跑目标测试；执行 `node scripts/e2e/run-e2e.mjs --plugins router,gotify` 和 `--plugins tracing,mqtt`，鉴权负例及合法请求通过，OTLP 数据可观测；真实 Cookie 详见[U3 记录](../reports/2026-10-02-u3-browser-grants.md)。
 - [x] 审查敏感响应与重放副作用证据；同插件只读 Cookie 的 GET/POST、跨插件读取及重放副作用、真实过期均由当前 Gateway 记录验证，纳入本轮提交。
+- [x] 在本机真实 Chrome 检查 Control UI 的 Router/Tracing tab：390×884、768×1024、1280×1024 共六次导航及状态 iframe HTTP 200/JSON 均通过；页面目前直接显示原始 JSON，视觉可用性未通过。一次性脚本的中断清理测试失败，故不交付该脚本或把本次结果记作可重复门禁；见[浏览器核查](../reports/2026-10-02-u3-local-control-ui-browser.md)。
 
 ### Task 4: 标准入站和 Transcript（U4）
 
@@ -165,4 +166,4 @@
 
 U1–U9 分别由 T1–T9 覆盖；Review Focus 五项已绑定 T2/T3/T5/T6/T7 的测试。T5 的 outcome 与 T6 的 delivery outcome 分开，避免把 Agent 完成等同投递完成。源码、mock、已安装宿主、真实平台四层证据分别记录。
 
-U8 的 27 项安装态场景已对当前候选物重验；共享 E2E 输入变动后，曾全部为宿主 Gateway 模式，三个 Web 场景使用真实 Chrome。之后 Prometheus 使用全新隔离状态目录完成一次容器 Gateway 安装态复验，PASS 且跳过 0；当前 27 项证据门禁仍通过，详见[最新本地复验](../reports/2026-10-02-openmem-installed-tool-e2e.md)。U3 的 Router/Tracing 同插件签发 Cookie 已在真实 Gateway HTTP 边界验证。真实厂商联调、浏览器视觉交互、生产部署及 U9 的部署故障恢复仍需验收；此前容器测试库报错时的快照不可得，根因未确认。npm 包尚未发布。
+U8 的 27 项安装态场景已对当前候选物重验；共享 E2E 输入变动后，曾全部为宿主 Gateway 模式，三个 Web 场景使用真实 Chrome。之后 Prometheus 使用全新隔离状态目录完成一次容器 Gateway 安装态复验，PASS 且跳过 0；当前 27 项证据门禁仍通过，详见[最新本地复验](../reports/2026-10-02-openmem-installed-tool-e2e.md)。U3 的 Router/Tracing 同插件签发 Cookie 已在真实 Gateway HTTP 边界验证；本地 Chrome 的六次 Control UI tab 点击与状态读取也通过，但页面显示原始 JSON，视觉可用性与可重复浏览器门禁仍待改进，见[浏览器核查](../reports/2026-10-02-u3-local-control-ui-browser.md)。真实厂商联调、生产部署及 U9 的部署故障恢复仍需验收；此前容器测试库报错时的快照不可得，根因未确认。npm 包尚未发布。
