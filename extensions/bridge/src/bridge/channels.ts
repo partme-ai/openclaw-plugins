@@ -202,7 +202,7 @@ export function adaptGatewayChannelFacts(
   pluginsList: { partial?: boolean; plugins?: Array<{ id?: string; installed?: boolean; enabled?: boolean; runtime?: { state?: string } }> } | undefined,
   channelsStatus: { partial?: boolean; channelAccounts?: Record<string, Array<{
     enabled?: boolean; configured?: boolean; running?: boolean; connected?: boolean;
-    lifecycle?: string; lastError?: string | null;
+    lifecycle?: string; ingressUnavailable?: true; lastError?: string | null;
   }>> } | undefined,
 ): ChannelRuntimeFacts {
   const canonical = getChannelMeta(meta.channelId);
@@ -222,7 +222,8 @@ export function adaptGatewayChannelFacts(
       // Other channels need explicit connected or ready lifecycle evidence.
       const states = activeRows.map((account) => {
         if (account.configured === false || account.running === false || account.connected === false ||
-          account.lifecycle === "blocked" || account.lifecycle === "stopped" || account.lastError) return false;
+          account.ingressUnavailable === true || account.lifecycle === "blocked" || account.lifecycle === "stopped" ||
+          account.lifecycle === "starting" || account.lifecycle === "recovering" || account.lastError) return false;
         if (account.running === true && (account.connected === true || account.lifecycle === "ready" || canonical.channelId === "mqtt")) return true;
         return undefined;
       });

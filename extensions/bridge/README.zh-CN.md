@@ -191,7 +191,7 @@ Bridge 不再使用发送前的 `reply_payload_sending` 作为出站依据，因
 
 静态目录识别 27 个渠道：19 个 OpenClaw 2026.9.6 bundled 渠道、仓库内 6 个渠道（`wecom`、`openclaw-weixin`、`wechat-ipad`、`wecom-kf`、`douyin`、`mqtt`），以及外部 `dingtalk-connector` 和 QQ Bot。QQ Bot 是可下载的 `@tencent-connect/openclaw-qqbot`，插件 ID `openclaw-qqbot`、渠道 ID `qqbot`。
 
-`ALL_CHANNELS` 只证明 **known**；`ALL_CAPABILITIES` 的消息格式与限制是静态近似，不证明 **installed / enabled / ready**。Bridge 自身的 `channels` 配置也不是连接状态。`resolveChannelAvailability(meta, runtimeFacts)` 对缺失事实返回 `false` 并在 `unavailableFacts` 中列明，已知否定值不列入；未知渠道不授予额外能力。宿主调用方持 `operator.read`，从同一 Gateway 获取 `plugins.list` 与 `channels.status`，调用 `adaptGatewayChannelFacts(meta, pluginsList, channelsStatus)`。适配器读取插件安装/启用/运行状态与渠道账号快照；MQTT 的 `running` 是入站监听器就绪事实，其他渠道需要显式 `connected` 或 `lifecycle=ready`。部分响应保守为未知。Bridge 外部插件不自行请求 Gateway 或扩大权限。响应契约来源：OpenClaw 2026.9.6 `src/gateway/server-methods/{plugins,channels}.ts`。
+`ALL_CHANNELS` 只证明 **known**；`ALL_CAPABILITIES` 的消息格式与限制是静态近似，不证明 **installed / enabled / ready**。Bridge 自身的 `channels` 配置也不是连接状态。`resolveChannelAvailability(meta, runtimeFacts)` 对缺失事实返回 `false` 并在 `unavailableFacts` 中列明，已知否定值不列入；未知渠道不授予额外能力。宿主调用方持 `operator.read`，从同一 Gateway 获取 `plugins.list` 与 `channels.status`，调用 `adaptGatewayChannelFacts(meta, pluginsList, channelsStatus)`。适配器读取插件安装/启用/运行状态与渠道账号快照；MQTT 的 `running` 是入站监听器就绪事实，其他渠道需要显式 `connected` 或 `lifecycle=ready`。`ingressUnavailable=true` 明确否定入站就绪，即使传输仍运行或连接；`starting/recovering` 也不能作为就绪证据。部分响应保守为未知。Bridge 外部插件不自行请求 Gateway 或扩大权限。响应契约来源：OpenClaw 2026.9.6 `src/gateway/server-methods/{plugins,channels}.ts`、`src/channels/plugins/types.core.ts`。
 
 当前安装态 E2E 使用 MQTT 证明以下完整链路：真实 MQTT 入站 → Agent Turn → MQTT 回复 → `message_sent` → Bridge inbound/outbound 审计 Topic，并检查同源 MQ 审计不会递归。其他渠道仍要用真实账号、租户、权限和网络环境逐个验收。
 

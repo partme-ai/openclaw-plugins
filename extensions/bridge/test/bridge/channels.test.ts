@@ -38,6 +38,21 @@ describe("2026.9.6 Gateway channel facts", () => {
     expect(resolveChannelAvailability(mqtt, recovered)).toMatchObject({ known: true, installed: true, enabled: true, ready: true });
   });
 
+  it("does not call inbound ready when ingress admission has failed or lifecycle is in progress", () => {
+    const plugins = { plugins: [{ id: "mqtt", installed: true, enabled: true, runtime: { state: "active" } }] };
+    for (const account of [
+      { enabled: true, configured: true, running: true, connected: true, lifecycle: "recovering", ingressUnavailable: true },
+      { enabled: true, configured: true, running: true, connected: true, lifecycle: "ready", ingressUnavailable: true },
+      { enabled: true, configured: true, running: true, connected: true, lifecycle: "starting" },
+      { enabled: true, configured: true, running: true, connected: true, lifecycle: "recovering" },
+    ]) {
+      const facts = adaptGatewayChannelFacts(mqtt!, plugins, snapshots(account));
+      expect(resolveChannelAvailability(mqtt, facts)).toMatchObject({
+        known: true, installed: true, enabled: true, ready: false,
+      });
+    }
+  });
+
   it("fails closed for partial snapshots, service failure, and unknown channels", () => {
     const partial = adaptGatewayChannelFacts(mqtt!, { plugins: [] }, { channelAccounts: {} });
     expect(resolveChannelAvailability(mqtt, partial).unavailableFacts).toEqual(["installed", "enabled", "ready"]);
