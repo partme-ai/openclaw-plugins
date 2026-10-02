@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、Node 24.18.0、pnpm 9.0.0、OpenClaw 2026.9.6、Docker Compose、Playwright。
 
-**Spec:** [稳定版升级规格](../specs/2026-09-29-openclaw-2026-9-6-upgrade.md)。状态：实施中；U1、U2、U4、U5、U6、U7、U8 已完成本地候选物验证；U3 已完成当前本地 Gateway 和目标安装态验证，见[U3 记录](../reports/2026-10-02-u3-browser-grants.md)。U9 的本地实现和目标验证见[后续记录](../reports/2026-10-02-openmem-recoverable-commit.md)。全量当前候选物证据门禁 27/27 通过，见[当前复验记录](../reports/2026-10-02-current-candidate-verification.md)；旧候选物证据见[验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。
+**Spec:** [稳定版升级规格](../specs/2026-09-29-openclaw-2026-9-6-upgrade.md)。状态：实施中；U1、U2、U4、U5、U6、U7 已完成本地候选物验证；U8 的 27 项候选物安装态证据通过，但 OpenMem `openmem_search` 真实工具调用仍待补测。U3 已完成当前本地 Gateway 和目标安装态验证，见[U3 记录](../reports/2026-10-02-u3-browser-grants.md)。U9 的本地实现和目标验证见[后续记录](../reports/2026-10-02-openmem-recoverable-commit.md)。全量当前候选物证据门禁 27/27 通过，见[当前复验记录](../reports/2026-10-02-current-candidate-verification.md)；旧候选物证据见[验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。
 
 ## Global Constraints
 
@@ -138,7 +138,8 @@
 
 - [x] 执行 `pnpm typecheck`、`pnpm build`、`pnpm test:unit`、`pnpm test:e2e:harness`、`pnpm test:release-scripts`、`pnpm check-release-readiness`、`pnpm check-explanatory-assets` 和包归档校验；结果见[验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。
 - [x] 按注册表运行安装态场景：单插件使用 `node scripts/e2e/run-e2e.mjs --plugins <id>`；bridge/mqtt、router/gotify、tracing/mqtt 使用规定组合。mtls、oauth2、memory、openmem 等隔离配置分别执行；无 skip-install/skip-browser。
-- [x] 核对每一插件的实际 Agent/Tool/协议结果及负例；具备 fixture 的场景标记 fixture，真实第三方平台验收单列，缺失未写成通过。
+- [x] 核对已执行安装态场景的 Agent/Tool/协议结果及负例；具备 fixture 的场景标记 fixture，真实第三方平台验收单列。OpenMem 的下一轮上下文可能来自宿主 transcript，尚不能证明 `openmem_search` 被模型调用。
+- [ ] 在本地安装态 Gateway 中让模型实际调用 `openmem_search`，断言工具结果来自 Sidecar 检索且请求经受保护代理，并排除宿主 transcript 单独提供答案的假阳性。
 - [x] 运行 `node scripts/check-e2e-evidence.mjs`，27 个当前候选物与 2026.9.6 宿主全部匹配、退出 0；已保存可访问归档，未提交凭据或原始敏感日志。
 - [x] 完成全变更审查和兼容说明；逐项证据见验收记录，旧 E2E 计划仍待实网验证。独立复核识别出 OpenMem Sidecar 提交意图已落盘但 POST 未发出时无法自动恢复的生产阻断，已记录人工对账边界。2026-10-02 的后续请求已授权 Git 提交与 GitHub 推送；npm 发布仍未授权。
 
@@ -154,6 +155,7 @@
 - [x] 单写入者启动防护：本地两个生产入口进程指向同一数据目录时，第二个在监听前明确拒绝；首个正常退出或 `SIGKILL` 后新进程可取得写入权，提交与同 ID 重放通过。RED 先复现第二实例错误监听；修复并发双拒绝后 15/15 次本机竞争通过。追加 `1cf0d23` 在真实生产入口复现归档已落盘、事实写入失败，再 `SIGKILL`、接管并同 ID 重放，唯一产物与直接 FTS 三行匹配；独立审查通过。见[本地证据](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)。
 - [x] 生产入口默认仅监听 loopback；显式外部绑定可供受保护代理使用，日志显示实际绑定地址。本机旧入口 `lsof` 显示 `*`，新进程绑定测试 6/6，通过独立审查；保留程序化入口的独立边界，见[本地证据](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)。
 - [x] HTTP 应用在所有路由前拒绝不可信 Host/Origin 和跨站浏览器请求，默认不向任意 Origin 开放 CORS；受保护代理 Host/Origin 显式配置，CLI/Gateway 无 Origin 请求继续可用。GET 工作记忆不落盘新文件；本地预检、表单 POST、DNS rebinding、同源和代理配置测试通过，独立安全审查以真实 HTTP 验证五类拒绝后零会话，见[本地证据](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)。
+- [x] 本地安装态 OpenMem 插件经独立 HTTPS 认证代理访问真实生产入口 Sidecar；未授权/TLS 拒绝、Agent Turn、归档、Gateway 重启后上下文保留及非空事实 ID 重放均通过。继承保留状态时仍使用一次性 profile 和本轮事件标记，信号退出清理验证通过；独立审查 Spec PASS、Quality APPROVE，见[本地证据](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)。夹具不等同于受保护预发验收，下一轮上下文不等于 `openmem_search` 工具调用。
 - [ ] 跨主机/网络卷的单写入约束、真实断电/部署恢复和受保护网络验收；[本地并发及代理探测](../reports/2026-10-02-u9-local-concurrency-and-proxy.md)已复现旧入口双 Sidecar 共享目录的 SQLite 锁冲突，新生产入口在本机拒绝第二写入者，本地 HTTPS 测试代理通过但不代表真实部署。[预发环境发现与入口清单](../reports/2026-10-02-preprod-discovery.md)已记录；完成独立环境验收后才能把该协议视为生产环境已验收。
 
 共享安装门禁的 OpenMem 包摘要更新后，已重新运行 27 个插件的安装态场景；`check-e2e-evidence` 对当前候选物退出 0。旧报告只作为历史证据。
