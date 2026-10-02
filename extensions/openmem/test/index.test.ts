@@ -1,3 +1,4 @@
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -748,5 +749,136 @@ describe("OpenMem session 生命周期", () => {
     const restarted = new OpenMemCoordinator(client, "main");
     const manager = new OpenMemSearchManager(client, restarted, config);
     expect((await manager.search("archived", { sessionKey: "restart-thread" }))[0].snippet).toBe("archived summary");
+  });
+});
+
+
+describe("O1 Memory capability 与可信会话身份", () => {
+  type Capability = Parameters<OpenClawPluginApi["registerMemoryCapability"]>[0];
+
+  function register(pluginConfig: Record<string, unknown> = {}) {
+    let capability!: Capability;
+    let service!: { stop: () => Promise<void> };
+    const hooks = new Map<string, (...args: any[]) => Promise<void>>();
+    const logger = { info() {}, warn: vi.fn(), error() {}, debug() {} };
+    plugin.register!({
+      registrationMode: "full",
+      pluginConfig,
+      config: { plugins: { entries: { openmem: { hooks: { allowConversationAccess: true } } } } },
+      logger,
+      registerCli() {},
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability(value: Capability) { capability = value; },
+      registerTool() {},
+      on(name: string, handler: (...args: any[]) => Promise<void>) { hooks.set(name, handler); },
+    } as never);
+    return { capability, service, hooks, logger };
+  }
+
+  it("只向模型描述已可调用的真实召回工具", async () => {
+    const { capability, service } = register();
+    try {
+      expect(capability.deterministicRecallToolName).toBe("openmem_search");
+      expect(capability.promptBuilder).toBeTypeOf("function");
+      expect(capability.promptBuilder!({ availableTools: new Set() })).toEqual([]);
+      expect(capability.promptBuilder!({ availableTools: new Set(["unrelated_tool"]) })).toEqual([]);
+      const prompt = capability.promptBuilder!({ availableTools: new Set(["openmem_search"]) }).join("\n");
+      expect(prompt).toContain("openmem_search");
+      expect(prompt).not.toContain("memory_search");
+      // 后端没有公开 artifact 或预压缩 flush 契约，不返回虚假空成功。
+      expect(capability.flushPlanResolver).toBeUndefined();
+      expect(capability.publicArtifacts).toBeUndefined();
+      expect(capability.supportsPrivateTranscriptRecall).not.toBe(true);
+    } finally {
+      await service.stop();
+    }
+  });
+
+  it("无身份轮次不 ingest 或 append，空 sessionKey 可回退可信 sessionId", async () => {
+    const { service, hooks } = register({ baseUrl: "http://127.0.0.1:3333", allowSharedRecall: false });
+    const ingestTurn = vi.spyOn(OpenMemCoordinator.prototype, "ingestTurn");
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push(`${init?.method ?? "GET"} ${url.pathname}`);
+      if (url.pathname === "/sessions") return json({ sessions: [] });
+      if (url.pathname === "/sessions/start") return json({ session_id: "fallback", status: "ACTIVE", updated_at: "now" });
+      if (url.pathname === "/events/ingest") return json({ ingested: 1, skipped: 0 });
+      if (url.pathname === "/sessions/fallback") return json({ session_id: "fallback", metadata: { append_notes: [] } });
+      if (url.pathname === "/sessions/fallback/append") return json({ ok: true });
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    const event = { success: true, messages: [{ role: "user", content: "trusted identity" }] };
+    try {
+      for (const context of [{}, { sessionKey: " ", sessionId: " " }]) {
+        await hooks.get("agent_end")!(event, context);
+      }
+      expect(ingestTurn).not.toHaveBeenCalled();
+      expect(requests).toEqual([]);
+      await hooks.get("agent_end")!(event, { sessionKey: " ", sessionId: "fallback-session" });
+      expect(requests).toContain("POST /events/ingest");
+      expect(requests).toContain("POST /sessions/fallback/append");
+    } finally {
+      ingestTurn.mockRestore();
+      await service.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("生命周期缺失身份时不创建或提交外部会话，空白 key 回退 event sessionId", async () => {
+    const { service, hooks } = register({ baseUrl: "http://127.0.0.1:3334" });
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push(`${init?.method ?? "GET"} ${url.pathname}`);
+      if (url.pathname === "/sessions") return json({ sessions: [] });
+      if (url.pathname === "/sessions/start") return json({ session_id: "lifecycle", status: "ACTIVE", updated_at: "now" });
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    try {
+      for (const event of [{}, { sessionKey: " ", sessionId: " " }]) {
+        await hooks.get("session_start")!(event, {});
+        await hooks.get("session_end")!(event, {});
+      }
+      expect(requests).toEqual([]);
+      await hooks.get("session_start")!({ sessionKey: " ", sessionId: "event-session" }, {});
+      expect(requests).toContain("POST /sessions/start");
+    } finally {
+      await service.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("显式关闭共享时其他会话与无身份调用均无检索结果", async () => {
+    let threadId = "";
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/sessions/start") {
+        threadId = JSON.parse(String(init?.body)).threadId;
+        return json({ session_id: "session-a", status: "ACTIVE", updated_at: "now" });
+      }
+      if (url.pathname === "/sessions") return json({ sessions: url.searchParams.get("status") === "ARCHIVED"
+        ? [{ session_id: "archive-a", agent_id: "main", thread_id: threadId, status: "ARCHIVED", updated_at: "now" }]
+        : [] });
+      if (url.pathname === "/inspect/search") return json({ chunks: [
+        { text: "private-fact", score: 1, source: "archive:a", recall_type: "continuity" },
+        { text: "shared-fact", score: 1, source: "memory:b", recall_type: "knowledge" },
+      ], sources: [] });
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    const config = makeConfig({ allowSharedRecall: false });
+    const client = new OpenMemClient(config);
+    const coordinator = new OpenMemCoordinator(client, "main");
+    const manager = new OpenMemSearchManager(client, coordinator, config);
+    try {
+      await coordinator.startSession("session-a");
+      expect((await manager.search("fact", { sessionKey: "session-a" })).map((item) => item.snippet)).toEqual(["private-fact"]);
+      expect(await manager.search("fact", { sessionKey: "session-b" })).toEqual([]);
+      expect(await manager.search("fact")).toEqual([]);
+    } finally {
+      await manager.close();
+      client.close();
+      vi.unstubAllGlobals();
+    }
   });
 });

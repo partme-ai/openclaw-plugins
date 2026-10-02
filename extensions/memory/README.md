@@ -124,9 +124,24 @@ The original configuration tables, protocol details, examples, and troubleshooti
 
 ## Overview
 
-`@partme.ai/openclaw-memory` provides multi-level long-term memory for OpenClaw agents. It implements the OpenClaw 2026.7.1 Memory Host SDK contract with `kind: "memory"`. The plugin handles local storage, deterministic extraction, and lexical search through `MemorySearchManager`.
+`@partme.ai/openclaw-memory` provides multi-level long-term memory for OpenClaw agents. It implements the OpenClaw 2026.9.6 Memory Host SDK contract with `kind: "memory"`. The plugin handles local storage, deterministic extraction, and lexical search through `MemorySearchManager`.
 
 **Zero external dependencies** — data is stored in local JSONL files with lexical matching. This plugin does not claim vector or semantic search.
+
+## Memory Host capability support
+
+The plugin uses OpenClaw's public `registerMemoryCapability` contract. Its prompt builder describes `memory_search` only when the host includes that tool in `availableTools`; disabling the tool removes the recall instruction.
+
+| Capability | Support | Boundary |
+| --- | --- | --- |
+| Deterministic recall | `memory_search` | The registered tool searches with trusted host agent/session context. |
+| Prompt builder | Available-tool aware | No instruction to call an unavailable tool. |
+| Search manager | Existing manager contract | `profileScope: "session"` (default); only `profileScope: "agent"` shares L3 profiles. |
+| `flushPlanResolver` | Not provided | No backend contract for an agent-driven pre-compaction flush plan; normal lifecycle persistence remains separate. |
+| `publicArtifacts` | Not provided | Internal JSONL files are not exported as public workspace artifacts. |
+| `supportsPrivateTranscriptRecall` | Not declared | Memory records are not host private-transcript access authorization. |
+
+Successful-turn capture requires a nonblank trusted `sessionKey`, or a nonblank `sessionId` fallback. Missing identity skips persistence and logs a warning; it never writes to a shared `unknown` bucket. Existing historical `unknown` data is neither migrated nor deleted by this change.
 
 ## Architecture
 

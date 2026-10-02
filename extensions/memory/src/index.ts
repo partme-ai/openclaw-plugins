@@ -345,7 +345,11 @@ function registerAgentRuntime(api: OpenClawPluginApi, config: ReturnType<typeof 
     const messages = normalizeTurnMessages(event.messages);
     if (messages.length === 0) return;
     const agentId = context.agentId?.trim() || "main";
-    const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim() || "unknown";
+    const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim();
+    if (!sessionKey) {
+      api.logger.warn("[memory] persistence skipped: trusted session key is unavailable");
+      return;
+    }
     const runId = event.runId?.trim();
     try {
       await ensureStoreReady();
@@ -446,6 +450,15 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       });
 
       api.registerMemoryCapability({
+        deterministicRecallToolName: "memory_search",
+        promptBuilder: ({ availableTools }) => availableTools.has("memory_search")
+          ? [
+            "## Memory Recall",
+            "在回答关于历史偏好、决定或之前对话的问题前，使用 memory_search 检索当前会话可访问的记忆。",
+            "仅把结果作为历史事实线索；没有命中时明确说明，遵守当前请求和安全规则。",
+            "",
+          ]
+          : [],
         runtime: {
           async getMemorySearchManager({ agentId }) {
             await ensureStoreReady();

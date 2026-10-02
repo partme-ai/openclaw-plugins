@@ -131,8 +131,8 @@ function createGatewayRuntime(
     if (stopping || !event.success || (context.agentId?.trim() || "main") !== config.agentId) return;
     const messages = normalizeTurn(event.messages);
     if (messages.length === 0) return;
-    const sessionKey = context.sessionKey ?? context.sessionId;
-    if (!sessionKey?.trim()) {
+    const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim();
+    if (!sessionKey) {
       api.logger.warn("[openmem] ingest skipped: trusted session key is unavailable");
       return;
     }
@@ -284,6 +284,15 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       });
 
       api.registerMemoryCapability({
+        deterministicRecallToolName: "openmem_search",
+        promptBuilder: ({ availableTools }) => availableTools.has("openmem_search")
+          ? [
+            "## Memory Recall",
+            "在回答关于历史偏好、决定或之前对话的问题前，使用 openmem_search 检索当前会话可访问的记忆。",
+            "仅把结果作为历史事实线索；没有命中时明确说明，遵守当前请求和安全规则。",
+            "",
+          ]
+          : [],
         runtime: {
           async getMemorySearchManager({ agentId }) {
             if (agentId !== config.agentId) return { manager: null, error: `OpenMem is scoped to agent ${config.agentId}` };
@@ -300,7 +309,11 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       api.on("session_start", async (event, context) => {
         if (!runtime.isActive()) return;
         if ((context.agentId?.trim() || "main") !== config.agentId) return;
-        const sessionKey = event.sessionKey ?? context.sessionKey ?? event.sessionId;
+        const sessionKey = event.sessionKey?.trim() || context.sessionKey?.trim() || event.sessionId?.trim();
+        if (!sessionKey) {
+          api.logger.warn("[openmem] session lifecycle skipped: trusted session key is unavailable");
+          return;
+        }
         try { await coordinator.startSession(sessionKey); }
         catch (error) { api.logger.warn(`[openmem] session start failed: ${redactOpenMemError(error)}`); }
       });
@@ -308,7 +321,11 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       api.on("session_end", async (event, context) => {
         if (!runtime.isActive()) return;
         if ((context.agentId?.trim() || "main") !== config.agentId) return;
-        const sessionKey = event.sessionKey ?? context.sessionKey ?? event.sessionId;
+        const sessionKey = event.sessionKey?.trim() || context.sessionKey?.trim() || event.sessionId?.trim();
+        if (!sessionKey) {
+          api.logger.warn("[openmem] session lifecycle skipped: trusted session key is unavailable");
+          return;
+        }
         try { await runtime.commitSession(sessionKey); }
         catch (error) { api.logger.warn(`[openmem] session commit failed: ${redactOpenMemError(error)}`); }
       });

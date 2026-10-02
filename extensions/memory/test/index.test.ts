@@ -1,3 +1,4 @@
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -796,5 +797,73 @@ describe("OpenClaw 2026.7.1 插件契约", () => {
     expect(results.filter((result: { snippet: string }) => result.snippet.startsWith("[L2/scenario]"))).toHaveLength(1);
     await rootService!.stop();
     fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+});
+
+
+describe("O1 Memory capability 与可信会话身份", () => {
+  type Capability = Parameters<OpenClawPluginApi["registerMemoryCapability"]>[0];
+
+  function register(pluginConfig: Record<string, unknown> = {}) {
+    let capability!: Capability;
+    let service!: { stop: () => Promise<void> };
+    const hooks = new Map<string, (...args: any[]) => Promise<void>>();
+    const logger = { info() {}, warn: vi.fn(), error() {}, debug() {} };
+    plugin.register!({
+      registrationMode: "full",
+      pluginConfig,
+      config: { plugins: { entries: { memory: { hooks: { allowConversationAccess: true } } } } },
+      logger,
+      registerCli() {},
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability(value: Capability) { capability = value; },
+      registerTool() {},
+      on(name: string, handler: (...args: any[]) => Promise<void>) { hooks.set(name, handler); },
+    } as never);
+    return { capability, service, hooks, logger };
+  }
+
+  it("只向模型描述已可调用的真实召回工具", async () => {
+    const { capability, service } = register();
+    try {
+      expect(capability.deterministicRecallToolName).toBe("memory_search");
+      expect(capability.promptBuilder).toBeTypeOf("function");
+      expect(capability.promptBuilder!({ availableTools: new Set() })).toEqual([]);
+      expect(capability.promptBuilder!({ availableTools: new Set(["unrelated_tool"]) })).toEqual([]);
+      const prompt = capability.promptBuilder!({ availableTools: new Set(["memory_search"]) }).join("\n");
+      expect(prompt).toContain("memory_search");
+      expect(prompt).not.toContain("openmem_search");
+      // 后端没有公开 artifact 或预压缩 flush 契约，不返回虚假空成功。
+      expect(capability.flushPlanResolver).toBeUndefined();
+      expect(capability.publicArtifacts).toBeUndefined();
+      expect(capability.supportsPrivateTranscriptRecall).not.toBe(true);
+    } finally {
+      await service.stop();
+    }
+  });
+
+  it("无身份的成功轮次不写入共享 unknown 桶，sessionId 仍可作为可信后备", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "memory-o1-identity-"));
+    const { capability, service, hooks, logger } = register({ dataDir, profileScope: "session" });
+    const appendTurn = vi.spyOn(MemoryStore.prototype, "appendTurn");
+    const appendRecords = vi.spyOn(MemoryStore.prototype, "appendRecords");
+    const event = { success: true, messages: [{ role: "user", content: "我喜欢身份隔离的中文回答" }] };
+    try {
+      for (const context of [{}, { sessionKey: " ", sessionId: " " }]) {
+        await hooks.get("agent_end")!(event, context);
+      }
+      expect(appendTurn).not.toHaveBeenCalled();
+      expect(appendRecords).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("trusted session"));
+      await hooks.get("agent_end")!(event, { sessionKey: " ", sessionId: "fallback-session" });
+      const { manager } = await capability.runtime!.getMemorySearchManager({ agentId: "main" } as never);
+      expect(await manager!.search("身份隔离", { sessionKey: "other-session" })).toEqual([]);
+      expect((await manager!.search("身份隔离", { sessionKey: "fallback-session" })).length).toBeGreaterThan(0);
+    } finally {
+      appendTurn.mockRestore();
+      appendRecords.mockRestore();
+      await service.stop();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });

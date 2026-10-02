@@ -112,7 +112,7 @@ The original configuration tables, protocol details, examples, and troubleshooti
 <!-- README_STANDARD_END -->
 
 
-Production-oriented OpenMem REST bridge for OpenClaw 2026.7.1.
+Production-oriented OpenMem REST bridge for OpenClaw 2026.9.6.
 
 [简体中文](./README.zh-CN.md) | [English](./README.md)
 
@@ -127,6 +127,21 @@ Production-oriented OpenMem REST bridge for OpenClaw 2026.7.1.
 - Optional environment-backed auth headers for a protecting reverse proxy.
 
 OpenMem currently performs FTS5 plus character n-gram reranking. It does not currently expose embedding/vector recall, and this plugin reports that capability accurately.
+
+## Memory Host capability support
+
+The plugin uses OpenClaw's public `registerMemoryCapability` contract. Its prompt builder describes `openmem_search` only when the host includes that tool in `availableTools`; disabling the tool removes the recall instruction.
+
+| Capability | Support | Boundary |
+| --- | --- | --- |
+| Deterministic recall | `openmem_search` | The registered tool searches with trusted host agent/session context. |
+| Prompt builder | Available-tool aware | No instruction to call an unavailable tool. |
+| Search manager | Existing manager contract | `allowSharedRecall: false` (default); shared hybrid recall requires `true`. |
+| `flushPlanResolver` | Not provided | No backend contract for an agent-driven pre-compaction flush plan; normal lifecycle persistence remains separate. |
+| `publicArtifacts` | Not provided | Sidecar archives are not exported as public workspace artifacts. |
+| `supportsPrivateTranscriptRecall` | Not declared | Memory records are not host private-transcript access authorization. |
+
+Successful-turn capture requires a nonblank trusted `sessionKey`, or a nonblank `sessionId` fallback. Session start/end hooks also require nonblank event/context identity. Missing identity skips persistence and logs a warning; it never writes to a shared `unknown` bucket. Existing historical `unknown` data is neither migrated nor deleted by this change.
 
 ## Runtime architecture
 
