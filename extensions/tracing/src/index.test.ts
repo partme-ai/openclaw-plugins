@@ -94,6 +94,58 @@ describe("tracing plugin", () => {
       expect(shutdown).toHaveBeenCalledTimes(1);
     } finally { gate.resolve(); vi.restoreAllMocks(); }
   });
+  it("a timed-out stop eventually closes its old backend without closing a restarted generation", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const routes = new Map<string, Hook>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1,
+      traceDir: testTraceDir, shutdownTimeoutMs: 100 },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+    } as never);
+    const backends: LogBackend[] = [];
+    const closed: LogBackend[] = [];
+    const originalInit = LogBackend.prototype.init;
+    const originalShutdown = LogBackend.prototype.shutdown;
+    vi.spyOn(LogBackend.prototype, "init").mockImplementation(async function (config) {
+      backends.push(this);
+      await originalInit.call(this, config);
+    });
+    vi.spyOn(LogBackend.prototype, "shutdown").mockImplementation(async function () {
+      closed.push(this);
+      await originalShutdown.call(this);
+    });
+    const gate = Promise.withResolvers<void>();
+    const exporting = vi.spyOn(LogBackend.prototype, "exportSpans").mockImplementationOnce(() => gate.promise);
+    try {
+      await emit(hooks, "gateway_start");
+      await emit(hooks, "message_received", {}, { sessionKey: "timeout-session", runId: "timeout-run", channelId: "wecom" });
+      const reply = emit(hooks, "reply_payload_sending", { kind: "final" },
+        { sessionKey: "timeout-session", runId: "timeout-run" });
+      await vi.waitFor(() => expect(exporting).toHaveBeenCalled());
+      const stopHandler = hooks.get("gateway_stop")?.at(-1);
+      expect(stopHandler).toBeDefined();
+      await expect(stopHandler?.()).rejects.toThrow("Tracing shutdown timed out after 100ms");
+      expect(closed).toEqual([]);
+
+      await emit(hooks, "gateway_start");
+      expect(backends).toHaveLength(2);
+      const restarted = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, restarted as never);
+      expect(JSON.parse(restarted.body).data.status).toBe("active");
+
+      gate.resolve();
+      await reply;
+      await vi.waitFor(() => expect(closed).toContain(backends[0]));
+      expect(closed).not.toContain(backends[1]);
+      const stillActive = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, stillActive as never);
+      expect(JSON.parse(stillActive.body).data.status).toBe("active");
+      await emit(hooks, "gateway_stop");
+      expect(closed.filter((backend) => backend === backends[0])).toHaveLength(1);
+      expect(closed.filter((backend) => backend === backends[1])).toHaveLength(1);
+    } finally { gate.resolve(); vi.restoreAllMocks(); }
+  });
   it("stopping registration A leaves B backend and active spans intact", async () => {
     const register = () => {
       const hooks = new Map<string, Hook[]>();

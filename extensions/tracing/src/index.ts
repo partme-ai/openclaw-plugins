@@ -124,9 +124,16 @@ let initializationPromise: Promise<void> | null = null;
 let stopping = false;
 let lifecycleGeneration = 0;
 let cleanupTask: Promise<void> | null = null;
+let storeFinalization: Promise<void> | null = null;
 
 async function initTracing(api: OpenClawPluginApi): Promise<void> {
   if (stopping) return;
+  // A timed-out stop may still be finishing the old store. Do not create a new
+  // context over maps that the old finalizer can still mutate.
+  if (storeFinalization) {
+    try { await storeFinalization; } catch { /* The old stop reports its own error. */ }
+    if (stopping) return;
+  }
   if (initialized) return;
   if (initializationPromise) return initializationPromise;
   const pending = initializeTracing(api);
@@ -190,32 +197,39 @@ async function initializeTracing(api: OpenClawPluginApi): Promise<void> {
 }
 
 async function shutdownTracing(drainHooks: () => Promise<void>): Promise<void> {
+  if (stopping) return;
   stopping = true;
-  lifecycleGeneration += 1;
+  const generation = ++lifecycleGeneration;
+  const backend = activeContext?.backend ?? null;
+  const pendingCleanup = cleanupTask;
+  const pendingInitialization = initializationPromise;
   if (cleanupTimer) {
     clearInterval(cleanupTimer);
     cleanupTimer = null;
   }
   let firstError: unknown;
   const shutdownTimeoutMs = activeContext?.config.shutdownTimeoutMs ?? 15_000;
+  let timedOut = false;
   try {
     await withTimeout((async () => {
       await drainHooks();
-      if (cleanupTask) await cleanupTask;
-      if (initializationPromise) {
+      if (pendingCleanup) await pendingCleanup;
+      if (pendingInitialization) {
         try {
-          await initializationPromise;
+          await pendingInitialization;
         } catch (error) {
           firstError ??= error;
         }
       }
-      const backend = activeContext?.backend ?? null;
-      activeContext = null;
-      initialized = false;
-      try {
-        if (backend) await store.finishAllActiveTraces(backend, "gateway_shutdown");
-      } catch (error) {
-        firstError ??= error;
+      if (!timedOut && generation === lifecycleGeneration && backend) {
+        const finalization = (async () => {
+          try { await store.finishAllActiveTraces(backend, "gateway_shutdown"); }
+          finally { store.resetTraceStore(); }
+        })();
+        storeFinalization = finalization;
+        try { await finalization; }
+        catch (error) { firstError ??= error; }
+        finally { if (storeFinalization === finalization) storeFinalization = null; }
       }
       try {
         if (backend) await backend.shutdown();
@@ -224,14 +238,17 @@ async function shutdownTracing(drainHooks: () => Promise<void>): Promise<void> {
       }
     })(), shutdownTimeoutMs, `Tracing shutdown timed out after ${shutdownTimeoutMs}ms`);
   } catch (error) {
+    timedOut = true;
     firstError ??= error;
   } finally {
-    activeContext = null;
-    initialized = false;
-    initializationPromise = null;
-    cleanupTask = null;
-    store.resetTraceStore();
-    stopping = false;
+    if (generation === lifecycleGeneration) {
+      activeContext = null;
+      initialized = false;
+      initializationPromise = null;
+      cleanupTask = null;
+      if (!storeFinalization) store.resetTraceStore();
+      stopping = false;
+    }
   }
   if (firstError) throw firstError;
 }

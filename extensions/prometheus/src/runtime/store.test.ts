@@ -6,6 +6,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import plugin from "../index.js";
+import { MetricsRegistry } from "../diagnostics/metrics-registry.js";
 import type { ResolvedPrometheusConfig } from "../config/plugin-config.js";
 import {
   getRuntimeStore,
@@ -30,6 +31,49 @@ const config = {
 } satisfies ResolvedPrometheusConfig;
 
 describe("RuntimeStore observed channel accounts", () => {
+  it("does not write health metrics or return old health after stop races a provider probe", async () => {
+    const services: Array<{ start(context: unknown): Promise<void>; stop(): Promise<void> }> = [];
+    const routes = new Map<string, (request: unknown, response: unknown) => Promise<void>>();
+    const probe = Promise.withResolvers<{ apiKey: string }>();
+    const resolveApiKeyForProvider = vi.fn(() => probe.promise);
+    plugin.register({ config: {}, pluginConfig: { path: "/metrics", scrapeAuth: { enabled: false }, monitoredProviders: ["openai"] },
+      runtime: { modelAuth: { resolveApiKeyForProvider } },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, on: vi.fn(),
+      registerService(service: typeof services[number]) { services.push(service); },
+      registerHttpRoute(route: { path: string; handler: typeof routes extends Map<string, infer V> ? V : never }) { routes.set(route.path, route.handler); },
+    } as never);
+    const bridge = { onEvent: () => () => {}, emit: vi.fn() };
+    await services[0].start({ internalDiagnostics: bridge });
+    const set = vi.spyOn(MetricsRegistry.prototype, "set");
+    const response = { writeHead: vi.fn(), end: vi.fn(), statusCode: 200 };
+    try {
+      const health = routes.get("/metrics/health")?.({ method: "GET", url: "/metrics/health", headers: {} }, response);
+      await vi.waitFor(() => expect(resolveApiKeyForProvider).toHaveBeenCalledTimes(1));
+      await services[0].stop();
+      const healthWritesBeforeRelease = set.mock.calls.filter(([name]) => name === "openclaw_gateway_healthz_healthy").length;
+      probe.resolve({ apiKey: "late" });
+      await health;
+      expect(response.writeHead).toHaveBeenCalledWith(503, expect.anything());
+      expect(set.mock.calls.filter(([name]) => name === "openclaw_gateway_healthz_healthy")).toHaveLength(healthWritesBeforeRelease);
+    } finally { probe.resolve({ apiKey: "late" }); set.mockRestore(); }
+  });
+
+  it("sequential repeated service.start subscribes and emits exporter-started once", async () => {
+    const services: Array<{ start(context: unknown): Promise<void>; stop(): Promise<void> }> = [];
+    plugin.register({ config: {}, pluginConfig: { path: "/metrics", scrapeAuth: { enabled: false } },
+      runtime: {}, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, on: vi.fn(),
+      registerService(service: typeof services[number]) { services.push(service); },
+      registerHttpRoute: vi.fn(),
+    } as never);
+    const onEvent = vi.fn(() => vi.fn());
+    const emitEvent = vi.fn();
+    const context = { internalDiagnostics: { onEvent, emit: emitEvent } };
+    await services[0].start(context);
+    await services[0].start(context);
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(emitEvent).toHaveBeenCalledTimes(1);
+    await services[0].stop();
+  });
   it("stopping registration A preserves B runtime, metrics route and diagnostics subscription", async () => {
     const register = () => {
       const services: Array<{ start(context: unknown): Promise<void>; stop(): Promise<void> }> = [];

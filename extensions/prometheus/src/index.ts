@@ -439,12 +439,14 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
 
   let pendingStart: Promise<void> | null = null;
   let pendingStop: Promise<void> | null = null;
+  let started = false;
   let stoppedOnce = false;
   api.registerService({
     id: "openclaw-prometheus-diagnostics",
     start: async (ctx) => {
       if (pendingStop) await pendingStop;
       if (pendingStart) return pendingStart;
+      if (started && !lifecycle.closed) return;
       lifecycle.closed = false;
       if (stoppedOnce) {
         initializeRuntimeStore(api, cfg);
@@ -462,8 +464,12 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
         config: api.config,
       });
       pendingStart = starting;
-      try { await starting; }
+      try {
+        await starting;
+        if (currentGeneration === generation && !lifecycle.closed) started = true;
+      }
       catch (error) {
+        started = false;
         lifecycle.closed = true;
         stopDiagnosticsSubscription();
         resetDiagnosticsMetricStore();
@@ -493,6 +499,7 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
       collectorErrorCounts.clear();
       lastCollectorDiagnostics.clear();
       lastCollectAt = undefined;
+      started = false;
       stoppedOnce = true;
       })();
       pendingStop = stopping;
@@ -608,7 +615,12 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
       if (!assertScrapeAuthorized(req, res, cfg)) {
         return;
       }
+      const currentGeneration = generation;
       await refreshRuntimeSnapshots(false);
+      if (currentGeneration !== generation || lifecycle.closed) {
+        writeJson(res, 503, { ok: false, error: "Metrics exporter stopped" });
+        return;
+      }
       refreshHousekeepingMetrics();
       const store = getRuntimeStore();
 
