@@ -397,6 +397,8 @@ flowchart LR
 
 对外提供这些接口前须配置 Gateway 鉴权（例如 Gateway token）。若设置 `gateway.auth.mode: "none"`，Gateway 无法认证身份，这些接口应视为未鉴权。凭据和浏览器 grant 由 Gateway 校验；只读浏览器 grant 不能授权重放 POST。平台 Webhook 仍使用原有的独立签名验证。
 
+插件为 `GET /router/status` 注册 Control UI 状态 tab。Gateway 签发的只读 Cookie 仅授权这条精确路由；其他运维读取和重放 POST 仍需正常 Gateway 授权。
+
 - `GET /router/status`
 - `GET /router/health`
 - `GET /router/audit?limit=100`

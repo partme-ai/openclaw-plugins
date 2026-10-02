@@ -13,12 +13,13 @@ import { dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
-  FIXTURE_ID, FIXTURE_PATH, selectFixtureGrant, seedRouterDeadLetter, writeDisposableConfig,
+  FIXTURE_ID, FIXTURE_PATH, selectFixtureGrant, selectPluginGrant, seedRouterDeadLetter, writeDisposableConfig,
 } from "./fixtures/u3-auth-grant/runner-lib.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDir = join(repoRoot, "scripts/fixtures/u3-auth-grant");
 const routerDir = join(repoRoot, "extensions/router");
+const tracingDir = join(repoRoot, "extensions/tracing");
 const reportDir = join(fixtureDir, "reports");
 const profile = "u3-auth-grant-e2e";
 
@@ -101,12 +102,16 @@ async function run() {
   if (!fixtureOnly && !existsSync(join(routerDir, "dist/index.js"))) {
     throw new Error("Router dist/index.js is missing; build it or use --fixture-only");
   }
+  if (!fixtureOnly && !existsSync(join(tracingDir, "dist/index.js"))) {
+    throw new Error("Tracing dist/index.js is missing; build it or use --fixture-only");
+  }
   const stateDir = mkdtempSync(join(tmpdir(), "openclaw-u3-auth-grant-e2e-"));
   const token = randomBytes(32).toString("hex");
   const port = await unusedLoopbackPort();
   const origin = `http://127.0.0.1:${port}`;
   const routerIncluded = !fixtureOnly;
-  const configPath = writeDisposableConfig({ stateDir, fixtureDir, routerDir: routerIncluded ? routerDir : undefined, port, token });
+  const configPath = writeDisposableConfig({ stateDir, fixtureDir, routerDir: routerIncluded ? routerDir : undefined,
+    tracingDir: routerIncluded ? tracingDir : undefined, port, token });
   const seededDeadLetterId = routerIncluded ? seedRouterDeadLetter(stateDir) : undefined;
   const logPath = join(stateDir, "gateway.log");
   const logFd = openSync(logPath, "w", 0o600);
@@ -132,6 +137,25 @@ async function run() {
     assertStatus(bootstrap, 200, "Control UI bootstrap");
     const cookie = selectFixtureGrant(bootstrap.setCookie, bootstrap.body?.pluginFrameGrants, issuedAt);
     report.assertions.push("Gateway bootstrap minted a route-bound read Cookie");
+    const managementCookies = routerIncluded ? {
+      router: selectPluginGrant(bootstrap.setCookie, bootstrap.body?.pluginFrameGrants, issuedAt,
+        { pluginId: "router", path: "/router/status", match: "exact" }),
+      tracing: selectPluginGrant(bootstrap.setCookie, bootstrap.body?.pluginFrameGrants, issuedAt,
+        { pluginId: "tracing", path: "/tracing/status", match: "exact" }),
+    } : undefined;
+    if (managementCookies) {
+      for (const [id, grant] of Object.entries(managementCookies)) {
+        const routePath = `/${id}/status`;
+        assertStatus(await request(origin, routePath, { headers: { Cookie: grant.pair } }), 200,
+          `${id} same-plugin Cookie GET`);
+        assertStatus(await request(origin, routePath, { method: "POST", headers: { Cookie: grant.pair } }), 401,
+          `${id} same-plugin read Cookie POST`);
+        report.assertions.push(`${id} same-plugin signed Cookie GET=200, POST=401`);
+      }
+      assertStatus(await request(origin, "/tracing/status", { headers: { Cookie: managementCookies.router.pair } }), 401,
+        "Router Cookie cross-plugin Tracing GET");
+      report.assertions.push("Router Cookie cross-plugin Tracing GET=401");
+    }
 
     const cookieHeaders = { Cookie: cookie.pair };
     const read = await request(origin, FIXTURE_PATH, { headers: cookieHeaders });
@@ -160,6 +184,10 @@ async function run() {
         method: "POST", headers: cookieHeaders,
       });
       assertStatus(crossWrite, 401, "cross-plugin Cookie Router replay POST");
+      const samePluginReadOnlyReplay = await request(origin, "/router/dlq/replay?limit=1", {
+        method: "POST", headers: { Cookie: managementCookies.router.pair },
+      });
+      assertStatus(samePluginReadOnlyReplay, 401, "same-plugin read Cookie Router replay POST");
       const afterStatus = await request(origin, "/router/status", { headers: authorized });
       const afterDlq = await request(origin, "/router/dlq", { headers: authorized });
       if (JSON.stringify(afterStatus.body?.data) !== JSON.stringify(beforeStatus.body?.data) ||
@@ -167,6 +195,7 @@ async function run() {
         throw new Error("denied cross-plugin Cookie POST changed Router state");
       }
       report.assertions.push("cross-plugin Cookie Router DLQ GET=401 and replay POST=401; DLQ and delivery unchanged");
+      report.assertions.push("same-plugin Router read Cookie replay POST=401; DLQ and delivery unchanged");
     }
 
     const authorizedWrite = await request(origin, FIXTURE_PATH, { method: "POST", headers: authorized });
@@ -184,6 +213,13 @@ async function run() {
     }
     const expiredRead = await request(origin, FIXTURE_PATH, { headers: cookieHeaders });
     assertStatus(expiredRead, 401, "expired genuine Cookie fixture GET");
+    if (managementCookies) {
+      for (const [id, grant] of Object.entries(managementCookies)) {
+        assertStatus(await request(origin, `/${id}/status`, { headers: { Cookie: grant.pair } }), 401,
+          `expired ${id} Cookie GET`);
+      }
+      report.assertions.push("Router and Tracing signed Cookies expired in the same Gateway process");
+    }
     const stillAuthorized = await request(origin, FIXTURE_PATH, { headers: authorized });
     if (stillAuthorized.status !== 200 || stillAuthorized.body?.mutationCount !== 1) {
       throw new Error("Gateway was not healthy in the same process after Cookie expiry");

@@ -25,6 +25,7 @@ async function harness() {
   const sendText = vi.fn().mockResolvedValue({ channel: "rabbitmq", messageId: "sent" });
   const api = {
     registrationMode: "full",
+    session: { controls: { registerControlUiDescriptor: vi.fn() } },
     pluginConfig: {
       rules: [{
         id: "all-inbound",

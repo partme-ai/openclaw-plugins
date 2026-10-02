@@ -390,6 +390,8 @@ Operational routes use OpenClaw Gateway authentication (`auth: "gateway"`) and e
 
 Configure Gateway authentication (for example, a Gateway token) before exposing these endpoints. With `gateway.auth.mode: "none"`, OpenClaw has no identity to authenticate and these routes must be treated as unauthenticated. The Gateway owns credential and browser-grant checks; a read-only browser grant cannot authorize the replay POST. Platform webhooks retain their own signature verification and are unaffected.
 
+The plugin registers a Control UI status tab backed by `GET /router/status`. The server-issued read Cookie is scoped to that exact route; other management reads and the replay POST require normal Gateway authorization.
+
 - `GET /router/status`
 - `GET /router/health`
 - `GET /router/audit?limit=100`

@@ -399,6 +399,16 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       },
     });
 
+    if (api.registrationMode === "full") {
+      api.session.controls.registerControlUiDescriptor({
+        surface: "tab",
+        id: "router-status",
+        label: "Router status",
+        path: "/router/status",
+        requiredScopes: ["operator.read"],
+      });
+    }
+
     api.logger.info(`[router] registered ${config.rules.length} rule(s), durable delivery enabled`);
   },
 });

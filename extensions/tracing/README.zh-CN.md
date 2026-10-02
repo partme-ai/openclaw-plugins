@@ -240,6 +240,8 @@ openclaw plugins install @partme.ai/openclaw-tracing
 
 对外提供这些接口前须配置 Gateway 鉴权。若设置 `gateway.auth.mode: "none"`，Gateway 无法认证身份，这些接口应视为未鉴权。浏览器 grant 的授权由 Gateway 管理。平台 Webhook 仍使用原有的独立签名验证。
 
+插件为 `GET /tracing/status` 注册 Control UI 状态 tab。Gateway 签发的只读 Cookie 仅授权这条精确路由；Trace 列表和详情仍需正常 Gateway 授权。
+
 - `GET /tracing/status`
 - `GET /tracing/traces?limit=50`，范围 `1..200`
 - `GET /tracing/trace?traceId=<32位十六进制ID>`

@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { checkReports, readCandidateManifest, validateEvidence } from "./check-e2e-evidence.mjs";
+import { browserEvidenceRequired, checkReports, readCandidateManifest, validateEvidence } from "./check-e2e-evidence.mjs";
 
 const SHA = "a".repeat(64);
 const baseline = () => ({
@@ -28,6 +28,13 @@ const baseline = () => ({
     currentVersions: { mqtt: "1.2.3" },
     browserPlugins: ["mqtt"],
   },
+});
+
+test("web browser inventory entries require browser evidence", () => {
+  assert.equal(browserEvidenceRequired({ id: "web-mqtt", category: "web-browser" }), true);
+  assert.equal(browserEvidenceRequired({ id: "web-stomp", category: "web-browser" }), true);
+  assert.equal(browserEvidenceRequired({ id: "web-socket", category: "web-browser" }), true);
+  assert.equal(browserEvidenceRequired({ id: "mqtt", category: "embedded-service" }), false);
 });
 
 test("candidate and runtime evidence pass only when independently matched", () => {

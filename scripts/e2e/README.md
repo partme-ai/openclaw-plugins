@@ -188,6 +188,7 @@ Do **not** fake success — if the gateway never listens on `E2E_GATEWAY_PORT`, 
 | `E2E_GATEWAY_PORT` | `19789` | Gateway HTTP port |
 | `E2E_GOTIFY_PORT` | `18080` | Gotify host port; set `GOTIFY_URL=http://127.0.0.1:<port>` to the same port when overriding |
 | `OPENCLAW_E2E_BROWSER_EXECUTABLE` | Playwright Chromium | Optional installed Chrome/Chromium executable for real browser E2E when Playwright's bundled browser is absent |
+| `OPENMEM_E2E_REPO` | `../OpenMem` relative to plugin repo root | Absolute path to the OpenMem source checkout when running the OpenMem scenario from an isolated worktree |
 | `OPENCLAW_E2E_SKIP_DOCKER` | unset | `1` = skip Docker entirely (broker tests fail unless services already running) |
 | `E2E_STOMP_TCP_PORT` | `61613` | stomp-tcp channel port in config/tests |
 

@@ -344,6 +344,8 @@ tarball 安装 → Gateway Agent Turn → session/start → events/ingest → wo
 → continuity search → 下一轮 Prompt 注入
 ```
 
-写入仍不是 Sidecar 内部的单事务：插件通过持久事件、`turnId` 标记和恢复对账补偿最近 1000 条事件，已经覆盖 Gateway 在 ingest 与 append 之间退出的常见故障；极长 ACTIVE session 超出恢复窗口时，仍需要 OpenMem 提供事务批接口或原生幂等 append 才能给出严格原子性保证。完成鉴权隔离和 Sidecar 故障演练之前，不标记为完全生产就绪。
+更新后的 OpenMem Sidecar 通过 `GET /sessions/:id/commit` 声明按 session ID 幂等且可恢复的提交。插件在重启后发现持久提交意图时，先验证能力，再重试提交；开始下一条 ACTIVE session 前也会先处理待提交会话。旧 Sidecar 没有能力声明，结果不明时仍需人工对账。完整 Sidecar 快照包含提交日志。2026-10-02 的 OpenClaw 2026.9.6 tarball 安装态场景通过；崩溃窗口由目标测试覆盖，不能把该安装态场景当作真实断电演练。
+
+写入仍不是整个 Agent 轮次的单事务：插件通过持久事件、`turnId` 标记和恢复对账补偿最近 1000 条事件；极长 ACTIVE session 超出恢复窗口时，仍需要事务批接口或原生幂等 append。新提交协议假设每个数据目录只有一个 Sidecar 写入者。鉴权隔离、多写入者和部署故障恢复仍是生产验收门禁。
 
 当 `agent_end` 没有可信 `sessionKey/sessionId` 时，插件会跳过写入并告警，不再把不同对话合并进共享的 `unknown` 线程。单轮最多摄取 100 条消息，每条最多 16,000 字符；搜索 query 最长 4,000 字符。

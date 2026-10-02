@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、Node 24.18.0、pnpm 9.0.0、OpenClaw 2026.9.6、Docker Compose、Playwright。
 
-**Spec:** [稳定版升级规格](../specs/2026-09-29-openclaw-2026-9-6-upgrade.md)。状态：实施中；U1、U2、U4、U5、U6、U7、U8 已完成目标验证；U3 尚有 Router/Tracing 同插件浏览器 grant 正例缺口。逐项证据见[验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。
+**Spec:** [稳定版升级规格](../specs/2026-09-29-openclaw-2026-9-6-upgrade.md)。状态：实施中；U1、U2、U4、U5、U6、U7、U8 已完成本地候选物验证；U3 已完成当前本地 Gateway 和目标安装态验证，见[U3 记录](../reports/2026-10-02-u3-browser-grants.md)。U9 的本地实现和目标验证见[后续记录](../reports/2026-10-02-openmem-recoverable-commit.md)。全量当前候选物证据门禁 27/27 通过，见[当前复验记录](../reports/2026-10-02-current-candidate-verification.md)；旧候选物证据见[验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。
 
 ## Global Constraints
 
@@ -76,11 +76,11 @@
 
 **Interfaces:** 保留 URL 和响应结构；统一 `auth: "gateway"`；重放仍是 POST。权限行为以 Gateway 实际授权为准，不在插件内伪造 operator scope。
 
-- [ ] 添加路由元数据断言和真实 Gateway 请求用例：匿名 GET/POST 拒绝；授权 GET 成功；有效授权 POST 恰好重放一次；只读浏览器 grant、过期 token 的 POST 无副作用。
-- [ ] 运行 `pnpm --dir extensions/router test`、`pnpm --dir extensions/tracing test`，新鉴权断言应 FAIL；记录旧宿主路径的匿名访问基线。
-- [ ] 调整管理路由鉴权和 E2E 请求凭据；文档说明 auth=none 边界，保留 Webhook 签名验证行为。
-- [ ] 重跑目标测试；执行 `node scripts/e2e/run-e2e.mjs --plugins router` 和 `node scripts/e2e/run-e2e.mjs --plugins tracing,mqtt`，期望鉴权负例及合法请求全部通过，OTLP 数据仍可观测。
-- [ ] 审查敏感响应与重放副作用证据，获授权时提交 `fix: authenticate router and tracing management routes`。
+- [x] 添加路由元数据断言和真实 Gateway 请求用例：匿名 GET/POST 拒绝；授权 GET 成功；有效授权 POST 恰好重放一次；只读浏览器 grant 和真实过期 Cookie 均无重放副作用。
+- [x] 运行 `pnpm --dir extensions/router test`、`pnpm --dir extensions/tracing test`，新注册断言先 FAIL；旧匿名访问基线见[前次验收记录](../reports/2026-09-29-openclaw-2026-9-6-verification.md)。
+- [x] 调整管理路由鉴权和 E2E 请求凭据，注册同插件只读状态 tab；文档说明 auth=none 边界，保留 Webhook 签名验证行为。
+- [x] 重跑目标测试；执行 `node scripts/e2e/run-e2e.mjs --plugins router,gotify` 和 `--plugins tracing,mqtt`，鉴权负例及合法请求通过，OTLP 数据可观测；真实 Cookie 详见[U3 记录](../reports/2026-10-02-u3-browser-grants.md)。
+- [x] 审查敏感响应与重放副作用证据；同插件只读 Cookie 的 GET/POST、跨插件读取及重放副作用、真实过期均由当前 Gateway 记录验证，纳入本轮提交。
 
 ### Task 4: 标准入站和 Transcript（U4）
 
@@ -142,8 +142,20 @@
 - [x] 运行 `node scripts/check-e2e-evidence.mjs`，27 个当前候选物与 2026.9.6 宿主全部匹配、退出 0；已保存可访问归档，未提交凭据或原始敏感日志。
 - [x] 完成全变更审查和兼容说明；逐项证据见验收记录，旧 E2E 计划仍待实网验证。独立复核识别出 OpenMem Sidecar 提交意图已落盘但 POST 未发出时无法自动恢复的生产阻断，已记录人工对账边界。2026-10-02 的后续请求已授权 Git 提交与 GitHub 推送；npm 发布仍未授权。
 
+### Task 9: OpenMem 可恢复提交（U9）
+
+**Files:** OpenMem 仓库的 `packages/core/src/{engine,application/externalization.service,application/session-lifecycle.service,application/snapshot.service,infrastructure/local-bridge-store}.ts` 与 `apps/server/src/routes/sessions.ts`；本仓库的 `extensions/openmem/src/coordinator.ts`、对应测试和 README。OpenMem 仓库没有单独初始化规格体系；本规格是跨仓库协议事实源。
+
+- [x] 故障注入测试先复现重复归档/事实 ID、HTTP 缺少能力端点、插件重启后提交意图阻塞；记录红灯。
+- [x] Sidecar 持久提交快照、原子文件发布、产物重放与终态顺序、只读能力端点；完整快照保留提交日志。
+- [x] 插件只在 Sidecar 明确声明幂等且可恢复时重试；下一会话开始前处理持久意图；旧 Sidecar 保持人工对账。
+- [x] Core 16/16、Server 7/7、插件 47/47、构建和类型检查，以及 OpenClaw 2026.9.6 tarball 安装态 OpenMem 场景通过；Core 包含文件路径边界回归。
+- [ ] 多写入者、真实断电/部署恢复和受保护网络验收；完成后才能把该协议视为生产环境已验收。
+
+共享安装门禁的 OpenMem 包摘要更新后，已重新运行 27 个插件的安装态场景；`check-e2e-evidence` 对当前候选物退出 0。旧报告只作为历史证据。
+
 ## 自审与执行交接
 
-U1–U8 分别由 T1–T8 覆盖；Review Focus 五项已绑定 T2/T3/T5/T6/T7 的测试。T5 的 outcome 与 T6 的 delivery outcome 分开，避免把 Agent 完成等同投递完成。源码、mock、已安装宿主、真实平台四层证据分别记录。
+U1–U9 分别由 T1–T9 覆盖；Review Focus 五项已绑定 T2/T3/T5/T6/T7 的测试。T5 的 outcome 与 T6 的 delivery outcome 分开，避免把 Agent 完成等同投递完成。源码、mock、已安装宿主、真实平台四层证据分别记录。
 
-U8 的 27 项固定宿主安装态场景、最终证据门禁和变更审查已完成；真实厂商联调、生产部署、U3 的 Router/Tracing 同插件浏览器 grant 正例，以及 OpenMem Sidecar 的可恢复幂等提交协议仍需单独验收。代码与文档由 2026-10-02 后续授权提交并推送 GitHub，npm 包尚未发布。
+U8 的 27 项固定宿主安装态场景已对当前候选物重验；U3 的 Router/Tracing 同插件签发 Cookie 已在真实 Gateway HTTP 边界验证。真实厂商联调、浏览器视觉交互、生产部署及 U9 的部署故障恢复仍需验收。npm 包尚未发布。

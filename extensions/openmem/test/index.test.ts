@@ -226,6 +226,7 @@ describe("OpenClaw prepared Agent registry", () => {
       if (url.pathname === "/sessions/retry-session") return json({ session_id: "retry-session", status: "ACTIVE", metadata: { append_notes: [] } });
       if (url.pathname === "/sessions/retry-session/append") return json({ ok: true });
       if (url.pathname === "/sessions/retry-session/commit") {
+        if (init?.method === "GET") return json({ error: "unsupported" }, 404);
         commitAttempts += 1;
         return commitAttempts === 1 ? json({ error: "temporary failure" }, 503) : json({ status: "ARCHIVED" });
       }
@@ -572,6 +573,56 @@ describe("OpenMem session 生命周期", () => {
     expect(commitAttempts).toBe(1);
   });
 
+  it("重启后遇到已持久化提交意图时只在 Sidecar 声明幂等协议后恢复", async () => {
+    let threadId = "";
+    let status: "ACTIVE" | "ARCHIVED" = "ACTIVE";
+    let intentWrites = 0;
+    let commitAttempts = 0;
+    let capabilityAvailable = false;
+    let sessionStarts = 0;
+    let intentEvent: { event_id: string; type: string } | undefined;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/sessions" && url.searchParams.get("status") === "ACTIVE") {
+        return json({ sessions: threadId && status === "ACTIVE" ? [{ session_id: "resume-session", agent_id: "main", thread_id: threadId, status, updated_at: "now" }] : [] });
+      }
+      if (url.pathname === "/sessions/start") {
+        threadId = JSON.parse(String(init?.body)).threadId;
+        sessionStarts += 1;
+        return json({ session_id: sessionStarts === 1 ? "resume-session" : "resume-session-2", agent_id: "main", thread_id: threadId, status: "ACTIVE", updated_at: "now" }, 201);
+      }
+      if (url.pathname === "/events") return json({ events: intentEvent ? [intentEvent] : [] });
+      if (url.pathname === "/events/ingest") {
+        intentWrites += 1;
+        const event = JSON.parse(String(init?.body)).events[0];
+        intentEvent = { event_id: event.eventId, type: "openclaw_commit_intent" };
+        return intentWrites === 1 ? json({ ingested: [{ event_id: event.eventId }], skipped: 0 }, 201) : json({ ingested: [], skipped: 1 }, 201);
+      }
+      if (url.pathname === "/sessions/resume-session") return json({ session_id: "resume-session", status, metadata: { append_notes: [] } });
+      if (url.pathname === "/archives") return json({ archives: [{ session_id: "resume-session", facts: [] }] });
+      if (url.pathname === "/sessions/resume-session/commit" && init?.method === "GET") {
+        return capabilityAvailable ? json({ idempotent: true, recoverable: true, status }) : json({ error: "unavailable" }, 503);
+      }
+      if (url.pathname === "/sessions/resume-session/commit" && init?.method === "POST") {
+        commitAttempts += 1;
+        if (commitAttempts === 1) throw new Error("connection lost before commit reached Sidecar");
+        status = "ARCHIVED";
+        return json({ archive: { archive_id: "stable" } });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+
+    const first = new OpenMemCoordinator(new OpenMemClient(makeConfig({ maxAttempts: 1 })), "main");
+    await first.startSession("resume-key");
+    await expect(first.endSession("resume-key")).rejects.toThrow();
+    expect(status).toBe("ACTIVE");
+    capabilityAvailable = true;
+    const restarted = new OpenMemCoordinator(new OpenMemClient(makeConfig({ maxAttempts: 1 })), "main");
+    expect(await restarted.startSession("resume-key")).toBe("resume-session-2");
+    expect(commitAttempts).toBe(2);
+    expect(status).toBe("ARCHIVED");
+  });
+
   it("ARCHIVED 但缺少归档产物时保持结果不明且不重放提交", async () => {
     let status: "ACTIVE" | "ARCHIVED" = "ACTIVE";
     let commitAttempts = 0;
@@ -587,6 +638,7 @@ describe("OpenMem session 生命周期", () => {
       if (url.pathname === "/sessions/missing-archive") return json({ session_id: "missing-archive", status, metadata: { append_notes: [] } });
       if (url.pathname === "/sessions/missing-archive/append") return json({ ok: true });
       if (url.pathname === "/sessions/missing-archive/commit") {
+        if (init?.method === "GET") return json({ error: "unsupported" }, 404);
         commitAttempts += 1;
         status = "ARCHIVED";
         return json({ error: "archive failed" }, 503);
@@ -597,6 +649,7 @@ describe("OpenMem session 生命周期", () => {
     const coordinator = new OpenMemCoordinator(new OpenMemClient(makeConfig({ maxAttempts: 1 })), "main");
     await coordinator.ingestTurn({ sessionKey: "missing-archive-key", runId: "missing-run", messages: [{ role: "user", content: "hello" }] });
     await expect(coordinator.endSession("missing-archive-key")).rejects.toThrow("manual reconciliation");
+    await expect(coordinator.startSession("missing-archive-key")).rejects.toThrow("archive is incomplete");
     await expect(coordinator.endSession("missing-archive-key")).rejects.toThrow("archive is incomplete");
     expect(commitAttempts).toBe(1);
   });

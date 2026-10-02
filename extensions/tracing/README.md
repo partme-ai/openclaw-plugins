@@ -235,6 +235,8 @@ All routes use OpenClaw Gateway authentication (`auth: "gateway"`), reject non-G
 
 Configure Gateway authentication before exposing these endpoints. With `gateway.auth.mode: "none"`, the Gateway has no identity to authenticate and these routes must be treated as unauthenticated. Gateway authorization also governs browser grants. Platform webhooks keep their independent signature verification.
 
+The plugin registers a Control UI status tab backed by `GET /tracing/status`. Its server-issued read Cookie is scoped to that exact route; trace-list and detail requests require normal Gateway authorization.
+
 - `GET /tracing/status`
 - `GET /tracing/traces?limit=50` (`1..200`)
 - `GET /tracing/trace?traceId=<32-hex-character-id>`

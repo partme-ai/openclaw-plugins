@@ -359,6 +359,15 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/status", handler: (req, res) => statusHandler(req, res, journal) });
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/traces", handler: (req, res) => tracesHandler(req, res, journal) });
     api.registerHttpRoute({ ...routeOptions, path: "/tracing/trace", handler: (req, res) => traceDetailHandler(req, res, journal) });
+    if (api.registrationMode === "full") {
+      api.session.controls.registerControlUiDescriptor({
+        surface: "tab",
+        id: "tracing-status",
+        label: "Tracing status",
+        path: "/tracing/status",
+        requiredScopes: ["operator.read"],
+      });
+    }
     // OpenClaw 2026.7.1 loads hook registries in scoped plugin-runtime
     // instances that do not receive the Gateway instance's gateway_start
     // state. Initialize lazily inside each hook runtime so message/tool hooks

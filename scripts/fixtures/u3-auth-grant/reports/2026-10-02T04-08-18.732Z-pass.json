@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "startedAt": "2026-10-02T04:08:18.732Z",
+  "hostVersion": "2026.9.6",
+  "profile": "u3-auth-grant-e2e",
+  "port": 60062,
+  "fixtureId": "u3-auth-grant-fixture",
+  "routerIncluded": true,
+  "seededDeadLetterId": "u3-grant-replay-c91223db2ae35e12",
+  "assertions": [
+    "anonymous fixture GET=401",
+    "Gateway bootstrap minted a route-bound read Cookie",
+    "router same-plugin signed Cookie GET=200, POST=401",
+    "tracing same-plugin signed Cookie GET=200, POST=401",
+    "Router Cookie cross-plugin Tracing GET=401",
+    "genuine Cookie fixture GET=200; count=0",
+    "same-plugin Cookie POST=401; no handler side effect",
+    "cross-plugin Cookie Router DLQ GET=401 and replay POST=401; DLQ and delivery unchanged",
+    "same-plugin Router read Cookie replay POST=401; DLQ and delivery unchanged",
+    "explicit bearer POST reaches fixture handler once",
+    "Router and Tracing signed Cookies expired in the same Gateway process",
+    "same signed Cookie GET=401 after real five-minute TTL in same Gateway process"
+  ],
+  "finishedAt": "2026-10-02T04:13:47.146Z"
+}

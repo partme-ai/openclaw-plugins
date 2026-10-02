@@ -41,7 +41,10 @@ describe("tracing plugin", () => {
   it("ID、生命周期和 Gateway 认证 GET-only 路由与 OpenClaw 2026.9.6 对齐", async () => {
     const hooks = new Map<string, Hook[]>();
     const routes = new Map<string, { auth?: string; match?: string; handler: Hook }>();
+    const descriptors: Array<{ surface: string; path?: string; requiredScopes?: string[] }> = [];
     const api = {
+      registrationMode: "full",
+      session: { controls: { registerControlUiDescriptor: (descriptor: typeof descriptors[number]) => descriptors.push(descriptor) } },
       config: {},
       pluginConfig: { enabled: true, backend: "log", sampleRate: 1, traceDir: testTraceDir },
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -58,6 +61,7 @@ describe("tracing plugin", () => {
     expect(routes.size).toBe(3);
     expect([...routes.values()].every((route) => route.auth === "gateway")).toBe(true);
     expect([...routes.values()].every((route) => route.match === "exact")).toBe(true);
+    expect(descriptors).toContainEqual(expect.objectContaining({ surface: "tab", path: "/tracing/status", requiredScopes: ["operator.read"] }));
     expect(hooks.get("message_received")).toHaveLength(1);
     expect(hooks.get("reply_payload_sending")).toHaveLength(1);
     expect(hooks.get("agent_end")).toHaveLength(1);

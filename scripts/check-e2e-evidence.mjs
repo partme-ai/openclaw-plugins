@@ -12,6 +12,11 @@ const ROOT = resolve(import.meta.dirname, "..");
 const REPORTS_DIR = join(ROOT, "scripts/e2e/reports");
 const HOST_VERSION = "2026.9.6";
 
+/** Browser channels must have an actual browser result, not only protocol E2E. */
+export function browserEvidenceRequired(extension) {
+  return extension.category === "web-browser";
+}
+
 /** Pure contract check; expected is supplied by current source and the packer's candidate manifest. */
 export function validateEvidence(report, expected) {
   const failures = [];
@@ -100,7 +105,7 @@ export function checkReports(directory = REPORTS_DIR) {
       try {
         const packed = report.candidateManifest ? readCandidateManifest(report.candidateManifest) : {};
         const currentVersion = readJson(join(ROOT, extension.dir, "package.json")).version;
-        const issues = validateEvidence(report, { hostVersion: HOST_VERSION, sourceFingerprints: { [id]: fingerprint }, candidates: packed, currentVersions: { [id]: currentVersion }, browserPlugins: extension.browserTest ? [id] : [] });
+        const issues = validateEvidence(report, { hostVersion: HOST_VERSION, sourceFingerprints: { [id]: fingerprint }, candidates: packed, currentVersions: { [id]: currentVersion }, browserPlugins: browserEvidenceRequired(extension) ? [id] : [] });
         if (issues.length === 0) { accepted = true; break; }
         reason = issues.join("; ");
       } catch (error) { reason = error.message; }
