@@ -31,7 +31,7 @@ const APPROVED_E2E_CAPABILITIES = {
 // Exact reviewed E2E package snapshots. Update only after reviewing the changed
 // package, including dist; this does not claim a complete runtime surface list.
 const APPROVED_E2E_ARTIFACT_SHA256 = {
-  wecom: "5f931beaa49752e861897de417cc80dca79da3233c6cd0a0b194d1553f9a939a",
+  wecom: "f1a6201c855c401de3108680cd18d99bea944d6e5110857efe17ee7eb086b5e3",
   "wechat-ipad": "229a6deb3bf60e25075c1a65b565b3fef470adbf782aff4941774db40254da3f",
   rednode: "1253223ebe4085d3f074e6dfb53cfc2d039ca86b217981aa3243c6fe5e120323",
   amap: "ef5e72eef1e401544881f31bb56fac351e6f57c55dba46c9e50527f3dccae28f",
@@ -43,7 +43,7 @@ const APPROVED_E2E_ARTIFACT_SHA256 = {
   openmem: "24e0bbe94499f4578f098b5520367f0fd48ddddceac262354c1bb080c17f0a0e",
   router: "86292e12a9fd35f81e44b67bb64c8fe3e077786808bccef90fab64fec1f0adac",
   gotify: "3c52d261c8f56928e1aba52f4590b1bb3a63fcb98b79793506807b95ad43ddcc",
-  douyin: "69765cc9a2c1b609f1356d388e71396a48abcc11d82a46d2ff4bb0c8ae303ddd",
+  douyin: "2e9b75bec2c25ea5ceafcf4a4ccb5c9b029fee9fb7517214ef9dc668994c1040",
   "wecom-kf": "61ce66fb81683d6e8ea405a830ab76a50de1b147423d26239d77fda8fca4a6ca",
   tracing: "425cd7d0b794d58d75c8d826c925e127a1d61e6de45a0238d51796d73107804c",
   mqtt: "fd77759059cf1ce2f5f9c86560600e0dfe9abef9b2b4458a46881ff4c5a6ba56",
