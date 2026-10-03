@@ -13,24 +13,91 @@ import { createTraceStore } from "./trace-store.js";
 import * as defaultTraceStore from "./trace-store.js";
 import { hasPendingInternalDiagnosticEvent, onInternalDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 type TraceStore = ReturnType<typeof createTraceStore>;
 
-// OpenClaw can register the same plugin in multiple scoped runtimes in one
-// process. Its diagnostic seq is process-wide, so claim only after a live
-// backend exists; the bounded global set prevents duplicate OTLP exports.
-const TELEMETRY_SEEN_KEY = Symbol.for("partme.tracing.deliveryTelemetrySeen.v1");
-function claimTelemetryEvent(sequence: unknown): boolean {
-  if (!Number.isSafeInteger(sequence) || (sequence as number) <= 0) return false;
-  const global = globalThis as unknown as Record<symbol, unknown>;
-  let seen = global[TELEMETRY_SEEN_KEY] as Set<number> | undefined;
-  if (!seen) global[TELEMETRY_SEEN_KEY] = seen = new Set<number>();
-  const seq = sequence as number;
-  if (seen.has(seq)) return false;
-  seen.add(seq);
-  if (seen.size > 2048) seen.delete(seen.values().next().value!);
-  return true;
+// OpenClaw invokes all diagnostic listeners synchronously, then lets their
+// async context providers run. Keep one bounded ticket per event until every
+// listener has finished; a slow provider must not resurrect an evicted claim.
+const TELEMETRY_EVENTS_KEY = Symbol.for("partme.tracing.deliveryTelemetryEvents.v1");
+const MAX_TELEMETRY_EVENTS = 1024;
+const MAX_TELEMETRY_SINKS_PER_EVENT = 128;
+const TELEMETRY_EVENT_TIMEOUT_MS = 30_000;
+interface TelemetryEventEntry {
+  pending: number;
+  dispatched: boolean;
+  closed: boolean;
+  sinks: Set<string | TracingBackend>;
+  timeout: ReturnType<typeof setTimeout>;
 }
-
+interface TelemetryEventTicket {
+  claim: (backend: TracingBackend, config: TracingConfig) => boolean;
+  release: () => void;
+}
+function telemetryEvents(): Map<number, TelemetryEventEntry> {
+  const global = globalThis as unknown as Record<symbol, unknown>;
+  let events = global[TELEMETRY_EVENTS_KEY] as Map<number, TelemetryEventEntry> | undefined;
+  if (!(events instanceof Map)) global[TELEMETRY_EVENTS_KEY] = events = new Map();
+  return events;
+}
+/** @internal The host invokes listeners synchronously for each diagnostic sequence. */
+export function reserveTelemetryEvent(sequence: unknown): TelemetryEventTicket | undefined {
+  if (!Number.isSafeInteger(sequence) || (sequence as number) <= 0) return undefined;
+  const seq = sequence as number;
+  const events = telemetryEvents();
+  let entry = events.get(seq);
+  if (!entry) {
+    if (events.size >= MAX_TELEMETRY_EVENTS) return undefined;
+    const timeout = setTimeout(() => {
+      entry!.closed = true;
+      events.delete(seq);
+    }, TELEMETRY_EVENT_TIMEOUT_MS);
+    timeout.unref?.();
+    entry = { pending: 0, dispatched: false, closed: false, sinks: new Set(), timeout };
+    events.set(seq, entry);
+    queueMicrotask(() => {
+      entry!.dispatched = true;
+      if (entry!.pending === 0) {
+        clearTimeout(entry!.timeout);
+        if (events.get(seq) === entry) events.delete(seq);
+      }
+    });
+  }
+  if (entry.closed) return undefined;
+  entry.pending += 1;
+  let released = false;
+  return {
+    claim: (backend, config) => {
+      if (entry.closed) return false;
+      const sink = telemetrySinkKey(config) ?? backend;
+      if (entry.sinks.has(sink) || entry.sinks.size >= MAX_TELEMETRY_SINKS_PER_EVENT) return false;
+      entry.sinks.add(sink);
+      return true;
+    },
+    release: () => {
+      if (released) return;
+      released = true;
+      entry.pending -= 1;
+      if (entry.dispatched && entry.pending === 0) {
+        clearTimeout(entry.timeout);
+        if (events.get(seq) === entry) events.delete(seq);
+      }
+    },
+  };
+}
+function telemetrySinkKey(config: TracingConfig): string | undefined {
+  if (config.backend === "otlp") {
+    const headers = Object.entries(config.otlpHeaders)
+      .map(([name, value]): [string, string] => [name.toLowerCase(), value])
+      .sort(([leftName, leftValue], [rightName, rightValue]) =>
+        leftName.localeCompare(rightName) || leftValue.localeCompare(rightValue));
+    return createHash("sha256").update(JSON.stringify(["otlp", new URL(config.otlpEndpoint).toString(), headers])).digest("hex");
+  }
+  if (config.backend === "file") {
+    return createHash("sha256").update(JSON.stringify(["file", resolve(config.traceDir)])).digest("hex");
+  }
+  return undefined;
+}
 /** 单次 Gateway 生命周期中供所有 tracing hooks 共享的后端、采样器与不可变配置。 */
 export interface TracingHookContext {
   backend: TracingBackend;
@@ -213,30 +280,38 @@ export function registerTracingPluginHooks(
       api.logger.warn("[tracing] telemetry export cap reached; delivery telemetry may be incomplete");
       return;
     }
+    const ticket = reserveTelemetryEvent(event.seq);
+    if (!ticket) {
+      api.logger.warn("[tracing] telemetry event cap reached; delivery telemetry may be incomplete");
+      return;
+    }
     const generation = hookGeneration;
     const exportFact = (async () => {
-      const context = await resolveHookContext(api, getLiveContext, "telemetry");
-      if (!context || !isLive(generation)) return;
-      if (!claimTelemetryEvent(event.seq)) return;
-      const fields: Record<string, string | number | boolean> = { "partme.event": kind };
-      for (const key of ["channel", "outcome", "plugin"] as const) {
-        const value = attributes[key];
-        if (typeof value === "string" && /^[a-z-]{1,24}$/u.test(value)) fields[`partme.${key}`] = value;
+      try {
+        const context = await resolveHookContext(api, getLiveContext, "telemetry");
+        if (!context || !isLive(generation) || !ticket.claim(context.backend, context.config)) return;
+        const fields: Record<string, string | number | boolean> = { "partme.event": kind };
+        for (const key of ["channel", "outcome", "plugin"] as const) {
+          const value = attributes[key];
+          if (typeof value === "string" && /^[a-z-]{1,24}$/u.test(value)) fields[`partme.${key}`] = value;
+        }
+        for (const key of ["run_id", "message_id", "delivery_id"] as const) {
+          const value = attributes[key];
+          if (typeof value === "string" && /^id_[a-f0-9]{24}$/u.test(value)) fields[`partme.${key}`] = value;
+        }
+        const duration = attributes.duration_ms;
+        if (typeof duration === "number" && Number.isFinite(duration) && duration >= 0 && duration <= 600_000) {
+          fields["partme.duration_ms"] = duration;
+        }
+        if (kind === "dlq") fields["partme.entries"] = attributes.entries as number;
+        const span = createSpan(kind === "recall" ? "memory.recall" : `delivery.${kind}`, {
+          kind: "internal", attributes: fields,
+        });
+        await endSpan(span.spanId, kind === "settlement" && attributes.outcome !== "delivered" ? "error" : "ok",
+          context.backend, typeof duration === "number" ? { durationMs: duration } : {});
+      } finally {
+        ticket.release();
       }
-      for (const key of ["run_id", "message_id", "delivery_id"] as const) {
-        const value = attributes[key];
-        if (typeof value === "string" && /^id_[a-f0-9]{24}$/u.test(value)) fields[`partme.${key}`] = value;
-      }
-      const duration = attributes.duration_ms;
-      if (typeof duration === "number" && Number.isFinite(duration) && duration >= 0 && duration <= 600_000) {
-        fields["partme.duration_ms"] = duration;
-      }
-      if (kind === "dlq") fields["partme.entries"] = attributes.entries as number;
-      const span = createSpan(kind === "recall" ? "memory.recall" : `delivery.${kind}`, {
-        kind: "internal", attributes: fields,
-      });
-      await endSpan(span.spanId, kind === "settlement" && attributes.outcome !== "delivered" ? "error" : "ok",
-        context.backend, typeof duration === "number" ? { durationMs: duration } : {});
     })().catch((error) => logHookError(api, "telemetry export", error));
     telemetryExports.add(exportFact);
     void exportFact.finally(() => telemetryExports.delete(exportFact));

@@ -12,6 +12,21 @@ function baseEvent(): Pick<DiagnosticEventPayload, "seq" | "ts"> {
 }
 
 describe("diagnostics metric-store (diagnostics-prometheus parity)", () => {
+  it("tracks the last accepted DLQ observation and clears it on exporter reset", () => {
+    const store = __test__.createPrometheusMetricStore();
+    expect(store.routerDlqLastObservedAtMs()).toBeNull();
+    const fact = { ...baseEvent(), type: "log.record", level: "info",
+      loggerName: "partme.delivery-recall.v1", message: "delivery telemetry",
+      attributes: { event: "dlq", channel: "router", entries: 2 } } as DiagnosticEventPayload;
+    __test__.recordDiagnosticEvent(store, fact, untrusted);
+    expect(store.routerDlqLastObservedAtMs()).toBeGreaterThan(0);
+    expect(__test__.renderPrometheusMetrics(store)).toContain("openclaw_router_dlq_entries 2");
+    store.reset();
+    expect(store.routerDlqLastObservedAtMs()).toBeNull();
+    expect(__test__.renderPrometheusMetrics(store)).not.toContain("openclaw_router_dlq_entries");
+    __test__.recordDiagnosticEvent(store, fact, untrusted);
+    expect(__test__.renderPrometheusMetrics(store)).toContain("openclaw_router_dlq_entries 2");
+  });
   it("records final settlements once and keeps 10,000 identities out of metric labels", async () => {
     const store = __test__.createPrometheusMetricStore();
     const stop = onInternalDiagnosticEvent((event, metadata) => __test__.recordDiagnosticEvent(store, event, metadata));

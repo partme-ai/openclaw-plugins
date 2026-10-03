@@ -426,6 +426,17 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
   res.end(JSON.stringify(payload, null, 2));
 }
 
+function configuredRouterTelemetry(config: unknown): "enabled" | "disabled" | "unknown" {
+  if (!config || typeof config !== "object") return "unknown";
+  const plugins = (config as { plugins?: { entries?: Record<string, unknown> } }).plugins;
+  const entry = plugins?.entries?.router;
+  if (entry === undefined) return "unknown";
+  if (typeof entry === "boolean") return entry ? "enabled" : "disabled";
+  if (!entry || typeof entry !== "object") return "unknown";
+  const settings = entry as { enabled?: unknown; config?: { enabled?: unknown } };
+  return settings.enabled === false || settings.config?.enabled === false ? "disabled" : "enabled";
+}
+
   const cfg = resolvePrometheusConfig(api.pluginConfig as Record<string, unknown> | undefined);
   initializeRuntimeStore(api, cfg);
   setRuntime({
@@ -443,12 +454,14 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
   let pendingStop: Promise<void> | null = null;
   let started = false;
   let stoppedOnce = false;
+  let activeServiceConfig: unknown = null;
   api.registerService({
     id: "openclaw-prometheus-diagnostics",
     start: async (ctx) => {
       if (pendingStop) await pendingStop;
       if (pendingStart) return pendingStart;
       if (started && !lifecycle.closed) return;
+      activeServiceConfig = ctx.config ?? api.config;
       lifecycle.closed = false;
       if (stoppedOnce) {
         initializeRuntimeStore(api, cfg);
@@ -463,7 +476,7 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
       const starting = startDiagnosticsSubscription({
         logger: api.logger,
         internalDiagnostics: ctx.internalDiagnostics as import("./diagnostics/subscribe.js").InternalDiagnosticsBridge | undefined,
-        config: api.config,
+        config: activeServiceConfig,
       });
       pendingStart = starting;
       try {
@@ -472,6 +485,7 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
       }
       catch (error) {
         started = false;
+        activeServiceConfig = null;
         lifecycle.closed = true;
         stopDiagnosticsSubscription();
         resetDiagnosticsMetricStore();
@@ -507,6 +521,7 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
       lastCollectorDiagnostics.clear();
       lastCollectAt = undefined;
       started = false;
+      activeServiceConfig = null;
       stoppedOnce = true;
       })();
       pendingStop = stopping;
@@ -638,6 +653,14 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
       const diagnosticQueueDrops = [...getDiagnosticsMetricStore().snapshot().counters]
         .filter(([key]) => key.startsWith("openclaw_diagnostic_async_queue_dropped_total|"))
         .reduce((sum, [, sample]) => sum + sample.value, 0);
+      const routerDlqObservedAtMs = getDiagnosticsMetricStore().routerDlqLastObservedAtMs();
+      const routerDlqAgeMs = routerDlqObservedAtMs === null ? null : Math.max(0, Date.now() - routerDlqObservedAtMs);
+      const routerDlqFresh = routerDlqAgeMs !== null && routerDlqAgeMs <= 90_000;
+      const routerConfigured = configuredRouterTelemetry(activeServiceConfig);
+      const routerDlqRelevant = routerConfigured === "enabled" ||
+        (routerConfigured === "unknown" && routerDlqObservedAtMs !== null);
+      const routerDlqStatus = !routerDlqRelevant ? "unavailable" : routerDlqFresh ? "fresh" :
+        routerDlqObservedAtMs === null ? "missing" : "stale";
       const healthy =
         snapshotHealthy &&
         collectorFailures.failed === 0 &&
@@ -666,7 +689,16 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
           diagnosticsEnabled: areDiagnosticsEnabledForProcess(),
           subscribed: started,
           diagnosticQueueDrops,
-          status: !areDiagnosticsEnabledForProcess() || !started || diagnosticQueueDrops > 0 ? "degraded" : "best-effort",
+          routerDlq: {
+            configured: routerConfigured,
+            status: routerDlqStatus,
+            lastObservedAt: routerDlqObservedAtMs === null ? null : new Date(routerDlqObservedAtMs).toISOString(),
+            ageMs: routerDlqAgeMs,
+            fresh: routerDlqFresh,
+          },
+          status: !areDiagnosticsEnabledForProcess() || !started || diagnosticQueueDrops > 0 ||
+            (routerDlqRelevant && !routerDlqFresh)
+            ? "degraded" : "best-effort",
         },
         snapshot: {
           ageMs: snapshotAge,

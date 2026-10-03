@@ -102,11 +102,19 @@ export async function testPrometheus(ctx, results) {
         }, { label: "O6 actual settlement/retry/DLQ/recall metric values", timeoutMs: 30_000, intervalMs: 500 });
         const o6Health = await ctx.gatewayFetch("/metrics/health", { headers: AUTH_HEADERS });
         if (o6Health.json?.deliveryTelemetry?.status !== "best-effort" ||
-            o6Health.json?.deliveryTelemetry?.diagnosticQueueDrops !== 0) {
+            o6Health.json?.deliveryTelemetry?.diagnosticQueueDrops !== 0 ||
+            o6Health.json?.deliveryTelemetry?.routerDlq?.configured !== "enabled" ||
+            o6Health.json?.deliveryTelemetry?.routerDlq?.status !== "fresh" ||
+            o6Health.json?.deliveryTelemetry?.routerDlq?.fresh !== true ||
+            !Number.isFinite(o6Health.json?.deliveryTelemetry?.routerDlq?.ageMs) ||
+            !Number.isFinite(Date.parse(o6Health.json?.deliveryTelemetry?.routerDlq?.lastObservedAt))) {
           throw new Error(`O6 diagnostics degraded: ${o6Health.text}`);
         }
         evidence.o6 = { ...actualSamples, diagnosticsStatus: o6Health.json.deliveryTelemetry.status,
           diagnosticQueueDrops: o6Health.json.deliveryTelemetry.diagnosticQueueDrops,
+          routerDlqStatus: o6Health.json.deliveryTelemetry.routerDlq.status,
+          routerDlqFresh: o6Health.json.deliveryTelemetry.routerDlq.fresh,
+          routerDlqAgeMs: o6Health.json.deliveryTelemetry.routerDlq.ageMs,
           rawDeliveryIdAbsent: true };
         console.log("[o6-prometheus] installed MQTT delivered, Router failed/retry/DLQ, Memory recall count, diagnostics enabled, zero queue drops");
       }

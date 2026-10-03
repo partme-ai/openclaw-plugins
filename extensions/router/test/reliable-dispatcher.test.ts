@@ -66,6 +66,100 @@ afterEach(async () => {
 });
 
 describe("ReliableRouteDispatcher", () => {
+  it("does not start a zombie timer or retain the lease when stop overtakes initialization", async () => {
+    const directory = await stateDir();
+    const resolved = config();
+    const store = new DurableRouteStore(directory, resolved);
+    const initialized = Promise.withResolvers<void>();
+    const releaseStart = Promise.withResolvers<void>();
+    const initialize = store.initialize.bind(store);
+    vi.spyOn(store, "initialize").mockImplementationOnce(async () => {
+      await initialize();
+      initialized.resolve();
+      await releaseStart.promise;
+    });
+    const events: number[] = [];
+    const unsubscribe = onInternalDiagnosticEvent((event) => {
+      if (event.type === "log.record" && event.loggerName === "partme.delivery-recall.v1" &&
+          event.attributes?.event === "dlq") events.push(event.attributes.entries as number);
+    });
+    const dispatcher = new ReliableRouteDispatcher(api(), resolved, store, vi.fn(), 20);
+    try {
+      const starting = dispatcher.start();
+      await initialized.promise;
+      const stopping = dispatcher.stop();
+      releaseStart.resolve();
+      await Promise.all([starting, stopping]);
+      expect((await dispatcher.status()).running).toBe(false);
+      const replacement = new DurableRouteStore(directory, resolved);
+      await expect(replacement.initialize()).resolves.toBeUndefined();
+      await replacement.close();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await waitForDiagnosticEventsDrained();
+      expect(events).toEqual([]);
+    } finally {
+      releaseStart.resolve();
+      unsubscribe();
+      await dispatcher.stop();
+    }
+  });
+  it("starts a new generation after a concurrent stop releases its writer lease", async () => {
+    const directory = await stateDir();
+    const resolved = config();
+    const store = new DurableRouteStore(directory, resolved);
+    const dispatcher = new ReliableRouteDispatcher(api(), resolved, store, vi.fn(), 20);
+    await dispatcher.start();
+    const closing = Promise.withResolvers<void>();
+    const releaseClose = Promise.withResolvers<void>();
+    const close = store.close.bind(store);
+    vi.spyOn(store, "close").mockImplementationOnce(async () => {
+      await close();
+      closing.resolve();
+      await releaseClose.promise;
+    });
+    const stopping = dispatcher.stop();
+    await closing.promise;
+    const initialize = vi.spyOn(store, "initialize");
+    const restarting = dispatcher.start();
+    await Promise.resolve();
+    expect(initialize).not.toHaveBeenCalled();
+    releaseClose.resolve();
+    await Promise.all([stopping, restarting]);
+    expect((await dispatcher.status()).running).toBe(true);
+    await dispatcher.stop();
+    const replacement = new DurableRouteStore(directory, resolved);
+    await expect(replacement.initialize()).resolves.toBeUndefined();
+    await replacement.close();
+  });
+  it("reobserves durable DLQ depth after a metrics subscriber resets without a Router transition", async () => {
+    const directory = await stateDir();
+    const resolved = config({ lockHeartbeatMs: 60_000 });
+    const dispatcher = new ReliableRouteDispatcher(api(), resolved, new DurableRouteStore(directory, resolved), vi.fn(), 20);
+    const first: number[] = [];
+    const second: number[] = [];
+    const subscribe = (target: number[]) => onInternalDiagnosticEvent((event) => {
+      if (event.type === "log.record" && event.loggerName === "partme.delivery-recall.v1" &&
+          event.attributes?.event === "dlq") target.push(event.attributes.entries as number);
+    });
+    const stopFirst = subscribe(first);
+    await dispatcher.start();
+    await waitForDiagnosticEventsDrained();
+    expect(first).toEqual([0]);
+    stopFirst();
+    const stopSecond = subscribe(second);
+    try {
+      await waitFor(async () => second.length > 0);
+      await waitForDiagnosticEventsDrained();
+      expect(second).toEqual([0]);
+      await dispatcher.stop();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await waitForDiagnosticEventsDrained();
+      expect(second).toEqual([0]);
+    } finally {
+      stopSecond();
+      await dispatcher.stop();
+    }
+  });
   it("records retry then delivered once and classifies an exhausted timeout as ambiguous", async () => {
     const events: Array<{ attributes?: Record<string, unknown> }> = [];
     const stop = onInternalDiagnosticEvent((event) => {
@@ -198,6 +292,52 @@ describe("ReliableRouteDispatcher", () => {
     await dispatcher.stop();
   });
 
+  it("replays a committed DLQ entry when the telemetry depth snapshot fails", async () => {
+    const directory = await stateDir();
+    const resolved = config({ maxAttempts: 1 });
+    const store = new DurableRouteStore(directory, resolved);
+    const publish = vi.fn().mockRejectedValueOnce(new Error("temporary")).mockResolvedValue(undefined);
+    const pluginApi = api() as { logger: { error: ReturnType<typeof vi.fn> } };
+    const dispatcher = new ReliableRouteDispatcher(pluginApi as never, resolved, store, publish);
+    await dispatcher.start();
+    await dispatcher.enqueue({ dedupeKey: "replay-snapshot-error", ruleId: "r", actionType: "forward",
+      payload: { channel: "mqtt", content: "hello" } });
+    await waitFor(async () => (await dispatcher.deadLetters(10)).length === 1);
+    const replay = store.replayDeadLetters.bind(store);
+    vi.spyOn(store, "replayDeadLetters").mockImplementation(async (limit) => {
+      const count = await replay(limit);
+      vi.spyOn(store, "snapshot").mockRejectedValueOnce(new Error("telemetry snapshot failed"));
+      return count;
+    });
+    pluginApi.logger.error.mockImplementationOnce(() => { throw new Error("logger unavailable"); });
+    await expect(dispatcher.replayDeadLetters(10)).resolves.toBe(1);
+    await waitFor(async () => (await dispatcher.status()).delivered === 1);
+    expect(await dispatcher.deadLetters(10)).toHaveLength(0);
+    await dispatcher.stop();
+  });
+
+  it("completes exhausted delivery bookkeeping when the DLQ telemetry snapshot fails", async () => {
+    const directory = await stateDir();
+    const resolved = config({ maxAttempts: 1 });
+    const store = new DurableRouteStore(directory, resolved);
+    const markFailed = store.markFailed.bind(store);
+    vi.spyOn(store, "markFailed").mockImplementation(async (...args) => {
+      const result = await markFailed(...args);
+      if (result === "dead-letter") vi.spyOn(store, "snapshot").mockRejectedValueOnce(new Error("telemetry snapshot failed"));
+      return result;
+    });
+    const pluginApi = api() as { logger: { error: ReturnType<typeof vi.fn> } };
+    const dispatcher = new ReliableRouteDispatcher(pluginApi as never, resolved, store,
+      vi.fn().mockRejectedValue(new Error("permanent")));
+    await dispatcher.start();
+    await dispatcher.enqueue({ dedupeKey: "failed-snapshot-error", ruleId: "r", actionType: "forward",
+      payload: { channel: "mqtt", content: "hello" } });
+    await waitFor(async () => (await dispatcher.deadLetters(10)).length === 1);
+    await waitFor(async () => pluginApi.logger.error.mock.calls.some(([line]) => String(line).includes("delivery exhausted")));
+    expect(await dispatcher.status()).toMatchObject({ pending: 0, deadLetters: 1 });
+    await dispatcher.stop();
+  });
+
   it("persists every fan-out action atomically before starting delivery", async () => {
     const directory = await stateDir();
     const resolved = config();
@@ -298,6 +438,18 @@ describe("ReliableRouteDispatcher", () => {
     );
     await expect(failed.start()).rejects.toThrow("send capability is unavailable");
 
+    const replacement = new DurableRouteStore(directory, resolved);
+    await expect(replacement.initialize()).resolves.toBeUndefined();
+    await replacement.close();
+  });
+
+  it("releases the startup writer lease even when the telemetry snapshot fails", async () => {
+    const directory = await stateDir();
+    const resolved = config();
+    const store = new DurableRouteStore(directory, resolved);
+    vi.spyOn(store, "snapshot").mockRejectedValueOnce(new Error("telemetry snapshot failed"));
+    const failed = new ReliableRouteDispatcher(api(), resolved, store, undefined);
+    await expect(failed.start()).rejects.toThrow("send capability is unavailable");
     const replacement = new DurableRouteStore(directory, resolved);
     await expect(replacement.initialize()).resolves.toBeUndefined();
     await replacement.close();

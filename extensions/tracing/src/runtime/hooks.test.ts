@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { registerTracingPluginHooks } from "./hooks.js";
+import { registerTracingPluginHooks, reserveTelemetryEvent } from "./hooks.js";
 import { emitDeliveryTelemetry } from "../../../message-sdk/src/transport/telemetry.js";
 import { emitDiagnosticEvent, waitForDiagnosticEventsDrained } from "openclaw/plugin-sdk/diagnostic-runtime";
 import { TracingSampler } from "./sampler.js";
@@ -98,6 +98,204 @@ describe("registerTracingPluginHooks", () => {
     await waitForDiagnosticEventsDrained();
     await vi.waitFor(() => expect(backend.exportSpans).toHaveBeenCalledTimes(2));
     await stopSecond();
+  });
+  it("exports a diagnostic fact independently to distinct backends in one Gateway process", async () => {
+    const firstBackend = createMockBackend();
+    const secondBackend = createMockBackend();
+    const first = createMockApi();
+    const second = createMockApi();
+    const stopFirst = registerTracingPluginHooks(first as never, () => ({
+      backend: firstBackend, sampler: new TracingSampler(1), config: baseConfig,
+    }));
+    const stopSecond = registerTracingPluginHooks(second as never, () => ({
+      backend: secondBackend, sampler: new TracingSampler(1), config: baseConfig,
+    }));
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", deliveryId: "two-backends" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(firstBackend.exportSpans).toHaveBeenCalledTimes(1));
+    expect(secondBackend.exportSpans).toHaveBeenCalledTimes(1);
+    await stopFirst();
+    await stopSecond();
+  });
+  it("exports one fact when distinct backend objects target the same OTLP sink", async () => {
+    const firstBackend = createMockBackend();
+    const secondBackend = createMockBackend();
+    const config = { ...baseConfig, backend: "otlp" as const, otlpEndpoint: "https://collector.example/v1/traces",
+      otlpHeaders: { Authorization: "Bearer private-token", "X-Scope": "one" } };
+    const reordered = { ...config, otlpHeaders: { "X-Scope": "one", Authorization: "Bearer private-token" } };
+    const first = createMockApi();
+    const second = createMockApi();
+    const stopFirst = registerTracingPluginHooks(first as never, () => ({
+      backend: firstBackend, sampler: new TracingSampler(1), config,
+    }));
+    const stopSecond = registerTracingPluginHooks(second as never, () => ({
+      backend: secondBackend, sampler: new TracingSampler(1), config: reordered,
+    }));
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", deliveryId: "one-otlp-sink" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(vi.mocked(firstBackend.exportSpans).mock.calls.length +
+      vi.mocked(secondBackend.exportSpans).mock.calls.length).toBe(1));
+    await stopFirst();
+    await stopSecond();
+  });
+  it("keeps same-sink claims best effort when the chosen async exporter fails", async () => {
+    const firstBackend = createMockBackend();
+    const secondBackend = createMockBackend();
+    vi.mocked(firstBackend.exportSpans).mockRejectedValueOnce(new Error("export unavailable"));
+    const config = { ...baseConfig, backend: "otlp" as const, otlpEndpoint: "https://failed.example/v1/traces" };
+    const first = createMockApi();
+    const second = createMockApi();
+    const stopFirst = registerTracingPluginHooks(first as never, () => ({
+      backend: firstBackend, sampler: new TracingSampler(1), config,
+    }));
+    const stopSecond = registerTracingPluginHooks(second as never, () => ({
+      backend: secondBackend, sampler: new TracingSampler(1), config,
+    }));
+    emitDeliveryTelemetry({ event: "retry", channel: "mqtt", deliveryId: "failed-export" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(firstBackend.exportSpans).toHaveBeenCalledTimes(1));
+    expect(secondBackend.exportSpans).not.toHaveBeenCalled();
+    expect(first.logger.error).toHaveBeenCalledWith(expect.stringContaining("telemetry export failed"));
+    await stopFirst();
+    await stopSecond();
+  });
+  it("exports independently to different OTLP endpoints or header scopes", async () => {
+    const backends = [createMockBackend(), createMockBackend(), createMockBackend()];
+    const apis = backends.map(() => createMockApi());
+    const configs = [
+      { ...baseConfig, backend: "otlp" as const, otlpEndpoint: "https://first.example/v1/traces",
+        otlpHeaders: { Authorization: "Bearer first", "X-Scope": "a" } },
+      { ...baseConfig, backend: "otlp" as const, otlpEndpoint: "https://second.example/v1/traces",
+        otlpHeaders: { "X-Scope": "a", Authorization: "Bearer first" } },
+      { ...baseConfig, backend: "otlp" as const, otlpEndpoint: "https://first.example/v1/traces",
+        otlpHeaders: { "X-Scope": "a", Authorization: "Bearer second" } },
+    ];
+    const stops = apis.map((api, index) => registerTracingPluginHooks(api as never, () => ({
+      backend: backends[index]!, sampler: new TracingSampler(1), config: configs[index]!,
+    })));
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", deliveryId: "many-otlp-sinks" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(backends.every((backend) => vi.mocked(backend.exportSpans).mock.calls.length === 1)).toBe(true));
+    for (const stop of stops) await stop();
+  });
+  it("bounds sink claims to the diagnostic event lifetime across configuration changes", async () => {
+    const backends = Array.from({ length: 70 }, () => createMockBackend());
+    const stops = backends.map((backend, index) => registerTracingPluginHooks(createMockApi() as never, () => ({
+      backend, sampler: new TracingSampler(1), config: { ...baseConfig, backend: "otlp",
+        otlpEndpoint: `https://collector-${index}.example/v1/traces`,
+        otlpHeaders: { Authorization: "Bearer private-token" } },
+    })));
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", deliveryId: "bounded-sinks" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(backends.every((backend) => vi.mocked(backend.exportSpans).mock.calls.length === 1)).toBe(true));
+    const events = (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("partme.tracing.deliveryTelemetryEvents.v1")];
+    expect(events).toBeInstanceOf(Map);
+    await vi.waitFor(() => expect((events as Map<number, unknown>).size).toBe(0));
+    for (const stop of stops) await stop();
+  });
+  it("does not export twice when 65 other sinks occur between two listeners for one sink", async () => {
+    const backends = Array.from({ length: 67 }, () => createMockBackend());
+    const sinkA = { ...baseConfig, backend: "otlp" as const, otlpEndpoint: "https://sink-a.example/v1/traces" };
+    const stops = backends.map((backend, index) => registerTracingPluginHooks(createMockApi() as never, () => ({
+      backend, sampler: new TracingSampler(1), config: index === 0 || index === 66 ? sinkA :
+        { ...sinkA, otlpEndpoint: `https://sink-${index}.example/v1/traces` },
+    })));
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", deliveryId: "sink-order" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(backends.slice(0, 66).every((backend) =>
+      vi.mocked(backend.exportSpans).mock.calls.length === 1)).toBe(true));
+    const events = (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("partme.tracing.deliveryTelemetryEvents.v1")] as
+      Map<number, unknown>;
+    await vi.waitFor(() => expect(events.size).toBe(0));
+    expect(vi.mocked(backends[66]!.exportSpans).mock.calls.length).toBe(0);
+    for (const stop of stops) await stop();
+  });
+  it("keeps a pending same-sink ticket after more than 2048 later diagnostics", async () => {
+    const gate = Promise.withResolvers<void>();
+    const firstBackend = createMockBackend();
+    const secondBackend = createMockBackend();
+    const config = { ...baseConfig, backend: "otlp" as const,
+      otlpEndpoint: "https://slow-provider.example/v1/traces" };
+    const first = registerTracingPluginHooks(createMockApi() as never, () => ({
+      backend: firstBackend, sampler: new TracingSampler(1), config,
+    }));
+    let calls = 0;
+    const second = registerTracingPluginHooks(createMockApi() as never, async () => {
+      if (++calls === 1) await gate.promise;
+      return { backend: secondBackend, sampler: new TracingSampler(1), config };
+    });
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", deliveryId: "slow-first" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(firstBackend.exportSpans).toHaveBeenCalledTimes(1));
+    const events = (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("partme.tracing.deliveryTelemetryEvents.v1")] as
+      Map<number, { pending: number }>;
+    const firstEntry = [...events.values()][0]!;
+    expect(firstEntry.pending).toBe(1);
+    for (let index = 0; index < 2050; index += 1) {
+      emitDeliveryTelemetry({ event: "retry", channel: "mqtt", deliveryId: `later-${index}` });
+    }
+    await waitForDiagnosticEventsDrained();
+    gate.resolve();
+    await vi.waitFor(() => expect(firstEntry.pending).toBe(0));
+    expect(calls).toBeGreaterThan(2048);
+    expect(secondBackend.exportSpans).not.toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ name: "delivery.started" }),
+    ]));
+    await first();
+    await second();
+  });
+  it("refuses a late export after the bounded diagnostic ticket expires", async () => {
+    const gate = Promise.withResolvers<void>();
+    const backend = createMockBackend();
+    const originalSetTimeout = globalThis.setTimeout;
+    let expire: (() => void) | undefined;
+    const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => {
+      if (delay === 30_000) {
+        expire = callback;
+        return { unref() {} } as ReturnType<typeof setTimeout>;
+      }
+      return originalSetTimeout(callback, delay);
+    }) as typeof setTimeout);
+    const stop = registerTracingPluginHooks(createMockApi() as never, async () => {
+      await gate.promise;
+      return { backend, sampler: new TracingSampler(1), config: baseConfig };
+    });
+    try {
+      emitDeliveryTelemetry({ event: "started", channel: "mqtt", deliveryId: "expired" });
+      await waitForDiagnosticEventsDrained();
+      expect(expire).toBeTypeOf("function");
+      const events = (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("partme.tracing.deliveryTelemetryEvents.v1")] as
+        Map<number, { pending: number }>;
+      const entry = [...events.values()][0]!;
+      expect(entry.pending).toBe(1);
+      expire!();
+      gate.resolve();
+      await vi.waitFor(() => expect(entry.pending).toBe(0));
+      expect(backend.exportSpans).not.toHaveBeenCalled();
+      expect(events.size).toBe(0);
+      await stop();
+    } finally {
+      gate.resolve();
+      timer.mockRestore();
+    }
+  });
+  it("drops new event tickets at capacity and limits sink claims per event", async () => {
+    const tickets = Array.from({ length: 1024 }, (_, index) => reserveTelemetryEvent(10_000_000 + index));
+    expect(tickets.every(Boolean)).toBe(true);
+    expect(reserveTelemetryEvent(11_000_000)).toBeUndefined();
+    expect(reserveTelemetryEvent(11_000_000)).toBeUndefined();
+    await Promise.resolve();
+    const backend = createMockBackend();
+    const config = { ...baseConfig, backend: "otlp" as const };
+    for (let index = 0; index < 128; index += 1) {
+      expect(tickets[0]!.claim(backend, { ...config,
+        otlpEndpoint: `https://bounded-${index}.example/v1/traces` })).toBe(true);
+    }
+    expect(tickets[0]!.claim(backend, { ...config,
+      otlpEndpoint: "https://bounded-overflow.example/v1/traces" })).toBe(false);
+    for (const ticket of tickets) ticket!.release();
+    const events = (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("partme.tracing.deliveryTelemetryEvents.v1")];
+    expect((events as Map<number, unknown>).size).toBe(0);
   });
   it("exports a redacted final delivery span and stops listening after shutdown", async () => {
     const backend = createMockBackend();

@@ -31,6 +31,87 @@ const config = {
 } satisfies ResolvedPrometheusConfig;
 
 describe("RuntimeStore observed channel accounts", () => {
+  it("reports missing, fresh, and stale Router DLQ observations in telemetry health", async () => {
+    const services: Array<{ start(context: unknown): Promise<void>; stop(): Promise<void> }> = [];
+    const routes = new Map<string, (request: unknown, response: unknown) => Promise<void>>();
+    plugin.register({ config: { plugins: { entries: { router: { enabled: true, config: { enabled: true } } } } },
+      pluginConfig: { path: "/metrics", scrapeAuth: { enabled: false } },
+      runtime: {}, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, on: vi.fn(),
+      registerService(service: typeof services[number]) { services.push(service); },
+      registerHttpRoute(route: { path: string; handler: typeof routes extends Map<string, infer V> ? V : never }) { routes.set(route.path, route.handler); },
+    } as never);
+    let diagnosticListener: ((event: unknown, metadata: unknown) => void) | undefined;
+    await services[0].start({ internalDiagnostics: { onEvent(listener: typeof diagnosticListener) {
+      diagnosticListener = listener; return () => {};
+    }, emit: vi.fn() } });
+    const readHealth = async () => {
+      const response = { writeHead: vi.fn(), end: vi.fn(), statusCode: 200 };
+      await routes.get("/metrics/health")?.({ method: "GET", url: "/metrics/health", headers: {} }, response);
+      return JSON.parse(String(response.end.mock.calls[0]?.[0])) as { deliveryTelemetry: {
+        status: string; routerDlq: { lastObservedAt: string | null; ageMs: number | null; fresh: boolean };
+      } };
+    };
+    try {
+      expect((await readHealth()).deliveryTelemetry.routerDlq).toMatchObject({ lastObservedAt: null, fresh: false });
+      expect((await readHealth()).deliveryTelemetry.status).toBe("degraded");
+      diagnosticListener?.({ type: "log.record", seq: 1, ts: Date.now(), level: "info",
+        loggerName: "partme.delivery-recall.v1", message: "delivery telemetry",
+        attributes: { event: "dlq", channel: "router", entries: 0 } }, { trusted: false });
+      const fresh = await readHealth();
+      expect(fresh.deliveryTelemetry.routerDlq).toMatchObject({ ageMs: expect.any(Number), fresh: true });
+      const observedAt = Date.parse(fresh.deliveryTelemetry.routerDlq.lastObservedAt!);
+      const clock = vi.spyOn(Date, "now").mockReturnValue(observedAt + 90_001);
+      try {
+        const stale = await readHealth();
+        expect(stale.deliveryTelemetry.routerDlq.fresh).toBe(false);
+        expect(stale.deliveryTelemetry.status).toBe("degraded");
+      } finally { clock.mockRestore(); }
+    } finally { await services[0].stop(); }
+  });
+  it("does not report an absent optional Router as failed delivery telemetry", async () => {
+    const services: Array<{ start(context: unknown): Promise<void>; stop(): Promise<void> }> = [];
+    const routes = new Map<string, (request: unknown, response: unknown) => Promise<void>>();
+    plugin.register({ config: {}, pluginConfig: { path: "/metrics", scrapeAuth: { enabled: false } },
+      runtime: {}, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, on: vi.fn(),
+      registerService(service: typeof services[number]) { services.push(service); },
+      registerHttpRoute(route: { path: string; handler: typeof routes extends Map<string, infer V> ? V : never }) { routes.set(route.path, route.handler); },
+    } as never);
+    await services[0].start({ internalDiagnostics: { onEvent: () => () => {}, emit: vi.fn() } });
+    try {
+      const response = { writeHead: vi.fn(), end: vi.fn(), statusCode: 200 };
+      await routes.get("/metrics/health")?.({ method: "GET", url: "/metrics/health", headers: {} }, response);
+      const health = JSON.parse(String(response.end.mock.calls[0]?.[0]));
+      expect(health.deliveryTelemetry.routerDlq).toMatchObject({ status: "unavailable", configured: "unknown", fresh: false });
+      expect(health.deliveryTelemetry.status).toBe("best-effort");
+    } finally { await services[0].stop(); }
+  });
+  it("uses the current service config when Router is toggled across reloads", async () => {
+    const services: Array<{ start(context: unknown): Promise<void>; stop(): Promise<void> }> = [];
+    const routes = new Map<string, (request: unknown, response: unknown) => Promise<void>>();
+    const router = (enabled: boolean) => ({ plugins: { entries: { router: { enabled, config: { enabled } } } } });
+    plugin.register({ config: router(true), pluginConfig: { path: "/metrics", scrapeAuth: { enabled: false } },
+      runtime: {}, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, on: vi.fn(),
+      registerService(service: typeof services[number]) { services.push(service); },
+      registerHttpRoute(route: { path: string; handler: typeof routes extends Map<string, infer V> ? V : never }) { routes.set(route.path, route.handler); },
+    } as never);
+    const readRouterHealth = async () => {
+      const response = { writeHead: vi.fn(), end: vi.fn(), statusCode: 200 };
+      await routes.get("/metrics/health")?.({ method: "GET", url: "/metrics/health", headers: {} }, response);
+      const health = JSON.parse(String(response.end.mock.calls[0]?.[0]));
+      return health.deliveryTelemetry as { status: string; routerDlq: { configured: string; status: string } };
+    };
+    const bridge = { onEvent: () => () => {}, emit: vi.fn() };
+    try {
+      await services[0].start({ config: router(true), internalDiagnostics: bridge });
+      expect(await readRouterHealth()).toMatchObject({ status: "degraded", routerDlq: { configured: "enabled", status: "missing" } });
+      await services[0].stop();
+      await services[0].start({ config: router(false), internalDiagnostics: bridge });
+      expect(await readRouterHealth()).toMatchObject({ status: "best-effort", routerDlq: { configured: "disabled", status: "unavailable" } });
+      await services[0].stop();
+      await services[0].start({ config: router(true), internalDiagnostics: bridge });
+      expect(await readRouterHealth()).toMatchObject({ status: "degraded", routerDlq: { configured: "enabled", status: "missing" } });
+    } finally { await services[0].stop(); }
+  });
   it("does not write health metrics or return old health after stop races a provider probe", async () => {
     const services: Array<{ start(context: unknown): Promise<void>; stop(): Promise<void> }> = [];
     const routes = new Map<string, (request: unknown, response: unknown) => Promise<void>>();

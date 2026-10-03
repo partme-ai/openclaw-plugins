@@ -109,6 +109,7 @@ export function createPrometheusMetricStore() {
   const gauges = new Map<string, GaugeSample>();
   const histograms = new Map<string, HistogramSample>();
   let droppedSeries = 0;
+  let routerDlqObservedAtMs: number | null = null;
 
   const canCreateSeries = <T>(map: Map<string, T>, key: string, metricName: string): boolean => {
     if (map.has(key)) {
@@ -142,13 +143,20 @@ export function createPrometheusMetricStore() {
 
   const gauge = (name: string, help: string, labels: LabelSet, value: number | undefined) => {
     if (value === undefined || !Number.isFinite(value)) {
-      return;
+      return false;
     }
     const key = metricKey(name, labels);
     if (!canCreateSeries(gauges, key, name)) {
-      return;
+      return false;
     }
     gauges.set(key, { help, labels, value });
+    return true;
+  };
+
+  const observeRouterDlq = (entries: number) => {
+    if (gauge("openclaw_router_dlq_entries", "Most recently observed durable Router dead letter queue depth.", {}, entries)) {
+      routerDlqObservedAtMs = Date.now();
+    }
   };
 
   const histogram = (
@@ -208,9 +216,10 @@ export function createPrometheusMetricStore() {
     gauges.clear();
     histograms.clear();
     droppedSeries = 0;
+    routerDlqObservedAtMs = null;
   };
 
-  return { counter, gauge, histogram, reset, snapshot };
+  return { counter, gauge, histogram, observeRouterDlq, reset, routerDlqLastObservedAtMs: () => routerDlqObservedAtMs, snapshot };
 }
 
 function runLabels(evt: {
@@ -433,7 +442,7 @@ export function recordDiagnosticEvent(
         attributes.run_id === undefined && attributes.message_id === undefined && attributes.delivery_id === undefined &&
         typeof attributes.entries === "number" && Number.isInteger(attributes.entries) &&
         attributes.entries >= 0 && attributes.entries <= 1_000_000) {
-      store.gauge("openclaw_router_dlq_entries", "Current Router dead letter queue depth.", {}, attributes.entries);
+      store.observeRouterDlq(attributes.entries);
     }
     return;
   }
