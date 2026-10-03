@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、OpenClaw 2026.9.6、Node 24.18.0、pnpm 9.0.0、现有 JSONL/SQLite/OTLP/Prometheus 实现。
 
-**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–5 已完成各自本地候选物验收；Task 2–5 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)、[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)、[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)和[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)；Task 6 六插件安装态与独立质量复审通过，但 Agent↔delivery trace 身份缺口使规格仍部分完成，见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)；Task 7 待实施。最终全仓证据仍待收口。
+**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–5 已完成各自本地候选物验收；Task 2–5 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)、[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)、[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)和[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)；Task 6 六插件安装态与独立质量复审通过，但 Agent↔delivery trace 身份缺口使规格仍部分完成，见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)；Task 7 基准、决策报告和独立复审 Spec PASS / Quality APPROVE，见[O7 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-7-report.md)。最终全仓证据仍待收口。
 
 ## Global Constraints
 
@@ -121,11 +121,11 @@ O6 当前进度：投递起点/结算、失败/重试/DLQ/召回指标、脱敏�
 
 **Interfaces:** `generateDataset({seed,count}): Dataset` 生成确定性脱敏数据；benchmark CLI 输出 datasetHash、硬件/Node/config、规模、样本次数、P50/P95、吞吐、扫描/写入字节和事件循环延迟。数据和产物放独立临时目录。
 
-- [ ] 测试同 seed/count 的 hash 相同、不同 seed 的 hash 不同、规模/容量拒绝被记录；验证统计函数不能把失败样本当零耗时。
-- [ ] 运行 `node --test scripts/benchmarks/plugin-state.test.mjs`，确认新测量契约红灯后实现生成/采样与报告逻辑。
-- [ ] 运行新 CLI `node scripts/benchmarks/plugin-state.mjs --seed 20260929 --memory-counts 1000,10000,100000 --router-counts 100,1000,10000 --runs 5`，预热后每组至少 5 次；加密、隔离、检索质量和容量配置随报告保存。期望每组输出测量结果或明确容量拒绝，不能遗漏样本。
-- [ ] 重复同种子运行并核对数据 hash；报告瓶颈、代价和保留/迁移建议，没有工作负载 SLO 不写“已达生产目标”。
-- [ ] 审查测量可复现性；获授权时提交 `perf: establish memory and router storage baselines`。若建议 SQLite/worker/索引迁移，另行形成增量规格，当前任务不自动执行迁移。
+- [x] 测试同 seed/count 的 hash 相同、不同 seed 的 hash 不同、规模/容量拒绝被记录；验证统计函数不能把失败样本当零耗时。
+- [x] 运行 `node --test scripts/benchmarks/plugin-state.test.mjs`，确认新测量契约红灯后实现生成/采样与报告逻辑。
+- [x] 运行新 CLI `node scripts/benchmarks/plugin-state.mjs --seed 20260929 --memory-counts 1000,10000,100000 --router-counts 100,1000,10000 --runs 5`，预热后每组至少 5 次；加密、隔离、检索质量和容量配置随报告保存。每组输出测量结果或明确容量拒绝，没有遗漏样本。
+- [x] 重复同种子运行并核对数据 hash；报告瓶颈、代价和保留/迁移建议，没有工作负载 SLO 不写“已达生产目标”。
+- [x] 审查测量可复现性；提交 `perf: establish memory and router storage baselines`。若建议 SQLite/worker/索引迁移，另行形成增量规格，当前任务不自动执行迁移。
 
 ## 收口与自审
 
@@ -135,4 +135,4 @@ O1–O7 分别由 T1–T7 覆盖。五项 Review Focus 均有对应测试。O1 �
 - [ ] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；公共 SDK 变化引起的指纹失效必须重跑。
 - [ ] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。
 
-当前按用户后续授权逐任务实施与独立审查。Task 1–5 已完成各自当时本地候选物验收；Task 6 的实现、独立质量复审和六插件安装态 E2E 已完成，但 Agent↔delivery trace 身份缺口使 Task 6 仍为 partial。最新 `node scripts/check-e2e-evidence.mjs` 仅 MQTT、Router、Gotify、Tracing、Prometheus、Memory 六项证据有效，其余 21 项因共享 SDK/测试输入变化或旧报告不合格仍不满足全仓门禁，收口前必须按最终输入重验。Task 7 待实施；它的性能测量可基于已验证的 O6 观测子集进行，但不能据此宣称 O6 规格完成。
+当前按用户后续授权逐任务实施与独立审查。Task 1–5 已完成各自当时本地候选物验收；Task 6 的实现、独立质量复审和六插件安装态 E2E 已完成，但 Agent↔delivery trace 身份缺口使 Task 6 仍为 partial。Task 7 已完成两轮本机性能测量和独立复审；Memory 100k 因默认检索预算明确拒绝，未执行存储迁移。根开发依赖与锁文件为可复现基准新增 `tsx` 后，`node scripts/check-e2e-evidence.mjs` 显示 27 项历史安装态证据全部因输入指纹变化或旧报告不合格而失效；收口前必须按最终输入重验。本次性能测量不能据此宣称 O6 规格完成。

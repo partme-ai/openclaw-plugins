@@ -60,5 +60,5 @@ Task 5: complete after final independent review. Proceed to Task 6 from reviewed
 - [x] T4 Bridge channel capability and readiness
 - [x] T5 Per-instance service lifecycle
 - [ ] T6 Delivery and recall telemetry
-- [ ] T7 Storage performance baseline and decision
+- [x] T7 Storage performance baseline and decision
 - [ ] Whole-branch review and final verification
