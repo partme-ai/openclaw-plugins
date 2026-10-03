@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、OpenClaw 2026.9.6、Node 24.18.0、pnpm 9.0.0、现有 JSONL/SQLite/OTLP/Prometheus 实现。
 
-**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–5 已完成各自本地候选物验收；Task 2–5 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)、[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)、[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)和[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)；Task 6 六插件安装态与独立质量复审通过，但 Agent↔delivery trace 身份缺口使规格仍部分完成，见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)；Task 7 基准、决策报告和独立复审 Spec PASS / Quality APPROVE，见[O7 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-7-report.md)。最终全仓证据仍待收口。
+**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–5 已完成各自本地候选物验收；Task 2–5 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)、[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)、[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)和[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)；Task 6 六插件安装态与独立质量复审通过，但 Agent↔delivery trace 身份缺口使规格仍部分完成，见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)；Task 7 基准、决策报告和独立复审 Spec PASS / Quality APPROVE，见[O7 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-7-report.md)。O3 兼容修复提交 `c4cff66` 后，最终 27 插件安装态证据已在当前 HEAD 重跑，见[最终本地门禁](../reports/2026-10-03-final-27-local-e2e-gate.md)；O6 仍保持部分完成。
 
 ## Global Constraints
 
@@ -131,8 +131,8 @@ O6 当前进度：投递起点/结算、失败/重试/DLQ/召回指标、脱敏�
 
 O1–O7 分别由 T1–T7 覆盖。五项 Review Focus 均有对应测试。O1 不承诺不存在的后端能力；O2 仅约束插件注入；O3 显式版本化；O7 只交付测量和决策，避免把实验性迁移混入完成声明。
 
-- [ ] 受影响插件全部通过类型检查、单测、最终包检查和稳定版安装态复验，必要浏览器场景无跳过。
-- [ ] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；公共 SDK 变化引起的指纹失效必须重跑。
-- [ ] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。
+- [x] 受影响插件全部通过类型检查、单测、最终包检查和稳定版安装态复验，必要浏览器场景无跳过；各项单测/类型检查见任务报告，O3 修复后 27 项安装态重跑见最终本地门禁。O6 的 trace 身份规格仍为 partial。
+- [x] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；固定 HEAD `c4cff66` 上退出码 0。
+- [x] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。O6 保持未完成。
 
-当前按用户后续授权逐任务实施与独立审查。Task 1–5 已完成各自当时本地候选物验收；Task 6 的实现、独立质量复审和六插件安装态 E2E 已完成，但 Agent↔delivery trace 身份缺口使 Task 6 仍为 partial。Task 7 已完成两轮本机性能测量和独立复审；Memory 100k 因默认检索预算明确拒绝，未执行存储迁移。根开发依赖与锁文件为可复现基准新增 `tsx` 后，`node scripts/check-e2e-evidence.mjs` 显示 27 项历史安装态证据全部因输入指纹变化或旧报告不合格而失效；收口前必须按最终输入重验。本次性能测量不能据此宣称 O6 规格完成。
+当前按用户后续授权逐任务实施与独立审查。Task 1–5 已完成各自本地候选物验收；Task 6 的实现、独立质量复审和六插件安装态 E2E 已完成，但 Agent↔delivery trace 身份缺口使 Task 6 仍为 partial。Task 7 已完成两轮本机性能测量和独立复审；Memory 100k 因默认检索预算明确拒绝，未执行存储迁移。O3 兼容修复使先前通过的安装态证据指纹失效，现已按固定 HEAD `c4cff66` 重新完成 27 项安装态证据并通过总检查。此次本地收口不构成厂商实网、预发或生产验收，也不使 O6 规格完成。全分支源码审查发现的 O3 回归已修复并由原审查者复核通过；最终本地证据与状态文档独立复审 Spec PASS / Quality APPROVE，必须修复项 0。
