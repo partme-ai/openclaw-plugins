@@ -14,6 +14,8 @@ import type { UnifiedMessage } from "../core/types.js";
 import type { DispatchInboundParams, DispatchInboundResult } from "../bridge/inbound-bridge.js";
 import type { BridgePluginRuntime } from "../bridge/types.js";
 import type { OutboundWireFormat } from "../pipeline/serialize-payload.js";
+import type { PluginRuntime } from "openclaw/plugin-sdk/core";
+import type { DeliveryOutcome } from "./delivery-outcome.js";
 
 /** 重新导出通道类别 / Re-export channel class type */
 export type { ChannelClass };
@@ -43,6 +45,7 @@ export interface ChannelDispatchReplyConfig {
   deliver: (payload: ChannelDispatchDeliverParams) => void | Promise<void>;
   /** 出站 wire 格式 / Outbound wire format */
   outboundFormat?: OutboundWireFormat;
+  structuredMediaHosts?: readonly string[];
   /** 回复路由（MQ topic 等）/ Reply route for publish */
   replyRoute?: Record<string, string>;
   /** Agent ID / Agent id */
@@ -55,6 +58,18 @@ export interface ChannelDispatchReplyConfig {
 
 /** dispatchChannelMessage 入参 / Params for unified channel dispatch */
 export interface ChannelDispatchParams {
+  /** Stable broker/application delivery ID used by the durable reply journal. */
+  deliveryIdentity?: string;
+  /** Optional stable source payload fingerprint; do not include redelivery flags or timestamps. */
+  deliveryFingerprint?: string;
+  /** Stable sender/session/reply scope for fingerprinting a reconnect; dispatch still uses the live values. */
+  deliveryFingerprintContext?: { peerId: string; sessionKey: string; replyRoute: Record<string, string> };
+  /** Reject before Agent execution when no stable delivery ID exists. */
+  requireDeliveryIdentity?: boolean;
+  /** Let a broker ACK commit the durable journal after dispatch returns. */
+  deferDeliverySettlement?: boolean;
+  /** Required with deferred settlement: true only when the broker adapter observed the final publish/no-reply outcome. */
+  canPrepareDeliverySettlement?: (outcome: "delivered" | "no-reply") => boolean;
   /** 运行模式，默认 reply-pipeline / Dispatch mode */
   mode?: ChannelDispatchMode;
   /** OpenClaw bridge runtime / Bridge runtime */
@@ -90,10 +105,33 @@ export interface ChannelDispatchParams {
 }
 
 /** dispatchChannelMessage 返回值 / Result discriminated by mode */
-export type ChannelDispatchResult =
-  | { mode: "reply-pipeline"; wireResult: DispatchInboundResult }
-  | { mode: "embedded-agent"; runId: string; delivered: boolean }
-  | { mode: "subagent"; runId: string; delivered: boolean };
+export type ChannelDispatchResult = (
+  | { mode: "reply-pipeline"; wireResult: DispatchInboundResult; deliveryOutcome: DeliveryOutcome }
+  | { mode: "embedded-agent"; runId: string; delivered: boolean; outcome: EmbeddedDispatchOutcome; deliveryOutcome: DeliveryOutcome }
+  | ({ mode: "subagent"; deliveryOutcome: DeliveryOutcome } & SubagentDispatchResult)
+) & { confirmDelivery?: () => void };
+
+/** Embedded Agent 的可观察终态。 */
+export type EmbeddedDispatchOutcome = "visible" | "silent" | "empty" | "pending" | "failed";
+
+/** 宿主公开 PluginRuntime.subagent.waitForRun 返回的终态类型。 */
+export type AgentWaitResult = Awaited<ReturnType<PluginRuntime["subagent"]["waitForRun"]>>;
+
+/** 子 Agent 的回复或失败终态。 */
+export type SubagentOutcome =
+  | { kind: "visible"; text: string }
+  | { kind: "silent" }
+  | { kind: "empty" }
+  | { kind: "pending" }
+  | { kind: "failed"; status: "timeout" | "error" | "invalid" };
+
+/** 派发结果保留宿主接受的 canonical sessionKey（如宿主提供）。 */
+export type SubagentDispatchResult = {
+  runId: string;
+  sessionKey?: string;
+  delivered: boolean;
+  outcome: SubagentOutcome;
+};
 
 /** embedded-agent runtime 能力子集 / Embedded agent runtime capability subset */
 export interface EmbeddedAgentRuntime extends BridgePluginRuntime {
@@ -116,18 +154,13 @@ export interface EmbeddedAgentRuntime extends BridgePluginRuntime {
 
 /** subagent runtime 能力子集 / Subagent runtime capability subset */
 export interface SubagentRuntime extends BridgePluginRuntime {
-  subagent: {
-    run: (params: {
-      sessionKey: string;
-      message: string;
-      deliver: boolean;
-    }) => Promise<{ runId: string }>;
-    waitForRun: (params: { runId: string; timeoutMs: number }) => Promise<unknown>;
-  };
+  subagent: Pick<PluginRuntime["subagent"], "run" | "waitForRun">;
 }
 
 /** dispatchEmbeddedAgentMessage 入参 / Embedded agent dispatch params */
 export interface EmbeddedAgentDispatchParams {
+  /** Persist the irreversible Agent boundary immediately before runEmbeddedAgent. */
+  beforeAgentDispatch?: () => void;
   runtime: EmbeddedAgentRuntime;
   channel: string;
   accountId: string;
@@ -143,6 +176,8 @@ export interface EmbeddedAgentDispatchParams {
 
 /** dispatchSubagentMessage 入参 / Subagent dispatch params */
 export interface SubagentDispatchParams {
+  /** Persist the irreversible Agent boundary immediately before subagent.run. */
+  beforeAgentDispatch?: () => void;
   runtime: SubagentRuntime;
   channel: string;
   accountId: string;
@@ -175,87 +210,44 @@ export type WireDispatchParams = DispatchInboundParams;
 /** dispatchWireMessage 返回值 / Wire dispatch result alias */
 export type WireDispatchResult = DispatchInboundResult;
 
-/** Transcript 路径 recordInboundSession 参数子集 / Transcript record params subset */
-export interface TranscriptRecordParams {
-  storePath: string;
-  sessionKey: string;
-  ctx: Record<string, unknown>;
-  updateLastRoute?: {
-    sessionKey: string;
-    channel: string;
-    to: string;
-    accountId: string;
-  };
-  onRecordError?: (err: unknown) => void;
-}
+type HostDispatchReply = PluginRuntime["channel"]["inbound"]["dispatchReply"];
+type HostDispatchReplyParams = Parameters<HostDispatchReply>[0];
 
-/** OpenClaw channel.turn.runAssembled 所需 runtime 子集 / Transcript channel runtime subset */
+/** 稳定版公开入站记录参数。 */
+export type TranscriptRecordParams = Parameters<HostDispatchReplyParams["recordInboundSession"]>[0];
+
+/** 稳定版公开入站结果。 */
+export type TranscriptDispatchResult = Awaited<ReturnType<HostDispatchReply>>;
+
+/** Transcript 所需的公开 channel runtime 能力。 */
 export interface TranscriptChannelRuntime {
-  turn?: {
-    runAssembled?: (params: {
-      cfg: Record<string, unknown>;
-      channel: string;
-      accountId: string;
-      agentId: string;
-      routeSessionKey: string;
-      storePath: string;
-      ctxPayload: Record<string, unknown>;
-      recordInboundSession: (
-        params: TranscriptRecordParams,
-      ) => void | Promise<void>;
-      dispatchReplyWithBufferedBlockDispatcher: (params: {
-        ctx: Record<string, unknown>;
-        cfg: Record<string, unknown>;
-        dispatcherOptions: {
-          deliver: (payload: { text: string }) => void | Promise<void>;
-          onError?: (error: unknown) => void;
-        };
-      }) => void | Promise<void>;
-      delivery: {
-        deliver: (payload: { text: string }) => void | Promise<void>;
-        onError?: (error: unknown) => void;
-      };
-      record?: {
-        updateLastRoute?: TranscriptRecordParams["updateLastRoute"];
-        onRecordError?: (err: unknown) => void;
-      };
-    }) => void | Promise<void>;
-  };
+  inbound?: Pick<PluginRuntime["channel"]["inbound"], "dispatchReply">;
   session?: {
-    resolveStorePath?: (
-      store?: string,
-      opts?: { agentId?: string },
-    ) => string | undefined;
-    recordInboundSession?: (params: TranscriptRecordParams) => void | Promise<void>;
+    resolveStorePath?: PluginRuntime["channel"]["session"]["resolveStorePath"];
+    recordInboundSession?: HostDispatchReplyParams["recordInboundSession"];
   };
-  reply: {
-    dispatchReplyWithBufferedBlockDispatcher: (params: {
-      ctx: Record<string, unknown>;
-      cfg: Record<string, unknown>;
-      dispatcherOptions: {
-        deliver: (payload: { text: string }) => void | Promise<void>;
-        onError?: (error: unknown) => void;
-      };
-    }) => void | Promise<void>;
+  reply?: {
+    dispatchReplyWithBufferedBlockDispatcher?: HostDispatchReplyParams["dispatchReplyWithBufferedBlockDispatcher"];
   };
 }
 
 /** dispatchTranscriptTurn 入参 / Transcript turn dispatch params */
 export interface TranscriptDispatchParams {
   channelRuntime: TranscriptChannelRuntime;
-  cfg: Record<string, unknown>;
+  cfg: HostDispatchReplyParams["cfg"];
   channel: string;
   accountId: string;
   agentId: string;
   sessionKey: string;
   storePath?: string;
-  inboundContext: Record<string, unknown>;
+  inboundContext: HostDispatchReplyParams["ctxPayload"];
   record: {
-    updateLastRoute?: TranscriptRecordParams["updateLastRoute"];
+    updateLastRoute?: NonNullable<HostDispatchReplyParams["record"]>["updateLastRoute"];
     onRecordError?: (err: unknown) => void;
   };
   delivery: {
-    deliver: (payload: { text: string }) => void | Promise<void>;
-    onError?: (error: unknown) => void;
+    deliver: HostDispatchReplyParams["delivery"]["deliver"];
+    onError?: HostDispatchReplyParams["delivery"]["onError"];
   };
+  signal?: AbortSignal;
 }

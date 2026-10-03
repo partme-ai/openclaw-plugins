@@ -2,12 +2,13 @@
  * @module dispatch/kf-transcript-dispatch
  *
  * KF 客户消息 Transcript 派发：route → finalizeInboundContext → record →
- * `dispatchTranscriptTurn`（runAssembled 优先）→ `deliverKfAgentReplyPayload`。
+ * `dispatchTranscriptTurn`（稳定版 channel.inbound）→ `deliverKfAgentReplyPayload`。
  */
 
-import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 import {
   dispatchTranscriptTurn,
+  TranscriptDispatchError,
   type TranscriptChannelRuntime,
 } from "@partme.ai/openclaw-message-sdk";
 
@@ -38,6 +39,7 @@ export type KfTranscriptDispatchParams = {
   messageSid?: string;
   mediaContext: KfInboundMediaContext;
   commandAuthorized: boolean;
+  signal?: AbortSignal;
   log?: (message: string) => void;
   error?: (message: string) => void;
 };
@@ -45,6 +47,7 @@ export type KfTranscriptDispatchParams = {
 export type KfTranscriptDispatchResult = {
   route: KfTranscriptRoute;
   delivered: boolean;
+  hostResult?: Awaited<ReturnType<typeof dispatchTranscriptTurn>>;
   /** Agent 派发是否因超时失败 */
   timedOut?: boolean;
   /** 实际使用的派发超时（毫秒），超时兜底文案会用到 */
@@ -236,9 +239,8 @@ export async function dispatchKfTranscriptTurn(
   const logger = createLogger({ log: params.log, error: params.error });
   const { runtime, cfg, openKfId, externalUserId } = params;
 
-  const dispatchReply = runtime.channel?.reply?.dispatchReplyWithBufferedBlockDispatcher;
-  if (!dispatchReply) {
-    logger.warn("runtime buffered reply dispatcher unavailable");
+  if (!runtime.channel?.inbound?.dispatchReply) {
+    logger.warn("runtime inbound reply dispatcher unavailable");
     return null;
   }
 
@@ -293,17 +295,22 @@ export async function dispatchKfTranscriptTurn(
   const dispatchTimeoutMs = resolveDispatchTimeoutMs(params.accountConfig);
   const agentId = route.agentId ?? "main";
 
+  const abortController = new AbortController();
+  const signal = params.signal
+    ? AbortSignal.any([abortController.signal, params.signal])
+    : abortController.signal;
+  let hostResult: Awaited<ReturnType<typeof dispatchTranscriptTurn>>;
   try {
-    await withTimeout(
+    hostResult = await withTimeout(
       dispatchTranscriptTurn({
         channelRuntime: runtime.channel as unknown as TranscriptChannelRuntime,
-        cfg: cfg as unknown as Record<string, unknown>,
+        cfg,
         channel: "wecom-kf",
         accountId: openKfId,
         agentId,
         sessionKey: route.sessionKey,
         storePath,
-        inboundContext,
+        inboundContext: inboundContext as Parameters<typeof dispatchTranscriptTurn>[0]["inboundContext"],
         record: {
           updateLastRoute: {
             sessionKey: String((route.mainSessionKey ?? route.sessionKey) || route.sessionKey),
@@ -321,31 +328,39 @@ export async function dispatchKfTranscriptTurn(
             logger.error(`reply failed: ${String(error)}`);
           },
         },
+        signal,
       }),
       dispatchTimeoutMs,
       `KF dispatch timed out after ${dispatchTimeoutMs}ms`,
     );
   } catch (error) {
+    abortController.abort();
     if (error instanceof TimeoutError) {
       logger.error(`dispatchTranscriptTurn timed out after ${dispatchTimeoutMs}ms`);
-      return { route, delivered: false, timedOut: true, dispatchTimeoutMs };
+      throw new TranscriptDispatchError(error, "ambiguous");
     }
     logger.error(`dispatchTranscriptTurn failed: ${String(error)}`);
-    return { route, delivered: false };
+    throw error;
+  }
+
+  if (signal.aborted) throw new TranscriptDispatchError(signal.reason, "recorded");
+
+  if (!hostResult.dispatched) {
+    return { route, delivered: false, hostResult };
   }
 
   const combined = responseChunks.join("\n\n").trim();
   if (!combined && responseMediaUrls.length === 0) {
-    return { route, delivered: false };
+    return { route, delivered: false, hostResult };
   }
 
   const agent = resolveKfAgentAccount(cfg, openKfId);
   if (!agent) {
-    logger.warn("skip outbound: missing corp credentials");
-    return { route, delivered: false };
+    throw new TranscriptDispatchError(new Error("KF reply cannot be sent without corp credentials"), "recorded");
   }
 
   try {
+    signal.throwIfAborted();
     const delivery = await deliverKfAgentReplyPayload({
       cfg,
       openKfId,
@@ -353,14 +368,23 @@ export async function dispatchKfTranscriptTurn(
       agent,
       text: combined,
       mediaUrls: responseMediaUrls,
+      signal,
     });
+    if (signal.aborted) throw new TranscriptDispatchError(signal.reason, "recorded");
     if (!delivery.ok) {
       logger.error(`reply send failed: ${delivery.error ?? "unknown error"}`);
-      return { route, delivered: false };
+      throw new TranscriptDispatchError(new Error(delivery.error ?? "KF reply send failed"), "recorded");
     }
-    return { route, delivered: true };
+    return { route, delivered: true, hostResult };
   } catch (error) {
+    if (signal.aborted) {
+      throw error instanceof TranscriptDispatchError
+        ? error
+        : new TranscriptDispatchError(error, "recorded");
+    }
     logger.error(`reply send failed: ${String(error)}`);
-    return { route, delivered: false };
+    throw error instanceof TranscriptDispatchError
+      ? error
+      : new TranscriptDispatchError(error, "recorded");
   }
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -60,6 +60,33 @@ describe("FileBackend", () => {
     expect(JSON.parse(content.trim())).toMatchObject({ name: "span-a", durationMs: 10 });
     expect(backend.getStatus()).toMatchObject({ healthy: true, bufferedSpans: 0 });
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it("profile 内相对 traceDir 不跟随父目录或日文件 symlink", async () => {
+    const profile = await mkdtemp(join(tmpdir(), "tracing-file-profile-"));
+    const outside = await mkdtemp(join(tmpdir(), "tracing-file-outside-"));
+    try {
+      await symlink(outside, join(profile, "linked"));
+      const parentBackend = new FileBackend(logger, profile);
+      await expect(parentBackend.init({ ...config, traceDir: join(profile, "linked", "traces") }))
+        .rejects.toThrow(/symlink/);
+      expect(await readdir(outside)).toEqual([]);
+
+      const traceDir = join(profile, "traces");
+      await mkdir(traceDir);
+      const target = join(outside, "outside.jsonl");
+      await writeFile(target, "untouched");
+      const today = new Date().toISOString().slice(0, 10);
+      await symlink(target, join(traceDir, `traces-${today}.jsonl`));
+      const fileBackend = new FileBackend(logger, profile);
+      await fileBackend.init({ ...config, traceDir });
+      await fileBackend.exportSpans([span("safe")]);
+      await expect(fileBackend.shutdown()).rejects.toThrow();
+      expect(await readFile(target, "utf8")).toBe("untouched");
+    } finally {
+      await rm(profile, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 

@@ -16,6 +16,7 @@ export const WECOM_KF_E2E = {
   openKfId: "wk_e2e_account",
   externalUserId: "wm_e2e_customer",
   messageId: "wecom-kf-e2e-message-1",
+  secondMessageId: "wecom-kf-e2e-message-2",
   accessToken: "wecom-kf-e2e-access-token",
 };
 
@@ -66,6 +67,7 @@ export async function startWecomKfProvider(port) {
     callbacks: 0,
     replies: 0,
     lastReply: null,
+    sentReplies: [],
   };
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
@@ -90,20 +92,24 @@ export async function startWecomKfProvider(port) {
     if (request.method === "POST" && url.pathname === "/cgi-bin/kf/sync_msg") {
       const body = await readJson(request);
       metrics.syncRequests.push(body);
+      const requestNumber = metrics.syncRequests.length;
+      // 两个同账号通知分别对应独立用户轮次；重启后再次拉取第一个 msgid 验证持久去重。
+      if (requestNumber === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
       return writeJson(response, 200, {
         errcode: 0,
         errmsg: "ok",
-        next_cursor: "wecom-kf-e2e-cursor-1",
+        next_cursor: `wecom-kf-e2e-cursor-${Math.min(requestNumber, 2)}`,
         has_more: 0,
-        // 每次回放同一个 msgid：第二次 Gateway 启动后必须由持久化去重层拦截。
         msg_list: [{
-          msgid: WECOM_KF_E2E.messageId,
+          msgid: requestNumber === 2 ? WECOM_KF_E2E.secondMessageId : WECOM_KF_E2E.messageId,
           open_kfid: WECOM_KF_E2E.openKfId,
           external_userid: WECOM_KF_E2E.externalUserId,
           send_time: Math.floor(Date.now() / 1000),
           origin: 3,
           msgtype: "text",
-          text: { content: "请回复企业微信客服 E2E 消息" },
+          text: { content: `请回复企业微信客服 E2E 消息 ${requestNumber === 2 ? "2" : "1"}` },
         }],
       });
     }
@@ -111,6 +117,7 @@ export async function startWecomKfProvider(port) {
       const body = await readJson(request);
       metrics.replies += 1;
       metrics.lastReply = body;
+      metrics.sentReplies.push(body);
       return writeJson(response, 200, { errcode: 0, errmsg: "ok", msgid: `reply-${metrics.replies}` });
     }
     return writeJson(response, 404, { errcode: 404, errmsg: "not found" });

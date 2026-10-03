@@ -157,6 +157,16 @@ describe("deliverDouyinAgentReplyPayload", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBeTruthy();
   });
+
+  it("does not enter outbound delivery after account stop", async () => {
+    const controller = new AbortController();
+    const log = vi.fn();
+    controller.abort();
+    await expect(deliverDouyinAgentReplyPayload({
+      cfg: {}, shopId: "shop-1", peerId: "peer-1", text: "late", signal: controller.signal, log,
+    })).rejects.toMatchObject({ name: "AbortError" });
+    expect(log).not.toHaveBeenCalled();
+  });
 });
 
 describe("sendDouyinOutboundUnsupported", () => {

@@ -11,6 +11,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { rabbitmqChannel } from "./channel.js";
 import { setRabbitmqRuntime } from "./runtime.js";
@@ -26,7 +27,7 @@ export { rabbitmqChannel } from "./channel.js";
  * @description Channel 插件默认导出：`defineChannelPluginEntry` 注册契约，含 full 模式 HTTP 路由。
  * @see ./channel.js
  */
-export default defineChannelPluginEntry({
+const entry: OpenClawPluginDefinition = defineChannelPluginEntry({
   id: "rabbitmq",
   name: "RabbitMQ",
   description: "OpenClaw RabbitMQ channel plugin with enterprise-grade controls.",
@@ -80,3 +81,5 @@ export default defineChannelPluginEntry({
     });
   },
 });
+
+export default entry;

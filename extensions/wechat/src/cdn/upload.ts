@@ -19,6 +19,7 @@ import { getExtensionFromContentTypeOrUrl } from "../media/mime.js";
 import { tempFileName } from "../util/random.js";
 import { UploadMediaType } from "../api/types.js";
 import { readWeixinLocalMedia } from "../media/path-guard.js";
+import type { WeixinMediaSessionContext } from "../media/path-guard.js";
 
 export type UploadedFileInfo = {
   filekey: string;
@@ -134,7 +135,7 @@ export async function withRemoteMediaTempFile<T>(params: {
 /**
  * Common upload pipeline: read file → hash → gen aeskey → getUploadUrl → uploadBufferToCdn → return info.
  */
-async function uploadMediaToCdn(params: {
+async function uploadMediaToCdn(params: WeixinMediaSessionContext & {
   filePath: string;
   toUserId: string;
   opts: WeixinApiOptions;
@@ -149,6 +150,9 @@ async function uploadMediaToCdn(params: {
     opts,
     cdnBaseUrl,
     mediaLocalRoots,
+    cfg,
+    agentId,
+    sessionWorkspaceDir,
     mediaType,
     label,
   } = params;
@@ -157,6 +161,9 @@ async function uploadMediaToCdn(params: {
   const plaintext = await readWeixinLocalMedia({
     filePath,
     customRoots: mediaLocalRoots,
+    cfg,
+    agentId,
+    sessionWorkspaceDir,
     maxBytes: MAX_MEDIA_BYTES,
   });
   const rawsize = plaintext.length;
@@ -209,7 +216,7 @@ async function uploadMediaToCdn(params: {
 }
 
 /** Upload a local image file to the Weixin CDN with AES-128-ECB encryption. */
-export async function uploadFileToWeixin(params: {
+export async function uploadFileToWeixin(params: WeixinMediaSessionContext & {
   filePath: string;
   toUserId: string;
   opts: WeixinApiOptions;
@@ -224,7 +231,7 @@ export async function uploadFileToWeixin(params: {
 }
 
 /** Upload a local video file to the Weixin CDN. */
-export async function uploadVideoToWeixin(params: {
+export async function uploadVideoToWeixin(params: WeixinMediaSessionContext & {
   filePath: string;
   toUserId: string;
   opts: WeixinApiOptions;
@@ -242,7 +249,7 @@ export async function uploadVideoToWeixin(params: {
  * Upload a local file attachment (non-image, non-video) to the Weixin CDN.
  * Uses media_type=FILE; no thumbnail required.
  */
-export async function uploadFileAttachmentToWeixin(params: {
+export async function uploadFileAttachmentToWeixin(params: WeixinMediaSessionContext & {
   filePath: string;
   fileName: string;
   toUserId: string;

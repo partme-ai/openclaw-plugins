@@ -5,7 +5,7 @@
  */
 
 import type { EventMessagesConfig } from "../types/index.js";
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { getWecomRuntime } from "../runtime/index.js";
 import { resolveKfAccountByOpenKfId } from "./accounts.js";
 

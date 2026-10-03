@@ -13,9 +13,14 @@ import { buildMessage } from "../core/message.js";
 import type { InboundBridgeParams, ReplyBridgeParams, ReplyBridgeResult } from "./types.js";
 import { createReplyHandler } from "./reply-bridge.js";
 import { resolveBridgeRuntimeConfig } from "./runtime-config.js";
+import { classifyDeliveryOutcome, type DeliveryOutcome, type ReplyDispatchReceipt } from "../dispatch/delivery-outcome.js";
 
 /** dispatchInbound 入参（含 reply 配置）/ Dispatch inbound params with reply config */
 export interface DispatchInboundParams extends InboundBridgeParams {
+  /** Persist Agent start only after all runtime/context preflight has passed. */
+  beforeAgentDispatch?: () => void;
+  /** Exact run identity supplied by the host reply pipeline. */
+  onAgentRunStart?: (runId: string | undefined) => void;
   reply: Omit<ReplyBridgeParams, "runtime" | "channel" | "accountId" | "peerId">;
 }
 
@@ -23,6 +28,9 @@ export interface DispatchInboundParams extends InboundBridgeParams {
 export interface DispatchInboundResult extends ReplyBridgeResult {
   /** finalizeInboundContext 产出的 ctx / Inbound context from OpenClaw */
   ctx: Record<string, unknown>;
+  receipt?: ReplyDispatchReceipt;
+  deliveryOutcome: DeliveryOutcome;
+  runId?: string;
 }
 
 /**
@@ -72,7 +80,7 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
     ...extra,
   });
 
-  const { dispatcher } = createReplyHandler({
+  const { dispatcher, replyOptions: dispatcherReplyOptions } = createReplyHandler({
     runtime,
     channel,
     accountId,
@@ -80,24 +88,57 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
     ...reply,
   });
 
-  await runtime.channel.reply.dispatchReplyFromConfig({
+  let runId: string | undefined;
+  let ambiguousRunId = false;
+  const routeStart = replyOptions.onAgentRunStart;
+  const dispatcherStart = dispatcherReplyOptions.onAgentRunStart;
+  const linkedReplyOptions = { ...replyOptions, onAgentRunStart: function (this: unknown, ...args: unknown[]) {
+    if (typeof args[0] === "string" && args[0].trim()) {
+      if (runId && runId !== args[0]) ambiguousRunId = true;
+      runId = args[0];
+      try { params.onAgentRunStart?.(ambiguousRunId ? undefined : runId); }
+      catch { /* Trace observation cannot interrupt the host run callback. */ }
+    }
+    // The route callback owns the return value used by OpenClaw. Preserve
+    // dispatcher side effects when it supplies a distinct callback.
+    const dispatcherResult = typeof dispatcherStart === "function" && dispatcherStart !== routeStart
+      ? (dispatcherStart as (...values: unknown[]) => unknown).apply(this, args) : undefined;
+    return typeof routeStart === "function"
+      ? (routeStart as (...values: unknown[]) => unknown).apply(this, args) : dispatcherResult;
+  } };
+
+  params.beforeAgentDispatch?.();
+  const dispatchResult = await runtime.channel.reply.dispatchReplyFromConfig({
     ctx,
     cfg,
     dispatcher,
-    replyOptions,
+    replyOptions: linkedReplyOptions,
   });
 
   // OpenClaw's reply dispatcher may still be draining an asynchronous
   // transport delivery after dispatchReplyFromConfig resolves. Wire/MQ
   // consumers must not treat the inbound message as complete until that
   // delivery has settled, otherwise deferred ACK can race the publish confirm.
-  const waitForIdle = (dispatcher as { waitForIdle?: () => Promise<void> } | undefined)
+  const waitForIdle = (dispatcher as { waitForIdle?: () => Promise<ReplyDispatchReceipt> } | undefined)
     ?.waitForIdle;
+  let idleReceipt: ReplyDispatchReceipt | undefined;
   if (typeof waitForIdle === "function") {
-    await waitForIdle.call(dispatcher);
+    idleReceipt = await waitForIdle.call(dispatcher);
   }
+  const receipt = idleReceipt ?? dispatchResult?.settledReceipt;
+  const terminal = dispatchResult?.deliberateSilentTerminalReply
+    ? "silent"
+    : dispatchResult?.deferredToActiveRun || receipt?.hasPendingDelivery
+      ? "pending"
+      : receipt?.anyVisibleDelivered
+        ? "visible"
+        : dispatchResult && dispatchResult.queuedFinal === false &&
+            Object.values(dispatchResult.counts ?? {}).every((count) => count === 0)
+          ? "empty"
+          : "failed";
 
-  return { ctx, dispatcher, replyOptions };
+  return { ctx, dispatcher, replyOptions: linkedReplyOptions, receipt,
+    runId: ambiguousRunId ? undefined : runId, deliveryOutcome: classifyDeliveryOutcome(receipt, terminal) };
 }
 
 /**

@@ -112,7 +112,7 @@ The original configuration tables, protocol details, examples, and troubleshooti
 <!-- README_STANDARD_END -->
 
 
-Production-oriented OpenMem REST bridge for OpenClaw 2026.7.1.
+Production-oriented OpenMem REST bridge for OpenClaw 2026.9.6.
 
 [简体中文](./README.zh-CN.md) | [English](./README.md)
 
@@ -127,6 +127,21 @@ Production-oriented OpenMem REST bridge for OpenClaw 2026.7.1.
 - Optional environment-backed auth headers for a protecting reverse proxy.
 
 OpenMem currently performs FTS5 plus character n-gram reranking. It does not currently expose embedding/vector recall, and this plugin reports that capability accurately.
+
+## Memory Host capability support
+
+The plugin uses OpenClaw's public `registerMemoryCapability` contract. Its prompt builder describes `openmem_search` only when the host includes that tool in `availableTools`; disabling the tool removes the recall instruction.
+
+| Capability | Support | Boundary |
+| --- | --- | --- |
+| Deterministic recall | `openmem_search` | The registered tool searches with trusted host agent/session context. |
+| Prompt builder | Available-tool aware | No instruction to call an unavailable tool. |
+| Search manager | Existing manager contract | `allowSharedRecall: false` (default); shared hybrid recall requires `true`. |
+| `flushPlanResolver` | Not provided | No backend contract for an agent-driven pre-compaction flush plan; normal lifecycle persistence remains separate. |
+| `publicArtifacts` | Not provided | Sidecar archives are not exported as public workspace artifacts. |
+| `supportsPrivateTranscriptRecall` | Not declared | Memory records are not host private-transcript access authorization. |
+
+Successful-turn capture requires a nonblank trusted `sessionKey`, or a nonblank `sessionId` fallback. Session start/end hooks also require nonblank event/context identity. Missing identity skips persistence and logs a warning; it never writes to a shared `unknown` bucket. Existing historical `unknown` data is neither migrated nor deleted by this change.
 
 ## Runtime architecture
 
@@ -258,4 +273,6 @@ OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins openmem --ski
 
 The 2026-07-17 gate passes 32 tests plus a tarball-installed OpenClaw 2026.7.1 E2E against the real workspace OpenMem Server: Agent Turn, ingest, working memory, shutdown-drain commit, archive, Gateway restart, continuity recall, and next-turn prompt injection.
 
-`/events/ingest` and `/sessions/:id/append` remain separate Sidecar writes. The plugin now reconciles the normal crash window from persisted events, but strict atomicity beyond the 1,000-event recovery window still requires a transactional Sidecar API or native idempotent append. Protected-network and Sidecar failure-recovery acceptance tests also remain production gates.
+With the updated OpenMem Sidecar, `GET /sessions/:id/commit` advertises a recoverable, session-idempotent POST. If a persisted commit intent is found after restart, the plugin checks this capability before retrying. It also resolves the pending commit before opening the next ACTIVE session. Older Sidecars do not advertise the protocol, so an uncertain commit still requires manual reconciliation. Full Sidecar snapshots now preserve commit journals. The local tarball-installed OpenClaw 2026.9.6 scenario passed on 2026-10-02; crash-window recovery is covered by targeted tests, not that installed scenario.
+
+`/events/ingest` and `/sessions/:id/append` remain separate Sidecar writes. Recovery reads at most 1,000 recent events; strict atomicity beyond that window requires a transactional Sidecar API or native idempotent append. The new commit protocol assumes one Sidecar writer per data directory. Protected-network, multi-writer, and deployment failure-recovery acceptance remain production gates.

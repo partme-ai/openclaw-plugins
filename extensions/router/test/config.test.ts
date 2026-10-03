@@ -104,3 +104,7 @@ describe("resolveRouterConfig", () => {
     }))).toThrow("must not contain duplicates");
   });
 });
+
+it("requires durable audit for explicit media loss", () => {
+  expect(() => resolveRouterConfig(api({ audit: { enabled: false }, rules: [{ id: "loss", actions: [{ type: "forward", target: "text", mediaFallback: "text" }] }] }))).toThrow(/audit/);
+});

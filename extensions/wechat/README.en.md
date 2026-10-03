@@ -101,6 +101,8 @@ Text send example:
 
 Media messages use CDN parameters and AES-128-ECB encryption. Local files must stay under OpenClaw-managed roots or the account-level `mediaLocalRoots`; the Path Guard rejects traversal, symlink escapes, special files, and files above 100 MiB. HTTPS media downloads use OpenClaw's DNS/redirect-aware SSRF Guard, and plugin-created temporary files are removed on both success and failure. Server-provided upload URLs must match the configured CDN origin and `/upload` path; uploads reject redirects, time out after 30 seconds, never retry 4xx, and retry network/5xx failures at most three times.
 
+Agent auto-reply `MEDIA:` paths may come from the current workspace or host-managed media directories; a model-supplied path cannot widen that set. Account-level `mediaLocalRoots` remain available for direct channel outbound sends but do not widen Agent auto-reply access.
+
 Each account may also define its own `routeTag`; the plugin propagates it as `SKRouteTag` to every iLink API call for that account:
 
 ```json

@@ -13,6 +13,7 @@ function fixture() {
     "extensions/message-sdk/src",
     "scripts/e2e/plugins",
     "scripts/e2e/config/plugins",
+    "test-web",
   ]) mkdirSync(join(root, dir), { recursive: true });
   writeFileSync(join(root, "extensions/mqtt/src/index.ts"), "export const value = 1;\n");
   writeFileSync(join(root, "extensions/mqtt/package.json"), "{}\n");
@@ -39,3 +40,19 @@ test("sourceFingerprint changes when shared message-sdk changes", () => {
   assert.notEqual(sourceFingerprint("mqtt", { repoRoot }), first);
 });
 
+test("sourceFingerprint changes when browser test inputs change", () => {
+  const repoRoot = fixture();
+  const first = sourceFingerprint("mqtt", { repoRoot });
+  writeFileSync(join(repoRoot, "test-web/flow.js"), "browser flow changed");
+  assert.notEqual(sourceFingerprint("mqtt", { repoRoot }), first);
+});
+
+test("sourceFingerprint includes shared adapter context, index and datasets", () => {
+  const repoRoot = fixture();
+  for (const path of ["scripts/e2e/plugins/_context.mjs", "scripts/e2e/plugins/index.mjs", "scripts/e2e/datasets/sample.json"]) {
+    mkdirSync(join(repoRoot, path, ".."), { recursive: true });
+    const before = sourceFingerprint("mqtt", { repoRoot });
+    writeFileSync(join(repoRoot, path), "new test input");
+    assert.notEqual(sourceFingerprint("mqtt", { repoRoot }), before, path);
+  }
+});

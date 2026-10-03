@@ -1,8 +1,8 @@
 # OpenClaw 稳定版后续功能优化规格
 
-日期：2026-09-29。状态：待实施；与 [稳定版升级规格](2026-09-29-openclaw-2026-9-6-upgrade.md) 分属两个交付目标，各自一份规格和一份计划。
+日期：2026-09-29。状态：O1–O5、O7 的本地实现与验收见各自任务报告；O6 已在 OpenClaw 2026.9.6 的真实 MQTT Agent Turn 中证明 Agent 根 Span 与投递开始、结算 Span 共享 trace ID，六插件安装态 6/6 通过，独立源码复审 Spec PASS / Quality APPROVE，见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)。全仓 27 个运行时插件的当前输入指纹证据已重跑并通过[最终本地门禁](../reports/2026-10-03-final-27-local-e2e-gate.md)。本地验收不等于厂商实网、预发或生产验收。与[稳定版升级规格](2026-09-29-openclaw-2026-9-6-upgrade.md)分属两个交付目标，各自一份规格和一份计划。
 
-**规格事实源：** 本文件；[实施计划](../plans/2026-09-29-openclaw-followup-optimization.md) 负责执行拆解。通用插件约定沿用 [PLUGIN_SPEC](../../../spec/PLUGIN_SPEC.md)。这是审计建议的可审阅任务化设计，不能称为已实现能力。
+**规格事实源：** 本文件；[实施计划](../plans/2026-09-29-openclaw-followup-optimization.md) 负责执行拆解。通用插件约定沿用 [PLUGIN_SPEC](../../../spec/PLUGIN_SPEC.md)。未实施项仍是审计建议的可审阅任务化设计，不能称为已实现能力。
 
 ## 1. 目标和前提
 
@@ -37,9 +37,15 @@ memory 已有会话隔离、扫描预算、保留和加密；openmem 已有外�
 
 新增 wire 格式以 `structured-v1` 显式启用，schemaVersion=1；旧 envelope/legacyJsonText 保留原行为。Router 对未声明支持结构化 payload 的目标默认拒绝含媒体消息；允许文本降级须显式配置并在审计中标识。出站媒体必须继续经过宿主授权加载，不得在信封中泄露本地绝对路径、认证 token 或未经批准的私有 URL。
 
+Router 开启结构化能力后，普通业务 JSON（包括仅有 `schemaVersion` 字段的文本）仍走旧文本路由。只有带显式 `format: "structured-v1"` 标记，或为兼容已发布 O3 wire 而具备 `schemaVersion`、`messageId`、`deliveryId`、`parts` 全部协议字段的对象，才进入严格协议解析；被识别的无效版本或字段必须报错，不能悄悄降级。结构化发送方应携带显式格式标记，新旧完整 wire 的有序片段、身份和媒体授权语义保持不变。
+
 ### O5/O6 适用范围
 
 优先覆盖 oauth2、mtls 的 activeProxy、nacos 活跃服务、tracing 的上下文和 prometheus 的 collector/cache。这些是需要验证的生命周期风险，不预先宣称所有插件都存在串实例故障。保留 tracing 已有 generation/停止超时和 Prometheus 已有 scrape 授权；新增隔离不能削弱已有机制。
+
+### O6 Agent 与投递的 trace 身份
+
+`reply-pipeline` 通过 OpenClaw 2026.9.6 公开的 `onAgentRunStart` 回调取得本次派发的精确 `runId`；包装回调时必须转发全部参数和原返回值。投递开始、最终结算与 Agent 根 Span 只有在同一次运行的 `runId` 或同源 `messageId` 可精确验证时才共享 trace ID。标准入站 Hook 不保证携带 `runId`，SDK 发送点也不保证存在活动宿主 trace scope；不得仅按 `sessionKey`、到达时间、事件顺序或新建 trace scope 猜测归属。若精确绑定缺失，保留独立投递观测并标明未关联。并发、重试、迟到诊断和 Gateway 重启不得造成跨运行误关联；身份仍脱敏，观测故障不得改变投递结果。完成验收须在 OpenClaw 2026.9.6 的真实 MQTT Agent Turn 中证明 Agent 根 Span、`delivery.started` 和 `delivery.settlement` 的 trace ID 相同，且不泄露原始身份。
 
 ### O7 决策门禁
 
@@ -47,7 +53,7 @@ memory 已有会话隔离、扫描预算、保留和加密；openmem 已有外�
 
 ## 3. 非目标与完成条件
 
-不重写 amap/meituan/rednode 的业务 API，不自动扩展全部上游渠道，不重建 Agent Harness，不迁移用户存量数据，不发布或推送。每项优化独立记录结果；O7 完成意味着基准与决策文档完成，不意味着存储迁移完成。对行为有变化的插件重跑稳定版安装态证据；不得借用优化前 PASS。
+不重写 amap/meituan/rednode 的业务 API，不自动扩展全部上游渠道，不重建 Agent Harness，不迁移用户存量数据，不发布 npm；Git 提交与推送仅按用户后续明确授权执行。每项优化独立记录结果；O7 完成意味着基准与决策文档完成，不意味着存储迁移完成。对行为有变化的插件重跑稳定版安装态证据；不得借用优化前 PASS。
 
 ```mermaid
 flowchart LR

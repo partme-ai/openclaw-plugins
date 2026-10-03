@@ -6,6 +6,7 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { stompTcpChannel } from "./channel.js";
@@ -18,7 +19,7 @@ import {
   getStatusSnapshot,
 } from "./transport/server.js";
 
-export default defineChannelPluginEntry({
+const entry: OpenClawPluginDefinition = defineChannelPluginEntry({
   id: "stomp",
   name: "OpenClaw STOMP TCP",
   description: "Authenticated STOMP 1.2 over TCP/TLS for OpenClaw",
@@ -53,3 +54,5 @@ export {
   resolveStompTcpConfig,
   validateStompTcpConfig,
 } from "./config.js";
+
+export default entry;

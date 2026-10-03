@@ -5,10 +5,10 @@
  * 监视器一直等待账户 AbortSignal，停止时回写 lastStopAt。遗留 Bot/Agent 配置只告警，不会
  * 重新启用已移除的 wecom-cs 路径。
  */
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type {
-  ChannelGatewayContext,
   OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 
 import {
   listWecomAccountIds,

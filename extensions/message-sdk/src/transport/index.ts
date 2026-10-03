@@ -38,6 +38,7 @@ export {
   type AclUser,
   type AclAction,
 } from "./acl-engine.js";
+export { emitDeliveryTelemetry, emitRecallTelemetry, TELEMETRY_LOGGER, type DeliveryTelemetry } from "./telemetry.js";
 
 // Metrics 需要安装 prom-client，按需导入：
 //   import { createTransportMetrics } from "@partme.ai/openclaw-message-sdk/transport/metrics";

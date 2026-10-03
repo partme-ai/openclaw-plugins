@@ -31,7 +31,7 @@ export type ChannelMessageTypingCallbacks = {
 };
 
 /**
- * 工具进度格式化函数（可选，由 openclaw/plugin-sdk/channel-streaming 提供）。
+ * 工具进度格式化函数（可选，由 openclaw/plugin-sdk/channel-message 提供）。
  *
  * @param config - 渠道账号 config
  * @param entry - tool 事件条目

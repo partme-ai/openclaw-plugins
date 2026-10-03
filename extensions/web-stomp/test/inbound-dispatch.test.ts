@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  dispatchChannelMessage: vi.fn().mockResolvedValue(undefined),
+  dispatchChannelMessage: vi.fn().mockResolvedValue({ deliveryOutcome: { kind: "delivered" } }),
   resolveChannelDispatchIdentity: vi.fn().mockResolvedValue({
     agentId: "main",
     sessionKey: "agent:main:stomp:direct:peer-1",
@@ -56,6 +56,7 @@ describe("dispatchInboundStomp", () => {
       peerId: "peer-1",
       destination: "/queue/agent.demo",
       rawPayload: "hello web-stomp",
+      idempotencyKey: "test-hello",
     });
 
     expect(dispatchChannelMessage).toHaveBeenCalledTimes(1);
@@ -71,6 +72,7 @@ describe("dispatchInboundStomp", () => {
       peerId: "peer-2",
       destination: "/queue/in",
       rawPayload: "ping",
+      idempotencyKey: `test-${Date.now()}-${Math.random()}`,
     });
 
     const reply = dispatchChannelMessage.mock.calls[0][0].reply as {
@@ -86,6 +88,7 @@ describe("dispatchInboundStomp", () => {
       peerId: "peer-no-subscriber",
       destination: "/queue/in",
       rawPayload: "ping",
+      idempotencyKey: `test-${Date.now()}-${Math.random()}`,
     });
 
     const reply = dispatchChannelMessage.mock.calls[0][0].reply as {
@@ -94,7 +97,7 @@ describe("dispatchInboundStomp", () => {
     await expect(reply.deliver({ wire: "reply" })).rejects.toThrow(/No Web STOMP subscriber/);
   });
 
-  it("drops duplicate idempotency keys", async () => {
+  it("passes duplicate IDs to durable SDK reconciliation", async () => {
     const key = `web-stomp-dedup-${Date.now()}`;
     await dispatchInboundStomp({
       peerId: "peer-3",
@@ -109,7 +112,28 @@ describe("dispatchInboundStomp", () => {
       idempotencyKey: key,
     });
 
-    expect(dispatchChannelMessage).toHaveBeenCalledTimes(1);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a SEND without message-id on the best-effort path", async () => {
+    await dispatchInboundStomp({ peerId: "peer-1", destination: "/queue/in", rawPayload: "ping" });
+    expect(dispatchChannelMessage.mock.calls[0][0]).toMatchObject({
+      deliveryIdentity: undefined,
+      requireDeliveryIdentity: false,
+    });
+  });
+
+  it("scopes a caller ID to its authenticated sender across reconnects", async () => {
+    const common = { destination: "/queue/in", rawPayload: "ping", idempotencyKey: "same" };
+    await dispatchInboundStomp({ ...common, senderScope: "user:alice", peerId: "conn-1" });
+    await dispatchInboundStomp({ ...common, senderScope: "user:alice", peerId: "conn-2" });
+    await dispatchInboundStomp({ ...common, senderScope: "user:bob", peerId: "conn-3" });
+    const ids = dispatchChannelMessage.mock.calls.map(([args]) => args.deliveryIdentity);
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[2]).not.toBe(ids[0]);
+    const contexts = dispatchChannelMessage.mock.calls.map(([args]) => args.deliveryFingerprintContext);
+    expect(contexts[0]).toEqual(contexts[1]);
+    expect(contexts[2]).not.toEqual(contexts[0]);
   });
 
   it("releases an idempotency claim after Agent dispatch fails", async () => {
@@ -141,6 +165,7 @@ describe("dispatchInboundStomp", () => {
       agentId: "sales",
       destination: "/queue/agent.sales",
       rawPayload: "lead",
+      idempotencyKey: "test-lead",
     });
 
     expect(resolveChannelDispatchIdentity).toHaveBeenCalledWith(

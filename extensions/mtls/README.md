@@ -157,6 +157,7 @@ Client (with client cert)
 - Spoofable identity headers are removed and replaced with the verified certificate CN
 - OpenClaw performs final authorization through `gateway.auth.mode: "trusted-proxy"`
 - `GET https://<host>:18443/mtls/status` is forwarded to OpenClaw's `auth: "gateway"` route; proxy-local runtime details are not exposed anonymously
+- Each full registration owns its proxy and running status. Failed or cancelled starts close the partial listener; stopping one registration leaves another running. The request counters in `stats` remain process-wide totals.
 
 ## 🚀 Quick Start
 

@@ -10,6 +10,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
 import { redisStreamChannel } from "./channel.js";
 import { getStats } from "./transport/server.js";
@@ -17,7 +18,7 @@ import { resolveRedisChannelConfig, redactUrl } from "./config.js";
 import { setRedisStreamRuntime } from "./runtime.js";
 import { getSessionStats } from "./routing/session-mapper.js";
 
-export default defineChannelPluginEntry({
+const entry: OpenClawPluginDefinition = defineChannelPluginEntry({
   id: "redis-stream",
   name: "Redis Stream",
   description: "Redis Pub/Sub channel + Stream consumer group integration for OpenClaw.",
@@ -76,3 +77,5 @@ export default defineChannelPluginEntry({
     });
   },
 });
+
+export default entry;

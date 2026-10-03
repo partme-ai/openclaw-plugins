@@ -311,7 +311,7 @@ Do not hardcode the browser credential shown as a placeholder; inject a short-li
 
 A `RECEIPT` for `SEND` is emitted only after OpenClaw accepts the inbound dispatch. For `client` or `client-individual` subscriptions, acknowledge the `ack` header from the `MESSAGE` frame.
 
-Inbound deduplication is enabled only when the client explicitly supplies `message-id`. A `receipt` is protocol correlation rather than request identity, and equal bodies may be legitimate repeated user requests, so neither is converted into an implicit idempotency key.
+Durable inbound settlement requires `message-id` and an authenticated login or explicit `sender-id`. Without both an ID and sender scope, `SEND` remains best-effort and cannot suppress a replay after reconnect. A client-supplied `sender-id` is an idempotency scope, not an authorization identity. A `receipt` is protocol correlation rather than request identity, and equal bodies may be legitimate repeated user requests, so neither is converted into an implicit idempotency key.
 
 ## Failure and backpressure
 

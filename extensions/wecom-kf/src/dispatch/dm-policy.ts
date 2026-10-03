@@ -2,7 +2,7 @@
  * WeCom KF DM 策略薄封装（委托 message-sdk checkChannelDmPolicy）。
  */
 
-import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 import {
   checkChannelDmPolicy,
   type DmPolicyCheckResult,

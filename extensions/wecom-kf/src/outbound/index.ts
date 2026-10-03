@@ -2,7 +2,7 @@
  * WeCom KF 出站适配器：KF send_msg 路径。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import { getWecomRuntime } from "../runtime/index.js";
 import { sendKfOutboundMedia, sendKfOutboundText } from "./kf-send.js";

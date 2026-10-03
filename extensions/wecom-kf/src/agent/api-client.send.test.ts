@@ -62,6 +62,15 @@ afterEach(async () => {
 });
 
 describe("sendKfMessage 额度预占", () => {
+  it("服务停止后不发起 token 或 send_msg 请求", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(sendKfMessage(agent, {
+      touser: "u-send", open_kfid: "wk-send", msgtype: "text", text: { content: "late" },
+    }, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(wecomFetchMock).not.toHaveBeenCalled();
+    expect((await peekKfSendGuardState("wk-send", "u-send"))?.replyCount).toBe(0);
+  });
   it("发送成功后保留预占计数", async () => {
     wecomFetchMock.mockResolvedValueOnce(jsonResponse({ access_token: "access-1", expires_in: 7200 }));
     wecomFetchMock.mockResolvedValueOnce(jsonResponse({ errcode: 0, errmsg: "ok", msgid: "out-1" }));

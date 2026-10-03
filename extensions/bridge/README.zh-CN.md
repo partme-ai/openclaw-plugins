@@ -17,7 +17,7 @@
 | 当前版本 | `2026.7.1` |
 | 插件 ID | `bridge` |
 | Channel ID | — |
-| OpenClaw | `>=2026.7.1` |
+| OpenClaw | `>=2026.9.6` |
 | 源码目录 | `extensions/bridge` |
 
 ## 2. 一眼看懂
@@ -112,7 +112,7 @@ pnpm --filter "@partme.ai/openclaw-bridge" build
 <!-- README_STANDARD_END -->
 
 
-`@partme.ai/openclaw-bridge` 是面向 OpenClaw 2026.7.1 的上下文与消息观测桥。它不会替代 IM 或 MQ Channel，而是利用官方 Hook 给指定渠道补充平台约束，并把真实收发消息归一化后镜像到 MQ。
+`@partme.ai/openclaw-bridge` 是面向 OpenClaw 2026.9.6 的上下文与消息观测桥。它不会替代 IM 或 MQ Channel，而是利用官方 Hook 给指定渠道补充平台约束，并把真实收发消息归一化后镜像到 MQ。
 
 完整配置和支持的 adapter 列表见 [README.md](./README.md)。
 
@@ -189,7 +189,9 @@ Bridge 不再使用发送前的 `reply_payload_sending` 作为出站依据，因
 
 ## 覆盖范围与验收边界
 
-静态注册表包含 27 个渠道：20 个 OpenClaw stock 渠道、仓库内 6 个渠道（`wecom`、`openclaw-weixin`、`wechat-ipad`、`wecom-kf`、`douyin`、`mqtt`）以及外部 `dingtalk-connector`。这只表示 Bridge 能识别配置并提供上下文预设，不等于全部渠道已经生产验收。
+静态目录识别 27 个渠道：19 个 OpenClaw 2026.9.6 bundled 渠道、仓库内 6 个渠道（`wecom`、`openclaw-weixin`、`wechat-ipad`、`wecom-kf`、`douyin`、`mqtt`），以及外部 `dingtalk-connector` 和 QQ Bot。QQ Bot 是可下载的 `@tencent-connect/openclaw-qqbot`，插件 ID `openclaw-qqbot`、渠道 ID `qqbot`。
+
+`ALL_CHANNELS` 只证明 **known**；`ALL_CAPABILITIES` 的消息格式与限制是静态近似，不证明 **installed / enabled / ready**。Bridge 自身的 `channels` 配置也不是连接状态。`resolveChannelAvailability(meta, runtimeFacts)` 对缺失事实返回 `false` 并在 `unavailableFacts` 中列明，已知否定值不列入；未知渠道不授予额外能力。宿主调用方持 `operator.read`，从同一 Gateway 获取 `plugins.list` 与 `channels.status`，调用 `adaptGatewayChannelFacts(meta, pluginsList, channelsStatus)`。适配器读取插件安装/启用/运行状态与渠道账号快照；MQTT 的 `running` 是入站监听器就绪事实，其他渠道需要显式 `connected` 或 `lifecycle=ready`。`ingressUnavailable=true` 明确否定入站就绪，即使传输仍运行或连接；`starting/recovering` 也不能作为就绪证据。部分响应保守为未知。Bridge 外部插件不自行请求 Gateway 或扩大权限。响应契约来源：OpenClaw 2026.9.6 `src/gateway/server-methods/{plugins,channels}.ts`、`src/channels/plugins/types.core.ts`。
 
 当前安装态 E2E 使用 MQTT 证明以下完整链路：真实 MQTT 入站 → Agent Turn → MQTT 回复 → `message_sent` → Bridge inbound/outbound 审计 Topic，并检查同源 MQ 审计不会递归。其他渠道仍要用真实账号、租户、权限和网络环境逐个验收。
 
@@ -199,7 +201,7 @@ Bridge 不再使用发送前的 `reply_payload_sending` 作为出站依据，因
 27 个静态渠道元数据
         │  仅表示：配置可识别、存在上下文预设
         ▼
-OpenClaw 2026.7.1 Hook 契约对齐
+OpenClaw 2026.9.6 状态与 Hook 契约对齐
         │  表示：Bridge 使用的字段与宿主源码一致
         ▼
 MQTT 安装态 tarball E2E
@@ -213,7 +215,7 @@ MQTT 安装态 tarball E2E
 
 ```mermaid
 flowchart TD
-    M["静态元数据<br/>27 个渠道"] --> H["宿主源码契约<br/>OpenClaw 2026.7.1"]
+    M["静态元数据<br/>27 个渠道"] --> H["宿主源码契约<br/>OpenClaw 2026.9.6"]
     H --> E["安装态自动 E2E<br/>当前：MQTT"]
     E --> R["真实环境验收<br/>IM × MQ 组合"]
     R --> P["生产准入"]
@@ -262,7 +264,7 @@ flowchart TD
 
 只有 `channels` 中显式声明的来源渠道会被处理。未知来源或不受支持的 MQ ID 会在启动注册时失败；受支持但未安装/未就绪的 adapter 会在后台投递时明确失败并执行有界重试，不会静默回退到其它 MQ。
 
-`includeMediaUrls` 默认是 `false`：媒体消息仍会进入 MQ，但只携带 `mediaCount`、媒体类型和 MIME，`media[].url` 为空。单个信封最多保留 16 个媒体条目，超出时 `mediaCount` 仍报告原始总数并设置 `mediaTruncated=true`。显式设为 `true` 后，Bridge 只复制不含 URL 用户名/密码的 HTTP(S) 地址；对象存储签名查询参数仍可能是敏感信息，启用前必须确认 MQ ACL、日志和消息留存策略。OpenClaw 2026.7.1 的出站 `message_sent` 不提供媒体元数据，因此当前只对入站媒体生成这一摘要。
+`includeMediaUrls` 默认是 `false`：媒体消息仍会进入 MQ，但只携带 `mediaCount`、媒体类型和 MIME，`media[].url` 为空。单个信封最多保留 16 个媒体条目，超出时 `mediaCount` 仍报告原始总数并设置 `mediaTruncated=true`。显式设为 `true` 后，Bridge 只复制不含 URL 用户名/密码的 HTTP(S) 地址；对象存储签名查询参数仍可能是敏感信息，启用前必须确认 MQ ACL、日志和消息留存策略。OpenClaw 2026.9.6 的出站 `message_sent` 不提供媒体元数据，因此当前只对入站媒体生成这一摘要。
 
 ## 投递语义
 

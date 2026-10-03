@@ -5,7 +5,8 @@ const { dispatchChannelMessage, normalizeWireIngress } = vi.hoisted(() => ({
   normalizeWireIngress: vi.fn(),
 }));
 
-vi.mock("@partme.ai/openclaw-message-sdk/bridge", () => ({
+vi.mock("@partme.ai/openclaw-message-sdk/bridge", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@partme.ai/openclaw-message-sdk/bridge")>(),
   normalizeWireIngress,
   resolveChannelDispatchIdentity: vi.fn(async () => ({
     agentId: "main",
@@ -20,7 +21,7 @@ import { setRockermqRuntime } from "../src/runtime.js";
 
 describe("rocketmq inbound reliability", () => {
   beforeEach(() => {
-    dispatchChannelMessage.mockReset();
+    dispatchChannelMessage.mockReset().mockResolvedValue({ deliveryOutcome: { kind: "delivered" } });
     normalizeWireIngress.mockReset().mockReturnValue({
       accepted: true,
       text: "hello",
@@ -29,7 +30,7 @@ describe("rocketmq inbound reliability", () => {
     setRockermqRuntime({ config: {} });
   });
 
-  it("releases the idempotency claim when dispatch fails, then commits after redelivery", async () => {
+  it("retries a pre-send failure and passes the stable message ID to SDK custody", async () => {
     const messageId = `retry-${Date.now()}-${Math.random()}`;
     const event = {
       topic: "openclaw--agent--main--in--peer",
@@ -41,13 +42,36 @@ describe("rocketmq inbound reliability", () => {
     const failed = await processInbound(event, DEFAULT_ROCKERMQ_CONFIG);
     expect(failed).toMatchObject({ accepted: false, reconsume: true });
 
-    dispatchChannelMessage.mockResolvedValueOnce(undefined);
+    dispatchChannelMessage.mockResolvedValueOnce({ deliveryOutcome: { kind: "delivered" } });
     const redelivered = await processInbound(event, DEFAULT_ROCKERMQ_CONFIG);
     expect(redelivered).toMatchObject({ accepted: true, routeSource: "standard" });
+    expect(dispatchChannelMessage.mock.calls[1][0]).toMatchObject({
+      deliveryIdentity: messageId,
+      requireDeliveryIdentity: true,
+    });
 
     const duplicate = await processInbound(event, DEFAULT_ROCKERMQ_CONFIG);
-    expect(duplicate).toEqual({ accepted: true, routeSource: "idempotency" });
-    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+    expect(duplicate).toEqual({ accepted: true, routeSource: "standard" });
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(3);
+  });
+
+  it("fails closed when reply dispatch has no stable broker or envelope ID", async () => {
+    const result = await processInbound({
+      topic: "openclaw--agent--main--in--peer",
+      body: Buffer.from("hello"),
+    }, DEFAULT_ROCKERMQ_CONFIG);
+    expect(result).toEqual({ accepted: false, reconsume: true, reason: "missing_delivery_identity" });
+    expect(dispatchChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not acknowledge ambiguous delivery", async () => {
+    dispatchChannelMessage.mockResolvedValueOnce({ deliveryOutcome: { kind: "ambiguous" } });
+    const result = await processInbound({
+      topic: "openclaw--agent--main--in--peer",
+      body: Buffer.from("hello"),
+      messageId: "ambiguous-delivery",
+    }, DEFAULT_ROCKERMQ_CONFIG);
+    expect(result).toMatchObject({ accepted: false, reconsume: true });
   });
 
   it("requests broker redelivery when the OpenClaw runtime is unavailable", async () => {
@@ -75,7 +99,7 @@ describe("rocketmq inbound reliability", () => {
       unified: null,
       idempotencyKey,
     });
-    dispatchChannelMessage.mockResolvedValue(undefined);
+    dispatchChannelMessage.mockResolvedValue({ deliveryOutcome: { kind: "delivered" } });
     const event = {
       topic: "openclaw--agent--main--in--peer",
       body: Buffer.from("hello"),
@@ -87,9 +111,9 @@ describe("rocketmq inbound reliability", () => {
     });
     await expect(processInbound(event, DEFAULT_ROCKERMQ_CONFIG)).resolves.toEqual({
       accepted: true,
-      routeSource: "idempotency",
+      routeSource: "standard",
     });
-    expect(dispatchChannelMessage).toHaveBeenCalledOnce();
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
   });
 
   it("drops an empty parsed payload without dispatching it", async () => {

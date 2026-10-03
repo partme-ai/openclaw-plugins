@@ -16,7 +16,7 @@
 
 import path from "node:path";
 
-import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-runtime";
+import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-message";
 import {
   resolveSenderCommandAuthorizationWithRuntime,
   resolveDirectDmAuthorizationOutcome,
@@ -417,6 +417,8 @@ export async function processOneMessage(
         try {
           if (mediaUrl) {
             const sendFile = async (filePath: string) => {
+              // ReplyPayload has no trusted sandbox root. Host-prepared media and
+              // configured roots remain readable; raw sandbox paths fail closed.
               await sendWeixinMediaFile({
                 filePath,
                 to: ctx.To,
@@ -429,6 +431,8 @@ export async function processOneMessage(
                 },
                 cdnBaseUrl: deps.cdnBaseUrl,
                 mediaLocalRoots: deps.mediaLocalRoots,
+                cfg: deps.config,
+                agentId: route.agentId,
               });
             };
             if (!mediaUrl.includes("://") || mediaUrl.startsWith("file://")) {
@@ -526,13 +530,26 @@ export async function processOneMessage(
   logger.debug(
     `dispatchReplyFromConfig: starting agentId=${route.agentId ?? "(none)"}`,
   );
+  // The host may otherwise expand local-media roots from an Agent-authored
+  // MEDIA: path and copy an arbitrary file into its trusted media cache before
+  // this channel's path guard can inspect the original source.
+  const replyConfig = {
+    ...deps.config,
+    tools: {
+      ...deps.config.tools,
+      fs: { ...deps.config.tools?.fs, workspaceOnly: true },
+    },
+  };
   try {
     await deps.channelRuntime.reply.withReplyDispatcher({
       dispatcher,
       run: () =>
         deps.channelRuntime.reply.dispatchReplyFromConfig({
           ctx: finalized,
-          cfg: deps.config,
+          cfg: replyConfig,
+          // The host's prepared Agent runtime otherwise replaces cfg during
+          // reply resolution; apply the same limit to that current runtime.
+          configOverride: { tools: { fs: { workspaceOnly: true } } },
           dispatcher,
           replyOptions: { ...replyOptions, disableBlockStreaming: true },
         }),

@@ -9,7 +9,7 @@ import {
   normalizeInboundTextContentType,
 } from "@partme.ai/openclaw-message-sdk";
 import { pathToFileURL } from "node:url";
-import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import { downloadMedia } from "../agent/api-client.js";
 import { isKfVoiceAsrEnabled, transcribeKfVoice } from "../agent/asr.js";

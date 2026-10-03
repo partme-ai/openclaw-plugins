@@ -26,6 +26,7 @@ export class WebhookClusterService {
   private selfIp: string | null = null;
   private selfPort: number | null = null;
   private unsubscribeFn: (() => Promise<void>) | null = null;
+  private lifecycleGeneration = 0;
 
   /**
    * Returns the current list of discovered peer nodes (excluding self).
@@ -52,6 +53,7 @@ export class WebhookClusterService {
     selfPort: number;
     logger: PluginLog;
   }): Promise<void> {
+    const generation = ++this.lifecycleGeneration;
     const { pluginConfig, selfPort, logger } = params;
     const serverList = resolveNamingServerList(pluginConfig);
     const namespace = pluginConfig.namespace?.trim() || DEFAULT_NAMESPACE;
@@ -77,6 +79,7 @@ export class WebhookClusterService {
     this.client = client;
 
     const updatePeers = (hosts: unknown) => {
+      if (generation !== this.lifecycleGeneration || this.client !== client) return;
       if (!Array.isArray(hosts)) {
         logger.warn("[openclaw-nacos] ignored invalid cluster update: hosts is not an array");
         return;
@@ -138,6 +141,7 @@ export class WebhookClusterService {
    * Stops cluster discovery and releases the client.
    */
   async stop(logger: PluginLog): Promise<void> {
+    this.lifecycleGeneration += 1;
     if (this.unsubscribeFn) {
       try {
         await this.unsubscribeFn();

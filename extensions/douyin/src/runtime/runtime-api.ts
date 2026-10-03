@@ -11,6 +11,7 @@ export {
   isRequestBodyLimitError,
   DEFAULT_WEBHOOK_MAX_BODY_BYTES,
   dispatchTranscriptTurn,
+  TranscriptDispatchError,
   parseMediaDirectives,
   resolveOutboundMedia,
   isHttpUrl,

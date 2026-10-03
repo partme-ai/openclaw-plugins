@@ -5,7 +5,7 @@
  * **架构角色**：为本插件其它层（上下文预设、能力矩阵、MQ 桥接闸门）提供「渠道是否存在 /
  * 是否官方扩展包 / UI 文案」等只读真相来源。运行时逻辑应优先查表而非魔法字符串。
  *
- * **数据来源语义**：区分 OpenClaw 2026.7.1 stock、当前仓库插件与外部连接器。
+ * **数据来源语义**：区分 OpenClaw 2026.9.6 bundled、当前仓库插件与外部连接器。
  *
  * @module bridge/channels
  */
@@ -32,6 +32,8 @@ export interface ChannelMeta {
   source: "external" | "openclaw-stock" | "repository";
   /** @description （可选）外部渠道在安装时需对齐的官方 npm 包名。 */
   npmPackage?: string;
+  /** @description 宿主插件 ID 与消息渠道 ID 不同时使用。 */
+  hostPluginId?: string;
   /** @description （可选）上游源代码仓库地址（人机可读溯源）。 */
   repoUrl?: string;
   /** @description `PRESETS` 中与该平台话术模版相对应的预设键（可与 channelId 不同语义但更常为对齐别名）。 */
@@ -99,7 +101,10 @@ export const ALL_CHANNELS: ChannelMeta[] = [
     channelId: "qqbot",
     label: "QQ Bot",
     labelCN: "QQ",
-    source: "openclaw-stock",
+    source: "external",
+    npmPackage: "@tencent-connect/openclaw-qqbot",
+    hostPluginId: "openclaw-qqbot",
+    repoUrl: "https://github.com/tencent-connect/openclaw-qqbot",
     contextPreset: "qqbot",
   },
 
@@ -150,12 +155,84 @@ export function getExternalChannels(): ChannelMeta[] {
 }
 
 /**
- * @description 列出 OpenClaw 2026.7.1 stock 渠道。
+ * @description 列出 OpenClaw 2026.9.6 bundled 渠道。
  * @returns `ChannelMeta[]` 快照（新数组实例）。
  * @throws 不抛出。
  */
 export function getBundledChannels(): ChannelMeta[] {
   return ALL_CHANNELS.filter((c) => c.source === "openclaw-stock");
+}
+
+/** 宿主显式提供的三项事实。缺失值表示 unknown，不能从目录或 Bridge 配置推断。 */
+export interface ChannelRuntimeFacts {
+  installed?: boolean;
+  enabled?: boolean;
+  ready?: boolean;
+}
+
+/** 将静态识别和宿主事实分开解析；unavailableFacts 仅列未知事实。 */
+export function resolveChannelAvailability(meta: ChannelMeta | undefined, runtimeFacts?: ChannelRuntimeFacts): {
+  known: boolean;
+  installed: boolean;
+  enabled: boolean;
+  ready: boolean;
+  unavailableFacts?: string[];
+} {
+  if (!meta || !getChannelMeta(meta.channelId)) {
+    return { known: false, installed: false, enabled: false, ready: false };
+  }
+  const unavailableFacts = (["installed", "enabled", "ready"] as const)
+    .filter((key) => typeof runtimeFacts?.[key] !== "boolean");
+  return {
+    known: true,
+    installed: runtimeFacts?.installed === true,
+    enabled: runtimeFacts?.installed === true && runtimeFacts.enabled === true,
+    ready: runtimeFacts?.installed === true && runtimeFacts.enabled === true && runtimeFacts.ready === true,
+    ...(unavailableFacts.length > 0 ? { unavailableFacts } : {}),
+  };
+}
+
+/**
+ * 消费已获 operator.read 授权的 OpenClaw 2026.9.6 plugins.list/channels.status 响应。
+ * Bridge 本身不查询 Gateway；宿主必须按同一 Gateway 实例提供两个快照。
+ * 来源：OpenClaw src/gateway/server-methods/plugins.ts#plugins.list、channels.ts#channels.status。
+ */
+export function adaptGatewayChannelFacts(
+  meta: ChannelMeta,
+  pluginsList: { partial?: boolean; plugins?: Array<{ id?: string; installed?: boolean; enabled?: boolean; runtime?: { state?: string } }> } | undefined,
+  channelsStatus: { partial?: boolean; channelAccounts?: Record<string, Array<{
+    enabled?: boolean; configured?: boolean; running?: boolean; connected?: boolean;
+    lifecycle?: string; ingressUnavailable?: true; lastError?: string | null;
+  }>> } | undefined,
+): ChannelRuntimeFacts {
+  const canonical = getChannelMeta(meta.channelId);
+  if (!canonical) return {};
+  if (pluginsList?.partial === true) return {};
+  const plugin = pluginsList?.plugins?.find((entry) => entry.id === (canonical.hostPluginId ?? canonical.channelId));
+  const accountRows = channelsStatus?.partial === true ? undefined : channelsStatus?.channelAccounts?.[canonical.channelId];
+  const facts: ChannelRuntimeFacts = {};
+  if (typeof plugin?.installed === "boolean") facts.installed = plugin.installed;
+  if (typeof plugin?.enabled === "boolean") facts.enabled = plugin.enabled;
+  if (plugin?.runtime?.state === "disabled") facts.enabled = false;
+  if (Array.isArray(accountRows) && accountRows.length > 0) {
+    if (accountRows.every((account) => account.enabled === false)) facts.enabled = false;
+    const activeRows = accountRows.filter((account) => account.enabled === true);
+    if (activeRows.length > 0) {
+      // MQTT is an inbound listener: running is its published transport fact.
+      // Other channels need explicit connected or ready lifecycle evidence.
+      const states = activeRows.map((account) => {
+        if (account.configured === false || account.running === false || account.connected === false ||
+          account.ingressUnavailable === true || account.lifecycle === "blocked" || account.lifecycle === "stopped" ||
+          account.lifecycle === "starting" || account.lifecycle === "recovering" || account.lastError) return false;
+        if (account.running === true && (account.connected === true || account.lifecycle === "ready" || canonical.channelId === "mqtt")) return true;
+        return undefined;
+      });
+      if (states.includes(true)) facts.ready = true;
+      else if (states.every((state) => state === false)) facts.ready = false;
+    } else if (accountRows.every((account) => account.enabled === false)) facts.ready = false;
+  }
+  if (plugin?.runtime?.state === "service-failed" || plugin?.runtime?.state === "disabled" || plugin?.runtime?.state === "unloaded") facts.ready = false;
+  return facts;
 }
 
 export { getChannelCapabilities } from "./capabilities.js";

@@ -4,7 +4,7 @@
  * 入站 dispatch 写入状态，before_prompt_build 读取并注入 prompt，形成闭环。
  */
 
-import type { OpenClawConfig, OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import {
   type DialogueContext,
@@ -76,8 +76,12 @@ export async function loadDialogueContext(params: {
     return createDialogueContext({ sessionId: params.sessionKey, userId: params.userId });
   }
 
-  const store = params.runtime.agent.session.loadSessionStore(storePath, { clone: true });
-  const existing = readDialogueFromEntry(store[params.sessionKey] as SessionStoreEntry | undefined);
+  const entry = params.runtime.agent.session.getSessionEntry({
+    storePath,
+    sessionKey: params.sessionKey,
+    readConsistency: "latest",
+  });
+  const existing = readDialogueFromEntry(entry);
   if (existing) {
     return existing;
   }
@@ -95,28 +99,21 @@ export async function persistDialogueContext(params: {
   agentId?: string;
   context: DialogueContext;
 }): Promise<void> {
-  const updateSessionStore = params.runtime.agent?.session?.updateSessionStore;
+  const updateSessionStoreEntry = params.runtime.agent?.session?.updateSessionStoreEntry;
   const storePath = resolveSessionStorePath(params);
-  if (!updateSessionStore || !storePath) {
+  if (!updateSessionStoreEntry || !storePath) {
     return;
   }
 
-  const serialized = JSON.parse(JSON.stringify(params.context)) as Record<string, unknown>;
+  const serialized = { ...params.context, collectedInfo: { ...params.context.collectedInfo } };
 
-  await updateSessionStore(storePath, (store) => {
-    const entry = store[params.sessionKey] as SessionStoreEntry | undefined;
-    if (!entry) {
-      return;
-    }
+  await updateSessionStoreEntry({ storePath, sessionKey: params.sessionKey, update: (entry) => {
     const pluginExtensions = { ...(entry.pluginExtensions ?? {}) };
     const pluginState = { ...(pluginExtensions[PLUGIN_ID] ?? {}) };
     pluginState[DIALOGUE_SESSION_NAMESPACE] = serialized;
     pluginExtensions[PLUGIN_ID] = pluginState;
-    (store as Record<string, SessionStoreEntry>)[params.sessionKey] = {
-      ...entry,
-      pluginExtensions,
-    };
-  });
+    return { pluginExtensions };
+  }});
 }
 
 /**

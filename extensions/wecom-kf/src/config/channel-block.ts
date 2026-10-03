@@ -2,7 +2,7 @@
  * channels.wecom-kf 配置块解析（含 wecom-cs 读时兼容别名）
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import type { WecomKfConfig } from "../types/index.js";
 

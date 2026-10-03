@@ -238,7 +238,7 @@ function resolveMcpAccountId(cfg: OpenClawConfig): string | null {
 export function resolveCurrentAccountId(): string {
   try {
     const core = getWeComRuntime();
-    const cfg = core.config.loadConfig();
+    const cfg = core.config.current() as OpenClawConfig;
 
     const mcpAccountId = resolveMcpAccountId(cfg);
     if (mcpAccountId) {

@@ -3,13 +3,12 @@
  *
  * OpenClaw WebSocket 渠道定义。
  */
-
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type {
   ChannelAccountSnapshot,
-  ChannelGatewayContext,
   ChannelPlugin,
   OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 import {
   deleteAccountFromConfigSection,
   setAccountEnabledInConfigSection,

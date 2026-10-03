@@ -11,11 +11,10 @@
 import { serializeForTransport, type OutboundWireFormat } from "../pipeline/serialize-payload.js";
 import type { ReplyRoute } from "../core/types.js";
 import {
-  createDispatchRunId,
-  extractSubagentResultText,
+  resolveSubagentOutcome,
   sanitizeSessionId,
 } from "./agent-helpers.js";
-import type { SubagentDispatchParams, SubagentRuntime } from "./types.js";
+import type { SubagentDispatchParams, SubagentDispatchResult } from "./types.js";
 
 /**
  * 通过 subagent 执行 prompt；可选将回复经 deliver 发回传输层 / Run subagent and optionally deliver reply.
@@ -25,20 +24,23 @@ import type { SubagentDispatchParams, SubagentRuntime } from "./types.js";
  */
 export async function dispatchSubagentMessage(
   params: SubagentDispatchParams,
-): Promise<{ runId: string; delivered: boolean }> {
-  const rt = params.runtime as SubagentRuntime;
+): Promise<SubagentDispatchResult> {
+  const rt = params.runtime;
   const childSessionKey =
     params.childSessionKey ??
     `agent:${params.agentId}:subagent:${params.channel}:${sanitizeSessionId(params.sessionKey)}`;
 
-  const { runId } = await rt.subagent.run({
+  params.beforeAgentDispatch?.();
+  const run = await rt.subagent.run({
     sessionKey: childSessionKey,
     message: params.text,
     deliver: false,
   });
+  const { runId, sessionKey } = run;
+  const identity = sessionKey === undefined ? { runId } : { runId, sessionKey };
 
   if (params.replyEnabled === false) {
-    return { runId, delivered: false };
+    return { ...identity, delivered: false, outcome: { kind: "pending" } };
   }
 
   const result = await rt.subagent.waitForRun({
@@ -46,9 +48,9 @@ export async function dispatchSubagentMessage(
     timeoutMs: params.timeoutMs ?? 120_000,
   });
 
-  const replyText = extractSubagentResultText(result);
-  if (replyText.trim().length === 0) {
-    return { runId, delivered: false };
+  const outcome = resolveSubagentOutcome(result);
+  if (outcome.kind !== "visible") {
+    return { ...identity, delivered: false, outcome };
   }
 
   const format: OutboundWireFormat = params.reply.outboundFormat ?? "legacyJsonText";
@@ -56,12 +58,12 @@ export async function dispatchSubagentMessage(
     channel: params.channel,
     accountId: params.accountId,
     userId: params.reply.userId ?? params.sessionKey,
-    text: replyText,
+    text: outcome.text,
     agentId: params.agentId,
     format,
     replyRoute: params.reply.replyRoute as ReplyRoute | undefined,
   });
 
-  await params.reply.deliver({ wire, text: replyText, runId });
-  return { runId, delivered: true };
+  await params.reply.deliver({ wire, text: outcome.text, runId });
+  return { ...identity, delivered: true, outcome };
 }

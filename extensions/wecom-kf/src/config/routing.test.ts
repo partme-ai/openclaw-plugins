@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 import { resolveWecomFailClosedOnDefaultRoute, shouldRejectWecomDefaultRoute } from "./resolvers.js";
 

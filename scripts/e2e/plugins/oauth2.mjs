@@ -1,4 +1,7 @@
+import * as http from "node:http";
 import { startOAuth2Provider } from "../helpers/oauth2-provider.mjs";
+import { oauth2ClientAddress } from "../config/plugins/oauth2.mjs";
+import { restartInstalledGateway } from "../lib/lifecycle.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 function cookieFrom(response) {
@@ -6,7 +9,41 @@ function cookieFrom(response) {
 }
 
 async function manualFetch(url, init = {}) {
-  return fetch(url, { ...init, redirect: "manual" });
+  return new Promise((resolve, reject) => {
+    const request = http.request(url, {
+      method: init.method ?? "GET",
+      headers: init.headers ?? {},
+      localAddress: oauth2ClientAddress(),
+      timeout: 10_000,
+    }, (response) => {
+      response.on("error", reject);
+      response.resume();
+      response.on("end", () => resolve({
+        status: response.statusCode ?? 0,
+        ok: (response.statusCode ?? 0) >= 200 && (response.statusCode ?? 0) < 300,
+        headers: {
+          get(name) {
+            const value = response.headers[name.toLowerCase()];
+            return Array.isArray(value) ? value[0] ?? null : value ?? null;
+          },
+        },
+      }));
+    });
+    request.on("timeout", () => request.destroy(new Error("OAuth2 E2E request timed out")));
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+function safeProviderMetrics(metrics) {
+  return JSON.stringify({
+    pkceVerified: metrics.pkceVerified,
+    codeExchange: metrics.codeExchange,
+    refresh: metrics.refresh,
+    introspect: metrics.introspect,
+    revoke: metrics.revoke,
+    lastError: metrics.lastError,
+  });
 }
 
 /** @param {ReturnType<import('./_context.mjs').createTestContext>} ctx */
@@ -21,7 +58,7 @@ export async function testOAuth2(ctx, results) {
       try {
         await ctx.waitFor(async () => {
           try {
-            return (await fetch(`${proxy}/health`)).ok;
+            return (await manualFetch(`${proxy}/health`)).ok;
           } catch {
             return false;
           }
@@ -40,10 +77,16 @@ export async function testOAuth2(ctx, results) {
         const callbackUrl = authorize.headers.get("location");
         if (authorize.status !== 302 || !callbackUrl) throw new Error("OAuth2 provider did not authorize the PKCE request");
 
-        const callback = await manualFetch(callbackUrl, { headers: { cookie: stateCookie } });
+        const callbackRequestUrl = new URL(callbackUrl);
+        if (callbackRequestUrl.hostname !== "127.0.0.1" ||
+            callbackRequestUrl.port !== String(ctx.ports.oauth2Proxy) ||
+            callbackRequestUrl.pathname !== "/auth/oauth2/callback") {
+          throw new Error("OAuth2 provider returned an unexpected callback destination");
+        }
+        const callback = await manualFetch(callbackRequestUrl, { headers: { cookie: stateCookie } });
         const sessionCookie = cookieFrom(callback);
         if (callback.status !== 302 || !sessionCookie) {
-          throw new Error(`OAuth2 callback → ${callback.status}, session missing; provider=${JSON.stringify(provider.metrics)}`);
+          throw new Error(`OAuth2 callback → ${callback.status}, session missing; provider=${safeProviderMetrics(provider.metrics)}`);
         }
 
         const authenticated = await manualFetch(`${proxy}/auth/oauth2/status`, {
@@ -77,15 +120,26 @@ export async function testOAuth2(ctx, results) {
           throw new Error("OAuth2 Authorization Code + PKCE was not verified by the provider");
         }
         if (provider.metrics.refresh < 1 || provider.metrics.introspect < 2 || provider.metrics.revoke !== 1) {
-          throw new Error(`OAuth2 lifecycle incomplete: ${JSON.stringify(provider.metrics)}`);
+          throw new Error(`OAuth2 lifecycle incomplete: ${safeProviderMetrics(provider.metrics)}`);
+        }
+
+        await restartInstalledGateway(ctx, [ctx.ports.oauth2Proxy]);
+        await ctx.waitFor(async () => {
+          try { return (await manualFetch(`${proxy}/health`)).ok; }
+          catch { return false; }
+        }, { label: "OAuth2 proxy after Gateway restart", timeoutMs: 30_000 });
+        const restartedAnonymous = await manualFetch(`${proxy}/auth/oauth2/status`);
+        const restartedLogin = await manualFetch(`${proxy}/auth/oauth2/login?returnTo=%2Fauth%2Foauth2%2Fstatus`);
+        if (restartedAnonymous.status !== 401 || restartedLogin.status !== 302 || !restartedLogin.headers.get("location")) {
+          throw new Error(`OAuth2 restart changed auth routes: status=${restartedAnonymous.status}, login=${restartedLogin.status}`);
         }
       } finally {
         await provider.close();
       }
     },
     {
-      service: `http://127.0.0.1:${ctx.ports.oauth2Proxy}`,
-      method: "Authorization Code + PKCE + refresh + introspection + revoke + OpenClaw trusted-proxy",
+      service: `http://127.0.0.1:${ctx.ports.oauth2Proxy} (client source ${oauth2ClientAddress()})`,
+      method: "Authorization Code + PKCE + refresh + introspection + revoke + Gateway stop/restart auth recovery",
     },
     results,
   );

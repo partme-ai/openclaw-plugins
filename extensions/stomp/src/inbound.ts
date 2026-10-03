@@ -15,15 +15,13 @@
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
+  requireSettledDelivery,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
 import { STOMP_TCP_CHANNEL_ID } from "./config/resolvers.js";
 import { getStompRuntime } from "./runtime.js";
 import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
-import {
-  getStompTcpClaimableDedupe,
-} from "./shared/wire-helpers.js";
 import { publishToDestination } from "./transport/server.js";
 import type { InboundMessage } from "./types.js";
 
@@ -48,11 +46,12 @@ export async function dispatchInboundMessage(message: InboundMessage): Promise<v
     throw new Error("STOMP inbound payload is empty");
   }
 
-  const dedupe = getStompTcpClaimableDedupe();
-  const claim = message.idempotencyKey
-    ? await dedupe.claim(message.idempotencyKey)
+  const durableIdentity = message.idempotencyKey?.trim() && message.senderScope?.trim()
+    ? JSON.stringify([message.senderScope.trim(), message.destination, message.idempotencyKey.trim()])
     : undefined;
-  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) return;
+  const stableSenderRoute = durableIdentity
+    ? JSON.stringify([message.senderScope!.trim(), message.destination])
+    : undefined;
 
   const replyDestination = message.replyDestination ?? `/topic/session.${message.peerId}`;
 
@@ -64,7 +63,7 @@ export async function dispatchInboundMessage(message: InboundMessage): Promise<v
       agentId: message.agentId,
     });
 
-    await dispatchChannelMessage({
+    const dispatchResult = await dispatchChannelMessage({
       mode: "reply-pipeline",
       runtime: runtime as unknown as BridgePluginRuntime,
       channel: STOMP_TCP_CHANNEL_ID,
@@ -73,6 +72,13 @@ export async function dispatchInboundMessage(message: InboundMessage): Promise<v
       text: parsed.text,
       agentId,
       sessionKey,
+      deliveryIdentity: durableIdentity,
+      requireDeliveryIdentity: Boolean(durableIdentity),
+      deliveryFingerprintContext: stableSenderRoute ? {
+        peerId: stableSenderRoute,
+        sessionKey: stableSenderRoute,
+        replyRoute: { destination: message.destination },
+      } : undefined,
       unified: parsed.unified,
       extra: {
         stompDestination: message.destination,
@@ -90,9 +96,8 @@ export async function dispatchInboundMessage(message: InboundMessage): Promise<v
         agentId,
       },
     });
-    if (message.idempotencyKey) await dedupe.commit(message.idempotencyKey);
+    requireSettledDelivery(dispatchResult?.deliveryOutcome);
   } catch (error) {
-    if (message.idempotencyKey) dedupe.release(message.idempotencyKey);
     throw error;
   }
 }

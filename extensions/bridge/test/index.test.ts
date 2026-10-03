@@ -102,3 +102,16 @@ describe("public API exports", () => {
     expect(mod.buildMessage).toBeDefined();
   });
 });
+
+describe('O2 full registration budget validation', () => {
+  it('accepts generated context allocation through the complete plugin registration path', () => {
+    const api = { registrationMode: 'full', pluginConfig: { contextMaxTokens: 20 }, logger: { info() {} }, on: vi.fn(), registerService: vi.fn() };
+    expect(() => plugin.register(api as never)).not.toThrow();
+    expect(api.on).toHaveBeenCalledWith('before_prompt_build', expect.any(Function));
+  });
+  it.each([-1, 1.5, '20', null, Number.MAX_SAFE_INTEGER + 1])('rejects invalid allocation %s before registering hooks', value => {
+    const api = { registrationMode: 'full', pluginConfig: { contextMaxTokens: value }, logger: { info() {} }, on: vi.fn(), registerService: vi.fn() };
+    expect(() => plugin.register(api as never)).toThrow('contextMaxTokens');
+    expect(api.on).not.toHaveBeenCalled();
+  });
+});

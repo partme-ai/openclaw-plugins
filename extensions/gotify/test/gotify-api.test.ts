@@ -574,6 +574,56 @@ describe("Health & Doctor", () => {
     expect(report.clientsChecked).toBe(true);
   });
 
+  it("runGotifyDoctor omits proxy path and query secrets from its report", async () => {
+    const withPrivateUrl = createTestAccount({
+      serverUrl: "https://push.example.com/private-secret?access=hidden-secret#fragment",
+      clientToken: undefined,
+    });
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    const report = await runGotifyDoctor(withPrivateUrl, { fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(report.serverUrl).toBe("https://push.example.com");
+    expect(JSON.stringify(report)).not.toContain("private-secret");
+    expect(JSON.stringify(report)).not.toContain("hidden-secret");
+  });
+
+  it("healthCheck omits a configured private URL from network errors", async () => {
+    const withPrivateUrl = createTestAccount({
+      serverUrl: "https://push.example.com/private-secret?access=hidden-secret",
+    });
+    const fetchImpl = vi.fn().mockRejectedValue(
+      new Error("request to https://push.example.com/private-secret?access=hidden-secret/health failed"),
+    );
+    const result = await healthCheck(withPrivateUrl, { fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(result.ok).toBe(false);
+    expect(result.error).not.toContain("private-secret");
+    expect(result.error).not.toContain("hidden-secret");
+  });
+
+  it("healthCheck omits a normalized private URL from network errors", async () => {
+    const withPrivateUrl = createTestAccount({
+      serverUrl: "https://push.example.com:443/private-secret?access=hidden-secret",
+    });
+    const fetchImpl = vi.fn().mockRejectedValue(
+      new Error("request to https://push.example.com/private-secret?access=hidden-secret/health failed"),
+    );
+    const result = await healthCheck(withPrivateUrl, { fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(result.ok).toBe(false);
+    expect(result.error).not.toContain("private-secret");
+    expect(result.error).not.toContain("hidden-secret");
+  });
+
+  it.each([
+    ["https://push.example.com/private-secret?access=hidden-secret#fragment", "https://push.example.com/private-secret?access=hidden-secret"],
+    ["https://push.example.com:443/private-secret?access=hidden-secret#fragment", "https://push.example.com/private-secret?access=hidden-secret"],
+  ])("healthCheck omits a fragment-free private URL from %s", async (serverUrl, errorUrl) => {
+    const withPrivateUrl = createTestAccount({ serverUrl });
+    const fetchImpl = vi.fn().mockRejectedValue(new Error(`request to ${errorUrl}/health failed`));
+    const result = await healthCheck(withPrivateUrl, { fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(result.ok).toBe(false);
+    expect(result.error).not.toContain("private-secret");
+    expect(result.error).not.toContain("hidden-secret");
+  });
+
   it("runGotifyDoctor reports missing serverUrl", async () => {
     const noUrl = createTestAccount({ serverUrl: undefined });
     const report = await runGotifyDoctor(noUrl);

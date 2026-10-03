@@ -5,15 +5,13 @@
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
+  requireSettledDelivery,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
 import { WEB_STOMP_CHANNEL_ID } from "./config/resolvers.js";
 import { getWebStompRuntime } from "./runtime.js";
 import { resolvePayloadMode } from "@partme.ai/openclaw-message-sdk/transport";
-import {
-  getWebStompClaimableDedupe,
-} from "./shared/wire-helpers.js";
 
 const DEFAULT_PAYLOAD_MODE = "jsonTextOrPlain" as const;
 
@@ -24,6 +22,8 @@ export type WebStompInboundContext = {
   destination: string;
   rawPayload: string;
   idempotencyKey?: string;
+  /** 已认证 login 或客户端声明的 sender-id；不用于授权。 */
+  senderScope?: string;
 };
 
 /**
@@ -58,14 +58,15 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
     throw new Error("Web STOMP inbound payload is empty");
   }
 
-  const dedupe = getWebStompClaimableDedupe();
-  const claim = ctx.idempotencyKey
-    ? await dedupe.claim(ctx.idempotencyKey)
+  const durableIdentity = ctx.idempotencyKey?.trim() && ctx.senderScope?.trim()
+    ? JSON.stringify([ctx.senderScope.trim(), ctx.destination, ctx.idempotencyKey.trim()])
     : undefined;
-  if (claim && (claim.kind === "duplicate" || claim.kind === "inflight")) return;
+  const stableSenderRoute = durableIdentity
+    ? JSON.stringify([ctx.senderScope!.trim(), ctx.destination])
+    : undefined;
 
   try {
-    await dispatchChannelMessage({
+    const dispatchResult = await dispatchChannelMessage({
     mode: "reply-pipeline",
     runtime: runtime as unknown as BridgePluginRuntime,
     channel: WEB_STOMP_CHANNEL_ID,
@@ -74,6 +75,13 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
     text: parsed.text,
     agentId,
     sessionKey,
+    deliveryIdentity: durableIdentity,
+    requireDeliveryIdentity: Boolean(durableIdentity),
+    deliveryFingerprintContext: stableSenderRoute ? {
+      peerId: stableSenderRoute,
+      sessionKey: stableSenderRoute,
+      replyRoute: { destination: ctx.destination },
+    } : undefined,
     unified: parsed.unified,
     extra: {
       stompReplyDestination: replyDestination,
@@ -93,9 +101,8 @@ export async function dispatchInboundStomp(ctx: WebStompInboundContext): Promise
       agentId,
     },
     });
-    if (ctx.idempotencyKey) await dedupe.commit(ctx.idempotencyKey);
+    requireSettledDelivery(dispatchResult?.deliveryOutcome);
   } catch (error) {
-    if (ctx.idempotencyKey) dedupe.release(ctx.idempotencyKey);
     throw error;
   }
 }

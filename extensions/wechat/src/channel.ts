@@ -19,7 +19,7 @@ import path from "node:path";
 
 import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
-import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 
 import {
   registerWeixinAccountId,
@@ -275,6 +275,8 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
             },
             cdnBaseUrl: account.cdnBaseUrl,
             mediaLocalRoots: account.mediaLocalRoots,
+            cfg: ctx.cfg,
+            sessionWorkspaceDir: ctx.mediaAccess?.workspaceDir,
           });
           return { channel: "openclaw-weixin", messageId: result.messageId };
         };

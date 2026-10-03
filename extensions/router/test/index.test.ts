@@ -5,7 +5,28 @@
  * 模板展开、路由分发逻辑、审计配置
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { matchRule, tmpl } from "../src/index.ts";
+import plugin, { matchRule, tmpl } from "../src/index.ts";
+
+describe("management route registration", () => {
+  it("delegates every exact management path to Gateway authentication", () => {
+    const routes: Array<{ path: string; auth?: string; match?: string }> = [];
+    const descriptors: Array<{ surface: string; path?: string; requiredScopes?: string[] }> = [];
+    plugin.register({
+      registrationMode: "full",
+      session: { controls: { registerControlUiDescriptor: (descriptor: typeof descriptors[number]) => descriptors.push(descriptor) } },
+      pluginConfig: { rules: [] },
+      runtime: { config: { current: () => ({}) }, channel: { outbound: { loadAdapter: vi.fn() } } },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      registerService: vi.fn(),
+      on: vi.fn(),
+      registerHttpRoute: (route: { path: string; auth?: string; match?: string }) => routes.push(route),
+    } as never);
+    expect(routes.map(({ path, auth, match }) => ({ path, auth, match }))).toEqual([
+      "/router/status", "/router/health", "/router/dlq", "/router/audit", "/router/dlq/replay",
+    ].map((path) => ({ path, auth: "gateway", match: "exact" })));
+    expect(descriptors).toContainEqual(expect.objectContaining({ surface: "tab", path: "/router/status", requiredScopes: ["operator.read"] }));
+  });
+});
 
 // ============================================================================
 // tmpl — 模板展开

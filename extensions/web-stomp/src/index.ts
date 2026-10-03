@@ -6,6 +6,7 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { stompChannel } from "./channel.js";
@@ -15,7 +16,7 @@ import { getAckStats } from "./transport/ack-handler.js";
 import { getSubscriptionStats } from "./transport/subscription-mgr.js";
 import { getActiveStompConfig, getConnectionInfoList, getStompServerStats } from "./transport/server.js";
 
-export default defineChannelPluginEntry({
+const entry: OpenClawPluginDefinition = defineChannelPluginEntry({
   id: "web-stomp",
   name: "STOMP over WebSocket",
   description: "STOMP 1.2 over WebSocket/WSS bridge for OpenClaw",
@@ -46,3 +47,5 @@ export default defineChannelPluginEntry({
 
 export { stompChannel } from "./channel.js";
 export { resolveStompWsConfig, validateStompWsConfig } from "./config.js";
+
+export default entry;

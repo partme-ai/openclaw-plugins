@@ -28,7 +28,7 @@
   "author": "PartMe",
   "license": "MIT",
   "engines": {
-    "node": ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0"
+    "node": ">=24.16.0 <25 || >=26.1.0"
   },
   "files": [
     "dist",
@@ -60,7 +60,7 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.7.1"
+    "openclaw": ">=2026.9.6"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -73,8 +73,8 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "compat": {
-      "pluginApi": ">=2026.7.1",
-      "minGatewayVersion": "2026.7.1"
+      "pluginApi": ">=2026.9.6",
+      "minGatewayVersion": "2026.9.6"
     },
     "channel": {
       "id": "mqtt-ws",
@@ -84,7 +84,7 @@
     "install": {
       "npmSpec": "@partme.ai/openclaw-web-mqtt",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.7.1"
+      "minHostVersion": ">=2026.9.6"
     }
   },
   "exports": {

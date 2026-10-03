@@ -6,6 +6,7 @@
  * 不确定”，两类情况都会降低健康状态，避免把无法证明的投递结果误报为完全成功。
  */
 import { createHash, randomUUID } from "node:crypto";
+import { emitDeliveryTelemetry } from "@partme.ai/openclaw-message-sdk/transport";
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
@@ -53,6 +54,7 @@ type EnqueueParams = {
   actionType: RouteAction["type"];
   payload: PublishInboundParams;
 };
+const DLQ_TELEMETRY_INTERVAL_MS = 30_000;
 
 function errorMessage(error: unknown): string {
   return redactRouterError(error);
@@ -66,8 +68,13 @@ export function stableDeliveryKey(parts: Record<string, unknown>): string {
 /** 驱动持久队列出队、并发发布、重试、DLQ 和运行状态统计。 */
 export class ReliableRouteDispatcher {
   private running = false;
+  private startPromise: Promise<void> | null = null;
+  private stopPromise: Promise<void> | null = null;
+  private lifecycleGeneration = 0;
   private drainPromise: Promise<void> | null = null;
   private retryTimer: NodeJS.Timeout | undefined;
+  private dlqTelemetryTimer: NodeJS.Timeout | undefined;
+  private dlqTelemetryGeneration = 0;
   private counters = {
     accepted: 0,
     duplicates: 0,
@@ -97,29 +104,58 @@ export class ReliableRouteDispatcher {
     private readonly config: RouterConfig,
     private readonly store: DurableRouteStore,
     private readonly publish: PublishInboundFn | undefined,
+    private readonly dlqTelemetryIntervalMs = DLQ_TELEMETRY_INTERVAL_MS,
   ) {}
 
   async start(): Promise<void> {
+    if (this.stopPromise) await this.stopPromise;
+    if (this.running) return;
+    if (this.startPromise) return this.startPromise;
+    const generation = ++this.lifecycleGeneration;
+    const starting = this.startGeneration(generation);
+    this.startPromise = starting;
+    try { await starting; }
+    finally { if (this.startPromise === starting) this.startPromise = null; }
+  }
+
+  private async startGeneration(generation: number): Promise<void> {
     await this.store.initialize();
+    if (generation !== this.lifecycleGeneration) return;
+    await this.observeDlqDepth("startup telemetry snapshot", () => generation === this.lifecycleGeneration);
+    if (generation !== this.lifecycleGeneration) return;
     if (!this.publish) {
       // 初始化已经持有 writer lease；启动失败必须释放，否则同目录后续实例无法接管。
       await this.store.close();
       throw new Error("[router] Gateway send capability is unavailable");
     }
     this.running = true;
+    this.dlqTelemetryGeneration += 1;
+    this.scheduleDlqTelemetry(this.dlqTelemetryGeneration);
     this.wake();
   }
 
   async stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    this.lifecycleGeneration += 1;
     this.running = false;
+    this.dlqTelemetryGeneration += 1;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
-    try {
-      await this.drainPromise;
-    } finally {
-      // 无论后台 drain 是否异常，服务停止都必须释放 heartbeat、文件句柄和 writer lease。
-      await this.store.close();
-    }
+    if (this.dlqTelemetryTimer) clearTimeout(this.dlqTelemetryTimer);
+    this.dlqTelemetryTimer = undefined;
+    const stopping = (async () => {
+      // A stop may overtake initialize() or the best-effort startup snapshot.
+      // Wait for that generation to settle before releasing its writer lease.
+      await Promise.allSettled([this.startPromise]);
+      try {
+        await this.drainPromise;
+      } finally {
+        await this.store.close();
+      }
+    })();
+    this.stopPromise = stopping;
+    try { await stopping; }
+    finally { if (this.stopPromise === stopping) this.stopPromise = null; }
   }
 
   async enqueue(params: EnqueueParams): Promise<"enqueued" | "duplicate"> {
@@ -151,6 +187,7 @@ export class ReliableRouteDispatcher {
 
   async replayDeadLetters(limit: number): Promise<number> {
     const count = await this.store.replayDeadLetters(limit);
+    if (count > 0) await this.observeDlqDepth("replay telemetry snapshot");
     if (count > 0) this.wake();
     return count;
   }
@@ -161,13 +198,15 @@ export class ReliableRouteDispatcher {
 
   async status(): Promise<ReliableDispatcherStatus> {
     let snapshot = this.lastSnapshot;
-    let storeAvailable = true;
-    try {
-      snapshot = await this.store.snapshot();
-      this.lastSnapshot = snapshot;
-    } catch (error) {
-      storeAvailable = false;
-      this.recordStoreFailure(error, "status snapshot");
+    let storeAvailable = this.running && this.stopPromise === null;
+    if (storeAvailable) {
+      try {
+        snapshot = await this.store.snapshot();
+        this.lastSnapshot = snapshot;
+      } catch (error) {
+        storeAvailable = false;
+        this.recordStoreFailure(error, "status snapshot");
+      }
     }
     if (!this.durabilityUncertain && snapshot.pending === 0 && snapshot.deadLetters === 0 && this.inflight === 0) {
       if (storeAvailable) {
@@ -237,26 +276,33 @@ export class ReliableRouteDispatcher {
         this.lastError = errorMessage(error);
         this.lastErrorAt = Date.now();
         this.counters.delivered += 1;
+        emitDeliveryTelemetry({ event: "settlement", channel: "router", outcome: "ambiguous", deliveryId: task.id });
         this.api.logger.error(`[router] delivery committed with uncertain directory durability task=${task.id}: ${this.lastError}`);
         return;
       }
       this.counters.delivered += 1;
+      emitDeliveryTelemetry({ event: "settlement", channel: "router", outcome: "delivered", deliveryId: task.id });
       if (this.config.audit.logToConsole) this.api.logger.info(`[router] delivered task=${task.id} rule=${task.ruleId} target=${task.payload.channel}`);
     } catch (error) {
       // 同一份脱敏文本同时进入状态、持久 DLQ/审计和日志，避免不同出口遗漏凭据。
       const diagnostic = errorMessage(error);
       this.lastError = diagnostic;
       this.lastErrorAt = Date.now();
-      if (error instanceof Error && error.name === "RouterDeliveryTimeoutError") this.counters.unknownOutcomes += 1;
+      const timedOut = error instanceof Error && error.name === "RouterDeliveryTimeoutError";
+      if (timedOut) this.counters.unknownOutcomes += 1;
       const attempts = task.attempts + 1;
       const dead = attempts >= this.config.delivery.maxAttempts;
       const nextAttemptAt = dead ? null : Date.now() + this.retryDelay(attempts);
-      const outcome = await this.store.markFailed(task, diagnostic, nextAttemptAt);
+      const outcome = await this.store.markFailed(task, diagnostic, nextAttemptAt, timedOut);
       if (outcome === "dead-letter") {
         this.counters.deadLetters += 1;
+        emitDeliveryTelemetry({ event: "settlement", channel: "router",
+          outcome: timedOut || task.outcomeUncertain ? "ambiguous" : "failed", deliveryId: task.id });
+        await this.observeDlqDepth("dead-letter telemetry snapshot");
         this.api.logger.error(`[router] delivery exhausted task=${task.id} rule=${task.ruleId}: ${diagnostic}`);
       } else {
         this.counters.retries += 1;
+        emitDeliveryTelemetry({ event: "retry", channel: "router", deliveryId: task.id });
         this.api.logger.warn(`[router] delivery ${outcome === "blocked" ? "blocked by full DLQ" : `retry ${attempts}/${this.config.delivery.maxAttempts}`} task=${task.id}: ${diagnostic}`);
       }
     } finally {
@@ -292,6 +338,34 @@ export class ReliableRouteDispatcher {
     );
     const spread = base * this.config.delivery.jitter;
     return Math.max(10, Math.floor(base - spread + Math.random() * spread * 2));
+  }
+
+  /** A failed observation cannot roll back a committed delivery or DLQ replay. */
+  private async observeDlqDepth(phase: string, stillCurrent: () => boolean = () => true): Promise<void> {
+    try {
+      const snapshot = await this.store.snapshot();
+      if (!stillCurrent()) return;
+      this.lastSnapshot = snapshot;
+      emitDeliveryTelemetry({ event: "dlq", channel: "router", entries: snapshot.deadLetters });
+    } catch (error) {
+      if (!stillCurrent()) return;
+      // Even the logger can fail; telemetry must never reject a committed
+      // replay or delivery transition.
+      try { this.recordStoreFailure(error, phase); } catch { /* best effort */ }
+    }
+  }
+
+  /** Reobserve in-memory durable state so a restarted exporter or lost event can recover its gauge. */
+  private scheduleDlqTelemetry(generation: number): void {
+    if (!this.running || generation !== this.dlqTelemetryGeneration) return;
+    this.dlqTelemetryTimer = setTimeout(() => {
+      this.dlqTelemetryTimer = undefined;
+      const stillCurrent = () => this.running && generation === this.dlqTelemetryGeneration;
+      void this.observeDlqDepth("periodic DLQ telemetry snapshot", stillCurrent).then(() => {
+        if (stillCurrent()) this.scheduleDlqTelemetry(generation);
+      });
+    }, Math.max(10, this.dlqTelemetryIntervalMs));
+    this.dlqTelemetryTimer.unref();
   }
 
   private async scheduleNext(): Promise<void> {

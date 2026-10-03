@@ -109,7 +109,7 @@ type GotifyChannelRuntime = ChannelRuntimeSurface & {
     ) => Promise<Record<string, unknown>>;
   };
   session?: TranscriptChannelRuntime["session"];
-  turn?: TranscriptChannelRuntime["turn"];
+  inbound?: TranscriptChannelRuntime["inbound"];
 };
 
 /** WebSocket 入站 messageId 去重（message-sdk）。 */
@@ -698,15 +698,15 @@ export async function dispatchInboundMessage(
   message: GotifyStreamEnvelope,
 ): Promise<void> {
   const cr = ctx.channelRuntime as GotifyChannelRuntime | undefined;
-  if (!cr?.reply || !cr?.routing) {
+  if (!cr?.reply || !cr?.routing || !cr.inbound?.dispatchReply) {
     /*
      * channelRuntime 是 OpenClaw 宿主提供的核心能力。缺少 reply/routing 时，
      * 插件无法构造 transcript 或找到 agent，因此只记录状态并停止处理本条消息。
      */
     patchAccountSnapshot(account.accountId, {
-      lastError: "channelRuntime does not expose reply/routing.",
+      lastError: "channelRuntime does not expose inbound reply/routing.",
     });
-    throw new Error("Gotify channelRuntime does not expose reply/routing");
+    throw new Error("Gotify channelRuntime does not expose inbound reply/routing");
   }
 
   // ── 跳过 OpenClaw 出站回显，避免 Agent 反馈环 ─────────────────────────────
@@ -882,7 +882,10 @@ export async function dispatchInboundMessage(
     });
   };
 
-  const deliverReply = async (payload: { text: string }) => {
+  const deliverReply = async (payload: { text?: string }) => {
+    if (!payload.text) {
+      return;
+    }
     /*
      * Agent 回复仍然通过 Gotify Application token 投递。extras.openclaw.outbound
      * 标记由 withOpenClawOutboundExtras 写入，确保回复进入 /stream 时不会再次触发 agent。
@@ -923,28 +926,22 @@ export async function dispatchInboundMessage(
     accountId: account.accountId,
   };
 
-  if (
-    !cr.turn?.runAssembled &&
-    (!cr.session?.recordInboundSession || !storePath || !sessionKey)
-  ) {
-    /*
-     * 缺少 transcript 记录能力时仍继续调用 dispatchTranscriptTurn：
-     * 新版宿主可能通过 turn.runAssembled 完成记录和派发；这里仅保留状态提示。
-     */
+  if (!cr.session?.recordInboundSession || !storePath || !sessionKey) {
     patchAccountSnapshot(account.accountId, {
       lastError: `Cannot record inbound transcript (missing session API or sessionKey=${sessionKey ?? "missing"})`,
     });
+    throw new Error("Gotify channelRuntime cannot record inbound transcript");
   }
 
-  await dispatchTranscriptTurn({
+  const hostResult = await dispatchTranscriptTurn({
     channelRuntime: cr as unknown as TranscriptChannelRuntime,
-    cfg,
+    cfg: ctx.cfg,
     channel: "gotify",
     accountId: account.accountId,
     agentId: resolvedAgentId,
     sessionKey,
     storePath,
-    inboundContext,
+    inboundContext: inboundContext as Parameters<typeof dispatchTranscriptTurn>[0]["inboundContext"],
     record: {
       updateLastRoute,
       onRecordError,
@@ -956,7 +953,11 @@ export async function dispatchInboundMessage(
         patchAccountSnapshot(account.accountId, { lastError: errorMsg });
       },
     },
+    signal: ctx.abortSignal,
   });
+  if (!hostResult.dispatched) {
+    throw new Error(`Gotify inbound turn was not dispatched: ${hostResult.admission.reason ?? "unknown"}`);
+  }
 
   const allowedAppId = account.inbound.allowedAppId;
   const seenMessageId = parsePositiveMessageId(message.id);

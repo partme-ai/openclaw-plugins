@@ -335,7 +335,7 @@ flowchart TD
 
 Aedes enforces protocol-level publish/subscribe ACLs first. OpenClaw inbound and outbound processing then binds the authenticated identity to the account route again. With authentication enabled, a missing identity fails closed.
 
-Application-level deduplication requires an explicit `idempotencyKey` or `messageId` in the JSON payload. MQTT packet identifiers are legally reusable and are not treated as cross-turn idempotency keys; repeated plain-text payloads remain separate valid messages.
+Application-level durable deduplication requires an explicit `idempotencyKey` or `messageId` in the JSON payload. Its scope includes the authenticated username and client ID. MQTT packet identifiers are legally reusable and are not treated as cross-turn idempotency keys; plain text without an application ID remains best-effort and may run the Agent again after retry.
 
 - Bind plain WS to loopback only; non-loopback startup requires both `tls.enabled=true` and `auth.required=true`
 - Use dedicated users and preferably `passwordHash` instead of plaintext passwords

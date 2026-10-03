@@ -123,6 +123,23 @@ export async function testKnowledge(ctx, results) {
         throw new Error("Knowledge did not forward configured OpenAI embedding parameters");
       }
 
+      // 安装包 Hook probe：真实检索数据、来源与字节上界，并撤销在途 invocation。
+      let budgetHook;
+      knowledge.default.register({ pluginConfig: KNOWLEDGE_E2E_CONFIG, resolvePath: value => value,
+        logger: { info() {}, warn() {}, error() {} }, registerTool() {},
+        on(name, hook) { if (name === 'before_prompt_build') budgetHook = hook; },
+      });
+      const probeStart = performance.now();
+      const probe = await budgetHook({ prompt: KNOWLEDGE_QUERY }, { sessionKey: KNOWLEDGE_SESSION_KEY, agentId: 'main' });
+      const injected = probe?.prependSystemContext ?? '';
+      if (!injected.includes('[knowledge:') || !injected.includes(KNOWLEDGE_FACT) || Buffer.byteLength(injected) > 4096) throw Error('installed knowledge budget/provenance failed');
+      console.log(JSON.stringify({ o2: 'knowledge', counter: 'utf8-byte-upper-bound-v1', tokens: Buffer.byteLength(injected), durationMs: performance.now() - probeStart }));
+      let active = true;
+      const late = budgetHook({ prompt: KNOWLEDGE_QUERY }, { sessionKey: KNOWLEDGE_SESSION_KEY, agentId: 'main', hookInvocation: { assertActive() { if (!active) throw Error('expired'); } } });
+      active = false;
+      if (await late !== undefined) throw Error('installed knowledge returned late injection');
+      await knowledge.invalidateStoreCache?.();
+
       const completionsBeforeFirst = model.metrics.completions;
       const first = await runAgent(KNOWLEDGE_SESSION_KEY, KNOWLEDGE_QUERY);
       if (!first.includes("openclaw e2e fixture reply") || model.metrics.completions !== completionsBeforeFirst + 1) {

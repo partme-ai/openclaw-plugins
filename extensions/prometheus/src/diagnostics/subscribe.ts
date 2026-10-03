@@ -4,6 +4,7 @@
 
 import type { DiagnosticEventMetadata, DiagnosticEventPayload } from "openclaw/plugin-sdk/diagnostic-runtime";
 import type { RuntimeLogger } from "../types.js";
+import { currentRuntimeOwner } from "../runtime/store.js";
 import {
   createPrometheusMetricStore,
   recordDiagnosticEvent,
@@ -12,8 +13,17 @@ import {
   type PrometheusMetricStore,
 } from "./metric-store.js";
 
-let store: PrometheusMetricStore | null = null;
-let unsubscribe: (() => void) | undefined;
+type SubscriptionState = { store: PrometheusMetricStore | null; unsubscribe?: () => void; generation: number };
+const subscriptions = new WeakMap<object, SubscriptionState>();
+function subscriptionState(): SubscriptionState {
+  const owner = currentRuntimeOwner();
+  let state = subscriptions.get(owner);
+  if (!state) {
+    state = { store: null, generation: 0 };
+    subscriptions.set(owner, state);
+  }
+  return state;
+}
 
 const BUNDLED_DIAGNOSTICS_PLUGIN_ID = "diagnostics-prometheus";
 
@@ -75,26 +85,30 @@ export type InternalDiagnosticsBridge = {
  * 获取（或懒创建）diagnostics Prometheus 指标存储。
  */
 export function getDiagnosticsMetricStore(): PrometheusMetricStore {
-  if (!store) {
-    store = createPrometheusMetricStore();
+  const state = subscriptionState();
+  if (!state.store) {
+    state.store = createPrometheusMetricStore();
   }
-  return store;
+  return state.store;
 }
 
 /**
  * 重置存储并取消订阅（gateway 停止 / 插件 reload 时调用）。
  */
 export function resetDiagnosticsMetricStore(): void {
-  unsubscribe?.();
-  unsubscribe = undefined;
-  store?.reset();
-  store = null;
+  const state = subscriptionState();
+  state.generation += 1;
+  state.unsubscribe?.();
+  state.unsubscribe = undefined;
+  state.store?.reset();
+  state.store = null;
 }
 
 /**
  * 渲染 diagnostics 指标块（Prometheus text），供 `/metrics` 追加输出。
  */
 export function renderDiagnosticsMetricsBlock(): string {
+  const store = subscriptionState().store;
   if (!store) {
     return "";
   }
@@ -112,10 +126,14 @@ export async function startDiagnosticsSubscription(params: {
   internalDiagnostics?: InternalDiagnosticsBridge;
   config?: unknown;
 }): Promise<void> {
-  unsubscribe?.();
+  const state = subscriptionState();
+  state.unsubscribe?.();
+  state.generation += 1;
+  const generation = state.generation;
   const metricStore = getDiagnosticsMetricStore();
 
   const listener = (event: DiagnosticEventPayload, metadata: DiagnosticEventMetadata) => {
+    if (generation !== state.generation) return;
     try {
       recordDiagnosticEvent(metricStore, event, metadata);
     } catch (err) {
@@ -126,7 +144,7 @@ export async function startDiagnosticsSubscription(params: {
   };
 
   if (params.internalDiagnostics?.onEvent) {
-    unsubscribe = params.internalDiagnostics.onEvent(listener);
+    state.unsubscribe = params.internalDiagnostics.onEvent(listener);
     params.internalDiagnostics.emit({
       type: "telemetry.exporter",
       exporter: "openclaw-prometheus",
@@ -141,8 +159,9 @@ export async function startDiagnosticsSubscription(params: {
 
   try {
     const mod = await import("openclaw/plugin-sdk/diagnostic-runtime");
+    if (generation !== state.generation) return;
     if (typeof mod.onInternalDiagnosticEvent === "function") {
-      unsubscribe = mod.onInternalDiagnosticEvent(listener);
+      state.unsubscribe = mod.onInternalDiagnosticEvent(listener);
       if (typeof mod.emitTrustedDiagnosticEvent === "function") {
         mod.emitTrustedDiagnosticEvent({
           type: "telemetry.exporter",
@@ -169,6 +188,8 @@ export async function startDiagnosticsSubscription(params: {
  * 停止 diagnostics 订阅（保留已采集样本，直到 reset）。
  */
 export function stopDiagnosticsSubscription(): void {
-  unsubscribe?.();
-  unsubscribe = undefined;
+  const state = subscriptionState();
+  state.generation += 1;
+  state.unsubscribe?.();
+  state.unsubscribe = undefined;
 }

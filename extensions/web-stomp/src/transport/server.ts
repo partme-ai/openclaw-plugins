@@ -51,6 +51,7 @@ export type StompInboundCallback = (ctx: {
   destination: string;
   rawPayload: string;
   idempotencyKey?: string;
+  senderScope?: string;
 }) => Promise<void> | void;
 
 type ConnectionState = {
@@ -264,6 +265,11 @@ async function handleSend(connectionId: string, frame: StompFrame, config: Stomp
       rawPayload: body,
       // 只有调用方明确提供 message-id 才启用幂等。正文相同不代表重复请求，receipt 也只是协议回执关联键。
       idempotencyKey: frame.headers["message-id"],
+      senderScope: config.auth.required && state?.info.login
+        ? `auth:${state.info.login}`
+        : frame.headers["sender-id"]?.trim()
+          ? `client:${frame.headers["sender-id"].trim()}`
+          : undefined,
     });
   } catch (error) {
     // 内部 Runtime 错误只写脱敏日志；外部 STOMP 客户端不能获得堆栈、凭据或基础设施地址。

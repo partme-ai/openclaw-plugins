@@ -1,7 +1,6 @@
 ---
 name: wecom-unified
-description: "企业微信 CLI 全能套件，覆盖通讯录、消息、文档、日程、会议、待办 6 大业务域。支持按姓名/别名查找联系人、收发消息（文本/图片/文件/语音/视频）、读取/创建/编辑各类文档（可由'https://doc.weixin.qq.com/XXXX'链接触发）、读写智能表格的子表/字段/记录、创建并导出智能文档、创建/修改/取消日程并查询闲忙、预约/管理会议、创建/跟踪/分派待办任务。即使用户未明确提到'企业微信'，只要消息中涉及消息/日程/待办/文档/会议/找人等场景也应触发本技能"
-allowed-tools: Bash, Read
+description: "用户明确要求通过企业微信处理通讯录、消息、文档、日程、会议或待办时，使用已由管理员安装并授权的 wecom-cli。"
 ---
 
 # 企业微信套件 (WeCom Unified)
@@ -16,11 +15,7 @@ allowed-tools: Bash, Read
 wecom-cli --version
 ```
 
-如果命令不存在或报错，执行安装：
-
-```bash
-npm install -g @wecom/cli@0.1.8
-```
+如果命令不存在或报错，停止本次 CLI 操作，告知用户由管理员按当前官方安装文档选择版本并安装；Agent 不执行全局安装。
 
 ### Step 2: 检查凭证是否配置
 
@@ -29,15 +24,11 @@ wecom-cli auth show --auth-status
 ```
 
 - 输出 `authorized` → 已配置，可以继续使用
-- 输出 `unauthorized` → 未配置，需要执行 Step 3
+- 输出 `unauthorized` → 未配置，需要用户完成 Step 3
 
 ### Step 3: 配置凭证（仅未授权时执行）
 
-```bash
-wecom-cli init --noninteractive
-```
-
-> ⚠️ 该命令会输出一个授权链接和二维码，并阻塞等待用户扫码完成验证。授权成功后命令会自动退出，仅需执行一次。
+请用户在可信终端按企业微信 CLI 文档自行完成交互式授权。Agent 不执行初始化命令，也不读取或转发凭据、授权链接和二维码。
 
 ---
 

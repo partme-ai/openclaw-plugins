@@ -4,7 +4,7 @@
  * OpenClaw plugin-sdk 可选动态加载 / Optional dynamic import of OpenClaw plugin-sdk subpaths.
  *
  * **职责**：以 peer 依赖方式动态 `import('openclaw/plugin-sdk/<subpath>')`；
- * 测试环境或 import 失败时返回 `null`，不抛错。
+ * 测试环境或 import 失败时返回 `null`，不抛错；运行时失败会发出可诊断的警告。
  *
  * **适用场景**：`format-error`、compat 类型、pairing 存储等需 OpenClaw 能力但 SDK 非硬依赖的模块。
  *
@@ -20,7 +20,7 @@
  *
  * - 测试环境（`VITEST` 或 `NODE_ENV=test`）直接返回 `null`
  * - 去掉 leading `/` 与 trailing `.js` 后拼接子路径
- * - import 失败时 catch 并返回 `null`（不抛出）
+ * - import 失败时发出一次警告并返回 `null`（不抛出）
  *
  * @param subpath - 子路径，不含 `openclaw/plugin-sdk/` 前缀 / Subpath without prefix
  * @returns 模块命名空间或 `null` / Module exports or null if unavailable
@@ -32,6 +32,8 @@
  * );
  * ```
  */
+const warnedSubpaths = new Set<string>();
+
 export async function importOpenClawPluginSdk<T extends Record<string, unknown>>(
   subpath: string,
 ): Promise<T | null> {
@@ -44,7 +46,15 @@ export async function importOpenClawPluginSdk<T extends Record<string, unknown>>
       /* @vite-ignore */ `openclaw/plugin-sdk/${trimmed}`,
     );
     return mod as T;
-  } catch {
+  } catch (error) {
+    if (!warnedSubpaths.has(trimmed)) {
+      warnedSubpaths.add(trimmed);
+      const detail = error instanceof Error ? error.message : String(error);
+      process.emitWarning(
+        `Optional OpenClaw SDK import openclaw/plugin-sdk/${trimmed} failed: ${detail}`,
+        { code: "OPENCLAW_PLUGIN_SDK_IMPORT_FAILED" },
+      );
+    }
     return null;
   }
 }

@@ -9,6 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import type { AgentWaitResult, SubagentOutcome } from "./types.js";
 
 /**
  * 从 embedded agent run 结果中提取可发送文本 / Extract sendable text from embedded run result.
@@ -54,19 +55,41 @@ export function createDispatchRunId(): string {
 }
 
 /**
- * 从 subagent waitForRun 结果提取文本 / Extract text from subagent waitForRun result.
+ * 依据宿主公开的 waitForRun 终态区分可见回复、无回复及失败。
  *
- * 依次尝试 result.text、result.message，否则 JSON.stringify。
- *
- * @param result - waitForRun 返回值
- * @returns 提取的回复文本或 JSON 字符串
+ * @param result - waitForRun 返回值；运行边界可能传入未知结构，须先校验。
+ * @returns 结构化终态，未知结构按 invalid 失败处理。
  */
+export function resolveSubagentOutcome(result: AgentWaitResult): SubagentOutcome;
+export function resolveSubagentOutcome(result: unknown): SubagentOutcome;
+export function resolveSubagentOutcome(result: unknown): SubagentOutcome {
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    return { kind: "failed", status: "invalid" };
+  }
+  const value = result as Record<string, unknown>;
+  if (value.status === "pending") return { kind: "pending" };
+  if (value.status === "timeout" || value.status === "error") {
+    return { kind: "failed", status: value.status };
+  }
+  if (value.status !== "ok") return { kind: "failed", status: "invalid" };
+
+  const reply = value.terminalReply;
+  if (reply === null || typeof reply !== "object" || Array.isArray(reply)) {
+    return { kind: "failed", status: "invalid" };
+  }
+  const terminal = reply as Record<string, unknown>;
+  if (terminal.disposition === "silent") return { kind: "silent" };
+  if (terminal.disposition === "empty") return { kind: "empty" };
+  if (terminal.disposition === "visible" && typeof terminal.text === "string") {
+    return terminal.text.trim().length > 0
+      ? { kind: "visible", text: terminal.text }
+      : { kind: "empty" };
+  }
+  return { kind: "failed", status: "invalid" };
+}
+
+/** 保留既有文本提取 API；仅返回明确可见的正文。 */
 export function extractSubagentResultText(result: unknown): string {
-  if (typeof (result as { text?: unknown })?.text === "string") {
-    return (result as { text: string }).text;
-  }
-  if (typeof (result as { message?: unknown })?.message === "string") {
-    return (result as { message: string }).message;
-  }
-  return JSON.stringify(result ?? {});
+  const outcome = resolveSubagentOutcome(result);
+  return outcome.kind === "visible" ? outcome.text : "";
 }

@@ -1,3 +1,4 @@
+import { formatBudgetedContext, isContextInvocationActive } from '@partme.ai/openclaw-message-sdk/text';
 /**
  * @fileoverview OpenClaw 内置长期记忆插件的组装入口。
  *
@@ -5,7 +6,8 @@
  * `agent_end` 事件后持久化 L0 对话及抽取出的 L1/L2/L3 记录。对话捕获必须显式授权，服务
  * 生命周期同时负责保留期清理、搜索管理器缓存和关闭排空。
  */
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { createHash } from "node:crypto";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   buildJsonPluginConfigSchema,
   definePluginEntry,
@@ -18,7 +20,6 @@ import {
   buildMemoryRecords,
   generateId,
   normalizeTurnMessages,
-  sessionCounters,
   shouldExtract,
 } from "./extraction.js";
 import { MemoryStore } from "./store.js";
@@ -28,6 +29,7 @@ const configSchema = {
   type: "object" as const,
   additionalProperties: false,
   properties: {
+    contextMaxTokens: { type: "integer" as const, minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
     enabled: { type: "boolean" as const, default: true },
     dataDir: { type: "string" as const, default: "~/.openclaw/state/memory" },
     maxSearchResults: { type: "integer" as const, minimum: 1, maximum: 100, default: 10 },
@@ -107,12 +109,13 @@ function registerMemoryCli(program: CliCommand, config: ReturnType<typeof resolv
 async function withRecallTimeout<T>(
   task: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
+  parentSignal?: AbortSignal,
 ): Promise<T> {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
-      task(controller.signal),
+      task(parentSignal ? AbortSignal.any([parentSignal, controller.signal]) : controller.signal),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
           controller.abort();
@@ -154,6 +157,7 @@ function createMemoryTool(
 ) {
   const agentId = context.agentId?.trim() || "main";
   const manager = store.createSearchManager(agentId);
+  const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim();
   return {
     name: "memory_search",
     label: "Memory Search",
@@ -174,7 +178,7 @@ function createMemoryTool(
       const requested = typeof params.limit === "number" ? params.limit : maxResults;
       const results = await manager.search(query, {
         maxResults: Math.min(Math.max(Math.floor(requested), 1), maxResults),
-        ...(context.sessionKey ? { sessionKey: context.sessionKey } : {}),
+        ...(sessionKey ? { sessionKey } : {}),
       });
       return {
         content: [{
@@ -183,10 +187,205 @@ function createMemoryTool(
             ? "未找到相关记忆。"
             : results.map((result, index) => `${index + 1}. ${result.snippet} (${result.citation})`).join("\n"),
         }],
-        details: { count: results.length, agentId, sessionScoped: Boolean(context.sessionKey) },
+        details: { count: results.length, agentId, sessionScoped: Boolean(sessionKey) },
       };
     },
   };
+}
+
+type MemoryRuntime = {
+  store: MemoryStore;
+  managers: Map<string, ReturnType<MemoryStore["createSearchManager"]>>;
+  managerFor: (agentId: string) => ReturnType<MemoryStore["createSearchManager"]>;
+  ensureStoreReady: () => Promise<void>;
+  sessionCounters: Map<string, number>;
+  owners: Set<symbol>;
+  start: (logger: { info: (message: string) => void; warn: (message: string) => void }) => Promise<void>;
+  release: (owner: symbol) => Promise<void>;
+  isActive: () => boolean;
+  runAgentEnd: (work: () => Promise<void>) => Promise<void>;
+};
+
+// Gateway and prepared Agent generations load the same plugin in different registration modes.
+// Borrow the Gateway-owned store so writes, run-id dedupe and shutdown drain stay serialized.
+const runtimeSymbol = Symbol.for("@partme.ai/openclaw-memory/gateway-runtimes/v3");
+const globalRuntimes = globalThis as unknown as Record<symbol, Map<string, MemoryRuntime>>;
+const gatewayRuntimes = globalRuntimes[runtimeSymbol] ??= new Map<string, MemoryRuntime>();
+
+function runtimeKey(api: OpenClawPluginApi, config: ReturnType<typeof resolveConfig>): string {
+  const encryptionKeyFingerprint = config.encryptionKeyEnv
+    ? createHash("sha256").update(process.env[config.encryptionKeyEnv] ?? "").digest("hex")
+    : null;
+  return JSON.stringify([api.source ?? "", config, encryptionKeyFingerprint]);
+}
+
+function createGatewayRuntime(config: ReturnType<typeof resolveConfig>, key: string): MemoryRuntime {
+  const store = new MemoryStore(config);
+  const managers = new Map<string, ReturnType<MemoryStore["createSearchManager"]>>();
+  const owners = new Set<symbol>();
+  const activeAgentEnds = new Set<Promise<void>>();
+  let cleanupTimer: NodeJS.Timeout | undefined;
+  let initialization: Promise<void> | undefined;
+  let startPromise: Promise<void> | undefined;
+  let shutdownPromise: Promise<void> | undefined;
+  let stopping = false;
+  // Gateway service 与 Agent Harness scoped runtime 共用同一惰性初始化屏障。
+  const ensureStoreReady = (): Promise<void> => {
+    if (!initialization) {
+      initialization = store.initialize().catch((error: unknown) => {
+        initialization = undefined;
+        throw error;
+      });
+    }
+    return initialization;
+  };
+  const managerFor = (agentId: string) => {
+    const agentKey = agentId.trim() || "main";
+    const existing = managers.get(agentKey);
+    if (existing) return existing;
+    const manager = store.createSearchManager(agentKey);
+    managers.set(agentKey, manager);
+    return manager;
+  };
+  const runtime: MemoryRuntime = {
+    store,
+    managers,
+    managerFor,
+    ensureStoreReady,
+    sessionCounters: new Map(),
+    owners,
+    isActive: () => !stopping,
+    runAgentEnd(work) {
+      if (stopping) return Promise.resolve();
+      const task = work();
+      activeAgentEnds.add(task);
+      void task.then(
+        () => { activeAgentEnds.delete(task); },
+        () => { activeAgentEnds.delete(task); },
+      );
+      return task;
+    },
+    start(logger) {
+      if (stopping) return Promise.resolve();
+      if (!startPromise) {
+        startPromise = (async () => {
+          await ensureStoreReady();
+          if (stopping) return;
+          const removed = await store.cleanup();
+          if (stopping) return;
+          if (removed > 0) logger.info(`[memory] retention cleanup removed ${removed} expired file(s)`);
+          cleanupTimer = setInterval(() => {
+            store.cleanup().then((count) => {
+              if (count > 0) logger.info(`[memory] retention cleanup removed ${count} expired file(s)`);
+            }).catch((error: unknown) => logger.warn(`[memory] retention cleanup failed: ${String(error)}`));
+          }, 24 * 60 * 60 * 1000);
+          cleanupTimer.unref();
+        })().catch((error: unknown) => {
+          startPromise = undefined;
+          throw error;
+        });
+      }
+      return startPromise;
+    },
+    release(owner) {
+      if (!owners.delete(owner)) return shutdownPromise ?? Promise.resolve();
+      if (owners.size > 0) return Promise.resolve();
+      stopping = true;
+      if (gatewayRuntimes.get(key) === runtime) gatewayRuntimes.delete(key);
+      shutdownPromise ??= (async () => {
+        await startPromise?.catch(() => undefined);
+        if (cleanupTimer) clearInterval(cleanupTimer);
+        cleanupTimer = undefined;
+        await Promise.allSettled([...activeAgentEnds]);
+        await initialization?.catch(() => undefined);
+        await store.close();
+        initialization = undefined;
+        managers.clear();
+        runtime.sessionCounters.clear();
+      })();
+      return shutdownPromise;
+    },
+  };
+  return runtime;
+}
+
+function registerAgentRuntime(api: OpenClawPluginApi, config: ReturnType<typeof resolveConfig>, runtime: MemoryRuntime): void {
+  const { store, managerFor, ensureStoreReady } = runtime;
+  api.registerTool(
+    (context) => runtime.isActive()
+      ? createMemoryTool(store, context, config.maxSearchResults, ensureStoreReady)
+      : null,
+    { name: "memory_search" },
+  );
+
+  api.on("before_prompt_build", async (event, context) => {
+    if (!config.autoRecall || !runtime.isActive() || !isContextInvocationActive(context)) return undefined;
+    const messages = normalizeTurnMessages(Array.isArray(event.messages) ? event.messages : []);
+    const latestUser = [...messages].reverse().find((message) => message.role === "user")?.content;
+    const query = (latestUser || event.prompt || "").trim().slice(0, 2_000);
+    if (query.length < 2) return undefined;
+    const agentId = context.agentId?.trim() || "main";
+    const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim();
+    try {
+      await ensureStoreReady();
+      if (!runtime.isActive() || !isContextInvocationActive(context)) return undefined;
+      const results = await withRecallTimeout(
+        (signal) => managerFor(agentId).search(query, {
+          maxResults: config.autoRecallMaxResults,
+          ...(sessionKey ? { sessionKey } : {}),
+          signal,
+        }),
+        config.autoRecallTimeoutMs,
+        (context as { signal?: AbortSignal }).signal,
+      );
+      if (!runtime.isActive() || !isContextInvocationActive(context)) return undefined;
+      const prependContext = config.contextMaxTokens === undefined ? formatRecallContext(results, config.autoRecallMaxChars)
+        : formatBudgetedContext('memory', results.map(result => ({ source: result.citation ?? result.snippet, text: `Untrusted history: ${/[。！？.!?]$/u.test(result.snippet) ? result.snippet : `${result.snippet}。`}` })), config.contextMaxTokens);
+      return prependContext ? { prependContext } : undefined;
+    } catch (error) {
+      api.logger.warn(`[memory] automatic recall skipped: ${String(error)}`);
+      return undefined;
+    }
+  });
+
+  api.on("agent_end", (event, context) => runtime.runAgentEnd(async () => {
+    if (!event.success) return;
+    const messages = normalizeTurnMessages(event.messages);
+    if (messages.length === 0) return;
+    const agentId = context.agentId?.trim() || "main";
+    const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim();
+    if (!sessionKey) {
+      api.logger.warn("[memory] persistence skipped: trusted session key is unavailable");
+      return;
+    }
+    const runId = event.runId?.trim();
+    try {
+      await ensureStoreReady();
+      const appended = await store.appendTurn({
+        id: generateId(),
+        level: "L0",
+        type: "conversation",
+        agentId,
+        sessionKey,
+        ...(context.senderId ? { senderId: context.senderId } : {}),
+        ...(runId ? { runId } : {}),
+        messages,
+        createdAt: new Date().toISOString(),
+      });
+      if (!appended) return;
+      const counterKey = `${agentId}\u0000${sessionKey}`;
+      await store.appendRecords(buildMemoryRecords({
+        agentId,
+        sessionKey,
+        ...(context.senderId ? { senderId: context.senderId } : {}),
+        ...(runId ? { runId } : {}),
+        messages,
+        createScenario: shouldExtract(counterKey, config.extractionInterval, runtime.sessionCounters),
+      }));
+    } catch (error) {
+      api.logger.warn(`[memory] failed to persist completed turn: ${String(error)}`);
+    }
+  }));
 }
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({
@@ -211,7 +410,31 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         }],
       },
     );
-    if (api.registrationMode !== "full") return;
+    const key = runtimeKey(api, config);
+    if (api.registrationMode !== "full") {
+      const runtime = gatewayRuntimes.get(key);
+      if (!runtime) {
+        api.logger.warn("[memory] Gateway-owned runtime unavailable during Agent discovery");
+        return;
+      }
+      if (!api.lifecycle?.onDispose) {
+        registerAgentRuntime(api, config, runtime);
+        return;
+      }
+      const owner = Symbol("memory-agent-generation");
+      runtime.owners.add(owner);
+      const release = () => runtime.release(owner);
+      try {
+        api.lifecycle.onDispose(release);
+        registerAgentRuntime(api, config, runtime);
+      } catch (error) {
+        void release().catch((releaseError: unknown) => {
+          api.logger.warn(`[memory] failed to clean up Agent discovery: ${String(releaseError)}`);
+        });
+        throw error;
+      }
+      return;
+    }
     const conversationAccessAllowed =
       api.config?.plugins?.entries?.memory?.hooks?.allowConversationAccess === true;
     if (!conversationAccessAllowed) {
@@ -220,147 +443,61 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       );
     }
 
-    const store = new MemoryStore(config);
-    const managers = new Map<string, ReturnType<MemoryStore["createSearchManager"]>>();
-    let cleanupTimer: NodeJS.Timeout | undefined;
-    let initialization: Promise<void> | undefined;
-    /**
-     * Gateway service 与 Agent Harness scoped runtime 的生命周期并不相同：后者会注册
-     * Hook/Memory Host，却不会执行 registerService.start。所有数据入口因此必须共享同一
-     * 惰性初始化屏障，不能假设 service 一定先于 agent_end 或 Tool 执行。
-     */
-    const ensureStoreReady = (): Promise<void> => {
-      if (!initialization) {
-        initialization = store.initialize().catch((error: unknown) => {
-          initialization = undefined;
-          throw error;
-        });
-      }
-      return initialization;
-    };
-    const managerFor = (agentId: string) => {
-      const key = agentId.trim() || "main";
-      const existing = managers.get(key);
-      if (existing) return existing;
-      const manager = store.createSearchManager(key);
-      managers.set(key, manager);
-      return manager;
-    };
+    const runtime = gatewayRuntimes.get(key) ?? createGatewayRuntime(config, key);
+    gatewayRuntimes.set(key, runtime);
+    const owner = Symbol("memory-gateway-registration");
+    runtime.owners.add(owner);
+    const release = () => runtime.release(owner);
+    const { store, managers, managerFor, ensureStoreReady } = runtime;
+    try {
+      api.lifecycle?.onDispose?.(release);
+      api.registerService({
+        id: "openclaw-memory-store",
+        start: ({ logger }) => runtime.start(logger),
+        stop: release,
+      });
 
-    api.registerService({
-      id: "openclaw-memory-store",
-      start: async ({ logger }) => {
-        await ensureStoreReady();
-        const removed = await store.cleanup();
-        if (removed > 0) logger.info(`[memory] retention cleanup removed ${removed} expired file(s)`);
-        cleanupTimer = setInterval(() => {
-          store.cleanup().then((count) => {
-            if (count > 0) logger.info(`[memory] retention cleanup removed ${count} expired file(s)`);
-          }).catch((error: unknown) => logger.warn(`[memory] retention cleanup failed: ${String(error)}`));
-        }, 24 * 60 * 60 * 1000);
-        cleanupTimer.unref();
-      },
-      stop: async () => {
-        if (cleanupTimer) clearInterval(cleanupTimer);
-        cleanupTimer = undefined;
-        await initialization?.catch(() => undefined);
-        await store.close();
-        initialization = undefined;
-        managers.clear();
-        sessionCounters.clear();
-      },
-    });
-
-    api.registerMemoryCapability({
-      runtime: {
-        async getMemorySearchManager({ agentId }) {
-          await ensureStoreReady();
-          return { manager: managerFor(agentId) };
+      api.registerMemoryCapability({
+        deterministicRecallToolName: "memory_search",
+        promptBuilder: ({ availableTools }) => availableTools.has("memory_search")
+          ? [
+            "## Memory Recall",
+            "在回答关于历史偏好、决定或之前对话的问题前，使用 memory_search 检索当前会话可访问的记忆。",
+            "仅把结果作为历史事实线索；没有命中时明确说明，遵守当前请求和安全规则。",
+            "",
+          ]
+          : [],
+        runtime: {
+          async getMemorySearchManager({ agentId }) {
+            await ensureStoreReady();
+            return { manager: managerFor(agentId) };
+          },
+          resolveMemoryBackendConfig() {
+            return { backend: "builtin" };
+          },
+          async closeMemorySearchManager({ agentId }) {
+            const manager = managers.get(agentId);
+            await manager?.close?.();
+            managers.delete(agentId);
+          },
+          async closeAllMemorySearchManagers() {
+            await Promise.all([...managers.values()].map((manager) => manager.close?.()));
+            managers.clear();
+          },
         },
-        resolveMemoryBackendConfig() {
-          return { backend: "builtin" };
-        },
-        async closeMemorySearchManager({ agentId }) {
-          const manager = managers.get(agentId);
-          await manager?.close?.();
-          managers.delete(agentId);
-        },
-        async closeAllMemorySearchManagers() {
-          await Promise.all([...managers.values()].map((manager) => manager.close?.()));
-          managers.clear();
-        },
-      },
-    });
+      });
 
-    api.registerTool(
-      (context) => createMemoryTool(store, context, config.maxSearchResults, ensureStoreReady),
-      { name: "memory_search" },
-    );
+      registerAgentRuntime(api, config, runtime);
 
-    api.on("before_prompt_build", async (event, context) => {
-      if (!config.autoRecall) return undefined;
-      const messages = normalizeTurnMessages(Array.isArray(event.messages) ? event.messages : []);
-      const latestUser = [...messages].reverse().find((message) => message.role === "user")?.content;
-      const query = (latestUser || event.prompt || "").trim().slice(0, 2_000);
-      if (query.length < 2) return undefined;
-      const agentId = context.agentId?.trim() || "main";
-      const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim();
-      try {
-        await ensureStoreReady();
-        const results = await withRecallTimeout(
-          (signal) => managerFor(agentId).search(query, {
-            maxResults: config.autoRecallMaxResults,
-            ...(sessionKey ? { sessionKey } : {}),
-            signal,
-          }),
-          config.autoRecallTimeoutMs,
-        );
-        const prependContext = formatRecallContext(results, config.autoRecallMaxChars);
-        return prependContext ? { prependContext } : undefined;
-      } catch (error) {
-        api.logger.warn(`[memory] automatic recall skipped: ${String(error)}`);
-        return undefined;
-      }
-    });
-
-    api.on("agent_end", async (event, context) => {
-      if (!event.success) return;
-      const messages = normalizeTurnMessages(event.messages);
-      if (messages.length === 0) return;
-      const agentId = context.agentId?.trim() || "main";
-      const sessionKey = context.sessionKey?.trim() || context.sessionId?.trim() || "unknown";
-      const runId = event.runId?.trim();
-      try {
-        await ensureStoreReady();
-        const appended = await store.appendTurn({
-          id: generateId(),
-          level: "L0",
-          type: "conversation",
-          agentId,
-          sessionKey,
-          ...(context.senderId ? { senderId: context.senderId } : {}),
-          ...(runId ? { runId } : {}),
-          messages,
-          createdAt: new Date().toISOString(),
-        });
-        if (!appended) return;
-        const counterKey = `${agentId}\u0000${sessionKey}`;
-        await store.appendRecords(buildMemoryRecords({
-          agentId,
-          sessionKey,
-          ...(context.senderId ? { senderId: context.senderId } : {}),
-          ...(runId ? { runId } : {}),
-          messages,
-          createScenario: shouldExtract(counterKey, config.extractionInterval),
-        }));
-      } catch (error) {
-        api.logger.warn(`[memory] failed to persist completed turn: ${String(error)}`);
-      }
-    });
-
-    api.logger.info(
-      `[memory] registered (retention=${config.retentionDays}d, encrypted=${Boolean(config.encryptionKeyEnv)}, profileScope=${config.profileScope})`,
-    );
+      api.logger.info(
+        `[memory] registered (retention=${config.retentionDays}d, encrypted=${Boolean(config.encryptionKeyEnv)}, profileScope=${config.profileScope})`,
+      );
+    } catch (error) {
+      void release().catch((releaseError: unknown) => {
+        api.logger.warn(`[memory] failed to clean up rejected registration: ${String(releaseError)}`);
+      });
+      throw error;
+    }
   },
 });
 

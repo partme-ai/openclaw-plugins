@@ -93,7 +93,7 @@ function makeCtx(
 
   const recordInboundSession = vi.fn().mockResolvedValue(undefined);
 
-  const runAssembled = vi.fn(
+  const dispatchReply = vi.fn(
     async (params: {
       recordInboundSession: typeof recordInboundSession;
       dispatchReplyWithBufferedBlockDispatcher: typeof dispatchReplyWithBufferedBlockDispatcher;
@@ -114,11 +114,18 @@ function makeCtx(
         updateLastRoute: params.record?.updateLastRoute,
         onRecordError: params.record?.onRecordError,
       });
-      await params.dispatchReplyWithBufferedBlockDispatcher({
+      const dispatchResult = await params.dispatchReplyWithBufferedBlockDispatcher({
         ctx: params.ctxPayload,
         cfg: params.cfg,
         dispatcherOptions: { deliver: params.delivery.deliver },
       });
+      return {
+        admission: { kind: "dispatch" },
+        dispatched: true,
+        routeSessionKey: params.routeSessionKey,
+        ctxPayload: params.ctxPayload,
+        dispatchResult,
+      };
     },
   );
 
@@ -143,7 +150,7 @@ function makeCtx(
           .mockReturnValue("/tmp/openclaw-sessions.json"),
         recordInboundSession,
       },
-      turn: { runAssembled },
+      inbound: { dispatchReply },
     },
   };
 }
@@ -463,7 +470,7 @@ describe("dispatchInboundMessage", () => {
     );
   });
 
-  it("records inbound session with peer-scoped last route via turn.runAssembled", async () => {
+  it("records inbound session with peer-scoped last route via channel.inbound", async () => {
     const resolveAgentRoute = vi.fn().mockResolvedValue({
       agentId: "main",
       sessionKey: "agent:main:gotify:default:direct:4",
@@ -473,7 +480,7 @@ describe("dispatchInboundMessage", () => {
     const ctx = makeCtx({ resolveAgentRoute });
     const recordInboundSession = ctx.channelRuntime.session!
       .recordInboundSession as ReturnType<typeof vi.fn>;
-    const runAssembled = ctx.channelRuntime.turn!.runAssembled as ReturnType<
+    const dispatchReply = ctx.channelRuntime.inbound!.dispatchReply as ReturnType<
       typeof vi.fn
     >;
 
@@ -483,7 +490,7 @@ describe("dispatchInboundMessage", () => {
       message: "hello",
     });
 
-    expect(runAssembled).toHaveBeenCalledTimes(1);
+    expect(dispatchReply).toHaveBeenCalledTimes(1);
     expect(recordInboundSession).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionKey: "agent:main:gotify:default:direct:4",
@@ -597,7 +604,7 @@ describe("dispatchInboundMessage", () => {
         appid: 5,
         message: "do not acknowledge",
       }),
-    ).rejects.toThrow("does not expose reply/routing");
+    ).rejects.toThrow("does not expose inbound reply/routing");
   });
 
   it("continues dispatch when optional application-name lookup fails", async () => {
@@ -671,7 +678,7 @@ describe("dispatchInboundMessage", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it("uses dispatchTranscriptTurn path via turn.runAssembled for Control UI transcript", async () => {
+  it("uses dispatchTranscriptTurn via channel.inbound for Control UI transcript", async () => {
     const resolveAgentRoute = vi.fn().mockResolvedValue({
       agentId: "main",
       sessionKey: "agent:main:gotify:default:direct:4",
@@ -679,7 +686,7 @@ describe("dispatchInboundMessage", () => {
       lastRoutePolicy: "main",
     });
     const ctx = makeCtx({ resolveAgentRoute });
-    const runAssembled = ctx.channelRuntime.turn!.runAssembled as ReturnType<
+    const dispatchReply = ctx.channelRuntime.inbound!.dispatchReply as ReturnType<
       typeof vi.fn
     >;
 
@@ -689,8 +696,8 @@ describe("dispatchInboundMessage", () => {
       message: "transcript test",
     });
 
-    expect(runAssembled).toHaveBeenCalledTimes(1);
-    expect(runAssembled).toHaveBeenCalledWith(
+    expect(dispatchReply).toHaveBeenCalledTimes(1);
+    expect(dispatchReply).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "gotify",
         routeSessionKey: "agent:main:gotify:default:direct:4",

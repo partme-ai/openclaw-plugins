@@ -29,6 +29,7 @@ import {
   GotifyConfigError,
 } from "../shared/errors.js";
 import { redactGotifyError } from "../shared/redact.js";
+import { redactServerUrl } from "../config.js";
 
 /**
  * Gotify API 调用的 fetch 行为选项。
@@ -894,7 +895,7 @@ export async function runGotifyDoctor(
 
   return {
     ok: errors.length === 0,
-    serverUrl: account.serverUrl,
+    serverUrl: redactServerUrl(account.serverUrl),
     hasAppToken: Boolean(account.appToken),
     hasClientToken: Boolean(account.clientToken),
     healthOk,

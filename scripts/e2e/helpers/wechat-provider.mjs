@@ -1,5 +1,6 @@
 /** 微信 iLink getUpdates/getConfig/sendMessage 的本地协议夹具，不使用真实账号或 Token。 */
 import * as http from "node:http";
+import crypto from "node:crypto";
 
 const ACCOUNT_ID = "e2e-im-bot";
 const USER_ID = "wechat-e2e-user@im.wechat";
@@ -35,11 +36,29 @@ export async function startWechatProvider(port) {
     getConfig: 0,
     replies: 0,
     lastReply: null,
+    sentMessages: [],
+    uploadRequests: [],
+    uploads: [],
     desiredDeliveries: deliveries.length,
   };
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
     if (request.method !== "POST") return writeJson(response, 405, { ret: -1 });
+    if (url.pathname === "/cdn/upload") {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const ciphertext = Buffer.concat(chunks);
+      const latest = metrics.uploadRequests.at(-1);
+      if (!latest || ciphertext.length !== latest.filesize) return writeJson(response, 400, { ret: -1 });
+      const decipher = crypto.createDecipheriv("aes-128-ecb", Buffer.from(latest.aeskey, "hex"), null);
+      const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+      metrics.uploads.push({
+        size: plaintext.length,
+        md5: crypto.createHash("md5").update(plaintext).digest("hex"),
+      });
+      response.writeHead(200, { "x-encrypted-param": "wechat-e2e-cdn-param" });
+      return response.end();
+    }
     if (request.headers.authorization !== `Bearer ${TOKEN}`) {
       return writeJson(response, 401, { ret: 401, errmsg: "invalid token" });
     }
@@ -76,9 +95,17 @@ export async function startWechatProvider(port) {
       metrics.getConfig += 1;
       return writeJson(response, 200, { ret: 0 });
     }
+    if (url.pathname === "/ilink/bot/getuploadurl") {
+      metrics.uploadRequests.push(body);
+      return writeJson(response, 200, {
+        ret: 0,
+        upload_full_url: `http://127.0.0.1:${port}/cdn/upload`,
+      });
+    }
     if (url.pathname === "/ilink/bot/sendmessage") {
       metrics.replies += 1;
       metrics.lastReply = { authorization: request.headers.authorization, body };
+      metrics.sentMessages.push(metrics.lastReply);
       return writeJson(response, 200, { ret: 0 });
     }
     return writeJson(response, 404, { ret: 404 });

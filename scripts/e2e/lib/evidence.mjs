@@ -27,10 +27,16 @@ const SHARED_SDK_FILES = [
 ];
 const SHARED_HARNESS_FILES = [
   "scripts/e2e/run-e2e.mjs",
+  "scripts/e2e/plugins/_context.mjs",
+  "scripts/e2e/plugins/index.mjs",
+  "scripts/e2e/datasets",
   "scripts/e2e/lib",
   "scripts/e2e/helpers",
   "scripts/e2e/bootstrap",
   "scripts/e2e/docker-compose.yml",
+  "scripts/e2e/docker/openclaw-entrypoint.sh",
+  "scripts/e2e/browser-web-channels.mjs",
+  "test-web",
 ];
 
 /**

@@ -11,6 +11,7 @@
  * **关键导出**：`parseTransportPayload`
  */
 
+import { parseStructuredWire } from "../core/structured-wire.js";
 import { parseEnvelopeAny } from "../core/envelope.js";
 import { parseMessageAny } from "../core/message.js";
 import type { ParsedTransportPayload, PayloadParseMode } from "../core/types.js";
@@ -29,6 +30,10 @@ export function parseTransportPayload(
   rawPayload: string,
   mode: PayloadParseMode = "jsonTextOrPlain",
 ): ParsedTransportPayload {
+  if (mode === "structured-v1") {
+    const structured = parseStructuredWire(JSON.parse(rawPayload));
+    return { text: structured.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n"), unified: null, structured, idempotencyKey: structured.deliveryId };
+  }
   if (mode === "plain") {
     return { text: rawPayload, unified: null };
   }

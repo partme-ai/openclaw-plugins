@@ -116,10 +116,11 @@ describe("web-stomp server integration", () => {
 
     ws.send(frame("SEND", { destination: "/queue/agent.demo" }, "same-body"));
     ws.send(frame("SEND", { destination: "/queue/agent.demo" }, "same-body"));
-    ws.send(frame("SEND", { destination: "/queue/agent.demo", "message-id": "request-3" }, "same-body"));
+    ws.send(frame("SEND", { destination: "/queue/agent.demo", "message-id": "request-3", "sender-id": "client-3" }, "same-body"));
     await vi.waitFor(() => expect(inboundSpy).toHaveBeenCalledTimes(3));
 
     expect(inboundSpy.mock.calls.map(([ctx]) => ctx.idempotencyKey)).toEqual([undefined, undefined, "request-3"]);
+    expect(inboundSpy.mock.calls.map(([ctx]) => ctx.senderScope)).toEqual([undefined, undefined, "client:client-3"]);
     ws.close();
   });
 

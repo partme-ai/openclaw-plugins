@@ -12,6 +12,8 @@
  * 未来 OpenClaw 加载路径变化。未知字段一律失败，防止安全开关拼写错误后被静默忽略。
  */
 import type { MeituanAccountCredential, MeituanOperation, MeituanPluginConfig } from "./types.js";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 
 const DEFAULT_BASE_URL = "https://api-open-cater.meituan.com";
 const CONFIG_KEYS = new Set([
@@ -39,7 +41,9 @@ const CONFIG_KEYS = new Set([
   "maxIdempotencyEntries",
   "allowCustomApiBaseUrl",
   "ownerOnly",
+  "callbacks",
 ]);
+const CALLBACK_KEYS = new Set(["enabled", "maxBodyBytes", "timestampToleranceSeconds", "maxInboxEntries", "maxArchivedEntries", "inboxDirectory"]);
 const ACCOUNT_KEYS = new Set(["accountId", "appAuthToken", "appAuthTokenEnv"]);
 const OPERATION_KEYS = new Set([
   "name",
@@ -84,6 +88,7 @@ export function resolveMeituanConfig(
     readEnv(env.MEITUAN_APP_AUTH_TOKEN, "MEITUAN_APP_AUTH_TOKEN", 2048) ||
     undefined;
   const accounts = readAccounts(config.accounts, env);
+  const callbacks = readCallbacks(config.callbacks, env);
 
   assertOptionalBoolean(config.allowCustomApiBaseUrl, "allowCustomApiBaseUrl");
   assertOptionalBoolean(config.ownerOnly, "ownerOnly");
@@ -147,7 +152,7 @@ export function resolveMeituanConfig(
       allowCustomApiBaseUrl,
     ),
     version,
-    operations: readOperations(config.operations, requireWriteIdempotency),
+    operations: readOperations(config.operations, requireWriteIdempotency, callbacks.enabled),
     requestTimeoutMs: readInteger(
       config.requestTimeoutMs,
       "requestTimeoutMs",
@@ -211,6 +216,27 @@ export function resolveMeituanConfig(
     ),
     allowCustomApiBaseUrl,
     ownerOnly: config.ownerOnly !== false,
+    callbacks,
+  };
+}
+
+function readCallbacks(value: unknown, env: NodeJS.ProcessEnv): MeituanPluginConfig["callbacks"] {
+  if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) {
+    throw new Error("meituan.callbacks must be an object");
+  }
+  const raw = (value ?? {}) as Record<string, unknown>;
+  assertAllowedKeys(raw, CALLBACK_KEYS, "meituan.callbacks");
+  assertOptionalBoolean(raw.enabled, "callbacks.enabled");
+  const configured = readString(raw.inboxDirectory, "callbacks.inboxDirectory", 2048, false);
+  if (configured && !isAbsolute(configured)) throw new Error("meituan.callbacks.inboxDirectory must be absolute");
+  const state = env.OPENCLAW_STATE_DIR || join(homedir(), ".openclaw");
+  return {
+    enabled: raw.enabled === true,
+    maxBodyBytes: readInteger(raw.maxBodyBytes, "callbacks.maxBodyBytes", 1024, 1_048_576, 65_536),
+    timestampToleranceSeconds: readInteger(raw.timestampToleranceSeconds, "callbacks.timestampToleranceSeconds", 30, 3600, 300),
+    maxInboxEntries: readInteger(raw.maxInboxEntries, "callbacks.maxInboxEntries", 1, 100_000, 10_000),
+    maxArchivedEntries: readInteger(raw.maxArchivedEntries, "callbacks.maxArchivedEntries", 1, 100_000, 2_000),
+    inboxDirectory: configured || join(state, "meituan", "callback-inbox"),
   };
 }
 
@@ -278,7 +304,9 @@ function readAccounts(
 function readOperations(
   value: unknown,
   requireWriteIdempotency: boolean,
+  callbacksEnabled: boolean,
 ): MeituanOperation[] {
+  if ((value === undefined || (Array.isArray(value) && value.length === 0)) && callbacksEnabled) return [];
   if (!Array.isArray(value) || value.length === 0 || value.length > 100) {
     throw new Error(
       "meituan.operations must contain between 1 and 100 operations",

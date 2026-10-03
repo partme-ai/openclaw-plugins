@@ -4,7 +4,7 @@
  * 渠道级配置解析：出口代理、媒体上限、默认路由 fail-closed 策略。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import {
   resolveChannelEgressProxyUrl,
   resolveChannelMediaMaxBytes,

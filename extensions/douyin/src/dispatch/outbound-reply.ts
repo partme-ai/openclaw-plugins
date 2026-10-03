@@ -14,7 +14,9 @@ export async function deliverDouyinAgentReplyPayload(params: {
   text: string;
   mediaUrls?: string[];
   log?: (message: string) => void;
+  signal?: AbortSignal;
 }): Promise<{ ok: boolean; error?: string }> {
+  params.signal?.throwIfAborted();
   if (!params.text.trim() && (params.mediaUrls?.length ?? 0) === 0) {
     return { ok: false, error: "empty agent reply" };
   }

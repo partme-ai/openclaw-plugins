@@ -36,12 +36,13 @@ export class QianfanEmbeddingService implements EmbeddingService {
     this.dimensions = config?.dimensions ?? DEFAULT_DIMENSIONS;
   }
 
-  async embed(text: string): Promise<number[]> {
-    const results = await this.embedBatch([text]);
+  async embed(text: string, signal?: AbortSignal): Promise<number[]> {
+    const results = await this.embedBatch([text], signal);
     return results[0];
   }
 
-  async embedBatch(texts: string[]): Promise<number[][]> {
+  async embedBatch(texts: string[], signal?: AbortSignal): Promise<number[][]> {
+    signal?.throwIfAborted();
     if (texts.length === 0) return [];
 
     if (!this.apiKey) {
@@ -61,6 +62,7 @@ export class QianfanEmbeddingService implements EmbeddingService {
     const url = `${this.baseUrl.replace(/\/+$/, '')}/embeddings`;
     const data = await postEmbeddingJson<{ data?: unknown }>(url, {
       method: 'POST',
+      signal,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.apiKey}`,

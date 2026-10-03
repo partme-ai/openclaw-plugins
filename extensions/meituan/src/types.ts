@@ -49,6 +49,14 @@ export type MeituanPluginConfig = {
   maxIdempotencyEntries: number;
   allowCustomApiBaseUrl: boolean;
   ownerOnly: boolean;
+  callbacks: {
+    enabled: boolean;
+    maxBodyBytes: number;
+    timestampToleranceSeconds: number;
+    maxInboxEntries: number;
+    maxArchivedEntries: number;
+    inboxDirectory: string;
+  };
 };
 
 /** 美团 MTOp 标准响应；具体 data 结构由 operation 对应业务文档决定。 */

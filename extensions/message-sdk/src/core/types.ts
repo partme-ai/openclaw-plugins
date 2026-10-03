@@ -159,12 +159,14 @@ export interface MessageEnvelope {
  * - `jsonTextOrPlain`：优先 JSON/envelope，失败回退 plain
  * - `jsonOnly`：仅接受 JSON，无有效 JSON 时返回空文本
  */
-export type PayloadParseMode = "plain" | "jsonTextOrPlain" | "jsonOnly";
+export type PayloadParseMode = "plain" | "jsonTextOrPlain" | "jsonOnly" | "structured-v1";
 
 /**
  * 传输层解析结果 / Parsed transport payload result.
  */
 export interface ParsedTransportPayload {
+  /** 显式 structured-v1 解码结果；不由旧模式自动识别。 */
+  structured?: StructuredWireMessage;
   /** 提取的可发送文本 / Extracted sendable text */
   text: string;
   /** 解析出的 UnifiedMessage，legacy/plain 时为 null / Parsed unified message or null */
@@ -203,4 +205,17 @@ export interface BuildMessageParams {
   metadata?: Record<string, unknown>;
   /** 方向，默认 inbound / Direction, default inbound */
   direction?: MessageDirection;
+}
+
+/** 保持原始顺序的版本化出站片段。 */
+export type StructuredWirePart = { type: "text"; text: string } | { type: "media"; mediaType: MediaKind; url: string };
+
+/** 显式选择的 structured-v1 协议，不替换旧 MessageEnvelope。 */
+export interface StructuredWireMessage {
+  schemaVersion: 1;
+  messageId: string;
+  deliveryId: string;
+  parts: StructuredWirePart[];
+  replyTo?: string;
+  threadId?: string;
 }

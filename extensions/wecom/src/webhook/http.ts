@@ -9,7 +9,7 @@
 
 import type { Dispatcher } from "undici";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
-import { buildTimeoutAbortSignal } from "openclaw/plugin-sdk/text-runtime";
+import { buildTimeoutAbortSignal } from "openclaw/plugin-sdk/extension-shared";
 import {
   retryWeComFetch,
   shouldRetryWeComHttpResponse,

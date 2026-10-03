@@ -14,7 +14,7 @@
  * OpenClaw Bridge 插件定义（register 入口）。
  */
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { registerContextInjection } from "./context-inject.js";
 import { registerMessageBridge, validateBridgeConfig, type BridgeConfig } from "./message-bridge.js";
 import { ALL_CHANNELS } from "./channels.js";
@@ -32,11 +32,12 @@ const plugin = {
   id: "bridge",
   name: "OpenClaw Bridge",
   description:
-    `跨渠道上下文与消息观测桥 — ${ALL_CHANNELS.length} 个渠道统一预设、规范化和 MQ 镜像`,
+    `跨渠道上下文与消息观测桥 — 静态识别 ${ALL_CHANNELS.length} 个渠道，按配置注入与镜像`,
   configSchema: {
     type: "object" as const,
     additionalProperties: false,
     properties: {
+      contextMaxTokens: { type: "integer" as const, minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       channels: {
         type: "object",
         additionalProperties: {
@@ -83,7 +84,7 @@ const plugin = {
     // 在任何 Hook、Service 或全局 runtime 引用注册之前校验，保证错误配置原子失败。
     validateBridgeConfig((api.pluginConfig ?? {}) as BridgeConfig);
     setBridgeRuntime(api);
-    api.logger.info(`[openclaw-bridge] Initializing — ${ALL_CHANNELS.length} channels available`);
+    api.logger.info(`[openclaw-bridge] Initializing — ${ALL_CHANNELS.length} channels in static catalog`);
 
     registerContextInjection(api);
     registerMessageBridge(api);

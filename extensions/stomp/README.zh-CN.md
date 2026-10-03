@@ -126,7 +126,7 @@ pnpm --filter "@partme.ai/openclaw-stomp" build
 - 正确实现 `client` 累计确认与 `client-individual` 单条确认
 - 支持连接级事务缓冲：事务内 SEND/ACK/NACK 只在 COMMIT 时按序执行，ABORT 直接丢弃
 - 可选的进程内持久订阅和 NACK 重入队
-- 入站幂等采用 claim/commit/release，仅在 Agent 与回复投递成功后提交；失败允许同一 `message-id` 重试
+- 持久入站结算要求 `message-id` 与已认证 login 或显式 `sender-id` 同时存在；缺少稳定 ID 或发送者作用域时，`SEND` 保留 best-effort 行为，重连重放无法去重。客户端声明的 `sender-id` 仅作为幂等作用域，不是授权身份。
 - 默认启用 Agent 白名单、显式 Topic 绑定和连接级回复主题隔离
 - 接入 OpenClaw Gateway 生命周期，提供凭证脱敏的 `/stomp-tcp/status`
 

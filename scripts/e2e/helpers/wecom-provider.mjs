@@ -1,4 +1,5 @@
 /** 企业微信 Agent OpenAPI 的本地隔离夹具；不会连接企业微信公网。 */
+import { createHash } from "node:crypto";
 import * as http from "node:http";
 
 export const WECOM_AGENT_E2E = {
@@ -20,7 +21,7 @@ function writeJson(response, status, body) {
 
 /** 启动 gettoken/message/send/appchat/send 夹具，并记录出站请求用于 E2E 断言。 */
 export async function startWecomProvider(port) {
-  const metrics = { tokenRequests: 0, replies: 0, lastReply: null };
+  const metrics = { tokenRequests: 0, replies: 0, lastReply: null, messages: [], uploads: [] };
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
     if (request.method === "GET" && url.pathname === "/cgi-bin/gettoken") {
@@ -41,12 +42,27 @@ export async function startWecomProvider(port) {
     if (url.searchParams.get("access_token") !== WECOM_AGENT_E2E.accessToken) {
       return writeJson(response, 200, { errcode: 40014, errmsg: "invalid access token" });
     }
+    if (request.method === "POST" && url.pathname === "/cgi-bin/media/upload") {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = Buffer.concat(chunks);
+      const boundary = /boundary=([^;]+)/.exec(request.headers["content-type"] ?? "")?.[1];
+      if (!boundary) return writeJson(response, 400, { errcode: 400, errmsg: "missing multipart boundary" });
+      const start = body.indexOf(Buffer.from("\r\n\r\n")) + 4;
+      const end = body.lastIndexOf(Buffer.from(`\r\n--${boundary}--`));
+      if (start < 4 || end <= start) return writeJson(response, 400, { errcode: 400, errmsg: "invalid multipart body" });
+      const bytes = body.subarray(start, end);
+      const mediaId = `o3-upload-${metrics.uploads.length + 1}`;
+      metrics.uploads.push({ mediaId, type: url.searchParams.get("type"), bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
+      return writeJson(response, 200, { errcode: 0, type: url.searchParams.get("type"), media_id: mediaId, created_at: Math.floor(Date.now() / 1000) });
+    }
     if (
       request.method === "POST" &&
       (url.pathname === "/cgi-bin/message/send" || url.pathname === "/cgi-bin/appchat/send")
     ) {
       metrics.replies += 1;
       metrics.lastReply = await readJson(request);
+      metrics.messages.push(metrics.lastReply);
       return writeJson(response, 200, { errcode: 0, errmsg: "ok", msgid: `wecom-e2e-reply-${metrics.replies}` });
     }
     return writeJson(response, 404, { errcode: 404, errmsg: "not found" });

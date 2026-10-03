@@ -11,6 +11,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { getBrokerStats, getConnectedClients } from "./transport/server.js";
@@ -55,7 +56,7 @@ export function sanitizeMqttConfig(config: MqttBrokerConfig | null): Record<stri
   };
 }
 
-export default defineChannelPluginEntry({
+const entry: OpenClawPluginDefinition = defineChannelPluginEntry({
   id: "mqtt",
   name: "MQTT",
   description:
@@ -108,3 +109,5 @@ export default defineChannelPluginEntry({
     });
   },
 });
+
+export default entry;

@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -407,6 +408,249 @@ describe("MemoryStore", () => {
 });
 
 describe("OpenClaw 2026.7.1 插件契约", () => {
+  it("同配置双 Gateway 生命周期重叠时共享 store，首个 stop 不丢失记忆", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-memory-overlap-"));
+    const services: Array<{ stop: () => Promise<void> }> = [];
+    const capabilities: any[] = [];
+    let agentEnd: any;
+    const api = {
+      registrationMode: "full",
+      source: "/installed/memory/dist/index.js",
+      pluginConfig: { dataDir },
+      config: { plugins: { entries: { memory: { hooks: { allowConversationAccess: true } } } } },
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      registerCli() {},
+      registerService(value: { stop: () => Promise<void> }) { services.push(value); },
+      registerMemoryCapability(value: unknown) { capabilities.push(value); },
+      registerTool() {},
+      on(name: string, handler: unknown) { if (name === "agent_end") agentEnd = handler; },
+    };
+    plugin.register(api as never);
+    plugin.register(api as never);
+    const firstHook = agentEnd;
+    agentEnd = undefined;
+    plugin.register({ ...api, registrationMode: "discovery" } as never);
+    expect(typeof agentEnd).toBe("function");
+    await agentEnd(
+      { success: true, runId: "overlap-1", messages: [{ role: "user", content: "重叠时期的银河绿记忆" }] },
+      { agentId: "main", sessionKey: "overlap-session" },
+    );
+    await services[0]!.stop();
+    await firstHook(
+      { success: true, runId: "overlap-2", messages: [{ role: "user", content: "旧 generation 仍然存活" }] },
+      { agentId: "main", sessionKey: "overlap-session" },
+    );
+    plugin.register({ ...api, registrationMode: "discovery" } as never);
+    expect(typeof agentEnd).toBe("function");
+    const { manager } = await capabilities[1].runtime.getMemorySearchManager({ agentId: "main" });
+    expect((await manager.search("银河绿", { sessionKey: "overlap-session" })).length).toBeGreaterThan(0);
+    expect((await manager.search("旧 generation", { sessionKey: "overlap-session" })).length).toBeGreaterThan(0);
+    await services[1]!.stop();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("注册失败后相同配置可以重新注册而没有孤儿 store", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-memory-retry-"));
+    let service: { stop: () => Promise<void> } | undefined;
+    let agentEnd: unknown;
+    let failCapability = true;
+    const api = {
+      registrationMode: "full",
+      pluginConfig: { dataDir },
+      config: { plugins: { entries: { memory: { hooks: { allowConversationAccess: true } } } } },
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      registerCli() {},
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability() { if (failCapability) throw new Error("registration failed"); },
+      registerTool() {},
+      on(name: string, handler: unknown) { if (name === "agent_end") agentEnd = handler; },
+    };
+    expect(() => plugin.register(api as never)).toThrow("registration failed");
+    failCapability = false;
+    plugin.register(api as never);
+    agentEnd = undefined;
+    plugin.register({ ...api, registrationMode: "discovery" } as never);
+    expect(typeof agentEnd).toBe("function");
+    await service!.stop();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("加密密钥内容轮换时不复用旧 Gateway store", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-memory-key-rotation-"));
+    const envName = "OPENCLAW_MEMORY_ROTATION_TEST_KEY";
+    const previous = process.env[envName];
+    process.env[envName] = "a".repeat(40);
+    const services: Array<{ start: (context: unknown) => Promise<void>; stop: () => Promise<void> }> = [];
+    const logger = { info() {}, warn() {}, error() {}, debug() {} };
+    const api = {
+      registrationMode: "full",
+      pluginConfig: { dataDir, encryptionKeyEnv: envName },
+      config: { plugins: { entries: { memory: { hooks: { allowConversationAccess: true } } } } },
+      logger,
+      registerCli() {},
+      registerService(value: (typeof services)[number]) { services.push(value); },
+      registerMemoryCapability() {},
+      registerTool() {},
+      on() {},
+    };
+    try {
+      plugin.register(api as never);
+      await services[0]!.start({ logger });
+      process.env[envName] = "b".repeat(40);
+      plugin.register(api as never);
+      await expect(services[1]!.start({ logger })).rejects.toThrow(/encryption|key/i);
+    } finally {
+      await Promise.all(services.map((service) => service.stop()));
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("最后 full owner 停止后存活的 discovery generation 仍能完成写入", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-memory-discovery-lease-"));
+    let service: { stop: () => Promise<void> } | undefined;
+    let agentEnd: any;
+    let dispose: (() => void | Promise<void>) | undefined;
+    const api = {
+      registrationMode: "full",
+      pluginConfig: { dataDir },
+      config: { plugins: { entries: { memory: { hooks: { allowConversationAccess: true } } } } },
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      registerCli() {},
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability() {},
+      registerTool() {},
+      on(name: string, handler: unknown) { if (name === "agent_end") agentEnd = handler; },
+    };
+    plugin.register(api as never);
+    agentEnd = undefined;
+    plugin.register({
+      ...api,
+      registrationMode: "discovery",
+      lifecycle: { onDispose(callback: typeof dispose) { dispose = callback; } },
+    } as never);
+    const scopedHook = agentEnd;
+    await service!.stop();
+    await scopedHook(
+      { success: true, runId: "retained-generation", messages: [{ role: "user", content: "旧 generation 的星云蓝" }] },
+      { agentId: "main", sessionKey: "retained-session" },
+    );
+    const files: string[] = [];
+    const visit = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const target = path.join(dir, entry.name);
+        if (entry.isDirectory()) visit(target);
+        else if (target.endsWith(".jsonl")) files.push(target);
+      }
+    };
+    visit(dataDir);
+    expect(files.some((file) => file.includes("/memories/"))).toBe(true);
+    await dispose?.();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("start 与最终 stop 交错时不会在关闭后创建清理定时器", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-memory-start-stop-"));
+    let service: { start: (context: unknown) => Promise<void>; stop: () => Promise<void> } | undefined;
+    let enteredCleanup: (() => void) | undefined;
+    let releaseCleanup: (() => void) | undefined;
+    const cleanupEntered = new Promise<void>((resolve) => { enteredCleanup = resolve; });
+    const cleanupGate = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    const originalCleanup = MemoryStore.prototype.cleanup;
+    const cleanup = vi.spyOn(MemoryStore.prototype, "cleanup").mockImplementation(async function (...args) {
+      enteredCleanup?.();
+      await cleanupGate;
+      return originalCleanup.apply(this, args);
+    });
+    const interval = vi.spyOn(globalThis, "setInterval");
+    const logger = { info() {}, warn() {}, error() {}, debug() {} };
+    const api = {
+      registrationMode: "full",
+      pluginConfig: { dataDir },
+      config: { plugins: { entries: { memory: { hooks: { allowConversationAccess: true } } } } },
+      logger,
+      registerCli() {},
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability() {},
+      registerTool() {},
+      on() {},
+    };
+    try {
+      plugin.register(api as never);
+      const start = service!.start({ logger });
+      await cleanupEntered;
+      const stop = service!.stop();
+      releaseCleanup?.();
+      await Promise.all([start, stop]);
+      expect(interval).not.toHaveBeenCalled();
+    } finally {
+      releaseCleanup?.();
+      cleanup.mockRestore();
+      interval.mockRestore();
+      await service?.stop();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("Gateway stop 等待已接纳的完整 agent_end 写入 L0-L3", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-memory-drain-"));
+    let service: { stop: () => Promise<void> } | undefined;
+    let agentEnd: any;
+    let releaseRecords: (() => void) | undefined;
+    let enteredRecords: (() => void) | undefined;
+    const recordsEntered = new Promise<void>((resolve) => { enteredRecords = resolve; });
+    const recordsGate = new Promise<void>((resolve) => { releaseRecords = resolve; });
+    const originalAppendRecords = MemoryStore.prototype.appendRecords;
+    const appendRecords = vi.spyOn(MemoryStore.prototype, "appendRecords").mockImplementation(async function (...args) {
+      enteredRecords?.();
+      await recordsGate;
+      return originalAppendRecords.apply(this, args);
+    });
+    const api = {
+      registrationMode: "full",
+      pluginConfig: { dataDir, extractionInterval: 1 },
+      config: { plugins: { entries: { memory: { hooks: { allowConversationAccess: true } } } } },
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      registerCli() {},
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability() {},
+      registerTool() {},
+      on(name: string, handler: unknown) { if (name === "agent_end") agentEnd = handler; },
+    };
+    try {
+      plugin.register(api as never);
+      const hook = agentEnd(
+        { success: true, runId: "drain-run", messages: [{ role: "user", content: "我喜欢银河绿格式" }] },
+        { agentId: "main", sessionKey: "drain-session" },
+      );
+      await recordsEntered;
+      let stopped = false;
+      const stop = service!.stop().then(() => { stopped = true; });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(stopped).toBe(false);
+      releaseRecords?.();
+      await Promise.all([hook, stop]);
+      const files: string[] = [];
+      const visit = (dir: string) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const target = path.join(dir, entry.name);
+          if (entry.isDirectory()) visit(target);
+          else if (target.endsWith(".jsonl")) files.push(target);
+        }
+      };
+      visit(dataDir);
+      expect(files.some((file) => file.includes("/conversations/"))).toBe(true);
+      expect(files.some((file) => file.includes("/memories/"))).toBe(true);
+      expect(files.some((file) => file.includes("/profiles/"))).toBe(true);
+    } finally {
+      releaseRecords?.();
+      appendRecords.mockRestore();
+      await service?.stop();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("通过 service、memory capability、tool factory 和 agent_end 组成完整运行链路", async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-memory-plugin-"));
     let service: { start: (context: unknown) => Promise<void>; stop: () => Promise<void> } | undefined;
@@ -483,12 +727,25 @@ describe("OpenClaw 2026.7.1 插件契约", () => {
     };
 
     plugin.register(api as never);
-    // 刻意不调用 service.start：真实 Agent Harness scoped runtime 正是这条路径。
+    const rootService = service;
+    const rootCapability = capability;
+    service = undefined;
+    capability = undefined;
+    toolFactory = undefined;
+    agentEnd = undefined;
+    beforePromptBuild = undefined;
+    plugin.register({ ...api, registrationMode: "discovery" } as never);
+    expect(service).toBeUndefined();
+    expect(capability).toBeUndefined();
+    expect(typeof toolFactory).toBe("function");
+    expect(typeof agentEnd).toBe("function");
+    expect(typeof beforePromptBuild).toBe("function");
+    // Gateway owns the store while Agent discovery borrows the same runtime.
     await agentEnd(
       { success: true, runId: "run-scoped", messages: [{ role: "user", content: "我喜欢星云紫格式" }] },
       { agentId: "main", sessionKey: "session-scoped", senderId: "user-1" },
     );
-    const { manager } = await capability.runtime.getMemorySearchManager({ agentId: "main" });
+    const { manager } = await rootCapability.runtime.getMemorySearchManager({ agentId: "main" });
     expect((await manager.search("星云紫", { sessionKey: "other-session" }))[0]?.snippet)
       .toContain("星云紫");
     const tool = toolFactory({ agentId: "main", sessionKey: "other-session" });
@@ -502,7 +759,199 @@ describe("OpenClaw 2026.7.1 插件契约", () => {
     expect(recall.prependContext).toContain("L3/profile");
     expect(recall.prependContext).toContain("不是系统指令");
 
-    await service!.stop();
+    await rootService!.stop();
     fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("多个 discovery generation 共用 L2 提取轮次计数", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-memory-generations-"));
+    let service: { stop: () => Promise<void> } | undefined;
+    let capability: any;
+    let agentEnd: any;
+    const api = {
+      registrationMode: "full",
+      config: { plugins: { entries: { memory: { hooks: { allowConversationAccess: true } } } } },
+      pluginConfig: { dataDir, extractionInterval: 2 },
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      registerCli() {},
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability(value: unknown) { capability = value; },
+      registerTool() {},
+      on(name: string, handler: unknown) { if (name === "agent_end") agentEnd = handler; },
+    };
+    plugin.register(api as never);
+    const rootService = service;
+    const rootCapability = capability;
+    for (const runId of ["run-generation-1", "run-generation-2"]) {
+      if (runId === "run-generation-2") sessionCounters.clear();
+      agentEnd = undefined;
+      plugin.register({ ...api, registrationMode: "discovery" } as never);
+      expect(typeof agentEnd).toBe("function");
+      await agentEnd(
+        { success: true, runId, messages: [{ role: "user", content: "银河绿产品场景" }] },
+        { agentId: "main", sessionKey: "same-session" },
+      );
+    }
+    const { manager } = await rootCapability.runtime.getMemorySearchManager({ agentId: "main" });
+    const results = await manager.search("银河绿", { sessionKey: "same-session" });
+    expect(results.filter((result: { snippet: string }) => result.snippet.startsWith("[L2/scenario]"))).toHaveLength(1);
+    await rootService!.stop();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+});
+
+
+describe("O1 Memory capability 与可信会话身份", () => {
+  type Capability = Parameters<OpenClawPluginApi["registerMemoryCapability"]>[0];
+
+  function register(pluginConfig: Record<string, unknown> = {}) {
+    let capability!: Capability;
+    let service!: { stop: () => Promise<void> };
+    let toolFactory!: (context: Record<string, unknown>) => any;
+    const hooks = new Map<string, (...args: any[]) => Promise<void>>();
+    const logger = { info() {}, warn: vi.fn(), error() {}, debug() {} };
+    plugin.register!({
+      registrationMode: "full",
+      pluginConfig,
+      config: { plugins: { entries: { memory: { hooks: { allowConversationAccess: true } } } } },
+      logger,
+      registerCli() {},
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability(value: Capability) { capability = value; },
+      registerTool(value: typeof toolFactory) { toolFactory = value; },
+      on(name: string, handler: (...args: any[]) => Promise<void>) { hooks.set(name, handler); },
+    } as never);
+    return { capability, service, hooks, logger, toolFactory };
+  }
+
+  it.each([
+    { sessionKey: "  tool-session  " },
+    { sessionKey: " ", sessionId: "  tool-session  " },
+    { sessionId: "  tool-session  " },
+  ])("注册工具与写入共用规范化会话身份：%j", async (identity) => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "memory-o1-tool-"));
+    const { service, hooks, toolFactory } = register({ dataDir, profileScope: "session" });
+    try {
+      await hooks.get("agent_end")!(
+        { success: true, messages: [{ role: "user", content: "我喜欢tool-private-fact" }] },
+        { agentId: "main", ...identity },
+      );
+      const result = await toolFactory({ agentId: "main", ...identity }).execute("same", { query: "tool-private-fact" });
+      expect(result.details.count).toBeGreaterThan(0);
+      expect(result.details.sessionScoped).toBe(true);
+      expect(result.content[0].text).toContain("tool-private-fact");
+      const other = await toolFactory({ agentId: "main", sessionKey: "other-session" }).execute("other", { query: "tool-private-fact" });
+      expect(other.details.count).toBe(0);
+      for (const missing of [{}, { sessionKey: " ", sessionId: " " }]) {
+        const empty = await toolFactory({ agentId: "main", ...missing }).execute("missing", {
+          query: "tool-private-fact", sessionKey: "tool-session", sessionId: "tool-session",
+        });
+        expect(empty.details.count).toBe(0);
+        expect(empty.details.sessionScoped).toBe(false);
+      }
+    } finally {
+      await service.stop();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("只向模型描述已可调用的真实召回工具", async () => {
+    const { capability, service } = register();
+    try {
+      expect(capability.deterministicRecallToolName).toBe("memory_search");
+      expect(capability.promptBuilder).toBeTypeOf("function");
+      expect(capability.promptBuilder!({ availableTools: new Set() })).toEqual([]);
+      expect(capability.promptBuilder!({ availableTools: new Set(["unrelated_tool"]) })).toEqual([]);
+      const prompt = capability.promptBuilder!({ availableTools: new Set(["memory_search"]) }).join("\n");
+      expect(prompt).toContain("memory_search");
+      expect(prompt).not.toContain("openmem_search");
+      // 后端没有公开 artifact 或预压缩 flush 契约，不返回虚假空成功。
+      expect(capability.flushPlanResolver).toBeUndefined();
+      expect(capability.publicArtifacts).toBeUndefined();
+      expect(capability.supportsPrivateTranscriptRecall).not.toBe(true);
+    } finally {
+      await service.stop();
+    }
+  });
+
+  it("无身份的成功轮次不写入共享 unknown 桶，sessionId 仍可作为可信后备", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "memory-o1-identity-"));
+    const { capability, service, hooks, logger } = register({ dataDir, profileScope: "session" });
+    const appendTurn = vi.spyOn(MemoryStore.prototype, "appendTurn");
+    const appendRecords = vi.spyOn(MemoryStore.prototype, "appendRecords");
+    const event = { success: true, messages: [{ role: "user", content: "我喜欢身份隔离的中文回答" }] };
+    try {
+      for (const context of [{}, { sessionKey: " ", sessionId: " " }]) {
+        await hooks.get("agent_end")!(event, context);
+      }
+      expect(appendTurn).not.toHaveBeenCalled();
+      expect(appendRecords).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("trusted session"));
+      await hooks.get("agent_end")!(event, { sessionKey: " ", sessionId: "fallback-session" });
+      const { manager } = await capability.runtime!.getMemorySearchManager({ agentId: "main" } as never);
+      expect(await manager!.search("身份隔离", { sessionKey: "other-session" })).toEqual([]);
+      expect((await manager!.search("身份隔离", { sessionKey: "fallback-session" })).length).toBeGreaterThan(0);
+    } finally {
+      appendTurn.mockRestore();
+      appendRecords.mockRestore();
+      await service.stop();
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('O2 bounded recall cancellation', () => {
+  it('retains complete legacy sentence punctuation inside the explicit budget', async () => {
+    let recall!: (...args: any[]) => Promise<any>;
+    let stop!: () => Promise<void>;
+    const ready = vi.spyOn(MemoryStore.prototype, 'initialize').mockResolvedValue();
+    const search = vi.spyOn(MemoryStore.prototype, 'createSearchManager').mockReturnValue({ search: async () => [{ citation: 'a', snippet: '我喜欢中文回答' }] } as never);
+    plugin.register!({ registrationMode: 'full', pluginConfig: { contextMaxTokens: 1000 }, config: {},
+      logger: { info() {}, warn() {} }, registerCli() {}, registerTool() {}, registerMemoryCapability() {},
+      registerService(service: { stop: () => Promise<void> }) { stop = service.stop; },
+      on(name: string, fn: typeof recall) { if (name === 'before_prompt_build') recall = fn; },
+    } as never);
+    try {
+      const result = await recall({ prompt: 'question' }, {});
+      expect(result.prependContext).toContain('我喜欢中文回答。');
+      expect(Buffer.byteLength(result.prependContext)).toBeLessThanOrEqual(1000);
+    } finally { await stop(); ready.mockRestore(); search.mockRestore(); }
+  });
+
+  it.each([false, true])('drops late results after %s timeout/cancellation and propagates signal', async timedOut => {
+    let recall!: (...args: any[]) => Promise<unknown>;
+    let stop!: () => Promise<void>;
+    let finish!: (value: unknown[]) => void;
+    let receivedSignal!: AbortSignal;
+    const ready = vi.spyOn(MemoryStore.prototype, 'initialize').mockResolvedValue();
+    const search = vi.spyOn(MemoryStore.prototype, 'createSearchManager').mockReturnValue({ search: (_query: string, options: { signal: AbortSignal }) => {
+      receivedSignal = options.signal;
+      return new Promise(resolve => { finish = resolve; });
+    } } as never);
+    plugin.register!({ registrationMode: 'full', pluginConfig: { contextMaxTokens: 40, autoRecallTimeoutMs: 50 }, config: {},
+      logger: { info() {}, warn() {} }, registerCli() {}, registerTool() {}, registerMemoryCapability() {},
+      registerService(service: { stop: () => Promise<void> }) { stop = service.stop; },
+      on(name: string, fn: typeof recall) { if (name === 'before_prompt_build') recall = fn; },
+    } as never);
+    let active = true;
+    const controller = new AbortController();
+    try {
+      const pending = recall({ prompt: 'question' }, { signal: controller.signal, hookInvocation: { assertActive() { if (!active) throw Error('expired'); } } });
+      await vi.waitFor(() => expect(finish).toBeDefined(), { interval: 1 });
+      if (timedOut) {
+        expect(await pending).toBeUndefined();
+        expect(receivedSignal.aborted).toBe(true);
+        finish([{ citation: 'a', snippet: 'late' }]);
+      } else {
+        active = false; controller.abort(); finish([{ citation: 'a', snippet: 'late' }]);
+        expect(receivedSignal.aborted).toBe(true);
+        expect(await pending).toBeUndefined();
+      }
+    } finally { await stop(); ready.mockRestore(); search.mockRestore(); }
+  });
+  it('rejects invalid allocation without changing the legacy default', () => {
+    expect(resolveConfig({ pluginConfig: {} } as never).contextMaxTokens).toBeUndefined();
+    for (const contextMaxTokens of [-1, 0.5, '40', null]) expect(() => resolveConfig({ pluginConfig: { contextMaxTokens } } as never)).toThrow('contextMaxTokens');
+    expect(resolveConfig({ pluginConfig: { contextMaxTokens: 0 } } as never).contextMaxTokens).toBe(0);
   });
 });

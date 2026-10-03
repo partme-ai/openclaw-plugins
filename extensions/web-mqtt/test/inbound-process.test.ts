@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  dispatchChannelMessage: vi.fn().mockResolvedValue(undefined),
+  dispatchChannelMessage: vi.fn().mockResolvedValue({ deliveryOutcome: { kind: "delivered" } }),
   resolveChannelDispatchIdentity: vi.fn().mockResolvedValue({
     agentId: "iot-agent",
     sessionKey: "agent:iot-agent:mqtt-ws:direct:client-a",
@@ -103,7 +103,7 @@ describe("processInbound", () => {
       {
         clientId: "client-a",
         topic: "openclaw/agent/demo/in",
-        payload: Buffer.from("hello mqtt"),
+        payload: Buffer.from('{"text":"hello mqtt","idempotencyKey":"standard-1"}'),
         messageId: `mqtt-${Date.now()}-a`,
       },
       baseConfig(),
@@ -116,6 +116,7 @@ describe("processInbound", () => {
       channel: "mqtt-ws",
       text: "hello mqtt",
       peerId: "client-a",
+      requireDeliveryIdentity: true,
     });
   });
 
@@ -124,7 +125,7 @@ describe("processInbound", () => {
       {
         clientId: "client-b",
         topic: "devices/sensor/in",
-        payload: Buffer.from("bound"),
+        payload: Buffer.from('{"text":"bound","idempotencyKey":"bound-1"}'),
         messageId: `mqtt-${Date.now()}-b`,
       },
       baseConfig({
@@ -143,7 +144,7 @@ describe("processInbound", () => {
     );
   });
 
-  it("drops duplicate application idempotency keys only after success", async () => {
+  it("passes repeated application IDs to the durable SDK for settlement", async () => {
     const messageId = `mqtt-dedup-${Date.now()}`;
     const event = {
       clientId: "client-dedup",
@@ -154,9 +155,29 @@ describe("processInbound", () => {
     const config = baseConfig();
 
     expect((await processInbound(event, config)).accepted).toBe(true);
-    expect((await processInbound(event, config)).accepted).toBe(false);
-    expect((await processInbound(event, config)).reason).toBe("duplicate");
-    expect(dispatchChannelMessage).toHaveBeenCalledTimes(1);
+    expect((await processInbound(event, config)).accepted).toBe(true);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+    expect(dispatchChannelMessage.mock.calls[0][0].deliveryIdentity).toBe(dispatchChannelMessage.mock.calls[1][0].deliveryIdentity);
+  });
+
+  it("never confirms an inflight duplicate before the SDK settles it", async () => {
+    let finishFirst!: () => void;
+    dispatchChannelMessage.mockImplementationOnce(() => new Promise((resolve) => {
+      finishFirst = () => resolve({ deliveryOutcome: { kind: "delivered" } });
+    }));
+    dispatchChannelMessage.mockRejectedValueOnce(new Error("pending durable delivery"));
+    const event = {
+      clientId: "client-inflight",
+      topic: "openclaw/agent/demo/in",
+      payload: Buffer.from('{"text":"once","idempotencyKey":"inflight-app-id"}'),
+    };
+    const first = processInbound(event, baseConfig());
+    await vi.waitFor(() => expect(dispatchChannelMessage).toHaveBeenCalledTimes(1));
+
+    await expect(processInbound(event, baseConfig())).rejects.toThrow("pending durable delivery");
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+    finishFirst();
+    await first;
   });
 
   it("does not dedupe legitimate repeated plain-text publishes", async () => {
@@ -171,6 +192,30 @@ describe("processInbound", () => {
     expect((await processInbound(event, config)).accepted).toBe(true);
     expect((await processInbound(event, config)).accepted).toBe(true);
     expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+    expect(dispatchChannelMessage.mock.calls[0][0]).toMatchObject({
+      deliveryIdentity: undefined, requireDeliveryIdentity: false,
+    });
+  });
+
+  it("uses one durable identity so the SDK can reject a changed body", async () => {
+    const config = baseConfig();
+    const event = { clientId: "client-a", topic: "openclaw/agent/demo/in", payload: Buffer.from('{"text":"first","idempotencyKey":"same"}') };
+    await processInbound(event, config);
+    await processInbound({ ...event, payload: Buffer.from('{"text":"second","idempotencyKey":"same"}') }, config);
+    expect(dispatchChannelMessage.mock.calls[0][0].deliveryIdentity).toBe(dispatchChannelMessage.mock.calls[1][0].deliveryIdentity);
+  });
+
+  it("separates authenticated owners reusing a clientId and application ID", async () => {
+    const cfg = baseConfig({ auth: { required: true, allowAnonymous: false, users: [
+      { username: "alice", password: "secret", publishAllow: ["openclaw/#"] },
+      { username: "bob", password: "secret", publishAllow: ["openclaw/#"] },
+    ] } });
+    const event = { clientId: "shared", topic: "openclaw/agent/demo/in",
+      payload: Buffer.from('{"text":"hello","idempotencyKey":"same-app-id"}') };
+    await processInbound({ ...event, authenticatedUsername: "alice" }, cfg);
+    await processInbound({ ...event, authenticatedUsername: "bob" }, cfg);
+    expect(dispatchChannelMessage.mock.calls[0][0].deliveryIdentity)
+      .not.toBe(dispatchChannelMessage.mock.calls[1][0].deliveryIdentity);
   });
 
   it("releases the application idempotency claim after Agent failure", async () => {
@@ -208,6 +253,28 @@ describe("processInbound", () => {
     expect(dispatchChannelMessage).not.toHaveBeenCalled();
   });
 
+  it("does not replace an empty connection identity snapshot with a later clientId owner", async () => {
+    vi.mocked(getClientUsername).mockReturnValue("bob");
+    const result = await processInbound(
+      {
+        clientId: "reused-client-id",
+        authenticatedUsername: undefined,
+        topic: "openclaw/agent/demo/in",
+        payload: Buffer.from('{"text":"queued","idempotencyKey":"queued-1"}'),
+      },
+      baseConfig({
+        auth: {
+          required: true,
+          allowAnonymous: false,
+          users: [{ username: "bob", password: "secret", publishAllow: ["openclaw/#"] }],
+        },
+      }),
+    );
+    expect(result).toEqual({ accepted: false, reason: "acl_inbound_identity_missing" });
+    expect(getClientUsername).not.toHaveBeenCalled();
+    expect(dispatchChannelMessage).not.toHaveBeenCalled();
+  });
+
   it("uses the connection identity snapshot when the same clientId now belongs to another user", async () => {
     vi.mocked(getClientUsername).mockReturnValue("bob");
     const result = await processInbound(
@@ -215,7 +282,7 @@ describe("processInbound", () => {
         clientId: "reused-client-id",
         authenticatedUsername: "alice",
         topic: "devices/secure/in",
-        payload: Buffer.from("alice queued this message"),
+        payload: Buffer.from('{"text":"alice queued this message","idempotencyKey":"alice-1"}'),
       },
       baseConfig({
         subscribeTopics: ["devices/#"],

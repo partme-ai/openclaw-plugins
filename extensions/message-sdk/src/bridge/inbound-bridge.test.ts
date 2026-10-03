@@ -2,6 +2,79 @@ import { describe, expect, it, vi } from "vitest";
 import { dispatchInbound } from "./inbound-bridge.js";
 
 describe("dispatchInbound", () => {
+  it("captures the exact reply-pipeline run and preserves the route callback contract", async () => {
+    const token = { token: "opaque" };
+    const options = { mode: "normal" };
+    const original = vi.fn(() => token);
+    const observed = vi.fn();
+    const runtime = { config: {}, channel: { routing: { resolveAgentRoute: vi.fn(async () => ({ onAgentRunStart: original })) }, reply: {
+      finalizeInboundContext: vi.fn(async (ctx) => ctx),
+      createReplyDispatcherWithTyping: vi.fn(() => ({ dispatcher: {}, replyOptions: { onAgentRunStart: original } })),
+      dispatchReplyFromConfig: vi.fn(async ({ replyOptions }) => {
+        expect(replyOptions.onAgentRunStart("real-run", token, options)).toBe(token);
+        return undefined;
+      }),
+    } } };
+    const result = await dispatchInbound({ runtime, channel: "mqtt", accountId: "default", peerId: "p", text: "hi",
+      reply: { deliver: vi.fn() }, onAgentRunStart: observed });
+    expect(original).toHaveBeenCalledWith("real-run", token, options);
+    expect(observed).toHaveBeenCalledWith("real-run");
+    expect(result.runId).toBe("real-run");
+  });
+  it("preserves distinct dispatcher and route callbacks and drops ambiguous run identity", async () => {
+    const routeReturn = { route: true };
+    const dispatcherStart = vi.fn(() => ({ dispatcher: true }));
+    const routeStart = vi.fn(() => routeReturn);
+    const observed = vi.fn();
+    const runtime = { config: {}, channel: { routing: { resolveAgentRoute: vi.fn(async () => ({ onAgentRunStart: routeStart })) }, reply: {
+      finalizeInboundContext: vi.fn(async (ctx) => ctx),
+      createReplyDispatcherWithTyping: vi.fn(() => ({ dispatcher: {}, replyOptions: { onAgentRunStart: dispatcherStart } })),
+      dispatchReplyFromConfig: vi.fn(async ({ replyOptions }) => {
+        expect(replyOptions.onAgentRunStart("run-one", "token-one", { mode: "normal" })).toBe(routeReturn);
+        expect(replyOptions.onAgentRunStart("run-two", "token-two", { mode: "followup" })).toBe(routeReturn);
+        return undefined;
+      }),
+    } } };
+    const result = await dispatchInbound({ runtime, channel: "mqtt", accountId: "default", peerId: "p", text: "hi",
+      reply: { deliver: vi.fn() }, onAgentRunStart: observed });
+    expect(dispatcherStart).toHaveBeenCalledWith("run-one", "token-one", { mode: "normal" });
+    expect(routeStart).toHaveBeenCalledWith("run-two", "token-two", { mode: "followup" });
+    expect(observed.mock.calls).toEqual([["run-one"], [undefined]]);
+    expect(result.runId).toBeUndefined();
+  });
+  it("marks Agent start only after context preflight succeeds", async () => {
+    const events: string[] = [];
+    const finalizeInboundContext = vi.fn()
+      .mockRejectedValueOnce(new Error("invalid context"))
+      .mockImplementationOnce(async (ctx) => { events.push("context"); return ctx; });
+    const runtime = { config: {}, channel: { routing: { resolveAgentRoute: vi.fn(async () => ({})) }, reply: {
+      finalizeInboundContext,
+      createReplyDispatcherWithTyping: vi.fn(() => ({ dispatcher: {}, replyOptions: {} })),
+      dispatchReplyFromConfig: vi.fn(async () => { events.push("agent"); return undefined; }),
+    } } };
+    const params = { runtime, channel: "rabbitmq", accountId: "default", peerId: "p", text: "hi",
+      reply: { deliver: vi.fn() }, beforeAgentDispatch: () => { events.push("mark"); } };
+    await expect(dispatchInbound(params)).rejects.toThrow("invalid context");
+    expect(events).toEqual([]);
+    await dispatchInbound(params);
+    expect(events).toEqual(["context", "mark", "agent"]);
+  });
+  it("retains settled receipt before classifying the turn", async () => {
+    const receipt = {
+      counts: { tool: { delivered: 0, deliveredNotVisible: 0, cancelled: 0, failedBeforeSend: 0, failedAfterSend: 0 },
+        block: { delivered: 1, deliveredNotVisible: 0, cancelled: 0, failedBeforeSend: 0, failedAfterSend: 0 },
+        final: { delivered: 0, deliveredNotVisible: 0, cancelled: 0, failedBeforeSend: 0, failedAfterSend: 1 } },
+      anyVisibleDelivered: true,
+    };
+    const runtime = { config: {}, channel: { routing: { resolveAgentRoute: vi.fn(async () => ({})) }, reply: {
+      finalizeInboundContext: vi.fn(async (ctx) => ctx),
+      createReplyDispatcherWithTyping: vi.fn(() => ({ dispatcher: { waitForIdle: vi.fn(async () => receipt) } })),
+      dispatchReplyFromConfig: vi.fn(async () => undefined),
+    } } };
+    const result = await dispatchInbound({ runtime, channel: "rabbitmq", accountId: "default", peerId: "p", text: "hi", reply: { deliver: vi.fn() } });
+    expect(result.receipt).toEqual(receipt);
+    expect(result.deliveryOutcome).toEqual({ kind: "ambiguous" });
+  });
   it("builds the canonical OpenClaw 2026.7.1 inbound context", async () => {
     const finalizeInboundContext = vi.fn(async (ctx) => ctx);
     const dispatchReplyFromConfig = vi.fn(async () => undefined);

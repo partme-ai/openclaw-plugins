@@ -4,7 +4,7 @@
  * KF 账号健康探测（Phase 4 P4-02）：cursor、lastSync、凭证配置摘要。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { getCursorStore } from "../state/cursor-store.js";
 import { resolveKfAccountByOpenKfId, resolveWecomAccounts } from "../config/accounts.js";
 import { resolveKfAgentAccount } from "../tools/call-context.js";

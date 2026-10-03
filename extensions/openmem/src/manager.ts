@@ -5,12 +5,18 @@
  * 会转换成受控虚拟路径并进入有界内容缓存，`readFile` 只能读取允许的 archive/memory 来源。
  * 状态与探针明确标识当前使用 FTS/字符重排而非向量嵌入。
  */
-import type {
-  MemoryEmbeddingProbeResult,
-  MemoryProviderStatus,
-  MemorySearchManager,
-  MemorySearchResult,
-} from "openclaw/plugin-sdk/memory-core-host-engine-storage";
+import type { MemoryPluginCapability } from "openclaw/plugin-sdk/memory-host-core";
+import { emitDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
+
+type MemoryRuntime = NonNullable<MemoryPluginCapability["runtime"]>;
+type MemorySearchManager = NonNullable<
+  Awaited<ReturnType<MemoryRuntime["getMemorySearchManager"]>>["manager"]
+>;
+type MemorySearchResult = Awaited<ReturnType<MemorySearchManager["search"]>>[number];
+type MemoryEmbeddingProbeResult = Awaited<
+  ReturnType<MemorySearchManager["probeEmbeddingAvailability"]>
+>;
+type MemoryProviderStatus = ReturnType<MemorySearchManager["status"]>;
 
 import { OpenMemClient } from "./client.js";
 import type { OpenMemConfig } from "./config.js";
@@ -38,6 +44,8 @@ export class OpenMemSearchManager implements MemorySearchManager {
     sessionKey?: string;
     signal?: AbortSignal;
   }): Promise<MemorySearchResult[]> {
+    const startedAt = performance.now();
+    try {
     const trimmed = query.trim();
     if (!trimmed) return [];
     if (trimmed.length > 4_000) throw new Error("OpenMem search query exceeds 4000 characters");
@@ -70,6 +78,15 @@ export class OpenMemSearchManager implements MemorySearchManager {
       });
     }
     return results.slice(0, limit);
+    } finally {
+      // OpenMem intentionally has no message-sdk dependency; use the same
+      // versioned public diagnostics envelope directly.
+      try {
+        emitDiagnosticEvent({ type: "log.record", level: "info", loggerName: "partme.delivery-recall.v1",
+          message: "recall telemetry", attributes: { event: "recall", plugin: "openmem",
+            duration_ms: Math.min(performance.now() - startedAt, 600_000) } });
+      } catch { /* Telemetry must never replace the search result or error. */ }
+    }
   }
 
   async readFile({ relPath, from, lines }: { relPath: string; from?: number; lines?: number }) {

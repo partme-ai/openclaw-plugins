@@ -333,6 +333,19 @@ operation 配置：
 
 ## Agent 工具
 
+### 通知与消息回调
+
+在 `plugins.entries.meituan.config` 增加 `"callbacks": { "enabled": true }` 后，Gateway 在 full 模式注册 `POST /meituan/callback`。可仅启用回调，此时 `operations` 可省略；`developerId` 与 `signKey` 仍必填。回调支持 Form 和 JSON，验证开发者编号、时间戳（默认 ±300 秒）和 SDK 风格的 SHA-1 签名，再解析 `message`/`param` JSON。仅接收 [通知类型目录](./src/callback/catalog.ts) 中的异步通知和消息，查询及命令类型返回错误。
+
+签名覆盖的是 body 参数，`X-Msg-Type`/`X-Msg-Id` 请求头不参与签名；因此插件不使用头字段代替缺失的 `msgType`/`msgId`。时间戳支持 10 位秒和 SDK 示例中的 13 位毫秒，验签使用收到的原始值。
+业务 JSON 中超出 JavaScript 安全整数范围的数字 ID 会作为十进制字符串保留，同时保存已验签的 `messageRaw` 文本，避免订单号被浮点数改写。JSON 对象信封依照参考服务的行为，先去除对象外空白再参与签名，保留数字词法与字符串内部空白。
+
+验签通过的事件写入 OpenClaw 状态目录下 `meituan/callback-inbox` 后才回复 `{ "code": 0, "message": "success" }`；相同 `msgId` 重投去重，冲突或存储故障不成功应答。回调配置可调整 `maxBodyBytes`（默认 65536）、`timestampToleranceSeconds`（默认 300）、`maxInboxEntries`（默认 10000）及绝对路径 `inboxDirectory`。生产中须由 HTTPS 反向代理暴露该固定路径。
+
+`maxInboxEntries` 限制未确认事件数量；确认后释放该容量。`maxArchivedEntries`（默认 2000）限制保留完整正文的已确认事件数。确认新事件前会预留归档槽位，因此最早已确认正文可能在本次确认失败时已清理；其去重标记仍保留，正文不能再通过 `get` 读取。去重标记保留 30 天且数量上限为 `maxArchivedEntries × 10`；上限已满时新确认失败，仍有效的去重标记不会被提前删除。超龄后重投可能作为新事件接收。Owner Tool 返回值受 `maxToolResultBytes` 限制。
+
+Owner 可通过 `meituan_callback_inbox` 工具调用 `{"action":"list","limit":20}`、`{"action":"get","eventId":"..."}` 和 `{"action":"ack","eventId":"..."}`。回调内容只在主动读取时进入 Agent 上下文；插件不会自动执行 MTOp 写操作。收件箱是单 Gateway 本地存储，多 Gateway 部署需要共享持久层与全局去重。
+
 插件注册一个工具 `meituan_openapi_invoke`：
 
 ```json

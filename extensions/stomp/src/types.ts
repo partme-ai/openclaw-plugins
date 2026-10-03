@@ -83,6 +83,8 @@ export interface InboundMessage {
   replyDestination?: string;
   rawPayload: string;
   idempotencyKey?: string;
+  /** 已认证 login 或客户端声明的 sender-id；不用于授权。 */
+  senderScope?: string;
 }
 
 export type InboundHandler = (message: InboundMessage) => Promise<void> | void;

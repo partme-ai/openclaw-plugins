@@ -14,7 +14,7 @@ import { checkRuntimePluginIds } from "./runtime-plugin-id-contract.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const EXTENSIONS = join(ROOT, "extensions");
-const TARGET_OPENCLAW_RANGE = ">=2026.7.1";
+const TARGET_OPENCLAW_RANGE = ">=2026.9.6";
 const TARGET_RELEASE_VERSION = "2026.7.1";
 const SDK_PACKAGE = "@partme.ai/openclaw-message-sdk";
 const SDK_VERSION = readMessageSdkVersion();
@@ -107,7 +107,7 @@ for (const pluginDir of pluginDirs) {
   if (typeof pkg.scripts?.lint === "string" && /(?:^|\s)--fix(?:\s|$)/.test(pkg.scripts.lint)) {
     fail(packagePath, "lint must be read-only; move --fix to lint:fix");
   }
-  if (!Array.isArray(pkg.files) || !pkg.files.some((entry) => String(entry).replace(/\/$/, "") === "dist")) {
+  if (!Array.isArray(pkg.files) || !pkg.files.some((entry) => ["dist", "dist/", "dist/**/*"].includes(entry))) {
     fail(packagePath, "files must include dist");
   }
 

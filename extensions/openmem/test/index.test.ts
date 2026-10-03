@@ -1,3 +1,4 @@
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -9,6 +10,7 @@ import {
   resolveConfig,
 } from "../src/index.js";
 import type { OpenMemConfig } from "../src/config.js";
+import plugin from "../src/index.js";
 
 function json(body: unknown, status = 200, headers: HeadersInit = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -22,6 +24,284 @@ function makeConfig(overrides: Partial<OpenMemConfig> = {}): OpenMemConfig {
     pluginConfig: { retryBaseDelayMs: 0, allowSharedRecall: true, ...overrides },
   } as never);
 }
+
+describe("OpenClaw prepared Agent registry", () => {
+  it("同配置双 Gateway 生命周期重叠时共享 coordinator", async () => {
+    const services: Array<{ stop: () => Promise<void> }> = [];
+    let agentEnd: unknown;
+    let rootAgentEnd: unknown;
+    const api = {
+      registrationMode: "full",
+      source: "/installed/openmem/dist/index.js",
+      pluginConfig: { baseUrl: "http://127.0.0.1:3318" },
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      registerService(value: { stop: () => Promise<void> }) { services.push(value); },
+      registerMemoryCapability() {},
+      registerTool() {},
+      on(name: string, handler: unknown) { if (name === "agent_end") agentEnd = handler; },
+    };
+    plugin.register!(api as never);
+    rootAgentEnd = agentEnd;
+    plugin.register!(api as never);
+    expect(agentEnd).toBe(rootAgentEnd);
+    agentEnd = undefined;
+    plugin.register!({ ...api, registrationMode: "discovery" } as never);
+    expect(agentEnd).toBe(rootAgentEnd);
+    await services[0]!.stop();
+    plugin.register!({ ...api, registrationMode: "discovery" } as never);
+    expect(agentEnd).toBe(rootAgentEnd);
+    await services[1]!.stop();
+  });
+
+  it("注册失败后相同配置可以重新注册而没有孤儿 coordinator", async () => {
+    let service: { stop: () => Promise<void> } | undefined;
+    let agentEnd: unknown;
+    let failCapability = true;
+    const api = {
+      registrationMode: "full",
+      pluginConfig: { baseUrl: "http://127.0.0.1:3319" },
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability() { if (failCapability) throw new Error("registration failed"); },
+      registerTool() {},
+      on(name: string, handler: unknown) { if (name === "agent_end") agentEnd = handler; },
+    };
+    expect(() => plugin.register!(api as never)).toThrow("registration failed");
+    failCapability = false;
+    plugin.register!(api as never);
+    agentEnd = undefined;
+    plugin.register!({ ...api, registrationMode: "discovery" } as never);
+    expect(typeof agentEnd).toBe("function");
+    await service!.stop();
+  });
+
+  it("最后 full owner 停止后 discovery 晚到轮次仍摄取并提交归档", async () => {
+    const services: Array<{ stop: () => Promise<void> }> = [];
+    let agentEnd: any;
+    let dispose: (() => void | Promise<void>) | undefined;
+    const requests: string[] = [];
+    let enteredIngest: (() => void) | undefined;
+    let releaseIngest: (() => void) | undefined;
+    const ingestEntered = new Promise<void>((resolve) => { enteredIngest = resolve; });
+    const ingestGate = new Promise<void>((resolve) => { releaseIngest = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push(`${init?.method ?? "GET"} ${url.pathname}${url.search}`);
+      if (url.pathname === "/sessions" && url.searchParams.get("status") === "ACTIVE") return json({ sessions: [] });
+      if (url.pathname === "/sessions/start") return json({ session_id: "late-session", status: "ACTIVE", updated_at: "now" }, 201);
+      if (url.pathname === "/events/ingest") {
+        enteredIngest?.();
+        await ingestGate;
+        return json({ ingested: 1, skipped: 0 }, 201);
+      }
+      if (url.pathname === "/sessions/late-session") return json({ session_id: "late-session", metadata: { append_notes: [] } });
+      if (url.pathname === "/sessions/late-session/append") return json({ ok: true });
+      if (url.pathname === "/events") return json({ events: [] });
+      if (url.pathname === "/sessions/late-session/commit") return json({ session_id: "late-session", status: "ARCHIVED" });
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    const api = {
+      registrationMode: "full",
+      pluginConfig: { baseUrl: "http://127.0.0.1:3320" },
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      registerService(value: (typeof services)[number]) { services.push(value); },
+      registerMemoryCapability() {},
+      registerTool() {},
+      on(name: string, handler: unknown) { if (name === "agent_end") agentEnd = handler; },
+    };
+    try {
+      plugin.register!(api as never);
+      agentEnd = undefined;
+      plugin.register!({
+        ...api,
+        registrationMode: "discovery",
+        lifecycle: { onDispose(callback: typeof dispose) { dispose = callback; } },
+      } as never);
+      await services[0]!.stop();
+      const lateTurn = agentEnd(
+        { success: true, runId: "retained-generation", messages: [{ role: "user", content: "retained" }] },
+        { agentId: "main", sessionKey: "late-session-key" },
+      );
+      await ingestEntered;
+      // 旧 generation 摄取期间，新的 full owner 已接管；提交仍归属旧轮次。
+      plugin.register!(api as never);
+      releaseIngest?.();
+      await lateTurn;
+      expect(requests).toContain("POST /events/ingest");
+      expect(requests).toContain("POST /sessions/late-session/commit");
+      expect(requests.indexOf("POST /sessions/late-session/commit"))
+        .toBeGreaterThan(requests.indexOf("POST /events/ingest"));
+    } finally {
+      releaseIngest?.();
+      await Promise.all(services.map((service) => service.stop()));
+      await dispose?.();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("最后 discovery 释放等待已进入的摄取和提交", async () => {
+    let service: { stop: () => Promise<void> } | undefined;
+    let agentEnd: any;
+    let dispose: (() => void | Promise<void>) | undefined;
+    let enteredIngest: (() => void) | undefined;
+    let releaseIngest: (() => void) | undefined;
+    const ingestEntered = new Promise<void>((resolve) => { enteredIngest = resolve; });
+    const ingestGate = new Promise<void>((resolve) => { releaseIngest = resolve; });
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push(`${init?.method ?? "GET"} ${url.pathname}${url.search}`);
+      if (url.pathname === "/sessions" && url.searchParams.get("status") === "ACTIVE") return json({ sessions: [] });
+      if (url.pathname === "/sessions/start") return json({ session_id: "drain-session", status: "ACTIVE", updated_at: "now" }, 201);
+      if (url.pathname === "/events/ingest") {
+        enteredIngest?.();
+        await ingestGate;
+        return json({ ingested: 1, skipped: 0 }, 201);
+      }
+      if (url.pathname === "/sessions/drain-session") return json({ session_id: "drain-session", status: "ACTIVE", metadata: { append_notes: [] } });
+      if (url.pathname === "/sessions/drain-session/append") return json({ ok: true });
+      if (url.pathname === "/events") return json({ events: [] });
+      if (url.pathname === "/sessions/drain-session/commit") return json({ status: "ARCHIVED" });
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    const api = {
+      registrationMode: "full",
+      pluginConfig: { baseUrl: "http://127.0.0.1:3322" },
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability() {},
+      registerTool() {},
+      on(name: string, handler: unknown) { if (name === "agent_end") agentEnd = handler; },
+    };
+    try {
+      plugin.register!(api as never);
+      plugin.register!({
+        ...api,
+        registrationMode: "discovery",
+        lifecycle: { onDispose(callback: typeof dispose) { dispose = callback; } },
+      } as never);
+      await service!.stop();
+      const turn = agentEnd(
+        { success: true, runId: "drain-run", messages: [{ role: "user", content: "drain" }] },
+        { agentId: "main", sessionKey: "drain-key" },
+      );
+      await ingestEntered;
+      const stopping = dispose?.();
+      releaseIngest?.();
+      await Promise.all([turn, stopping]);
+      expect(requests).toContain("POST /sessions/drain-session/append");
+      expect(requests).toContain("POST /sessions/drain-session/commit");
+    } finally {
+      releaseIngest?.();
+      await service?.stop();
+      await dispose?.();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("晚到轮次提交结果不明时最后 owner 只核对状态而不重放 POST", async () => {
+    let service: { stop: () => Promise<void> } | undefined;
+    let agentEnd: any;
+    let sessionEnd: any;
+    let dispose: (() => void | Promise<void>) | undefined;
+    let commitAttempts = 0;
+    let threadId = "";
+    const eventIds = new Set<string>();
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push(`${init?.method ?? "GET"} ${url.pathname}${url.search}`);
+      if (url.pathname === "/sessions" && url.searchParams.get("status") === "ACTIVE") return json({ sessions: threadId ? [{ session_id: "retry-session", agent_id: "main", thread_id: threadId, status: "ACTIVE", updated_at: "now" }] : [] });
+      if (url.pathname === "/sessions" && url.searchParams.get("status") === "ARCHIVED") return json({ sessions: [] });
+      if (url.pathname === "/sessions/start") {
+        threadId = JSON.parse(String(init?.body)).threadId;
+        return json({ session_id: "retry-session", status: "ACTIVE", updated_at: "now" }, 201);
+      }
+      if (url.pathname === "/events/ingest") {
+        const events = JSON.parse(String(init?.body)).events as Array<{ eventId: string }>;
+        const ingested = events.filter((event) => !eventIds.has(event.eventId));
+        for (const event of ingested) eventIds.add(event.eventId);
+        return json({ ingested: ingested.map((event) => ({ event_id: event.eventId })), skipped: events.length - ingested.length }, 201);
+      }
+      if (url.pathname === "/events") return json({ events: [] });
+      if (url.pathname === "/sessions/retry-session") return json({ session_id: "retry-session", status: "ACTIVE", metadata: { append_notes: [] } });
+      if (url.pathname === "/sessions/retry-session/append") return json({ ok: true });
+      if (url.pathname === "/sessions/retry-session/commit") {
+        if (init?.method === "GET") return json({ error: "unsupported" }, 404);
+        commitAttempts += 1;
+        return commitAttempts === 1 ? json({ error: "temporary failure" }, 503) : json({ status: "ARCHIVED" });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    const api = {
+      registrationMode: "full",
+      pluginConfig: { baseUrl: "http://127.0.0.1:3321", maxAttempts: 1 },
+      logger: { info() {}, warn: vi.fn(), error() {}, debug() {} },
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability() {},
+      registerTool() {},
+      on(name: string, handler: unknown) {
+        if (name === "agent_end") agentEnd = handler;
+        if (name === "session_end") sessionEnd = handler;
+      },
+    };
+    try {
+      plugin.register!(api as never);
+      plugin.register!({
+        ...api,
+        registrationMode: "discovery",
+        lifecycle: { onDispose(callback: typeof dispose) { dispose = callback; } },
+      } as never);
+      await service!.stop();
+      await agentEnd(
+        { success: true, runId: "retry-run", messages: [{ role: "user", content: "retry" }] },
+        { agentId: "main", sessionKey: "retry-session-key" },
+      );
+      expect(commitAttempts).toBe(1);
+      await dispose?.();
+      expect(commitAttempts).toBe(1);
+      expect(requests.filter((request) => request === "GET /sessions/retry-session").length).toBeGreaterThan(2);
+      expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("manual reconciliation"));
+      // 新 Gateway/runtime 已失去内存状态，持久 intent 仍阻止同一非幂等 POST 重放。
+      plugin.register!(api as never);
+      await sessionEnd({ sessionKey: "retry-session-key" }, { agentId: "main" });
+      expect(commitAttempts).toBe(1);
+    } finally {
+      await service?.stop();
+      await dispose?.();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("discovery borrows the Gateway coordinator without registering another service", async () => {
+    const hooks = new Map<string, unknown>();
+    let service: { stop: () => Promise<void> } | undefined;
+    let tool: unknown;
+    const api = {
+      registrationMode: "full",
+      pluginConfig: { baseUrl: "http://127.0.0.1:3317" },
+      logger: { info() {}, warn() {}, error() {}, debug() {} },
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability() {},
+      registerTool(value: unknown) { tool = value; },
+      on(name: string, handler: unknown) { hooks.set(name, handler); },
+    };
+    plugin.register!(api as never);
+    const rootService = service;
+    const rootAgentEnd = hooks.get("agent_end");
+    hooks.clear();
+    service = undefined;
+    tool = undefined;
+    plugin.register!({ ...api, registrationMode: "discovery" } as never);
+    expect(service).toBeUndefined();
+    expect(typeof tool).toBe("function");
+    expect(typeof hooks.get("agent_end")).toBe("function");
+    expect(hooks.has("session_start")).toBe(false);
+    expect(hooks.has("session_end")).toBe(false);
+    expect(hooks.get("agent_end")).toBe(rootAgentEnd);
+    await rootService!.stop();
+  });
+});
 
 describe("OpenMem 配置", () => {
   it("拒绝非 loopback 明文 HTTP", () => {
@@ -245,7 +525,7 @@ describe("OpenMem session 生命周期", () => {
       if (url.endsWith("/sessions/start")) return json({ session_id: "om-s1", agent_id: "main", thread_id: body.threadId, status: "ACTIVE", updated_at: "2026-07-15" }, 201);
       if (url.endsWith("/events/ingest")) {
         ingestedEvents = body.events;
-        return json({ ingested: body.events, skipped: 0 }, 201);
+        return json({ ingested: body.events.map((event: { eventId: string }) => ({ ...event, event_id: event.eventId })), skipped: 0 }, 201);
       }
       if (url.endsWith("/sessions/om-s1")) return json({ session_id: "om-s1", metadata: { append_notes: appendNotes } });
       if (url.includes("/events?sessionId=om-s1")) return json({ events: ingestedEvents });
@@ -263,6 +543,116 @@ describe("OpenMem session 生命周期", () => {
     expect(ingest?.body.events[0].eventId).toHaveLength(64);
     expect(ingest?.body.events[0].payload.openclawTurnId).toHaveLength(64);
     expect(calls.some((call) => call.url.endsWith("/sessions/om-s1/commit"))).toBe(true);
+  });
+
+  it("提交响应丢失但远端已经归档时不重放 POST", async () => {
+    let threadId = "";
+    let status: "ACTIVE" | "ARCHIVED" = "ACTIVE";
+    let commitAttempts = 0;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/sessions" && url.searchParams.get("status") === "ACTIVE") return json({ sessions: [] });
+      if (url.pathname === "/sessions/start") {
+        threadId = JSON.parse(String(init?.body)).threadId;
+        return json({ session_id: "uncertain-session", agent_id: "main", thread_id: threadId, status, updated_at: "now" }, 201);
+      }
+      if (url.pathname === "/events/ingest") return json({ ingested: 1, skipped: 0 }, 201);
+      if (url.pathname === "/events") return json({ events: [] });
+      if (url.pathname === "/sessions/uncertain-session") return json({ session_id: "uncertain-session", status, metadata: { append_notes: [] } });
+      if (url.pathname === "/archives") return json({ archives: [{ session_id: "uncertain-session", facts: [] }] });
+      if (url.pathname === "/sessions/uncertain-session/append") return json({ ok: true });
+      if (url.pathname === "/sessions/uncertain-session/commit") {
+        commitAttempts += 1;
+        status = "ARCHIVED";
+        return json({ error: "response lost" }, 503);
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+    const coordinator = new OpenMemCoordinator(new OpenMemClient(makeConfig({ maxAttempts: 1 })), "main");
+    await coordinator.ingestTurn({ sessionKey: "uncertain-key", runId: "uncertain-run", messages: [{ role: "user", content: "hello" }] });
+    await coordinator.endSession("uncertain-key");
+    expect(commitAttempts).toBe(1);
+  });
+
+  it("重启后遇到已持久化提交意图时只在 Sidecar 声明幂等协议后恢复", async () => {
+    let threadId = "";
+    let status: "ACTIVE" | "ARCHIVED" = "ACTIVE";
+    let intentWrites = 0;
+    let commitAttempts = 0;
+    let capabilityAvailable = false;
+    let sessionStarts = 0;
+    let intentEvent: { event_id: string; type: string } | undefined;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/sessions" && url.searchParams.get("status") === "ACTIVE") {
+        return json({ sessions: threadId && status === "ACTIVE" ? [{ session_id: "resume-session", agent_id: "main", thread_id: threadId, status, updated_at: "now" }] : [] });
+      }
+      if (url.pathname === "/sessions/start") {
+        threadId = JSON.parse(String(init?.body)).threadId;
+        sessionStarts += 1;
+        return json({ session_id: sessionStarts === 1 ? "resume-session" : "resume-session-2", agent_id: "main", thread_id: threadId, status: "ACTIVE", updated_at: "now" }, 201);
+      }
+      if (url.pathname === "/events") return json({ events: intentEvent ? [intentEvent] : [] });
+      if (url.pathname === "/events/ingest") {
+        intentWrites += 1;
+        const event = JSON.parse(String(init?.body)).events[0];
+        intentEvent = { event_id: event.eventId, type: "openclaw_commit_intent" };
+        return intentWrites === 1 ? json({ ingested: [{ event_id: event.eventId }], skipped: 0 }, 201) : json({ ingested: [], skipped: 1 }, 201);
+      }
+      if (url.pathname === "/sessions/resume-session") return json({ session_id: "resume-session", status, metadata: { append_notes: [] } });
+      if (url.pathname === "/archives") return json({ archives: [{ session_id: "resume-session", facts: [] }] });
+      if (url.pathname === "/sessions/resume-session/commit" && init?.method === "GET") {
+        return capabilityAvailable ? json({ idempotent: true, recoverable: true, status }) : json({ error: "unavailable" }, 503);
+      }
+      if (url.pathname === "/sessions/resume-session/commit" && init?.method === "POST") {
+        commitAttempts += 1;
+        if (commitAttempts === 1) throw new Error("connection lost before commit reached Sidecar");
+        status = "ARCHIVED";
+        return json({ archive: { archive_id: "stable" } });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+
+    const first = new OpenMemCoordinator(new OpenMemClient(makeConfig({ maxAttempts: 1 })), "main");
+    await first.startSession("resume-key");
+    await expect(first.endSession("resume-key")).rejects.toThrow();
+    expect(status).toBe("ACTIVE");
+    capabilityAvailable = true;
+    const restarted = new OpenMemCoordinator(new OpenMemClient(makeConfig({ maxAttempts: 1 })), "main");
+    expect(await restarted.startSession("resume-key")).toBe("resume-session-2");
+    expect(commitAttempts).toBe(2);
+    expect(status).toBe("ARCHIVED");
+  });
+
+  it("ARCHIVED 但缺少归档产物时保持结果不明且不重放提交", async () => {
+    let status: "ACTIVE" | "ARCHIVED" = "ACTIVE";
+    let commitAttempts = 0;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/sessions" && url.searchParams.get("status") === "ACTIVE") return json({ sessions: [] });
+      if (url.pathname === "/sessions/start") return json({ session_id: "missing-archive", status: "ACTIVE", updated_at: "now" }, 201);
+      if (url.pathname === "/events/ingest") {
+        const events = JSON.parse(String(init?.body)).events as Array<{ eventId: string }>;
+        return json({ ingested: events.map((event) => ({ event_id: event.eventId })), skipped: 0 }, 201);
+      }
+      if (url.pathname === "/events") return json({ events: [] });
+      if (url.pathname === "/sessions/missing-archive") return json({ session_id: "missing-archive", status, metadata: { append_notes: [] } });
+      if (url.pathname === "/sessions/missing-archive/append") return json({ ok: true });
+      if (url.pathname === "/sessions/missing-archive/commit") {
+        if (init?.method === "GET") return json({ error: "unsupported" }, 404);
+        commitAttempts += 1;
+        status = "ARCHIVED";
+        return json({ error: "archive failed" }, 503);
+      }
+      if (url.pathname === "/archives") return json({ archives: [] });
+      throw new Error(`unexpected ${url.pathname}`);
+    });
+    const coordinator = new OpenMemCoordinator(new OpenMemClient(makeConfig({ maxAttempts: 1 })), "main");
+    await coordinator.ingestTurn({ sessionKey: "missing-archive-key", runId: "missing-run", messages: [{ role: "user", content: "hello" }] });
+    await expect(coordinator.endSession("missing-archive-key")).rejects.toThrow("manual reconciliation");
+    await expect(coordinator.startSession("missing-archive-key")).rejects.toThrow("archive is incomplete");
+    await expect(coordinator.endSession("missing-archive-key")).rejects.toThrow("archive is incomplete");
+    expect(commitAttempts).toBe(1);
   });
 
   it("重启后根据持久事件补齐 ingest 与 append 之间的崩溃窗口", async () => {
@@ -359,5 +749,190 @@ describe("OpenMem session 生命周期", () => {
     const restarted = new OpenMemCoordinator(client, "main");
     const manager = new OpenMemSearchManager(client, restarted, config);
     expect((await manager.search("archived", { sessionKey: "restart-thread" }))[0].snippet).toBe("archived summary");
+  });
+});
+
+
+describe("O1 Memory capability 与可信会话身份", () => {
+  type Capability = Parameters<OpenClawPluginApi["registerMemoryCapability"]>[0];
+
+  function register(pluginConfig: Record<string, unknown> = {}) {
+    let capability!: Capability;
+    let service!: { stop: () => Promise<void> };
+    let toolFactory!: (context: Record<string, unknown>) => any;
+    const hooks = new Map<string, (...args: any[]) => Promise<void>>();
+    const logger = { info() {}, warn: vi.fn(), error() {}, debug() {} };
+    plugin.register!({
+      registrationMode: "full",
+      pluginConfig,
+      config: { plugins: { entries: { openmem: { hooks: { allowConversationAccess: true } } } } },
+      logger,
+      registerCli() {},
+      registerService(value: typeof service) { service = value; },
+      registerMemoryCapability(value: Capability) { capability = value; },
+      registerTool(value: typeof toolFactory) { toolFactory = value; },
+      on(name: string, handler: (...args: any[]) => Promise<void>) { hooks.set(name, handler); },
+    } as never);
+    return { capability, service, hooks, logger, toolFactory };
+  }
+
+  it.each([
+    { sessionKey: "  tool-session  " },
+    { sessionKey: " ", sessionId: "  tool-session  " },
+    { sessionId: "  tool-session  " },
+  ])("注册工具与写入共用规范化会话身份：%j", async (identity) => {
+    const { service, hooks, toolFactory } = register({ baseUrl: "http://127.0.0.1:3335", allowSharedRecall: false });
+    let session: Record<string, unknown> | undefined;
+    let appended = "";
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/sessions") return json({ sessions: url.searchParams.get("status") === "ACTIVE" && session ? [session] : [] });
+      if (url.pathname === "/sessions/start") {
+        const body = JSON.parse(String(init?.body));
+        session = { session_id: "tool-session-id", agent_id: body.agentId, thread_id: body.threadId, status: "ACTIVE", updated_at: "now" };
+        return json(session);
+      }
+      if (url.pathname === "/events/ingest") return json({ ingested: JSON.parse(String(init?.body)).events.length, skipped: 0 });
+      if (url.pathname === "/sessions/tool-session-id") return json({ ...session, metadata: { append_notes: [] } });
+      if (url.pathname === "/sessions/tool-session-id/append") {
+        appended = JSON.parse(String(init?.body)).content;
+        return json({ ok: true });
+      }
+      if (url.pathname === "/inspect/search") {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({ mode: "continuity", sessionId: "tool-session-id" });
+        return json({ chunks: [{ text: appended, score: 1, source: "archive:tool-session-id", recall_type: "continuity" }], sources: [] });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    try {
+      await hooks.get("agent_end")!(
+        { success: true, messages: [{ role: "user", content: "tool-private-fact" }] },
+        { agentId: "main", ...identity },
+      );
+      const result = await toolFactory({ agentId: "main", ...identity }).execute("same", { query: "tool-private-fact" });
+      expect(result.details.count).toBe(1);
+      expect(result.details.sessionScoped).toBe(true);
+      expect(result.content[0].text).toContain("tool-private-fact");
+      const other = await toolFactory({ agentId: "main", sessionKey: "other-session" }).execute("other", { query: "tool-private-fact" });
+      expect(other.details.count).toBe(0);
+      for (const missing of [{}, { sessionKey: " ", sessionId: " " }]) {
+        const empty = await toolFactory({ agentId: "main", ...missing }).execute("missing", {
+          query: "tool-private-fact", sessionKey: "tool-session", sessionId: "tool-session",
+        });
+        expect(empty.details.count).toBe(0);
+        expect(empty.details.sessionScoped).toBe(false);
+      }
+    } finally {
+      await service.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("只向模型描述已可调用的真实召回工具", async () => {
+    const { capability, service } = register();
+    try {
+      expect(capability.deterministicRecallToolName).toBe("openmem_search");
+      expect(capability.promptBuilder).toBeTypeOf("function");
+      expect(capability.promptBuilder!({ availableTools: new Set() })).toEqual([]);
+      expect(capability.promptBuilder!({ availableTools: new Set(["unrelated_tool"]) })).toEqual([]);
+      const prompt = capability.promptBuilder!({ availableTools: new Set(["openmem_search"]) }).join("\n");
+      expect(prompt).toContain("openmem_search");
+      expect(prompt).not.toContain("memory_search");
+      // 后端没有公开 artifact 或预压缩 flush 契约，不返回虚假空成功。
+      expect(capability.flushPlanResolver).toBeUndefined();
+      expect(capability.publicArtifacts).toBeUndefined();
+      expect(capability.supportsPrivateTranscriptRecall).not.toBe(true);
+    } finally {
+      await service.stop();
+    }
+  });
+
+  it("无身份轮次不 ingest 或 append，空 sessionKey 可回退可信 sessionId", async () => {
+    const { service, hooks } = register({ baseUrl: "http://127.0.0.1:3333", allowSharedRecall: false });
+    const ingestTurn = vi.spyOn(OpenMemCoordinator.prototype, "ingestTurn");
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push(`${init?.method ?? "GET"} ${url.pathname}`);
+      if (url.pathname === "/sessions") return json({ sessions: [] });
+      if (url.pathname === "/sessions/start") return json({ session_id: "fallback", status: "ACTIVE", updated_at: "now" });
+      if (url.pathname === "/events/ingest") return json({ ingested: 1, skipped: 0 });
+      if (url.pathname === "/sessions/fallback") return json({ session_id: "fallback", metadata: { append_notes: [] } });
+      if (url.pathname === "/sessions/fallback/append") return json({ ok: true });
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    const event = { success: true, messages: [{ role: "user", content: "trusted identity" }] };
+    try {
+      for (const context of [{}, { sessionKey: " ", sessionId: " " }]) {
+        await hooks.get("agent_end")!(event, context);
+      }
+      expect(ingestTurn).not.toHaveBeenCalled();
+      expect(requests).toEqual([]);
+      await hooks.get("agent_end")!(event, { sessionKey: " ", sessionId: "fallback-session" });
+      expect(requests).toContain("POST /events/ingest");
+      expect(requests).toContain("POST /sessions/fallback/append");
+    } finally {
+      ingestTurn.mockRestore();
+      await service.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("生命周期缺失身份时不创建或提交外部会话，空白 key 回退 event sessionId", async () => {
+    const { service, hooks } = register({ baseUrl: "http://127.0.0.1:3334" });
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push(`${init?.method ?? "GET"} ${url.pathname}`);
+      if (url.pathname === "/sessions") return json({ sessions: [] });
+      if (url.pathname === "/sessions/start") return json({ session_id: "lifecycle", status: "ACTIVE", updated_at: "now" });
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    try {
+      for (const event of [{}, { sessionKey: " ", sessionId: " " }]) {
+        await hooks.get("session_start")!(event, {});
+        await hooks.get("session_end")!(event, {});
+      }
+      expect(requests).toEqual([]);
+      await hooks.get("session_start")!({ sessionKey: " ", sessionId: "event-session" }, {});
+      expect(requests).toContain("POST /sessions/start");
+    } finally {
+      await service.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("显式关闭共享时其他会话与无身份调用均无检索结果", async () => {
+    let threadId = "";
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/sessions/start") {
+        threadId = JSON.parse(String(init?.body)).threadId;
+        return json({ session_id: "session-a", status: "ACTIVE", updated_at: "now" });
+      }
+      if (url.pathname === "/sessions") return json({ sessions: url.searchParams.get("status") === "ARCHIVED"
+        ? [{ session_id: "archive-a", agent_id: "main", thread_id: threadId, status: "ARCHIVED", updated_at: "now" }]
+        : [] });
+      if (url.pathname === "/inspect/search") return json({ chunks: [
+        { text: "private-fact", score: 1, source: "archive:a", recall_type: "continuity" },
+        { text: "shared-fact", score: 1, source: "memory:b", recall_type: "knowledge" },
+      ], sources: [] });
+      throw new Error(`unexpected ${url.pathname}`);
+    }));
+    const config = makeConfig({ allowSharedRecall: false });
+    const client = new OpenMemClient(config);
+    const coordinator = new OpenMemCoordinator(client, "main");
+    const manager = new OpenMemSearchManager(client, coordinator, config);
+    try {
+      await coordinator.startSession("session-a");
+      expect((await manager.search("fact", { sessionKey: "session-a" })).map((item) => item.snippet)).toEqual(["private-fact"]);
+      expect(await manager.search("fact", { sessionKey: "session-b" })).toEqual([]);
+      expect(await manager.search("fact")).toEqual([]);
+    } finally {
+      await manager.close();
+      client.close();
+      vi.unstubAllGlobals();
+    }
   });
 });

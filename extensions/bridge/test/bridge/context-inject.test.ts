@@ -138,3 +138,21 @@ describe("registerContextInjection", () => {
     expect(result).toBeUndefined();
   });
 });
+
+describe('O2 explicit allocation', () => {
+  it('counts provenance within budget and supports zero allocation', () => {
+    for (const budget of [0, 20, 60]) {
+      const api = createMockApi({ contextMaxTokens: budget, channels: { discord: {} } });
+      registerContextInjection(api);
+      const result = invokeHook(api, 'before_prompt_build', { channel: 'discord' });
+      expect(Buffer.byteLength(result?.appendSystemContext ?? '')).toBeLessThanOrEqual(budget);
+      if (budget) expect(result.appendSystemContext).toContain('[bridge:discord]');
+      else expect(result).toBeUndefined();
+    }
+  });
+  it('does not inject after host invocation has expired', () => {
+    const api = createMockApi({ channels: { discord: {} } });
+    registerContextInjection(api);
+    expect(invokeHook(api, 'before_prompt_build', { channel: 'discord', hookInvocation: { assertActive() { throw Error('expired'); } } })).toBeUndefined();
+  });
+});

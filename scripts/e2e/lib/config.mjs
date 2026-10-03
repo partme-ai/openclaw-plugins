@@ -1,11 +1,21 @@
 /**
  * Merge per-plugin config fragments into ~/.openclaw-queue-e2e/openclaw.json.
  */
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { loadPluginConfigs } from "../config/plugins/index.mjs";
 import { PLUGIN_REGISTRY, resolvePlugins } from "./registry.mjs";
 import { E2E_DIR, E2E_PORTS, GATEWAY_PORT, STATE_DIR } from "./utils.mjs";
+import { useHostGateway } from "./compose.mjs";
+
+// Dedicated disposable E2E profile only; never use this credential for a user Gateway.
+export const MANAGEMENT_E2E_GATEWAY_TOKEN = randomBytes(32).toString("hex");
+
+/** Model fixture tools are exposed only for adapters that explicitly exercise them. */
+export function fixtureModelSupportsTools(ids) {
+  return ids.some((id) => id === "amap" || id === "meituan" || id === "rednode" || id === "openmem" || id === "memory");
+}
 
 /**
  * Installed plugin ids from prior install step (may include plugins outside this run).
@@ -15,6 +25,15 @@ function readInstalledPlugins() {
   const path = join(STATE_DIR, ".e2e-installed.json");
   if (!existsSync(path)) return [];
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function installedPathForGateway(path) {
+  if (useHostGateway()) return path;
+  const suffix = relative(STATE_DIR, path);
+  if (!suffix || suffix.startsWith("..") || isAbsolute(suffix)) {
+    throw new Error(`Installed E2E plugin path escapes the mounted state directory: ${path}`);
+  }
+  return join("/state", suffix);
 }
 
 /**
@@ -51,10 +70,11 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
   }
 
   const config = {
+    ...(process.env.OPENCLAW_E2E_O6 === "1" ? { diagnostics: { enabled: true } } : {}),
     gateway: {
       mode: "local",
       port: GATEWAY_PORT,
-      bind: "loopback",
+      bind: useHostGateway() ? "loopback" : "lan",
       ...(ids.includes("mtls") || ids.includes("oauth2") ? {
         trustedProxies: ["127.0.0.1"],
         auth: {
@@ -65,9 +85,16 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
             allowUsers: [ids.includes("oauth2") ? "oauth-e2e-user" : "e2e-client"],
           },
         },
-      } : { auth: { mode: "none" } }),
+      } : !useHostGateway() || ids.includes("router") || ids.includes("tracing")
+        ? { auth: { mode: "token", token: MANAGEMENT_E2E_GATEWAY_TOKEN } }
+        : { auth: { mode: "none" } }),
     },
     session: { dmScope: "main" },
+    // The deterministic fixture selects the plugin tool from the model request.
+    // These installed-tool E2Es need the direct surface; otherwise OpenClaw
+    // can defer the tool behind tool_search and the fixture cannot invoke it.
+    ...(fixtureModelSupportsTools(ids)
+      ? { tools: { toolSearch: false } } : {}),
     plugins: {
       allow: ids.map(manifestIdFor),
       ...(Object.keys(fragments.pluginSlots).length > 0 ? { slots: fragments.pluginSlots } : {}),
@@ -77,7 +104,7 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
       load: {
         paths: installed
           .filter((plugin) => ids.includes(plugin.id))
-          .map((plugin) => plugin.path),
+          .map((plugin) => installedPathForGateway(plugin.path)),
       },
       entries: fragments.pluginEntries,
     },
@@ -105,7 +132,7 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
               // preflight context guard.
               contextWindow: 131072,
               maxTokens: 1024,
-              compat: { supportsTools: ids.includes("amap") || ids.includes("meituan") || ids.includes("rednode"), requiresStringContent: true },
+              compat: { supportsTools: fixtureModelSupportsTools(ids), requiresStringContent: true },
             }],
           },
         },
@@ -144,6 +171,7 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
     mkdirSync(routerDir, { recursive: true });
     const now = Date.now();
     const id = `router-e2e-${now}`;
+    const replayId = `router-replay-e2e-${now}`;
     writeFileSync(join(routerDir, "delivery-state.json"), JSON.stringify({
       version: 1,
       pending: {
@@ -164,7 +192,21 @@ export function generateOpenClawConfig(pluginIds, opts = {}) {
         },
       },
       delivered: {},
-      deadLetters: [],
+      deadLetters: [{
+        id: replayId,
+        dedupeKey: replayId,
+        ruleId: "e2e-dlq-replay",
+        actionType: "forward",
+        payload: {
+          channel: "gotify",
+          to: "e2e",
+          content: `router authenticated DLQ replay E2E ${e2eTopic}`,
+          metadata: { idempotencyKey: replayId },
+        },
+        attempts: 1,
+        createdAt: now,
+        nextAttemptAt: now,
+      }],
       audit: [],
     }, null, 2));
   }

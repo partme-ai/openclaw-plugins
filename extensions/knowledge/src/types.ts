@@ -42,9 +42,9 @@ export interface EmbeddingService {
   readonly modelName: string;
 
   /** 单文本嵌入 */
-  embed(text: string): Promise<number[]>;
+  embed(text: string, signal?: AbortSignal): Promise<number[]>;
   /** 批量文本嵌入 */
-  embedBatch(texts: string[]): Promise<number[][]>;
+  embedBatch(texts: string[], signal?: AbortSignal): Promise<number[][]>;
   /** 健康检查 */
   health(): Promise<boolean>;
 }
@@ -75,6 +75,7 @@ export type VectorChunk = {
 
 /** 检索选项 */
 export type SearchOptions = {
+  signal?: AbortSignal;
   /** 返回 topK 结果（默认 5） */
   topK?: number;
   /** 相似度阈值（0-1，低于此值的结果不返回） */
@@ -118,7 +119,7 @@ export interface VectorStore {
   /** 清空所有数据 */
   clear(): Promise<void>;
   /** FTS5 关键词检索（可选，非向量存储无需实现） */
-  keywordSearch?(query: string, topK?: number, sourceId?: string): Promise<ScoredChunk[]>;
+  keywordSearch?(query: string, topK?: number, sourceId?: string, signal?: AbortSignal): Promise<ScoredChunk[]>;
   /** 统计信息 */
   stats(): Promise<StoreStats>;
   /** Optional resource cleanup for local/native backends. */
@@ -450,6 +451,7 @@ export type KnowledgeIntentGateConfig = {
 
 /** 完整知识库配置 */
 export type KnowledgeConfig = {
+  contextMaxTokens?: number;
   /** 是否启用 */
   enabled: boolean;
   /** Intent Gate 配置（默认只走 rule 模式） */
@@ -551,6 +553,8 @@ export type BeforePromptBuildContext = {
   channel?: string;
   /** 本轮用户消息正文；Intent Gate 与检索 query 来源。 */
   message?: string;
+  signal?: AbortSignal;
+  hookInvocation?: { assertActive(): void };
   /** 宿主扩展字段透传。 */
   [key: string]: unknown;
 };

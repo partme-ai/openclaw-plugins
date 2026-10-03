@@ -42,6 +42,8 @@
                     "properties": {
                       "type": { "const": "forward" },
                       "target": { "type": "string", "minLength": 1 },
+                      "payloadFormat": { "type": "string", "enum": ["structured-v1"] },
+                      "mediaFallback": { "type": "string", "enum": ["text"] },
                       "topic": { "type": "string", "minLength": 1 }
                     }
                   },
@@ -52,6 +54,8 @@
                     "properties": {
                       "type": { "const": "reply-via" },
                       "target": { "type": "string", "minLength": 1 },
+                      "payloadFormat": { "type": "string", "enum": ["structured-v1"] },
+                      "mediaFallback": { "type": "string", "enum": ["text"] },
                       "accountId": { "type": "string", "minLength": 1 },
                       "to": { "type": "string", "minLength": 1 }
                     }
@@ -69,6 +73,13 @@
           "enabled": { "type": "boolean", "default": true },
           "logToConsole": { "type": "boolean", "default": false },
           "maxEntries": { "type": "integer", "minimum": 100, "maximum": 100000, "default": 5000 }
+        }
+      },
+      "structured": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "allowedMediaHosts": { "type": "array", "items": { "type": "string" }, "default": [] }
         }
       },
       "delivery": {

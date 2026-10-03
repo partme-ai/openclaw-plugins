@@ -7,7 +7,7 @@
  *
  * @module channel
  */
-
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import {
   getStats,
   startRedisServer,
@@ -15,10 +15,9 @@ import {
 } from "./transport/server.js";
 import type {
   ChannelAccountSnapshot,
-  ChannelGatewayContext,
   ChannelPlugin,
   OpenClawConfig,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 import {
   resolveRedisChannelConfig,
   redactUrl,

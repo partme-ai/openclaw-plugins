@@ -4,7 +4,7 @@
  * 仅在完整插件注册后写入，供诊断与扩展组件读取；停止或测试结束必须清空，避免热重载
  * 后继续持有旧 logger/runtime。该引用不是跨进程状态，也不能作为健康事实来源。
  */
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 /** Bridge 扩展组件实际需要的最小宿主能力，避免传播完整 Plugin API。 */
 export type BridgeRuntime = Pick<OpenClawPluginApi, "runtime" | "logger">;

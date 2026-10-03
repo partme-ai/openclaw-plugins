@@ -16,7 +16,8 @@ export interface MqttPayloadConfig {
   /** 解析模式，当前支持 JSON.text 优先后回退纯文本 */
   mode: MqttPayloadParseMode;
   /** 出站 wire 格式（默认 envelope） */
-  outboundFormat?: "envelope" | "legacyJsonText" | "plainText";
+  outboundFormat?: "envelope" | "legacyJsonText" | "plainText" | "structured-v1";
+  structuredMediaHosts?: string[];
 }
 
 /**
@@ -337,6 +338,8 @@ export interface MqttInboundRoute {
  * MQTT 入站消息（设备 -> Agent）
  */
 export interface MqttInboundMessage {
+  /** CONNECT 时绑定的认证主体快照；clientId 被接管后不得重新查询。 */
+  authenticatedUsername?: string;
   /** 来源 Topic */
   topic: string;
   /** 消息内容 */

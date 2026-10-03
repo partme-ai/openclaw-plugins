@@ -135,6 +135,12 @@ Metrics come from two layers:
 
 > After enabling this plugin, **disable** bundled `diagnostics-prometheus` to avoid duplicate subscriptions and duplicate series.
 
+### Delivery and recall telemetry (O6)
+
+`openclaw_delivery_settlements_total{channel,outcome}` records final `delivered`, `failed`, or `ambiguous` facts. `openclaw_delivery_retries_total{channel}` counts retry attempts separately; a retry followed by success contributes one delivered settlement. `openclaw_router_dlq_entries` is the **most recently observed durable DLQ depth** and decreases after replay. Router republishes it on transitions and every 30 seconds while running, allowing an exporter restart or a lost diagnostic event to recover; each poll reads the Router store's in-memory state under its lock, without an additional disk read. A publish timeout can mean the target received the message; an exhausted timeout is `ambiguous`, while a proven rejection is `failed`. `openclaw_memory_recall_duration_seconds{plugin}` measures searches in `memory` or `openmem`. Raw run, message, delivery, and session IDs never appear as metric labels.
+
+These facts travel through OpenClaw's public diagnostics `log.record` bus with a versioned `partme.delivery-recall.v1` envelope. The host queues these events asynchronously. Set `diagnostics.enabled` to true; when disabled, `openclaw_delivery_telemetry_enabled` is 0 and `/health` reports `deliveryTelemetry.status: "degraded"`. `/health` also reports `diagnosticQueueDrops` and `routerDlq.{configured,status,lastObservedAt,ageMs,fresh}`. When Router is explicitly enabled in `plugins.entries.router`, a missing DLQ observation or one older than 90 seconds degrades telemetry health until the next fact arrives. Without a Router entry and without any Router fact, its substatus is `unavailable`/`unknown` and does not degrade the optional deployment; a previously observed Router fact becoming stale does. `openclaw_diagnostic_async_queue_dropped_total` exposes host queue overload. When either condition occurs, counts may be incomplete. Even with both clear, telemetry is best effort across a process crash between a durable settlement and diagnostic emission. The public bus does not authenticate which enabled plugin emitted a valid envelope: schema checks bound fields and labels, but cannot prove event origin. Install only trusted plugins. Metrics are not authoritative ACK or audit evidence; scrape authorization protects `/metrics` and `/health` from unauthorized reads but does not prevent an internal plugin from spoofing an event.
+
 ## Core capabilities
 
 - **diagnostics-prometheus drop-in**: `src/diagnostics/metric-store.ts` mirrors the official implementation (series cap, low-cardinality labels, histogram buckets).
@@ -153,6 +159,7 @@ Metrics come from two layers:
 
 - Loaded through `package.json` / `openclaw.plugin.json` discovery like any other OpenClaw plugin.
 - `register()` wires `api.runtime`, installs hook/event observers, and registers plugin-owned routes with `api.registerHttpRoute`.
+- Each registration owns its collectors, scrape cache, RPC connection, observer subscriptions, and diagnostics subscription. Stopping an old registration releases only its resources; callbacks that arrive after stop cannot add metrics to it.
 - Routes are mounted directly on the Gateway. The plugin does not open a separate listener; terminate TLS and enforce network policy at the Gateway or reverse proxy.
 
 ### Runtime architecture

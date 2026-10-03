@@ -44,14 +44,14 @@ export const sessionCounters = new Map<string, number>();
  * 推进会话轮次并判断本轮是否执行 L1-L3 抽取。
  * Map 最多保留 10,000 个会话，避免长期运行 Gateway 因冷会话无限增长。
  */
-export function shouldExtract(sessionKey: string, everyN = 5): boolean {
+export function shouldExtract(sessionKey: string, everyN = 5, counters = sessionCounters): boolean {
   const interval = Math.max(1, Math.floor(everyN));
-  if (!sessionCounters.has(sessionKey) && sessionCounters.size >= 10_000) {
-    const oldest = sessionCounters.keys().next().value;
-    if (typeof oldest === "string") sessionCounters.delete(oldest);
+  if (!counters.has(sessionKey) && counters.size >= 10_000) {
+    const oldest = counters.keys().next().value;
+    if (typeof oldest === "string") counters.delete(oldest);
   }
-  const count = (sessionCounters.get(sessionKey) ?? 0) + 1;
-  sessionCounters.set(sessionKey, count);
+  const count = (counters.get(sessionKey) ?? 0) + 1;
+  counters.set(sessionKey, count);
   return count % interval === 0;
 }
 

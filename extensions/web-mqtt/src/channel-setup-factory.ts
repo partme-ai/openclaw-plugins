@@ -4,7 +4,7 @@
  * 供 extensions 下各渠道插件复用，减少重复声明式向导代码。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { ChannelSetupAdapter, ChannelSetupWizard } from "openclaw/plugin-sdk/setup";
 import {
   applySetupAccountConfigPatch,

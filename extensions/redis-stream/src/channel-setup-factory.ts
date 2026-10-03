@@ -7,7 +7,7 @@
  * @module channel-setup-factory
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type {
   ChannelSetupAdapter,
   ChannelSetupWizard,

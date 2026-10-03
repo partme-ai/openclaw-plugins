@@ -3,18 +3,95 @@
  *
  * 测试通过真实 Gateway Agent Turn 触发 session_start/agent_end，再调用正式 sessions.reset
  * 触发 session_end；随后检查真实 OpenMem Server 的事件、工作记忆、archive 和 continuity
- * 检索，并确认下一轮模型请求收到上一会话的记忆上下文。
+ * 检索，并确认 Gateway 重启后下一轮模型请求仍带有上一会话上下文。
+ * 默认和 protected 场景均通过模型工具调用验证带本轮标记的回执及跨会话空结果；
+ * transcript 上下文不再被单独视为工具检索证据。
  */
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
-import { OPENCLAW_BIN, PROFILE } from "../lib/utils.mjs";
+import { GATEWAY_PORT, OPENCLAW_BIN, PROFILE, tcpReachable } from "../lib/utils.mjs";
 import { ensureGatewayRunning, stopHostGateway } from "../lib/gateway.mjs";
 import { runAdapterTest } from "./_context.mjs";
 
 const execFileAsync = promisify(execFile);
 const SESSION_KEY = "agent:main:openmem-e2e";
 const FIRST_MEMORY = "OpenMem 真实联调代号是海盐蓝，回答应保持简洁。";
+
+/** A prior ACTIVE session may have the same fact; accept only this run's marker. */
+export async function findRunSession(sessions, marker, readEvents) {
+  for (const session of sessions ?? []) {
+    if (session.agent_id !== "main" || !(session.event_count > 0)) continue;
+    const events = await readEvents(session.session_id);
+    if (events.events?.some((event) => event.content?.includes(marker))) return session;
+  }
+  return undefined;
+}
+
+/** A replay of an empty memory set cannot prove fact-memory idempotency. */
+export function assertStableCommitReplay(first, second) {
+  if (!first.archive?.archive_id || first.archive.archive_id !== second.archive?.archive_id) {
+    throw new Error("repeated authenticated commit changed archive ID");
+  }
+  if (!Array.isArray(first.memories) || first.memories.length === 0 || !Array.isArray(second.memories)) {
+    throw new Error("repeated authenticated commit lacks fact memory IDs");
+  }
+  const firstIds = first.memories.map((memory) => memory?.memory_id);
+  const secondIds = second.memories.map((memory) => memory?.memory_id);
+  if (firstIds.some((id) => typeof id !== "string" || !id.trim()) ||
+      secondIds.some((id) => typeof id !== "string" || !id.trim()) ||
+      JSON.stringify(firstIds) !== JSON.stringify(secondIds)) {
+    throw new Error("repeated authenticated commit changed fact memory IDs");
+  }
+}
+
+/** Require the model continuation to contain this tool's result, not transcript text. */
+export function findToolResultMessage(messages, toolCallId, expectedText) {
+  const result = Array.isArray(messages)
+    ? messages.find((message) => message?.role === "tool" && message.tool_call_id === toolCallId)
+    : undefined;
+  const resultContent = JSON.stringify(result?.content) ?? "";
+  const citation = /openmem\/(?:archive|memory)\/[^\s()"\\]+#L1/.test(resultContent);
+  if (!result || !resultContent.includes(expectedText) || !citation) {
+    const outline = Array.isArray(messages) ? messages.map((message) => {
+      const content = JSON.stringify(message?.content) ?? "";
+      return {
+        role: message?.role,
+        toolCallId: message?.tool_call_id,
+        hasExpectedText: content.includes(expectedText),
+        hasCitation: /openmem\/(?:archive|memory)\/[^\s()"\\]+#L1/.test(content),
+        contentLength: content.length,
+      };
+    }) : [];
+    throw new Error(`OpenMem tool result is absent from the model continuation: ${JSON.stringify(outline)}`);
+  }
+  return result;
+}
+
+/** An empty real tool receipt proves isolation; transcript text and errors cannot substitute. */
+export function findEmptyToolResultMessage(messages, toolCallId) {
+  const result = Array.isArray(messages)
+    ? messages.find((message) => message?.role === "tool" && message.tool_call_id === toolCallId)
+    : undefined;
+  const content = result?.content;
+  const text = typeof content === "string" ? content
+    : Array.isArray(content) ? content.map((block) => block?.text ?? "").join("\n") : "";
+  if (!result || text.trim() !== "未找到 OpenMem 记忆。") {
+    throw new Error("OpenMem tool result does not prove an isolated empty recall");
+  }
+  return result;
+}
+
+/** Session-end closes its target; unended logical sessions remain recoverable across Gateway restarts. */
+export function assertShutdownSessionBoundary(sessions, endedSessionId, preservedSessionId) {
+  const ended = Array.isArray(sessions) ? sessions.find((session) => session?.session_id === endedSessionId) : undefined;
+  const preserved = Array.isArray(sessions) ? sessions.find((session) => session?.session_id === preservedSessionId) : undefined;
+  if (ended?.status !== "ARCHIVED" || preserved?.status !== "ACTIVE") {
+    throw new Error("OpenMem shutdown boundary must archive the ended session and preserve the continuing ACTIVE session");
+  }
+  return { endedSessionId, endedStatus: ended.status, preservedSessionId, preservedStatus: preserved.status };
+}
 
 async function runCli(args) {
   const { stdout, stderr } = await execFileAsync(
@@ -26,15 +103,24 @@ async function runCli(args) {
 }
 
 async function readJson(baseUrl, path, init) {
-  const response = await fetch(`${baseUrl}${path}`, init);
+  const protectedMode = process.env.OPENMEM_E2E_PROTECTED === "1";
+  const token = process.env.OPENMEM_E2E_PROXY_TOKEN;
+  if (protectedMode && !token) throw new Error("protected OpenMem E2E token is missing");
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: {
+      ...init?.headers,
+      ...(protectedMode ? { authorization: `Bearer ${token}` } : {}),
+    },
+  });
   const text = await response.text();
   if (!response.ok) throw new Error(`OpenMem ${path} returned ${response.status}: ${text.slice(0, 500)}`);
   return text ? JSON.parse(text) : undefined;
 }
 
-async function runAgent(message) {
+async function runAgent(message, sessionKey = SESSION_KEY) {
   return runCli([
-    "agent", "--agent", "main", "--session-key", SESSION_KEY,
+    "agent", "--agent", "main", "--session-key", sessionKey,
     "--message", message, "--timeout", "60", "--json",
   ]);
 }
@@ -49,29 +135,37 @@ export async function testOpenMem(ctx, results) {
       const model = ctx.modelFixture;
       const sidecar = ctx.openmemSidecar;
       if (!model || !sidecar) throw new Error("OpenMem E2E requires model fixture and real OpenMem sidecar");
+      const protectedMode = process.env.OPENMEM_E2E_PROTECTED === "1";
+      const endpoint = protectedMode ? process.env.OPENMEM_E2E_PROXY_URL : sidecar.baseUrl;
+      if (!endpoint) throw new Error("OpenMem E2E endpoint is missing");
 
-      const health = await readJson(sidecar.baseUrl, "/healthz");
+      const health = await readJson(endpoint, "/healthz");
       if (health?.status !== "ok") throw new Error("real OpenMem health check failed");
 
+      const runMarker = randomUUID();
       const beforeFirst = model.metrics.completions;
-      const first = await runAgent(FIRST_MEMORY);
+      const first = await runAgent(`${FIRST_MEMORY} 本轮唯一标识：${runMarker}`);
       if (!first.includes("openclaw e2e fixture reply") || model.metrics.completions !== beforeFirst + 1) {
         throw new Error("first Agent Turn did not complete exactly once through the model fixture");
+      }
+      if (protectedMode && !model.metrics.lastRequest?.tools?.some((tool) => tool?.function?.name === "openmem_search")) {
+        throw new Error("installed Gateway did not expose openmem_search to the model");
       }
 
       let firstSession;
       await ctx.waitFor(async () => {
-        const data = await readJson(sidecar.baseUrl, "/sessions?status=ACTIVE");
-        firstSession = data.sessions?.find((session) => session.agent_id === "main" && session.event_count > 0);
+        const data = await readJson(endpoint, "/sessions?status=ACTIVE");
+        firstSession = await findRunSession(data.sessions, runMarker, (sessionId) =>
+          readJson(endpoint, `/events?sessionId=${encodeURIComponent(sessionId)}`));
         return Boolean(firstSession);
-      }, { label: "OpenMem ACTIVE session ingest", timeoutMs: 30_000 });
+      }, { label: "OpenMem current-run ACTIVE session ingest", timeoutMs: 30_000 });
 
-      const events = await readJson(sidecar.baseUrl, `/events?sessionId=${encodeURIComponent(firstSession.session_id)}`);
-      if (!events.events?.some((event) => event.content?.includes("海盐蓝"))) {
+      const events = await readJson(endpoint, `/events?sessionId=${encodeURIComponent(firstSession.session_id)}`);
+      if (!events.events?.some((event) => event.content?.includes("海盐蓝") && event.content.includes(runMarker))) {
         throw new Error("agent_end did not ingest the current user turn into real OpenMem");
       }
-      const working = await readJson(sidecar.baseUrl, `/sessions/${encodeURIComponent(firstSession.session_id)}/working-memory`);
-      if (!JSON.stringify(working).includes("海盐蓝")) {
+      const working = await readJson(endpoint, `/sessions/${encodeURIComponent(firstSession.session_id)}/working-memory`);
+      if (!JSON.stringify(working).includes(runMarker)) {
         throw new Error("agent_end did not append the current turn to OpenMem working memory");
       }
 
@@ -81,12 +175,12 @@ export async function testOpenMem(ctx, results) {
 
       let archived;
       await ctx.waitFor(async () => {
-        const data = await readJson(sidecar.baseUrl, "/sessions?status=ARCHIVED");
+        const data = await readJson(endpoint, "/sessions?status=ARCHIVED");
         archived = data.sessions?.find((session) => session.session_id === firstSession.session_id);
         return Boolean(archived);
       }, { label: "OpenMem session_end commit/archive", timeoutMs: 30_000 });
 
-      const recall = await readJson(sidecar.baseUrl, "/inspect/search", {
+      const recall = await readJson(endpoint, "/inspect/search", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ query: "海盐蓝", mode: "continuity", sessionId: archived.session_id, limit: 10 }),
@@ -95,19 +189,107 @@ export async function testOpenMem(ctx, results) {
         throw new Error("committed session was not available through real continuity recall");
       }
 
-      await ensureGatewayRunning();
+      if (protectedMode) {
+        const commitPath = `/sessions/${encodeURIComponent(archived.session_id)}/commit`;
+        const firstReplay = await readJson(endpoint, commitPath, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        const secondReplay = await readJson(endpoint, commitPath, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        assertStableCommitReplay(firstReplay, secondReplay);
+      }
+
+      const searchBeforeTool = protectedMode
+        ? (await readJson(endpoint, "/__e2e_metrics")).successfulPaths?.["POST /inspect/search"] ?? 0
+        : 0;
+      const restartedGateway = await ensureGatewayRunning();
       const beforeSecond = model.metrics.completions;
-      const second = await runAgent("上一段会话中的联调代号是什么？");
-      if (!second.includes("openclaw e2e fixture reply") || model.metrics.completions !== beforeSecond + 1) {
-        throw new Error("second Agent Turn did not complete exactly once");
+      const beforeToolCalls = model.metrics.toolCalls;
+      model.controls.nextToolCall = {
+        id: "callopenmeme2e",
+        name: "openmem_search",
+        arguments: JSON.stringify({ query: runMarker, limit: 10 }),
+      };
+      const second = await runAgent("请调用 openmem_search 工具检索上一段会话中的联调代号。");
+      if (!second.includes("openclaw e2e fixture reply") ||
+          model.metrics.completions !== beforeSecond + 2) {
+        throw new Error("second Agent Turn did not complete expected model calls");
       }
-      if (!JSON.stringify(model.metrics.lastRequest).includes("海盐蓝")) {
-        throw new Error("OpenMem continuity memory was not injected into the next Agent Turn");
+      if (!JSON.stringify(model.metrics.lastRequest).includes(runMarker)) {
+        throw new Error("previous-session context was absent from the next Agent Turn");
       }
+      if (model.metrics.toolCalls !== beforeToolCalls + 1 || model.controls.nextToolCall !== null) {
+        throw new Error("model fixture did not issue exactly one OpenMem tool call");
+      }
+      findToolResultMessage(model.metrics.lastRequest?.messages, "callopenmeme2e", runMarker);
+      if (protectedMode) {
+        const searchAfterTool = (await readJson(endpoint, "/__e2e_metrics")).successfulPaths?.["POST /inspect/search"] ?? 0;
+        if (searchAfterTool <= searchBeforeTool) {
+          throw new Error("openmem_search did not make a new request through the authenticated HTTPS proxy");
+        }
+        try {
+          findToolResultMessage(model.metrics.lastRequest?.messages, "callopenmeme2e", "海盐蓝");
+        } catch (error) {
+          throw new Error(`${error.message}; proxy search ${searchBeforeTool} → ${searchAfterTool}`);
+        }
+      }
+      const continuing = await readJson(endpoint, "/sessions?status=ACTIVE");
+      const continuingSessions = continuing.sessions?.filter((session) =>
+        session.agent_id === "main" && session.thread_id === firstSession.thread_id);
+      if (continuingSessions?.length !== 1) throw new Error("OpenMem continuing logical session was not uniquely ACTIVE");
+      const preservedSessionId = continuingSessions[0].session_id;
+      const isolationMarker = randomUUID();
+      const beforeIsolated = model.metrics.completions;
+      const beforeIsolatedTool = model.metrics.toolCalls;
+      model.controls.nextToolCall = {
+        id: "callopenmemisolated",
+        name: "openmem_search",
+        arguments: JSON.stringify({ query: runMarker, limit: 10 }),
+      };
+      const isolated = await runAgent(`请调用 openmem_search 检索联调代号。本轮隔离验证编号：${isolationMarker}`, `${SESSION_KEY}:isolated`);
+      if (!isolated.includes("openclaw e2e fixture reply") ||
+          model.metrics.completions !== beforeIsolated + 2 ||
+          model.metrics.toolCalls !== beforeIsolatedTool + 1 || model.controls.nextToolCall !== null) {
+        throw new Error("isolated OpenMem tool call did not execute and return exactly once");
+      }
+      findEmptyToolResultMessage(model.metrics.lastRequest?.messages, "callopenmemisolated");
+      let endedSession;
+      await ctx.waitFor(async () => {
+        const data = await readJson(endpoint, "/sessions?status=ACTIVE");
+        endedSession = await findRunSession(data.sessions, isolationMarker, (sessionId) =>
+          readJson(endpoint, `/events?sessionId=${encodeURIComponent(sessionId)}`));
+        return Boolean(endedSession);
+      }, { label: "OpenMem isolated current-run session ingest", timeoutMs: 30_000 });
+      stopHostGateway();
+      let shutdownBoundary;
+      await ctx.waitFor(async () => {
+        if (await tcpReachable(GATEWAY_PORT)) return false;
+        if (restartedGateway.pid) {
+          try { process.kill(restartedGateway.pid, 0); return false; }
+          catch (error) { if (error.code !== "ESRCH") throw error; }
+        }
+        const [active, archivedData] = await Promise.all([
+          readJson(endpoint, "/sessions?status=ACTIVE"),
+          readJson(endpoint, "/sessions?status=ARCHIVED"),
+        ]);
+        try {
+          shutdownBoundary = assertShutdownSessionBoundary(
+            [...(active.sessions ?? []), ...(archivedData.sessions ?? [])],
+            endedSession.session_id, preservedSessionId,
+          );
+          return true;
+        } catch { return false; }
+      }, { label: "OpenMem Gateway exit and owned session-end archive", timeoutMs: 30_000 });
+      const durableRecall = await readJson(endpoint, "/inspect/search", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: runMarker, mode: "continuity", sessionId: archived.session_id, limit: 10 }),
+      });
+      if (!durableRecall.chunks?.some((chunk) => chunk.recall_type === "continuity" && chunk.text.includes(runMarker))) {
+        throw new Error("OpenMem committed current-run facts disappeared after final Gateway shutdown");
+      }
+      console.log("[openmem] verified shutdown boundary:", JSON.stringify(shutdownBoundary));
     },
     {
-      service: "real workspace OpenMem Server",
-      method: "tarball install + Agent Turn + shutdown drain + archive + Gateway restart + next-turn continuity injection",
+      service: process.env.OPENMEM_E2E_PROTECTED === "1" ? "authenticated HTTPS proxy + production OpenMem Server" : "real workspace OpenMem Server",
+      method: "tarball install + Agent Turn + shutdown drain + archive + Sidecar continuity API + Gateway restart + model openmem_search current-run receipt + cross-session empty receipt + Gateway exit + session-end archive + preserved continuing ACTIVE + durable facts" +
+        (process.env.OPENMEM_E2E_PROTECTED === "1" ? " + authenticated idempotent commit replay" : ""),
     },
     results,
   );

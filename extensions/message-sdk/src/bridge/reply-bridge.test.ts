@@ -126,3 +126,26 @@ describe("createReplyHandler", () => {
     );
   });
 });
+
+describe("structured reply bridge", () => {
+  it("rejects media without authorization before calling the transport", async () => {
+    let send: any;
+    const deliver = vi.fn();
+    createReplyHandler({ runtime: runtimeWithFactory((params: any) => { send = params.deliver; return {}; }),
+      channel: "mqtt", accountId: "a", peerId: "p", outboundFormat: "structured-v1", deliver,
+    } as never);
+    await expect(send({ text: "caption", mediaUrl: "https://media.example.org/a.png" })).rejects.toThrow(/authoriz/);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it("keeps explicitly ordered text parts and reply/thread identities", async () => {
+    let send: any;
+    const deliver = vi.fn();
+    createReplyHandler({ runtime: runtimeWithFactory((params: any) => { send = params.deliver; return {}; }),
+      channel: "mqtt", accountId: "a", peerId: "p", outboundFormat: "structured-v1", deliver,
+    } as never);
+    const structured = { schemaVersion: 1, messageId: "m", deliveryId: "d", replyTo: "parent", threadId: "thread", parts: [{ type: "text", text: "a" }, { type: "text", text: "b" }] };
+    await send({ text: "ignored flattened", structured });
+    expect(JSON.parse(deliver.mock.calls[0][0].wire)).toEqual({ format: "structured-v1", ...structured });
+  });
+});

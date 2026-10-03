@@ -14,8 +14,6 @@ import {
 import { resolveOAuth2Config, validateOAuth2GatewayIntegration } from "./config.js";
 import { OAuth2ProxyServer } from "./proxy-server.js";
 
-let activeProxy: OAuth2ProxyServer | null = null;
-
 const configSchema = {
   type: "object" as const,
   additionalProperties: false,
@@ -86,22 +84,54 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
   configSchema: buildJsonPluginConfigSchema(configSchema, { cacheKey: "openclaw-oauth2" }),
   register(api) {
     if (api.registrationMode !== "full") return;
+    let activeProxy: OAuth2ProxyServer | null = null;
+    let pendingStart: Promise<void> | null = null;
+    let pendingStop: Promise<void> | null = null;
+    let generation = 0;
 
     api.registerService({
       id: "openclaw-oauth2-proxy",
       start: async (context) => {
+        if (pendingStop) await pendingStop;
+        if (pendingStart) return pendingStart;
+        if (activeProxy) return;
         const config = resolveOAuth2Config(api.pluginConfig);
         if (!config.enabled) {
           context.logger.info("[openclaw-oauth2] disabled; proxy not started");
           return;
         }
         validateOAuth2GatewayIntegration(config, api.config);
-        activeProxy = new OAuth2ProxyServer(config, context.logger);
-        await activeProxy.start();
+        const currentGeneration = generation;
+        const proxy = new OAuth2ProxyServer(config, context.logger);
+        const starting = (async () => {
+          try {
+            await proxy.start();
+            if (currentGeneration !== generation) {
+              await proxy.stop();
+              return;
+            }
+            activeProxy = proxy;
+          } catch (error) {
+            await proxy.stop().catch(() => undefined);
+            throw error;
+          }
+        })();
+        pendingStart = starting;
+        try { await starting; }
+        finally { if (pendingStart === starting) pendingStart = null; }
       },
       stop: async () => {
-        await activeProxy?.stop();
-        activeProxy = null;
+        if (pendingStop) return pendingStop;
+        generation += 1;
+        const stopping = (async () => {
+          try { await pendingStart; } catch { /* Failed start already cleans its proxy. */ }
+          const proxy = activeProxy;
+          activeProxy = null;
+          await proxy?.stop();
+        })();
+        pendingStop = stopping;
+        try { await stopping; }
+        finally { if (pendingStop === stopping) pendingStop = null; }
       },
     });
 

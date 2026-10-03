@@ -1,3 +1,4 @@
+import { formatBudgetedContext, isContextInvocationActive } from '@partme.ai/openclaw-message-sdk/text';
 /**
  * @fileoverview Knowledge 运行时核心 — **配置合并 / Store 缓存 / before_prompt_build 编排**。
  *
@@ -9,7 +10,7 @@
  * @module knowledge/runtime/hooks
  */
 
-import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
+import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import type {
   KnowledgeConfig,
   DeepPartialKnowledgeConfig,
@@ -266,7 +267,7 @@ async function handleBeforePromptBuild(
   knowledgeConfig: any,
   logger: OpenClawPluginApi['logger'],
 ): Promise<BeforePromptBuildResult | undefined> {
-  if (!ctx.message) return;
+  if (!ctx.message || !isContextInvocationActive(ctx)) return;
 
   // OpenClaw 2026.7.1 的 before_prompt_build 不提供 accountId。Hook 与 Tool 必须
   // 共同使用官方 sessionKey，否则多账号环境会出现“写入成功但自动检索永远查不到”。
@@ -293,6 +294,7 @@ async function handleBeforePromptBuild(
     }
 
     const { store, embedding } = await getOrCreateStore(config, namespace);
+    if (!isContextInvocationActive(ctx)) return;
     const retrieval = config.retrieval ?? {};
     const injection = config.injection ?? {};
     const topK = Math.min(retrieval.topK ?? 5, injection.maxChunks ?? 5);
@@ -310,9 +312,10 @@ async function handleBeforePromptBuild(
       topK: topK * 2, // 多召回一些，给 reranker 裁剪空间
       minScore,
       config: hybridConfig,
+      signal: ctx.signal,
     });
 
-    if (chunks.length === 0) return;
+    if (!isContextInvocationActive(ctx) || chunks.length === 0) return;
 
     // ================================================================
     // 节点 2：重排序（可选 — 配置 reranker.provider 后启用）
@@ -322,6 +325,7 @@ async function handleBeforePromptBuild(
       try {
         const documents = chunks.map((c) => c.chunk.metadata.text);
         const reranked = await reranker.rerank(ctx.message, documents, topK);
+        if (!isContextInvocationActive(ctx)) return;
         // 按重排序结果重新组织 chunks
         const chunkMap = new Map(chunks.map((c) => [c.chunk.metadata.text, c]));
         chunks = reranked
@@ -337,7 +341,18 @@ async function handleBeforePromptBuild(
       chunks = chunks.slice(0, topK);
     }
 
-    if (chunks.length === 0) return;
+    if (!isContextInvocationActive(ctx) || chunks.length === 0) return;
+
+    // 显式组合预算在来源去重后一次计数，避免额外 tokenizer 调用与重复截断。
+    if (config.contextMaxTokens !== undefined) {
+      const template = injection.template ?? 'Untrusted knowledge: {context}';
+      const text = formatBudgetedContext('knowledge', chunks.map(({ chunk }) => ({
+        source: String(chunk.metadata.sourceId ?? chunk.id),
+        text: template.replace('{context}', chunk.metadata.text),
+      })), config.contextMaxTokens);
+      if (!text || !isContextInvocationActive(ctx)) return;
+      return injection.position === 'user' ? { prependContext: text } : { prependSystemContext: text };
+    }
 
     // ================================================================
     // 节点 3：构建上下文文本 + Token 截断（可选）
@@ -352,6 +367,7 @@ async function handleBeforePromptBuild(
       try {
         const maxTokens = injection.maxTokens ?? 2048;
         contextText = await tokenizer.truncate(contextText, maxTokens);
+        if (!isContextInvocationActive(ctx)) return;
       } catch (err) {
         logger.warn(`[knowledge] tokenizer truncation failed; using original context: ${safeKnowledgeError(err)}`);
         // 截断失败不阻断
@@ -366,6 +382,7 @@ async function handleBeforePromptBuild(
     // ================================================================
     const template = injection.template ?? '以下是与当前话题可能相关的知识库内容，请选择性参考（如果不相关可忽略）：\n\n{context}';
     const injectedContext = template.replace('{context}', contextText);
+    if (!isContextInvocationActive(ctx)) return;
 
     const position = injection.position ?? 'system';
 

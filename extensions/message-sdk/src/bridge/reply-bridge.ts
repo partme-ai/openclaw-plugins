@@ -8,6 +8,9 @@
  * **关键导出**：`createReplyHandler`
  */
 
+import { createHash, randomUUID } from "node:crypto";
+import { authorizeStructuredMedia, parseStructuredWire } from "../core/structured-wire.js";
+import type { StructuredWireMessage } from "../core/types.js";
 import { serializeForTransport } from "../pipeline/serialize-payload.js";
 import type { ReplyBridgeParams, ReplyBridgeResult } from "./types.js";
 import {
@@ -84,25 +87,42 @@ export function createReplyHandler(params: ReplyBridgeParams): ReplyBridgeResult
     agentId,
   } = params;
 
+  let replySequence = 0;
+  const replyIdentity = params.deliveryIdentity ?? randomUUID();
   const created = runtime.channel.reply.createReplyDispatcherWithTyping({
-    deliver: async (payload: { text: string }) => {
+    deliver: async (payload) => {
+      const text = payload.text ?? "";
+      let structured: StructuredWireMessage | undefined;
+      let authorizedMediaUrls: string[] | undefined;
+      if (outboundFormat === "structured-v1") {
+        const id = createHash("sha256").update(`${replyIdentity}:${replySequence++}`).digest("hex");
+        const urls = payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []);
+        structured = parseStructuredWire(payload.structured ?? {
+          schemaVersion: 1, messageId: id, deliveryId: id,
+          parts: [...(text ? [{ type: "text", text }] : []), ...urls.map((url) => ({ type: "media", mediaType: "other", url }))],
+          replyTo: payload.replyToId, threadId: payload.threadId,
+        });
+        authorizedMediaUrls = await authorizeStructuredMedia(structured, params.structuredMediaHosts);
+      }
       const wire = serializeForTransport({
         channel,
         accountId,
         userId: peerId,
-        text: payload.text,
+        text,
+        structured,
+        authorizedMediaUrls,
         agentId,
         format: outboundFormat ?? "envelope",
         replyRoute,
       });
       try {
-        await deliver({ text: payload.text, wire });
+        await deliver({ text, wire });
         emitMessageSent({
           channel,
           accountId,
           peerId,
           sessionKey,
-          content: payload.text,
+          content: outboundFormat === "structured-v1" ? wire : text,
           success: true,
         });
       } catch (error) {
@@ -111,7 +131,7 @@ export function createReplyHandler(params: ReplyBridgeParams): ReplyBridgeResult
           accountId,
           peerId,
           sessionKey,
-          content: payload.text,
+          content: outboundFormat === "structured-v1" ? wire : text,
           success: false,
           error: error instanceof Error ? error.message : String(error),
         });

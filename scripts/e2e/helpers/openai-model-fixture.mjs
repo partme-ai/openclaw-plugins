@@ -16,10 +16,11 @@ function writeJson(response, status, body) {
 
 export async function startOpenAiModelFixture(port) {
   /** 各插件可在隔离 E2E 中注入有限故障；默认值不改变正常模型夹具行为。 */
-  const controls = { failNextCompletions: 0 };
+  const controls = { failNextCompletions: 0, replyText: "openclaw e2e fixture reply", nextToolCall: null };
   const metrics = {
     models: 0,
     completions: 0,
+    completionsFinished: 0,
     embeddings: 0,
     lastRequest: null,
     lastEmbeddingRequest: null,
@@ -37,6 +38,7 @@ export async function startOpenAiModelFixture(port) {
     if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
       const body = await readJson(request);
       metrics.completions += 1;
+      response.once("finish", () => { metrics.completionsFinished += 1; });
       metrics.lastRequest = body;
       if (controls.failNextCompletions > 0) {
         controls.failNextCompletions -= 1;
@@ -52,7 +54,10 @@ export async function startOpenAiModelFixture(port) {
       const selectedTool = Array.isArray(body.tools)
         ? body.tools.find((tool) => fixtureToolNames.has(tool?.function?.name))
         : undefined;
-      const toolCall = selectedTool?.function?.name === "rednode_ark_invoke"
+      const controlledToolCall = controls.nextToolCall && Array.isArray(body.tools) &&
+        body.tools.some((tool) => tool?.function?.name === controls.nextToolCall.name)
+        ? controls.nextToolCall : null;
+      const autoToolCall = selectedTool?.function?.name === "rednode_ark_invoke"
         ? {
             id: "call_rednode_e2e",
             name: "rednode_ark_invoke",
@@ -74,7 +79,9 @@ export async function startOpenAiModelFixture(port) {
       // OpenClaw 会按 provider compat 归一化 Tool Result 的 role/字段，夹具不应依赖
       // 某一种上游序列化形态。Tool 插件均为隔离 E2E，一轮只发出一次确定性 tool_call；
       // 后续 completion 必须给最终文本，从而也能暴露宿主是否真的执行并回到模型。
-      const requestFixtureTool = Boolean(toolCall && metrics.toolCalls === 0);
+      const toolCall = controlledToolCall ?? autoToolCall;
+      const requestFixtureTool = Boolean(controlledToolCall || autoToolCall && metrics.toolCalls === 0);
+      if (controlledToolCall) controls.nextToolCall = null;
       if (requestFixtureTool) metrics.toolCalls += 1;
       if (body.stream !== true) {
         if (requestFixtureTool && toolCall) {
@@ -106,7 +113,7 @@ export async function startOpenAiModelFixture(port) {
           model: "fixture-model",
           choices: [{
             index: 0,
-            message: { role: "assistant", content: "openclaw e2e fixture reply" },
+            message: { role: "assistant", content: controls.replyText },
             finish_reason: "stop",
           }],
           usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
@@ -154,7 +161,7 @@ export async function startOpenAiModelFixture(port) {
                 object: "chat.completion.chunk",
                 created,
                 model: "fixture-model",
-                choices: [{ index: 0, delta: { role: "assistant", content: "openclaw e2e fixture reply" }, finish_reason: null }],
+                choices: [{ index: 0, delta: { role: "assistant", content: controls.replyText }, finish_reason: null }],
               },
               {
                 id,

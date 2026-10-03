@@ -22,10 +22,12 @@ import {
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { areDiagnosticsEnabledForProcess, waitForDiagnosticEventsDrained } from "openclaw/plugin-sdk/diagnostic-runtime";
 
 import { DiagnosticsCollector } from "./diagnostics/collector.js";
 import { safeDiagnosticHandlerError } from "./diagnostics/metric-store.js";
 import {
+  getDiagnosticsMetricStore,
   resetDiagnosticsMetricStore,
   startDiagnosticsSubscription,
   stopDiagnosticsSubscription,
@@ -54,11 +56,14 @@ import {
   initializeRuntimeStore,
   getRuntimeStore,
   updateRpcSamples,
+  bindRuntimeOwner,
+  withRuntimeOwner,
 } from "./runtime/store.js";
 import {
   refreshHousekeepingMetrics,
   refreshRuntimeSnapshots,
   registerPluginObservers,
+  restartPluginRuntimeEventListeners,
   recordHttpLatency,
   stopPluginObservers,
 } from "./runtime/observer.js";
@@ -66,13 +71,50 @@ import { resetRuntime, setRuntime } from "./runtime/ws-bridge.js";
 
 const PLUGIN_ID = "prometheus";
 
-/** 内部采集状态（每个 register 调用一组） */
-let collectors: MetricCollector[] = [];
-let cache: CollectCache = new CollectCache(0);
-const collectorRunner = new CollectorRunner();
-const collectorErrorCounts = new Map<string, number>();
-const lastCollectorDiagnostics = new Map<string, CollectorDiagnostic>();
-let lastCollectAt: number | undefined;
+/** OpenClaw 延迟调用的入口都恢复注册时的资源 owner。 */
+function scopePluginApi(api: OpenClawPluginApi, lifecycle: { closed: boolean }): OpenClawPluginApi {
+  return new Proxy(api, {
+    get(target, property, receiver) {
+      const original = Reflect.get(target, property, receiver);
+      if (typeof original !== "function" || !new Set(["on", "registerHttpRoute", "registerService", "registerGatewayMethod"]).has(String(property))) return original;
+      return (...args: unknown[]) => {
+        if (property === "on" || property === "registerGatewayMethod") {
+          const callback = args[1] as (...values: unknown[]) => unknown;
+          args[1] = bindRuntimeOwner((...values: unknown[]) => {
+            if (lifecycle.closed) {
+              if (property === "registerGatewayMethod") {
+                const invocation = values[0] as { respond?: (ok: boolean, payload: unknown) => void };
+                invocation.respond?.(false, { error: "Metrics exporter stopped" });
+              }
+              return undefined;
+            }
+            return callback(...values);
+          });
+        } else {
+          const definition = args[0] as Record<string, unknown>;
+          const wrapped = { ...definition };
+          for (const key of property === "registerService" ? ["start", "stop"] : ["handler"]) {
+            if (typeof wrapped[key] === "function") {
+              const callback = wrapped[key] as (...values: unknown[]) => unknown;
+              wrapped[key] = bindRuntimeOwner((...values: unknown[]) => {
+                if (property === "registerService" && key === "stop") lifecycle.closed = true;
+                if (property === "registerHttpRoute" && lifecycle.closed) {
+                  const response = values[1] as ServerResponse;
+                  response.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
+                  response.end("Metrics exporter stopped\n");
+                  return;
+                }
+                return callback(...values);
+              });
+            }
+          }
+          args[0] = wrapped;
+        }
+        return Reflect.apply(original, target, args);
+      };
+    },
+  });
+}
 
 /**
  * @description 组装启用的 MetricCollector 列表。
@@ -99,97 +141,6 @@ function buildCollectors(includeRuntime: boolean): MetricCollector[] {
     list.push(new RuntimeCollector());
   }
   return list;
-}
-
-function disposeCollectors(): void {
-  for (const collector of collectors) {
-    const disposable = collector as MetricCollector & { dispose?: () => void };
-    disposable.dispose?.();
-  }
-  collectors = [];
-}
-
-/**
- * @description 并行执行所有 collector.collect() 并汇总定义、样本与诊断。
- *
- * @returns definitions、samples 与 per-collector diagnostics
- */
-const COLLECTOR_SUCCESS_DEF: MetricDefinition = {
-  name: "openclaw_metrics_collector_success",
-  help: "Whether a collector succeeded during the last scrape (1=yes, 0=no)",
-  type: "gauge",
-  labels: ["collector"],
-};
-
-const COLLECTOR_ERRORS_TOTAL_DEF: MetricDefinition = {
-  name: "openclaw_metrics_collect_errors_total",
-  help: "Cumulative collector failures observed by the exporter",
-  type: "counter",
-  labels: ["collector"],
-};
-
-async function collectAll(collectorTimeoutMs: number): Promise<{
-  definitions: MetricDefinition[];
-  samples: MetricSample[];
-  diagnostics: CollectorDiagnostic[];
-}> {
-  const allDefinitions: MetricDefinition[] = [];
-  const allSamples: MetricSample[] = [];
-  const diagnostics: CollectorDiagnostic[] = [];
-  const rpcSamples: MetricSample[] = [];
-
-  const results = await Promise.allSettled(
-    collectors.map((collector) => collectorRunner.run(collector, collectorTimeoutMs)),
-  );
-  allDefinitions.push(COLLECTOR_SUCCESS_DEF, COLLECTOR_ERRORS_TOTAL_DEF);
-
-  for (let i = 0; i < collectors.length; i++) {
-    allDefinitions.push(...collectors[i].definitions);
-    const result = results[i];
-    const collector = collectors[i].name;
-    if (result.status === "fulfilled") {
-      allSamples.push(...result.value);
-      if (collector !== "plugin-runtime" && collector !== "runtime" && collector !== "diagnostics") {
-        rpcSamples.push(...result.value);
-      }
-      allSamples.push({
-        name: COLLECTOR_SUCCESS_DEF.name,
-        labels: { collector },
-        value: 1,
-      });
-      allSamples.push({
-        name: COLLECTOR_ERRORS_TOTAL_DEF.name,
-        labels: { collector },
-        value: collectorErrorCounts.get(collector) ?? 0,
-      });
-      diagnostics.push({ collector, ok: true });
-      lastCollectorDiagnostics.set(collector, { collector, ok: true });
-      continue;
-    }
-    const nextCount = (collectorErrorCounts.get(collector) ?? 0) + 1;
-    collectorErrorCounts.set(collector, nextCount);
-    allSamples.push({
-      name: COLLECTOR_SUCCESS_DEF.name,
-      labels: { collector },
-      value: 0,
-    });
-    allSamples.push({
-      name: COLLECTOR_ERRORS_TOTAL_DEF.name,
-      labels: { collector },
-      value: nextCount,
-    });
-    const diagnostic = {
-      collector,
-      ok: false,
-      error: safeDiagnosticHandlerError(result.reason),
-    } satisfies CollectorDiagnostic;
-    diagnostics.push(diagnostic);
-    lastCollectorDiagnostics.set(collector, diagnostic);
-  }
-
-  lastCollectAt = Date.now();
-  updateRpcSamples(rpcSamples);
-  return { definitions: dedupeDefinitions(allDefinitions), samples: allSamples, diagnostics };
 }
 
 const BUILD_INFO_DEF: MetricDefinition = {
@@ -244,7 +195,248 @@ function metricsChildPath(base: string, suffix: string): string {
  *
  * @param api - OpenClaw 插件 API
  */
-function registerMetricsRoutes(api: OpenClawPluginApi): void {
+function registerMetricsRoutes(api: OpenClawPluginApi, lifecycle: { closed: boolean }): void {
+  /** 每次 register 独立持有 collector、采集缓存与诊断状态。 */
+  let collectors: MetricCollector[] = [];
+  let cache: CollectCache = new CollectCache(0);
+  const collectorRunner = new CollectorRunner();
+  const collectorErrorCounts = new Map<string, number>();
+  const lastCollectorDiagnostics = new Map<string, CollectorDiagnostic>();
+  let lastCollectAt: number | undefined;
+  let generation = 0;
+
+function disposeCollectors(): void {
+  for (const collector of collectors) {
+    const disposable = collector as MetricCollector & { dispose?: () => void };
+    disposable.dispose?.();
+  }
+  collectors = [];
+}
+
+/**
+ * @description 并行执行所有 collector.collect() 并汇总定义、样本与诊断。
+ *
+ * @returns definitions、samples 与 per-collector diagnostics
+ */
+const COLLECTOR_SUCCESS_DEF: MetricDefinition = {
+  name: "openclaw_metrics_collector_success",
+  help: "Whether a collector succeeded during the last scrape (1=yes, 0=no)",
+  type: "gauge",
+  labels: ["collector"],
+};
+
+const COLLECTOR_ERRORS_TOTAL_DEF: MetricDefinition = {
+  name: "openclaw_metrics_collect_errors_total",
+  help: "Cumulative collector failures observed by the exporter",
+  type: "counter",
+  labels: ["collector"],
+};
+
+async function collectAll(collectorTimeoutMs: number): Promise<{
+  definitions: MetricDefinition[];
+  samples: MetricSample[];
+  diagnostics: CollectorDiagnostic[];
+}> {
+  const currentGeneration = generation;
+  const ownedCollectors = [...collectors];
+  const allDefinitions: MetricDefinition[] = [];
+  const allSamples: MetricSample[] = [];
+  const diagnostics: CollectorDiagnostic[] = [];
+  const rpcSamples: MetricSample[] = [];
+
+  const results = await Promise.allSettled(
+    ownedCollectors.map((collector) => collectorRunner.run(collector, collectorTimeoutMs)),
+  );
+  if (currentGeneration !== generation) return { definitions: [], samples: [], diagnostics: [] };
+  allDefinitions.push(COLLECTOR_SUCCESS_DEF, COLLECTOR_ERRORS_TOTAL_DEF);
+
+  for (let i = 0; i < ownedCollectors.length; i++) {
+    allDefinitions.push(...ownedCollectors[i].definitions);
+    const result = results[i];
+    const collector = ownedCollectors[i].name;
+    if (result.status === "fulfilled") {
+      allSamples.push(...result.value);
+      if (collector !== "plugin-runtime" && collector !== "runtime" && collector !== "diagnostics") {
+        rpcSamples.push(...result.value);
+      }
+      allSamples.push({
+        name: COLLECTOR_SUCCESS_DEF.name,
+        labels: { collector },
+        value: 1,
+      });
+      allSamples.push({
+        name: COLLECTOR_ERRORS_TOTAL_DEF.name,
+        labels: { collector },
+        value: collectorErrorCounts.get(collector) ?? 0,
+      });
+      diagnostics.push({ collector, ok: true });
+      lastCollectorDiagnostics.set(collector, { collector, ok: true });
+      continue;
+    }
+    const nextCount = (collectorErrorCounts.get(collector) ?? 0) + 1;
+    collectorErrorCounts.set(collector, nextCount);
+    allSamples.push({
+      name: COLLECTOR_SUCCESS_DEF.name,
+      labels: { collector },
+      value: 0,
+    });
+    allSamples.push({
+      name: COLLECTOR_ERRORS_TOTAL_DEF.name,
+      labels: { collector },
+      value: nextCount,
+    });
+    const diagnostic = {
+      collector,
+      ok: false,
+      error: safeDiagnosticHandlerError(result.reason),
+    } satisfies CollectorDiagnostic;
+    diagnostics.push(diagnostic);
+    lastCollectorDiagnostics.set(collector, diagnostic);
+  }
+
+  lastCollectAt = Date.now();
+  updateRpcSamples(rpcSamples);
+  return { definitions: dedupeDefinitions(allDefinitions), samples: allSamples, diagnostics };
+}
+
+/** @description 从 collector 错误计数汇总 failed/total 诊断。 */
+function diagnosticsFromCollectorMap(): { total: number; failed: number } {
+  const total = collectors.length;
+  let failed = 0;
+  for (const collector of collectors) {
+    const success = lastCollectorDiagnostics.get(collector.name)?.ok !== false;
+    if (!success) {
+      failed += 1;
+    }
+  }
+  return { total, failed };
+}
+
+/** @description 是否存在依赖 RPC 的 collector（非 plugin-runtime/runtime/diagnostics）。 */
+function hasRpcCollectorsConfigured(): boolean {
+  return collectors.some(
+    (collector) =>
+      collector.name !== "plugin-runtime" &&
+      collector.name !== "runtime" &&
+      collector.name !== "diagnostics",
+  );
+}
+
+/** @description 按 metric name 去重 MetricDefinition 列表。 */
+function dedupeDefinitions(definitions: MetricDefinition[]): MetricDefinition[] {
+  const seen = new Set<string>();
+  const deduped: MetricDefinition[] = [];
+  for (const definition of definitions) {
+    if (seen.has(definition.name)) {
+      continue;
+    }
+    seen.add(definition.name);
+    deduped.push(definition);
+  }
+  return deduped;
+}
+
+/** @description 构建 JSON 格式 scrape 响应中的 rpc/collectors 元数据块。 */
+function buildJsonMeta(): {
+  rpc: {
+    initialized: boolean;
+    lastSuccessAt: string | null;
+    lastMethod: string | null;
+    lastError: string | null;
+  };
+  collectors: {
+    total: number;
+    failed: number;
+  };
+} {
+  const store = getRuntimeStore();
+  return {
+    rpc: {
+      initialized: store.rpcClientInitialized,
+      lastSuccessAt: store.lastRpcSuccessAt ? new Date(store.lastRpcSuccessAt).toISOString() : null,
+      lastMethod: store.lastRpcMethod ?? null,
+      lastError: store.lastRpcError ? safeDiagnosticHandlerError(store.lastRpcError) : null,
+    },
+    collectors: diagnosticsFromCollectorMap(),
+  };
+}
+
+/**
+ * @description 包装 HTTP handler：记录请求计数与 duration histogram。
+ *
+ * @param routePath - 注册的路由路径
+ * @param req - 入站 HTTP 请求
+ * @param res - 出站 HTTP 响应
+ * @param fn - 实际 handler 逻辑
+ */
+async function withRouteMetrics(
+  routePath: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const currentGeneration = generation;
+  const startedAt = performance.now();
+  try {
+    if (req.method !== "GET") {
+      res.writeHead(405, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        Allow: "GET",
+      });
+      res.end("Method Not Allowed\n");
+      return;
+    }
+    await fn();
+  } finally {
+    if (currentGeneration === generation) {
+    const statusCode =
+      typeof (res as ServerResponse & { statusCode?: number }).statusCode === "number"
+        ? String((res as ServerResponse & { statusCode?: number }).statusCode)
+        : "200";
+    const { registry } = getRuntimeStore();
+    const labels = {
+      route: routePath,
+      method: req.method ?? "GET",
+      status: statusCode,
+    };
+    registry.inc("openclaw_metrics_http_requests_total", 1, {
+      help: "HTTP requests served by the Prometheus plugin routes",
+      type: "counter",
+      labels,
+    });
+    const durationSeconds = (performance.now() - startedAt) / 1000;
+    registry.observeHistogram("openclaw_metrics_http_request_duration_seconds", durationSeconds, {
+      help: "HTTP request duration served by the Prometheus plugin routes",
+      labels: {
+        route: routePath,
+        method: req.method ?? "GET",
+      },
+    });
+    recordHttpLatency(durationSeconds);
+    }
+  }
+}
+
+function writeJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  res.end(JSON.stringify(payload, null, 2));
+}
+
+function configuredRouterTelemetry(config: unknown): "enabled" | "disabled" | "unknown" {
+  if (!config || typeof config !== "object") return "unknown";
+  const plugins = (config as { plugins?: { entries?: Record<string, unknown> } }).plugins;
+  const entry = plugins?.entries?.router;
+  if (entry === undefined) return "unknown";
+  if (typeof entry === "boolean") return entry ? "enabled" : "disabled";
+  if (!entry || typeof entry !== "object") return "unknown";
+  const settings = entry as { enabled?: unknown; config?: { enabled?: unknown } };
+  return settings.enabled === false || settings.config?.enabled === false ? "disabled" : "enabled";
+}
+
   const cfg = resolvePrometheusConfig(api.pluginConfig as Record<string, unknown> | undefined);
   initializeRuntimeStore(api, cfg);
   setRuntime({
@@ -258,16 +450,67 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
   lastCollectorDiagnostics.clear();
   lastCollectAt = undefined;
 
+  let pendingStart: Promise<void> | null = null;
+  let pendingStop: Promise<void> | null = null;
+  let started = false;
+  let stoppedOnce = false;
+  let activeServiceConfig: unknown = null;
   api.registerService({
     id: "openclaw-prometheus-diagnostics",
     start: async (ctx) => {
-      await startDiagnosticsSubscription({
+      if (pendingStop) await pendingStop;
+      if (pendingStart) return pendingStart;
+      if (started && !lifecycle.closed) return;
+      activeServiceConfig = ctx.config ?? api.config;
+      lifecycle.closed = false;
+      if (stoppedOnce) {
+        initializeRuntimeStore(api, cfg);
+        setRuntime({ ...(api.runtime as GatewayRuntime), config: api.config as Record<string, unknown> });
+        refreshHousekeepingMetrics();
+        restartPluginRuntimeEventListeners(api);
+        collectors = buildCollectors(cfg.includeRuntime);
+        cache = new CollectCache(cfg.collectIntervalMs);
+        stoppedOnce = false;
+      }
+      const currentGeneration = generation;
+      const starting = startDiagnosticsSubscription({
         logger: api.logger,
         internalDiagnostics: ctx.internalDiagnostics as import("./diagnostics/subscribe.js").InternalDiagnosticsBridge | undefined,
-        config: api.config,
+        config: activeServiceConfig,
       });
+      pendingStart = starting;
+      try {
+        await starting;
+        if (currentGeneration === generation && !lifecycle.closed) started = true;
+      }
+      catch (error) {
+        started = false;
+        activeServiceConfig = null;
+        lifecycle.closed = true;
+        stopDiagnosticsSubscription();
+        resetDiagnosticsMetricStore();
+        stopPluginObservers();
+        disposeCollectors();
+        collectorRunner.clear();
+        resetRuntime();
+        stoppedOnce = true;
+        throw error;
+      }
+      finally {
+        if (pendingStart === starting) pendingStart = null;
+        if (currentGeneration !== generation) stopDiagnosticsSubscription();
+      }
     },
-    stop: () => {
+    stop: async () => {
+      if (pendingStop) return pendingStop;
+      generation += 1;
+      const stopping = (async () => {
+      try { await pendingStart; } catch { /* Subscription startup has no required external service. */ }
+      // Host log.record diagnostics are queued. Bound shutdown drain so a stuck
+      // dispatcher cannot hold Gateway stop indefinitely.
+      await Promise.race([waitForDiagnosticEventsDrained(), new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 1_000); timer.unref();
+      })]);
       stopDiagnosticsSubscription();
       resetDiagnosticsMetricStore();
       stopPluginObservers();
@@ -277,6 +520,12 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
       collectorErrorCounts.clear();
       lastCollectorDiagnostics.clear();
       lastCollectAt = undefined;
+      started = false;
+      activeServiceConfig = null;
+      stoppedOnce = true;
+      })();
+      pendingStop = stopping;
+      try { await stopping; } finally { if (pendingStop === stopping) pendingStop = null; }
     },
   });
 
@@ -294,6 +543,7 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
     samples: MetricSample[];
     diagnostics: CollectorDiagnostic[];
   } | null> {
+    const currentGeneration = generation;
     if (!alreadyAuthorized && !assertScrapeAuthorized(req, res, cfg)) {
       return null;
     }
@@ -306,6 +556,10 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
         collectDurationSeconds: (performance.now() - collectStartedAt) / 1000,
       };
     });
+    if (currentGeneration !== generation) {
+      writeJson(res, 503, { ok: false, error: "Metrics exporter stopped" });
+      return null;
+    }
     const scrapeSeconds = bundle.collectDurationSeconds ?? 0;
 
     let definitions = [...bundle.definitions];
@@ -383,7 +637,12 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
       if (!assertScrapeAuthorized(req, res, cfg)) {
         return;
       }
+      const currentGeneration = generation;
       await refreshRuntimeSnapshots(false);
+      if (currentGeneration !== generation || lifecycle.closed) {
+        writeJson(res, 503, { ok: false, error: "Metrics exporter stopped" });
+        return;
+      }
       refreshHousekeepingMetrics();
       const store = getRuntimeStore();
 
@@ -391,6 +650,17 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
       const snapshotAge = Date.now() - (store.lastSnapshotRefreshAt ?? 0);
       const snapshotHealthy = snapshotAge <= Math.max(60_000, cfg.snapshotIntervalMs * 2);
       const collectorFailures = diagnosticsFromCollectorMap();
+      const diagnosticQueueDrops = [...getDiagnosticsMetricStore().snapshot().counters]
+        .filter(([key]) => key.startsWith("openclaw_diagnostic_async_queue_dropped_total|"))
+        .reduce((sum, [, sample]) => sum + sample.value, 0);
+      const routerDlqObservedAtMs = getDiagnosticsMetricStore().routerDlqLastObservedAtMs();
+      const routerDlqAgeMs = routerDlqObservedAtMs === null ? null : Math.max(0, Date.now() - routerDlqObservedAtMs);
+      const routerDlqFresh = routerDlqAgeMs !== null && routerDlqAgeMs <= 90_000;
+      const routerConfigured = configuredRouterTelemetry(activeServiceConfig);
+      const routerDlqRelevant = routerConfigured === "enabled" ||
+        (routerConfigured === "unknown" && routerDlqObservedAtMs !== null);
+      const routerDlqStatus = !routerDlqRelevant ? "unavailable" : routerDlqFresh ? "fresh" :
+        routerDlqObservedAtMs === null ? "missing" : "stale";
       const healthy =
         snapshotHealthy &&
         collectorFailures.failed === 0 &&
@@ -415,6 +685,21 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
           lastError: store.lastRpcError ? safeDiagnosticHandlerError(store.lastRpcError) : null,
         },
         collectors: collectorFailures,
+        deliveryTelemetry: {
+          diagnosticsEnabled: areDiagnosticsEnabledForProcess(),
+          subscribed: started,
+          diagnosticQueueDrops,
+          routerDlq: {
+            configured: routerConfigured,
+            status: routerDlqStatus,
+            lastObservedAt: routerDlqObservedAtMs === null ? null : new Date(routerDlqObservedAtMs).toISOString(),
+            ageMs: routerDlqAgeMs,
+            fresh: routerDlqFresh,
+          },
+          status: !areDiagnosticsEnabledForProcess() || !started || diagnosticQueueDrops > 0 ||
+            (routerDlqRelevant && !routerDlqFresh)
+            ? "degraded" : "best-effort",
+        },
         snapshot: {
           ageMs: snapshotAge,
           healthy: snapshotHealthy,
@@ -518,137 +803,15 @@ function registerMetricsRoutes(api: OpenClawPluginApi): void {
   );
 }
 
-/** @description 从 collector 错误计数汇总 failed/total 诊断。 */
-function diagnosticsFromCollectorMap(): { total: number; failed: number } {
-  const total = collectors.length;
-  let failed = 0;
-  for (const collector of collectors) {
-    const success = lastCollectorDiagnostics.get(collector.name)?.ok !== false;
-    if (!success) {
-      failed += 1;
-    }
-  }
-  return { total, failed };
-}
-
-/** @description 是否存在依赖 RPC 的 collector（非 plugin-runtime/runtime/diagnostics）。 */
-function hasRpcCollectorsConfigured(): boolean {
-  return collectors.some(
-    (collector) =>
-      collector.name !== "plugin-runtime" &&
-      collector.name !== "runtime" &&
-      collector.name !== "diagnostics",
-  );
-}
-
-/** @description 按 metric name 去重 MetricDefinition 列表。 */
-function dedupeDefinitions(definitions: MetricDefinition[]): MetricDefinition[] {
-  const seen = new Set<string>();
-  const deduped: MetricDefinition[] = [];
-  for (const definition of definitions) {
-    if (seen.has(definition.name)) {
-      continue;
-    }
-    seen.add(definition.name);
-    deduped.push(definition);
-  }
-  return deduped;
-}
-
-/** @description 构建 JSON 格式 scrape 响应中的 rpc/collectors 元数据块。 */
-function buildJsonMeta(): {
-  rpc: {
-    initialized: boolean;
-    lastSuccessAt: string | null;
-    lastMethod: string | null;
-    lastError: string | null;
-  };
-  collectors: {
-    total: number;
-    failed: number;
-  };
-} {
-  const store = getRuntimeStore();
-  return {
-    rpc: {
-      initialized: store.rpcClientInitialized,
-      lastSuccessAt: store.lastRpcSuccessAt ? new Date(store.lastRpcSuccessAt).toISOString() : null,
-      lastMethod: store.lastRpcMethod ?? null,
-      lastError: store.lastRpcError ? safeDiagnosticHandlerError(store.lastRpcError) : null,
-    },
-    collectors: diagnosticsFromCollectorMap(),
-  };
-}
-
-/**
- * @description 包装 HTTP handler：记录请求计数与 duration histogram。
- *
- * @param routePath - 注册的路由路径
- * @param req - 入站 HTTP 请求
- * @param res - 出站 HTTP 响应
- * @param fn - 实际 handler 逻辑
- */
-async function withRouteMetrics(
-  routePath: string,
-  req: IncomingMessage,
-  res: ServerResponse,
-  fn: () => Promise<void>,
-): Promise<void> {
-  const startedAt = performance.now();
-  try {
-    if (req.method !== "GET") {
-      res.writeHead(405, {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-store",
-        Allow: "GET",
-      });
-      res.end("Method Not Allowed\n");
-      return;
-    }
-    await fn();
-  } finally {
-    const statusCode =
-      typeof (res as ServerResponse & { statusCode?: number }).statusCode === "number"
-        ? String((res as ServerResponse & { statusCode?: number }).statusCode)
-        : "200";
-    const { registry } = getRuntimeStore();
-    const labels = {
-      route: routePath,
-      method: req.method ?? "GET",
-      status: statusCode,
-    };
-    registry.inc("openclaw_metrics_http_requests_total", 1, {
-      help: "HTTP requests served by the Prometheus plugin routes",
-      type: "counter",
-      labels,
-    });
-    const durationSeconds = (performance.now() - startedAt) / 1000;
-    registry.observeHistogram("openclaw_metrics_http_request_duration_seconds", durationSeconds, {
-      help: "HTTP request duration served by the Prometheus plugin routes",
-      labels: {
-        route: routePath,
-        method: req.method ?? "GET",
-      },
-    });
-    recordHttpLatency(durationSeconds);
-  }
-}
-
-function writeJson(res: ServerResponse, status: number, payload: unknown): void {
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-  });
-  res.end(JSON.stringify(payload, null, 2));
-}
-
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: PLUGIN_ID,
   name: "Prometheus",
   description:
     "Prometheus metrics exporter for OpenClaw Gateway — supersedes bundled diagnostics-prometheus (internal diagnostic events) plus RPC/hook/SLI extensions",
   register(api: OpenClawPluginApi) {
-    registerMetricsRoutes(api);
+    const owner = {};
+    const lifecycle = { closed: false };
+    withRuntimeOwner(owner, () => registerMetricsRoutes(scopePluginApi(api, lifecycle), lifecycle));
   },
 });
 

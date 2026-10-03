@@ -12,9 +12,8 @@
 /**
  * OpenClaw Bridge — 统一 IM 渠道适配层
  *
- * 一个插件，覆盖 27 个 OpenClaw 消息渠道：
- * - 20 个 OpenClaw 2026.7.1 stock 渠道
- * - 当前仓库 6 个渠道与外部钉钉连接器
+ * 静态识别 27 个消息渠道（19 个 OpenClaw 2026.9.6 bundled，
+ * 6 个当前仓库渠道与 2 个外部连接器）；识别不表示已安装或就绪。
  *
  * 功能：
  * 1. before_prompt_build — 按渠道注入平台特定的系统上下文
@@ -22,12 +21,12 @@
  * 3. 导出 normalizeForChannel / getChannelCapabilities / deriveTraceId 等供下游使用
  */
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import plugin from "./bridge/plugin-entry.js";
 
 // ── 渠道注册表 ──
-export { ALL_CHANNELS, getChannelMeta, getExternalChannels, getBundledChannels } from "./bridge/channels.js";
-export type { ChannelMeta, ChannelContextPreset } from "./bridge/channels.js";
+export { ALL_CHANNELS, getChannelMeta, getExternalChannels, getBundledChannels, adaptGatewayChannelFacts, resolveChannelAvailability } from "./bridge/channels.js";
+export type { ChannelMeta, ChannelContextPreset, ChannelRuntimeFacts } from "./bridge/channels.js";
 
 // ── 渠道能力 ──
 export { getChannelCapabilities, ALL_CAPABILITIES } from "./bridge/capabilities.js";

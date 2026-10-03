@@ -16,6 +16,7 @@ export default defineConfig({
   sourcemap: true,
   target: "node22",
   outDir: "dist",
+  banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
   external: [/^openclaw(\/.*)?$/],
   noExternal: ["redis"],
 });

@@ -41,6 +41,7 @@ export async function requestProviderJson<T>(
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    if (attempt > 0 && init.signal?.aborted) throw new Error(`${provider} ${operation} request aborted by caller`);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref?.();
@@ -66,7 +67,7 @@ export async function requestProviderJson<T>(
       lastError = error;
       // 调用方主动取消代表上游已经放弃本次工作，既不应伪装成 Provider 超时，也不应
       // 继续重试并制造额外外部副作用。只有本客户端自己的超时 Abort 才进入重试判断。
-      if (init.signal?.aborted && error instanceof Error && error.name === 'AbortError') {
+      if (init.signal?.aborted) {
         throw new Error(`${provider} ${operation} request aborted by caller`, { cause: error });
       }
       if (attempt === maxRetries || !isRetryableError(error)) {
@@ -75,7 +76,7 @@ export async function requestProviderJson<T>(
     } finally {
       clearTimeout(timer);
     }
-    await delay(Math.min(250 * 2 ** attempt, 2_000));
+    await delay(Math.min(250 * 2 ** attempt, 2_000), init.signal);
   }
   throw normalizeError(lastError, provider, operation, timeoutMs);
 }
@@ -178,9 +179,13 @@ function safeErrorText(value: string): string {
   return safeKnowledgeError(value).slice(0, 2_048);
 }
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, milliseconds);
+function delay(milliseconds: number, signal?: AbortSignal | null): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const finish = () => { signal?.removeEventListener('abort', abort); resolve(); };
+    const timer = setTimeout(finish, milliseconds);
+    const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(signal?.reason); };
+    signal?.addEventListener('abort', abort, { once: true });
     timer.unref?.();
   });
 }

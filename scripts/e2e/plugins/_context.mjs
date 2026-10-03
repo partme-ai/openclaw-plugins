@@ -24,6 +24,7 @@ export function createTestContext(pluginIds, services = {}) {
 
   return {
     pluginIds,
+    gatewayRestarts: [],
     meta,
     gotifySecrets,
     installed,
@@ -56,9 +57,11 @@ export function createTestContext(pluginIds, services = {}) {
  * @param {ReturnType<typeof resultRow>[]} results
  */
 export async function runAdapterTest(ctx, plugin, fn, meta, results) {
+  const restartOffset = ctx.gatewayRestarts.length;
   try {
     await fn();
-    results.push(ctx.resultRow({ plugin, result: "PASS", installedPath: ctx.installedPath(plugin), ...meta }));
+    results.push(ctx.resultRow({ plugin, result: "PASS", installedPath: ctx.installedPath(plugin),
+      gatewayRestarts: ctx.gatewayRestarts.slice(restartOffset), ...meta }));
   } catch (err) {
     results.push(
       ctx.resultRow({
@@ -66,6 +69,7 @@ export async function runAdapterTest(ctx, plugin, fn, meta, results) {
         result: "FAIL",
         blocker: err instanceof Error ? err.message : String(err),
         installedPath: ctx.installedPath(plugin),
+        gatewayRestarts: ctx.gatewayRestarts.slice(restartOffset),
         ...meta,
       }),
     );

@@ -5,8 +5,9 @@
  * 队首，缓冲超限则丢弃最旧 Span 并降低健康状态。后端每天清理过期文件，关闭时必须完成
  * 最后一轮 flush，否则明确报告未持久化数据。
  */
-import { appendFile, mkdir, readdir, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { constants } from "node:fs";
+import { chmod, lstat, mkdir, open, readdir, realpath, unlink } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   Span,
   TracingBackend,
@@ -43,13 +44,13 @@ export class FileBackend implements TracingBackend {
     droppedSpans: 0,
   };
 
-  constructor(private readonly logger: TracingLogger) {}
+  constructor(private readonly logger: TracingLogger, private readonly profileStateDir?: string) {}
 
   async init(config: TracingConfig): Promise<void> {
     this.traceDir = config.traceDir;
     this.maxBufferedSpans = config.maxBufferedSpans;
     this.retentionDays = config.traceRetentionDays;
-    await mkdir(this.traceDir, { recursive: true });
+    await this.ensureTraceDirectory();
     await this.cleanupExpiredFiles();
     this.flushTimer = setInterval(() => {
       void this.flush().catch((error: unknown) => {
@@ -97,6 +98,7 @@ export class FileBackend implements TracingBackend {
 
   private async flushInternal(): Promise<void> {
     if (this.buffer.length === 0) return;
+    await this.ensureTraceDirectory();
     const date = new Date().toISOString().slice(0, 10);
     if (date !== this.lastRetentionDate) await this.cleanupExpiredFiles();
     const filePath = join(this.traceDir, `traces-${date}.jsonl`);
@@ -107,7 +109,14 @@ export class FileBackend implements TracingBackend {
       remaining -= lines.length;
       this.inFlightSpans = lines.length;
       try {
-        await appendFile(filePath, `${lines.join("\n")}\n`, "utf8");
+        const handle = await open(filePath,
+          constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+        try {
+          await handle.chmod(0o600);
+          await handle.writeFile(`${lines.join("\n")}\n`, "utf8");
+        } finally {
+          await handle.close();
+        }
         this.inFlightSpans = 0;
         this.status = {
           ...this.status,
@@ -142,6 +151,7 @@ export class FileBackend implements TracingBackend {
   }
 
   private async cleanupExpiredFiles(): Promise<void> {
+    await this.ensureTraceDirectory();
     const today = new Date().toISOString().slice(0, 10);
     const todayStart = Date.parse(`${today}T00:00:00.000Z`);
     const cutoff = todayStart - (this.retentionDays - 1) * 86_400_000;
@@ -155,6 +165,39 @@ export class FileBackend implements TracingBackend {
       }
     }));
     this.lastRetentionDate = today;
+  }
+
+  /** Relative traceDir paths must remain in the current OpenClaw profile even through parent symlinks. */
+  private async ensureTraceDirectory(): Promise<void> {
+    const target = resolve(this.traceDir);
+    if (this.profileStateDir) {
+      const root = resolve(this.profileStateDir);
+      const lexical = relative(root, target);
+      if (lexical === ".." || lexical.startsWith(`..${sep}`) || isAbsolute(lexical)) {
+        throw new Error("file traceDir escaped the OpenClaw state directory");
+      }
+      await mkdir(root, { recursive: true, mode: 0o700 });
+      const rootEntry = await lstat(root);
+      if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink()) throw new Error("unsafe file traceDir state directory");
+      let cursor = root;
+      for (const component of lexical.split(sep).filter(Boolean)) {
+        cursor = join(cursor, component);
+        await mkdir(cursor, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "EEXIST") throw error;
+        });
+        const entry = await lstat(cursor);
+        if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("unsafe file traceDir symlink");
+      }
+      const canonical = relative(await realpath(root), await realpath(target));
+      if (canonical === ".." || canonical.startsWith(`..${sep}`) || isAbsolute(canonical)) {
+        throw new Error("file traceDir escaped the OpenClaw state directory");
+      }
+      await chmod(target, 0o700);
+    } else {
+      await mkdir(target, { recursive: true });
+      const entry = await lstat(target);
+      if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("unsafe file traceDir symlink");
+    }
   }
 }
 

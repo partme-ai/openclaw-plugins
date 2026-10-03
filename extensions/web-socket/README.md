@@ -177,7 +177,7 @@ flowchart LR
 - Browser-safe subprotocol token authentication without putting credentials in the URL
 - Native WSS listener with configurable certificate, CA and minimum TLS version
 - Origin 白名单、每连接速率限制、异步入站队列与出站背压保护
-- Two-phase `messageId` dedupe: claim before dispatch, commit only after reply delivery, release on failure
+- Durable delivery journal for frames with both a stable client-declared `peerId` and `messageId`; frames without either field use best-effort processing
 - Outbound adapter failures throw so a Router outbox can retry or dead-letter them instead of accepting a placeholder message ID
 - WebSocket ping/pong 心跳、连接超时、指数退避重连与可等待停机
 - Reply/accepted/outbound writes wait for the `ws.send` callback and fail within a configured timeout
@@ -214,7 +214,7 @@ After the Agent pipeline and reply delivery complete, the server emits:
 { "version": "1", "type": "accepted", "messageId": "optional" }
 ```
 
-If dispatch or reply delivery fails, the `messageId` claim is released so the same message can be retried. Only a completed pipeline commits the dedupe record.
+For durable redelivery, send both a stable client-declared `peerId` and `messageId`. The journal keeps completed delivery outcomes across connection changes and detects a changed payload under the same pair. `peerId` is an idempotency scope supplied by the client, not an authenticated identity. Frames without either field remain compatible but use best-effort processing. An ambiguous delivery outcome does not rerun the Agent automatically.
 
 All structured outbound frames carry `version: "1"`. Explicit unsupported versions are rejected; unversioned JSON and plain text remain compatible with 0.1.x clients.
 
@@ -227,7 +227,7 @@ Caller        WS transport       bounded queue       OpenClaw       Agent
   │                │                  │                  │◀── reply ───┤
   │◀── reply ──────┤◀─────────────────┴──────────────────┤             │
   │◀── accepted ───┤  only after Agent + reply delivery                 │
-  │                │  failure: release(m-1) + error, no accepted        │
+  │                │  failure: error, no accepted                       │
 ```
 
 ```mermaid
@@ -238,8 +238,8 @@ sequenceDiagram
   participant Q as Per-connection queue
   participant O as OpenClaw Runtime
   participant A as Agent
-  C->>W: message(version=1, messageId=m-1)
-  W->>Q: validate + claim + enqueue
+  C->>W: message(version=1, peerId=p-1, messageId=m-1)
+  W->>Q: validate + enqueue
   Q->>O: dispatchChannelMessage
   O->>A: Agent Turn
   A-->>O: reply

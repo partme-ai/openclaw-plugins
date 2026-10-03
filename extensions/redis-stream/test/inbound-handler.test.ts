@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  dispatchChannelMessage: vi.fn().mockResolvedValue(undefined),
+  dispatchChannelMessage: vi.fn().mockResolvedValue({ deliveryOutcome: { kind: "delivered" } }),
   resolveChannelDispatchIdentity: vi.fn().mockResolvedValue({
     agentId: "main",
     sessionKey: "agent:main:redis-stream:direct:openclaw:agent:demo:in",
@@ -33,7 +33,6 @@ vi.mock("../src/transport/publisher.js", () => ({
 import { resolveRedisChannelConfig } from "../src/config.js";
 import { handleInboundMessage } from "../src/inbound.js";
 import { setRedisStreamRuntime } from "../src/runtime.js";
-import { getRedisStreamClaimableDedupe } from "../src/shared/wire-helpers.js";
 import type { RedisChannelConfig, RedisInboundMessage } from "../src/types.js";
 
 const {
@@ -76,7 +75,6 @@ describe("handleInboundMessage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     publishMessage.mockResolvedValue(1);
-    getRedisStreamClaimableDedupe(baseConfig().idempotency)?.clearMemory();
     setRedisStreamRuntime({ config: {} } as never);
   });
 
@@ -162,13 +160,17 @@ describe("handleInboundMessage", () => {
     expect(publishMessage).not.toHaveBeenCalled();
   });
 
-  it("drops duplicate message ids", async () => {
+  it("passes a repeated Stream entry to durable SDK reconciliation", async () => {
     const msg = makeMessage({ message: "once" });
     const config = baseConfig();
 
     expect(await handleInboundMessage(msg, config)).toBe(true);
     expect(await handleInboundMessage(msg, config)).toBe(true);
-    expect(dispatchChannelMessage).toHaveBeenCalledTimes(1);
+    expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+    expect(dispatchChannelMessage.mock.calls[0][0]).toMatchObject({
+      deliveryIdentity: `${msg.channel}:${msg.streamEntryId}`,
+      requireDeliveryIdentity: true,
+    });
   });
 
   it("releases an idempotency claim when dispatch fails", async () => {
@@ -183,16 +185,32 @@ describe("handleInboundMessage", () => {
     expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
   });
 
-  it("does not dedupe Pub/Sub messages without a stable delivery id", async () => {
+  it("preserves Pub/Sub best-effort dispatch without a Stream entry id", async () => {
     const msg = makeMessage({
       streamEntryId: undefined,
       message: "legitimate repeated payload",
     });
-    const config = baseConfig();
+    const config = baseConfig({ channelMode: "pubsub" });
 
     expect(await handleInboundMessage(msg, config)).toBe(true);
     expect(await handleInboundMessage(msg, config)).toBe(true);
     expect(dispatchChannelMessage).toHaveBeenCalledTimes(2);
+    expect(dispatchChannelMessage).toHaveBeenCalledWith(expect.objectContaining({
+      deliveryIdentity: undefined,
+      requireDeliveryIdentity: false,
+    }));
+  });
+
+  it("rejects a Stream delivery without its broker entry id", async () => {
+    const msg = makeMessage({ streamEntryId: undefined });
+
+    expect(await handleInboundMessage(msg, baseConfig({ channelMode: "stream" }))).toBe(false);
+    expect(dispatchChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps an ambiguous Stream delivery unacknowledged for PEL reconciliation", async () => {
+    dispatchChannelMessage.mockResolvedValueOnce({ deliveryOutcome: { kind: "ambiguous" } });
+    expect(await handleInboundMessage(makeMessage(), baseConfig({ channelMode: "stream" }))).toBe(false);
   });
 
   it("returns false when runtime is missing", async () => {

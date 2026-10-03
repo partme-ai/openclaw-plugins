@@ -2,7 +2,7 @@
  * KF 出站：解析目标并调用 send_msg API（文本 + 媒体）。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import {
   isHttpUrl,
   parseMediaDirectives,
@@ -211,7 +211,9 @@ export async function deliverKfAgentReplyPayload(params: {
   agent: ResolvedAgentAccount;
   text: string;
   mediaUrls?: string[];
+  signal?: AbortSignal;
 }): Promise<{ ok: boolean; error?: string }> {
+  params.signal?.throwIfAborted();
   const parsed = parseMediaDirectives(params.text);
   const prepared = prepareKfOutboundText(parsed.text);
   const replyText = prepared.join("\n\n");
@@ -220,11 +222,13 @@ export async function deliverKfAgentReplyPayload(params: {
   );
 
   if (replyText.trim()) {
+    params.signal?.throwIfAborted();
     const textResults = await sendKfTextMessage({
       agent: params.agent,
       externalUserId: params.externalUserId,
       text: replyText,
       openKfId: params.openKfId,
+      signal: params.signal,
     });
     const textSummary = summarizeSendResults(textResults);
     if (!textSummary.ok) {
@@ -234,7 +238,9 @@ export async function deliverKfAgentReplyPayload(params: {
 
   for (const mediaPath of mediaPaths) {
     try {
+      params.signal?.throwIfAborted();
       const loaded = await loadKfOutboundMediaBuffer({ cfg: params.cfg, mediaPath });
+      params.signal?.throwIfAborted();
       const result = await sendKfMediaMessage({
         agent: params.agent,
         externalUserId: params.externalUserId,
@@ -242,11 +248,13 @@ export async function deliverKfAgentReplyPayload(params: {
         buffer: loaded.buffer,
         filename: loaded.filename,
         contentType: loaded.contentType,
+        signal: params.signal,
       });
       if (result.errcode !== 0) {
         return { ok: false, error: result.errmsg || `media send failed (${result.errcode})` };
       }
     } catch (err) {
+      params.signal?.throwIfAborted();
       return { ok: false, error: String(err) };
     }
   }

@@ -294,8 +294,9 @@ async function handleMessageCallback(params: AgentWebhookParams): Promise<boolea
             return true;
         }
 
-        // 异步处理消息
-        processAgentMessage({
+        // ACK 已发送；保持 HTTP 路由 Promise 存活，直到 Agent 工作完成，
+        // 使 Gateway 请求 admission 不会在回复入队前被释放。
+        await processAgentMessage({
             agent,
             config,
             core,

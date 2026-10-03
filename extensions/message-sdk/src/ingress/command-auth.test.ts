@@ -57,8 +57,20 @@ describe("resolveCommandAuthorization", () => {
   };
 
   it("open policy allows commands without allowFrom", async () => {
+    let observedAccessGroups: boolean | undefined;
+    const commandCore = {
+      channel: {
+        commands: {
+          ...core.channel.commands,
+          resolveCommandAuthorizedFromAuthorizers: ({ useAccessGroups }: { useAccessGroups: boolean }) => {
+            observedAccessGroups = useAccessGroups;
+            return true;
+          },
+        },
+      },
+    };
     const result = await resolveCommandAuthorization({
-      core: core as never,
+      core: commandCore as never,
       cfg: { commands: { useAccessGroups: false } } as never,
       accountConfig: { dmPolicy: "open" },
       rawBody: "/help",
@@ -70,6 +82,7 @@ describe("resolveCommandAuthorization", () => {
     expect(result.senderAllowed).toBe(true);
     expect(result.commandAuthorized).toBe(true);
     expect(result.effectiveAllowFrom).toEqual(["*"]);
+    expect(observedAccessGroups).toBe(true);
   });
 
   it("allowlist policy requires sender in list", async () => {

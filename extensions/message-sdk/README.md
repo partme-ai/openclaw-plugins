@@ -1,5 +1,7 @@
 # OpenClaw Message SDK
 
+Delivery telemetry from `dispatchChannelMessage` uses OpenClaw's public diagnostics bus (`partme.delivery-recall.v1`). A `delivery.started` fact is emitted after a durable send-start record and shares a pseudonymous delivery ID with its final settlement. A `delivered` result is reported only after durable settlement or deferred broker confirmation; a duplicate replay and repeated `confirmDelivery()` do not report a second success. `retryable` reports a retry, `ambiguous` an uncertain final result, and `no-reply`/`cancelled` do not become false successes. Identity fields are pseudonyms in diagnostics and are never intended as Prometheus labels. Diagnostics disabled or an overloaded host queue can lose observations; the durable journal remains the delivery authority. Ack-pending recovery cannot restore an Agent run ID because the journal does not persist one.
+
 <!-- README_STANDARD_START -->
 
 > Standard reading order: positioning → architecture → flow → boundaries → installation → configuration → operations → deep dive.

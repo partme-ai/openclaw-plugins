@@ -7,9 +7,9 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 import {
   dispatchTranscriptTurn,
+  TranscriptDispatchError,
   withTimeout,
   TimeoutError,
-  buildAgentReplyTimeoutSummary,
   type TranscriptChannelRuntime,
   type ChannelLimitsOpenClawConfig,
 } from "../runtime/runtime-api.js";
@@ -18,8 +18,6 @@ import { deliverDouyinAgentReplyPayload } from "./outbound-reply.js";
 
 const CHANNEL_ID = "douyin";
 const CHANNEL_LABEL = "Douyin";
-const AGENT_REPLY_TIMEOUT_TEMPLATE =
-  "抱歉，处理您的消息超时（约 {minutes} 分钟），请稍后重试。";
 
 /** 抖音用户映射到 OpenClaw Agent 会话后的稳定路由快照。 */
 export type DouyinTranscriptRoute = {
@@ -38,6 +36,7 @@ export type DouyinTranscriptDispatchParams = {
   shopId: string;
   rawText: string;
   messageSid?: string;
+  signal?: AbortSignal;
   /** 经 DM policy + OpenClaw command authorizer 计算后的结论 */
   commandAuthorized?: boolean;
   log?: (message: string) => void;
@@ -48,6 +47,7 @@ export type DouyinTranscriptDispatchParams = {
 export type DouyinTranscriptDispatchResult = {
   route: DouyinTranscriptRoute;
   delivered: boolean;
+  hostResult?: Awaited<ReturnType<typeof dispatchTranscriptTurn>>;
   timedOut?: boolean;
   dispatchTimeoutMs?: number;
   timeoutUserMessage?: string;
@@ -195,9 +195,8 @@ export async function dispatchDouyinTranscriptTurn(
   const logger = createLogger({ log: params.log, error: params.error });
   const { runtime, cfg, accountId, peerId, shopId } = params;
 
-  const dispatchReply = runtime.channel?.reply?.dispatchReplyWithBufferedBlockDispatcher;
-  if (!dispatchReply) {
-    logger.warn("runtime buffered reply dispatcher unavailable");
+  if (!runtime.channel?.inbound?.dispatchReply) {
+    logger.warn("runtime inbound reply dispatcher unavailable");
     return null;
   }
 
@@ -250,17 +249,22 @@ export async function dispatchDouyinTranscriptTurn(
   const dispatchTimeoutMs = resolveDouyinAgentReplyTimeoutMs(cfg as ChannelLimitsOpenClawConfig);
   const agentId = route.agentId ?? "main";
 
+  const abortController = new AbortController();
+  const signal = params.signal
+    ? AbortSignal.any([abortController.signal, params.signal])
+    : abortController.signal;
+  let hostResult: Awaited<ReturnType<typeof dispatchTranscriptTurn>>;
   try {
-    await withTimeout(
+    hostResult = await withTimeout(
       dispatchTranscriptTurn({
         channelRuntime: runtime.channel as unknown as TranscriptChannelRuntime,
-        cfg,
+        cfg: cfg as Parameters<typeof dispatchTranscriptTurn>[0]["cfg"],
         channel: CHANNEL_ID,
         accountId,
         agentId,
         sessionKey: route.sessionKey,
         storePath,
-        inboundContext,
+        inboundContext: inboundContext as Parameters<typeof dispatchTranscriptTurn>[0]["inboundContext"],
         record: {
           updateLastRoute: {
             sessionKey: String((route.mainSessionKey ?? route.sessionKey) || route.sessionKey),
@@ -278,29 +282,34 @@ export async function dispatchDouyinTranscriptTurn(
             logger.error(`reply failed: ${String(error)}`);
           },
         },
+        signal,
       }),
       dispatchTimeoutMs,
       `Douyin dispatch timed out after ${dispatchTimeoutMs}ms`,
     );
   } catch (error) {
+    abortController.abort();
     if (error instanceof TimeoutError) {
       logger.error(`dispatchTranscriptTurn timed out after ${dispatchTimeoutMs}ms`);
-      const timeoutUserMessage = buildAgentReplyTimeoutSummary(
-        dispatchTimeoutMs,
-        AGENT_REPLY_TIMEOUT_TEMPLATE,
-      );
-      return { route, delivered: false, timedOut: true, dispatchTimeoutMs, timeoutUserMessage };
+      throw new TranscriptDispatchError(error, "ambiguous");
     }
     logger.error(`dispatchTranscriptTurn failed: ${String(error)}`);
-    return { route, delivered: false };
+    throw error;
+  }
+
+  if (signal.aborted) throw new TranscriptDispatchError(signal.reason, "recorded");
+
+  if (!hostResult.dispatched) {
+    return { route, delivered: false, hostResult };
   }
 
   const combined = responseChunks.join("\n\n").trim();
   if (!combined && responseMediaUrls.length === 0) {
-    return { route, delivered: false };
+    return { route, delivered: false, hostResult };
   }
 
   try {
+    signal.throwIfAborted();
     const delivery = await deliverDouyinAgentReplyPayload({
       cfg,
       shopId,
@@ -308,10 +317,21 @@ export async function dispatchDouyinTranscriptTurn(
       text: combined,
       mediaUrls: responseMediaUrls,
       log: params.log,
+      signal,
     });
-    return { route, delivered: delivery.ok };
+    if (signal.aborted) {
+      throw new TranscriptDispatchError(signal.reason, "recorded");
+    }
+    return { route, delivered: delivery.ok, hostResult };
   } catch (error) {
+    if (signal.aborted) {
+      throw error instanceof TranscriptDispatchError
+        ? error
+        : new TranscriptDispatchError(error, "recorded");
+    }
     logger.error(`reply send failed: ${String(error)}`);
-    return { route, delivered: false };
+    throw error instanceof TranscriptDispatchError
+      ? error
+      : new TranscriptDispatchError(error, "recorded");
   }
 }

@@ -6,6 +6,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { resolveWebsocketConfig } from "./config.js";
@@ -25,7 +26,7 @@ export { webSocketPlugin } from "./runtime/web-socket-plugin.js";
 export { resolveWebsocketConfig } from "./config.js";
 export type { ResolvedWebsocketAccount } from "./config.js";
 
-export default defineChannelPluginEntry({
+const entry: OpenClawPluginDefinition = defineChannelPluginEntry({
   id: "web-socket",
   name: "WebSocket",
   description:
@@ -80,3 +81,5 @@ export default defineChannelPluginEntry({
     api.logger.info("[openclaw-web-socket] Plugin registered — endpoint: /web-socket/status");
   },
 });
+
+export default entry;

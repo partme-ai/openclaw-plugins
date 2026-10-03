@@ -113,7 +113,7 @@ describe("stomp TCP server", () => {
     await stompConnect(client);
 
     const receipt = readUntil(client, "receipt-id:send-1");
-    client.write(frame("SEND", { destination: "/topic/devices/alpha/in", receipt: "send-1" }, "hello"));
+    client.write(frame("SEND", { destination: "/topic/devices/alpha/in", receipt: "send-1", "sender-id": "device-1", "message-id": "request-1" }, "hello"));
     await receipt;
 
     expect(inbound).toHaveBeenCalledTimes(1);
@@ -122,6 +122,8 @@ describe("stomp TCP server", () => {
       destination: "/topic/devices/alpha/in",
       replyDestination: "/topic/devices/reply",
       rawPayload: "hello",
+      senderScope: "client:device-1",
+      idempotencyKey: "request-1",
     });
     client.destroy();
   });

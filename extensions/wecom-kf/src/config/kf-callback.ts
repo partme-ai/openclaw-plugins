@@ -5,7 +5,7 @@
  * 供 createKfCallbackHandler 验签解密与 sync_msg 拉取使用。
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { WecomAccountConfig } from "../types/index.js";
 import { applyKfEnvVarFallback, DEFAULT_ACCOUNT_ID } from "./accounts.js";
 

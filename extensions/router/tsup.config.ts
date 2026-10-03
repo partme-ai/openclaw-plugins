@@ -9,6 +9,7 @@ export default defineConfig({
   clean: true,
   splitting: false,
   treeshake: true,
+  noExternal: ["@partme.ai/openclaw-message-sdk"],
   outDir: "dist",
   tsconfig: "tsconfig.json",
 });

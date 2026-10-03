@@ -7,7 +7,7 @@
  * **关键依赖**：`./channel-setup-factory`、`./config`
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { resolveDouyinAccount } from "./config.js";
 import { createAppKeySecretChannelSetup } from "./channel-setup-factory.js";
 

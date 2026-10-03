@@ -77,6 +77,7 @@ export async function dispatchWireMessage(
         ctx: { skippedDuplicate: true },
         dispatcher: undefined,
         replyOptions: {},
+        deliveryOutcome: { kind: "no-reply" },
       } as DispatchInboundResult;
     }
     if (pushResult === "full") {
@@ -89,6 +90,7 @@ export async function dispatchWireMessage(
         ctx: {},
         dispatcher: undefined,
         replyOptions: {},
+        deliveryOutcome: { kind: "ambiguous" },
       } as DispatchInboundResult)
     );
   }

@@ -3,8 +3,8 @@
  *
  * Gateway 账号生命周期：按 mode 启动客户端 / 服务端 / 双模式。
  */
-
-import type { ChannelAccountSnapshot, ChannelGatewayContext } from "openclaw/plugin-sdk";
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
+import type { ChannelAccountSnapshot } from "openclaw/plugin-sdk/core";
 
 import { handleInboundMessage } from "../inbound.js";
 import {

@@ -54,7 +54,7 @@
     "install": {
       "npmSpec": "@partme.ai/openclaw-mtls",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.7.1"
+      "minHostVersion": ">=2026.9.6"
     }
   },
   "exports": {
@@ -64,6 +64,9 @@
     }
   },
   "peerDependencies": {
-    "openclaw": ">=2026.7.1"
+    "openclaw": ">=2026.9.6"
+  },
+  "engines": {
+    "node": ">=24.16.0 <25 || >=26.1.0"
   }
 }

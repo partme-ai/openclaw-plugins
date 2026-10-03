@@ -7,7 +7,7 @@
  * **关键依赖**：`openclaw/plugin-sdk/setup`
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import type { ChannelSetupAdapter, ChannelSetupWizard } from "openclaw/plugin-sdk/setup";
 import {
   applySetupAccountConfigPatch,

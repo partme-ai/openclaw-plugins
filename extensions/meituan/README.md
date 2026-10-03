@@ -182,6 +182,19 @@ When `accounts` are configured, credentials are selected only from the runtime-t
 
 ## Configuration
 
+### Notification and message callbacks
+
+Set `plugins.entries.meituan.config.callbacks.enabled=true` to register `POST /meituan/callback` in full Gateway mode. Callback-only setups may omit `operations`; `developerId` and `signKey` remain required. The route accepts form or JSON envelopes, checks developer identity, a five-minute timestamp window and the SDK SHA-1 signature, and parses `message`/`param` as JSON. Only asynchronous IDs in [the callback catalog](./src/callback/catalog.ts) are accepted; queries and commands are rejected.
+
+Only body parameters are signed. The plugin does not use unsigned `X-Msg-Type` or `X-Msg-Id` headers to fill missing identifiers. Timestamps may be 10-digit seconds or the 13-digit milliseconds shown in the SDK fixture; verification uses the original received value.
+Numeric IDs outside JavaScript's safe integer range become exact decimal strings in the parsed payload; the signed `messageRaw` text is also retained. For a JSON object envelope, insignificant whitespace is removed before signing while preserving number lexemes and whitespace inside strings.
+
+Validated events are written to the OpenClaw state directory under `meituan/callback-inbox` before replying `{ "code": 0, "message": "success" }`. Repeated message IDs are deduplicated; conflicts and storage failures do not receive a success acknowledgment. Configure `maxBodyBytes`, `timestampToleranceSeconds`, `maxInboxEntries`, or an absolute `inboxDirectory` under `callbacks` if needed. Expose the route through an HTTPS reverse proxy in production.
+
+`maxInboxEntries` limits unacknowledged events. `maxArchivedEntries` (default 2,000) limits acknowledged events with full bodies. Before a new acknowledgment, the inbox reserves an archive slot, so the oldest acknowledged body may be removed even if that acknowledgment later fails; its deduplication marker remains. Removed bodies cannot be read with `get`. Markers are kept for 30 days and capped at ten times `maxArchivedEntries`. When the marker cap is full, new acknowledgments fail rather than deleting live deduplication state; redelivery after age pruning can appear as a new event. Owner tool results obey `maxToolResultBytes`.
+
+The owner-only `meituan_callback_inbox` tool supports `{"action":"list","limit":20}`, `{"action":"get","eventId":"..."}`, and `{"action":"ack","eventId":"..."}`. Callback content reaches an Agent only when explicitly read. The plugin does not automatically invoke write APIs. The inbox is local to one Gateway; multiple Gateways require shared durable storage and global deduplication.
+
 ```json
 {
   "plugins": {

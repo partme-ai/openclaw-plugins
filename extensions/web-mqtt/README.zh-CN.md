@@ -358,7 +358,7 @@ flowchart TD
 
 第一层由 Aedes 在协议入口执行 `publishAllow` / `subscribeAllow`；第二层在 OpenClaw 入站和出站处理时再次绑定已认证身份与账号路由。认证开启后若身份映射缺失，插件按 fail-closed 拒绝，不会退化为匿名放行。
 
-应用级幂等需在 JSON payload 中提供 `idempotencyKey` 或 `messageId`。MQTT packet id 会被客户端合法复用，插件不会把它当作跨 Agent Turn 的幂等键；纯文本相同内容也会按两条合法消息处理。
+应用级持久幂等需在 JSON payload 中提供 `idempotencyKey` 或 `messageId`，作用域包含已认证用户名与 clientId。MQTT packet id 会被客户端合法复用，插件不会把它当作跨 Agent Turn 的幂等键；无应用 ID 的纯文本按尽力而为方式处理，重投可能再次运行 Agent。
 
 - 明文 WS 只能绑定 loopback；监听非 loopback 地址必须同时启用 `tls.enabled=true` 与 `auth.required=true`
 - 使用独立 MQTT 用户，生产配置优先使用 `passwordHash`，避免明文密码

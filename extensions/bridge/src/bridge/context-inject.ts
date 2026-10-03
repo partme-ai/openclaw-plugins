@@ -1,3 +1,4 @@
+import { formatBudgetedContext, isContextInvocationActive } from '@partme.ai/openclaw-message-sdk/text';
 /**
  * @fileoverview `before_prompt_build` 钩子注册：按渠道把平台规则注入系统上下文尾部。
  *
@@ -17,7 +18,7 @@
  * 渠道自带工具的不需要重复注入工具说明，只注入平台交互规则。
  */
 
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { getChannelMeta, type ChannelContextPreset } from "./channels.js";
 import { PRESETS } from "./presets.js";
 
@@ -31,6 +32,7 @@ interface ChannelCfg {
 
 /** @description Bridge 配置文件顶层：`channels` 映射可选。 */
 interface BridgeConfig {
+  contextMaxTokens?: number;
   channels?: Record<string, ChannelCfg>;
 }
 
@@ -45,6 +47,7 @@ export function registerContextInjection(api: OpenClawPluginApi): void {
   const cfg = (api.pluginConfig ?? {}) as BridgeConfig;
 
   api.on("before_prompt_build", (_event, ctx) => {
+    if (!isContextInvocationActive(ctx)) return;
     const channelId = ctx?.channel ?? ctx?.messageProvider ?? ctx?.channelId;
     // 无渠道上下文时不注入，避免污染非 Channel 场景（例如本地 CLI）。
     if (!channelId) return;
@@ -66,7 +69,9 @@ export function registerContextInjection(api: OpenClawPluginApi): void {
     // 预设缺失通常是部署不完整（channels/presets 漂移）；静默跳过以免打断对话。
     if (!preset) return;
 
-    return { appendSystemContext: preset };
+    const text = cfg.contextMaxTokens === undefined ? preset
+      : formatBudgetedContext('bridge', [{ source: channelId, text: preset }], cfg.contextMaxTokens);
+    return text ? { appendSystemContext: text } : undefined;
   });
 
   api.logger.info("[openclaw-bridge] Context injection registered");

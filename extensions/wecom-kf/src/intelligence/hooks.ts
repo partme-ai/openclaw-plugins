@@ -2,7 +2,7 @@
  * 智能化层 OpenClaw hooks：dialogue state → before_prompt_build 闭环。
  */
 
-import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 import { buildStateAwarePrompt } from "./prompt-builder.js";
 import { loadDialogueContext, registerDialogueSessionExtension } from "./dialogue-session.js";

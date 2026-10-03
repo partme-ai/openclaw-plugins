@@ -1,13 +1,13 @@
 # Superpowers 规格与任务索引
 
-## 当前规划
+## 当前目标
 
-以下是 2026-09-29 CodeGraph 稳定版审计后新增的待实施目标。每个目标一份规格、一份计划；计划中的步骤全部未完成，文档编写完成不等于功能交付。
+以下目标来自 2026-09-29 CodeGraph 稳定版审计。每个目标一份规格、一份计划；勾选状态以当前验收证据为准。
 
 | 目标 | 状态 | 规格 | 任务 | 顺序 |
 | --- | --- | --- | --- | --- |
-| OpenClaw 2026.9.6 稳定版升级 | [ ] 待实施 | [规格](specs/2026-09-29-openclaw-2026-9-6-upgrade.md) | [8 项任务](plans/2026-09-29-openclaw-2026-9-6-upgrade.md) | 先完成兼容、安全、消息语义及 27 插件验收 |
-| 稳定版后续功能优化 | [ ] 待实施 | [规格](specs/2026-09-29-openclaw-followup-optimization.md) | [7 项任务](plans/2026-09-29-openclaw-followup-optimization.md) | 升级门禁之后逐项交付 |
+| OpenClaw 2026.9.6 稳定版升级 | 本地安装态 27/27 通过；U3 与 U9 本地验证通过，实网和生产待验 | [规格](specs/2026-09-29-openclaw-2026-9-6-upgrade.md) | [8 项任务](plans/2026-09-29-openclaw-2026-9-6-upgrade.md) | [本地验收记录](reports/2026-10-03-final-27-local-e2e-gate.md) |
+| 稳定版后续功能优化 | T1–T7 本地范围完成；实网和生产待验 | [规格](specs/2026-09-29-openclaw-followup-optimization.md) | [7 项任务](plans/2026-09-29-openclaw-followup-optimization.md) | [本地验收记录](reports/2026-10-03-final-27-local-e2e-gate.md) |
 
 原「当前源码安装态 E2E 复验」保留 2026.7.1 上下文和未完成状态。2026.9.6 的验收统一由升级计划 Task 8 执行，不重复创建另一套同版本任务，也不自动勾选旧任务。
 
@@ -15,7 +15,7 @@
 
 本目录按同一目标的一组连续提交建立**一份规格 + 一份单任务计划**。历史文档是 2026-09-29 的重建，不冒充原始提交中的 Superpowers 文件。现有 [插件规范](../../spec/PLUGIN_SPEC.md)、[message-sdk PRD/Tasks](../../extensions/message-sdk/docs/tasks-message-sdk-consolidation.md) 与 [生产优化计划](../../doc/OpenClaw-Plugins-Production-Optimization-Plan.md) 保持原位。
 
-[x] 表示提交属于当前 `main` 且文件仍存在；不代表当前安装态或生产验收。当前源码的 E2E 指纹门禁仍未通过。
+[x] 表示提交属于当前 `main` 且文件仍存在；不代表当前安装态或生产验收。2026.9.6 的 27 插件 E2E 指纹门禁已通过，具体范围见当前验收记录。
 
 | 日期 | 交付目标 | 状态 | 规格 | 任务 |
 | --- | --- | --- | --- | --- |

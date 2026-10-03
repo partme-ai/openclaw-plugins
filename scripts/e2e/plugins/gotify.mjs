@@ -61,7 +61,7 @@ export async function testGotify(ctx, results) {
       if (!health.ok) throw new Error(`/gotify/health → ${health.status}`);
     },
     {
-      service: "docker:18080",
+      service: ctx.gotifySecrets?.serverUrl ?? "gotify server unavailable",
       method: "REST publish → WebSocket → real Agent Turn → retained reply → delete inbound",
     },
     results,

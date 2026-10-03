@@ -14,6 +14,7 @@ import type { RouteAction, RouterConfig, RouterRule } from "./types.js";
 
 const DEFAULTS: RouterConfig = {
   enabled: true,
+  structured: { enabled: false, allowedMediaHosts: [] },
   rules: [],
   audit: { enabled: true, logToConsole: false, maxEntries: 5_000 },
   delivery: {
@@ -72,16 +73,23 @@ function resolveAction(value: unknown, field: string): RouteAction {
   if (!isRecord(value)) throw new Error(`[router] ${field} must be an object`);
   const action = value;
   const type = action.type;
+  if (action.payloadFormat !== undefined && action.payloadFormat !== "structured-v1") throw new Error("[router] invalid payloadFormat");
+  if (action.mediaFallback !== undefined && action.mediaFallback !== "text") throw new Error("[router] invalid mediaFallback");
+  const structuredOptions = {
+    ...(action.payloadFormat === "structured-v1" ? { payloadFormat: "structured-v1" as const } : {}),
+    ...(action.mediaFallback === "text" ? { mediaFallback: "text" as const } : {}),
+  };
   const target = nonEmpty(action.target, `${field}.target`);
   if (type === "forward") {
-    assertKnownKeys(action, ["type", "target", "topic"], field);
-    return { type, target, ...(action.topic === undefined ? {} : { topic: nonEmpty(action.topic, `${field}.topic`) }) };
+    assertKnownKeys(action, ["type", "target", "topic", "payloadFormat", "mediaFallback"], field);
+    return { type, target, ...structuredOptions, ...(action.topic === undefined ? {} : { topic: nonEmpty(action.topic, `${field}.topic`) }) };
   }
   if (type === "reply-via") {
-    assertKnownKeys(action, ["type", "target", "accountId", "to"], field);
+    assertKnownKeys(action, ["type", "target", "accountId", "to", "payloadFormat", "mediaFallback"], field);
     return {
       type,
       target,
+      ...structuredOptions,
       ...(action.accountId === undefined ? {} : { accountId: nonEmpty(action.accountId, `${field}.accountId`) }),
       ...(action.to === undefined ? {} : { to: nonEmpty(action.to, `${field}.to`) }),
     };
@@ -121,11 +129,17 @@ function resolveRule(value: unknown, index: number): RouterRule {
 export function resolveRouterConfig(api: OpenClawPluginApi): RouterConfig {
   if (api.pluginConfig !== undefined && !isRecord(api.pluginConfig)) throw new Error("[router] config must be an object");
   const raw = isRecord(api.pluginConfig) ? api.pluginConfig : {};
-  assertKnownKeys(raw, ["enabled", "rules", "audit", "delivery"], "config");
+  assertKnownKeys(raw, ["enabled", "rules", "audit", "delivery", "structured"], "config");
   if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") throw new Error("[router] enabled must be a boolean");
   if (raw.audit !== undefined && !isRecord(raw.audit)) throw new Error("[router] audit must be an object");
   if (raw.delivery !== undefined && !isRecord(raw.delivery)) throw new Error("[router] delivery must be an object");
   if (raw.rules !== undefined && !Array.isArray(raw.rules)) throw new Error("[router] rules must be an array");
+  if (raw.structured !== undefined && !isRecord(raw.structured)) throw new Error("[router] structured must be an object");
+  const structured = isRecord(raw.structured) ? raw.structured : {};
+  assertKnownKeys(structured, ["enabled", "allowedMediaHosts"], "structured");
+  if (structured.enabled !== undefined && typeof structured.enabled !== "boolean") throw new Error("[router] structured.enabled must be boolean");
+  const allowedMediaHosts = stringList(structured.allowedMediaHosts, "structured.allowedMediaHosts") ?? [];
+  if (allowedMediaHosts.some((host) => !/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/u.test(host) || host.includes(".."))) throw new Error("[router] allowedMediaHosts requires exact lowercase hostnames");
   const audit = isRecord(raw.audit) ? raw.audit : {};
   const delivery = isRecord(raw.delivery) ? raw.delivery : {};
   assertKnownKeys(audit, ["enabled", "logToConsole", "maxEntries"], "audit");
@@ -155,6 +169,7 @@ export function resolveRouterConfig(api: OpenClawPluginApi): RouterConfig {
     throw new Error("[router] current state encryption key must not also be a previous key");
   }
   const rules = Array.isArray(raw.rules) ? raw.rules.map(resolveRule) : [];
+  if (audit.enabled === false && rules.some((rule) => rule.actions.some((action) => action.mediaFallback === "text"))) throw new Error("[router] text mediaFallback requires audit.enabled");
   if (rules.length > 1_000) throw new Error("[router] rules must contain at most 1000 entries");
   const duplicateIds = rules.map((rule) => rule.id).filter((id, index, ids) => ids.indexOf(id) !== index);
   if (duplicateIds.length > 0) throw new Error(`[router] duplicate rule id(s): ${[...new Set(duplicateIds)].join(", ")}`);
@@ -166,6 +181,7 @@ export function resolveRouterConfig(api: OpenClawPluginApi): RouterConfig {
   if (maxDelayMs < initialDelayMs) throw new Error("[router] delivery.maxDelayMs must be greater than or equal to initialDelayMs");
   return {
     enabled: raw.enabled !== false,
+    structured: { enabled: structured.enabled === true, allowedMediaHosts },
     rules,
     audit: {
       enabled: audit.enabled !== false,

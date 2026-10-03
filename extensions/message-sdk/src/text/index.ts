@@ -13,3 +13,5 @@
  */
 
 export { stripMarkdown } from "./strip-markdown.js";
+export { CONTEXT_TOKEN_COUNTER, validateContextBudgetProfile, truncateContextToBudget, countContextTokens, formatBudgetedContext, isContextInvocationActive } from './context-budget.js';
+export type { ContextBudgetProfile, ContextBudgetPlugin } from './context-budget.js';

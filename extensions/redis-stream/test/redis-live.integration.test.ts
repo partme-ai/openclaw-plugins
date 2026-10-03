@@ -126,6 +126,7 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
     await startRedisServer(config);
     const producer = createClient({ url: REDIS_URL });
     await producer.connect();
+    const ackedBefore = getStats().messagesAcked;
     const id = await producer.xAdd(config.stream.inboundKey, "*", {
       text: "live redis request",
       agentId: "main",
@@ -136,6 +137,14 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
     await waitUntil(
       async () => (await producer.xLen(config.stream.outboundKey)) === 1,
     );
+    // Reply XADD completes inside the handler; consumeLoop issues XACK afterwards.
+    await waitUntil(async () => {
+      const pending = await producer.xPending(
+        config.stream.inboundKey,
+        config.stream.consumerGroup,
+      );
+      return pending.pending === 0 && getStats().messagesAcked > ackedBefore;
+    });
     const pending = await producer.xPending(
       config.stream.inboundKey,
       config.stream.consumerGroup,
@@ -143,7 +152,7 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
     const replies = await producer.xRange(config.stream.outboundKey, "-", "+");
     expect(pending.pending).toBe(0);
     expect(replies[0]?.message.text).toContain("live redis reply");
-    expect(getStats().messagesAcked).toBeGreaterThan(0);
+    expect(getStats().messagesAcked).toBeGreaterThan(ackedBefore);
     expect(id).toMatch(/^\d+-\d+$/);
     await producer.quit();
   });
@@ -160,6 +169,8 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
     await startRedisServer(config);
     const producer = createClient({ url: REDIS_URL });
     await producer.connect();
+    const ackedBefore = getStats().messagesAcked;
+    const deadLetteredBefore = getStats().messagesDeadLettered;
     const sourceId = await producer.xAdd(config.stream.inboundKey, "*", {
       text: "always fails",
       agentId: "main",
@@ -168,6 +179,19 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
     await waitUntil(
       async () => (await producer.xLen(config.stream.deadLetterKey)) === 1,
     );
+    // The Redis transaction may be visible before local counters are updated.
+    await waitUntil(async () => {
+      const pending = await producer.xPending(
+        config.stream.inboundKey,
+        config.stream.consumerGroup,
+      );
+      const stats = getStats();
+      return (
+        pending.pending === 0 &&
+        stats.messagesAcked > ackedBefore &&
+        stats.messagesDeadLettered > deadLetteredBefore
+      );
+    });
     const pending = await producer.xPending(
       config.stream.inboundKey,
       config.stream.consumerGroup,
@@ -180,7 +204,7 @@ describe.skipIf(!brokerUp)("redis-stream live integration", () => {
     expect(pending.pending).toBe(0);
     expect(deadLetters[0]?.message._sourceId).toBe(sourceId);
     expect(deadLetters[0]?.message._deliveryCount).toBe("2");
-    expect(getStats().messagesDeadLettered).toBeGreaterThan(0);
+    expect(getStats().messagesDeadLettered).toBeGreaterThan(deadLetteredBefore);
     await producer.quit();
   });
 

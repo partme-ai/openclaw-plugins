@@ -29,6 +29,9 @@ Reports:
 
 - `scripts/e2e/e2e-report.json`：最近一次运行，供 CI 和人工快速读取。
 - `scripts/e2e/reports/<timestamp>-<plugins>-<runId>.json`：逐次归档，连续执行隔离插件时不会覆盖前一份证据。
+- `scripts/e2e/reports/candidates/<runId>.json` 和对应 `.tgz`：打包步骤保存候选版本、tarball SHA-256 及原始归档；校验器重算归档摘要，独立于 E2E 报告的自报值。
+
+正式证据运行须安装本次打包的候选物且不得跳过浏览器测试。报告记录实际启动 Gateway 的 OpenClaw CLI 路径、版本、Node 版本、安装版本、源码指纹、tarball SHA-256、PASS/FAIL 与跳过数量。宿主模式从启动的 PID 校验 CLI 与 Node 可执行文件。运行 `node scripts/check-e2e-evidence.mjs` 对照当前源码、当前 package 版本以及保存的候选归档内部 package.json；同插件 PASS 与 FAIL 并存也会被拒绝。旧格式或缺少归档的报告会判为 stale。报告中的 fixture 通过只代表本地隔离测试，实网平台仍需单独验证。
 
 两类报告都执行凭据字段脱敏并保持 gitignored；正式发布证据应由 CI 将 `reports/` 作为构建产物上传，而不是提交运行态文件。
 
@@ -110,7 +113,7 @@ Redis Stream adapter 同样执行真实 Agent Turn：向 consumer-group 入站 S
 |--------|-----------------|
 | mqtt, stomp, web-mqtt, web-stomp | None (embedded / browser)；STOMP 两种传输验证 Agent 回复与 ACK/RECEIPT；Web-MQTT 验证 QoS 1 deferred PUBACK、Agent 回复及 Chromium 闭环 |
 | web-socket | None; run explicitly with `--plugins web-socket`; the runner selects the host Gateway for the embedded listener |
-| mtls | None; run explicitly with `--plugins mtls` because it switches Gateway auth to trusted-proxy |
+| mtls | None; run `OPENCLAW_E2E_HOST_GATEWAY=1 node scripts/e2e/run-e2e.mjs --plugins mtls` because its loopback-only proxy fixture switches Gateway auth to trusted-proxy |
 | oauth2 | None; run explicitly with `--plugins oauth2`; the runner selects the host Gateway for its local provider fixture |
 | douyin | None; isolated signed Webhook challenge/401, real Agent Turn, in-process dedupe, and post-restart persistent dedupe |
 | amap | None; isolated tarball Agent Tool call against a loopback AMap v5 fixture, including safe GET retry and result transcript |
@@ -162,7 +165,7 @@ Future categories (extensible via `lib/registry.mjs` + adapter registration):
 
 ## OpenClaw in Docker vs host
 
-There is **no official OpenClaw image** in this repo. The compose `openclaw` service uses `node:22-bookworm-slim`, mounts the repo + E2E state dir, and runs the CLI from `devDependencies.openclaw` (or `npm install -g` fallback).
+There is **no official OpenClaw image** in this repo. The compose `openclaw` service uses `node:24.18.0-bookworm-slim`, mounts the repo + E2E state dir, and runs the pinned OpenClaw `2026.9.6` CLI from `devDependencies.openclaw` (or `npm install -g` fallback).
 
 **Mac / local dev:** use host gateway when bind mounts or CLI paths are simpler:
 
@@ -171,7 +174,7 @@ export OPENCLAW_E2E_HOST_GATEWAY=1
 export OPENCLAW_BIN="$HOME/.openclaw/extensions/wecom/node_modules/.bin/openclaw"  # if needed
 ```
 
-**Container gateway:** omit `OPENCLAW_E2E_HOST_GATEWAY`; orchestrator starts `openclaw` via compose after backing services.
+**Container gateway:** omit `OPENCLAW_E2E_HOST_GATEWAY`; the orchestrator starts `openclaw` and only the selected plugins' backing services via Compose. The container reads the disposable profile from `/state`, binds to its container network interface with a generated Gateway token, and publishes Gateway ports only on host `127.0.0.1`. Nacos selects host mode because its registration/config fixture uses the host-loopback Nacos endpoint.
 
 Do **not** fake success — if the gateway never listens on `E2E_GATEWAY_PORT`, the run fails.
 
@@ -183,8 +186,46 @@ Do **not** fake success — if the gateway never listens on `E2E_GATEWAY_PORT`, 
 | `OPENCLAW_BIN` | repo or wecom install | OpenClaw CLI path |
 | `OPENCLAW_E2E_STATE_DIR` | `~/.openclaw-queue-e2e` | Profile state |
 | `E2E_GATEWAY_PORT` | `19789` | Gateway HTTP port |
+| `E2E_GOTIFY_PORT` | `18080` | Gotify host port; set `GOTIFY_URL=http://127.0.0.1:<port>` to the same port when overriding |
+| `OPENCLAW_E2E_BROWSER_EXECUTABLE` | Playwright Chromium | Optional installed Chrome/Chromium executable for real browser E2E when Playwright's bundled browser is absent |
+| `OPENMEM_E2E_REPO` | `../OpenMem` relative to plugin repo root | Absolute path to the OpenMem source checkout when running the OpenMem scenario from an isolated worktree |
 | `OPENCLAW_E2E_SKIP_DOCKER` | unset | `1` = skip Docker entirely (broker tests fail unless services already running) |
 | `E2E_STOMP_TCP_PORT` | `61613` | stomp-tcp channel port in config/tests |
+
+### OpenMem local protected gateway test
+
+```bash
+OPENMEM_E2E_REPO=/absolute/path/to/OpenMem \
+  node scripts/openmem-protected-e2e.mjs
+```
+
+The wrapper generates a disposable certificate and random Bearer token, starts a
+loopback HTTPS proxy, and launches the regular tarball-install E2E with the
+production OpenMem server entrypoint. The Gateway receives certificate trust
+through this disposable E2E child process environment. The wrapper checks
+untrusted TLS rejection, anonymous and invalid token 401 responses,
+authenticated proxy traffic during Agent Turn, archive,
+Gateway restart, continuity recall, and repeated commit with stable IDs. The
+protected run also makes the installed Gateway execute `openmem_search` through
+a model `tool_call`, then checks the matching tool-role result contains an
+OpenMem memory citation and that the proxy saw an additional successful
+`POST /inspect/search`. A transcript mention alone cannot satisfy this check.
+The plugin config contains an environment variable name, never the token. The
+wrapper also checks that the E2E report and Gateway log do not contain it and
+deletes the temporary certificate and private key on exit.
+
+The standard OpenMem command remains available:
+
+```bash
+OPENMEM_E2E_REPO=/absolute/path/to/OpenMem \
+  node scripts/e2e/run-e2e.mjs --plugins openmem
+```
+
+Protected wrapper results are archived in `scripts/e2e/reports/protected/` with
+the wrapper SHA-256, OpenClaw version, installed candidate SHA-256, underlying
+E2E archive path, proxy route counts, and negative-case results. This is a
+local fixture; cross-host storage, real power loss, a deployed protecting proxy,
+and vendor callback environments require separate acceptance.
 
 ## Adding a new plugin test adapter
 

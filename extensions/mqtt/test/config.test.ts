@@ -297,3 +297,12 @@ describe("resolveBrokerConfig", () => {
     expect(r.persistence.redis?.retainedTTL).toBe(0);
   });
 });
+
+describe("explicit structured wire output", () => {
+  it("preserves explicit format and authorized hosts without changing the legacy default", () => {
+    const config = resolveBrokerConfig({ channels: { mqtt: { payload: { outboundFormat: "structured-v1", structuredMediaHosts: ["media.example.org"] } } } } as never);
+    expect(config.payload.outboundFormat).toBe("structured-v1");
+    expect(config.payload.structuredMediaHosts).toEqual(["media.example.org"]);
+    expect(resolveBrokerConfig({}).payload.outboundFormat).toBeUndefined();
+  });
+});

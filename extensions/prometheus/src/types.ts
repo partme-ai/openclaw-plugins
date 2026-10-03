@@ -98,7 +98,7 @@ export interface AgentRuntimeEvent {
 
 /** 会话转录增量通知；观察器只提取计数元数据，不导出消息正文。 */
 export interface SessionTranscriptUpdate {
-  sessionFile: string;
+  sessionFile?: string;
   sessionKey?: string;
   message?: unknown;
   messageId?: string;

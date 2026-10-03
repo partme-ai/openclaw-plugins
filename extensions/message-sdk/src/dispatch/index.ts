@@ -13,7 +13,11 @@ export {
   dispatchWireMessage,
   type WireDispatchOptions,
 } from "./wire-dispatch.js";
-export { dispatchTranscriptTurn } from "./transcript-dispatch.js";
+export {
+  dispatchTranscriptTurn,
+  TranscriptDispatchError,
+  type TranscriptRecordState,
+} from "./transcript-dispatch.js";
 export { dispatchEmbeddedAgentMessage } from "./embedded-dispatch.js";
 export { dispatchSubagentMessage } from "./subagent-dispatch.js";
 export { dispatchChannelMessage } from "./channel-dispatch.js";
@@ -21,6 +25,7 @@ export { dispatchChannelMessage } from "./channel-dispatch.js";
 export {
   extractFinalTextFromRunResult,
   extractSubagentResultText,
+  resolveSubagentOutcome,
   sanitizeSessionId,
   createDispatchRunId,
 } from "./agent-helpers.js";
@@ -35,6 +40,9 @@ export type {
   ChannelDispatchResult,
   EmbeddedAgentRuntime,
   SubagentRuntime,
+  AgentWaitResult,
+  SubagentOutcome,
+  SubagentDispatchResult,
   EmbeddedAgentDispatchParams,
   SubagentDispatchParams,
   WireDispatchConfig,

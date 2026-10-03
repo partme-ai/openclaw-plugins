@@ -214,6 +214,34 @@ describe("rabbitmq-server", () => {
     expect(consumeCh.nack).toHaveBeenCalledWith(expect.anything(), false, true);
   });
 
+  it("requeues when channel.ack throws synchronously instead of marking delivery settled", async () => {
+    ({ startRabbitmqServer, stopRabbitmqServer } = await import("../src/transport/server.js"));
+    consumeCh.ack.mockImplementationOnce(() => { throw new Error("ack channel closed"); });
+    await startRabbitmqServer({
+      ...DEFAULT_RABBITMQ_CONFIG,
+      retry: { ...DEFAULT_RABBITMQ_CONFIG.retry, enabled: false },
+      consume: { ...DEFAULT_RABBITMQ_CONFIG.consume, requeueOnError: true },
+    }, async () => ({ ok: true as const }));
+    consumeCb?.(sampleMsg());
+    await vi.waitFor(() => expect(consumeCh.nack).toHaveBeenCalledOnce());
+    expect(consumeCh.nack).toHaveBeenCalledWith(expect.anything(), false, true);
+  });
+
+  it("retains an unsettled delivery for shutdown retry when ACK and immediate NACK both throw", async () => {
+    ({ startRabbitmqServer, stopRabbitmqServer } = await import("../src/transport/server.js"));
+    consumeCh.ack.mockImplementationOnce(() => { throw new Error("ack channel closed"); });
+    consumeCh.nack.mockImplementationOnce(() => { throw new Error("nack temporarily failed"); });
+    await startRabbitmqServer({
+      ...DEFAULT_RABBITMQ_CONFIG,
+      retry: { ...DEFAULT_RABBITMQ_CONFIG.retry, enabled: false },
+      consume: { ...DEFAULT_RABBITMQ_CONFIG.consume, requeueOnError: true },
+    }, async () => ({ ok: true as const }));
+    consumeCb?.(sampleMsg());
+    await vi.waitFor(() => expect(consumeCh.nack).toHaveBeenCalledOnce());
+    await stopRabbitmqServer();
+    expect(consumeCh.nack).toHaveBeenCalledTimes(2);
+  });
+
   it("supports direct reply-to requestMessage", async () => {
     ({ startRabbitmqServer, stopRabbitmqServer, requestMessage } = await import("../src/transport/server.js"));
     await startRabbitmqServer(DEFAULT_RABBITMQ_CONFIG, async () => ({ ok: true as const }));

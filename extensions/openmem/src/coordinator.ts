@@ -13,6 +13,8 @@ const RECOVERY_EVENT_LIMIT = 1_000;
 const MAX_TURN_MESSAGES = 100;
 
 type RecoverableEvent = {
+  event_id?: unknown;
+  type?: unknown;
   content?: unknown;
   payload?: {
     role?: unknown;
@@ -83,6 +85,7 @@ export function normalizeTurn(messages: unknown[]): TurnMessage[] {
  */
 export class OpenMemCoordinator {
   private readonly active = new Map<string, string>();
+  private readonly uncertainCommits = new Set<string>();
   private readonly sessionOperations = new Map<string, Promise<void>>();
 
   constructor(private readonly client: OpenMemClient, private readonly agentId: string) {}
@@ -132,11 +135,110 @@ export class OpenMemCoordinator {
       const cached = this.active.get(scoped);
       const sessionId = cached ?? (await this.findSession(sessionKey, "ACTIVE"))?.session_id;
       if (!sessionId) return;
+      const intentId = createHash("sha256").update(`${this.agentId}\u0000${sessionId}\u0000commit-intent`).digest("hex");
+      if (this.uncertainCommits.has(scoped)) {
+        // 上次 POST 可能已成功而响应丢失；先核对同一 session，禁止盲目重放非幂等提交。
+        if (await this.confirmOrRecoverCommit(sessionId, scoped)) return;
+        throw new Error(`OpenMem commit outcome is uncertain; manual reconciliation required (sessionId=${sessionId}, intentId=${intentId})`);
+      }
       // commit 会归档并拒绝后续 append，所以必须先补齐上次崩溃留下的事件投影。
       await this.recoverPendingTurns(sessionId);
-      await this.client.post(`/sessions/${encodeURIComponent(sessionId)}/commit`, {});
+      // Sidecar 的 eventId 是持久去重键。提交前先占有确定性的意图标记，跨 Gateway 重启
+      // 仍可识别结果不明的非幂等 POST；重复标记只能对账，不能再次提交。
+      const intent = await this.client.post<{ ingested?: unknown; skipped?: unknown }>("/events/ingest", {
+        events: [{ eventId: intentId, sessionId, type: "openclaw_commit_intent", source: "runtime", content: "", payload: { openclawAgentId: this.agentId } }],
+      }, { retrySafe: true });
+      const inserted = Array.isArray(intent?.ingested)
+        ? intent.ingested.some((event: { event_id?: unknown }) => event?.event_id === intentId)
+        : intent?.ingested === 1;
+      if (intent?.skipped === 1) {
+        this.uncertainCommits.add(scoped);
+        if (await this.confirmOrRecoverCommit(sessionId, scoped)) return;
+        throw new Error(`OpenMem commit intent already exists; manual reconciliation required (sessionId=${sessionId}, intentId=${intentId})`);
+      }
+      if (!inserted || intent?.skipped !== 0) throw new Error("OpenMem returned an invalid commit intent response");
+      try {
+        await this.client.post(`/sessions/${encodeURIComponent(sessionId)}/commit`, {});
+      } catch (error) {
+        this.uncertainCommits.add(scoped);
+        try {
+          if (await this.confirmOrRecoverCommit(sessionId, scoped)) return;
+        } catch {
+          // 保留原始提交错误；下一次尝试仍须先查询远端状态。
+        }
+        throw new Error(`OpenMem commit outcome is uncertain; manual reconciliation required (sessionId=${sessionId}, intentId=${intentId})`, { cause: error });
+      }
+      this.uncertainCommits.delete(scoped);
       this.active.delete(scoped);
     });
+  }
+
+  /** 旧 Sidecar 只允许对账；新 Sidecar 明确声明幂等且可恢复后才重发提交。 */
+  private async confirmOrRecoverCommit(sessionId: string, scoped: string): Promise<boolean> {
+    let confirmationError: unknown;
+    try {
+      if (await this.confirmCommitState(sessionId)) {
+        this.uncertainCommits.delete(scoped);
+        this.active.delete(scoped);
+        return true;
+      }
+    } catch (error) {
+      confirmationError = error;
+    }
+    let supported = false;
+    try {
+      const capability = await this.client.get<{ idempotent?: unknown; recoverable?: unknown }>(
+        `/sessions/${encodeURIComponent(sessionId)}/commit`,
+      );
+      supported = capability?.idempotent === true && capability.recoverable === true;
+    } catch {
+      // 老版本没有能力接口；网络错误也不能作为幂等提交的授权证据。
+    }
+    if (!supported) {
+      if (confirmationError) throw confirmationError;
+      return false;
+    }
+    await this.client.post(`/sessions/${encodeURIComponent(sessionId)}/commit`, {}, { retrySafe: true });
+    if (!await this.confirmCommitState(sessionId)) throw new Error(`OpenMem commit did not reach ARCHIVED: ${sessionId}`);
+    this.uncertainCommits.delete(scoped);
+    this.active.delete(scoped);
+    return true;
+  }
+
+  /** 仅在归档文档及其事实记忆均已落库时确认完成；ACTIVE 不能证明重试安全。 */
+  private async confirmCommitState(sessionId: string): Promise<boolean> {
+    const session = await this.client.get<OpenMemSession>(`/sessions/${encodeURIComponent(sessionId)}`);
+    if (session?.session_id !== sessionId) throw new Error("OpenMem returned a mismatched session");
+    if (session.status === "ARCHIVED") {
+      // Sidecar 先写 ARCHIVED，再写 archive 和 memories；状态本身不代表外部化完成。
+      const archives = await this.client.get<{ archives?: unknown }>("/archives");
+      if (!Array.isArray(archives?.archives)) throw new Error("OpenMem returned an invalid archives response");
+      const archive = archives.archives.find((item): item is { session_id: string; facts: string[] } => Boolean(
+        item && typeof item === "object" &&
+        (item as { session_id?: unknown }).session_id === sessionId &&
+        Array.isArray((item as { facts?: unknown }).facts),
+      ));
+      if (!archive) throw new Error(`OpenMem archive is incomplete for session ${sessionId}`);
+      if (archive.facts.length > 0) {
+        const data = await this.client.get<{ memories?: unknown }>("/externalized-memories");
+        if (!Array.isArray(data?.memories)) throw new Error("OpenMem returned an invalid memories response");
+        const available = new Map<string, number>();
+        for (const item of data.memories) {
+          if (!item || typeof item !== "object") continue;
+          const memory = item as { source_session_id?: unknown; lossless_restatement?: unknown };
+          if (memory.source_session_id !== sessionId || typeof memory.lossless_restatement !== "string") continue;
+          available.set(memory.lossless_restatement, (available.get(memory.lossless_restatement) ?? 0) + 1);
+        }
+        for (const fact of archive.facts) {
+          const count = available.get(fact) ?? 0;
+          if (count < 1) throw new Error(`OpenMem externalized memories are incomplete for session ${sessionId}`);
+          available.set(fact, count - 1);
+        }
+      }
+      return true;
+    }
+    if (session.status === "ACTIVE") return false;
+    throw new Error(`OpenMem commit state is ${session.status ?? "unknown"}`);
   }
 
   async recallSessionId(sessionKey: string): Promise<string | undefined> {
@@ -158,11 +260,19 @@ export class OpenMemCoordinator {
   private async ensureActive(sessionKey: string, channel?: string): Promise<string> {
     const scoped = this.scopeKey(sessionKey);
     const cached = this.active.get(scoped);
+    if (cached && this.uncertainCommits.has(scoped)) {
+      if (await this.confirmOrRecoverCommit(cached, scoped)) return this.ensureActive(sessionKey, channel);
+      throw new Error(`OpenMem commit outcome is uncertain; manual reconciliation required (sessionId=${cached})`);
+    }
     if (cached) return cached;
     const existing = await this.findSession(sessionKey, "ACTIVE");
     if (existing) {
+      const pendingCommit = await this.recoverPendingTurns(existing.session_id);
+      if (pendingCommit) {
+        if (await this.confirmOrRecoverCommit(existing.session_id, scoped)) return this.ensureActive(sessionKey, channel);
+        throw new Error(`OpenMem commit intent already exists; manual reconciliation required (sessionId=${existing.session_id})`);
+      }
       this.rememberActive(scoped, existing.session_id);
-      await this.recoverPendingTurns(existing.session_id);
       return existing.session_id;
     }
     const created = await this.client.post<OpenMemSession>("/sessions/start", {
@@ -207,15 +317,17 @@ export class OpenMemCoordinator {
    * 放在 append 内容开头，并通过 session.metadata.append_notes 判断是否已经成功；进程若在
    * ingest 与 append 之间退出，下次恢复 ACTIVE session 或 commit 前可由持久事件重建该轮。
    */
-  private async recoverPendingTurns(sessionId: string): Promise<void> {
+  private async recoverPendingTurns(sessionId: string): Promise<boolean> {
     const data = await this.client.get<{ events?: unknown }>(
       `/events?sessionId=${encodeURIComponent(sessionId)}&limit=${RECOVERY_EVENT_LIMIT}`,
     );
     if (!Array.isArray(data?.events)) throw new Error("OpenMem returned an invalid events response");
     const grouped = new Map<string, { size: number; messages: Map<number, TurnMessage> }>();
+    let pendingCommit = false;
     for (const event of data.events) {
       if (!event || typeof event !== "object") continue;
       const item = event as RecoverableEvent;
+      if (item.type === "openclaw_commit_intent") pendingCommit = true;
       const payload = item.payload;
       if (!payload || payload.openclawAgentId !== this.agentId || typeof payload.openclawTurnId !== "string") continue;
       if (!Number.isSafeInteger(payload.openclawTurnIndex) || !Number.isSafeInteger(payload.openclawTurnSize)) continue;
@@ -234,6 +346,7 @@ export class OpenMemCoordinator {
       if (messages.some((message) => message === undefined)) continue;
       await this.appendTurnIfMissing(sessionId, turnId, messages as TurnMessage[]);
     }
+    return pendingCommit;
   }
 
   /** 通过持久 turnId 标记把非幂等 append 收敛成“检查后写入”。 */

@@ -156,6 +156,8 @@ export function validateKnowledgeConfig(config: KnowledgeConfig): string[] {
     if ((ret.vectorWeight ?? 0.7) + (ret.keywordWeight ?? 0.3) <= 0) errors.push('retrieval.vectorWeight 与 retrieval.keywordWeight 不能同时为 0');
   }
 
+  if (config.contextMaxTokens !== undefined && (!Number.isSafeInteger(config.contextMaxTokens) || config.contextMaxTokens < 0)) errors.push('contextMaxTokens must be a non-negative safe integer');
+
   // --- injection ---
   if (config.injection) {
     const inj = config.injection;
@@ -249,6 +251,7 @@ export function createKnowledgeConfig(raw: any): KnowledgeConfig | null {
 
   const config: KnowledgeConfig = {
     enabled: true,
+    ...(raw.contextMaxTokens === undefined ? {} : { contextMaxTokens: raw.contextMaxTokens as number }),
     embedding: mergeEmbeddingConfig(raw.embedding),
     store: mergeStoreConfig(raw.store),
     retrieval: mergeRetrievalConfig(raw.retrieval),

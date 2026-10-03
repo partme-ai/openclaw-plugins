@@ -123,6 +123,10 @@ Production-oriented message and tool tracing for OpenClaw 2026.7.1.
 creates an OpenTelemetry-compatible root span for each sampled message and a
 child span for each tool call.
 
+Delivery start, final settlement, retry, Router DLQ depth, and memory recall facts from the public OpenClaw diagnostics bus produce `delivery.*` and `memory.recall` spans. The versioned envelope accepts fixed event kinds and bounded attributes only; run/message/delivery identifiers are SHA-256 pseudonyms and message bodies or credentials are not copied. A delivery start and its settlement share the same pseudonymous delivery ID. Duplicate registrations targeting the same OTLP endpoint/header scope or file directory export a diagnostic fact once; distinct sinks each export it. Log backends use backend object identity. A process-wide ticket tracks each host diagnostic sequence until its listeners finish; it permits at most 1024 active events and 128 sinks per event, and expires after 30 seconds. At capacity or after expiry, the span is dropped. A claim happens before asynchronous export, so a failed exporter may lose that fact rather than make another registration retry it; these spans remain best-effort observations. On OpenClaw 2026.9.6, the installed-host MQTT probe found no active host trace scope at SDK delivery, so Agent root and delivery spans do not share a trace ID; this Agent-to-delivery link remains incomplete. On Gateway stop, tracing invalidates the old generation immediately and flushes already accepted spans within its shutdown timeout. Queued diagnostics that have not reached the subscriber are reported as potentially incomplete. `diagnostics.enabled=false` suppresses these spans.
+
+The public diagnostics bus does not authenticate which enabled plugin emitted a valid `log.record` envelope. Schema checks bound fields, cardinality, and sensitive data; they cannot prove event origin. Install only trusted plugins and do not treat these spans as authoritative delivery ACK or audit evidence.
+
 The plugin supports three real export paths:
 
 - `log`: one compact JSON object per completed span through the OpenClaw logger.
@@ -219,8 +223,8 @@ URL. Configuration is validated again at runtime; invalid values fail startup.
 | `maxActiveTraces` | `1000` | Concurrent active-trace limit; multiplied by `maxSpansPerTrace` must not exceed 100000 |
 | `maxBufferedSpans` | `10000` | Oldest spans are dropped on overflow and health becomes degraded |
 | `flushIntervalMs` | `5000` | File and OTLP flush interval |
-| `traceDir` | `./traces` | File backend directory |
-| `traceRetentionDays` | `7` | File backend retention |
+| `traceDir` | `./traces` | File backend directory; relative paths resolve inside the OpenClaw state directory |
+| `traceRetentionDays` | `7` | File backend and shared query journal retention |
 | `otlpEndpoint` | `http://localhost:4318/v1/traces` | OTLP/HTTP trace endpoint |
 | `otlpHeaders` | `{}` | Collector authentication headers; values are never exposed by logs or status APIs |
 | `exportTimeoutMs` | `10000` | Per OTLP request timeout |
@@ -230,24 +234,50 @@ URL. Configuration is validated again at runtime; invalid values fail startup.
 
 ## Operations API
 
-All routes use OpenClaw plugin authentication, reject non-GET methods, and send
+All routes use OpenClaw Gateway authentication (`auth: "gateway"`), reject non-GET methods, and send
 `Cache-Control: no-store`:
+
+Configure Gateway authentication before exposing these endpoints. With `gateway.auth.mode: "none"`, the Gateway has no identity to authenticate and these routes must be treated as unauthenticated. Gateway authorization also governs browser grants. Platform webhooks keep their independent signature verification.
+
+The plugin registers a Control UI status tab backed by `GET /tracing/status`. Its server-issued read Cookie is scoped to that exact route; trace-list and detail requests require normal Gateway authorization.
+
+Each registration owns its backend, cleanup timer, Hook queue, and active TraceStore. Diagnostic events carry a host process sequence number; a bounded process-wide ticket keeps same-sink claims until all listeners for that event finish or its 30-second deadline passes. A registration without a live backend leaves the event for another subscriber. Stopping an older registration leaves a newer one active. The completed-trace SQLite journal remains shared by registrations within the same OpenClaw state profile so Gateway routes can query spans written by a separate Hook runtime.
 
 - `GET /tracing/status`
 - `GET /tracing/traces?limit=50` (`1..200`)
 - `GET /tracing/trace?traceId=<32-hex-character-id>`
 
+The authenticated query routes read completed spans from
+`<OpenClaw state directory>/plugins/tracing/journal/journal.sqlite`. Hook runtimes and Gateway HTTP routes can
+load in separate module realms; this private journal makes the same trace ID
+queryable across those runtimes and after a Gateway restart. It retains at most
+200 traces and 100 completed spans per trace, with an 8 KiB limit per span.
+Excess spans are omitted from the query journal and reported as an observer
+error; the configured log/file/OTLP export still runs. SQLite transactions
+atomically publish spans across processes and roll back incomplete writes after
+a crash. The database has mode `0600` under a `0700` directory. Read routes
+filter expired traces without taking a writer lock; subsequent writes remove
+expired rows physically.
+
 `/tracing/status` returns HTTP 503 when the selected backend reports a current
 export or capacity failure. Its `backendStatus` includes buffered, dropped,
-last-export, and last-error diagnostics.
+last-export, and last-error diagnostics. `exportHealth` describes only the
+Gateway runtime's backend instance; Hook runtimes can be isolated and need
+their own logs/Collector checks. `queryHealth` checks only shared journal
+readability; its `completeness: "unverified"` does not claim every completed
+Span was retained. Journal read failure returns 503 without exposing filesystem
+details. A journal write failure remains in the writer runtime's backend
+diagnostics and log even if a later Span succeeds.
 
 ## Reliability and privacy boundaries
 
-- Active traces and recent query data are bounded in process memory.
+- Active traces are bounded in process memory; completed query data uses the bounded shared journal.
 - Concurrent startup hooks share one initialization promise. Initialization failures are logged and
   fail open, so the observer cannot reject the message or tool path.
-- File and OTLP hooks only append to bounded memory. Disk writes, 50-span HTTP batches, and retries
-  run in serialized background flushes instead of blocking threshold-crossing business requests.
+- File and OTLP export buffers use bounded memory and background flushes for
+  external delivery. Completed spans also synchronously write the small local
+  query journal; monitor local disk latency because it adds observer overhead
+  to completion hooks. Journal errors are logged without rejecting Agent work.
 - OTLP retries only network failures, 408/429, and 5xx responses. Permanent 4xx failures stop the
   current attempt immediately. A `partialSuccess` response is not resent as a whole batch because
   doing so would duplicate spans the Collector already accepted; rejected spans are counted as dropped.
@@ -272,8 +302,13 @@ last-export, and last-error diagnostics.
   boundary before they reach memory, files, logs, or OTLP.
 - `otlpHeaders` may contain credentials. Values are not returned by the plugin, but the OpenClaw
   configuration file still requires least-privilege filesystem protection.
-- The HTTP query cache contains only the 200 most recently completed traces and
-  is cleared on gateway shutdown.
+- Gateway authentication protects HTTP access to the journal; filesystem users
+  who can read the Gateway process's files must be trusted with redacted span
+  data. The journal uses OpenClaw's profile state directory rather than the
+  process working directory, so separate profiles cannot query each other's
+  traces. Relative `traceDir` paths are likewise resolved under that state
+  directory; paths that escape it are rejected. Restart does not clear retained
+  query data.
 
 ## Verification
 

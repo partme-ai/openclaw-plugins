@@ -3,8 +3,9 @@
  *
  * 监听 inbound、outbound 和 reply_payload 事件，按规则生成稳定幂等键与 hop trace，再交给
  * `ReliableRouteDispatcher` 持久化投递。trace 限制和已拥有 identity 检查防止路由环路；
- * 状态、健康、DLQ、审计及重放端点均要求插件认证，并只返回脱敏摘要。
+ * 状态、健康、DLQ、审计及重放端点均要求 Gateway 鉴权，并只返回脱敏摘要。
  */
+import { authorizeStructuredMedia, parseStructuredWire, type StructuredWireMessage } from "@partme.ai/openclaw-message-sdk/structured-wire";
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 
@@ -33,6 +34,7 @@ type RouteEvent = {
   channelId: string;
   direction: RouteDirection;
   content: string;
+  structured?: StructuredWireMessage;
   topic?: string;
   accountId?: string;
   recipient?: string;
@@ -101,8 +103,11 @@ function encodeOutboundTarget(channel: string, target: string): string {
     : target;
 }
 
-function resolveChannelSend(api: OpenClawPluginApi): ChannelSendFn {
+function resolveChannelSend(api: OpenClawPluginApi, config: RouterConfig): ChannelSendFn {
   return async (params, signal) => {
+    if (params.mediaFallback === "text" && !params.content.trim()) {
+      throw new Error("router text fallback has no nonempty text");
+    }
     const target = readString(params.to) ?? readString(params.topic);
     if (!target) throw new Error(`router target ${params.channel} requires action.to or action.topic`);
     const idempotencyKey = readString(params.metadata?.idempotencyKey);
@@ -117,6 +122,33 @@ function resolveChannelSend(api: OpenClawPluginApi): ChannelSendFn {
       deliveryQueueId: idempotencyKey,
       abortSignal: signal,
     };
+    if (params.structured) {
+      if (params.payloadFormat !== "structured-v1" || (!adapter.sendPayload &&
+        params.structured.parts.some((part) => part.type === "media" ? !adapter.sendMedia : !adapter.sendText))) {
+        throw new Error("router target does not support structured-v1 payload");
+      }
+      await authorizeStructuredMedia(params.structured, config.structured.allowedMediaHosts);
+      for (const [index, part] of params.structured.parts.entries()) {
+        signal?.throwIfAborted();
+        const partContext = { ...context,
+          signal,
+          replyToId: params.structured.replyTo,
+          threadId: params.structured.threadId,
+          deliveryQueueId: idempotencyKey,
+          deliveryPartIndex: index,
+          deliveryPartCount: params.structured.parts.length,
+          text: part.type === "text" ? part.text : "",
+          mediaUrl: part.type === "media" ? part.url : undefined,
+          payload: { ...(part.type === "text" ? { text: part.text } : { mediaUrl: part.url }),
+            channelData: { structuredWire: { schemaVersion: 1, messageId: params.structured.messageId, deliveryId: params.structured.deliveryId, partIndex: index, partCount: params.structured.parts.length } },
+          },
+        };
+        if (adapter.sendPayload) await adapter.sendPayload(partContext);
+        else if (part.type === "media") await adapter.sendMedia!(partContext);
+        else await adapter.sendText!(partContext);
+      }
+      return;
+    }
     if (adapter.sendText) {
       await adapter.sendText(context);
       return;
@@ -133,19 +165,40 @@ function resolveChannelSend(api: OpenClawPluginApi): ChannelSendFn {
   };
 }
 
-function resolveEvent(eventValue: unknown, ctxValue: unknown, direction: RouteDirection): RouteEvent | null {
+function resolveEvent(eventValue: unknown, ctxValue: unknown, direction: RouteDirection, config: RouterConfig): RouteEvent | null {
   const event = record(eventValue);
   const ctx = record(ctxValue);
-  const content = resolveContent(event);
-  if (!content) return null;
+  let content = resolveContent(event);
+  let structured: StructuredWireMessage | undefined;
+  if (config.structured.enabled && content) {
+    let candidate: unknown;
+    try { candidate = JSON.parse(content); } catch { /* 普通文本继续旧路径。 */ }
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate) &&
+      (("format" in candidate && candidate.format === "structured-v1") ||
+        ["schemaVersion", "messageId", "deliveryId", "parts"].every((field) => field in candidate))) {
+      structured = parseStructuredWire(candidate);
+    }
+  }
+  if (!structured && (event.mediaUrl || (Array.isArray(event.mediaUrls) && event.mediaUrls.length))) {
+    if (!config.structured.enabled) throw new Error("router structured media routing is disabled");
+    const urls = Array.isArray(event.mediaUrls) ? event.mediaUrls : [event.mediaUrl];
+    const id = readString(event.messageId) ?? readString(ctx.messageId) ?? randomUUID();
+    structured = parseStructuredWire({ schemaVersion: 1, messageId: id, deliveryId: id,
+      parts: [...(content ? [{ type: "text", text: content }] : []), ...urls.map((url) => ({ type: "media", mediaType: "other", url }))],
+      replyTo: event.replyToId, threadId: event.threadId,
+    });
+  }
+  if (structured) content = structured.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
+  if (!content && !structured) return null;
   const metadata = record(event.metadata);
-  const messageId = readString(ctx.messageId) ?? readString(event.messageId) ?? readString(event.id);
+  const messageId = structured?.messageId ?? readString(ctx.messageId) ?? readString(event.messageId) ?? readString(event.id);
   const runId = readString(ctx.runId) ?? readString(event.runId);
-  const stableIdentity = resolveRouterDeliveryIdentity(event, ctx) ?? messageId ?? runId;
+  const stableIdentity = structured?.deliveryId ?? resolveRouterDeliveryIdentity(event, ctx) ?? messageId ?? runId;
   return {
     channelId: readString(ctx.channelId) ?? readString(event.channelId) ?? "unknown",
     direction,
-    content,
+    content: content ?? "",
+    ...(structured ? { structured } : {}),
     topic: resolveTopic(event),
     accountId: resolveAccountId(ctx),
     recipient: readString(event.to) ?? readString(event.from) ?? readString(ctx.conversationId) ?? readString(ctx.senderId),
@@ -185,6 +238,15 @@ function payloadForAction(
   const trace = readTrace(event.metadata);
   const hop = `${rule.id}:${actionIndex}:${action.type}:${action.target}`;
   if (trace.hops.length >= config.delivery.maxHops || trace.hops.includes(hop)) return null;
+  const structuredPayload = event.structured
+    ? action.payloadFormat === "structured-v1"
+      ? { structured: event.structured, payloadFormat: action.payloadFormat }
+      : event.structured.parts.some((part) => part.type === "media")
+        ? action.mediaFallback === "text"
+          ? { mediaFallback: "text" as const }
+          : { structured: event.structured }
+        : {}
+    : {};
   const metadata = {
     ...event.metadata,
     sessionKey: event.sessionKey,
@@ -201,11 +263,12 @@ function payloadForAction(
       direction: event.direction,
       account: event.accountId ?? "default",
     });
-    return { channel: action.target, content: event.content, topic, to: topic, metadata: { ...metadata, topic } };
+    return { channel: action.target, content: event.content, ...structuredPayload, topic, to: topic, metadata: { ...metadata, topic } };
   }
   return {
     channel: action.target,
     content: event.content,
+    ...structuredPayload,
     ...(action.accountId ? { accountId: action.accountId } : {}),
     ...(action.to ?? event.recipient ? { to: action.to ?? event.recipient } : {}),
     metadata,
@@ -284,7 +347,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     }
 
     const store = new DurableRouteStore(resolveRouterStateDir(config), config);
-    const dispatcher = new ReliableRouteDispatcher(api, config, store, resolveChannelSend(api));
+    const dispatcher = new ReliableRouteDispatcher(api, config, store, resolveChannelSend(api, config));
     const replyIdentities = new ReplyPayloadIdentityTracker();
     api.registerService({
       id: "openclaw-router-delivery",
@@ -293,7 +356,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     });
 
     api.on("message_received", async (event, ctx) => {
-      const route = resolveEvent(event, ctx, "inbound");
+      const route = resolveEvent(event, ctx, "inbound", config);
       if (route) await routeEvent(dispatcher, config, route, "forward");
     }, { priority: 50 });
 
@@ -305,7 +368,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         ?? readString(eventRecord.runId)
         ?? readString(eventRecord.messageId);
       if (await dispatcher.ownsIdentity(identity)) return;
-      const route = resolveEvent(event, ctx, "outbound");
+      const route = resolveEvent(event, ctx, "outbound", config);
       if (route) await routeEvent(dispatcher, config, route, "forward");
     }, { priority: 50 });
 
@@ -318,13 +381,13 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         sessionKey: readString(record(event).sessionKey),
         messageId: replyIdentities.next(record(event), record(ctx)),
       };
-      const route = resolveEvent(replyEvent, ctx, "outbound");
+      const route = resolveEvent(replyEvent, ctx, "outbound", config);
       if (route) await routeEvent(dispatcher, config, route, "reply-via");
     }, { priority: 50 });
 
     api.registerHttpRoute({
       path: "/router/status",
-      auth: "plugin",
+      auth: "gateway",
       match: "exact",
       handler: async (req, res) => {
         if ((req.method ?? "GET") !== "GET") {
@@ -338,7 +401,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.registerHttpRoute({
       path: "/router/health",
-      auth: "plugin",
+      auth: "gateway",
       match: "exact",
       handler: async (req, res) => {
         if ((req.method ?? "GET") !== "GET") {
@@ -353,7 +416,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.registerHttpRoute({
       path: "/router/dlq",
-      auth: "plugin",
+      auth: "gateway",
       match: "exact",
       handler: async (req, res) => {
         if ((req.method ?? "GET") !== "GET") {
@@ -369,7 +432,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.registerHttpRoute({
       path: "/router/audit",
-      auth: "plugin",
+      auth: "gateway",
       match: "exact",
       handler: async (req, res) => {
         if ((req.method ?? "GET") !== "GET") {
@@ -385,7 +448,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.registerHttpRoute({
       path: "/router/dlq/replay",
-      auth: "plugin",
+      auth: "gateway",
       match: "exact",
       handler: async (req, res) => {
         if (req.method !== "POST") {
@@ -398,6 +461,16 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         writeJson(res, 202, { ok: true, data: { replayed: await dispatcher.replayDeadLetters(limit) } });
       },
     });
+
+    if (api.registrationMode === "full") {
+      api.session.controls.registerControlUiDescriptor({
+        surface: "tab",
+        id: "router-status",
+        label: "Router status",
+        path: "/router/status",
+        requiredScopes: ["operator.read"],
+      });
+    }
 
     api.logger.info(`[router] registered ${config.rules.length} rule(s), durable delivery enabled`);
   },

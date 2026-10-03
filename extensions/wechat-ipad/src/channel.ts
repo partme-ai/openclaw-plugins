@@ -5,10 +5,10 @@
  * 连接，也不处理消息正文；实际连接由 `WechatIpadBridge` 管理，收发分别由 inbound/outbound
  * 模块完成。
  */
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type {
   ChannelAccountSnapshot,
-  ChannelGatewayContext,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/core";
 import type {
   ChannelPlugin,
   OpenClawConfig,

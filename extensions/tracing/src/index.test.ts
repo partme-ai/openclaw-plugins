@@ -1,7 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import plugin from "./index.js";
+import { SharedTraceJournal } from "./runtime/shared-trace-journal.js";
+import { LogBackend } from "./backends/log-backend.js";
+import { TracingSampler } from "./runtime/sampler.js";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 
 type Hook = (event?: Record<string, unknown>, ctx?: Record<string, unknown>) => Promise<void> | void;
+let testTraceDir: string;
+beforeEach(async () => {
+  testTraceDir = await mkdtemp(join(tmpdir(), "tracing-index-test-"));
+  vi.stubEnv("OPENCLAW_STATE_DIR", testTraceDir);
+});
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await rm(testTraceDir, { recursive: true, force: true });
+});
+
+async function emit(hooks: Map<string, Hook[]>, name: string, event = {}, ctx = {}) {
+  for (const handler of hooks.get(name) ?? []) await handler(event, ctx);
+}
 
 function response() {
   return {
@@ -20,12 +40,255 @@ function response() {
 }
 
 describe("tracing plugin", () => {
-  it("ID、生命周期和认证 GET-only 路由与 OpenClaw 2026.7.1 对齐", async () => {
+  it("failed and in-flight initialization clean only their backend and allow restart", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const routes = new Map<string, Hook>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", traceDir: testTraceDir },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+    } as never);
+    const originalInit = LogBackend.prototype.init;
+    const shutdown = vi.spyOn(LogBackend.prototype, "shutdown");
+    const init = vi.spyOn(LogBackend.prototype, "init").mockRejectedValueOnce(new Error("backend unavailable"));
+    try {
+      await expect(emit(hooks, "gateway_start")).rejects.toThrow("backend unavailable");
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      const gate = Promise.withResolvers<void>();
+      init.mockImplementationOnce(() => gate.promise);
+      const starting = emit(hooks, "gateway_start");
+      const stopping = emit(hooks, "gateway_stop");
+      gate.resolve();
+      await Promise.allSettled([starting, stopping]);
+      const stoppedStatus = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, stoppedStatus as never);
+      expect(JSON.parse(stoppedStatus.body).data.status).toBe("disabled");
+      expect(shutdown).toHaveBeenCalledTimes(2);
+      init.mockImplementation(originalInit);
+      await emit(hooks, "gateway_start");
+      const restartedStatus = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, restartedStatus as never);
+      expect(JSON.parse(restartedStatus.body).data.status).toBe("active");
+      await emit(hooks, "gateway_stop");
+    } finally { vi.restoreAllMocks(); }
+  });
+  it("concurrent gateway_stop waits for the in-flight Hook export before backend shutdown", async () => {
+    const hooks = new Map<string, Hook[]>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1, traceDir: testTraceDir },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute: vi.fn(),
+    } as never);
+    const gate = Promise.withResolvers<void>();
+    const exporting = vi.spyOn(LogBackend.prototype, "exportSpans").mockImplementation(() => gate.promise);
+    const shutdown = vi.spyOn(LogBackend.prototype, "shutdown");
+    try {
+      await emit(hooks, "gateway_start");
+      await emit(hooks, "message_received", {}, { sessionKey: "race-session", runId: "race-run", channelId: "wecom" });
+      const reply = emit(hooks, "reply_payload_sending", { kind: "final" }, { sessionKey: "race-session", runId: "race-run" });
+      await vi.waitFor(() => expect(exporting).toHaveBeenCalled());
+      const stopping = Promise.all((hooks.get("gateway_stop") ?? []).map((handler) => handler({}, {})));
+      await Promise.resolve();
+      expect(shutdown).not.toHaveBeenCalled();
+      gate.resolve();
+      await Promise.all([reply, stopping]);
+      expect(shutdown).toHaveBeenCalledTimes(1);
+    } finally { gate.resolve(); vi.restoreAllMocks(); }
+  });
+  it("a timed-out stop eventually closes its old backend without closing a restarted generation", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const routes = new Map<string, Hook>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1,
+      traceDir: testTraceDir, shutdownTimeoutMs: 100 },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+    } as never);
+    const backends: LogBackend[] = [];
+    const closed: LogBackend[] = [];
+    const originalInit = LogBackend.prototype.init;
+    const originalShutdown = LogBackend.prototype.shutdown;
+    vi.spyOn(LogBackend.prototype, "init").mockImplementation(async function (config) {
+      backends.push(this);
+      await originalInit.call(this, config);
+    });
+    vi.spyOn(LogBackend.prototype, "shutdown").mockImplementation(async function () {
+      closed.push(this);
+      await originalShutdown.call(this);
+    });
+    const gate = Promise.withResolvers<void>();
+    const exporting = vi.spyOn(LogBackend.prototype, "exportSpans").mockImplementationOnce(() => gate.promise);
+    try {
+      await emit(hooks, "gateway_start");
+      await emit(hooks, "message_received", {}, { sessionKey: "timeout-session", runId: "timeout-run", channelId: "wecom" });
+      const reply = emit(hooks, "reply_payload_sending", { kind: "final" },
+        { sessionKey: "timeout-session", runId: "timeout-run" });
+      await vi.waitFor(() => expect(exporting).toHaveBeenCalled());
+      const stopHandler = hooks.get("gateway_stop")?.at(-1);
+      expect(stopHandler).toBeDefined();
+      await expect(stopHandler?.()).rejects.toThrow("Tracing shutdown timed out after 100ms");
+      expect(closed).toEqual([]);
+
+      await emit(hooks, "gateway_start");
+      expect(backends).toHaveLength(2);
+      const restarted = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, restarted as never);
+      expect(JSON.parse(restarted.body).data.status).toBe("active");
+
+      gate.resolve();
+      await reply;
+      await vi.waitFor(() => expect(closed).toContain(backends[0]));
+      expect(closed).not.toContain(backends[1]);
+      const stillActive = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, stillActive as never);
+      expect(JSON.parse(stillActive.body).data.status).toBe("active");
+      await emit(hooks, "gateway_stop");
+      expect(closed.filter((backend) => backend === backends[0])).toHaveLength(1);
+      expect(closed.filter((backend) => backend === backends[1])).toHaveLength(1);
+    } finally { gate.resolve(); vi.restoreAllMocks(); }
+  });
+  it("late superseded message cannot create a trace in the generation after timeout and restart", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const routes = new Map<string, Hook>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1,
+      traceDir: testTraceDir, shutdownTimeoutMs: 100 },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+    } as never);
+    const gate = Promise.withResolvers<void>();
+    const exporting = vi.spyOn(LogBackend.prototype, "exportSpans").mockImplementationOnce(() => gate.promise);
+    let lateMessage: Promise<void> | undefined;
+    try {
+      await emit(hooks, "gateway_start");
+      const identity = { sessionKey: "reused-session", runId: "reused-run", channelId: "mqtt" };
+      await emit(hooks, "message_received", { content: "first" }, identity);
+      lateMessage = emit(hooks, "message_received", { content: "second" }, identity);
+      await vi.waitFor(() => expect(exporting).toHaveBeenCalledTimes(1));
+      const stopHandler = hooks.get("gateway_stop")?.at(-1);
+      await expect(stopHandler?.()).rejects.toThrow("Tracing shutdown timed out after 100ms");
+      await emit(hooks, "gateway_start");
+      const beforeRelease = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, beforeRelease as never);
+      expect(JSON.parse(beforeRelease.body).data).toMatchObject({ status: "active", activeTraces: 0 });
+
+      const newMessage = emit(hooks, "message_received", { content: "new generation" }, identity);
+      await vi.waitFor(async () => {
+        const duringOldExport = response();
+        await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, duringOldExport as never);
+        expect(JSON.parse(duringOldExport.body).data).toMatchObject({ status: "active", activeTraces: 1 });
+      }, { timeout: 300 });
+      await newMessage;
+
+      gate.resolve();
+      await lateMessage;
+      const afterRelease = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, afterRelease as never);
+      expect(JSON.parse(afterRelease.body).data).toMatchObject({ status: "active", activeTraces: 1 });
+    } finally {
+      gate.resolve();
+      await lateMessage?.catch(() => undefined);
+      await emit(hooks, "gateway_stop").catch(() => undefined);
+      vi.restoreAllMocks();
+    }
+  });
+  it("repeated gateway_start keeps an in-flight message in the same generation", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const routes = new Map<string, Hook>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1,
+      traceDir: testTraceDir, shutdownTimeoutMs: 100 },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+    } as never);
+    const gate = Promise.withResolvers<void>();
+    const exporting = vi.spyOn(LogBackend.prototype, "exportSpans").mockImplementationOnce(() => gate.promise);
+    let second: Promise<void> | undefined;
+    try {
+      const identity = { sessionKey: "repeated-start-session", runId: "repeated-start-run", channelId: "mqtt" };
+      await emit(hooks, "gateway_start");
+      await emit(hooks, "message_received", { content: "first" }, identity);
+      second = emit(hooks, "message_received", { content: "second" }, identity);
+      await vi.waitFor(() => expect(exporting).toHaveBeenCalledTimes(1));
+      await emit(hooks, "gateway_start");
+      gate.resolve();
+      await second;
+      const status = response();
+      await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, status as never);
+      expect(JSON.parse(status.body).data).toMatchObject({ status: "active", activeTraces: 1 });
+    } finally {
+      gate.resolve();
+      await second?.catch(() => undefined);
+      await emit(hooks, "gateway_stop").catch(() => undefined);
+      vi.restoreAllMocks();
+    }
+  });
+  it("late agent_end cannot consume a new generation's sampled-out run after timeout", async () => {
+    const hooks = new Map<string, Hook[]>();
+    plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 0.5,
+      traceDir: testTraceDir, shutdownTimeoutMs: 100 },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute: vi.fn(),
+    } as never);
+    vi.spyOn(TracingSampler.prototype, "shouldSample")
+      .mockReturnValueOnce(true).mockReturnValueOnce(false).mockReturnValue(true);
+    const gate = Promise.withResolvers<void>();
+    const exporting = vi.spyOn(LogBackend.prototype, "exportSpans").mockImplementationOnce(() => gate.promise);
+    let lateEnd: Promise<void> | undefined;
+    try {
+      const identity = { sessionKey: "same-session", runId: "old-run", channelId: "mqtt" };
+      await emit(hooks, "gateway_start");
+      await emit(hooks, "message_received", {}, identity);
+      await emit(hooks, "before_tool_call", { toolCallId: "old-tool", toolName: "search" }, identity);
+      lateEnd = emit(hooks, "agent_end", { runId: "old-run", success: true }, identity);
+      await vi.waitFor(() => expect(exporting).toHaveBeenCalledTimes(1));
+      await expect(hooks.get("gateway_stop")?.at(-1)?.()).rejects.toThrow("Tracing shutdown timed out after 100ms");
+      await emit(hooks, "gateway_start");
+      await emit(hooks, "message_received", {}, { sessionKey: "same-session", channelId: "mqtt" }); // sampled out before runId is known
+      gate.resolve();
+      await lateEnd;
+      await emit(hooks, "agent_end", { runId: "new-run", success: true },
+        { sessionKey: "same-session", runId: "new-run", channelId: "mqtt" });
+      const exportedNames = exporting.mock.calls.flatMap(([spans]) => spans.map((span) => span.name));
+      expect(exportedNames).not.toContain("agent.run");
+    } finally {
+      gate.resolve();
+      await lateEnd?.catch(() => undefined);
+      await emit(hooks, "gateway_stop").catch(() => undefined);
+      vi.restoreAllMocks();
+    }
+  });
+  it("stopping registration A leaves B backend and active spans intact", async () => {
+    const register = () => {
+      const hooks = new Map<string, Hook[]>();
+      const routes = new Map<string, Hook>();
+      plugin.register({ config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1, traceDir: testTraceDir },
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+        registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+      } as never);
+      return { hooks, routes };
+    };
+    const a = register(); const b = register();
+    await emit(a.hooks, "gateway_start");
+    await emit(b.hooks, "gateway_start");
+    await emit(b.hooks, "message_received", {}, { sessionKey: "b-session", runId: "b-run", channelId: "wecom" });
+    await emit(a.hooks, "gateway_stop");
+    const status = response();
+    await b.routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, status as never);
+    expect(JSON.parse(status.body).data).toMatchObject({ status: "active", activeSpans: 1, activeTraces: 1 });
+    await emit(b.hooks, "gateway_stop");
+  });
+  it("ID、生命周期和 Gateway 认证 GET-only 路由与 OpenClaw 2026.9.6 对齐", async () => {
     const hooks = new Map<string, Hook[]>();
     const routes = new Map<string, { auth?: string; match?: string; handler: Hook }>();
+    const descriptors: Array<{ surface: string; path?: string; requiredScopes?: string[] }> = [];
     const api = {
+      registrationMode: "full",
+      session: { controls: { registerControlUiDescriptor: (descriptor: typeof descriptors[number]) => descriptors.push(descriptor) } },
       config: {},
-      pluginConfig: { enabled: true, backend: "log", sampleRate: 1 },
+      pluginConfig: { enabled: true, backend: "log", sampleRate: 1, traceDir: testTraceDir },
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       on(name: string, handler: Hook) {
         hooks.set(name, [...(hooks.get(name) ?? []), handler]);
@@ -38,13 +301,14 @@ describe("tracing plugin", () => {
     expect(plugin.id).toBe("tracing");
     plugin.register(api as never);
     expect(routes.size).toBe(3);
-    expect([...routes.values()].every((route) => route.auth === "plugin")).toBe(true);
+    expect([...routes.values()].every((route) => route.auth === "gateway")).toBe(true);
     expect([...routes.values()].every((route) => route.match === "exact")).toBe(true);
+    expect(descriptors).toContainEqual(expect.objectContaining({ surface: "tab", path: "/tracing/status", requiredScopes: ["operator.read"] }));
     expect(hooks.get("message_received")).toHaveLength(1);
     expect(hooks.get("reply_payload_sending")).toHaveLength(1);
     expect(hooks.get("agent_end")).toHaveLength(1);
 
-    await hooks.get("gateway_start")?.[0]?.({}, {});
+    await emit(hooks, "gateway_start");
     const statusResponse = response();
     await routes.get("/tracing/status")?.handler(
       { method: "GET", url: "/tracing/status", headers: {} },
@@ -71,7 +335,7 @@ describe("tracing plugin", () => {
     );
     expect(limitResponse.status).toBe(400);
 
-    await hooks.get("gateway_stop")?.[0]?.({}, {});
+    await emit(hooks, "gateway_stop");
   });
 
   it("gateway_start 与首个 Hook 并发时复用同一初始化 Promise，不漏首条 Trace", async () => {
@@ -80,7 +344,7 @@ describe("tracing plugin", () => {
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const api = {
       config: {},
-      pluginConfig: { enabled: true, backend: "log", sampleRate: 1 },
+      pluginConfig: { enabled: true, backend: "log", sampleRate: 1, traceDir: testTraceDir },
       logger,
       on(name: string, handler: Hook) {
         hooks.set(name, [...(hooks.get(name) ?? []), handler]);
@@ -92,7 +356,7 @@ describe("tracing plugin", () => {
     plugin.register(api as never);
 
     await Promise.all([
-      hooks.get("gateway_start")?.[0]?.({}, {}),
+      emit(hooks, "gateway_start"),
       hooks.get("message_received")?.[0]?.(
         { content: "first" },
         { sessionKey: "sk-concurrent-init", runId: "run-concurrent-init", channelId: "wecom" },
@@ -108,6 +372,124 @@ describe("tracing plugin", () => {
       data: { status: "active", activeSpans: 1, activeTraces: 1 },
     });
     expect(logger.info.mock.calls.filter(([message]) => String(message).includes("Log backend initialized"))).toHaveLength(1);
-    await hooks.get("gateway_stop")?.[0]?.({}, {});
+    await emit(hooks, "gateway_stop");
+  });
+
+  it("停止后的迟到 Hook 不复活后端，新一轮启动可恢复", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const api = {
+      config: {}, pluginConfig: { enabled: true, backend: "log", sampleRate: 1, traceDir: testTraceDir }, logger,
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute: vi.fn(),
+    };
+    plugin.register(api as never);
+    await emit(hooks, "gateway_start");
+    await emit(hooks, "gateway_stop");
+    const initializations = () => logger.info.mock.calls.filter(([message]) => String(message).includes("Log backend initialized")).length;
+    expect(initializations()).toBe(1);
+    await emit(hooks, "session_end", {}, { sessionKey: "late-session", runId: "late-run" });
+    expect(initializations()).toBe(1);
+    await emit(hooks, "gateway_start");
+    expect(initializations()).toBe(2);
+    await emit(hooks, "gateway_stop");
+  });
+
+  it("Gateway 查询读取另一个 runtime 写入的同一 traceId", async () => {
+    const traceDir = await mkdtemp(join(tmpdir(), "tracing-route-test-"));
+    try {
+      const routes = new Map<string, { auth?: string; handler: Hook }>();
+      const api = {
+        config: {}, pluginConfig: { enabled: true, backend: "log", traceDir },
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+        on: vi.fn(),
+        registerHttpRoute(route: { path: string; auth?: string; handler: Hook }) { routes.set(route.path, route); },
+      };
+      plugin.register(api as never);
+      const traceId = "e".repeat(32);
+      const writer = new SharedTraceJournal(join(testTraceDir, "plugins", "tracing", "journal"), { scopeRoot: testTraceDir });
+      await writer.writeSpan({ traceId, spanId: "f".repeat(16), name: "agent.run", kind: "internal",
+        startTimeMs: 1, endTimeMs: 2, attributes: {}, events: [], status: "ok" });
+      const status = response();
+      await routes.get("/tracing/status")?.handler({ method: "GET", url: "/tracing/status", headers: {} }, status as never);
+      expect(JSON.parse(status.body).data.recentTraces).toBe(1);
+      const list = response();
+      await routes.get("/tracing/traces")?.handler({ method: "GET", url: "/tracing/traces", headers: {} }, list as never);
+      expect(JSON.parse(list.body).data).toMatchObject([{ traceId, rootSpan: "agent.run" }]);
+      const detail = response();
+      await routes.get("/tracing/trace")?.handler({ method: "GET", url: `/tracing/trace?traceId=${traceId}`, headers: {} }, detail as never);
+      expect(JSON.parse(detail.body).data).toMatchObject({ traceId, spans: [{ spanId: "f".repeat(16) }] });
+      expect([...routes.values()].every((route) => route.auth === "gateway")).toBe(true);
+    } finally {
+      await rm(traceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("公开 state-paths 契约把两个 profile 的查询 journal 隔离", async () => {
+    const secondProfile = await mkdtemp(join(tmpdir(), "tracing-profile-b-"));
+    try {
+      const register = () => {
+        const routes = new Map<string, Hook>();
+        plugin.register({
+          config: {}, pluginConfig: { enabled: true, backend: "log" },
+          logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, on: vi.fn(),
+          registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+        } as never);
+        return routes;
+      };
+      const firstState = resolveStateDir();
+      expect(firstState).toBe(testTraceDir);
+      const firstRoutes = register();
+      const traceId = "d".repeat(32);
+      await new SharedTraceJournal(join(firstState, "plugins", "tracing", "journal"), { scopeRoot: firstState })
+        .writeSpan({ traceId, spanId: "1".repeat(16), name: "profile-a", kind: "internal",
+          startTimeMs: 1, endTimeMs: 2, attributes: {}, events: [], status: "ok" });
+      vi.stubEnv("OPENCLAW_STATE_DIR", secondProfile);
+      expect(resolveStateDir()).toBe(secondProfile);
+      const secondRoutes = register();
+      const secondList = response();
+      await secondRoutes.get("/tracing/traces")?.({ method: "GET", url: "/tracing/traces", headers: {} }, secondList as never);
+      expect(JSON.parse(secondList.body).data).toEqual([]);
+      const firstList = response();
+      await firstRoutes.get("/tracing/traces")?.({ method: "GET", url: "/tracing/traces", headers: {} }, firstList as never);
+      expect(JSON.parse(firstList.body).data).toMatchObject([{ traceId }]);
+    } finally {
+      await rm(secondProfile, { recursive: true, force: true });
+    }
+  });
+
+  it("相对 traceDir 在 profile 下解析并拒绝越界", async () => {
+    const hooks = new Map<string, Hook[]>();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const makeApi = (traceDir: string) => ({
+      config: {}, pluginConfig: { enabled: true, backend: "file", traceDir }, logger,
+      on(name: string, handler: Hook) { hooks.set(name, [...(hooks.get(name) ?? []), handler]); },
+      registerHttpRoute: vi.fn(),
+    });
+    expect(() => plugin.register(makeApi("../outside") as never)).toThrow(/state directory/);
+    plugin.register(makeApi("./relative-traces") as never);
+    await emit(hooks, "gateway_start");
+    expect(logger.info.mock.calls.some(([message]) => String(message).includes(join(testTraceDir, "relative-traces")))).toBe(true);
+    await emit(hooks, "gateway_stop");
+  });
+
+  it("共享查询损坏时 status 报 queryHealth 故障且不泄露路径", async () => {
+    const journalDir = join(testTraceDir, "plugins", "tracing", "journal");
+    await mkdir(journalDir, { recursive: true });
+    const target = join(testTraceDir, "private-target.sqlite");
+    await writeFile(target, "secret");
+    await symlink(target, join(journalDir, "journal.sqlite"));
+    const routes = new Map<string, Hook>();
+    plugin.register({
+      config: {}, pluginConfig: { enabled: true, backend: "log" },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, on: vi.fn(),
+      registerHttpRoute(route: { path: string; handler: Hook }) { routes.set(route.path, route.handler); },
+    } as never);
+    const status = response();
+    await routes.get("/tracing/status")?.({ method: "GET", url: "/tracing/status", headers: {} }, status as never);
+    expect(status.status).toBe(503);
+    expect(JSON.parse(status.body)).toMatchObject({ ok: false, data: { queryHealth: { healthy: false } } });
+    expect(status.body).not.toContain(testTraceDir);
+    expect(status.body).not.toContain("secret");
   });
 });

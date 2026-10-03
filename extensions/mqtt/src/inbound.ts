@@ -18,22 +18,33 @@ import {
 } from "./routing/topic-router.js";
 import { upsertSessionContext } from "./routing/session-mapper.js";
 import { logAuditEvent } from "./transport/audit.js";
-import { getClientUsername, publishMessage } from "./transport/server.js";
+import { publishMessage } from "./transport/server.js";
 import { isUserActionAllowed } from "./transport/acl.js";
 import {
   normalizeWireIngress,
   dispatchChannelMessage,
+  requireSettledDelivery,
   resolveChannelDispatchIdentity,
   type BridgePluginRuntime,
 } from "@partme.ai/openclaw-message-sdk/bridge";
-import {
-  buildMqttPacketIdempotencyKey,
-  getMqttIdempotencyCache,
-} from "./shared/wire-helpers.js";
 import { redactMqttError } from "./shared/redact.js";
+import { createHash } from "node:crypto";
 
-/** MQTT 入站幂等缓存（messageId / 等价键）。 */
-const idempotencyCache = getMqttIdempotencyCache();
+/** Packet IDs are reused after PUBACK; durable custody requires an application ID. */
+function resolveApplicationDeliveryIdentity(message: MqttInboundMessage, authenticated: boolean): string | undefined {
+  try {
+    const payload = JSON.parse(Buffer.from(message.payload).toString("utf8")) as Record<string, unknown>;
+    const nested = typeof payload.message === "object" && payload.message ? payload.message as Record<string, unknown> : undefined;
+    const headers = typeof payload.headers === "object" && payload.headers ? payload.headers as Record<string, unknown> : undefined;
+    const candidate = payload.idempotencyKey ?? payload.messageId ?? nested?.messageId ?? headers?.idempotencyKey;
+    if (typeof candidate !== "string" || !candidate.trim()) return undefined;
+    return createHash("sha256").update(JSON.stringify([
+      authenticated ? message.authenticatedUsername : "local", message.clientId, candidate.trim(),
+    ])).digest("hex");
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * 处理 MQTT 入站消息（设备 → Agent）：Topic 过滤、路由、ACL、message-sdk dispatch。
@@ -63,8 +74,7 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
 
   const rt = getMqttRuntime();
   if (!rt) {
-    console.warn("[openclaw-mqtt] Runtime not initialized, cannot dispatch message");
-    return;
+    throw new Error("Runtime not initialized, cannot dispatch MQTT message");
   }
 
   const peerId = message.clientId;
@@ -75,24 +85,17 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
     agentId: route.agentId,
   });
 
-  const idempotencyKey = buildMqttPacketIdempotencyKey(message);
-  // DUP=false 表示新的应用发布；即使 Broker 已复用 Packet Identifier，也必须接受并刷新占位。
-  // DUP=true 才可能是同一 QoS 报文的重投，此时保留缓存记录用于短路重复 dispatch。
-  if (idempotencyKey && !message.dup) idempotencyCache.forget(idempotencyKey);
   const parsed = normalizeWireIngress({
     rawPayload: message.payload,
     mode: config.payload.mode,
     channel: "mqtt",
-    idempotencyKey,
-    idempotency: idempotencyKey ? idempotencyCache : undefined,
   });
   if (!parsed.accepted) {
-    console.log(`[openclaw-mqtt] Duplicate inbound dropped: ${redactMqttError(message.messageId, config)}`);
-    return;
+    throw new Error("MQTT inbound was rejected before durable delivery settlement");
   }
   const text = parsed.text;
   const replyTopic = route.replyTopic ?? buildReplyTopicFromInbound(message.topic);
-  const username = getClientUsername(message.clientId);
+  const username = message.authenticatedUsername;
   const user = config.auth.users.find((entry) => entry.username === username);
   if (
     config.auth.enabled &&
@@ -113,6 +116,8 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
     return;
   }
 
+  const deliveryIdentity = resolveApplicationDeliveryIdentity(message, config.auth.enabled);
+
   upsertSessionContext(sessionKey, {
     clientId: message.clientId,
     agentId,
@@ -128,10 +133,8 @@ export async function handleInboundMessage(message: MqttInboundMessage): Promise
   ));
 
   try {
-    await dispatchToRuntime(sessionKey, peerId, agentId, text, message, route, replyTopic, parsed.unified);
+    await dispatchToRuntime(sessionKey, peerId, agentId, text, message, route, replyTopic, parsed.unified, deliveryIdentity);
   } catch (error) {
-    // dispatch 失败时释放预占；否则客户端按 QoS 重投会被当成“已处理”并错误 ACK，造成消息丢失。
-    if (idempotencyKey) idempotencyCache.forget(idempotencyKey);
     console.error(redactMqttError(
       `[openclaw-mqtt] Runtime dispatch failed for client=${message.clientId}: ${error instanceof Error ? error.message : String(error)}`,
       config,
@@ -163,16 +166,18 @@ async function dispatchToRuntime(
   routeResult: MqttInboundRoute,
   replyTopic: string,
   unified: import("@partme.ai/openclaw-message-sdk").UnifiedMessage | null,
+  deliveryIdentity: string | undefined,
 ): Promise<void> {
   const rt = getMqttRuntime();
   if (!rt) {
-    console.warn("[openclaw-mqtt] Runtime not initialized, cannot dispatch message");
-    return;
+    throw new Error("Runtime not initialized, cannot dispatch MQTT message");
   }
 
   const outboundFormat = getMqttChannelConfig()?.payload?.outboundFormat ?? "envelope";
 
-  await dispatchChannelMessage({
+  const dispatchResult = await dispatchChannelMessage({
+    deliveryIdentity,
+    requireDeliveryIdentity: Boolean(deliveryIdentity),
     mode: "reply-pipeline",
     runtime: rt as unknown as BridgePluginRuntime,
     channel: "mqtt",
@@ -199,10 +204,12 @@ async function dispatchToRuntime(
         await publishMessage(replyTopic, payload);
       },
       outboundFormat,
+      structuredMediaHosts: getMqttChannelConfig()?.payload?.structuredMediaHosts,
       replyRoute: { topic: replyTopic },
       agentId,
     },
   });
+  requireSettledDelivery(dispatchResult?.deliveryOutcome);
 }
 
 /** 判断 topic 是否匹配 subscribeTopics；列表为空时接受全部。 */

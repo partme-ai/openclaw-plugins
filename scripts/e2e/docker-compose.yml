@@ -21,16 +21,16 @@ services:
       JVM_XMN: 128m
     ports:
       # SDK 2.x 会在 HTTP 端口基础上派生 gRPC 端口，因此三者必须成组映射。
-      - "18848:8848"
-      - "19848:9848"
-      - "19849:9849"
+      - "127.0.0.1:18848:8848"
+      - "127.0.0.1:19848:9848"
+      - "127.0.0.1:19849:9849"
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.128.0
     container_name: openclaw-e2e-otel-collector
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     ports:
-      - "${E2E_OTLP_HTTP_PORT:-14318}:4318"
+      - "127.0.0.1:${E2E_OTLP_HTTP_PORT:-14318}:4318"
     volumes:
       - ./docker/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
 
@@ -38,7 +38,7 @@ services:
     image: redis:7-alpine
     container_name: openclaw-e2e-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
@@ -49,8 +49,8 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: openclaw-e2e-rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s
@@ -62,7 +62,7 @@ services:
     image: gotify/server:2.9.1
     container_name: openclaw-e2e-gotify
     ports:
-      - "18080:80"
+      - "127.0.0.1:${E2E_GOTIFY_PORT:-18080}:80"
     environment:
       GOTIFY_DEFAULTUSER_NAME: admin
       GOTIFY_DEFAULTUSER_PASS: openclaw-e2e
@@ -72,7 +72,7 @@ services:
     container_name: openclaw-e2e-rmq-namesrv
     command: sh mqnamesrv -c /etc/rocketmq/namesrv.conf
     ports:
-      - "9876:9876"
+      - "127.0.0.1:9876:9876"
     volumes:
       - ./docker/rocketmq-namesrv.conf:/etc/rocketmq/namesrv.conf:ro
 
@@ -83,8 +83,8 @@ services:
       - rocketmq-namesrv
     command: sh mqbroker -n rocketmq-namesrv:9876 -c /etc/rocketmq/broker.conf
     ports:
-      - "10911:10911"
-      - "10912:10912"
+      - "127.0.0.1:10911:10911"
+      - "127.0.0.1:10912:10912"
     environment:
       NAMESRV_ADDR: rocketmq-namesrv:9876
     volumes:
@@ -122,21 +122,17 @@ services:
         condition: service_completed_successfully
     command: sh mqproxy -n rocketmq-namesrv:9876
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     environment:
       NAMESRV_ADDR: rocketmq-namesrv:9876
 
   openclaw:
-    image: node:22-bookworm-slim
+    image: node:24.18.0-bookworm-slim
     container_name: openclaw-e2e-gateway
-    depends_on:
-      - rabbitmq
-      - gotify
-      - rocketmq-proxy
     working_dir: /workspace
     ports:
-      - "${E2E_GATEWAY_PORT:-19789}:${E2E_GATEWAY_PORT:-19789}"
-      - "${E2E_MTLS_PORT:-18443}:${E2E_MTLS_PORT:-18443}"
+      - "127.0.0.1:${E2E_GATEWAY_PORT:-19789}:${E2E_GATEWAY_PORT:-19789}"
+      - "127.0.0.1:${E2E_MTLS_PORT:-18443}:${E2E_MTLS_PORT:-18443}"
     environment:
       OPENCLAW_PROFILE: queue-e2e
       E2E_GATEWAY_PORT: ${E2E_GATEWAY_PORT:-19789}

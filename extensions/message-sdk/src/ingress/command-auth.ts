@@ -142,7 +142,9 @@ export async function resolveCommandAuthorization(params: {
     (entry) => normalizeAllowFrom(entry) === "*",
   );
   const authorizerConfigured = allowAllConfigured || effectiveAllowFrom.length > 0;
-  const useAccessGroups = cfg.commands?.useAccessGroups !== false;
+  // OpenClaw 2026.9.6 no longer exposes commands.useAccessGroups; its
+  // command authorization contract always evaluates access groups.
+  const useAccessGroups = true;
 
   const commandAuthorized = shouldComputeAuth
     ? core.channel.commands.resolveCommandAuthorizedFromAuthorizers({

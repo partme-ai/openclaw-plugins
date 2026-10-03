@@ -9,7 +9,7 @@
  */
 
 import amqp from "amqplib";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { ConsumeMessage, ChannelModel, Channel, ConfirmChannel, Options } from "amqplib";
 import type { RabbitmqConfig } from "../config.js";
@@ -153,6 +153,8 @@ export async function stopRabbitmqServer(): Promise<void> {
   try {
     if (consumeChannel) {
       await consumeChannel.close();
+      // Closing the channel releases any unacked deliveries back to the broker.
+      pendingDeliveries.clear();
     }
   } catch {
   } finally {
@@ -203,6 +205,29 @@ export async function publishMessage(routingKey: string, message: string, opts?:
   };
   await publishConfirmed(publishChannel, config.exchange, routingKey, Buffer.from(message), options);
   stats.messagesSent++;
+}
+
+/** Persist an uncertain inbound turn with its original identity before rejecting broker custody. */
+export async function publishAmbiguousInbound(event: InboundEvent): Promise<void> {
+  if (!publishChannel || !deadLetterExchangeName) {
+    throw new Error("RabbitMQ dead-letter publisher is not initialized");
+  }
+  const fingerprint = createHash("sha256").update(event.routingKey).update("\0").update(event.content).digest("hex");
+  const identity = event.properties.correlationId || event.properties.messageId || fingerprint;
+  await publishConfirmed(publishChannel, deadLetterExchangeName, event.routingKey, event.content, {
+    correlationId: event.properties.correlationId,
+    messageId: event.properties.messageId,
+    contentType: event.properties.contentType ?? "application/json",
+    headers: {
+      ...(event.properties.headers ?? {}),
+      "x-original-routing-key": event.routingKey,
+      "x-delivery-outcome": "ambiguous",
+      "x-delivery-identity": identity,
+      "x-delivery-fingerprint": fingerprint,
+    },
+    persistent: true,
+  });
+  stats.messagesDeadLettered++;
 }
 
 /**
@@ -473,7 +498,7 @@ async function connectOnce(cfg: RabbitmqConfig): Promise<void> {
           const requeue = activeConfig.consume.requeueOnError;
           delivery.nack({ requeue, reason: redactRabbitmqError(err, activeConfig) });
         } finally {
-          pendingDeliveries.delete(delivery);
+          if (delivery.settled) pendingDeliveries.delete(delivery);
           stats.inFlight = Math.max(0, stats.inFlight - 1);
         }
       }).catch((error: unknown) => {
@@ -548,6 +573,7 @@ async function teardownTransport(): Promise<void> {
   try {
     if (consumeChannel) {
       await consumeChannel.close();
+      pendingDeliveries.clear();
     }
   } catch {
   } finally {
@@ -807,17 +833,17 @@ function createInboundDeliveryHandle(
       if (settled) {
         return;
       }
-      settled = true;
       channel.ack(msg);
+      settled = true;
       stats.messagesAcked++;
     },
     nack: (options) => {
       if (settled) {
         return;
       }
-      settled = true;
       const requeue = options?.requeue ?? activeConfig.consume.requeueOnError;
       channel.nack(msg, false, requeue);
+      settled = true;
       stats.messagesNacked++;
       if (requeue) {
         stats.messagesRequeued++;
@@ -837,8 +863,13 @@ function createInboundDeliveryHandle(
 function nackAllPendingDeliveries(requeue: boolean, reason: string): void {
   for (const delivery of pendingDeliveries) {
     if (!delivery.settled) {
-      delivery.nack({ requeue, reason });
+      try {
+        delivery.nack({ requeue, reason });
+      } catch (error) {
+        stats.errors++;
+        if (config) stats.lastError = redactRabbitmqError(error, config);
+      }
     }
+    if (delivery.settled) pendingDeliveries.delete(delivery);
   }
-  pendingDeliveries.clear();
 }

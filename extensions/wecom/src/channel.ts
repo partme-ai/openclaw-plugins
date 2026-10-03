@@ -814,7 +814,7 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
       }
 
       if (changed) {
-        await getWeComRuntime().config.writeConfigFile(nextCfg);
+        await getWeComRuntime().config.replaceConfigFile({ nextConfig: nextCfg, afterWrite: { mode: "auto" } });
       }
 
       const resolved = resolveWeComAccountMulti({ cfg: changed ? nextCfg : cfg, accountId: resolvedAccountId });

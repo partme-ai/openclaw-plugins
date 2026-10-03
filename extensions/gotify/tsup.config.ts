@@ -12,6 +12,8 @@ export default defineConfig({
   sourcemap: false,
   target: "node22",
   outDir: "dist",
+  // Bundled message-sdk imports createRequire itself; keep this shim's binding distinct.
+  banner: { js: 'import { createRequire as createGotifyRequire } from "node:module"; const require = createGotifyRequire(import.meta.url);' },
   external: [/^openclaw(\/.*)?$/],
   noExternal: ["@partme.ai/openclaw-message-sdk", "ws", "zod"],
 });
