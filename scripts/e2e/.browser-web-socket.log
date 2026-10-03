@@ -2,15 +2,15 @@
   "protocol": "openclaw.v1",
   "connected": {
     "type": "connected",
-    "connectionId": "3f021d1a-2179-4f95-a24c-f7175bcb1d04",
+    "connectionId": "0d144af1-497b-4ab1-90c4-57448f21f806",
     "version": "1"
   },
   "reply": {
     "version": "1",
     "message": {
-      "messageId": "web-socket-c419da8e-8606-4b59-84af-98ae8a6c6855",
-      "traceId": "20c80ee3-811a-4eda-bfce-8ac1a3484388",
-      "timestamp": 1784302564929,
+      "messageId": "web-socket-4c70e1f4-82b8-4535-b6f2-37396162aad4",
+      "traceId": "f8aeb263-9539-481b-bda4-79fde815630a",
+      "timestamp": 1790944807649,
       "source": {
         "channel": "web-socket",
         "accountId": "default",
@@ -25,16 +25,16 @@
     },
     "headers": {
       "replyRoute": {
-        "connectionId": "3f021d1a-2179-4f95-a24c-f7175bcb1d04"
+        "connectionId": "0d144af1-497b-4ab1-90c4-57448f21f806"
       }
     },
     "type": "reply",
     "sessionKey": "agent:main:main",
-    "messageId": "web-socket-browser-1784302564527"
+    "messageId": "web-socket-browser-1790944807530"
   },
   "accepted": {
     "type": "accepted",
-    "messageId": "web-socket-browser-1784302564527",
+    "messageId": "web-socket-browser-1790944807530",
     "version": "1"
   }
 }

@@ -27,7 +27,7 @@ O3 的首次附加重跑遗漏已有的 `OPENCLAW_E2E_STRUCTURED_DNS_PIN=1`，�
 
 ## 浏览器原始证明与环境
 
-Playwright 默认 Chromium 缓存缺失；本轮使用现有 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`。测试报告以外，本轮原始浏览器日志复制到忽略目录 `scripts/e2e/reports/browser-proof/2026-10-03-final/`：MQTT 请求 ID `browser-1791012831204`、回复时间 `1791012831428`，STOMP 回复时间 `1791012831120`，均落在 07:33:51 UTC 报告窗口；WebSocket 请求 ID `web-socket-browser-1791012918271`、回复时间 `1791012918411`，落在 07:35:18 UTC 报告窗口。独立复核者核对这些 ID、时间及浏览器报告。三份用户原有 `.browser-*.log` 在复制证明后逐字节恢复，`cmp` 均通过；这些日志没有纳入提交。
+Playwright 默认 Chromium 缓存缺失；本轮使用现有 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`。测试报告以外，本轮原始浏览器日志复制到忽略目录 `scripts/e2e/reports/browser-proof/2026-10-03-final/`：MQTT 请求 ID `browser-1791012831204`、回复时间 `1791012831428`，STOMP 回复时间 `1791012831120`，均落在 07:33:51 UTC 报告窗口；WebSocket 请求 ID `web-socket-browser-1791012918271`、回复时间 `1791012918411`，落在 07:35:18 UTC 报告窗口。独立复核者核对这些 ID、时间及浏览器报告。三份用户原有 `.browser-*.log` 在复制证明后逐字节恢复，`cmp` 均通过；它们记录的是更早的一轮合成浏览器交互，不是上述 07:33/07:35 UTC 的原始证明。原任务提交 `7cc4e67` 未纳入这些日志；后续用户要求“全部提交”后，三份原有日志作为单独的历史记录提交。
 
 OpenMem Sidecar 源码在 `/Users/wandl/workspaces/workspace-agent-fabric/OpenMem`。首次重跑时根 `node_modules` 缺失；执行 `pnpm install --offline --frozen-lockfile` 从本机缓存恢复 366 个包、下载 0 个包，随后真实 Sidecar、Agent 回合、检索及关闭归档通过。该仓库声明 pnpm `10.32.1`，本机运行 `9.0.0`；Sidecar 锁文件和源码没有修改。
 
