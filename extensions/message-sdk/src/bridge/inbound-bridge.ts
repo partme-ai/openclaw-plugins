@@ -19,6 +19,8 @@ import { classifyDeliveryOutcome, type DeliveryOutcome, type ReplyDispatchReceip
 export interface DispatchInboundParams extends InboundBridgeParams {
   /** Persist Agent start only after all runtime/context preflight has passed. */
   beforeAgentDispatch?: () => void;
+  /** Exact run identity supplied by the host reply pipeline. */
+  onAgentRunStart?: (runId: string | undefined) => void;
   reply: Omit<ReplyBridgeParams, "runtime" | "channel" | "accountId" | "peerId">;
 }
 
@@ -28,6 +30,7 @@ export interface DispatchInboundResult extends ReplyBridgeResult {
   ctx: Record<string, unknown>;
   receipt?: ReplyDispatchReceipt;
   deliveryOutcome: DeliveryOutcome;
+  runId?: string;
 }
 
 /**
@@ -77,7 +80,7 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
     ...extra,
   });
 
-  const { dispatcher } = createReplyHandler({
+  const { dispatcher, replyOptions: dispatcherReplyOptions } = createReplyHandler({
     runtime,
     channel,
     accountId,
@@ -85,12 +88,31 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
     ...reply,
   });
 
+  let runId: string | undefined;
+  let ambiguousRunId = false;
+  const routeStart = replyOptions.onAgentRunStart;
+  const dispatcherStart = dispatcherReplyOptions.onAgentRunStart;
+  const linkedReplyOptions = { ...replyOptions, onAgentRunStart: function (this: unknown, ...args: unknown[]) {
+    if (typeof args[0] === "string" && args[0].trim()) {
+      if (runId && runId !== args[0]) ambiguousRunId = true;
+      runId = args[0];
+      try { params.onAgentRunStart?.(ambiguousRunId ? undefined : runId); }
+      catch { /* Trace observation cannot interrupt the host run callback. */ }
+    }
+    // The route callback owns the return value used by OpenClaw. Preserve
+    // dispatcher side effects when it supplies a distinct callback.
+    const dispatcherResult = typeof dispatcherStart === "function" && dispatcherStart !== routeStart
+      ? (dispatcherStart as (...values: unknown[]) => unknown).apply(this, args) : undefined;
+    return typeof routeStart === "function"
+      ? (routeStart as (...values: unknown[]) => unknown).apply(this, args) : dispatcherResult;
+  } };
+
   params.beforeAgentDispatch?.();
   const dispatchResult = await runtime.channel.reply.dispatchReplyFromConfig({
     ctx,
     cfg,
     dispatcher,
-    replyOptions,
+    replyOptions: linkedReplyOptions,
   });
 
   // OpenClaw's reply dispatcher may still be draining an asynchronous
@@ -115,7 +137,8 @@ export async function dispatchInbound(params: DispatchInboundParams): Promise<Di
           ? "empty"
           : "failed";
 
-  return { ctx, dispatcher, replyOptions, receipt, deliveryOutcome: classifyDeliveryOutcome(receipt, terminal) };
+  return { ctx, dispatcher, replyOptions: linkedReplyOptions, receipt,
+    runId: ambiguousRunId ? undefined : runId, deliveryOutcome: classifyDeliveryOutcome(receipt, terminal) };
 }
 
 /**

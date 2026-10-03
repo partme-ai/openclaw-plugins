@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createHash } from "node:crypto";
 import { registerTracingPluginHooks, reserveTelemetryEvent } from "./hooks.js";
 import { emitDeliveryTelemetry } from "../../../message-sdk/src/transport/telemetry.js";
 import { emitDiagnosticEvent, waitForDiagnosticEventsDrained } from "openclaw/plugin-sdk/diagnostic-runtime";
@@ -63,6 +64,89 @@ const baseConfig: TracingConfig = {
 };
 
 describe("registerTracingPluginHooks", () => {
+  it("uses the real Agent terminal trace for delivery facts that arrive before agent_end", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const stop = registerTracingPluginHooks(api as never, () => ({ backend,
+      sampler: new TracingSampler(1), config: baseConfig }));
+    const expectedTraceId = "a".repeat(32);
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "exact-run", deliveryId: "delivery-one" });
+    await waitForDiagnosticEventsDrained();
+    expect(backend.exportSpans).not.toHaveBeenCalled();
+    await api.emit("agent_end", { runId: "exact-run", success: true }, {
+      sessionKey: "same-session", runId: "exact-run", trace: { traceId: expectedTraceId },
+    });
+    emitDeliveryTelemetry({ event: "settlement", channel: "mqtt", outcome: "delivered",
+      runId: "exact-run", deliveryId: "delivery-one" });
+    await waitForDiagnosticEventsDrained();
+    await vi.waitFor(() => expect(backend.exportSpans).toHaveBeenCalledTimes(3));
+    const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.map((span) => span.name).sort()).toEqual(["agent.run", "delivery.settlement", "delivery.started"]);
+    expect(new Set(spans.map((span) => span.traceId))).toEqual(new Set([expectedTraceId]));
+    await stop();
+  });
+  it("keeps concurrent runs in one session separate and flushes unmatched facts independently", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const stop = registerTracingPluginHooks(api as never, () => ({ backend,
+      sampler: new TracingSampler(1), config: baseConfig }));
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "run-A", deliveryId: "delivery-A" });
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "run-B", deliveryId: "delivery-B" });
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "no-Agent", deliveryId: "orphan" });
+    await waitForDiagnosticEventsDrained();
+    await api.emit("agent_end", { runId: "run-B", success: true }, {
+      sessionKey: "shared-session", runId: "run-B", trace: { traceId: "b".repeat(32) },
+    });
+    await api.emit("agent_end", { runId: "run-A", success: true }, {
+      sessionKey: "shared-session", runId: "run-A", trace: { traceId: "a".repeat(32) },
+    });
+    await stop();
+    const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
+    const byDelivery = (id: string) => spans.find((span) => span.attributes["partme.delivery_id"] ===
+      `id_${createHash("sha256").update(id).digest("hex").slice(0, 24)}`);
+    expect(byDelivery("delivery-A")?.traceId).toBe("a".repeat(32));
+    expect(byDelivery("delivery-B")?.traceId).toBe("b".repeat(32));
+    expect(byDelivery("orphan")?.traceId).not.toBe("a".repeat(32));
+    expect(byDelivery("orphan")?.traceId).not.toBe("b".repeat(32));
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "run-A", deliveryId: "late" });
+    await waitForDiagnosticEventsDrained();
+    expect(vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items)).toHaveLength(spans.length);
+  });
+  it("does not bind delivery to an Agent root rejected by sampling", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const sampler = new TracingSampler(0);
+    const stop = registerTracingPluginHooks(api as never, () => ({ backend, sampler,
+      config: { ...baseConfig, sampleRate: 0 } }));
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "sampled-run", deliveryId: "sampled-delivery" });
+    await waitForDiagnosticEventsDrained();
+    await api.emit("agent_end", { runId: "sampled-run", success: true }, {
+      sessionKey: "sampled-session", runId: "sampled-run", trace: { traceId: "c".repeat(32) },
+    });
+    await stop();
+    const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.map((span) => span.name)).toEqual(["delivery.started"]);
+    expect(spans[0]?.traceId).not.toBe("c".repeat(32));
+  });
+  it("keeps two active run roots in one session separate", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const stop = registerTracingPluginHooks(api as never, () => ({ backend,
+      sampler: new TracingSampler(1), config: baseConfig }));
+    await api.emit("message_received", {}, { sessionKey: "shared", runId: "root-A", traceId: "a".repeat(32) });
+    await api.emit("message_received", {}, { sessionKey: "shared", runId: "root-B", traceId: "b".repeat(32) });
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "root-A", deliveryId: "delivery-A" });
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "root-B", deliveryId: "delivery-B" });
+    await waitForDiagnosticEventsDrained();
+    await api.emit("agent_end", { runId: "root-B", success: true }, { sessionKey: "shared", runId: "root-B" });
+    await api.emit("agent_end", { runId: "root-A", success: true }, { sessionKey: "shared", runId: "root-A" });
+    const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.filter((span) => span.name === "message.received").map((span) => span.traceId).sort())
+      .toEqual(["a".repeat(32), "b".repeat(32)]);
+    expect(spans.filter((span) => span.name === "delivery.started").map((span) => span.traceId).sort())
+      .toEqual(["a".repeat(32), "b".repeat(32)]);
+    await stop();
+  });
   it("links delivery start and final settlement by one pseudonymous ID", async () => {
     const backend = createMockBackend();
     const api = createMockApi();
@@ -313,11 +397,13 @@ describe("registerTracingPluginHooks", () => {
       message: "recall telemetry", attributes: { event: "recall", plugin: "memory", duration_ms: 1,
         delivery_id: "id_000000000000000000000000" } });
     await waitForDiagnosticEventsDrained();
+    expect(backend.exportSpans).not.toHaveBeenCalled();
+    // No Agent root was observed, so shutdown flushes an independent fact.
+    await stop();
     expect(backend.exportSpans).toHaveBeenCalledTimes(1);
     const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
     expect(spans.some((span) => span.name === "delivery.settlement")).toBe(true);
     expect(JSON.stringify(spans)).not.toMatch(/run-private|message-private|delivery-private/);
-    await stop();
     emitDeliveryTelemetry({ event: "retry", channel: "mqtt", deliveryId: "other-private" });
     await waitForDiagnosticEventsDrained();
     expect(backend.exportSpans).toHaveBeenCalledTimes(1);
@@ -418,7 +504,7 @@ describe("registerTracingPluginHooks", () => {
     expect(getActiveSpanCount()).toBe(1);
   });
 
-  it("agent_end 为不触发标准出站 hook 的自定义 channel 关闭 trace", async () => {
+  it("agent_end 不把仅有 sessionKey 的入站 root 猜成具体 run", async () => {
     const backend = createMockBackend();
     const api = createMockApi();
     registerTracingPluginHooks(api as never, () => ({
@@ -434,11 +520,14 @@ describe("registerTracingPluginHooks", () => {
       { sessionKey: "sk-wire", runId: "run-wire", channel: "mqtt" },
     );
 
-    expect(getActiveSpanCount()).toBe(0);
+    expect(getActiveSpanCount()).toBe(1);
     const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
     expect(exported).toHaveLength(1);
+    expect(exported[0]?.name).toBe("agent.run");
     expect(exported[0]?.status).toBe("ok");
     expect(exported[0]?.attributes["openclaw.end_reason"]).toBe("agent_end_success");
+    await api.emit("session_end", {}, { sessionKey: "sk-wire" });
+    expect(getActiveSpanCount()).toBe(0);
   });
 
   it("缺少 message_received 时仍为真实 Agent 终态导出可辨认的 span", async () => {

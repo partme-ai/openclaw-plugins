@@ -201,6 +201,30 @@ export function registerTracingPluginHooks(
   /** 同一注册实例的 Hook 状态变更串行执行。 */
   const traceOperationChains = new Map<string, Promise<void>>();
   const telemetryExports = new Set<Promise<void>>();
+  const runLinks = new Map<string, { traceId: string; rootSpanId: string }>();
+  const pendingDelivery = new Map<string, Array<{ exportSpan: (link?: { traceId: string; rootSpanId: string }) => Promise<void>; timeout: ReturnType<typeof setTimeout> }>>();
+  const MAX_RUN_LINKS = 1_000;
+  const MAX_PENDING_DELIVERIES = 1_024;
+  let pendingDeliveryCount = 0;
+  const trackExport = (promise: Promise<void>) => {
+    const observed = promise.catch((error) => logHookError(api, "telemetry export", error));
+    telemetryExports.add(observed);
+    void observed.finally(() => telemetryExports.delete(observed));
+  };
+  const linkRun = (runId: string, traceId: string, rootSpanId: string) => {
+    const key = correlationId(runId);
+    if (runLinks.has(key)) runLinks.delete(key);
+    runLinks.set(key, { traceId, rootSpanId });
+    while (runLinks.size > MAX_RUN_LINKS) runLinks.delete(runLinks.keys().next().value!);
+    const pending = pendingDelivery.get(key);
+    if (!pending) return;
+    pendingDelivery.delete(key);
+    pendingDeliveryCount -= pending.length;
+    for (const item of pending) {
+      clearTimeout(item.timeout);
+      trackExport(item.exportSpan({ traceId, rootSpanId }));
+    }
+  };
   let stopTelemetry: () => void = () => {};
   let stopPromise: Promise<void> | null = null;
   const hookOpts = { priority: 100 };
@@ -234,6 +258,15 @@ export function registerTracingPluginHooks(
     const unsubscribe = stopTelemetry;
     stopTelemetry = () => {};
     unsubscribe();
+    for (const items of pendingDelivery.values()) {
+      for (const item of items) {
+        clearTimeout(item.timeout);
+        trackExport(item.exportSpan());
+      }
+    }
+    pendingDelivery.clear();
+    pendingDeliveryCount = 0;
+    runLinks.clear();
     const stopping = (async () => {
     const pending = [...traceOperationChains.values()];
     traceOperationChains.clear();
@@ -304,11 +337,38 @@ export function registerTracingPluginHooks(
           fields["partme.duration_ms"] = duration;
         }
         if (kind === "dlq") fields["partme.entries"] = attributes.entries as number;
-        const span = createSpan(kind === "recall" ? "memory.recall" : `delivery.${kind}`, {
-          kind: "internal", attributes: fields,
-        });
-        await endSpan(span.spanId, kind === "settlement" && attributes.outcome !== "delivered" ? "error" : "ok",
-          context.backend, typeof duration === "number" ? { durationMs: duration } : {});
+        const observedAtMs = Date.now();
+        const exportSpan = async (link?: { traceId: string; rootSpanId: string }) => {
+          const span = createSpan(kind === "recall" ? "memory.recall" : `delivery.${kind}`, {
+            ...(link ? { traceId: link.traceId, parentSpanId: link.rootSpanId } : {}),
+            kind: "internal", attributes: fields,
+          });
+          await endSpan(span.spanId, kind === "settlement" && attributes.outcome !== "delivered" ? "error" : "ok",
+            context.backend, typeof duration === "number" ? { durationMs: duration, endTimeMs: observedAtMs }
+              : { durationMs: 0, endTimeMs: observedAtMs });
+        };
+        const runKey = kind === "started" || kind === "settlement" ? attributes.run_id : undefined;
+        if (typeof runKey === "string") {
+          const linked = runLinks.get(runKey);
+          if (linked) { await exportSpan(linked); return; }
+          if (pendingDeliveryCount < MAX_PENDING_DELIVERIES) {
+            const item = { exportSpan, timeout: setTimeout(() => {
+              const queue = pendingDelivery.get(runKey);
+              if (!queue || !queue.includes(item)) return;
+              queue.splice(queue.indexOf(item), 1);
+              pendingDeliveryCount -= 1;
+              if (queue.length === 0) pendingDelivery.delete(runKey);
+              trackExport(exportSpan());
+            }, 120_000) };
+            item.timeout.unref?.();
+            const queue = pendingDelivery.get(runKey) ?? [];
+            queue.push(item);
+            pendingDelivery.set(runKey, queue);
+            pendingDeliveryCount += 1;
+            return;
+          }
+        }
+        await exportSpan();
       } finally {
         ticket.release();
       }
@@ -348,10 +408,10 @@ export function registerTracingPluginHooks(
       }
 
       await runTraceOperation(operationKey, eventGeneration, async (stillLive) => {
-        const previous = resolveActiveTrace(sessionKey, runId);
+        const previous = runId ? resolveActiveTrace(undefined, runId) : resolveActiveTrace(sessionKey);
         if (previous) {
           try {
-            await finishActiveTrace(sessionKey, runId, "error", backend, "superseded_by_new_message");
+            await finishActiveTrace(runId ? undefined : sessionKey, runId, "error", backend, "superseded_by_new_message");
           } catch (error) {
             logHookError(api, "closing superseded trace", error);
           }
@@ -386,6 +446,7 @@ export function registerTracingPluginHooks(
           sessionKey,
           runId,
         });
+        if (runId) linkRun(runId, traceId, rootSpan.spanId);
         // A prior turn in the same session may have been suppressed without
         // ever producing agent_end. The new accepted root owns this session.
         if (sessionKey) consumeSuppressedSession(sessionKey);
@@ -407,7 +468,7 @@ export function registerTracingPluginHooks(
       const operationKey = traceOperationKey(sessionKey, runId);
       if (!operationKey) return;
       await runTraceOperation(operationKey, eventGeneration, () => {
-        const active = resolveActiveTrace(sessionKey, runId);
+        const active = runId ? resolveActiveTrace(undefined, runId) : resolveActiveTrace(sessionKey);
         if (!active || !incrementSpanCount(active, hookContext.config.maxSpansPerTrace)) return;
 
         const toolName = readString(event.toolName) ?? "unknown";
@@ -439,7 +500,7 @@ export function registerTracingPluginHooks(
       const operationKey = traceOperationKey(sessionKey, runId);
       if (!operationKey) return;
       await runTraceOperation(operationKey, eventGeneration, async () => {
-        const active = resolveActiveTrace(sessionKey, runId);
+        const active = runId ? resolveActiveTrace(undefined, runId) : resolveActiveTrace(sessionKey);
         const spanId = active ? takeToolSpanId(toolBindingKey(toolCallId, active.traceId)) : undefined;
         if (!spanId) return;
         try {
@@ -467,7 +528,7 @@ export function registerTracingPluginHooks(
       if (!operationKey) return;
       await runTraceOperation(operationKey, eventGeneration, async () => {
         try {
-          await finishActiveTrace(sessionKey, runId, "ok", hookContext.backend, "reply_payload_final");
+          await finishActiveTrace(runId ? undefined : sessionKey, runId, "ok", hookContext.backend, "reply_payload_final");
         } catch (error) {
           logHookError(api, "ending reply trace", error);
         }
@@ -493,8 +554,10 @@ export function registerTracingPluginHooks(
       if (!operationKey) return;
       await runTraceOperation(operationKey, eventGeneration, async (stillLive) => {
         try {
+          const exactRoot = runId ? resolveActiveTrace(undefined, runId) : undefined;
+          if (runId && exactRoot) linkRun(runId, exactRoot.traceId, exactRoot.rootSpanId);
           const finished = await finishActiveTrace(
-            sessionKey,
+            runId ? undefined : sessionKey,
             runId,
             event.success ? "ok" : "error",
             hookContext.backend,
@@ -511,7 +574,8 @@ export function registerTracingPluginHooks(
           // terminal event instead of silently reporting zero traces.
           if (!finished && runId && !suppressedByRun && !suppressedBySession && rememberCompletedRun(runId)) {
             if (getActiveTraceCount() >= hookContext.config.maxActiveTraces) return;
-            const traceId = randomHexId(16);
+            const traceId = readTraceId((ctx as { trace?: { traceId?: unknown } }).trace?.traceId)
+              ?? readTraceId((ctx as { traceId?: unknown }).traceId) ?? randomHexId(16);
             if (hookContext.sampler.shouldSample(traceId)) {
               const messageText = hookContext.config.captureMessageBody
                 ? readLastUserMessage(event.messages)
@@ -525,6 +589,7 @@ export function registerTracingPluginHooks(
                   ...(messageText ? { "openclaw.message_text": messageText } : {}),
                 },
               });
+              linkRun(runId, traceId, span.spanId);
               await endSpan(span.spanId, event.success ? "ok" : "error", hookContext.backend, {
                 ...(typeof event.durationMs === "number" && Number.isFinite(event.durationMs) && event.durationMs >= 0
                   ? { durationMs: event.durationMs } : {}),

@@ -405,6 +405,37 @@ describe("dispatchChannelMessage", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("carries a reply-pipeline run callback into started and deferred settlement facts", async () => {
+    await waitForDiagnosticEventsDrained();
+    const events: Array<{ attributes?: Record<string, unknown> }> = [];
+    const stopTelemetry = onInternalDiagnosticEvent((event) => {
+      if (event.type === "log.record" && event.loggerName === "partme.delivery-recall.v1") events.push(event);
+    });
+    const dir = mkdtempSync(join(tmpdir(), "channel-journal-"));
+    const old = process.env.OPENCLAW_STATE_DIR;
+    process.env.OPENCLAW_STATE_DIR = dir;
+    const spy = vi.spyOn(wireDispatch, "dispatchWireMessage").mockImplementation(async (params) => {
+      params.beforeAgentDispatch?.();
+      params.onAgentRunStart?.("pipeline-run");
+      await params.reply.deliver({ wire: "reply", text: "reply" });
+      return { ctx: {}, dispatcher: {}, replyOptions: {}, deliveryOutcome: { kind: "delivered" } } as never;
+    });
+    try {
+      const result = await dispatchChannelMessage({ ...baseParams, deliveryIdentity: "pipeline-delivery",
+        deferDeliverySettlement: true, canPrepareDeliverySettlement: () => true });
+      result.confirmDelivery?.();
+      await waitForDiagnosticEventsDrained();
+      const expected = `id_${createHash("sha256").update("pipeline-run").digest("hex").slice(0, 24)}`;
+      expect(events.filter((event) => ["started", "settlement"].includes(String(event.attributes?.event)))
+        .map((event) => event.attributes?.run_id)).toEqual([expected, expected]);
+    } finally {
+      stopTelemetry();
+      spy.mockRestore();
+      if (old === undefined) delete process.env.OPENCLAW_STATE_DIR;
+      else process.env.OPENCLAW_STATE_DIR = old;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it("ACKs a prepared redelivery after restart without rerunning Agent, then confirms the journal", async () => {
     const dir = mkdtempSync(join(tmpdir(), "channel-journal-"));
     const old = process.env.OPENCLAW_STATE_DIR;

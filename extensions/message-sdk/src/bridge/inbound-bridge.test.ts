@@ -2,6 +2,46 @@ import { describe, expect, it, vi } from "vitest";
 import { dispatchInbound } from "./inbound-bridge.js";
 
 describe("dispatchInbound", () => {
+  it("captures the exact reply-pipeline run and preserves the route callback contract", async () => {
+    const token = { token: "opaque" };
+    const options = { mode: "normal" };
+    const original = vi.fn(() => token);
+    const observed = vi.fn();
+    const runtime = { config: {}, channel: { routing: { resolveAgentRoute: vi.fn(async () => ({ onAgentRunStart: original })) }, reply: {
+      finalizeInboundContext: vi.fn(async (ctx) => ctx),
+      createReplyDispatcherWithTyping: vi.fn(() => ({ dispatcher: {}, replyOptions: { onAgentRunStart: original } })),
+      dispatchReplyFromConfig: vi.fn(async ({ replyOptions }) => {
+        expect(replyOptions.onAgentRunStart("real-run", token, options)).toBe(token);
+        return undefined;
+      }),
+    } } };
+    const result = await dispatchInbound({ runtime, channel: "mqtt", accountId: "default", peerId: "p", text: "hi",
+      reply: { deliver: vi.fn() }, onAgentRunStart: observed });
+    expect(original).toHaveBeenCalledWith("real-run", token, options);
+    expect(observed).toHaveBeenCalledWith("real-run");
+    expect(result.runId).toBe("real-run");
+  });
+  it("preserves distinct dispatcher and route callbacks and drops ambiguous run identity", async () => {
+    const routeReturn = { route: true };
+    const dispatcherStart = vi.fn(() => ({ dispatcher: true }));
+    const routeStart = vi.fn(() => routeReturn);
+    const observed = vi.fn();
+    const runtime = { config: {}, channel: { routing: { resolveAgentRoute: vi.fn(async () => ({ onAgentRunStart: routeStart })) }, reply: {
+      finalizeInboundContext: vi.fn(async (ctx) => ctx),
+      createReplyDispatcherWithTyping: vi.fn(() => ({ dispatcher: {}, replyOptions: { onAgentRunStart: dispatcherStart } })),
+      dispatchReplyFromConfig: vi.fn(async ({ replyOptions }) => {
+        expect(replyOptions.onAgentRunStart("run-one", "token-one", { mode: "normal" })).toBe(routeReturn);
+        expect(replyOptions.onAgentRunStart("run-two", "token-two", { mode: "followup" })).toBe(routeReturn);
+        return undefined;
+      }),
+    } } };
+    const result = await dispatchInbound({ runtime, channel: "mqtt", accountId: "default", peerId: "p", text: "hi",
+      reply: { deliver: vi.fn() }, onAgentRunStart: observed });
+    expect(dispatcherStart).toHaveBeenCalledWith("run-one", "token-one", { mode: "normal" });
+    expect(routeStart).toHaveBeenCalledWith("run-two", "token-two", { mode: "followup" });
+    expect(observed.mock.calls).toEqual([["run-one"], [undefined]]);
+    expect(result.runId).toBeUndefined();
+  });
   it("marks Agent start only after context preflight succeeds", async () => {
     const events: string[] = [];
     const finalizeInboundContext = vi.fn()

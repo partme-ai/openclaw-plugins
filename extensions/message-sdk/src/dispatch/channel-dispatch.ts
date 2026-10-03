@@ -94,16 +94,18 @@ export async function dispatchChannelMessage(
   wireOptions?: WireDispatchOptions,
 ): Promise<ChannelDispatchResult> {
   const inboundId = params.deliveryIdentity?.trim();
+  let replyPipelineRunId: string | undefined;
+  const captureReplyPipelineRunId = (runId: string | undefined) => { replyPipelineRunId = runId; };
   if (params.requireDeliveryIdentity && !inboundId) {
     throw new Error(`Stable delivery identity is required for ${params.channel}`);
   }
   const observe = (kind: "delivered" | "ambiguous" | "retryable", runId?: string) => {
     emitDeliveryTelemetry({ event: kind === "retryable" ? "retry" : "settlement", channel: params.channel,
-      ...(kind === "retryable" ? {} : { outcome: kind }), runId,
+      ...(kind === "retryable" ? {} : { outcome: kind }), runId: runId ?? replyPipelineRunId,
       messageId: params.unified?.messageId, deliveryId: inboundId });
   };
   if (!inboundId) {
-    const result = await dispatchChannelMessageCore(params, wireOptions);
+    const result = await dispatchChannelMessageCore(params, wireOptions, undefined, captureReplyPipelineRunId);
     if (result.deliveryOutcome?.kind === "delivered" || result.deliveryOutcome?.kind === "ambiguous" ||
         result.deliveryOutcome?.kind === "retryable") observe(result.deliveryOutcome.kind, "runId" in result ? result.runId : undefined);
     return result;
@@ -150,6 +152,7 @@ export async function dispatchChannelMessage(
       sendAttempted = true;
       sendsStarted++;
       emitDeliveryTelemetry({ event: "started", channel: params.channel,
+        runId: payload.runId ?? replyPipelineRunId,
         messageId: params.unified?.messageId, deliveryId: inboundId });
       await deliver(payload);
       journal.sendConfirmed(...identity, hash);
@@ -161,7 +164,7 @@ export async function dispatchChannelMessage(
       agentStarted = true;
     };
     try {
-      const result = await dispatchChannelMessageCore(guarded, wireOptions, beforeAgentDispatch);
+      const result = await dispatchChannelMessageCore(guarded, wireOptions, beforeAgentDispatch, captureReplyPipelineRunId);
       if ((result.deliveryOutcome.kind === "delivered" && (sendsConfirmed === 0 || sendsConfirmed !== sendsStarted)) ||
           ((agentStarted || sendAttempted) &&
             (result.deliveryOutcome.kind === "retryable" || result.deliveryOutcome.kind === "cancelled" ||
@@ -207,6 +210,7 @@ async function dispatchChannelMessageCore(
   params: ChannelDispatchParams,
   wireOptions?: WireDispatchOptions,
   beforeAgentDispatch?: () => void,
+  onAgentRunStart?: (runId: string | undefined) => void,
 ): Promise<ChannelDispatchResult> {
   const mode: ChannelDispatchMode = params.mode ?? "reply-pipeline";
   const runtime = params.runtime as BridgePluginRuntime;
@@ -288,6 +292,7 @@ async function dispatchChannelMessageCore(
         sessionKey: params.reply.sessionKey ?? sessionKey,
       },
       beforeAgentDispatch,
+      onAgentRunStart,
     },
     wireOptions,
   );
