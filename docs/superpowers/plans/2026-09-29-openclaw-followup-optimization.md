@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、OpenClaw 2026.9.6、Node 24.18.0、pnpm 9.0.0、现有 JSONL/SQLite/OTLP/Prometheus 实现。
 
-**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–5 已完成各自本地候选物验收；Task 2–5 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)、[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)、[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)和[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)；Task 6–7 待实施。最终全仓证据仍待收口。
+**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–5 已完成各自本地候选物验收；Task 2–5 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)、[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)、[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)和[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)；Task 6 六插件安装态与独立质量复审通过，但 Agent↔delivery trace 身份缺口使规格仍部分完成，见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)；Task 7 待实施。最终全仓证据仍待收口。
 
 ## Global Constraints
 
@@ -113,6 +113,8 @@ O5 独立最终复审 Spec PASS / Quality APPROVE。五插件最终安装态各�
 - [ ] 运行 tracing,mqtt 组合和 prometheus 安装态场景；校验 OTLP 接收、scrape 值、失败计数、脱敏和标签基数，不以 HTTP 200 代替数值断言。
 - [ ] 更新指标说明与排障路径；获授权时提交 `feat: correlate delivery and recall telemetry`。
 
+O6 当前进度：投递起点/结算、失败/重试/DLQ/召回指标、脱敏与受控标签均已实现并通过六插件安装态 E2E；独立源码复审 Quality APPROVE。宿主 OpenClaw 2026.9.6 在 SDK 投递起点无活动 trace scope，Agent 根 Span 与投递 Span 不能共享 trace 身份，因此整项 Task 6 保持未勾选、Spec partial。见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)。
+
 ### Task 7: 存储性能基线与迁移决策（O7）
 
 **Files:** Read `extensions/memory/src/store.ts`、`extensions/router/src/durable-store.ts`；Create `scripts/benchmarks/plugin-state.mjs`、`scripts/benchmarks/plugin-state.test.mjs`、`docs/superpowers/reports/2026-09-29-plugin-state-benchmark.md`。该任务不修改生产存储实现。
@@ -133,4 +135,4 @@ O1–O7 分别由 T1–T7 覆盖。五项 Review Focus 均有对应测试。O1 �
 - [ ] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；公共 SDK 变化引起的指纹失效必须重跑。
 - [ ] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。
 
-当前按用户后续授权逐任务实施与独立审查。Task 1–5 已完成各自本地候选物验收，Task 5 独立复审通过；当前 OAuth2、mTLS、Nacos、Tracing、Prometheus 和 MQTT 六项证据有效，其余 21 项仍不满足全仓门禁，收口前必须按最终输入重验。Task 6–7 仍按本计划依赖顺序推进。
+当前按用户后续授权逐任务实施与独立审查。Task 1–5 已完成各自当时本地候选物验收；Task 6 的实现、独立质量复审和六插件安装态 E2E 已完成，但 Agent↔delivery trace 身份缺口使 Task 6 仍为 partial。最新 `node scripts/check-e2e-evidence.mjs` 仅 MQTT、Router、Gotify、Tracing、Prometheus、Memory 六项证据有效，其余 21 项因共享 SDK/测试输入变化或旧报告不合格仍不满足全仓门禁，收口前必须按最终输入重验。Task 7 待实施；它的性能测量可基于已验证的 O6 观测子集进行，但不能据此宣称 O6 规格完成。
