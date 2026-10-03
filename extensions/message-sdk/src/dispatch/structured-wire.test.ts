@@ -22,7 +22,7 @@ describe("explicit structured-v1 wire contract", () => {
     const wire = serializeForTransport({ ...base, format: "structured-v1", structured: message,
       authorizedMediaUrls: [message.parts[1].url],
     } as never);
-    expect(JSON.parse(wire)).toEqual(message);
+    expect(JSON.parse(wire)).toEqual({ format: "structured-v1", ...message });
     expect(parseTransportPayload(wire, "structured-v1" as never)).toMatchObject({ structured: message });
   });
 

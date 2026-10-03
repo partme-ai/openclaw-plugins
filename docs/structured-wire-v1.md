@@ -2,8 +2,10 @@
 
 O3 adds an explicit `structured-v1` format. Existing `envelope`, `legacyJsonText` and `plainText` defaults and encoders are unchanged. It is never enabled by guessing a target's capabilities.
 
+Router's structured receiver treats ordinary business JSON as text, even if it contains `schemaVersion`. A sender should identify this wire with `format: "structured-v1"`. For compatibility with O3 payloads already sent without that field, Router also recognizes a complete object containing `schemaVersion`, `messageId`, `deliveryId`, and `parts`; recognized malformed or unsupported wires fail explicitly. The format marker does not replace the existing target opt-in or media authorization checks.
+
 ```json
-{"schemaVersion":1,"messageId":"m1","deliveryId":"d1","parts":[{"type":"text","text":"before"},{"type":"media","mediaType":"image","url":"https://media.example.org/image.png"},{"type":"text","text":"after"}],"replyTo":"parent","threadId":"thread"}
+{"format":"structured-v1","schemaVersion":1,"messageId":"m1","deliveryId":"d1","parts":[{"type":"text","text":"before"},{"type":"media","mediaType":"image","url":"https://media.example.org/image.png"},{"type":"text","text":"after"}],"replyTo":"parent","threadId":"thread"}
 ```
 
 The ordered `parts` list permits text and media interleaving. Media types are `image`, `video`, `audio`, `document`, `archive`, `other`. IDs are nonempty strings up to 1024 characters; the list has 1–1024 parts, at most 8 media references, and at most 1 MiB aggregate UTF-8 text/URL bytes. Unknown versions, malformed parts and unsafe URLs fail explicitly. SDK decoding requires `parseTransportPayload(wire, "structured-v1")`; default legacy parsing remains unchanged.

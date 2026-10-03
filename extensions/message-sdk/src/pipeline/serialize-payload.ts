@@ -62,7 +62,7 @@ export function serializeForTransport(params: SerializeOutboundParams): string {
     for (const part of message.parts) {
       if (part.type === "media" && !params.authorizedMediaUrls?.includes(part.url)) throw new Error("structured media is not authorized");
     }
-    return JSON.stringify(message);
+    return JSON.stringify({ format: "structured-v1", ...message });
   }
 
   if (format === "plainText") {

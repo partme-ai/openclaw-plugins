@@ -151,6 +151,35 @@ describe("structured routing", () => {
     { type: "text", text: "last" },
   ] };
 
+  it.each([
+    '{"schemaVersion":1,"description":"ordinary JSON business message"}',
+    '{"schemaVersion":2,"orderId":"order-123"}',
+    '{"schemaVersion":2,"orderId":"order-123","parts":["business data"]}',
+  ])("routes ordinary business JSON containing schemaVersion as unchanged text: %s", async (content) => {
+    const h = await harness({ structured: { enabled: true } });
+    try {
+      await h.hooks.get("message_received")?.({ content }, { channelId: "web-mqtt" });
+      await waitFor(() => h.sendText.mock.calls.length === 1);
+      expect(h.sendText.mock.calls[0][0].text).toBe(content);
+    } finally { await h.service.stop(); }
+  });
+
+  it("rejects an explicitly marked wire even when its version and parts are missing", async () => {
+    const h = await harness({ structured: { enabled: true } });
+    try {
+      await expect(h.hooks.get("message_received")?.({ content: JSON.stringify({ format: "structured-v1", messageId: "m", deliveryId: "d" }) }, { channelId: "web-mqtt" })).rejects.toThrow(/schemaVersion/i);
+      expect(h.sendText).not.toHaveBeenCalled();
+    } finally { await h.service.stop(); }
+  });
+
+  it("rejects malformed parts on an explicitly marked wire", async () => {
+    const h = await harness({ structured: { enabled: true } });
+    try {
+      await expect(h.hooks.get("message_received")?.({ content: JSON.stringify({ ...wire, format: "structured-v1", parts: [{ type: "media", url: "https://media.example.org/a.png" }] }) }, { channelId: "web-mqtt" })).rejects.toThrow(/part/i);
+      expect(h.sendText).not.toHaveBeenCalled();
+    } finally { await h.service.stop(); }
+  });
+
   it("refuses undeclared media targets instead of silently sending their text", async () => {
     const h = await harness({ structured: { enabled: true } });
     try {
@@ -221,6 +250,7 @@ describe("structured routing", () => {
     const h = await harness({ structured: { enabled: true }, action: { payloadFormat: "structured-v1" }, adapter: { sendPayload } });
     try {
       await expect(h.hooks.get("message_received")?.({ content: JSON.stringify({ ...wire, schemaVersion: 2 }) }, { channelId: "web-mqtt" })).rejects.toThrow(/Version/);
+      await expect(h.hooks.get("message_received")?.({ content: JSON.stringify({ ...wire, format: "structured-v1", schemaVersion: 2 }) }, { channelId: "web-mqtt" })).rejects.toThrow(/Version/);
       await h.hooks.get("message_received")?.({ content: JSON.stringify({ ...wire, parts: [wire.parts[1]] }) }, { channelId: "web-mqtt" });
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(sendPayload).not.toHaveBeenCalled();

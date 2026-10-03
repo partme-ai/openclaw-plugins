@@ -1,6 +1,6 @@
 # OpenClaw 稳定版后续功能优化规格
 
-日期：2026-09-29。状态：O1 已完成当时本地候选物验收，见[O1 记录](../reports/2026-10-03-o1-memory-capability.md)；O2 已完成当时本地候选物验收与独立审查，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)；O3 已完成当时本地候选物验收与独立审查，见[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)；O4 已完成当时本地候选物验收与独立复审，见[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)；O5 已完成当时本地候选物验收与独立复审，见[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)；O6 本地六插件安装态验收及独立质量复审通过，但 Agent 到投递的 trace 身份未贯通，仍为部分完成，见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)；O7 本地基准与独立审查通过，见[基准报告](../reports/2026-09-29-plugin-state-benchmark.md)。最终全仓证据仍待收口。与 [稳定版升级规格](2026-09-29-openclaw-2026-9-6-upgrade.md) 分属两个交付目标，各自一份规格和一份计划。
+日期：2026-09-29。状态：O1 已完成当时本地候选物验收，见[O1 记录](../reports/2026-10-03-o1-memory-capability.md)；O2 已完成当时本地候选物验收与独立审查，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)；O3 已完成当时本地候选物验收与独立审查，见[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)；O4 已完成当时本地候选物验收与独立复审，见[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)；O5 已完成当时本地候选物验收与独立复审，见[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)；O6 本地六插件安装态验收及独立质量复审通过，但 Agent 到投递的 trace 身份未贯通，仍为部分完成，见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)；O7 本地基准与独立审查通过，见[基准报告](../reports/2026-09-29-plugin-state-benchmark.md)。O3 兼容修复后，全仓 27 插件证据需按新输入指纹重跑；O6 规格仍未完成。与 [稳定版升级规格](2026-09-29-openclaw-2026-9-6-upgrade.md) 分属两个交付目标，各自一份规格和一份计划。
 
 **规格事实源：** 本文件；[实施计划](../plans/2026-09-29-openclaw-followup-optimization.md) 负责执行拆解。通用插件约定沿用 [PLUGIN_SPEC](../../../spec/PLUGIN_SPEC.md)。未实施项仍是审计建议的可审阅任务化设计，不能称为已实现能力。
 
@@ -36,6 +36,8 @@ memory 已有会话隔离、扫描预算、保留和加密；openmem 已有外�
 ### O3 协议边界
 
 新增 wire 格式以 `structured-v1` 显式启用，schemaVersion=1；旧 envelope/legacyJsonText 保留原行为。Router 对未声明支持结构化 payload 的目标默认拒绝含媒体消息；允许文本降级须显式配置并在审计中标识。出站媒体必须继续经过宿主授权加载，不得在信封中泄露本地绝对路径、认证 token 或未经批准的私有 URL。
+
+Router 开启结构化能力后，普通业务 JSON（包括仅有 `schemaVersion` 字段的文本）仍走旧文本路由。只有带显式 `format: "structured-v1"` 标记，或为兼容已发布 O3 wire 而具备 `schemaVersion`、`messageId`、`deliveryId`、`parts` 全部协议字段的对象，才进入严格协议解析；被识别的无效版本或字段必须报错，不能悄悄降级。结构化发送方应携带显式格式标记，新旧完整 wire 的有序片段、身份和媒体授权语义保持不变。
 
 ### O5/O6 适用范围
 

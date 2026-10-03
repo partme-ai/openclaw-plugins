@@ -146,6 +146,6 @@ describe("structured reply bridge", () => {
     } as never);
     const structured = { schemaVersion: 1, messageId: "m", deliveryId: "d", replyTo: "parent", threadId: "thread", parts: [{ type: "text", text: "a" }, { type: "text", text: "b" }] };
     await send({ text: "ignored flattened", structured });
-    expect(JSON.parse(deliver.mock.calls[0][0].wire)).toEqual(structured);
+    expect(JSON.parse(deliver.mock.calls[0][0].wire)).toEqual({ format: "structured-v1", ...structured });
   });
 });

@@ -173,7 +173,9 @@ function resolveEvent(eventValue: unknown, ctxValue: unknown, direction: RouteDi
   if (config.structured.enabled && content) {
     let candidate: unknown;
     try { candidate = JSON.parse(content); } catch { /* 普通文本继续旧路径。 */ }
-    if (candidate && typeof candidate === "object" && "schemaVersion" in candidate) {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate) &&
+      (("format" in candidate && candidate.format === "structured-v1") ||
+        ["schemaVersion", "messageId", "deliveryId", "parts"].every((field) => field in candidate))) {
       structured = parseStructuredWire(candidate);
     }
   }
