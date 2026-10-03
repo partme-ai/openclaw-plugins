@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Vitest、OpenClaw 2026.9.6、Node 24.18.0、pnpm 9.0.0、现有 JSONL/SQLite/OTLP/Prometheus 实现。
 
-**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。状态：Task 1–5 已完成各自本地候选物验收；Task 2–5 独立审查 Spec PASS / Quality APPROVE，见[O2 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md)、[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)、[O4 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-4-report.md)和[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)；Task 6 六插件安装态与独立质量复审通过，但 Agent↔delivery trace 身份缺口使规格仍部分完成，见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)；Task 7 基准、决策报告和独立复审 Spec PASS / Quality APPROVE，见[O7 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-7-report.md)。O3 兼容修复提交 `c4cff66` 后，最终 27 插件安装态证据已在当前 HEAD 重跑，见[最终本地门禁](../reports/2026-10-03-final-27-local-e2e-gate.md)；O6 仍保持部分完成。
+**Spec:** [功能优化规格](../specs/2026-09-29-openclaw-followup-optimization.md)。Task 1–7 均已完成各自承诺的本地实现与验证；Task 6 的 Agent 根与双投递 Span 同 trace 身份已由 OpenClaw 2026.9.6 的真实 MQTT Agent Turn 证明，独立复审 Spec PASS / Quality APPROVE，见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)。27 个运行时插件的当前候选物证据见[最终本地门禁](../reports/2026-10-03-final-27-local-e2e-gate.md)。这些结果仅覆盖本地安装态，厂商实网、预发及生产运行另行验收。
 
 ## Global Constraints
 
@@ -57,7 +57,7 @@ T1 memory/openmem；T2 knowledge/memory/bridge 的上下文与 message-sdk 预�
 - [x] 运行三插件目标单测；新增三插件组合 fixture，断言注入总量 ≤100 token、来源可追踪、取消后零注入；在稳定版重跑 knowledge/memory/bridge 受影响安装态场景。
 - [x] 保存预算配置示例与实测 token/延迟记录；获授权时提交 `feat: bound and attribute plugin context injection`。
 
-O2 实施、scoped 安装态验收与独立审查完成，Spec PASS / Quality APPROVE；详见 `.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md`。四项当前证据有效，全仓其余 23 项证据需后续刷新。
+O2 实施、scoped 安装态验收与独立审查完成，Spec PASS / Quality APPROVE；详见 `.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-2-report.md`。在 O2 当时的输入指纹下，四项证据有效，其余 23 项尚待刷新；最终状态见本文顶部的 27 项本地门禁。
 
 ### Task 3: 结构化 Wire 与 Router 消息（O3）
 
@@ -71,7 +71,7 @@ O2 实施、scoped 安装态验收与独立审查完成，Spec PASS / Quality AP
 - [x] 重跑测试与一个 MQ→Router→支持媒体目标的安装态 fixture；同时验收纯文本老客户端、附件拒绝/显式降级、重试身份保持。
 - [x] 更新协议文档与消费者兼容表；已按授权提交 `feat: preserve structured replies through wire routing` 和独立审查修复 `fix: reject empty structured text fallback`。
 
-O3 安装态 mqtt/router/wecom/gotify 四项均 PASS 且零跳过，修复后的证据已按当前源码指纹和精确候选物验证；独立复审 Spec PASS / Quality APPROVE。详见[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)。其余 23 项仍待最终全仓重验。
+O3 安装态 mqtt/router/wecom/gotify 四项均 PASS 且零跳过，修复后的证据已按源码指纹和精确候选物验证；独立复审 Spec PASS / Quality APPROVE。当前工作树另以原有测试专用 DNS 固定配置重跑四项，确认文本→图片→文本和上传字节哈希，并由 27 项总检查器选中；首次遗漏该配置时宿主 SSRF 正确拒绝了代理的特殊用途 DNS 地址。详见[O3 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-3-report.md)与[当前本地门禁](../reports/2026-10-03-final-27-local-e2e-gate.md)。
 
 ### Task 4: Bridge 渠道能力与运行状态（O4）
 
@@ -99,7 +99,7 @@ O4 独立复审 Spec PASS / Quality APPROVE。最终安装态 Bridge/MQTT 各一
 - [x] 重跑目标测试和五插件安装态重启/重载场景，验证无残留监听端口、计时器和后台投递，失败启动可再次恢复。Nacos 自动配置重启未单独探测端口关闭区间，见 O5 报告。
 - [x] 保存生命周期资源清单；已按授权提交 `fix: isolate plugin service lifecycle ownership` 及两轮审查修复。
 
-O5 独立最终复审 Spec PASS / Quality APPROVE。五插件最终安装态各一次 PASS、零跳过，当前指纹及精确包校验均为 `[]`；Nacos 端口观测限制和 OAuth2 单元测试一项 Redis 依赖跳过已记录。全仓 27 插件证据检查目前仍有 21 项历史报告失效，待最终收口。详见[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)。
+O5 独立最终复审 Spec PASS / Quality APPROVE。五插件在 O5 当时的安装态各一次 PASS、零跳过，指纹及精确包校验均为 `[]`；Nacos 端口观测限制和 OAuth2 单元测试一项 Redis 依赖跳过已记录。当时全仓仍有 21 项历史报告失效；最终状态见本文顶部的 27 项本地门禁。详见[O5 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-5-report.md)。
 
 ### Task 6: 投递与召回的可观测闭环（O6）
 
@@ -107,13 +107,15 @@ O5 独立最终复审 Spec PASS / Quality APPROVE。五插件最终安装态各�
 
 **Interfaces:** 新指标 `openclaw_delivery_settlements_total{channel,outcome}`、`openclaw_delivery_retries_total{channel}`、`openclaw_router_dlq_entries`、`openclaw_memory_recall_duration_seconds{plugin}`；标签使用受控集合，原有指标保留。runId/messageId/deliveryId 只进入脱敏 trace/log，不做 metrics label。
 
-- [ ] 写单次 delivered/failed/ambiguous 结算恰好计数一次、重试不重复成功计数、调用链共享身份、credential/body 脱敏测试；输入 1万不同 messageId 不增加标签组合数。
-- [ ] 运行 `pnpm --dir extensions/tracing test` 与 `pnpm --dir extensions/prometheus test`，记录新增指标缺口。
-- [ ] 消费升级计划的结构化结算结果与召回事件，贯通 trace 身份；保持 Collector 容量限制、scrape 鉴权与 shutdown flush。
-- [ ] 运行 tracing,mqtt 组合和 prometheus 安装态场景；校验 OTLP 接收、scrape 值、失败计数、脱敏和标签基数，不以 HTTP 200 代替数值断言。
-- [ ] 更新指标说明与排障路径；获授权时提交 `feat: correlate delivery and recall telemetry`。
+- [x] 写单次 delivered/failed/ambiguous 结算恰好计数一次、重试不重复成功计数、调用链共享身份、credential/body 脱敏测试；输入 1万不同 messageId 不增加标签组合数。
+- [x] 运行 Tracing 与 Prometheus 测试，记录新增指标缺口并验证修复。
+- [x] 消费结构化结算结果与召回事件，贯通精确 runId 的 trace 身份；保持 Collector 容量限制、scrape 鉴权与 shutdown flush。
+- [x] 运行六插件安装态场景；校验 OTLP 根/双投递 Span 的同 trace ID、scrape 数值、失败/重试/DLQ、脱敏和标签基数。
+- [x] 更新指标说明与排障路径；按用户授权提交 O6 初始实现 `c4633b9`，最终竞态修复与证据随本轮交付提交。
 
-O6 当前进度：投递起点/结算、失败/重试/DLQ/召回指标、脱敏与受控标签均已实现并通过六插件安装态 E2E；独立源码复审 Quality APPROVE。宿主 OpenClaw 2026.9.6 在 SDK 投递起点无活动 trace scope，Agent 根 Span 与投递 Span 不能共享 trace 身份，因此整项 Task 6 保持未勾选、Spec partial。见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)。
+O6 验收：投递起点/结算、失败/重试/DLQ/召回指标、脱敏与受控标签均已实现。SDK 取得精确 runId 后，Tracing 将同次 Agent 根与投递 span 关联；无精确身份时保持独立观测。正式六插件报告 6/6 PASS、零跳过，Collector 同 trace 断言与 Prometheus 数值断言通过；独立源码复审 Spec PASS / Quality APPROVE。见[O6 记录](../../../.superpowers/sdd/2026-09-29-openclaw-followup-optimization/task-6-report.md)。
+
+O6 trace 缺口收口：先以 `reply-pipeline` 的 `onAgentRunStart` 精确 runId 和 `agent_end`/`message_received` 的真实根 Span 建立测试红灯，覆盖同会话并发、重复回调、投递事件早于 Agent 终态、无回调、采样拒绝和停止后的迟到事件。实现必须保留宿主既有回调及投递结果，缺少精确绑定时保持独立 Span。随后运行 message-sdk/tracing 受影响测试与构建，在专用 Gateway 的 MQTT Agent Turn 中从 OTLP Collector 检查根 Span 与开始/结算 Span 同一 trace ID、身份脱敏，再重跑指纹失效的安装态证据及 27 项总检查；独立源码与证据复审后才勾选 T6。
 
 ### Task 7: 存储性能基线与迁移决策（O7）
 
@@ -131,8 +133,8 @@ O6 当前进度：投递起点/结算、失败/重试/DLQ/召回指标、脱敏�
 
 O1–O7 分别由 T1–T7 覆盖。五项 Review Focus 均有对应测试。O1 不承诺不存在的后端能力；O2 仅约束插件注入；O3 显式版本化；O7 只交付测量和决策，避免把实验性迁移混入完成声明。
 
-- [x] 受影响插件全部通过类型检查、单测、最终包检查和稳定版安装态复验，必要浏览器场景无跳过；各项单测/类型检查见任务报告，O3 修复后 27 项安装态重跑见最终本地门禁。O6 的 trace 身份规格仍为 partial。
-- [x] 使用升级后的 `node scripts/check-e2e-evidence.mjs` 重新确认 27 项候选证据；固定 HEAD `c4cff66` 上退出码 0。
-- [x] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。O6 保持未完成。
+- [x] 受影响插件全部通过类型检查、单测、最终包检查和稳定版安装态复验，必要浏览器场景无跳过；各项证据见任务报告与最终本地门禁。
+- [x] 使用 `node scripts/check-e2e-evidence.mjs` 确认当前工作树 27 项候选证据，退出码 0。
+- [x] 最终审查说明未提供能力、实网验证边界和存储决策；只有实际实施项才勾选。
 
-当前按用户后续授权逐任务实施与独立审查。Task 1–5 已完成各自本地候选物验收；Task 6 的实现、独立质量复审和六插件安装态 E2E 已完成，但 Agent↔delivery trace 身份缺口使 Task 6 仍为 partial。Task 7 已完成两轮本机性能测量和独立复审；Memory 100k 因默认检索预算明确拒绝，未执行存储迁移。O3 兼容修复使先前通过的安装态证据指纹失效，现已按固定 HEAD `c4cff66` 重新完成 27 项安装态证据并通过总检查。此次本地收口不构成厂商实网、预发或生产验收，也不使 O6 规格完成。全分支源码审查发现的 O3 回归已修复并由原审查者复核通过；最终本地证据与状态文档独立复审 Spec PASS / Quality APPROVE，必须修复项 0。
+当前按用户后续授权逐任务实施与独立审查。Task 1–7 的本地范围均已实现和验证；O6 的 Agent↔delivery 精确 trace 身份在正式六插件安装态中通过，独立源码复审 Spec PASS / Quality APPROVE。Task 7 只交付本机性能测量和决策；Memory 100k 因默认检索预算明确拒绝，未执行存储迁移。27 项当前指纹安装态证据已通过总检查。此次本地收口不构成厂商实网、预发或生产验收。

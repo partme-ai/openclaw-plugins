@@ -64,6 +64,372 @@ const baseConfig: TracingConfig = {
 };
 
 describe("registerTracingPluginHooks", () => {
+  it("finishes an exact inbound root owned by another hook runtime", async () => {
+    const inboundBackend = createMockBackend();
+    const agentBackend = createMockBackend();
+    const inboundStore = createTraceStore();
+    const agentStore = createTraceStore();
+    const inboundApi = createMockApi();
+    const agentApi = createMockApi();
+    const thirdApi = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const,
+      otlpEndpoint: "http://localhost:4318/cross-runtime-exact-root" };
+    const stopInbound = registerTracingPluginHooks(inboundApi as never, () => ({
+      backend: inboundBackend, sampler: new TracingSampler(1), config,
+    }), inboundStore);
+    const stopAgent = registerTracingPluginHooks(agentApi as never, () => ({
+      backend: agentBackend, sampler: new TracingSampler(1), config,
+    }), agentStore);
+    const stopThird = registerTracingPluginHooks(thirdApi as never, () => ({
+      backend: agentBackend, sampler: new TracingSampler(1), config,
+    }), createTraceStore());
+    await inboundApi.emit("message_received", {}, {
+      sessionKey: "cross-runtime-session", runId: "cross-runtime-run", traceId: "f".repeat(32),
+    });
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "cross-runtime-run",
+      deliveryId: "cross-runtime-delivery" });
+    await waitForDiagnosticEventsDrained();
+    await agentApi.emit("agent_end", { runId: "cross-runtime-run", success: true }, {
+      sessionKey: "cross-runtime-session", runId: "cross-runtime-run", trace: { traceId: "e".repeat(32) },
+    });
+    await thirdApi.emit("agent_end", { runId: "cross-runtime-run", success: true }, {
+      sessionKey: "cross-runtime-session", runId: "cross-runtime-run", trace: { traceId: "d".repeat(32) },
+    });
+    emitDeliveryTelemetry({ event: "settlement", channel: "mqtt", outcome: "delivered",
+      runId: "cross-runtime-run", deliveryId: "cross-runtime-delivery" });
+    await waitForDiagnosticEventsDrained();
+    await Promise.all([stopInbound(), stopAgent(), stopThird()]);
+    const spans = [inboundBackend, agentBackend]
+      .flatMap((backend) => vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items));
+    expect(spans.map((span) => span.name).sort())
+      .toEqual(["delivery.settlement", "delivery.started", "message.received"]);
+    expect(new Set(spans.map((span) => span.traceId))).toEqual(new Set(["f".repeat(32)]));
+    expect(spans.find((span) => span.name === "message.received")?.status).toBe("ok");
+    expect(inboundStore.getActiveTraceCount()).toBe(0);
+    expect(inboundStore.getActiveSpanCount()).toBe(0);
+  });
+  it("keeps a live cross-runtime exact root beyond the completed-link retention window", async () => {
+    const backend = createMockBackend();
+    const inboundStore = createTraceStore();
+    const agentStore = createTraceStore();
+    const inboundApi = createMockApi();
+    const agentApi = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const,
+      otlpEndpoint: "http://localhost:4318/long-cross-runtime-root" };
+    const stopInbound = registerTracingPluginHooks(inboundApi as never, () => ({
+      backend, sampler: new TracingSampler(1), config,
+    }), inboundStore);
+    const stopAgent = registerTracingPluginHooks(agentApi as never, () => ({
+      backend, sampler: new TracingSampler(1), config,
+    }), agentStore);
+    await inboundApi.emit("message_received", {}, {
+      sessionKey: "long-session", runId: "long-run", traceId: "a".repeat(32),
+    });
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 121_000);
+    try {
+      await agentApi.emit("agent_end", { runId: "long-run", success: true }, {
+        sessionKey: "long-session", runId: "long-run", trace: { traceId: "b".repeat(32) },
+      });
+    } finally {
+      clock.mockRestore();
+    }
+    await Promise.all([stopInbound(), stopAgent()]);
+    const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.map((span) => span.name)).toEqual(["message.received"]);
+    expect(spans[0]?.traceId).toBe("a".repeat(32));
+    expect(inboundStore.getActiveTraceCount()).toBe(0);
+  });
+  it("does not reuse a stopped owner's exact root link", async () => {
+    const inboundBackend = createMockBackend();
+    const agentBackend = createMockBackend();
+    const inboundStore = createTraceStore();
+    const agentApi = createMockApi();
+    const inboundApi = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const,
+      otlpEndpoint: "http://localhost:4318/stopped-root" };
+    const stopInbound = registerTracingPluginHooks(inboundApi as never, () => ({
+      backend: inboundBackend, sampler: new TracingSampler(1), config,
+    }), inboundStore);
+    const stopAgent = registerTracingPluginHooks(agentApi as never, () => ({
+      backend: agentBackend, sampler: new TracingSampler(1), config,
+    }), createTraceStore());
+    await inboundApi.emit("message_received", {}, {
+      sessionKey: "stopped-session", runId: "stopped-run", traceId: "a".repeat(32),
+    });
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "stopped-run",
+      deliveryId: "stopped-delivery" });
+    await waitForDiagnosticEventsDrained();
+    await stopInbound();
+    await agentApi.emit("agent_end", { runId: "stopped-run", success: true }, {
+      sessionKey: "stopped-session", runId: "stopped-run", trace: { traceId: "b".repeat(32) },
+    });
+    await stopAgent();
+    const spans = vi.mocked(agentBackend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.filter((span) => span.name === "agent.run")).toHaveLength(1);
+    expect(spans.find((span) => span.name === "agent.run")?.traceId).toBe("b".repeat(32));
+    await inboundStore.finishAllActiveTraces(inboundBackend, "gateway_shutdown");
+  });
+  it("keeps a late inbound observation in the completed Agent trace without reopening a root", async () => {
+    const backend = createMockBackend();
+    const inboundStore = createTraceStore();
+    const agentStore = createTraceStore();
+    const inboundApi = createMockApi();
+    const agentApi = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const,
+      otlpEndpoint: "http://localhost:4318/late-inbound" };
+    const stopInbound = registerTracingPluginHooks(inboundApi as never, () => ({
+      backend, sampler: new TracingSampler(1), config,
+    }), inboundStore);
+    const stopAgent = registerTracingPluginHooks(agentApi as never, () => ({
+      backend, sampler: new TracingSampler(1), config,
+    }), agentStore);
+    await agentApi.emit("agent_end", { runId: "late-run", success: true }, {
+      sessionKey: "late-session", runId: "late-run", trace: { traceId: "c".repeat(32) },
+    });
+    await inboundApi.emit("message_received", {}, {
+      sessionKey: "late-session", runId: "late-run", traceId: "d".repeat(32),
+    });
+    await Promise.all([stopInbound(), stopAgent()]);
+    const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.map((span) => span.name).sort()).toEqual(["agent.run", "message.received"]);
+    expect(new Set(spans.map((span) => span.traceId))).toEqual(new Set(["c".repeat(32)]));
+    expect(spans.find((span) => span.name === "message.received")?.status).toBe("unset");
+    expect(inboundStore.getActiveTraceCount()).toBe(0);
+    expect(inboundStore.getActiveSpanCount()).toBe(0);
+  });
+  it("keeps one canonical root when message_received repeats for the same run", async () => {
+    const backend = createMockBackend();
+    const store = createTraceStore();
+    const api = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const, maxSpansPerTrace: 2,
+      otlpEndpoint: "http://localhost:4318/repeated-inbound" };
+    const stop = registerTracingPluginHooks(api as never, () => ({
+      backend, sampler: new TracingSampler(1), config,
+    }), store);
+    await api.emit("message_received", {}, {
+      sessionKey: "repeat-session", runId: "repeat-run", traceId: "1".repeat(32),
+    });
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "repeat-run",
+      deliveryId: "repeat-delivery" });
+    await waitForDiagnosticEventsDrained();
+    await api.emit("message_received", {}, {
+      sessionKey: "repeat-session", runId: "repeat-run", traceId: "2".repeat(32),
+    });
+    await api.emit("message_received", {}, {
+      sessionKey: "repeat-session", runId: "repeat-run", traceId: "3".repeat(32),
+    });
+    await api.emit("agent_end", { runId: "repeat-run", success: true }, {
+      sessionKey: "repeat-session", runId: "repeat-run",
+    });
+    emitDeliveryTelemetry({ event: "settlement", channel: "mqtt", outcome: "delivered",
+      runId: "repeat-run", deliveryId: "repeat-delivery" });
+    await waitForDiagnosticEventsDrained();
+    await stop();
+    const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.filter((span) => span.name === "message.received" && !span.parentSpanId)).toHaveLength(1);
+    expect(spans.filter((span) => span.name === "message.received")).toHaveLength(2);
+    expect(new Set(spans.map((span) => span.traceId))).toEqual(new Set(["1".repeat(32)]));
+    expect(spans.filter((span) => span.name === "message.received" && span.status === "error")).toHaveLength(0);
+    expect(store.getActiveTraceCount()).toBe(0);
+  });
+  it("does not refresh the Agent root TTL when delivery telemetry reads its link", async () => {
+    const backend = createMockBackend();
+    const store = createTraceStore();
+    const api = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const,
+      otlpEndpoint: "http://localhost:4318/ttl-link" };
+    const stop = registerTracingPluginHooks(api as never, () => ({
+      backend, sampler: new TracingSampler(1), config,
+    }), store);
+    const startedAt = Date.now();
+    await api.emit("message_received", {}, {
+      sessionKey: "ttl-session", runId: "ttl-run", traceId: "a".repeat(32),
+    });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(startedAt + 29 * 60_000);
+    try {
+      emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "ttl-run",
+        deliveryId: "ttl-delivery" });
+      await waitForDiagnosticEventsDrained();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(await store.cleanupSessionTraces(backend, startedAt + 30 * 60_000 + 1)).toBe(1);
+    expect(store.getActiveTraceCount()).toBe(0);
+    await stop();
+  });
+  it("expires a completed root link 120 seconds after its actual export", async () => {
+    const backend = createMockBackend();
+    const inboundApi = createMockApi();
+    const agentApi = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const,
+      otlpEndpoint: "http://localhost:4318/completed-link-window" };
+    const stopInbound = registerTracingPluginHooks(inboundApi as never, () => ({
+      backend, sampler: new TracingSampler(1), config,
+    }), createTraceStore());
+    const stopAgent = registerTracingPluginHooks(agentApi as never, () => ({
+      backend, sampler: new TracingSampler(1), config,
+    }), createTraceStore());
+    await inboundApi.emit("message_received", {}, {
+      sessionKey: "completed-session", runId: "completed-run", traceId: "a".repeat(32),
+    });
+    await inboundApi.emit("reply_payload_sending", { kind: "final", runId: "completed-run" }, {
+      sessionKey: "completed-session", runId: "completed-run",
+    });
+    const completedAt = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(completedAt + 121_000);
+    try {
+      await agentApi.emit("agent_end", { runId: "completed-run", success: true }, {
+        sessionKey: "completed-session", runId: "completed-run", trace: { traceId: "b".repeat(32) },
+      });
+    } finally {
+      clock.mockRestore();
+    }
+    await Promise.all([stopInbound(), stopAgent()]);
+    const roots = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items)
+      .filter((span) => !span.parentSpanId);
+    expect(roots.map((span) => span.traceId)).toEqual(["a".repeat(32), "b".repeat(32)]);
+  });
+  it("falls back when another runtime fails to export its exact root", async () => {
+    const inboundBackend = createMockBackend();
+    vi.mocked(inboundBackend.exportSpans).mockRejectedValue(new Error("collector unavailable"));
+    const agentBackend = createMockBackend();
+    const inboundApi = createMockApi();
+    const agentApi = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const,
+      otlpEndpoint: "http://localhost:4318/failed-owner-export" };
+    const stopInbound = registerTracingPluginHooks(inboundApi as never, () => ({
+      backend: inboundBackend, sampler: new TracingSampler(1), config,
+    }), createTraceStore());
+    const stopAgent = registerTracingPluginHooks(agentApi as never, () => ({
+      backend: agentBackend, sampler: new TracingSampler(1), config,
+    }), createTraceStore());
+    await inboundApi.emit("message_received", {}, {
+      sessionKey: "failed-session", runId: "failed-run", traceId: "a".repeat(32),
+    });
+    await agentApi.emit("agent_end", { runId: "failed-run", success: true }, {
+      sessionKey: "failed-session", runId: "failed-run", trace: { traceId: "b".repeat(32) },
+    });
+    await Promise.all([stopInbound(), stopAgent()]);
+    const spans = vi.mocked(agentBackend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.map((span) => span.name)).toEqual(["agent.run"]);
+    expect(spans[0]?.traceId).toBe("b".repeat(32));
+    expect(inboundApi.logger.error).toHaveBeenCalledWith(expect.stringContaining("collector unavailable"));
+  });
+  it("exports one fallback root for concurrent agent_end hooks in separate runtimes", async () => {
+    let releaseFirst!: () => void;
+    const firstExportGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstBackend = createMockBackend();
+    vi.mocked(firstBackend.exportSpans).mockImplementation(async () => { await firstExportGate; });
+    const secondBackend = createMockBackend();
+    const firstApi = createMockApi();
+    const secondApi = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const,
+      otlpEndpoint: "http://localhost:4318/concurrent-fallback" };
+    const stopFirst = registerTracingPluginHooks(firstApi as never, () => ({
+      backend: firstBackend, sampler: new TracingSampler(1), config,
+    }), createTraceStore());
+    const stopSecond = registerTracingPluginHooks(secondApi as never, () => ({
+      backend: secondBackend, sampler: new TracingSampler(1), config,
+    }), createTraceStore());
+    const firstEnd = firstApi.emit("agent_end", { runId: "concurrent-run", success: true }, {
+      runId: "concurrent-run", sessionKey: "concurrent-session", trace: { traceId: "a".repeat(32) },
+    });
+    await vi.waitFor(() => expect(firstBackend.exportSpans).toHaveBeenCalledTimes(1));
+    const secondEnd = secondApi.emit("agent_end", { runId: "concurrent-run", success: true }, {
+      runId: "concurrent-run", sessionKey: "concurrent-session", trace: { traceId: "b".repeat(32) },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    releaseFirst();
+    await Promise.all([firstEnd, secondEnd]);
+    await Promise.all([stopFirst(), stopSecond()]);
+    const roots = [firstBackend, secondBackend]
+      .flatMap((backend) => vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items))
+      .filter((span) => span.name === "agent.run");
+    expect(roots).toHaveLength(1);
+    expect(roots[0]?.traceId).toBe("a".repeat(32));
+  });
+  it("does not duplicate a fallback root while its export exceeds the wait timeout", async () => {
+    let releaseFirst!: () => void;
+    const firstExportGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const firstBackend = createMockBackend();
+    vi.mocked(firstBackend.exportSpans).mockImplementation(async () => { await firstExportGate; });
+    const secondBackend = createMockBackend();
+    const firstApi = createMockApi();
+    const secondApi = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const, exportTimeoutMs: 1,
+      otlpEndpoint: "http://localhost:4318/slow-concurrent-fallback" };
+    const stopFirst = registerTracingPluginHooks(firstApi as never, () => ({
+      backend: firstBackend, sampler: new TracingSampler(1), config,
+    }), createTraceStore());
+    const stopSecond = registerTracingPluginHooks(secondApi as never, () => ({
+      backend: secondBackend, sampler: new TracingSampler(1), config,
+    }), createTraceStore());
+    const firstEnd = firstApi.emit("agent_end", { runId: "slow-run", success: true }, {
+      runId: "slow-run", sessionKey: "slow-session", trace: { traceId: "a".repeat(32) },
+    });
+    await vi.waitFor(() => expect(firstBackend.exportSpans).toHaveBeenCalledTimes(1));
+    const secondEnd = secondApi.emit("agent_end", { runId: "slow-run", success: true }, {
+      runId: "slow-run", sessionKey: "slow-session", trace: { traceId: "b".repeat(32) },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await secondEnd;
+    expect(secondBackend.exportSpans).not.toHaveBeenCalled();
+    releaseFirst();
+    await firstEnd;
+    await Promise.all([stopFirst(), stopSecond()]);
+    expect(vi.mocked(firstBackend.exportSpans).mock.calls.flatMap(([items]) => items)
+      .filter((span) => span.name === "agent.run")).toHaveLength(1);
+  });
+  it("links delivery across discovery and hook runtimes sharing one OTLP sink", async () => {
+    const discoveryBackend = createMockBackend();
+    const hookBackend = createMockBackend();
+    const discoveryApi = createMockApi();
+    const hookApi = createMockApi();
+    const config = { ...baseConfig, backend: "otlp" as const };
+    const stopDiscovery = registerTracingPluginHooks(discoveryApi as never, () => ({
+      backend: discoveryBackend, sampler: new TracingSampler(1), config,
+    }));
+    const stopHook = registerTracingPluginHooks(hookApi as never, () => ({
+      backend: hookBackend, sampler: new TracingSampler(1), config,
+    }));
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "shared-run", deliveryId: "shared-delivery" });
+    await waitForDiagnosticEventsDrained();
+    await hookApi.emit("agent_end", { runId: "shared-run", success: true }, {
+      runId: "shared-run", sessionKey: "shared-session", trace: { traceId: "d".repeat(32) },
+    });
+    emitDeliveryTelemetry({ event: "settlement", channel: "mqtt", outcome: "delivered",
+      runId: "shared-run", deliveryId: "shared-delivery" });
+    await waitForDiagnosticEventsDrained();
+    await Promise.all([stopDiscovery(), stopHook()]);
+    const spans = [discoveryBackend, hookBackend]
+      .flatMap((backend) => vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items));
+    expect(spans.map((span) => span.name).sort()).toEqual(["agent.run", "delivery.settlement", "delivery.started"]);
+    expect(new Set(spans.map((span) => span.traceId))).toEqual(new Set(["d".repeat(32)]));
+  });
+  it("never links a pending delivery from another OTLP sink with the same run id", async () => {
+    const backendA = createMockBackend();
+    const backendB = createMockBackend();
+    const api = createMockApi();
+    let current = { backend: backendA, sampler: new TracingSampler(1),
+      config: { ...baseConfig, backend: "otlp" as const, otlpEndpoint: "http://localhost:4318/v1/traces" } };
+    const stop = registerTracingPluginHooks(api as never, () => current);
+    emitDeliveryTelemetry({ event: "started", channel: "mqtt", runId: "same-run", deliveryId: "sink-A" });
+    await waitForDiagnosticEventsDrained();
+    current = { backend: backendB, sampler: new TracingSampler(1),
+      config: { ...baseConfig, backend: "otlp" as const, otlpEndpoint: "http://localhost:14318/v1/traces" } };
+    await api.emit("agent_end", { runId: "same-run", success: true }, {
+      sessionKey: "sink-B", runId: "same-run", trace: { traceId: "e".repeat(32) },
+    });
+    await stop();
+    const delivery = vi.mocked(backendA.exportSpans).mock.calls.flatMap(([items]) => items)
+      .find((span) => span.name === "delivery.started");
+    const root = vi.mocked(backendB.exportSpans).mock.calls.flatMap(([items]) => items)
+      .find((span) => span.name === "agent.run");
+    expect(delivery).toBeDefined();
+    expect(root?.traceId).toBe("e".repeat(32));
+    expect(delivery?.traceId).not.toBe(root?.traceId);
+  });
   it("uses the real Agent terminal trace for delivery facts that arrive before agent_end", async () => {
     const backend = createMockBackend();
     const api = createMockApi();
@@ -83,6 +449,8 @@ describe("registerTracingPluginHooks", () => {
     const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
     expect(spans.map((span) => span.name).sort()).toEqual(["agent.run", "delivery.settlement", "delivery.started"]);
     expect(new Set(spans.map((span) => span.traceId))).toEqual(new Set([expectedTraceId]));
+    expect(spans.find((span) => span.name === "agent.run")?.attributes["partme.run_id"])
+      .toBe(spans.find((span) => span.name === "delivery.started")?.attributes["partme.run_id"]);
     await stop();
   });
   it("keeps concurrent runs in one session separate and flushes unmatched facts independently", async () => {
@@ -504,7 +872,7 @@ describe("registerTracingPluginHooks", () => {
     expect(getActiveSpanCount()).toBe(1);
   });
 
-  it("agent_end 不把仅有 sessionKey 的入站 root 猜成具体 run", async () => {
+  it("agent_end 不把仅有 sessionKey 的入站 root 猜成具体 run，并回收未归属 root", async () => {
     const backend = createMockBackend();
     const api = createMockApi();
     registerTracingPluginHooks(api as never, () => ({
@@ -514,20 +882,92 @@ describe("registerTracingPluginHooks", () => {
     }));
 
     await api.emit("message_received", {}, { sessionKey: "sk-wire", channelId: "mqtt" });
+    expect(getActiveSpanCount()).toBe(0);
+    expect(vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans))
+      .toMatchObject([{ name: "message.received", status: "unset" }]);
     await api.emit(
       "agent_end",
       { runId: "run-wire", messages: [], success: true },
       { sessionKey: "sk-wire", runId: "run-wire", channel: "mqtt" },
     );
 
-    expect(getActiveSpanCount()).toBe(1);
+    expect(getActiveSpanCount()).toBe(0);
     const exported = vi.mocked(backend.exportSpans).mock.calls.flatMap(([spans]) => spans);
-    expect(exported).toHaveLength(1);
-    expect(exported[0]?.name).toBe("agent.run");
-    expect(exported[0]?.status).toBe("ok");
-    expect(exported[0]?.attributes["openclaw.end_reason"]).toBe("agent_end_success");
+    expect(exported).toHaveLength(2);
+    expect(exported.find((span) => span.name === "message.received")?.status).toBe("unset");
+    expect(exported.find((span) => span.name === "agent.run")?.status).toBe("ok");
+    expect(exported.find((span) => span.name === "agent.run")?.attributes["openclaw.end_reason"])
+      .toBe("agent_end_success");
     await api.emit("session_end", {}, { sessionKey: "sk-wire" });
     expect(getActiveSpanCount()).toBe(0);
+  });
+
+  it("unattributed inbound export failure does not reject the host message hook", async () => {
+    const backend = createMockBackend();
+    vi.mocked(backend.exportSpans).mockRejectedValueOnce(new Error("collector unavailable"));
+    const api = createMockApi();
+    registerTracingPluginHooks(api as never, () => ({ backend,
+      sampler: new TracingSampler(1), config: baseConfig }));
+    await expect(api.emit("message_received", {}, { sessionKey: "fail-open-inbound" }))
+      .resolves.toBeUndefined();
+    expect(getActiveSpanCount()).toBe(0);
+    expect(api.logger.error).toHaveBeenCalled();
+  });
+
+  it("同会话显式 run 接管前回收未归属 root，TTL 不留下无法索引的 Span", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const store = createTraceStore();
+    registerTracingPluginHooks(api as never, () => ({ backend,
+      sampler: new TracingSampler(1), config: baseConfig }), store);
+
+    await api.emit("message_received", {}, { sessionKey: "shared-orphan", traceId: "1".repeat(32) });
+    await api.emit("message_received", {}, {
+      sessionKey: "shared-orphan", runId: "exact-B", traceId: "2".repeat(32),
+    });
+    await api.emit("agent_end", { runId: "exact-B", success: true }, {
+      sessionKey: "shared-orphan", runId: "exact-B",
+    });
+    await store.cleanupSessionTraces(backend, Date.now() + 3_600_000, 1);
+    expect(store.getActiveTraceCount()).toBe(0);
+    expect(store.getActiveSpanCount()).toBe(0);
+    const spans = vi.mocked(backend.exportSpans).mock.calls.flatMap(([items]) => items);
+    expect(spans.find((span) => span.traceId === "1".repeat(32))?.status).toBe("unset");
+    expect(spans.find((span) => span.traceId === "2".repeat(32))?.status).toBe("ok");
+  });
+
+  it("session_end 关闭同一会话的全部显式 run root", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const store = createTraceStore();
+    registerTracingPluginHooks(api as never, () => ({ backend,
+      sampler: new TracingSampler(1), config: baseConfig }), store);
+    await api.emit("message_received", {}, { sessionKey: "shared-end", runId: "run-A" });
+    await api.emit("message_received", {}, { sessionKey: "shared-end", runId: "run-B" });
+    await api.emit("session_end", {}, { sessionKey: "shared-end" });
+    expect(store.getActiveTraceCount()).toBe(0);
+    expect(store.getActiveSpanCount()).toBe(0);
+  });
+
+  it("terminal hooks without run id cannot finish another active run in the same session", async () => {
+    const backend = createMockBackend();
+    const api = createMockApi();
+    const store = createTraceStore();
+    registerTracingPluginHooks(api as never, () => ({ backend,
+      sampler: new TracingSampler(1), config: baseConfig }), store);
+    await api.emit("message_received", {}, { sessionKey: "shared-terminal", runId: "run-A" });
+    await api.emit("message_received", {}, { sessionKey: "shared-terminal", runId: "run-B" });
+    await api.emit("reply_payload_sending", { kind: "final", sessionKey: "shared-terminal" },
+      { sessionKey: "shared-terminal" });
+    await api.emit("agent_end", { success: true }, { sessionKey: "shared-terminal" });
+    expect(store.getActiveTraceCount()).toBe(2);
+    expect(backend.exportSpans).not.toHaveBeenCalled();
+    await api.emit("agent_end", { runId: "run-B", success: true },
+      { sessionKey: "shared-terminal", runId: "run-B" });
+    await api.emit("agent_end", { runId: "run-A", success: true },
+      { sessionKey: "shared-terminal", runId: "run-A" });
+    expect(store.getActiveTraceCount()).toBe(0);
+    expect(store.getActiveSpanCount()).toBe(0);
   });
 
   it("缺少 message_received 时仍为真实 Agent 终态导出可辨认的 span", async () => {
@@ -614,7 +1054,7 @@ describe("registerTracingPluginHooks", () => {
       config: { ...baseConfig, maxActiveTraces: 1 },
     }));
     await api.emit("message_received", {}, { sessionKey: "active-1", runId: "active-run-1" });
-    await api.emit("message_received", {}, { sessionKey: "capped-2" });
+    await api.emit("message_received", {}, { sessionKey: "capped-2", runId: "capped-run-2" });
     await api.emit("agent_end", { runId: "active-run-1", success: true }, {
       sessionKey: "active-1", runId: "active-run-1",
     });

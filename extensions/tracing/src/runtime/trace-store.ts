@@ -32,6 +32,8 @@ const MAX_RECENT_TRACES = 200;
 const DEFAULT_ACTIVE_TRACE_TTL_MS = 30 * 60_000;
 const recentTraces = new Map<string, Span[]>();
 const activeSpans = new Map<string, Span>();
+const pendingRootExports = new Set<string>();
+const exportedRoots = new Map<string, { reason?: string; endedAtMs: number }>();
 const sessionTraceMap = new Map<string, ActiveTraceContext>();
 const runTraceMap = new Map<string, ActiveTraceContext>();
 const toolSpanMap = new Map<string, { spanId: string; traceId: string }>();
@@ -123,6 +125,7 @@ async function endSpan(
 ): Promise<Span | undefined> {
   const span = activeSpans.get(spanId);
   if (!span) return undefined;
+  const generation = storeGeneration;
 
   const endTimeMs = options.endTimeMs ?? Date.now();
   if (options.durationMs !== undefined && Number.isFinite(options.durationMs) && options.durationMs >= 0) {
@@ -143,7 +146,23 @@ async function endSpan(
     if (!oldest) break;
     recentTraces.delete(oldest);
   }
-  if (backend) await backend.exportSpans([completed]);
+  if (backend) {
+    const isRoot = !completed.parentSpanId && (completed.name === "message.received" || completed.name === "agent.run");
+    if (isRoot) pendingRootExports.add(spanId);
+    try {
+      await backend.exportSpans([completed]);
+      if (isRoot && generation === storeGeneration) {
+        exportedRoots.set(spanId, {
+          reason: typeof completed.attributes["openclaw.end_reason"] === "string"
+            ? completed.attributes["openclaw.end_reason"] : undefined,
+          endedAtMs: completed.endTimeMs!,
+        });
+        if (exportedRoots.size > 1_000) exportedRoots.delete(exportedRoots.keys().next().value!);
+      }
+    } finally {
+      if (isRoot) pendingRootExports.delete(spanId);
+    }
+  }
   return cloneSpan(completed);
 }
 
@@ -162,6 +181,37 @@ function resolveActiveTrace(sessionKey?: string, runId?: string): ActiveTraceCon
     ?? (sessionKey ? sessionTraceMap.get(sessionKey) : undefined);
   if (context) context.lastTouchedAtMs = Date.now();
   return context;
+}
+
+/** 只读查询精确 run，供跨实例关联检查；不能刷新业务活动 Trace 的 TTL。 */
+function peekActiveTraceByRun(runId: string): ActiveTraceContext | undefined {
+  return runTraceMap.get(runId);
+}
+
+/** 后端已接受该 Span 的导出请求，供跨实例终态判断；失败导出不算完成。 */
+function hasExportedSpan(spanId: string): boolean {
+  return exportedRoots.has(spanId);
+}
+
+/** 根 Span 已从活动表移除但后端导出仍在进行。 */
+function isRootExportPending(spanId: string): boolean {
+  return pendingRootExports.has(spanId);
+}
+
+/** 返回已导出根 Span 的结束原因，供跨实例排除 TTL/停机回收。 */
+function exportedRootReason(spanId: string): string | undefined {
+  return exportedRoots.get(spanId)?.reason;
+}
+
+/** 返回根 Span 实际结束时间，避免从首次读取时间重启关联保留期。 */
+function exportedRootEndAt(spanId: string): number | undefined {
+  return exportedRoots.get(spanId)?.endedAtMs;
+}
+
+/** 列出同一会话内所有可索引的活动 Trace，包括被较新 run 覆盖的会话索引。 */
+function listActiveTracesForSession(sessionKey: string): ActiveTraceContext[] {
+  return [...new Set([...sessionTraceMap.values(), ...runTraceMap.values()])]
+    .filter((context) => context.sessionKey === sessionKey);
 }
 
 /** 在单 Trace 上限内预留一个 Span 名额；超过上限返回 false 以阻止无界增长。 */
@@ -357,6 +407,8 @@ async function cleanupSessionTraces(
 function resetTraceStore(): void {
   storeGeneration += 1;
   activeSpans.clear();
+  pendingRootExports.clear();
+  exportedRoots.clear();
   recentTraces.clear();
   sessionTraceMap.clear();
   runTraceMap.clear();
@@ -377,7 +429,7 @@ function cloneSpan(span: Span): Span {
   };
 }
 
-  return { suppressRun, consumeSuppressedRun, suppressSession, consumeSuppressedSession, rememberCompletedRun, randomHexId, createSpan, endSpan, registerActiveTrace, resolveActiveTrace, incrementSpanCount, clearActiveTrace, bindToolSpan, takeToolSpanId, finishActiveTrace, finishAllActiveTraces, getActiveSpanCount, getActiveTraceCount, getRecentTraceCount, listRecentTraces, getTraceSpans, cleanupSessionTraces, resetTraceStore, activeSpans, recentTraces };
+  return { suppressRun, consumeSuppressedRun, suppressSession, consumeSuppressedSession, rememberCompletedRun, randomHexId, createSpan, endSpan, registerActiveTrace, resolveActiveTrace, peekActiveTraceByRun, hasExportedSpan, isRootExportPending, exportedRootReason, exportedRootEndAt, listActiveTracesForSession, incrementSpanCount, clearActiveTrace, bindToolSpan, takeToolSpanId, finishActiveTrace, finishAllActiveTraces, getActiveSpanCount, getActiveTraceCount, getRecentTraceCount, listRecentTraces, getTraceSpans, cleanupSessionTraces, resetTraceStore, activeSpans, recentTraces };
 }
 
 const defaultTraceStore = createTraceStore();
@@ -391,6 +443,12 @@ export const createSpan = defaultTraceStore.createSpan;
 export const endSpan = defaultTraceStore.endSpan;
 export const registerActiveTrace = defaultTraceStore.registerActiveTrace;
 export const resolveActiveTrace = defaultTraceStore.resolveActiveTrace;
+export const peekActiveTraceByRun = defaultTraceStore.peekActiveTraceByRun;
+export const hasExportedSpan = defaultTraceStore.hasExportedSpan;
+export const isRootExportPending = defaultTraceStore.isRootExportPending;
+export const exportedRootReason = defaultTraceStore.exportedRootReason;
+export const exportedRootEndAt = defaultTraceStore.exportedRootEndAt;
+export const listActiveTracesForSession = defaultTraceStore.listActiveTracesForSession;
 export const incrementSpanCount = defaultTraceStore.incrementSpanCount;
 export const clearActiveTrace = defaultTraceStore.clearActiveTrace;
 export const bindToolSpan = defaultTraceStore.bindToolSpan;

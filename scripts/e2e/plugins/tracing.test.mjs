@@ -52,3 +52,21 @@ test("turn evidence rejects unfinished, failed and unexported roots", () => {
   assert.equal(selectCompletedTurnTrace(evidence({ summaries: [{ traceId, rootSpan: "agent.run", startTimeMs: 100 }] })), null);
   assert.equal(selectCompletedTurnTrace(evidence({ collectorLog: "" })), null);
 });
+
+test("O6 turn evidence requires both delivery spans in the Agent root trace", () => {
+  const token = "id_" + "d".repeat(24);
+  const root = `Span #0\nTrace ID: ${traceId}\nID: ${rootSpanId}\nName: agent.run`;
+  const started = (id) => `Span #1\nTrace ID: ${id}\nID: ${"e".repeat(16)}\nName: delivery.started\n     -> partme.delivery_id: Str(${token})`;
+  const settled = (id) => `Span #2\nTrace ID: ${id}\nID: ${"f".repeat(16)}\nName: delivery.settlement\n     -> partme.delivery_id: Str(${token})`;
+
+  assert.equal(selectCompletedTurnTrace(evidence({ deliveryToken: token,
+    collectorLog: `${root}\n${started(oldTraceId)}\n${settled(oldTraceId)}` })), null);
+  assert.equal(selectCompletedTurnTrace(evidence({ deliveryToken: token,
+    collectorLog: `${root}\n${started(traceId)}\n${settled(oldTraceId)}` })), null);
+  assert.equal(selectCompletedTurnTrace(evidence({ deliveryToken: token,
+    collectorLog: `${root}\n${started(traceId)}` })), null);
+  assert.equal(selectCompletedTurnTrace(evidence({ deliveryToken: token,
+    collectorLog: `${root}\nSpan #1\nTrace ID: ${traceId}\nName: delivery.started\n     -> partme.message_id: Str(${token})\n${settled(traceId)}` })), null);
+  assert.deepEqual(selectCompletedTurnTrace(evidence({ deliveryToken: token,
+    collectorLog: `${root}\n${started(traceId)}\n${settled(traceId)}` })), { traceId, spanId: rootSpanId });
+});

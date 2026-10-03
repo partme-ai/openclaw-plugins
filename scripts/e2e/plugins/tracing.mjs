@@ -23,7 +23,7 @@ async function collectorLogs() {
 }
 
 /** Match one new, terminal Agent turn in both the shared journal and OTLP Collector. */
-export function selectCompletedTurnTrace({ beforeTraceIds, nonce, summaries, spansByTraceId, collectorLog }) {
+export function selectCompletedTurnTrace({ beforeTraceIds, nonce, summaries, spansByTraceId, collectorLog, deliveryToken }) {
   if (typeof nonce !== "string" || nonce.length === 0) return null;
   for (const summary of summaries) {
     const traceId = summary?.traceId;
@@ -39,7 +39,9 @@ export function selectCompletedTurnTrace({ beforeTraceIds, nonce, summaries, spa
       ["agent_end_success", "reply_payload_final"].includes(span.attributes?.["openclaw.end_reason"]),
     );
     if (!root) continue;
-    if (collectorHasSpan(collectorLog, root)) {
+    if (collectorHasSpan(collectorLog, root) && (!deliveryToken ||
+        (collectorHasTelemetrySpanInTrace(collectorLog, "delivery.started", deliveryToken, traceId) &&
+         collectorHasTelemetrySpanInTrace(collectorLog, "delivery.settlement", deliveryToken, traceId)))) {
       return { traceId, spanId: root.spanId };
     }
   }
@@ -60,6 +62,17 @@ function collectorHasSpan(log, root) {
 
 function collectorHasTelemetrySpan(log, name, identity) {
   return collectorTelemetrySpanCount(log, name, identity) > 0;
+}
+
+function collectorHasTelemetrySpanInTrace(log, name, identity, traceId) {
+  const starts = [...log.matchAll(/^[ \t]*Span #\d+[ \t]*$/gm)].map((match) => match.index);
+  return starts.some((start, index) => {
+    const block = log.slice(start, starts[index + 1] ?? log.length);
+    const field = (key) => block.match(new RegExp(`^[ \\t]*${key}[ \\t]*:[ \\t]*([^\\r\\n]*)`, "m"))?.[1]?.trim();
+    const deliveryId = block.match(/^[ \t]*->[ \t]*partme\.delivery_id:[ \t]*Str\((id_[a-f0-9]{24})\)[ \t]*$/m)?.[1];
+    return field("Trace ID")?.toLowerCase() === traceId.toLowerCase() &&
+      field("Name") === name && deliveryId === identity;
+  });
 }
 
 function collectorTelemetrySpanCount(log, name, identity) {
@@ -154,6 +167,11 @@ export async function testTracing(ctx, results) {
       if (!model) throw new Error("tracing E2E model fixture was not started by the orchestrator");
       const nonce = randomUUID();
       const o6DeliveryId = process.env.OPENCLAW_E2E_O6 === "1" ? `o6-delivery-${randomUUID()}` : undefined;
+      const o6DeliveryToken = o6DeliveryId
+        ? `id_${createHash("sha256").update(createHash("sha256")
+          .update(JSON.stringify(["local", `tracing-e2e-${nonce}`, o6DeliveryId])).digest("hex"))
+          .digest("hex").slice(0, 24)}`
+        : undefined;
       const initialCompletions = model.metrics.completions;
       const initialTraces = await ctx.gatewayFetch("/tracing/traces?limit=200", authorized);
       if (!initialTraces.ok || !Array.isArray(initialTraces.json?.data)) {
@@ -196,6 +214,7 @@ export async function testTracing(ctx, results) {
           summaries: traces.json.data,
           spansByTraceId,
           collectorLog: await collectorLogs(),
+          deliveryToken: o6DeliveryToken,
         });
         return completedTrace !== null;
       }, { label: "this completed Agent turn in the journal and OTLP Collector", timeoutMs: 30_000, intervalMs: 500 });
@@ -209,8 +228,11 @@ export async function testTracing(ctx, results) {
       console.log(`[tracing-otlp] completed traceId=${completedTrace.traceId}, spanId=${completedTrace.spanId}; gatewayActiveSpans=${status.json?.data?.activeSpans}, gatewayActiveTraces=${status.json?.data?.activeTraces}, journalRecentTraces=${status.json?.data?.recentTraces}`);
       if (o6DeliveryId) {
         if (!ctx.pluginIds.includes("memory")) throw new Error("O6 tracing E2E requires installed memory recall");
-        const journalId = createHash("sha256").update(JSON.stringify(["local", `tracing-e2e-${nonce}`, o6DeliveryId])).digest("hex");
-        const token = `id_${createHash("sha256").update(journalId).digest("hex").slice(0, 24)}`;
+        await ctx.waitFor(async () => {
+          const current = await ctx.gatewayFetch("/tracing/status", authorized);
+          return current.ok && current.json?.data?.activeSpans === 0 && current.json?.data?.activeTraces === 0;
+        }, { label: "O6 Agent turn without active tracing roots", timeoutMs: 10_000, intervalMs: 250 });
+        const token = o6DeliveryToken;
         await ctx.waitFor(async () => {
           const logs = await collectorLogs();
           return collectorHasTelemetrySpan(logs, "delivery.started", token) &&
@@ -226,7 +248,9 @@ export async function testTracing(ctx, results) {
         }
         evidence.o6 = { collectorSpanNames: ["delivery.started", "delivery.settlement", "memory.recall"],
           deliveryIdHash: token, startedCount, settledCount,
-          rawDeliveryIdAbsent: true, agentDeliveryCorrelation: "unavailable-host-trace-scope" };
+          rawDeliveryIdAbsent: true, agentDeliveryCorrelation: "shared-trace-id",
+          traceId: completedTrace.traceId, rootSpanId: completedTrace.spanId,
+          activeSpansAfterTurn: 0, activeTracesAfterTurn: 0 };
         console.log(`[o6-tracing] OTLP received delivery.started and delivery.settlement identity=${token}, memory.recall; raw delivery ID absent`);
       }
       await restartInstalledGateway(ctx);

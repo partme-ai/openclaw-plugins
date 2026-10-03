@@ -98,6 +98,25 @@ function telemetrySinkKey(config: TracingConfig): string | undefined {
   }
   return undefined;
 }
+
+type RunLink = { traceId: string; rootSpanId: string };
+type RunLinkSink = string | TracingBackend;
+type RunLinkRecord = { link: RunLink; atMs: number; completedAtMs?: number; owner: object;
+  isOwnerLive: () => boolean; isActive?: () => boolean; isCompleted?: () => boolean;
+  completedAt?: () => number | undefined; observations: number;
+  reserveObservation?: () => boolean;
+  awaitCompletion?: () => Promise<boolean | "pending">;
+  finishRoot?: (status: "ok" | "error", reason: string) => Promise<boolean> };
+type RunLinkEntry = { links: Map<string, RunLinkRecord>;
+  listeners: Set<(runKey: string, link: RunLink) => void> };
+const RUN_LINK_HUB_KEY = Symbol.for("partme.tracing.runLinkHub.v1");
+/** Gateway may register diagnostics and Agent hooks in separate plugin runtimes. */
+function runLinkHub(): Map<RunLinkSink, RunLinkEntry> {
+  const global = globalThis as unknown as Record<symbol, unknown>;
+  let hub = global[RUN_LINK_HUB_KEY] as Map<RunLinkSink, RunLinkEntry> | undefined;
+  if (!(hub instanceof Map)) global[RUN_LINK_HUB_KEY] = hub = new Map();
+  return hub;
+}
 /** 单次 Gateway 生命周期中供所有 tracing hooks 共享的后端、采样器与不可变配置。 */
 export interface TracingHookContext {
   backend: TracingBackend;
@@ -194,15 +213,19 @@ export function registerTracingPluginHooks(
 ): () => Promise<void> {
   const {
     bindToolSpan, consumeSuppressedRun, consumeSuppressedSession, createSpan, endSpan,
-    finishActiveTrace, getActiveTraceCount, incrementSpanCount, randomHexId,
+    exportedRootEndAt, exportedRootReason, finishActiveTrace, getActiveTraceCount, hasExportedSpan,
+    isRootExportPending, incrementSpanCount,
+    listActiveTracesForSession, peekActiveTraceByRun, randomHexId,
     rememberCompletedRun, suppressRun, suppressSession, registerActiveTrace,
     resolveActiveTrace, takeToolSpanId,
   } = store;
   /** 同一注册实例的 Hook 状态变更串行执行。 */
   const traceOperationChains = new Map<string, Promise<void>>();
   const telemetryExports = new Set<Promise<void>>();
-  const runLinks = new Map<string, { traceId: string; rootSpanId: string }>();
-  const pendingDelivery = new Map<string, Array<{ exportSpan: (link?: { traceId: string; rootSpanId: string }) => Promise<void>; timeout: ReturnType<typeof setTimeout> }>>();
+  type PendingDelivery = { exportSpan: (link?: RunLink) => Promise<void>; timeout: ReturnType<typeof setTimeout> };
+  const pendingDelivery = new Map<RunLinkSink, Map<string, PendingDelivery[]>>();
+  const subscribedSinks = new Map<RunLinkSink, (runKey: string, link: RunLink) => void>();
+  const linkOwner = {};
   const MAX_RUN_LINKS = 1_000;
   const MAX_PENDING_DELIVERIES = 1_024;
   let pendingDeliveryCount = 0;
@@ -211,19 +234,73 @@ export function registerTracingPluginHooks(
     telemetryExports.add(observed);
     void observed.finally(() => telemetryExports.delete(observed));
   };
-  const linkRun = (runId: string, traceId: string, rootSpanId: string) => {
-    const key = correlationId(runId);
-    if (runLinks.has(key)) runLinks.delete(key);
-    runLinks.set(key, { traceId, rootSpanId });
-    while (runLinks.size > MAX_RUN_LINKS) runLinks.delete(runLinks.keys().next().value!);
-    const pending = pendingDelivery.get(key);
+  const acceptLink = (sink: RunLinkSink, key: string, link: RunLink) => {
+    const byRun = pendingDelivery.get(sink);
+    const pending = byRun?.get(key);
     if (!pending) return;
-    pendingDelivery.delete(key);
+    byRun!.delete(key);
+    if (byRun!.size === 0) pendingDelivery.delete(sink);
     pendingDeliveryCount -= pending.length;
     for (const item of pending) {
       clearTimeout(item.timeout);
-      trackExport(item.exportSpan({ traceId, rootSpanId }));
+      trackExport(item.exportSpan(link));
     }
+  };
+  const ensureSink = (sink: RunLinkSink): RunLinkEntry => {
+    const hub = runLinkHub();
+    let entry = hub.get(sink);
+    if (!entry) {
+      entry = { links: new Map(), listeners: new Set() };
+      hub.set(sink, entry);
+    }
+    if (!subscribedSinks.has(sink)) {
+      const listener = (key: string, link: RunLink) => acceptLink(sink, key, link);
+      entry.listeners.add(listener);
+      subscribedSinks.set(sink, listener);
+      for (const [key, value] of entry.links) listener(key, value.link);
+    }
+    return entry;
+  };
+  const expiredRunLink = (record: RunLinkRecord, now: number): boolean => {
+    if (!record.isOwnerLive()) return true;
+    if (record.isActive?.()) return false;
+    if (record.isCompleted && !record.isCompleted()) return true;
+    record.completedAtMs ??= record.completedAt?.() ?? record.atMs;
+    return now - record.completedAtMs > 120_000;
+  };
+  const findRunLink = (runId: string, backend: TracingBackend, config: TracingConfig): RunLinkRecord | undefined => {
+    const entry = ensureSink(telemetrySinkKey(config) ?? backend);
+    const key = correlationId(runId);
+    const record = entry.links.get(key);
+    if (record && expiredRunLink(record, Date.now())) {
+      entry.links.delete(key);
+      return undefined;
+    }
+    return record;
+  };
+  const linkRun = (runId: string, traceId: string, rootSpanId: string,
+    backend: TracingBackend, config: TracingConfig,
+    finishRoot?: RunLinkRecord["finishRoot"], isActive?: RunLinkRecord["isActive"],
+    isCompleted?: RunLinkRecord["isCompleted"], completedAt?: RunLinkRecord["completedAt"],
+    reserveObservation?: RunLinkRecord["reserveObservation"],
+    awaitCompletion?: RunLinkRecord["awaitCompletion"]) => {
+    const entry = ensureSink(telemetrySinkKey(config) ?? backend);
+    const key = correlationId(runId);
+    const now = Date.now();
+    for (const [candidate, value] of entry.links) {
+      if (expiredRunLink(value, now)) entry.links.delete(candidate);
+    }
+    const existing = entry.links.get(key);
+    // The first observed exact run owns the root. A second plugin runtime
+    // must not replace that identity with a terminal-only fallback root.
+    if (existing) return;
+    const link = { traceId, rootSpanId };
+    const ownerGeneration = hookGeneration;
+    entry.links.set(key, { link, atMs: now, owner: linkOwner, observations: 0,
+      isOwnerLive: () => isLive(ownerGeneration), finishRoot, isActive, isCompleted,
+      completedAt, reserveObservation, awaitCompletion });
+    while (entry.links.size > MAX_RUN_LINKS) entry.links.delete(entry.links.keys().next().value!);
+    for (const listener of entry.listeners) listener(key, link);
   };
   let stopTelemetry: () => void = () => {};
   let stopPromise: Promise<void> | null = null;
@@ -258,15 +335,26 @@ export function registerTracingPluginHooks(
     const unsubscribe = stopTelemetry;
     stopTelemetry = () => {};
     unsubscribe();
-    for (const items of pendingDelivery.values()) {
-      for (const item of items) {
-        clearTimeout(item.timeout);
-        trackExport(item.exportSpan());
+    for (const byRun of pendingDelivery.values()) {
+      for (const items of byRun.values()) {
+        for (const item of items) {
+          clearTimeout(item.timeout);
+          trackExport(item.exportSpan());
+        }
       }
     }
     pendingDelivery.clear();
     pendingDeliveryCount = 0;
-    runLinks.clear();
+    for (const [sink, listener] of subscribedSinks) {
+      const hub = runLinkHub();
+      const entry = hub.get(sink);
+      entry?.listeners.delete(listener);
+      for (const [key, record] of entry?.links ?? []) {
+        if (record.owner === linkOwner) entry!.links.delete(key);
+      }
+      if (entry?.listeners.size === 0) hub.delete(sink);
+    }
+    subscribedSinks.clear();
     const stopping = (async () => {
     const pending = [...traceOperationChains.values()];
     traceOperationChains.clear();
@@ -322,7 +410,10 @@ export function registerTracingPluginHooks(
     const exportFact = (async () => {
       try {
         const context = await resolveHookContext(api, getLiveContext, "telemetry");
-        if (!context || !isLive(generation) || !ticket.claim(context.backend, context.config)) return;
+        if (!context || !isLive(generation)) return;
+        const sink = telemetrySinkKey(context.config) ?? context.backend;
+        const links = ensureSink(sink);
+        if (!ticket.claim(context.backend, context.config)) return;
         const fields: Record<string, string | number | boolean> = { "partme.event": kind };
         for (const key of ["channel", "outcome", "plugin"] as const) {
           const value = attributes[key];
@@ -349,21 +440,26 @@ export function registerTracingPluginHooks(
         };
         const runKey = kind === "started" || kind === "settlement" ? attributes.run_id : undefined;
         if (typeof runKey === "string") {
-          const linked = runLinks.get(runKey);
-          if (linked) { await exportSpan(linked); return; }
+          const linked = links.links.get(runKey);
+          if (linked && !expiredRunLink(linked, Date.now())) { await exportSpan(linked.link); return; }
+          if (linked) links.links.delete(runKey);
           if (pendingDeliveryCount < MAX_PENDING_DELIVERIES) {
             const item = { exportSpan, timeout: setTimeout(() => {
-              const queue = pendingDelivery.get(runKey);
+              const byRun = pendingDelivery.get(sink);
+              const queue = byRun?.get(runKey);
               if (!queue || !queue.includes(item)) return;
               queue.splice(queue.indexOf(item), 1);
               pendingDeliveryCount -= 1;
-              if (queue.length === 0) pendingDelivery.delete(runKey);
+              if (queue.length === 0) byRun!.delete(runKey);
+              if (byRun!.size === 0) pendingDelivery.delete(sink);
               trackExport(exportSpan());
             }, 120_000) };
             item.timeout.unref?.();
-            const queue = pendingDelivery.get(runKey) ?? [];
+            const byRun = pendingDelivery.get(sink) ?? new Map<string, PendingDelivery[]>();
+            const queue = byRun.get(runKey) ?? [];
             queue.push(item);
-            pendingDelivery.set(runKey, queue);
+            byRun.set(runKey, queue);
+            pendingDelivery.set(sink, byRun);
             pendingDeliveryCount += 1;
             return;
           }
@@ -408,15 +504,87 @@ export function registerTracingPluginHooks(
       }
 
       await runTraceOperation(operationKey, eventGeneration, async (stillLive) => {
+        if (!runId) {
+          // The inbound hook can run in a different plugin runtime from the
+          // Agent hook. Without exact run identity, it is an observation, not
+          // a live Agent root that may remain open until TTL.
+          try {
+            const messageText = readMessageContent(event as Record<string, unknown>, config.captureMessageBody);
+            const messageId = readString(ctx.messageId);
+            const observed = createSpan("message.received", {
+              traceId, kind: "server", attributes: {
+                "openclaw.channel": channelId,
+                ...(sessionKey ? { "openclaw.session_key": sessionKey } : {}),
+                ...(messageId ? { "openclaw.message_id": messageId,
+                  "partme.message_id": correlationId(messageId) } : {}),
+                ...(messageText ? { "openclaw.message_text": messageText } : {}),
+              },
+            });
+            await endSpan(observed.spanId, "unset", backend, {
+              attributes: { "openclaw.end_reason": "unattributed_inbound" },
+            });
+          } catch (error) {
+            logHookError(api, "exporting unattributed inbound", error);
+          }
+          if (sessionKey) consumeSuppressedSession(sessionKey);
+          return;
+        }
+        const canonical = findRunLink(runId, backend, config);
+        if (canonical) {
+          // Fire-and-forget host hooks can arrive after agent_end. Keep a
+          // single canonical root and export the later observation neutrally.
+          if (canonical.observations >= config.maxSpansPerTrace - 1 ||
+              canonical.reserveObservation?.() === false) return;
+          canonical.observations += 1;
+          try {
+            const messageText = readMessageContent(event as Record<string, unknown>, config.captureMessageBody);
+            const messageId = readString(ctx.messageId);
+            const observed = createSpan("message.received", {
+              traceId: canonical.link.traceId, parentSpanId: canonical.link.rootSpanId,
+              kind: "server", attributes: {
+                "openclaw.channel": channelId,
+                ...(sessionKey ? { "openclaw.session_key": sessionKey } : {}),
+                "openclaw.run_id": runId, "partme.run_id": correlationId(runId),
+                ...(messageId ? { "openclaw.message_id": messageId,
+                  "partme.message_id": correlationId(messageId) } : {}),
+                ...(messageText ? { "openclaw.message_text": messageText } : {}),
+              },
+            });
+            await endSpan(observed.spanId, "unset", backend, {
+              attributes: { "openclaw.end_reason": "duplicate_or_late_inbound" },
+            });
+          } catch (error) {
+            logHookError(api, "exporting duplicate inbound", error);
+          }
+          return;
+        }
         const previous = runId ? resolveActiveTrace(undefined, runId) : resolveActiveTrace(sessionKey);
         if (previous) {
           try {
-            await finishActiveTrace(runId ? undefined : sessionKey, runId, "error", backend, "superseded_by_new_message");
+            await finishActiveTrace(
+              runId ? undefined : sessionKey,
+              runId,
+              previous.runId ? "error" : "unset",
+              backend,
+              previous.runId ? "superseded_by_new_message" : "unattributed_new_message",
+            );
           } catch (error) {
             logHookError(api, "closing superseded trace", error);
           }
           if (!stillLive()) return;
-        } else if (getActiveTraceCount() >= config.maxActiveTraces) {
+        }
+        // A session-only observation has no exact Agent identity. End it
+        // neutrally before a distinct run replaces the session index.
+        const sessionOnly = runId && sessionKey ? resolveActiveTrace(sessionKey) : undefined;
+        if (sessionOnly && !sessionOnly.runId) {
+          try {
+            await finishActiveTrace(sessionKey, undefined, "unset", backend, "unattributed_new_message");
+          } catch (error) {
+            logHookError(api, "closing unattributed trace", error);
+          }
+          if (!stillLive()) return;
+        }
+        if (getActiveTraceCount() >= config.maxActiveTraces) {
           if (runId) suppressRun(runId);
           if (sessionKey) suppressSession(sessionKey);
           api.logger.error(
@@ -439,14 +607,38 @@ export function registerTracingPluginHooks(
             ...(messageText ? { "openclaw.message_text": messageText } : {}),
           },
         });
-        registerActiveTrace({
+        const rootContext = {
           traceId,
           rootSpanId: rootSpan.spanId,
           spanCount: 1,
           sessionKey,
           runId,
-        });
-        if (runId) linkRun(runId, traceId, rootSpan.spanId);
+        };
+        registerActiveTrace(rootContext);
+        if (runId) linkRun(runId, traceId, rootSpan.spanId, backend, config,
+          async (status, reason) => {
+            let finished = false;
+            await runTraceOperation(operationKey, eventGeneration, async () => {
+              try {
+                finished = await finishActiveTrace(undefined, runId, status, backend, reason);
+              } catch (error) {
+                logHookError(api, "ending cross-runtime trace", error);
+              }
+            });
+            return finished;
+          }, () => {
+            const active = peekActiveTraceByRun(runId);
+            return (active?.traceId === traceId && active.rootSpanId === rootSpan.spanId) ||
+              isRootExportPending(rootSpan.spanId);
+          }, () => hasExportedSpan(rootSpan.spanId) &&
+            !["trace_ttl_expired", "gateway_shutdown"].includes(exportedRootReason(rootSpan.spanId) ?? ""),
+          () => exportedRootEndAt(rootSpan.spanId), () => {
+            const active = peekActiveTraceByRun(runId);
+            if (active === rootContext) return incrementSpanCount(active, config.maxSpansPerTrace);
+            if (rootContext.spanCount >= config.maxSpansPerTrace) return false;
+            rootContext.spanCount += 1;
+            return true;
+          });
         // A prior turn in the same session may have been suppressed without
         // ever producing agent_end. The new accepted root owns this session.
         if (sessionKey) consumeSuppressedSession(sessionKey);
@@ -528,7 +720,14 @@ export function registerTracingPluginHooks(
       if (!operationKey) return;
       await runTraceOperation(operationKey, eventGeneration, async () => {
         try {
-          await finishActiveTrace(runId ? undefined : sessionKey, runId, "ok", hookContext.backend, "reply_payload_final");
+          if (!runId) {
+            const sessionOnly = sessionKey ? resolveActiveTrace(sessionKey) : undefined;
+            if (sessionOnly && !sessionOnly.runId) {
+              await finishActiveTrace(sessionKey, undefined, "unset", hookContext.backend, "unattributed_final_reply");
+            }
+            return;
+          }
+          await finishActiveTrace(undefined, runId, "ok", hookContext.backend, "reply_payload_final");
         } catch (error) {
           logHookError(api, "ending reply trace", error);
         }
@@ -554,8 +753,44 @@ export function registerTracingPluginHooks(
       if (!operationKey) return;
       await runTraceOperation(operationKey, eventGeneration, async (stillLive) => {
         try {
+          if (!runId) {
+            const sessionOnly = sessionKey ? resolveActiveTrace(sessionKey) : undefined;
+            if (sessionOnly && !sessionOnly.runId) {
+              await finishActiveTrace(sessionKey, undefined, "unset", hookContext.backend, "unattributed_agent_end");
+            }
+            if (sessionKey) consumeSuppressedSession(sessionKey);
+            return;
+          }
           const exactRoot = runId ? resolveActiveTrace(undefined, runId) : undefined;
-          if (runId && exactRoot) linkRun(runId, exactRoot.traceId, exactRoot.rootSpanId);
+          const linkedRoot = !exactRoot ? findRunLink(runId, hookContext.backend, hookContext.config) : undefined;
+          if (runId && exactRoot) linkRun(runId, exactRoot.traceId, exactRoot.rootSpanId,
+            hookContext.backend, hookContext.config);
+          if (linkedRoot) {
+            const finishedByOwner = linkedRoot.finishRoot
+              ? await linkedRoot.finishRoot(event.success ? "ok" : "error",
+                event.success ? "agent_end_success" : "agent_end_error")
+              : await linkedRoot.awaitCompletion?.();
+            if (finishedByOwner === "pending" && linkedRoot.isOwnerLive()) {
+              // A slow but still running export owns this run. The hook must
+              // return promptly without constructing a competing root.
+              api.logger.warn("[tracing] canonical Agent root export still pending after wait");
+              rememberCompletedRun(runId);
+              return;
+            }
+            if (linkedRoot.isOwnerLive() && (finishedByOwner || linkedRoot.isCompleted?.())) {
+              linkedRoot.completedAtMs ??= linkedRoot.completedAt?.() ?? Date.now();
+              rememberCompletedRun(runId);
+              const unattributed = sessionKey ? resolveActiveTrace(sessionKey) : undefined;
+              if (unattributed && !unattributed.runId) {
+                await finishActiveTrace(sessionKey, undefined, "unset", hookContext.backend, "unattributed_agent_end");
+              }
+              if (sessionKey) consumeSuppressedSession(sessionKey);
+              return;
+            }
+            const sink = telemetrySinkKey(hookContext.config) ?? hookContext.backend;
+            const links = runLinkHub().get(sink)?.links;
+            if (links?.get(correlationId(runId)) === linkedRoot) links.delete(correlationId(runId));
+          }
           const finished = await finishActiveTrace(
             runId ? undefined : sessionKey,
             runId,
@@ -564,6 +799,13 @@ export function registerTracingPluginHooks(
             event.success ? "agent_end_success" : "agent_end_error",
           );
           if (!stillLive()) return;
+          // The session-only inbound observation cannot establish run identity.
+          // Reclaim it without assigning the Agent result or delivery parent.
+          const unattributed = !finished && sessionKey ? resolveActiveTrace(sessionKey) : undefined;
+          if (unattributed && !unattributed.runId) {
+            await finishActiveTrace(sessionKey, undefined, "unset", hookContext.backend, "unattributed_agent_end");
+            if (!stillLive()) return;
+          }
           const suppressedByRun = runId ? consumeSuppressedRun(runId) : false;
           const suppressedBySession = sessionKey ? consumeSuppressedSession(sessionKey) : false;
           if (suppressedByRun || suppressedBySession) {
@@ -586,15 +828,37 @@ export function registerTracingPluginHooks(
                 attributes: {
                   ...(sessionKey ? { "openclaw.session_key": sessionKey } : {}),
                   "openclaw.run_id": runId,
+                  "partme.run_id": correlationId(runId),
                   ...(messageText ? { "openclaw.message_text": messageText } : {}),
                 },
               });
-              linkRun(runId, traceId, span.spanId);
-              await endSpan(span.spanId, event.success ? "ok" : "error", hookContext.backend, {
-                ...(typeof event.durationMs === "number" && Number.isFinite(event.durationMs) && event.durationMs >= 0
-                  ? { durationMs: event.durationMs } : {}),
-                attributes: { "openclaw.end_reason": event.success ? "agent_end_success" : "agent_end_error" },
-              });
+              let resolveCompletion!: (exported: boolean) => void;
+              const completion = new Promise<boolean>((resolve) => { resolveCompletion = resolve; });
+              linkRun(runId, traceId, span.spanId, hookContext.backend, hookContext.config,
+                undefined, () => store.activeSpans.has(span.spanId) || isRootExportPending(span.spanId),
+                () => hasExportedSpan(span.spanId), () => exportedRootEndAt(span.spanId),
+                undefined, async () => {
+                  let timeout: ReturnType<typeof setTimeout> | undefined;
+                  try {
+                    return await Promise.race([completion, new Promise<boolean | "pending">((resolve) => {
+                      timeout = setTimeout(() => resolve("pending"), Math.max(1_000, hookContext.config.exportTimeoutMs));
+                      timeout.unref?.();
+                    })]);
+                  } finally {
+                    if (timeout) clearTimeout(timeout);
+                  }
+                });
+              try {
+                await endSpan(span.spanId, event.success ? "ok" : "error", hookContext.backend, {
+                  ...(typeof event.durationMs === "number" && Number.isFinite(event.durationMs) && event.durationMs >= 0
+                    ? { durationMs: event.durationMs } : {}),
+                  attributes: { "openclaw.end_reason": event.success ? "agent_end_success" : "agent_end_error" },
+                });
+                resolveCompletion(true);
+              } catch (error) {
+                resolveCompletion(false);
+                throw error;
+              }
             }
           }
         } catch (error) {
@@ -617,13 +881,17 @@ export function registerTracingPluginHooks(
       if (!operationKey) return;
       await runTraceOperation(operationKey, eventGeneration, async () => {
         try {
-          await finishActiveTrace(
-            sessionKey,
-            runId,
-            "error",
-            hookContext.backend,
-            "session_end_before_final_reply",
-          );
+          const contexts = sessionKey ? listActiveTracesForSession(sessionKey)
+            : (runId ? [resolveActiveTrace(undefined, runId)].filter((context) => context !== undefined) : []);
+          for (const context of contexts) {
+            await finishActiveTrace(
+              context.runId ? undefined : context.sessionKey,
+              context.runId,
+              context.runId ? "error" : "unset",
+              hookContext.backend,
+              context.runId ? "session_end_before_final_reply" : "session_end_unattributed",
+            );
+          }
         } catch (error) {
           logHookError(api, "ending session trace", error);
         }
