@@ -1,0 +1,406 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-10-03T00:37:33.178Z",
+  "sourceHashes": {
+    "extensions/memory/src/store.ts": "6cd9c3091fa20c73eedd1b2faa1e99bd0e245c27ee591c11baba79270cce5d24",
+    "extensions/router/src/durable-store.ts": "bacb81ca19bb88069cc7a34adda8799d076141c968d00f3c62fce62e7c434e00"
+  },
+  "environment": {
+    "node": "v24.18.0",
+    "platform": "darwin",
+    "osRelease": "27.0.0",
+    "cpuModel": "Apple M4 Pro",
+    "cpuCount": 12,
+    "totalMemoryBytes": 25769803776,
+    "tempFilesystem": "<system-tmpdir>",
+    "reserveBytes": 8589934592,
+    "groupBudgetBytes": 536870912
+  },
+  "options": {
+    "seed": 20260929,
+    "runs": 5,
+    "memoryCounts": [
+      1000,
+      10000,
+      100000
+    ],
+    "routerCounts": [
+      100,
+      1000,
+      10000
+    ]
+  },
+  "groups": [
+    {
+      "kind": "memory",
+      "seed": 20260929,
+      "count": 1000,
+      "datasetHash": "7d5c3f5708176424b9a45a795e698c78581f5b7ba219594ffce0ae89d1eab6c2",
+      "estimatedBytes": 238964,
+      "config": {
+        "maxSearchBytes": 16777216,
+        "maxRecordBytes": 65536,
+        "profileScope": "session",
+        "encrypted": false
+      },
+      "warmupCount": 1,
+      "samples": [
+        {
+          "ok": true,
+          "durationMs": 1.8555410000000165,
+          "bytesScanned": 238964,
+          "bytesWritten": 0,
+          "resultCount": 10,
+          "eventLoopDelayMs": 0.910847
+        },
+        {
+          "ok": true,
+          "durationMs": 1.5922910000000172,
+          "bytesScanned": 238964,
+          "bytesWritten": 0,
+          "resultCount": 10,
+          "eventLoopDelayMs": null
+        },
+        {
+          "ok": true,
+          "durationMs": 1.9722500000000025,
+          "bytesScanned": 238964,
+          "bytesWritten": 0,
+          "resultCount": 10,
+          "eventLoopDelayMs": 1.072127
+        },
+        {
+          "ok": true,
+          "durationMs": 1.4253329999999949,
+          "bytesScanned": 238964,
+          "bytesWritten": 0,
+          "resultCount": 10,
+          "eventLoopDelayMs": 1.140735
+        },
+        {
+          "ok": true,
+          "durationMs": 1.4588750000000061,
+          "bytesScanned": 238964,
+          "bytesWritten": 0,
+          "resultCount": 10,
+          "eventLoopDelayMs": null
+        }
+      ],
+      "setupMs": 16.916541,
+      "setupBytesWritten": 238964,
+      "measuredOperation": "MemoryStore.search(session scoped, lexical needle)",
+      "warmupMs": 3.82975,
+      "storedBytes": 238964,
+      "status": "measured",
+      "summary": {
+        "sampleCount": 5,
+        "successCount": 5,
+        "failureCount": 0,
+        "p50Ms": 1.592291,
+        "p95Ms": 1.948908,
+        "throughputPerSec": 602098.43346,
+        "bytesScanned": 1194820,
+        "bytesWritten": 0,
+        "eventLoopDelayP95Ms": 1.133874
+      }
+    },
+    {
+      "kind": "memory",
+      "seed": 20260929,
+      "count": 10000,
+      "datasetHash": "028aa4b6cfac9baa2f21196dae2e97127a3b4ec227acc0351b78c08ce7c4c5f1",
+      "estimatedBytes": 2398668,
+      "config": {
+        "maxSearchBytes": 16777216,
+        "maxRecordBytes": 65536,
+        "profileScope": "session",
+        "encrypted": false
+      },
+      "warmupCount": 1,
+      "samples": [
+        {
+          "ok": true,
+          "durationMs": 14.540499999999952,
+          "bytesScanned": 2398668,
+          "bytesWritten": 0,
+          "resultCount": 10,
+          "eventLoopDelayMs": 1.473535
+        },
+        {
+          "ok": true,
+          "durationMs": 15.277332999999999,
+          "bytesScanned": 2398668,
+          "bytesWritten": 0,
+          "resultCount": 10,
+          "eventLoopDelayMs": 2.439167
+        },
+        {
+          "ok": true,
+          "durationMs": 12.718165999999997,
+          "bytesScanned": 2398668,
+          "bytesWritten": 0,
+          "resultCount": 10,
+          "eventLoopDelayMs": 1.214463
+        },
+        {
+          "ok": true,
+          "durationMs": 13.661541999999997,
+          "bytesScanned": 2398668,
+          "bytesWritten": 0,
+          "resultCount": 10,
+          "eventLoopDelayMs": 2.053119
+        },
+        {
+          "ok": true,
+          "durationMs": 14.39995799999997,
+          "bytesScanned": 2398668,
+          "bytesWritten": 0,
+          "resultCount": 10,
+          "eventLoopDelayMs": 2.770943
+        }
+      ],
+      "setupMs": 150.743333,
+      "setupBytesWritten": 2398668,
+      "measuredOperation": "MemoryStore.search(session scoped, lexical needle)",
+      "warmupMs": 15.3855,
+      "storedBytes": 2398668,
+      "status": "measured",
+      "summary": {
+        "sampleCount": 5,
+        "successCount": 5,
+        "failureCount": 0,
+        "p50Ms": 14.399958,
+        "p95Ms": 15.129966,
+        "throughputPerSec": 708240.386816,
+        "bytesScanned": 11993340,
+        "bytesWritten": 0,
+        "eventLoopDelayP95Ms": 2.704588
+      }
+    },
+    {
+      "kind": "memory",
+      "seed": 20260929,
+      "count": 100000,
+      "datasetHash": "58e42b25b661dcaddb412f9834cd080915432bd0a0c45fe4bb8b7c135aea3266",
+      "estimatedBytes": 24052012,
+      "config": {
+        "maxSearchBytes": 16777216,
+        "maxRecordBytes": 65536,
+        "profileScope": "session",
+        "encrypted": false
+      },
+      "warmupCount": 0,
+      "samples": [],
+      "status": "rejected",
+      "rejection": {
+        "accepted": false,
+        "reason": "search-byte-budget",
+        "limit": 16777216
+      }
+    },
+    {
+      "kind": "router",
+      "seed": 20260929,
+      "count": 100,
+      "datasetHash": "4c21922f06f585f92bb407ae63e2c306c1c2e25343cd61d56c6afad52946838a",
+      "estimatedBytes": 25428,
+      "config": {
+        "maxPendingTasks": 10000,
+        "maxPayloadBytes": 1048576,
+        "auditEnabled": true,
+        "encrypted": false
+      },
+      "warmupCount": 1,
+      "samples": [
+        {
+          "ok": true,
+          "durationMs": 9.906207999999992,
+          "bytesScanned": 0,
+          "bytesWritten": 27447,
+          "eventLoopDelayMs": 1.678335
+        },
+        {
+          "ok": true,
+          "durationMs": 10.573041999999987,
+          "bytesScanned": 0,
+          "bytesWritten": 27608,
+          "eventLoopDelayMs": 1.646591
+        },
+        {
+          "ok": true,
+          "durationMs": 10.366499999999974,
+          "bytesScanned": 0,
+          "bytesWritten": 27769,
+          "eventLoopDelayMs": 1.321983
+        },
+        {
+          "ok": true,
+          "durationMs": 10.83416699999998,
+          "bytesScanned": 0,
+          "bytesWritten": 27930,
+          "eventLoopDelayMs": 1.631231
+        },
+        {
+          "ok": true,
+          "durationMs": 8.975708000000054,
+          "bytesScanned": 0,
+          "bytesWritten": 28091,
+          "eventLoopDelayMs": 1.759231
+        }
+      ],
+      "setupMs": 23.405,
+      "setupBytesWritten": 27061,
+      "measuredOperation": "DurableRouteStore.markFailed(retry, whole-state persist)",
+      "warmupMs": 14.760208,
+      "storedBytes": 28091,
+      "status": "measured",
+      "summary": {
+        "sampleCount": 5,
+        "successCount": 5,
+        "failureCount": 0,
+        "p50Ms": 10.3665,
+        "p95Ms": 10.781942,
+        "throughputPerSec": 98.705721,
+        "bytesScanned": 0,
+        "bytesWritten": 138845,
+        "eventLoopDelayP95Ms": 1.743052
+      }
+    },
+    {
+      "kind": "router",
+      "seed": 20260929,
+      "count": 1000,
+      "datasetHash": "7d5c3f5708176424b9a45a795e698c78581f5b7ba219594ffce0ae89d1eab6c2",
+      "estimatedBytes": 254928,
+      "config": {
+        "maxPendingTasks": 10000,
+        "maxPayloadBytes": 1048576,
+        "auditEnabled": true,
+        "encrypted": false
+      },
+      "warmupCount": 1,
+      "samples": [
+        {
+          "ok": true,
+          "durationMs": 12.93670899999995,
+          "bytesScanned": 0,
+          "bytesWritten": 271347,
+          "eventLoopDelayMs": 1.991679
+        },
+        {
+          "ok": true,
+          "durationMs": 12.026082999999971,
+          "bytesScanned": 0,
+          "bytesWritten": 271508,
+          "eventLoopDelayMs": 1.982463
+        },
+        {
+          "ok": true,
+          "durationMs": 11.867334000000028,
+          "bytesScanned": 0,
+          "bytesWritten": 271669,
+          "eventLoopDelayMs": 2.057215
+        },
+        {
+          "ok": true,
+          "durationMs": 9.987167,
+          "bytesScanned": 0,
+          "bytesWritten": 271830,
+          "eventLoopDelayMs": 1.344511
+        },
+        {
+          "ok": true,
+          "durationMs": 10.98524999999995,
+          "bytesScanned": 0,
+          "bytesWritten": 271991,
+          "eventLoopDelayMs": 2.050047
+        }
+      ],
+      "setupMs": 18.635083,
+      "setupBytesWritten": 270961,
+      "measuredOperation": "DurableRouteStore.markFailed(retry, whole-state persist)",
+      "warmupMs": 15.649708,
+      "storedBytes": 271991,
+      "status": "measured",
+      "summary": {
+        "sampleCount": 5,
+        "successCount": 5,
+        "failureCount": 0,
+        "p50Ms": 11.867334,
+        "p95Ms": 12.754584,
+        "throughputPerSec": 86.501385,
+        "bytesScanned": 0,
+        "bytesWritten": 1358345,
+        "eventLoopDelayP95Ms": 2.055781
+      }
+    },
+    {
+      "kind": "router",
+      "seed": 20260929,
+      "count": 10000,
+      "datasetHash": "028aa4b6cfac9baa2f21196dae2e97127a3b4ec227acc0351b78c08ce7c4c5f1",
+      "estimatedBytes": 2567336,
+      "config": {
+        "maxPendingTasks": 10000,
+        "maxPayloadBytes": 1048576,
+        "auditEnabled": true,
+        "encrypted": false
+      },
+      "warmupCount": 1,
+      "samples": [
+        {
+          "ok": true,
+          "durationMs": 31.024625000000015,
+          "bytesScanned": 0,
+          "bytesWritten": 2736459,
+          "eventLoopDelayMs": 5.865471
+        },
+        {
+          "ok": true,
+          "durationMs": 28.588042000000087,
+          "bytesScanned": 0,
+          "bytesWritten": 2736620,
+          "eventLoopDelayMs": 6.246399
+        },
+        {
+          "ok": true,
+          "durationMs": 32.26041600000008,
+          "bytesScanned": 0,
+          "bytesWritten": 2736781,
+          "eventLoopDelayMs": 6.655999
+        },
+        {
+          "ok": true,
+          "durationMs": 30.082417000000078,
+          "bytesScanned": 0,
+          "bytesWritten": 2736942,
+          "eventLoopDelayMs": 5.746687
+        },
+        {
+          "ok": true,
+          "durationMs": 28.83112499999993,
+          "bytesScanned": 0,
+          "bytesWritten": 2737103,
+          "eventLoopDelayMs": 6.234111
+        }
+      ],
+      "setupMs": 38.114583,
+      "setupBytesWritten": 2736073,
+      "measuredOperation": "DurableRouteStore.markFailed(retry, whole-state persist)",
+      "warmupMs": 30.875709,
+      "storedBytes": 2737103,
+      "status": "measured",
+      "summary": {
+        "sampleCount": 5,
+        "successCount": 5,
+        "failureCount": 0,
+        "p50Ms": 30.082417,
+        "p95Ms": 32.013258,
+        "throughputPerSec": 33.15944,
+        "bytesScanned": 0,
+        "bytesWritten": 13683905,
+        "eventLoopDelayP95Ms": 6.574079
+      }
+    }
+  ]
+}
