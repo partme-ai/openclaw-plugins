@@ -1,7 +1,7 @@
 {
   "id": "prometheus",
   "name": "prometheus",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "Prometheus metrics exporter for OpenClaw Gateway. Supersedes bundled diagnostics-prometheus (model.usage tokens, run/tool/message histograms via internal diagnostics) and adds RPC usage, hooks, and SLI metrics. Disable the bundled diagnostics-prometheus plugin when using this exporter.",
   "main": "dist/index.js",
   "activation": {

@@ -9,7 +9,7 @@
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk/account-resolution";
 import { createHybridChannelConfigAdapter } from "openclaw/plugin-sdk/channel-config-helpers";
-import { waitUntilAbort } from "openclaw/plugin-sdk/channel-lifecycle";
+import { waitUntilAbort } from "openclaw/plugin-sdk/channel-outbound";
 import { sendDouyinOutboundUnsupported } from "./outbound.js";
 import { createChatChannelPlugin, type ChannelPlugin } from "openclaw/plugin-sdk/core";
 import { createEmptyChannelDirectoryAdapter } from "openclaw/plugin-sdk/directory-runtime";

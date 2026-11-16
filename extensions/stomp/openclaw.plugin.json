@@ -1,7 +1,7 @@
 {
   "id": "stomp",
   "name": "OpenClaw STOMP TCP",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "Authenticated STOMP 1.2 over TCP/TLS with bounded in-memory delivery controls",
   "channels": ["stomp-tcp"],
   "commands": [],

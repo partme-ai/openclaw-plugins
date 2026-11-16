@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-nacos",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "OpenClaw plugin — Nacos Config Center merge and Gateway/Hooks naming registration",
   "type": "module",
   "main": "dist/bootstrap.cjs",
@@ -41,7 +41,7 @@
     "directory": "extensions/nacos"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.9.6"
+    "openclaw": ">=2026.11.3"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -68,17 +68,17 @@
     "setupEntry": "./dist/setup-entry.js",
     "providers": [],
     "compat": {
-      "pluginApi": ">=2026.9.6",
-      "minGatewayVersion": "2026.9.6"
+      "pluginApi": ">=2026.11.3",
+      "minGatewayVersion": "2026.11.3"
     },
     "build": {
-      "openclawVersion": "2026.9.6",
-      "pluginSdkVersion": "2026.9.6"
+      "openclawVersion": "2026.11.3",
+      "pluginSdkVersion": "2026.11.3"
     },
     "install": {
       "npmSpec": "@partme.ai/openclaw-nacos",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.9.6"
+      "minHostVersion": ">=2026.11.3"
     }
   },
   "exports": {

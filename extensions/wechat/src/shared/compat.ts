@@ -11,7 +11,7 @@
 
 import { logger } from "../util/logger.js";
 
-export const SUPPORTED_HOST_MIN = "2026.7.1";
+export const SUPPORTED_HOST_MIN = "2026.11.3";
 
 export interface OpenClawVersion {
   year: number;

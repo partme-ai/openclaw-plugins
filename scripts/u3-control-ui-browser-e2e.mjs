@@ -202,7 +202,7 @@ async function main() {
   chmodSync(outputDir, 0o700);
   const reportPath = join(outputDir, "report.json");
   const report = { status: "FAIL", startedAt, mode: installedCandidate ? "installed-candidate" : "source",
-    hostVersion: "2026.9.6", chrome: chromePath, build: {}, candidates: [], commandRuns: [], evidence: [], cleanup: {},
+    hostVersion: "2026.11.3", chrome: chromePath, build: {}, candidates: [], commandRuns: [], evidence: [], cleanup: {},
     limitations: [installedCandidate ? "Local packed candidate and loopback browser only; no deployed proxy or vendor callback evidence." :
       "Local source/dist and loopback browser only; no installed tarball, deployed proxy, or vendor callback evidence."] };
   let stateDir, gateway, browser, chromeChild, commandChild, commandShutdown;
@@ -300,7 +300,7 @@ async function main() {
     await Promise.race([(async () => {
       const selectedCli = cliScript(process.env.OPENCLAW_BIN ?? join(root, "node_modules/.bin/openclaw"));
       const version = execFileSync(process.execPath, [selectedCli, "--version"], { encoding: "utf8" }).trim();
-      if (!/\b2026\.9\.6\b/.test(version)) throw new Error(`OpenClaw 2026.9.6 required, got ${version}`);
+      if (!/\b2026\.11\.3\b/.test(version)) throw new Error(`OpenClaw 2026.11.3 required, got ${version}`);
       if (!existsSync(chromePath)) throw new Error(`Chrome not found: ${chromePath}`);
       stateDir = mkdtempSync(join(tmpdir(), "openclaw-u3-browser-e2e-"));
       for (const [id, dir] of [["router", routerDir], ["tracing", tracingDir]]) {

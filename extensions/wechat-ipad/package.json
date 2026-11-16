@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/wechat-ipad",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "Opt-in OpenClaw channel for a separately operated, unofficial WeChat iPad protocol bridge",
   "type": "module",
   "main": "dist/index.js",
@@ -45,7 +45,7 @@
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
     "@vitest/coverage-v8": "^4.1.6",
-    "openclaw": "2026.9.6",
+    "openclaw": "2026.11.3",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.6"
@@ -56,11 +56,12 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "build": {
-      "openclawVersion": "2026.9.6"
+      "openclawVersion": "2026.11.3",
+      "pluginSdkVersion": "2026.11.3"
     },
     "compat": {
-      "pluginApi": ">=2026.9.6",
-      "minGatewayVersion": "2026.9.6"
+      "pluginApi": ">=2026.11.3",
+      "minGatewayVersion": "2026.11.3"
     },
     "channel": {
       "id": "wechat-ipad",
@@ -70,11 +71,11 @@
     "install": {
       "npmSpec": "@partme.ai/wechat-ipad",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.9.6"
+      "minHostVersion": ">=2026.11.3"
     }
   },
   "peerDependencies": {
-    "openclaw": ">=2026.9.6"
+    "openclaw": ">=2026.11.3"
   },
   "peerDependenciesMeta": {
     "openclaw": {

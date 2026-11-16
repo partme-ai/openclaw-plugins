@@ -9,7 +9,7 @@
 [![npm](https://img.shields.io/badge/npm-@partme.ai-cb3837?logo=npm)](https://www.npmjs.com/search?q=%40partme.ai)
 [![GitHub](https://img.shields.io/badge/github-partme--ai%2Fopenclaw--plugins-green.svg)](https://github.com/partme-ai/openclaw-plugins)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-24.16%2B%20%2F%2026.1%2B-brightgreen.svg)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-9-orange.svg)](https://pnpm.io)
 
 English | [简体中文](./README.zh-CN.md)
@@ -252,9 +252,9 @@ Shipped with OpenClaw, bridged via `@partme.ai/openclaw-bridge` with zero extra 
 
 #### Prerequisites
 
-- **Node.js** >= 22.0.0
+- **Node.js** `>=24.16.0 <25 || >=26.1.0`
 - **pnpm** >= 9 (monorepo contributors)
-- **OpenClaw** >= 2026.7.1 — [OpenClaw repository](https://github.com/partme-ai/openclaw)
+- **OpenClaw** >= 2026.11.3 — [OpenClaw repository](https://github.com/partme-ai/openclaw)
 
 #### 1. Install OpenClaw Gateway
 
@@ -455,10 +455,10 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # prerelease
 
 #### Core
 
-- **Node.js** 22+ (ESM)
+- **Node.js** `>=24.16.0 <25 || >=26.1.0` (ESM)
 - **TypeScript** 5.x strict mode
 - **pnpm** 9 workspaces
-- **OpenClaw** Plugin API >= 2026.7.1
+- **OpenClaw** Plugin API >= 2026.11.3
 
 #### Build & Test
 
@@ -483,7 +483,7 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # prerelease
 
 | Item | Current |
 |------|---------|
-| OpenClaw peer dependency | >= 2026.7.1 |
+| OpenClaw peer dependency | >= 2026.11.3 |
 | message-sdk | 2026.5.24 |
 | openclaw-nacos | 2026.5.24 |
 | openclaw-gotify | 2026.5.22 |

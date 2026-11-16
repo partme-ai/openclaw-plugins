@@ -124,7 +124,7 @@ describe("prometheusPlugin register", () => {
 
     const body = Buffer.concat(buffers).toString("utf-8");
     expect(body).toContain("# HELP openclaw_exporter_build_info");
-    expect(body).toContain('version="2026.7.1"');
+    expect(body).toContain('version="2026.11.16"');
     expect(body).toContain("openclaw_up");
     expect(body).toContain("openclaw_model_auth_provider_status{provider=\"openai\",status=\"ok\"} 1");
     expect(body).toContain("openclaw_sli_message_success_ratio");

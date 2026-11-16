@@ -468,7 +468,7 @@ async function handleFrame(state: ConnectionState, frame: StompFrame, config: St
         clearTimeout(state.connectTimer);
         sendFrame(state, "CONNECTED", {
           version: "1.2",
-          server: "openclaw-stomp/2026.7.1",
+          server: "openclaw-stomp/2026.11.16",
           session: state.id,
           "heart-beat": `${config.heartbeat.serverMs},${config.heartbeat.clientMs}`,
         });

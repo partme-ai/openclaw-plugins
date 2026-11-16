@@ -54,8 +54,8 @@ export async function testPrometheus(ctx, results) {
       if (scrape.status !== 200 || !/^openclaw_up(?:\{[^}]*\})? 1(?:\s|$)/m.test(scrape.text)) {
         throw new Error(`authenticated scrape did not expose openclaw_up=1: ${scrape.status}`);
       }
-      if (!scrape.text.includes('openclaw_exporter_build_info{plugin="prometheus",version="2026.7.1"} 1')) {
-        throw new Error("build_info does not identify prometheus@2026.7.1");
+      if (!scrape.text.includes('openclaw_exporter_build_info{plugin="prometheus",version="2026.11.16"} 1')) {
+        throw new Error("build_info does not identify prometheus@2026.11.16");
       }
       if (count(scrape.text, "# HELP openclaw_exporter_build_info") !== 1) {
         throw new Error("build_info HELP must be emitted exactly once");
@@ -65,7 +65,7 @@ export async function testPrometheus(ctx, results) {
       }
 
       const health = await ctx.gatewayFetch("/metrics/health", { headers: AUTH_HEADERS });
-      if (health.status !== 200 || health.json?.healthy !== true || health.json?.version !== "2026.7.1") {
+      if (health.status !== 200 || health.json?.healthy !== true || health.json?.version !== "2026.11.16") {
         throw new Error(`Prometheus health is not ready: ${health.status} ${health.text}`);
       }
       if (health.json?.rpc?.initialized !== true || health.json?.collectors?.failed !== 0) {

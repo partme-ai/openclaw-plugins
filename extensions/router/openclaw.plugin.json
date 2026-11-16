@@ -1,7 +1,7 @@
 {
   "id": "router",
   "name": "Message Router",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "Durable cross-channel routing with retry, DLQ, dedupe, audit, and loop protection.",
   "activation": {
     "onStartup": true

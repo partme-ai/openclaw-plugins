@@ -1,7 +1,7 @@
 {
   "id": "tracing",
   "name": "openclaw-tracing",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "Bounded OpenTelemetry-compatible tracing for OpenClaw message and tool lifecycles",
   "main": "dist/index.js",
   "activation": {
