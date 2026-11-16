@@ -20,9 +20,9 @@ export async function readHostBaseline(cliPath, startedPid, recordedLaunch) {
       }
     } else {
       if (!recordedLaunch) throw new Error("started Gateway CLI mismatch");
-      const startedAt = Date.parse(execFileSync("ps", ["-p", String(startedPid), "-o", "lstart="], { encoding: "utf8" }).trim());
-      if (!Number.isFinite(startedAt) || !Number.isSafeInteger(recordedLaunch.spawnedAt) ||
-          startedAt < recordedLaunch.spawnedAt - 1_000 || startedAt > recordedLaunch.spawnedAt + 5_000) {
+      // 复用 PID 记录中的系统启动时间，避免将 Linux 的秒级时间与 Node 的毫秒时钟混用。
+      const birthTime = execFileSync("ps", ["-p", String(startedPid), "-o", "lstart="], { encoding: "utf8" }).trim();
+      if (!birthTime || birthTime !== recordedLaunch.birthTime) {
         throw new Error("started Gateway launch time mismatch");
       }
       nodeExecutable = recordedLaunch.nodeExecutable;

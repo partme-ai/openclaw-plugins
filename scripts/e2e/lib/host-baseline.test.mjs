@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, chmodSync, realpathSync } from "node:fs";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -68,18 +69,18 @@ test("host baseline rejects a selected CLI different from the live Gateway PID",
   } finally { child.kill(); }
 });
 
-test("host baseline accepts a live Node CLI whose command is hidden by process.title only for the recorded launch", async () => {
+test("host baseline accepts a live Node CLI whose command is hidden by process.title only for the recorded launch", { timeout: 10_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "e2e-retitled-baseline-"));
   const launched = join(dir, "openclaw.mjs");
-  writeFileSync(launched, 'if (process.argv.includes("--version")) console.log("2026.9.6"); else { process.title = "openclaw"; setInterval(() => {}, 1000); }\n');
-  const spawnedAt = Date.now();
-  const child = spawn(process.execPath, [launched], { stdio: "ignore" });
+  writeFileSync(launched, 'if (process.argv.includes("--version")) console.log("2026.9.6"); else { process.title = "openclaw"; process.send("ready"); setInterval(() => {}, 1000); }\n');
+  const child = spawn(process.execPath, [launched], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
   try {
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    const launch = { spawnedAt, nodeExecutable: process.execPath };
+    await once(child, "message");
+    const birthTime = execFileSync("ps", ["-p", String(child.pid), "-o", "lstart="], { encoding: "utf8" }).trim();
+    const launch = { birthTime, nodeExecutable: process.execPath };
     const baseline = await readHostBaseline(launched, child.pid, launch);
     assert.equal(baseline.cliPath, realpathSync(launched));
     await assert.rejects(readHostBaseline(launched, child.pid), /started Gateway CLI mismatch/);
-    await assert.rejects(readHostBaseline(launched, child.pid, { ...launch, spawnedAt: spawnedAt - 60_000 }), /started Gateway launch time mismatch/);
+    await assert.rejects(readHostBaseline(launched, child.pid, { ...launch, birthTime: "different process start" }), /started Gateway launch time mismatch/);
   } finally { child.kill(); }
 });
