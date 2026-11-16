@@ -103,7 +103,7 @@ export class AmapClient {
         this.attemptsTotal += 1;
         const response = await fetch(url, {
           method: "GET",
-          headers: { Accept: "application/json", "User-Agent": "openclaw-amap/2026.7.1" },
+          headers: { Accept: "application/json", "User-Agent": "openclaw-amap/2026.11.16" },
           signal: AbortSignal.timeout(this.config.requestTimeoutMs),
           // Key 和 sig 都在查询串中，禁止 fetch 把带凭据 URL 自动转发给 3xx 目标。
           redirect: "manual",

@@ -1,4 +1,3 @@
-import { formatBudgetedContext, isContextInvocationActive } from '@partme.ai/openclaw-message-sdk/text';
 /**
  * @fileoverview Knowledge 运行时核心 — **配置合并 / Store 缓存 / before_prompt_build 编排**。
  *
@@ -9,6 +8,7 @@ import { formatBudgetedContext, isContextInvocationActive } from '@partme.ai/ope
  *
  * @module knowledge/runtime/hooks
  */
+import { formatBudgetedContext, isContextInvocationActive } from '@partme.ai/openclaw-message-sdk/text';
 
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import type {

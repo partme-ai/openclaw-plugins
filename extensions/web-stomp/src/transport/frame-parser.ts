@@ -151,7 +151,7 @@ export function buildConnectedFrame(heartbeat: string, session?: string): StompF
   const headers: Record<string, string> = {
     version: "1.2",
     "heart-beat": heartbeat,
-    server: "openclaw-web-stomp/2026.7.1",
+    server: "openclaw-web-stomp/2026.11.16",
   };
   if (session) {
     headers.session = session;

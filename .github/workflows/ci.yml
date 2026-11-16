@@ -80,11 +80,11 @@ jobs:
       - name: Type check
         run: pnpm --dir extensions/${{ matrix.plugin }} run --if-present typecheck
 
-      - name: Unit tests
-        run: pnpm --dir extensions/${{ matrix.plugin }} run --if-present test
-
       - name: Build
         run: pnpm --dir extensions/${{ matrix.plugin }} run --if-present build
+
+      - name: Unit tests
+        run: pnpm --dir extensions/${{ matrix.plugin }} run --if-present test
 
       - name: Package archive verification
         run: node scripts/check-package-archives.mjs --plugin "${{ matrix.plugin }}"

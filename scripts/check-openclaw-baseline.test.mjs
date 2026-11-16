@@ -14,13 +14,13 @@ function fixture() {
     mkdirSync(join(full, ".."), { recursive: true });
     writeFileSync(full, typeof content === "string" ? content : JSON.stringify(content));
   };
-  write("package.json", { engines: { node: ">=24.16.0 <25 || >=26.1.0" }, devDependencies: { openclaw: "2026.9.6" }, packageManager: "pnpm@9.0.0" });
+  write("package.json", { engines: { node: ">=24.16.0 <25 || >=26.1.0" }, devDependencies: { openclaw: "2026.11.3" }, packageManager: "pnpm@9.0.0" });
   write("extensions/example/package.json", {
     version: "2026.7.1", engines: { node: ">=24.16.0 <25 || >=26.1.0" },
-    devDependencies: { openclaw: "2026.9.6" }, peerDependencies: { openclaw: ">=2026.9.6" },
-    openclaw: { compat: { pluginApi: ">=2026.9.6", minGatewayVersion: "2026.9.6" },
-      build: { openclawVersion: "2026.9.6", pluginSdkVersion: "2026.9.6" },
-      install: { minHostVersion: ">=2026.9.6" } },
+    devDependencies: { openclaw: "2026.11.3" }, peerDependencies: { openclaw: ">=2026.11.3" },
+    openclaw: { compat: { pluginApi: ">=2026.11.3", minGatewayVersion: "2026.11.3" },
+      build: { openclawVersion: "2026.11.3", pluginSdkVersion: "2026.11.3" },
+      install: { minHostVersion: ">=2026.11.3" } },
   });
   write(".github/workflows/ci.yml", setupNode("24.18.0"));
   write(".github/workflows/build-nacos.yml", setupNode("24.18.0"));
@@ -38,10 +38,37 @@ test("allows a valid candidate plugin version independent of the host", () => {
   try { assert.deepEqual(checkBaseline(f.root), []); } finally { f.cleanup(); }
 });
 
+test("requires WeCom build identity so the host can diagnose SDK incompatibility", () => {
+  const f = fixture();
+  try {
+    const pkg = JSON.parse(readFileSync(join(f.root, "extensions/example/package.json"), "utf8"));
+    delete pkg.openclaw.compat;
+    delete pkg.openclaw.build;
+    f.write("extensions/wecom/package.json", pkg);
+    const failures = checkBaseline(f.root).join("\n");
+    assert.match(failures, /wecom\/package\.json.*openclaw\.compat\.pluginApi/);
+    assert.match(failures, /wecom\/package\.json.*openclaw\.compat\.minGatewayVersion/);
+    assert.match(failures, /wecom\/package\.json.*openclaw\.build\.openclawVersion/);
+    assert.match(failures, /wecom\/package\.json.*openclaw\.build\.pluginSdkVersion/);
+  } finally { f.cleanup(); }
+});
+
+test("requires build identity on every runtime plugin, including MQTT", () => {
+  const f = fixture();
+  try {
+    const pkg = JSON.parse(readFileSync(join(f.root, "extensions/example/package.json"), "utf8"));
+    delete pkg.openclaw.build;
+    f.write("extensions/mqtt/package.json", pkg);
+    const failures = checkBaseline(f.root).join("\n");
+    assert.match(failures, /mqtt\/package\.json.*openclaw\.build\.openclawVersion/);
+    assert.match(failures, /mqtt\/package\.json.*openclaw\.build\.pluginSdkVersion/);
+  } finally { f.cleanup(); }
+});
+
 test("rejects Node 22 in package engines and CI", () => {
   const f = fixture();
   try {
-    f.write("package.json", { engines: { node: ">=22.0.0" }, devDependencies: { openclaw: "2026.9.6" }, packageManager: "pnpm@9.0.0" });
+    f.write("package.json", { engines: { node: ">=22.0.0" }, devDependencies: { openclaw: "2026.11.3" }, packageManager: "pnpm@9.0.0" });
     f.write(".github/workflows/ci.yml", setupNode("22"));
     assert.match(checkBaseline(f.root).join("\n"), /package\.json.*engines\.node/);
     assert.match(checkBaseline(f.root).join("\n"), /ci\.yml.*node-version/);

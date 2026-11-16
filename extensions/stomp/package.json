@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-stomp",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "OpenClaw STOMP channel plugin — native TCP STOMP with topic bindings, ACK/NACK and enterprise delivery controls",
   "type": "module",
   "main": "dist/index.js",
@@ -54,7 +54,7 @@
     "vitest": "^4.1.6"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.9.6"
+    "openclaw": ">=2026.11.3"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -67,8 +67,8 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "compat": {
-      "pluginApi": ">=2026.9.6",
-      "minGatewayVersion": "2026.9.6"
+      "pluginApi": ">=2026.11.3",
+      "minGatewayVersion": "2026.11.3"
     },
     "channel": {
       "id": "stomp-tcp",
@@ -78,7 +78,11 @@
     "install": {
       "npmSpec": "@partme.ai/openclaw-stomp",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.9.6"
+      "minHostVersion": ">=2026.11.3"
+    },
+    "build": {
+      "openclawVersion": "2026.11.3",
+      "pluginSdkVersion": "2026.11.3"
     }
   },
   "exports": {
@@ -88,6 +92,6 @@
     }
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.11.16"
   }
 }

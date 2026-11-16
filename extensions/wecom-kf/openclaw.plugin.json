@@ -2,7 +2,7 @@
   "id": "wecom-kf",
   "name": "@partme.ai/wecom-kf",
   "description": "企业微信微信客服插件 — KF 消息收发 + Control Tools（wecom_kf_*）；ICS / agents / skills 为可选运营资产",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "main": "dist/index.js",
   "channels": [
     "wecom-kf"

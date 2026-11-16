@@ -1,4 +1,4 @@
-/** Bounded O6 facts transported through the public OpenClaw diagnostics bus. */
+/** 通过 OpenClaw 诊断总线报告投递与召回，限制标签范围并对会话标识取摘要。 */
 import { createHash } from "node:crypto";
 import { emitDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
 

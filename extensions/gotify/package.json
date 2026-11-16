@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-gotify",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "OpenClaw Gotify channel plugin — REST delivery, WebSocket stream inbound, bootstrap helpers, and config validation",
   "type": "module",
   "main": "dist/index.js",
@@ -53,7 +53,7 @@
     "directory": "extensions/gotify"
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1",
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.11.16",
     "ws": "^8.20.1",
     "zod": "^4.3.6"
   },
@@ -75,7 +75,7 @@
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.9.6"
+    "openclaw": ">=2026.11.3"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -88,11 +88,12 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "build": {
-      "openclawVersion": "2026.9.6"
+      "openclawVersion": "2026.11.3",
+      "pluginSdkVersion": "2026.11.3"
     },
     "compat": {
-      "pluginApi": ">=2026.9.6",
-      "minGatewayVersion": "2026.9.6"
+      "pluginApi": ">=2026.11.3",
+      "minGatewayVersion": "2026.11.3"
     },
     "channel": {
       "id": "gotify",
@@ -102,7 +103,7 @@
     "install": {
       "npmSpec": "@partme.ai/openclaw-gotify",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.9.6"
+      "minHostVersion": ">=2026.11.3"
     }
   },
   "exports": {

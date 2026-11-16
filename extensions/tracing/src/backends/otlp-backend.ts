@@ -200,11 +200,11 @@ export class OtlpBackend implements TracingBackend {
         resource: {
           attributes: [
             { key: "service.name", value: { stringValue: "openclaw-gateway" } },
-            { key: "service.version", value: { stringValue: "2026.7.1" } },
+            { key: "service.version", value: { stringValue: "2026.11.16" } },
           ],
         },
         scopeSpans: [{
-          scope: { name: "@partme.ai/openclaw-tracing", version: "2026.7.1" },
+          scope: { name: "@partme.ai/openclaw-tracing", version: "2026.11.16" },
           spans: spans.map((span) => this.toOtlpSpan(span)),
         }],
       }],

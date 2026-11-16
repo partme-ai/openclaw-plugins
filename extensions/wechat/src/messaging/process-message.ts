@@ -16,19 +16,17 @@
 
 import path from "node:path";
 
-import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-message";
+import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-outbound";
 import {
-  resolveSenderCommandAuthorizationWithRuntime,
-  resolveDirectDmAuthorizationOutcome,
-} from "openclaw/plugin-sdk/command-auth";
-import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
+  resolveInboundDirectDmAccessWithRuntime,
+} from "openclaw/plugin-sdk/channel-inbound";
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import type { PluginRuntime } from "openclaw/plugin-sdk/core";
 
 import { sendTyping } from "../api/api.js";
 import type { WeixinMessage } from "../api/types.js";
 import { MessageItemType, TypingStatus } from "../api/types.js";
 import { loadWeixinAccount } from "../auth/accounts.js";
-import { readFrameworkAllowFromList } from "../auth/pairing.js";
 import { withRemoteMediaTempFile } from "../cdn/upload.js";
 import { downloadMediaFromItem } from "../media/media-download.js";
 import { logger } from "../util/logger.js";
@@ -130,41 +128,29 @@ export async function processOneMessage(
   // --- Framework DM / command authorization ---
   // 鉴权必须是第一个有副作用步骤：未授权消息不得触发 slash、媒体下载、
   // getConfig、会话落盘或 Agent 调用。
-  const configuredAllowFrom = [
-    ...new Set((deps.allowFrom ?? []).map((id) => id.trim()).filter(Boolean)),
-  ];
-  const { senderAllowedForCommands, commandAuthorized } =
-    await resolveSenderCommandAuthorizationWithRuntime({
+  // 扫码绑定人由本账号凭据标识，其余配对授权只从宿主的账号级配对存储读取。
+  const linkedUserId = loadWeixinAccount(deps.accountId)?.userId?.trim();
+  const configuredAllowFrom = [...new Set([
+    ...(deps.allowFrom ?? []).map((id) => id.trim()).filter(Boolean),
+    ...(linkedUserId ? [linkedUserId] : []),
+  ])];
+  const { access, commandAuthorized, senderAllowedForCommands } =
+    await resolveInboundDirectDmAccessWithRuntime({
       cfg: deps.config,
+      channel: "openclaw-weixin",
+      accountId: deps.accountId,
       rawBody: textBody.trim(),
-      isGroup: false,
       dmPolicy: "pairing",
-      configuredAllowFrom,
-      configuredGroupAllowFrom: [],
+      allowFrom: configuredAllowFrom,
       senderId,
       isSenderAllowed: (id: string, list: string[]) => list.includes(id),
-      /** 配对文件优先；扫码账号的 userId 仅作为旧安装迁移兜底。 */
-      readAllowFromStore: async () => {
-        const paired = readFrameworkAllowFromList(deps.accountId);
-        const linkedUserId = loadWeixinAccount(deps.accountId)?.userId?.trim();
-        return [
-          ...new Set([
-            ...configuredAllowFrom,
-            ...paired,
-            ...(linkedUserId ? [linkedUserId] : []),
-          ]),
-        ];
-      },
+      readStoreAllowFrom: (channel, accountId) =>
+        deps.channelRuntime.pairing.readAllowFromStore({ channel, accountId }),
       runtime: deps.channelRuntime.commands,
     });
 
-  const directDmOutcome = resolveDirectDmAuthorizationOutcome({
-    isGroup: false,
-    dmPolicy: "pairing",
-    senderAllowedForCommands,
-  });
-  if (directDmOutcome === "disabled" || directDmOutcome === "unauthorized") {
-    logger.info(`authorization: dropping message outcome=${directDmOutcome}`);
+  if (access.decision !== "allow") {
+    logger.info(`authorization: dropping message outcome=${access.decision}`);
     return;
   }
 

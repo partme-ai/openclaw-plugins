@@ -1,6 +1,6 @@
 {
   "id": "wecom",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "channels": ["wecom"],
   "skills": ["./skills"],
   "contracts": { "tools": ["wecom_mcp"] },

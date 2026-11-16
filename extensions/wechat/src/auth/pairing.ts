@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { withFileLock } from "openclaw/plugin-sdk/infra-runtime";
+import { withFileLock } from "@openclaw/fs-safe/file-lock";
 
 import { resolveStateDir } from "../storage/state-dir.js";
 import { writePrivateJsonAtomic } from "../storage/atomic-json.js";
@@ -79,10 +79,13 @@ export function readFrameworkAllowFromList(accountId: string): string[] {
   return [];
 }
 
-/** File lock options matching the framework's pairing store lock settings. */
+/** 与宿主共享锁域；无法确认过期锁所有者时保留锁，避免并发覆盖配对名单。 */
 const LOCK_OPTIONS = {
-  retries: { retries: 3, factor: 2, minTimeout: 100, maxTimeout: 2000 },
-  stale: 10_000,
+  managerKey: "openclaw.plugin-sdk.file-lock",
+  retry: { retries: 3, factor: 2, minTimeout: 100, maxTimeout: 2000 },
+  staleMs: 10_000,
+  staleRecovery: "fail-closed" as const,
+  payload: () => ({ pid: process.pid, createdAt: new Date().toISOString() }),
 };
 
 /**

@@ -16,7 +16,7 @@ const mockWithFileLock = vi.hoisted(() =>
   vi.fn(async (_path: string, _opts: unknown, fn: () => Promise<unknown>) => fn()),
 );
 
-vi.mock("openclaw/plugin-sdk/infra-runtime", () => ({
+vi.mock("@openclaw/fs-safe/file-lock", () => ({
   withFileLock: mockWithFileLock,
 }));
 
@@ -156,8 +156,8 @@ describe("registerUserInFrameworkStore", () => {
     expect(mockWithFileLock).toHaveBeenCalledTimes(1);
     const [lockPath, lockOpts] = mockWithFileLock.mock.calls[0]!;
     expect(lockPath).toContain("openclaw-weixin-acc6-allowFrom.json");
-    expect(lockOpts).toHaveProperty("retries");
-    expect(lockOpts).toHaveProperty("stale");
+    expect(lockOpts).toHaveProperty("retry");
+    expect(lockOpts).toHaveProperty("staleMs");
   });
 
   it("handles corrupted file gracefully", async () => {

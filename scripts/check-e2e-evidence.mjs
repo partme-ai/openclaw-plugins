@@ -10,7 +10,7 @@ import { EXTENSION_INVENTORY, findExtension } from "./e2e/lib/registry.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const REPORTS_DIR = join(ROOT, "scripts/e2e/reports");
-const HOST_VERSION = "2026.9.6";
+const HOST_VERSION = "2026.11.3";
 
 /** Browser channels must have an actual browser result, not only protocol E2E. */
 export function browserEvidenceRequired(extension) {

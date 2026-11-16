@@ -53,14 +53,22 @@
       "npmSpec": "@partme.ai/openclaw-TEMPLATE_NAME",
       "localPath": "plugins/TEMPLATE_NAME",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.9.6"
+      "minHostVersion": ">=2026.11.3"
+    },
+    "build": {
+      "openclawVersion": "2026.11.3",
+      "pluginSdkVersion": "2026.11.3"
+    },
+    "compat": {
+      "pluginApi": ">=2026.11.3",
+      "minGatewayVersion": "2026.11.3"
     }
   },
   "peerDependencies": {
-    "openclaw": ">=2026.9.6"
+    "openclaw": ">=2026.11.3"
   },
   "dependencies": {
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.11.16"
   },
   "devDependencies": {
     "tsup": "^8.2.0",

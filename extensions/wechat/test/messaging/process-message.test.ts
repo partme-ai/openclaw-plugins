@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   resolveCommandAuthorization: vi.fn(),
-  resolveDmOutcome: vi.fn(),
   handleSlashCommand: vi.fn(),
   downloadMedia: vi.fn(),
   resolveTypingTicket: vi.fn(),
@@ -14,16 +13,15 @@ const mocks = vi.hoisted(() => ({
   createMsgContext: vi.fn(),
 }));
 
-vi.mock("openclaw/plugin-sdk/channel-message", () => ({ createTypingCallbacks: vi.fn() }));
+vi.mock("openclaw/plugin-sdk/channel-outbound", () => ({ createTypingCallbacks: vi.fn() }));
 vi.mock("openclaw/plugin-sdk/agent-harness-runtime", () => ({
   resolveSandboxContext: mocks.resolveSandboxContext,
 }));
 vi.mock("openclaw/plugin-sdk/temp-path", () => ({
   resolvePreferredOpenClawTmpDir: () => "/tmp/openclaw-weixin-test",
 }));
-vi.mock("openclaw/plugin-sdk/command-auth", () => ({
-  resolveSenderCommandAuthorizationWithRuntime: mocks.resolveCommandAuthorization,
-  resolveDirectDmAuthorizationOutcome: mocks.resolveDmOutcome,
+vi.mock("openclaw/plugin-sdk/channel-inbound", () => ({
+  resolveInboundDirectDmAccessWithRuntime: mocks.resolveCommandAuthorization,
 }));
 vi.mock("../../src/api/api.js", () => ({ sendTyping: vi.fn() }));
 vi.mock("../../src/auth/accounts.js", () => ({
@@ -95,10 +93,9 @@ beforeEach(() => {
   mocks.resolveSandboxContext.mockReset();
   mocks.sendWeixinMediaFile.mockReset();
   mocks.resolveCommandAuthorization.mockResolvedValue({
-    senderAllowedForCommands: false,
+    access: { decision: "block" },
     commandAuthorized: false,
   });
-  mocks.resolveDmOutcome.mockReturnValue("unauthorized");
 });
 
 afterEach(async () => {
@@ -135,10 +132,9 @@ describe("processOneMessage authorization boundary", () => {
       maxBytes: 1024,
     })).rejects.toThrow("not under an allowed directory");
     mocks.resolveCommandAuthorization.mockResolvedValue({
-      senderAllowedForCommands: true,
+      access: { decision: "allow" },
       commandAuthorized: false,
     });
-    mocks.resolveDmOutcome.mockReturnValue("authorized");
     mocks.createMsgContext.mockReturnValue({ Body: "hello", To: "stranger" });
     mocks.resolveSandboxContext.mockRejectedValue(new Error("backend unavailable"));
     mocks.sendWeixinMediaFile.mockImplementation(async (params) => {
@@ -217,7 +213,9 @@ describe("processOneMessage authorization boundary", () => {
     expect(mocks.resolveCommandAuthorization).toHaveBeenCalledWith(
       expect.objectContaining({
         senderId: "stranger",
-        configuredAllowFrom: ["configured-user"],
+        channel: "openclaw-weixin",
+        accountId: "account",
+        allowFrom: ["configured-user", "linked-user"],
       }),
     );
     expect(mocks.handleSlashCommand).not.toHaveBeenCalled();
@@ -225,12 +223,34 @@ describe("processOneMessage authorization boundary", () => {
     expect(mocks.resolveTypingTicket).not.toHaveBeenCalled();
   });
 
+  it("honors host pairing approvals and revocations only in the current account", async () => {
+    const host = await vi.importActual<typeof import("openclaw/plugin-sdk/channel-inbound")>(
+      "openclaw/plugin-sdk/channel-inbound",
+    );
+    mocks.resolveCommandAuthorization.mockImplementation(host.resolveInboundDirectDmAccessWithRuntime);
+    mocks.handleSlashCommand.mockResolvedValue({ handled: true });
+    const grants = new Map([["account", ["stranger"]]]);
+    const readAllowFromStore = vi.fn(async ({ accountId }: { accountId: string }) => grants.get(accountId) ?? []);
+    const input = deps();
+    input.channelRuntime = {
+      commands: { shouldComputeCommandAuthorized: () => true },
+      pairing: { readAllowFromStore },
+    } as never;
+
+    await processOneMessage(message(), input);
+    expect(mocks.handleSlashCommand).toHaveBeenCalledOnce();
+    expect(readAllowFromStore).toHaveBeenCalledWith({ channel: "openclaw-weixin", accountId: "account" });
+    await processOneMessage(message(), { ...input, accountId: "another" });
+    grants.delete("account");
+    await processOneMessage(message(), input);
+    expect(mocks.handleSlashCommand).toHaveBeenCalledTimes(1);
+  });
+
   it("runs a built-in slash command only after command authorization succeeds", async () => {
     mocks.resolveCommandAuthorization.mockResolvedValue({
-      senderAllowedForCommands: true,
+      access: { decision: "allow" },
       commandAuthorized: true,
     });
-    mocks.resolveDmOutcome.mockReturnValue("authorized");
     mocks.handleSlashCommand.mockResolvedValue({ handled: true });
 
     await processOneMessage(message(), deps());

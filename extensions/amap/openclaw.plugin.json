@@ -1,7 +1,7 @@
 {
   "id": "amap",
   "name": "AMap Web Service",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "Bounded AMap Web Service POI tools for OpenClaw",
   "main": "dist/index.js",
   "channels": [],

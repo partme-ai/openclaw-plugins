@@ -79,7 +79,7 @@ describe("monitorMqttBroker — Gateway 生命周期", () => {
     expect(mocks.configureSessionExpiry).toHaveBeenCalledWith(300, true);
     expect(mocks.loadTopicMappings).toHaveBeenCalledWith([{ topicPattern: "devices/#", agentId: "iot" }]);
     expect(mocks.setMqttChannelConfig).toHaveBeenCalledWith(brokerConfig, "per-channel-peer");
-    expect(statuses[0]).toMatchObject({ accountId: "default", running: true, configured: true, port: 1883 });
+    expect(statuses[0]).toMatchObject({ accountId: "default", running: true, lifecycle: "ready", configured: true, port: 1883 });
 
     controller.abort();
     await monitoring;

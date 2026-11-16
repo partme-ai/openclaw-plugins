@@ -5,24 +5,15 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 
-const HOST_VERSION = "2026.9.6";
+const HOST_VERSION = "2026.11.3";
 const HOST_RANGE = `>=${HOST_VERSION}`;
 const NODE_RANGE = ">=24.16.0 <25 || >=26.1.0";
 const TEST_NODE = "24.18.0";
 const CONTAINER_IMAGE = `node:${TEST_NODE}-bookworm-slim`;
 
-// Fields already published by these packages at the start of the 2026.9.6 migration.
+// Fields already published by these packages at the start of the 2026.11.3 migration.
 // Their removal must not silently pass the host baseline check.
 const REQUIRED_DEV_HOST = new Set(["amap", "douyin", "knowledge", "meituan", "rednode", "wechat", "wechat-ipad"]);
-const REQUIRED_COMPAT = new Set([
-  "amap", "gotify", "knowledge", "meituan", "nacos", "prometheus", "rednode", "router",
-  "stomp", "tracing", "web-mqtt", "web-socket", "web-stomp", "wechat-ipad",
-]);
-const REQUIRED_BUILD_HOST = new Set([
-  "amap", "gotify", "knowledge", "meituan", "nacos", "prometheus", "rednode", "router", "wechat-ipad",
-]);
-const REQUIRED_BUILD_SDK = new Set(["amap", "knowledge", "meituan", "nacos", "prometheus", "rednode"]);
-
 /** Return every host-baseline mismatch without changing the repository. */
 export function checkBaseline(repoRoot) {
   const failures = [];
@@ -77,16 +68,16 @@ export function checkBaseline(repoRoot) {
       expect(path, "devDependencies.openclaw", pkg.devDependencies?.openclaw, HOST_VERSION);
     }
     expect(path, "peerDependencies.openclaw", pkg.peerDependencies?.openclaw, HOST_RANGE);
-    if (REQUIRED_COMPAT.has(name) || pkg.openclaw?.compat?.pluginApi !== undefined) {
+    if (name !== "message-sdk" || pkg.openclaw?.compat?.pluginApi !== undefined) {
       expect(path, "openclaw.compat.pluginApi", pkg.openclaw?.compat?.pluginApi, HOST_RANGE);
     }
-    if (REQUIRED_COMPAT.has(name) || pkg.openclaw?.compat?.minGatewayVersion !== undefined) {
+    if (name !== "message-sdk" || pkg.openclaw?.compat?.minGatewayVersion !== undefined) {
       expect(path, "openclaw.compat.minGatewayVersion", pkg.openclaw?.compat?.minGatewayVersion, HOST_VERSION);
     }
-    if (REQUIRED_BUILD_HOST.has(name) || pkg.openclaw?.build?.openclawVersion !== undefined) {
+    if (name !== "message-sdk" || pkg.openclaw?.build?.openclawVersion !== undefined) {
       expect(path, "openclaw.build.openclawVersion", pkg.openclaw?.build?.openclawVersion, HOST_VERSION);
     }
-    if (REQUIRED_BUILD_SDK.has(name) || pkg.openclaw?.build?.pluginSdkVersion !== undefined) {
+    if (name !== "message-sdk" || pkg.openclaw?.build?.pluginSdkVersion !== undefined) {
       expect(path, "openclaw.build.pluginSdkVersion", pkg.openclaw?.build?.pluginSdkVersion, HOST_VERSION);
     }
     if (name !== "message-sdk") {

@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { constants, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
+import { checkPackedSdkImports } from "./packed-sdk-imports.mjs";
 import { EXTENSION_INVENTORY } from "./e2e/lib/registry.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
+const host = JSON.parse(readFileSync(join(ROOT, "node_modules/openclaw/package.json"), "utf8"));
+const destinationIndex = args.indexOf("--pack-destination");
+const destination = destinationIndex < 0 ? undefined : args[destinationIndex + 1];
+if (destinationIndex >= 0 && (!destination || destination.startsWith("--"))) {
+  throw new Error("--pack-destination requires a directory");
+}
 const pluginIndex = args.indexOf("--plugin");
 const requestedPlugin = pluginIndex >= 0 ? args[pluginIndex + 1] : undefined;
 
@@ -43,6 +50,10 @@ function checkPackedJavaScriptSyntax(archive, outputDir, id) {
       if (entry.isDirectory()) {
         visit(path);
       } else if (entry.isFile() && /\.(?:cjs|js|mjs)$/.test(entry.name)) {
+        const missing = checkPackedSdkImports(path, readFileSync(path, "utf8"), host.exports);
+        if (missing.length) {
+          throw new Error(`${id}: ${entry.name} imports unsupported SDK paths on OpenClaw ${host.version}: ${missing.join(", ")}`);
+        }
         try {
           execFileSync(process.execPath, ["--check", path], { stdio: ["ignore", "pipe", "pipe"] });
         } catch (error) {
@@ -83,8 +94,21 @@ try {
     if (packedPackage.name !== entry.filter) {
       throw new Error(`${entry.id}: packed name ${packedPackage.name} does not match ${entry.filter}`);
     }
+    const exportTargets = (entry) => typeof entry === "string" ? [entry]
+      : Object.values(entry ?? {}).flatMap(exportTargets);
+    const targets = [packedPackage.main, packedPackage.types, ...exportTargets(packedPackage.exports),
+      ...(packedPackage.openclaw?.extensions ?? []), packedPackage.openclaw?.setupEntry];
+    for (const target of new Set(targets.filter(Boolean))) {
+      if (!members.includes("package/" + target.replace(/^\.\//u, ""))) {
+        throw new Error(`${entry.id}: declared entry missing from archive: ${target}`);
+      }
+    }
     assertNoWorkspaceDependencies(packedPackage, entry.id);
     checkPackedJavaScriptSyntax(archive, outputDir, entry.id);
+    if (destination) {
+      mkdirSync(destination, { recursive: true });
+      copyFileSync(archive, join(destination, basename(archive)), constants.COPYFILE_EXCL);
+    }
     console.log(`packed ${entry.id}: ${archives[0]}`);
   }
   console.log(`Package archive verification passed for ${selected.length} extension(s).`);
