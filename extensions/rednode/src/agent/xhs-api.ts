@@ -199,7 +199,7 @@ export class RednodeClient {
             "app-key": this.config.appKey,
             timestamp,
             sign,
-            "User-Agent": "openclaw-rednode/2026.7.1",
+            "User-Agent": "openclaw-rednode/2026.11.16",
           },
           body: bodyJson,
           signal: AbortSignal.timeout(this.config.requestTimeoutMs),

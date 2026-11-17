@@ -1,6 +1,6 @@
 {
   "id": "rocketmq",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "RocketMQ channel plugin for OpenClaw.",
   "channels": ["rocketmq"],
   "configSchema": {

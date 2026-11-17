@@ -34,7 +34,7 @@ import { truncateUtf8Bytes } from "@partme.ai/openclaw-message-sdk/util";
 import {
   formatChannelProgressDraftLineForEntry,
   isChannelProgressDraftWorkToolName,
-} from "openclaw/plugin-sdk/channel-message";
+} from "openclaw/plugin-sdk/channel-outbound";
 import { getWeComRuntime } from "../runtime.js";
 import type { WecomWebhookTarget } from "./types.js";
 import { STREAM_MAX_BYTES } from "./types.js";

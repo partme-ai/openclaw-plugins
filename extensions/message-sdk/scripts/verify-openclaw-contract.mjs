@@ -25,7 +25,7 @@ while (packageRoot !== filesystemRoot) {
 }
 if (!packageJson)
   throw new Error("Unable to locate the resolved openclaw package root");
-const minimum = [2026, 9, 6];
+const minimum = [2026, 11, 3];
 const actual = String(packageJson.version ?? "0.0.0")
   .split(/[.-]/u)
   .slice(0, 3)
@@ -45,17 +45,19 @@ if (
   compareVersion(actual, minimum) < 0
 ) {
   failures.push(
-    `openclaw ${packageJson.version ?? "unknown"} is below required 2026.9.6`,
+    `openclaw ${packageJson.version ?? "unknown"} is below required 2026.11.3`,
   );
 }
 
 const requiredExports = {
   "hook-runtime": ["buildCanonicalSentMessageHookContext", "fireAndForgetHook", "toPluginMessageContext", "toPluginMessageSentEvent"],
   "plugin-runtime": ["getGlobalHookRunner"],
-  "channel-outbound": ["sanitizeForPlainText"],
-  "channel-message": ["createTypingCallbacks", "formatChannelProgressDraftLineForEntry"],
+  "channel-outbound": ["sanitizeForPlainText", "createTypingCallbacks", "createChannelMessageReplyPipeline", "createReplyPrefixContext", "formatChannelProgressDraftLineForEntry", "isChannelProgressDraftWorkToolName"],
+  "channel-inbound": ["resolveInboundDirectDmAccessWithRuntime"],
+  "config-mutation": ["mutateConfigFile"],
   "extension-shared": ["buildTimeoutAbortSignal"],
-  "infra-runtime": ["readLocalFileFromRoots", "withFileLock"],
+  "runtime-env": ["retryAsync"],
+  "temp-path": ["resolvePreferredOpenClawTmpDir"],
   "media-local-roots": ["getAgentScopedMediaLocalRoots"],
 };
 for (const [subpath, names] of Object.entries(requiredExports)) {

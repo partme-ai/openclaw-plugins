@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-mtls",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "mTLS mutual TLS authentication plugin for OpenClaw — bidirectional certificate-based security authentication",
   "type": "module",
   "main": "dist/index.js",
@@ -54,7 +54,15 @@
     "install": {
       "npmSpec": "@partme.ai/openclaw-mtls",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.9.6"
+      "minHostVersion": ">=2026.11.3"
+    },
+    "build": {
+      "openclawVersion": "2026.11.3",
+      "pluginSdkVersion": "2026.11.3"
+    },
+    "compat": {
+      "pluginApi": ">=2026.11.3",
+      "minGatewayVersion": "2026.11.3"
     }
   },
   "exports": {
@@ -64,7 +72,7 @@
     }
   },
   "peerDependencies": {
-    "openclaw": ">=2026.9.6"
+    "openclaw": ">=2026.11.3"
   },
   "engines": {
     "node": ">=24.16.0 <25 || >=26.1.0"

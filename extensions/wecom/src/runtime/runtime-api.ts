@@ -60,7 +60,7 @@ export { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 export {
   createChannelMessageReplyPipeline,
   createReplyPrefixContext,
-} from "openclaw/plugin-sdk/channel-message";
+} from "openclaw/plugin-sdk/channel-outbound";
 export { sendMediaWithLeadingCaption } from "openclaw/plugin-sdk/reply-payload";
 export { formatReasoningMessage } from "openclaw/plugin-sdk/agent-runtime";
 export { stripReasoningTagsFromText } from "openclaw/plugin-sdk/text-chunking";

@@ -1,7 +1,7 @@
 {
   "id": "web-socket",
   "name": "web-socket",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "WebSocket channel for OpenClaw — ws client and/or embedded server with JSON frames",
   "main": "dist/index.js",
   "channels": ["web-socket"],

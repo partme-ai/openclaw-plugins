@@ -83,6 +83,7 @@ export async function monitorMqttBroker(ctx: ChannelGatewayContext<ResolvedMqttA
     ctx.setStatus({
       accountId: ctx.account.accountId,
       running: true,
+      lifecycle: "ready",
       configured: true,
       lastStartAt: Date.now(),
       webhookPath: "/mqtt/status",

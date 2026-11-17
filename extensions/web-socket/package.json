@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-web-socket",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "Native WebSocket channel for OpenClaw — JSON text protocol via embedded ws server",
   "type": "module",
   "main": "dist/index.js",
@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "ws": "^8.18.0",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.11.16"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -54,7 +54,7 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.9.6"
+    "openclaw": ">=2026.11.3"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -67,8 +67,8 @@
     ],
     "setupEntry": "./dist/setup-entry.js",
     "compat": {
-      "pluginApi": ">=2026.9.6",
-      "minGatewayVersion": "2026.9.6"
+      "pluginApi": ">=2026.11.3",
+      "minGatewayVersion": "2026.11.3"
     },
     "channel": {
       "id": "web-socket",
@@ -78,7 +78,11 @@
     "install": {
       "npmSpec": "@partme.ai/openclaw-web-socket",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.9.6"
+      "minHostVersion": ">=2026.11.3"
+    },
+    "build": {
+      "openclawVersion": "2026.11.3",
+      "pluginSdkVersion": "2026.11.3"
     }
   },
   "exports": {

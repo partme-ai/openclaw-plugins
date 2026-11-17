@@ -1,6 +1,6 @@
 {
   "id": "message-sdk",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "name": "OpenClaw Message SDK",
   "description": "Unified message format SDK for OpenClaw channel plugins",
   "configSchema": {

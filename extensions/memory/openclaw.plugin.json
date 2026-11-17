@@ -1,7 +1,7 @@
 {
   "id": "memory",
   "name": "Memory",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "本地分层长期记忆，支持物理会话隔离、保留策略和可选静态加密",
   "kind": "memory",
   "configSchema": {

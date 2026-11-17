@@ -212,7 +212,6 @@ export function startHostGateway() {
   stopHostGateway();
   const cliPath = resolveHostGatewayCli(OPENCLAW_BIN);
   const out = openSync(LOG_FILE, "w");
-  const spawnedAt = Date.now();
   let child;
   try {
     child = spawn(
@@ -236,8 +235,8 @@ export function startHostGateway() {
   } finally {
     closeSync(out);
   }
-  recordHostGatewayLaunch(child, PID_FILE);
-  startedHostGateway = { child, cliPath, spawnedAt };
+  const birthTime = recordHostGatewayLaunch(child, PID_FILE);
+  startedHostGateway = { child, cliPath, birthTime };
   return child.pid;
 }
 
@@ -284,7 +283,7 @@ export async function readStartedGatewayBaseline(gateway) {
       !processLifecycle.ownsPort(gateway.pid, GATEWAY_PORT)) {
     throw new Error("Gateway PID is not the live listener started by this E2E run");
   }
-  return readHostBaseline(launch.cliPath, gateway.pid, { spawnedAt: launch.spawnedAt, nodeExecutable: process.execPath });
+  return readHostBaseline(launch.cliPath, gateway.pid, { birthTime: launch.birthTime, nodeExecutable: process.execPath });
 }
 
 /** @returns {string} tail of gateway log for reports */

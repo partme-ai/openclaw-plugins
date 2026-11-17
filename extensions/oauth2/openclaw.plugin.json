@@ -1,7 +1,7 @@
 {
   "id": "oauth2",
   "name": "openclaw-oauth2",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "Standard OAuth2/OIDC client reverse proxy for OpenClaw, powered by openid-client",
   "main": "dist/index.js",
   "activation": {

@@ -19,7 +19,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import {
   getAgentScopedMediaLocalRoots,
 } from "openclaw/plugin-sdk/media-local-roots";
-import { readLocalFileFromRoots } from "openclaw/plugin-sdk/infra-runtime";
+import { readLocalFileFromRoots } from "@openclaw/fs-safe/advanced";
 
 /** 仅由宿主路由或出站上下文提供；不得从待上传文件路径推导。 */
 export type WeixinMediaSessionContext = {

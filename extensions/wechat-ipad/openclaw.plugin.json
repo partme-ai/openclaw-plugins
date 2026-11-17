@@ -1,7 +1,7 @@
 {
   "id": "wechat-ipad",
   "name": "wechat-ipad",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "Opt-in channel for a separately operated, unofficial WeChat iPad protocol bridge",
   "main": "dist/index.js",
   "channels": ["wechat-ipad"],

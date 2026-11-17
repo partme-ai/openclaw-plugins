@@ -9,7 +9,7 @@
 [![npm](https://img.shields.io/badge/npm-@partme.ai-cb3837?logo=npm)](https://www.npmjs.com/search?q=%40partme.ai)
 [![GitHub](https://img.shields.io/badge/github-partme--ai%2Fopenclaw--plugins-green.svg)](https://github.com/partme-ai/openclaw-plugins)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-24.16%2B%20%2F%2026.1%2B-brightgreen.svg)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-9-orange.svg)](https://pnpm.io)
 
 [English](./README.md) | 简体中文
@@ -268,9 +268,9 @@ openclaw-plugins/
 
 #### 前置要求
 
-- **Node.js** >= 22.0.0
+- **Node.js** `>=24.16.0 <25 || >=26.1.0`
 - **pnpm** >= 9（Monorepo 贡献者）
-- **OpenClaw** >= 2026.7.1 — [OpenClaw 仓库](https://github.com/partme-ai/openclaw)
+- **OpenClaw** >= 2026.11.3 — [OpenClaw 仓库](https://github.com/partme-ai/openclaw)
 
 #### 1. 安装 OpenClaw Gateway
 
@@ -472,10 +472,10 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # 预发布
 
 #### 核心
 
-- **Node.js** 22+（ESM）
+- **Node.js** `>=24.16.0 <25 || >=26.1.0`（ESM）
 - **TypeScript** 5.x strict
 - **pnpm** 9 workspaces
-- **OpenClaw** Plugin API >= 2026.7.1
+- **OpenClaw** Plugin API >= 2026.11.3
 
 #### 构建与测试
 
@@ -500,9 +500,9 @@ node scripts/publish-changed.mjs --plugin wecom --tag next   # 预发布
 
 | 项 | 当前 |
 |----|------|
-| OpenClaw peer 依赖 | >= 2026.7.1 |
-| message-sdk | 2026.7.1 |
-| 28 个 npm 模块 | 2026.7.1 |
+| OpenClaw peer 依赖 | >= 2026.11.3 |
+| message-sdk | 2026.11.16 |
+| 28 个 npm 模块 | 2026.11.16 |
 | 版本策略 | `YYYY.M.D`（活跃）· semver（稳定）· 预发布 `--tag next` |
 
 npm 已发布版本：[@partme.ai on npm](https://www.npmjs.com/search?q=%40partme.ai)。

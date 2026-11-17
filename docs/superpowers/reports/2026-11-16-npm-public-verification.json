@@ -1,0 +1,175 @@
+{
+  "version": "2026.11.16",
+  "sourceCommit": "f53f22434f23bbe0eb5a3d6a2abf4ed6c2f8302d",
+  "verifiedAt": "2026-11-16T13:53:51.034Z",
+  "packages": [
+    {
+      "name": "@partme.ai/openclaw-message-sdk",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-message-sdk/-/openclaw-message-sdk-2026.11.16.tgz",
+      "integrity": "sha512-rvrgOyCnhb/6rhSVTrZIP6ria/NV2GHcpPoSuhBY49xxJeVDvDbZIXdOcoRK/Osqf0nORszgEr/i8as4ZMxl1Q=="
+    },
+    {
+      "name": "@partme.ai/openclaw-amap",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-amap/-/openclaw-amap-2026.11.16.tgz",
+      "integrity": "sha512-oNhFkknm0Tx136KCpbyzmOO9g+0uOPhneX0FAKdQjdSd3bL/dAFgTkzjaUaC2HquSeWXdBp9PjA6HWJeRSwVCQ=="
+    },
+    {
+      "name": "@partme.ai/openclaw-bridge",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-bridge/-/openclaw-bridge-2026.11.16.tgz",
+      "integrity": "sha512-1ubMT1CNv0InCO00s6RfhI5AMsUXzgtPYZ63/tKvNPrg94udEtjPd2wzGbrZWPLHWukvtM/jDlfWhzc0a4dVaQ=="
+    },
+    {
+      "name": "@partme.ai/openclaw-douyin",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-douyin/-/openclaw-douyin-2026.11.16.tgz",
+      "integrity": "sha512-N0NiWRgbdOP/yltVXU7ovif9PfsFXpojDNFBGMf/GVcwmErz3hp5YxO8AzXJ4vuMtD0rBDm/FK+HQV1x4/3chA=="
+    },
+    {
+      "name": "@partme.ai/openclaw-gotify",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-gotify/-/openclaw-gotify-2026.11.16.tgz",
+      "integrity": "sha512-jsEUIoUFLbNzjOzmglOnOfYdXxucXg0azwAaV28rHlcUgrdKqlPF8bxHFNtSggscdZnckl1eiVdzw7bGRZrLRA=="
+    },
+    {
+      "name": "@partme.ai/openclaw-knowledge",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-knowledge/-/openclaw-knowledge-2026.11.16.tgz",
+      "integrity": "sha512-ic/o8GGWr7e5FwRVBJYHtpAGpAvW6tFjlZ6qSFwzSKGuf2SazhWrnpmY4slNSkC6BZaEAbufafIml0f3rXaQcQ=="
+    },
+    {
+      "name": "@partme.ai/openclaw-meituan",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-meituan/-/openclaw-meituan-2026.11.16.tgz",
+      "integrity": "sha512-WSajPuBkQ0zA2s4xhrI5rUn1P98kJrqCOikljoFfK6prMS3n8KUkBMyEary/dmZ/LCOmE0iHKzRrNFGE0I1Tdg=="
+    },
+    {
+      "name": "@partme.ai/openclaw-memory",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-memory/-/openclaw-memory-2026.11.16.tgz",
+      "integrity": "sha512-LKr6rl2pgNRPGOjlNL6NB7CyE4IswvACUcJEKCHQb5auJrTOeYZYZ4XafEDXHXm1a/mJPZlvGYI3V+s9dfoABw=="
+    },
+    {
+      "name": "@partme.ai/openclaw-mqtt",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-mqtt/-/openclaw-mqtt-2026.11.16.tgz",
+      "integrity": "sha512-8o8XN/4ZmRysI65H5hUwOtmiSpUJSMQ2RfM0+dFQlOUkVPPY63E9Lop2BEejdsEvdudwEnjNKqfFBNfjPyGYdg=="
+    },
+    {
+      "name": "@partme.ai/openclaw-mtls",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-mtls/-/openclaw-mtls-2026.11.16.tgz",
+      "integrity": "sha512-KnyMPNDwiWrspeCB4zlxa6+BxsPDSX1PwzO46DIFASvjF2hJCb7SY6nhLBPBzN7hCpzwPVM8+mpGMJZ8atImxw=="
+    },
+    {
+      "name": "@partme.ai/openclaw-nacos",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-nacos/-/openclaw-nacos-2026.11.16.tgz",
+      "integrity": "sha512-0EBybOZ5yDV8XZBDgKMdXh9lCFGqchXL4VEX+Uu5L6kaRG43tkNPmw/J2xelRThtdRDOlDgt7TsVE7FkPFORoQ=="
+    },
+    {
+      "name": "@partme.ai/openclaw-oauth2",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-oauth2/-/openclaw-oauth2-2026.11.16.tgz",
+      "integrity": "sha512-Oh2QMbfX49Qw975ildJLzA2EdjEx949TEyqKV2gjUpSqgqnjcYxzddZqzWvzq1Wfv3R0CETBROaKLKltP+nXTg=="
+    },
+    {
+      "name": "@partme.ai/openclaw-openmem",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-openmem/-/openclaw-openmem-2026.11.16.tgz",
+      "integrity": "sha512-KgvWZ2TPbA+WazS/rjevyAGS5FQZYw/ObeUZ9rcocl4x5LY0TepBAsAti1WVkRp+t42XtM2VoXC80psW+UTIRA=="
+    },
+    {
+      "name": "@partme.ai/openclaw-prometheus",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-prometheus/-/openclaw-prometheus-2026.11.16.tgz",
+      "integrity": "sha512-C52i6t1CO4XcJ5GGyPcKFeHK6XPyHyBTIAOGIVQDSAMsha6UPGGl4JxBGZprqGAFooH3qSBRxkMkeFj22QC9Qw=="
+    },
+    {
+      "name": "@partme.ai/openclaw-rabbitmq",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-rabbitmq/-/openclaw-rabbitmq-2026.11.16.tgz",
+      "integrity": "sha512-VW3uIYtSSQEANEoe2fVyFMNxcjpDh7GDabpFB7zBET8bxdfUIV8OwfrRWXCFqp14eJCINFWXxa7pgoJNihljcw=="
+    },
+    {
+      "name": "@partme.ai/openclaw-redis-stream",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-redis-stream/-/openclaw-redis-stream-2026.11.16.tgz",
+      "integrity": "sha512-PShoNMSAtu5qbcvpFyxqdpxDg0qWXinuc59bJ6tMoiiCLKitcw0EU+YQROVhoK0qTIyQ3Aid303mba7Vo7Q86A=="
+    },
+    {
+      "name": "@partme.ai/openclaw-rednode",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-rednode/-/openclaw-rednode-2026.11.16.tgz",
+      "integrity": "sha512-uhpgIje3T5ClekWMnb/qeu1U3rlK+m/2halG8/PRx+58U6kmBFUlw1q4HIkuwJ7G4ynWJzl0bQcu7+2i04bJMA=="
+    },
+    {
+      "name": "@partme.ai/openclaw-rocketmq",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-rocketmq/-/openclaw-rocketmq-2026.11.16.tgz",
+      "integrity": "sha512-vf+MOWT7w6L1eQ6FczRkDDFyU8n6sbzCKOlVqWWZ89Gp1ZM0w4RhlElKkjLk1mLmMa/M1EXBO+MonwYSVJqubQ=="
+    },
+    {
+      "name": "@partme.ai/openclaw-router",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-router/-/openclaw-router-2026.11.16.tgz",
+      "integrity": "sha512-gnb1+SvxOb0D7U4yQAUphhfbEE1pbBAVqwQVzcEYTFGimICFW9AHmBRmwuYzb85MUxAIFrCbVmkYOdPbXrB/AA=="
+    },
+    {
+      "name": "@partme.ai/openclaw-stomp",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-stomp/-/openclaw-stomp-2026.11.16.tgz",
+      "integrity": "sha512-nd+ivjXVWcKJGzwW71oOHkU+bhiAcsZU3eaR47yEHtcpWlwdTop3mN6ykJndtbR+OjPKamAjdKHVFYlaOurd2g=="
+    },
+    {
+      "name": "@partme.ai/openclaw-tracing",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-tracing/-/openclaw-tracing-2026.11.16.tgz",
+      "integrity": "sha512-LrxqZViNukjQvFwCexiB0GPnS0hnq0cC6iv5AI6K2nBWBDF/W1EOKrwSFgVggD2DsfWUKEWQJ/kWlLinMUVySg=="
+    },
+    {
+      "name": "@partme.ai/openclaw-web-mqtt",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-web-mqtt/-/openclaw-web-mqtt-2026.11.16.tgz",
+      "integrity": "sha512-nmqyGNdetYMicXT5tNjp+EFAE9r53svrnZJrFz08NpMvkjuJ67hUH6/TpU3jI7rr241vgVgSI8AOUaoMu4JwkA=="
+    },
+    {
+      "name": "@partme.ai/openclaw-web-socket",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-web-socket/-/openclaw-web-socket-2026.11.16.tgz",
+      "integrity": "sha512-ggasIONpRCdFzZapdrdGd1qX3C/qlltf0nVFvsmJZC7aozeYyg5a+fO6D4QSljgAh0Mr/TPI/L8NftqhYD1w5g=="
+    },
+    {
+      "name": "@partme.ai/openclaw-web-stomp",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/openclaw-web-stomp/-/openclaw-web-stomp-2026.11.16.tgz",
+      "integrity": "sha512-P7cmY2mOvzFg6UiWAxFiQnThOPhJCqLrBLZEvrZg6MkNV6iX2ExJlO7f2lcFp7/9v1Lp7HdOOX3fJxrqoSLdtA=="
+    },
+    {
+      "name": "@partme.ai/weixin",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/weixin/-/weixin-2026.11.16.tgz",
+      "integrity": "sha512-x5yxmxY4wXAr9ZINCEju2FD7f7YzEqiH4MUwG/QOABFBSFf5owleUDsdrtZhJ7vXCxbB7SPjbTr0siugAUjPlw=="
+    },
+    {
+      "name": "@partme.ai/wechat-ipad",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/wechat-ipad/-/wechat-ipad-2026.11.16.tgz",
+      "integrity": "sha512-Dq8ZwHKevPdupxuGnE8+VTWBFvowL8NyNjMJEQyQC8F3B0lEeoNYlL4hCZyMh4WlP3AmKmvs+WY3xRS2putxKA=="
+    },
+    {
+      "name": "@partme.ai/wecom",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/wecom/-/wecom-2026.11.16.tgz",
+      "integrity": "sha512-BPDBdig6LXlxt0SQyGp6kX0E6rATPi1tAq3j66q+QM3vuUGIYWyE4NvOZQ0N9yTBeuV7/zkprxSWe7Muy9qsXA=="
+    },
+    {
+      "name": "@partme.ai/wecom-kf",
+      "version": "2026.11.16",
+      "tarball": "https://registry.npmjs.org/@partme.ai/wecom-kf/-/wecom-kf-2026.11.16.tgz",
+      "integrity": "sha512-vyyvkGzNm/YPAgbg6pWZCa0NOgv4DOpBd8sMy+tpp8QAgvbKiv3AR2x4fz4PG/fnlGbIAGAnl1vogxixQBlWgw=="
+    }
+  ]
+}

@@ -5,4 +5,6 @@ import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
 
 import { wecomPlugin } from "./channel/channel.js";
 
-export default defineSetupPluginEntry(wecomPlugin);
+const setupEntry: { plugin: typeof wecomPlugin } = defineSetupPluginEntry(wecomPlugin);
+
+export default setupEntry;

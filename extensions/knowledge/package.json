@@ -1,6 +1,6 @@
 {
   "name": "@partme.ai/openclaw-knowledge",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "OpenClaw knowledge RAG plugin with bounded retrieval, isolated local storage, and owner-gated ingestion",
   "type": "module",
   "main": "./dist/index.js",
@@ -37,15 +37,15 @@
   "dependencies": {
     "ollama": "^0.6.3",
     "tiktoken": "^1.0.0",
-    "@partme.ai/openclaw-message-sdk": "workspace:^2026.7.1"
+    "@partme.ai/openclaw-message-sdk": "workspace:^2026.11.16"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.9.6"
+    "openclaw": ">=2026.11.3"
   },
   "devDependencies": {
     "@types/node": "^25.2.0",
     "@vitest/coverage-v8": "^4.1.6",
-    "openclaw": "2026.9.6",
+    "openclaw": "2026.11.3",
     "tsup": "^8.4.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6"
@@ -69,17 +69,17 @@
       "./dist/index.js"
     ],
     "compat": {
-      "pluginApi": ">=2026.9.6",
-      "minGatewayVersion": "2026.9.6"
+      "pluginApi": ">=2026.11.3",
+      "minGatewayVersion": "2026.11.3"
     },
     "build": {
-      "openclawVersion": "2026.9.6",
-      "pluginSdkVersion": "2026.9.6"
+      "openclawVersion": "2026.11.3",
+      "pluginSdkVersion": "2026.11.3"
     },
     "install": {
       "npmSpec": "@partme.ai/openclaw-knowledge",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.9.6"
+      "minHostVersion": ">=2026.11.3"
     }
   },
   "bugs": {

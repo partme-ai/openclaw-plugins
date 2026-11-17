@@ -1,7 +1,7 @@
 {
   "id": "meituan",
   "name": "@partme.ai/openclaw-meituan",
-  "version": "2026.7.1",
+  "version": "2026.11.16",
   "description": "美团技术服务合作中心 MTOp OpenAPI capability",
   "main": "dist/index.js",
   "activation": { "onStartup": true },

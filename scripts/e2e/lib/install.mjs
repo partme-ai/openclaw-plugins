@@ -5,7 +5,7 @@ import { execFileSync, execSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { MESSAGE_SDK, PLUGIN_REGISTRY, resolvePlugins } from "./registry.mjs";
 import { OPENCLAW_BIN, PROFILE, REPO_ROOT, STATE_DIR } from "./utils.mjs";
 
@@ -31,33 +31,33 @@ const APPROVED_E2E_CAPABILITIES = {
 // Exact reviewed E2E package snapshots. Update only after reviewing the changed
 // package, including dist; this does not claim a complete runtime surface list.
 const APPROVED_E2E_ARTIFACT_SHA256 = {
-  wecom: "f1a6201c855c401de3108680cd18d99bea944d6e5110857efe17ee7eb086b5e3",
-  "wechat-ipad": "229a6deb3bf60e25075c1a65b565b3fef470adbf782aff4941774db40254da3f",
-  rednode: "1253223ebe4085d3f074e6dfb53cfc2d039ca86b217981aa3243c6fe5e120323",
-  amap: "ef5e72eef1e401544881f31bb56fac351e6f57c55dba46c9e50527f3dccae28f",
-  bridge: "6acab1708388eb3b6e09b38e0b7439ccbd7964aa84605def51d67c6ea778beef",
-  mtls: "d8122a3932d2731cb793cbd578679950d8a2e9aabf407652eecd8daf49d7fb11",
-  oauth2: "75ee6101005307c46673332e336a722c8d72e01e25853e4fc68e810b221b83ec",
-  knowledge: "84f8c0139c2e4f42af0da6b563423f0ad573b8bff6381721821b9638d1d16410",
-  memory: "a12dbab171a00e0c5c76e98358e4f4df2a51268ce929ab1b03bf78f01ca4cc57",
-  openmem: "24e0bbe94499f4578f098b5520367f0fd48ddddceac262354c1bb080c17f0a0e",
-  router: "edf9cac450893b8709d3b02aa4d67ccf32f6e53dcbb4c29ca2f7687d65b8eccb",
-  gotify: "3c52d261c8f56928e1aba52f4590b1bb3a63fcb98b79793506807b95ad43ddcc",
-  douyin: "4c64d589e374e935276ca1dfe17a343caedb79f4fcf0fdf6fc5d58483e3683b8",
-  "wecom-kf": "61ce66fb81683d6e8ea405a830ab76a50de1b147423d26239d77fda8fca4a6ca",
-  tracing: "c57b769c3e2c645735932541e714b2d65f1eaf7cf6cfebbee24298b7816c330a",
-  mqtt: "bfd4340ef37d14bfdd1b5c034653a0a4b6be68a3dbe9d1db9ef2784b8f061297",
-  "web-mqtt": "2b5d11032e2d2762c5d125a0a3b698655c4e3e64e9f691a852ec9486702ba6f3",
-  "web-socket": "fe87dbc1e5015ae1d77990c790d14659a1870ae4a62b3b3c1cd1b2b04abe35f9",
-  rabbitmq: "930b90d74ea1c4873ff6cd36e228ab2c37bbc0f4e69dacdb157c9ff1414e3d15",
-  "redis-stream": "3c17b4ba23476cb98d338e20de7ced12878981f7d62073abb439acd202419c6e",
-  rocketmq: "80274658024d632fe9cd9965b86f87c8d8f6427b9c0dad8411132b1e5c61b939",
-  meituan: "df4f5e8a93215472913f54647f4e74974ced422e10d381a94848b027029231f7",
-  prometheus: "cdceb31a1f1f4f95d29f761519f4648a880a78c3f7d467013a9c30f92282a2a7",
-  nacos: "ce21e83e7488f1816c728fd1517154f0b58cbdfe7513d4cabbab42375949c80c",
-  stomp: "cf1b3b4898380d94f1607372b198f1fa5861c120e1a4c6f456fb56252726d2e3",
-  "web-stomp": "6d0f4a68894529ff366e736196fd569df5ff84090e2198ca9765201fe23d327c",
-  wechat: "f4f14b36610a9bc4fadd7c99e9b3c04cc6a2a29e2ac734074e889cb2128fe6d4",
+  wecom: "9744411162131e888ded53f95742aaf1b69340b13daae914393ed02f10be6790",
+  "wechat-ipad": "db2202c04bd8b6f3d155f6232e6147ca785a91e33f4e1be27b583cd7c461cd23",
+  rednode: "4d459de8cb1793ce46de2616c84dfa6762d0af2b653ed6fe5b004a2b611e5e15",
+  amap: "c27e9ab7f25e8c768274d3249a4fef2b5c56cfa9d2008c845c11f2904684ba4b",
+  bridge: "58c94421683e7c2d1998df5d3a9d8dbe4f555f2bacffe54546eb8a0166a7c048",
+  mtls: "c8d393078854081b0cc95d8aa6f139cea013ebe33ffa04acaac9847786fa9b92",
+  oauth2: "ac4fb2c3531ecd49db92e8fe1a9f8644d105eabc85ce1cf8ac073126035dc299",
+  knowledge: "7c5eb7d82954f6decd8e4cf64d0f5052edc884597d424807c51424ef510a2c99",
+  memory: "7432bfb1a77b396a3bdc0f2f6da69efef4669b76d5e0ce78f823b99d0349eee9",
+  openmem: "55b42dac4b1c41e4e3bbba0a71d8d1326fa2501e3ecbe7305d00049951954e65",
+  router: "e9db8c85bc21a1c5688945d4f44f27ee2b4ccd72319997ddb144bb9230dee68e",
+  gotify: "62963360712ed5f70763a037140ed16f3d8468945fc92a1d5b32802958928a94",
+  douyin: "918f544f4561c6ade824dd3f1378dd0be9afa46fdccef9e87d6dd9022ccd39f2",
+  "wecom-kf": "bb2df1376a2d4bcaa0394d9a60b396636b0f5e4237fa194e5c2ce55e0f0b6105",
+  tracing: "5aa9277bfb657deb6c3d34880d038a8ad2cb5255af9b49d232e5374a94939b6e",
+  mqtt: "38de2b6f5a82f3b07888c5dbf552dac588fe3d003e853c40218992e1279ff115",
+  "web-mqtt": "ffbcf96f7bfe1a396c846016ba3c3ad8849c7dd1536a1268f0cd26ef7794d856",
+  "web-socket": "f561511859b2c259ee90244c0c04979d34d8dab66331988970e373ec38a4735e",
+  rabbitmq: "5d173ea4d78d8d13b8a30c080ab50526e60d761f8f5d1f7dd7a7e9cc996fb4c3",
+  "redis-stream": "bc517ab8b3c0b6badc1cb258ef3b5fdbc9e5dc1b2d08963b94bb187e097d4e19",
+  rocketmq: "cefaa0c7e69a8ae86647e04079c61b2268987ac1b5ab1d9428f828a2f4aafe25",
+  meituan: "9f4966f98a8d2a270a4af784876edefe83695afab09c02b18d570ffb0fd898b3",
+  prometheus: "b95ac64670a43e44df8b2d5d9f9d174c4cb9a389589684461b4604e7f9fc0e40",
+  nacos: "645767de464adb965faa0c84e51c41e6a5974a5edea8a2bb4881a265f6c81bfe",
+  stomp: "833186ccd1fa69d97876275fd035be9df83538626a3b212900d3fbd36cccd90f",
+  "web-stomp": "a48ea7a75d7cda9d2453677dfd792f7c8375f220092475b7a96b972d25081aba",
+  wechat: "ba71780054f6315bebcd53a4a3b0616467df538ba08633f0c033c5aa3dd758f6",
 };
 const REVIEWED_CONSENT_IDS = new Set(Object.keys(APPROVED_E2E_ARTIFACT_SHA256));
 
@@ -181,6 +181,11 @@ function extractTgz(tgzPath, dest) {
 function installProductionDeps(extPath, messageSdkArchive) {
   const pkgPath = join(extPath, "package.json");
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+  // --omit=dev 仍会解析根包的开发依赖；纯插件归档在宿主提供 peer 时没有待安装项。
+  const hasRuntimeDeps = Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies }).length > 0;
+  const hasInstallHook = ["preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare"]
+    .some((hook) => pkg.scripts?.[hook]);
+  if (!hasRuntimeDeps && !hasInstallHook) return;
   const consumesMessageSdk = ["dependencies", "peerDependencies", "optionalDependencies"]
     .some((section) => pkg[section]?.["@partme.ai/openclaw-message-sdk"]);
   const sdkArg = consumesMessageSdk ? ` --no-save "${messageSdkArchive}"` : "";
@@ -193,6 +198,21 @@ export function preparePackedCandidate(tgzPath, extPath) {
   return reviewedArtifactDigest(extPath);
 }
 
+/** 测试已校验的发行包时保留原归档字节；常规开发仍从工作区构建。 */
+function resolveCandidate(def, packRoot, releaseDir) {
+  const pkgDir = join(REPO_ROOT, def.dir);
+  const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
+  const filename = `${pkg.name.replace(/^@/u, "").replace("/", "-")}-${pkg.version}.tgz`;
+  if (releaseDir) return join(releaseDir, filename);
+  if (def.id !== MESSAGE_SDK.id) run(`pnpm --filter ${def.filter} typecheck`);
+  run(`pnpm --filter ${def.filter} build`);
+  if (def.id !== MESSAGE_SDK.id) run(`pnpm --filter ${def.filter} test`);
+  const packDir = join(packRoot, def.id);
+  mkdirSync(packDir, { recursive: true });
+  execFileSync("pnpm", ["pack", "--pack-destination", packDir], { cwd: pkgDir, env: toolEnv(), stdio: "inherit" });
+  return join(packDir, filename);
+}
+
 /**
  * Build, pack, and install selected plugins.
  * @param {string[]|undefined} pluginIds
@@ -200,18 +220,9 @@ export function preparePackedCandidate(tgzPath, extPath) {
  */
 export function installPlugins(pluginIds) {
   const ids = resolvePlugins(pluginIds);
-  run("pnpm install");
-  run(`pnpm --filter ${MESSAGE_SDK.filter} build`);
+  const releaseDir = process.env.OPENCLAW_E2E_ARCHIVES ? realpathSync(resolve(process.env.OPENCLAW_E2E_ARCHIVES)) : undefined;
+  if (!releaseDir) run("pnpm install --frozen-lockfile");
   const packRoot = mkdtempSync(join(tmpdir(), "openclaw-e2e-packs-"));
-  const sdkPackDir = join(packRoot, MESSAGE_SDK.id);
-  mkdirSync(sdkPackDir, { recursive: true });
-  run(`pnpm pack --pack-destination "${sdkPackDir}"`, { cwd: join(REPO_ROOT, MESSAGE_SDK.dir) });
-  const sdkArchives = readdirSync(sdkPackDir).filter((name) => name.endsWith(".tgz"));
-  if (sdkArchives.length !== 1) {
-    rmSync(packRoot, { recursive: true, force: true });
-    throw new Error(`message-sdk pack produced ${sdkArchives.length} archives`);
-  }
-  const messageSdkArchive = join(sdkPackDir, sdkArchives[0]);
 
   /** @type {Array<{ id: string; path: string; version: string; tgz: string; artifactSha256: string }>} */
   const installed = [];
@@ -220,23 +231,12 @@ export function installPlugins(pluginIds) {
   const candidates = [];
 
   try {
+    const messageSdkArchive = resolveCandidate(MESSAGE_SDK, packRoot, releaseDir);
     for (const def of PLUGIN_REGISTRY) {
       if (!ids.includes(def.id)) continue;
 
-      run(`pnpm --filter ${def.filter} typecheck`);
-      run(`pnpm --filter ${def.filter} test`);
-      run(`pnpm --filter ${def.filter} build`);
-
-      const pkgDir = join(REPO_ROOT, def.dir);
-      const pluginPackDir = join(packRoot, def.id);
-      mkdirSync(pluginPackDir, { recursive: true });
-      run(`pnpm pack --pack-destination "${pluginPackDir}"`, { cwd: pkgDir });
-      const archives = readdirSync(pluginPackDir).filter((name) => name.endsWith(".tgz"));
-      if (archives.length !== 1) {
-        throw new Error(`pack produced ${archives.length} archives for ${def.filter}`);
-      }
-      const [tgzName] = archives;
-      const tgzPath = join(pluginPackDir, tgzName);
+      const tgzPath = resolveCandidate(def, packRoot, releaseDir);
+      const tgzName = basename(tgzPath);
       const artifactSha256 = createHash("sha256").update(readFileSync(tgzPath)).digest("hex");
       mkdirSync(candidateDir, { recursive: true });
       const archivePath = join(candidateDir, `${candidateRunId}-${def.id}.tgz`);

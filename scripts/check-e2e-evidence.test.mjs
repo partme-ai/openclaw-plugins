@@ -10,7 +10,7 @@ import { browserEvidenceRequired, checkReports, readCandidateManifest, validateE
 const SHA = "a".repeat(64);
 const baseline = () => ({
   report: {
-    host: { version: "2026.9.6", nodeVersion: "v24.18.0", cliPath: "/real/openclaw" },
+    host: { version: "2026.11.3", nodeVersion: "v24.18.0", cliPath: "/real/openclaw" },
     installed: [{ id: "mqtt", version: "1.2.3", artifactSha256: SHA }],
     sourceFingerprints: { mqtt: "source-a" },
     e2e: [{ plugin: "mqtt", result: "PASS" }],
@@ -21,7 +21,7 @@ const baseline = () => ({
     skipBrowser: false,
   },
   expected: {
-    hostVersion: "2026.9.6",
+    hostVersion: "2026.11.3",
     nodeVersion: "v24.18.0",
     sourceFingerprints: { mqtt: "source-a" },
     candidates: { mqtt: { version: "1.2.3", artifactSha256: SHA } },
@@ -46,7 +46,7 @@ test("single-field tampering of host, plugin, tarball, source, browser and skip 
   const mutations = [
     (r) => { r.host.version = "2026.7.1"; },
     (r) => { r.host.nodeVersion = "v22.0.0"; },
-    (r) => { r.installed[0].version = "2026.9.6"; },
+    (r) => { r.installed[0].version = "2026.11.3"; },
     (r) => { r.installed[0].artifactSha256 = "b".repeat(64); },
     (r) => { r.sourceFingerprints.mqtt = "source-b"; },
     (r) => { r.browser[0].result = "FAIL"; },

@@ -32,7 +32,7 @@ import {
 import {
   formatChannelProgressDraftLineForEntry,
   isChannelProgressDraftWorkToolName,
-} from "openclaw/plugin-sdk/channel-message";
+} from "openclaw/plugin-sdk/channel-outbound";
 import { THINKING_MESSAGE } from "../types/const.js";
 import type { MessageState } from "../types/interface.js";
 import { getExtendedMediaLocalRoots } from "../media/media-path-guard.js";

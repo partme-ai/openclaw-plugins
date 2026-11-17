@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Real OpenClaw 2026.9.6 Control UI grant exercise.
+ * Real OpenClaw 2026.11.3 Control UI grant exercise.
  * Runs in its own temporary profile and port; it never changes the shared plugin E2E profile.
  * The full run waits for the server-issued Cookie's actual five-minute expiration.
  */
@@ -96,8 +96,8 @@ async function run() {
   const selectedCli = process.env.OPENCLAW_BIN ?? join(repoRoot, "node_modules/.bin/openclaw");
   const cliScript = resolveCliScript(selectedCli);
   const versionText = execFileSync(process.execPath, [cliScript, "--version"], { encoding: "utf8" }).trim();
-  if (!/\b2026\.9\.6\b/.test(versionText)) {
-    throw new Error(`U3 real grant fixture requires OpenClaw 2026.9.6; selected ${versionText}`);
+  if (!/\b2026\.11\.3\b/.test(versionText)) {
+    throw new Error(`U3 real grant fixture requires OpenClaw 2026.11.3; selected ${versionText}`);
   }
   if (!fixtureOnly && !existsSync(join(routerDir, "dist/index.js"))) {
     throw new Error("Router dist/index.js is missing; build it or use --fixture-only");
@@ -116,7 +116,7 @@ async function run() {
   const logPath = join(stateDir, "gateway.log");
   const logFd = openSync(logPath, "w", 0o600);
   const startedAt = new Date().toISOString();
-  const report = { status: "FAIL", startedAt, hostVersion: "2026.9.6", profile, port,
+  const report = { status: "FAIL", startedAt, hostVersion: "2026.11.3", profile, port,
     fixtureId: FIXTURE_ID, routerIncluded, seededDeadLetterId, assertions: [] };
   let child;
   try {
